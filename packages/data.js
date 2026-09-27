@@ -70,18 +70,9 @@ export async function start(ctx) {
     };
     tables.set(idHex, t);
 
-    // Read it and follow it. None on the network yet: its first write is a PUT.
-    async function read() {
-      const [, frames] = core.tail_get(id);
-      const said = await ask(frames, x => (x.kind === "tail" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, 30000);
-      if (said.kind === "tail") t.took(said.tail.rows);
-      else core.tail_absent(id);
-    }
-    await read();
-    ctx.log("table open", { what: `${app}: ${rows.length} row(s)` });
-
     // Leave to write it: the person's grant for this site (the node asks them the first time). Reading needs none;
-    // without it the table is read-only here, and a write says why.
+    // without it the table is read-only here, and a write says why. Asked NOW, beside the read, so a slow read never
+    // holds the prompt back.
     let writable = null;
     t.writable = () => writable === true;
     const allowed = () =>
@@ -90,6 +81,24 @@ export async function start(ctx) {
         return ok;
       });
     allowed().catch(() => {});
+
+    // Read it and follow it. None on the network yet: its first write is a PUT. No answer at all (a table nobody has
+    // written can take the network longer than the wait): the same as none, so the page opens empty; a first write
+    // that the network then refuses resets the table and reads it again.
+    async function read() {
+      const [, frames] = core.tail_get(id);
+      let said;
+      try {
+        said = await ask(frames, x => (x.kind === "tail" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, 30000);
+      } catch (e) {
+        ctx.log("table not found yet", { what: `${app}: ${e.message}; opened empty` });
+        said = { kind: "get-failed" };
+      }
+      if (said.kind === "tail") t.took(said.tail.rows);
+      else core.tail_absent(id);
+    }
+    await read();
+    ctx.log("table open", { what: `${app}: ${rows.length} row(s)` });
 
     // One write: prepared by the core, signed by the identity delegate with the data key, sent as one delta.
     async function write(key, value) {
