@@ -19,6 +19,26 @@ export async function mount(ctx, el) {
   line("Account (DID)", s.did);
   line("This device's member key", s.member);
 
+  // YOUR DEVICES: the account's members as the network holds them.
+  const dev = document.createElement("section");
+  dev.innerHTML = `<h3>Your devices</h3><p class="line">Reading your account from the network…</p>`;
+  box.append(dev);
+  auth.devices().then(
+    list => {
+      const ul = document.createElement("ul");
+      for (const m of list.sort((a, b) => a.since - b.since)) {
+        const li = document.createElement("li");
+        const code = document.createElement("code");
+        code.textContent = `${m.key.slice(0, 16)}…`;
+        li.append(`${m.name || "a device"} — `, code, ` · since ${new Date(m.since).toLocaleString()}`);
+        if (m.key === s.member) li.append(" (this device)");
+        ul.append(li);
+      }
+      dev.querySelector(".line").replaceWith(list.length ? ul : "No devices listed yet: this account was made before the member list.");
+    },
+    e => (dev.querySelector(".line").textContent = `Could not read your devices: ${e.message}`),
+  );
+
   // RECOVERY WORDS: made with the account; they ARE the account (its owner key and its DID come from them). Shown on
   // request, never kept on the page.
   const rec = document.createElement("section");

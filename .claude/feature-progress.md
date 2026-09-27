@@ -45,8 +45,13 @@ device + the same PIN opens the same account. Adding a second device: pairing wi
   dialog (asked only by pages that need it) + first login makes the DID (owner seat; the vault was replaced by recovery words the same day). Verified on a
   private node (create, wrong PIN counted, same PIN reopens, a 2nd person on the same device gets another DID);
   published through B as app site v5. Pages must connect to the host they were served from (localhost ≠ 127.0.0.1).
-- [ ] B0. member list on the network: a Register `members` under the owner key listing member keys; register and
-  words-login add this device (they hold the words). Needed so DID → members → tails.
+- [x] B0. member list on the network: a SET under the owner key (owner-only), one owner-signed item per member (key =
+  member key, payload MB01 ‖ class ‖ device name). Register and words-login admit this device (PUT merges = union, so
+  two devices joining at once never conflict; a Register list would have forked). The seat now names the owner key
+  (`ST01 ‖ owner`, at seq 2 so the first seats' seq-1 records are replaced, not forked), so DID → seat (checked:
+  that key's seat must be the DID) → owner → member Set. Account page lists the devices. Verified on the private
+  node: register → 1 device; words-login → 2 devices, same DID. The Set crate links with default-features off (no
+  contract imports in the page wasm).
 - [ ] B. data: device tail per app (identity signs), subscribe, write rows, flush into the tree, read tail→tree
 - [ ] C. pairing admits a member without the words (the admitted device holding the words signs the addition)
 - [ ] D. auth package: on-demand sign-in dialog; import/export key file

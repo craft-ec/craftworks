@@ -57,11 +57,14 @@ pub struct Core {
     identity: Vec<u8>,
     next_id: u32,
     next_stream: u32,
+    /// Contract states the node sent (a GET's answer), by contract id: read by the account readers, never handed to
+    /// the page as bytes.
+    got: std::collections::HashMap<[u8; 32], Vec<u8>>,
 }
 
 impl Core {
     pub fn new(identity_wasm: &[u8]) -> Core {
-        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1 }
+        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1, got: Default::default() }
     }
 
     pub fn identity_key(&self) -> String {
@@ -95,8 +98,26 @@ impl Core {
         wire::frame_put(p.contract.clone(), p.state.clone(), s)
     }
 
+    /// Frames of a GET of contract `id` (`wire::frame_get`, no subscription).
+    pub fn frames_get(&mut self, id: [u8; 32]) -> Result<Vec<Vec<u8>>, String> {
+        let s = self.stream();
+        wire::frame_get(wire::contract_id(id), false, s)
+    }
+
+    /// The state the node last sent for `id`.
+    pub fn got(&self, id: &[u8; 32]) -> Option<&[u8]> {
+        self.got.get(id).map(Vec::as_slice)
+    }
+
     pub fn take(&mut self, bytes: &[u8]) -> Value {
-        describe(wire::unframe(&mut self.r, bytes))
+        match wire::unframe(&mut self.r, bytes) {
+            Incoming::Got { id, state } => {
+                self.got.insert(id, state);
+                json!({ "kind": "got", "id": hex(&id) })
+            }
+            Incoming::GetFailed { id, why } => json!({ "kind": "get-failed", "id": hex(&id), "why": format!("{why:?}") }),
+            other => describe(other),
+        }
     }
 }
 
@@ -172,18 +193,32 @@ mod js {
             self.ask(Request::Recovery)
         }
 
-        /// The account of these recovery words (their entropy): `{ did, didBytes, seat: { id, frames } }`. The same
-        /// words always give the same DID and the same seat PUT, so this is both "register" and "log in with words".
-        pub fn account(&mut self, register_code: &[u8], entropy: &[u8]) -> Result<js_sys::Object, JsValue> {
-            let seat = account::seat(register_code, entropy).ok_or_else(|| err("recovery entropy: 16 or 32 bytes".into()))?;
+        /// The account of these recovery words (their entropy), with `member` admitted to it: `{ did, didBytes,
+        /// seat: { id, frames }, members: { id, frames } }`. The same words always give the same DID and the same seat
+        /// PUT, so this is both "register" and "log in with words"; the member PUT merges into the account's Set.
+        #[allow(clippy::too_many_arguments)]
+        pub fn account(
+            &mut self,
+            register_code: &[u8],
+            set_code: &[u8],
+            entropy: &[u8],
+            member: &[u8],
+            ts: f64,
+            name: &str,
+        ) -> Result<js_sys::Object, JsValue> {
+            let bad = || err("recovery entropy: 16 or 32 bytes".into());
+            let seat = account::seat(register_code, entropy).ok_or_else(bad)?;
+            let members = account::admit(set_code, entropy, &b32(member)?, ts as u64, name).ok_or_else(bad)?;
             let o = js_sys::Object::new();
             let set = |k: &str, v: JsValue| js_sys::Reflect::set(&o, &k.into(), &v).map(|_| ());
             set("did", account::did(&seat).into())?;
             set("didBytes", js_sys::Uint8Array::from(&seat.id_bytes[..]).into())?;
-            let p = js_sys::Object::new();
-            js_sys::Reflect::set(&p, &"id".into(), &seat.id.clone().into())?;
-            js_sys::Reflect::set(&p, &"frames".into(), &frames(self.0.frames_put(&seat).map_err(err)?).into())?;
-            set("seat", p.into())?;
+            for (name, put) in [("seat", &seat), ("members", &members)] {
+                let p = js_sys::Object::new();
+                js_sys::Reflect::set(&p, &"id".into(), &put.id.clone().into())?;
+                js_sys::Reflect::set(&p, &"frames".into(), &frames(self.0.frames_put(put).map_err(err)?).into())?;
+                set(name, p.into())?;
+            }
             Ok(o)
         }
 
@@ -197,6 +232,38 @@ mod js {
             account::entropy(words)
                 .map(|e| js_sys::Uint8Array::from(&e[..]))
                 .ok_or_else(|| err("these are not 12 or 24 recovery words (a word is misspelled, or one is missing)".into()))
+        }
+
+        /// `[id hex, frames]` of a GET of contract `id` (32 bytes).
+        pub fn frames_get(&mut self, id: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let id = b32(id)?;
+            let f = self.0.frames_get(id).map_err(err)?;
+            Ok([JsValue::from(hex(&id)), JsValue::from(frames(f))].into_iter().collect())
+        }
+
+        /// The owner key the DID's seat names, checked (the seat must have been got): hex.
+        pub fn owner_of(&self, register_code: &[u8], did: &[u8]) -> Result<String, JsValue> {
+            let did = b32(did)?;
+            let state = self.0.got(&did).ok_or_else(|| err("the account's seat has not been read".into()))?;
+            account::owner_of_seat(register_code, &did, state)
+                .map(|o| hex(&o))
+                .ok_or_else(|| err("the seat does not name this account's owner".into()))
+        }
+
+        /// The member Set's contract id (32 bytes) for an owner key.
+        pub fn members_id(&self, set_code: &[u8], owner: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            let p = account::members_address(set_code, &b32(owner)?).ok_or_else(|| err("not an owner key".into()))?;
+            Ok(js_sys::Uint8Array::from(&p.id_bytes[..]))
+        }
+
+        /// The members the got member Set names, as JSON text `[{ key, name, since }]` (every signature checked).
+        pub fn members(&self, set_code: &[u8], owner: &[u8]) -> Result<String, JsValue> {
+            let owner = b32(owner)?;
+            let id = account::members_address(set_code, &owner).ok_or_else(|| err("not an owner key".into()))?.id_bytes;
+            let state = self.0.got(&id).ok_or_else(|| err("the member list has not been read".into()))?;
+            let list = account::members(&owner, state).ok_or_else(|| err("the member list does not verify".into()))?;
+            let v: Vec<Value> = list.iter().map(|m| json!({ "key": hex(&m.key), "name": m.name, "since": m.since })).collect();
+            Ok(Value::from(v).to_string())
         }
 
         /// The ed25519 public key of a seed.

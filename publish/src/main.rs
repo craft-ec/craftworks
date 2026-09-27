@@ -235,7 +235,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 11] = [
+    let packages: [(&str, &str, PathBuf); 12] = [
         ("header", "module", app.join("packages/header.js")),
         ("footer", "module", app.join("packages/footer.js")),
         ("home", "module", app.join("packages/home.js")),
@@ -248,6 +248,8 @@ async fn main() -> Result<()> {
         // The identity delegate's code (the node needs it to run it) and the Register's (a first login puts two).
         ("identity-wasm", "bytes", built.join("identity.wasm")),
         ("register-wasm", "bytes", contracts.join("register.wasm")),
+        // The Set's code: the account's member list (admitting this device, and reading it back).
+        ("set-wasm", "bytes", contracts.join("set.wasm")),
     ];
     let mut entries = Vec::new();
     // WHAT IS ALREADY UP: the piece addresses the live manifest names (PUBLISHED_MANIFEST, the app site's own

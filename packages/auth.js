@@ -3,6 +3,7 @@
 // - `check()`: who is logged in, or null, never a dialog (a public page choosing its view).
 // - `session({ tab })`: the logged-in person, asking with the dialog if nobody is; null if they close it.
 // - `logout()`: ends this app's session and goes home.
+// - `devices()`: the account's members as the network holds them (DID → seat → owner key → member Set).
 // Every change is announced as a `craftworks:auth` event (detail: the person, or null), so a page can switch views.
 // - The DID is the ACCOUNT. It is named by the account's RECOVERY WORDS (BIP39, like a wallet's): the owner key is
 //   derived from them, and the DID is its seat. Registering makes the words; the Account page shows them.
@@ -17,7 +18,7 @@ export async function start(ctx) {
 
   const announce = () => dispatchEvent(new CustomEvent("craftworks:auth", { detail: current }));
   const opened = a => {
-    current = { member: a.unlocked.member, did: glue.did_of(hexBytes(a.unlocked.did)) };
+    current = { member: a.unlocked.member, did: glue.did_of(hexBytes(a.unlocked.did)), didBytes: hexBytes(a.unlocked.did) };
     ctx.log("logged in", { what: `${current.did.slice(0, 24)}… member ${current.member.slice(0, 12)}…` });
     announce();
     return current;
@@ -41,10 +42,28 @@ export async function start(ctx) {
     location.hash = "#/";
   }
 
-  // The account's seat, put (the same PUT every time for the same words: it makes the account, or finds it).
-  async function putSeat(a) {
-    const said = await ask(a.seat.frames, s => (s.kind === "put" && s.key === a.seat.id) || s.kind === "refused", "putting the account's seat", 60000);
-    if (said.kind !== "put") throw new Error(`the node refused the account's seat (${said.said})`);
+  // Put one of the account's contracts; resolves when the node accepts it.
+  async function put(p, what) {
+    const said = await ask(p.frames, s => (s.kind === "put" && s.key === p.id) || s.kind === "refused", what, 60000);
+    if (said.kind !== "put") throw new Error(`the node refused ${what} (${said.said})`);
+  }
+
+  // Read one contract by its 32-byte id; resolves true when its state is in the core, false if the network has none.
+  async function get(id, what) {
+    const [hexId, frames] = core.frames_get(id);
+    const said = await ask(frames, s => (s.kind === "got" || s.kind === "get-failed") && s.id === hexId, what, 30000);
+    return said.kind === "got";
+  }
+
+  // The account's members, from the network: `[{ key, name, since }]`.
+  async function devices() {
+    const s = await check();
+    if (!s) return [];
+    const [registerCode, setCode] = [await ctx.require("register-wasm"), await ctx.require("set-wasm")];
+    if (!(await get(s.didBytes, "reading the account's seat"))) throw new Error("the account's seat is not on the network");
+    const owner = hexBytes(core.owner_of(registerCode, s.didBytes));
+    if (!(await get(core.members_id(setCode, owner), "reading the account's members"))) return [];
+    return JSON.parse(core.members(setCode, owner));
   }
 
   // This device as a member of the account the words name. Kept across a retry with another PIN, so one attempt
@@ -52,10 +71,13 @@ export async function start(ctx) {
   let joining = null;
   async function join(entropy, pin) {
     if (!joining || joining.entropyHex !== hex(entropy)) {
-      const a = core.account(await ctx.require("register-wasm"), entropy);
-      await putSeat(a);
-      ctx.log("account", { what: a.did });
-      joining = { entropyHex: hex(entropy), entropy, did: a.didBytes, member: crypto.getRandomValues(new Uint8Array(32)) };
+      const member = crypto.getRandomValues(new Uint8Array(32));
+      const a = core.account(
+        await ctx.require("register-wasm"), await ctx.require("set-wasm"), entropy, id.publicOf(member), Date.now(), deviceName());
+      await put(a.seat, "the account's seat");
+      await put(a.members, "this device's place in the account");
+      ctx.log("account", { what: `${a.did}, this device admitted` });
+      joining = { entropyHex: hex(entropy), entropy, did: a.didBytes, member };
     }
     const r = await id.provision(joining.member, joining.did, pin, joining.entropy);
     if (r.unlocked) {
@@ -188,7 +210,15 @@ export async function start(ctx) {
     });
   }
 
-  return { check, session, logout, current: () => current, identity: id, words: e => glue.CraftworksCore.words_of(e) };
+  return { check, session, logout, devices, current: () => current, identity: id, words: e => glue.CraftworksCore.words_of(e) };
+}
+
+// A name for this device, for the member list: its system and browser, as the browser says them.
+function deviceName() {
+  const ua = navigator.userAgent;
+  const system = /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Linux/.test(ua) ? "Linux" : "device";
+  const browser = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "browser";
+  return `${system} · ${browser}`;
 }
 
 function hexBytes(h) {
