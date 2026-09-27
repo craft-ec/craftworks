@@ -102,7 +102,8 @@ export async function start(ctx) {
               <strong>Log in with recovery words</strong>
               <p class="note">On any device: your words open your account, and this device joins it with its own PIN.</p>
               <label>Your 12 or 24 words <textarea name="words" rows="3" autocomplete="off" spellcheck="false" required></textarea></label>
-              <label>A PIN for this device (6 or more) <input name="pin" type="password" minlength="6" autocomplete="off" required></label>
+              <label>Create a PIN (6 or more) <input name="pin" type="password" minlength="6" autocomplete="off" required></label>
+              <label>Confirm the PIN <input name="again" type="password" minlength="6" autocomplete="off" required></label>
               <button>Log in</button>
               <p class="said"></p>
               <button type="button" class="swap">Back to PIN</button>
@@ -111,8 +112,8 @@ export async function start(ctx) {
           <div data-panel="register" hidden>
             <form class="register">
               <strong>Register with this device</strong>
-              <label>Choose a PIN (6 or more) <input name="pin" type="password" minlength="6" autocomplete="off" required></label>
-              <label>The PIN again <input name="again" type="password" minlength="6" autocomplete="off" required></label>
+              <label>Create a PIN (6 or more) <input name="pin" type="password" minlength="6" autocomplete="off" required></label>
+              <label>Confirm the PIN <input name="again" type="password" minlength="6" autocomplete="off" required></label>
               <button>Register</button>
               <p class="said"></p>
               <p class="note">Your account comes with recovery words. See them any time on your Account page.</p>
@@ -165,6 +166,7 @@ export async function start(ctx) {
 
       const words = q("form.words");
       on(words, async () => {
+        if (words.pin.value !== words.again.value) return { error: "The two PINs differ." };
         let entropy;
         try {
           entropy = glue.CraftworksCore.entropy_of(words.words.value);
