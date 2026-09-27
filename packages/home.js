@@ -1,7 +1,7 @@
 // HOME: public and private in one page.
 // - PUBLIC (nobody logged in): a welcome, and Log in / Register, which open auth's dialog.
-// - PRIVATE (logged in): the DESKTOP: the site's apps as icons, the ones this account pinned first. Pins are the account's
-//   the account's (the `data` service), so they are the same on every node of the account.
+// - PRIVATE (logged in): the DESKTOP: the site's apps as icons, the ones this account pinned first. Pins are the
+//   account's (the `pins` package, with its one pin button), so they are the same on every node of the account.
 // It asks auth quietly (`check`, never a dialog) which view to show, and switches when someone logs in or out.
 export async function mount(ctx, el) {
   const auth = await ctx.require("auth");
@@ -24,9 +24,7 @@ export async function mount(ctx, el) {
           border-radius: 12px; text-decoration: none; color: inherit; }
         .desk .app:hover { background: #8881; }
         .desk .icon { font-size: 40px; line-height: 1; }
-        .desk .pin { position: absolute; top: 2px; right: 2px; border: 0; background: none; cursor: pointer;
-          font-size: 14px; opacity: .35; }
-        .desk .pin[aria-pressed="true"] { opacity: 1; }
+        .desk .cw-pin { position: absolute; top: 2px; right: 2px; font-size: 14px; }
         .desk .empty { opacity: .6; font-size: .9em; }
       </style>
       <div class="desk">
@@ -39,7 +37,7 @@ export async function mount(ctx, el) {
     // An app's pin is the account's pin of `app:<route>`: the same pins every app uses.
     const pinned = () => new Set((pins?.refs("app:") ?? []).map(r => r.slice(4)));
     // A tile is the app's link and, beside it (never inside: the loader takes every click on a `#` link), its pin.
-    const icon = (a, on) => {
+    const icon = a => {
       const tile = document.createElement("div");
       tile.className = "tile";
       const link = document.createElement("a");
@@ -49,17 +47,7 @@ export async function mount(ctx, el) {
       link.querySelector(".icon").textContent = a.icon ?? "▫️";
       link.querySelector(".name").textContent = a.name;
       tile.append(link);
-      if (pins) {
-        const pin = document.createElement("button");
-        pin.type = "button";
-        pin.className = "pin";
-        pin.textContent = "📌";
-        pin.title = on ? "Unpin" : "Pin";
-        pin.setAttribute("aria-pressed", String(on));
-        pin.onclick = () =>
-          pins.set(`app:${a.route}`, !on).catch(err => ctx.log("pin failed", { what: err?.message ?? String(err) }));
-        tile.append(pin);
-      }
+      if (pins) tile.append(pins.button(`app:${a.route}`));
       return tile;
     };
     const render = () => {
@@ -67,12 +55,12 @@ export async function mount(ctx, el) {
       const on = pinned();
       const [pinnedGrid, allGrid] = [el.querySelector(".pinned"), el.querySelector(".all")];
       const mine = ctx.apps.filter(a => on.has(a.route));
-      pinnedGrid.replaceChildren(...mine.map(a => icon(a, true)));
+      pinnedGrid.replaceChildren(...mine.map(icon));
       if (!mine.length) pinnedGrid.append(Object.assign(document.createElement("p"), { className: "empty", textContent: "Pin an app with 📌 to keep it here." }));
-      allGrid.replaceChildren(...ctx.apps.map(a => icon(a, on.has(a.route))));
+      allGrid.replaceChildren(...ctx.apps.map(icon));
     };
     render();
-    (await ctx.require("data")).pins().then(
+    ctx.require("pins").then(
       t => {
         pins = t;
         pins.onChange(render);

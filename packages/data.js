@@ -7,7 +7,6 @@
 //
 //   const notes = await (await ctx.require("data")).table("notes");
 //   notes.rows()                [{ key, value }]
-//   const pins = await data.pins();   pins.has("notes:<id>")   pins.set(ref, on)   pins.onChange(fn)
 //   await notes.put(key, value)   await notes.remove(key)   notes.onChange(fn)
 export async function start(ctx) {
   const auth = await ctx.require("auth");
@@ -270,18 +269,5 @@ export async function start(ctx) {
     return ready;
   }
 
-  // PINS: one table of the account for every pin in every app, keyed by what is pinned — `app:/notes` (an app on
-  // the home screen), `notes:<id>` (a note), … — so pinning is one mechanism, not one per app.
-  let pinsHandle;
-  function pins() {
-    pinsHandle ??= table("pins").then(t => ({
-      has: ref => t.rows().some(r => r.key === ref),
-      refs: prefix => t.rows().map(r => r.key).filter(k => !prefix || k.startsWith(prefix)),
-      set: (ref, on) => (on ? t.put(ref, JSON.stringify({ at: Date.now() })) : t.remove(ref)),
-      onChange: t.onChange,
-    }));
-    return pinsHandle;
-  }
-
-  return { table, pins };
+  return { table };
 }
