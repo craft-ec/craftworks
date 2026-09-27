@@ -19,10 +19,11 @@ export async function mount(ctx, el) {
   } catch (e) {
     return said(`Could not open your notes: ${e?.message ?? e}`);
   }
+  let newestFirst = true;
   const render = () => {
     const ul = el.querySelector(".rows");
     ul.replaceChildren();
-    const rows = [...notes.rows()].sort((a, b) => (a.key < b.key ? 1 : -1));
+    const rows = [...notes.rows()].sort((a, b) => ((a.key < b.key) === newestFirst ? 1 : -1));
     if (!rows.length) ul.append(Object.assign(document.createElement("li"), { textContent: "No notes yet." }));
     for (const r of rows) {
       const li = document.createElement("li");
@@ -36,6 +37,22 @@ export async function mount(ctx, el) {
   notes.onChange(() => el.isConnected && render());
   render();
   const form = el.querySelector("form.add");
+  // The top bar's actions while Notes is open.
+  const actions = () => {
+    ctx.actions["/notes"] = [
+      { label: "New note", run: () => form.text.focus() },
+      {
+        label: newestFirst ? "Oldest first" : "Newest first",
+        run: () => {
+          newestFirst = !newestFirst;
+          render();
+          actions();
+        },
+      },
+    ];
+    dispatchEvent(new CustomEvent("craftworks:actions"));
+  };
+  actions();
   form.onsubmit = async e => {
     e.preventDefault();
     const text = form.text.value.trim();
