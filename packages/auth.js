@@ -1,5 +1,9 @@
 // AUTH, a service: asked for only when something needs a logged-in person (`(await ctx.require("auth")).session()`).
 // Like any website, it shows its dialog then, and not before: LOGIN | REGISTER.
+// - `check()`: who is logged in, or null, never a dialog (a public page choosing its view).
+// - `session({ tab })`: the logged-in person, asking with the dialog if nobody is; null if they close it.
+// - `logout()`: ends this app's session and goes home.
+// Every change is announced as a `craftworks:auth` event (detail: the person, or null), so a page can switch views.
 // - The DID is the ACCOUNT. It is named by the account's RECOVERY WORDS (BIP39, like a wallet's): the owner key is
 //   derived from them, and the DID is its seat. Registering makes the words; the Account page shows them.
 // - A MEMBER is one device key admitted to the account, kept by the identity delegate on this node and opened here by
@@ -11,23 +15,30 @@ export async function start(ctx) {
   const { core, glue, ask } = await ctx.require("node");
   let current = null;
 
+  const announce = () => dispatchEvent(new CustomEvent("craftworks:auth", { detail: current }));
   const opened = a => {
     current = { member: a.unlocked.member, did: glue.did_of(hexBytes(a.unlocked.did)) };
     ctx.log("logged in", { what: `${current.did.slice(0, 24)}… member ${current.member.slice(0, 12)}…` });
+    announce();
     return current;
   };
 
-  async function session() {
+  async function check() {
     if (current) return current;
     const w = await id.who();
-    if (w.unlocked) return opened(w);
-    return dialog();
+    return w.unlocked ? opened(w) : null;
+  }
+
+  async function session({ tab = "login" } = {}) {
+    return (await check()) ?? dialog(tab);
   }
 
   async function logout() {
     await id.lock();
     current = null;
     ctx.log("logged out", {});
+    announce();
+    location.hash = "#/";
   }
 
   // The account's seat, put (the same PUT every time for the same words: it makes the account, or finds it).
@@ -55,7 +66,7 @@ export async function start(ctx) {
     return r;
   }
 
-  function dialog() {
+  function dialog(tab) {
     return new Promise(resolve => {
       const box = document.createElement("div");
       box.className = "auth-dialog";
@@ -65,6 +76,7 @@ export async function start(ctx) {
           .auth-dialog .card { background: var(--bg, #fff); color: inherit; padding: 1.2em 1.4em; border-radius: 8px;
             width: min(26em, calc(100vw - 32px)); display: grid; gap: .7em; }
           .auth-dialog .tabs { display: flex; gap: .5em; }
+          .auth-dialog .close { margin-left: auto; }
           .auth-dialog .tabs button[aria-selected="true"] { font-weight: bold; text-decoration: underline; }
           .auth-dialog form { display: grid; gap: .5em; }
           .auth-dialog form[hidden], .auth-dialog details[hidden] { display: none; }
@@ -76,6 +88,7 @@ export async function start(ctx) {
           <div class="tabs" role="tablist">
             <button type="button" role="tab" data-tab="login" aria-selected="true">Login</button>
             <button type="button" role="tab" data-tab="register" aria-selected="false">Register</button>
+            <button type="button" class="close" aria-label="Close">✕</button>
           </div>
           <div data-panel="login">
             <form class="device">
@@ -119,6 +132,10 @@ export async function start(ctx) {
         box.remove();
         resolve(opened(a));
       };
+      q(".close").addEventListener("click", () => {
+        box.remove();
+        resolve(null);
+      });
       const why = r =>
         r.wrongPin ? `Wrong PIN. ${r.wrongPin.triesLeft} tries left on this device.`
         : r.locked ? "Too many wrong PINs: this device is locked. Log in with your recovery words."
@@ -155,11 +172,11 @@ export async function start(ctx) {
         fresh ??= crypto.getRandomValues(new Uint8Array(16));
         return join(fresh, register.pin.value);
       });
-      device.pin.focus();
+      box.querySelector(`[data-tab="${tab}"]`).click();
     });
   }
 
-  return { session, logout, current: () => current, identity: id, words: e => glue.CraftworksCore.words_of(e) };
+  return { check, session, logout, current: () => current, identity: id, words: e => glue.CraftworksCore.words_of(e) };
 }
 
 function hexBytes(h) {

@@ -1,10 +1,14 @@
-// ACCOUNT: the logged-in person's page. It NEEDS a session, so it asks `auth`, which shows its dialog if nobody is
-// logged in on this device for this app. Home and every other public page never load auth at all.
+// ACCOUNT, a PRIVATE page: it shows nothing until someone is logged in. It asks `auth`, which shows its dialog if
+// nobody is; closing the dialog goes home.
 export async function mount(ctx, el) {
-  el.innerHTML = `<h2>Account</h2><p class="line">Asking…</p>`;
   const auth = await ctx.require("auth");
   const s = await auth.session();
+  if (!s) {
+    location.hash = "#/";
+    return;
+  }
   const box = document.createElement("div");
+  box.innerHTML = `<h2>Account</h2>`;
   const line = (label, value) => {
     const row = document.createElement("p");
     const code = document.createElement("code");
@@ -53,10 +57,7 @@ export async function mount(ctx, el) {
 
   const out = document.createElement("button");
   out.textContent = "Log out";
-  out.onclick = async () => {
-    await auth.logout();
-    box.replaceChildren("Logged out.");
-  };
+  out.onclick = () => auth.logout();
   box.append(out);
-  el.querySelector(".line").replaceWith(box);
+  el.append(box);
 }

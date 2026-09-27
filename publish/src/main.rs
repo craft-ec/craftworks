@@ -80,9 +80,13 @@ fn cut_package(webapp_code: &[u8], file: &str, bytes: &[u8]) -> Result<(Vec<Piec
 /// going out (a client that sends everything before reading deadlocks: the node stops reading while its answers sit
 /// unread). Framing and reading are the SDK's (`wire::frame_put`, `wire::unframe`); answers are matched by the key
 /// each names, never by order. A PUT of the same container is the same PUT, so one the node leaves unanswered for
-/// 60 s after the last send is sent again, up to TRIES times. Returns the pieces still unanswered: the caller decides
-/// whether each package has enough (k of its k + m).
-async fn put_all(ws: &str, pieces: &[&Piece]) -> Result<std::collections::HashSet<String>> {
+/// 60 s after the last send is sent again, up to TRIES times, unless `enough` says the pieces still unanswered no
+/// longer matter. Returns the pieces still unanswered.
+async fn put_all(
+    ws: &str,
+    pieces: &[&Piece],
+    enough: impl Fn(&std::collections::HashSet<String>) -> bool,
+) -> Result<std::collections::HashSet<String>> {
     use futures::StreamExt;
     use std::sync::atomic::{AtomicU64, Ordering};
     const TRIES: u32 = 3;
@@ -135,6 +139,10 @@ async fn put_all(ws: &str, pieces: &[&Piece]) -> Result<std::collections::HashSe
             break;
         }
         eprintln!("{} piece(s) unanswered 60 s after the last send (try {attempt} of {TRIES})", owed.len());
+        // Every package can be rebuilt already: the rest are spares, not worth another minute.
+        if enough(&owed.keys().cloned().collect()) {
+            break;
+        }
     }
     drop(queue);
     sender.abort();
@@ -276,7 +284,10 @@ async fn main() -> Result<()> {
         }
     }
     let t = Instant::now();
-    let missing = put_all(&ws, &all.iter().collect::<Vec<_>>()).await?;
+    let rebuildable = |missing: &std::collections::HashSet<String>| {
+        sent.iter().all(|(_, k, a)| a.iter().filter(|x| !missing.contains(*x)).count() >= *k)
+    };
+    let missing = put_all(&ws, &all.iter().collect::<Vec<_>>(), rebuildable).await?;
     println!("pieces: {} of {} accepted in {} ms", all.len() - missing.len(), all.len(), t.elapsed().as_millis());
     // RACING needs any k of a package's k + m pieces: a package with fewer accepted cannot be rebuilt, so nothing that
     // names it is published. One with k or more is fine; the rest are said.
