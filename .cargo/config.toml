@@ -1,0 +1,4 @@
+# The SDK's build script reads the contract hashes from a contracts build (build/hashes.toml). Ours is contracts/,
+# which holds the released code this app publishes with (contracts/SHA256SUMS).
+[env]
+CRAFTWORKS_CONTRACTS = { value = "contracts", relative = true }

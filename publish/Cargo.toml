@@ -1,0 +1,28 @@
+[package]
+name = "craftworks-publish"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Publish the Craftworks app: its packages as immutable containers, the loader and app sites through a node's signer."
+
+[[bin]]
+name = "publish-craftworks"
+path = "src/main.rs"
+
+[dependencies]
+wire = { workspace = true }
+page = { workspace = true }
+page-io = { workspace = true }
+engine = { workspace = true }
+probe = { workspace = true }
+core-types = { workspace = true }
+anyhow = "1"
+blake3 = "1"
+sha2 = "0.10"
+serde_json = "1"
+futures = "0.3"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.27"
+freenet-stdlib = { version = "0.10.0", features = ["net"] }
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
