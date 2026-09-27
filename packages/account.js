@@ -40,40 +40,11 @@ export async function mount(ctx, el) {
     e => (dev.querySelector(".line").textContent = `Could not read your nodes: ${e?.message ?? e}`),
   );
 
-  // RECOVERY WORDS: made with the account; they ARE the account (its owner key and its DID come from them). Shown on
-  // request, never kept on the page.
+  // RECOVERY WORDS: shown once, at registration; no node keeps them.
   const rec = document.createElement("section");
   rec.innerHTML = `<h3>Recovery words</h3>
-    <p>With these words you can log in on any node, and get your account back if you lose this one. Anyone who has
-    them has your account: write them down and keep them offline.</p>
-    <button type="button" class="show">Show my recovery words</button>
-    <ol class="words" hidden style="columns:3;font-family:monospace"></ol>
-    <p class="said"></p>`;
-  const list = rec.querySelector(".words");
-  const show = rec.querySelector(".show");
-  show.onclick = async () => {
-    if (!list.hidden) {
-      list.hidden = true;
-      list.replaceChildren();
-      show.textContent = "Show my recovery words";
-      return;
-    }
-    const r = await auth.identity.recovery();
-    if (!r.recovery) {
-      rec.querySelector(".said").textContent =
-        r.refused === "NoRecovery" ? "This node does not hold this account's words (it joined without them)." : `Refused: ${r.refused}`;
-      return;
-    }
-    const bytes = new Uint8Array(r.recovery.match(/../g).map(b => parseInt(b, 16)));
-    for (const w of auth.words(bytes).split(" ")) {
-      const li = document.createElement("li");
-      li.textContent = w;
-      list.append(li);
-    }
-    bytes.fill(0);
-    list.hidden = false;
-    show.textContent = "Hide my recovery words";
-  };
+    <p>Your recovery words were shown once, when you registered. They are your account: with them you log in on any
+    node and get your account back. No node keeps them, so a lost or stolen node cannot give your account away.</p>`;
   box.append(rec);
 
   const out = document.createElement("button");

@@ -19,7 +19,7 @@ export async function mount(ctx, el) {
       <h3>What you can do</h3>
       <ul>
         <li><a href="#/account">Your account</a>: your DID, this node, and your recovery words.</li>
-        <li>Your data: a table only your nodes write, readable wherever you log in <em>(next)</em>.</li>
+        <li><a href="#/notes">Notes</a>: your notes, on every one of your nodes.</li>
         <li>Your other nodes: add one with its node id and a PIN <em>(soon)</em>.</li>
       </ul>`;
     el.querySelector(".who code").textContent = s.did;

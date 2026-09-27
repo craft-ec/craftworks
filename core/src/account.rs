@@ -3,38 +3,34 @@
 //! - **Words:** BIP39, 12 or 24 (16 or 32 bytes of entropy), the same words a deterministic wallet uses. The OWNER key
 //!   is derived from them by SLIP-0010 (ed25519) at [`PATH`], a path of Craftworks' own, so words shared with a
 //!   bitcoin wallet give an owner key unrelated to any of that wallet's keys.
-//! - **Owner seat:** a Register under the owner key, label `seat`, holding one fixed record that names the owner's
-//!   public key. Its contract id IS the DID (`did:craftec:<id>`). So the words alone name the account, and a reader
-//!   holding only the DID learns the owner key from the seat and checks it: that key's seat must BE this DID.
-//! - **Members:** a Set under the owner key (owner-only), label `members`. Each member (a device key) is its own item,
-//!   keyed by the member's public key and signed by the owner key: two devices joining at once are two items, never a
-//!   conflict. Leaving is a tombstone. DID → seat → owner key → members.
-//! - The seat's record is the same bytes whoever writes it (ed25519 signs deterministically), so putting it again
-//!   from another device, or when logging in with the words, is the same PUT and never a second record.
+//! - **The DID is the owner's public key** (`did:craftec:<base58 of it>`), never a contract's address: a contract's
+//!   address moves with every release of its code, and an identity must not (freenet-agent-skills, "Identity must
+//!   not be a contract key"). The words alone give it, and it is self-certifying: whoever holds the DID holds the key
+//!   that signs for the account.
+//! - **Members:** a Set under the owner key (owner-only), label `members`. Each member (a node's key) is its own item,
+//!   keyed by the member's public key and signed by the owner key: two nodes joining at once are two items, never a
+//!   conflict. Leaving is a tombstone. DID → member Set, derived: nothing to look up.
 //!
 //! The page makes the entropy (this crate has no randomness) and the identity delegate keeps it with the member, so
 //! the Account page can show the words when the person sets up recovery.
 
 use bip39::Mnemonic;
-use craftec_register_contract::wire::{Params, RegState, Record, Signed};
 use ed25519_dalek::{Signer, SigningKey};
 use freenet_stdlib::prelude::{ContractContainer, WrappedState};
 use craftec_set_contract::wire::{Admission, Item, Params as SetParams, SetState};
 use hmac::{Hmac, Mac};
 use sha2::Sha512;
 
-pub const SEAT_LABEL: &[u8] = b"seat";
-/// The seat's record: `ST01 ‖ owner public key`. Members live in the member Set, never here.
-const SEAT_MAGIC: &[u8] = b"ST01";
-/// The seat's record is written at seq 2: the first seats (2026-09-27) held a bare `ST01` at seq 1, and a different
-/// record at the same seq would be a fork; seq 2 replaces them cleanly and is where every new seat starts.
-const SEAT_SEQ: u64 = 2;
 pub const MEMBERS_LABEL: &[u8] = b"members";
 /// A member item's payload: `MB01 ‖ class ‖ name`. Class 0 = one of the person's own devices.
 const MEMBER_MAGIC: &[u8] = b"MB01";
 const MAX_NAME: usize = 48;
 /// SLIP-0010 ed25519, every step hardened: m/44'/25458'/0' (25458 = "cr"; no coin's, so no wallet key collides).
 pub const PATH: [u32; 3] = [44, 25458, 0];
+/// The account's DATA key: m/44'/25458'/1'. Every node of the account holds it (the identity delegate keeps it), so
+/// the account's tables are the account's, not one node's. Recoverable from the words like the owner key, and,
+/// unlike the owner, not the account itself: it could be rotated.
+pub const DATA_PATH: [u32; 3] = [44, 25458, 1];
 
 /// One Register to PUT: its contract, its state, and the id the node names it by.
 pub struct Put {
@@ -88,29 +84,20 @@ fn put(code: &[u8], params: &[u8], state: &[u8]) -> Put {
     Put { id, id_bytes, contract, state }
 }
 
-/// The owner seat for these words: the Register to PUT, whose id is the DID.
-pub fn seat(register_code: &[u8], entropy: &[u8]) -> Option<Put> {
-    let owner = SigningKey::from_bytes(&owner_seed(entropy)?);
-    let public = owner.verifying_key().to_bytes();
-    let params = wire::register_params(&public, SEAT_LABEL);
-    let p = Params::parse(&params).expect("our own params parse");
-    let value = [SEAT_MAGIC, &public[..]].concat();
-    let value_hash = *blake3::hash(&value).as_bytes();
-    let sig = owner.sign(&p.signed_message(false, SEAT_SEQ, &value_hash)).to_bytes();
-    let signed = Signed { terminal: false, seq: SEAT_SEQ, value_hash, bitmap: 0, sigs: vec![sig] };
-    let record = Record::new(signed, value).expect("a value within the cap, hashed above");
-    let state = RegState { record: Some(record), evidence: None }.encode(&p.authority);
-    Some(put(register_code, &params, &state))
+/// The account's data key seed from the words' entropy.
+pub fn data_seed(entropy: &[u8]) -> Option<[u8; 32]> {
+    let m = Mnemonic::from_entropy(entropy).ok()?;
+    Some(slip10(&m.to_seed_normalized(""), &DATA_PATH))
 }
 
-/// The owner key a seat names, checked: the seat must verify under that key AND that key's seat must be `did`.
-/// `None` for a state that is not this DID's seat.
-pub fn owner_of_seat(register_code: &[u8], did: &[u8; 32], state: &[u8]) -> Option<[u8; 32]> {
-    let (_, _, value) = craftec_register_contract::wire::record_head(state)?;
-    let owner: [u8; 32] = value.strip_prefix(SEAT_MAGIC)?.try_into().ok()?;
-    let params = wire::register_params(&owner, SEAT_LABEL);
-    craftec_register_contract::read(&params, state)?;
-    (put(register_code, &params, &[]).id_bytes == *did).then_some(owner)
+/// The owner's public key for these words: the account's DID, as bytes.
+pub fn owner(entropy: &[u8]) -> Option<[u8; 32]> {
+    Some(SigningKey::from_bytes(&owner_seed(entropy)?).verifying_key().to_bytes())
+}
+
+/// `did:craftec:<base58 of the owner's public key>`.
+pub fn did(owner: &[u8; 32]) -> String {
+    format!("did:craftec:{}", bs58::encode(owner).into_string())
 }
 
 /// The member Set's params for an owner key.
@@ -186,15 +173,11 @@ pub fn members(owner: &[u8; 32], state: &[u8]) -> Option<Vec<Member>> {
     )
 }
 
-pub fn did(p: &Put) -> String {
-    format!("did:craftec:{}", p.id)
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const CODE: &[u8] = b"\0asm\x01\0\0\0";
 
     fn hex(b: &[u8]) -> String {
         b.iter().map(|x| format!("{x:02x}")).collect()
@@ -223,23 +206,21 @@ mod tests {
     }
 
     #[test]
-    fn the_words_alone_name_the_did_and_the_seat_is_the_same_put_every_time() {
-        let a = seat(CODE, &[3; 16]).unwrap();
-        let b = seat(CODE, &[3; 16]).unwrap();
-        assert_eq!(a.id, b.id);
-        assert_eq!(a.state.as_ref(), b.state.as_ref(), "the same record bytes: a second PUT is the same PUT");
-        assert_ne!(seat(CODE, &[4; 16]).unwrap().id, a.id);
-        let owner = SigningKey::from_bytes(&owner_seed(&[3; 16]).unwrap());
-        let params = wire::register_params(&owner.verifying_key().to_bytes(), SEAT_LABEL);
-        let (_, st) = craftec_register_contract::read(&params, a.state.as_ref()).expect("a valid Register state");
-        assert_eq!(st.record.unwrap().signed.seq, SEAT_SEQ);
-        assert!(did(&a).starts_with("did:craftec:"));
-        // A reader holding only the DID learns the owner key from the seat, checked.
-        let owner = owner.verifying_key().to_bytes();
-        assert_eq!(owner_of_seat(CODE, &a.id_bytes, a.state.as_ref()), Some(owner));
-        // Another account's seat offered for this DID is refused.
-        let other = seat(CODE, &[4; 16]).unwrap();
-        assert_eq!(owner_of_seat(CODE, &a.id_bytes, other.state.as_ref()), None);
+    fn the_did_is_the_owner_key_the_words_give() {
+        let owner = owner(&[3; 16]).unwrap();
+        assert_eq!(owner, SigningKey::from_bytes(&owner_seed(&[3; 16]).unwrap()).verifying_key().to_bytes());
+        assert_ne!(super::owner(&[4; 16]).unwrap(), owner);
+        let d = did(&owner);
+        assert!(d.starts_with("did:craftec:"));
+        assert_eq!(bs58::decode(d.trim_start_matches("did:craftec:")).into_vec().unwrap(), owner);
+    }
+
+    #[test]
+    fn the_data_key_is_its_own_key_from_the_same_words() {
+        let (owner, data) = (owner_seed(&[3; 16]).unwrap(), data_seed(&[3; 16]).unwrap());
+        assert_ne!(owner, data);
+        assert_eq!(data_seed(&[3; 16]), Some(data), "the same on every node");
+        assert_eq!(data, slip10(&Mnemonic::from_entropy(&[3; 16]).unwrap().to_seed_normalized(""), &DATA_PATH));
     }
 
     #[test]

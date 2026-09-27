@@ -4,6 +4,7 @@ export function mount(ctx, el) {
   el.innerHTML = `<nav style="display:flex;gap:16px;align-items:baseline;border-bottom:1px solid #8884;padding-bottom:8px">
     <strong style="font-size:1.25rem"></strong>
     <a href="#/">Home</a>
+    <a href="#/notes">Notes</a>
     <a href="#/account">Account</a>
   </nav>`;
   el.querySelector("strong").textContent = ctx.app;

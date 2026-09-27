@@ -1,9 +1,10 @@
-//! DATA (ARCHITECTURE §1): a member's TAIL for an app. Each member writes its own tail, a one-writer contract whose
-//! state is the tree root plus the rows written since the last flush. A person's data for an app is the overlay of
-//! their members' tails.
+//! DATA (ARCHITECTURE §1): an ACCOUNT's table for one app: a TAIL, whose state is the tree root plus the rows written
+//! since the last flush. It is the account's, not a node's: its key is the account's DATA key, which every node of
+//! the account holds, so any of them reads and writes it, and losing a node loses nothing.
 //!
-//! The tail's params are the Register's: the member's key and a label that begins with the APP's site id (the
-//! identity delegate signs only such labels for that app). So the address is derived, never looked up.
+//! The tail's params are the Register's: the data key and a label `site id ‖ app name`. The identity delegate signs
+//! only labels that begin with the asking site's id; the name after it gives each app of the site its own table. So
+//! the address is derived, never looked up.
 //!
 //! This holds each open tail's WRITER (`tail::Writer`, the SDK's one client of the contract) and feeds it every
 //! state the node sends (a GET or a subscription push), verified in full. Signing is the identity delegate's: the
@@ -14,8 +15,6 @@ use freenet_stdlib::prelude::{ContractContainer, ContractKey};
 use serde_json::{json, Value};
 use tail::{Op, Unsigned, Writer};
 
-/// The label's name part after the app's 32-byte site id.
-pub const TAIL_NAME: &[u8] = b"tail";
 
 pub struct Open {
     pub params: Vec<u8>,
@@ -28,8 +27,9 @@ pub struct Open {
 }
 
 impl Open {
-    pub fn new(tail_code: &[u8], member: &[u8; 32], site: &[u8; 32]) -> Open {
-        let params = wire::register_params(member, &[&site[..], TAIL_NAME].concat());
+    /// The table of app `app` of the site `site`, under the account's data key `key`.
+    pub fn new(tail_code: &[u8], key: &[u8; 32], site: &[u8; 32], app: &[u8]) -> Open {
+        let params = wire::register_params(key, &[&site[..], app].concat());
         let (_, contract, _) = wire::puts::contract(tail_code, &params, &[]);
         let writer = Writer::new(&params).expect("our own params parse");
         Open { params, contract, writer, on_network: false, pending: None }
@@ -45,6 +45,12 @@ impl Open {
 
     pub fn key(&self) -> ContractKey {
         self.contract.key()
+    }
+
+    /// Forget the local state: a write the network refused never landed, so the next state read is the truth.
+    pub fn reset(&mut self) {
+        self.writer = Writer::new(&self.params).expect("our own params parse");
+        self.pending = None;
     }
 
     /// A state from the network. Taken only if it verifies and is not behind what this writer holds.
@@ -122,7 +128,7 @@ mod tests {
     fn first_write_puts_the_state_then_deltas_and_another_writer_resumes() {
         let key = SigningKey::from_bytes(&[5; 32]);
         let member = key.verifying_key().to_bytes();
-        let mut o = Open::new(CODE, &member, &[0xA1; 32]);
+        let mut o = Open::new(CODE, &member, &[0xA1; 32], b"notes");
         assert!(is_tail_of(&o.params, &[0xA1; 32]));
         let (seq, h) = o.prepare(vec![Op::Set { key: b"a".to_vec(), value: b"1".to_vec() }]).unwrap();
         let Some(Send::Put(state)) = o.commit(sign(&key, &o, seq, h)) else { panic!("first write is a put") };
@@ -130,7 +136,7 @@ mod tests {
         assert!(matches!(o.commit(sign(&key, &o, seq, h)), Some(Send::Update(_))));
         assert_eq!(o.rows()["rows"].as_array().unwrap().len(), 2);
         // Another page of the same member reads the first state from the network.
-        let mut other = Open::new(CODE, &member, &[0xA1; 32]);
+        let mut other = Open::new(CODE, &member, &[0xA1; 32], b"notes");
         assert!(other.absorb(&state));
         assert_eq!(other.writer.seq(), 1);
         // An older state never moves a writer back.
@@ -141,7 +147,7 @@ mod tests {
     #[test]
     fn a_wrong_signature_sends_nothing() {
         let key = SigningKey::from_bytes(&[5; 32]);
-        let mut o = Open::new(CODE, &key.verifying_key().to_bytes(), &[0xA1; 32]);
+        let mut o = Open::new(CODE, &key.verifying_key().to_bytes(), &[0xA1; 32], b"notes");
         let (seq, h) = o.prepare(vec![Op::Set { key: b"a".to_vec(), value: b"1".to_vec() }]).unwrap();
         let wrong = SigningKey::from_bytes(&[6; 32]);
         assert!(o.commit(sign(&wrong, &o, seq, h)).is_none());

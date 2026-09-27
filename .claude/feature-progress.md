@@ -58,3 +58,20 @@ device + the same PIN opens the same account. Adding a second device: pairing wi
 - [ ] E. auth: keycraft
 - [ ] F. auth: device id + PIN (pairing through the admitted device's inbox; needs C)
 - [ ] G. republish Craftworks under the new identity; retire the old signer
+
+## 2026-09-28 — reviewed against freenet's dapp-builder skill (github.com/freenet/freenet-agent-skills)
+- DID = the owner's public key (`did:craftec:<base58>`), never a contract address (an address moves with every code
+  release; "identity must not be a contract key"). The seat is gone; DID → member Set is derived.
+- Recovery words are shown ONCE at registration and kept by no node (a node's disk can be copied; the words are the
+  owner and cannot be rotated). Account page no longer shows them.
+- The identity delegate: one gate before any request — only a web app the node attests is served (`None` and other
+  delegates refused; "own tools" removed). Members keep the account's DATA key (m/44'/25458'/1'). `Handover {pin}`
+  gives a member to the next delegate version (its home app, counted as an unlock try): delegate secrets stay with
+  the delegate key and freenet never migrates them, so every future re-key needs this. The page-side walk over
+  predecessor delegates is built when the first successor ships (nothing before this build can answer).
+- Data is per ACCOUNT per app: one tail under the data key, label `site id ‖ app`, so any node of the account reads
+  and writes it; Notes is its own package (/notes). Deltas go as `UpdateData::Delta` (wire `frame_update_delta`,
+  sdk#576, pinned 615c9d5): a delta sent as a State is refused ("invalid put") — that was the lost second note.
+  A refused write resets the local table and re-reads it.
+- [x] B. data (tail per account per app, live) — verified on the private node: register, two notes, reload → both.
+- [ ] B2. flush the tail into the prolly tree; tree blocks as erasure piece sets.

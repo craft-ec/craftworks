@@ -3,10 +3,13 @@
 // - `check()`: who is logged in, or null, never a dialog (a public page choosing its view).
 // - `session({ tab })`: the logged-in person, asking with the dialog if nobody is; null if they close it.
 // - `logout()`: ends this app's session and goes home.
-// - `nodes()`: the account's members as the network holds them (DID → seat → owner key → member Set).
+// - `nodes()`: the account's members as the network holds them (the DID is the owner key → its member Set).
 // Every change is announced as a `craftworks:auth` event (detail: the person, or null), so a page can switch views.
 // - The DID is the ACCOUNT. It is named by the account's RECOVERY WORDS (BIP39, like a wallet's): the owner key is
-//   derived from them, and the DID is its seat. Registering makes the words; the Account page shows them.
+//   derived from them, and the DID IS that key (never a contract address, which moves with every code release).
+//   Registering makes the words and shows them ONCE; no node keeps them
+//   (a node that did would lose the account to anyone who copied its disk). The account's data key is derived from
+//   them too, and every member node keeps that.
 // - A MEMBER is one NODE's key admitted to the account, kept by the identity delegate on that node and opened by a PIN.
 //   Every browser on the node shares its members and sessions. One node can hold several members, of one person or of
 //   several.
@@ -19,7 +22,12 @@ export async function start(ctx) {
 
   const announce = () => dispatchEvent(new CustomEvent("craftworks:auth", { detail: current }));
   const opened = a => {
-    current = { member: a.unlocked.member, did: glue.did_of(hexBytes(a.unlocked.did)), didBytes: hexBytes(a.unlocked.did) };
+    current = {
+      member: a.unlocked.member,
+      did: glue.did_of(hexBytes(a.unlocked.did)),
+      didBytes: hexBytes(a.unlocked.did),
+      data: a.unlocked.data, // the account's data key (public, hex), or null
+    };
     ctx.log("logged in", { what: `${current.did.slice(0, 24)}… member ${current.member.slice(0, 12)}…` });
     announce();
     return current;
@@ -60,27 +68,10 @@ export async function start(ctx) {
   async function nodes() {
     const s = await check();
     if (!s) return [];
-    const [registerCode, setCode] = [await ctx.require("register-wasm"), await ctx.require("set-wasm")];
-    if (!(await get(s.didBytes, "reading the account's seat"))) throw new Error("the account's seat is not on the network");
-    let owner;
-    try {
-      owner = hexBytes(core.owner_of(registerCode, s.didBytes));
-    } catch {
-      // An account made before the member list: its seat does not name the owner key yet. The node that holds the
-      // account's words upgrades it (the new seat replaces the old at a higher seq) and admits itself.
-      const r = await id.recovery();
-      if (!r.recovery) throw new Error("this account was made before the member list: log in once with its recovery words to add it");
-      const words = hexBytes(r.recovery);
-      const a = core.account(registerCode, setCode, words, hexBytes(s.member), Date.now(), "");
-      words.fill(0);
-      await put(a.seat, "the account's seat");
-      await put(a.members, "this node's place in the account");
-      ctx.log("account upgraded", { what: "the seat names its owner; this node is listed" });
-      if (!(await get(s.didBytes, "reading the account's seat"))) throw new Error("the account's seat is not on the network");
-      owner = hexBytes(core.owner_of(registerCode, s.didBytes));
-    }
-    if (!(await get(core.members_id(setCode, owner), "reading the account's members"))) return [];
-    return JSON.parse(core.members(setCode, owner));
+    // The DID is the owner's key, so the member list's address is derived from it: nothing to look up first.
+    const setCode = await ctx.require("set-wasm");
+    if (!(await get(core.members_id(setCode, s.didBytes), "reading the account's members"))) return [];
+    return JSON.parse(core.members(setCode, s.didBytes));
   }
 
   // This node as a member of the account the words name. Kept across a retry with another PIN, so one attempt
@@ -89,14 +80,14 @@ export async function start(ctx) {
   async function join(entropy, pin) {
     if (!joining || joining.entropyHex !== hex(entropy)) {
       const member = crypto.getRandomValues(new Uint8Array(32));
-      const a = core.account(
-        await ctx.require("register-wasm"), await ctx.require("set-wasm"), entropy, id.publicOf(member), Date.now(), "");
-      await put(a.seat, "the account's seat");
+      const a = core.account(await ctx.require("set-wasm"), entropy, id.publicOf(member), Date.now());
       await put(a.members, "this node's place in the account");
       ctx.log("account", { what: `${a.did}, this node admitted` });
       joining = { entropyHex: hex(entropy), entropy, did: a.didBytes, member };
     }
-    const r = await id.provision(joining.member, joining.did, pin, joining.entropy);
+    const data = glue.CraftworksCore.data_seed(joining.entropy);
+    const r = await id.provision(joining.member, joining.did, pin, data);
+    data.fill(0);
     if (r.unlocked) {
       joining.member.fill(0);
       joining.entropy.fill(0);
@@ -153,9 +144,17 @@ export async function start(ctx) {
               <strong>Register with this node</strong>
               <label>Create a PIN (6 or more) <input name="pin" type="password" minlength="6" autocomplete="off" required></label>
               <label>Confirm the PIN <input name="again" type="password" minlength="6" autocomplete="off" required></label>
-              <button>Register</button>
+              <button>Next</button>
               <p class="said"></p>
-              <p class="note">Your account comes with recovery words. See them any time on your Account page.</p>
+            </form>
+            <form class="words-once" hidden>
+              <strong>Your recovery words</strong>
+              <p class="note">Write these down and keep them offline. They are your account: with them you log in on any
+              node and get your account back. They are shown only now; no node keeps them.</p>
+              <ol class="shown" style="columns:3;font-family:monospace"></ol>
+              <label><input type="checkbox" name="kept" required> I have written them down</label>
+              <button>Create my account</button>
+              <p class="said"></p>
             </form>
           </div>
         </div>`;
@@ -215,19 +214,37 @@ export async function start(ctx) {
         return join(entropy, words.pin.value);
       });
 
+      // REGISTER: the PIN, then the new words shown once, then the account.
       const register = q("form.register");
+      const once = q("form.words-once");
       let fresh = null;
       on(register, async () => {
         if (register.pin.value !== register.again.value) return { error: "The two PINs differ." };
         // New words, made once per dialog (a retry with another PIN is the same new account): 16 bytes, 12 words.
         fresh ??= crypto.getRandomValues(new Uint8Array(16));
-        return join(fresh, register.pin.value);
+        const list = once.querySelector(".shown");
+        list.replaceChildren(...glue.CraftworksCore.words_of(fresh).split(" ").map(w => Object.assign(document.createElement("li"), { textContent: w })));
+        register.hidden = true;
+        once.hidden = false;
+        say(register, "");
+        return null;
+      });
+      on(once, async () => {
+        const r = await join(fresh, register.pin.value);
+        if (r.unlocked) once.querySelector(".shown").replaceChildren();
+        if (r.refused === "PinTaken") {
+          once.hidden = true;
+          register.hidden = false;
+          say(register, "That PIN is taken on this node: choose another.");
+          return null;
+        }
+        return r;
       });
       box.querySelector(`[data-tab="${tab}"]`).click();
     });
   }
 
-  return { check, session, logout, nodes, current: () => current, identity: id, words: e => glue.CraftworksCore.words_of(e) };
+  return { check, session, logout, nodes, current: () => current, identity: id };
 }
 
 

@@ -26,12 +26,13 @@ impl DelegateInterface for Identity {
     ) -> Result<Vec<OutboundDelegateMsg>, DelegateError> {
         match inbound {
             InboundDelegateMsg::ApplicationMessage(m) => {
-                let who = match origin {
-                    None => crate::Origin::Local,
-                    Some(MessageOrigin::WebApp(id)) => crate::Origin::App(*id),
-                    Some(_) => crate::Origin::Delegate,
+                // THE GATE: only a web app the node names is served; `None` (the node cannot say who asks) and
+                // another delegate are refused before any request is read.
+                let app = match origin {
+                    Some(MessageOrigin::WebApp(id)) => Some(*id),
+                    _ => None,
                 };
-                let answer = crate::serve_bytes(&mut Ctx(ctx), &m.payload, who);
+                let answer = crate::serve_bytes(&mut Ctx(ctx), &m.payload, app);
                 Ok(vec![OutboundDelegateMsg::ApplicationMessage(ApplicationMessage::new(answer).processed(true))])
             }
             // The identity issues no GET, PUT, UPDATE or SUBSCRIBE, so nothing else can answer it.

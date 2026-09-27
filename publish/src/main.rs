@@ -235,7 +235,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 12] = [
+    let packages: [(&str, &str, PathBuf); 14] = [
         ("header", "module", app.join("packages/header.js")),
         ("footer", "module", app.join("packages/footer.js")),
         ("home", "module", app.join("packages/home.js")),
@@ -245,11 +245,14 @@ async fn main() -> Result<()> {
         ("auth", "service", app.join("packages/auth.js")),
         ("core-glue", "module", built.join("craftworks_core.js")),
         ("core-wasm", "bytes", built.join("craftworks_core_bg.wasm")),
-        // The identity delegate's code (the node needs it to run it) and the Register's (a first login puts two).
+        // The identity delegate's code (the node needs it to run it).
         ("identity-wasm", "bytes", built.join("identity.wasm")),
-        ("register-wasm", "bytes", contracts.join("register.wasm")),
         // The Set's code: the account's member list (admitting this device, and reading it back).
         ("set-wasm", "bytes", contracts.join("set.wasm")),
+        // The data: each node's rows for this app, as its own tail.
+        ("data", "service", app.join("packages/data.js")),
+        ("notes", "module", app.join("packages/notes.js")),
+        ("tail-wasm", "bytes", contracts.join("tail.wasm")),
     ];
     let mut entries = Vec::new();
     // WHAT IS ALREADY UP: the piece addresses the live manifest names (PUBLISHED_MANIFEST, the app site's own
@@ -303,7 +306,7 @@ async fn main() -> Result<()> {
         }
     }
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ \"/\": [\"home\"], \"/account\": [\"account\"] }},\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ \"/\": [\"home\"], \"/account\": [\"account\"], \"/notes\": [\"notes\"] }},\n  \"packages\": {{\n{}\n  }} }}\n",
         entries.join(",\n")
     );
 

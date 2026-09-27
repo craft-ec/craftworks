@@ -16,13 +16,17 @@ fn hex(b: &[u8]) -> String {
 /// An identity answer, for the page.
 pub fn answer_json(a: &Answer) -> Value {
     match a {
-        Answer::Unlocked { public, did } => json!({ "unlocked": { "member": hex(public), "did": hex(did) } }),
+        Answer::Unlocked { public, did, data } => {
+            json!({ "unlocked": { "member": hex(public), "did": hex(did), "data": data.map(|d| hex(&d)) } })
+        }
         Answer::WrongPin { tries_left } => json!({ "wrongPin": { "triesLeft": tries_left } }),
         Answer::Locked => json!({ "locked": true }),
         Answer::LoggedOut => json!({ "loggedOut": true }),
         Answer::Signed { sig } => json!({ "signed": hex(sig) }),
         Answer::Exported { seed } => json!({ "exported": hex(seed) }),
-        Answer::Recovery { entropy } => json!({ "recovery": hex(entropy) }),
+        Answer::Handed { seed, did, data } => {
+            json!({ "handed": { "seed": hex(seed), "did": hex(did), "data": data.map(|d| hex(&d)) } })
+        }
         Answer::Refused(why) => json!({ "refused": format!("{why:?}") }),
     }
 }
@@ -112,9 +116,9 @@ impl Core {
         self.got.get(id).map(Vec::as_slice)
     }
 
-    /// Open the tail of `member` for the app `site` (idempotent). Returns its contract id.
-    pub fn tail_open(&mut self, tail_code: &[u8], member: &[u8; 32], site: &[u8; 32]) -> [u8; 32] {
-        let o = data::Open::new(tail_code, member, site);
+    /// Open the table of app `app` of site `site` under the data key `key` (idempotent). Returns its contract id.
+    pub fn tail_open(&mut self, tail_code: &[u8], key: &[u8; 32], site: &[u8; 32], app: &[u8]) -> [u8; 32] {
+        let o = data::Open::new(tail_code, key, site, app);
         let id = o.id_bytes();
         self.tails.entry(id).or_insert(o);
         id
@@ -132,7 +136,7 @@ impl Core {
             data::Send::Put(state) => {
                 wire::frame_put(o.contract.clone(), freenet_stdlib::prelude::WrappedState::new(state), s)
             }
-            data::Send::Update(delta) => wire::frame_update(o.key(), delta, s),
+            data::Send::Update(delta) => wire::frame_update_delta(o.key(), delta, s),
         }
     }
 
@@ -219,9 +223,9 @@ mod js {
             Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
         }
         /// `[id, frames]` for each identity request.
-        /// `recovery`: the account's word entropy, or empty.
-        pub fn frames_provision(&mut self, seed: &[u8], did: &[u8], pin: String, recovery: &[u8]) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::Provision { seed: b32(seed)?, did: b32(did)?, pin, recovery: recovery.to_vec() })
+        /// `data`: the account's data key seed (32 bytes), or empty.
+        pub fn frames_provision(&mut self, seed: &[u8], did: &[u8], pin: String, data: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Provision { seed: b32(seed)?, did: b32(did)?, pin, data: data.to_vec() })
         }
         pub fn frames_unlock(&mut self, pin: String) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Unlock { pin })
@@ -238,37 +242,34 @@ mod js {
         pub fn frames_export(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Export)
         }
-        pub fn frames_recovery(&mut self) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::Recovery)
+        /// For the next version of the identity delegate: the member this PIN opens (to its home app).
+        pub fn frames_handover(&mut self, pin: String) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Handover { pin })
         }
 
         /// The account of these recovery words (their entropy), with `member` admitted to it: `{ did, didBytes,
-        /// seat: { id, frames }, members: { id, frames } }`. The same words always give the same DID and the same seat
-        /// PUT, so this is both "register" and "log in with words"; the member PUT merges into the account's Set.
-        #[allow(clippy::too_many_arguments)]
-        pub fn account(
-            &mut self,
-            register_code: &[u8],
-            set_code: &[u8],
-            entropy: &[u8],
-            member: &[u8],
-            ts: f64,
-            name: &str,
-        ) -> Result<js_sys::Object, JsValue> {
+        /// members: { id, frames } }`. The DID is the owner's public key, so the same words always name the same
+        /// account; the member PUT merges into the account's Set. So this is both "register" and "log in with words".
+        pub fn account(&mut self, set_code: &[u8], entropy: &[u8], member: &[u8], ts: f64) -> Result<js_sys::Object, JsValue> {
             let bad = || err("recovery entropy: 16 or 32 bytes".into());
-            let seat = account::seat(register_code, entropy).ok_or_else(bad)?;
-            let members = account::admit(set_code, entropy, &b32(member)?, ts as u64, name).ok_or_else(bad)?;
+            let owner = account::owner(entropy).ok_or_else(bad)?;
+            let members = account::admit(set_code, entropy, &b32(member)?, ts as u64, "").ok_or_else(bad)?;
             let o = js_sys::Object::new();
             let set = |k: &str, v: JsValue| js_sys::Reflect::set(&o, &k.into(), &v).map(|_| ());
-            set("did", account::did(&seat).into())?;
-            set("didBytes", js_sys::Uint8Array::from(&seat.id_bytes[..]).into())?;
-            for (name, put) in [("seat", &seat), ("members", &members)] {
-                let p = js_sys::Object::new();
-                js_sys::Reflect::set(&p, &"id".into(), &put.id.clone().into())?;
-                js_sys::Reflect::set(&p, &"frames".into(), &frames(self.0.frames_put(put).map_err(err)?).into())?;
-                set(name, p.into())?;
-            }
+            set("did", account::did(&owner).into())?;
+            set("didBytes", js_sys::Uint8Array::from(&owner[..]).into())?;
+            let p = js_sys::Object::new();
+            js_sys::Reflect::set(&p, &"id".into(), &members.id.clone().into())?;
+            js_sys::Reflect::set(&p, &"frames".into(), &frames(self.0.frames_put(&members).map_err(err)?).into())?;
+            set("members", p.into())?;
             Ok(o)
+        }
+
+        /// The account's data key seed from the words' entropy (handed once to the identity delegate, never kept).
+        pub fn data_seed(entropy: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            account::data_seed(entropy)
+                .map(|d| js_sys::Uint8Array::from(&d[..]))
+                .ok_or_else(|| err("recovery entropy: 16 or 32 bytes".into()))
         }
 
         /// The BIP39 words of 16 or 32 bytes of entropy.
@@ -288,15 +289,6 @@ mod js {
             let id = b32(id)?;
             let f = self.0.frames_get(id).map_err(err)?;
             Ok([JsValue::from(hex(&id)), JsValue::from(frames(f))].into_iter().collect())
-        }
-
-        /// The owner key the DID's seat names, checked (the seat must have been got): hex.
-        pub fn owner_of(&self, register_code: &[u8], did: &[u8]) -> Result<String, JsValue> {
-            let did = b32(did)?;
-            let state = self.0.got(&did).ok_or_else(|| err("the account's seat has not been read".into()))?;
-            account::owner_of_seat(register_code, &did, state)
-                .map(|o| hex(&o))
-                .ok_or_else(|| err("the seat does not name this account's owner".into()))
         }
 
         /// The member Set's contract id (32 bytes) for an owner key.
@@ -321,9 +313,12 @@ mod js {
             Ok(js_sys::Uint8Array::from(&i[..]))
         }
 
-        /// Open a member's tail for an app: its contract id (hex).
-        pub fn tail_open(&mut self, tail_code: &[u8], member: &[u8], site: &[u8]) -> Result<String, JsValue> {
-            Ok(hex(&self.0.tail_open(tail_code, &b32(member)?, &b32(site)?)))
+        /// Open an app's table under the account's data key: its contract id (hex).
+        pub fn tail_open(&mut self, tail_code: &[u8], key: &[u8], site: &[u8], app: &str) -> Result<String, JsValue> {
+            if app.is_empty() || app.len() > 32 {
+                return Err(err("an app's name is 1 to 32 bytes".into()));
+            }
+            Ok(hex(&self.0.tail_open(tail_code, &b32(key)?, &b32(site)?, app.as_bytes())))
         }
 
         /// `[id hex, frames]`: read an open tail and follow it.
@@ -331,6 +326,13 @@ mod js {
             let id = b32(id)?;
             let f = self.0.frames_tail_get(&id).map_err(err)?;
             Ok([JsValue::from(hex(&id)), JsValue::from(frames(f))].into_iter().collect())
+        }
+
+        /// Forget what this page holds of an open table (a write the node refused, so the local step never landed):
+        /// read it again before the next write.
+        pub fn tail_reset(&mut self, id: &[u8]) -> Result<(), JsValue> {
+            self.0.tail(&b32(id)?).map_err(err)?.reset();
+            Ok(())
         }
 
         /// Mark an open tail as absent from the network (a GET found none): its first write is a PUT.
@@ -388,10 +390,10 @@ mod js {
         }
     }
 
-    /// `did:craftec:<id>` from the owner seat's 32-byte contract id (what the identity delegate answers).
+    /// `did:craftec:<base58>` of the owner's public key (the DID the identity delegate answers, as bytes).
     #[wasm_bindgen]
-    pub fn did_of(id: &[u8]) -> Result<String, JsValue> {
-        Ok(format!("did:craftec:{}", wire::contract_id(b32(id)?).encode()))
+    pub fn did_of(owner: &[u8]) -> Result<String, JsValue> {
+        Ok(account::did(&b32(owner)?))
     }
 
     /// The node's client-API URL on this machine (`wire::ws_url`: loopback only, native encoding), at the host the page
@@ -418,7 +420,8 @@ mod tests {
 
     #[test]
     fn answers_read_as_json() {
-        let a = answer_json(&Answer::Unlocked { public: [1; 32], did: [2; 32] });
+        let a = answer_json(&Answer::Unlocked { public: [1; 32], did: [2; 32], data: Some([3; 32]) });
+        assert_eq!(a["unlocked"]["data"], hex(&[3; 32]));
         assert_eq!(a["unlocked"]["did"], hex(&[2; 32]));
         assert_eq!(answer_json(&Answer::WrongPin { tries_left: 3 })["wrongPin"]["triesLeft"], 3);
         assert_eq!(bytes32("x", &hex(&[7; 32])).unwrap(), [7; 32]);

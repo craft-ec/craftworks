@@ -24,6 +24,8 @@ blake3 = { version = "1", default-features = false }
 # Recovery words (BIP39) and the owner key's derivation from them (SLIP-0010 ed25519 over HMAC-SHA512).
 bip39 = { version = "2", default-features = false, features = ["alloc"] }
 hmac = "0.12"
+# The DID's text form: base58 of the owner key.
+bs58 = "0.5"
 sha2 = { version = "0.10", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

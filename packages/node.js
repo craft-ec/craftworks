@@ -1,5 +1,6 @@
 // NODE, a service: the connection to this machine's freenet node, started once, the first time a package asks for it.
-// It gives callers `{ core, ask, url }`: the wasm core (framing) and one way to send frames and wait for an answer.
+// It gives callers `{ core, ask, listen, url }`: the wasm core (framing), one way to send frames and wait for an answer,
+// and `listen(fn)` for what the node sends unasked (a followed contract that changed).
 // It needs `core-glue`, `core-wasm` and `identity-wasm` (the core is built around the identity delegate's code).
 export async function start(ctx) {
   const glue = await ctx.require("core-glue");
@@ -15,13 +16,16 @@ export async function start(ctx) {
   const ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
   const waiters = [];
+  const listeners = [];
   ws.onmessage = ev => {
     const said = JSON.parse(core.take(new Uint8Array(ev.data)));
     if (said.kind === "partial") return;
     const i = waiters.findIndex(w => w.match(said));
     if (i >= 0) waiters.splice(i, 1)[0].resolve(said);
+    else if (listeners.length) for (const f of listeners) f(said);
     else ctx.log("node said", { what: JSON.stringify(said).slice(0, 160) });
   };
+  const listen = f => listeners.push(f);
   await new Promise((resolve, reject) => {
     ws.onopen = resolve;
     ws.onerror = () => reject(new Error(`could not connect to ${url}`));
@@ -36,5 +40,5 @@ export async function start(ctx) {
       for (const f of frames) ws.send(f);
     });
 
-  return { core, glue, ask, url };
+  return { core, glue, ask, listen, url };
 }

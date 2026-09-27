@@ -13,15 +13,14 @@ export async function start(ctx) {
     return said.answers.find(a => a.id === id).answer;
   };
   return {
-    // A new member on this device: its key minted here, handed to the delegate once, never kept. `recovery`: the
-    // account's word entropy when this device holds it.
-    provision: (seed, did, pin, recovery) => call(core.frames_provision(seed, did, pin, recovery), "adding this device"),
+    // A new member on this node: its key minted here and the account's data key, handed to the delegate once, never
+    // kept by the page.
+    provision: (seed, did, pin, data) => call(core.frames_provision(seed, did, pin, data), "adding this node"),
     unlock: pin => call(core.frames_unlock(pin), "unlocking with the PIN"),
     lock: () => call(core.frames_lock(), "logging out"),
     who: () => call(core.frames_who(), "asking who is logged in"),
     sign: (params, seq, valueHash) => call(core.frames_sign(params, BigInt(seq), valueHash), "signing"),
     exportKey: () => call(core.frames_export(), "exporting the key"),
-    recovery: () => call(core.frames_recovery(), "reading the recovery words"),
     publicOf: seed => glue.CraftworksCore.public_of(seed),
   };
 }
