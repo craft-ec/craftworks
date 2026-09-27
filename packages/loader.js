@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. A page that needs no node never loads the
 // node's code at all.
-const VERSION = "11";
+const VERSION = "12";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -15,7 +15,7 @@ export async function run(boot) {
   const loaded = new Map(); // name -> Promise of what `require` gives
   let manifest;
 
-  const ctx = { params: boot.params, log: boot.log, on: boot.on, require, route: "/", app: "" };
+  const ctx = { params: boot.params, log: boot.log, on: boot.on, require, route: "/", app: "", apps: [] };
   globalThis.app = ctx;
 
   // A package, fetched and checked by the wrapper, the first time anything asks for it. What it gives depends on its
@@ -197,6 +197,8 @@ export async function run(boot) {
     const m = await boot.manifest();
     manifest = JSON.parse(new TextDecoder().decode(m.bytes));
     ctx.app = manifest.app;
+    // The site's APPS, as its manifest lists them ({ name, icon, route }): what a desktop shows.
+    ctx.apps = manifest.apps ?? [];
     document.title = manifest.app;
     ctx.log("manifest read", {
       what: `${manifest.app}: ${Object.keys(manifest.packages).length} packages, ${Object.keys(manifest.pages).length} pages`,
