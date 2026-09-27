@@ -80,6 +80,11 @@ device + the same PIN opens the same account. Adding a second device: pairing wi
   reload → "tree read notes: 1 block", 34 rows. B app v28.
 - [ ] B2b. erasure for the tree: parity groups start at freenet-prolly's MIN_GROUP (21 siblings); a small tree's
   blocks have NO parity yet (single copy each) — decide: race-put copies, or group smaller trees.
+  RETENTION evidence (KEEPER §11(c) run 3, engineer1, archived KEEPER.md not updated): 10 blocks PUT 2026-09-26T23:24Z
+  to a private node on Hetzner; present 10/10 at +1h, +6h, +24h; batched AskHeld 1 op 224/286/281 ms; one-per-op
+  median/max 249/329, 240/388, 249/291 ms. Node dir 38M → 98M → 285M over the day (the node's own data, not the
+  blocks); host disk 67–69%. So an unrepaired single copy survived a day on a node that stayed up; it says nothing
+  about a node going away, which is what parity is for.
 
 ## 2026-09-28 — data belongs to the account; sites get the person's grant
 - Owner: another developer's front end (or another address for the same app) must show the same data intact.
