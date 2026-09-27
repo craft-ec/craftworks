@@ -5,7 +5,9 @@
 // row: its key an id that sorts by creation, its value JSON { title, body, color, archived, edited }. A row that is
 // not JSON (the first notes were plain text) is read as a body. PINS are not a note's field: they are the account's
 // (the `pins` package, ref `notes:<id>`), with its one pin button. A note saved with the old `pinned` field is moved
-// into the pins once, when Notes opens.
+// into the pins once, when Notes opens. LABELS likewise are the account's (the `labels` package): a note's labels show
+// as chips, 🏷️ opens the label menu, the label bar shows one label's notes, and "Edit labels" makes, renames and
+// deletes them.
 const COLORS = [
   ["", "Default"], ["#faafa8", "Coral"], ["#f39f76", "Peach"], ["#fff8b8", "Sand"], ["#e2f6d3", "Mint"],
   ["#b4ddd3", "Sage"], ["#d4e4ed", "Fog"], ["#aeccdc", "Storm"], ["#d3bfdb", "Dusk"], ["#f6e2dd", "Blossom"],
@@ -56,8 +58,25 @@ export async function mount(ctx, el) {
         box-shadow: 0 4px 24px #0006; display: grid; gap: 8px; }
       .keep dialog.editor[style*="background"] { color: #202124; }
       .keep dialog.editor:not([open]) { display: none; }
+      .keep .card .cw-chips { margin-top: 8px; }
+      .keep .labelbar { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 0 auto 12px; max-width: 800px; }
+      .keep .labelbar:has(> :only-child) { display: none; }
+      .keep .labelbar button { font: inherit; font-size: .85rem; border: 1px solid var(--line); background: none; color: inherit;
+        border-radius: 14px; padding: 3px 12px; cursor: pointer; }
+      .keep .labelbar button[aria-pressed="true"] { background: #feefc3; color: #202124; border-color: transparent; }
+      .keep .labelbar .edit-labels { border-style: dashed; }
+      .keep dialog.labels-editor { border: 0; border-radius: 8px; padding: 14px 16px; width: min(320px, calc(100vw - 32px));
+        box-shadow: 0 4px 24px #0006; }
+      .keep dialog.labels-editor:not([open]) { display: none; }
+      .keep .labels-editor h3 { margin: 0 0 10px; font-size: 1rem; }
+      .keep .labels-editor .line { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+      .keep .labels-editor input { flex: 1; font: inherit; border: 0; border-bottom: 1px solid var(--line); background: transparent;
+        color: inherit; outline: 0; padding: 3px 0; }
+      .keep .labels-editor button { border: 0; background: none; cursor: pointer; font: inherit; color: inherit; }
+      .keep .labels-editor .done-l { display: block; margin: 12px 0 0 auto; }
     </style>
     <div class="keep">
+      <div class="labelbar"></div>
       <form class="composer">
         <input class="title" name="title" placeholder="Title" hidden>
         <textarea class="body" name="body" rows="1" placeholder="Take a note…"></textarea>
@@ -71,19 +90,27 @@ export async function mount(ctx, el) {
       <dialog class="editor">
         <input class="title" name="title" placeholder="Title">
         <textarea class="body" name="body" rows="6" placeholder="Note"></textarea>
+        <div class="label-slot"></div>
         <div class="row"><span class="pin-slot"></span>
           <button type="button" class="palette" title="Background">🎨</button>
+          <button type="button" class="label-e" title="Labels">🏷️</button>
           <button type="button" class="archive-e" title="Archive">🗃️</button>
           <button type="button" class="delete-e" title="Delete">🗑️</button>
           <button type="button" class="end done">Close</button></div>
       </dialog>
+      <dialog class="labels-editor">
+        <h3>Edit labels</h3>
+        <form class="line new-label"><input name="name" placeholder="Create new label" maxlength="50"><button title="Create">✔️</button></form>
+        <div class="label-lines"></div>
+        <button type="button" class="done-l">Done</button>
+      </dialog>
     </div>`;
   const root = el.querySelector(".keep");
   const said = t => (root.querySelector(".said").textContent = t);
-  let notes, pins;
+  let notes, pins, labels;
   try {
     const data = await ctx.require("data");
-    [notes, pins] = await Promise.all([data.table("notes"), ctx.require("pins")]);
+    [notes, pins, labels] = await Promise.all([data.table("notes"), ctx.require("pins"), ctx.require("labels")]);
   } catch (e) {
     return said(`Could not open your notes: ${e?.message ?? e}`);
   }
@@ -116,7 +143,11 @@ export async function mount(ctx, el) {
       .then(() => notes.put(r.key, JSON.stringify({ title: n.title, body: n.body, color: n.color, archived: n.archived, edited: n.edited })))
       .catch(e => said(`Could not move a pin: ${e?.message ?? e}`));
   }
-  const remove = key => notes.remove(key).catch(e => said(`Could not delete: ${e?.message ?? e}`));
+  const remove = key =>
+    notes
+      .remove(key)
+      .then(() => labels.clear(ref(key)))
+      .catch(e => said(`Could not delete: ${e?.message ?? e}`));
   const newKey = () =>
     `${Date.now().toString(36).padStart(10, "0")}-${[...crypto.getRandomValues(new Uint8Array(4))].map(b => b.toString(16).padStart(2, "0")).join("")}`;
 
@@ -124,6 +155,7 @@ export async function mount(ctx, el) {
   let archive = false;
   let list = false;
   let query = "";
+  let label = null; // showing one label's notes: its id
 
   // A colour picker under `anchor`; `pick(color)` on a choice.
   const palette = (anchor, pick) => {
@@ -173,7 +205,11 @@ export async function mount(ctx, el) {
     const color = composing.color;
     composing = { color: "" };
     tint(composer, "");
-    if (title || body) await save(newKey(), { title, body, color, archived: false });
+    if (!(title || body)) return;
+    // Made while one label is shown: it has that label, as in Keep.
+    const key = newKey();
+    await save(key, { title, body, color, archived: false });
+    if (label) await labels.set(ref(key), label, true).catch(e => said(`Could not label: ${e?.message ?? e}`));
   };
   cBody.addEventListener("focus", open);
   composer.querySelector(".close").onclick = shut;
@@ -193,6 +229,7 @@ export async function mount(ctx, el) {
     eBody.value = n.body;
     tint(editor, n.color);
     editor.querySelector(".pin-slot").replaceChildren(pins.button(ref(n.key)));
+    editor.querySelector(".label-slot").replaceChildren(labels.chips(ref(n.key), { onPick: show }));
     editor.querySelector(".archive-e").title = n.archived ? "Unarchive" : "Archive";
     editor.showModal();
   };
@@ -223,6 +260,7 @@ export async function mount(ctx, el) {
       tint(editor, c);
       live();
     });
+  editor.querySelector(".label-e").onclick = e => labels.menu(e.currentTarget, ref(editing.key));
   editor.querySelector(".archive-e").onclick = () => ((editing.archived = !editing.archived), finish());
   editor.querySelector(".delete-e").onclick = async () => {
     const key = editing.key;
@@ -239,6 +277,7 @@ export async function mount(ctx, el) {
     tint(c, n.color);
     if (n.title) c.append(Object.assign(document.createElement("div"), { className: "t", textContent: n.title }));
     if (n.body) c.append(Object.assign(document.createElement("div"), { className: "b", textContent: n.body }));
+    c.append(labels.chips(ref(n.key), { onPick: show }));
     const pinButton = pins.button(ref(n.key));
     const tools = document.createElement("div");
     tools.className = "tools";
@@ -248,6 +287,7 @@ export async function mount(ctx, el) {
       tools.append(b);
     };
     tool("🎨", "Background", e => palette(e.currentTarget, color => save(n.key, { ...n, color })));
+    tool("🏷️", "Labels", e => labels.menu(e.currentTarget, ref(n.key)));
     tool(n.archived ? "📤" : "🗃️", n.archived ? "Unarchive" : "Archive", () => {
       save(n.key, { ...n, archived: !n.archived });
       if (!n.archived && n.pinned) pins.set(ref(n.key), false).catch(e => said(`Could not unpin: ${e?.message ?? e}`)); // an archived note is not pinned, as in Keep
@@ -262,12 +302,16 @@ export async function mount(ctx, el) {
   const render = () => {
     root.classList.toggle("list", list);
     composer.hidden = archive;
+    if (label && !labels.list().some(l => l.id === label)) label = null; // deleted meanwhile
+    bar();
     const q = query.toLowerCase();
+    const inLabel = label ? new Set(labels.refs(label, "notes:")) : null;
     const all = notes
       .rows()
       .map(note)
       .filter(n => n.archived === archive)
-      .filter(n => !q || `${n.title}\n${n.body}`.toLowerCase().includes(q))
+      .filter(n => !inLabel || inLabel.has(ref(n.key)))
+      .filter(n => !q || `${n.title}\n${n.body}\n${labels.of(ref(n.key)).map(l => l.name).join("\n")}`.toLowerCase().includes(q))
       .sort((a, b) => (b.edited || 0) - (a.edited || 0) || (a.key < b.key ? 1 : -1));
     const pinned = all.filter(n => n.pinned && !archive);
     const others = all.filter(n => !n.pinned || archive);
@@ -277,8 +321,67 @@ export async function mount(ctx, el) {
     root.querySelector(".others").replaceChildren(...others.map(card));
     const empty = root.querySelector(".empty");
     empty.hidden = all.length > 0;
-    empty.textContent = q ? "No matching notes." : archive ? "Your archived notes appear here." : "Notes you add appear here.";
+    empty.textContent = q
+      ? "No matching notes."
+      : archive
+        ? "Your archived notes appear here."
+        : label
+          ? "No notes with this label yet."
+          : "Notes you add appear here.";
   };
+
+  // THE LABEL BAR: all notes, or one label's; and Edit labels.
+  function show(id) {
+    label = id;
+    archive = false;
+    render();
+    actions();
+  }
+  function bar() {
+    const b = root.querySelector(".labelbar");
+    const chip = (text, on, run, cls = "") => {
+      const x = Object.assign(document.createElement("button"), { type: "button", textContent: text, className: cls });
+      if (cls !== "edit-labels") x.setAttribute("aria-pressed", String(on));
+      x.onclick = run;
+      return x;
+    };
+    b.replaceChildren(
+      chip("All notes", !label, () => show(null)),
+      ...labels.list().map(l => chip(`🏷️ ${l.name}`, label === l.id, () => show(label === l.id ? null : l.id))),
+      chip("✏️ Edit labels", false, editLabels, "edit-labels"),
+    );
+  }
+
+  // EDIT LABELS: make, rename (on leaving the field) and delete, as in Keep.
+  const lEditor = root.querySelector("dialog.labels-editor");
+  function lines() {
+    lEditor.querySelector(".label-lines").replaceChildren(
+      ...labels.list().map(l => {
+        const line = Object.assign(document.createElement("div"), { className: "line" });
+        const del = Object.assign(document.createElement("button"), { type: "button", textContent: "🗑️", title: "Delete label" });
+        del.onclick = () => {
+          if (confirm(`Delete the label “${l.name}”? It is removed from every note; the notes stay.`)) labels.remove(l.id).catch(e => said(`Could not delete the label: ${e?.message ?? e}`));
+        };
+        const name = Object.assign(document.createElement("input"), { value: l.name, maxLength: 50 });
+        name.onchange = () => labels.rename(l.id, name.value).catch(e => ((name.value = l.name), said(`Could not rename: ${e?.message ?? e}`)));
+        line.append(del, name);
+        return line;
+      }),
+    );
+  }
+  function editLabels() {
+    lines();
+    lEditor.showModal();
+  }
+  lEditor.querySelector(".new-label").onsubmit = e => {
+    e.preventDefault();
+    const f = e.currentTarget;
+    const v = f.name.value;
+    f.reset();
+    if (v.trim()) labels.create(v).catch(err => said(`Could not create the label: ${err?.message ?? err}`));
+  };
+  lEditor.querySelector(".done-l").onclick = () => lEditor.close();
+  labels.onChange(() => lEditor.open && lines());
 
   // THE TOP BAR while Notes is open: search, grid or list, and Notes or Archive.
   const actions = () => {
@@ -292,5 +395,6 @@ export async function mount(ctx, el) {
   actions();
   notes.onChange(() => root.isConnected && render());
   pins.onChange(() => root.isConnected && render());
+  labels.onChange(() => root.isConnected && render());
   render();
 }
