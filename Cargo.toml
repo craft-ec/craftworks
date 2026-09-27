@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "publish"]
+members = ["core", "identity", "publish"]
 resolver = "2"
 
 # THE SDK, pinned: only its proven parts are used — wire (the node's message format), page / page-io / engine (a

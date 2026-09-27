@@ -41,17 +41,29 @@ async fn put_package(c: &mut WebApi, webapp_code: &[u8], bytes: &[u8]) -> Result
         std::sync::Arc::new(ContractCode::from(webapp_code.to_vec())),
         Parameters::from(wire::webapp::params(&state).to_vec()),
     )));
-    c.send(ClientRequest::ContractOp(ContractRequest::Put { contract: container, state: WrappedState::new(state), related_contracts: RelatedContracts::default(), subscribe: false, blocking_subscribe: false })).await?;
-    let by = Instant::now() + Duration::from_secs(60);
-    while Instant::now() < by {
-        match tokio::time::timeout(Duration::from_secs(60), c.recv()).await {
-            Ok(Ok(HostResponse::ContractResponse(ContractResponse::PutResponse { key }))) if key.id().encode() == address => return Ok(address),
-            Ok(Ok(_)) => continue,
-            Ok(Err(e)) => bail!("put {address}: node error: {e}"),
-            Err(_) => break,
+    // A PUT of the same container is the same PUT, so one the node leaves unanswered is sent again (B sometimes does).
+    const TRIES: u32 = 3;
+    for attempt in 1..=TRIES {
+        let put = ContractRequest::Put {
+            contract: container.clone(),
+            state: WrappedState::new(state.clone()),
+            related_contracts: RelatedContracts::default(),
+            subscribe: false,
+            blocking_subscribe: false,
+        };
+        c.send(ClientRequest::ContractOp(put)).await?;
+        let by = Instant::now() + Duration::from_secs(60);
+        while let Some(left) = by.checked_duration_since(Instant::now()) {
+            match tokio::time::timeout(left, c.recv()).await {
+                Ok(Ok(HostResponse::ContractResponse(ContractResponse::PutResponse { key }))) if key.id().encode() == address => return Ok(address),
+                Ok(Ok(_)) => continue,
+                Ok(Err(e)) => bail!("put {address}: node error: {e}"),
+                Err(_) => break,
+            }
         }
+        eprintln!("put {address}: no answer within 60 s (try {attempt} of {TRIES})");
     }
-    bail!("put {address}: no answer within 60 s")
+    bail!("put {address}: no answer in {TRIES} tries of 60 s")
 }
 
 struct Driver {
@@ -141,15 +153,19 @@ async fn main() -> Result<()> {
     // 2. Packages, immutable.
     let mut c = WebApi::start(tokio_tungstenite::connect_async(ws.as_str()).await.context("second connection")?.0);
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 8] = [
+    let packages: [(&str, &str, PathBuf); 11] = [
         ("header", "module", app.join("packages/header.js")),
         ("footer", "module", app.join("packages/footer.js")),
         ("home", "module", app.join("packages/home.js")),
         ("who", "module", app.join("packages/who.js")),
         ("node", "service", app.join("packages/node.js")),
+        ("identity", "service", app.join("packages/identity.js")),
+        ("auth", "service", app.join("packages/auth.js")),
         ("core-glue", "module", built.join("craftworks_core.js")),
         ("core-wasm", "bytes", built.join("craftworks_core_bg.wasm")),
-        ("signer", "bytes", contracts.join("signer.wasm")),
+        // The identity delegate's code (the node needs it to run it) and the Register's (a first login puts two).
+        ("identity-wasm", "bytes", built.join("identity.wasm")),
+        ("register-wasm", "bytes", contracts.join("register.wasm")),
     ];
     let mut entries = Vec::new();
     // WHAT IS ALREADY UP: the addresses the live manifest names (PUBLISHED_MANIFEST, the app site's own manifest.json as

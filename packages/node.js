@@ -1,6 +1,6 @@
 // NODE, a service: the connection to this machine's freenet node, started once, the first time a package asks for it.
-// It registers the signer (the node needs its code to run it) and gives callers `{ core, ask }`.
-// It needs `core-glue`, `core-wasm` and `signer`, fetched when it starts.
+// It gives callers `{ core, ask, url }`: the wasm core (framing) and one way to send frames and wait for an answer.
+// It needs `core-glue`, `core-wasm` and `identity-wasm` (the core is built around the identity delegate's code).
 export async function start(ctx) {
   const glue = await ctx.require("core-glue");
   await glue.default({ module_or_path: await ctx.require("core-wasm") });
@@ -9,8 +9,8 @@ export async function start(ctx) {
   // The node that served this page, unless `?node=` names another on this machine.
   const port = Number(ctx.params.get("node") ?? location.port);
   if (!port) throw new Error("no node port: this page was not served by a node, and no ?node= names one");
-  const core = new glue.CraftworksCore(await ctx.require("signer"));
-  const url = glue.ws_url(port);
+  const core = new glue.CraftworksCore(await ctx.require("identity-wasm"));
+  const url = glue.ws_url(location.hostname, port);
 
   const ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
@@ -36,8 +36,5 @@ export async function start(ctx) {
       for (const f of frames) ws.send(f);
     });
 
-  const reg = await ask(core.frames_register_signer(), s => s.kind === "registered" || s.kind === "refused", "registering the signer");
-  if (reg.kind !== "registered") throw new Error(`the node refused the signer: ${reg.said}`);
-  ctx.log("signer ready", { what: core.signer_key().slice(0, 16) + "…" });
-  return { core, ask, url };
+  return { core, glue, ask, url };
 }

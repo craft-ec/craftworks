@@ -1,0 +1,29 @@
+[package]
+name = "craftworks-identity"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "The IDENTITY delegate on each node: holds this device's key and signs records for it (ARCHITECTURE §4)."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# The node's entry point, only in the wasm the node runs (build.sh turns it on). Native builds and tests export nothing.
+default = []
+freenet-main-delegate = []
+# Named by the stdlib `#[delegate]` macro's cfg; unused here.
+trace = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+blake3 = { version = "1", default-features = false }
+freenet-stdlib = { version = "0.10.0", features = ["contract"] }
+# The Register's params and signed message: the ONE format a tail's signature covers (the tail is built on it).
+craftec-register-contract = { workspace = true }
+ed25519-dalek = { version = "=2.2.0", default-features = false }
+
+[dev-dependencies]
+craftec-register-contract = { workspace = true, features = ["testing"] }
