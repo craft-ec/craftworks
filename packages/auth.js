@@ -3,13 +3,14 @@
 // - `check()`: who is logged in, or null, never a dialog (a public page choosing its view).
 // - `session({ tab })`: the logged-in person, asking with the dialog if nobody is; null if they close it.
 // - `logout()`: ends this app's session and goes home.
-// - `devices()`: the account's members as the network holds them (DID → seat → owner key → member Set).
+// - `nodes()`: the account's members as the network holds them (DID → seat → owner key → member Set).
 // Every change is announced as a `craftworks:auth` event (detail: the person, or null), so a page can switch views.
 // - The DID is the ACCOUNT. It is named by the account's RECOVERY WORDS (BIP39, like a wallet's): the owner key is
 //   derived from them, and the DID is its seat. Registering makes the words; the Account page shows them.
-// - A MEMBER is one device key admitted to the account, kept by the identity delegate on this node and opened here by
-//   a PIN. One device can hold several members, of one person or of several.
-// - Log in with this device: the PIN. Log in with recovery words: the words name the account; this device becomes a
+// - A MEMBER is one NODE's key admitted to the account, kept by the identity delegate on that node and opened by a PIN.
+//   Every browser on the node shares its members and sessions. One node can hold several members, of one person or of
+//   several.
+// - Log in with this node: the PIN. Log in with recovery words: the words name the account; this node becomes a
 //   member of it, with a new PIN.
 export async function start(ctx) {
   const id = await ctx.require("identity");
@@ -56,7 +57,7 @@ export async function start(ctx) {
   }
 
   // The account's members, from the network: `[{ key, name, since }]`.
-  async function devices() {
+  async function nodes() {
     const s = await check();
     if (!s) return [];
     const [registerCode, setCode] = [await ctx.require("register-wasm"), await ctx.require("set-wasm")];
@@ -65,16 +66,16 @@ export async function start(ctx) {
     try {
       owner = hexBytes(core.owner_of(registerCode, s.didBytes));
     } catch {
-      // An account made before the member list: its seat does not name the owner key yet. The device that holds the
+      // An account made before the member list: its seat does not name the owner key yet. The node that holds the
       // account's words upgrades it (the new seat replaces the old at a higher seq) and admits itself.
       const r = await id.recovery();
       if (!r.recovery) throw new Error("this account was made before the member list: log in once with its recovery words to add it");
       const words = hexBytes(r.recovery);
-      const a = core.account(registerCode, setCode, words, hexBytes(s.member), Date.now(), deviceName());
+      const a = core.account(registerCode, setCode, words, hexBytes(s.member), Date.now(), "");
       words.fill(0);
       await put(a.seat, "the account's seat");
-      await put(a.members, "this device's place in the account");
-      ctx.log("account upgraded", { what: "the seat names its owner; this device is listed" });
+      await put(a.members, "this node's place in the account");
+      ctx.log("account upgraded", { what: "the seat names its owner; this node is listed" });
       if (!(await get(s.didBytes, "reading the account's seat"))) throw new Error("the account's seat is not on the network");
       owner = hexBytes(core.owner_of(registerCode, s.didBytes));
     }
@@ -82,17 +83,17 @@ export async function start(ctx) {
     return JSON.parse(core.members(setCode, owner));
   }
 
-  // This device as a member of the account the words name. Kept across a retry with another PIN, so one attempt
+  // This node as a member of the account the words name. Kept across a retry with another PIN, so one attempt
   // mints one member key.
   let joining = null;
   async function join(entropy, pin) {
     if (!joining || joining.entropyHex !== hex(entropy)) {
       const member = crypto.getRandomValues(new Uint8Array(32));
       const a = core.account(
-        await ctx.require("register-wasm"), await ctx.require("set-wasm"), entropy, id.publicOf(member), Date.now(), deviceName());
+        await ctx.require("register-wasm"), await ctx.require("set-wasm"), entropy, id.publicOf(member), Date.now(), "");
       await put(a.seat, "the account's seat");
-      await put(a.members, "this device's place in the account");
-      ctx.log("account", { what: `${a.did}, this device admitted` });
+      await put(a.members, "this node's place in the account");
+      ctx.log("account", { what: `${a.did}, this node admitted` });
       joining = { entropyHex: hex(entropy), entropy, did: a.didBytes, member };
     }
     const r = await id.provision(joining.member, joining.did, pin, joining.entropy);
@@ -130,7 +131,7 @@ export async function start(ctx) {
           </div>
           <div data-panel="login">
             <form class="device">
-              <strong>Log in with this device</strong>
+              <strong>Log in with this node</strong>
               <label>PIN <input name="pin" type="password" inputmode="numeric" autocomplete="off" required></label>
               <button>Log in</button>
               <p class="said"></p>
@@ -138,7 +139,7 @@ export async function start(ctx) {
             </form>
             <form class="words" hidden>
               <strong>Log in with recovery words</strong>
-              <p class="note">On any device: your words open your account, and this device joins it with its own PIN.</p>
+              <p class="note">On any node: your words open your account, and this node joins it with its own PIN.</p>
               <label>Your 12 or 24 words <textarea name="words" rows="3" autocomplete="off" spellcheck="false" required></textarea></label>
               <label>Create a PIN (6 or more) <input name="pin" type="password" minlength="6" autocomplete="off" required></label>
               <label>Confirm the PIN <input name="again" type="password" minlength="6" autocomplete="off" required></label>
@@ -149,7 +150,7 @@ export async function start(ctx) {
           </div>
           <div data-panel="register" hidden>
             <form class="register">
-              <strong>Register with this device</strong>
+              <strong>Register with this node</strong>
               <label>Create a PIN (6 or more) <input name="pin" type="password" minlength="6" autocomplete="off" required></label>
               <label>Confirm the PIN <input name="again" type="password" minlength="6" autocomplete="off" required></label>
               <button>Register</button>
@@ -177,9 +178,9 @@ export async function start(ctx) {
         resolve(null);
       });
       const why = r =>
-        r.wrongPin ? `Wrong PIN. ${r.wrongPin.triesLeft} tries left on this device.`
-        : r.locked ? "Too many wrong PINs: this device is locked. Log in with your recovery words."
-        : r.refused === "PinTaken" ? "That PIN is taken on this device: choose another."
+        r.wrongPin ? `Wrong PIN. ${r.wrongPin.triesLeft} tries left on this node.`
+        : r.locked ? "Too many wrong PINs: this node is locked. Log in with your recovery words."
+        : r.refused === "PinTaken" ? "That PIN is taken on this node: choose another."
         : r.error ?? `Refused: ${r.refused}`;
       const on = (form, run) =>
         form.addEventListener("submit", async e => {
@@ -226,16 +227,9 @@ export async function start(ctx) {
     });
   }
 
-  return { check, session, logout, devices, current: () => current, identity: id, words: e => glue.CraftworksCore.words_of(e) };
+  return { check, session, logout, nodes, current: () => current, identity: id, words: e => glue.CraftworksCore.words_of(e) };
 }
 
-// A name for this device, for the member list: its system and browser, as the browser says them.
-function deviceName() {
-  const ua = navigator.userAgent;
-  const system = /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Linux/.test(ua) ? "Linux" : "device";
-  const browser = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "browser";
-  return `${system} · ${browser}`;
-}
 
 function hexBytes(h) {
   return new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));

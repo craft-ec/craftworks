@@ -17,33 +17,34 @@ export async function mount(ctx, el) {
     box.append(row);
   };
   line("Account (DID)", s.did);
-  line("This device's member key", s.member);
+  line("This node's member key", s.member);
 
-  // YOUR DEVICES: the account's members as the network holds them.
+  // YOUR NODES: the account's members as the network holds them.
   const dev = document.createElement("section");
-  dev.innerHTML = `<h3>Your devices</h3><p class="line">Reading your account from the network…</p>`;
+  dev.innerHTML = `<h3>Your nodes</h3><p class="line">Reading your account from the network…</p>`;
   box.append(dev);
-  auth.devices().then(
+  auth.nodes().then(
     list => {
       const ul = document.createElement("ul");
       for (const m of list.sort((a, b) => a.since - b.since)) {
         const li = document.createElement("li");
         const code = document.createElement("code");
         code.textContent = `${m.key.slice(0, 16)}…`;
-        li.append(`${m.name || "a device"} — `, code, ` · since ${new Date(m.since).toLocaleString()}`);
-        if (m.key === s.member) li.append(" (this device)");
+        // A node is shown by its key: a name guessed from the browser was wrong (the browser is not the member).
+        li.append("Node ", code, ` · since ${new Date(m.since).toLocaleString()}`);
+        if (m.key === s.member) li.append(" (this node)");
         ul.append(li);
       }
-      dev.querySelector(".line").replaceWith(list.length ? ul : "No devices listed yet: this account was made before the member list.");
+      dev.querySelector(".line").replaceWith(list.length ? ul : "No nodes listed yet: this account was made before the member list.");
     },
-    e => (dev.querySelector(".line").textContent = `Could not read your devices: ${e?.message ?? e}`),
+    e => (dev.querySelector(".line").textContent = `Could not read your nodes: ${e?.message ?? e}`),
   );
 
   // RECOVERY WORDS: made with the account; they ARE the account (its owner key and its DID come from them). Shown on
   // request, never kept on the page.
   const rec = document.createElement("section");
   rec.innerHTML = `<h3>Recovery words</h3>
-    <p>With these words you can log in on any device, and get your account back if you lose this one. Anyone who has
+    <p>With these words you can log in on any node, and get your account back if you lose this one. Anyone who has
     them has your account: write them down and keep them offline.</p>
     <button type="button" class="show">Show my recovery words</button>
     <ol class="words" hidden style="columns:3;font-family:monospace"></ol>
@@ -60,7 +61,7 @@ export async function mount(ctx, el) {
     const r = await auth.identity.recovery();
     if (!r.recovery) {
       rec.querySelector(".said").textContent =
-        r.refused === "NoRecovery" ? "This device does not hold this account's words (it joined without them)." : `Refused: ${r.refused}`;
+        r.refused === "NoRecovery" ? "This node does not hold this account's words (it joined without them)." : `Refused: ${r.refused}`;
       return;
     }
     const bytes = new Uint8Array(r.recovery.match(/../g).map(b => parseInt(b, 16)));

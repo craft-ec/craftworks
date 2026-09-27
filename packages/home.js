@@ -8,7 +8,7 @@ export async function mount(ctx, el) {
   const publicView = () => {
     el.innerHTML = `<h2>Welcome to Craftworks</h2>
       <p>Apps that live on freenet: no server, no company holding your data. Your account is yours, named by twelve
-      recovery words, and your data is written by your own devices.</p>
+      recovery words, and your data is written by your own nodes.</p>
       <p><button type="button" data-tab="login">Log in</button> <button type="button" data-tab="register">Register</button></p>`;
     for (const b of el.querySelectorAll("[data-tab]")) b.onclick = () => auth.session({ tab: b.dataset.tab });
   };
@@ -18,9 +18,9 @@ export async function mount(ctx, el) {
       <p class="who">Logged in as <code></code></p>
       <h3>What you can do</h3>
       <ul>
-        <li><a href="#/account">Your account</a>: your DID, this device, and your recovery words.</li>
-        <li>Your data: a table only your devices write, readable wherever you log in <em>(next)</em>.</li>
-        <li>Your other devices: add one with its device id and a PIN <em>(soon)</em>.</li>
+        <li><a href="#/account">Your account</a>: your DID, this node, and your recovery words.</li>
+        <li>Your data: a table only your nodes write, readable wherever you log in <em>(next)</em>.</li>
+        <li>Your other nodes: add one with its node id and a PIN <em>(soon)</em>.</li>
       </ul>`;
     el.querySelector(".who code").textContent = s.did;
   };
