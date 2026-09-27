@@ -18,7 +18,7 @@ export async function mount(ctx, el) {
   }
   el.innerHTML = `
     <style>
-      .keep { --line: #8884; }
+      .keep { --line: #8884; position: relative; }
       .keep [hidden] { display: none !important; }
       .keep .composer { max-width: 600px; margin: 8px auto 28px; border: 1px solid var(--line); border-radius: 8px;
         box-shadow: 0 1px 3px #0002; padding: 10px 16px; display: grid; gap: 8px; }
@@ -42,7 +42,9 @@ export async function mount(ctx, el) {
       .keep .tools button:hover, .keep .row button:hover { background: #0001; }
       .keep .pin { position: absolute; top: 6px; right: 6px; opacity: 0; }
       .keep .card:hover .pin, .keep .pin[aria-pressed="true"] { opacity: 1; }
-      .keep .pin[aria-pressed="false"] { filter: grayscale(1); }
+      /* One look for a pin everywhere (a card, an open note): unpinned grey and faint, pinned in colour. */
+      .keep .pin-e[aria-pressed="false"], .keep .card:hover .pin[aria-pressed="false"] { filter: grayscale(1); opacity: .45; }
+      .keep .pin-e[aria-pressed="true"] { opacity: 1; background: #0001; }
       .keep .swatches { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; border: 1px solid var(--line);
         border-radius: 8px; background: Canvas; position: absolute; z-index: 5; width: max-content; max-width: 90vw;
         box-shadow: 0 2px 10px #0003; }
