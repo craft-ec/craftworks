@@ -44,11 +44,12 @@ export async function mount(ctx, el) {
       .keep .card:hover .pin, .keep .pin[aria-pressed="true"] { opacity: 1; }
       .keep .pin[aria-pressed="false"] { filter: grayscale(1); }
       .keep .swatches { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; border: 1px solid var(--line);
-        border-radius: 8px; background: Canvas; position: absolute; z-index: 5; }
+        border-radius: 8px; background: Canvas; position: absolute; z-index: 5; width: max-content; max-width: 90vw;
+        box-shadow: 0 2px 10px #0003; }
       .keep .swatches button { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line); }
       .keep .empty { text-align: center; opacity: .6; margin-top: 40px; }
       .keep .said { text-align: center; font-size: .9em; }
-      .keep dialog.editor { position: fixed; width: min(600px, calc(100vw - 32px)); border: 0; border-radius: 8px; padding: 14px 16px;
+      .keep dialog.editor { position: fixed; overflow: visible; width: min(600px, calc(100vw - 32px)); border: 0; border-radius: 8px; padding: 14px 16px;
         box-shadow: 0 4px 24px #0006; display: grid; gap: 8px; }
       .keep dialog.editor[style*="background"] { color: #202124; }
       .keep dialog.editor:not([open]) { display: none; }
