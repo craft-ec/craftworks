@@ -52,16 +52,22 @@ export async function mount(ctx, el) {
     ul.replaceChildren();
     if (!list.length) ul.append(Object.assign(document.createElement("li"), { textContent: "None yet." }));
     const here = location.pathname.split("/")[4];
-    for (const g of list) {
+    // One line per SITE, with the kinds of data it may change; each can be removed on its own.
+    const bySite = new Map();
+    for (const g of list) bySite.set(g.app, [...(bySite.get(g.app) ?? []), g.table]);
+    for (const [app, tables] of bySite) {
       const li = document.createElement("li");
       const code = document.createElement("code");
-      code.textContent = `${g.app.slice(0, 10)}…`;
-      const remove = Object.assign(document.createElement("button"), { type: "button", textContent: "Remove" });
-      remove.onclick = async () => {
-        await auth.identity.revoke(g.app, g.table);
-        drawGrants();
-      };
-      li.append(`“${g.table}” — site `, code, g.app === here ? " (this app) " : " ", remove);
+      code.textContent = `${app.slice(0, 10)}…`;
+      li.append(app === here ? "This app " : "Site ", code, app === here ? "" : "", ": ");
+      tables.forEach((table, i) => {
+        const chip = Object.assign(document.createElement("button"), { type: "button", textContent: `${table} ✕`, title: `Remove its access to your ${table}` });
+        chip.onclick = async () => {
+          await auth.identity.revoke(app, table);
+          drawGrants();
+        };
+        li.append(i ? " " : "", chip);
+      });
       ul.append(li);
     }
   };

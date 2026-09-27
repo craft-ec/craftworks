@@ -2,8 +2,10 @@
 // pinned notes first, archive, search, and grid or list. A PRIVATE page: nothing shows until someone is logged in.
 //
 // The notes are one table of the ACCOUNT (the `data` service), the same on every node of the account. A note is one
-// row: its key an id that sorts by creation, its value JSON { title, body, color, pinned, archived, edited }. A row
-// that is not JSON (the first notes were plain text) is read as a body.
+// row: its key an id that sorts by creation, its value JSON { title, body, color, archived, edited }. A row that is
+// not JSON (the first notes were plain text) is read as a body. PINS are not a note's field: they are the account's
+// one pins table (`data.pins()`, ref `notes:<id>`), the same mechanism every app uses. A note saved with the old
+// `pinned` field still shows pinned, and the field is dropped the first time its pin changes.
 const COLORS = [
   ["", "Default"], ["#faafa8", "Coral"], ["#f39f76", "Peach"], ["#fff8b8", "Sand"], ["#e2f6d3", "Mint"],
   ["#b4ddd3", "Sage"], ["#d4e4ed", "Fog"], ["#aeccdc", "Storm"], ["#d3bfdb", "Dusk"], ["#f6e2dd", "Blossom"],
@@ -79,25 +81,35 @@ export async function mount(ctx, el) {
     </div>`;
   const root = el.querySelector(".keep");
   const said = t => (root.querySelector(".said").textContent = t);
-  let notes;
+  let notes, pins;
   try {
-    notes = await (await ctx.require("data")).table("notes");
+    const data = await ctx.require("data");
+    [notes, pins] = await Promise.all([data.table("notes"), data.pins()]);
   } catch (e) {
     return said(`Could not open your notes: ${e?.message ?? e}`);
   }
 
-  // A row as a note: JSON, or (the first notes) plain text as the body.
+  // A row as a note: JSON, or (the first notes) plain text as the body. `pinned` comes from the account's pins.
+  const ref = key => `notes:${key}`;
   const note = r => {
+    let n = { title: "", body: r.value, color: "", archived: false, edited: 0 };
     try {
-      const n = JSON.parse(r.value);
-      if (n && typeof n === "object") return { key: r.key, title: "", body: "", color: "", pinned: false, archived: false, edited: 0, ...n };
+      const j = JSON.parse(r.value);
+      if (j && typeof j === "object") n = { title: "", body: "", color: "", archived: false, edited: 0, ...j };
     } catch {}
-    return { key: r.key, title: "", body: r.value, color: "", pinned: false, archived: false, edited: 0 };
+    const legacy = n.pinned === true;
+    return { ...n, key: r.key, legacy, pinned: pins.has(ref(r.key)) || legacy };
   };
   const save = (key, n) => {
-    const { title, body, color, pinned, archived } = n;
-    return notes.put(key, JSON.stringify({ title, body, color, pinned, archived, edited: Date.now() })).catch(e => said(`Could not save: ${e?.message ?? e}`));
+    const { title, body, color, archived } = n;
+    return notes.put(key, JSON.stringify({ title, body, color, archived, edited: Date.now() })).catch(e => said(`Could not save: ${e?.message ?? e}`));
   };
+  // Pin or unpin: the account's pins; a note still carrying the old field is saved without it.
+  const pinIt = (n, on) =>
+    Promise.all([
+      pins.set(ref(n.key), on),
+      n.legacy ? save(n.key, { ...n, legacy: false }) : null,
+    ]).catch(e => said(`Could not pin: ${e?.message ?? e}`));
   const remove = key => notes.remove(key).catch(e => said(`Could not delete: ${e?.message ?? e}`));
   const newKey = () =>
     `${Date.now().toString(36).padStart(10, "0")}-${[...crypto.getRandomValues(new Uint8Array(4))].map(b => b.toString(16).padStart(2, "0")).join("")}`;
@@ -155,7 +167,7 @@ export async function mount(ctx, el) {
     const color = composing.color;
     composing = { color: "" };
     tint(composer, "");
-    if (title || body) await save(newKey(), { title, body, color, pinned: false, archived: false });
+    if (title || body) await save(newKey(), { title, body, color, archived: false });
   };
   cBody.addEventListener("focus", open);
   composer.querySelector(".close").onclick = shut;
@@ -184,7 +196,7 @@ export async function mount(ctx, el) {
     const before = note(notes.rows().find(r => r.key === n.key) ?? { key: n.key, value: "" });
     editing = null;
     editor.close();
-    const changed = ["title", "body", "color", "pinned", "archived"].some(k => n[k] !== before[k]);
+    const changed = ["title", "body", "color", "archived"].some(k => n[k] !== before[k]);
     if (changed) await save(n.key, n);
   };
   editor.querySelector(".done").onclick = finish;
@@ -202,7 +214,8 @@ export async function mount(ctx, el) {
   editor.querySelector(".pin-e").onclick = e => {
     editing.pinned = !editing.pinned;
     e.currentTarget.setAttribute("aria-pressed", String(editing.pinned));
-    live();
+    pinIt(editing, editing.pinned);
+    editing.legacy = false;
   };
   editor.querySelector(".palette").onclick = e =>
     palette(e.currentTarget, c => {
@@ -226,9 +239,9 @@ export async function mount(ctx, el) {
     tint(c, n.color);
     if (n.title) c.append(Object.assign(document.createElement("div"), { className: "t", textContent: n.title }));
     if (n.body) c.append(Object.assign(document.createElement("div"), { className: "b", textContent: n.body }));
-    const pin = Object.assign(document.createElement("button"), { type: "button", className: "pin", textContent: "📌", title: n.pinned ? "Unpin" : "Pin" });
-    pin.setAttribute("aria-pressed", String(n.pinned));
-    pin.onclick = e => (e.stopPropagation(), save(n.key, { ...n, pinned: !n.pinned }));
+    const pinButton = Object.assign(document.createElement("button"), { type: "button", className: "pin", textContent: "📌", title: n.pinned ? "Unpin" : "Pin" });
+    pinButton.setAttribute("aria-pressed", String(n.pinned));
+    pinButton.onclick = e => (e.stopPropagation(), pinIt(n, !n.pinned));
     const tools = document.createElement("div");
     tools.className = "tools";
     const tool = (icon, title, run) => {
@@ -237,9 +250,12 @@ export async function mount(ctx, el) {
       tools.append(b);
     };
     tool("🎨", "Background", e => palette(e.currentTarget, color => save(n.key, { ...n, color })));
-    tool(n.archived ? "📤" : "🗃️", n.archived ? "Unarchive" : "Archive", () => save(n.key, { ...n, archived: !n.archived, pinned: false }));
+    tool(n.archived ? "📤" : "🗃️", n.archived ? "Unarchive" : "Archive", () => {
+      save(n.key, { ...n, archived: !n.archived });
+      if (!n.archived && n.pinned) pinIt(n, false); // an archived note is not pinned, as in Keep
+    });
     tool("🗑️", "Delete", () => remove(n.key));
-    c.append(pin, tools);
+    c.append(pinButton, tools);
     c.onclick = () => edit(n);
     c.onkeydown = e => e.key === "Enter" && edit(n);
     return c;
@@ -277,5 +293,6 @@ export async function mount(ctx, el) {
   };
   actions();
   notes.onChange(() => root.isConnected && render());
+  pins.onChange(() => root.isConnected && render());
   render();
 }

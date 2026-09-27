@@ -1,6 +1,6 @@
 // HOME: public and private in one page.
 // - PUBLIC (nobody logged in): a welcome, and Log in / Register, which open auth's dialog.
-// - PRIVATE (logged in): the DESKTOP: the site's apps as icons, the ones this account pinned first. Pins are the table
+// - PRIVATE (logged in): the DESKTOP: the site's apps as icons, the ones this account pinned first. Pins are the account's
 //   the account's (the `data` service), so they are the same on every node of the account.
 // It asks auth quietly (`check`, never a dialog) which view to show, and switches when someone logs in or out.
 export async function mount(ctx, el) {
@@ -36,7 +36,8 @@ export async function mount(ctx, el) {
     // The icons show at once; the pins arrive when the account's desktop table has been read (a table the account
     // never wrote takes the network a while to report absent).
     let pins = null;
-    const pinned = () => new Set((pins?.rows() ?? []).map(r => r.key));
+    // An app's pin is the account's pin of `app:<route>`: the same pins every app uses.
+    const pinned = () => new Set((pins?.refs("app:") ?? []).map(r => r.slice(4)));
     // A tile is the app's link and, beside it (never inside: the loader takes every click on a `#` link), its pin.
     const icon = (a, on) => {
       const tile = document.createElement("div");
@@ -56,7 +57,7 @@ export async function mount(ctx, el) {
         pin.title = on ? "Unpin" : "Pin";
         pin.setAttribute("aria-pressed", String(on));
         pin.onclick = () =>
-          (on ? pins.remove(a.route) : pins.put(a.route, "pinned")).catch(err => ctx.log("pin failed", { what: err?.message ?? String(err) }));
+          pins.set(`app:${a.route}`, !on).catch(err => ctx.log("pin failed", { what: err?.message ?? String(err) }));
         tile.append(pin);
       }
       return tile;
@@ -71,7 +72,7 @@ export async function mount(ctx, el) {
       allGrid.replaceChildren(...ctx.apps.map(a => icon(a, on.has(a.route))));
     };
     render();
-    (await ctx.require("data")).table("pins").then(
+    (await ctx.require("data")).pins().then(
       t => {
         pins = t;
         pins.onChange(render);
