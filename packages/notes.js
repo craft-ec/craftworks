@@ -196,11 +196,20 @@ export async function mount(ctx, el) {
     const r = editor.getBoundingClientRect();
     if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) finish();
   });
+  // Pin and colour take effect at once, as in Keep: the card behind the open note moves or changes while it is open.
+  // Title and body are saved when it closes.
+  const live = () => save(editing.key, { ...editing, title: eTitle.value.trim(), body: eBody.value.trim() });
   editor.querySelector(".pin-e").onclick = e => {
     editing.pinned = !editing.pinned;
     e.currentTarget.setAttribute("aria-pressed", String(editing.pinned));
+    live();
   };
-  editor.querySelector(".palette").onclick = e => palette(e.currentTarget, c => ((editing.color = c), tint(editor, c)));
+  editor.querySelector(".palette").onclick = e =>
+    palette(e.currentTarget, c => {
+      editing.color = c;
+      tint(editor, c);
+      live();
+    });
   editor.querySelector(".archive-e").onclick = () => ((editing.archived = !editing.archived), finish());
   editor.querySelector(".delete-e").onclick = async () => {
     const key = editing.key;

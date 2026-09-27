@@ -18,7 +18,10 @@ export async function start(ctx) {
   const tables = new Map(); // id hex -> table
   listen(said => {
     const t = said.kind === "tail" && tables.get(said.id);
-    if (t) t.took(said.tail.rows);
+    if (t) {
+      ctx.log("table changed", { what: `${t.app}: seq ${said.tail.seq}, ${said.tail.rows.length} row(s), pushed by the node` });
+      t.took(said.tail.rows);
+    }
   });
 
   async function table(app) {
@@ -32,6 +35,7 @@ export async function start(ctx) {
     let rows = [];
     const changed = [];
     const t = {
+      app,
       took: r => {
         rows = r;
         for (const f of changed) f();
@@ -57,11 +61,21 @@ export async function start(ctx) {
     async function write(key, value) {
       const enc = new TextEncoder();
       const p = core.tail_prepare(id, enc.encode(key), enc.encode(value));
+      const t0 = performance.now();
       const r = await auth.identity.sign(p.params, p.seq, p.valueHash);
-      if (!r.signed) throw new Error(`the identity would not sign: ${r.refused ?? JSON.stringify(r)}`);
+      if (!r.signed) {
+        ctx.log("write refused", { what: `${app} seq ${p.seq}: the identity said ${r.refused ?? JSON.stringify(r)}` });
+        core.tail_reset(id);
+        await read();
+        throw new Error(`the identity would not sign: ${r.refused ?? JSON.stringify(r)}`);
+      }
       const [kind, frames] = core.tail_commit(id, r.signed);
       const ok = kind === "put" ? "put" : "updated";
       const said = await ask(frames, x => (x.kind === ok && x.key === name) || x.kind === "refused", `saving to ${app}`, 60000);
+      ctx.log(said.kind === "refused" ? "write refused" : "written", {
+        what: `${app} seq ${p.seq} as ${kind === "put" ? "a PUT" : "an UPDATE (one delta)"}${said.kind === "refused" ? `: ${said.said}` : ""}`,
+        ms: Math.round(performance.now() - t0),
+      });
       if (said.kind === "refused") {
         // The step never landed: drop what this page holds and read the table again, so the next write builds on
         // what the network has.
