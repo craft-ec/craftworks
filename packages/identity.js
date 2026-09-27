@@ -27,5 +27,18 @@ export async function start(ctx) {
     grants: () => call(core.frames_grants(), "listing the apps with access"),
     revoke: (app, table) => call(core.frames_revoke(app, table), "removing an app's access"),
     publicOf: seed => glue.CraftworksCore.public_of(seed),
+    // HANDOVER: ask an earlier build (`<key>:<code hash>`) for the member `pin` opens there. `{ handed }` with its keys,
+    // or its refusal, or `{ missing: true }` when this node never ran that build.
+    handoverFrom: async (prior, pin) => {
+      const [id, frames] = core.frames_handover_from(prior, pin);
+      const key = prior.split(":")[0];
+      const said = await ask(
+        frames,
+        s => (s.kind === "identity" && s.answers.some(a => a.id === id)) || (s.kind === "delegate-missing" && String(s.delegate).includes(key)),
+        "asking an earlier identity build",
+        20000,
+      );
+      return said.kind === "identity" ? said.answers.find(a => a.id === id).answer : { missing: true };
+    },
   };
 }

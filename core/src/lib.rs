@@ -97,6 +97,21 @@ impl Core {
     /// Ask the identity delegate. Returns the id its answer will carry, and the frames.
     pub fn frames_identity(&mut self, req: &Request) -> Result<(u32, Vec<Vec<u8>>), String> {
         let (_, key) = wire::delegate_from_code(&self.identity);
+        self.frames_identity_at(key, req)
+    }
+
+    /// Ask an EARLIER build of the identity delegate, named `<key>:<code hash>` (base58, as the manifest's
+    /// `identity_prior` lists them): only for `Handover`, moving a member to this build.
+    pub fn frames_handover(&mut self, prior: &str, pin: String) -> Result<(u32, Vec<Vec<u8>>), String> {
+        let b32 = |s: &str| -> Result<[u8; 32], String> {
+            bs58::decode(s).into_vec().ok().and_then(|v| v.try_into().ok()).ok_or_else(|| format!("not a 32-byte base58 id: {s}"))
+        };
+        let (k, c) = prior.split_once(':').ok_or("an earlier build is <key>:<code hash>")?;
+        let key = freenet_stdlib::prelude::DelegateKey::new(b32(k)?, freenet_stdlib::prelude::CodeHash::new(b32(c)?));
+        self.frames_identity_at(key, &Request::Handover { pin })
+    }
+
+    fn frames_identity_at(&mut self, key: freenet_stdlib::prelude::DelegateKey, req: &Request) -> Result<(u32, Vec<Vec<u8>>), String> {
         let id = self.next_id;
         self.next_id += 1;
         let s = self.stream();
@@ -231,6 +246,11 @@ mod js {
         /// `data`: the account's data key seed (32 bytes), or empty.
         pub fn frames_provision(&mut self, seed: &[u8], did: &[u8], pin: String, data: &[u8]) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Provision { seed: b32(seed)?, did: b32(did)?, pin, data: data.to_vec() })
+        }
+        /// `[id, frames]` of a Handover asked of an earlier build (`<key>:<code hash>`).
+        pub fn frames_handover_from(&mut self, prior: &str, pin: String) -> Result<js_sys::Array, JsValue> {
+            let (id, f) = self.0.frames_handover(prior, pin).map_err(err)?;
+            Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
         }
         pub fn frames_unlock(&mut self, pin: String) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Unlock { pin })
@@ -434,6 +454,20 @@ mod tests {
         assert_eq!((a, b), (1, 2));
         assert!(!fa.is_empty());
         assert!(!c.frames_register_identity().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_handover_is_addressed_to_the_earlier_build_it_names() {
+        let mut c = Core::new(b"\0asm\x01\0\0\0");
+        let prior = "AP3BuSjFrhJ45Fg7iTvsFb2ER8Hda3iXR3eXjTfrLvnQ:9gcqi8176H7WehFLSqsT1s6BZBxJD4DfX2X4g2Sma7r2";
+        let (_, to_prior) = c.frames_handover(prior, "123456".into()).unwrap();
+        let has = |f: &[Vec<u8>], k: &[u8]| f.iter().any(|b| b.windows(k.len()).any(|w| w == k));
+        let key = bs58::decode("AP3BuSjFrhJ45Fg7iTvsFb2ER8Hda3iXR3eXjTfrLvnQ").into_vec().unwrap();
+        assert!(has(&to_prior, &key), "addressed to the earlier build's key");
+        let (_, to_this) = c.frames_identity(&Request::Handover { pin: "123456".into() }).unwrap();
+        assert!(!has(&to_this, &key), "control: this build's own request does not carry it");
+        assert!(c.frames_handover("no-colon", "1".into()).is_err());
+        assert!(c.frames_handover("abc:def", "1".into()).is_err());
     }
 
     #[test]

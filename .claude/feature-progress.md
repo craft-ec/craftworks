@@ -101,3 +101,10 @@ device + the same PIN opens the same account. Adding a second device: pairing wi
   the catalog read tables as before and list what they find. Delegate: catalog writable by home site or any site with
   some grant (re-key). Verified private node: new account → "tables: new", PUT; pin → pins PUT + listed; reload →
   tables 2 rows, pins 1 row. B app v26. The prolly tree joins each catalog entry when flush lands.
+- [x] Handover walk: manifest `identity_prior` (from contracts/identity-history, appended by publish per new build);
+  a PIN the current build does not know is asked of earlier builds newest first, the member provisioned here.
+  Verified private node: PIN 556000 (made by 826bb69's build) → "member moved from AP3BuSjF…", its note back.
+- [x] Catalog completeness: only a catalog made at registration is `complete`; a later one (older account) never
+  hides unlisted tables; a table is listed BEFORE its first write.
+- [x] Publish: a piece a peer refuses (peers with a full disk budget: 166 MiB / 128 MiB) is a missing piece, retried,
+  judged by k-of-n — not fatal. B app v27, loader v9.

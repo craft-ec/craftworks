@@ -56,15 +56,23 @@ export async function start(ctx) {
   function catalog() {
     return (catalogOpen ??= open("tables", { catalog: true }));
   }
+  // Listed: true. Not listed in a COMPLETE catalog (one made with the account, so every table since went through
+  // it): false, nothing to read. Otherwise (no catalog, or one made later for an account that already had tables):
+  // null, unknown, read the table.
   async function listed(name) {
     const c = await catalog();
     if (c.rows().some(r => r.key === name)) return true;
-    if (c.absent) return null; // no catalog: unknown, read the table
-    return false;
+    const self = c.rows().find(r => r.key === "tables");
+    const complete = !!self && (() => { try { return JSON.parse(self.value).complete === true; } catch { return false; } })();
+    return complete ? false : null;
   }
   async function list(name) {
     const c = await catalog();
-    if (!c.rows().some(r => r.key === name)) await c.put(name, JSON.stringify({ at: Date.now() }));
+    if (c.rows().some(r => r.key === name)) return;
+    // No catalog yet (an account from before it): this write creates it, NOT complete, since tables may exist that it
+    // does not name.
+    if (c.absent && !c.rows().length) await c.put("tables", JSON.stringify({ at: Date.now(), complete: false }));
+    await c.put(name, JSON.stringify({ at: Date.now() }));
   }
 
   function table(name) {
@@ -115,7 +123,7 @@ export async function start(ctx) {
             .catch(e => ctx.log("not listed", { what: `${app}: ${e.message}` }));
       }
       // A new account's catalog is created now, so the next page finds it.
-      if (isCatalog && t.absent && s.fresh) await t.put("tables", JSON.stringify({ at: Date.now() }));
+      if (isCatalog && t.absent && s.fresh) await t.put("tables", JSON.stringify({ at: Date.now(), complete: true }));
       return t;
     })();
     tables.set(idHex, ready);
@@ -150,6 +158,9 @@ export async function start(ctx) {
     // One write: prepared by the core, signed by the identity delegate with the data key, sent as one delta.
     async function write(key, value) {
       if (!(await allowed())) throw new Error(`this app may not change your “${app}”: allow it when your node asks`);
+      // Listed BEFORE it is created: a failure between the two leaves a listed table that is empty, never data the
+      // catalog does not name.
+      if (t.absent && !isCatalog) await list(app);
       const enc = new TextEncoder();
       const p = core.tail_prepare(id, enc.encode(key), enc.encode(value));
       const t0 = performance.now();
@@ -177,11 +188,7 @@ export async function start(ctx) {
         throw new Error(`the node refused the write: ${said.said}`);
       }
       t.took(JSON.parse(core.tail_rows(id)).rows);
-      if (t.absent) {
-        t.absent = false;
-        // Created: list it, so every page after this one reads it.
-        if (!isCatalog) await list(app).catch(e => ctx.log("not listed", { what: `${app}: ${e.message}` }));
-      }
+      t.absent = false;
     }
     return ready;
   }

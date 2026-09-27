@@ -24,6 +24,12 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::Message;
 
+/// A delegate build as the page addresses it: `<key>:<code hash>`, both base58.
+fn delegate_id(wasm: &[u8]) -> String {
+    let (_, key) = wire::delegate_from_code(wasm);
+    format!("{}:{}", key.encode(), key.code_hash().encode())
+}
+
 fn read(p: &Path) -> Result<Vec<u8>> {
     std::fs::read(p).with_context(|| format!("reading {}", p.display()))
 }
@@ -108,7 +114,12 @@ async fn put_all(
     let mut owed: std::collections::HashMap<String, &Piece> = pieces.iter().map(|p| (p.address.clone(), *p)).collect();
     let mut stream = 1u32;
     let quiet = Duration::from_secs(60);
+    // REFUSED pieces: a peer on the way would not store one (a full peer's disk budget, say). A piece is one of a
+    // package's n, any k of which rebuild it, so a refusal is a missing piece like an unanswered one: tried again
+    // next round, and the package is judged by the k it needs, never by one peer.
+    let mut refused: std::collections::HashMap<String, &Piece> = Default::default();
     for attempt in 1..=TRIES {
+        owed.extend(refused.drain());
         for p in owed.values() {
             stream += 1;
             for f in wire::frame_put(p.contract.clone(), WrappedState::new(p.state.clone()), stream).map_err(|e| anyhow::anyhow!(e))? {
@@ -128,25 +139,28 @@ async fn put_all(
                         owed.remove(&key);
                     }
                     wire::Incoming::PutFailed { key, said } | wire::Incoming::PutFailedByText { key, said } if owed.contains_key(&key) => {
-                        bail!("the node refused piece {key}: {said}")
+                        eprintln!("piece {key} refused: {said}");
+                        if let Some(p) = owed.remove(&key) {
+                            refused.insert(key, p);
+                        }
                     }
                     _ => {}
                 },
                 Ok(Some(Ok(_))) => {}
             }
         }
-        if owed.is_empty() {
+        if owed.is_empty() && refused.is_empty() {
             break;
         }
-        eprintln!("{} piece(s) unanswered 60 s after the last send (try {attempt} of {TRIES})", owed.len());
+        eprintln!("{} piece(s) unanswered 60 s after the last send, {} refused (try {attempt} of {TRIES})", owed.len(), refused.len());
         // Every package can be rebuilt already: the rest are spares, not worth another minute.
-        if enough(&owed.keys().cloned().collect()) {
+        if enough(&owed.keys().chain(refused.keys()).cloned().collect()) {
             break;
         }
     }
     drop(queue);
     sender.abort();
-    Ok(owed.into_keys().collect())
+    Ok(owed.into_keys().chain(refused.into_keys()).collect())
 }
 
 struct Driver {
@@ -192,6 +206,12 @@ impl Driver {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let a: Vec<String> = std::env::args().skip(1).collect();
+    if let [flag, wasm] = a.as_slice() {
+        if flag == "--delegate-key" {
+            println!("{}", delegate_id(&read(Path::new(wasm))?));
+            return Ok(());
+        }
+    }
     let [ws, root] = a.as_slice() else { bail!("usage: publish-craftworks <ws_url> <craftworks_root>") };
     probe::node::allowed_port(ws)?;
     let app = PathBuf::from(root);
@@ -308,8 +328,20 @@ async fn main() -> Result<()> {
             println!("package {name}: {have} of {} pieces accepted (any {k} rebuild it)", addresses.len());
         }
     }
+    // EARLIER IDENTITY BUILDS: each build is a new delegate, and the members on a node stay in the build that made
+    // them. The page asks these (newest first) to hand a member over on a PIN its own build does not know. The list
+    // is contracts/identity-history, one build per line, appended here when this build is new.
+    let history_file = contracts.join("identity-history");
+    let this_build = delegate_id(&read(&built.join("identity.wasm"))?);
+    let mut history: Vec<String> = std::fs::read_to_string(&history_file).unwrap_or_default().lines().map(str::to_string).filter(|l| !l.is_empty()).collect();
+    if history.last() != Some(&this_build) {
+        history.push(this_build.clone());
+        std::fs::write(&history_file, history.join("\n") + "\n").context("writing contracts/identity-history")?;
+    }
+    let prior: Vec<String> = history.iter().rev().filter(|l| **l != this_build).take(8).map(|l| format!("\"{l}\"")).collect();
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ \"/\": [\"home\"], \"/account\": [\"account\"], \"/notes\": [\"notes\"] }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\" }} ],\n  \"uses\": [\"notes\", \"pins\"],\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ \"/\": [\"home\"], \"/account\": [\"account\"], \"/notes\": [\"notes\"] }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\" }} ],\n  \"uses\": [\"notes\", \"pins\"],\n  \"identity_prior\": [{}],\n  \"packages\": {{\n{}\n  }} }}\n",
+        prior.join(", "),
         entries.join(",\n")
     );
 

@@ -77,6 +77,29 @@ export async function start(ctx) {
     return JSON.parse(core.members(setCode, s.didBytes));
   }
 
+  // Log in with the PIN. A member made by an EARLIER build of the identity delegate is not in this one (a delegate's
+  // secrets stay with its build): on a PIN this build does not know, the earlier builds are asked, newest first, and
+  // the member the PIN opens there is moved here, so an update never costs anyone their login.
+  async function unlock(pin) {
+    const r = await id.unlock(pin);
+    if (!r.wrongPin) return r;
+    for (const prior of ctx.identityPrior) {
+      let h;
+      try {
+        h = await id.handoverFrom(prior, pin);
+      } catch (e) {
+        ctx.log("earlier build", { what: `${prior.slice(0, 12)}…: ${e.message}` });
+        continue;
+      }
+      if (!h.handed) continue;
+      const bytes = x => (x ? hexBytes(x) : new Uint8Array(0));
+      const p = await id.provision(bytes(h.handed.seed), bytes(h.handed.did), pin, bytes(h.handed.data));
+      ctx.log("member moved", { what: `from the earlier build ${prior.slice(0, 12)}…: ${p.unlocked ? "logged in" : JSON.stringify(p)}` });
+      return p;
+    }
+    return r;
+  }
+
   // This node as a member of the account the words name. Kept across a retry with another PIN, so one attempt
   // mints one member key.
   let joining = null;
@@ -204,7 +227,7 @@ export async function start(ctx) {
         });
       }
       const device = q("form.device");
-      on(device, () => id.unlock(device.pin.value));
+      on(device, () => unlock(device.pin.value));
 
       const words = q("form.words");
       on(words, async () => {

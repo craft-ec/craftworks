@@ -15,7 +15,7 @@ export async function run(boot) {
   const loaded = new Map(); // name -> Promise of what `require` gives
   let manifest;
 
-  const ctx = { params: boot.params, log: boot.log, on: boot.on, require, route: "/", app: "", apps: [], uses: [], actions: {} };
+  const ctx = { params: boot.params, log: boot.log, on: boot.on, require, route: "/", app: "", apps: [], uses: [], identityPrior: [], actions: {} };
   globalThis.app = ctx;
 
   // A package, fetched and checked by the wrapper, the first time anything asks for it. What it gives depends on its
@@ -201,6 +201,9 @@ export async function run(boot) {
     ctx.apps = manifest.apps ?? [];
     // The kinds of the person's data the site USES (["notes", "pins"]): asked for together, in one prompt.
     ctx.uses = manifest.uses ?? [];
+    // Earlier builds of the identity delegate (`<key>:<code hash>`, newest first): where a member made before this
+    // build still is, until its next login moves it here.
+    ctx.identityPrior = manifest.identity_prior ?? [];
     document.title = manifest.app;
     ctx.log("manifest read", {
       what: `${manifest.app}: ${Object.keys(manifest.packages).length} packages, ${Object.keys(manifest.pages).length} pages`,
