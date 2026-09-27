@@ -9,9 +9,11 @@ export function mount(ctx, el) {
       .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid #8884; padding-bottom: 8px; }
       .bar .home { text-decoration: none; font-size: 1.1rem; }
       .bar .name { font-weight: 600; }
-      .bar .actions { display: flex; gap: 10px; }
+      .bar .actions { display: flex; gap: 10px; align-items: center; }
       .bar .actions button { border: 0; background: none; padding: 2px 4px; cursor: pointer; font: inherit; }
       .bar .actions button:hover { background: #8882; border-radius: 4px; }
+      .bar .actions button[aria-pressed="true"] { background: #8883; border-radius: 4px; }
+      .bar .actions .search { font: inherit; padding: 4px 10px; border: 1px solid #8885; border-radius: 16px; width: 16em; }
       .bar .account { margin-left: auto; }
     </style>
     <nav class="bar">
@@ -26,9 +28,20 @@ export function mount(ctx, el) {
     const actions = el.querySelector(".actions");
     actions.replaceChildren(
       ...(ctx.actions[ctx.route] ?? []).map(a => {
+        // A search box ({ search: fn, placeholder, value }) or a button ({ label, run, on }).
+        if (a.search) {
+          const input = document.createElement("input");
+          input.type = "search";
+          input.className = "search";
+          input.placeholder = a.placeholder ?? "Search";
+          input.value = a.value ?? "";
+          input.oninput = () => a.search(input.value);
+          return input;
+        }
         const b = document.createElement("button");
         b.type = "button";
         b.textContent = a.label;
+        if (a.on) b.setAttribute("aria-pressed", "true");
         b.onclick = () => a.run();
         return b;
       }),
