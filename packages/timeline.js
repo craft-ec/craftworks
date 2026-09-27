@@ -1,5 +1,5 @@
 // THE TRACE, the loader's own: an overlay with two tabs. LOADING is the page's log, in order. STACK is the app as its
-// manifest names it — the wrapper, the loader, the layout's slots, the pages, and every package with its address and
+// manifest names it — the wrapper, the loader, the layout's slots, the pages, and every package with its pieces (k data + m parity) and
 // whether it is loaded yet. It only reads; it changes nothing.
 export function mount(ctx, el, stack) {
   el.innerHTML = `
@@ -59,7 +59,7 @@ export function mount(ctx, el, stack) {
       return by ? `via <b>${esc(by)}</b>` : stack.loaded(name) ? "the loader" : "<i>not asked for yet</i>";
     };
     const pkgs = Object.entries(m.packages).map(([name, p]) =>
-      row([`<b>${esc(name)}</b>`, placed(name), esc(p.kind), short(p.address), short(p.sha256), stack.loaded(name) ? "loaded" : "not yet"]),
+      row([`<b>${esc(name)}</b>`, placed(name), esc(p.kind), esc(`${p.k}+${p.m}`), short(p.sha256), stack.loaded(name) ? "loaded" : "not yet"]),
     );
     pane.innerHTML = `
       <table>
@@ -69,7 +69,7 @@ export function mount(ctx, el, stack) {
         ${pages.join("")}
       </table>
       <h3 style="font-size:.9rem;margin:10px 0 4px">Packages (${Object.keys(m.packages).length})</h3>
-      <table><thead><tr><th>name</th><th>placed in</th><th>kind</th><th>address</th><th>sha256</th><th>now</th></tr></thead>${pkgs.join("")}</table>`;
+      <table><thead><tr><th>name</th><th>placed in</th><th>kind</th><th>pieces (k+m)</th><th>sha256</th><th>now</th></tr></thead>${pkgs.join("")}</table>`;
   }
 
   show("loading");

@@ -12,9 +12,14 @@
 //! - **Wrong PINs:** five in a row, by anyone, lock PIN unlock on this device (a new member refused for a taken PIN
 //!   counts too: it reveals that PIN opens a member). A good unlock clears the count. A locked
 //!   device is opened by a key file: `Provision` with a member's own key sets its PIN anew and clears the lock.
-//! - **Sessions:** an unlock opens a session for that app, naming one member, under a random token the page holds in
-//!   memory. Who, Sign and Export all go through it. The person's own tools (no origin) have one session too.
+//! - **Sessions:** an unlock opens a session for that APP on this device, naming one member, kept here until the app
+//!   logs out (so a reload, another tab or tomorrow's visit is still logged in, as a website's is). The node attests
+//!   which app asks, so one app's session is never another's. Who, Sign and Export all go through it. The person's
+//!   own tools (no origin) have one session too.
 //! - **Export** (the key file): the member's home app, or the person's own tools.
+//! - **Recovery words:** a member made by "register with this device" (or by logging in with the words) also keeps
+//!   its account's RECOVERY ENTROPY: the BIP39 words the owner key derives from. The Account page shows them
+//!   (`Recovery`: home app or own tools, with a session), so the person can write them down whenever they choose.
 //! - **Sign:** the Register's one signed message (`Params::signed_message`, non-terminal). A tail signs the same
 //!   message over its body hash, so one verb covers both. Rules, in order:
 //!   0. an open session names the member;
@@ -42,24 +47,27 @@ mod delegate;
 /// Every identity message starts with this, so a page tells an identity answer from any other delegate's.
 pub const MAGIC: &[u8; 4] = b"ID01";
 
-/// What a page asks. `id` is the page's own, returned with the answer. `session` is a random token the page makes
-/// and keeps in memory; the identity remembers, per app, the token that last unlocked and which member it opened.
+/// What a page asks. `id` is the page's own, returned with the answer. The session is the asking app's (the node
+/// names the app), so no request carries one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Request {
     /// "Log in with this device": a new member (a 32-byte ed25519 seed the page minted, and the DID it belongs to)
     /// under a PIN no other member on this device has. An member's own key again (a key file) sets its PIN anew.
     /// Opens a session on it.
-    Provision { seed: [u8; 32], did: [u8; 32], pin: String, session: [u8; 32] },
+    /// `recovery`: the account's BIP39 entropy (16 or 32 bytes), when this device holds it; empty otherwise.
+    Provision { seed: [u8; 32], did: [u8; 32], pin: String, recovery: Vec<u8> },
     /// Open a session on the member this PIN belongs to.
-    Unlock { pin: String, session: [u8; 32] },
+    Unlock { pin: String },
     /// Close this app's session.
     Lock,
     /// The session's member.
-    Who { session: [u8; 32] },
+    Who,
     /// Sign `params.signed_message(false, seq, value_hash)` with the session's member.
-    Sign { session: [u8; 32], params: Vec<u8>, seq: u64, value_hash: [u8; HASH_LEN] },
+    Sign { params: Vec<u8>, seq: u64, value_hash: [u8; HASH_LEN] },
     /// The session member's seed, for a key file. Its home app, or the person's own tools.
-    Export { session: [u8; 32] },
+    Export,
+    /// The session member's recovery entropy (its account's words). Home app or own tools.
+    Recovery,
 }
 
 /// What the identity answers.
@@ -76,6 +84,7 @@ pub enum Answer {
     /// The 64-byte ed25519 signature.
     Signed { sig: Vec<u8> },
     Exported { seed: [u8; 32] },
+    Recovery { entropy: Vec<u8> },
     Refused(Why),
 }
 
@@ -87,10 +96,14 @@ pub enum Why {
     OtherDid,
     /// Export asked by an app that is not the member's home.
     NotHome,
-    /// This app has no open session with that token: ask for the PIN.
+    /// This app has no open session on this device: ask for the PIN.
     NoSession,
     /// A PIN must be 6 to 64 characters.
     BadPin,
+    /// Recovery entropy is 16 or 32 bytes (12 or 24 words).
+    BadRecovery,
+    /// This member's device does not hold its account's recovery words.
+    NoRecovery,
     /// The bytes are not one Register's params.
     BadParams,
     /// The params name a quorum or another key.
@@ -149,7 +162,7 @@ pub const MEMBER: &[u8] = b"identity_member/";
 pub const PIN: &[u8] = b"identity_pin/";
 /// Wrong PINs in a row on this device (one byte).
 pub const TRIES: &[u8] = b"identity_tries";
-/// `SESSION ‖ app contract id` (all zero: own tools) → `token ‖ public key` (empty: closed).
+/// `SESSION ‖ app contract id` (all zero: own tools) → the public key of the member it opened (empty: closed).
 pub const SESSION: &[u8] = b"identity_session/";
 /// `GUARD ‖ params hash` → `seq ‖ value hash` of the last signature for that record.
 pub const GUARD: &[u8] = b"identity_guard/";
@@ -161,6 +174,8 @@ struct Member {
     pin: [u8; 32],
     /// `None`: made by the person's own tools.
     home: Option<[u8; 32]>,
+    /// The account's BIP39 entropy, if this device holds it (empty: not held).
+    recovery: Vec<u8>,
 }
 
 fn pin_hash(pin: &str) -> [u8; 32] {
@@ -177,6 +192,8 @@ impl Member {
                 out.extend_from_slice(&h);
             }
         }
+        out.push(self.recovery.len() as u8);
+        out.extend_from_slice(&self.recovery);
         out
     }
 
@@ -184,12 +201,25 @@ impl Member {
         let (seed, rest) = b.split_at_checked(32)?;
         let (did, rest) = rest.split_at_checked(32)?;
         let (pin, rest) = rest.split_at_checked(32)?;
-        let home = match rest {
-            [0] => None,
-            [1, h @ ..] if h.len() == 32 => Some(h.try_into().ok()?),
+        let (home, rest) = match rest.split_first()? {
+            (0, r) => (None, r),
+            (1, r) => {
+                let (h, r) = r.split_at_checked(32)?;
+                (Some(h.try_into().ok()?), r)
+            }
             _ => return None,
         };
-        Some(Member { seed: seed.try_into().ok()?, did: did.try_into().ok()?, pin: pin.try_into().ok()?, home })
+        let (&n, recovery) = rest.split_first()?;
+        if recovery.len() != n as usize {
+            return None;
+        }
+        Some(Member {
+            seed: seed.try_into().ok()?,
+            did: did.try_into().ok()?,
+            pin: pin.try_into().ok()?,
+            home,
+            recovery: recovery.to_vec(),
+        })
     }
 
     fn key(&self) -> SigningKey {
@@ -227,18 +257,16 @@ fn session_name(origin: Origin) -> Option<Vec<u8>> {
     }
 }
 
-/// The member `origin`'s session with this token opened, if it is still open.
-fn session<H: Host>(h: &H, origin: Origin, token: &[u8; 32]) -> Option<Member> {
-    let s = h.get_secret(&session_name(origin)?)?;
-    let (t, public) = s.split_at_checked(32)?;
-    (t == token).then_some(())?;
-    member(h, public)
+/// The member `origin`'s session opened, if it is still open.
+fn session<H: Host>(h: &H, origin: Origin) -> Option<Member> {
+    let public = h.get_secret(&session_name(origin)?)?;
+    member(h, &public)
 }
 
-/// Open `origin`'s session on `a` under `token`, and clear the try count.
-fn open<H: Host>(h: &mut H, origin: Origin, token: &[u8; 32], a: &Member) -> Answer {
+/// Open `origin`'s session on `a`, and clear the try count.
+fn open<H: Host>(h: &mut H, origin: Origin, a: &Member) -> Answer {
     let Some(name) = session_name(origin) else { return Answer::Refused(Why::NotForDelegates) };
-    if !h.set_secret(&name, &[&token[..], &a.public()].concat()) || !h.set_secret(TRIES, &[0]) {
+    if !h.set_secret(&name, &a.public()) || !h.set_secret(TRIES, &[0]) {
         return Answer::Refused(Why::NotSaved);
     }
     a.unlocked()
@@ -262,9 +290,12 @@ pub fn serve<H: Host>(h: &mut H, req: Request, origin: Origin) -> Answer {
         return Refused(Why::NotForDelegates);
     }
     match req {
-        Request::Provision { seed, did, pin, session: token } => {
+        Request::Provision { seed, did, pin, recovery } => {
             if !pin_ok(&pin) {
                 return Refused(Why::BadPin);
+            }
+            if !matches!(recovery.len(), 0 | 16 | 32) {
+                return Refused(Why::BadRecovery);
             }
             let pin = pin_hash(&pin);
             let public = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
@@ -289,9 +320,11 @@ pub fn serve<H: Host>(h: &mut H, req: Request, origin: Origin) -> Answer {
                     if a.pin != pin && !h.set_secret(&[PIN, &a.pin[..]].concat(), &[]) {
                         return Refused(Why::NotSaved);
                     }
-                    Member { pin, ..a }
+                    // A key file brings no words; words already held stay.
+                    let recovery = if recovery.is_empty() { a.recovery.clone() } else { recovery };
+                    Member { pin, recovery, ..a }
                 }
-                None => Member { seed, did, pin, home: origin_id(origin) },
+                None => Member { seed, did, pin, home: origin_id(origin), recovery },
             };
             // The member before its PIN entry: a crash between leaves a member its key file can reach, never a
             // PIN that points at nothing.
@@ -300,15 +333,15 @@ pub fn serve<H: Host>(h: &mut H, req: Request, origin: Origin) -> Answer {
             {
                 return Refused(Why::NotSaved);
             }
-            open(h, origin, &token, &a)
+            open(h, origin, &a)
         }
-        Request::Unlock { pin, session: token } => {
+        Request::Unlock { pin } => {
             let t = tries(h);
             if t >= MAX_TRIES {
                 return Locked;
             }
             match by_pin(h, &pin_hash(&pin)) {
-                Some(a) => open(h, origin, &token, &a),
+                Some(a) => open(h, origin, &a),
                 None => {
                     // The try is counted before the answer leaves, or a crash would give a free guess.
                     if !h.set_secret(TRIES, &[t + 1]) {
@@ -326,17 +359,23 @@ pub fn serve<H: Host>(h: &mut H, req: Request, origin: Origin) -> Answer {
             Some(name) if h.set_secret(&name, &[]) => LoggedOut,
             _ => Refused(Why::NotSaved),
         },
-        Request::Who { session: token } => match session(h, origin, &token) {
+        Request::Who => match session(h, origin) {
             Some(a) => a.unlocked(),
             None => Refused(Why::NoSession),
         },
-        Request::Export { session: token } => match session(h, origin, &token) {
+        Request::Export => match session(h, origin) {
             None => Refused(Why::NoSession),
             Some(a) if origin != Origin::Local && a.home != origin_id(origin) => Refused(Why::NotHome),
             Some(a) => Exported { seed: a.seed },
         },
-        Request::Sign { session: token, params, seq, value_hash } => {
-            let Some(a) = session(h, origin, &token) else { return Refused(Why::NoSession) };
+        Request::Recovery => match session(h, origin) {
+            None => Refused(Why::NoSession),
+            Some(a) if origin != Origin::Local && a.home != origin_id(origin) => Refused(Why::NotHome),
+            Some(a) if a.recovery.is_empty() => Refused(Why::NoRecovery),
+            Some(a) => Recovery { entropy: a.recovery },
+        },
+        Request::Sign { params, seq, value_hash } => {
+            let Some(a) = session(h, origin) else { return Refused(Why::NoSession) };
             let Some(p) = Params::parse(&params) else { return Refused(Why::BadParams) };
             let key = a.key();
             match &p.authority {

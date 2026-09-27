@@ -1,28 +1,28 @@
-//! A person's ACCOUNT on the network (ARCHITECTURE §4): the DID and its vault.
+//! A person's ACCOUNT on the network (ARCHITECTURE §4): the DID, derived from RECOVERY WORDS.
 //!
-//! - **Owner seat:** a Register under the OWNER key, label `seat`. Its contract id IS the DID
-//!   (`did:craftec:<id>`); its value names the first member.
-//! - **Vault:** a Register under the owner key, label `vault`. Its value is the owner key encrypted under a slow hash of
-//!   the person's passphrase. Anyone can copy it and guess offline, so the passphrase must be long.
+//! - **Words:** BIP39, 12 or 24 (16 or 32 bytes of entropy), the same words a deterministic wallet uses. The OWNER key
+//!   is derived from them by SLIP-0010 (ed25519) at [`PATH`], a path of Craftworks' own, so words shared with a
+//!   bitcoin wallet give an owner key unrelated to any of that wallet's keys.
+//! - **Owner seat:** a Register under the owner key, label `seat`, holding one fixed record. Its contract id IS the DID
+//!   (`did:craftec:<id>`). So the words alone name the account: nothing to look up, nothing else to remember.
+//! - The seat's record is the same bytes whoever writes it (ed25519 signs deterministically), so putting it again
+//!   from another device, or when logging in with the words, is the same PUT and never a second record.
 //!
-//! The page makes both at the first "log in with this device": it mints the owner key (the caller passes randomness;
-//! this crate has none), signs the two records, and forgets the owner key. The passphrase gets it back.
+//! The page makes the entropy (this crate has no randomness) and the identity delegate keeps it with the member, so
+//! the Account page can show the words when the person sets up recovery.
 
-use argon2::{Algorithm, Argon2, Version};
-use chacha20poly1305::aead::{Aead, KeyInit};
-use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+use bip39::Mnemonic;
 use craftec_register_contract::wire::{Params, RegState, Record, Signed};
 use ed25519_dalek::{Signer, SigningKey};
 use freenet_stdlib::prelude::{ContractContainer, WrappedState};
+use hmac::{Hmac, Mac};
+use sha2::Sha512;
 
 pub const SEAT_LABEL: &[u8] = b"seat";
-pub const VAULT_LABEL: &[u8] = b"vault";
-const SEAT_MAGIC: &[u8; 4] = b"ST01";
-const VAULT_MAGIC: &[u8; 4] = b"VT01";
-/// argon2id: 19 MiB, 2 passes, 1 lane (OWASP's floor), written into each vault so it can be raised later.
-const M_KIB: u32 = 19 * 1024;
-const T: u32 = 2;
-const P: u32 = 1;
+/// The seat's one record: the account exists. Members live in the member Set, never here.
+const SEAT_VALUE: &[u8] = b"ST01";
+/// SLIP-0010 ed25519, every step hardened: m/44'/25458'/0' (25458 = "cr"; no coin's, so no wallet key collides).
+pub const PATH: [u32; 3] = [44, 25458, 0];
 
 /// One Register to PUT: its contract, its state, and the id the node names it by.
 pub struct Put {
@@ -32,77 +32,62 @@ pub struct Put {
     pub state: WrappedState,
 }
 
-/// A one-key Register holding one record at seq 1, signed by `key`.
-fn first_record(register_code: &[u8], key: &SigningKey, label: &[u8], value: Vec<u8>) -> Put {
-    let params = wire::register_params(&key.verifying_key().to_bytes(), label);
+/// The words for this entropy (16 or 32 bytes).
+pub fn words(entropy: &[u8]) -> Option<String> {
+    matches!(entropy.len(), 16 | 32).then_some(())?;
+    Some(Mnemonic::from_entropy(entropy).ok()?.to_string())
+}
+
+/// The entropy of 12 or 24 words; `None` for anything that is not a valid BIP39 English phrase (checksum included).
+pub fn entropy(words: &str) -> Option<Vec<u8>> {
+    let m = Mnemonic::parse_normalized(&words.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()).ok()?;
+    matches!(m.word_count(), 12 | 24).then(|| m.to_entropy())
+}
+
+fn hmac512(key: &[u8], parts: &[&[u8]]) -> [u8; 64] {
+    let mut mac = Hmac::<Sha512>::new_from_slice(key).expect("HMAC takes any key");
+    for p in parts {
+        mac.update(p);
+    }
+    mac.finalize().into_bytes().into()
+}
+
+/// SLIP-0010 ed25519: the private key at `path` (every index hardened) from a BIP32 seed.
+pub fn slip10(seed: &[u8], path: &[u32]) -> [u8; 32] {
+    let i = hmac512(b"ed25519 seed", &[seed]);
+    let (mut k, mut c) = (<[u8; 32]>::try_from(&i[..32]).unwrap(), <[u8; 32]>::try_from(&i[32..]).unwrap());
+    for &n in path {
+        let i = hmac512(&c, &[&[0], &k, &(n | 0x8000_0000).to_be_bytes()]);
+        k.copy_from_slice(&i[..32]);
+        c.copy_from_slice(&i[32..]);
+    }
+    k
+}
+
+/// The owner key's seed from the words' entropy (BIP39 seed with no passphrase, then [`PATH`]).
+pub fn owner_seed(entropy: &[u8]) -> Option<[u8; 32]> {
+    let m = Mnemonic::from_entropy(entropy).ok()?;
+    Some(slip10(&m.to_seed_normalized(""), &PATH))
+}
+
+/// The owner seat for these words: the Register to PUT, whose id is the DID.
+pub fn seat(register_code: &[u8], entropy: &[u8]) -> Option<Put> {
+    let owner = SigningKey::from_bytes(&owner_seed(entropy)?);
+    let params = wire::register_params(&owner.verifying_key().to_bytes(), SEAT_LABEL);
     let p = Params::parse(&params).expect("our own params parse");
+    let value = SEAT_VALUE.to_vec();
     let value_hash = *blake3::hash(&value).as_bytes();
-    let sig = key.sign(&p.signed_message(false, 1, &value_hash)).to_bytes();
+    let sig = owner.sign(&p.signed_message(false, 1, &value_hash)).to_bytes();
     let signed = Signed { terminal: false, seq: 1, value_hash, bitmap: 0, sigs: vec![sig] };
     let record = Record::new(signed, value).expect("a value within the cap, hashed above");
     let state = RegState { record: Some(record), evidence: None }.encode(&p.authority);
     let (id, contract, state) = wire::puts::contract(register_code, &params, &state);
     let id_bytes = contract.key().id().as_bytes().try_into().expect("a contract id is 32 bytes");
-    Put { id, id_bytes, contract, state }
+    Some(Put { id, id_bytes, contract, state })
 }
 
-/// The vault key from a passphrase.
-fn vault_key(passphrase: &str, salt: &[u8], m: u32, t: u32, p: u32) -> Option<[u8; 32]> {
-    let params = argon2::Params::new(m, t, p, Some(32)).ok()?;
-    let mut k = [0u8; 32];
-    Argon2::new(Algorithm::Argon2id, Version::V0x13, params).hash_password_into(passphrase.as_bytes(), salt, &mut k).ok()?;
-    Some(k)
-}
-
-/// `VT01 ‖ m u32 ‖ t u32 ‖ p u32 ‖ salt 16 ‖ nonce 12 ‖ ChaCha20-Poly1305(owner seed)`.
-pub fn seal(owner_seed: &[u8; 32], passphrase: &str, salt: &[u8; 16], nonce: &[u8; 12]) -> Vec<u8> {
-    let k = vault_key(passphrase, salt, M_KIB, T, P).expect("fixed argon2 params are valid");
-    let sealed = ChaCha20Poly1305::new(&k.into()).encrypt(Nonce::from_slice(nonce), &owner_seed[..]).expect("encrypts");
-    [&VAULT_MAGIC[..], &M_KIB.to_le_bytes(), &T.to_le_bytes(), &P.to_le_bytes(), salt, nonce, &sealed].concat()
-}
-
-/// The owner seed from a vault value and the passphrase; `None` for a wrong passphrase or not a vault.
-pub fn open(vault: &[u8], passphrase: &str) -> Option<[u8; 32]> {
-    let r = vault.strip_prefix(VAULT_MAGIC)?;
-    let u = |b: &[u8]| u32::from_le_bytes(b.try_into().unwrap_or_default());
-    let (m, r) = r.split_at_checked(4)?;
-    let (t, r) = r.split_at_checked(4)?;
-    let (p, r) = r.split_at_checked(4)?;
-    let (salt, r) = r.split_at_checked(16)?;
-    let (nonce, sealed) = r.split_at_checked(12)?;
-    // A vault names its own cost; refuse one that would take the page's memory.
-    if u(m) > 256 * 1024 {
-        return None;
-    }
-    let k = vault_key(passphrase, salt, u(m), u(t), u(p))?;
-    ChaCha20Poly1305::new(&k.into()).decrypt(Nonce::from_slice(nonce), sealed).ok()?.try_into().ok()
-}
-
-/// What the first login puts: the owner seat (whose id is the DID) and the vault.
-pub struct NewAccount {
-    pub seat: Put,
-    pub vault: Put,
-}
-
-impl NewAccount {
-    pub fn did(&self) -> String {
-        format!("did:craftec:{}", self.seat.id)
-    }
-}
-
-/// Make an account: the owner key from `owner_seed`, its first member `member_public`, sealed under `passphrase`.
-pub fn create(
-    register_code: &[u8],
-    owner_seed: &[u8; 32],
-    member_public: &[u8; 32],
-    passphrase: &str,
-    salt: &[u8; 16],
-    nonce: &[u8; 12],
-) -> NewAccount {
-    let owner = SigningKey::from_bytes(owner_seed);
-    let seat = first_record(register_code, &owner, SEAT_LABEL, [&SEAT_MAGIC[..], member_public].concat());
-    let vault = first_record(register_code, &owner, VAULT_LABEL, seal(owner_seed, passphrase, salt, nonce));
-    NewAccount { seat, vault }
+pub fn did(p: &Put) -> String {
+    format!("did:craftec:{}", p.id)
 }
 
 #[cfg(test)]
@@ -111,25 +96,43 @@ mod tests {
 
     const CODE: &[u8] = b"\0asm\x01\0\0\0";
 
+    fn hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    /// SLIP-0010's own test vector 1 for ed25519 (seed 000102…0f): an oracle that is not this code.
     #[test]
-    fn the_vault_opens_with_its_passphrase_only() {
-        let v = seal(&[4; 32], "correct horse battery staple", &[1; 16], &[2; 12]);
-        assert_eq!(open(&v, "correct horse battery staple"), Some([4; 32]));
-        assert_eq!(open(&v, "correct horse battery stapler"), None);
-        assert_eq!(open(b"nonsense", "x"), None);
+    fn slip10_matches_the_published_ed25519_vectors() {
+        let seed: Vec<u8> = (0u8..16).collect();
+        assert_eq!(hex(&slip10(&seed, &[])), "2b4be7f19ee27bbf30c667b642d5f4aa69fd169872f8fc3059c08ebae2eb19e7");
+        assert_eq!(hex(&slip10(&seed, &[0])), "68e0fe46dfb67e368c75379acec591dad19df3cde26e63b93a8e704f1dade7a3");
+        assert_eq!(hex(&slip10(&seed, &[0, 1])), "b1d0bad404bf35da785a64ca1ac54b2617211d2777696fbffaf208f746ae84f2");
+    }
+
+    /// BIP39's own vector: 16 zero bytes are "abandon ×11 about".
+    #[test]
+    fn words_round_trip_and_bad_words_are_refused() {
+        let w = words(&[0; 16]).unwrap();
+        assert_eq!(w, "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about");
+        assert_eq!(entropy(&w.to_uppercase()), Some(vec![0; 16]));
+        assert_eq!(entropy(&words(&[7; 32]).unwrap()), Some(vec![7; 32]));
+        // A wrong checksum word, and a count that is not 12 or 24.
+        assert_eq!(entropy(&w.replace("about", "abandon")), None);
+        assert_eq!(entropy("abandon abandon"), None);
+        assert_eq!(words(&[0; 20]), None);
     }
 
     #[test]
-    fn both_records_verify_under_the_owner_key_and_the_did_is_the_seat() {
-        let a = create(CODE, &[4; 32], &[9; 32], "pass phrase words", &[1; 16], &[2; 12]);
-        for (put, label) in [(&a.seat, SEAT_LABEL), (&a.vault, VAULT_LABEL)] {
-            let params = wire::register_params(&SigningKey::from_bytes(&[4; 32]).verifying_key().to_bytes(), label);
-            let (_, st) = craftec_register_contract::read(&params, put.state.as_ref()).expect("a valid Register state");
-            assert_eq!(st.record.unwrap().signed.seq, 1);
-        }
-        assert_eq!(a.did(), format!("did:craftec:{}", a.seat.id));
-        assert_ne!(a.seat.id, a.vault.id);
-        // The same inputs name the same DID: it is derived, never looked up.
-        assert_eq!(create(CODE, &[4; 32], &[9; 32], "other words", &[3; 16], &[5; 12]).seat.id, a.seat.id);
+    fn the_words_alone_name_the_did_and_the_seat_is_the_same_put_every_time() {
+        let a = seat(CODE, &[3; 16]).unwrap();
+        let b = seat(CODE, &[3; 16]).unwrap();
+        assert_eq!(a.id, b.id);
+        assert_eq!(a.state.as_ref(), b.state.as_ref(), "the same record bytes: a second PUT is the same PUT");
+        assert_ne!(seat(CODE, &[4; 16]).unwrap().id, a.id);
+        let owner = SigningKey::from_bytes(&owner_seed(&[3; 16]).unwrap());
+        let params = wire::register_params(&owner.verifying_key().to_bytes(), SEAT_LABEL);
+        let (_, st) = craftec_register_contract::read(&params, a.state.as_ref()).expect("a valid Register state");
+        assert_eq!(st.record.unwrap().value, SEAT_VALUE);
+        assert!(did(&a).starts_with("did:craftec:"));
     }
 }

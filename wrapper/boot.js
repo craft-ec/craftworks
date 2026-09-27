@@ -1,9 +1,8 @@
 // THE WRAPPER: the only fixed code in an app's site. It fetches the LOADER from the loader's own site — a signed,
 // versioned site: a new loader goes live there without touching this file or any app — and hands over.
 //
-// Everything is read from this machine's freenet node over plain HTTP: a site at /v1/contract/web/<site>/, a package
-// at /v1/contract/web/<container>/piece (the SDK's one file name for a single-file container). LOADER_SITE is filled in
-// when the app is published.
+// Everything is read from this machine's freenet node over plain HTTP, at /v1/contract/web/<site>/. How packages are
+// fetched (racing their pieces) is the loader's. LOADER_SITE is filled in when the app is published.
 const LOADER_SITE = "__LOADER_SITE__";
 const t0 = performance.now();
 const params = new URLSearchParams(location.search);
@@ -40,14 +39,6 @@ async function get(url, what) {
   }
 }
 
-// One package: an immutable container, refused unless its bytes hash to what the manifest says.
-async function fetchPackage(p, name) {
-  const { bytes, ms } = await get(new URL("piece", web(p.address)), name);
-  const got = hex(await crypto.subtle.digest("SHA-256", bytes));
-  if (got !== p.sha256) throw new Error(`${name}: its bytes hash to ${got.slice(0, 12)}…, the manifest says ${p.sha256.slice(0, 12)}…`);
-  return { bytes, ms };
-}
-
 const importBytes = bytes => import(URL.createObjectURL(new Blob([bytes], { type: "text/javascript" })));
 
 try {
@@ -58,7 +49,7 @@ try {
   const loader = await importBytes(bytes);
   // The app's manifest is this site's own file: publishing a new version of the app is a new version of this site.
   const manifest = () => get(new URL("manifest.json", location.href), "manifest");
-  await loader.run({ t0, params, log, on, get, manifest, fetchPackage, importBytes, loaderBase: base });
+  await loader.run({ t0, params, log, on, get, manifest, importBytes, loaderBase: base });
 } catch (e) {
   log("FAILED", { what: e.message });
   const s = document.getElementById("status");

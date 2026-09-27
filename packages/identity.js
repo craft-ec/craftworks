@@ -1,5 +1,6 @@
 // IDENTITY, a service: this page's side of the identity delegate on the node. The delegate holds the members (device
-// keys) on this device and signs for them; this page holds only a SESSION token, random, in memory, gone with the page.
+// keys) on this device and signs for them, and keeps each app's SESSION until it logs out: a reload, another tab or a
+// later visit is still logged in. The node tells the delegate which app asks, so no token lives in the page.
 // Every call answers with the delegate's own answer (`{ unlocked }`, `{ wrongPin }`, `{ refused }`, ...).
 export async function start(ctx) {
   const { core, glue, ask } = await ctx.require("node");
@@ -7,19 +8,20 @@ export async function start(ctx) {
   if (reg.kind !== "registered") throw new Error(`the node refused the identity delegate: ${reg.said}`);
   ctx.log("identity ready", { what: core.identity_key().slice(0, 16) + "…" });
 
-  const session = crypto.getRandomValues(new Uint8Array(32));
   const call = async ([id, frames], what) => {
     const said = await ask(frames, s => s.kind === "identity" && s.answers.some(a => a.id === id), what);
     return said.answers.find(a => a.id === id).answer;
   };
   return {
-    // A new member on this device: its key minted here, handed to the delegate once, never kept.
-    provision: (seed, did, pin) => call(core.frames_provision(seed, did, pin, session), "logging in with this device"),
-    unlock: pin => call(core.frames_unlock(pin, session), "unlocking with the PIN"),
+    // A new member on this device: its key minted here, handed to the delegate once, never kept. `recovery`: the
+    // account's word entropy when this device holds it.
+    provision: (seed, did, pin, recovery) => call(core.frames_provision(seed, did, pin, recovery), "adding this device"),
+    unlock: pin => call(core.frames_unlock(pin), "unlocking with the PIN"),
     lock: () => call(core.frames_lock(), "logging out"),
-    who: () => call(core.frames_who(session), "asking who is logged in"),
-    sign: (params, seq, valueHash) => call(core.frames_sign(session, params, BigInt(seq), valueHash), "signing"),
-    exportKey: () => call(core.frames_export(session), "exporting the key"),
+    who: () => call(core.frames_who(), "asking who is logged in"),
+    sign: (params, seq, valueHash) => call(core.frames_sign(params, BigInt(seq), valueHash), "signing"),
+    exportKey: () => call(core.frames_export(), "exporting the key"),
+    recovery: () => call(core.frames_recovery(), "reading the recovery words"),
     publicOf: seed => glue.CraftworksCore.public_of(seed),
   };
 }

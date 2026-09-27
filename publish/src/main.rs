@@ -2,9 +2,10 @@
 //! private node, a key given by seed).
 //!
 //! What goes up:
-//! - every PACKAGE as an immutable web container (`wire::webapp::piece_container`, served at `/v1/contract/web/<address>/piece`),
-//!   named in the app's manifest by that address and its sha256;
-//! - the LOADER as its own SITE `loader` (loader.js + timeline.js): signed, versioned, one fixed address;
+//! - every PACKAGE as a PIECE SET: k data + 8 parity pieces (the SDK's `pieces::cut`), each its own immutable web
+//!   container (served at `/v1/contract/web/<address>/piece`); any k rebuild it. The manifest names each piece by
+//!   address and sha256, and the package by its own sha256. The loader races them: the first k to arrive win;
+//! - the LOADER as its own SITE `loader` (loader.js, timeline.js, and the SDK's racing parts): signed, versioned;
 //! - the APP as its SITE `craftworks` (the wrapper's index.html + boot.js, and manifest.json: its layout — what fills
 //!   the header and footer — its pages, and its packages).
 //!
@@ -13,7 +14,6 @@
 //! usage: publish-craftworks <ws_url> <craftworks_root>
 //!   env PUBLISH_KEY_SEED=<text>  rehearsal only: provision the node's signer with a key from this seed
 use anyhow::{bail, Context, Result};
-use freenet_stdlib::client_api::{ClientRequest, ContractRequest, ContractResponse, HostResponse, WebApi};
 use freenet_stdlib::prelude::*;
 use futures::SinkExt;
 use page::server::{Server, SignerFacts};
@@ -33,37 +33,112 @@ fn sha256_hex(b: &[u8]) -> String {
     core_types::hex::encode(&sha2::Sha256::digest(b))
 }
 
-/// Put one immutable package container; returns its address. Waits for the node's answer.
-async fn put_package(c: &mut WebApi, webapp_code: &[u8], bytes: &[u8]) -> Result<String> {
-    let state = wire::webapp::piece_container(bytes).map_err(|e| anyhow::anyhow!(e))?;
-    let address = wire::webapp::address(webapp_code, &state);
-    let container = ContractContainer::from(ContractWasmAPIVersion::V1(WrappedContract::new(
-        std::sync::Arc::new(ContractCode::from(webapp_code.to_vec())),
-        Parameters::from(wire::webapp::params(&state).to_vec()),
-    )));
-    // A PUT of the same container is the same PUT, so one the node leaves unanswered is sent again (B sometimes does).
+/// PARITY for every package: m = 8, whatever its size (the owner's). A package is cut into k data pieces of at most
+/// PAYLOAD bytes plus M parity pieces; any k of them rebuild it. A package smaller than one piece is k = 1: its 9
+/// pieces are 9 ways to the same bytes.
+const M: usize = 8;
+/// The builder's own piece size.
+const PAYLOAD: usize = 96 * 1024;
+
+/// One piece: its container, its state and the address the node names it by.
+struct Piece {
+    address: String,
+    contract: ContractContainer,
+    state: Vec<u8>,
+}
+
+/// A package as its PIECE SET (`pieces::bundle` then `pieces::cut`, the SDK's one implementation). Nothing is sent
+/// here. Returns the pieces and the manifest entry's fields after `kind`.
+fn cut_package(webapp_code: &[u8], file: &str, bytes: &[u8]) -> Result<(Vec<Piece>, String)> {
+    let bundle = pieces::bundle(&[(file, bytes)]).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    let cut = pieces::cut(&bundle, PAYLOAD, M).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    let mut out = Vec::new();
+    let mut lines = Vec::new();
+    for p in &cut.pieces {
+        let state = wire::webapp::piece_container(p).map_err(|e| anyhow::anyhow!(e))?;
+        let address = wire::webapp::address(webapp_code, &state);
+        let contract = ContractContainer::from(ContractWasmAPIVersion::V1(WrappedContract::new(
+            std::sync::Arc::new(ContractCode::from(webapp_code.to_vec())),
+            Parameters::from(wire::webapp::params(&state).to_vec()),
+        )));
+        lines.push(format!(r#"{{ "address": "{address}", "sha256": "{}" }}"#, sha256_hex(p)));
+        out.push(Piece { address, contract, state });
+    }
+    let fields = format!(
+        r#""file": "{file}", "sha256": "{}", "k": {}, "m": {}, "payload": {}, "bundle_len": {}, "pieces": [{}]"#,
+        sha256_hex(bytes),
+        cut.k,
+        cut.m,
+        cut.payload,
+        cut.bundle_len,
+        lines.join(", ")
+    );
+    Ok((out, fields))
+}
+
+/// Put every piece, all at once: the node queues them. The socket is SPLIT, so answers are read while PUTs are still
+/// going out (a client that sends everything before reading deadlocks: the node stops reading while its answers sit
+/// unread). Framing and reading are the SDK's (`wire::frame_put`, `wire::unframe`); answers are matched by the key
+/// each names, never by order. A PUT of the same container is the same PUT, so one the node leaves unanswered for
+/// 60 s after the last send is sent again, up to TRIES times. Returns the pieces still unanswered: the caller decides
+/// whether each package has enough (k of its k + m).
+async fn put_all(ws: &str, pieces: &[&Piece]) -> Result<std::collections::HashSet<String>> {
+    use futures::StreamExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
     const TRIES: u32 = 3;
+    let (mut tx, mut rx) = tokio_tungstenite::connect_async(ws).await.context("the pieces' connection")?.0.split();
+    // THE SENDER, its own task: frames go out whole and in order (a chunked PUT is several frames), while this task
+    // reads answers. It stamps each send, so "unanswered" is counted from the last frame actually sent.
+    let t0 = Instant::now();
+    let last_sent = std::sync::Arc::new(AtomicU64::new(0));
+    let (queue, mut frames) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    let stamp = last_sent.clone();
+    let sender = tokio::spawn(async move {
+        while let Some(f) = frames.recv().await {
+            tx.send(Message::Binary(f.into())).await?;
+            stamp.store(t0.elapsed().as_millis() as u64, Ordering::Relaxed);
+        }
+        anyhow::Ok(())
+    });
+    let mut r = wire::Reassembler::new();
+    let mut owed: std::collections::HashMap<String, &Piece> = pieces.iter().map(|p| (p.address.clone(), *p)).collect();
+    let mut stream = 1u32;
+    let quiet = Duration::from_secs(60);
     for attempt in 1..=TRIES {
-        let put = ContractRequest::Put {
-            contract: container.clone(),
-            state: WrappedState::new(state.clone()),
-            related_contracts: RelatedContracts::default(),
-            subscribe: false,
-            blocking_subscribe: false,
-        };
-        c.send(ClientRequest::ContractOp(put)).await?;
-        let by = Instant::now() + Duration::from_secs(60);
-        while let Some(left) = by.checked_duration_since(Instant::now()) {
-            match tokio::time::timeout(left, c.recv()).await {
-                Ok(Ok(HostResponse::ContractResponse(ContractResponse::PutResponse { key }))) if key.id().encode() == address => return Ok(address),
-                Ok(Ok(_)) => continue,
-                Ok(Err(e)) => bail!("put {address}: node error: {e}"),
-                Err(_) => break,
+        for p in owed.values() {
+            stream += 1;
+            for f in wire::frame_put(p.contract.clone(), WrappedState::new(p.state.clone()), stream).map_err(|e| anyhow::anyhow!(e))? {
+                queue.send(f).context("the sender stopped")?;
             }
         }
-        eprintln!("put {address}: no answer within 60 s (try {attempt} of {TRIES})");
+        let asked = t0.elapsed();
+        while !owed.is_empty() {
+            let since = Duration::from_millis(last_sent.load(Ordering::Relaxed)).max(asked);
+            let Some(left) = (since + quiet).checked_sub(t0.elapsed()) else { break };
+            match tokio::time::timeout(left.min(Duration::from_secs(1)), rx.next()).await {
+                Err(_) => continue,
+                Ok(None) => bail!("the node closed the pieces' connection"),
+                Ok(Some(Err(e))) => bail!("the pieces' connection: {e}"),
+                Ok(Some(Ok(Message::Binary(b)))) => match wire::unframe(&mut r, &b) {
+                    wire::Incoming::Ack(wire::AckKind::Put(key)) => {
+                        owed.remove(&key);
+                    }
+                    wire::Incoming::PutFailed { key, said } | wire::Incoming::PutFailedByText { key, said } if owed.contains_key(&key) => {
+                        bail!("the node refused piece {key}: {said}")
+                    }
+                    _ => {}
+                },
+                Ok(Some(Ok(_))) => {}
+            }
+        }
+        if owed.is_empty() {
+            break;
+        }
+        eprintln!("{} piece(s) unanswered 60 s after the last send (try {attempt} of {TRIES})", owed.len());
     }
-    bail!("put {address}: no answer in {TRIES} tries of 60 s")
+    drop(queue);
+    sender.abort();
+    Ok(owed.into_keys().collect())
 }
 
 struct Driver {
@@ -151,13 +226,12 @@ async fn main() -> Result<()> {
     println!("identity: the signer's; loader site {loader_site}, craftworks site {app_site}");
 
     // 2. Packages, immutable.
-    let mut c = WebApi::start(tokio_tungstenite::connect_async(ws.as_str()).await.context("second connection")?.0);
     let built = app.join("packages/build");
     let packages: [(&str, &str, PathBuf); 11] = [
         ("header", "module", app.join("packages/header.js")),
         ("footer", "module", app.join("packages/footer.js")),
         ("home", "module", app.join("packages/home.js")),
-        ("who", "module", app.join("packages/who.js")),
+        ("account", "module", app.join("packages/account.js")),
         ("node", "service", app.join("packages/node.js")),
         ("identity", "service", app.join("packages/identity.js")),
         ("auth", "service", app.join("packages/auth.js")),
@@ -168,39 +242,69 @@ async fn main() -> Result<()> {
         ("register-wasm", "bytes", contracts.join("register.wasm")),
     ];
     let mut entries = Vec::new();
-    // WHAT IS ALREADY UP: the addresses the live manifest names (PUBLISHED_MANIFEST, the app site's own manifest.json as
-    // the node serves it). A package at one of them is on the network already: not sent again.
+    // WHAT IS ALREADY UP: the piece addresses the live manifest names (PUBLISHED_MANIFEST, the app site's own
+    // manifest.json as the node serves it). A package whose pieces are all there is not sent again.
     let published: std::collections::HashSet<String> = match std::env::var("PUBLISHED_MANIFEST") {
         Ok(f) => match std::fs::read(&f).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()) {
-            Some(m) => m["packages"].as_object().map(|p| p.values().filter_map(|v| v["address"].as_str().map(String::from)).collect()).unwrap_or_default(),
+            Some(m) => m["packages"]
+                .as_object()
+                .map(|p| {
+                    p.values()
+                        .flat_map(|v| v["pieces"].as_array().cloned().unwrap_or_default())
+                        .filter_map(|x| x["address"].as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default(),
             None => Default::default(),
         },
         Err(_) => Default::default(),
     };
+    let mut all = Vec::new();
+    // Per package sent: its name, its k, and its pieces' addresses.
+    let mut sent: Vec<(String, usize, Vec<String>)> = Vec::new();
     for (name, kind, path) in &packages {
         let bytes = read(path)?;
-        let t = Instant::now();
-        let state = wire::webapp::piece_container(&bytes).map_err(|e| anyhow::anyhow!(e))?;
-        let address = if published.contains(&wire::webapp::address(&webapp_code, &state)) {
-            let a = wire::webapp::address(&webapp_code, &state);
-            println!("package {name}: {} B at {a} (already published)", bytes.len());
-            a
-        } else {
-            let a = put_package(&mut c, &webapp_code, &bytes).await?;
-            println!("package {name}: {} B at {a} ({} ms)", bytes.len(), t.elapsed().as_millis());
-            a
-        };
-        entries.push(format!(r#"    "{name}": {{ "kind": "{kind}", "address": "{address}", "sha256": "{}" }}"#, sha256_hex(&bytes)));
+        let file = path.file_name().and_then(|n| n.to_str()).context("a package file name")?;
+        let (pieces, fields) = cut_package(&webapp_code, file, &bytes)?;
+        let up = pieces.iter().all(|p| published.contains(&p.address));
+        println!("package {name}: {} B as {} pieces{}", bytes.len(), pieces.len(), if up { " (already published)" } else { "" });
+        entries.push(format!(r#"    "{name}": {{ "kind": "{kind}", {fields} }}"#));
+        if !up {
+            let k = pieces.len() - M;
+            sent.push((name.to_string(), k, pieces.iter().map(|p| p.address.clone()).collect()));
+            all.extend(pieces);
+        }
+    }
+    let t = Instant::now();
+    let missing = put_all(&ws, &all.iter().collect::<Vec<_>>()).await?;
+    println!("pieces: {} of {} accepted in {} ms", all.len() - missing.len(), all.len(), t.elapsed().as_millis());
+    // RACING needs any k of a package's k + m pieces: a package with fewer accepted cannot be rebuilt, so nothing that
+    // names it is published. One with k or more is fine; the rest are said.
+    for (name, k, addresses) in &sent {
+        let have = addresses.iter().filter(|a| !missing.contains(*a)).count();
+        if have < *k {
+            bail!("package {name}: only {have} of its {} pieces accepted, fewer than the {k} that rebuild it", addresses.len());
+        }
+        if have < addresses.len() {
+            println!("package {name}: {have} of {} pieces accepted (any {k} rebuild it)", addresses.len());
+        }
     }
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ \"/\": [\"home\"], \"/me\": [\"who\"] }},\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ \"/\": [\"home\"], \"/account\": [\"account\"] }},\n  \"packages\": {{\n{}\n  }} }}\n",
         entries.join(",\n")
     );
 
     // 3. The loader's site, then the app's (whose wrapper names the loader's site).
+    let sdk = app.join("loader/sdk");
     let loader_web = wire::webapp::app_web(&[
         ("loader.js", &read(&app.join("packages/loader.js"))?),
         ("timeline.js", &read(&app.join("packages/timeline.js"))?),
+        // The racing parts, the SDK's own (tools/sdk-racing-parts.sh).
+        ("served.js", &read(&sdk.join("served.js"))?),
+        ("rto.js", &read(&sdk.join("rto.js"))?),
+        ("instrument-vocab.js", &read(&sdk.join("instrument-vocab.js"))?),
+        ("pieces.js", &read(&sdk.join("pieces.js"))?),
+        ("decoder.wasm", &read(&sdk.join("decoder.wasm"))?),
     ])
     .map_err(|e| anyhow::anyhow!(e))?;
     d.publish("loader", &site_code, loader_web).await?;

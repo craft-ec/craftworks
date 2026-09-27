@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. A page that needs no node never loads the
 // node's code at all.
-const VERSION = "10";
+const VERSION = "11";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -33,12 +33,51 @@ export async function run(boot) {
     return loaded.get(name);
   }
 
+  // RACING (the loader's own parts, from its site, loaded once): every package is a PIECE SET, k data + m parity
+  // pieces, each its own container. All are asked at once; the first k that verify (each against its sha256) are
+  // decoded back into the package, which is checked against the package's own sha256. One slow or missing piece holds
+  // nothing up. The fetch is the SDK's (served.js: a node's 503 is "not yet", asked again), the decoding its decoder.
+  let racingParts;
+  function racing() {
+    racingParts ??= (async () => {
+      const t = performance.now();
+      const served = await import(new URL("served.js", boot.loaderBase).href);
+      const pieces = await import(new URL("pieces.js", boot.loaderBase).href);
+      const d = await boot.get(new URL("decoder.wasm", boot.loaderBase), "decoder");
+      const dec = await pieces.decoder(d.bytes);
+      ctx.log("loaded", { what: "racing (the loader's: served.js, pieces.js, decoder.wasm)", bytes: d.bytes.length, ms: Math.round(performance.now() - t) });
+      return { raceK: served.raceK, openPieces: pieces.openPieces, dec };
+    })();
+    return racingParts;
+  }
+
+  const hex = buf => [...new Uint8Array(buf)].map(x => x.toString(16).padStart(2, "0")).join("");
+
+  async function fetchPackage(p, name) {
+    const { raceK, openPieces, dec } = await racing();
+    const t = performance.now();
+    const spec = {
+      k: p.k,
+      m: p.m,
+      pieces: p.pieces.map(x => ({ url: new URL(`/v1/contract/web/${x.address}/piece`, location.href).href, sha256: x.sha256 })),
+    };
+    const raced = await raceK(spec, {
+      onWait: w => (status.textContent = `Waiting for ${name}: ${w.verified} of ${w.k} pieces…`),
+    });
+    const { files } = openPieces(dec, { k: p.k, m: p.m, payload: p.payload, bundle_len: p.bundle_len }, raced.pieces);
+    const bytes = files.get(p.file);
+    if (!bytes) throw new Error(`${name}: its pieces decode to no file "${p.file}"`);
+    const got = hex(await crypto.subtle.digest("SHA-256", bytes));
+    if (got !== p.sha256) throw new Error(`${name}: decoded to bytes hashing ${got.slice(0, 12)}…, not ${p.sha256.slice(0, 12)}…`);
+    return { bytes, ms: Math.round(performance.now() - t), used: raced.pieces.filter(Boolean).length, asked: raced.asked.length };
+  }
+
   async function load(name) {
     const p = manifest.packages[name];
     if (!p) throw new Error(`package "${name}" is not in this app's manifest`);
     for (const d of p.needs ?? []) await require(d);
-    const { bytes, ms } = await boot.fetchPackage(p, name);
-    ctx.log("loaded", { what: name, bytes: bytes.length, hash: p.sha256.slice(0, 12), ms });
+    const { bytes, ms, used, asked } = await fetchPackage(p, name);
+    ctx.log("loaded", { what: `${name} (${used} of ${p.k}+${p.m} pieces; asked ${asked})`, bytes: bytes.length, hash: p.sha256.slice(0, 12), ms });
     if (p.kind === "bytes") return bytes;
     const mod = await boot.importBytes(bytes);
     if (p.kind === "service") {
@@ -111,7 +150,7 @@ export async function run(boot) {
     const b = document.createElement("button");
     b.textContent = "trace";
     b.title = "Show what this page loaded, in order";
-    b.style.cssText = "position:fixed;right:12px;bottom:12px;font-size:12px;padding:4px 8px;opacity:.7";
+    b.style.cssText = "position:fixed;right:12px;bottom:12px;font-size:12px;padding:4px 8px;opacity:.7;z-index:2147483001";
     const panel = document.createElement("section");
     panel.id = "trace";
     panel.hidden = true;

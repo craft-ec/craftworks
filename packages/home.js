@@ -2,5 +2,5 @@
 export function mount(ctx, el) {
   el.innerHTML = `<h2>Welcome</h2>
     <p>This page needs no login. It loaded only the parts it shows: the header, this text and the footer.</p>
-    <p><a href="#/me">Who am I?</a> needs a login: it asks for your PIN, or makes your account on this device.</p>`;
+    <p>Your <a href="#/account">Account</a> needs a login: it asks you to log in or register, like any website.</p>`;
 }

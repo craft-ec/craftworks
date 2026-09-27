@@ -35,8 +35,6 @@ const ALICE2_PIN: &str = "432102";
 const BOB_PIN: &str = "987601";
 const APP: [u8; 32] = [0xA1; 32];
 const OTHER: [u8; 32] = [0xB2; 32];
-/// The session token every test page holds.
-const TOKEN: [u8; 32] = [0x5E; 32];
 
 fn public(seed: [u8; 32]) -> [u8; 32] {
     SigningKey::from_bytes(&seed).verifying_key().to_bytes()
@@ -60,7 +58,7 @@ fn params(key: [u8; 32], label: &[u8]) -> Vec<u8> {
 }
 
 fn provision(m: &mut Map, seed: [u8; 32], did: [u8; 32], pin: &str, origin: Origin) -> Answer {
-    serve(m, Request::Provision { seed, did, pin: pin.into(), session: TOKEN }, origin)
+    serve(m, Request::Provision { seed, did, pin: pin.into(), recovery: Vec::new() }, origin)
 }
 
 /// Alice's member made by "log in with this device" from `origin`, which then holds a session on it.
@@ -71,11 +69,11 @@ fn provisioned(origin: Origin) -> Map {
 }
 
 fn unlock(m: &mut Map, pin: &str, origin: Origin) -> Answer {
-    serve(m, Request::Unlock { pin: pin.into(), session: TOKEN }, origin)
+    serve(m, Request::Unlock { pin: pin.into() }, origin)
 }
 
 fn who(m: &mut Map, origin: Origin) -> Answer {
-    serve(m, Request::Who { session: TOKEN }, origin)
+    serve(m, Request::Who, origin)
 }
 
 fn lock(m: &mut Map, origin: Origin) -> Answer {
@@ -83,11 +81,11 @@ fn lock(m: &mut Map, origin: Origin) -> Answer {
 }
 
 fn sign(m: &mut Map, origin: Origin, p: &[u8], seq: u64, v: [u8; 32]) -> Answer {
-    serve(m, Request::Sign { session: TOKEN, params: p.to_vec(), seq, value_hash: v }, origin)
+    serve(m, Request::Sign { params: p.to_vec(), seq, value_hash: v }, origin)
 }
 
 fn export(m: &mut Map, origin: Origin) -> Answer {
-    serve(m, Request::Export { session: TOKEN }, origin)
+    serve(m, Request::Export, origin)
 }
 
 #[test]
@@ -104,9 +102,10 @@ fn same_device_same_pin_opens_the_same_member_another_pin_another_person() {
         assert_eq!(unlock(&mut m, BOB_PIN, Origin::App(APP)), bob());
         assert_eq!(who(&mut m, Origin::App(APP)), bob());
     }
-    // Another page's token is not this session.
-    let stranger = serve(&mut m, Request::Who { session: [1; 32] }, Origin::App(APP));
-    assert_eq!(stranger, Answer::Refused(Why::NoSession));
+    // The session is the app's on this device: every later ask (a reload, another tab) is still Bob, until he logs
+    // out. Another app has none of it.
+    assert_eq!(who(&mut m, Origin::App(APP)), bob());
+    assert_eq!(who(&mut m, Origin::App(OTHER)), Answer::Refused(Why::NoSession));
 }
 
 #[test]
@@ -268,7 +267,7 @@ fn only_the_home_or_own_tools_export_a_key() {
 fn delegates_get_nothing_and_garbage_is_refused_not_a_panic() {
     let mut m = provisioned(Origin::Local);
     assert_eq!(who(&mut m, Origin::Delegate), Answer::Refused(Why::NotForDelegates));
-    let out = serve_bytes(&mut m, &encode_request(42, &Request::Who { session: TOKEN }), Origin::Local);
+    let out = serve_bytes(&mut m, &encode_request(42, &Request::Who), Origin::Local);
     assert_eq!(decode_answer(&out), Some((42, alice())));
     for junk in [&b""[..], b"ID01", b"ID01\xff\xff\xff\xff\xff", b"SG02whatever"] {
         let out = serve_bytes(&mut m, junk, Origin::Local);
@@ -279,4 +278,28 @@ fn delegates_get_nothing_and_garbage_is_refused_not_a_panic() {
     let hash = Params::parse(&p).unwrap().hash;
     m.s.insert([GUARD, &hash[..]].concat(), vec![1, 2, 3]);
     assert!(matches!(sign(&mut m, Origin::Local, &p, 1, [1; 32]), Answer::Refused(Why::WouldFork { .. })));
+}
+
+#[test]
+fn the_recovery_words_are_kept_with_the_member_and_shown_only_to_its_home() {
+    let mut m = Map::default();
+    let words = vec![0x11; 16];
+    let r = serve(&mut m, Request::Provision { seed: ALICE, did: ALICE_DID, pin: ALICE_PIN.into(), recovery: words.clone() }, Origin::App(APP));
+    assert_eq!(r, alice());
+    assert_eq!(serve(&mut m, Request::Recovery, Origin::App(APP)), Answer::Recovery { entropy: words.clone() });
+    // Another app, even unlocked, may not read them.
+    assert_eq!(unlock(&mut m, ALICE_PIN, Origin::App(OTHER)), alice());
+    assert_eq!(serve(&mut m, Request::Recovery, Origin::App(OTHER)), Answer::Refused(Why::NotHome));
+    // Logged out: nothing.
+    assert_eq!(lock(&mut m, Origin::App(APP)), Answer::LoggedOut);
+    assert_eq!(serve(&mut m, Request::Recovery, Origin::App(APP)), Answer::Refused(Why::NoSession));
+    // A key file brings no words, and does not erase the ones held.
+    let r = serve(&mut m, Request::Provision { seed: ALICE, did: ALICE_DID, pin: "777777".into(), recovery: vec![] }, Origin::App(APP));
+    assert_eq!(r, alice());
+    assert_eq!(serve(&mut m, Request::Recovery, Origin::App(APP)), Answer::Recovery { entropy: words });
+    // A member made without words has none to show; a wrong length is refused.
+    assert_eq!(provision(&mut m, BOB, BOB_DID, BOB_PIN, Origin::App(APP)), bob());
+    assert_eq!(serve(&mut m, Request::Recovery, Origin::App(APP)), Answer::Refused(Why::NoRecovery));
+    let r = serve(&mut m, Request::Provision { seed: [4; 32], did: BOB_DID, pin: "888888".into(), recovery: vec![1; 20] }, Origin::App(APP));
+    assert_eq!(r, Answer::Refused(Why::BadRecovery));
 }

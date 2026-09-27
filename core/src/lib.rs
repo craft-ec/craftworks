@@ -1,5 +1,5 @@
 //! The Craftworks app's one wasm package: the node's message framing (`wire`), the identity delegate's questions and
-//! answers, and the account records a first login puts. It holds no key after a call returns and makes no decision: it
+//! answers, and the account: its recovery words and the DID they name. It holds no key after a call returns and makes no decision: it
 //! frames what the page asks and names what the node answers, as JSON the components can show.
 
 pub mod account;
@@ -21,6 +21,7 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::LoggedOut => json!({ "loggedOut": true }),
         Answer::Signed { sig } => json!({ "signed": hex(sig) }),
         Answer::Exported { seed } => json!({ "exported": hex(seed) }),
+        Answer::Recovery { entropy } => json!({ "recovery": hex(entropy) }),
         Answer::Refused(why) => json!({ "refused": format!("{why:?}") }),
     }
 }
@@ -148,51 +149,54 @@ mod js {
             Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
         }
         /// `[id, frames]` for each identity request.
-        pub fn frames_provision(&mut self, seed: &[u8], did: &[u8], pin: String, session: &[u8]) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::Provision { seed: b32(seed)?, did: b32(did)?, pin, session: b32(session)? })
+        /// `recovery`: the account's word entropy, or empty.
+        pub fn frames_provision(&mut self, seed: &[u8], did: &[u8], pin: String, recovery: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Provision { seed: b32(seed)?, did: b32(did)?, pin, recovery: recovery.to_vec() })
         }
-        pub fn frames_unlock(&mut self, pin: String, session: &[u8]) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::Unlock { pin, session: b32(session)? })
+        pub fn frames_unlock(&mut self, pin: String) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Unlock { pin })
         }
         pub fn frames_lock(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Lock)
         }
-        pub fn frames_who(&mut self, session: &[u8]) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::Who { session: b32(session)? })
+        pub fn frames_who(&mut self) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Who)
         }
-        pub fn frames_sign(&mut self, session: &[u8], params: &[u8], seq: u64, value_hash: &[u8]) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::Sign { session: b32(session)?, params: params.to_vec(), seq, value_hash: b32(value_hash)? })
+        pub fn frames_sign(&mut self, params: &[u8], seq: u64, value_hash: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Sign { params: params.to_vec(), seq, value_hash: b32(value_hash)? })
         }
-        pub fn frames_export(&mut self, session: &[u8]) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::Export { session: b32(session)? })
+        pub fn frames_export(&mut self) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Export)
+        }
+        pub fn frames_recovery(&mut self) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Recovery)
         }
 
-        /// A new account (owner seat + vault) for the first member `member_public`: `{ did, didBytes, seat, vault }`,
-        /// each put as `{ id, frames }`. The owner key exists only inside this call.
-        #[allow(clippy::too_many_arguments)]
-        pub fn new_account(
-            &mut self,
-            register_code: &[u8],
-            owner_seed: &[u8],
-            member_public: &[u8],
-            passphrase: String,
-            salt: &[u8],
-            nonce: &[u8],
-        ) -> Result<js_sys::Object, JsValue> {
-            let salt: [u8; 16] = salt.try_into().map_err(|_| err("salt: 16 bytes".into()))?;
-            let nonce: [u8; 12] = nonce.try_into().map_err(|_| err("nonce: 12 bytes".into()))?;
-            let a = account::create(register_code, &b32(owner_seed)?, &b32(member_public)?, &passphrase, &salt, &nonce);
+        /// The account of these recovery words (their entropy): `{ did, didBytes, seat: { id, frames } }`. The same
+        /// words always give the same DID and the same seat PUT, so this is both "register" and "log in with words".
+        pub fn account(&mut self, register_code: &[u8], entropy: &[u8]) -> Result<js_sys::Object, JsValue> {
+            let seat = account::seat(register_code, entropy).ok_or_else(|| err("recovery entropy: 16 or 32 bytes".into()))?;
             let o = js_sys::Object::new();
             let set = |k: &str, v: JsValue| js_sys::Reflect::set(&o, &k.into(), &v).map(|_| ());
-            set("did", a.did().into())?;
-            set("didBytes", js_sys::Uint8Array::from(&a.seat.id_bytes[..]).into())?;
-            for (name, put) in [("seat", &a.seat), ("vault", &a.vault)] {
-                let p = js_sys::Object::new();
-                js_sys::Reflect::set(&p, &"id".into(), &put.id.clone().into())?;
-                js_sys::Reflect::set(&p, &"frames".into(), &frames(self.0.frames_put(put).map_err(err)?).into())?;
-                set(name, p.into())?;
-            }
+            set("did", account::did(&seat).into())?;
+            set("didBytes", js_sys::Uint8Array::from(&seat.id_bytes[..]).into())?;
+            let p = js_sys::Object::new();
+            js_sys::Reflect::set(&p, &"id".into(), &seat.id.clone().into())?;
+            js_sys::Reflect::set(&p, &"frames".into(), &frames(self.0.frames_put(&seat).map_err(err)?).into())?;
+            set("seat", p.into())?;
             Ok(o)
+        }
+
+        /// The BIP39 words of 16 or 32 bytes of entropy.
+        pub fn words_of(entropy: &[u8]) -> Result<String, JsValue> {
+            account::words(entropy).ok_or_else(|| err("recovery entropy: 16 or 32 bytes".into()))
+        }
+
+        /// The entropy of 12 or 24 BIP39 words; an error names why not.
+        pub fn entropy_of(words: &str) -> Result<js_sys::Uint8Array, JsValue> {
+            account::entropy(words)
+                .map(|e| js_sys::Uint8Array::from(&e[..]))
+                .ok_or_else(|| err("these are not 12 or 24 recovery words (a word is misspelled, or one is missing)".into()))
         }
 
         /// The ed25519 public key of a seed.
@@ -229,7 +233,7 @@ mod tests {
     fn identity_requests_frame_and_ids_advance() {
         let mut c = Core::new(b"\0asm\x01\0\0\0");
         let (a, fa) = c.frames_identity(&Request::Lock).unwrap();
-        let (b, _) = c.frames_identity(&Request::Who { session: [1; 32] }).unwrap();
+        let (b, _) = c.frames_identity(&Request::Who).unwrap();
         assert_eq!((a, b), (1, 2));
         assert!(!fa.is_empty());
         assert!(!c.frames_register_identity().unwrap().is_empty());

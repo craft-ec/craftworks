@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "Publish the Craftworks app: its packages as immutable containers, the loader and app sites through a node's signer."
+description = "Publish the Craftworks app: its packages as piece sets, the loader and app sites through a node's signer."
 
 [[bin]]
 name = "publish-craftworks"
@@ -17,6 +17,8 @@ page-io = { workspace = true }
 engine = { workspace = true }
 probe = { workspace = true }
 core-types = { workspace = true }
+# Each package cut into its piece set: the SDK's one implementation.
+pieces = { workspace = true }
 anyhow = "1"
 blake3 = "1"
 sha2 = "0.10"
