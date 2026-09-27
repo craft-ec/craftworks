@@ -14,6 +14,10 @@ impl crate::Host for Ctx<'_> {
     }
 }
 
+fn reply(answer: Vec<u8>) -> OutboundDelegateMsg {
+    OutboundDelegateMsg::ApplicationMessage(ApplicationMessage::new(answer).processed(true))
+}
+
 pub struct Identity;
 
 #[delegate]
@@ -32,9 +36,22 @@ impl DelegateInterface for Identity {
                     Some(MessageOrigin::WebApp(id)) => Some(*id),
                     _ => None,
                 };
-                let answer = crate::serve_bytes(&mut Ctx(ctx), &m.payload, app);
-                Ok(vec![OutboundDelegateMsg::ApplicationMessage(ApplicationMessage::new(answer).processed(true))])
+                match crate::serve_bytes(&mut Ctx(ctx), &m.payload, app) {
+                    crate::Out::Answer(answer) => Ok(vec![reply(answer)]),
+                    // A question only the person can answer: the NODE shows it (naming the asking app itself), and
+                    // re-enters here with their choice.
+                    crate::Out::Ask(p) => Ok(vec![OutboundDelegateMsg::RequestUserInput(UserInputRequest {
+                        request_id: p.id,
+                        message: NotificationMessage::try_from(&serde_json::Value::String(p.message))
+                            .map_err(|_| DelegateError::Other("prompt".into()))?,
+                        responses: p.choices.into_iter().map(|c| ClientResponse::new(c.into_bytes())).collect(),
+                    })]),
+                }
             }
+            InboundDelegateMsg::UserResponse(r) => Ok(crate::serve_answer(&mut Ctx(ctx), r.request_id, &r.response)
+                .map(reply)
+                .into_iter()
+                .collect()),
             // The identity issues no GET, PUT, UPDATE or SUBSCRIBE, so nothing else can answer it.
             _ => Ok(Vec::new()),
         }

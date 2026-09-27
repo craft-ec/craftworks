@@ -302,6 +302,7 @@ dependencies = [
  "ed25519-dalek",
  "freenet-stdlib",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

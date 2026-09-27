@@ -1,7 +1,9 @@
-// DATA, a service: the logged-in ACCOUNT's tables, one per app. A table is a TAIL under the account's data key (every
-// node of the account holds it, in its identity delegate), labelled `site id ‖ app name`: the account's, not a node's,
-// so any of its nodes reads and writes it, and losing a node loses nothing. The table is followed, so a row written on
-// another node arrives here as it lands.
+// DATA, a service: the logged-in ACCOUNT's tables (notes, desktop, …). A table is a TAIL under the account's data key
+// (every node of the account holds it, in its identity delegate), labelled `t/<table>`: the account's, not a site's or
+// a node's. Any node of the account, and any SITE the person allows, reads and writes the same table: another
+// developer's front end, or a second address for the same app, shows the same data. Writing needs the person's GRANT
+// for this site and table; the first time, the node itself asks them. The table is followed, so a row written
+// elsewhere arrives here as it lands.
 //
 //   const notes = await (await ctx.require("data")).table("notes");
 //   notes.rows()                [{ key, value }]
@@ -11,8 +13,6 @@ export async function start(ctx) {
   const { core, glue, ask, listen } = await ctx.require("node");
   const tailCode = await ctx.require("tail-wasm");
   const Core = glue.CraftworksCore;
-  // This site: the one the page was served from (the id the node names as the asking app).
-  const site = Core.id_bytes(location.pathname.split("/")[4]);
   const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
 
   const tables = new Map(); // id hex -> table
@@ -28,7 +28,7 @@ export async function start(ctx) {
     const s = await auth.session();
     if (!s) throw new Error("nobody is logged in");
     if (!s.data) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
-    const idHex = core.tail_open(tailCode, bytes(s.data), site, app);
+    const idHex = core.tail_open(tailCode, bytes(s.data), app);
     if (tables.has(idHex)) return tables.get(idHex);
     const id = bytes(idHex);
     const name = Core.id_name(id);
@@ -57,8 +57,27 @@ export async function start(ctx) {
     await read();
     ctx.log("table open", { what: `${app}: ${rows.length} row(s)` });
 
+    // Leave to write it: the person's grant for this site (the node asks them the first time). Reading needs none;
+    // without it the table is read-only here, and a write says why.
+    // Asked once per page: a "no" stands until the page is opened again, so a refused site does not re-ask on every
+    // write.
+    let asking = null;
+    const allowed = () =>
+      (asking ??= auth.identity.grant(app).then(g => {
+        ctx.log(g.granted ? "allowed" : "not allowed", { what: `${app}${g.granted ? "" : `: ${g.refused ?? JSON.stringify(g)}`}` });
+        writable = !!g.granted;
+        return writable;
+      }));
+    let writable = null;
+    t.writable = () => writable === true;
+    allowed().catch(e => {
+      asking = null; // a failure to ask (no answer from the node) is not a "no": ask again on the next write
+      ctx.log("not allowed", { what: `${app}: ${e.message}` });
+    });
+
     // One write: prepared by the core, signed by the identity delegate with the data key, sent as one delta.
     async function write(key, value) {
+      if (!(await allowed())) throw new Error(`this app may not change your “${app}”: allow it when your node asks`);
       const enc = new TextEncoder();
       const p = core.tail_prepare(id, enc.encode(key), enc.encode(value));
       const t0 = performance.now();

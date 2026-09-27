@@ -40,6 +40,33 @@ export async function mount(ctx, el) {
     e => (dev.querySelector(".line").textContent = `Could not read your nodes: ${e?.message ?? e}`),
   );
 
+  // APPS WITH ACCESS: the sites this account allowed to write its tables (the home app's own need no prompt).
+  const access = document.createElement("section");
+  access.innerHTML = `<h3>Apps with access</h3><p class="note">Your data belongs to your account. These sites may
+    change it; any site can be removed, and will ask again next time.</p><ul class="grants"><li>Reading…</li></ul>`;
+  box.append(access);
+  const drawGrants = async () => {
+    const ul = access.querySelector(".grants");
+    const r = await auth.identity.grants();
+    const list = r.grants ?? [];
+    ul.replaceChildren();
+    if (!list.length) ul.append(Object.assign(document.createElement("li"), { textContent: "None yet." }));
+    const here = location.pathname.split("/")[4];
+    for (const g of list) {
+      const li = document.createElement("li");
+      const code = document.createElement("code");
+      code.textContent = `${g.app.slice(0, 10)}…`;
+      const remove = Object.assign(document.createElement("button"), { type: "button", textContent: "Remove" });
+      remove.onclick = async () => {
+        await auth.identity.revoke(g.app, g.table);
+        drawGrants();
+      };
+      li.append(`“${g.table}” — site `, code, g.app === here ? " (this app) " : " ", remove);
+      ul.append(li);
+    }
+  };
+  drawGrants().catch(e => (access.querySelector(".grants").textContent = `Could not read: ${e?.message ?? e}`));
+
   // RECOVERY WORDS: shown once, at registration; no node keeps them.
   const rec = document.createElement("section");
   rec.innerHTML = `<h3>Recovery words</h3>

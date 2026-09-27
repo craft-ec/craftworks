@@ -27,6 +27,11 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::Handed { seed, did, data } => {
             json!({ "handed": { "seed": hex(seed), "did": hex(did), "data": data.map(|d| hex(&d)) } })
         }
+        Answer::Granted { table } => json!({ "granted": table }),
+        Answer::Grants { list } => {
+            json!({ "grants": list.iter().map(|(app, t)| json!({ "app": wire::contract_id(*app).encode(), "table": t })).collect::<Vec<_>>() })
+        }
+        Answer::Revoked => json!({ "revoked": true }),
         Answer::Refused(why) => json!({ "refused": format!("{why:?}") }),
     }
 }
@@ -116,9 +121,9 @@ impl Core {
         self.got.get(id).map(Vec::as_slice)
     }
 
-    /// Open the table of app `app` of site `site` under the data key `key` (idempotent). Returns its contract id.
-    pub fn tail_open(&mut self, tail_code: &[u8], key: &[u8; 32], site: &[u8; 32], app: &[u8]) -> [u8; 32] {
-        let o = data::Open::new(tail_code, key, site, app);
+    /// Open the account's table `table` under the data key `key` (idempotent). Returns its contract id.
+    pub fn tail_open(&mut self, tail_code: &[u8], key: &[u8; 32], table: &str) -> [u8; 32] {
+        let o = data::Open::new(tail_code, key, table);
         let id = o.id_bytes();
         self.tails.entry(id).or_insert(o);
         id
@@ -242,6 +247,18 @@ mod js {
         pub fn frames_export(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Export)
         }
+        /// Leave to write table `table` (the node may prompt the person; the answer can take a minute).
+        pub fn frames_grant(&mut self, table: String) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Grant { table })
+        }
+        pub fn frames_grants(&mut self) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Grants)
+        }
+        /// Withdraw a grant: `app` is the site's id in its text form.
+        pub fn frames_revoke(&mut self, app: &str, table: String) -> Result<js_sys::Array, JsValue> {
+            let app = freenet_stdlib::prelude::ContractInstanceId::from_base58(app).map_err(|e| err(format!("not a site id: {e}")))?;
+            self.ask(Request::Revoke { app: *app, table })
+        }
         /// For the next version of the identity delegate: the member this PIN opens (to its home app).
         pub fn frames_handover(&mut self, pin: String) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Handover { pin })
@@ -313,12 +330,12 @@ mod js {
             Ok(js_sys::Uint8Array::from(&i[..]))
         }
 
-        /// Open an app's table under the account's data key: its contract id (hex).
-        pub fn tail_open(&mut self, tail_code: &[u8], key: &[u8], site: &[u8], app: &str) -> Result<String, JsValue> {
-            if app.is_empty() || app.len() > 32 {
-                return Err(err("an app's name is 1 to 32 bytes".into()));
+        /// Open one of the account's tables under its data key: its contract id (hex).
+        pub fn tail_open(&mut self, tail_code: &[u8], key: &[u8], table: &str) -> Result<String, JsValue> {
+            if table.is_empty() || table.len() > 32 {
+                return Err(err("a table's name is 1 to 32 bytes".into()));
             }
-            Ok(hex(&self.0.tail_open(tail_code, &b32(key)?, &b32(site)?, app.as_bytes())))
+            Ok(hex(&self.0.tail_open(tail_code, &b32(key)?, table)))
         }
 
         /// `[id hex, frames]`: read an open tail and follow it.

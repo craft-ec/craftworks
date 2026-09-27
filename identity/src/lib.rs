@@ -22,11 +22,18 @@
 //!   anyone who copied its disk, and an owner cannot be rotated away. Shown once at registration, typed when needed.
 //! - **The account's data key:** each member keeps its account's DATA key (derived from the words, the same on every
 //!   node of the account), so any of the account's nodes signs the account's data. `Unlocked` names its public key.
+//! - **The account's data is the account's, not a site's.** Its TABLES (notes, pins, labels, …) are tails under the
+//!   data key, labelled `t/<table>`, and any site the person allows reads and writes them: another developer's front
+//!   end over the same notes, or a second address for the same app. A site may WRITE a table only with a GRANT: the
+//!   first time it asks (`Grant`), the node itself prompts the person ("Delegate says: allow … ?", naming the asking
+//!   app from its own records, never from anything a site sent). A site cannot fake that answer. Grants are per member
+//!   (so per person on a shared node), per site, per table; the home app (the site the member was made with, the
+//!   person's own choice of app) is granted without a prompt, and lists and revokes them.
 //! - **Sign:** the Register's one signed message (`Params::signed_message`, non-terminal). A tail signs the same
 //!   message over its body hash, so one verb covers both. Rules, in order:
 //!   0. an open session names the member;
-//!   1. the params name ONE key, and it is the member's key or the account's data key;
-//!   2. ORIGIN RULE: an app signs only records whose label begins with its own contract id;
+//!   1. the params name ONE key, and it is the account's data key;
+//!   2. the label is `t/<table>`, and the asking site holds this member's grant for that table;
 //!   3. SEQ GUARD: never two different values at one seq, and never a seq below the last one signed for that record
 //!      (an identical re-ask gets the same signature back);
 //!   4. the guard is saved BEFORE the signature is returned (the node syncs a secret to disk before `set_secret`
@@ -74,6 +81,13 @@ pub enum Request {
     Export,
     /// For the next version of this delegate: the member this PIN opens, to its home app. Counted as an unlock try.
     Handover { pin: String },
+    /// Leave to write table `table` of the session member's account. Answered at once if already held; otherwise the
+    /// node prompts the person, and the answer comes when they choose (or after the node's timeout, as a denial).
+    Grant { table: String },
+    /// The grants the session member gave: all of them to its home app, or the asking site's own.
+    Grants,
+    /// Withdraw one: the home app withdraws any, a site its own.
+    Revoke { app: [u8; 32], table: String },
 }
 
 /// What the identity answers.
@@ -93,6 +107,9 @@ pub enum Answer {
     Exported { seed: [u8; 32] },
     /// A member, handed to the next version of this delegate.
     Handed { seed: [u8; 32], did: [u8; 32], data: Option<[u8; 32]> },
+    Granted { table: String },
+    Grants { list: Vec<([u8; 32], String)> },
+    Revoked,
     Refused(Why),
 }
 
@@ -122,6 +139,16 @@ pub enum Why {
     NotSaved,
     /// The caller is not a web app the node names (unattested, or another delegate): nothing is answered to it.
     NotAttested,
+    /// A table name is 1 to 32 of a-z, 0-9, `-`, `_`.
+    BadTable,
+    /// The params are not one of the account's tables (`t/<table>` under its data key).
+    NotATable,
+    /// This site has no grant for that table: ask for one (`Grant`).
+    NotGranted { table: String },
+    /// The person said no (or did not answer).
+    Denied,
+    /// This node holds no data key for the member.
+    NoDataKey,
     /// Not a request this identity reads.
     Unreadable,
 }
@@ -161,6 +188,51 @@ pub const TRIES: &[u8] = b"identity_tries";
 pub const SESSION: &[u8] = b"identity_session/";
 /// `GUARD ‖ params hash` → `seq ‖ value hash` of the last signature for that record.
 pub const GUARD: &[u8] = b"identity_guard/";
+/// `GRANT ‖ member ‖ app ‖ table` → `[1]` (empty: none).
+pub const GRANT: &[u8] = b"identity_grant/";
+/// `GRANTS ‖ member` → the member's grants, each `app ‖ len ‖ table` (the list the home app shows).
+pub const GRANTS: &[u8] = b"identity_grants/";
+/// `PENDING ‖ prompt id` → `page id ‖ member ‖ app ‖ table`: a grant waiting on the person.
+pub const PENDING: &[u8] = b"identity_pending/";
+/// The last prompt id used (u32).
+pub const PROMPTS: &[u8] = b"identity_prompts";
+/// A table's label prefix.
+pub const TABLE: &[u8] = b"t/";
+
+fn table_ok(t: &str) -> bool {
+    (1..=32).contains(&t.len()) && t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+fn grant_key(member: &[u8; KEY_LEN], app: &[u8; 32], table: &str) -> Vec<u8> {
+    [GRANT, &member[..], &app[..], table.as_bytes()].concat()
+}
+
+fn granted<H: Host>(h: &H, member: &[u8; KEY_LEN], app: &[u8; 32], table: &str) -> bool {
+    h.get_secret(&grant_key(member, app, table)).is_some_and(|v| v == [1])
+}
+
+fn grants<H: Host>(h: &H, member: &[u8; KEY_LEN]) -> Vec<([u8; 32], String)> {
+    let mut out = Vec::new();
+    let Some(b) = h.get_secret(&[GRANTS, &member[..]].concat()) else { return out };
+    let mut r = &b[..];
+    while let Some((app, rest)) = r.split_at_checked(32) {
+        let Some((&n, rest)) = rest.split_first() else { break };
+        let Some((t, rest)) = rest.split_at_checked(n as usize) else { break };
+        out.push((app.try_into().expect("32"), String::from_utf8_lossy(t).into_owned()));
+        r = rest;
+    }
+    out
+}
+
+fn set_grants<H: Host>(h: &mut H, member: &[u8; KEY_LEN], list: &[([u8; 32], String)]) -> bool {
+    let mut b = Vec::new();
+    for (app, t) in list {
+        b.extend_from_slice(app);
+        b.push(t.len() as u8);
+        b.extend_from_slice(t.as_bytes());
+    }
+    h.set_secret(&[GRANTS, &member[..]].concat(), &b)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Member {
@@ -362,17 +434,40 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 Handed { seed: a.seed, did: a.did, data: a.data }
             }
         },
+        // A Grant that needs the person goes through `serve_bytes` (a prompt); here only its immediate answers.
+        Request::Grant { table } => match grant(h, 0, &table, app) {
+            Ok(answer) => answer,
+            Err(_) => Refused(Why::NotGranted { table }),
+        },
+        Request::Grants => match session(h, &app) {
+            None => Refused(Why::NoSession),
+            Some(a) => Grants { list: grants(h, &a.public()).into_iter().filter(|(g, _)| a.home == app || *g == app).collect() },
+        },
+        Request::Revoke { app: whose, table } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app && whose != app {
+                return Refused(Why::NotHome);
+            }
+            let member = a.public();
+            let list: Vec<_> = grants(h, &member).into_iter().filter(|(g, t)| !(*g == whose && *t == table)).collect();
+            if !h.set_secret(&grant_key(&member, &whose, &table), &[]) || !set_grants(h, &member, &list) {
+                return Refused(Why::NotSaved);
+            }
+            Revoked
+        }
         Request::Sign { params, seq, value_hash } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             let Some(p) = Params::parse(&params) else { return Refused(Why::BadParams) };
-            // The member's own key, or the account's data key: whichever one key the record names.
-            let key = match &p.authority {
-                Authority::One(v) if *v == a.key().verifying_key() => a.key(),
-                Authority::One(v) if a.data_key().is_some_and(|d| d.verifying_key() == *v) => a.data_key().expect("checked"),
-                _ => return Refused(Why::NotThisKey),
+            // The account's data key, for one of the account's tables, by a site the person allowed.
+            let Some(key) = a.data_key() else { return Refused(Why::NoDataKey) };
+            if !matches!(&p.authority, Authority::One(v) if *v == key.verifying_key()) {
+                return Refused(Why::NotThisKey);
+            }
+            let Some(table) = p.label.strip_prefix(TABLE).and_then(|t| std::str::from_utf8(t).ok()).filter(|t| table_ok(t)) else {
+                return Refused(Why::NotATable);
             };
-            if !p.label.starts_with(&app) {
-                return Refused(Why::NotYourRecord);
+            if !granted(h, &a.public(), &app, table) {
+                return Refused(Why::NotGranted { table: table.into() });
             }
             let guard = [GUARD, &p.hash[..]].concat();
             if let Some(g) = h.get_secret(&guard) {
@@ -396,15 +491,95 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
     }
 }
 
+/// A question for the person, which the node itself shows (the delegate entry turns it into `RequestUserInput`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prompt {
+    pub id: u32,
+    pub message: String,
+    pub choices: Vec<String>,
+}
+
+/// What a message comes to: an answer for the page now, or a question for the person first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Out {
+    Answer(Vec<u8>),
+    Ask(Prompt),
+}
+
+pub const ALLOW: &str = "Allow";
+pub const DENY: &str = "Don't allow";
+
+/// A grant: answered at once (held already, or refused), or `Err(prompt)`, with the request kept until the answer.
+fn grant<H: Host>(h: &mut H, page_id: u32, table: &str, app: [u8; 32]) -> Result<Answer, Prompt> {
+    let Some(a) = session(h, &app) else { return Ok(Answer::Refused(Why::NoSession)) };
+    if !table_ok(table) {
+        return Ok(Answer::Refused(Why::BadTable));
+    }
+    let member = a.public();
+    if granted(h, &member, &app, table) {
+        return Ok(Answer::Granted { table: table.into() });
+    }
+    // The site the person made this member with (its home) is their own choice of app: granted without a prompt.
+    if a.home == app {
+        return Ok(record_grant(h, &member, app, table));
+    }
+    let id = h.get_secret(PROMPTS).and_then(|b| b.try_into().ok()).map_or(0, u32::from_le_bytes).wrapping_add(1);
+    let pending = [&page_id.to_le_bytes()[..], &member, &app, table.as_bytes()].concat();
+    if !h.set_secret(PROMPTS, &id.to_le_bytes()) || !h.set_secret(&[PENDING, &id.to_le_bytes()[..]].concat(), &pending) {
+        return Ok(Answer::Refused(Why::NotSaved));
+    }
+    Err(Prompt {
+        id,
+        message: format!(
+            "Allow this app to read and write your “{table}” on this node? It is your account’s data, the same in every app you allow."
+        ),
+        choices: vec![ALLOW.into(), DENY.into()],
+    })
+}
+
+fn record_grant<H: Host>(h: &mut H, member: &[u8; KEY_LEN], app: [u8; 32], table: &str) -> Answer {
+    let mut list = grants(h, member);
+    if !list.iter().any(|(g, t)| *g == app && t == table) {
+        list.push((app, table.into()));
+    }
+    if h.set_secret(&grant_key(member, &app, table), &[1]) && set_grants(h, member, &list) {
+        Answer::Granted { table: table.into() }
+    } else {
+        Answer::Refused(Why::NotSaved)
+    }
+}
+
+/// The person's answer to prompt `id`: the grant is recorded on "Allow", and the page that asked is answered (under
+/// its own request id). A prompt nobody is waiting on is ignored.
+pub fn serve_answer<H: Host>(h: &mut H, id: u32, choice: &[u8]) -> Option<Vec<u8>> {
+    let name = [PENDING, &id.to_le_bytes()[..]].concat();
+    let p = h.get_secret(&name).filter(|p| p.len() > 4 + KEY_LEN + 32)?;
+    h.set_secret(&name, &[]);
+    let page_id = u32::from_le_bytes(p[..4].try_into().ok()?);
+    let member: [u8; KEY_LEN] = p[4..4 + KEY_LEN].try_into().ok()?;
+    let app: [u8; 32] = p[4 + KEY_LEN..4 + KEY_LEN + 32].try_into().ok()?;
+    let table = String::from_utf8(p[4 + KEY_LEN + 32..].to_vec()).ok()?;
+    let answer = if choice == ALLOW.as_bytes() {
+        record_grant(h, &member, app, &table)
+    } else {
+        Answer::Refused(Why::Denied)
+    };
+    Some(encode_answer(page_id, &answer))
+}
+
 /// THE GATE, then the whole message: `app` is the web app the node attests, or `None` for any caller it does not
 /// (unattested, or another delegate), which is answered nothing but a refusal. An unreadable request is answered under
 /// id 0.
-pub fn serve_bytes<H: Host>(h: &mut H, payload: &[u8], app: Option<[u8; 32]>) -> Vec<u8> {
-    match (decode_request(payload), app) {
+pub fn serve_bytes<H: Host>(h: &mut H, payload: &[u8], app: Option<[u8; 32]>) -> Out {
+    Out::Answer(match (decode_request(payload), app) {
         (Some((id, _)), None) => encode_answer(id, &Answer::Refused(Why::NotAttested)),
         (None, _) => encode_answer(0, &Answer::Refused(Why::Unreadable)),
+        (Some((id, Request::Grant { table })), Some(app)) => match grant(h, id, &table, app) {
+            Ok(answer) => encode_answer(id, &answer),
+            Err(prompt) => return Out::Ask(prompt),
+        },
         (Some((id, req)), Some(app)) => encode_answer(id, &serve(h, req, app)),
-    }
+    })
 }
 
 #[cfg(test)]

@@ -19,6 +19,8 @@ trace = []
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
+# The prompt's text, as the node reads it (a JSON string).
+serde_json = "1"
 blake3 = { version = "1", default-features = false }
 freenet-stdlib = { version = "0.10.0", features = ["contract"] }
 # The Register's params and signed message: the ONE format a tail's signature covers (the tail is built on it).

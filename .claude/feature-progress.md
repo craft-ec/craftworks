@@ -75,3 +75,17 @@ device + the same PIN opens the same account. Adding a second device: pairing wi
   A refused write resets the local table and re-reads it.
 - [x] B. data (tail per account per app, live) — verified on the private node: register, two notes, reload → both.
 - [ ] B2. flush the tail into the prolly tree; tree blocks as erasure piece sets.
+
+## 2026-09-28 — data belongs to the account; sites get the person's grant
+- Owner: another developer's front end (or another address for the same app) must show the same data intact.
+- Tables are the ACCOUNT's, by kind (`notes`, `pins`, …): a tail under the data key labelled `t/<table>`; no site
+  in the label. Any site the person allows reads and writes the same table.
+- GRANTS in the identity delegate, per member (person), per site, per table. The first time a site asks, the NODE
+  prompts ("Delegate says: Allow this app to read and write your “notes” on this node?"), naming the asking site from
+  its own records — a site cannot fake the answer. The member's home site is granted without a prompt. The Account
+  page lists grants ("Apps with access") and removes them. A "no" stands for that page; reading needs no grant.
+- Verified on the private node with three addresses of the app: a note written at the home address is read at a
+  second address; the node's prompt named the second site; after Allow its note appeared at the home address live;
+  Remove + "Don't allow" → its writes refused, no re-prompt.
+- Open: tables are public (readable by anyone who knows the data key) until encryption; pins/labels as ONE relations
+  layer with query() is next.

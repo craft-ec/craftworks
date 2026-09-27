@@ -230,7 +230,10 @@ async fn main() -> Result<()> {
     let mut d = Driver { sock, io, t0 };
     d.drive("the signer", Duration::from_secs(60), |io| io.provisioned() && io.register_params_known()).await?;
     let loader_site = d.io.site_link(&site_code, "loader").context("no loader site for this identity")?;
-    let app_site = d.io.site_link(&site_code, "craftworks").context("no craftworks site for this identity")?;
+    // SITE_NAME: publish the same app at another address too (a second front end over the same account data); the
+    // default is the app's own site.
+    let site_name = std::env::var("SITE_NAME").unwrap_or_else(|_| "craftworks".into());
+    let app_site = d.io.site_link(&site_code, &site_name).context("no site of that name for this identity")?;
     println!("identity: the signer's; loader site {loader_site}, craftworks site {app_site}");
 
     // 2. Packages, immutable.
@@ -335,7 +338,7 @@ async fn main() -> Result<()> {
         ("manifest.json", manifest.as_bytes()),
     ])
     .map_err(|e| anyhow::anyhow!(e))?;
-    d.publish("craftworks", &site_code, app_web).await?;
+    d.publish(&site_name, &site_code, app_web).await?;
     println!("OPEN: /v1/contract/web/{app_site}/");
     println!("SITE {app_site}");
     Ok(())
