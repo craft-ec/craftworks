@@ -81,9 +81,10 @@ pub enum Request {
     Export,
     /// For the next version of this delegate: the member this PIN opens, to its home app. Counted as an unlock try.
     Handover { pin: String },
-    /// Leave to write table `table` of the session member's account. Answered at once if already held; otherwise the
-    /// node prompts the person, and the answer comes when they choose (or after the node's timeout, as a denial).
-    Grant { table: String },
+    /// Leave to write these tables of the session member's account: ONE prompt for all the ones not yet held (an app
+    /// asks for every table it uses at once). Answered at once if all are held; otherwise the node prompts the person,
+    /// and the answer comes when they choose (or after the node's timeout, as a denial).
+    Grant { tables: Vec<String> },
     /// The grants the session member gave: all of them to its home app, or the asking site's own.
     Grants,
     /// Withdraw one: the home app withdraws any, a site its own.
@@ -107,7 +108,7 @@ pub enum Answer {
     Exported { seed: [u8; 32] },
     /// A member, handed to the next version of this delegate.
     Handed { seed: [u8; 32], did: [u8; 32], data: Option<[u8; 32]> },
-    Granted { table: String },
+    Granted { tables: Vec<String> },
     Grants { list: Vec<([u8; 32], String)> },
     Revoked,
     Refused(Why),
@@ -139,7 +140,7 @@ pub enum Why {
     NotSaved,
     /// The caller is not a web app the node names (unattested, or another delegate): nothing is answered to it.
     NotAttested,
-    /// A table name is 1 to 32 of a-z, 0-9, `-`, `_`.
+    /// A table name is 1 to 32 of a-z, 0-9, `-`, `_`; a grant names 1 to 16 of them.
     BadTable,
     /// The params are not one of the account's tables (`t/<table>` under its data key).
     NotATable,
@@ -435,9 +436,13 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             }
         },
         // A Grant that needs the person goes through `serve_bytes` (a prompt); here only its immediate answers.
-        Request::Grant { table } => match grant(h, 0, &table, app) {
+        Request::Grant { tables } => match grant(h, 0, &tables, app) {
             Ok(answer) => answer,
-            Err(_) => Refused(Why::NotGranted { table }),
+            Err(p) => {
+                // Only `serve_bytes` can ask the person; a prompt made here is dropped with its pending record.
+                h.set_secret(&[PENDING, &p.id.to_le_bytes()[..]].concat(), &[]);
+                Refused(Why::NotGranted { table: tables.join(",") })
+            }
         },
         Request::Grants => match session(h, &app) {
             None => Refused(Why::NoSession),
@@ -509,32 +514,55 @@ pub enum Out {
 pub const ALLOW: &str = "Allow";
 pub const DENY: &str = "Don't allow";
 
-/// A grant: answered at once (held already, or refused), or `Err(prompt)`, with the request kept until the answer.
-fn grant<H: Host>(h: &mut H, page_id: u32, table: &str, app: [u8; 32]) -> Result<Answer, Prompt> {
+/// A grant: answered at once (all held already, or refused), or `Err(prompt)` naming the ones not held, with the
+/// request kept until the answer.
+fn grant<H: Host>(h: &mut H, page_id: u32, tables: &[String], app: [u8; 32]) -> Result<Answer, Prompt> {
     let Some(a) = session(h, &app) else { return Ok(Answer::Refused(Why::NoSession)) };
-    if !table_ok(table) {
+    if tables.is_empty() || tables.len() > 16 || !tables.iter().all(|t| table_ok(t)) {
         return Ok(Answer::Refused(Why::BadTable));
     }
     let member = a.public();
-    if granted(h, &member, &app, table) {
-        return Ok(Answer::Granted { table: table.into() });
+    let missing: Vec<String> = tables.iter().filter(|t| !granted(h, &member, &app, t)).cloned().collect();
+    if missing.is_empty() {
+        return Ok(Answer::Granted { tables: tables.to_vec() });
     }
     // The site the person made this member with (its home) is their own choice of app: granted without a prompt.
     if a.home == app {
-        return Ok(record_grant(h, &member, app, table));
+        return Ok(record_grants(h, &member, app, &missing, tables));
     }
     let id = h.get_secret(PROMPTS).and_then(|b| b.try_into().ok()).map_or(0, u32::from_le_bytes).wrapping_add(1);
-    let pending = [&page_id.to_le_bytes()[..], &member, &app, table.as_bytes()].concat();
+    let pending = [&page_id.to_le_bytes()[..], &member, &app, missing.join(",").as_bytes()].concat();
     if !h.set_secret(PROMPTS, &id.to_le_bytes()) || !h.set_secret(&[PENDING, &id.to_le_bytes()[..]].concat(), &pending) {
         return Ok(Answer::Refused(Why::NotSaved));
     }
     Err(Prompt {
         id,
         message: format!(
-            "Allow this app to read and write your “{table}” on this node? It is your account’s data, the same in every app you allow."
+            "Allow this app to read and write your {} on this node? It is your account’s data, the same in every app you allow.",
+            names(&missing)
         ),
         choices: vec![ALLOW.into(), DENY.into()],
     })
+}
+
+/// "“notes”", "“notes” and “pins”", "“a”, “b” and “c”".
+fn names(tables: &[String]) -> String {
+    let quoted: Vec<String> = tables.iter().map(|t| format!("“{t}”")).collect();
+    match quoted.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
+
+/// Record `missing` as granted; answer with all of `asked`.
+fn record_grants<H: Host>(h: &mut H, member: &[u8; KEY_LEN], app: [u8; 32], missing: &[String], asked: &[String]) -> Answer {
+    for t in missing {
+        if let Answer::Refused(why) = record_grant(h, member, app, t) {
+            return Answer::Refused(why);
+        }
+    }
+    Answer::Granted { tables: asked.to_vec() }
 }
 
 fn record_grant<H: Host>(h: &mut H, member: &[u8; KEY_LEN], app: [u8; 32], table: &str) -> Answer {
@@ -543,7 +571,7 @@ fn record_grant<H: Host>(h: &mut H, member: &[u8; KEY_LEN], app: [u8; 32], table
         list.push((app, table.into()));
     }
     if h.set_secret(&grant_key(member, &app, table), &[1]) && set_grants(h, member, &list) {
-        Answer::Granted { table: table.into() }
+        Answer::Granted { tables: vec![table.into()] }
     } else {
         Answer::Refused(Why::NotSaved)
     }
@@ -558,9 +586,9 @@ pub fn serve_answer<H: Host>(h: &mut H, id: u32, choice: &[u8]) -> Option<Vec<u8
     let page_id = u32::from_le_bytes(p[..4].try_into().ok()?);
     let member: [u8; KEY_LEN] = p[4..4 + KEY_LEN].try_into().ok()?;
     let app: [u8; 32] = p[4 + KEY_LEN..4 + KEY_LEN + 32].try_into().ok()?;
-    let table = String::from_utf8(p[4 + KEY_LEN + 32..].to_vec()).ok()?;
+    let tables: Vec<String> = String::from_utf8(p[4 + KEY_LEN + 32..].to_vec()).ok()?.split(',').map(String::from).collect();
     let answer = if choice == ALLOW.as_bytes() {
-        record_grant(h, &member, app, &table)
+        record_grants(h, &member, app, &tables, &tables)
     } else {
         Answer::Refused(Why::Denied)
     };
@@ -574,7 +602,7 @@ pub fn serve_bytes<H: Host>(h: &mut H, payload: &[u8], app: Option<[u8; 32]>) ->
     Out::Answer(match (decode_request(payload), app) {
         (Some((id, _)), None) => encode_answer(id, &Answer::Refused(Why::NotAttested)),
         (None, _) => encode_answer(0, &Answer::Refused(Why::Unreadable)),
-        (Some((id, Request::Grant { table })), Some(app)) => match grant(h, id, &table, app) {
+        (Some((id, Request::Grant { tables })), Some(app)) => match grant(h, id, &tables, app) {
             Ok(answer) => encode_answer(id, &answer),
             Err(prompt) => return Out::Ask(prompt),
         },

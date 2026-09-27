@@ -27,7 +27,7 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::Handed { seed, did, data } => {
             json!({ "handed": { "seed": hex(seed), "did": hex(did), "data": data.map(|d| hex(&d)) } })
         }
-        Answer::Granted { table } => json!({ "granted": table }),
+        Answer::Granted { tables } => json!({ "granted": tables }),
         Answer::Grants { list } => {
             json!({ "grants": list.iter().map(|(app, t)| json!({ "app": wire::contract_id(*app).encode(), "table": t })).collect::<Vec<_>>() })
         }
@@ -247,9 +247,10 @@ mod js {
         pub fn frames_export(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Export)
         }
-        /// Leave to write table `table` (the node may prompt the person; the answer can take a minute).
-        pub fn frames_grant(&mut self, table: String) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::Grant { table })
+        /// Leave to write these tables, asked in one prompt (the node may prompt the person; the answer can take a
+        /// minute).
+        pub fn frames_grant(&mut self, tables: Vec<String>) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Grant { tables })
         }
         pub fn frames_grants(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Grants)

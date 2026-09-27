@@ -23,7 +23,7 @@ export async function start(ctx) {
     exportKey: () => call(core.frames_export(), "exporting the key"),
     // Leave to write one of the account's tables. The node may ask the person (its own prompt, which waits up to a
     // minute), so this waits longer than any other call.
-    grant: table => call(core.frames_grant(table), `asking for “${table}”`, 90000),
+    grant: tables => call(core.frames_grant(tables), `asking for ${tables.map(t => `“${t}”`).join(", ")}`, 90000),
     grants: () => call(core.frames_grants(), "listing the apps with access"),
     revoke: (app, table) => call(core.frames_revoke(app, table), "removing an app's access"),
     publicOf: seed => glue.CraftworksCore.public_of(seed),

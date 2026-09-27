@@ -89,3 +89,10 @@ device + the same PIN opens the same account. Adding a second device: pairing wi
   Remove + "Don't allow" → its writes refused, no re-prompt.
 - Open: tables are public (readable by anyone who knows the data key) until encryption; pins/labels as ONE relations
   layer with query() is next.
+
+## Batch grants (2026-09-28)
+- [x] A site asks ONCE for every kind of data its manifest `uses` (["notes","pins"]): one node prompt
+  "Allow this app to read and write your “notes” and “pins”…"; only tables not yet held are named; a table outside
+  `uses` is asked on its own; removal stays per table. Delegate `Grant{tables}` (1–16 names), `Granted{tables}`.
+  Verified on the private node (craftworks-alt): one prompt naming both, "allowed: notes, pins", note PUT + pin PUT,
+  no second prompt. Published through B (app v24, loader v8). The delegate re-keyed: members log in once with words.

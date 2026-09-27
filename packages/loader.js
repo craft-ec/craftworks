@@ -15,7 +15,7 @@ export async function run(boot) {
   const loaded = new Map(); // name -> Promise of what `require` gives
   let manifest;
 
-  const ctx = { params: boot.params, log: boot.log, on: boot.on, require, route: "/", app: "", apps: [], actions: {} };
+  const ctx = { params: boot.params, log: boot.log, on: boot.on, require, route: "/", app: "", apps: [], uses: [], actions: {} };
   globalThis.app = ctx;
 
   // A package, fetched and checked by the wrapper, the first time anything asks for it. What it gives depends on its
@@ -199,6 +199,8 @@ export async function run(boot) {
     ctx.app = manifest.app;
     // The site's APPS, as its manifest lists them ({ name, icon, route }): what a desktop shows.
     ctx.apps = manifest.apps ?? [];
+    // The kinds of the person's data the site USES (["notes", "pins"]): asked for together, in one prompt.
+    ctx.uses = manifest.uses ?? [];
     document.title = manifest.app;
     ctx.log("manifest read", {
       what: `${manifest.app}: ${Object.keys(manifest.packages).length} packages, ${Object.keys(manifest.pages).length} pages`,

@@ -25,6 +25,28 @@ export async function start(ctx) {
     }
   });
 
+  // GRANTS, asked once per page for every kind of data the site uses (its manifest's `uses`) in ONE prompt; a table
+  // outside that list is asked for on its own. A "no" stands until the page is opened again, so a refused site does
+  // not re-ask on every write; a failure to ask (no answer from the node) is not a "no" and is asked again.
+  const asked = new Map(); // table -> Promise<bool>
+  function grant(name) {
+    if (asked.has(name)) return asked.get(name);
+    const list = ctx.uses.includes(name) ? ctx.uses.filter(t => !asked.has(t)) : [name];
+    const p = auth.identity.grant(list).then(
+      g => {
+        ctx.log(g.granted ? "allowed" : "not allowed", { what: `${list.join(", ")}${g.granted ? "" : `: ${g.refused ?? JSON.stringify(g)}`}` });
+        return !!g.granted;
+      },
+      e => {
+        for (const t of list) asked.delete(t);
+        ctx.log("not allowed", { what: `${list.join(", ")}: ${e.message}` });
+        return false;
+      },
+    );
+    for (const t of list) asked.set(t, p);
+    return p;
+  }
+
   async function table(app) {
     const s = await auth.session();
     if (!s) throw new Error("nobody is logged in");
@@ -60,21 +82,14 @@ export async function start(ctx) {
 
     // Leave to write it: the person's grant for this site (the node asks them the first time). Reading needs none;
     // without it the table is read-only here, and a write says why.
-    // Asked once per page: a "no" stands until the page is opened again, so a refused site does not re-ask on every
-    // write.
-    let asking = null;
-    const allowed = () =>
-      (asking ??= auth.identity.grant(app).then(g => {
-        ctx.log(g.granted ? "allowed" : "not allowed", { what: `${app}${g.granted ? "" : `: ${g.refused ?? JSON.stringify(g)}`}` });
-        writable = !!g.granted;
-        return writable;
-      }));
     let writable = null;
     t.writable = () => writable === true;
-    allowed().catch(e => {
-      asking = null; // a failure to ask (no answer from the node) is not a "no": ask again on the next write
-      ctx.log("not allowed", { what: `${app}: ${e.message}` });
-    });
+    const allowed = () =>
+      grant(app).then(ok => {
+        writable = ok;
+        return ok;
+      });
+    allowed().catch(() => {});
 
     // One write: prepared by the core, signed by the identity delegate with the data key, sent as one delta.
     async function write(key, value) {

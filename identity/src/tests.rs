@@ -111,10 +111,17 @@ fn table(data: [u8; 32], table: &str) -> Vec<u8> {
 
 /// Ask for a grant, and answer the node's prompt with `choice`: the page's answer.
 fn ask(m: &mut Map, app: [u8; 32], t: &str, choice: &str) -> Answer {
-    match serve_bytes(m, &encode_request(77, &Request::Grant { table: t.into() }), Some(app)) {
+    asks(m, app, &[t], choice)
+}
+
+fn asks(m: &mut Map, app: [u8; 32], ts: &[&str], choice: &str) -> Answer {
+    let t = ts.join(" ");
+    match serve_bytes(m, &encode_request(77, &Request::Grant { tables: ts.iter().map(|t| t.to_string()).collect() }), Some(app)) {
         Out::Answer(a) => decode_answer(&a).unwrap().1,
         Out::Ask(p) => {
-            assert!(p.message.contains(t), "the prompt names the table: {}", p.message);
+            for one in t.split(' ') {
+                assert!(p.message.contains(one), "the prompt names {one}: {}", p.message);
+            }
             assert_eq!(p.choices, [ALLOW, DENY]);
             let (id, answer) = decode_answer(&serve_answer(m, p.id, p.choices_bytes(choice)).unwrap()).unwrap();
             assert_eq!(id, 77, "the page that asked is answered, under its own id");
@@ -215,7 +222,7 @@ fn a_wrong_pin_that_cannot_be_counted_is_not_answered() {
 #[test]
 fn the_signature_verifies_as_a_register_record_of_the_data_key() {
     let mut m = provisioned(APP);
-    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { table: "notes".into() });
+    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
     let p = table(ALICE_DATA, "notes");
     let v = [3; 32];
     let Answer::Signed { sig } = sign(&mut m, APP, &p, 1, v) else { panic!("not signed") };
@@ -239,14 +246,14 @@ fn a_site_writes_a_table_only_with_the_persons_grant() {
     assert_eq!(ask(&mut m, OTHER, "notes", DENY), Answer::Refused(Why::Denied));
     assert_eq!(sign(&mut m, OTHER, &notes, 1, [1; 32]), Answer::Refused(Why::NotGranted { table: "notes".into() }));
     // The person allows: signed; and asking again is answered at once, no prompt.
-    assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { table: "notes".into() });
+    assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
     assert!(matches!(sign(&mut m, OTHER, &notes, 1, [1; 32]), Answer::Signed { .. }));
-    let again = serve_bytes(&mut m, &encode_request(5, &Request::Grant { table: "notes".into() }), Some(OTHER));
+    let again = serve_bytes(&mut m, &encode_request(5, &Request::Grant { tables: vec!["notes".into()] }), Some(OTHER));
     assert!(matches!(again, Out::Answer(_)), "an existing grant needs no prompt");
     // A grant is for one table.
     assert_eq!(sign(&mut m, OTHER, &table(ALICE_DATA, "pins"), 2, [1; 32]), Answer::Refused(Why::NotGranted { table: "pins".into() }));
     // The home (the site the member was made with) is granted without a prompt, and writes the same table.
-    let home = serve_bytes(&mut m, &encode_request(6, &Request::Grant { table: "notes".into() }), Some(APP));
+    let home = serve_bytes(&mut m, &encode_request(6, &Request::Grant { tables: vec!["notes".into()] }), Some(APP));
     assert!(matches!(home, Out::Answer(_)), "the home is not prompted");
     assert!(matches!(sign(&mut m, APP, &notes, 2, [2; 32]), Answer::Signed { .. }));
     // A prompt nobody waits on is ignored; a bad name is refused without one.
@@ -257,9 +264,9 @@ fn a_site_writes_a_table_only_with_the_persons_grant() {
 #[test]
 fn grants_are_per_person_and_the_home_lists_and_revokes_them() {
     let mut m = provisioned(APP);
-    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { table: "notes".into() });
+    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
     assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
-    assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { table: "notes".into() });
+    assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
     // Bob on the same node has none of Alice's grants.
     assert_eq!(provision(&mut m, BOB, BOB_DID, BOB_PIN, APP), bob());
     assert_eq!(sign(&mut m, APP, &table(BOB_DATA, "notes"), 1, [1; 32]), Answer::Refused(Why::NotGranted { table: "notes".into() }));
@@ -278,7 +285,7 @@ fn grants_are_per_person_and_the_home_lists_and_revokes_them() {
 #[test]
 fn only_the_accounts_data_key_signs_and_only_a_table() {
     let mut m = provisioned(APP);
-    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { table: "notes".into() });
+    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
     // The member's own key, or anyone else's, signs no table.
     assert_eq!(sign(&mut m, APP, &params(public(ALICE), b"t/notes"), 1, [1; 32]), Answer::Refused(Why::NotThisKey));
     assert_eq!(sign(&mut m, APP, &table([3; 32], "notes"), 1, [1; 32]), Answer::Refused(Why::NotThisKey));
@@ -299,8 +306,8 @@ fn only_the_accounts_data_key_signs_and_only_a_table() {
 #[test]
 fn never_two_values_at_one_seq_never_backwards_a_reask_is_answered_the_same() {
     let mut m = provisioned(APP);
-    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { table: "notes".into() });
-    assert_eq!(ask(&mut m, APP, "other", ALLOW), Answer::Granted { table: "other".into() });
+    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
+    assert_eq!(ask(&mut m, APP, "other", ALLOW), Answer::Granted { tables: vec!["other".into()] });
     let p = table(ALICE_DATA, "notes");
     let first = sign(&mut m, APP, &p, 5, [1; 32]);
     assert!(matches!(first, Answer::Signed { .. }));
@@ -317,7 +324,7 @@ fn never_two_values_at_one_seq_never_backwards_a_reask_is_answered_the_same() {
 #[test]
 fn nothing_is_signed_unless_the_guard_was_saved() {
     let mut m = provisioned(APP);
-    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { table: "notes".into() });
+    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
     m.refuse = true;
     let p = table(ALICE_DATA, "notes");
     assert_eq!(sign(&mut m, APP, &p, 1, [1; 32]), Answer::Refused(Why::NotSaved));
@@ -338,12 +345,12 @@ fn only_the_home_exports_a_key() {
 #[test]
 fn every_node_of_an_account_signs_its_data_with_the_one_data_key() {
     let mut m = provisioned(APP);
-    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { table: "notes".into() });
+    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
     let notes = table(ALICE_DATA, "notes");
     assert!(matches!(sign(&mut m, APP, &notes, 1, [1; 32]), Answer::Signed { .. }));
     // A second member of the account (another node's, here on one node) signs the next write of the same table.
     assert_eq!(provision(&mut m, ALICE2, ALICE_DID, ALICE2_PIN, APP), opened(ALICE2, ALICE_DID));
-    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { table: "notes".into() });
+    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
     assert!(matches!(sign(&mut m, APP, &notes, 2, [2; 32]), Answer::Signed { .. }));
     let r = serve(&mut m, Request::Provision { seed: [4; 32], did: BOB_DID, pin: "888888".into(), data: vec![1; 20] }, APP);
     assert_eq!(r, Answer::Refused(Why::BadDataKey));
@@ -375,4 +382,26 @@ fn a_member_is_handed_to_the_next_version_on_its_pin_to_its_home_only() {
     assert_eq!(r, Answer::Unlocked { public: public(ALICE), did: ALICE_DID, data: Some(public(DATA)) });
     assert_eq!(unlock(&mut new, BOB_PIN, APP), Answer::WrongPin { tries_left: MAX_TRIES - 1 }, "Bob was not carried");
     let _ = DATA;
+}
+
+#[test]
+fn one_prompt_for_every_table_an_app_uses_and_later_only_for_a_new_one() {
+    let mut m = provisioned(APP);
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    // One prompt names both.
+    let out = serve_bytes(&mut m, &encode_request(8, &Request::Grant { tables: vec!["notes".into(), "pins".into()] }), Some(OTHER));
+    let Out::Ask(p) = out else { panic!("expected one prompt") };
+    assert!(p.message.contains("“notes” and “pins”"), "{}", p.message);
+    let (_, a) = decode_answer(&serve_answer(&mut m, p.id, ALLOW.as_bytes()).unwrap()).unwrap();
+    assert_eq!(a, Answer::Granted { tables: vec!["notes".into(), "pins".into()] });
+    assert!(matches!(sign(&mut m, OTHER, &table(ALICE_DATA, "notes"), 1, [1; 32]), Answer::Signed { .. }));
+    assert!(matches!(sign(&mut m, OTHER, &table(ALICE_DATA, "pins"), 1, [1; 32]), Answer::Signed { .. }));
+    // The same list again: no prompt. A new table: a prompt for it alone.
+    assert!(matches!(serve_bytes(&mut m, &encode_request(9, &Request::Grant { tables: vec!["notes".into(), "pins".into()] }), Some(OTHER)), Out::Answer(_)));
+    let out = serve_bytes(&mut m, &encode_request(10, &Request::Grant { tables: vec!["notes".into(), "labels".into()] }), Some(OTHER));
+    let Out::Ask(p) = out else { panic!("expected a prompt for the new table") };
+    assert!(p.message.contains("“labels”") && !p.message.contains("notes"), "{}", p.message);
+    // A list that is empty or too long, or a bad name in it, is refused without a prompt.
+    assert_eq!(asks(&mut m, OTHER, &[], ALLOW), Answer::Refused(Why::BadTable));
+    assert_eq!(asks(&mut m, OTHER, &["ok", "Bad!"], ALLOW), Answer::Refused(Why::BadTable));
 }
