@@ -79,7 +79,7 @@ export async function start(ctx) {
           .auth-dialog .close { margin-left: auto; }
           .auth-dialog .tabs button[aria-selected="true"] { font-weight: bold; text-decoration: underline; }
           .auth-dialog form { display: grid; gap: .5em; }
-          .auth-dialog form[hidden], .auth-dialog details[hidden] { display: none; }
+          .auth-dialog form[hidden] { display: none; }
           .auth-dialog input, .auth-dialog textarea { font: inherit; padding: .4em; }
           .auth-dialog .said { min-height: 1.2em; font-size: .9em; margin: 0; }
           .auth-dialog .note { font-size: .85em; opacity: .8; margin: 0; }
@@ -96,16 +96,17 @@ export async function start(ctx) {
               <label>PIN <input name="pin" type="password" inputmode="numeric" autocomplete="off" required></label>
               <button>Log in</button>
               <p class="said"></p>
+              <button type="button" class="swap">Use recovery words instead</button>
             </form>
-            <details>
-              <summary>Log in with recovery words</summary>
-              <form class="words">
-                <label>Your 12 or 24 words <textarea name="words" rows="3" autocomplete="off" spellcheck="false" required></textarea></label>
-                <label>A PIN for this device (6 or more) <input name="pin" type="password" minlength="6" autocomplete="off" required></label>
-                <button>Log in</button>
-                <p class="said"></p>
-              </form>
-            </details>
+            <form class="words" hidden>
+              <strong>Log in with recovery words</strong>
+              <p class="note">On any device: your words open your account, and this device joins it with its own PIN.</p>
+              <label>Your 12 or 24 words <textarea name="words" rows="3" autocomplete="off" spellcheck="false" required></textarea></label>
+              <label>A PIN for this device (6 or more) <input name="pin" type="password" minlength="6" autocomplete="off" required></label>
+              <button>Log in</button>
+              <p class="said"></p>
+              <button type="button" class="swap">Back to PIN</button>
+            </form>
           </div>
           <div data-panel="register" hidden>
             <form class="register">
@@ -150,6 +151,15 @@ export async function start(ctx) {
           if (r) say(form, why(r));
         });
 
+      // The Login tab's two ways, one at a time.
+      for (const b of box.querySelectorAll("button.swap")) {
+        b.addEventListener("click", () => {
+          const [d, w] = [q("form.device"), q("form.words")];
+          d.hidden = !d.hidden;
+          w.hidden = !w.hidden;
+          (d.hidden ? w : d).querySelector("textarea, input").focus();
+        });
+      }
       const device = q("form.device");
       on(device, () => id.unlock(device.pin.value));
 
