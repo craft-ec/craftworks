@@ -16,9 +16,10 @@ export async function start(ctx) {
   const Core = glue.CraftworksCore;
   const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
 
-  const tables = new Map(); // id hex -> table
+  const tables = new Map(); // id hex -> Promise<table> (opened once per page)
+  const live = new Map(); // id hex -> table, for what the node pushes
   listen(said => {
-    const t = said.kind === "tail" && tables.get(said.id);
+    const t = said.kind === "tail" && live.get(said.id);
     if (t) {
       ctx.log("table changed", { what: `${t.app}: seq ${said.tail.seq}, ${said.tail.rows.length} row(s), pushed by the node` });
       t.took(said.tail.rows);
@@ -47,7 +48,30 @@ export async function start(ctx) {
     return p;
   }
 
-  async function table(app) {
+  // The account's CATALOG (table `tables`): one row per table that exists. A page reads the catalog, then fetches only
+  // the tables it lists; a table it does not list is new, opened empty WITHOUT a read (nothing to find), and listed on
+  // its first write. A new account's catalog is created at once; an account from before the catalog has none, so its
+  // tables are read as before and listed as they are found.
+  let catalogOpen = null;
+  function catalog() {
+    return (catalogOpen ??= open("tables", { catalog: true }));
+  }
+  async function listed(name) {
+    const c = await catalog();
+    if (c.rows().some(r => r.key === name)) return true;
+    if (c.absent) return null; // no catalog: unknown, read the table
+    return false;
+  }
+  async function list(name) {
+    const c = await catalog();
+    if (!c.rows().some(r => r.key === name)) await c.put(name, JSON.stringify({ at: Date.now() }));
+  }
+
+  function table(name) {
+    return open(name, {});
+  }
+
+  async function open(app, { catalog: isCatalog = false }) {
     const s = await auth.session();
     if (!s) throw new Error("nobody is logged in");
     if (!s.data) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
@@ -57,34 +81,58 @@ export async function start(ctx) {
     const name = Core.id_name(id);
     let rows = [];
     const changed = [];
+    let queue = Promise.resolve(); // one write at a time: each builds on the step before it
     const t = {
       app,
+      absent: false,
       took: r => {
         rows = r;
         for (const f of changed) f();
       },
       rows: () => rows,
       onChange: f => changed.push(f),
-      put: (key, value) => write(key, value),
-      remove: key => write(key, ""),
+      put: (key, value) => (queue = queue.catch(() => {}).then(() => write(key, value))),
+      remove: key => (queue = queue.catch(() => {}).then(() => write(key, ""))),
     };
-    tables.set(idHex, t);
+    const ready = (async () => {
+      // Leave to write it: the person's grant for this site (the node asks them the first time). Reading needs none;
+      // without it the table is read-only here, and a write says why. Asked NOW, beside the read, so a slow read never
+      // holds the prompt back. The catalog needs none of its own: listing a table is part of using it.
+      if (!isCatalog) allowed().catch(() => {});
+      const known = isCatalog ? (s.fresh ? false : null) : await listed(app);
+      if (known === false) {
+        core.tail_absent(id);
+        t.absent = true;
+        ctx.log("table open", { what: `${app}: new, nothing to read` });
+      } else {
+        await read();
+        ctx.log("table open", { what: `${app}: ${rows.length} row(s)` });
+        // Found but not listed (an account from before the catalog): list it.
+        // Once this site may write it (listing is part of writing).
+        if (!isCatalog && known === null && !t.absent)
+          allowed()
+            .then(ok => ok && list(app))
+            .catch(e => ctx.log("not listed", { what: `${app}: ${e.message}` }));
+      }
+      // A new account's catalog is created now, so the next page finds it.
+      if (isCatalog && t.absent && s.fresh) await t.put("tables", JSON.stringify({ at: Date.now() }));
+      return t;
+    })();
+    tables.set(idHex, ready);
+    live.set(idHex, t);
 
-    // Leave to write it: the person's grant for this site (the node asks them the first time). Reading needs none;
-    // without it the table is read-only here, and a write says why. Asked NOW, beside the read, so a slow read never
-    // holds the prompt back.
-    let writable = null;
+    let writable = isCatalog ? true : null;
     t.writable = () => writable === true;
-    const allowed = () =>
-      grant(app).then(ok => {
+    function allowed() {
+      if (isCatalog) return Promise.resolve(true);
+      return grant(app).then(ok => {
         writable = ok;
         return ok;
       });
-    allowed().catch(() => {});
+    }
 
-    // Read it and follow it. None on the network yet: its first write is a PUT. No answer at all (a table nobody has
-    // written can take the network longer than the wait): the same as none, so the page opens empty; a first write
-    // that the network then refuses resets the table and reads it again.
+    // Read it and follow it. None on the network: its first write is a PUT. No answer at all: the same as none, so
+    // the page opens empty; a first write the network then refuses resets the table and reads it again.
     async function read() {
       const [, frames] = core.tail_get(id);
       let said;
@@ -94,11 +142,10 @@ export async function start(ctx) {
         ctx.log("table not found yet", { what: `${app}: ${e.message}; opened empty` });
         said = { kind: "get-failed" };
       }
+      t.absent = said.kind !== "tail";
       if (said.kind === "tail") t.took(said.tail.rows);
       else core.tail_absent(id);
     }
-    await read();
-    ctx.log("table open", { what: `${app}: ${rows.length} row(s)` });
 
     // One write: prepared by the core, signed by the identity delegate with the data key, sent as one delta.
     async function write(key, value) {
@@ -125,11 +172,18 @@ export async function start(ctx) {
         // what the network has.
         core.tail_reset(id);
         await read();
+        // It was there after all (made on another page before it was listed): list it now.
+        if (!isCatalog && !t.absent) list(app).catch(e => ctx.log("not listed", { what: `${app}: ${e.message}` }));
         throw new Error(`the node refused the write: ${said.said}`);
       }
       t.took(JSON.parse(core.tail_rows(id)).rows);
+      if (t.absent) {
+        t.absent = false;
+        // Created: list it, so every page after this one reads it.
+        if (!isCatalog) await list(app).catch(e => ctx.log("not listed", { what: `${app}: ${e.message}` }));
+      }
     }
-    return t;
+    return ready;
   }
 
   // PINS: one table of the account for every pin in every app, keyed by what is pinned — `app:/notes` (an app on

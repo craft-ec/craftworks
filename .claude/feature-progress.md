@@ -96,3 +96,8 @@ device + the same PIN opens the same account. Adding a second device: pairing wi
   `uses` is asked on its own; removal stays per table. Delegate `Grant{tables}` (1–16 names), `Granted{tables}`.
   Verified on the private node (craftworks-alt): one prompt naming both, "allowed: notes, pins", note PUT + pin PUT,
   no second prompt. Published through B (app v24, loader v8). The delegate re-keyed: members log in once with words.
+- [x] Account CATALOG (table `tables`): pages read the catalog, fetch only listed tables, open unlisted ones empty
+  with NO read and list them on first write; registration creates the catalog (session `fresh`); accounts from before
+  the catalog read tables as before and list what they find. Delegate: catalog writable by home site or any site with
+  some grant (re-key). Verified private node: new account → "tables: new", PUT; pin → pins PUT + listed; reload →
+  tables 2 rows, pins 1 row. B app v26. The prolly tree joins each catalog entry when flush lands.

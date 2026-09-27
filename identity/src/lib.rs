@@ -199,6 +199,10 @@ pub const PENDING: &[u8] = b"identity_pending/";
 pub const PROMPTS: &[u8] = b"identity_prompts";
 /// A table's label prefix.
 pub const TABLE: &[u8] = b"t/";
+/// The account's CATALOG: the table listing its tables, so a page reads only tables that exist and creates the rest.
+/// Written by the member's home site, or by any site the person allowed some table: listing a table is part of using
+/// it.
+pub const CATALOG: &str = "tables";
 
 fn table_ok(t: &str) -> bool {
     (1..=32).contains(&t.len()) && t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
@@ -471,7 +475,13 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             let Some(table) = p.label.strip_prefix(TABLE).and_then(|t| std::str::from_utf8(t).ok()).filter(|t| table_ok(t)) else {
                 return Refused(Why::NotATable);
             };
-            if !granted(h, &a.public(), &app, table) {
+            let member = a.public();
+            let may = if table == CATALOG {
+                a.home == app || grants(h, &member).iter().any(|(g, _)| *g == app)
+            } else {
+                granted(h, &member, &app, table)
+            };
+            if !may {
                 return Refused(Why::NotGranted { table: table.into() });
             }
             let guard = [GUARD, &p.hash[..]].concat();

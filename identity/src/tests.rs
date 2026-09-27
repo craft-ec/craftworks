@@ -405,3 +405,15 @@ fn one_prompt_for_every_table_an_app_uses_and_later_only_for_a_new_one() {
     assert_eq!(asks(&mut m, OTHER, &[], ALLOW), Answer::Refused(Why::BadTable));
     assert_eq!(asks(&mut m, OTHER, &["ok", "Bad!"], ALLOW), Answer::Refused(Why::BadTable));
 }
+
+#[test]
+fn the_catalog_is_written_by_the_home_site_or_a_site_allowed_some_table() {
+    let mut m = provisioned(APP);
+    // The home site: no grant asked.
+    assert!(matches!(sign(&mut m, APP, &table(ALICE_DATA, CATALOG), 1, [1; 32]), Answer::Signed { .. }));
+    // Another site: not until the person allows it some table.
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    assert_eq!(sign(&mut m, OTHER, &table(ALICE_DATA, CATALOG), 2, [2; 32]), Answer::Refused(Why::NotGranted { table: CATALOG.into() }));
+    assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
+    assert!(matches!(sign(&mut m, OTHER, &table(ALICE_DATA, CATALOG), 2, [2; 32]), Answer::Signed { .. }));
+}

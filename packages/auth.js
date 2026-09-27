@@ -19,6 +19,7 @@ export async function start(ctx) {
   const id = await ctx.require("identity");
   const { core, glue, ask } = await ctx.require("node");
   let current = null;
+  let made = null; // the DID (hex) of an account this page registered
 
   const announce = () => dispatchEvent(new CustomEvent("craftworks:auth", { detail: current }));
   const opened = a => {
@@ -27,6 +28,8 @@ export async function start(ctx) {
       did: glue.did_of(hexBytes(a.unlocked.did)),
       didBytes: hexBytes(a.unlocked.did),
       data: a.unlocked.data, // the account's data key (public, hex), or null
+      // Made by this page just now: nothing of it is on the network yet, so there is nothing to read, only to create.
+      fresh: made === a.unlocked.did,
     };
     ctx.log("logged in", { what: `${current.did.slice(0, 24)}… member ${current.member.slice(0, 12)}…` });
     announce();
@@ -89,6 +92,7 @@ export async function start(ctx) {
     const r = await id.provision(joining.member, joining.did, pin, data);
     data.fill(0);
     if (r.unlocked) {
+      made = r.unlocked.did;
       joining.member.fill(0);
       joining.entropy.fill(0);
       joining = null;
