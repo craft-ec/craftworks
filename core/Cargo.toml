@@ -18,6 +18,7 @@ craftworks-identity = { path = "../identity" }
 craftec-set-contract = { workspace = true }
 # A member's tail: the SDK's one client of the Tail contract.
 tail = { workspace = true }
+freenet-prolly = { workspace = true }
 freenet-stdlib = { version = "0.10.0", features = ["contract"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = { version = "1", default-features = false }

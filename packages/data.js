@@ -13,17 +13,45 @@ export async function start(ctx) {
   const auth = await ctx.require("auth");
   const { core, glue, ask, listen } = await ctx.require("node");
   const tailCode = await ctx.require("tail-wasm");
+  // A table's tree lives in Block contracts: the core names them from this code.
+  core.set_block_code(await ctx.require("block-wasm"));
   const Core = glue.CraftworksCore;
   const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
+
+  // A table's VIEW, walked to the end: the tail names the tree's root; a view that needs tree blocks names their
+  // Block contracts, each fetched (its answer is the next view), until the rows are all there. Returns the last view:
+  // `{ kind: "tail", tail: { rows, … } }`, or `tail-unreadable`.
+  async function settle(view, app) {
+    for (let round = 0; view.kind === "tail-need"; round++) {
+      if (round >= 16) throw new Error(`${app}: the tree did not finish loading`);
+      const t0 = performance.now();
+      const answers = await Promise.all(
+        view.blocks.map(b => {
+          const [, frames] = core.frames_get(bytes(b));
+          return ask(frames, x => x.block === b || (x.kind === "get-failed" && x.id === b), `reading ${app}'s tree`, 30000);
+        }),
+      );
+      const failed = answers.find(a => a.kind === "get-failed");
+      if (failed) throw new Error(`${app}: a tree block is not on the network (${failed.id.slice(0, 12)}…)`);
+      ctx.log("tree read", { what: `${app}: ${view.blocks.length} block(s)`, ms: Math.round(performance.now() - t0) });
+      view = JSON.parse(core.tail_view(bytes(view.id)));
+    }
+    if (view.kind === "tail-unreadable") throw new Error(`${app}: ${view.said}`);
+    return view;
+  }
 
   const tables = new Map(); // id hex -> Promise<table> (opened once per page)
   const live = new Map(); // id hex -> table, for what the node pushes
   listen(said => {
-    const t = said.kind === "tail" && live.get(said.id);
-    if (t) {
-      ctx.log("table changed", { what: `${t.app}: seq ${said.tail.seq}, ${said.tail.rows.length} row(s), pushed by the node` });
-      t.took(said.tail.rows);
-    }
+    const t = (said.kind === "tail" || said.kind === "tail-need") && live.get(said.id);
+    if (t)
+      settle(said, t.app).then(
+        v => {
+          ctx.log("table changed", { what: `${t.app}: seq ${v.tail.seq}, ${v.tail.rows.length} row(s), pushed by the node` });
+          t.took(v.tail.rows);
+        },
+        e => ctx.log("table changed", { what: `${t.app}: ${e.message}` }),
+      );
   });
 
   // GRANTS, asked once per page for every kind of data the site uses (its manifest's `uses`) in ONE prompt; a table
@@ -145,11 +173,14 @@ export async function start(ctx) {
       const [, frames] = core.tail_get(id);
       let said;
       try {
-        said = await ask(frames, x => (x.kind === "tail" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, 30000);
+        said = await ask(frames, x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, 30000);
       } catch (e) {
         ctx.log("table not found yet", { what: `${app}: ${e.message}; opened empty` });
         said = { kind: "get-failed" };
       }
+      // The tail is there: its tree must load too. A tree that does not is an error, never an empty table (that
+      // would write over rows it could not see).
+      if (said.kind !== "get-failed") said = await settle(said, app);
       t.absent = said.kind !== "tail";
       if (said.kind === "tail") t.took(said.tail.rows);
       else core.tail_absent(id);
@@ -187,9 +218,55 @@ export async function start(ctx) {
         if (!isCatalog && !t.absent) list(app).catch(e => ctx.log("not listed", { what: `${app}: ${e.message}` }));
         throw new Error(`the node refused the write: ${said.said}`);
       }
-      t.took(JSON.parse(core.tail_rows(id)).rows);
+      await view();
+      // FLUSH once the tail is long: its rows into the tree, the tail emptied (in this write's turn of the queue).
+      if (core.tail_pending(id) >= Core.flush_at()) await flush().catch(e => ctx.log("flush failed", { what: `${app}: ${e.message}` }));
       t.absent = false;
     }
+    async function view() {
+      const v = await settle(JSON.parse(core.tail_view(id)), app);
+      t.took(v.tail.rows);
+    }
+
+    // FLUSH: the tree's new blocks PUT first (a tail must never name a root whose blocks are not there), then the step
+    // naming the new root, signed like any write.
+    async function flush() {
+      const t0 = performance.now();
+      for (let round = 0; round < 16; round++) {
+        const f = core.tail_flush(id);
+        if (f.need) {
+          await settle({ kind: "tail-need", id: idHex, blocks: f.need }, app);
+          continue;
+        }
+        const puts = await Promise.all(
+          f.puts.map(([key, frames]) => ask(frames, x => (x.kind === "put" && x.key === key) || x.kind === "refused", `putting ${app}'s tree`, 60000)),
+        );
+        const refused = puts.find(p => p.kind === "refused");
+        if (refused) {
+          core.tail_reset(id);
+          await read();
+          throw new Error(`a tree block was refused: ${refused.said}`);
+        }
+        const r = await auth.identity.sign(f.params, f.seq, f.valueHash);
+        if (!r.signed) {
+          core.tail_reset(id);
+          await read();
+          throw new Error(`the identity would not sign the flush: ${r.refused ?? JSON.stringify(r)}`);
+        }
+        const [, frames] = core.tail_commit(id, r.signed);
+        const said = await ask(frames, x => (x.kind === "updated" && x.key === name) || x.kind === "refused", `flushing ${app}`, 60000);
+        if (said.kind === "refused") {
+          core.tail_reset(id);
+          await read();
+          throw new Error(`the node refused the flush: ${said.said}`);
+        }
+        ctx.log("flushed", { what: `${app}: ${f.puts.length} tree block(s) put, the tail emptied (seq ${f.seq})`, ms: Math.round(performance.now() - t0) });
+        await view();
+        return;
+      }
+      throw new Error("the tree did not finish loading");
+    }
+
     return ready;
   }
 

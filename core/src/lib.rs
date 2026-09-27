@@ -72,11 +72,15 @@ pub struct Core {
     got: std::collections::HashMap<[u8; 32], Vec<u8>>,
     /// Open tails (this member's, to write; the account's other members', to read), by contract id.
     tails: std::collections::HashMap<[u8; 32], data::Open>,
+    /// The Block contract's code: a table's tree blocks live in Block contracts.
+    block_code: Vec<u8>,
+    /// Tree blocks asked of the network: Block contract id -> (the tail that needs it, the block's id).
+    wanted: std::collections::HashMap<[u8; 32], ([u8; 32], freenet_prolly::Cid)>,
 }
 
 impl Core {
     pub fn new(identity_wasm: &[u8]) -> Core {
-        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1, got: Default::default(), tails: Default::default() }
+        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1, got: Default::default(), tails: Default::default(), block_code: Vec::new(), wanted: Default::default() }
     }
 
     pub fn identity_key(&self) -> String {
@@ -167,15 +171,74 @@ impl Core {
     }
 
     fn tail_state(&mut self, id: [u8; 32], state: &[u8]) -> Option<Value> {
-        let o = self.tails.get_mut(&id)?;
-        o.absorb(state);
-        Some(json!({ "kind": "tail", "id": hex(&id), "tail": o.rows() }))
+        self.tails.get_mut(&id)?.absorb(state);
+        Some(self.tail_view(&id))
+    }
+
+    pub fn set_block_code(&mut self, code: &[u8]) {
+        self.block_code = code.to_vec();
+    }
+
+    /// An open table as the page sees it: `{ kind: "tail", tail: { rows, … } }` once every tree block it needs is
+    /// held; else `{ kind: "tail-need", blocks: [Block contract ids] }`, each to GET (its answer comes back through
+    /// `take`, which feeds it in and gives the next view).
+    pub fn tail_view(&mut self, id: &[u8; 32]) -> Value {
+        let Some(o) = self.tails.get(id) else { return json!({ "kind": "error", "said": "that tail is not open" }) };
+        match o.rows() {
+            Ok(data::Step::Ready(rows)) => json!({ "kind": "tail", "id": hex(id), "tail": rows }),
+            Ok(data::Step::Need(cids)) => {
+                let blocks = self.want(id, &cids);
+                json!({ "kind": "tail-need", "id": hex(id), "blocks": blocks })
+            }
+            Err(e) => json!({ "kind": "tail-unreadable", "id": hex(id), "said": e }),
+        }
+    }
+
+    /// Record tree blocks `cids` as wanted by tail `id`; their Block contract ids (hex), to GET.
+    fn want(&mut self, id: &[u8; 32], cids: &[freenet_prolly::Cid]) -> Vec<String> {
+        cids.iter()
+            .map(|cid| {
+                let c = wire::block::contract_for(&self.block_code, cid);
+                self.wanted.insert(c, (*id, *cid));
+                hex(&c)
+            })
+            .collect()
+    }
+
+    /// FLUSH an open table: `Ready` with the frames that PUT its new tree blocks (send and see them all accepted
+    /// FIRST) and the step to sign; or `Need` with Block contract ids to GET first.
+    pub fn tail_flush(&mut self, id: &[u8; 32]) -> Result<FlushOut, String> {
+        let step = self.tail(id)?.flush()?;
+        match step {
+            data::Step::Need(cids) => Ok(FlushOut::Need(self.want(id, &cids))),
+            data::Step::Ready(f) => {
+                let mut puts = Vec::new();
+                for (cid, state) in f.blocks {
+                    let s = self.stream();
+                    let c = wire::block::block_contract(&self.block_code, &cid);
+                    let name = c.key().id().encode();
+                    puts.push((name, wire::frame_put(c, freenet_stdlib::prelude::WrappedState::new(state), s)?));
+                }
+                Ok(FlushOut::Ready { seq: f.seq, hash: f.hash, puts })
+            }
+        }
     }
 
     pub fn take(&mut self, bytes: &[u8]) -> Value {
         match wire::unframe(&mut self.r, bytes) {
             Incoming::Got { id, state } => {
                 if let Some(v) = self.tail_state(id, &state) {
+                    return v;
+                }
+                // A tree block a table asked for: into that table, and its next view.
+                if let Some((tail, cid)) = self.wanted.remove(&id) {
+                    if let Some(o) = self.tails.get_mut(&tail) {
+                        if !o.absorb_block(&cid, &state) {
+                            return json!({ "kind": "tail-unreadable", "id": hex(&tail), "said": format!("block {} is not what was asked", hex(&cid)) });
+                        }
+                    }
+                    let mut v = self.tail_view(&tail);
+                    v["block"] = json!(hex(&id)); // which fetch this answers
                     return v;
                 }
                 self.got.insert(id, state);
@@ -192,6 +255,13 @@ impl Core {
             other => describe(other),
         }
     }
+}
+
+/// A flush, from the core: the Block contract ids (hex) to GET first, or the block PUTs (by name, with their frames)
+/// and the step to sign.
+pub enum FlushOut {
+    Need(Vec<String>),
+    Ready { seq: u64, hash: [u8; 32], puts: Vec<(String, Vec<Vec<u8>>)> },
 }
 
 /// 32 bytes from hex, or an error naming what.
@@ -406,9 +476,46 @@ mod js {
             Ok([JsValue::from(kind), JsValue::from(frames(f))].into_iter().collect())
         }
 
-        /// An open tail's rows, as JSON text `{ id, seq, rows: [{ key, value }], root }`.
-        pub fn tail_rows(&mut self, id: &[u8]) -> Result<String, JsValue> {
-            Ok(self.0.tail(&b32(id)?).map_err(err)?.rows().to_string())
+        /// An open table's view, as JSON text: `{ kind: "tail", tail: { id, seq, rows: [{ key, value }], root,
+        /// pending } }`, or `{ kind: "tail-need", blocks: [Block contract ids to GET] }`.
+        pub fn tail_view(&mut self, id: &[u8]) -> Result<String, JsValue> {
+            Ok(self.0.tail_view(&b32(id)?).to_string())
+        }
+
+        pub fn set_block_code(&mut self, code: &[u8]) {
+            self.0.set_block_code(code);
+        }
+
+        /// How many rows wait in an open table's tail (a flush is due at `data::FLUSH_AT`).
+        pub fn tail_pending(&mut self, id: &[u8]) -> Result<u32, JsValue> {
+            Ok(self.0.tail(&b32(id)?).map_err(err)?.pending_rows() as u32)
+        }
+
+        pub fn flush_at() -> u32 {
+            data::FLUSH_AT as u32
+        }
+
+        /// FLUSH an open table. `{ need: [Block contract ids] }` to GET first; or `{ params, seq, valueHash, puts:
+        /// [[name, frames]] }`: send every put and see each accepted, THEN sign and `tail_commit` as for a write.
+        pub fn tail_flush(&mut self, id: &[u8]) -> Result<js_sys::Object, JsValue> {
+            let id = b32(id)?;
+            let out = js_sys::Object::new();
+            match self.0.tail_flush(&id).map_err(err)? {
+                FlushOut::Need(blocks) => {
+                    let a: js_sys::Array = blocks.into_iter().map(JsValue::from).collect();
+                    js_sys::Reflect::set(&out, &"need".into(), &a.into())?;
+                }
+                FlushOut::Ready { seq, hash, puts } => {
+                    let params = self.0.tail(&id).map_err(err)?.params.clone();
+                    js_sys::Reflect::set(&out, &"params".into(), &js_sys::Uint8Array::from(&params[..]).into())?;
+                    js_sys::Reflect::set(&out, &"seq".into(), &JsValue::from(seq as f64))?;
+                    js_sys::Reflect::set(&out, &"valueHash".into(), &js_sys::Uint8Array::from(&hash[..]).into())?;
+                    let a: js_sys::Array =
+                        puts.into_iter().map(|(name, f)| -> JsValue { [JsValue::from(name), JsValue::from(frames(f))].into_iter().collect::<js_sys::Array>().into() }).collect();
+                    js_sys::Reflect::set(&out, &"puts".into(), &a.into())?;
+                }
+            }
+            Ok(out)
         }
 
         /// A contract id's base58 form, as the node names it in acks.

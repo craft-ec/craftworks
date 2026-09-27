@@ -74,7 +74,12 @@ device + the same PIN opens the same account. Adding a second device: pairing wi
   sdk#576, pinned 615c9d5): a delta sent as a State is refused ("invalid put") — that was the lost second note.
   A refused write resets the local table and re-reads it.
 - [x] B. data (tail per account per app, live) — verified on the private node: register, two notes, reload → both.
-- [ ] B2. flush the tail into the prolly tree; tree blocks as erasure piece sets.
+- [x] B2. flush the tail into the prolly tree (SDK `tail::flush_into`, freenet-prolly 17d67d8 = the SDK's pin). Tree
+  blocks in Block contracts, PUT before the step naming the root; reads walk catalog → tail → root → blocks.
+  FLUSH_AT = 32 rows. Verified private node: 33 notes → "flushed: 2 tree block(s), tail emptied (seq 33)";
+  reload → "tree read notes: 1 block", 34 rows. B app v28.
+- [ ] B2b. erasure for the tree: parity groups start at freenet-prolly's MIN_GROUP (21 siblings); a small tree's
+  blocks have NO parity yet (single copy each) — decide: race-put copies, or group smaller trees.
 
 ## 2026-09-28 — data belongs to the account; sites get the person's grant
 - Owner: another developer's front end (or another address for the same app) must show the same data intact.

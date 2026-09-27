@@ -12,9 +12,18 @@
 //! page takes `message` out, the delegate signs it, the signature comes back to `commit`.
 
 use craftec_register_contract::wire::Signed;
+use freenet_prolly::apply::ApplyError;
+use freenet_prolly::range::{range, read_value, PageEnd, Range, RangeError};
+use freenet_prolly::store::{MemBlocks, ReadError};
+use freenet_prolly::Cid;
 use freenet_stdlib::prelude::{ContractContainer, ContractKey};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use tail::{Op, Unsigned, Writer};
+
+/// A table's tail is FLUSHED into its tree once it holds this many rows: the tail stays small (every write re-signs
+/// and every reader re-reads the whole tail), the tree holds the rest.
+pub const FLUSH_AT: usize = 32;
 
 
 pub struct Open {
@@ -25,6 +34,24 @@ pub struct Open {
     /// of the whole state; after, every write is an UPDATE carrying one delta.
     pub on_network: bool,
     pub pending: Option<Unsigned>,
+    /// The tree's blocks this page holds (fetched, or built by a flush), by id: `Blocks` bodies.
+    pub blocks: MemBlocks,
+    /// A flush's new blocks, kept until its step is signed and sent: then they are this page's too.
+    staged: Option<MemBlocks>,
+}
+
+/// A flush, ready: the blocks to put FIRST (as Block contract states), then the step to sign.
+pub struct Flush {
+    pub seq: u64,
+    pub hash: [u8; 32],
+    pub blocks: Vec<(Cid, Vec<u8>)>,
+}
+
+/// What a flush or a read needs before it can go on.
+pub enum Step<T> {
+    Ready(T),
+    /// These tree blocks, fetched and handed to `absorb_block`, then ask again.
+    Need(Vec<Cid>),
 }
 
 impl Open {
@@ -33,7 +60,7 @@ impl Open {
         let params = wire::register_params(key, &[b"t/".as_slice(), table.as_bytes()].concat());
         let (_, contract, _) = wire::puts::contract(tail_code, &params, &[]);
         let writer = Writer::new(&params).expect("our own params parse");
-        Open { params, contract, writer, on_network: false, pending: None }
+        Open { params, contract, writer, on_network: false, pending: None, blocks: MemBlocks::default(), staged: None }
     }
 
     pub fn id(&self) -> String {
@@ -74,12 +101,59 @@ impl Open {
         Some(out)
     }
 
+    /// A block the network sent (a Block contract's state, `kind ‖ body`), kept if it is one this table asked for:
+    /// its id is computed from the bytes, never taken on trust.
+    pub fn absorb_block(&mut self, want: &Cid, state: &[u8]) -> bool {
+        match wire::block::block_of_state(state) {
+            Some((id, body)) if id == *want => {
+                self.blocks.insert(id, body);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Pending rows in the tail.
+    pub fn pending_rows(&self) -> usize {
+        self.writer.body().entries.len()
+    }
+
+    /// FLUSH: write the tail's rows into the tree (the SDK's `flush_into`, the tree library's own `apply`) and
+    /// prepare the step that names the new root. The blocks go out FIRST: a tail must never name a root whose blocks
+    /// are not there. `Need` when the old tree's blocks along the edited paths are not held yet.
+    pub fn flush(&mut self) -> Result<Step<Flush>, String> {
+        let body = self.writer.body();
+        if body.entries.is_empty() {
+            return Err("nothing to flush".into());
+        }
+        let mut staging = self.blocks.clone();
+        let (applied, op) = match tail::flush_into(&mut staging, &body, self.writer.seq()) {
+            Ok(x) => x,
+            Err(ApplyError::Read(ReadError::Need(ids))) => return Ok(Step::Need(ids)),
+            Err(e) => return Err(format!("the tree would not take the rows: {e:?}")),
+        };
+        for (cid, bytes) in &applied.parity {
+            staging.insert(*cid, bytes);
+        }
+        let mut blocks = Vec::new();
+        for (cid, body) in staging.0.iter().filter(|(c, _)| !self.blocks.0.contains_key(*c)) {
+            let state = wire::block::block_state(cid, body).ok_or_else(|| format!("block {} is of no known kind", crate::hex(cid)))?;
+            blocks.push((*cid, state));
+        }
+        let (seq, hash) = self.prepare(vec![op]).ok_or("the tail would refuse the flush")?;
+        self.staged = Some(staging);
+        Ok(Step::Ready(Flush { seq, hash, blocks }))
+    }
+
     /// The signature for the prepared step. Returns what to send: `Put(state)` if the network has no tail yet, else
     /// `Update(delta)`.
     pub fn commit(&mut self, sig: [u8; 64]) -> Option<Send> {
         let u = self.pending.take()?;
         let signed = Signed { terminal: false, seq: u.seq, value_hash: u.body.hash(), bitmap: 0, sigs: vec![sig] };
         let delta = self.writer.commit(u, signed)?;
+        if let Some(b) = self.staged.take() {
+            self.blocks = b;
+        }
         Some(if self.on_network {
             Send::Update(delta)
         } else {
@@ -88,17 +162,46 @@ impl Open {
         })
     }
 
-    /// The rows, for the page: the tail's pending rows (the tree's come with the flush step).
-    pub fn rows(&self) -> Value {
+    /// The rows, for the page: the TREE's (at the tail's root) with the TAIL's pending rows over them (a pending
+    /// delete hides a tree row). `Need` names the tree blocks to fetch first.
+    pub fn rows(&self) -> Result<Step<Value>, String> {
         let body = self.writer.body();
-        let rows: Vec<Value> = body
-            .entries
-            .iter()
-            .filter_map(|(k, e)| {
-                e.value.as_ref().map(|v| json!({ "key": String::from_utf8_lossy(k), "value": String::from_utf8_lossy(v) }))
-            })
-            .collect();
-        json!({ "id": self.id(), "seq": self.writer.seq(), "rows": rows, "root": body.root.map(|r| crate::hex(&r)) })
+        let mut all: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+        if let Some(root) = &body.root {
+            let mut r = Range { max_entries: 4096, max_bytes: 4 << 20, ..Range::default() };
+            loop {
+                let page = match range(&self.blocks, root, &r) {
+                    Ok(p) => p,
+                    Err(RangeError::Read(ReadError::Need(ids))) => return Ok(Step::Need(ids)),
+                    Err(e) => return Err(format!("the tree does not read: {e:?}")),
+                };
+                if page.end == PageEnd::Blocked {
+                    return Ok(Step::Need(page.need.clone()));
+                }
+                for (k, v) in &page.entries {
+                    match read_value(&self.blocks, *v) {
+                        Ok(b) => {
+                            all.insert(k.clone(), b.to_vec());
+                        }
+                        Err(ReadError::Need(ids)) => return Ok(Step::Need(ids)),
+                        Err(e) => return Err(format!("a value does not read: {e:?}")),
+                    }
+                }
+                match (&page.end, &page.next) {
+                    (PageEnd::Limit, Some(n)) => r.after = Some(n.clone()),
+                    _ => break,
+                }
+            }
+        }
+        for (k, e) in &body.entries {
+            match &e.value {
+                Some(v) => all.insert(k.clone(), v.clone()),
+                None => all.remove(k),
+            };
+        }
+        let rows: Vec<Value> =
+            all.iter().map(|(k, v)| json!({ "key": String::from_utf8_lossy(k), "value": String::from_utf8_lossy(v) })).collect();
+        Ok(Step::Ready(json!({ "id": self.id(), "seq": self.writer.seq(), "rows": rows, "root": body.root.map(|r| crate::hex(&r)), "pending": body.entries.len() })))
     }
 }
 
@@ -131,7 +234,8 @@ mod tests {
         let Some(Send::Put(state)) = o.commit(sign(&key, &o, seq, h)) else { panic!("first write is a put") };
         let (seq, h) = o.prepare(vec![Op::Set { key: b"b".to_vec(), value: b"2".to_vec() }]).unwrap();
         assert!(matches!(o.commit(sign(&key, &o, seq, h)), Some(Send::Update(_))));
-        assert_eq!(o.rows()["rows"].as_array().unwrap().len(), 2);
+        let Ok(Step::Ready(v)) = o.rows() else { panic!("no tree yet: nothing to fetch") };
+        assert_eq!(v["rows"].as_array().unwrap().len(), 2);
         // Another page of the same member reads the first state from the network.
         let mut other = Open::new(CODE, &member, "notes");
         assert!(other.absorb(&state));
@@ -139,6 +243,58 @@ mod tests {
         // An older state never moves a writer back.
         assert!(!o.absorb(&state));
         assert_eq!(o.writer.seq(), 2);
+    }
+
+    fn write(key: &SigningKey, o: &mut Open, k: &str, v: &str) {
+        let op = if v.is_empty() { Op::Delete { key: k.into() } } else { Op::Set { key: k.into(), value: v.into() } };
+        let (seq, h) = o.prepare(vec![op]).unwrap();
+        o.commit(sign(key, o, seq, h)).unwrap();
+    }
+
+    fn keys(v: &Value) -> Vec<String> {
+        v["rows"].as_array().unwrap().iter().map(|r| format!("{}={}", r["key"].as_str().unwrap(), r["value"].as_str().unwrap())).collect()
+    }
+
+    #[test]
+    fn a_flush_moves_the_rows_into_the_tree_and_a_reader_walks_tail_then_tree() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        let mut o = Open::new(CODE, &member, "notes");
+        for (k, v) in [("a", "1"), ("b", "2"), ("c", "3")] {
+            write(&key, &mut o, k, v);
+        }
+        let Ok(Step::Ready(f)) = o.flush() else { panic!("a flush of held rows is ready") };
+        assert!(!f.blocks.is_empty(), "the new tree's blocks go out first");
+        o.commit(sign(&key, &o, f.seq, f.hash)).unwrap();
+        assert_eq!(o.pending_rows(), 0, "the tail is empty after the flush");
+        // After the flush: a new row in the tail, one tree row deleted from the tail.
+        write(&key, &mut o, "d", "4");
+        write(&key, &mut o, "b", "");
+        let Ok(Step::Ready(v)) = o.rows() else { panic!("the writer holds its own blocks") };
+        assert_eq!(keys(&v), ["a=1", "c=3", "d=4"]);
+        // Another page: the state only. It walks tail -> tree root -> blocks it must fetch.
+        let mut r = Open::new(CODE, &member, "notes");
+        assert!(r.absorb(&o.writer.state()));
+        let mut rounds = 0;
+        let v = loop {
+            match r.rows().unwrap() {
+                Step::Ready(v) => break v,
+                Step::Need(ids) => {
+                    rounds += 1;
+                    assert!(rounds < 10, "the walk ends");
+                    for id in ids {
+                        let state = wire::block::block_state(&id, o.blocks.0.get(&id).expect("the writer made it")).unwrap();
+                        assert!(r.absorb_block(&id, &state));
+                    }
+                }
+            }
+        };
+        assert!(rounds >= 1, "control: the reader had to fetch the tree");
+        assert_eq!(keys(&v), ["a=1", "c=3", "d=4"]);
+        // A block that is not the one asked for is refused.
+        let (id, body) = o.blocks.0.iter().next().unwrap();
+        let other = [0u8; 32];
+        assert!(!r.absorb_block(&other, &wire::block::block_state(id, body).unwrap()));
     }
 
     #[test]
