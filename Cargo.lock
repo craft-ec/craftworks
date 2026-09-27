@@ -286,6 +286,7 @@ dependencies = [
  "js-sys",
  "serde_json",
  "sha2",
+ "tail",
  "wasm-bindgen",
  "wire",
 ]

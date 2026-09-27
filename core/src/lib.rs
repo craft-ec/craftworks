@@ -3,6 +3,7 @@
 //! frames what the page asks and names what the node answers, as JSON the components can show.
 
 pub mod account;
+pub mod data;
 
 use craftworks_identity::{decode_answer, encode_request, Answer, Request};
 use serde_json::{json, Value};
@@ -60,11 +61,13 @@ pub struct Core {
     /// Contract states the node sent (a GET's answer), by contract id: read by the account readers, never handed to
     /// the page as bytes.
     got: std::collections::HashMap<[u8; 32], Vec<u8>>,
+    /// Open tails (this member's, to write; the account's other members', to read), by contract id.
+    tails: std::collections::HashMap<[u8; 32], data::Open>,
 }
 
 impl Core {
     pub fn new(identity_wasm: &[u8]) -> Core {
-        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1, got: Default::default() }
+        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1, got: Default::default(), tails: Default::default() }
     }
 
     pub fn identity_key(&self) -> String {
@@ -109,12 +112,58 @@ impl Core {
         self.got.get(id).map(Vec::as_slice)
     }
 
+    /// Open the tail of `member` for the app `site` (idempotent). Returns its contract id.
+    pub fn tail_open(&mut self, tail_code: &[u8], member: &[u8; 32], site: &[u8; 32]) -> [u8; 32] {
+        let o = data::Open::new(tail_code, member, site);
+        let id = o.id_bytes();
+        self.tails.entry(id).or_insert(o);
+        id
+    }
+
+    pub fn tail(&mut self, id: &[u8; 32]) -> Result<&mut data::Open, String> {
+        self.tails.get_mut(id).ok_or_else(|| "that tail is not open".into())
+    }
+
+    /// Frames that send a committed write: the first as a PUT of the whole state, then UPDATEs of one delta each.
+    pub fn frames_send(&mut self, id: &[u8; 32], send: data::Send) -> Result<Vec<Vec<u8>>, String> {
+        let s = self.stream();
+        let o = self.tail(id)?;
+        match send {
+            data::Send::Put(state) => {
+                wire::frame_put(o.contract.clone(), freenet_stdlib::prelude::WrappedState::new(state), s)
+            }
+            data::Send::Update(delta) => wire::frame_update(o.key(), delta, s),
+        }
+    }
+
+    /// Frames of a GET of an open tail, subscribing (so other devices' writes arrive as they land).
+    pub fn frames_tail_get(&mut self, id: &[u8; 32]) -> Result<Vec<Vec<u8>>, String> {
+        let s = self.stream();
+        wire::frame_get(wire::contract_id(*id), true, s)
+    }
+
+    fn tail_state(&mut self, id: [u8; 32], state: &[u8]) -> Option<Value> {
+        let o = self.tails.get_mut(&id)?;
+        o.absorb(state);
+        Some(json!({ "kind": "tail", "id": hex(&id), "tail": o.rows() }))
+    }
+
     pub fn take(&mut self, bytes: &[u8]) -> Value {
         match wire::unframe(&mut self.r, bytes) {
             Incoming::Got { id, state } => {
+                if let Some(v) = self.tail_state(id, &state) {
+                    return v;
+                }
                 self.got.insert(id, state);
                 json!({ "kind": "got", "id": hex(&id) })
             }
+            Incoming::HeadChanged { key, state: Some(state) } => {
+                match freenet_stdlib::prelude::ContractInstanceId::from_base58(&key).ok().and_then(|i| self.tail_state(*i, &state)) {
+                    Some(v) => v,
+                    None => json!({ "kind": "changed", "key": key }),
+                }
+            }
+            Incoming::Ack(AckKind::Updated(key)) => json!({ "kind": "updated", "key": key }),
             Incoming::GetFailed { id, why } => json!({ "kind": "get-failed", "id": hex(&id), "why": format!("{why:?}") }),
             other => describe(other),
         }
@@ -264,6 +313,67 @@ mod js {
             let list = account::members(&owner, state).ok_or_else(|| err("the member list does not verify".into()))?;
             let v: Vec<Value> = list.iter().map(|m| json!({ "key": hex(&m.key), "name": m.name, "since": m.since })).collect();
             Ok(Value::from(v).to_string())
+        }
+
+        /// The 32 bytes of a contract id written in base58 (as in a `/v1/contract/web/<id>/` path).
+        pub fn id_bytes(id: &str) -> Result<js_sys::Uint8Array, JsValue> {
+            let i = freenet_stdlib::prelude::ContractInstanceId::from_base58(id).map_err(|e| err(format!("not a contract id: {e}")))?;
+            Ok(js_sys::Uint8Array::from(&i[..]))
+        }
+
+        /// Open a member's tail for an app: its contract id (hex).
+        pub fn tail_open(&mut self, tail_code: &[u8], member: &[u8], site: &[u8]) -> Result<String, JsValue> {
+            Ok(hex(&self.0.tail_open(tail_code, &b32(member)?, &b32(site)?)))
+        }
+
+        /// `[id hex, frames]`: read an open tail and follow it.
+        pub fn tail_get(&mut self, id: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let id = b32(id)?;
+            let f = self.0.frames_tail_get(&id).map_err(err)?;
+            Ok([JsValue::from(hex(&id)), JsValue::from(frames(f))].into_iter().collect())
+        }
+
+        /// Mark an open tail as absent from the network (a GET found none): its first write is a PUT.
+        pub fn tail_absent(&mut self, id: &[u8]) -> Result<(), JsValue> {
+            self.0.tail(&b32(id)?).map_err(err)?.on_network = false;
+            Ok(())
+        }
+
+        /// The next write to an open tail: set `key` to `value` (empty value: delete). Returns `{ params, seq,
+        /// valueHash }`, what the identity delegate signs; nothing moves until `tail_commit`.
+        pub fn tail_prepare(&mut self, id: &[u8], key: &[u8], value: &[u8]) -> Result<js_sys::Object, JsValue> {
+            let o = self.0.tail(&b32(id)?).map_err(err)?;
+            let op = if value.is_empty() {
+                tail::Op::Delete { key: key.to_vec() }
+            } else {
+                tail::Op::Set { key: key.to_vec(), value: value.to_vec() }
+            };
+            let (seq, hash) = o.prepare(vec![op]).ok_or_else(|| err("the tail refuses that write (too large?)".into()))?;
+            let out = js_sys::Object::new();
+            js_sys::Reflect::set(&out, &"params".into(), &js_sys::Uint8Array::from(&o.params[..]).into())?;
+            js_sys::Reflect::set(&out, &"seq".into(), &JsValue::from(seq as f64))?;
+            js_sys::Reflect::set(&out, &"valueHash".into(), &js_sys::Uint8Array::from(&hash[..]).into())?;
+            Ok(out)
+        }
+
+        /// The delegate's signature (hex) for the prepared write: `[kind, frames]`, kind "put" or "update".
+        pub fn tail_commit(&mut self, id: &[u8], sig_hex: &str) -> Result<js_sys::Array, JsValue> {
+            let id = b32(id)?;
+            let sig: [u8; 64] = unhex(sig_hex).and_then(|b| b.try_into().ok()).ok_or_else(|| err("not a signature".into()))?;
+            let send = self.0.tail(&id).map_err(err)?.commit(sig).ok_or_else(|| err("the signature does not cover that write".into()))?;
+            let kind = if matches!(send, data::Send::Put(_)) { "put" } else { "update" };
+            let f = self.0.frames_send(&id, send).map_err(err)?;
+            Ok([JsValue::from(kind), JsValue::from(frames(f))].into_iter().collect())
+        }
+
+        /// An open tail's rows, as JSON text `{ id, seq, rows: [{ key, value }], root }`.
+        pub fn tail_rows(&mut self, id: &[u8]) -> Result<String, JsValue> {
+            Ok(self.0.tail(&b32(id)?).map_err(err)?.rows().to_string())
+        }
+
+        /// A contract id's base58 form, as the node names it in acks.
+        pub fn id_name(id: &[u8]) -> Result<String, JsValue> {
+            Ok(wire::contract_id(b32(id)?).encode())
         }
 
         /// The ed25519 public key of a seed.

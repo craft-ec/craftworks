@@ -36,7 +36,7 @@ export async function mount(ctx, el) {
       }
       dev.querySelector(".line").replaceWith(list.length ? ul : "No devices listed yet: this account was made before the member list.");
     },
-    e => (dev.querySelector(".line").textContent = `Could not read your devices: ${e.message}`),
+    e => (dev.querySelector(".line").textContent = `Could not read your devices: ${e?.message ?? e}`),
   );
 
   // RECOVERY WORDS: made with the account; they ARE the account (its owner key and its DID come from them). Shown on

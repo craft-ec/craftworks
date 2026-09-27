@@ -16,6 +16,8 @@ serde_json = "1"
 craftworks-identity = { path = "../identity" }
 # The member Set's item format and reader: its ONE implementation.
 craftec-set-contract = { workspace = true }
+# A member's tail: the SDK's one client of the Tail contract.
+tail = { workspace = true }
 freenet-stdlib = { version = "0.10.0", features = ["contract"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = { version = "1", default-features = false }

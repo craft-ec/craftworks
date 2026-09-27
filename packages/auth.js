@@ -61,7 +61,23 @@ export async function start(ctx) {
     if (!s) return [];
     const [registerCode, setCode] = [await ctx.require("register-wasm"), await ctx.require("set-wasm")];
     if (!(await get(s.didBytes, "reading the account's seat"))) throw new Error("the account's seat is not on the network");
-    const owner = hexBytes(core.owner_of(registerCode, s.didBytes));
+    let owner;
+    try {
+      owner = hexBytes(core.owner_of(registerCode, s.didBytes));
+    } catch {
+      // An account made before the member list: its seat does not name the owner key yet. The device that holds the
+      // account's words upgrades it (the new seat replaces the old at a higher seq) and admits itself.
+      const r = await id.recovery();
+      if (!r.recovery) throw new Error("this account was made before the member list: log in once with its recovery words to add it");
+      const words = hexBytes(r.recovery);
+      const a = core.account(registerCode, setCode, words, hexBytes(s.member), Date.now(), deviceName());
+      words.fill(0);
+      await put(a.seat, "the account's seat");
+      await put(a.members, "this device's place in the account");
+      ctx.log("account upgraded", { what: "the seat names its owner; this device is listed" });
+      if (!(await get(s.didBytes, "reading the account's seat"))) throw new Error("the account's seat is not on the network");
+      owner = hexBytes(core.owner_of(registerCode, s.didBytes));
+    }
     if (!(await get(core.members_id(setCode, owner), "reading the account's members"))) return [];
     return JSON.parse(core.members(setCode, owner));
   }
