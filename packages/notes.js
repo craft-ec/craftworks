@@ -36,7 +36,7 @@ export async function mount(ctx, el) {
       .keep .card .t { font-weight: 600; margin-bottom: 6px; overflow-wrap: anywhere; }
       .keep .card .b { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18em; overflow: hidden; }
       .keep .card .tools { display: flex; gap: 2px; opacity: 0; transition: opacity .15s; margin-top: 6px; }
-      .keep .card:hover .tools, .keep .card:focus-within .tools { opacity: 1; }
+      .keep .card:hover .tools, .keep .card:focus-visible .tools, .keep .card:has(:focus-visible) .tools { opacity: 1; }
       .keep .tools button, .keep .row button, .keep .pin { border: 0; background: none; cursor: pointer; font-size: 15px;
         padding: 4px 6px; border-radius: 50%; color: inherit; }
       .keep .tools button:hover, .keep .row button:hover { background: #0001; }
@@ -48,7 +48,7 @@ export async function mount(ctx, el) {
       .keep .swatches button { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line); }
       .keep .empty { text-align: center; opacity: .6; margin-top: 40px; }
       .keep .said { text-align: center; font-size: .9em; }
-      .keep dialog.editor { width: min(600px, calc(100vw - 32px)); border: 0; border-radius: 8px; padding: 14px 16px;
+      .keep dialog.editor { position: fixed; width: min(600px, calc(100vw - 32px)); border: 0; border-radius: 8px; padding: 14px 16px;
         box-shadow: 0 4px 24px #0006; display: grid; gap: 8px; }
       .keep dialog.editor[style*="background"] { color: #202124; }
       .keep dialog.editor:not([open]) { display: none; }
@@ -106,7 +106,7 @@ export async function mount(ctx, el) {
 
   // A colour picker under `anchor`; `pick(color)` on a choice.
   const palette = (anchor, pick) => {
-    root.querySelector(".swatches")?.remove();
+    el.querySelector(".swatches")?.remove();
     const box = document.createElement("div");
     box.className = "swatches";
     for (const [c, name] of COLORS) {
@@ -122,11 +122,13 @@ export async function mount(ctx, el) {
       };
       box.append(b);
     }
+    // Inside the open editor when picked from it: while a dialog is open, everything outside it is inert.
+    const host = anchor.closest("dialog") ?? root;
     const r = anchor.getBoundingClientRect();
-    const base = root.getBoundingClientRect();
+    const base = host.getBoundingClientRect();
     box.style.left = `${r.left - base.left}px`;
     box.style.top = `${r.bottom - base.top + 4}px`;
-    root.append(box);
+    host.append(box);
     setTimeout(() => addEventListener("click", () => box.remove(), { once: true }));
   };
   const tint = (node, color) => (node.style.background = color || "");
@@ -184,6 +186,13 @@ export async function mount(ctx, el) {
   };
   editor.querySelector(".done").onclick = finish;
   editor.addEventListener("cancel", e => (e.preventDefault(), finish()));
+  // A click outside the note (on the backdrop) closes it, as Close does. The backdrop's clicks land on the dialog
+  // itself, outside its box.
+  editor.addEventListener("click", e => {
+    if (e.target !== editor || e.target.closest(".swatches")) return;
+    const r = editor.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) finish();
+  });
   editor.querySelector(".pin-e").onclick = e => {
     editing.pinned = !editing.pinned;
     e.currentTarget.setAttribute("aria-pressed", String(editing.pinned));
