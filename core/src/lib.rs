@@ -793,6 +793,13 @@ mod js {
         Ok(account::did(&b32(owner)?))
     }
 
+    /// The names of an account space's own tables — the identity's constants (the delegate's rules name them), given to
+    /// the `space` capability: `{ catalog, members, channel }`.
+    #[wasm_bindgen]
+    pub fn account_tables() -> String {
+        serde_json::json!({ "catalog": craftworks_identity::CATALOG, "members": craftworks_identity::MEMBERS, "channel": craftworks_identity::CHANNEL }).to_string()
+    }
+
     /// The public key (hex) of an EPOCH's log: the tail of that epoch's MLS commits (`identity::epoch_log_key`, the one
     /// derivation the identity delegate signs with).
     #[wasm_bindgen]

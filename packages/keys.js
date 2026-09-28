@@ -20,10 +20,13 @@
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const storage = await ctx.require("storage");
+  // The space whose group this is (the account): its channel's name.
+  const space = await ctx.require("space");
+  const CHANNEL = space.tables.channel;
   // The group's commits in one agreed order: the account's nodes share one key, so a `tail` ordering.
   const ordering = await ctx.require("ordering");
   let commits = null;
-  const commitLog = async () => (commits ??= await ordering.open({ type: "tail", table: "mls", prefix: "c/" }));
+  const commitLog = async () => (commits ??= await ordering.open({ type: "tail", table: CHANNEL, prefix: "c/" }));
   const { core } = await ctx.require("node");
   const idlogCode = await ctx.require("idlog-wasm");
   // MLS is its own wasm package, loaded here only: no other page pays for it.
@@ -105,7 +108,7 @@ export async function start(ctx) {
       // Only the home site keeps the account's keys: anywhere else, nothing to do (and no table to ask for).
       const home = await auth.identity.mlsLoad();
       if (home.refused) return;
-      const channel = await storage.table("mls");
+      const channel = await storage.table(CHANNEL);
       for (let round = 0; round < 4; round++) {
         // The group info to join from: the newest commit's, else the one published beside them.
         const last = (await commitLog()).from(0).at(-1);
@@ -137,7 +140,7 @@ export async function start(ctx) {
     (busy = busy.then(async () => {
       const home = await auth.identity.mlsLoad();
       if (home.refused) return;
-      const channel = await storage.table("mls");
+      const channel = await storage.table(CHANNEL);
       const rows = channel.rows().filter(x => x.key.startsWith("e/"));
       for (const row of rows) await channel.put(row.key, hexOf(mlsGlue.Mls.reseal_escrow(old, fresh, bytes(row.value))));
       mls.escrow_to(fresh);
@@ -154,7 +157,7 @@ export async function start(ctx) {
         if (!r.mlsState) return null; // not the home site, or this node has not joined yet
         mls.load(s.didBytes, await keyLog(s.didBytes), bytes(r.mlsState));
       }
-      const channel = await storage.table("mls");
+      const channel = await storage.table(CHANNEL);
       const applied = await catchUp();
       if (mls.status().removed) return forget();
       if (applied) await keep(channel);
@@ -184,7 +187,7 @@ export async function start(ctx) {
   async function remove(index) {
     return (busy = busy.then(async () => {
       if (!status) throw new Error("the account's keys are not held on this site");
-      const channel = await storage.table("mls");
+      const channel = await storage.table(CHANNEL);
       const commit = mls.remove(index);
       const r = await (await commitLog()).append(mls.status().epoch - 1, entryOf(commit));
       if (!r.ok) {
@@ -203,7 +206,7 @@ export async function start(ctx) {
 
   // How many epochs are in escrow for the words.
   async function escrowed() {
-    const channel = await storage.table("mls");
+    const channel = await storage.table(CHANNEL);
     return channel.rows().filter(x => x.key.startsWith("e/")).length;
   }
 

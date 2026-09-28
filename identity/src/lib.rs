@@ -237,6 +237,9 @@ pub const CATALOG: &str = "tables";
 /// The account's MEMBERS table: every node's credentials and the removals it made, gossiped in its own feed. Read with
 /// any grant (whose feeds count is part of reading any table); written by the home site only (where the group runs).
 pub const MEMBERS: &str = "members";
+/// The account's CHANNEL: its shared tail (the account's data key) — the pointer to its group's first epoch, and its
+/// commits until they move onto the epoch logs.
+pub const CHANNEL: &str = "mls";
 /// A table whose key comes with ANY grant of the site.
 fn with_any_grant(table: &str) -> bool {
     table == CATALOG || table == MEMBERS

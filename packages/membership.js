@@ -15,13 +15,14 @@
 export async function start(ctx) {
   const keys = await ctx.require("keys");
   const auth = await ctx.require("auth");
+  const space = await ctx.require("space");
   const storage = await ctx.require("storage");
   const { core } = await ctx.require("node");
   const idlogCode = await ctx.require("idlog-wasm");
-  const MEMBERS = "members";
+  const MEMBERS = space.tables.members;
   const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
 
-  // WHO BELONGS: gathered from the members feeds, then the account's rule.
+  // WHO BELONGS: gathered from the members feeds, then the rule of the space's governance.
   let cache = null;
   function writers() {
     return (cache ??= gather().catch(e => {
@@ -30,9 +31,9 @@ export async function start(ctx) {
     }));
   }
   async function gather() {
-    const s = await auth.check();
-    if (!s || !(await auth.identity.readKeyLog(s.didBytes))) return [];
-    const known = new Set([s.member, ...(await storage.nodes())]);
+    const sp = await space.account();
+    if (!sp) return [];
+    const known = new Set([sp.self, ...(await storage.nodes())]);
     const seen = new Set();
     const creds = new Set();
     const removals = [];
@@ -53,7 +54,14 @@ export async function start(ctx) {
         }
       }
     }
-    return Array.from(core.account_members(idlogCode, s.didBytes, [...creds].map(bytes), removals));
+    return Array.from((await admittedBy(sp))([...creds].map(bytes), removals));
+  }
+
+  // WHO BELONGS by the space's GOVERNANCE: for an account, credentials signed by an owner key of its key log.
+  async function admittedBy(sp) {
+    if (sp.governance.kind !== "key-log") throw new Error(`no membership rule for a space governed by ${sp.governance.kind}`);
+    if (!(await auth.identity.readKeyLog(sp.governance.did))) throw new Error("the account's key log is not on the network");
+    return (creds, removals) => core.account_members(idlogCode, sp.governance.did, creds, removals);
   }
 
   // TELL: every credential this node's group holds, in this node's own members feed (the home site only: where the

@@ -279,4 +279,10 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
     logging in by PIN, forgot itself (its PIN opens nothing).
   - OPEN: in the first removal run (two browser scripts overlapped) Q's note was NOT adopted; the page's trace was
     lost to the overlap — cause unknown; the clean rerun adopted correctly. Re-test on the next removal.
-- [ ] 2c ordering over feeds (`log`; the data key signs nothing)
+- [x] S space, the shape (owner: "no spaces capability? where is the shape defined?"): `space` defines what a space
+  is (id, governance `{ kind: "key-log" }`, self, shared, tables named ONCE by the identity: CATALOG, MEMBERS, CHANNEL
+  via `account_tables()`); the account is the first. storage/membership/keys take it; membership applies the rule of
+  the space's governance. Spaces compose membership, roles, governance, access, administration, moderation, ordering,
+  keys, storage, index — a group chat / Discord / Facebook group / subreddit is a space CONFIGURED. Live: P moved to a
+  new delegate build carrying "the account's group and 4 epoch(s)" (HandoverKeys, first live), notes + account intact.
+- [ ] 2c ordering per epoch (groundwork committed: epoch log keys, logs by owner) — the commits move onto epoch logs

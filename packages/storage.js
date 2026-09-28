@@ -17,6 +17,8 @@
 //   await notes.put(key, value)   await notes.remove(key)   notes.onChange(fn)
 export async function start(ctx) {
   const auth = await ctx.require("auth");
+  // What a space is: its keys and its own tables' names (the account, here).
+  const space = await ctx.require("space");
   // Who may read and write a table here: the person's grant for this site, and the table's key that comes with it.
   const access = await ctx.require("access");
   const { core, glue, ask, listen } = await ctx.require("node");
@@ -36,10 +38,10 @@ export async function start(ctx) {
   const dec = new TextDecoder();
   // The account's own CHANNELS: one shared tail each, outside the catalog's feeds (the MLS group's, which `membership`
   // reads to say whose feeds count).
-  const CHANNELS = new Set(["mls"]);
-  const CATALOG = "tables";
-  // Tables whose key comes with ANY grant of the site: the catalog, and the account's members.
-  const ANY_GRANT = new Set([CATALOG, "members"]);
+  const { catalog: CATALOG, members: MEMBERS, channel: CHANNEL } = space.tables;
+  const CHANNELS = new Set([CHANNEL]);
+  // Tables whose key comes with ANY grant of the site: the catalog, and the space's members.
+  const ANY_GRANT = new Set([CATALOG, MEMBERS]);
 
   // A tail's VIEW, walked to the end: the tail names the tree's root; a view that needs tree blocks names their
   // contracts, fetched (raced, rebuilt if missing) until the rows are all there; one that names EPOCHS gets their keys
@@ -132,8 +134,8 @@ export async function start(ctx) {
         await read();
       }
       // Rows under an older key: sealed over now, a batch per step (in the write queue), where this node signs the tail.
-      const s = await auth.check();
-      if ((legacy > 0 || reseal) && (owner === s?.member || owner === s?.data)) queue = queue.catch(() => {}).then(sealOld);
+      const sp = await space.account();
+      if ((legacy > 0 || reseal) && (owner === sp?.self || owner === sp?.shared)) queue = queue.catch(() => {}).then(sealOld);
       return t;
     })();
     tails.set(idHex, ready);
@@ -270,9 +272,9 @@ export async function start(ctx) {
   let directoryOpen = null;
   function directory() {
     return (directoryOpen ??= (async () => {
-      const s = await auth.check();
-      const d = await tail(s.data, CATALOG, { known: s.fresh ? false : null, catalogKey: true });
-      if (d.absent && s.fresh) await d.put(CATALOG, JSON.stringify({ at: Date.now(), complete: true }));
+      const sp = await space.account();
+      const d = await tail(sp.shared, CATALOG, { known: sp.fresh ? false : null, catalogKey: true });
+      if (d.absent && sp.fresh) await d.put(CATALOG, JSON.stringify({ at: Date.now(), complete: true }));
       return d;
     })());
   }
@@ -307,10 +309,10 @@ export async function start(ctx) {
 
   // A CHANNEL: one shared tail, listed in the directory before it is made.
   async function channel(name) {
-    const s = await auth.check();
+    const sp = await space.account();
     const d = await directory();
     const listed = legacyListed(d, name);
-    return tail(s.data, name, { known: listed === false ? false : null, beforeCreate: () => listInDirectory(name) });
+    return tail(sp.shared, name, { known: listed === false ? false : null, beforeCreate: () => listInDirectory(name) });
   }
 
   // A TABLE: the merge of its writers' feeds, and this node's feed to write.
@@ -318,11 +320,11 @@ export async function start(ctx) {
   function merged(name) {
     if (tables.has(name)) return tables.get(name);
     const ready = (async () => {
-      const s = await auth.check();
-      if (!s) throw new Error("nobody is logged in");
-      if (!s.data) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
+      const sp = await space.account();
+      if (!sp) throw new Error("nobody is logged in");
+      if (!sp.shared) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
       const d = await directory();
-      const [mine, others] = await Promise.all([catalogOf(s.member), writers(s.member)]);
+      const [mine, others] = await Promise.all([catalogOf(sp.self), writers(sp.self)]);
       const lists = (cat, n) => own(cat).some(r => r.key === n);
       // Another writer's feed that does not open here (sealed under a key this node lacks — a node that has not
       // recovered its epochs) is left out and COUNTED, never fatal: this node writes only its own feed, so nothing it
@@ -338,7 +340,7 @@ export async function start(ctx) {
       const feeds = [];
       // The table from before feeds: the oldest writer.
       const old = legacyListed(d, name);
-      if (old !== false) feeds.push(theirs(s.data, old));
+      if (old !== false) feeds.push(theirs(sp.shared, old));
       // The other nodes' feeds of it, where their catalogs list one.
       const cats = await Promise.all(others.map(o => catalogOf(o).catch(() => null)));
       for (const c of cats) if (c && lists(c, name)) feeds.push(theirs(c.owner, true));
@@ -346,7 +348,7 @@ export async function start(ctx) {
       const listMine = async () => {
         if (!lists(mine, name)) await versioned(mine, name, JSON.stringify({ at: Date.now() }), own(mine).find(r => r.key === name)?.id);
       };
-      const mineFeed = tail(s.member, name, { known: lists(mine, name) ? null : false, catalogKey, beforeCreate: listMine });
+      const mineFeed = tail(sp.self, name, { known: lists(mine, name) ? null : false, catalogKey, beforeCreate: listMine });
       feeds.push(mineFeed);
       const all = (await Promise.all(feeds)).filter(Boolean);
       const me = all[all.length - 1];
@@ -401,9 +403,9 @@ export async function start(ctx) {
   // tables this site uses, or this page already opened, are opened: another app's table is listed by its name
   // (`{ name, closed: true }`), never asked for — no prompt from a list.
   async function describe() {
-    const s = await auth.check();
+    const sp = await space.account();
     const d = await directory();
-    const cats = await Promise.all([s.member, ...(await writers(s.member))].map(catalogOf));
+    const cats = await Promise.all([sp.self, ...(await writers(sp.self))].map(catalogOf));
     const names = new Set(d.rows().map(r => r.key).filter(n => n !== CATALOG && !n.startsWith("node:")));
     for (const c of cats) for (const r of own(c)) names.add(r.key);
     const out = [];
@@ -452,9 +454,9 @@ export async function start(ctx) {
   // ADOPT a node's current rows (before it is removed): every row whose current version is `node`'s is written again
   // in this node's own feed, replacing it — so when its feed stops counting, nothing it wrote is lost.
   async function adopt(node) {
-    const s = await auth.check();
+    const sp = await space.account();
     const d = await directory();
-    const cats = await Promise.all([s.member, node].map(o => catalogOf(o).catch(() => null)));
+    const cats = await Promise.all([sp.self, node].map(o => catalogOf(o).catch(() => null)));
     const names = new Set(cats.filter(Boolean).flatMap(c => own(c).map(r => r.key)));
     for (const n of d.rows().map(r => r.key)) if (n !== CATALOG && !n.startsWith("node:")) names.add(n);
     let moved = 0;

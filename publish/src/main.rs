@@ -258,7 +258,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 31] = [
+    let packages: [(&str, &str, PathBuf); 32] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -268,6 +268,7 @@ async fn main() -> Result<()> {
         ("node", "service", app.join("packages/node.js")),
         ("identity", "service", app.join("packages/identity.js")),
         ("auth", "service", app.join("packages/auth.js")),
+        ("space", "service", app.join("packages/space.js")),
         ("login", "service", app.join("packages/login.js")),
         ("access", "service", app.join("packages/access.js")),
         // The account's MLS group on this node: the source of every table key.
