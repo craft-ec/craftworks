@@ -8,13 +8,14 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [space, storage, keys, node, directory, roomUI] = await Promise.all(
-    ["space", "storage", "keys", "node", "directory", "room"].map(n => ctx.require(n)),
+  const [space, storage, keys, directory, roomUI, conversation, theme] = await Promise.all(
+    ["space", "storage", "keys", "directory", "room", "conversation", "theme"].map(n => ctx.require(n)),
   );
   const account = await space.account();
+  el.classList.add("cw-fill");
   el.innerHTML = `
     <style>
-      .dc { display: grid; grid-template-columns: 72px 240px 1fr 220px; height: calc(100vh - 120px); min-height: 420px;
+      .dc { display: grid; grid-template-columns: 72px 240px 1fr 220px; min-height: 420px;
         border: 1px solid var(--cw-line); border-radius: var(--cw-radius); overflow: hidden; background: var(--cw-surface); }
       .dc button { font: inherit; cursor: pointer; }
       .dc .rail { background: var(--cw-bg); border-right: 1px solid var(--cw-line); display: flex; flex-direction: column;
@@ -62,10 +63,11 @@ export async function mount(ctx, el) {
   const say = m => ((said.textContent = m), (said.hidden = !m));
   const newId = n => [...crypto.getRandomValues(new Uint8Array(n))].map(x => x.toString(16).padStart(2, "0")).join("");
   // One question, in the page's own dialog: the answer, or null.
-  const ask = question =>
+  const ask = (question, button = "Create") =>
     new Promise(resolve => {
       const d = $(".ask");
       d.querySelector("span").textContent = question;
+      d.querySelector('button[value="ok"]').textContent = button;
       const field = d.querySelector("input");
       field.value = "";
       d.onclose = () => resolve(d.returnValue === "ok" ? field.value.trim() || null : null);
@@ -102,20 +104,50 @@ export async function mount(ctx, el) {
     }
   }
 
+  // The top bar: Invite, once a server is open.
+  const menu = () => {
+    ctx.actions["/chat"] = server ? [{ label: "Invite", run: inviteSomeone }] : [];
+    dispatchEvent(new CustomEvent("craftworks:actions"));
+  };
+  async function inviteSomeone() {
+    const who = await ask("Invite who? name#abc123 or their id (did:craftec:…)", "Invite");
+    if (!who || !server) return;
+    say("");
+    try {
+      const did = await conversation.person(who);
+      const card = await conversation.invite(server, did);
+      say("");
+      drawMembers(server);
+      ctx.log("chat", { what: `${directory.shown(did, card.handle)} invited to ${server.name}` });
+    } catch (e) {
+      say(`Could not invite them: ${e?.message ?? e}`);
+    }
+  }
+
   async function openServer(s) {
     server = s;
     channel = null;
+    menu();
     sideName.textContent = s.name;
     drawRail();
-    chans.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: "Opening…" }));
+    chans.replaceChildren(theme.loading("Loading channels…"));
+    people.replaceChildren(theme.loading("Loading members…", 2));
+    roomEl.replaceChildren(theme.loading(`Opening ${s.name}…`));
     try {
       await keys.group(s).ready();
-      channelsT = await storage.table(space.tableOf(s, "channels"), s);
-      channelsT.onChange(() => server === s && drawChannels());
+      const t = (channelsT = await storage.table(space.tableOf(s, "channels"), s));
+      t.onChange(() => server === s && drawChannels());
+      t.settled.finally(() => {
+        t.done = true;
+        if (server !== s) return;
+        drawChannels();
+        if (!channel && list()[0]) openChannel(list()[0]);
+      });
       drawChannels();
       drawMembers(s);
       const first = list()[0];
       if (first) openChannel(first);
+      else roomEl.replaceChildren();
     } catch (e) {
       say(`Could not open the server: ${e?.message ?? e}`);
     }
@@ -134,6 +166,8 @@ export async function mount(ctx, el) {
       .sort((a, b) => a.name.localeCompare(b.name));
 
   function drawChannels() {
+    // A server's channels come from its members' feeds: none yet is not "none" until every one has been tried.
+    if (!list().length && !channelsT.done) return chans.replaceChildren(theme.loading("Loading channels…"));
     chans.replaceChildren(
       ...list().map(c => {
         const b = Object.assign(document.createElement("button"), { type: "button", textContent: `# ${c.name}` });
@@ -151,11 +185,11 @@ export async function mount(ctx, el) {
     await channelsT.put(newId(4), JSON.stringify({ name, at: Date.now() })).catch(e => say(`Could not add it: ${e?.message ?? e}`));
   }
 
-  // The server's members: its group's nodes, by the accounts their credentials name.
+  // The server's members: the accounts in its group.
   async function drawMembers(s) {
-    const st = await keys.group(s).ready().catch(() => null);
+    const dids = await conversation.members(s);
     if (server !== s) return;
-    const dids = [...new Set((st?.members ?? []).filter(m => m.cred).map(m => node.glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16))))))];
+    if (!dids.length) return people.replaceChildren();
     const draw = names =>
       people.replaceChildren(...dids.map((d, i) => Object.assign(document.createElement("li"), { textContent: `${directory.shown(d, names[i])}${d === account.id ? " (you)" : ""}`, title: d })));
     draw([]);
@@ -169,6 +203,13 @@ export async function mount(ctx, el) {
     shown = await roomUI.show(roomEl, c, `#${c.name}`);
   }
 
+  // Invitations waiting in the inbox (and conversations): joined now.
+  conversation
+    .accept()
+    .then(joined => joined.some(s => s.kind === "server") && drawRail())
+    .catch(e => ctx.log("conversation", { what: e?.message ?? String(e) }));
+  rail.replaceChildren(theme.loading("", 2));
+  chans.replaceChildren(theme.loading("Loading your servers…"));
   const first = (await drawRail())[0];
   if (first) openServer(first);
   else chans.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: "No servers yet: make one with +" }));

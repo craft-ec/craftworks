@@ -35,8 +35,18 @@ export async function start(ctx) {
     form.append(input);
     box.append(el("h2", { textContent: title }), msgs, said, form);
     host.replaceChildren(box);
+    // Until every author's feed has been tried, an empty room is not known to be empty: the theme's placeholder.
+    const theme = await ctx.require("theme");
+    const waiting = el("li", {});
+    waiting.append(theme.loading("Loading messages…"));
+    msgs.replaceChildren(waiting);
     let open = true;
+    let settled = false;
     const room = await content.in(conversation);
+    room.settled.finally(() => {
+      settled = true;
+      if (open) draw();
+    });
     const names = new Map();
     const nameOf = did => {
       if (!did) return "?";
@@ -49,6 +59,7 @@ export async function start(ctx) {
     function draw() {
       const items = room.list();
       if (!items.length) {
+        if (!settled) return;
         msgs.replaceChildren(el("li", { className: "empty", textContent: `This is the start of ${title}.` }));
         return;
       }

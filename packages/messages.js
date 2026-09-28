@@ -8,10 +8,11 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [conversation, directory, roomUI] = await Promise.all(["conversation", "directory", "room"].map(n => ctx.require(n)));
+  const [conversation, directory, roomUI, theme] = await Promise.all(["conversation", "directory", "room", "theme"].map(n => ctx.require(n)));
+  el.classList.add("cw-fill");
   el.innerHTML = `
     <style>
-      .dm { display: grid; grid-template-columns: 260px 1fr; height: calc(100vh - 120px); min-height: 420px;
+      .dm { display: grid; grid-template-columns: 260px 1fr; min-height: 420px;
         border: 1px solid var(--cw-line); border-radius: var(--cw-radius); overflow: hidden; background: var(--cw-surface); }
       .dm button { font: inherit; cursor: pointer; }
       .dm .list { background: var(--cw-bg); border-right: 1px solid var(--cw-line); display: flex; flex-direction: column; min-width: 0; }
@@ -39,13 +40,16 @@ export async function mount(ctx, el) {
     <div class="dm listing">
       <aside class="list"><h2>Messages</h2><button class="new" type="button">+ New message</button><div class="people"></div><p class="said" hidden></p></aside>
       <section class="room"><p class="empty">Pick a conversation, or start one.</p></section>
-      <dialog class="ask"><form method="dialog"><label>Their id (did:craftec:…) <input name="answer" autocomplete="off" required></label>
+      <dialog class="ask"><form method="dialog"><label>Who? name#abc123 or their id (did:craftec:…) <input name="answer" autocomplete="off" required></label>
         <div class="row"><button value="cancel" formnovalidate>Cancel</button><button value="ok">Start</button></div></form></dialog>
     </div>`;
   const $ = s => el.querySelector(s);
   const box = $(".dm"), people = $(".people"), roomEl = $(".room"), said = $(".said");
   const say = m => ((said.textContent = m), (said.hidden = !m));
   let open = null, shown = null;
+  // While the inbox is read (conversations begun while this account was away), the list says so at its end.
+  let checking = true;
+  people.replaceChildren(theme.loading("Loading conversations…"));
 
   async function drawList() {
     const list = await conversation.list();
@@ -58,7 +62,8 @@ export async function mount(ctx, el) {
         return b;
       }),
     );
-    if (!list.length) people.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: "No conversations yet." }));
+    if (checking) people.append(theme.loading("Checking your inbox…", 1));
+    else if (!list.length) people.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: "No conversations yet." }));
   }
 
   async function show(sp, name) {
@@ -74,10 +79,11 @@ export async function mount(ctx, el) {
     const field = d.querySelector("input");
     field.value = "";
     d.onclose = async () => {
-      const did = d.returnValue === "ok" ? field.value.trim() : "";
-      if (!did) return;
+      const who = d.returnValue === "ok" ? field.value.trim() : "";
+      if (!who) return;
       say("");
       try {
+        const did = await conversation.person(who);
         const sp = await conversation.direct(did);
         await show(sp, await directory.name(did));
       } catch (e) {
@@ -92,6 +98,9 @@ export async function mount(ctx, el) {
   // Conversations started with this person while they were away: joined now.
   conversation
     .accept()
-    .then(joined => joined.length && drawList())
-    .catch(e => ctx.log("conversation", { what: e?.message ?? String(e) }));
+    .catch(e => (ctx.log("conversation", { what: e?.message ?? String(e) }), []))
+    .then(() => {
+      checking = false;
+      return drawList();
+    });
 }

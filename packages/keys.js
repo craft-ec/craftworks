@@ -97,10 +97,27 @@ export async function start(ctx) {
       return (await open(e, secret)).append(e, JSON.stringify({ commit: hexOf(commit), info: hexOf(st.info), ...(st.escrow ? { next: hexOf(st.escrow) } : {}) }));
     }
     // This epoch's LOG exists: made now by the node that made the epoch (`made`: known new, nothing to ask), else found —
-    // or, for an epoch from before epoch logs, made the first time it is looked for.
-    async function ensure(st, made) {
+    // or, for an epoch from before epoch logs, made the first time it is looked for. `prev`: the epoch before's secret
+    // (a space's HISTORY: whoever holds this epoch opens every earlier one, walking back — the account has escrow).
+    async function ensure(st, made, prev = null) {
       const log = await storage.log(g.channel, glue.epoch_log_public(st.secret), { known: made ? false : null, sealWith: await g.seal(st.epoch), space: g.space });
-      if (log.absent) await log.put("open", JSON.stringify({ info: hexOf(st.info) }));
+      if (log.absent) await log.put("open", JSON.stringify({ info: hexOf(st.info), ...(prev ? { prev } : {}) }));
+      return log;
+    }
+    // Every EARLIER epoch this group's log hands on, from `st` back: each secret kept here, so rows sealed before this
+    // node joined open too. How many were kept.
+    async function history(st) {
+      let [e, secret, n] = [st.epoch, st.secret, 0];
+      while (e > 0) {
+        const log = await storage.log(g.channel, glue.epoch_log_public(secret), { sealWith: await g.seal(e), space: g.space });
+        const prev = parse(log.rows().find(r => r.key === "open")?.value ?? "{}").prev;
+        if (!prev) break;
+        e -= 1;
+        secret = bytes(prev);
+        await auth.identity.epochKeep(e, secret, g.space);
+        n += 1;
+      }
+      return n;
     }
     // Apply every commit newer than this node's epoch, in order, keeping every epoch passed (rows sealed then must open
     // here too). `reload(st)` first, before the first (the account: its key log as it is NOW).
@@ -125,7 +142,7 @@ export async function start(ctx) {
       if (n) ctx.log(g.label, { what: `${n} commit(s) applied: epoch ${m.status().epoch}` });
       return n;
     }
-    return { commitFrom, commitAt, ensure, catchUp };
+    return { commitFrom, commitAt, ensure, catchUp, history };
   }
 
   // THE ACCOUNT's group.
@@ -293,11 +310,11 @@ export async function start(ctx) {
       seal: async e => (await auth.identity.tableKeyAt(ch, e, sp.idBytes)).tableKey,
       label: `${sp.name ?? "space"} keys`,
     });
-    async function keep(made) {
+    async function keep(made, prev = null) {
       const s = m.status();
       const r = await auth.identity.mlsSave(s.state, s.epoch, s.secret, sp.idBytes);
       if (!r.mlsSaved) throw new Error(`the identity would not keep the space's keys: ${r.refused ?? JSON.stringify(r)}`);
-      await logs.ensure(s, made);
+      await logs.ensure(s, made, prev);
       st = { epoch: s.epoch, me: s.me, members: s.members, removed: s.removed };
       return st;
     }
@@ -314,7 +331,7 @@ export async function start(ctx) {
             m = mlsGlue.Mls.load_space(sp.idBytes, bytes(kept.mlsState));
             throw new Error("the group moved meanwhile: add them again");
           }
-          await keep(true);
+          await keep(true, hexOf(from.secret));
           return hexOf(welcome);
         })),
       // JOINED from a welcome (this node was added): the group kept, and this node's account state saved (its key
@@ -326,7 +343,10 @@ export async function start(ctx) {
           const acc = mls.status();
           await auth.identity.mlsSave(acc.state, acc.epoch, acc.secret);
           ctx.log(`${sp.name ?? "space"} keys`, { what: `this node joined the space's group: epoch ${m.status().epoch}` });
-          return keep(false);
+          const kept = await keep(false);
+          const n = await logs.history(m.status()).catch(e => (ctx.log(`${sp.name ?? "space"} keys`, { what: `its history: ${e.message}` }), 0));
+          if (n) ctx.log(`${sp.name ?? "space"} keys`, { what: `${n} earlier epoch(s) of its history kept` });
+          return kept;
         })),
       // MADE by this node, its first member (with its account membership's credential).
       create: () =>

@@ -8,29 +8,44 @@
 //
 //   const conversation = await ctx.require("conversation");
 //   await conversation.direct(did)   // a direct conversation with that person (made, and they are welcomed)
+//   await conversation.invite(sp, did) // that person into a space (a server): their nodes added, the welcome sent
 //   await conversation.accept()      // conversations waiting in this account's inbox: joined
 //   await conversation.list()        // this account's direct conversations
+//   await conversation.members(sp)   // the accounts (DIDs) whose nodes are in a space's group
+//   await conversation.person(text)  // a DID from `did:craftec:…`, or from `name#abc123` among the people this account knows
 export async function start(ctx) {
-  const [space, keys, directory, index, content] = await Promise.all(["space", "keys", "directory", "index", "content"].map(n => ctx.require(n)));
+  const [space, keys, directory, index, content, node] = await Promise.all(["space", "keys", "directory", "index", "content", "node"].map(n => ctx.require(n)));
   const short = did => `${did.replace(/^did:craftec:/, "").slice(0, 8)}…`;
 
-  async function direct(did) {
+  // WELCOME a person into a space: each of their nodes added to its group (from their card's key packages), and the
+  // welcome — what the space is, and one per node — sealed into their inbox. `name`: what the space is called for them.
+  async function welcome(sp, did, name) {
     const me = await space.account();
     if (!me) throw new Error("nobody is logged in");
     if (did === me.id) throw new Error("that is you");
     const card = await directory.card(did);
-    if (!card?.inbox || !card.keyPackages.length) throw new Error("that person has not published a card yet (Account → Your card)");
-    // This person's own card: their reply comes back to its inbox.
-    const mine = await directory.publish();
-    const sp = await space.create("direct", card.handle ?? short(did), { with: did });
+    if (!card?.inbox || !card.keyPackages.length) throw new Error("that person has no card yet");
     const g = keys.group(sp);
     const welcomes = [];
     for (const k of card.keyPackages) welcomes.push({ node: k.node, welcome: await g.add(k.keyPackage) });
-    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: "direct", from: me.id, name: mine.handle ?? short(me.id), welcomes });
+    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, name, welcomes });
+    ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind}: ${welcomes.length} node(s)` });
+    return card;
+  }
+
+  // DIRECT: a two-person space, the other welcomed.
+  async function direct(did) {
+    const me = await space.account();
+    const card = await directory.card(did);
+    if (!card) throw new Error("that person has no card yet");
+    const sp = await space.create("direct", card.handle ?? short(did), { with: did });
+    await welcome(sp, did, (await directory.card(me.id))?.handle ?? short(me.id));
     await (await content.in(sp)).post("system", "started the conversation");
-    ctx.log("conversation", { what: `a direct conversation with ${short(did)}: ${welcomes.length} node(s) welcomed` });
     return sp;
   }
+
+  // INVITE a person into a space this node is in (a server): their nodes join its group from the welcome.
+  const invite = (sp, did) => welcome(sp, did, sp.name);
 
   // WELCOMES in this account's inbox: every conversation not yet joined here, joined (with this node's key package).
   async function accept() {
@@ -42,7 +57,7 @@ export async function start(ctx) {
       if (it.kind !== "welcome" || listed.has(it.space)) continue;
       const w = it.welcomes?.find(x => x.node === me.self);
       if (!w) continue;
-      const v = { kind: it.spaceKind, name: it.name, owner: it.from, with: it.from };
+      const v = { kind: it.spaceKind, name: it.name, owner: it.from, ...(it.spaceKind === "direct" ? { with: it.from } : {}) };
       try {
         const sp = await space.describe(it.space, v);
         await keys.group(sp).join(w.welcome);
@@ -61,5 +76,31 @@ export async function start(ctx) {
 
   const list = async () => (await space.mine()).filter(s => s.kind === "direct");
 
-  return { direct, accept, list };
+  // A space's MEMBERS: the accounts its group's nodes' credentials name (each node's credential carries its DID).
+  async function members(sp) {
+    const st = await keys.group(sp).ready().catch(() => null);
+    const cred = h => new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16)));
+    return [...new Set((st?.members ?? []).filter(m => m.cred).map(m => node.glue.did_of(cred(m.cred))))];
+  }
+
+  // A PERSON from what someone typed: a DID as it is, or `name#abc123` (as people are shown) matched among the people
+  // this account knows — its conversations and its servers' members. The 6 characters are only the id's start: a
+  // stranger is found by their full id (their card is addressed by it).
+  async function person(text) {
+    const t = String(text ?? "").trim();
+    if (t.startsWith("did:craftec:")) return t;
+    const m = t.match(/^([^#]*)#([1-9A-HJ-NP-Za-km-z]{6})$/);
+    if (!m) throw new Error("give their id (did:craftec:…) or name#abc123");
+    const mine = await space.mine();
+    const known = new Set(mine.filter(s => s.kind === "direct" && s.with).map(s => s.with));
+    for (const sp of mine.filter(s => s.kind === "server")) for (const d of await members(sp)) known.add(d);
+    const prefix = [...known].filter(d => d.replace(/^did:craftec:/, "").startsWith(m[2]));
+    const named = m[1] ? (await Promise.all(prefix.map(async d => ((await directory.handle(d)) === m[1] ? d : null)))).filter(Boolean) : prefix;
+    const found = named.length ? named : prefix;
+    if (found.length === 1) return found[0];
+    if (!found.length) throw new Error(`${t} is nobody you know yet: give their full id (did:craftec:…)`);
+    throw new Error(`${t} matches ${found.length} people: give their full id`);
+  }
+
+  return { direct, invite, accept, list, members, person };
 }

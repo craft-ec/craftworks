@@ -403,7 +403,7 @@ async fn main() -> Result<()> {
         needs.push(format!("\"{route}\": [{}]", have.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")));
     }
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\" }}, {{ \"name\": \"Messages\", \"icon\": \"✉️\", \"route\": \"/messages\" }}, {{ \"name\": \"Chat\", \"icon\": \"💬\", \"route\": \"/chat\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\", \"about\": \"Write and keep notes, tagged and pinned, on every node of your account.\" }}, {{ \"name\": \"Messages\", \"icon\": \"✉️\", \"route\": \"/messages\", \"about\": \"Private conversations with one person, sealed end to end.\" }}, {{ \"name\": \"Chat\", \"icon\": \"💬\", \"route\": \"/chat\", \"about\": \"Servers and channels for a group, Discord-style.\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
         pages.iter().map(|(r, p)| format!("\"{r}\": [\"{p}\"]")).collect::<Vec<_>>().join(", "),
         prior.join(", "),
         needs.join(", "),

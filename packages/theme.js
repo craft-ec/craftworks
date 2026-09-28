@@ -76,7 +76,40 @@ export async function start() {
     }
     dialog { background: var(--cw-surface); color: var(--cw-fg); }
     dialog::backdrop { background: var(--cw-scrim); }
-    [hidden] { display: none !important; }`;
+    [hidden] { display: none !important; }
+    /* THE SHELL, like an app on a phone: the window never scrolls. The header on top and the footer at the bottom stay;
+       only the body between them scrolls. The whole window, edge to edge. A page that fills the body (its own
+       panes scroll) marks its component .cw-fill. */
+    html, body { height: 100%; overflow: hidden; }
+    body { box-sizing: border-box; max-width: none; margin: 0; padding: 0 16px; }
+    #app { height: 100dvh; display: flex; flex-direction: column; }
+    #app > .slot-header { flex: none; padding-top: var(--cw-space-3); }
+    #app > .slot-footer { flex: none; }
+    #app > .slot-footer p { margin: 0; padding-bottom: var(--cw-space-2); }
+    #app > .slot-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; }
+    #app > .slot-body > section { flex: none; }
+    #app > .slot-body > section.cw-fill { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    #app > .slot-body > section.cw-fill > * { flex: 1 1 auto; min-height: 0; }
+    #status { position: fixed; left: 16px; bottom: 40px; margin: 0; }
+    .cw-loading { display: grid; gap: var(--cw-space-2); padding: var(--cw-space-3) 0; color: var(--cw-muted); font-size: var(--cw-text-sm); }
+    .cw-loading i { display: block; height: .8em; border-radius: var(--cw-radius-sm); background: linear-gradient(90deg,
+      var(--cw-hover) 25%, var(--cw-line) 50%, var(--cw-hover) 75%) 0 0 / 200% 100%; animation: cw-shimmer 1.4s linear infinite; }
+    .cw-loading i:nth-of-type(2) { width: 80%; } .cw-loading i:nth-of-type(3) { width: 55%; }
+    @keyframes cw-shimmer { to { background-position: -200% 0; } }
+    @media (prefers-reduced-motion: reduce) { .cw-loading i { animation: none; } }`;
   document.head.append(style);
-  return {};
+  // LOADING: what stands in place of something still on its way — a label and three shimmering lines. The one
+  // placeholder: the loader's for a component, a component's for its own parts (a list, a room). `label` may change.
+  function loading(label, lines = 3) {
+    const box = document.createElement("div");
+    box.className = "cw-loading";
+    box.setAttribute("role", "status");
+    box.setAttribute("aria-busy", "true");
+    const said = document.createElement("span");
+    said.textContent = label;
+    box.append(said, ...Array.from({ length: lines }, () => document.createElement("i")));
+    box.say = text => (said.textContent = text);
+    return box;
+  }
+  return { loading };
 }

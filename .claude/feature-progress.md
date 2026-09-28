@@ -358,6 +358,18 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
    fetches pieces over the node's web path, whose addresses hash their content.) Measured: needs are 39–40 of 40 per
    page — login pulls the whole keys/storage graph — so today's gain is the 7× smaller manifest and parallel entry
    reads, not fewer bytes per page. Loader v15. Live: messages, notes, chat, account/storage load.
-4. [ ] server invites by id (a member adds a person's nodes from their card; welcome in their inbox)
+4. [x] server invites by id (Chat's top bar: Invite; `conversation.invite` = the same `welcome` as a direct
+   conversation). A space's HISTORY: each epoch log's `open` row carries the epoch before's secret, so a joiner walks
+   back and keeps every earlier epoch (`logsOf.history`) — without it U joined "Crafters" and saw no channels (written
+   at epoch 0, before U). Live: S made "Guild", posted, invited U; U kept 1 earlier epoch, saw #general + S's
+   message, replied; S saw the reply. (Crafters, made before the fix, stays unreadable to U: dev data.)
+   UI with it (owner): theme `loading(label)` placeholder — the loader's per component, rooms/channel lists/inbox
+   check their own, "start of" only once every feed was tried (`content.settled`); "page ready" in the trace, not the
+   footer; welcome page (Craftec · Craft The Future, one stop centre for everything Freenet; apps' `about` in the
+   manifest); the app SHELL — the window never scrolls, header and footer fixed, body scrolls, full width;
+   home's apps centred; footer one line. Loader v16.
+   People by `name#abc123` (`conversation.person`): matched among the people this account knows (its conversations,
+   its servers' members); a stranger needs the full id (a 6-character prefix locates no card). Invite and New message
+   take either. Live: Google#H33CU9, #8r4orC, pat#8r4orC resolved; nobody#ZZZZZZ refused.
 5. [ ] roles and moderation
 6. [ ] mail

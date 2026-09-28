@@ -11,6 +11,7 @@
 //   room.list()                                // [{ id, kind, body, at, by }], oldest first
 //   await room.post("message", "hello")        // the new item's id
 //   await room.edit(id, body)   await room.remove(id)   room.onChange(fn)
+//   await room.settled                        // every author's feed tried once (more may still arrive)
 export async function start(ctx) {
   const storage = await ctx.require("storage");
   const space = await ctx.require("space");
@@ -43,6 +44,7 @@ export async function start(ctx) {
     };
     return {
       list,
+      settled: t.settled ?? Promise.resolve(),
       onChange: f => t.onChange(f),
       async post(kind, body) {
         const id = newId();

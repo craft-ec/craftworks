@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. A page that needs no node never loads the
 // node's code at all.
-const VERSION = "15";
+const VERSION = "16";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -62,7 +62,11 @@ export async function run(boot) {
       pieces: p.pieces.map(x => ({ url: new URL(`/v1/contract/web/${x.address}/piece`, location.href).href, sha256: x.sha256 })),
     };
     const raced = await raceK(spec, {
-      onWait: w => (status.textContent = `Waiting for ${name}: ${w.verified} of ${w.k} pieces…`),
+      onWait: w => {
+        const what = `${w.verified} of ${w.k} pieces`;
+        ctx.log("waiting", { what: `${name}: ${what}` });
+        for (const p of placeholders.values()) p.say(`Loading ${p.dataset.name}: ${name}, ${what}…`);
+      },
     });
     const { files } = openPieces(dec, { k: p.k, m: p.m, payload: p.payload, bundle_len: p.bundle_len }, raced.pieces);
     const bytes = files.get(p.file);
@@ -113,16 +117,34 @@ export async function run(boot) {
   }
   const filled = { header: null, footer: null };
 
+  // A component still on its way shows the theme's placeholder in its place, until it has drawn itself (it replaces
+  // its element's contents) or its mount is over. Every component of a slot gets one at once: what is coming, shown.
+  const placeholders = new Map(); // element -> placeholder
   async function fill(slot, names) {
     slots[slot].replaceChildren();
-    for (const name of names) {
+    const theme = manifest.theme ? await require(manifest.theme) : null;
+    const els = names.map(name => {
       const el = document.createElement("section");
       el.dataset.component = name;
+      if (theme?.loading && slot === "body") {
+        const p = theme.loading(`Loading ${name}…`);
+        p.dataset.name = name;
+        placeholders.set(el, p);
+        el.append(p);
+      }
       slots[slot].append(el);
+      return el;
+    });
+    for (const [i, name] of names.entries()) {
+      const el = els[i];
       const mod = await require(name);
       const t = performance.now();
       working.push(name);
-      await Promise.resolve(mod.mount(ctx, el)).finally(() => working.pop());
+      await Promise.resolve(mod.mount(ctx, el)).finally(() => {
+        working.pop();
+        placeholders.get(el)?.remove();
+        placeholders.delete(el);
+      });
       ctx.log("mounted", { what: `${slot}: ${name}`, ms: Math.round(performance.now() - t) });
     }
   }
@@ -136,6 +158,9 @@ export async function run(boot) {
     const page = Array.isArray(raw) ? { body: raw } : raw;
     const t0 = performance.now();
     ctx.log("page", { what: full });
+    // The wrapper's "Loading…" line: gone once a page starts (its components show their own placeholders, and how long
+    // it took is in the trace); it comes back for a failure.
+    status.hidden = status.className !== "bad";
     ctx.route = route;
     ctx.sub = full.slice(route.length).replace(/^\//, "");
     // Every entry this page will need, asked for at once (the manifest lists them): no chain of one-by-one reads.
@@ -151,7 +176,7 @@ export async function run(boot) {
     }
     await fill("body", page.body ?? []);
     dispatchEvent(new CustomEvent("craftworks:route", { detail: route }));
-    status.textContent = `Page ${route} ready in ${Math.round(performance.now() - t0)} ms.`;
+    ctx.log("page ready", { what: route, ms: Math.round(performance.now() - t0) });
   }
 
   // THE TRACE: always recorded (the wrapper's log), shown only on demand. A small toggle; the `trace` component is
@@ -243,5 +268,6 @@ export async function run(boot) {
     ctx.log("FAILED", { what: e.message });
     status.textContent = `Could not load: ${e.message}`;
     status.className = "bad";
+    status.hidden = false;
   }
 }
