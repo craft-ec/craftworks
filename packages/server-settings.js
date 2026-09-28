@@ -338,6 +338,8 @@ export async function start(ctx) {
     }
     r.onChange(() => d.open && draw());
     d.onclose = () => d.remove();
+    // A click outside (on the backdrop: the dialog itself, not its panes) closes it, as Esc does.
+    d.addEventListener("click", e => e.target === d && d.close());
     draw();
     d.showModal();
     return { close: () => d.close() };

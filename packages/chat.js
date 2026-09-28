@@ -65,6 +65,8 @@ export async function mount(ctx, el) {
         <div class="row"><button value="cancel" formnovalidate>Cancel</button><button value="ok">Create</button></div></form></dialog>
     </div>`;
   const $ = s => el.querySelector(s);
+  // A click outside a question (on its backdrop) cancels it, as Esc does.
+  $(".ask").addEventListener("click", e => e.target === e.currentTarget && e.currentTarget.close("cancel"));
   const rail = $(".rail"), sideName = $(".side h2"), chans = $(".chans"), roomEl = $(".room"), people = $(".people ul"), said = $(".said");
   const say = m => ((said.textContent = m), (said.hidden = !m));
   const newId = n => [...crypto.getRandomValues(new Uint8Array(n))].map(x => x.toString(16).padStart(2, "0")).join("");

@@ -44,6 +44,8 @@ export async function mount(ctx, el) {
         <div class="row"><button value="cancel" formnovalidate>Cancel</button><button value="ok">Start</button></div></form></dialog>
     </div>`;
   const $ = s => el.querySelector(s);
+  // A click outside a question (on its backdrop) cancels it, as Esc does.
+  $(".ask").addEventListener("click", e => e.target === e.currentTarget && e.currentTarget.close("cancel"));
   const box = $(".dm"), people = $(".people"), roomEl = $(".room"), said = $(".said");
   const say = m => ((said.textContent = m), (said.hidden = !m));
   let open = null, shown = null;
