@@ -94,7 +94,7 @@ export async function start(ctx) {
                 "main",
               ),
               people.is("friend", did)
-                ? act("Friends ✓", () => people.set("friend", did, false), "on", "unfriend")
+                ? act("Friends ✓", () => conversation.unfriend(did), "on", "unfriend")
                 : people.is("asked", did)
                   ? el("button", { type: "button", textContent: "Friend request sent", disabled: true })
                   : act("Add friend", () => conversation.befriend(did)),

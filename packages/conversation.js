@@ -23,6 +23,7 @@
 //   await conversation.befriend(did) // a FRIEND request (their inbox); friends once both have asked, or they accept
 //   await conversation.friendRequests()   // who asked this person, not yet answered: [did]
 //   await conversation.answerFriend(did, yes)
+//   await conversation.unfriend(did)      // no longer friends — on both sides (a notice in their inbox)
 //   (A BLOCKED person's welcomes, mail and requests are left unopened: `edge.people`.)
 //   await conversation.mail.send([did…], subject, body, re)   // a mail (re: the id of the one it answers)
 //   await conversation.mail.fetch()  // mails pointed to in the inbox, opened and kept
@@ -84,24 +85,41 @@ export async function start(ctx) {
     const [p, items] = await Promise.all([people(), index.inbox()]);
     await p.settled;
     const asking = new Set();
-    for (const it of items) {
+    // In the order they were made (an inbox is a set: what arrived first is not what was said first).
+    for (const it of [...items].sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0))) {
+      // Their unfriending, newer than the friendship here: no longer friends on this side either.
+      if (it.kind === "unfriend" && it.from && p.is("friend", it.from) && Number(it.at) > p.at("friend", it.from)) {
+        await p.set("friend", it.from, false);
+        await p.set("answered", it.from, true, Number(it.at));
+        asking.delete(it.from);
+        continue;
+      }
       if (!it.from || p.is("block", it.from) || p.is("friend", it.from)) continue;
-      // Their yes to this person's request: friends.
-      if ((it.kind === "friend-yes" || it.kind === "friend") && p.is("asked", it.from)) {
+      // Their yes to this person's request — made after it (an older yes answered an older request) — or their own
+      // request, not answered yet, while this person has asked too: friends.
+      const fresh = it.kind === "friend-yes" ? Number(it.at) > p.at("asked", it.from) : it.kind === "friend" && Number(it.at) > p.at("answered", it.from);
+      if (fresh && p.is("asked", it.from)) {
         await p.set("friend", it.from, true);
         await p.set("asked", it.from, false);
         if (it.kind === "friend") await index.send(it.from, { kind: "friend-yes", from: (await space.account()).id, at: Date.now() }).catch(() => {});
         continue;
       }
-      if (it.kind === "friend" && !p.is("declined", it.from)) asking.add(it.from);
+      // A request not answered since it was made (yes, no, or a friendship ended after it).
+      if (it.kind === "friend" && Number(it.at) > p.at("answered", it.from)) asking.add(it.from);
     }
     return [...asking];
   }
+  async function unfriend(did) {
+    const p = await people();
+    await p.set("friend", did, false);
+    await p.set("answered", did, true);
+    await index.send(did, { kind: "unfriend", from: (await space.account()).id, at: Date.now() }).catch(() => {});
+  }
   async function answerFriend(did, yes) {
     const p = await people();
-    if (!yes) return p.set("declined", did, true);
+    await p.set("answered", did, true);
+    if (!yes) return;
     await p.set("friend", did, true);
-    await p.set("declined", did, false);
     await index.send(did, { kind: "friend-yes", from: (await space.account()).id, at: Date.now() });
   }
 
@@ -291,5 +309,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, list, members, person, mail, createInvite, revokeInvite, join, admit, befriend, friendRequests, answerFriend };
+  return { direct, group, invite, accept, list, members, person, mail, createInvite, revokeInvite, join, admit, befriend, friendRequests, answerFriend, unfriend };
 }

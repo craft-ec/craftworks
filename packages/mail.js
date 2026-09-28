@@ -7,7 +7,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [conversation, directory, theme] = await Promise.all(["conversation", "directory", "theme"].map(n => ctx.require(n)));
+  const [conversation, directory, theme, person] = await Promise.all(["conversation", "directory", "theme", "person"].map(n => ctx.require(n)));
   const box = ctx.sub === "sent" ? "sent" : "in";
   ctx.actions["/mail"] = [
     { label: "Inbox", href: "#/mail", on: box === "in" },
@@ -87,9 +87,15 @@ export async function mount(ctx, el) {
     root.classList.add("reading");
     draw();
     const [from, to] = await Promise.all([directory.name(m.from), names(m.to)]);
+    // Each name: what can be done with that person.
+    const who = (did, name) => node("a", { href: "#", textContent: name, onclick: e => (e.preventDefault(), person.open(e.currentTarget, did)) });
+    const meta = node("div", { className: "meta" });
+    meta.append("From ", who(m.from, from), " · to ");
+    m.to.forEach((d, i) => meta.append(...(i ? [", "] : []), who(d, to[i])));
+    meta.append(` · ${new Date(m.at).toLocaleString()}`);
     read.replaceChildren(
       node("h2", { textContent: m.subject || "(no subject)" }),
-      node("div", { className: "meta", textContent: `From ${from} · to ${to.join(", ")} · ${new Date(m.at).toLocaleString()}` }),
+      meta,
       node("div", { className: "body", textContent: m.body }),
     );
     if (box === "in") read.append(node("button", { type: "button", className: "reply", textContent: "Reply", onclick: () => compose(m) }));

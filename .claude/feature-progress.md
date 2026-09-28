@@ -423,3 +423,8 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
 - [x] Messages: group conversations (`conversation.group`, kind "group"; several people in New message), friend requests
       at the top. Live: S → pat's menu, Message opened the DM; S made "Trio" with U and P (both joined, U posted);
       P accepted S's friend request; U hid S in Kiln (3 → 2 messages).
+- [x] Contacts app (Home): the one `people-list` component (requests, friends, following, hidden, blocked; names open
+      `person`) + Find by name#id/id. Messages stays conversations only (owner). Mail names open `person`.
+      Friends: unfriend clears both sides (a notice); a request counts if newer than its last answer (`answered`, stamped
+      at what it answers), a yes if newer than the ask; inbox items read in the order made. Live (test v93): S unfriended
+      P, asked again (S: "requests you sent"), P accepted → friends on both sides.
