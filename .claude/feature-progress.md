@@ -428,3 +428,15 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       Friends: unfriend clears both sides (a notice); a request counts if newer than its last answer (`answered`, stamped
       at what it answers), a yes if newer than the ask; inbox items read in the order made. Live (test v93): S unfriended
       P, asked again (S: "requests you sent"), P accepted → friends on both sides.
+
+## Managed account key (owner 2026-09-28: WAX-style; no always-on server)
+- [x] Measured: a passkey for rp `localhost` (Edge → iCloud Keychain) has PRF, gives the same secret in Edge and Safari,
+      and syncs to the owner's iPhone. `127.0.0.1` is not a relying party. The app iframe cannot use WebAuthn (no
+      publickey-credentials-* grant; opaque origin). Email OTP/magic link needs an always-on service: not taken.
+- [x] Upstream: freenet/freenet-core#5764 filed (shell-brokered passkeys, PRF bound to the contract). Implementation
+      pushed to onlyabrak/freenet-core:feat/shell-passkey-5764 (bridge + host-owned bar + binding; unit test 17 checks,
+      mutation-verified; Playwright: bridge reachable in all 3 engines, bound PRF in chromium; 59 passed locally, 2
+      webkit failures identical on main). The repo auto-closes feature PRs without an approved issue: OPEN THE PR when
+      #5764 is approved. Worktree: jobs tmp fc-passkey (delete after the PR).
+- [ ] Our side: the account key sealed on the network, opened by words / passphrase now, by the passkey PRF when the
+      shell supports it; PIN for daily use; passkey step-up for account acts.
