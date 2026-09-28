@@ -6,6 +6,8 @@
 //   SESSION until it logs out, and keeps the account's keys (MLS state, epoch secrets). The node tells it which app
 //   asks, so no token lives in the page. Every call answers with the delegate's own answer (`{ unlocked }`, …).
 export async function start(ctx) {
+  // No space named: the account's own group.
+  const NONE = new Uint8Array(0);
   const { core, glue, ask } = await ctx.require("node");
   const reg = await ask(core.frames_register_identity(), s => s.kind === "registered" || s.kind === "refused", "registering the identity delegate");
   if (reg.kind !== "registered") throw new Error(`the node refused the identity delegate: ${reg.said}`);
@@ -90,7 +92,7 @@ export async function start(ctx) {
     // This node's member forgotten (key, PIN, grants, group state, every epoch's secret): for a removed node.
     forget: () => call(core.frames_forget(), "forgetting this node's member"),
     who: () => call(core.frames_who(), "asking who is logged in"),
-    sign: (params, seq, valueHash) => call(core.frames_sign(params, BigInt(seq), valueHash), "signing"),
+    sign: (params, seq, valueHash, space = NONE) => call(core.frames_sign(params, BigInt(seq), valueHash, space), "signing"),
     exportKey: () => call(core.frames_export(), "exporting the key"),
     // Leave to write one of the account's tables. The node may ask the person (its own prompt, which waits up to a
     // minute), so this waits longer than any other call.
@@ -99,11 +101,12 @@ export async function start(ctx) {
     // The key that seals a table (generation 0): only for a site the person allowed that table.
     tableKey: table => call(core.frames_table_key(table, 0), `the key of “${table}”`),
     // The account's MLS group on this node: its state and the current epoch's secret, kept by the delegate (home only).
-    mlsSave: (state, epoch, secret) => call(core.frames_mls_save(state, epoch, secret), "keeping the account's keys"),
-    mlsLoad: () => call(core.frames_mls_load(), "reading the account's keys"),
-    epochKeep: (epoch, secret) => call(core.frames_epoch_keep(epoch, secret), "keeping an earlier epoch's key"),
+    // `space`: a space's id (bytes) — its own group — or none: the account's.
+    mlsSave: (state, epoch, secret, space = NONE) => call(core.frames_mls_save(state, epoch, secret, space), "keeping the group's keys"),
+    mlsLoad: (space = NONE) => call(core.frames_mls_load(space), "reading the group's keys"),
+    epochKeep: (epoch, secret, space = NONE) => call(core.frames_epoch_keep(epoch, secret, space), "keeping an earlier epoch's key"),
     // A table's key in an MLS epoch (-1: the newest this node holds).
-    tableKeyAt: (table, epoch = -1) => call(core.frames_table_key_at(table, epoch), `the key of “${table}”`),
+    tableKeyAt: (table, epoch = -1, space = NONE) => call(core.frames_table_key_at(table, epoch, space), `the key of “${table}”`),
     revoke: (app, table) => call(core.frames_revoke(app, table), "removing an app's access"),
     publicOf: seed => glue.CraftworksCore.public_of(seed),
     // HANDOVER: ask an earlier build (`<key>:<code hash>`) for the member `pin` opens there. `{ handed }` with its keys,
@@ -122,9 +125,9 @@ export async function start(ctx) {
       const k = said.kind === "identity" ? said.answers.find(a => a.id === id)?.answer?.handedKeys : null;
       if (!k) return { moved: 0 };
       const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
-      for (const [e, secret] of k.epochs) await call(core.frames_epoch_keep(e, bytes(secret)), "keeping an epoch's key");
+      for (const [e, secret] of k.epochs) await call(core.frames_epoch_keep(e, bytes(secret), NONE), "keeping an epoch's key");
       const newest = k.epochs[k.epochs.length - 1];
-      if (k.mls && newest) await call(core.frames_mls_save(bytes(k.mls), newest[0], bytes(newest[1])), "keeping the account's keys");
+      if (k.mls && newest) await call(core.frames_mls_save(bytes(k.mls), newest[0], bytes(newest[1]), NONE), "keeping the account's keys");
       return { moved: k.epochs.length, group: !!k.mls };
     },
     handoverFrom: async (prior, pin) => {
