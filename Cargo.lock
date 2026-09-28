@@ -282,6 +282,7 @@ dependencies = [
  "craftec-set-contract",
  "craftworks-identity",
  "ed25519-dalek",
+ "engine",
  "freenet-prolly",
  "freenet-stdlib",
  "hmac",

@@ -19,6 +19,9 @@ craftec-set-contract = { workspace = true }
 # A member's tail: the SDK's one client of the Tail contract.
 tail = { workspace = true }
 freenet-prolly = { workspace = true }
+# A read repairs through parity with the SDK's one implementation (`engine::repair`: find a block's group, rebuild
+# and verify it; the root's group of one). Pure: nothing in it reaches the network.
+engine = { workspace = true }
 freenet-stdlib = { version = "0.10.0", features = ["contract"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = { version = "1", default-features = false }

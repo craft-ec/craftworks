@@ -78,8 +78,16 @@ device + the same PIN opens the same account. Adding a second device: pairing wi
   blocks in Block contracts, PUT before the step naming the root; reads walk catalog → tail → root → blocks.
   FLUSH_AT = 32 rows. Verified private node: 33 notes → "flushed: 2 tree block(s), tail emptied (seq 33)";
   reload → "tree read notes: 1 block", 34 rows. B app v28.
-- [ ] B2b. erasure for the tree: parity groups start at freenet-prolly's MIN_GROUP (21 siblings); a small tree's
-  blocks have NO parity yet (single copy each) — decide: race-put copies, or group smaller trees.
+- [x] B2b. erasure for the tree. Every node's children are coded by freenet-prolly (a short group stands alone), and
+  every parity block a flush makes is PUT (test: the root lists parity, all of it put; control: a one-leaf tree lists
+  none). The ROOT — the one block no parent covers, so a one-leaf tree's only block — gets its group of one
+  (`engine::repair::root_parity`, 8 blocks), ids in the tail's own `\0root-parity` row beside the root, kept out of
+  the tree. READ repairs: a block whose GET fails is rebuilt from its group (`engine::repair::find_group`/`rebuild`,
+  verified against its id). Tests: a lost root of a one-leaf tree and a lost leaf of a 192-row tree are rebuilt, rows
+  whole; controls repair nothing. Live (private node): a flush put 19 blocks (leaves, root, 8 child parity, 8 root
+  parity), the node took the step, reload read 67 rows. NOT exercised live: a real missing block (no way to delete
+  one from a node) — the repair path is proven in the core tests only. The TAIL itself is one mutable contract:
+  freenet's hosting replicates it; no parity.
   RETENTION evidence (KEEPER §11(c) run 3, engineer1, archived KEEPER.md not updated): 10 blocks PUT 2026-09-26T23:24Z
   to a private node on Hetzner; present 10/10 at +1h, +6h, +24h; batched AskHeld 1 op 224/286/281 ms; one-per-op
   median/max 249/329, 240/388, 249/291 ms. Node dir 38M → 98M → 285M over the day (the node's own data, not the

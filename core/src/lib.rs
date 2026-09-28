@@ -76,11 +76,13 @@ pub struct Core {
     block_code: Vec<u8>,
     /// Tree blocks asked of the network: Block contract id -> (the tail that needs it, the block's id).
     wanted: std::collections::HashMap<[u8; 32], ([u8; 32], freenet_prolly::Cid)>,
+    /// Repairs under way: the lost block's contract id -> (its tail, its group).
+    repairs: std::collections::HashMap<[u8; 32], ([u8; 32], engine::repair::Group)>,
 }
 
 impl Core {
     pub fn new(identity_wasm: &[u8]) -> Core {
-        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1, got: Default::default(), tails: Default::default(), block_code: Vec::new(), wanted: Default::default() }
+        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1, got: Default::default(), tails: Default::default(), block_code: Vec::new(), wanted: Default::default(), repairs: Default::default() }
     }
 
     pub fn identity_key(&self) -> String {
@@ -203,6 +205,33 @@ impl Core {
                 hex(&c)
             })
             .collect()
+    }
+
+    /// REPAIR a tree block the network no longer has (its GET failed): its group, found in what the table holds.
+    /// Returns the group's other blocks to GET (Block contract ids, hex); their answers come back through `take`.
+    pub fn tail_repair(&mut self, id: &[u8; 32], lost_contract: &[u8; 32]) -> Result<Vec<String>, String> {
+        let cid = self
+            .wanted
+            .get(lost_contract)
+            .map(|(_, c)| *c)
+            .or_else(|| self.repairs.get(lost_contract).map(|(_, g)| g.missing))
+            .ok_or("that block was not asked for")?;
+        let o = self.tails.get(id).ok_or("that tail is not open")?;
+        let group = o.repair_group(&cid).ok_or("nothing held names a group for that block: it cannot be rebuilt")?;
+        let missing: Vec<freenet_prolly::Cid> =
+            group.slots.iter().filter(|c| **c != cid && !o.blocks.0.contains_key(*c)).copied().collect();
+        self.repairs.insert(*lost_contract, (*id, group));
+        Ok(self.want(id, &missing))
+    }
+
+    /// After the group's blocks came back: rebuild the lost one (verified against its id).
+    pub fn tail_rebuild(&mut self, lost_contract: &[u8; 32]) -> Result<(), String> {
+        let (id, group) = self.repairs.remove(lost_contract).ok_or("no repair under way for that block")?;
+        let r = self.tail(&id)?.rebuild(&group);
+        if r.is_ok() {
+            self.wanted.remove(lost_contract);
+        }
+        r
     }
 
     /// FLUSH an open table: `Ready` with the frames that PUT its new tree blocks (send and see them all accepted
@@ -484,6 +513,18 @@ mod js {
 
         pub fn set_block_code(&mut self, code: &[u8]) {
             self.0.set_block_code(code);
+        }
+
+        /// REPAIR a tree block whose GET failed: the Block contract ids (hex) of its group's other blocks, to GET.
+        pub fn tail_repair(&mut self, id: &[u8], lost_contract_hex: &str) -> Result<js_sys::Array, JsValue> {
+            let lost = bytes32("block", lost_contract_hex).map_err(err)?;
+            Ok(self.0.tail_repair(&b32(id)?, &lost).map_err(err)?.into_iter().map(JsValue::from).collect())
+        }
+
+        /// Rebuild it from what came back.
+        pub fn tail_rebuild(&mut self, lost_contract_hex: &str) -> Result<(), JsValue> {
+            let lost = bytes32("block", lost_contract_hex).map_err(err)?;
+            self.0.tail_rebuild(&lost).map_err(err)
         }
 
         /// How many rows wait in an open table's tail (a flush is due at `data::FLUSH_AT`).

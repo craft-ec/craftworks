@@ -25,6 +25,11 @@ use tail::{Op, Unsigned, Writer};
 /// and every reader re-reads the whole tail), the tree holds the rest.
 pub const FLUSH_AT: usize = 32;
 
+/// The tail's own row naming the ROOT's parity blocks (the root's group of one, `engine::repair::root_parity`): the
+/// root is the one block no parent's group covers, so its parity ids ride beside the root, in the tail, where a
+/// reader missing the root still finds them. Hidden from the rows; never written into the tree.
+pub const ROOT_PARITY: &[u8] = b"\0root-parity";
+
 
 pub struct Open {
     pub params: Vec<u8>,
@@ -113,19 +118,49 @@ impl Open {
         }
     }
 
-    /// Pending rows in the tail.
+    /// Pending rows in the tail (its own root-parity row is not one).
     pub fn pending_rows(&self) -> usize {
-        self.writer.body().entries.len()
+        self.writer.body().entries.keys().filter(|k| k.as_slice() != ROOT_PARITY).count()
+    }
+
+    /// The root's parity ids, as the tail names them.
+    pub fn root_parity_ids(&self) -> Vec<Cid> {
+        let body = self.writer.body();
+        let Some(e) = body.entries.get(ROOT_PARITY) else { return Vec::new() };
+        e.value.as_deref().unwrap_or_default().chunks_exact(32).map(|c| c.try_into().expect("32")).collect()
+    }
+
+    /// REPAIR: the group a missing tree block can be rebuilt from — the root's group of one, or the group a held
+    /// node lists it in. `None`: nothing held names a group for it.
+    pub fn repair_group(&self, missing: &Cid) -> Option<engine::repair::Group> {
+        let root = self.writer.body().root?;
+        if *missing == root {
+            let ids = self.root_parity_ids();
+            return (!ids.is_empty()).then(|| engine::repair::root_group(root, &ids));
+        }
+        engine::repair::find_group(&self.blocks, root, *missing)
+    }
+
+    /// Rebuild `missing` from what is held of its group; kept only if it hashes to `missing` (`engine::repair::rebuild`).
+    pub fn rebuild(&mut self, group: &engine::repair::Group) -> Result<(), String> {
+        let have: Vec<Option<Vec<u8>>> =
+            group.slots.iter().enumerate().map(|(i, c)| self.blocks.0.get(c).map(|b| group.stored(i, b))).collect();
+        let body = engine::repair::rebuild(group, &have)?;
+        self.blocks.insert(group.missing, &body);
+        Ok(())
     }
 
     /// FLUSH: write the tail's rows into the tree (the SDK's `flush_into`, the tree library's own `apply`) and
     /// prepare the step that names the new root. The blocks go out FIRST: a tail must never name a root whose blocks
     /// are not there. `Need` when the old tree's blocks along the edited paths are not held yet.
     pub fn flush(&mut self) -> Result<Step<Flush>, String> {
-        let body = self.writer.body();
-        if body.entries.is_empty() {
+        let mut body = self.writer.body();
+        if self.pending_rows() == 0 {
             return Err("nothing to flush".into());
         }
+        // The tail's own root-parity row stays out of the tree; the flush clears it with the rest, and the same step
+        // names the new root's.
+        body.entries.remove(ROOT_PARITY);
         let mut staging = self.blocks.clone();
         let (applied, op) = match tail::flush_into(&mut staging, &body, self.writer.seq()) {
             Ok(x) => x,
@@ -135,12 +170,21 @@ impl Open {
         for (cid, bytes) in &applied.parity {
             staging.insert(*cid, bytes);
         }
+        // The root's group of one: parity no parent lists, so its ids go in the tail beside the root.
+        let root_bytes = staging.0.get(&applied.root).ok_or("the new root is not among the blocks")?.clone();
+        let root_parity = engine::repair::root_parity(&root_bytes).ok_or("the root's parity would not code")?;
+        let mut ids = Vec::new();
+        for (cid, bytes) in &root_parity {
+            staging.insert(*cid, bytes);
+            ids.extend_from_slice(cid);
+        }
         let mut blocks = Vec::new();
         for (cid, body) in staging.0.iter().filter(|(c, _)| !self.blocks.0.contains_key(*c)) {
             let state = wire::block::block_state(cid, body).ok_or_else(|| format!("block {} is of no known kind", crate::hex(cid)))?;
             blocks.push((*cid, state));
         }
-        let (seq, hash) = self.prepare(vec![op]).ok_or("the tail would refuse the flush")?;
+        let (seq, hash) =
+            self.prepare(vec![op, Op::Set { key: ROOT_PARITY.to_vec(), value: ids }]).ok_or("the tail would refuse the flush")?;
         self.staged = Some(staging);
         Ok(Step::Ready(Flush { seq, hash, blocks }))
     }
@@ -193,7 +237,7 @@ impl Open {
                 }
             }
         }
-        for (k, e) in &body.entries {
+        for (k, e) in body.entries.iter().filter(|(k, _)| k.as_slice() != ROOT_PARITY) {
             match &e.value {
                 Some(v) => all.insert(k.clone(), v.clone()),
                 None => all.remove(k),
@@ -329,6 +373,93 @@ mod tests {
         for p in node.parity() {
             assert!(put.contains(&p), "parity block {} was put by a flush", crate::hex(&p));
         }
+    }
+
+    /// A reader of `o`'s state that is DENIED `lost` (the network no longer has it) and must repair it from its
+    /// group. Returns the rows it ends with.
+    fn read_without(o: &Open, member: &[u8; 32], lost: Cid) -> (Vec<String>, bool) {
+        let mut r = Open::new(CODE, member, "notes");
+        assert!(r.absorb(&o.writer.state()));
+        let mut repaired = false;
+        for _ in 0..20 {
+            match r.rows().unwrap() {
+                Step::Ready(v) => return (keys(&v), repaired),
+                Step::Need(ids) => {
+                    for id in ids {
+                        if id == lost {
+                            let g = r.repair_group(&id).expect("a group names the lost block");
+                            for (i, c) in g.slots.iter().enumerate() {
+                                if *c != lost && i < g.slots.len() {
+                                    if let Some(b) = o.blocks.0.get(c) {
+                                        r.absorb_block(c, &wire::block::block_state(c, b).unwrap());
+                                    }
+                                }
+                            }
+                            r.rebuild(&g).expect("rebuilt and verified");
+                            repaired = true;
+                        } else {
+                            r.absorb_block(&id, &wire::block::block_state(&id, o.blocks.0.get(&id).unwrap()).unwrap());
+                        }
+                    }
+                }
+            }
+        }
+        panic!("the read did not finish");
+    }
+
+    #[test]
+    fn a_one_leaf_tree_is_repairable_its_root_through_the_parity_the_tail_names() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        let mut o = Open::new(CODE, &member, "notes");
+        for (k, v) in [("a", "1"), ("b", "2")] {
+            write(&key, &mut o, k, v);
+        }
+        let Ok(Step::Ready(f)) = o.flush() else { panic!("ready") };
+        o.commit(sign(&key, &o, f.seq, f.hash)).unwrap();
+        let root = o.writer.body().root.unwrap();
+        let ids = o.root_parity_ids();
+        assert_eq!(ids.len(), freenet_prolly::parity::PARITY, "the tail names the root's parity");
+        let put: std::collections::HashSet<Cid> = f.blocks.iter().map(|(c, _)| *c).collect();
+        assert!(ids.iter().all(|i| put.contains(i)), "and the flush put every one");
+        assert_eq!(o.pending_rows(), 0, "the root-parity row is not a pending row");
+        // The control: with the root there, no repair.
+        let (rows, repaired) = read_without(&o, &member, [9; 32]);
+        assert_eq!((rows.clone(), repaired), (vec!["a=1".to_string(), "b=2".to_string()], false));
+        // The root lost: rebuilt from its parity, verified, and the rows are whole.
+        let (rows2, repaired) = read_without(&o, &member, root);
+        assert!(repaired, "the root was rebuilt");
+        assert_eq!(rows2, rows);
+        // A second flush clears the old row and names the new root's; the old parity never reaches the tree.
+        write(&key, &mut o, "c", "3");
+        let Ok(Step::Ready(f)) = o.flush() else { panic!("ready") };
+        o.commit(sign(&key, &o, f.seq, f.hash)).unwrap();
+        assert_ne!(o.root_parity_ids(), ids);
+        let Ok(Step::Ready(v)) = o.rows() else { panic!("held") };
+        assert_eq!(keys(&v), ["a=1", "b=2", "c=3"]);
+    }
+
+    #[test]
+    fn a_lost_leaf_of_a_bigger_tree_is_rebuilt_from_its_group() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        let mut o = Open::new(CODE, &member, "notes");
+        for round in 0..6 {
+            for i in 0..FLUSH_AT {
+                write(&key, &mut o, &format!("{round:02}-{i:03}"), &"x".repeat(200));
+            }
+            let Ok(Step::Ready(f)) = o.flush() else { panic!("ready") };
+            o.commit(sign(&key, &o, f.seq, f.hash)).unwrap();
+        }
+        let root = o.writer.body().root.unwrap();
+        let node = freenet_prolly::store::load(&o.blocks, &root).unwrap();
+        assert!(node.level() >= 1);
+        let leaf = node.child(1).0;
+        let (whole, _) = read_without(&o, &member, [9; 32]);
+        let (rows, repaired) = read_without(&o, &member, leaf);
+        assert!(repaired, "the leaf was rebuilt");
+        assert_eq!(rows, whole);
+        assert_eq!(rows.len(), 6 * FLUSH_AT);
     }
 
     #[test]

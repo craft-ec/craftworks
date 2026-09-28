@@ -20,19 +20,26 @@ export async function start(ctx) {
   // A table's VIEW, walked to the end: the tail names the tree's root; a view that needs tree blocks names their
   // Block contracts, each fetched (its answer is the next view), until the rows are all there. Returns the last view:
   // `{ kind: "tail", tail: { rows, … } }`, or `tail-unreadable`.
+  // One tree block, by its Block contract id: its answer is the table's next view, or `get-failed`.
+  const fetchBlock = (b, app) => {
+    const [, frames] = core.frames_get(bytes(b));
+    return ask(frames, x => x.block === b || (x.kind === "get-failed" && x.id === b), `reading ${app}'s tree`, 30000).catch(() => ({ kind: "get-failed", id: b }));
+  };
+
   async function settle(view, app) {
     for (let round = 0; view.kind === "tail-need"; round++) {
       if (round >= 16) throw new Error(`${app}: the tree did not finish loading`);
       const t0 = performance.now();
-      const answers = await Promise.all(
-        view.blocks.map(b => {
-          const [, frames] = core.frames_get(bytes(b));
-          return ask(frames, x => x.block === b || (x.kind === "get-failed" && x.id === b), `reading ${app}'s tree`, 30000);
-        }),
-      );
-      const failed = answers.find(a => a.kind === "get-failed");
-      if (failed) throw new Error(`${app}: a tree block is not on the network (${failed.id.slice(0, 12)}…)`);
+      const answers = await Promise.all(view.blocks.map(b => fetchBlock(b, app)));
       ctx.log("tree read", { what: `${app}: ${view.blocks.length} block(s)`, ms: Math.round(performance.now() - t0) });
+      // A block the network no longer has: rebuilt from its group (any k of its k + 8), verified against its id.
+      for (const lost of answers.filter(a => a.kind === "get-failed").map(a => a.id)) {
+        const t1 = performance.now();
+        const group = Array.from(core.tail_repair(bytes(view.id), lost));
+        await Promise.all(group.map(b => fetchBlock(b, app)));
+        core.tail_rebuild(lost);
+        ctx.log("tree repaired", { what: `${app}: block ${lost.slice(0, 12)}… rebuilt from ${group.length} of its group`, ms: Math.round(performance.now() - t1) });
+      }
       view = JSON.parse(core.tail_view(bytes(view.id)));
     }
     if (view.kind === "tail-unreadable") throw new Error(`${app}: ${view.said}`);
