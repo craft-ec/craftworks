@@ -57,7 +57,7 @@ a label alike; governance decides who controls one note or a whole company.
 | `node` | the connection to this machine's freenet node |
 | `identity` | the DID (its key log), the identity delegate: members (nodes), PINs, sessions, signing, MLS state |
 | `auth` | sessions, PIN login, recovery words, changing words (no UI: the dialog is `login`) |
-| `keys` | table keys per epoch (MLS), handed to granted sites; escrow of epoch secrets to the recovery words |
+| `keys` | table keys per epoch (MLS), handed to granted sites; escrow of epoch secrets to the recovery words. The MLS protocol runs in the page's core (mls-rs needs the page's randomness and clock); the identity delegate is the vault — it keeps the member state and the epoch secrets, and derives table keys for granted sites |
 | `storage` | tables: tail + tree, one sequence per writer merged by readers, sealed nodes, catalog, range and change-only reads |
 | `blocks` | the one door for tree blocks: fetch raced against parity, rebuild, put |
 | `keep` | lifecycle: re-publishing signed states, retention, flushing when quiet, health |

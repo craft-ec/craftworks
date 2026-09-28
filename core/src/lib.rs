@@ -4,6 +4,7 @@
 
 pub mod account;
 pub mod data;
+pub mod mls;
 
 use craftworks_identity::{decode_answer, encode_request, Answer, Request};
 use serde_json::{json, Value};

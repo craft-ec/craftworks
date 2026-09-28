@@ -22,6 +22,12 @@ freenet-prolly = { workspace = true }
 # A read repairs through parity with the SDK's one implementation (`engine::repair`: find a block's group, rebuild
 # and verify it; the root's group of one). Pure: nothing in it reaches the network.
 engine = { workspace = true }
+# MLS (RFC 9420): the one key manager — your account's nodes, and every space's members. Runs in the page's core
+# (JS randomness and clock are legitimate there); the identity delegate keeps the state and the epoch secrets.
+mls-rs = { version = "=0.56.0", default-features = false, features = ["std", "tree_index", "fast_serialize"] }
+mls-rs-crypto-rustcrypto = "=0.22.1"
+mls-rs-core = "=0.27.0"
+zeroize = "1"
 freenet-stdlib = { version = "0.10.0", features = ["contract"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = { version = "1", default-features = false }
