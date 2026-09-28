@@ -387,3 +387,13 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
    and keeps it in `mailbox` (private; the sender may later drop old rows). `directory.publicOf(did, name)`: any
    public tail of a person (the card is one). Live: P mailed S and U (S typed as sam#EAsepm); S read it and replied;
    P got the reply.
+7. [x] Stale sites. MEASURED on the owner's node (7509, site B8Y3…): a GET answers from the node's copy; a GET that
+   subscribes answered in 3 ms from the old copy and changed nothing; and after it, a real new version published via
+   B (v68) had not reached the node 5 min later. So following does not keep a node current (why: unknown — needs
+   per-hop traces from both nodes). Fixed by RELAY (`publish-craftworks relay <from> <to> <site>…`: the site's
+   contract + signed state from B, PUT into the node — the contract checks the signature): 7509 now serves the
+   current 9.6 KB manifest (all six pages) and its package entries. The page side: the loader follows both sites on
+   every load and re-reads the node's manifest every minute and on focus; a newer one → "A newer version is ready ·
+   Reload" (live: 39 s after a publish to the private node). "Get the newest" in the trace's Stack tab. Loader v20.
+   OPEN: a node the network never updates stays stale until a relay — publish.sh could relay to the owner's node
+   after each publish (owner's say).
