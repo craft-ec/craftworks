@@ -203,7 +203,70 @@ impl Store {
     }
 }
 
-type Config = WithIdentityProvider<Rule, WithCryptoProvider<RustCryptoProvider, mls_rs::client_builder::WithGroupStateStorage<Store, BaseConfig>>>;
+/// A node's KEY PACKAGES' secrets (MLS: what lets another member add this node while it is away), kept with its state:
+/// a welcome may come days later, across page loads. `id` → the key package data, encoded.
+#[derive(Clone, Default, Debug)]
+pub struct KeyPackages(Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>);
+
+impl mls_rs_core::key_package::KeyPackageStorage for KeyPackages {
+    type Error = NotAMember;
+
+    fn delete(&mut self, id: &[u8]) -> Result<(), Self::Error> {
+        self.0.lock().unwrap().remove(id);
+        Ok(())
+    }
+
+    fn insert(&mut self, id: Vec<u8>, pkg: mls_rs_core::key_package::KeyPackageData) -> Result<(), Self::Error> {
+        use mls_rs::mls_rs_codec::MlsEncode;
+        let b = pkg.mls_encode_to_vec().map_err(|_| NotAMember("a key package does not encode"))?;
+        self.0.lock().unwrap().insert(id, b);
+        Ok(())
+    }
+
+    fn get(&self, id: &[u8]) -> Result<Option<mls_rs_core::key_package::KeyPackageData>, Self::Error> {
+        use mls_rs::mls_rs_codec::MlsDecode;
+        Ok(self.0.lock().unwrap().get(id).and_then(|b| mls_rs_core::key_package::KeyPackageData::mls_decode(&mut &b[..]).ok()))
+    }
+}
+
+impl KeyPackages {
+    fn encode(&self) -> Vec<u8> {
+        let m = self.0.lock().unwrap();
+        let mut b = (m.len() as u32).to_le_bytes().to_vec();
+        for (k, v) in m.iter() {
+            for x in [k, v] {
+                b.extend_from_slice(&(x.len() as u32).to_le_bytes());
+                b.extend_from_slice(x);
+            }
+        }
+        b
+    }
+
+    fn decode(mut b: &[u8]) -> Option<KeyPackages> {
+        let mut take = |n: usize| -> Option<Vec<u8>> {
+            let (x, r) = b.split_at_checked(n)?;
+            b = r;
+            Some(x.to_vec())
+        };
+        let n = u32::from_le_bytes(take(4)?.try_into().ok()?);
+        let mut m = BTreeMap::new();
+        for _ in 0..n {
+            let kl = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+            let k = take(kl)?;
+            let vl = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+            m.insert(k, take(vl)?);
+        }
+        Some(KeyPackages(Arc::new(Mutex::new(m))))
+    }
+}
+
+type Config = WithIdentityProvider<
+    Rule,
+    WithCryptoProvider<
+        RustCryptoProvider,
+        mls_rs::client_builder::WithKeyPackageRepo<KeyPackages, mls_rs::client_builder::WithGroupStateStorage<Store, BaseConfig>>,
+    >,
+>;
 
 /// This node, as a member of a group: the account's, or a space's.
 pub struct Account {
@@ -214,12 +277,14 @@ pub struct Account {
     signer: (Vec<u8>, Vec<u8>),
     ident: Rule,
     cred: Vec<u8>,
+    kps: KeyPackages,
 }
 
-fn client(ident: &Rule, store: &Store, signer: &(Vec<u8>, Vec<u8>), cred: &[u8]) -> Client<Config> {
+fn client(ident: &Rule, store: &Store, kps: &KeyPackages, signer: &(Vec<u8>, Vec<u8>), cred: &[u8]) -> Client<Config> {
     let id = SigningIdentity::new(BasicCredential::new(cred.to_vec()).into_credential(), SignaturePublicKey::new(signer.1.clone()));
     Client::builder()
         .group_state_storage(store.clone())
+        .key_package_repo(kps.clone())
         .crypto_provider(RustCryptoProvider::default())
         .identity_provider(ident.clone())
         .signing_identity(id, SignatureSecretKey::new(signer.0.clone()), SUITE)
@@ -247,10 +312,11 @@ impl Account {
 
     fn create_with(ident: Rule, signer: (Vec<u8>, Vec<u8>), cred: Vec<u8>) -> Result<Account, String> {
         let store = Store::default();
-        let c = client(&ident, &store, &signer, &cred);
+        let kps = KeyPackages::default();
+        let c = client(&ident, &store, &kps, &signer, &cred);
         let mut group = c.create_group_with_id(ident.group_id(), ExtensionList::default(), Default::default(), None).map_err(e)?;
         group.write_to_storage().map_err(e)?;
-        Ok(Account { group, removed: false, store, signer, ident, cred })
+        Ok(Account { group, removed: false, store, signer, ident, cred, kps })
     }
 
     /// A SPACE's group, made by this node (a server's first member) with the credential and signing key it has as a
@@ -266,11 +332,12 @@ impl Account {
         let cred = credential(&ident.did, node, &signer.1, owner_seed);
         let ident = Rule::Account(ident);
         let store = Store::default();
-        let c = client(&ident, &store, &signer, &cred);
+        let kps = KeyPackages::default();
+        let c = client(&ident, &store, &kps, &signer, &cred);
         let info = MlsMessage::from_bytes(group_info).map_err(e)?;
         let (mut group, commit) = c.external_commit_builder().map_err(e)?.build(info).map_err(e)?;
         group.write_to_storage().map_err(e)?;
-        Ok((Account { group, removed: false, store, signer, ident, cred }, commit.to_bytes().map_err(e)?))
+        Ok((Account { group, removed: false, store, signer, ident, cred, kps }, commit.to_bytes().map_err(e)?))
     }
 
     /// The group info that lets a node holding the words join (published beside the commits).
@@ -302,6 +369,40 @@ impl Account {
         self.group.apply_pending_commit().map_err(e)?;
         self.group.write_to_storage().map_err(e)?;
         out.commit_message.to_bytes().map_err(e)
+    }
+
+    /// A KEY PACKAGE of this node (MLS), to publish: another member adds this node with it, while it is away. Its
+    /// secrets stay here, in this node's state (save it after).
+    pub fn key_package(&self) -> Result<Vec<u8>, String> {
+        let c = client(&self.ident, &self.store, &self.kps, &self.signer, &self.cred);
+        c.generate_key_package_message(ExtensionList::default(), ExtensionList::default(), None).map_err(e)?.to_bytes().map_err(e)
+    }
+
+    /// ADD a node (by its published key package) to this group: `(commit, welcome)` — the commit for the group's log,
+    /// the welcome for the new node (delivered to it: its inbox). This member's epoch moves now.
+    pub fn add(&mut self, key_package: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
+        let kp = MlsMessage::from_bytes(key_package).map_err(e)?;
+        let out = self.group.commit_builder().add_member(kp).map_err(e)?.build().map_err(e)?;
+        self.group.apply_pending_commit().map_err(e)?;
+        self.group.write_to_storage().map_err(e)?;
+        let welcome = out.welcome_messages.first().ok_or("no welcome for the new member")?.to_bytes().map_err(e)?;
+        Ok((out.commit_message.to_bytes().map_err(e)?, welcome))
+    }
+
+    /// JOIN a space's group from a WELCOME (this node was added by a member): with this node's account credential and
+    /// the key package's secrets kept here.
+    pub fn join_space(&self, space: [u8; 32], welcome: &[u8]) -> Result<Account, String> {
+        let ident = Rule::Space(space);
+        let store = Store::default();
+        let c = client(&ident, &store, &self.kps, &self.signer, &self.cred);
+        let msg = MlsMessage::from_bytes(welcome).map_err(e)?;
+        // Which group, BEFORE joining: a welcome to another space must not use up this node's key package.
+        if c.examine_welcome_message(&msg).map_err(e)?.group_context().group_id() != ident.group_id() {
+            return Err("that welcome is to another space".into());
+        }
+        let (mut group, _) = c.join_group(None, &msg, None).map_err(e)?;
+        group.write_to_storage().map_err(e)?;
+        Ok(Account { group, removed: false, store, signer: self.signer.clone(), ident, cred: self.cred.clone(), kps: self.kps.clone() })
     }
 
     pub fn epoch(&self) -> u64 {
@@ -345,6 +446,8 @@ impl Account {
         put(&mut b, &self.cred);
         put(&mut b, &self.store.encode());
         b.push(u8::from(self.removed));
+        // Its key packages' secrets (after the rest: a state saved before key packages still loads).
+        b.extend_from_slice(&self.kps.encode());
         Ok(b)
     }
 
@@ -359,11 +462,15 @@ impl Account {
         };
         let (s, p, cred, store) = (take()?, take()?, take()?, take()?);
         let removed = b.first() == Some(&1);
+        let kps = match b.get(1..) {
+            Some(rest) if !rest.is_empty() => KeyPackages::decode(rest).ok_or("the key packages do not read")?,
+            _ => KeyPackages::default(),
+        };
         let store = Store::decode(&store).ok_or("the stored group does not read")?;
         let signer = (s, p);
-        let c = client(&ident, &store, &signer, &cred);
+        let c = client(&ident, &store, &kps, &signer, &cred);
         let group = c.load_group(&ident.group_id()).map_err(e)?;
-        Ok(Account { group, removed, store, signer, ident, cred })
+        Ok(Account { group, removed, store, signer, ident, cred, kps })
     }
 }
 
@@ -377,6 +484,31 @@ mod tests {
 
     fn ident(owners: &[[u8; 32]]) -> AccountIdentity {
         AccountIdentity { did: [42; 32], owners: owners.iter().map(|s| SigningKey::from_bytes(s).verifying_key().to_bytes()).collect() }
+    }
+
+    /// ADD by KEY PACKAGE across ACCOUNTS: Bob's node publishes a key package (its secrets kept in its saved state, even
+    /// across a reload); Alice adds it to her space; Bob joins from the welcome — the same group, the same keys.
+    #[test]
+    fn a_node_of_another_account_is_added_by_its_key_package_and_joins_from_the_welcome() {
+        let (alice_owner, bob_owner) = ([1u8; 32], [2u8; 32]);
+        let alice = Account::create(AccountIdentity { did: [0xA; 32], owners: vec![SigningKey::from_bytes(&alice_owner).verifying_key().to_bytes()] }, &alice_owner, &[7; 32]).unwrap();
+        let mut bob = Account::create(AccountIdentity { did: [0xB; 32], owners: vec![SigningKey::from_bytes(&bob_owner).verifying_key().to_bytes()] }, &bob_owner, &[8; 32]).unwrap();
+        let bob_ident = bob.ident.clone();
+        let kp = bob.key_package().unwrap();
+        let bob = Account::load(bob_ident, &bob.save().unwrap()).unwrap();
+        let space = [0x5A; 32];
+        let mut dm = alice.create_space(space).unwrap();
+        let (commit, welcome) = dm.add(&kp).unwrap();
+        assert!(!commit.is_empty());
+        // A wrong space first: refused before the key package is used — the right one still joins after.
+        assert_eq!(bob.join_space([0x5B; 32], &welcome).err().as_deref(), Some("that welcome is to another space"));
+        let joined = bob.join_space(space, &welcome).unwrap();
+        assert_eq!(joined.epoch(), dm.epoch());
+        assert_eq!(joined.epoch_secret().unwrap(), dm.epoch_secret().unwrap(), "one group, one key");
+        let nodes: Vec<Vec<u8>> = joined.members().into_iter().map(|(_, n, _)| n).collect();
+        assert_eq!(nodes, vec![vec![7; 32], vec![8; 32]]);
+        // The key package is used up: the same welcome does not join twice.
+        assert!(bob.join_space(space, &welcome).is_err());
     }
 
     /// A SPACE's group: made by a node of an account, with its account credential; its own epoch secret (not the
@@ -529,6 +661,23 @@ mod js {
         pub fn create_space(&mut self, space: &[u8]) -> Result<Mls, JsValue> {
             let space = did32(space)?;
             Ok(Mls(Some(self.member()?.create_space(space).map_err(err)?), [0; 32]))
+        }
+
+        /// A KEY PACKAGE of this node (its account's member), to publish; save this node's state after (its secrets).
+        pub fn key_package(&mut self) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&self.member()?.key_package().map_err(err)?[..]))
+        }
+
+        /// ADD a node by its key package: `[commit, welcome]` (the commit for the log, the welcome for the new node).
+        pub fn add(&mut self, key_package: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let (c, w) = self.member()?.add(key_package).map_err(err)?;
+            Ok([js_sys::Uint8Array::from(&c[..]), js_sys::Uint8Array::from(&w[..])].into_iter().map(JsValue::from).collect())
+        }
+
+        /// JOIN a space's group from a welcome, with this node's (its account's member) key packages: a new `Mls`.
+        pub fn join_space(&mut self, space: &[u8], welcome: &[u8]) -> Result<Mls, JsValue> {
+            let space = did32(space)?;
+            Ok(Mls(Some(self.member()?.join_space(space, welcome).map_err(err)?), [0; 32]))
         }
 
         /// A space's group, as the identity delegate kept it.
