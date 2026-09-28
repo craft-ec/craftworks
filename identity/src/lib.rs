@@ -558,7 +558,13 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             if a.home != app {
                 return Refused(Why::NotHome);
             }
-            if !h.set_secret(&[EPOCH, &a.public()[..], &epoch.to_be_bytes()].concat(), &secret) {
+            let m = a.public();
+            let latest = h.get_secret(&[EPOCH_LATEST, &m[..]].concat()).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes);
+            // The secret, then the newest mark if this epoch is newer (a node joining with the words keeps the epochs it
+            // walks before its group's state exists: it signs the log of the one it joins at).
+            if !h.set_secret(&[EPOCH, &m[..], &epoch.to_be_bytes()].concat(), &secret)
+                || (latest.is_none_or(|l| epoch > l) && !h.set_secret(&[EPOCH_LATEST, &m[..]].concat(), &epoch.to_be_bytes()))
+            {
                 return Refused(Why::NotSaved);
             }
             MlsSaved

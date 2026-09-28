@@ -427,8 +427,8 @@ export async function start(ctx) {
 
   // A LOG: one shared tail under `owner`'s key (an epoch's, for the account's MLS commits). Read if it is there; made
   // by its first write if not.
-  function log(name, owner) {
-    return tail(owner, name, {});
+  function log(name, owner, { known = null } = {}) {
+    return tail(owner, name, { known });
   }
 
   // The nodes the directory lists as having feeds (hex keys): where `membership` starts gathering.

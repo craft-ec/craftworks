@@ -285,4 +285,13 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
   the space's governance. Spaces compose membership, roles, governance, access, administration, moderation, ordering,
   keys, storage, index — a group chat / Discord / Facebook group / subreddit is a space CONFIGURED. Live: P moved to a
   new delegate build carrying "the account's group and 4 epoch(s)" (HandoverKeys, first live), notes + account intact.
-- [ ] 2c ordering per epoch (groundwork committed: epoch log keys, logs by owner) — the commits move onto epoch logs
+- [x] 2c ordering per epoch: a commit from epoch e goes in e's LOG (tail under `epoch_log_key(secret e)`, signed by
+  the identity for the home site only, for an epoch whose secret it holds), carrying the info after it and the next
+  epoch's secret in escrow; whoever makes an epoch makes its log (known new: no 30 s GET); a node catching up walks
+  log → commit → next log, keeping EVERY epoch it passes; a words-joiner walks from the channel's pointer (`e/<L>` +
+  `info`, after the commits from before epoch logs) opening each escrow with the words. The data key now signs only
+  the channel's pointer and tables from before feeds. FIXED live: a joiner could not sign the log it joins at
+  (EpochKeep now advances the newest mark; test); catch-up kept only the last epoch (now each). Live: S registers,
+  T/U/V/W by words walk and join (epochs 1–5, earlier epochs recovered), S by PIN walks to epoch 5 with epoch 4's key;
+  S removes U through epoch 2's log (adopted 2 rows, removal told), T follows to epoch 3; P (account from before
+  epoch logs) unaffected. OPEN: S lacks epoch 1 (missed before the fix) until T's rows are sealed over upward.

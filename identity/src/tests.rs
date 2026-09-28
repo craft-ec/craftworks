@@ -548,3 +548,20 @@ fn an_epochs_log_is_signed_only_with_that_epochs_secret_by_the_home_site() {
     assert_eq!(ask(&mut m, OTHER, "mls", ALLOW), Answer::Granted { tables: vec!["mls".into()] });
     assert_eq!(sign(&mut m, OTHER, &log([2; 32]), 2, [2; 32]), Answer::Refused(Why::NotThisKey));
 }
+
+#[test]
+fn a_joiner_signs_the_log_of_an_epoch_it_kept_before_it_has_a_group() {
+    let mut m = provisioned(APP);
+    assert_eq!(ask(&mut m, APP, "mls", ALLOW), Answer::Granted { tables: vec!["mls".into()] });
+    let log = |secret: [u8; 32]| params(epoch_log_key(&secret).verifying_key().to_bytes(), b"t/mls");
+    // Control: nothing kept, nothing signed.
+    assert_eq!(sign(&mut m, APP, &log([4; 32]), 1, [1; 32]), Answer::Refused(Why::NotThisKey));
+    // Epochs 3 and 4 kept from the walk (no group state yet): epoch 4's log is signed, and 3's too.
+    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 3, secret: [3; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 4, secret: [4; 32] }, APP), Answer::MlsSaved);
+    assert!(matches!(sign(&mut m, APP, &log([4; 32]), 1, [1; 32]), Answer::Signed { .. }));
+    assert!(matches!(sign(&mut m, APP, &log([3; 32]), 1, [1; 32]), Answer::Signed { .. }));
+    // Keeping an OLDER epoch later does not move the newest back.
+    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 1, secret: [1; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::TableKeyAt { table: "mls".into(), epoch: None }, APP), Answer::TableKeyAt { epoch: 4, key: epoch_table_key(&[4; 32], "mls") });
+}
