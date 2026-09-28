@@ -68,7 +68,38 @@ impl AccountIdentity {
     }
 }
 
-impl IdentityProvider for AccountIdentity {
+/// WHO MAY BE IN A GROUP: the account's own nodes (`Account`), or — a SPACE's group (a server, a chat) — nodes of any
+/// account, each with its account's owner-signed credential (who may ADD them is the space's rules', above MLS).
+#[derive(Clone, Debug)]
+pub enum Rule {
+    Account(AccountIdentity),
+    Space([u8; 32]),
+}
+
+impl Rule {
+    fn group_id(&self) -> Vec<u8> {
+        match self {
+            Rule::Account(a) => a.did.to_vec(),
+            Rule::Space(id) => [b"craftworks space ".as_slice(), id].concat(),
+        }
+    }
+
+    fn check(&self, id: &SigningIdentity) -> Result<Vec<u8>, NotAMember> {
+        match self {
+            Rule::Account(a) => a.check(id),
+            Rule::Space(_) => {
+                let basic = id.credential.as_basic().ok_or(NotAMember("not a basic credential"))?;
+                let (_, _, _, sp) = read_credential(&basic.identifier).ok_or(NotAMember("the owner's signature does not hold"))?;
+                if sp != id.signature_key.as_bytes() {
+                    return Err(NotAMember("the credential names another signing key"));
+                }
+                Ok(sp)
+            }
+        }
+    }
+}
+
+impl IdentityProvider for Rule {
     type Error = NotAMember;
 
     fn validate_member(&self, id: &SigningIdentity, _t: Option<MlsTime>, _c: MemberValidationContext<'_>) -> Result<(), Self::Error> {
@@ -91,6 +122,7 @@ impl IdentityProvider for AccountIdentity {
         vec![BasicCredential::credential_type()]
     }
 }
+
 
 /// The group's storage, as ONE blob: its state and the epochs it keeps.
 #[derive(Clone, Default, Debug)]
@@ -171,20 +203,20 @@ impl Store {
     }
 }
 
-type Config = WithIdentityProvider<AccountIdentity, WithCryptoProvider<RustCryptoProvider, mls_rs::client_builder::WithGroupStateStorage<Store, BaseConfig>>>;
+type Config = WithIdentityProvider<Rule, WithCryptoProvider<RustCryptoProvider, mls_rs::client_builder::WithGroupStateStorage<Store, BaseConfig>>>;
 
-/// This node, as a member of the account's group.
+/// This node, as a member of a group: the account's, or a space's.
 pub struct Account {
     pub group: Group<Config>,
     /// A commit removed THIS member: it keeps what it held (the epochs before) and learns nothing newer.
     pub removed: bool,
     store: Store,
     signer: (Vec<u8>, Vec<u8>),
-    ident: AccountIdentity,
+    ident: Rule,
     cred: Vec<u8>,
 }
 
-fn client(ident: &AccountIdentity, store: &Store, signer: &(Vec<u8>, Vec<u8>), cred: &[u8]) -> Client<Config> {
+fn client(ident: &Rule, store: &Store, signer: &(Vec<u8>, Vec<u8>), cred: &[u8]) -> Client<Config> {
     let id = SigningIdentity::new(BasicCredential::new(cred.to_vec()).into_credential(), SignaturePublicKey::new(signer.1.clone()));
     Client::builder()
         .group_state_storage(store.clone())
@@ -210,11 +242,21 @@ impl Account {
     pub fn create(ident: AccountIdentity, owner_seed: &[u8; 32], node: &[u8; 32]) -> Result<Account, String> {
         let signer = new_signer()?;
         let cred = credential(&ident.did, node, &signer.1, owner_seed);
+        Self::create_with(Rule::Account(ident), signer, cred)
+    }
+
+    fn create_with(ident: Rule, signer: (Vec<u8>, Vec<u8>), cred: Vec<u8>) -> Result<Account, String> {
         let store = Store::default();
         let c = client(&ident, &store, &signer, &cred);
-        let mut group = c.create_group_with_id(ident.did.to_vec(), ExtensionList::default(), Default::default(), None).map_err(e)?;
+        let mut group = c.create_group_with_id(ident.group_id(), ExtensionList::default(), Default::default(), None).map_err(e)?;
         group.write_to_storage().map_err(e)?;
         Ok(Account { group, removed: false, store, signer, ident, cred })
+    }
+
+    /// A SPACE's group, made by this node (a server's first member) with the credential and signing key it has as a
+    /// member of its account: the same node, speaking for the same account, in another group.
+    pub fn create_space(&self, space: [u8; 32]) -> Result<Account, String> {
+        Self::create_with(Rule::Space(space), self.signer.clone(), self.cred.clone())
     }
 
     /// Join the account's group with the words alone: an external commit from its published group info. Returns the
@@ -222,6 +264,7 @@ impl Account {
     pub fn join(ident: AccountIdentity, owner_seed: &[u8; 32], node: &[u8; 32], group_info: &[u8]) -> Result<(Account, Vec<u8>), String> {
         let signer = new_signer()?;
         let cred = credential(&ident.did, node, &signer.1, owner_seed);
+        let ident = Rule::Account(ident);
         let store = Store::default();
         let c = client(&ident, &store, &signer, &cred);
         let info = MlsMessage::from_bytes(group_info).map_err(e)?;
@@ -305,7 +348,7 @@ impl Account {
         Ok(b)
     }
 
-    pub fn load(ident: AccountIdentity, blob: &[u8]) -> Result<Account, String> {
+    pub fn load(ident: Rule, blob: &[u8]) -> Result<Account, String> {
         let mut b = blob.strip_prefix(b"CWMS").ok_or("not a member state")?;
         let mut take = || -> Result<Vec<u8>, String> {
             let (n, r) = b.split_at_checked(4).ok_or("short")?;
@@ -319,7 +362,7 @@ impl Account {
         let store = Store::decode(&store).ok_or("the stored group does not read")?;
         let signer = (s, p);
         let c = client(&ident, &store, &signer, &cred);
-        let group = c.load_group(&ident.did).map_err(e)?;
+        let group = c.load_group(&ident.group_id()).map_err(e)?;
         Ok(Account { group, removed, store, signer, ident, cred })
     }
 }
@@ -334,6 +377,25 @@ mod tests {
 
     fn ident(owners: &[[u8; 32]]) -> AccountIdentity {
         AccountIdentity { did: [42; 32], owners: owners.iter().map(|s| SigningKey::from_bytes(s).verifying_key().to_bytes()).collect() }
+    }
+
+    /// A SPACE's group: made by a node of an account, with its account credential; its own epoch secret (not the
+    /// account's), kept and loaded again by its space id.
+    #[test]
+    fn a_node_makes_a_spaces_group_with_its_account_credential() {
+        let owner = [1u8; 32];
+        let id = ident(&[owner]);
+        let a = Account::create(id, &owner, &[7; 32]).unwrap();
+        let space = [0x5A; 32];
+        let mut g = a.create_space(space).unwrap();
+        assert_eq!(g.members().len(), 1);
+        assert_eq!(g.members()[0].1, vec![7; 32], "the same node, by its account credential");
+        assert_ne!(g.epoch_secret().unwrap(), a.epoch_secret().unwrap(), "its own keys, not the account's");
+        let blob = g.save().unwrap();
+        let g2 = Account::load(Rule::Space(space), &blob).unwrap();
+        assert_eq!(g2.epoch_secret().unwrap(), g.epoch_secret().unwrap());
+        // Control: loaded as another space, it is not found.
+        assert!(Account::load(Rule::Space([0x5B; 32]), &blob).is_err());
     }
 
     #[test]
@@ -360,7 +422,7 @@ mod tests {
         c.process(&removal).unwrap();
         assert!(c.removed, "the removed node learns it");
         assert!(c.process(&removal).is_err(), "and applies nothing after");
-        let c2 = Account::load(id.clone(), &c.save().unwrap()).unwrap();
+        let c2 = Account::load(Rule::Account(id.clone()), &c.save().unwrap()).unwrap();
         assert!(c2.removed, "kept across a save");
         assert!(!a.removed && !b.removed);
         assert_eq!(a.members().len(), 2);
@@ -368,7 +430,7 @@ mod tests {
         assert!(nodes.contains(&vec![0xA; 32]) && nodes.contains(&vec![0xB; 32]) && !nodes.contains(&vec![0xC; 32]), "the roster names the nodes");
         // Saved and loaded (the delegate keeps the blob): the same member, the same epoch.
         let blob = a.save().unwrap();
-        let a2 = Account::load(id.clone(), &blob).unwrap();
+        let a2 = Account::load(Rule::Account(id.clone()), &blob).unwrap();
         assert_eq!((a2.epoch(), a2.epoch_secret().unwrap()), (a.epoch(), a.epoch_secret().unwrap()));
     }
 
@@ -381,7 +443,7 @@ mod tests {
         // After the words changed (a new owner key in the log), a node admitted by the old owner is still a member,
         // and the new owner admits more.
         let rotated = ident(&[owner, next]);
-        let mut a = Account::load(rotated.clone(), &{ let mut a = a; a.save().unwrap() }).unwrap();
+        let mut a = Account::load(Rule::Account(rotated.clone()), &{ let mut a = a; a.save().unwrap() }).unwrap();
         let (d, commit) = Account::join(rotated.clone(), &next, &[0xD; 32], &a.group_info().unwrap()).unwrap();
         a.process(&commit).unwrap();
         assert_eq!(a.epoch_secret().unwrap(), d.epoch_secret().unwrap());
@@ -444,7 +506,7 @@ mod js {
         pub fn load(&mut self, did: &[u8], log: &[u8], state: &[u8]) -> Result<(), JsValue> {
             let did = did32(did)?;
             let log = log_of(&did, log)?;
-            self.0 = Some(Account::load(ident(did, &log), state).map_err(err)?);
+            self.0 = Some(Account::load(Rule::Account(ident(did, &log)), state).map_err(err)?);
             self.1 = log.head().enc;
             Ok(())
         }
@@ -461,6 +523,17 @@ mod js {
         /// Remove the member at `index`: the commit to publish.
         pub fn remove(&mut self, index: u32) -> Result<js_sys::Uint8Array, JsValue> {
             Ok(js_sys::Uint8Array::from(&self.member()?.remove(index).map_err(err)?[..]))
+        }
+
+        /// A SPACE's group, made now by this node (its account's member, as loaded here): a new `Mls` for it.
+        pub fn create_space(&mut self, space: &[u8]) -> Result<Mls, JsValue> {
+            let space = did32(space)?;
+            Ok(Mls(Some(self.member()?.create_space(space).map_err(err)?), [0; 32]))
+        }
+
+        /// A space's group, as the identity delegate kept it.
+        pub fn load_space(space: &[u8], state: &[u8]) -> Result<Mls, JsValue> {
+            Ok(Mls(Some(Account::load(Rule::Space(did32(space)?), state).map_err(err)?), [0; 32]))
         }
 
         /// NEW WORDS: an escrow sealed for the old words, sealed again for the new (both are in hand while they change).
@@ -494,9 +567,12 @@ mod js {
             set("epoch", JsValue::from(m.epoch() as f64))?;
             let secret = m.epoch_secret().map_err(err)?;
             set("secret", js_sys::Uint8Array::from(&secret[..]).into())?;
-            let mut eph = [0u8; 32];
-            getrandom::getrandom(&mut eph).map_err(err)?;
-            set("escrow", js_sys::Uint8Array::from(&craftworks_account::escrow_seal(&enc, &secret, eph)[..]).into())?;
+            // Escrowed to the words: the account's group only (a space's has no words).
+            if enc != [0; 32] {
+                let mut eph = [0u8; 32];
+                getrandom::getrandom(&mut eph).map_err(err)?;
+                set("escrow", js_sys::Uint8Array::from(&craftworks_account::escrow_seal(&enc, &secret, eph)[..]).into())?;
+            }
             set("info", js_sys::Uint8Array::from(&m.group_info().map_err(err)?[..]).into())?;
             set("me", JsValue::from(m.my_index()))?;
             set("removed", JsValue::from(m.removed))?;

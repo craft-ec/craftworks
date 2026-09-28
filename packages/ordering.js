@@ -21,8 +21,8 @@ export async function start(ctx) {
     // TAIL: rows `<prefix><position, 12 digits>` in one of the account's tables. The table has one write sequence, so
     // appends are totally ordered; a position already written is TAKEN (a write that raced it and lost is refused by
     // the node and read again by storage, after which the position shows as taken).
-    async tail({ table, prefix, owner }) {
-      const t = await (owner ? storage.log(table, owner) : storage.table(table));
+    async tail({ table, prefix, owner, known = null, sealWith = null, space = null }) {
+      const t = await (owner ? storage.log(table, owner, { known, sealWith, space }) : storage.table(table));
       const key = n => `${prefix}${String(n).padStart(12, "0")}`;
       const at = n => t.rows().find(r => r.key === key(n))?.value;
       return {

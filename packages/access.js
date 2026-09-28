@@ -9,6 +9,7 @@
 //   await access.key("notes")              // { key: hex } or { why }; the catalog's with { catalog: true }
 export async function start(ctx) {
   const auth = await ctx.require("auth");
+  const { glue } = await ctx.require("node");
 
   // Asked once per page for every kind of data the site uses (its manifest's `uses`) in ONE prompt; a table
   // outside that list is asked for on its own. A "no" stands until the page is opened again, so a refused site does
@@ -34,7 +35,9 @@ export async function start(ctx) {
 
   const allowed = name => grant(name);
 
-  async function key(table, { catalog = false } = {}) {
+  async function key(table, { catalog = false, space = null } = {}) {
+    // A space's table: its address key, from the space's id (its rows are sealed with the space's epoch keys).
+    if (space) return { key: glue.space_table_key(space, table) };
     // The catalog's key comes with any grant: listing a table is part of using it.
     const ok = catalog || (await allowed(table).catch(() => false));
     if (!ok) return { why: "not allowed" };
@@ -45,10 +48,10 @@ export async function start(ctx) {
   // The key of one of the account's EPOCHS for a table (`epoch` omitted: the newest this node holds): `{ epoch, key }`,
   // or `{ why }` (no grant, or no key for that epoch here — a node removed from the account has none after it). The
   // same grant as the table's own key.
-  async function keyAt(table, epoch = -1, { catalog = false } = {}) {
-    const ok = catalog || (await allowed(table).catch(() => false));
+  async function keyAt(table, epoch = -1, { catalog = false, space = null } = {}) {
+    const ok = space || catalog || (await allowed(table).catch(() => false));
     if (!ok) return { why: "not allowed" };
-    const k = await auth.identity.tableKeyAt(table, epoch).catch(e => ({ refused: e?.message ?? String(e) }));
+    const k = await auth.identity.tableKeyAt(table, epoch, space ?? undefined).catch(e => ({ refused: e?.message ?? String(e) }));
     return k?.tableKey ? { epoch: k.epoch, key: k.tableKey } : { why: k?.refused ?? "no key" };
   }
 

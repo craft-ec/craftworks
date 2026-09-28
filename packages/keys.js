@@ -26,24 +26,11 @@ export async function start(ctx) {
   // The space whose group this is (the account): its channel's name.
   const space = await ctx.require("space");
   const CHANNEL = space.tables.channel;
-  // The group's commits in one agreed order: the account's nodes share one key, so a `tail` ordering.
+  // The group's commits in one agreed order (the `ordering` capability's `tail`): the account's commits from before
+  // epoch logs in its channel; every later commit in its epoch's own log.
   const ordering = await ctx.require("ordering");
   let commits = null;
   const commitLog = async () => (commits ??= await ordering.open({ type: "tail", table: CHANNEL, prefix: "c/" }));
-  // EPOCH e's LOG: the tail under the key from e's secret.
-  const epochLog = secret => ordering.open({ type: "tail", table: CHANNEL, prefix: "c/", owner: glue.epoch_log_public(secret) });
-  // The commit that moved the group FROM epoch e: in the channel (from before epoch logs), else in e's log.
-  async function commitFrom(e, secret) {
-    const old = (await commitLog()).from(e)[0];
-    if (old) return old.entry;
-    return (await epochLog(secret)).from(e)[0]?.entry ?? null;
-  }
-  // COMMIT from epoch e (whose secret is `secret`): into e's log, with the info and the escrowed secret after it.
-  async function commitAt(e, secret, commit) {
-    if ((await commitLog()).from(e)[0]) return { ok: false, taken: true };
-    const st = mls.status();
-    return (await epochLog(secret)).append(e, JSON.stringify({ commit: hexOf(commit), info: hexOf(st.info), next: hexOf(st.escrow) }));
-  }
   const { core, glue } = await ctx.require("node");
   const idlogCode = await ctx.require("idlog-wasm");
   // MLS is its own wasm package, loaded here only: no other page pays for it.
@@ -90,41 +77,67 @@ export async function start(ctx) {
     return status;
   }
 
-  // This epoch's LOG exists: made now by the node that made the epoch (`made`: known new, nothing to ask), else found —
-  // or, for an epoch from before epoch logs, made the first time it is looked for.
-  async function ensureLog(st, made) {
-    const log = await storage.log(CHANNEL, glue.epoch_log_public(st.secret), { known: made ? false : null });
-    if (log.absent) await log.put("open", JSON.stringify({ info: hexOf(st.info) }));
+  // A GROUP's LOGS — the account's, or a space's; one set of rules for both. `g`: `mls()` (the group here), `space`
+  // (its id bytes; undefined: the account), `channel` (its logs' table), `seal(epoch)` (a space's logs are sealed with that
+  // epoch's own key; the account's with its channel's: undefined), `before` (the account's commits from before epoch
+  // logs, in its channel), `label` (for the trace).
+  function logsOf(g) {
+    const open = async (e, secret, known = null) =>
+      ordering.open({ type: "tail", table: g.channel, prefix: "c/", owner: glue.epoch_log_public(secret), known, sealWith: await g.seal(e), space: g.space });
+    // The commit that moved the group FROM epoch e.
+    async function commitFrom(e, secret) {
+      const old = g.before && (await g.before()).from(e)[0];
+      if (old) return old.entry;
+      return (await open(e, secret)).from(e)[0]?.entry ?? null;
+    }
+    // COMMIT from epoch e: into e's log, with the group info after it (and, for the account, the next secret in escrow).
+    async function commitAt(e, secret, commit) {
+      if (g.before && (await g.before()).from(e)[0]) return { ok: false, taken: true };
+      const st = g.mls().status();
+      return (await open(e, secret)).append(e, JSON.stringify({ commit: hexOf(commit), info: hexOf(st.info), ...(st.escrow ? { next: hexOf(st.escrow) } : {}) }));
+    }
+    // This epoch's LOG exists: made now by the node that made the epoch (`made`: known new, nothing to ask), else found —
+    // or, for an epoch from before epoch logs, made the first time it is looked for.
+    async function ensure(st, made) {
+      const log = await storage.log(g.channel, glue.epoch_log_public(st.secret), { known: made ? false : null, sealWith: await g.seal(st.epoch), space: g.space });
+      if (log.absent) await log.put("open", JSON.stringify({ info: hexOf(st.info) }));
+    }
+    // Apply every commit newer than this node's epoch, in order, keeping every epoch passed (rows sealed then must open
+    // here too). `reload(st)` first, before the first (the account: its key log as it is NOW).
+    async function catchUp(reload) {
+      const m = g.mls();
+      if (m.status().removed) return 0; // removed: nothing after that applies
+      let n = 0;
+      for (;;) {
+        const st = m.status();
+        const entry = await commitFrom(st.epoch, st.secret);
+        if (!entry) break;
+        if (!n && reload) await reload(st);
+        m.process(bytes(parse(entry).commit));
+        n += 1;
+        if (m.status().removed) {
+          ctx.log(g.label, { what: "this node was removed: it keeps what it could read, and gets nothing newer" });
+          break;
+        }
+        const now = m.status();
+        await auth.identity.epochKeep(now.epoch, now.secret, g.space);
+      }
+      if (n) ctx.log(g.label, { what: `${n} commit(s) applied: epoch ${m.status().epoch}` });
+      return n;
+    }
+    return { commitFrom, commitAt, ensure, catchUp };
   }
 
-  // Apply every commit newer than this node's epoch, in order. First the group is loaded again with the key log as it
-  // is NOW: a node joining after the words changed carries the new owner's signature.
-  async function catchUp() {
-    if (mls.status().removed) return 0; // removed from the account: nothing after that applies
-    let n = 0;
-    for (;;) {
-      const st = mls.status();
-      const entry = await commitFrom(st.epoch, st.secret);
-      if (!entry) break;
-      if (!n) {
-        const s = await auth.check();
-        mls.load(s.didBytes, await keyLog(s.didBytes), st.state);
-      }
-      mls.process(bytes(parse(entry).commit));
-      n += 1;
-      // Each epoch passed through is kept: rows sealed then must open here too, not only the newest's.
-      if (!mls.status().removed) {
-        const now = mls.status();
-        await auth.identity.epochKeep(now.epoch, now.secret);
-      }
-      if (mls.status().removed) {
-        ctx.log("account keys", { what: "this node was removed from the account: it keeps what it could read, and gets nothing newer" });
-        break;
-      }
-    }
-    if (n) ctx.log("account keys", { what: `${n} commit(s) applied: epoch ${mls.status().epoch}` });
-    return n;
-  }
+  // THE ACCOUNT's group.
+  // (No space: the account's group is the account's own — every identity call and tail defaults to it.)
+  const account = logsOf({ mls: () => mls, space: undefined, channel: CHANNEL, seal: async () => undefined, before: commitLog, label: "account keys" });
+  const { commitFrom, commitAt } = account;
+  const ensureLog = account.ensure;
+  const catchUp = () =>
+    account.catchUp(async st => {
+      const s = await auth.check();
+      mls.load(s.didBytes, await keyLog(s.didBytes), st.state);
+    });
 
   // MADE or JOINED with the words. A join whose epoch someone else moved first is refused by the channel's order:
   // read again and join from the newer group info.
@@ -187,10 +200,9 @@ export async function start(ctx) {
       const first = channel.rows().find(x => x.key === escrowKey(e))?.value;
       let secret = first ? mlsGlue.Mls.open_escrow(old, bytes(first)) : null;
       while (secret) {
-        const log = await epochLog(secret);
-        const at = log.from(e)[0];
-        if (!at) break;
-        const c = parse(at.entry);
+        const entry = await commitFrom(e, secret);
+        if (!entry) break;
+        const c = parse(entry);
         await (await storage.log(CHANNEL, glue.epoch_log_public(secret))).put(`c/${String(e).padStart(12, "0")}`, JSON.stringify({ ...c, next: reseal(c.next) }));
         secret = mlsGlue.Mls.open_escrow(old, bytes(c.next));
         e += 1;
@@ -262,6 +274,60 @@ export async function start(ctx) {
     }));
   }
 
+  // A SPACE's GROUP on this node (a server, a chat): made here by its first member, or loaded as the identity kept it,
+  // and brought current through its epoch logs — each sealed with its epoch's own key (a space has no shared key).
+  const groups = new Map();
+  function group(sp) {
+    if (groups.has(sp.id)) return groups.get(sp.id);
+    let m = null;
+    let st = null;
+    let queue = Promise.resolve();
+    const ch = sp.tables.channel;
+    const logs = logsOf({
+      mls: () => m,
+      space: sp.idBytes,
+      channel: ch,
+      seal: async e => (await auth.identity.tableKeyAt(ch, e, sp.idBytes)).tableKey,
+      label: `${sp.name ?? "space"} keys`,
+    });
+    async function keep(made) {
+      const s = m.status();
+      const r = await auth.identity.mlsSave(s.state, s.epoch, s.secret, sp.idBytes);
+      if (!r.mlsSaved) throw new Error(`the identity would not keep the space's keys: ${r.refused ?? JSON.stringify(r)}`);
+      await logs.ensure(s, made);
+      st = { epoch: s.epoch, me: s.me, members: s.members, removed: s.removed };
+      return st;
+    }
+    const g = {
+      // MADE by this node, its first member (with its account membership's credential).
+      create: () =>
+        (queue = queue.then(async () => {
+          if (!(await ready())) throw new Error("this node is not in its account's group here: log in once with your recovery words");
+          m = mls.create_space(sp.idBytes);
+          ctx.log(`${sp.name ?? "space"} keys`, { what: "this node made the space's group: epoch 0" });
+          return keep(true);
+        })),
+      // Loaded and brought current; null where this node is not in the space's group.
+      ready: () =>
+        (queue = queue.catch(() => {}).then(async () => {
+          if (!m) {
+            const r = await auth.identity.mlsLoad(sp.idBytes);
+            if (!r.mlsState) return null;
+            m = mlsGlue.Mls.load_space(sp.idBytes, bytes(r.mlsState));
+          }
+          if (await logs.catchUp()) return keep(false);
+          if (!st) {
+            const s = m.status();
+            await logs.ensure(s, false);
+            st = { epoch: s.epoch, me: s.me, members: s.members, removed: s.removed };
+          }
+          return st;
+        })),
+    };
+    groups.set(sp.id, g);
+    return g;
+  }
+
   // How many epochs are in escrow for the words.
   // Every epoch is escrowed: the first from the channel, each later one with the commit that made it.
   async function escrowed() {
@@ -275,5 +341,5 @@ export async function start(ctx) {
     else ready().catch(err => ctx.log("account keys", { what: err?.message ?? String(err) }));
   });
 
-  return { ready, remove, escrowed, onChange: f => watchers.push(f) };
+  return { ready, remove, escrowed, group, onChange: f => watchers.push(f) };
 }

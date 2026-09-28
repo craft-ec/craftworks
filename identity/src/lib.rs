@@ -75,8 +75,9 @@ pub enum Request {
     Lock,
     /// The session's member.
     Who,
-    /// Sign `params.signed_message(false, seq, value_hash)` with the session's member or the account's data key.
-    Sign { params: Vec<u8>, seq: u64, value_hash: [u8; HASH_LEN] },
+    /// Sign `params.signed_message(false, seq, value_hash)` with the session's member, the account's data key, or the
+    /// key of an epoch's log of `space` (`None`: the account).
+    Sign { params: Vec<u8>, seq: u64, value_hash: [u8; HASH_LEN], space: Option<[u8; 32]> },
     /// The session member's seed, for a key file. Its home app only.
     Export,
     /// For the next version of this delegate: the member this PIN opens, to its home app. Counted as an unlock try.
@@ -94,16 +95,16 @@ pub enum Request {
     /// account's data key, which never leaves. (Last in the list: the variants before keep their encoding, so earlier
     /// builds still read a Handover.)
     TableKey { table: String, gen: u8 },
-    /// KEEP this member's MLS state (the account's group, run by the page) and the secret of its current epoch. The
-    /// home site only: whoever holds the state can act in the group.
-    MlsSave { state: Vec<u8>, epoch: u64, secret: [u8; 32] },
-    /// The member's MLS state, to the home site only.
-    MlsLoad,
-    /// The key of table `table` in MLS epoch `epoch` (`None`: the newest this member holds): from that epoch's secret,
-    /// kept here; to a site allowed that table only.
-    TableKeyAt { table: String, epoch: Option<u64> },
-    /// KEEP an earlier epoch's secret (recovered from its escrow with the words): the home site only.
-    EpochKeep { epoch: u64, secret: [u8; 32] },
+    /// KEEP this member's MLS state of a SPACE's group (`None`: the account's; run by the page) and the secret of its
+    /// current epoch. The home site only: whoever holds the state can act in the group.
+    MlsSave { space: Option<[u8; 32]>, state: Vec<u8>, epoch: u64, secret: [u8; 32] },
+    /// The member's MLS state of a space's group, to the home site only.
+    MlsLoad { space: Option<[u8; 32]> },
+    /// The key of table `table` in MLS epoch `epoch` (`None`: the newest this member holds) of a space's group: from
+    /// that epoch's secret, kept here; the account's to a site allowed that table, another space's to the home site.
+    TableKeyAt { table: String, epoch: Option<u64>, space: Option<[u8; 32]> },
+    /// KEEP an earlier epoch's secret of a space's group (recovered from escrow, or walked): the home site only.
+    EpochKeep { space: Option<[u8; 32]>, epoch: u64, secret: [u8; 32] },
     /// FORGET the session's member: its key, PIN, grants, MLS state and every epoch's secret — for a node REMOVED
     /// from the account (its group told it so), so what it held can no longer be taken from it. The home site only.
     /// The account is untouched: its recovery words make this node a new member again.
@@ -256,6 +257,16 @@ pub fn epoch_table_key(epoch_secret: &[u8; 32], table: &str) -> [u8; 32] {
     *h.finalize().as_bytes()
 }
 
+/// The ADDRESS key of a space's table (where its sealed tree blocks live, and the key its tail is opened under): from the
+/// space's id and the table, so every member names the same blocks. Its rows and blocks are sealed with the space's
+/// epoch keys, never with this. The ONE derivation.
+pub fn space_table_key(space: &[u8; 32], table: &str) -> [u8; 32] {
+    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-09-28 space table key");
+    h.update(space);
+    h.update(table.as_bytes());
+    *h.finalize().as_bytes()
+}
+
 /// The signing key of an epoch's LOG (the account's MLS commits: one tail per epoch): from the epoch's secret, so only
 /// the nodes in the group at that epoch can write it — a removed node writes no later epoch's. The ONE derivation.
 pub fn epoch_log_key(epoch_secret: &[u8; 32]) -> SigningKey {
@@ -267,6 +278,41 @@ pub fn epoch_log_key(epoch_secret: &[u8; 32]) -> SigningKey {
 pub const MLS: &[u8] = b"identity_mls/";
 pub const EPOCH: &[u8] = b"identity_epoch/";
 pub const EPOCH_LATEST: &[u8] = b"identity_epoch_latest/";
+/// `SPACES ‖ member` → the ids (32 bytes each) of the spaces other than the account whose group this member keeps.
+pub const SPACES: &[u8] = b"identity_spaces/";
+
+/// Where a member keeps something of a SPACE's group: the account's (`None`) under the keys it always had; another
+/// space's with the space's id after the member.
+fn in_space(prefix: &[u8], m: &[u8; KEY_LEN], space: &Option<[u8; 32]>) -> Vec<u8> {
+    let mut k = [prefix, &m[..]].concat();
+    if let Some(sp) = space {
+        k.extend_from_slice(sp);
+    }
+    k
+}
+
+fn spaces_of<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Vec<[u8; 32]> {
+    h.get_secret(&[SPACES, &m[..]].concat()).unwrap_or_default().chunks_exact(32).map(|c| c.try_into().expect("32")).collect()
+}
+
+/// Note a space among the member's (once).
+fn note_space<H: Host>(h: &mut H, m: &[u8; KEY_LEN], space: &Option<[u8; 32]>) -> bool {
+    let Some(sp) = space else { return true };
+    let mut all = spaces_of(h, m);
+    if all.contains(sp) {
+        return true;
+    }
+    all.push(*sp);
+    h.set_secret(&[SPACES, &m[..]].concat(), &all.concat())
+}
+
+fn latest_in<H: Host>(h: &H, m: &[u8; KEY_LEN], space: &Option<[u8; 32]>) -> Option<u64> {
+    h.get_secret(&in_space(EPOCH_LATEST, m, space)).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes)
+}
+
+fn secret_in<H: Host>(h: &H, m: &[u8; KEY_LEN], space: &Option<[u8; 32]>, epoch: u64) -> Option<[u8; 32]> {
+    h.get_secret(&[in_space(EPOCH, m, space), epoch.to_be_bytes().to_vec()].concat()).and_then(|b| b.try_into().ok())
+}
 
 pub fn table_key(data_seed: &[u8; 32], table: &str, gen: u8) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key("craftworks 2026-09-28 table key");
@@ -536,34 +582,36 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             }
             Revoked
         }
-        Request::MlsSave { state, epoch, secret } => {
+        Request::MlsSave { space, state, epoch, secret } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {
                 return Refused(Why::NotHome);
             }
             let m = a.public();
-            let latest = h.get_secret(&[EPOCH_LATEST, &m[..]].concat()).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes);
+            let latest = latest_in(h, &m, &space);
             // Epoch secret first, then the state, then the newest mark: a crash between leaves a secret nobody points
             // at, never a state whose epoch has no secret.
-            if !h.set_secret(&[EPOCH, &m[..], &epoch.to_be_bytes()].concat(), &secret)
-                || !h.set_secret(&[MLS, &m[..]].concat(), &state)
-                || (latest.is_none_or(|l| epoch >= l) && !h.set_secret(&[EPOCH_LATEST, &m[..]].concat(), &epoch.to_be_bytes()))
+            if !note_space(h, &m, &space)
+                || !h.set_secret(&[in_space(EPOCH, &m, &space), epoch.to_be_bytes().to_vec()].concat(), &secret)
+                || !h.set_secret(&in_space(MLS, &m, &space), &state)
+                || (latest.is_none_or(|l| epoch >= l) && !h.set_secret(&in_space(EPOCH_LATEST, &m, &space), &epoch.to_be_bytes()))
             {
                 return Refused(Why::NotSaved);
             }
             MlsSaved
         }
-        Request::EpochKeep { epoch, secret } => {
+        Request::EpochKeep { space, epoch, secret } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {
                 return Refused(Why::NotHome);
             }
             let m = a.public();
-            let latest = h.get_secret(&[EPOCH_LATEST, &m[..]].concat()).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes);
+            let latest = latest_in(h, &m, &space);
             // The secret, then the newest mark if this epoch is newer (a node joining with the words keeps the epochs it
             // walks before its group's state exists: it signs the log of the one it joins at).
-            if !h.set_secret(&[EPOCH, &m[..], &epoch.to_be_bytes()].concat(), &secret)
-                || (latest.is_none_or(|l| epoch > l) && !h.set_secret(&[EPOCH_LATEST, &m[..]].concat(), &epoch.to_be_bytes()))
+            if !note_space(h, &m, &space)
+                || !h.set_secret(&[in_space(EPOCH, &m, &space), epoch.to_be_bytes().to_vec()].concat(), &secret)
+                || (latest.is_none_or(|l| epoch > l) && !h.set_secret(&in_space(EPOCH_LATEST, &m, &space), &epoch.to_be_bytes()))
             {
                 return Refused(Why::NotSaved);
             }
@@ -582,6 +630,14 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             for e in 0..=latest.unwrap_or(0) {
                 ok &= h.set_secret(&[EPOCH, &m[..], &e.to_be_bytes()].concat(), &[]);
             }
+            // Every other space's group too: its state and every epoch's secret.
+            for sp in spaces_of(h, &m).into_iter().map(Some) {
+                for e in 0..=latest_in(h, &m, &sp).unwrap_or(0) {
+                    ok &= h.set_secret(&[in_space(EPOCH, &m, &sp), e.to_be_bytes().to_vec()].concat(), &[]);
+                }
+                ok &= h.set_secret(&in_space(EPOCH_LATEST, &m, &sp), &[]) && h.set_secret(&in_space(MLS, &m, &sp), &[]);
+            }
+            ok &= h.set_secret(&[SPACES, &m[..]].concat(), &[]);
             for (g, t) in grants(h, &m) {
                 ok &= h.set_secret(&grant_key(&m, &g, &t), &[]);
             }
@@ -616,28 +672,33 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 HandedKeys { mls: h.get_secret(&[MLS, &m[..]].concat()).filter(|s| !s.is_empty()), epochs }
             }
         },
-        Request::MlsLoad => {
+        Request::MlsLoad { space } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {
                 return Refused(Why::NotHome);
             }
-            MlsState { state: h.get_secret(&[MLS, &a.public()[..]].concat()).filter(|s| !s.is_empty()) }
+            MlsState { state: h.get_secret(&in_space(MLS, &a.public(), &space)).filter(|s| !s.is_empty()) }
         }
-        Request::TableKeyAt { table, epoch } => {
+        Request::TableKeyAt { table, epoch, space } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if !table_ok(&table) {
                 return Refused(Why::BadTable);
             }
             let m = a.public();
-            let may = a.home == app || granted(h, &m, &app, &table) || (with_any_grant(&table) && grants(h, &m).iter().any(|(g, _)| *g == app));
+            // Another space's tables: the home site (spaces are the person's, not a site's, and not granted per table).
+            let may = if space.is_some() {
+                a.home == app
+            } else {
+                a.home == app || granted(h, &m, &app, &table) || (with_any_grant(&table) && grants(h, &m).iter().any(|(g, _)| *g == app))
+            };
             if !may {
                 return Refused(Why::NotGranted { table });
             }
-            let epoch = match epoch.or_else(|| h.get_secret(&[EPOCH_LATEST, &m[..]].concat()).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes)) {
+            let epoch = match epoch.or_else(|| latest_in(h, &m, &space)) {
                 Some(e) => e,
                 None => return Refused(Why::NoEpoch),
             };
-            match h.get_secret(&[EPOCH, &m[..], &epoch.to_be_bytes()].concat()).and_then(|b| <[u8; 32]>::try_from(b).ok()) {
+            match secret_in(h, &m, &space, epoch) {
                 Some(secret) => TableKeyAt { epoch, key: epoch_table_key(&secret, &table) },
                 None => Refused(Why::NoEpoch),
             }
@@ -657,7 +718,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             let Some(data) = a.data else { return Refused(Why::NoDataKey) };
             TableKey { key: table_key(&data, &table, gen) }
         }
-        Request::Sign { params, seq, value_hash } => {
+        Request::Sign { params, seq, value_hash, space } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             let Some(p) = Params::parse(&params) else { return Refused(Why::BadParams) };
             // One of the account's tables, by a site the person allowed: this node's own FEED of it (the member's key),
@@ -669,9 +730,9 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                     return None;
                 }
                 let m = a.public();
-                let latest = h.get_secret(&[EPOCH_LATEST, &m[..]].concat()).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes)?;
+                let latest = latest_in(h, &m, &space)?;
                 (0..=latest).rev().find_map(|e| {
-                    let secret: [u8; 32] = h.get_secret(&[EPOCH, &m[..], &e.to_be_bytes()].concat())?.try_into().ok()?;
+                    let secret = secret_in(h, &m, &space, e)?;
                     let k = epoch_log_key(&secret);
                     matches!(&p.authority, Authority::One(v) if *v == k.verifying_key()).then_some(k)
                 })
@@ -690,7 +751,8 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             let member = a.public();
             let may = if table == CATALOG {
                 a.home == app || grants(h, &member).iter().any(|(g, _)| *g == app)
-            } else if table == MEMBERS {
+            } else if table == MEMBERS || space.is_some() {
+                // The account's members, and another space's tables: the home site.
                 a.home == app
             } else {
                 granted(h, &member, &app, table)

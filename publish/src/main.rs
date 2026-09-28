@@ -258,7 +258,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 32] = [
+    let packages: [(&str, &str, PathBuf); 34] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -298,6 +298,8 @@ async fn main() -> Result<()> {
         ("pin-button", "service", app.join("packages/pin-button.js")),
         ("label-menu", "service", app.join("packages/label-menu.js")),
         ("notes", "module", app.join("packages/notes.js")),
+        ("content", "service", app.join("packages/content.js")),
+        ("chat", "module", app.join("packages/chat.js")),
         ("tail-wasm", "bytes", contracts.join("tail.wasm")),
         // The Block contract: a table's tree blocks, after a flush.
         ("block-wasm", "bytes", contracts.join("block.wasm")),
@@ -366,7 +368,7 @@ async fn main() -> Result<()> {
     }
     let prior: Vec<String> = history.iter().rev().filter(|l| **l != this_build).take(8).map(|l| format!("\"{l}\"")).collect();
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ \"/\": [\"home\"], \"/account\": [\"account\"], \"/notes\": [\"notes\"] }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\"],\n  \"identity_prior\": [{}],\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ \"/\": [\"home\"], \"/account\": [\"account\"], \"/notes\": [\"notes\"], \"/chat\": [\"chat\"] }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\" }}, {{ \"name\": \"Chat\", \"icon\": \"💬\", \"route\": \"/chat\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\"],\n  \"identity_prior\": [{}],\n  \"packages\": {{\n{}\n  }} }}\n",
         prior.join(", "),
         entries.join(",\n")
     );

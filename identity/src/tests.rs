@@ -89,7 +89,7 @@ fn lock(m: &mut Map, app: [u8; 32]) -> Answer {
 }
 
 fn sign(m: &mut Map, app: [u8; 32], p: &[u8], seq: u64, v: [u8; 32]) -> Answer {
-    serve(m, Request::Sign { params: p.to_vec(), seq, value_hash: v }, app)
+    serve(m, Request::Sign { params: p.to_vec(), seq, value_hash: v, space: None }, app)
 }
 
 fn export(m: &mut Map, app: [u8; 32]) -> Answer {
@@ -445,25 +445,25 @@ fn a_table_key_is_given_to_the_home_site_and_to_a_site_only_once_granted() {
 #[test]
 fn the_vault_keeps_mls_state_for_the_home_site_and_gives_epoch_table_keys_to_granted_sites() {
     let mut m = provisioned(APP);
-    let at = |m: &mut Map, app, t: &str, epoch| serve(m, Request::TableKeyAt { table: t.into(), epoch }, app);
+    let at = |m: &mut Map, app, t: &str, epoch| serve(m, Request::TableKeyAt { table: t.into(), epoch, space: None }, app);
     assert_eq!(at(&mut m, APP, "notes", None), Answer::Refused(Why::NoEpoch), "nothing before the group exists");
-    assert_eq!(serve(&mut m, Request::MlsLoad, APP), Answer::MlsState { state: None });
-    assert_eq!(serve(&mut m, Request::MlsSave { state: b"s1".to_vec(), epoch: 1, secret: [1; 32] }, APP), Answer::MlsSaved);
-    assert_eq!(serve(&mut m, Request::MlsSave { state: b"s2".to_vec(), epoch: 2, secret: [2; 32] }, APP), Answer::MlsSaved);
-    assert_eq!(serve(&mut m, Request::MlsLoad, APP), Answer::MlsState { state: Some(b"s2".to_vec()) });
+    assert_eq!(serve(&mut m, Request::MlsLoad { space: None }, APP), Answer::MlsState { state: None });
+    assert_eq!(serve(&mut m, Request::MlsSave { space: None, state: b"s1".to_vec(), epoch: 1, secret: [1; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::MlsSave { space: None, state: b"s2".to_vec(), epoch: 2, secret: [2; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::MlsLoad { space: None }, APP), Answer::MlsState { state: Some(b"s2".to_vec()) });
     // The newest epoch by default; an older one by name (blocks sealed then).
     assert_eq!(at(&mut m, APP, "notes", None), Answer::TableKeyAt { epoch: 2, key: epoch_table_key(&[2; 32], "notes") });
     assert_eq!(at(&mut m, APP, "notes", Some(1)), Answer::TableKeyAt { epoch: 1, key: epoch_table_key(&[1; 32], "notes") });
     assert_eq!(at(&mut m, APP, "notes", Some(7)), Answer::Refused(Why::NoEpoch));
     // An earlier epoch recovered from escrow: kept, readable by its number, the newest unchanged.
-    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 0, secret: [9; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::EpochKeep { space: None, epoch: 0, secret: [9; 32] }, APP), Answer::MlsSaved);
     assert_eq!(at(&mut m, APP, "notes", Some(0)), Answer::TableKeyAt { epoch: 0, key: epoch_table_key(&[9; 32], "notes") });
     assert_eq!(at(&mut m, APP, "notes", None), Answer::TableKeyAt { epoch: 2, key: epoch_table_key(&[2; 32], "notes") });
     // Another site: no state at all, and table keys only for what it was granted.
     assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
-    assert_eq!(serve(&mut m, Request::MlsLoad, OTHER), Answer::Refused(Why::NotHome));
-    assert_eq!(serve(&mut m, Request::MlsSave { state: vec![], epoch: 3, secret: [3; 32] }, OTHER), Answer::Refused(Why::NotHome));
-    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 3, secret: [3; 32] }, OTHER), Answer::Refused(Why::NotHome));
+    assert_eq!(serve(&mut m, Request::MlsLoad { space: None }, OTHER), Answer::Refused(Why::NotHome));
+    assert_eq!(serve(&mut m, Request::MlsSave { space: None, state: vec![], epoch: 3, secret: [3; 32] }, OTHER), Answer::Refused(Why::NotHome));
+    assert_eq!(serve(&mut m, Request::EpochKeep { space: None, epoch: 3, secret: [3; 32] }, OTHER), Answer::Refused(Why::NotHome));
     assert_eq!(at(&mut m, OTHER, "notes", None), Answer::Refused(Why::NotGranted { table: "notes".into() }));
     assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
     assert_eq!(at(&mut m, OTHER, "notes", None), Answer::TableKeyAt { epoch: 2, key: epoch_table_key(&[2; 32], "notes") });
@@ -472,9 +472,9 @@ fn the_vault_keeps_mls_state_for_the_home_site_and_gives_epoch_table_keys_to_gra
 #[test]
 fn a_removed_node_forgets_its_member_and_every_key_it_held() {
     let mut m = provisioned(APP);
-    let at = |m: &mut Map, app, epoch| serve(m, Request::TableKeyAt { table: "notes".into(), epoch }, app);
-    assert_eq!(serve(&mut m, Request::MlsSave { state: b"s".to_vec(), epoch: 2, secret: [2; 32] }, APP), Answer::MlsSaved);
-    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 0, secret: [9; 32] }, APP), Answer::MlsSaved);
+    let at = |m: &mut Map, app, epoch| serve(m, Request::TableKeyAt { table: "notes".into(), epoch, space: None }, app);
+    assert_eq!(serve(&mut m, Request::MlsSave { space: None, state: b"s".to_vec(), epoch: 2, secret: [2; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::EpochKeep { space: None, epoch: 0, secret: [9; 32] }, APP), Answer::MlsSaved);
     assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
     assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
     // Bob on the same node, as a control: untouched.
@@ -502,8 +502,8 @@ fn a_removed_node_forgets_its_member_and_every_key_it_held() {
 #[test]
 fn a_members_keys_go_to_the_next_build_on_its_pin_to_its_home_only() {
     let mut m = provisioned(APP);
-    assert_eq!(serve(&mut m, Request::MlsSave { state: b"group".to_vec(), epoch: 3, secret: [3; 32] }, APP), Answer::MlsSaved);
-    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 1, secret: [1; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::MlsSave { space: None, state: b"group".to_vec(), epoch: 3, secret: [3; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::EpochKeep { space: None, epoch: 1, secret: [1; 32] }, APP), Answer::MlsSaved);
     let keys = |m: &mut Map, pin: &str, app| serve(m, Request::HandoverKeys { pin: pin.into() }, app);
     assert_eq!(
         keys(&mut m, ALICE_PIN, APP),
@@ -534,7 +534,7 @@ fn the_members_table_is_read_with_any_grant_and_written_by_the_home_only() {
 #[test]
 fn an_epochs_log_is_signed_only_with_that_epochs_secret_by_the_home_site() {
     let mut m = provisioned(APP);
-    assert_eq!(serve(&mut m, Request::MlsSave { state: b"s".to_vec(), epoch: 2, secret: [2; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::MlsSave { space: None, state: b"s".to_vec(), epoch: 2, secret: [2; 32] }, APP), Answer::MlsSaved);
     assert_eq!(ask(&mut m, APP, "mls", ALLOW), Answer::Granted { tables: vec!["mls".into()] });
     let log = |secret: [u8; 32]| params(epoch_log_key(&secret).verifying_key().to_bytes(), b"t/mls");
     // Epoch 2's log: signed, and the signature holds under that log's key.
@@ -557,11 +557,42 @@ fn a_joiner_signs_the_log_of_an_epoch_it_kept_before_it_has_a_group() {
     // Control: nothing kept, nothing signed.
     assert_eq!(sign(&mut m, APP, &log([4; 32]), 1, [1; 32]), Answer::Refused(Why::NotThisKey));
     // Epochs 3 and 4 kept from the walk (no group state yet): epoch 4's log is signed, and 3's too.
-    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 3, secret: [3; 32] }, APP), Answer::MlsSaved);
-    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 4, secret: [4; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::EpochKeep { space: None, epoch: 3, secret: [3; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::EpochKeep { space: None, epoch: 4, secret: [4; 32] }, APP), Answer::MlsSaved);
     assert!(matches!(sign(&mut m, APP, &log([4; 32]), 1, [1; 32]), Answer::Signed { .. }));
     assert!(matches!(sign(&mut m, APP, &log([3; 32]), 1, [1; 32]), Answer::Signed { .. }));
     // Keeping an OLDER epoch later does not move the newest back.
-    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 1, secret: [1; 32] }, APP), Answer::MlsSaved);
-    assert_eq!(serve(&mut m, Request::TableKeyAt { table: "mls".into(), epoch: None }, APP), Answer::TableKeyAt { epoch: 4, key: epoch_table_key(&[4; 32], "mls") });
+    assert_eq!(serve(&mut m, Request::EpochKeep { space: None, epoch: 1, secret: [1; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::TableKeyAt { table: "mls".into(), epoch: None, space: None }, APP), Answer::TableKeyAt { epoch: 4, key: epoch_table_key(&[4; 32], "mls") });
+}
+
+#[test]
+fn each_space_keeps_its_own_group_and_epochs_apart_and_forget_clears_them_all() {
+    let mut m = provisioned(APP);
+    let (x, y) = (Some([0x51; 32]), Some([0x52; 32]));
+    let save = |m: &mut Map, space, state: &[u8], epoch, secret| serve(m, Request::MlsSave { space, state: state.to_vec(), epoch, secret }, APP);
+    let load = |m: &mut Map, space| serve(m, Request::MlsLoad { space }, APP);
+    let key = |m: &mut Map, space, epoch| serve(m, Request::TableKeyAt { table: "chat".into(), epoch, space }, APP);
+    assert_eq!(save(&mut m, None, b"account", 4, [4; 32]), Answer::MlsSaved);
+    assert_eq!(save(&mut m, x, b"server x", 1, [0x11; 32]), Answer::MlsSaved);
+    assert_eq!(save(&mut m, y, b"server y", 7, [0x77; 32]), Answer::MlsSaved);
+    // Each its own state, newest epoch and keys.
+    assert_eq!(load(&mut m, None), Answer::MlsState { state: Some(b"account".to_vec()) });
+    assert_eq!(load(&mut m, x), Answer::MlsState { state: Some(b"server x".to_vec()) });
+    assert_eq!(key(&mut m, x, None), Answer::TableKeyAt { epoch: 1, key: epoch_table_key(&[0x11; 32], "chat") });
+    assert_eq!(key(&mut m, y, None), Answer::TableKeyAt { epoch: 7, key: epoch_table_key(&[0x77; 32], "chat") });
+    assert_eq!(key(&mut m, x, Some(4)), Answer::Refused(Why::NoEpoch), "the account's epoch 4 is not server x's");
+    // Another site: no space's keys, even a granted table name.
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    assert_eq!(ask(&mut m, OTHER, "chat", ALLOW), Answer::Granted { tables: vec!["chat".into()] });
+    assert_eq!(serve(&mut m, Request::TableKeyAt { table: "chat".into(), epoch: None, space: x }, OTHER), Answer::Refused(Why::NotGranted { table: "chat".into() }));
+    // A space's epoch log is signed in its own space only.
+    let log = params(epoch_log_key(&[0x11; 32]).verifying_key().to_bytes(), b"t/chat");
+    assert!(matches!(serve(&mut m, Request::Sign { params: log.clone(), seq: 1, value_hash: [1; 32], space: x }, APP), Answer::Signed { .. }));
+    assert_eq!(serve(&mut m, Request::Sign { params: log, seq: 2, value_hash: [2; 32], space: y }, APP), Answer::Refused(Why::NotThisKey));
+    // Forget: every space's group goes with the member.
+    assert_eq!(unlock(&mut m, ALICE_PIN, APP), alice());
+    assert_eq!(serve(&mut m, Request::Forget, APP), Answer::LoggedOut);
+    assert!(!m.s.values().any(|v| v.windows(8).any(|w| w == b"server x" || w == b"server y")), "a space's state is still held");
+    assert!(!m.s.values().any(|v| v.windows(32).any(|w| w == [0x11; 32] || w == [0x77; 32])), "a space's epoch secret is still held");
 }

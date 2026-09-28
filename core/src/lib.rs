@@ -363,6 +363,15 @@ mod js {
         JsValue::from_str(&e)
     }
 
+    /// A space's id from the page: 32 bytes, or empty for the account.
+    fn space_of(b: &[u8]) -> Result<Option<[u8; 32]>, JsValue> {
+        if b.is_empty() {
+            Ok(None)
+        } else {
+            b32(b).map(Some)
+        }
+    }
+
     fn b32(v: &[u8]) -> Result<[u8; 32], JsValue> {
         v.try_into().map_err(|_| err("expected 32 bytes".into()))
     }
@@ -414,8 +423,9 @@ mod js {
         pub fn frames_who(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Who)
         }
-        pub fn frames_sign(&mut self, params: &[u8], seq: u64, value_hash: &[u8]) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::Sign { params: params.to_vec(), seq, value_hash: b32(value_hash)? })
+        /// Sign a record: `space` (32 bytes, or empty: the account) names whose epoch logs may be meant.
+        pub fn frames_sign(&mut self, params: &[u8], seq: u64, value_hash: &[u8], space: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Sign { params: params.to_vec(), seq, value_hash: b32(value_hash)?, space: space_of(space)? })
         }
         pub fn frames_export(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Export)
@@ -425,20 +435,21 @@ mod js {
         pub fn frames_grant(&mut self, tables: Vec<String>) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Grant { tables })
         }
-        /// Keep this member's MLS state and its epoch's secret (the home site only).
-        pub fn frames_mls_save(&mut self, state: &[u8], epoch: f64, secret: &[u8]) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::MlsSave { state: state.to_vec(), epoch: epoch as u64, secret: b32(secret)? })
+        /// Keep this member's MLS state of a space's group (`space` 32 bytes, or empty: the account) and its epoch's
+        /// secret (the home site only).
+        pub fn frames_mls_save(&mut self, state: &[u8], epoch: f64, secret: &[u8], space: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::MlsSave { space: space_of(space)?, state: state.to_vec(), epoch: epoch as u64, secret: b32(secret)? })
         }
-        /// Keep an earlier epoch's secret (recovered from escrow).
-        pub fn frames_epoch_keep(&mut self, epoch: f64, secret: &[u8]) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::EpochKeep { epoch: epoch as u64, secret: b32(secret)? })
+        /// Keep an earlier epoch's secret of a space's group (recovered from escrow, or walked).
+        pub fn frames_epoch_keep(&mut self, epoch: f64, secret: &[u8], space: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::EpochKeep { space: space_of(space)?, epoch: epoch as u64, secret: b32(secret)? })
         }
-        pub fn frames_mls_load(&mut self) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::MlsLoad)
+        pub fn frames_mls_load(&mut self, space: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::MlsLoad { space: space_of(space)? })
         }
-        /// A table's key in an MLS epoch (`epoch` < 0: the newest held).
-        pub fn frames_table_key_at(&mut self, table: String, epoch: f64) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::TableKeyAt { table, epoch: (epoch >= 0.0).then_some(epoch as u64) })
+        /// A table's key in an MLS epoch (`epoch` < 0: the newest held) of a space's group.
+        pub fn frames_table_key_at(&mut self, table: String, epoch: f64, space: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::TableKeyAt { table, epoch: (epoch >= 0.0).then_some(epoch as u64), space: space_of(space)? })
         }
         /// The key that seals table `table` (generation `gen`): given to a granted site only.
         pub fn frames_table_key(&mut self, table: String, gen: u8) -> Result<js_sys::Array, JsValue> {
@@ -798,6 +809,13 @@ mod js {
     #[wasm_bindgen]
     pub fn account_tables() -> String {
         serde_json::json!({ "catalog": craftworks_identity::CATALOG, "members": craftworks_identity::MEMBERS, "channel": craftworks_identity::CHANNEL }).to_string()
+    }
+
+    /// The address key (hex) of a space's table (`identity::space_table_key`).
+    #[wasm_bindgen]
+    pub fn space_table_key(space: &[u8], table: &str) -> Result<String, JsValue> {
+        let s: [u8; 32] = space.try_into().map_err(|_| err("a space's id is 32 bytes".into()))?;
+        Ok(hex(&craftworks_identity::space_table_key(&s, table)))
     }
 
     /// The public key (hex) of an EPOCH's log: the tail of that epoch's MLS commits (`identity::epoch_log_key`, the one

@@ -295,3 +295,19 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
   T/U/V/W by words walk and join (epochs 1–5, earlier epochs recovered), S by PIN walks to epoch 5 with epoch 4's key;
   S removes U through epoch 2's log (adopted 2 rows, removal told), T follows to epoch 3; P (account from before
   epoch logs) unaffected. OPEN: S lacks epoch 1 (missed before the fix) until T's rows are sealed over upward.
+
+## Messaging (owner 2026-09-28: Discord-style group chat first; then "we need private messaging first — the foundation")
+- [x] C1 groups per space + a server that works for its maker: identity keeps MLS state/epochs per space (`space: None`
+  = the account's, under its old keys; SPACES list; Forget clears all; tests); `mls` Rule { Account | Space } (a space
+  admits nodes of any account by their owner-signed credential; `create_space` reuses the node's account credential;
+  test); `keys.group(sp)` over one `logsOf` set shared with the account (space logs sealed with each epoch's own key,
+  signed in the space); storage over a SCOPE (account | space: group members write, space tables sealed with its
+  epochs, address key `identity::space_table_key`); `space.create/mine/tableOf/channel` (a channel = sub-space
+  inheriting the server); `content` capability (authored item shape; author-only edits); Chat page (Discord layout).
+  Live: server “Craft” made in 0.8 s (group, log, listed), #general, a message posted and there after a reload.
+  Bugs fixed on the way: `tail`'s `space` option shadowed the capability; the account group passed an empty space id.
+- [ ] M private messaging: directory (card + key packages), inbox (sealed pointers = MLS welcomes), DM = two-person space
+- [ ] C3 invites (join request, a member adds), C4 roles/moderation, C5 every node of each member
+- OPEN: a space's group state is not carried by HandoverKeys yet (the next delegate build loses space groups).
+- OWNER ASKED (published size): manifest 54 KB lists every piece of every package; plan: one hash per package (pieces
+  derived), split per page. Not done yet.
