@@ -402,7 +402,7 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
 - [x] P1 identity: `SpaceMember` — the DID's member key (derived from the data seed: the same on every device), its
       credential signed by the DATA key (checked against the DID's key log by anyone), and Sign allows that key (a
       space's feed is the DID's). Tests.
-- [ ] P2 mls: a member from (seed, credential); key packages and their secrets exportable (shared by the account's
+- [x] P2 mls: a member from (seed, credential); key packages and their secrets exportable (shared by the account's
       devices); create/join/load a space as the DID. Tests.
 - [ ] P3 pages: `keys.group` state + key packages in the account table `spacekeys` (any device loads the newest; the
       epoch log's order settles two devices); storage's space scope writes as the DID; `roles` maps writer → DID

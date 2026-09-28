@@ -39,6 +39,9 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::MlsState { state } => json!({ "mlsState": state.as_ref().map(|s| hex(s)) }),
         Answer::TableKeyAt { epoch, key } => json!({ "tableKey": hex(key), "epoch": epoch }),
         Answer::InboxKey { public } => json!({ "inboxKey": hex(public) }),
+        Answer::SpaceMember { seed, public, writer, credential } => json!({ "spaceMember": {
+            "seed": hex(seed), "public": hex(public), "writer": hex(writer), "credential": hex(credential),
+        } }),
         Answer::HandedSpaces { spaces } => json!({ "handedSpaces": spaces.iter().map(|(id, st, eps)| json!({
             "space": hex(id), "mls": st.as_ref().map(|s| hex(s)),
             "epochs": eps.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>(),
@@ -464,6 +467,10 @@ mod js {
         }
         pub fn frames_inbox_key(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::InboxKey)
+        }
+        /// The DID's member for spaces (the home site only): its MLS seed, keys and credential.
+        pub fn frames_space_member(&mut self) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::SpaceMember)
         }
         /// Open items sealed to the account's inbox key (the home site only).
         pub fn frames_inbox_open(&mut self, items: js_sys::Array) -> Result<js_sys::Array, JsValue> {

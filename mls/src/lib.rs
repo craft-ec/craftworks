@@ -319,12 +319,6 @@ impl Account {
         Ok(Account { group, removed: false, store, signer, ident, cred, kps })
     }
 
-    /// A SPACE's group, made by this node (a server's first member) with the credential and signing key it has as a
-    /// member of its account: the same node, speaking for the same account, in another group.
-    pub fn create_space(&self, space: [u8; 32]) -> Result<Account, String> {
-        Self::create_with(Rule::Space(space), self.signer.clone(), self.cred.clone())
-    }
-
     /// Join the account's group with the words alone: an external commit from its published group info. Returns the
     /// member and the commit, which every other member processes (the caller publishes it in the group's order).
     pub fn join(ident: AccountIdentity, owner_seed: &[u8; 32], node: &[u8; 32], group_info: &[u8]) -> Result<(Account, Vec<u8>), String> {
@@ -371,13 +365,6 @@ impl Account {
         out.commit_message.to_bytes().map_err(e)
     }
 
-    /// A KEY PACKAGE of this node (MLS), to publish: another member adds this node with it, while it is away. Its
-    /// secrets stay here, in this node's state (save it after).
-    pub fn key_package(&self) -> Result<Vec<u8>, String> {
-        let c = client(&self.ident, &self.store, &self.kps, &self.signer, &self.cred);
-        c.generate_key_package_message(ExtensionList::default(), ExtensionList::default(), None).map_err(e)?.to_bytes().map_err(e)
-    }
-
     /// ADD a node (by its published key package) to this group: `(commit, welcome)` — the commit for the group's log,
     /// the welcome for the new node (delivered to it: its inbox). This member's epoch moves now.
     pub fn add(&mut self, key_package: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
@@ -387,22 +374,6 @@ impl Account {
         self.group.write_to_storage().map_err(e)?;
         let welcome = out.welcome_messages.first().ok_or("no welcome for the new member")?.to_bytes().map_err(e)?;
         Ok((out.commit_message.to_bytes().map_err(e)?, welcome))
-    }
-
-    /// JOIN a space's group from a WELCOME (this node was added by a member): with this node's account credential and
-    /// the key package's secrets kept here.
-    pub fn join_space(&self, space: [u8; 32], welcome: &[u8]) -> Result<Account, String> {
-        let ident = Rule::Space(space);
-        let store = Store::default();
-        let c = client(&ident, &store, &self.kps, &self.signer, &self.cred);
-        let msg = MlsMessage::from_bytes(welcome).map_err(e)?;
-        // Which group, BEFORE joining: a welcome to another space must not use up this node's key package.
-        if c.examine_welcome_message(&msg).map_err(e)?.group_context().group_id() != ident.group_id() {
-            return Err("that welcome is to another space".into());
-        }
-        let (mut group, _) = c.join_group(None, &msg, None).map_err(e)?;
-        group.write_to_storage().map_err(e)?;
-        Ok(Account { group, removed: false, store, signer: self.signer.clone(), ident, cred: self.cred.clone(), kps: self.kps.clone() })
     }
 
     pub fn epoch(&self) -> u64 {
@@ -474,6 +445,61 @@ impl Account {
     }
 }
 
+/// A DID's MEMBER in spaces (ARCHITECTURE: a DID is the member, a device only signs in): its MLS signing key (from a
+/// seed the identity derives from the account's data seed — the same on every device), its credential (signed by the
+/// account's data key), and its KEY PACKAGES' secrets, which the account's devices share (`packages`, kept in the
+/// account's storage): a welcome answering one may reach any of them. It makes and joins spaces' groups.
+pub struct SpaceMember {
+    signer: (Vec<u8>, Vec<u8>),
+    cred: Vec<u8>,
+    kps: KeyPackages,
+}
+
+impl SpaceMember {
+    /// From the identity's seed and credential, with the key packages kept so far (empty: none).
+    pub fn new(seed: &[u8; 32], cred: Vec<u8>, packages: &[u8]) -> Result<SpaceMember, String> {
+        let k = ed25519_dalek::SigningKey::from_bytes(seed);
+        let (_, _, _, sp) = read_credential(&cred).ok_or("the member's credential does not hold")?;
+        if sp != k.verifying_key().to_bytes() {
+            return Err("the credential names another signing key".into());
+        }
+        let kps = if packages.is_empty() { KeyPackages::default() } else { KeyPackages::decode(packages).ok_or("the key packages do not read")? };
+        Ok(SpaceMember { signer: (k.to_keypair_bytes().to_vec(), k.verifying_key().to_bytes().to_vec()), cred, kps })
+    }
+
+    /// The key packages' secrets, to keep (after making one, and after joining: a used one is gone).
+    pub fn packages(&self) -> Vec<u8> {
+        self.kps.encode()
+    }
+
+    /// A KEY PACKAGE to publish (on the person's card): anyone adds this DID to a space with it, while it is away.
+    pub fn key_package(&self) -> Result<Vec<u8>, String> {
+        let (store, ident) = (Store::default(), Rule::Space([0; 32]));
+        let c = client(&ident, &store, &self.kps, &self.signer, &self.cred);
+        c.generate_key_package_message(ExtensionList::default(), ExtensionList::default(), None).map_err(e)?.to_bytes().map_err(e)
+    }
+
+    /// A SPACE's group, made by this DID (its first member).
+    pub fn create_space(&self, space: [u8; 32]) -> Result<Account, String> {
+        Account::create_with(Rule::Space(space), self.signer.clone(), self.cred.clone())
+    }
+
+    /// JOIN a space's group from a WELCOME (a member added this DID by one of its key packages).
+    pub fn join_space(&self, space: [u8; 32], welcome: &[u8]) -> Result<Account, String> {
+        let ident = Rule::Space(space);
+        let store = Store::default();
+        let c = client(&ident, &store, &self.kps, &self.signer, &self.cred);
+        let msg = MlsMessage::from_bytes(welcome).map_err(e)?;
+        // Which group, BEFORE joining: a welcome to another space must not use up a key package.
+        if c.examine_welcome_message(&msg).map_err(e)?.group_context().group_id() != ident.group_id() {
+            return Err("that welcome is to another space".into());
+        }
+        let (mut group, _) = c.join_group(None, &msg, None).map_err(e)?;
+        group.write_to_storage().map_err(e)?;
+        Ok(Account { group, removed: false, store, signer: self.signer.clone(), ident, cred: self.cred.clone(), kps: KeyPackages::default() })
+    }
+}
+
 /// A table's key in an epoch: the identity delegate's one derivation.
 pub use craftworks_identity::epoch_table_key as table_key;
 
@@ -486,48 +512,57 @@ mod tests {
         AccountIdentity { did: [42; 32], owners: owners.iter().map(|s| SigningKey::from_bytes(s).verifying_key().to_bytes()).collect() }
     }
 
-    /// ADD by KEY PACKAGE across ACCOUNTS: Bob's node publishes a key package (its secrets kept in its saved state, even
-    /// across a reload); Alice adds it to her space; Bob joins from the welcome — the same group, the same keys.
+    /// A DID's member for spaces, as its account's devices each make it (the identity's seed and credential).
+    fn member(did: [u8; 32], data: [u8; 32], packages: &[u8]) -> SpaceMember {
+        let seed = craftworks_identity::space_member_seed(&data);
+        let public = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+        SpaceMember::new(&seed, craftworks_identity::space_member_credential(&did, &data, &public), packages).unwrap()
+    }
+    fn writer(data: [u8; 32]) -> Vec<u8> {
+        craftworks_identity::space_writer(&data).verifying_key().to_bytes().to_vec()
+    }
+
+    /// ADD a DID by its KEY PACKAGE: Bob's member publishes one from one device; Alice adds Bob to her space; Bob's
+    /// OTHER device (the same member, the key packages the account keeps) joins from the welcome — one member per DID,
+    /// the same group, the same keys.
     #[test]
-    fn a_node_of_another_account_is_added_by_its_key_package_and_joins_from_the_welcome() {
-        let (alice_owner, bob_owner) = ([1u8; 32], [2u8; 32]);
-        let alice = Account::create(AccountIdentity { did: [0xA; 32], owners: vec![SigningKey::from_bytes(&alice_owner).verifying_key().to_bytes()] }, &alice_owner, &[7; 32]).unwrap();
-        let mut bob = Account::create(AccountIdentity { did: [0xB; 32], owners: vec![SigningKey::from_bytes(&bob_owner).verifying_key().to_bytes()] }, &bob_owner, &[8; 32]).unwrap();
-        let bob_ident = bob.ident.clone();
-        let kp = bob.key_package().unwrap();
-        let bob = Account::load(bob_ident, &bob.save().unwrap()).unwrap();
+    fn a_did_is_added_by_its_key_package_and_any_of_its_devices_joins() {
+        let (alice, bob_phone) = (member([0xA; 32], [0xAA; 32], &[]), member([0xB; 32], [0xBB; 32], &[]));
+        let kp = bob_phone.key_package().unwrap();
+        let bob_laptop = member([0xB; 32], [0xBB; 32], &bob_phone.packages());
         let space = [0x5A; 32];
         let mut dm = alice.create_space(space).unwrap();
         let (commit, welcome) = dm.add(&kp).unwrap();
         assert!(!commit.is_empty());
         // A wrong space first: refused before the key package is used — the right one still joins after.
-        assert_eq!(bob.join_space([0x5B; 32], &welcome).err().as_deref(), Some("that welcome is to another space"));
-        let joined = bob.join_space(space, &welcome).unwrap();
+        assert_eq!(bob_laptop.join_space([0x5B; 32], &welcome).err().as_deref(), Some("that welcome is to another space"));
+        let joined = bob_laptop.join_space(space, &welcome).unwrap();
         assert_eq!(joined.epoch(), dm.epoch());
         assert_eq!(joined.epoch_secret().unwrap(), dm.epoch_secret().unwrap(), "one group, one key");
-        let nodes: Vec<Vec<u8>> = joined.members().into_iter().map(|(_, n, _)| n).collect();
-        assert_eq!(nodes, vec![vec![7; 32], vec![8; 32]]);
-        // The key package is used up: the same welcome does not join twice.
-        assert!(bob.join_space(space, &welcome).is_err());
+        let writers: Vec<Vec<u8>> = joined.members().into_iter().map(|(_, w, _)| w).collect();
+        assert_eq!(writers, vec![writer([0xAA; 32]), writer([0xBB; 32])], "one member per DID, named by its writer");
+        // Control: a device without the account's key packages cannot answer the welcome.
+        assert!(member([0xB; 32], [0xBB; 32], &[]).join_space(space, &welcome).is_err());
     }
 
-    /// A SPACE's group: made by a node of an account, with its account credential; its own epoch secret (not the
-    /// account's), kept and loaded again by its space id.
+    /// A SPACE's group, made by a DID's member: its own epoch secret, kept and loaded again by its space id; a member
+    /// whose credential names another key is refused.
     #[test]
-    fn a_node_makes_a_spaces_group_with_its_account_credential() {
-        let owner = [1u8; 32];
-        let id = ident(&[owner]);
-        let a = Account::create(id, &owner, &[7; 32]).unwrap();
+    fn a_did_makes_a_spaces_group_and_its_credential_must_be_its_own() {
+        let a = member([0xA; 32], [0xAA; 32], &[]);
         let space = [0x5A; 32];
         let mut g = a.create_space(space).unwrap();
         assert_eq!(g.members().len(), 1);
-        assert_eq!(g.members()[0].1, vec![7; 32], "the same node, by its account credential");
-        assert_ne!(g.epoch_secret().unwrap(), a.epoch_secret().unwrap(), "its own keys, not the account's");
+        assert_eq!(g.members()[0].1, writer([0xAA; 32]));
         let blob = g.save().unwrap();
         let g2 = Account::load(Rule::Space(space), &blob).unwrap();
         assert_eq!(g2.epoch_secret().unwrap(), g.epoch_secret().unwrap());
         // Control: loaded as another space, it is not found.
         assert!(Account::load(Rule::Space([0x5B; 32]), &blob).is_err());
+        // Another account's credential with this seed: refused.
+        let seed = craftworks_identity::space_member_seed(&[0xAA; 32]);
+        let other = craftworks_identity::space_member_credential(&[0xB; 32], &[0xBB; 32], &SigningKey::from_bytes(&[3; 32]).verifying_key().to_bytes());
+        assert!(SpaceMember::new(&seed, other, &[]).is_err());
     }
 
     #[test]
@@ -657,27 +692,10 @@ mod js {
             Ok(js_sys::Uint8Array::from(&self.member()?.remove(index).map_err(err)?[..]))
         }
 
-        /// A SPACE's group, made now by this node (its account's member, as loaded here): a new `Mls` for it.
-        pub fn create_space(&mut self, space: &[u8]) -> Result<Mls, JsValue> {
-            let space = did32(space)?;
-            Ok(Mls(Some(self.member()?.create_space(space).map_err(err)?), [0; 32]))
-        }
-
-        /// A KEY PACKAGE of this node (its account's member), to publish; save this node's state after (its secrets).
-        pub fn key_package(&mut self) -> Result<js_sys::Uint8Array, JsValue> {
-            Ok(js_sys::Uint8Array::from(&self.member()?.key_package().map_err(err)?[..]))
-        }
-
-        /// ADD a node by its key package: `[commit, welcome]` (the commit for the log, the welcome for the new node).
+        /// ADD a member (a DID) by its key package: `[commit, welcome]` (the commit for the log, the welcome for it).
         pub fn add(&mut self, key_package: &[u8]) -> Result<js_sys::Array, JsValue> {
             let (c, w) = self.member()?.add(key_package).map_err(err)?;
             Ok([js_sys::Uint8Array::from(&c[..]), js_sys::Uint8Array::from(&w[..])].into_iter().map(JsValue::from).collect())
-        }
-
-        /// JOIN a space's group from a welcome, with this node's (its account's member) key packages: a new `Mls`.
-        pub fn join_space(&mut self, space: &[u8], welcome: &[u8]) -> Result<Mls, JsValue> {
-            let space = did32(space)?;
-            Ok(Mls(Some(self.member()?.join_space(space, welcome).map_err(err)?), [0; 32]))
         }
 
         /// A space's group, as the identity delegate kept it.
@@ -740,6 +758,39 @@ mod js {
             set("members", members.into())?;
             set("state", js_sys::Uint8Array::from(&m.save().map_err(err)?[..]).into())?;
             Ok(o)
+        }
+    }
+
+    /// A DID's member for spaces (the page's side of `SpaceMember`): from the identity's seed and credential and the key
+    /// packages the account keeps.
+    #[wasm_bindgen(js_name = SpaceMember)]
+    pub struct JsSpaceMember(super::SpaceMember);
+
+    #[wasm_bindgen(js_class = SpaceMember)]
+    impl JsSpaceMember {
+        #[wasm_bindgen(constructor)]
+        pub fn new(seed: &[u8], credential: &[u8], packages: &[u8]) -> Result<JsSpaceMember, JsValue> {
+            Ok(JsSpaceMember(super::SpaceMember::new(&did32(seed)?, credential.to_vec(), packages).map_err(err)?))
+        }
+
+        /// The key packages' secrets, to keep in the account's storage.
+        pub fn packages(&self) -> js_sys::Uint8Array {
+            js_sys::Uint8Array::from(&self.0.packages()[..])
+        }
+
+        /// A key package to publish on the card (keep `packages()` after).
+        pub fn key_package(&self) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&self.0.key_package().map_err(err)?[..]))
+        }
+
+        /// A space's group, made by this DID: a new `Mls`.
+        pub fn create_space(&self, space: &[u8]) -> Result<Mls, JsValue> {
+            Ok(Mls(Some(self.0.create_space(did32(space)?).map_err(err)?), [0; 32]))
+        }
+
+        /// JOIN a space's group from a welcome: a new `Mls` (keep `packages()` after: the one it answered is used up).
+        pub fn join_space(&self, space: &[u8], welcome: &[u8]) -> Result<Mls, JsValue> {
+            Ok(Mls(Some(self.0.join_space(did32(space)?, welcome).map_err(err)?), [0; 32]))
         }
     }
 
