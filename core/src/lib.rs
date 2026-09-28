@@ -793,6 +793,14 @@ mod js {
         Ok(account::did(&b32(owner)?))
     }
 
+    /// The public key (hex) of an EPOCH's log: the tail of that epoch's MLS commits (`identity::epoch_log_key`, the one
+    /// derivation the identity delegate signs with).
+    #[wasm_bindgen]
+    pub fn epoch_log_public(secret: &[u8]) -> Result<String, JsValue> {
+        let s: [u8; 32] = secret.try_into().map_err(|_| err("an epoch secret is 32 bytes".into()))?;
+        Ok(hex(&craftworks_identity::epoch_log_key(&s).verifying_key().to_bytes()))
+    }
+
     /// The node's client-API URL on this machine (`wire::ws_url`: loopback only, native encoding), at the host the page
     /// was served from (`localhost` and `127.0.0.1` are different origins to the node).
     #[wasm_bindgen]

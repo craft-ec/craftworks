@@ -253,6 +253,12 @@ pub fn epoch_table_key(epoch_secret: &[u8; 32], table: &str) -> [u8; 32] {
     *h.finalize().as_bytes()
 }
 
+/// The signing key of an epoch's LOG (the account's MLS commits: one tail per epoch): from the epoch's secret, so only
+/// the nodes in the group at that epoch can write it — a removed node writes no later epoch's. The ONE derivation.
+pub fn epoch_log_key(epoch_secret: &[u8; 32]) -> SigningKey {
+    SigningKey::from_bytes(blake3::Hasher::new_derive_key("craftworks 2026-09-28 epoch log key").update(epoch_secret).finalize().as_bytes())
+}
+
 /// `MLS ‖ member` → this member's MLS state; `EPOCH ‖ member ‖ epoch (u64 BE)` → that epoch's secret;
 /// `EPOCH_LATEST ‖ member` → the newest epoch held (u64 BE).
 pub const MLS: &[u8] = b"identity_mls/";
@@ -648,10 +654,26 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             // One of the account's tables, by a site the person allowed: this node's own FEED of it (the member's key),
             // or the account's shared tail (its data key; the account's ordering until it moves onto the feeds).
             let own = a.key();
+            // An EPOCH's log, by the home site: signed with the key of an epoch whose secret this member holds.
+            let epoch_log = || -> Option<SigningKey> {
+                if a.home != app {
+                    return None;
+                }
+                let m = a.public();
+                let latest = h.get_secret(&[EPOCH_LATEST, &m[..]].concat()).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes)?;
+                (0..=latest).rev().find_map(|e| {
+                    let secret: [u8; 32] = h.get_secret(&[EPOCH, &m[..], &e.to_be_bytes()].concat())?.try_into().ok()?;
+                    let k = epoch_log_key(&secret);
+                    matches!(&p.authority, Authority::One(v) if *v == k.verifying_key()).then_some(k)
+                })
+            };
             let key = match &p.authority {
                 Authority::One(v) if *v == own.verifying_key() => own,
                 Authority::One(v) if a.data_key().is_some_and(|d| d.verifying_key() == *v) => a.data_key().expect("checked"),
-                _ => return Refused(if a.data_key().is_none() { Why::NoDataKey } else { Why::NotThisKey }),
+                _ => match epoch_log() {
+                    Some(k) => k,
+                    None => return Refused(if a.data_key().is_none() { Why::NoDataKey } else { Why::NotThisKey }),
+                },
             };
             let Some(table) = p.label.strip_prefix(TABLE).and_then(|t| std::str::from_utf8(t).ok()).filter(|t| table_ok(t)) else {
                 return Refused(Why::NotATable);

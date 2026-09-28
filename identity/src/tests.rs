@@ -530,3 +530,21 @@ fn the_members_table_is_read_with_any_grant_and_written_by_the_home_only() {
     assert!(matches!(sign(&mut m, APP, &feed, 1, [1; 32]), Answer::Signed { .. }));
     assert_eq!(sign(&mut m, OTHER, &feed, 2, [2; 32]), Answer::Refused(Why::NotGranted { table: MEMBERS.into() }));
 }
+
+#[test]
+fn an_epochs_log_is_signed_only_with_that_epochs_secret_by_the_home_site() {
+    let mut m = provisioned(APP);
+    assert_eq!(serve(&mut m, Request::MlsSave { state: b"s".to_vec(), epoch: 2, secret: [2; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(ask(&mut m, APP, "mls", ALLOW), Answer::Granted { tables: vec!["mls".into()] });
+    let log = |secret: [u8; 32]| params(epoch_log_key(&secret).verifying_key().to_bytes(), b"t/mls");
+    // Epoch 2's log: signed, and the signature holds under that log's key.
+    let Answer::Signed { sig } = sign(&mut m, APP, &log([2; 32]), 1, [1; 32]) else { panic!("epoch 2's log is signed") };
+    let vk = epoch_log_key(&[2; 32]).verifying_key();
+    assert!(vk.verify(&Params::parse(&log([2; 32])).unwrap().signed_message(false, 1, &[1; 32]), &Signature::from_slice(&sig).unwrap()).is_ok());
+    // An epoch whose secret it does not hold (a removed node never gets the next one): refused.
+    assert_eq!(sign(&mut m, APP, &log([3; 32]), 1, [1; 32]), Answer::Refused(Why::NotThisKey));
+    // Another site, even for a held epoch: refused.
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    assert_eq!(ask(&mut m, OTHER, "mls", ALLOW), Answer::Granted { tables: vec!["mls".into()] });
+    assert_eq!(sign(&mut m, OTHER, &log([2; 32]), 2, [2; 32]), Answer::Refused(Why::NotThisKey));
+}

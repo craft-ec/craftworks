@@ -423,6 +423,12 @@ export async function start(ctx) {
     return out;
   }
 
+  // A LOG: one shared tail under `owner`'s key (an epoch's, for the account's MLS commits). Read if it is there; made
+  // by its first write if not.
+  function log(name, owner) {
+    return tail(owner, name, {});
+  }
+
   // The nodes the directory lists as having feeds (hex keys): where `membership` starts gathering.
   async function nodes() {
     return (await directory()).rows().filter(r => r.key.startsWith("node:")).map(r => r.key.slice(5));
@@ -465,5 +471,5 @@ export async function start(ctx) {
     return moved;
   }
 
-  return { table, describe, nodes, feedsOf, adopt, refuse: why => (refusing = why) };
+  return { table, log, describe, nodes, feedsOf, adopt, refuse: why => (refusing = why) };
 }
