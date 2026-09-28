@@ -1,15 +1,17 @@
-// DATA, a service: the logged-in ACCOUNT's tables (notes, desktop, …). A table is a TAIL under the account's data key
+// STORAGE, a capability: the logged-in ACCOUNT's tables (notes, desktop, …). A table is a TAIL under the account's data key
 // (every node of the account holds it, in its identity delegate), labelled `t/<table>`: the account's, not a site's or
 // a node's. Any node of the account, and any SITE the person allows, reads and writes the same table: another
 // developer's front end, or a second address for the same app, shows the same data. Writing needs the person's GRANT
 // for this site and table; the first time, the node itself asks them. The table is followed, so a row written
 // elsewhere arrives here as it lands.
 //
-//   const notes = await (await ctx.require("data")).table("notes");
+//   const notes = await (await ctx.require("storage")).table("notes");
 //   notes.rows()                [{ key, value }]
 //   await notes.put(key, value)   await notes.remove(key)   notes.onChange(fn)
 export async function start(ctx) {
   const auth = await ctx.require("auth");
+  // Who may read and write a table here: the person's grant for this site, and the table's key that comes with it.
+  const access = await ctx.require("access");
   const { core, glue, ask, listen } = await ctx.require("node");
   const tailCode = await ctx.require("tail-wasm");
   // A table's tree lives in Block contracts: the core names them from this code.
@@ -47,28 +49,6 @@ export async function start(ctx) {
       );
   });
 
-  // GRANTS, asked once per page for every kind of data the site uses (its manifest's `uses`) in ONE prompt; a table
-  // outside that list is asked for on its own. A "no" stands until the page is opened again, so a refused site does
-  // not re-ask on every write; a failure to ask (no answer from the node) is not a "no" and is asked again.
-  const asked = new Map(); // table -> Promise<bool>
-  function grant(name) {
-    if (asked.has(name)) return asked.get(name);
-    const list = ctx.uses.includes(name) ? ctx.uses.filter(t => !asked.has(t)) : [name];
-    const p = auth.identity.grant(list).then(
-      g => {
-        ctx.log(g.granted ? "allowed" : "not allowed", { what: `${list.join(", ")}${g.granted ? "" : `: ${g.refused ?? JSON.stringify(g)}`}` });
-        return !!g.granted;
-      },
-      e => {
-        for (const t of list) asked.delete(t);
-        ctx.log("not allowed", { what: `${list.join(", ")}: ${e.message}` });
-        return false;
-      },
-    );
-    for (const t of list) asked.set(t, p);
-    return p;
-  }
-
   // The account's CATALOG (table `tables`): one row per table that exists. A page reads the catalog, then fetches only
   // the tables it lists; a table it does not list is new, opened empty WITHOUT a read (nothing to find), and listed on
   // its first write. A new account's catalog is created at once; an account from before the catalog has none, so its
@@ -101,7 +81,7 @@ export async function start(ctx) {
   }
 
   async function open(app, { catalog: isCatalog = false }) {
-    const s = await auth.session();
+    const s = await auth.check();
     if (!s) throw new Error("nobody is logged in");
     if (!s.data) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
     const idHex = core.tail_open(tailCode, bytes(s.data), app);
@@ -127,12 +107,9 @@ export async function start(ctx) {
       // THE TABLE'S KEY: the table is sealed, so reading it needs its key, and the key comes only with the person's
       // grant for this site (asked NOW: the node prompts the first time). No grant: nothing of the table reads here.
       // The catalog's key comes with any grant: listing a table is part of using it.
-      const key = (isCatalog ? Promise.resolve(true) : allowed().catch(() => false)).then(async ok => {
-        const k = ok ? await auth.identity.tableKey(app).catch(() => null) : null;
-        if (k?.tableKey) core.tail_seal(id, bytes(k.tableKey));
-        else ctx.log("table sealed", { what: `${app}: no key here (${k?.refused ?? "not allowed"}): nothing of it reads` });
-      });
-      await key;
+      const k = await access.key(app, { catalog: isCatalog });
+      if (k.key) core.tail_seal(id, bytes(k.key));
+      else ctx.log("table sealed", { what: `${app}: no key here (${k.why}): nothing of it reads` });
       const known = isCatalog ? (s.fresh ? false : null) : await listed(app);
       if (known === false) {
         core.tail_absent(id);
@@ -161,7 +138,7 @@ export async function start(ctx) {
     t.writable = () => writable === true;
     function allowed() {
       if (isCatalog) return Promise.resolve(true);
-      return grant(app).then(ok => {
+      return access.allowed(app).then(ok => {
         writable = ok;
         return ok;
       });

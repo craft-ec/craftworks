@@ -1,8 +1,8 @@
-// ACCOUNT, a PRIVATE page: it shows nothing until someone is logged in. It asks `auth`, which shows its dialog if
+// ACCOUNT, a PRIVATE page: it shows nothing until someone is logged in. It asks `login`, which shows its dialog if
 // nobody is; closing the dialog goes home.
 export async function mount(ctx, el) {
-  const auth = await ctx.require("auth");
-  const s = await auth.session();
+  const [auth, login] = await Promise.all([ctx.require("auth"), ctx.require("login")]);
+  const s = await login.session();
   if (!s) {
     location.hash = "#/";
     return;

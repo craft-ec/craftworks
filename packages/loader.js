@@ -134,7 +134,7 @@ export async function run(boot) {
     status.textContent = `Page ${route} ready in ${Math.round(performance.now() - t0)} ms.`;
   }
 
-  // THE TRACE: always recorded (the wrapper's log), shown only on demand. A small toggle; the `timeline` package is
+  // THE TRACE: always recorded (the wrapper's log), shown only on demand. A small toggle; the `trace` component is
   // fetched the first time it is opened.
   // What the Stack tab shows: the app as its manifest names it, where each part comes from, and what is loaded now.
   const stack = {
@@ -166,8 +166,8 @@ export async function run(boot) {
       b.textContent = panel.hidden ? "trace" : "hide trace";
       if (!panel.hidden && !mounted) {
         mounted = true;
-        const { bytes, ms } = await boot.get(new URL("timeline.js", boot.loaderBase), "timeline");
-        ctx.log("loaded", { what: "timeline (the loader's)", bytes: bytes.length, ms });
+        const { bytes, ms } = await boot.get(new URL("trace.js", boot.loaderBase), "trace");
+        ctx.log("loaded", { what: "trace (the loader's)", bytes: bytes.length, ms });
         (await boot.importBytes(bytes)).mount(ctx, panel, stack);
       }
     };

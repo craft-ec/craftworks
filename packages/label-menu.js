@@ -1,19 +1,16 @@
-// TAGS, a service: the account's tags, for every page and app. A page may call them what suits it — Notes says
-// "labels", as Keep does — but it is one mechanism with one name. These are PRIVATE tags: the account's own names on
-// its own things (renaming one renames it everywhere, for this account only). Public tags, shared words other people
-// find things by, are the same shape with a visibility and an index; they come with communities.
-// One table (`tags`, the account's):
-//   `l/<id>`          { name }   a tag
-//   `a/<id>/<ref>`    { at }     that tag on a thing, named as pins name it (`notes:<id>`, …)
-// and the UI every page uses (the words shown are the page's: `title`, e.g. "Label note"):
+// LABEL MENU, a component: the label UI every page uses — the "Label note" menu (tick labels, type to filter or to
+// create one) and a thing's labels as chips, both kept in step with the account's labels (the `edge` capability).
+// The words shown are the page's (`title`).
 //
-//   const labels = await ctx.require("tags");
-//   labels.list()   labels.of("notes:<id>")   labels.refs(id, "notes:")   labels.onChange(fn)
-//   await labels.create(name)   labels.rename(id, name)   labels.remove(id)   labels.set(ref, id, on)   labels.clear(ref)
-//   labels.menu(anchor, ref)    // "Label note": a box of labels to tick, and "Create “…”" from what is typed
-//   el.append(labels.chips(ref, { onPick: id => … }))   // the thing's labels as chips, kept in step by itself
+//   const labelUI = await ctx.require("label-menu");
+//   labelUI.menu(anchor, ref, { title: "Label note" })
+//   el.append(labelUI.chips(ref, { onPick: id => … }))
 export async function start(ctx) {
-  const t = await (await ctx.require("data")).table("tags");
+  const labels = await (await ctx.require("edge")).labels();
+  const { list, of, set, create } = labels;
+  const find = name => list().find(l => l.name.localeCompare(name.trim(), undefined, { sensitivity: "base" }) === 0);
+  const fail = e => ctx.log("label failed", { what: e?.message ?? String(e) });
+  const t = { onChange: labels.onChange };
 
   const style = document.createElement("style");
   style.textContent = `
@@ -32,60 +29,6 @@ export async function start(ctx) {
     .cw-labels-menu label:hover, .cw-labels-menu .create:hover { background: #8881; }
     .cw-labels-menu .create { border: 0; background: none; font: inherit; color: inherit; width: 100%; text-align: left; }`;
   document.head.append(style);
-
-  const parse = v => {
-    try {
-      return JSON.parse(v) ?? {};
-    } catch {
-      return {};
-    }
-  };
-  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-  const list = () =>
-    t.rows()
-      .filter(r => r.key.startsWith("l/"))
-      .map(r => ({ id: r.key.slice(2), name: String(parse(r.value).name ?? "") }))
-      .filter(l => l.name)
-      .sort(byName);
-  const assigned = () => t.rows().filter(r => r.key.startsWith("a/")).map(r => {
-    const rest = r.key.slice(2);
-    const i = rest.indexOf("/");
-    return { id: rest.slice(0, i), ref: rest.slice(i + 1) };
-  });
-  const of = ref => {
-    const ids = new Set(assigned().filter(a => a.ref === ref).map(a => a.id));
-    return list().filter(l => ids.has(l.id));
-  };
-  const refs = (id, prefix = "") => assigned().filter(a => a.id === id && a.ref.startsWith(prefix)).map(a => a.ref);
-  const find = name => list().find(l => l.name.localeCompare(name.trim(), undefined, { sensitivity: "base" }) === 0);
-
-  const newId = () => `${Date.now().toString(36)}${[...crypto.getRandomValues(new Uint8Array(3))].map(b => b.toString(16).padStart(2, "0")).join("")}`;
-  async function create(name) {
-    name = name.trim().slice(0, 50);
-    if (!name) throw new Error("a label needs a name");
-    const same = find(name);
-    if (same) return same.id;
-    const id = newId();
-    await t.put(`l/${id}`, JSON.stringify({ name }));
-    return id;
-  }
-  const rename = (id, name) => {
-    name = name.trim().slice(0, 50);
-    const same = find(name);
-    if (!name || (same && same.id !== id)) return Promise.reject(new Error(name ? `there is already a label “${same.name}”` : "a label needs a name"));
-    return t.put(`l/${id}`, JSON.stringify({ name }));
-  };
-  // A label goes with every use of it.
-  async function remove(id) {
-    for (const ref of refs(id)) await t.remove(`a/${id}/${ref}`);
-    await t.remove(`l/${id}`);
-  }
-  const set = (ref, id, on) => (on ? t.put(`a/${id}/${ref}`, JSON.stringify({ at: Date.now() })) : t.remove(`a/${id}/${ref}`));
-  // A thing that is gone takes its labels with it.
-  async function clear(ref) {
-    for (const l of of(ref)) await t.remove(`a/${l.id}/${ref}`);
-  }
-  const fail = e => ctx.log("tag failed", { what: e?.message ?? String(e) });
 
   // CHIPS: a thing's labels, following the table.
   const chipSets = new Set();
@@ -174,5 +117,5 @@ export async function start(ctx) {
     if (openMenu?.isConnected) openMenu.refresh();
   });
 
-  return { list, of, refs, create, rename, remove, set, clear, chips, menu, onChange: t.onChange };
+  return { menu, chips };
 }

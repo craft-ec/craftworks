@@ -1,14 +1,13 @@
-// PINS, a service: the account's pins, for every page and app. One table (`pins`, the account's), keyed by what is
-// pinned — `app:/notes` (an app on the desktop), `notes:<id>` (a note), … — and one pin BUTTON, so a pin looks and
-// behaves the same everywhere and a page never builds its own.
+// PIN BUTTON, a component: the one 📌 for every page — pressed when the thing is pinned, kept in step with the
+// account's pins (the `edge` capability) by itself. A page only places it (position, size).
 //
-//   const pins = await ctx.require("pins");
-//   pins.has("notes:<id>")   pins.refs("app:")   await pins.set(ref, on)   pins.onChange(fn)
-//   el.append(pins.button("notes:<id>", { onSet: on => … }))   // 📌, pressed when pinned, kept in step by itself
-//
+//   const pin = await ctx.require("pin-button");
+//   el.append(pin.button("notes:<id>", { onSet: on => … }))
 // A button is NEVER put inside a `#` link: the loader takes every click on one. Place it beside the link.
 export async function start(ctx) {
-  const t = await (await ctx.require("data")).table("pins");
+  const pins = await (await ctx.require("edge")).pins();
+  const { has, set } = pins;
+  const t = { onChange: pins.onChange };
 
   // One look for a pin everywhere: unpinned grey and faint, pinned in colour. A page places it (position, size).
   const style = document.createElement("style");
@@ -18,10 +17,6 @@ export async function start(ctx) {
     .cw-pin[aria-pressed="true"] { opacity: 1; }
     .cw-pin:hover { background: #8882; }`;
   document.head.append(style);
-
-  const has = ref => t.rows().some(r => r.key === ref);
-  const refs = prefix => t.rows().map(r => r.key).filter(k => !prefix || k.startsWith(prefix));
-  const set = (ref, on) => (on ? t.put(ref, JSON.stringify({ at: Date.now() })) : t.remove(ref));
 
   // Every live button follows the table: a pin changed anywhere (this page, another tab, another node) shows at once.
   const buttons = new Set();
@@ -54,5 +49,5 @@ export async function start(ctx) {
     return b;
   }
 
-  return { has, refs, set, onChange: t.onChange, button };
+  return { button };
 }

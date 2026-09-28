@@ -5,7 +5,7 @@
 //! - every PACKAGE as a PIECE SET: k data + 8 parity pieces (the SDK's `pieces::cut`), each its own immutable web
 //!   container (served at `/v1/contract/web/<address>/piece`); any k rebuild it. The manifest names each piece by
 //!   address and sha256, and the package by its own sha256. The loader races them: the first k to arrive win;
-//! - the LOADER as its own SITE `loader` (loader.js, timeline.js, and the SDK's racing parts): signed, versioned;
+//! - the LOADER as its own SITE `loader` (loader.js, trace.js, and the SDK's racing parts): signed, versioned;
 //! - the APP as its SITE `craftworks` (the wrapper's index.html + boot.js, and manifest.json: its layout — what fills
 //!   the header and footer — its pages, and its packages).
 //!
@@ -258,7 +258,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 20] = [
+    let packages: [(&str, &str, PathBuf); 23] = [
         ("header", "module", app.join("packages/header.js")),
         ("footer", "module", app.join("packages/footer.js")),
         ("home", "module", app.join("packages/home.js")),
@@ -266,6 +266,8 @@ async fn main() -> Result<()> {
         ("node", "service", app.join("packages/node.js")),
         ("identity", "service", app.join("packages/identity.js")),
         ("auth", "service", app.join("packages/auth.js")),
+        ("login", "service", app.join("packages/login.js")),
+        ("access", "service", app.join("packages/access.js")),
         ("core-glue", "module", built.join("craftworks_core.js")),
         ("core-wasm", "bytes", built.join("craftworks_core_bg.wasm")),
         // The identity delegate's code (the node needs it to run it).
@@ -278,11 +280,11 @@ async fn main() -> Result<()> {
         // The data: each node's rows for this app, as its own tail.
         // Tree blocks: the one door (fetch raced against parity, put).
         ("blocks", "service", app.join("packages/blocks.js")),
-        ("data", "service", app.join("packages/data.js")),
-        // The account's pins and the one pin button, for every page.
-        ("pins", "service", app.join("packages/pins.js")),
-        // The account's tags and their UI (menu, chips), for every page; Notes calls them labels.
-        ("tags", "service", app.join("packages/tags.js")),
+        ("storage", "service", app.join("packages/storage.js")),
+        // EDGE (pins, labels) and its two components.
+        ("edge", "service", app.join("packages/edge.js")),
+        ("pin-button", "service", app.join("packages/pin-button.js")),
+        ("label-menu", "service", app.join("packages/label-menu.js")),
         ("notes", "module", app.join("packages/notes.js")),
         ("tail-wasm", "bytes", contracts.join("tail.wasm")),
         // The Block contract: a table's tree blocks, after a flush.
@@ -360,7 +362,7 @@ async fn main() -> Result<()> {
     let sdk = app.join("loader/sdk");
     let loader_web = wire::webapp::app_web(&[
         ("loader.js", &read(&app.join("packages/loader.js"))?),
-        ("timeline.js", &read(&app.join("packages/timeline.js"))?),
+        ("trace.js", &read(&app.join("packages/trace.js"))?),
         // The racing parts, the SDK's own (tools/sdk-racing-parts.sh).
         ("served.js", &read(&sdk.join("served.js"))?),
         ("rto.js", &read(&sdk.join("rto.js"))?),

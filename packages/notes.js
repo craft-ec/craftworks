@@ -4,8 +4,8 @@
 // The notes are one table of the ACCOUNT (the `data` service), the same on every node of the account. A note is one
 // row: its key an id that sorts by creation, its value JSON { title, body, color, archived, edited }. A row that is
 // not JSON (the first notes were plain text) is read as a body. PINS are not a note's field: they are the account's
-// (the `pins` package, ref `notes:<id>`), with its one pin button. A note saved with the old `pinned` field is moved
-// into the pins once, when Notes opens. LABELS are the account's tags (the `tags` package; Keep's word here): a note's labels show
+// (the `edge` capability's pins, ref `notes:<id>`), shown with the one `pin-button`. A note saved with the old `pinned` field is moved
+// into the pins once, when Notes opens. LABELS are the account's private tags (the `edge` capability; Keep's word here), shown with `label-menu`: a note's labels show
 // as chips, 🏷️ opens the label menu, the label bar shows one label's notes, and "Edit labels" makes, renames and
 // deletes them.
 const COLORS = [
@@ -15,8 +15,8 @@ const COLORS = [
 ];
 
 export async function mount(ctx, el) {
-  const auth = await ctx.require("auth");
-  if (!(await auth.session())) {
+  const login = await ctx.require("login");
+  if (!(await login.session())) {
     location.hash = "#/";
     return;
   }
@@ -107,10 +107,17 @@ export async function mount(ctx, el) {
     </div>`;
   const root = el.querySelector(".keep");
   const said = t => (root.querySelector(".said").textContent = t);
-  let notes, pins, labels;
+  let notes, edge, pins, labels, pinUI, labelUI;
   try {
-    const data = await ctx.require("data");
-    [notes, pins, labels] = await Promise.all([data.table("notes"), ctx.require("pins"), ctx.require("tags")]);
+    const storage = await ctx.require("storage");
+    edge = await ctx.require("edge");
+    [notes, pins, labels, pinUI, labelUI] = await Promise.all([
+      storage.table("notes"),
+      edge.pins(),
+      edge.labels(),
+      ctx.require("pin-button"),
+      ctx.require("label-menu"),
+    ]);
   } catch (e) {
     return said(`Could not open your notes: ${e?.message ?? e}`);
   }
@@ -129,20 +136,8 @@ export async function mount(ctx, el) {
     const { title, body, color, archived } = n;
     return notes.put(key, JSON.stringify({ title, body, color, archived, edited: Date.now() })).catch(e => said(`Could not save: ${e?.message ?? e}`));
   };
-  // Notes saved with the old `pinned` field: into the pins, and saved without it (once; `save` never writes it).
-  for (const r of notes.rows()) {
-    let j;
-    try {
-      j = JSON.parse(r.value);
-    } catch {
-      continue;
-    }
-    if (j?.pinned !== true) continue;
-    const n = note(r);
-    (n.pinned ? Promise.resolve() : pins.set(ref(r.key), true))
-      .then(() => notes.put(r.key, JSON.stringify({ title: n.title, body: n.body, color: n.color, archived: n.archived, edited: n.edited })))
-      .catch(e => said(`Could not move a pin: ${e?.message ?? e}`));
-  }
+  // Notes saved with the old `pinned` field: into the pins (the edge capability's one-time adoption).
+  edge.adoptPinnedField(notes, "notes:").catch(e => said(`Could not move a pin: ${e?.message ?? e}`));
   const remove = key =>
     notes
       .remove(key)
@@ -228,8 +223,8 @@ export async function mount(ctx, el) {
     eTitle.value = n.title;
     eBody.value = n.body;
     tint(editor, n.color);
-    editor.querySelector(".pin-slot").replaceChildren(pins.button(ref(n.key)));
-    editor.querySelector(".label-slot").replaceChildren(labels.chips(ref(n.key), { onPick: show }));
+    editor.querySelector(".pin-slot").replaceChildren(pinUI.button(ref(n.key)));
+    editor.querySelector(".label-slot").replaceChildren(labelUI.chips(ref(n.key), { onPick: show }));
     editor.querySelector(".archive-e").title = n.archived ? "Unarchive" : "Archive";
     editor.showModal();
   };
@@ -260,7 +255,7 @@ export async function mount(ctx, el) {
       tint(editor, c);
       live();
     });
-  editor.querySelector(".label-e").onclick = e => labels.menu(e.currentTarget, ref(editing.key));
+  editor.querySelector(".label-e").onclick = e => labelUI.menu(e.currentTarget, ref(editing.key));
   editor.querySelector(".archive-e").onclick = () => ((editing.archived = !editing.archived), finish());
   editor.querySelector(".delete-e").onclick = async () => {
     const key = editing.key;
@@ -277,8 +272,8 @@ export async function mount(ctx, el) {
     tint(c, n.color);
     if (n.title) c.append(Object.assign(document.createElement("div"), { className: "t", textContent: n.title }));
     if (n.body) c.append(Object.assign(document.createElement("div"), { className: "b", textContent: n.body }));
-    c.append(labels.chips(ref(n.key), { onPick: show }));
-    const pinButton = pins.button(ref(n.key));
+    c.append(labelUI.chips(ref(n.key), { onPick: show }));
+    const pinButton = pinUI.button(ref(n.key));
     const tools = document.createElement("div");
     tools.className = "tools";
     const tool = (icon, title, run) => {
@@ -287,7 +282,7 @@ export async function mount(ctx, el) {
       tools.append(b);
     };
     tool("🎨", "Background", e => palette(e.currentTarget, color => save(n.key, { ...n, color })));
-    tool("🏷️", "Labels", e => labels.menu(e.currentTarget, ref(n.key)));
+    tool("🏷️", "Labels", e => labelUI.menu(e.currentTarget, ref(n.key)));
     tool(n.archived ? "📤" : "🗃️", n.archived ? "Unarchive" : "Archive", () => {
       save(n.key, { ...n, archived: !n.archived });
       if (!n.archived && n.pinned) pins.set(ref(n.key), false).catch(e => said(`Could not unpin: ${e?.message ?? e}`)); // an archived note is not pinned, as in Keep

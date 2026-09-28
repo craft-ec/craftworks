@@ -101,7 +101,7 @@ Each phase: build → the private node (all three sites) → published through B
 
 | # | Phase | Capabilities | What it delivers | Status |
 |---|---|---|---|---|
-| 0 | **Restructure to the shape** | all | packages renamed/split to §3–4: `data` → `storage`, `auth` → `auth` + `login`, `pins` + `tags` → `edge` (kinds), `timeline` → `trace`; no behaviour change | next |
+| 0 | **Restructure to the shape** | all | packages renamed/split to §3–4: `data` → `storage`, `auth` → `auth` + `login`, grants → `access`, `pins` + `tags` → `edge` + components `pin-button`, `label-menu`, `timeline` → `trace`; no behaviour change | done |
 | 1 | **Keys and sealing** | `keys`, `identity`, `storage` | MLS in the core; your account as an MLS group of your nodes; table key = export(epoch, table); escrow to the words; sealing of whole tree nodes (a hook in freenet-prolly); tables sealed today by row are sealed over | — |
 | 2 | **Writers and merge** | `storage` | one sequence per writer (per node now, per member later); readers merge, causally ordered | — |
 | 3 | **Reads** | `storage`, `blocks` | range (latest N, older pages) and change-only reads (tree diff) | — |
@@ -113,6 +113,6 @@ Each phase: build → the private node (all three sites) → published through B
 | 9 | **Privacy and observability** | all | padding, sealed senders, no time-sortable ids in private spaces; health in `trace`/`account` | — |
 | 10 | **When needed** | `ordering`, `roles`, `keys` | witnessed snapshots; enterprise role templates and escrow | — |
 
-Built already (to be moved into the shape by phase 0): identity with rotatable keys (key log contract `idlog`), PIN
+Built already (in the shape since phase 0): identity with rotatable keys (key log contract `idlog`), PIN
 logins moved across delegate builds, per-site grants, tables (tail + tree, flush, catalog), erasure with raced reads and
 rebuild (`blocks`), row sealing (replaced in phase 1), pins, tags, Notes.
