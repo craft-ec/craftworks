@@ -91,6 +91,9 @@ export async function start() {
     #app > .slot-body { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
     #app > .slot-body > section { flex: 1 1 auto; min-height: 0; margin: 0; overflow-y: auto; overscroll-behavior: contain;
       padding: var(--cw-space-3) var(--cw-gutter); box-sizing: border-box; }
+    #app > .slot-body > section { position: relative; }
+    .cw-loading.cw-cover { position: absolute; inset: 0; z-index: 5; align-content: start; background: var(--cw-bg);
+      padding: var(--cw-space-3) var(--cw-gutter); }
     #app > .slot-body > section.cw-fill { overflow: hidden; padding: 0; display: flex; flex-direction: column; }
     #app > .slot-body > section.cw-fill > * { flex: 1 1 auto; min-height: 0; }
     #status { position: fixed; left: 16px; bottom: 40px; margin: 0; }

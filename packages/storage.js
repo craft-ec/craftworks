@@ -424,6 +424,8 @@ export async function start(ctx) {
         await open();
       };
       const settled = Promise.all(others.map(o => gather(o).catch(() => {})));
+      // The component that opened this table is not settled before it (the loader's placeholder stays over it).
+      ctx.pending?.(settled);
       ctx.log("table open", { what: `${name}: ${rows.length} row(s) from ${all.filter(f => !f.absent).length} feed(s)` });
       const write = (key, value) => versioned(me, key, value, rows.find(r => r.key === key)?.id);
       const t = {

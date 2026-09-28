@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. A page that needs no node never loads the
 // node's code at all.
-const VERSION = "16";
+const VERSION = "17";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -119,7 +119,21 @@ export async function run(boot) {
 
   // A component still on its way shows the theme's placeholder in its place, until it has drawn itself (it replaces
   // its element's contents) or its mount is over. Every component of a slot gets one at once: what is coming, shown.
+  // It stays until the component is SETTLED: mounted, and everything it said it is waiting on (`ctx.pending(promise)`:
+  // storage says it for each table it opens — every writer's feed tried) is in, or 20 s have passed. A component that
+  // draws itself at once (replacing its element's contents) keeps the placeholder over it meanwhile.
   const placeholders = new Map(); // element -> placeholder
+  const pendingOf = new Map(); // component name -> Set of promises it waits on
+  ctx.pending = p => pendingOf.get(working.at(-1))?.add(Promise.resolve(p).catch(() => {}));
+  async function settle(name) {
+    const waits = pendingOf.get(name) ?? new Set();
+    const cap = new Promise(r => setTimeout(r, 20000));
+    for (let seen = -1; seen !== waits.size; ) {
+      seen = waits.size;
+      await Promise.race([Promise.all(waits), cap]);
+    }
+    pendingOf.delete(name);
+  }
   async function fill(slot, names) {
     slots[slot].replaceChildren();
     const theme = manifest.theme ? await require(manifest.theme) : null;
@@ -129,8 +143,17 @@ export async function run(boot) {
       if (theme?.loading && slot === "body") {
         const p = theme.loading(`Loading ${name}…`);
         p.dataset.name = name;
+        p.classList.add("cw-cover");
         placeholders.set(el, p);
         el.append(p);
+        // Put back if the component's drawing took it out, until it is settled.
+        const keep = new MutationObserver(() => placeholders.has(el) && !el.contains(p) && el.append(p));
+        keep.observe(el, { childList: true });
+        p.done = () => {
+          keep.disconnect();
+          placeholders.delete(el);
+          p.remove();
+        };
       }
       slots[slot].append(el);
       return el;
@@ -140,11 +163,11 @@ export async function run(boot) {
       const mod = await require(name);
       const t = performance.now();
       working.push(name);
-      await Promise.resolve(mod.mount(ctx, el)).finally(() => {
-        working.pop();
-        placeholders.get(el)?.remove();
-        placeholders.delete(el);
-      });
+      pendingOf.set(name, new Set());
+      const p = placeholders.get(el);
+      await Promise.resolve(mod.mount(ctx, el)).finally(() => working.pop());
+      // Not awaited: the next component mounts meanwhile; this one's placeholder goes when it is settled.
+      settle(name).finally(() => p?.done());
       ctx.log("mounted", { what: `${slot}: ${name}`, ms: Math.round(performance.now() - t) });
     }
   }
