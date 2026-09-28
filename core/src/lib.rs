@@ -472,6 +472,19 @@ mod js {
             }
         }
 
+        /// `{ events, changes }` of the account's (got) key log: its events, and how many times its keys changed (each
+        /// change of the words is two events).
+        pub fn idlog_info(&self, idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Object, JsValue> {
+            let did = b32(did)?;
+            let id = account::idlog_put(idlog_code, &did, None).id_bytes;
+            let st = self.0.got(&id).ok_or_else(|| err("the account's key log has not been read".into()))?;
+            let log = craftworks_idlog_contract::read(&did, st).ok_or_else(|| err("the account's key log does not verify".into()))?;
+            let o = js_sys::Object::new();
+            js_sys::Reflect::set(&o, &"events".into(), &JsValue::from(log.events.len() as u32))?;
+            js_sys::Reflect::set(&o, &"changes".into(), &JsValue::from(((log.events.len() - 1) / 2) as u32))?;
+            Ok(o)
+        }
+
         /// The account's key log as the network holds it (read first): for the `mls` package, which verifies it again.
         pub fn idlog_state(&self, idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
             let id = account::idlog_put(idlog_code, &b32(did)?, None).id_bytes;

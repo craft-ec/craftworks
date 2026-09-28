@@ -14,6 +14,9 @@ export async function start(ctx) {
   const { core, ask } = await ctx.require("node");
   const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
 
+  // What this page did: blocks read, and how many of them were rebuilt from their group.
+  const stats = { read: 0, rebuilt: 0 };
+
   // One GET per block in flight: its answer is the table's next view (tagged with the block), or `get-failed`.
   const inflight = new Map();
   function get(b, what) {
@@ -73,6 +76,8 @@ export async function start(ctx) {
     const t0 = performance.now();
     const how = await Promise.all(ids.map(b => race(tail, b, `reading ${what}'s tree`)));
     const rebuilt = how.filter(h => h === "rebuilt").length;
+    stats.read += ids.length;
+    stats.rebuilt += rebuilt;
     ctx.log("tree read", {
       what: `${what}: ${ids.length} block(s), ${ids.length - rebuilt} arrived first, ${rebuilt} from their group first (rebuilt, verified)`,
       ms: Math.round(performance.now() - t0),
@@ -88,5 +93,5 @@ export async function start(ctx) {
     if (refused) throw new Error(`a tree block was refused: ${refused.said}`);
   }
 
-  return { fetch, put };
+  return { fetch, put, stats: () => ({ ...stats }) };
 }

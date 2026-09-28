@@ -200,6 +200,8 @@ type Config = WithIdentityProvider<AccountIdentity, WithCryptoProvider<RustCrypt
 /// This node, as a member of the account's group.
 pub struct Account {
     pub group: Group<Config>,
+    /// A commit removed THIS member: it keeps what it held (the epochs before) and learns nothing newer.
+    pub removed: bool,
     store: Store,
     signer: (Vec<u8>, Vec<u8>),
     ident: AccountIdentity,
@@ -236,7 +238,7 @@ impl Account {
         let c = client(&ident, &store, &signer, &cred);
         let mut group = c.create_group_with_id(ident.did.to_vec(), ExtensionList::default(), Default::default(), None).map_err(e)?;
         group.write_to_storage().map_err(e)?;
-        Ok(Account { group, store, signer, ident, cred })
+        Ok(Account { group, removed: false, store, signer, ident, cred })
     }
 
     /// Join the account's group with the words alone: an external commit from its published group info. Returns the
@@ -249,7 +251,7 @@ impl Account {
         let info = MlsMessage::from_bytes(group_info).map_err(e)?;
         let (mut group, commit) = c.external_commit_builder().map_err(e)?.build(info).map_err(e)?;
         group.write_to_storage().map_err(e)?;
-        Ok((Account { group, store, signer, ident, cred }, commit.to_bytes().map_err(e)?))
+        Ok((Account { group, removed: false, store, signer, ident, cred }, commit.to_bytes().map_err(e)?))
     }
 
     /// The group info that lets a node holding the words join (published beside the commits).
@@ -257,11 +259,19 @@ impl Account {
         self.group.group_info_message_allowing_ext_commit(true).map_err(e)?.to_bytes().map_err(e)
     }
 
-    /// A commit from another member (a join, a removal): applied, moving the epoch.
+    /// A commit from another member (a join, a removal): applied, moving the epoch. One that removes THIS member marks it
+    /// removed (nothing after it applies).
     pub fn process(&mut self, commit: &[u8]) -> Result<(), String> {
+        if self.removed {
+            return Err("this node was removed from the account".into());
+        }
         let m = MlsMessage::from_bytes(commit).map_err(e)?;
         match self.group.process_incoming_message(m).map_err(e)? {
-            ReceivedMessage::Commit(_) => {}
+            ReceivedMessage::Commit(d) => {
+                if matches!(d.effect, mls_rs::group::CommitEffect::Removed { .. }) {
+                    self.removed = true;
+                }
+            }
             other => return Err(format!("not a commit: {other:?}")),
         }
         self.group.write_to_storage().map_err(e)
@@ -315,6 +325,7 @@ impl Account {
         put(&mut b, &self.signer.1);
         put(&mut b, &self.cred);
         put(&mut b, &self.store.encode());
+        b.push(u8::from(self.removed));
         Ok(b)
     }
 
@@ -328,11 +339,12 @@ impl Account {
             Ok(x.to_vec())
         };
         let (s, p, cred, store) = (take()?, take()?, take()?, take()?);
+        let removed = b.first() == Some(&1);
         let store = Store::decode(&store).ok_or("the stored group does not read")?;
         let signer = (s, p);
         let c = client(&ident, &store, &signer, &cred);
         let group = c.load_group(&ident.did).map_err(e)?;
-        Ok(Account { group, store, signer, ident, cred })
+        Ok(Account { group, removed, store, signer, ident, cred })
     }
 }
 
@@ -367,6 +379,13 @@ mod tests {
         b.process(&removal).unwrap();
         assert_eq!(a.epoch_secret().unwrap(), b.epoch_secret().unwrap());
         assert_ne!(a.epoch_secret().unwrap(), c_secret, "the removed node's secret opens nothing written now");
+        let mut c = c;
+        c.process(&removal).unwrap();
+        assert!(c.removed, "the removed node learns it");
+        assert!(c.process(&removal).is_err(), "and applies nothing after");
+        let c2 = Account::load(id.clone(), &c.save().unwrap()).unwrap();
+        assert!(c2.removed, "kept across a save");
+        assert!(!a.removed && !b.removed);
         assert_eq!(a.members().len(), 2);
         let nodes: Vec<Vec<u8>> = a.members().into_iter().map(|(_, k)| k).collect();
         assert!(nodes.contains(&vec![0xA; 32]) && nodes.contains(&vec![0xB; 32]) && !nodes.contains(&vec![0xC; 32]), "the roster names the nodes");
@@ -503,6 +522,7 @@ mod js {
             set("escrow", js_sys::Uint8Array::from(&craftworks_account::escrow_seal(&enc, &secret, eph)[..]).into())?;
             set("info", js_sys::Uint8Array::from(&m.group_info().map_err(err)?[..]).into())?;
             set("me", JsValue::from(m.my_index()))?;
+            set("removed", JsValue::from(m.removed))?;
             let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
             let members: js_sys::Array = m
                 .members()

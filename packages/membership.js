@@ -4,14 +4,19 @@
 //
 //   const membership = await ctx.require("membership");
 //   await membership.nodes()   // [{ index, key, me }] — null where the account's group is not kept (not the home site)
+//   await membership.remove(index)
 export async function start(ctx) {
   const keys = await ctx.require("keys");
 
   async function nodes() {
     const st = await keys.ready();
     if (!st) return null;
+    if (st.removed) return "removed"; // this node was removed from the account
     return st.members.map(m => ({ index: m.index, key: m.key, me: m.index === st.me }));
   }
 
-  return { nodes };
+  // Remove a node from the account (by its index in the group): it reads nothing written afterwards.
+  const remove = index => keys.remove(index);
+
+  return { nodes, remove };
 }

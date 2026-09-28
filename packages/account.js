@@ -1,7 +1,9 @@
 // ACCOUNT, a PRIVATE page: it shows nothing until someone is logged in. It asks `login`, which shows its dialog if
 // nobody is; closing the dialog goes home.
 export async function mount(ctx, el) {
-  const [auth, login, grantsOf, membership] = await Promise.all([ctx.require("auth"), ctx.require("login"), ctx.require("access"), ctx.require("membership")]);
+  const [auth, login, grantsOf, membership, keys, storage, blocks] = await Promise.all(
+    ["auth", "login", "access", "membership", "keys", "storage", "blocks"].map(n => ctx.require(n)),
+  );
   const s = await login.session();
   if (!s) {
     location.hash = "#/";
@@ -19,30 +21,103 @@ export async function mount(ctx, el) {
   line("Account (DID)", s.did);
   line("This node's member key", s.member);
 
-  // YOUR NODES: the account's members as the network holds them.
+  // YOUR NODES: the account's members — its MLS group's. A node that is lost, stolen or retired is REMOVED: the group
+  // moves to a new epoch, and that node reads nothing written from then on.
   const dev = document.createElement("section");
-  dev.innerHTML = `<h3>Your nodes</h3><p class="line">Reading your account from the network…</p>`;
+  dev.innerHTML = `<h3>Your nodes</h3><p class="line">Reading your account from the network…</p>
+    <p class="note">Remove a node you lost or no longer use: it will not be able to read anything written after.</p>`;
   box.append(dev);
-  membership.nodes().then(
+  const drawNodes = () =>
+    membership.nodes().then(
+      list => {
+        const at = dev.querySelector(".line, ul");
+        if (list === "removed") {
+          dev.querySelector(".note")?.remove();
+          at.replaceWith(Object.assign(document.createElement("p"), { className: "line",
+            textContent: "This node was removed from your account: it keeps what it could already read, and gets nothing written since. Log out; to use it again, log in with your recovery words." }));
+          return;
+        }
+        if (list === null) {
+          at.replaceWith(Object.assign(document.createElement("p"), { className: "line",
+            textContent: "This node is not in your account's group yet: log out and log in once with your recovery words (and a new PIN)." }));
+          return;
+        }
+        const ul = document.createElement("ul");
+        for (const m of list) {
+          const li = document.createElement("li");
+          const code = document.createElement("code");
+          code.textContent = `${m.key.slice(0, 16)}…`;
+          // A node is shown by its key: a name guessed from the browser was wrong (the browser is not the member).
+          li.append("Node ", code);
+          if (m.me) li.append(" (this node)");
+          else {
+            const rm = Object.assign(document.createElement("button"), { type: "button", textContent: "Remove", className: "remove" });
+            rm.onclick = async () => {
+              if (!confirm(`Remove node ${m.key.slice(0, 16)}…? It will not be able to read anything written after this.`)) return;
+              rm.disabled = true;
+              rm.textContent = "Removing…";
+              try {
+                await membership.remove(m.index);
+              } catch (e) {
+                alert(`Could not remove it: ${e?.message ?? e}`);
+              }
+              drawNodes();
+              drawSecurity();
+            };
+            li.append(" ", rm);
+          }
+          ul.append(li);
+        }
+        at.replaceWith(ul);
+      },
+      e => (dev.querySelector(".line").textContent = `Could not read your nodes: ${e?.message ?? e}`),
+    );
+  drawNodes();
+
+  // SECURITY: how the account's keys stand.
+  const sec = document.createElement("section");
+  sec.innerHTML = `<h3>Security</h3><ul class="facts"><li>Reading…</li></ul>`;
+  box.append(sec);
+  async function drawSecurity() {
+    const [log, st, escrowed] = await Promise.all([
+      auth.identity.keyLogInfo(s.didBytes),
+      keys.ready(),
+      keys.escrowed().catch(() => null),
+    ]);
+    const facts = [
+      log ? `Recovery words changed ${log.changes} time${log.changes === 1 ? "" : "s"} (your key log has ${log.events} event${log.events === 1 ? "" : "s"}).` : "Your key log is not on the network yet.",
+      st?.removed ? "This node was removed from your account: it holds no keys for anything written since." :
+      st ? `Your data is sealed with the keys of epoch ${st.epoch}; ${st.members.length} node${st.members.length === 1 ? "" : "s"} hold them.` : "This site does not hold your account's keys.",
+      escrowed === null ? null : `${escrowed} epoch${escrowed === 1 ? "" : "s"} kept in escrow for your recovery words: with the words alone, every one of them opens again.`,
+    ].filter(Boolean);
+    sec.querySelector(".facts").replaceChildren(...facts.map(t => Object.assign(document.createElement("li"), { textContent: t })));
+  }
+  drawSecurity().catch(e => (sec.querySelector(".facts").textContent = `Could not read: ${e?.message ?? e}`));
+
+  // STORAGE: each of the account's tables, and how this page read them.
+  const sto = document.createElement("section");
+  sto.innerHTML = `<h3>Storage</h3><table class="tables"><thead><tr><th>Table</th><th>Rows</th><th>Sealed</th><th>Where</th></tr></thead>
+    <tbody><tr><td colspan="4">Reading…</td></tr></tbody></table><p class="note blocks"></p>`;
+  box.append(sto);
+  storage.describe().then(
     list => {
-      if (list === null) {
-        dev.querySelector(".line").textContent =
-          "This node is not in your account's group yet: log out and log in once with your recovery words (and a new PIN).";
-        return;
-      }
-      const ul = document.createElement("ul");
-      for (const m of list) {
-        const li = document.createElement("li");
-        const code = document.createElement("code");
-        code.textContent = `${m.key.slice(0, 16)}…`;
-        // A node is shown by its key: a name guessed from the browser was wrong (the browser is not the member).
-        li.append("Node ", code);
-        if (m.me) li.append(" (this node)");
-        ul.append(li);
-      }
-      dev.querySelector(".line").replaceWith(ul);
+      sto.querySelector("tbody").replaceChildren(
+        ...list.map(t => {
+          const tr = document.createElement("tr");
+          if (t.closed) {
+            // Another app's table: not opened from here.
+            for (const v of [t.name, "—", "—", "another app's"]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
+            return tr;
+          }
+          const where = t.flushed ? (t.pending ? `tree + ${t.pending} in the tail` : "tree") : `tail (${t.pending} row${t.pending === 1 ? "" : "s"})`;
+          for (const v of [t.name, String(t.rows), t.sealed ? "yes" : "no key here", where]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
+          return tr;
+        }),
+      );
+      const b = blocks.stats();
+      sto.querySelector(".blocks").textContent = `This page read ${b.read} tree block${b.read === 1 ? "" : "s"}; ${b.rebuilt} came from their recovery group first (rebuilt and checked).`;
     },
-    e => (dev.querySelector(".line").textContent = `Could not read your nodes: ${e?.message ?? e}`),
+    e => (sto.querySelector("tbody").textContent = `Could not read: ${e?.message ?? e}`),
   );
 
   // APPS WITH ACCESS: the sites this account allowed to write its tables (the home app's own need no prompt).

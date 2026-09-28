@@ -76,7 +76,9 @@ export async function start(ctx) {
     await c.put(name, JSON.stringify({ at: Date.now() }));
   }
 
+  const openedNames = new Set(); // the tables this page asked for
   function table(name) {
+    openedNames.add(name);
     return open(name, {});
   }
 
@@ -108,6 +110,7 @@ export async function start(ctx) {
       // grant for this site (asked NOW: the node prompts the first time). No grant: nothing of the table reads here.
       // The catalog's key comes with any grant: listing a table is part of using it.
       const k = await access.key(app, { catalog: isCatalog });
+      t.sealed = !!k.key;
       if (k.key) core.tail_seal(id, bytes(k.key));
       else ctx.log("table sealed", { what: `${app}: no key here (${k.why}): nothing of it reads` });
       const known = isCatalog ? (s.fresh ? false : null) : await listed(app);
@@ -161,6 +164,7 @@ export async function start(ctx) {
       t.absent = said.kind !== "tail";
       if (said.kind === "tail") {
         legacy = said.tail.legacy ?? 0;
+        t.info = { rows: said.tail.rows.length, pending: said.tail.pending, flushed: !!said.tail.root, legacy, unreadable: said.tail.unreadable ?? 0 };
         t.took(said.tail.rows);
       }
       else core.tail_absent(id);
@@ -216,6 +220,7 @@ export async function start(ctx) {
     async function view() {
       const v = await settle(JSON.parse(core.tail_view(id)), app);
       legacy = v.tail.legacy ?? 0;
+      t.info = { rows: v.tail.rows.length, pending: v.tail.pending, flushed: !!v.tail.root, legacy, unreadable: v.tail.unreadable ?? 0 };
       t.took(v.tail.rows);
     }
 
@@ -260,5 +265,23 @@ export async function start(ctx) {
     return ready;
   }
 
-  return { table };
+  // Every table of the account the catalog lists, as `{ name, rows, pending, flushed, sealed, legacy, unreadable }`
+  // (for the Account page's Storage section). Only the tables this site uses, or this page already opened, are opened:
+  // another app's table is listed by its name (`{ name, closed: true }`), never asked for — no prompt from a list.
+  async function describe() {
+    const c = await catalog();
+    const names = c.rows().map(r => r.key).filter(n => n !== "tables");
+    const out = [];
+    for (const name of names) {
+      if (!ctx.uses.includes(name) && !openedNames.has(name)) {
+        out.push({ name, closed: true });
+        continue;
+      }
+      const t = await table(name).catch(() => null);
+      if (t) out.push({ name, sealed: !!t.sealed, ...(t.info ?? { rows: t.rows().length, pending: 0, flushed: false, legacy: 0, unreadable: 0 }) });
+    }
+    return out;
+  }
+
+  return { table, describe };
 }

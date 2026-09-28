@@ -27,6 +27,12 @@ export async function start(ctx) {
   // The account's key log, read so the core holds it: true if the network has it.
   const readKeyLog = async did => get(await logOf(did), "reading the account's key log");
 
+  // `{ events, changes }` of the account's key log (read now).
+  async function keyLogInfo(did) {
+    if (!(await readKeyLog(did))) return null;
+    return core.idlog_info((await codes())[0], did);
+  }
+
   // WHICH ACCOUNT words hold. New words (`fresh`) hold their own inception's. Typed words hold either their own
   // inception's (an account's original words) or the one their whoami names (words rotated in): both are asked AT
   // ONCE and the first that answers wins, so the one that does not exist never holds the way in up. The log is put
@@ -72,6 +78,7 @@ export async function start(ctx) {
   return {
     accountOf,
     readKeyLog,
+    keyLogInfo,
     changeWords,
     // `fn({ old, fresh })`, called while the words change, both in hand; an error stops the change.
     onWordsChanged: f => wordsChanged.push(f),

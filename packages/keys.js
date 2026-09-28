@@ -55,20 +55,28 @@ export async function start(ctx) {
       await channel.put("info", info);
       published = info;
     }
-    status = { epoch: st.epoch, me: st.me, members: st.members };
+    status = { epoch: st.epoch, me: st.me, members: st.members, removed: st.removed };
     return status;
   }
 
   // Apply every commit newer than this node's epoch, in order. First the group is loaded again with the key log as it
   // is NOW: a node joining after the words changed carries the new owner's signature.
   async function catchUp() {
+    if (mls.status().removed) return 0; // removed from the account: nothing after that applies
     const pending = (await commitLog()).from(mls.status().epoch);
     if (pending.length) {
       const s = await auth.check();
       mls.load(s.didBytes, await keyLog(s.didBytes), mls.status().state);
     }
-    for (const { entry } of pending) mls.process(bytes(entry));
-    const n = pending.length;
+    let n = 0;
+    for (const { entry } of pending) {
+      mls.process(bytes(entry));
+      n += 1;
+      if (mls.status().removed) {
+        ctx.log("account keys", { what: "this node was removed from the account: it keeps what it could read, and gets nothing newer" });
+        break;
+      }
+    }
     if (n) ctx.log("account keys", { what: `${n} commit(s) applied: epoch ${mls.status().epoch}` });
     return n;
   }
@@ -129,9 +137,38 @@ export async function start(ctx) {
       }
       const channel = await storage.table("mls");
       if (await catchUp()) await keep(channel);
-      else status ??= (({ epoch, me, members }) => ({ epoch, me, members }))(mls.status());
+      else status ??= (({ epoch, me, members, removed }) => ({ epoch, me, members, removed }))(mls.status());
       return status;
     }));
+  }
+
+  // REMOVE a node (lost, stolen, retired): an MLS removal, committed in the group's order. The group moves to a new
+  // epoch; the removed node reads nothing written from then on. If another node moved the group first, this node's
+  // view is taken back to what it kept and brought current, and the removal must be asked again.
+  async function remove(index) {
+    return (busy = busy.then(async () => {
+      if (!status) throw new Error("the account's keys are not held on this site");
+      const channel = await storage.table("mls");
+      const commit = mls.remove(index);
+      const r = await (await commitLog()).append(mls.status().epoch - 1, hexOf(commit));
+      if (!r.ok) {
+        const kept = await auth.identity.mlsLoad();
+        const s = await auth.check();
+        mls.load(s.didBytes, await keyLog(s.didBytes), bytes(kept.mlsState));
+        await catchUp();
+        await keep(channel);
+        throw new Error("the account's group moved meanwhile: look again and remove it again");
+      }
+      const st = await keep(channel);
+      ctx.log("account keys", { what: `a node removed: epoch ${st.epoch}, ${st.members.length} node(s)` });
+      return st;
+    }));
+  }
+
+  // How many epochs are in escrow for the words.
+  async function escrowed() {
+    const channel = await storage.table("mls");
+    return channel.rows().filter(x => x.key.startsWith("e/")).length;
   }
 
   ready().catch(e => ctx.log("account keys", { what: e?.message ?? String(e) }));
@@ -140,5 +177,5 @@ export async function start(ctx) {
     else ready().catch(err => ctx.log("account keys", { what: err?.message ?? String(err) }));
   });
 
-  return { ready };
+  return { ready, remove, escrowed };
 }

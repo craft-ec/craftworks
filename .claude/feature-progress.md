@@ -204,6 +204,12 @@ Out of scope now: recovery quorum (guardians), data-key rotation (moves tails), 
     key log (a join signed by the new owner is accepted). Tests: escrow opens with the words only (control: other
     words), after a rotation with the new words only. Live: register → join (1 epoch recovered) → change words
     (2 re-sealed) → NEW words join (2 recovered) → first node by PIN applies both joins.
+  - [x] Account page surfaces the keys: Your nodes has Remove on every other node (an MLS removal committed through
+    `ordering`; a raced removal reloads and asks again); Security (words changes from the key log, epoch + node count,
+    epochs in escrow); Storage (per table: rows, sealed, tail/tree; blocks read/rebuilt this page — another app's table
+    is listed by name, never opened, so no prompt). A REMOVED node learns it from the commit (mls `removed`, kept across
+    saves), applies nothing after it, and the page says so. Live: register → words join → remove the first node (epoch 2,
+    3 escrowed) → first node by PIN: "This node was removed…", same after a reload.
   - [ ] 1e sealing whole tree nodes (a hook in freenet-prolly); tables sealed over
   - [x] `ordering` capability (packages/ordering.js): one agreed order per object, several types behind one interface
     (`tail` built: the account's nodes share one key, the table's write sequence decides; `log` for spaces and
