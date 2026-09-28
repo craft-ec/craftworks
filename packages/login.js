@@ -32,6 +32,7 @@ export async function start(ctx) {
           .auth-dialog form > button:not(.swap) { background: var(--cw-accent); color: var(--cw-accent-fg); border: 0; border-radius: var(--cw-radius-sm); padding: var(--cw-space-2); cursor: pointer; }
           .auth-dialog .swap { border: 0; background: none; color: var(--cw-accent); cursor: pointer; padding: 0; justify-self: start; }
           .auth-dialog .said { min-height: 1.2em; font-size: var(--cw-text-sm); margin: 0; }
+          .auth-dialog.busy .card { cursor: progress; }
           .auth-dialog .note { font-size: var(--cw-text-sm); color: var(--cw-muted); margin: 0; }
         </style>
         <div class="card">
@@ -92,7 +93,16 @@ export async function start(ctx) {
         box.remove();
         resolve(auth.accept(a));
       };
+      // BUSY: while a step runs (making the account, joining, logging in), nothing in the dialog can be pressed — not
+      // even ✕: closing half-way would leave a member made and a session open behind a closed dialog.
+      let busy = false;
+      const hold = on => {
+        busy = on;
+        for (const x of box.querySelectorAll("button, input, textarea")) x.disabled = on;
+        box.classList.toggle("busy", on);
+      };
       q(".close").addEventListener("click", () => {
+        if (busy) return;
         box.remove();
         resolve(null);
       });
@@ -104,8 +114,15 @@ export async function start(ctx) {
       const on = (form, run) =>
         form.addEventListener("submit", async e => {
           e.preventDefault();
+          if (busy) return;
           say(form, "Working…");
-          const r = await run().catch(err => ({ error: err?.message ?? String(err) }));
+          hold(true);
+          let r;
+          try {
+            r = await run().catch(err => ({ error: err?.message ?? String(err) }));
+          } finally {
+            hold(false);
+          }
           if (r?.unlocked) return done(r);
           if (r) say(form, why(r));
         });
