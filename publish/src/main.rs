@@ -349,7 +349,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 47] = [
+    let packages: [(&str, &str, PathBuf); 48] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -398,6 +398,7 @@ async fn main() -> Result<()> {
         ("server-settings", "service", app.join("packages/server-settings.js")),
         ("person", "service", app.join("packages/person.js")),
         ("people-list", "service", app.join("packages/people-list.js")),
+        ("activity", "service", app.join("packages/activity.js")),
         ("contacts", "module", app.join("packages/contacts.js")),
         ("chat", "module", app.join("packages/chat.js")),
         ("messages", "module", app.join("packages/messages.js")),
@@ -501,7 +502,7 @@ async fn main() -> Result<()> {
         needs.push(format!("\"{route}\": [{}]", have.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")));
     }
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\", \"about\": \"Write and keep notes, tagged and pinned, on every node of your account.\" }}, {{ \"name\": \"Messages\", \"icon\": \"✉️\", \"route\": \"/messages\", \"about\": \"Private conversations with one person, sealed end to end.\" }}, {{ \"name\": \"Chat\", \"icon\": \"💬\", \"route\": \"/chat\", \"about\": \"Servers and channels for a group, Discord-style.\" }}, {{ \"name\": \"Mail\", \"icon\": \"📮\", \"route\": \"/mail\", \"about\": \"Mail to anyone by their id: signed by your account, sealed to theirs.\" }}, {{ \"name\": \"Contacts\", \"icon\": \"👤\", \"route\": \"/contacts\", \"about\": \"The people you know: friends, following, requests. Find anyone by their id.\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\", \"mailbox\", \"spacekeys\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\", \"about\": \"Write and keep notes, tagged and pinned, on every node of your account.\" }}, {{ \"name\": \"Messages\", \"icon\": \"✉️\", \"route\": \"/messages\", \"counts\": \"messages\", \"about\": \"Private conversations with one person, sealed end to end.\" }}, {{ \"name\": \"Chat\", \"icon\": \"💬\", \"route\": \"/chat\", \"counts\": \"chat\", \"about\": \"Servers and channels for a group, Discord-style.\" }}, {{ \"name\": \"Mail\", \"icon\": \"📮\", \"route\": \"/mail\", \"about\": \"Mail to anyone by their id: signed by your account, sealed to theirs.\" }}, {{ \"name\": \"Contacts\", \"icon\": \"👤\", \"route\": \"/contacts\", \"about\": \"The people you know: friends, following, requests. Find anyone by their id.\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\", \"mailbox\", \"spacekeys\", \"reads\", \"people\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
         pages.iter().map(|(r, p)| format!("\"{r}\": [\"{p}\"]")).collect::<Vec<_>>().join(", "),
         prior.join(", "),
         needs.join(", "),

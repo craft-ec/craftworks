@@ -92,6 +92,9 @@ export async function start() {
     #app > .slot-body > section { flex: 1 1 auto; min-height: 0; margin: 0; overflow-y: auto; overscroll-behavior: contain;
       padding: var(--cw-space-3) var(--cw-gutter); box-sizing: border-box; }
     #app > .slot-body > section { position: relative; }
+    /* A count of what is new (unread): the one badge. */
+    .cw-badge { display: inline-block; min-width: 1.4em; padding: 0 .4em; margin-left: .4em; border-radius: 999px; background: var(--cw-accent);
+      color: var(--cw-accent-fg); font-size: var(--cw-text-xs); font-weight: 700; line-height: 1.5; text-align: center; vertical-align: middle; }
     /* A panel still working after its first load: a thin moving line along its top. */
     #app > .slot-body > section[aria-busy="true"]::before { content: ""; position: sticky; top: 0; z-index: 6; display: block;
       flex: none; height: 2px; margin-bottom: -2px; background: linear-gradient(90deg, transparent, var(--cw-accent), transparent)

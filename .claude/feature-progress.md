@@ -454,3 +454,16 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
 - [ ] The identity's `SpaceMember.writer` (DID-wide feed key) is unused now: drop it at the next delegate change.
 - [ ] A space table open before a member's device first writes picks that feed up on the 30 s re-read; a push on the
       catalog would make it immediate.
+
+## Queue 1–4 (owner 2026-09-29: "Proceed with 1-4")
+- [x] 1a unread + notifications (`activity`): read marks in the account table `reads`; counts on Messages, Chat
+      channels + rail, Home icons (the manifest's `counts`); a shell notification for a new message not on screen
+      (tag = its route; a click opens it). `conversation.channels(server)`: one home for a server's channels (Chat
+      uses it). Live (two-node private net): Home badge 1→2, notification in 3 s with the DM's route, list badge 2→0
+      on opening, Home cleared.
+- [ ] 1b replies, reactions, @mentions (compositions: an item's `re`, an edge to an item, a mention in the body)
+- [ ] 1c edit your own message; paging long histories
+- [ ] 2a account key sealed on the network: open with words or a passphrase (passkey slot for #5764)
+- [ ] 2b removing a device refreshes the DID's member in every space
+- [ ] 3 social content: posts, comments, votes; a feed from follows
+- [ ] 4 upkeep: a member's new device picked up at once; prune old mail rows and spent key-package batches

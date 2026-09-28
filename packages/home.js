@@ -74,6 +74,8 @@ export async function mount(ctx, el) {
         .desk .app:hover { background: var(--cw-hover); }
         .desk .icon { font-size: 40px; line-height: 1; }
         .desk .cw-pin { position: absolute; top: 2px; right: 2px; font-size: 14px; }
+        .desk .app { position: relative; }
+        .desk .app .new { position: absolute; top: 2px; left: calc(50% + 10px); margin: 0; }
         .desk .empty { grid-column: 1 / -1; color: var(--cw-muted); font-size: var(--cw-text-sm); text-align: center; }
       </style>
       <div class="desk">
@@ -84,6 +86,7 @@ export async function mount(ctx, el) {
     // never wrote takes the network a while to report absent).
     let pins = null;
     let pinUI = null;
+    let activity = null;
     // An app's pin is the account's pin of `app:<route>`: the same pins every app uses.
     const pinned = () => new Set((pins?.refs("app:") ?? []).map(r => r.slice(4)));
     // A tile is the app's link and, beside it (never inside: the loader takes every click on a `#` link), its pin.
@@ -96,6 +99,9 @@ export async function mount(ctx, el) {
       link.innerHTML = `<span class="icon"></span><span class="name"></span>`;
       link.querySelector(".icon").textContent = a.icon ?? "▫️";
       link.querySelector(".name").textContent = a.name;
+      // What is new in it (an app that counts: the manifest says what — `activity`'s totals).
+      const n = a.counts && activity ? activity.total(a.counts) : 0;
+      if (n) link.append(Object.assign(document.createElement("span"), { className: "cw-badge new", textContent: String(n) }));
       tile.append(link);
       if (pins) tile.append(pinUI.button(`app:${a.route}`));
       return tile;
@@ -119,6 +125,12 @@ export async function mount(ctx, el) {
       },
       e => ctx.log("desktop without pins", { what: e?.message ?? String(e) }),
     );
+    // What is new in each app: its badge, kept current.
+    ctx.require("activity").then(a => {
+      activity = a;
+      a.onChange(render);
+      render();
+    }, () => {});
   };
 
   const show = s => (s ? desktop() : publicView());

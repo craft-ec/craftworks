@@ -25,6 +25,8 @@
 //   await conversation.answerFriend(did, yes)
 //   await conversation.unfriend(did)      // no longer friends — on both sides (a notice in their inbox)
 //   (A BLOCKED person's welcomes, mail and requests are left unopened: `edge.people`.)
+//   const chs = await conversation.channels(server)   // a server's channels: chs.list() add(name) rename(c, name)
+//     remove(c) onChange(fn) settled — those made by someone who may make channels, less the deleted (hidden)
 //   await conversation.mail.send([did…], subject, body, re)   // a mail (re: the id of the one it answers)
 //   await conversation.mail.fetch()  // mails pointed to in the inbox, opened and kept
 //   await conversation.mail.list("in" | "sent")   // [{ id, from, to, subject, body, at, re }], newest first
@@ -237,6 +239,60 @@ export async function start(ctx) {
     return out;
   }
 
+  // A SERVER's CHANNELS: its table `channels` (`<id>` → { name, at }), as its roles and moderation have them — a
+  // channel counts if someone who may make channels made it, and is gone once hidden (deleted). Every page that shows
+  // or watches channels asks here.
+  const channelSets = new Map();
+  const channelName = name => {
+    name = String(name ?? "").trim().toLowerCase().replace(/\s+/g, "-");
+    if (!name) throw new Error("name it first");
+    return name;
+  };
+  function channels(server) {
+    if (!channelSets.has(server.id))
+      channelSets.set(
+        server.id,
+        (async () => {
+          const [storage, roles, moderation] = await Promise.all(["storage", "roles", "moderation"].map(n => ctx.require(n)));
+          const [t, r, m] = await Promise.all([storage.table(space.tableOf(server, "channels"), server), roles.of(server), moderation.of(server)]);
+          const list = () => {
+            const hidden = m.hidden(t.app);
+            return t
+              .rows()
+              .filter(row => !hidden.has(row.key) && r.can(r.author(row), "channels"))
+              .map(row => {
+                let v = {};
+                try {
+                  v = JSON.parse(row.value);
+                } catch {}
+                return space.channel(server, row.key, v.name ?? row.key);
+              })
+              .sort((a, b) => a.name.localeCompare(b.name));
+          };
+          const changed = [];
+          t.onChange(() => changed.forEach(f => f()));
+          r.onChange(() => changed.forEach(f => f()));
+          let done = false;
+          const settled = Promise.resolve(t.settled).finally(() => (done = true));
+          return {
+            list,
+            settled,
+            get done() {
+              return done;
+            },
+            onChange: f => changed.push(f),
+            add: name => t.put(newId().slice(0, 8), JSON.stringify({ name: channelName(name), at: Date.now() })),
+            rename: (c, name) => t.put(c.id.split("/").pop(), JSON.stringify({ name: channelName(name), at: Date.now() })),
+            remove: c => m.hide(t.app, c.id.split("/").pop()),
+          };
+        })().catch(e => {
+          channelSets.delete(server.id);
+          throw e;
+        }),
+      );
+    return channelSets.get(server.id);
+  }
+
   // MAIL.
   const MAIL = "mail";
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
@@ -309,5 +365,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, list, members, person, mail, createInvite, revokeInvite, join, admit, befriend, friendRequests, answerFriend, unfriend };
+  return { direct, group, invite, accept, list, members, person, mail, createInvite, revokeInvite, join, admit, befriend, friendRequests, answerFriend, unfriend, channels };
 }

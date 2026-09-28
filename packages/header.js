@@ -73,4 +73,7 @@ export function mount(ctx, el) {
   draw();
   addEventListener("craftworks:route", draw);
   addEventListener("craftworks:actions", draw);
+  // ACTIVITY runs on every page (the header is on every page): new messages notify, whichever app is open. After the
+  // page is up, never holding it.
+  setTimeout(() => ctx.require("activity").catch(() => {}), 1500);
 }

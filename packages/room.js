@@ -115,8 +115,17 @@ export async function start(ctx) {
     };
     input.disabled = false;
     input.focus();
+    // On screen: read as it arrives (`activity`), until closed.
+    const activity = await ctx.require("activity");
+    activity.showing(conversation);
     // Its messages still arriving (every author's feed tried): whoever shows the room waits on it with it.
-    return { close: () => (open = false), settled: room.settled };
+    return {
+      close: () => {
+        open = false;
+        activity.showing(null);
+      },
+      settled: room.settled,
+    };
   }
 
   return { show };

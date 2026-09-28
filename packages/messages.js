@@ -8,7 +8,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [conversation, directory, roomUI, theme] = await Promise.all(["conversation", "directory", "room", "theme"].map(n => ctx.require(n)));
+  const [conversation, directory, roomUI, theme, activity] = await Promise.all(["conversation", "directory", "room", "theme", "activity"].map(n => ctx.require(n)));
   el.classList.add("cw-fill");
   el.innerHTML = `
     <style>
@@ -60,6 +60,8 @@ export async function mount(ctx, el) {
     people.replaceChildren(
       ...list.map((sp, i) => {
         const b = Object.assign(document.createElement("button"), { type: "button", textContent: `${sp.kind === "group" ? "👥 " : ""}${names[i]}`, title: sp.with ?? "" });
+        const n = activity.unread(sp.id);
+        if (n) b.append(Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(n) }));
         b.setAttribute("aria-current", String(open?.id === sp.id));
         b.onclick = () => show(sp, names[i]);
         return b;
@@ -104,6 +106,7 @@ export async function mount(ctx, el) {
   };
 
   await drawList();
+  activity.onChange(() => el.isConnected && drawList());
   // Opened at a conversation (`#/messages/<id>`: from a person's Message): shown at once.
   const at = async () => {
     if (!ctx.sub) return;

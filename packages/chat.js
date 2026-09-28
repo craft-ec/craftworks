@@ -8,8 +8,8 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [space, storage, keys, directory, roomUI, conversation, theme, roles, moderation, settings, person] = await Promise.all(
-    ["space", "storage", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "server-settings", "person"].map(n => ctx.require(n)),
+  const [space, storage, keys, directory, roomUI, conversation, theme, roles, moderation, settings, person, activity] = await Promise.all(
+    ["space", "storage", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "server-settings", "person", "activity"].map(n => ctx.require(n)),
   );
   const account = await space.account();
   el.classList.add("cw-fill");
@@ -24,6 +24,8 @@ export async function mount(ctx, el) {
         font-weight: 600; transition: border-radius .15s; }
       .dc .rail button:hover, .dc .rail button[aria-current="true"] { border-radius: 16px; background: var(--cw-accent); color: var(--cw-accent-fg); }
       .dc .rail .add { color: var(--cw-accent); font-size: 1.5rem; font-weight: 400; }
+      .dc .rail button { position: relative; }
+      .dc .rail .cw-badge { position: absolute; right: -4px; bottom: -4px; margin: 0; }
       .dc .side, .dc .people { background: var(--cw-bg); display: flex; flex-direction: column; min-width: 0; }
       .dc .side { border-right: 1px solid var(--cw-line); }
       .dc .people { border-left: 1px solid var(--cw-line); padding: var(--cw-space-3); overflow-y: auto; }
@@ -83,7 +85,7 @@ export async function mount(ctx, el) {
       field.focus();
     });
 
-  let server = null, channelsT = null, channel = null, shown = null, rs = null, mod = null;
+  let server = null, chs = null, channel = null, shown = null, rs = null, mod = null;
   const may = what => !!rs?.can(account.id, what);
 
   async function drawRail() {
@@ -93,6 +95,11 @@ export async function mount(ctx, el) {
         const b = Object.assign(document.createElement("button"), { type: "button", title: s.name, textContent: s.name.slice(0, 2).toUpperCase() });
         b.setAttribute("aria-current", String(server?.id === s.id));
         b.onclick = () => openServer(s);
+        const n = activity.of(s.id);
+        if (n) {
+          b.classList.add("has-new");
+          b.append(Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(n) }));
+        }
         return b;
       }),
       Object.assign(document.createElement("button"), { type: "button", className: "add", title: "Make a server, or join one with a code", textContent: "+", onclick: plus }),
@@ -122,7 +129,7 @@ export async function mount(ctx, el) {
     say("");
     try {
       const s = await space.create("server", name);
-      await (await storage.table(space.tableOf(s, "channels"), s)).put(newId(4), JSON.stringify({ name: "general", at: Date.now() }));
+      await (await conversation.channels(s)).add("general");
       await openServer(s);
     } catch (e) {
       say(`Could not make the server: ${e?.message ?? e}`);
@@ -139,21 +146,13 @@ export async function mount(ctx, el) {
       : [];
     dispatchEvent(new CustomEvent("craftworks:actions"));
   };
-  // The server's CHANNELS, as settings changes them (one set of operations for the list here and the settings page).
+  // The server's CHANNELS, as settings changes them: `conversation.channels`', and the channel open closed when it goes.
   const channelOps = {
-    list: () => list(),
-    add: async name => {
-      name = String(name ?? "").trim().toLowerCase().replace(/\s+/g, "-");
-      if (!name) throw new Error("name it first");
-      await channelsT.put(newId(4), JSON.stringify({ name, at: Date.now() }));
-    },
-    rename: async (c, name) => {
-      name = String(name ?? "").trim().toLowerCase().replace(/\s+/g, "-");
-      if (!name) throw new Error("name it first");
-      await channelsT.put(c.id.split("/").pop(), JSON.stringify({ name, at: Date.now() }));
-    },
+    list: () => chs?.list() ?? [],
+    add: name => chs.add(name),
+    rename: (c, name) => chs.rename(c, name),
     remove: async c => {
-      await mod.hide(channelsT.app, c.id.split("/").pop());
+      await chs.remove(c);
       if (channel?.id === c.id) {
         channel = null;
         shown?.close();
@@ -183,10 +182,10 @@ export async function mount(ctx, el) {
       },
     });
 
-  async function openServer(s) {
+  async function openServer(s, want = null) {
     server = s;
     channel = null;
-    channelsT = null;
+    chs = null;
     menu();
     sideName.textContent = s.name;
     drawRail();
@@ -212,17 +211,17 @@ export async function mount(ctx, el) {
         drawMembers(s);
         menu();
       });
-      const t = (channelsT = await storage.table(space.tableOf(s, "channels"), s));
-      t.onChange(() => server === s && drawChannels());
-      t.settled.finally(() => {
-        t.done = true;
+      const c = (chs = await conversation.channels(s));
+      c.onChange(() => server === s && drawChannels());
+      c.settled.finally(() => {
         if (server !== s) return;
         drawChannels();
-        if (!channel && list()[0]) openChannel(list()[0]);
+        const c = (want && list().find(x => x.id.endsWith(`/${want}`))) || list()[0];
+        if (c && (!channel || (want && channel.id !== c.id))) openChannel(c);
       });
       drawChannels();
       drawMembers(s);
-      const first = list()[0];
+      const first = (want && list().find(x => x.id.endsWith(`/${want}`))) || list()[0];
       if (first) openChannel(first);
       else roomEl.replaceChildren();
     } catch (e) {
@@ -230,32 +229,20 @@ export async function mount(ctx, el) {
     }
   }
 
-  // The server's channels: those made by someone who may make channels, less the ones hidden (deleted).
-  const list = () => {
-    const hidden = mod?.hidden(channelsT.app) ?? new Set();
-    return channelsT
-      .rows()
-      .filter(r => !hidden.has(r.key) && rs?.can(rs.author(r), "channels"))
-      .map(r => {
-        let v = {};
-        try {
-          v = JSON.parse(r.value);
-        } catch {}
-        return space.channel(server, r.key, v.name ?? r.key);
-      })
-      .sort((a, b) => a.name.localeCompare(b.name));
-  };
+  const list = () => chs?.list() ?? [];
 
   function drawChannels() {
-    if (!channelsT) return;
+    if (!chs) return;
     // A server's channels come from its members' feeds: none yet is not "none" until every one has been tried.
-    if (!list().length && !channelsT.done) return chans.replaceChildren(theme.loading("Loading channels…"));
+    if (!list().length && !chs.done) return chans.replaceChildren(theme.loading("Loading channels…"));
     chans.replaceChildren(
       ...list().map(c => {
         const row = Object.assign(document.createElement("div"), { className: "ch" });
         const b = Object.assign(document.createElement("button"), { type: "button", textContent: `# ${c.name}` });
         b.setAttribute("aria-current", String(channel?.id === c.id));
         b.onclick = () => openChannel(c);
+        const n = activity.unread(c.id);
+        if (n) b.append(Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(n) }));
         row.append(b);
         return row;
       }),
@@ -314,7 +301,22 @@ export async function mount(ctx, el) {
   const every = setInterval(() => (el.isConnected ? tick() : clearInterval(every)), 30000);
   rail.replaceChildren(theme.loading("", 2));
   chans.replaceChildren(theme.loading("Loading your servers…"));
-  const first = (await drawRail())[0];
-  if (first) openServer(first);
+  // New since read: the rail and the channel list say so.
+  activity.onChange(() => {
+    if (!el.isConnected) return;
+    drawRail();
+    drawChannels();
+  });
+  // Opened at a channel (`#/chat/<server>/<channel>`: a notification clicked), or the first server.
+  const at = async () => {
+    const [sid, cid] = (ctx.sub || "").split("/");
+    const servers = (await space.mine()).filter(s => s.kind === "server");
+    const s = servers.find(x => x.id === sid);
+    if (s && (server?.id !== s.id || !channel?.id.endsWith(`/${cid}`))) openServer(s, cid);
+  };
+  addEventListener("craftworks:route", () => el.isConnected && ctx.sub && at());
+  const servers = await drawRail();
+  if (ctx.sub) await at();
+  else if (servers[0]) openServer(servers[0]);
   else chans.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: "No servers yet: make one with +" }));
 }
