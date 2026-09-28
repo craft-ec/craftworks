@@ -596,3 +596,16 @@ fn each_space_keeps_its_own_group_and_epochs_apart_and_forget_clears_them_all() 
     assert!(!m.s.values().any(|v| v.windows(8).any(|w| w == b"server x" || w == b"server y")), "a space's state is still held");
     assert!(!m.s.values().any(|v| v.windows(32).any(|w| w == [0x11; 32] || w == [0x77; 32])), "a space's epoch secret is still held");
 }
+
+#[test]
+fn the_inbox_is_opened_by_the_accounts_nodes_for_the_home_site_only() {
+    let mut m = provisioned(APP);
+    let Answer::InboxKey { public } = serve(&mut m, Request::InboxKey, APP) else { panic!("an inbox key") };
+    assert_eq!(public, inbox_public(&ALICE_DATA), "from the account's data key: the same on every node");
+    let sealed = seal_to(&public, b"a welcome", [3; 32]);
+    let other = seal_to(&inbox_public(&BOB_DATA), b"not alice's", [4; 32]);
+    let open = |m: &mut Map, app| serve(m, Request::InboxOpen { items: vec![sealed.clone(), other.clone(), b"junk".to_vec()] }, app);
+    assert_eq!(open(&mut m, APP), Answer::Opened { items: vec![Some(b"a welcome".to_vec()), None, None] });
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    assert_eq!(open(&mut m, OTHER), Answer::Refused(Why::NotHome));
+}

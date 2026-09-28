@@ -1,10 +1,11 @@
 // DIRECTORY, a capability: every person's public CARD — found from their DID alone: DID → their key log (its address
 // comes from the DID) → their account's data key → their card, a public tail under it. Nobody else can write it; anyone
-// reads it. A card holds a HANDLE (a name to show — not unique: a person is their handle AND their id) and a KEY
-// PACKAGE per node (MLS: with it, anyone adds that node to a conversation while it is away).
+// reads it. A card holds a HANDLE (a name to show — not unique: a person is their handle AND their id), a KEY
+// PACKAGE per node (MLS: with it, anyone adds that node to a conversation while it is away), and the account's INBOX
+// key (what is sealed to it only the account's nodes open: `index`'s inbox).
 //
 //   const directory = await ctx.require("directory");
-//   await directory.card(did)                 // { did, handle, keyPackages: [{ node, keyPackage }] }, or null
+//   await directory.card(did)                 // { did, handle, inbox, keyPackages: [{ node, keyPackage }] }, or null
 //   await directory.publish({ handle })       // this person's handle, and this node's key package
 export async function start(ctx) {
   const auth = await ctx.require("auth");
@@ -26,6 +27,7 @@ export async function start(ctx) {
     const rows = t.rows();
     return {
       handle: rows.find(r => r.key === "handle")?.value ?? null,
+      inbox: rows.find(r => r.key === "inbox")?.value ?? null,
       keyPackages: rows.filter(r => r.key.startsWith("kp/")).map(r => ({ node: r.key.slice(3), keyPackage: r.value })),
     };
   };
@@ -44,6 +46,13 @@ export async function start(ctx) {
     if (!sp?.shared) throw new Error("this node does not hold the account's data key");
     const t = await storage.publicTail(CARD, sp.shared);
     if (handle != null && read(t).handle !== handle) await t.put("handle", handle);
+    // The inbox key, and the (empty) inbox made now: nobody ever waits on an inbox that does not exist yet.
+    if (!read(t).inbox) {
+      const k = await auth.identity.inboxKey();
+      if (!k.inboxKey) throw new Error(`no inbox key here: ${k.refused ?? JSON.stringify(k)}`);
+      await (await ctx.require("index")).makeInbox();
+      await t.put("inbox", k.inboxKey);
+    }
     if (!read(t).keyPackages.some(k => k.node === sp.self)) {
       const kp = await (await ctx.require("keys")).keyPackage();
       if (kp) await t.put(`kp/${sp.self}`, kp);
@@ -51,5 +60,13 @@ export async function start(ctx) {
     return { did: sp.id, ...read(t) };
   }
 
-  return { card, publish };
+  // A NEW key package for this node (its last one was used to add it somewhere: one use each).
+  async function renew() {
+    const sp = await space.account();
+    const t = await storage.publicTail(CARD, sp.shared);
+    const kp = await (await ctx.require("keys")).keyPackage();
+    if (kp) await t.put(`kp/${sp.self}`, kp);
+  }
+
+  return { card, publish, renew };
 }

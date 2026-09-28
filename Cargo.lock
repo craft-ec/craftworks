@@ -364,6 +364,7 @@ dependencies = [
  "bs58",
  "chacha20poly1305",
  "craftec-register-contract",
+ "craftworks-identity",
  "craftworks-idlog-contract",
  "ed25519-dalek",
  "freenet-stdlib",
@@ -371,6 +372,14 @@ dependencies = [
  "sha2",
  "wire",
  "x25519-dalek",
+]
+
+[[package]]
+name = "craftworks-bag-contract"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "freenet-stdlib",
 ]
 
 [[package]]
@@ -383,6 +392,7 @@ dependencies = [
  "chacha20poly1305",
  "craftec-register-contract",
  "craftworks-account",
+ "craftworks-bag-contract",
  "craftworks-feed",
  "craftworks-identity",
  "craftworks-idlog-contract",
@@ -414,11 +424,13 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "blake3",
+ "chacha20poly1305",
  "craftec-register-contract",
  "ed25519-dalek",
  "freenet-stdlib",
  "serde",
  "serde_json",
+ "x25519-dalek",
 ]
 
 [[package]]

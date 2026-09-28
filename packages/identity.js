@@ -108,6 +108,9 @@ export async function start(ctx) {
     // A table's key in an MLS epoch (-1: the newest this node holds).
     tableKeyAt: (table, epoch = -1, space = NONE) => call(core.frames_table_key_at(table, epoch, space), `the key of “${table}”`),
     revoke: (app, table) => call(core.frames_revoke(app, table), "removing an app's access"),
+    // The account's INBOX key (its public half, for its card), and opening items sealed to it (the home site only).
+    inboxKey: () => call(core.frames_inbox_key(), "reading the inbox key"),
+    inboxOpen: items => call(core.frames_inbox_open(items), "opening the inbox"),
     publicOf: seed => glue.CraftworksCore.public_of(seed),
     // HANDOVER: ask an earlier build (`<key>:<code hash>`) for the member `pin` opens there. `{ handed }` with its keys,
     // or its refusal, or `{ missing: true }` when this node never ran that build.

@@ -16,10 +16,11 @@ export async function start(ctx) {
   const space = await ctx.require("space");
   const newId = () => [...crypto.getRandomValues(new Uint8Array(8))].map(x => x.toString(16).padStart(2, "0")).join("");
 
-  // A container's table, in its space: a channel's is its own table in its server (it inherits the server's access).
+  // Any conversation names its `messages` table and the `scope` (space) it lives in: a channel, its server; a direct
+  // conversation, itself.
   async function tableOf(container) {
-    if (container?.kind === "channel") return storage.table(container.messages, container.parent);
-    throw new Error(`content does not live in a ${container?.kind ?? "nothing"} yet`);
+    if (!container?.messages || !container.scope) throw new Error(`content does not live in a ${container?.kind ?? "nothing"}`);
+    return storage.table(container.messages, container.scope);
   }
 
   async function in_(container) {

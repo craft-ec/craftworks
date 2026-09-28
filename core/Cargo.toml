@@ -30,6 +30,8 @@ hmac = "0.12"
 bs58 = "0.5"
 # The account's key event log: its format and chain check, the ONE implementation (the contract's own crate).
 craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
+# The BAG (an inbox): its format and its work, the contract's own.
+craftworks-bag-contract = { path = "../contracts-src/bag", default-features = false }
 # The account (words, key log, owner keys, members): its own crate, shared with mls.
 craftworks-account = { path = "../account" }
 # The account's encryption key (X25519) and its vault (XChaCha20-Poly1305).

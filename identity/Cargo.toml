@@ -26,6 +26,9 @@ freenet-stdlib = { version = "0.10.0", features = ["contract"] }
 # The Register's params and signed message: the ONE format a tail's signature covers (the tail is built on it).
 craftec-register-contract = { workspace = true }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
+# Sealing to a public key (the inbox; escrow): X25519 and XChaCha20-Poly1305, the same as the account's.
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 craftec-register-contract = { workspace = true, features = ["testing"] }

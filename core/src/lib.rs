@@ -38,6 +38,8 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::MlsSaved => json!({ "mlsSaved": true }),
         Answer::MlsState { state } => json!({ "mlsState": state.as_ref().map(|s| hex(s)) }),
         Answer::TableKeyAt { epoch, key } => json!({ "tableKey": hex(key), "epoch": epoch }),
+        Answer::InboxKey { public } => json!({ "inboxKey": hex(public) }),
+        Answer::Opened { items } => json!({ "opened": items.iter().map(|i| i.as_ref().map(|b| hex(b))).collect::<Vec<_>>() }),
         Answer::HandedKeys { mls, epochs } => json!({ "handedKeys": {
             "mls": mls.as_ref().map(|s| hex(s)),
             "epochs": epochs.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>(),
@@ -444,6 +446,13 @@ mod js {
         pub fn frames_epoch_keep(&mut self, epoch: f64, secret: &[u8], space: &[u8]) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::EpochKeep { space: space_of(space)?, epoch: epoch as u64, secret: b32(secret)? })
         }
+        pub fn frames_inbox_key(&mut self) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::InboxKey)
+        }
+        /// Open items sealed to the account's inbox key (the home site only).
+        pub fn frames_inbox_open(&mut self, items: js_sys::Array) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::InboxOpen { items: items.iter().map(|i| js_sys::Uint8Array::new(&i).to_vec()).collect() })
+        }
         pub fn frames_mls_load(&mut self, space: &[u8]) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::MlsLoad { space: space_of(space)? })
         }
@@ -627,6 +636,43 @@ mod js {
             let id = b32(id)?;
             let f = self.0.frames_get(id).map_err(err)?;
             Ok([JsValue::from(hex(&id)), JsValue::from(frames(f))].into_iter().collect())
+        }
+
+        /// A person's INBOX: its address (the bag's params) from their DID — every sender computes the same.
+        pub fn inbox_address(did: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            let d = b32(did)?;
+            Ok(js_sys::Uint8Array::from(&blake3::derive_key("craftworks 2026-09-28 inbox address", &d)[..]))
+        }
+
+        /// SEAL `data` to a public key (`identity::seal_to`), with a one-time key the page draws (`eph`, 32 bytes).
+        pub fn seal_to(public: &[u8], data: &[u8], eph: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&craftworks_identity::seal_to(&b32(public)?, data, b32(eph)?)[..]))
+        }
+
+        /// `[id hex, frames]`: ADD an item carrying `payload` to the bag at `address` (the work found here: the sender's
+        /// cost), as a PUT the host merges into what it holds. An empty payload: the empty bag (made).
+        pub fn bag_add(&mut self, bag_code: &[u8], address: &[u8], payload: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let items = if payload.is_empty() { Vec::new() } else { vec![craftworks_bag_contract::grind(address, payload)] };
+            let state = craftworks_bag_contract::encode(address, &items);
+            let (_, c, w) = wire::puts::contract(bag_code, address, &state);
+            let id: [u8; 32] = c.key().id().as_bytes().try_into().map_err(|_| err("a contract id is 32 bytes".into()))?;
+            let s = self.0.stream();
+            let f = wire::frame_put(c, w, s).map_err(err)?;
+            Ok([JsValue::from(hex(&id)), JsValue::from(frames(f))].into_iter().collect())
+        }
+
+        /// The bag at `address`'s contract id (hex): to GET it.
+        pub fn bag_id(bag_code: &[u8], address: &[u8]) -> Result<String, JsValue> {
+            let (_, c, _) = wire::puts::contract(bag_code, address, &[]);
+            Ok(hex(&c.key().id().as_bytes()[..32]))
+        }
+
+        /// The PAYLOADS of the bag the node last sent (by contract id, hex), each as bytes; null if none was got.
+        pub fn bag_payloads(&self, address: &[u8], id_hex: &str) -> Result<JsValue, JsValue> {
+            let id = bytes32("bag", id_hex).map_err(err)?;
+            let Some(st) = self.0.got(&id) else { return Ok(JsValue::NULL) };
+            let items = craftworks_bag_contract::read(address, st).ok_or_else(|| err("that bag does not read".into()))?;
+            Ok(items.iter().map(|i| JsValue::from(js_sys::Uint8Array::from(craftworks_bag_contract::payload(i)))).collect::<js_sys::Array>().into())
         }
 
         /// The 32 bytes of a contract id written in base58 (as in a `/v1/contract/web/<id>/` path).

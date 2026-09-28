@@ -299,6 +299,32 @@ export async function start(ctx) {
       return st;
     }
     const g = {
+      // ADD a node by its key package (from someone's card): its commit in the group's log; the WELCOME (hex) for it.
+      add: keyPackage =>
+        (queue = queue.then(async () => {
+          if (!m) throw new Error("this node is not in the space's group");
+          const from = m.status();
+          const [commit, welcome] = m.add(bytes(keyPackage));
+          const r = await logs.commitAt(from.epoch, from.secret, commit);
+          if (!r.ok) {
+            const kept = await auth.identity.mlsLoad(sp.idBytes);
+            m = mlsGlue.Mls.load_space(sp.idBytes, bytes(kept.mlsState));
+            throw new Error("the group moved meanwhile: add them again");
+          }
+          await keep(true);
+          return hexOf(welcome);
+        })),
+      // JOINED from a welcome (this node was added): the group kept, and this node's account state saved (its key
+      // package is used up).
+      join: welcome =>
+        (queue = queue.then(async () => {
+          if (!(await ready())) throw new Error("this node is not in its account's group here");
+          m = mls.join_space(sp.idBytes, bytes(welcome));
+          const acc = mls.status();
+          await auth.identity.mlsSave(acc.state, acc.epoch, acc.secret);
+          ctx.log(`${sp.name ?? "space"} keys`, { what: `this node joined the space's group: epoch ${m.status().epoch}` });
+          return keep(false);
+        })),
       // MADE by this node, its first member (with its account membership's credential).
       create: () =>
         (queue = queue.then(async () => {

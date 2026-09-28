@@ -115,6 +115,8 @@ export async function start(ctx) {
       put: (key, value) => (queue = queue.catch(() => {}).then(() => write(key, value))),
       remove: key => (queue = queue.catch(() => {}).then(() => write(key, ""))),
       tailNext: () => core.tail_next(id),
+      // Ask again (a tail that was not there: its writer may have made it since).
+      reread: () => read(),
     };
     const ready = (async () => {
       // THE TABLE'S KEY: the table is sealed, so reading it needs its key, and the key comes only with the person's
@@ -362,6 +364,7 @@ export async function start(ctx) {
       if (sp.kind === "account" && !sp.shared) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
       const [mine, others] = await Promise.all([scope.catalogOf(scope.self), scope.writers()]);
       const lists = (cat, n) => own(cat).some(r => r.key === n);
+      const all = [];
       // Another writer's feed that does not open here (sealed under a key this node lacks — a node that has not
       // recovered its epochs) is left out and COUNTED, never fatal: this node writes only its own feed, so nothing it
       // cannot see is written over. Its own feed must open.
@@ -373,33 +376,61 @@ export async function start(ctx) {
           ctx.log("feed not read", { what: `${name}: ${owner.slice(0, 12)}…: ${e.message}` });
           return null;
         });
-      const feeds = [];
-      // The table from before feeds: the oldest writer.
-      const old = await scope.old(name);
-      if (old) feeds.push(theirs(old.owner, old.known));
-      // The other nodes' feeds of it, where their catalogs list one.
-      const cats = await Promise.all(others.map(o => scope.catalogOf(o).catch(() => null)));
-      for (const c of cats) if (c && lists(c, name)) feeds.push(theirs(c.owner, true));
-      // This node's: listed in its catalog BEFORE it is made.
-      const listMine = async () => {
-        if (!lists(mine, name)) await versioned(mine, name, JSON.stringify({ at: Date.now() }), own(mine).find(r => r.key === name)?.id);
-      };
-      const mineFeed = tail(scope.self, name, { known: lists(mine, name) ? null : false, ...opts, beforeCreate: listMine });
-      feeds.push(mineFeed);
-      const all = (await Promise.all(feeds)).filter(Boolean);
-      const me = all[all.length - 1];
       let rows = [];
       const changed = [];
       const remerge = () => {
         rows = decoded(Array.from(feed.merge_feeds(all.map(f => [bytes(f.owner), f.raw()]))));
         for (const f of changed) f();
       };
-      for (const f of all) f.onChange(remerge);
-      remerge();
+      const take = f => {
+        if (!f || all.includes(f)) return;
+        all.push(f);
+        f.onChange(remerge);
+        remerge();
+      };
+      // The table from before feeds: the oldest writer.
+      const old = await scope.old(name);
+      if (old) take(await theirs(old.owner, old.known));
+      // This node's: listed in its catalog BEFORE it is made. The table opens once it is open.
+      const listMine = async () => {
+        if (!lists(mine, name)) await versioned(mine, name, JSON.stringify({ at: Date.now() }), own(mine).find(r => r.key === name)?.id);
+      };
+      const me = await tail(scope.self, name, { known: lists(mine, name) ? null : false, ...opts, beforeCreate: listMine });
+      take(me);
+      // The OTHER writers' feeds, in the background: each merged in as it arrives, never holding the table up. A writer
+      // whose catalog is not there yet (a node that has not written here), or does not list this table yet, is asked
+      // again — its catalog is followed once it exists, and a missing one is asked every 30 s — so what it writes later
+      // arrives without a reload.
+      const opened = new Set();
+      const gather = async o => {
+        const c = await scope.catalogOf(o).catch(() => null);
+        if (!c) return;
+        const open = async () => {
+          if (opened.has(o) || !lists(c, name)) return;
+          opened.add(o);
+          take(await theirs(o, true));
+        };
+        c.onChange(() => open().catch(() => {}));
+        if (c.absent) {
+          const again = () =>
+            setTimeout(async () => {
+              await c.reread().catch(() => {});
+              if (c.absent) again();
+              else await open();
+            }, 30000);
+          again();
+          return;
+        }
+        await open();
+      };
+      const settled = Promise.all(others.map(o => gather(o).catch(() => {})));
       ctx.log("table open", { what: `${name}: ${rows.length} row(s) from ${all.filter(f => !f.absent).length} feed(s)` });
       const write = (key, value) => versioned(me, key, value, rows.find(r => r.key === key)?.id);
       const t = {
         app: name,
+        // Every writer tried once (some may still arrive later): for what needs the whole table now (adopting a node's
+        // rows before its removal).
+        settled,
         rows: () => rows,
         onChange: f => changed.push(f),
         put: (key, value) => write(key, value),
@@ -515,6 +546,7 @@ export async function start(ctx) {
       if (CHANNELS.has(name)) continue;
       const t = await table(name).catch(() => null);
       if (!t) continue;
+      await t.settled;
       for (const r of t.rows().filter(r => r.id?.startsWith(node))) {
         await t.put(r.key, r.value);
         moved += 1;

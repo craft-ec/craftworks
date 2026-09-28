@@ -113,6 +113,11 @@ pub enum Request {
     /// secret it holds — so an update never costs a member its place in the account's group, or what it could read.
     /// Its home only.
     HandoverKeys { pin: String },
+    /// The public half of the account's INBOX key (for its card): what is sealed to it only the account's nodes open.
+    InboxKey,
+    /// OPEN items sealed to the account's inbox key: each opened, or `None` (not sealed to it). The home site only: the
+    /// inbox is the person's, not a site's.
+    InboxOpen { items: Vec<Vec<u8>> },
 }
 
 /// What the identity answers.
@@ -142,6 +147,8 @@ pub enum Answer {
     TableKeyAt { epoch: u64, key: [u8; 32] },
     /// A member's keys, handed to the next build.
     HandedKeys { mls: Option<Vec<u8>>, epochs: Vec<(u64, [u8; 32])> },
+    InboxKey { public: [u8; 32] },
+    Opened { items: Vec<Option<Vec<u8>>> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,6 +262,53 @@ pub fn epoch_table_key(epoch_secret: &[u8; 32], table: &str) -> [u8; 32] {
     h.update(epoch_secret);
     h.update(table.as_bytes());
     *h.finalize().as_bytes()
+}
+
+/// SEALED TO A PUBLIC KEY (X25519): a one-time key (`eph_seed`, fresh randomness from the caller), the shared secret,
+/// then XChaCha20-Poly1305 — `one-time public ‖ nonce ‖ sealed`. Only the holder of the secret for `public` opens it.
+/// The ONE definition: the escrow of epoch secrets (to the words' key) and the inbox (to the account's inbox key).
+pub fn seal_to(public: &[u8; 32], data: &[u8], eph_seed: [u8; 32]) -> Vec<u8> {
+    use chacha20poly1305::{aead::Aead, KeyInit, XChaCha20Poly1305, XNonce};
+    let eph = x25519_dalek::StaticSecret::from(eph_seed);
+    let eph_pub = x25519_dalek::PublicKey::from(&eph).to_bytes();
+    let shared = eph.diffie_hellman(&x25519_dalek::PublicKey::from(*public));
+    let key = sealed_key(shared.as_bytes(), &eph_pub, public);
+    let n = blake3::keyed_hash(&key, b"nonce");
+    let nonce = XNonce::from_slice(&n.as_bytes()[..24]);
+    let ct = XChaCha20Poly1305::new((&key).into()).encrypt(nonce, data).expect("sealing cannot fail");
+    [&eph_pub[..], &n.as_bytes()[..24], &ct].concat()
+}
+
+/// Open what was sealed to the public key of `secret_seed`.
+pub fn open_with(secret_seed: &[u8; 32], blob: &[u8]) -> Option<Vec<u8>> {
+    use chacha20poly1305::{aead::Aead, KeyInit, XChaCha20Poly1305, XNonce};
+    let (eph_pub, rest) = blob.split_at_checked(32)?;
+    let (n, ct) = rest.split_at_checked(24)?;
+    let secret = x25519_dalek::StaticSecret::from(*secret_seed);
+    let public = x25519_dalek::PublicKey::from(&secret).to_bytes();
+    let eph_pub: [u8; 32] = eph_pub.try_into().ok()?;
+    let shared = secret.diffie_hellman(&x25519_dalek::PublicKey::from(eph_pub));
+    let key = sealed_key(shared.as_bytes(), &eph_pub, &public);
+    XChaCha20Poly1305::new((&key).into()).decrypt(XNonce::from_slice(n), ct).ok()
+}
+
+fn sealed_key(shared: &[u8; 32], eph_pub: &[u8; 32], public: &[u8; 32]) -> [u8; 32] {
+    // (The escrow's derivation name, kept: escrows sealed before it was general still open.)
+    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-09-28 escrow key");
+    h.update(shared);
+    h.update(eph_pub);
+    h.update(public);
+    *h.finalize().as_bytes()
+}
+
+/// The account's INBOX key: from its data key's seed, so every node of the account holds it (in this delegate) and
+/// nothing else does. Its public half is on the account's card; what is sealed to it only the account's nodes open.
+pub fn inbox_seed(data_seed: &[u8; 32]) -> [u8; 32] {
+    blake3::derive_key("craftworks 2026-09-28 inbox key", data_seed)
+}
+
+pub fn inbox_public(data_seed: &[u8; 32]) -> [u8; 32] {
+    x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(inbox_seed(data_seed))).to_bytes()
 }
 
 /// The ADDRESS key of a space's table (where its sealed tree blocks live, and the key its tail is opened under): from the
@@ -672,6 +726,20 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 HandedKeys { mls: h.get_secret(&[MLS, &m[..]].concat()).filter(|s| !s.is_empty()), epochs }
             }
         },
+        Request::InboxKey => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            let Some(data) = a.data else { return Refused(Why::NoDataKey) };
+            InboxKey { public: inbox_public(&data) }
+        }
+        Request::InboxOpen { items } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            let Some(data) = a.data else { return Refused(Why::NoDataKey) };
+            let seed = inbox_seed(&data);
+            Opened { items: items.iter().map(|b| open_with(&seed, b)).collect() }
+        }
         Request::MlsLoad { space } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {

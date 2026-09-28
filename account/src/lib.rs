@@ -148,36 +148,12 @@ pub fn vault_open(enc_seed: &[u8; 32], vault: &[u8]) -> Option<[u8; 32]> {
 /// its removal). X25519 with a one-time key (`eph_seed`, fresh randomness from the caller), then XChaCha20-Poly1305:
 /// `one-time public ‖ nonce ‖ sealed`.
 pub fn escrow_seal(enc_public: &[u8; 32], secret: &[u8; 32], eph_seed: [u8; 32]) -> Vec<u8> {
-    use chacha20poly1305::{aead::Aead, KeyInit, XChaCha20Poly1305, XNonce};
-    let eph = x25519_dalek::StaticSecret::from(eph_seed);
-    let eph_pub = x25519_dalek::PublicKey::from(&eph).to_bytes();
-    let shared = eph.diffie_hellman(&x25519_dalek::PublicKey::from(*enc_public));
-    let key = escrow_key(shared.as_bytes(), &eph_pub, enc_public);
-    let n = blake3::keyed_hash(&key, b"nonce");
-    let nonce = XNonce::from_slice(&n.as_bytes()[..24]);
-    let ct = XChaCha20Poly1305::new((&key).into()).encrypt(nonce, secret.as_slice()).expect("sealing 32 bytes cannot fail");
-    [&eph_pub[..], &n.as_bytes()[..24], &ct].concat()
-}
-
-fn escrow_key(shared: &[u8; 32], eph_pub: &[u8; 32], enc_public: &[u8; 32]) -> [u8; 32] {
-    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-09-28 escrow key");
-    h.update(shared);
-    h.update(eph_pub);
-    h.update(enc_public);
-    *h.finalize().as_bytes()
+    craftworks_identity::seal_to(enc_public, secret, eph_seed)
 }
 
 /// Open an escrow with the words (their encryption key at index 0: the key the words' own events publish).
 pub fn escrow_open(entropy: &[u8], blob: &[u8]) -> Option<[u8; 32]> {
-    use chacha20poly1305::{aead::Aead, KeyInit, XChaCha20Poly1305, XNonce};
-    let (eph_pub, rest) = blob.split_at_checked(32)?;
-    let (n, ct) = rest.split_at_checked(24)?;
-    let enc = x25519_dalek::StaticSecret::from(enc_seed_at(entropy, 0)?);
-    let enc_public = x25519_dalek::PublicKey::from(&enc).to_bytes();
-    let eph_pub: [u8; 32] = eph_pub.try_into().ok()?;
-    let shared = enc.diffie_hellman(&x25519_dalek::PublicKey::from(eph_pub));
-    let key = escrow_key(shared.as_bytes(), &eph_pub, &enc_public);
-    XChaCha20Poly1305::new((&key).into()).decrypt(XNonce::from_slice(n), ct).ok()?.try_into().ok()
+    craftworks_identity::open_with(&enc_seed_at(entropy, 0)?, blob)?.try_into().ok()
 }
 
 /// The first event of the account these words make: owner key 0, the commitment to key 1, the data key (from these

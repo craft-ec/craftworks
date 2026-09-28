@@ -8,6 +8,8 @@ description = "The ACCOUNT (identity capability, pure): recovery words, the key 
 
 [dependencies]
 wire = { workspace = true }
+# Sealing to a public key: the identity's one definition.
+craftworks-identity = { path = "../identity" }
 craftec-register-contract = { workspace = true }
 craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
 freenet-stdlib = { version = "0.10.0", features = ["contract"] }

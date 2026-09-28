@@ -258,7 +258,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 35] = [
+    let packages: [(&str, &str, PathBuf); 38] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -300,11 +300,14 @@ async fn main() -> Result<()> {
         ("notes", "module", app.join("packages/notes.js")),
         ("content", "service", app.join("packages/content.js")),
         ("directory", "service", app.join("packages/directory.js")),
+        ("index", "service", app.join("packages/index.js")),
+        ("conversation", "service", app.join("packages/conversation.js")),
         ("chat", "module", app.join("packages/chat.js")),
         ("tail-wasm", "bytes", contracts.join("tail.wasm")),
         // The Block contract: a table's tree blocks, after a flush.
         ("block-wasm", "bytes", contracts.join("block.wasm")),
         ("sealed-wasm", "bytes", contracts.join("sealed.wasm")),
+        ("bag-wasm", "bytes", contracts.join("bag.wasm")),
     ];
     let mut entries = Vec::new();
     // WHAT IS ALREADY UP: the piece addresses the live manifest names (PUBLISHED_MANIFEST, the app site's own

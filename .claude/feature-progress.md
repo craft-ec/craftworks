@@ -315,7 +315,22 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
     key, found from the DID alone (key log head: data + enc keys, `idlog_keys`); core public tails (in the clear, never
     flushed; test); own card listed in the directory before made. Account page "Your card". Live: "sam" published with
     1 node key, read back from the network. OPEN: someone else's missing card costs the 30 s GET.
-  - [ ] M3 inbox, M4 direct conversation, M5 UI
+  - [x] M3 inbox: `bag` contract (contracts-src/bag, 121 KB: unordered set at an address, admitted by 12 bits of work,
+    union merge, over the cap the most work stays; tests); `identity::seal_to/open_with` = the ONE seal-to-public-key
+    (escrow now uses it, same format); the account INBOX key from the data seed (every node has it, in the delegate);
+    delegate `InboxKey`, `InboxOpen` (home only; test); core `inbox_address`, `seal_to`, `bag_add/bag_id/bag_payloads`;
+    `index` capability (inbox: send to a DID, list mine); the card carries the inbox key and publishing makes the empty
+    inbox (never a GET of a missing one).
+  - [x] M4 `conversation` (kinds direct | group | mail; direct built): start = card → a two-person space, each of their
+    nodes added by its key package, one welcome per node in their inbox, a "started" system item; accept = join from
+    the welcome, list it, post "joined", renew this node's key package (one use each). Storage now opens a table on its
+    own feed and merges other writers as they arrive (a writer not there yet is asked again every 30 s; `settled` for
+    adopt) — no table waits on a person who has not written yet.
+  - [x] M5 Chat page: "✉ Direct messages" (list, + New message by id), rooms for channels and conversations alike,
+    handles from cards. Live: sam → pat: pat's node welcomed from the card; pat opens Chat, joins (epoch 1), sees
+    "hi pat", replies "hi sam"; sam sees "joined" and "hi sam"; names shown as sam/pat.
+  - OPEN: a space's group (a server, a conversation) is not carried by HandoverKeys: the next delegate build loses it
+    (this build change lost S's server "Craft"). Next to fix, before more spaces are relied on.
 - [ ] C3 invites (join request, a member adds), C4 roles/moderation, C5 every node of each member
 - OPEN: a space's group state is not carried by HandoverKeys yet (the next delegate build loses space groups).
 - OWNER ASKED (published size): manifest 54 KB lists every piece of every package; plan: one hash per package (pieces

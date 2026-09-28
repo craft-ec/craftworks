@@ -57,14 +57,17 @@ export async function start(ctx) {
 
   // A space from its row in the account's `spaces`.
   function made(id, v, acc) {
-    const sp = { kind: v.kind, id, idBytes: bytes(id), name: v.name, governance: Object.freeze({ kind: "owner", owner: v.owner }), self: acc.self };
+    const sp = { kind: v.kind, id, idBytes: bytes(id), name: v.name, with: v.with ?? null, governance: Object.freeze({ kind: "owner", owner: v.owner }), self: acc.self };
     sp.tables = Object.freeze({ catalog: tableOf(sp, "tables"), members: tableOf(sp, "members"), channel: tableOf(sp, "log") });
+    // A space that is itself a conversation (a direct one): its messages, in its own scope.
+    sp.messages = tableOf(sp, "messages");
+    sp.scope = sp;
     return Object.freeze(sp);
   }
 
   // A CHANNEL of a server: a sub-space inheriting the server's access (its group, members, keys and scope).
   function channel(server, id, name) {
-    return Object.freeze({ kind: "channel", id: `${server.id}/${id}`, name, parent: server, inherits: true, messages: tableOf(server, `c${id}`) });
+    return Object.freeze({ kind: "channel", id: `${server.id}/${id}`, name, parent: server, inherits: true, messages: tableOf(server, `c${id}`), scope: server });
   }
 
   async function mine() {
@@ -84,11 +87,21 @@ export async function start(ctx) {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  // A space someone else made, JOINED here: listed in the account (its group is `keys`').
+  async function record(id, v) {
+    const acc = await account();
+    await (await (await ctx.require("storage")).table(SPACES)).put(id, JSON.stringify({ ...v, at: v.at ?? Date.now() }));
+    return made(id, v, acc);
+  }
+
+  // A space as it would be listed, before it is (to join its group first).
+  const describe = async (id, v) => made(id, v, await account());
+
   // A NEW space: its id drawn here, its group made by this node (its first member), then listed in the account.
-  async function create(kind, name) {
+  async function create(kind, name, extra = {}) {
     const acc = await account();
     if (!acc) throw new Error("nobody is logged in");
-    const v = { kind, name, owner: acc.id, at: Date.now() };
+    const v = { kind, name, owner: acc.id, at: Date.now(), ...extra };
     const sp = made(hex(crypto.getRandomValues(new Uint8Array(32))), v, acc);
     await (await ctx.require("keys")).group(sp).create();
     await (await (await ctx.require("storage")).table(SPACES)).put(sp.id, JSON.stringify(v));
@@ -96,5 +109,5 @@ export async function start(ctx) {
     return sp;
   }
 
-  return { account, tables, mine, create, tableOf, channel };
+  return { account, tables, mine, create, record, describe, tableOf, channel };
 }

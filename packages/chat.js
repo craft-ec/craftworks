@@ -9,7 +9,9 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [space, storage, keys, node, content] = await Promise.all(["space", "storage", "keys", "node", "content"].map(n => ctx.require(n)));
+  const [space, storage, keys, node, content, conversation, directory] = await Promise.all(
+    ["space", "storage", "keys", "node", "content", "conversation", "directory"].map(n => ctx.require(n)),
+  );
   const account = await space.account();
   el.innerHTML = `
     <style>
@@ -40,6 +42,8 @@ export async function mount(ctx, el) {
       .dc .msg .who { font-weight: 600; margin-right: var(--cw-space-2); }
       .dc .msg time { color: var(--cw-muted); font-size: var(--cw-text-xs); }
       .dc .msg .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+      .dc .msg.system { color: var(--cw-muted); font-size: var(--cw-text-sm); }
+      .dc .rail .dm { font-size: 1.2rem; }
       .dc .compose { padding: var(--cw-space-3) var(--cw-space-4) var(--cw-space-4); }
       .dc .compose input { width: 100%; box-sizing: border-box; padding: 10px var(--cw-space-3); border-radius: var(--cw-radius); }
       .dc .people h3 { font-size: var(--cw-text-xs); letter-spacing: .08em; color: var(--cw-muted); margin-bottom: var(--cw-space-2); }
@@ -70,6 +74,25 @@ export async function mount(ctx, el) {
   const msgs = $(".msgs"), compose = $(".compose"), input = compose.elements.text, people = $(".people ul"), said = $(".said");
   const say = m => ((said.textContent = m), (said.hidden = !m));
   const short = did => `${did.replace(/^did:craftec:/, "").slice(0, 8)}…`;
+  // A person's name to show: their card's handle (looked up once; the view redrawn when it comes), else a short id.
+  const handles = new Map();
+  const nameOf = did => {
+    if (!did) return "?";
+    if (!handles.has(did)) {
+      handles.set(did, null);
+      directory
+        .card(did)
+        .then(c => {
+          if (!c?.handle) return;
+          handles.set(did, c.handle);
+          if (room) drawMessages();
+          drawMembers(lastGroup);
+        })
+        .catch(() => {});
+    }
+    return handles.get(did) ?? short(did);
+  };
+  let lastGroup = null;
   const didOfCred = hex => {
     // A credential: `CWMB ‖ did (32) ‖ …`: its account.
     return node.glue.did_of(new Uint8Array(hex.match(/../g).slice(4, 36).map(x => parseInt(x, 16))));
@@ -88,11 +111,15 @@ export async function mount(ctx, el) {
   const newId = n => [...crypto.getRandomValues(new Uint8Array(n))].map(x => x.toString(16).padStart(2, "0")).join("");
 
   let servers = [];
-  let server = null, channelsT = null, channel = null, room = null;
+  let server = null, channelsT = null, channel = null, room = null, dms = false;
 
   async function drawRail() {
     servers = await space.mine();
+    const dm = Object.assign(document.createElement("button"), { type: "button", className: "dm", title: "Direct messages", textContent: "✉" });
+    dm.setAttribute("aria-current", String(dms));
+    dm.onclick = openDMs;
     rail.replaceChildren(
+      dm,
       ...servers.filter(s => s.kind === "server").map(s => {
         const b = Object.assign(document.createElement("button"), { type: "button", title: s.name, textContent: s.name.slice(0, 2).toUpperCase() });
         b.setAttribute("aria-current", String(server?.id === s.id));
@@ -118,7 +145,40 @@ export async function mount(ctx, el) {
     }
   }
 
+  // DIRECT MESSAGES: this person's direct conversations, and a new one by someone's id.
+  async function openDMs() {
+    dms = true;
+    server = null;
+    sideName.textContent = "Direct messages";
+    drawRail();
+    const list = await conversation.list();
+    const current = channel;
+    chans.replaceChildren(
+      ...list.map(sp => {
+        const b = Object.assign(document.createElement("button"), { type: "button", textContent: `@ ${sp.name}`, title: sp.with ?? "" });
+        b.setAttribute("aria-current", String(current?.id === sp.id));
+        b.onclick = () => openRoom(sp, `@ ${sp.name}`, sp).then(openDMs);
+        return b;
+      }),
+      Object.assign(document.createElement("button"), { type: "button", className: "new", textContent: "+ New message", onclick: newDM }),
+    );
+  }
+
+  async function newDM() {
+    const did = await ask("Their id (did:craftec:…)");
+    if (!did) return;
+    say("");
+    try {
+      const sp = await conversation.direct(did);
+      await openRoom(sp, `@ ${sp.name}`, sp);
+      await openDMs();
+    } catch (e) {
+      say(`Could not start it: ${e?.message ?? e}`);
+    }
+  }
+
   async function openServer(s) {
+    dms = false;
     server = s;
     sideName.textContent = s.name;
     drawRail();
@@ -161,19 +221,25 @@ export async function mount(ctx, el) {
     await channelsT.put(newId(4), JSON.stringify({ name, at: Date.now() })).catch(e => say(`Could not add it: ${e?.message ?? e}`));
   }
 
-  async function drawMembers() {
-    const st = await keys.group(server).ready().catch(() => null);
+  async function drawMembers(sp = server) {
+    if (!sp) return;
+    lastGroup = sp;
+    const st = await keys.group(sp).ready().catch(() => null);
+    if (lastGroup !== sp) return;
     const dids = [...new Set((st?.members ?? []).map(m => (m.cred ? didOfCred(m.cred) : m.key)))];
     people.replaceChildren(
-      ...dids.map(d => Object.assign(document.createElement("li"), { textContent: d === account.id ? `${short(d)} (you)` : short(d), title: d })),
+      ...dids.map(d => Object.assign(document.createElement("li"), { textContent: d === account.id ? `${nameOf(d)} (you)` : nameOf(d), title: d })),
     );
   }
 
-  async function openChannel(c) {
+  const openChannel = c => openRoom(c, `# ${c.name}`, server).then(drawChannels);
+
+  // A ROOM: any conversation — a server's channel, or a direct conversation.
+  async function openRoom(c, title, group) {
     channel = c;
-    drawChannels();
-    roomName.textContent = `# ${c.name}`;
-    input.placeholder = `Message #${c.name}`;
+    roomName.textContent = title;
+    input.placeholder = `Message ${title}`;
+    drawMembers(group);
     input.disabled = true;
     msgs.replaceChildren();
     room = await content.in(c);
@@ -186,13 +252,13 @@ export async function mount(ctx, el) {
   function drawMessages() {
     const rows = room.list();
     if (!rows.length) {
-      msgs.replaceChildren(Object.assign(document.createElement("li"), { className: "empty", textContent: `This is the start of #${channel.name}.` }));
+      msgs.replaceChildren(Object.assign(document.createElement("li"), { className: "empty", textContent: `This is the start of ${roomName.textContent}.` }));
       return;
     }
     msgs.replaceChildren(
       ...rows.map(m => {
-        const li = Object.assign(document.createElement("li"), { className: "msg" });
-        const who = Object.assign(document.createElement("span"), { className: "who", textContent: m.by === account.id ? "you" : short(m.by ?? "?"), title: m.by ?? "" });
+        const li = Object.assign(document.createElement("li"), { className: m.kind === "system" ? "msg system" : "msg" });
+        const who = Object.assign(document.createElement("span"), { className: "who", textContent: m.by === account.id ? "you" : nameOf(m.by), title: m.by ?? "" });
         const time = Object.assign(document.createElement("time"), { textContent: new Date(m.at).toLocaleString() });
         const text = Object.assign(document.createElement("div"), { className: "text", textContent: m.body });
         li.append(who, time, text);
@@ -215,8 +281,13 @@ export async function mount(ctx, el) {
   };
 
   await drawRail();
+  // Welcomes waiting in the inbox: those conversations joined now.
+  conversation
+    .accept()
+    .then(joined => joined.length && (drawRail(), dms && openDMs()))
+    .catch(e => ctx.log("conversation", { what: e?.message ?? String(e) }));
   const first = servers.find(s => s.kind === "server");
   if (first) openServer(first);
-  else chans.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: "No servers yet: make one with +" }));
+  else openDMs();
 }
 
