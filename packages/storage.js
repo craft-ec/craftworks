@@ -39,12 +39,9 @@ export async function start(ctx) {
     return view;
   }
 
-  // Whether this node was REMOVED from the account (its group says so): it reads what it still can, and writes
+  // REFUSING: set by `keys` when the group says this node was REMOVED from the account. From then on it writes
   // nothing — not even sealing rows over, which would take them out of reach of the nodes that remain.
-  async function removed() {
-    const st = await (await ctx.require("keys")).ready().catch(() => null);
-    return !!st?.removed;
-  }
+  let refusing = null;
 
   async function epochKeys(idHex, epochs, app) {
     for (const e of epochs) {
@@ -197,7 +194,7 @@ export async function start(ctx) {
     // One write: prepared by the core, signed by the identity delegate with the data key, sent as one delta.
     async function write(key, value) {
       if (!(await allowed())) throw new Error(`this app may not change your “${app}”: allow it when your node asks`);
-      if (await removed()) throw new Error("this node was removed from your account: it cannot change it");
+      if (refusing) throw new Error(refusing);
       // Listed BEFORE it is created: a failure between the two leaves a listed table that is empty, never data the
       // catalog does not name.
       if (t.absent && !isCatalog) await list(app);
@@ -258,7 +255,7 @@ export async function start(ctx) {
     // rows a step, each sealed with the newest key and its old copy deleted in that same step, signed like any write.
     // A tree from before sealing whole is built again, sealed, by a flush.
     async function sealOld() {
-      if (await removed()) return;
+      if (refusing) return;
       let n = 0;
       for (let round = 0; round < 64; round++) {
         const p = core.tail_migrate(id, 16);
@@ -315,5 +312,5 @@ export async function start(ctx) {
     return out;
   }
 
-  return { table, describe };
+  return { table, describe, refuse: why => (refusing = why) };
 }

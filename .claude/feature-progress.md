@@ -221,6 +221,15 @@ Out of scope now: recovery quorum (guardians), data-key rotation (moves tails), 
     reload reads the sealed tree; words-join 2nd member (epoch 0 via escrow) → remove the 1st → note at epoch 2 → 1st
     by PIN reads 32 old notes, not the new one, and cannot write; 2nd reads everything.
     OPEN: a removed node still holds the account's DATA key (tail signing) — writers per space in phase 2.
+  - [x] Removed node FORGETS: the identity's `Forget` (home only) wipes the member — key, PIN, grants, MLS state, every
+    epoch's secret — and `keys` calls it the moment the group says this node was removed, then logs out (storage
+    refuses writes from then). Test: everything naming the member is gone, another member on the node untouched, a
+    non-home site refused. Live: register A → words-join B → remove A → A by PIN: forgotten, its PIN opens nothing; B
+    at epoch 2. FIXED: storage asking `keys` before a write deadlocked keys' own writes (no group for a new account)
+    — now keys tells storage to refuse instead. Changing the recovery words is NOT part of it: the words never reach
+    a node.
+  - [x] `HandoverKeys`: an update moves a member's MLS state and epoch secrets with it (after `Handover`, on its PIN,
+    home only). Builds before it answer unreadably: 0 moved (dev accounts only — owner OK'd losing keys this once).
   - [x] `ordering` capability (packages/ordering.js): one agreed order per object, several types behind one interface
     (`tail` built: the account's nodes share one key, the table's write sequence decides; `log` for spaces and
     `witnessed` later). keys' commits now go through it (append at the epoch it moved from; taken → join again).

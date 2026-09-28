@@ -87,6 +87,8 @@ export async function start(ctx) {
     provision: (seed, did, pin, data) => call(core.frames_provision(seed, did, pin, data), "adding this node"),
     unlock: pin => call(core.frames_unlock(pin), "unlocking with the PIN"),
     lock: () => call(core.frames_lock(), "logging out"),
+    // This node's member forgotten (key, PIN, grants, group state, every epoch's secret): for a removed node.
+    forget: () => call(core.frames_forget(), "forgetting this node's member"),
     who: () => call(core.frames_who(), "asking who is logged in"),
     sign: (params, seq, valueHash) => call(core.frames_sign(params, BigInt(seq), valueHash), "signing"),
     exportKey: () => call(core.frames_export(), "exporting the key"),
@@ -106,6 +108,25 @@ export async function start(ctx) {
     publicOf: seed => glue.CraftworksCore.public_of(seed),
     // HANDOVER: ask an earlier build (`<key>:<code hash>`) for the member `pin` opens there. `{ handed }` with its keys,
     // or its refusal, or `{ missing: true }` when this node never ran that build.
+    // A member's KEYS from an earlier build (its group state, every epoch's secret), kept here: after `handoverFrom`,
+    // so an update keeps its place in the account's group. A build from before this answers nothing it can read.
+    moveKeysFrom: async (prior, pin) => {
+      const [id, frames] = core.frames_handover_keys_from(prior, pin);
+      const key = prior.split(":")[0];
+      const said = await ask(
+        frames,
+        s => (s.kind === "identity" && s.answers.some(a => a.id === id || a.id === 0)) || (s.kind === "delegate-missing" && String(s.delegate).includes(key)),
+        "asking an earlier identity build for the member's keys",
+        20000,
+      ).catch(() => ({ kind: "none" }));
+      const k = said.kind === "identity" ? said.answers.find(a => a.id === id)?.answer?.handedKeys : null;
+      if (!k) return { moved: 0 };
+      const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+      for (const [e, secret] of k.epochs) await call(core.frames_epoch_keep(e, bytes(secret)), "keeping an epoch's key");
+      const newest = k.epochs[k.epochs.length - 1];
+      if (k.mls && newest) await call(core.frames_mls_save(bytes(k.mls), newest[0], bytes(newest[1])), "keeping the account's keys");
+      return { moved: k.epochs.length, group: !!k.mls };
+    },
     handoverFrom: async (prior, pin) => {
       const [id, frames] = core.frames_handover_from(prior, pin);
       const key = prior.split(":")[0];

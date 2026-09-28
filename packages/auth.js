@@ -65,6 +65,11 @@ export async function start(ctx) {
       const bytes = x => (x ? hexBytes(x) : new Uint8Array(0));
       const p = await id.provision(bytes(h.handed.seed), bytes(h.handed.did), pin, bytes(h.handed.data));
       ctx.log("member moved", { what: `from the earlier build ${prior.slice(0, 12)}…: ${p.unlocked ? "logged in" : JSON.stringify(p)}` });
+      // Its keys too (the account's group, the epochs it could read), before anything reads a table.
+      if (p.unlocked) {
+        const k = await id.moveKeysFrom(prior, pin).catch(e => ({ moved: 0, said: e.message }));
+        ctx.log("member moved", { what: `its keys: ${k.group ? "the account's group and " : ""}${k.moved} epoch(s)${k.said ? ` (${k.said})` : ""}` });
+      }
       return p;
     }
     return r;

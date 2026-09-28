@@ -136,10 +136,27 @@ export async function start(ctx) {
         mls.load(s.didBytes, await keyLog(s.didBytes), bytes(r.mlsState));
       }
       const channel = await storage.table("mls");
-      if (await catchUp()) await keep(channel);
+      const applied = await catchUp();
+      if (mls.status().removed) return forget();
+      if (applied) await keep(channel);
       else status ??= (({ epoch, me, members, removed }) => ({ epoch, me, members, removed }))(mls.status());
       return status;
     }));
+  }
+
+  // REMOVED: the group says this node is out of the account. It FORGETS its member at once — key, PIN, grants, the
+  // group's state and every epoch's secret — so a lost or stolen node that comes online again gives nothing away,
+  // and the app starts again logged out. The account is untouched: the recovery words bring the node back.
+  async function forget() {
+    storage.refuse("this node was removed from your account: it cannot change it");
+    const r = await auth.identity.forget().catch(e => ({ refused: e?.message ?? String(e) }));
+    ctx.log("account keys", { what: r.loggedOut ? "this node was removed from the account: it has forgotten everything it held" : `this node was removed, and could not forget: ${r.refused ?? JSON.stringify(r)}` });
+    status = { removed: true, members: [], epoch: mls.status().epoch };
+    if (r.loggedOut) {
+      alert("This node was removed from your account, so it has forgotten your account's keys. To use it again, log in with your recovery words.");
+      await auth.logout();
+    }
+    return status;
   }
 
   // REMOVE a node (lost, stolen, retired): an MLS removal, committed in the group's order. The group moves to a new

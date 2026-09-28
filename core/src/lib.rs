@@ -38,6 +38,10 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::MlsSaved => json!({ "mlsSaved": true }),
         Answer::MlsState { state } => json!({ "mlsState": state.as_ref().map(|s| hex(s)) }),
         Answer::TableKeyAt { epoch, key } => json!({ "tableKey": hex(key), "epoch": epoch }),
+        Answer::HandedKeys { mls, epochs } => json!({ "handedKeys": {
+            "mls": mls.as_ref().map(|s| hex(s)),
+            "epochs": epochs.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>(),
+        } }),
     }
 }
 
@@ -114,14 +118,21 @@ impl Core {
     }
 
     /// Ask an EARLIER build of the identity delegate, named `<key>:<code hash>` (base58, as the manifest's
-    /// `identity_prior` lists them): only for `Handover`, moving a member to this build.
-    pub fn frames_handover(&mut self, prior: &str, pin: String) -> Result<(u32, Vec<Vec<u8>>), String> {
+    /// `identity_prior` lists them): only to move a member to this build — `Handover`, then `HandoverKeys`.
+    pub fn frames_prior(&mut self, prior: &str, req: &Request) -> Result<(u32, Vec<Vec<u8>>), String> {
+        if !matches!(req, Request::Handover { .. } | Request::HandoverKeys { .. }) {
+            return Err("an earlier build is asked only to hand a member over".into());
+        }
         let b32 = |s: &str| -> Result<[u8; 32], String> {
             bs58::decode(s).into_vec().ok().and_then(|v| v.try_into().ok()).ok_or_else(|| format!("not a 32-byte base58 id: {s}"))
         };
         let (k, c) = prior.split_once(':').ok_or("an earlier build is <key>:<code hash>")?;
         let key = freenet_stdlib::prelude::DelegateKey::new(b32(k)?, freenet_stdlib::prelude::CodeHash::new(b32(c)?));
-        self.frames_identity_at(key, &Request::Handover { pin })
+        self.frames_identity_at(key, req)
+    }
+
+    pub fn frames_handover(&mut self, prior: &str, pin: String) -> Result<(u32, Vec<Vec<u8>>), String> {
+        self.frames_prior(prior, &Request::Handover { pin })
     }
 
     fn frames_identity_at(&mut self, key: freenet_stdlib::prelude::DelegateKey, req: &Request) -> Result<(u32, Vec<Vec<u8>>), String> {
@@ -385,11 +396,20 @@ mod js {
             let (id, f) = self.0.frames_handover(prior, pin).map_err(err)?;
             Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
         }
+        /// `[id, frames]` of a HandoverKeys asked of an earlier build: the member's group state and epoch secrets.
+        pub fn frames_handover_keys_from(&mut self, prior: &str, pin: String) -> Result<js_sys::Array, JsValue> {
+            let (id, f) = self.0.frames_prior(prior, &Request::HandoverKeys { pin }).map_err(err)?;
+            Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
+        }
         pub fn frames_unlock(&mut self, pin: String) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Unlock { pin })
         }
         pub fn frames_lock(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Lock)
+        }
+        /// Forget the session's member (a node removed from its account): home site only.
+        pub fn frames_forget(&mut self) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Forget)
         }
         pub fn frames_who(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Who)

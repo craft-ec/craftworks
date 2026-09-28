@@ -104,6 +104,14 @@ pub enum Request {
     TableKeyAt { table: String, epoch: Option<u64> },
     /// KEEP an earlier epoch's secret (recovered from its escrow with the words): the home site only.
     EpochKeep { epoch: u64, secret: [u8; 32] },
+    /// FORGET the session's member: its key, PIN, grants, MLS state and every epoch's secret — for a node REMOVED
+    /// from the account (its group told it so), so what it held can no longer be taken from it. The home site only.
+    /// The account is untouched: its recovery words make this node a new member again.
+    Forget,
+    /// With `Handover`, to the next build: the member's KEYS on the right PIN — its MLS state and every epoch's
+    /// secret it holds — so an update never costs a member its place in the account's group, or what it could read.
+    /// Its home only.
+    HandoverKeys { pin: String },
 }
 
 /// What the identity answers.
@@ -131,6 +139,8 @@ pub enum Answer {
     MlsSaved,
     MlsState { state: Option<Vec<u8>> },
     TableKeyAt { epoch: u64, key: [u8; 32] },
+    /// A member's keys, handed to the next build.
+    HandedKeys { mls: Option<Vec<u8>>, epochs: Vec<(u64, [u8; 32])> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -537,6 +547,53 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             }
             MlsSaved
         }
+        Request::Forget => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            let m = a.public();
+            let latest = h.get_secret(&[EPOCH_LATEST, &m[..]].concat()).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes);
+            // The secrets first and the member last: a crash between leaves a member holding less, never keys nobody
+            // can reach to forget.
+            let mut ok = true;
+            for e in 0..=latest.unwrap_or(0) {
+                ok &= h.set_secret(&[EPOCH, &m[..], &e.to_be_bytes()].concat(), &[]);
+            }
+            for (g, t) in grants(h, &m) {
+                ok &= h.set_secret(&grant_key(&m, &g, &t), &[]);
+            }
+            ok = ok
+                && set_grants(h, &m, &[])
+                && h.set_secret(&[EPOCH_LATEST, &m[..]].concat(), &[])
+                && h.set_secret(&[MLS, &m[..]].concat(), &[])
+                && h.set_secret(&[PIN, &a.pin[..]].concat(), &[])
+                && h.set_secret(&[MEMBER, &m[..]].concat(), &[])
+                && h.set_secret(&session_name(&app), &[]);
+            if ok {
+                LoggedOut
+            } else {
+                Refused(Why::NotSaved)
+            }
+        }
+        Request::HandoverKeys { pin } => match try_pin(h, &pin) {
+            Err(answer) => answer,
+            Ok(a) if a.home != app => Refused(Why::NotHome),
+            Ok(a) => {
+                if !h.set_secret(TRIES, &[0]) {
+                    return Refused(Why::NotSaved);
+                }
+                let m = a.public();
+                let latest = h.get_secret(&[EPOCH_LATEST, &m[..]].concat()).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes);
+                let epochs = match latest {
+                    None => Vec::new(),
+                    Some(l) => (0..=l)
+                        .filter_map(|e| Some((e, h.get_secret(&[EPOCH, &m[..], &e.to_be_bytes()].concat())?.try_into().ok()?)))
+                        .collect(),
+                };
+                HandedKeys { mls: h.get_secret(&[MLS, &m[..]].concat()).filter(|s| !s.is_empty()), epochs }
+            }
+        },
         Request::MlsLoad => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {

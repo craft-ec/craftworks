@@ -461,3 +461,50 @@ fn the_vault_keeps_mls_state_for_the_home_site_and_gives_epoch_table_keys_to_gra
     assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
     assert_eq!(at(&mut m, OTHER, "notes", None), Answer::TableKeyAt { epoch: 2, key: epoch_table_key(&[2; 32], "notes") });
 }
+
+#[test]
+fn a_removed_node_forgets_its_member_and_every_key_it_held() {
+    let mut m = provisioned(APP);
+    let at = |m: &mut Map, app, epoch| serve(m, Request::TableKeyAt { table: "notes".into(), epoch }, app);
+    assert_eq!(serve(&mut m, Request::MlsSave { state: b"s".to_vec(), epoch: 2, secret: [2; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 0, secret: [9; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
+    // Bob on the same node, as a control: untouched.
+    assert_eq!(provision(&mut m, BOB, BOB_DID, BOB_PIN, APP), bob());
+    assert_eq!(unlock(&mut m, ALICE_PIN, APP), alice());
+    // Only the home site forgets.
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    assert_eq!(serve(&mut m, Request::Forget, OTHER), Answer::Refused(Why::NotHome));
+    assert!(matches!(at(&mut m, APP, Some(0)), Answer::TableKeyAt { .. }), "control: the keys are there before");
+    assert_eq!(serve(&mut m, Request::Forget, APP), Answer::LoggedOut);
+    // Gone: its PIN opens nothing, no session anywhere, no state, no epoch, no grant.
+    assert!(matches!(unlock(&mut m, ALICE_PIN, APP), Answer::WrongPin { .. }));
+    assert_eq!(who(&mut m, OTHER), Answer::Refused(Why::NoSession));
+    let alice_key = public(ALICE);
+    for (k, v) in &m.s {
+        if k.windows(32).any(|w| w == alice_key) {
+            assert!(v.is_empty(), "a secret still names the forgotten member: {:?}", String::from_utf8_lossy(&k[..k.len().min(24)]));
+        }
+    }
+    assert!(!m.s.values().any(|v| v.windows(32).any(|w| w == [2; 32] || w == [9; 32])), "an epoch secret is still held");
+    // Bob still opens.
+    assert_eq!(unlock(&mut m, BOB_PIN, APP), bob());
+}
+
+#[test]
+fn a_members_keys_go_to_the_next_build_on_its_pin_to_its_home_only() {
+    let mut m = provisioned(APP);
+    assert_eq!(serve(&mut m, Request::MlsSave { state: b"group".to_vec(), epoch: 3, secret: [3; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 1, secret: [1; 32] }, APP), Answer::MlsSaved);
+    let keys = |m: &mut Map, pin: &str, app| serve(m, Request::HandoverKeys { pin: pin.into() }, app);
+    assert_eq!(
+        keys(&mut m, ALICE_PIN, APP),
+        Answer::HandedKeys { mls: Some(b"group".to_vec()), epochs: vec![(1, [1; 32]), (3, [3; 32])] }
+    );
+    assert_eq!(keys(&mut m, ALICE_PIN, OTHER), Answer::Refused(Why::NotHome));
+    assert!(matches!(keys(&mut m, "000000", APP), Answer::WrongPin { .. }), "a wrong PIN is a guess, counted");
+    // A member with no group yet: nothing to hand.
+    assert_eq!(provision(&mut m, BOB, BOB_DID, BOB_PIN, APP), bob());
+    assert_eq!(keys(&mut m, BOB_PIN, APP), Answer::HandedKeys { mls: None, epochs: vec![] });
+}
