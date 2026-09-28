@@ -7,6 +7,9 @@
 //   const directory = await ctx.require("directory");
 //   await directory.card(did)                 // { did, handle, inbox, keyPackages: [{ node, keyPackage }] }, or null
 //   await directory.publish({ handle })       // this person's handle, and this node's key package
+//   await directory.handle(did)               // their handle, or null (each card read once per page)
+//   directory.shown(did, handle)              // how a person is SHOWN everywhere: `pat#8r4orC`
+//   await directory.name(did)                 // the same, their handle looked up
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const storage = await ctx.require("storage");
@@ -68,5 +71,17 @@ export async function start(ctx) {
     if (kp) await t.put(`kp/${sp.self}`, kp);
   }
 
-  return { card, publish, renew };
+  // A person's HANDLE, read once per page (a name to show; the id is what makes them them).
+  const handles = new Map();
+  function handle(did) {
+    if (!handles.has(did)) handles.set(did, card(did).then(c => c?.handle ?? null, () => null));
+    return handles.get(did);
+  }
+
+  // How a person is SHOWN, everywhere: their handle and the start of their id — `pat#8r4orC` (handles are not unique;
+  // the id is). Without a handle: `#8r4orC`.
+  const shown = (did, handle) => `${handle ?? ""}#${String(did).replace(/^did:craftec:/, "").slice(0, 6)}`;
+  const name = async did => shown(did, await handle(did));
+
+  return { card, publish, renew, handle, shown, name };
 }

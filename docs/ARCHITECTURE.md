@@ -109,6 +109,8 @@ uses the tokens, never its own colours or sizes — so a new look, or a second t
   removed node's feed stops counting. Ordering is the one exception to "every writer its own feed": MLS epochs admit
   no forks, so each epoch's commits keep one sequence — a tail signed with a key derived from that epoch's secret, so
   only the nodes in the group at that epoch can write it, and a removed node can write nowhere that counts.
+- **A person is shown as `handle#id`** everywhere (owner): the handle from their card and the start of their DID —
+  handles are not unique, the id is. One definition (`directory.shown`); no page formats a person itself.
 - **Indexes are one shape** with a visibility — public (directory, tag index, comments) or sealed (inbox) — as edges
   are (public tags, private labels).
 - **Durability.** Immutable blocks are erasure-coded (every node's children and the root's group of one) and read by a

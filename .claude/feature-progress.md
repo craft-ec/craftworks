@@ -329,6 +329,10 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
   - [x] M5 Chat page: "✉ Direct messages" (list, + New message by id), rooms for channels and conversations alike,
     handles from cards. Live: sam → pat: pat's node welcomed from the card; pat opens Chat, joins (epoch 1), sees
     "hi pat", replies "hi sam"; sam sees "joined" and "hi sam"; names shown as sam/pat.
+  - [x] Apps separated (owner): Messages (✉, direct conversations, no member list) and Chat (servers only), both on the
+    `room` component (one conversation's messages + composer); people shown as `handle#id` everywhere
+    (`directory.shown`/`name`; owner: "user identification always show username#id"). Live: Messages lists
+    pat#8r4orC, the conversation shows sam#EAsepm / pat#8r4orC, a message sent from it; Account "Published as sam#EAsepm".
   - OPEN: a space's group (a server, a conversation) is not carried by HandoverKeys: the next delegate build loses it
     (this build change lost S's server "Craft"). Next to fix, before more spaces are relied on.
 - [ ] C3 invites (join request, a member adds), C4 roles/moderation, C5 every node of each member
