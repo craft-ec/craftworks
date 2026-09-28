@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. A page that needs no node never loads the
 // node's code at all.
-const VERSION = "18";
+const VERSION = "19";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -258,6 +258,19 @@ export async function run(boot) {
     loaderVersion: VERSION,
     loaded: name => loaded.has(name),
     askedBy: name => askedBy.get(name),
+    // GET THE NEWEST: this node follows (subscribes to) the app's site and the loader's — a node holding a copy answers
+    // a plain GET from it — then the page loads again. Returns what each said.
+    async fresh() {
+      const { core, glue, ask } = await require("node");
+      const out = [];
+      for (const site of [stack.appSite(), stack.loaderSite()].filter(Boolean)) {
+        const [id, frames] = core.frames_follow(glue.CraftworksCore.id_bytes(site));
+        const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, "getting the newest", 60000).catch(e => ({ kind: "failed", said: e.message }));
+        ctx.log("newest", { what: `${site.slice(0, 8)}…: ${said.kind}` });
+        out.push({ site, kind: said.kind });
+      }
+      return out;
+    },
   };
 
   function traceToggle() {

@@ -62,6 +62,8 @@ export function mount(ctx, el, stack) {
       row([`<b>${esc(name)}</b>`, placed(name), esc(p.kind), esc(`${p.k}+${p.m}`), short(p.sha256), stack.loaded(name) ? "loaded" : "not yet"]),
     );
     pane.innerHTML = `
+      <p style="margin:0 0 8px"><button type="button" class="fresh">Get the newest</button>
+        <span class="fresh-said" style="opacity:.7">this node follows the app's and the loader's sites, then the page loads again</span></p>
       <table>
         ${row(["<b>wrapper</b>", `app site ${short(stack.appSite())} (index.html, boot.js, manifest.json)`])}
         ${row(["<b>loader</b>", `loader site ${short(stack.loaderSite())} · v${esc(stack.loaderVersion)} (loader.js, trace)`])}
@@ -70,6 +72,15 @@ export function mount(ctx, el, stack) {
       </table>
       <h3 style="font-size:.9rem;margin:10px 0 4px">Packages (${Object.keys(m.packages).length})</h3>
       <table><thead><tr><th>name</th><th>placed in</th><th>kind</th><th>pieces (k+m)</th><th>sha256</th><th>now</th></tr></thead>${pkgs.join("")}</table>`;
+    const b = pane.querySelector(".fresh");
+    b.onclick = async () => {
+      b.disabled = true;
+      pane.querySelector(".fresh-said").textContent = "asking the network…";
+      const said = await stack.fresh();
+      pane.querySelector(".fresh-said").textContent = said.map(x => `${x.site.slice(0, 8)}…: ${x.kind}`).join(" · ");
+      if (said.some(x => x.kind === "got")) setTimeout(() => location.reload(), 800);
+      else b.disabled = false;
+    };
   }
 
   show("loading");

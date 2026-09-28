@@ -161,6 +161,13 @@ impl Core {
         wire::frame_get(wire::contract_id(id), false, s)
     }
 
+    /// Frames of a GET that also SUBSCRIBES this node to `id`: it asks the contract's peers, and keeps getting its
+    /// updates (a node that holds a copy answers a plain GET from it).
+    pub fn frames_follow(&mut self, id: [u8; 32]) -> Result<Vec<Vec<u8>>, String> {
+        let s = self.stream();
+        wire::frame_get(wire::contract_id(id), true, s)
+    }
+
     /// The state the node last sent for `id`.
     pub fn got(&self, id: &[u8; 32]) -> Option<&[u8]> {
         self.got.get(id).map(Vec::as_slice)
@@ -644,6 +651,13 @@ mod js {
         pub fn frames_get(&mut self, id: &[u8]) -> Result<js_sys::Array, JsValue> {
             let id = b32(id)?;
             let f = self.0.frames_get(id).map_err(err)?;
+            Ok([JsValue::from(hex(&id)), JsValue::from(frames(f))].into_iter().collect())
+        }
+
+        /// `[id hex, frames]` of a GET of contract `id` that subscribes this node to it (its newest, and what follows).
+        pub fn frames_follow(&mut self, id: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let id = b32(id)?;
+            let f = self.0.frames_follow(id).map_err(err)?;
             Ok([JsValue::from(hex(&id)), JsValue::from(frames(f))].into_iter().collect())
         }
 

@@ -381,4 +381,9 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
    U + P invited; P (member) had no channel controls; S made U admin; U added #news, hid P's "spam", removed P, posted;
    S saw all of it; P saw the removal. Ordering by the signer's claimed time: witnessed ordering is the documented
    later step (ARCHITECTURE §5 Ordering).
-6. [ ] mail
+6. [x] mail (`conversation.mail`, the Mail page /mail: Inbox · Sent · Compose; Reply). A mail lives in its SENDER's
+   public tail `mail` (their account's data key: only they write it — who sent it is whose tail it is in, never what it
+   says), sealed to each recipient's inbox key; a pointer {from, key} in each recipient's inbox; the recipient opens
+   and keeps it in `mailbox` (private; the sender may later drop old rows). `directory.publicOf(did, name)`: any
+   public tail of a person (the card is one). Live: P mailed S and U (S typed as sam#EAsepm); S read it and replied;
+   P got the reply.
