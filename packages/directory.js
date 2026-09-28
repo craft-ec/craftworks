@@ -10,6 +10,7 @@
 //   await directory.handle(did)               // their handle, or null (each card read once per page)
 //   directory.shown(did, handle)              // how a person is SHOWN everywhere: `pat#8r4orC`
 //   await directory.name(did)                 // the same, their handle looked up
+//   await directory.publicOf(did, name)       // any public tail of theirs (`card`, `mail`: only their account writes it)
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const storage = await ctx.require("storage");
@@ -47,11 +48,18 @@ export async function start(ctx) {
     };
   };
 
-  async function card(did) {
+  // A person's public tail `name`, under their account's data key: whatever is in it, their account wrote.
+  async function publicOf(did, name) {
+    const me = await space.account();
+    const id = typeof did === "string" ? did : glue.did_of(did);
+    if (me?.id === id) return storage.publicTail(name, me.shared);
     const k = await keysOf(did);
-    if (!k) return null;
-    const t = await storage.publicTail(CARD, k.data);
-    if (t.absent) return null;
+    return k ? storage.publicTail(name, k.data) : null;
+  }
+
+  async function card(did) {
+    const t = await publicOf(did, CARD);
+    if (!t || t.absent) return null;
     return { did: typeof did === "string" ? did : glue.did_of(did), ...read(t) };
   }
 
@@ -96,5 +104,5 @@ export async function start(ctx) {
   const shown = (did, handle) => `${handle ?? ""}#${String(did).replace(/^did:craftec:/, "").slice(0, 6)}`;
   const name = async did => shown(did, await handle(did));
 
-  return { card, publish, renew, handle, shown, name };
+  return { card, publish, renew, handle, shown, name, publicOf };
 }
