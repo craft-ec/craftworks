@@ -258,7 +258,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 24] = [
+    let packages: [(&str, &str, PathBuf); 27] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -270,6 +270,11 @@ async fn main() -> Result<()> {
         ("auth", "service", app.join("packages/auth.js")),
         ("login", "service", app.join("packages/login.js")),
         ("access", "service", app.join("packages/access.js")),
+        // The account's MLS group on this node: the source of every table key.
+        ("keys", "service", app.join("packages/keys.js")),
+        // MLS: its own wasm package, loaded only by `keys`.
+        ("mls-glue", "module", built.join("craftworks_mls.js")),
+        ("mls-wasm", "bytes", built.join("craftworks_mls_bg.wasm")),
         ("core-glue", "module", built.join("craftworks_core.js")),
         ("core-wasm", "bytes", built.join("craftworks_core_bg.wasm")),
         // The identity delegate's code (the node needs it to run it).

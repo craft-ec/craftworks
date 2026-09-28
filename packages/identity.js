@@ -27,6 +27,11 @@ export async function start(ctx) {
     grants: () => call(core.frames_grants(), "listing the apps with access"),
     // The key that seals a table (generation 0): only for a site the person allowed that table.
     tableKey: table => call(core.frames_table_key(table, 0), `the key of “${table}”`),
+    // The account's MLS group on this node: its state and the current epoch's secret, kept by the delegate (home only).
+    mlsSave: (state, epoch, secret) => call(core.frames_mls_save(state, epoch, secret), "keeping the account's keys"),
+    mlsLoad: () => call(core.frames_mls_load(), "reading the account's keys"),
+    // A table's key in an MLS epoch (-1: the newest this node holds).
+    tableKeyAt: (table, epoch = -1) => call(core.frames_table_key_at(table, epoch), `the key of “${table}”`),
     revoke: (app, table) => call(core.frames_revoke(app, table), "removing an app's access"),
     publicOf: seed => glue.CraftworksCore.public_of(seed),
     // HANDOVER: ask an earlier build (`<key>:<code hash>`) for the member `pin` opens there. `{ handed }` with its keys,

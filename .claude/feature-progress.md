@@ -185,7 +185,17 @@ Out of scope now: recovery quorum (guardians), data-key rotation (moves tails), 
     epoch secret → table key; save/load one blob. Tests: two nodes share one secret; a removed node's secret no longer
     matches; save/load; a stranger cannot join (control); after a words rotation old nodes stay and the new owner
     admits.
-  - [ ] 1b delegate as vault: keep the member state (home site only) and the epoch secrets; TableKey from the epoch
-  - [ ] 1c the account's MLS channel: group info + commits in one agreed order (an account table), processing on login
+  - [x] 1b delegate as vault: MlsSave/MlsLoad (home only), epoch secrets kept per member, TableKeyAt(table, epoch)
+    for granted sites (one derivation, `epoch_table_key`, shared with mls). 19 identity tests.
+  - [x] 1c the account's MLS channel: account table `mls` (`info` + `c/<epoch>`; one writer sequence = one order;
+    sealed with the words-derived key so a new node can read it). `keys` capability: created at registration, joined
+    by itself on a words login (external commit), caught up on a PIN login. MLS SPLIT OUT of the core: crates
+    `account` (shared) and `mls` (own wasm package, loaded by `keys` only); core wasm now wasm-opt'd: 717 KB (was
+    1.36 MB), mls 695 KB. build.sh inlines wasm-bindgen snippets (mls-rs's Date.now). Live: register → created epoch 0;
+    words login → joined epoch 1/2; PIN login → "2 commit(s) applied: epoch 2". FIXED: logout now reloads the app —
+    per-page grant/table/group caches leaked into the next session (a new member's commit was refused NotGranted);
+    only a REGISTRATION marks the account new (a words login used to, treating an existing catalog as absent).
+    OPEN: a member that only ever logs in by PIN and never joined can't join without the words (Add by another member
+    comes with spaces).
   - [ ] 1d escrow: epoch secrets sealed to the words, so words alone recover history
   - [ ] 1e sealing whole tree nodes (a hook in freenet-prolly); tables sealed over

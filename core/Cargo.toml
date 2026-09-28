@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "The Craftworks app's one wasm package: the node's framing (wire), the identity delegate's questions, and the account (recovery words, DID)."
+description = "The page's core wasm: the node's framing (wire), the identity delegate's questions, the account's contracts, and tables."
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -22,12 +22,6 @@ freenet-prolly = { workspace = true }
 # A read repairs through parity with the SDK's one implementation (`engine::repair`: find a block's group, rebuild
 # and verify it; the root's group of one). Pure: nothing in it reaches the network.
 engine = { workspace = true }
-# MLS (RFC 9420): the one key manager — your account's nodes, and every space's members. Runs in the page's core
-# (JS randomness and clock are legitimate there); the identity delegate keeps the state and the epoch secrets.
-mls-rs = { version = "=0.56.0", default-features = false, features = ["std", "tree_index", "fast_serialize"] }
-mls-rs-crypto-rustcrypto = "=0.22.1"
-mls-rs-core = "=0.27.0"
-zeroize = "1"
 freenet-stdlib = { version = "0.10.0", features = ["contract"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = { version = "1", default-features = false }
@@ -38,6 +32,8 @@ hmac = "0.12"
 bs58 = "0.5"
 # The account's key event log: its format and chain check, the ONE implementation (the contract's own crate).
 craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
+# The account (words, key log, owner keys, members): its own crate, shared with mls.
+craftworks-account = { path = "../account" }
 # The account's encryption key (X25519) and its vault (XChaCha20-Poly1305).
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }

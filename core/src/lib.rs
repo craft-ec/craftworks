@@ -2,9 +2,9 @@
 //! answers, and the account: its recovery words and the DID they name. It holds no key after a call returns and makes no decision: it
 //! frames what the page asks and names what the node answers, as JSON the components can show.
 
-pub mod account;
+/// The account: its own crate (shared with mls), under its old name here.
+pub use craftworks_account as account;
 pub mod data;
-pub mod mls;
 
 use craftworks_identity::{decode_answer, encode_request, Answer, Request};
 use serde_json::{json, Value};
@@ -35,6 +35,9 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::Revoked => json!({ "revoked": true }),
         Answer::Refused(why) => json!({ "refused": format!("{why:?}") }),
         Answer::TableKey { key } => json!({ "tableKey": hex(key) }),
+        Answer::MlsSaved => json!({ "mlsSaved": true }),
+        Answer::MlsState { state } => json!({ "mlsState": state.as_ref().map(|s| hex(s)) }),
+        Answer::TableKeyAt { epoch, key } => json!({ "tableKey": hex(key), "epoch": epoch }),
     }
 }
 
@@ -387,6 +390,17 @@ mod js {
         pub fn frames_grant(&mut self, tables: Vec<String>) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Grant { tables })
         }
+        /// Keep this member's MLS state and its epoch's secret (the home site only).
+        pub fn frames_mls_save(&mut self, state: &[u8], epoch: f64, secret: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::MlsSave { state: state.to_vec(), epoch: epoch as u64, secret: b32(secret)? })
+        }
+        pub fn frames_mls_load(&mut self) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::MlsLoad)
+        }
+        /// A table's key in an MLS epoch (`epoch` < 0: the newest held).
+        pub fn frames_table_key_at(&mut self, table: String, epoch: f64) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::TableKeyAt { table, epoch: (epoch >= 0.0).then_some(epoch as u64) })
+        }
         /// The key that seals table `table` (generation `gen`): given to a granted site only.
         pub fn frames_table_key(&mut self, table: String, gen: u8) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::TableKey { table, gen })
@@ -452,6 +466,13 @@ mod js {
                 Some(e) if e.id() == *did => Ok(craftworks_idlog_contract::Log { events: vec![e] }),
                 _ => Err(err("the account's key log is not on the network".into())),
             }
+        }
+
+        /// The account's key log as the network holds it (read first): for the `mls` package, which verifies it again.
+        pub fn idlog_state(&self, idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            let id = account::idlog_put(idlog_code, &b32(did)?, None).id_bytes;
+            let st = self.0.got(&id).ok_or_else(|| err("the account's key log has not been read".into()))?;
+            Ok(js_sys::Uint8Array::from(st))
         }
 
         /// JOIN the account words W hold, as `member` (this node's key): the log (PUT again: re-publishing a signed

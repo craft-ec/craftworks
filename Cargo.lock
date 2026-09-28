@@ -366,6 +366,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-account"
+version = "0.1.0"
+dependencies = [
+ "bip39",
+ "blake3",
+ "bs58",
+ "chacha20poly1305",
+ "craftec-register-contract",
+ "craftec-set-contract",
+ "craftworks-idlog-contract",
+ "ed25519-dalek",
+ "freenet-stdlib",
+ "hmac",
+ "sha2",
+ "wire",
+ "x25519-dalek",
+]
+
+[[package]]
 name = "craftworks-core"
 version = "0.1.0"
 dependencies = [
@@ -375,6 +394,7 @@ dependencies = [
  "chacha20poly1305",
  "craftec-register-contract",
  "craftec-set-contract",
+ "craftworks-account",
  "craftworks-identity",
  "craftworks-idlog-contract",
  "ed25519-dalek",
@@ -383,16 +403,12 @@ dependencies = [
  "freenet-stdlib",
  "hmac",
  "js-sys",
- "mls-rs",
- "mls-rs-core",
- "mls-rs-crypto-rustcrypto",
  "serde_json",
  "sha2",
  "tail",
  "wasm-bindgen",
  "wire",
  "x25519-dalek",
- "zeroize",
 ]
 
 [[package]]
@@ -415,6 +431,23 @@ dependencies = [
  "blake3",
  "ed25519-dalek",
  "freenet-stdlib",
+]
+
+[[package]]
+name = "craftworks-mls"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "craftworks-account",
+ "craftworks-identity",
+ "craftworks-idlog-contract",
+ "ed25519-dalek",
+ "js-sys",
+ "mls-rs",
+ "mls-rs-core",
+ "mls-rs-crypto-rustcrypto",
+ "wasm-bindgen",
+ "zeroize",
 ]
 
 [[package]]

@@ -324,13 +324,8 @@ impl Account {
     }
 }
 
-/// A table's key in an epoch: from the epoch's secret and the table's name.
-pub fn table_key(epoch_secret: &[u8; 32], table: &str) -> [u8; 32] {
-    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-09-28 mls table key");
-    h.update(epoch_secret);
-    h.update(table.as_bytes());
-    *h.finalize().as_bytes()
-}
+/// A table's key in an epoch: the identity delegate's one derivation.
+pub use craftworks_identity::epoch_table_key as table_key;
 
 #[cfg(test)]
 mod tests {
@@ -380,5 +375,109 @@ mod tests {
         let (d, commit) = Account::join(rotated.clone(), &next, &a.group_info().unwrap()).unwrap();
         a.process(&commit).unwrap();
         assert_eq!(a.epoch_secret().unwrap(), d.epoch_secret().unwrap());
+    }
+}
+
+/// The page's side: one `Mls` per page, this node's member of the account's group.
+#[cfg(target_arch = "wasm32")]
+mod js {
+    use super::*;
+    use wasm_bindgen::prelude::*;
+
+    fn err(e: impl std::fmt::Display) -> JsValue {
+        JsValue::from_str(&e.to_string())
+    }
+
+    fn did32(b: &[u8]) -> Result<[u8; 32], JsValue> {
+        b.try_into().map_err(|_| err("a DID is 32 bytes"))
+    }
+
+    /// The account's rule from its key log's bytes: verified here against the DID, never taken on trust.
+    fn log_of(did: &[u8; 32], log: &[u8]) -> Result<craftworks_idlog_contract::Log, JsValue> {
+        craftworks_idlog_contract::read(did, log).ok_or_else(|| err("the account's key log does not verify"))
+    }
+
+    fn ident(did: [u8; 32], log: &craftworks_idlog_contract::Log) -> AccountIdentity {
+        AccountIdentity { did, owners: log.events.iter().map(|e| e.key).collect() }
+    }
+
+    #[wasm_bindgen]
+    pub struct Mls(Option<Account>);
+
+    #[wasm_bindgen]
+    impl Mls {
+        #[wasm_bindgen(constructor)]
+        pub fn new() -> Mls {
+            Mls(None)
+        }
+
+        /// With the WORDS (their owner key is derived here and never leaves): the group made (`group_info` empty) or
+        /// joined by an external commit. `[kind, commit]`: "created" (no commit) or "joined".
+        pub fn with_words(&mut self, did: &[u8], log: &[u8], entropy: &[u8], group_info: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let did = did32(did)?;
+            let log = log_of(&did, log)?;
+            let (_, owner, _) = craftworks_account::open_log(entropy, &log).ok_or_else(|| err("these recovery words were replaced by newer ones"))?;
+            let (acc, kind, commit) = if group_info.is_empty() {
+                (Account::create(ident(did, &log), &owner).map_err(err)?, "created", Vec::new())
+            } else {
+                let (a, c) = Account::join(ident(did, &log), &owner, group_info).map_err(err)?;
+                (a, "joined", c)
+            };
+            self.0 = Some(acc);
+            Ok([JsValue::from(kind), js_sys::Uint8Array::from(&commit[..]).into()].into_iter().collect())
+        }
+
+        /// This node's member state, as the identity delegate kept it.
+        pub fn load(&mut self, did: &[u8], log: &[u8], state: &[u8]) -> Result<(), JsValue> {
+            let did = did32(did)?;
+            let log = log_of(&did, log)?;
+            self.0 = Some(Account::load(ident(did, &log), state).map_err(err)?);
+            Ok(())
+        }
+
+        fn member(&mut self) -> Result<&mut Account, JsValue> {
+            self.0.as_mut().ok_or_else(|| err("not a member of the account's group here yet"))
+        }
+
+        /// Another member's commit (a join, a removal), applied.
+        pub fn process(&mut self, commit: &[u8]) -> Result<(), JsValue> {
+            self.member()?.process(commit).map_err(err)
+        }
+
+        /// Remove the member at `index`: the commit to publish.
+        pub fn remove(&mut self, index: u32) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&self.member()?.remove(index).map_err(err)?[..]))
+        }
+
+        /// `{ epoch, secret, info, me, members: [{ index, key }], state }`.
+        pub fn status(&mut self) -> Result<js_sys::Object, JsValue> {
+            let m = self.member()?;
+            let o = js_sys::Object::new();
+            let set = |k: &str, v: JsValue| js_sys::Reflect::set(&o, &k.into(), &v).map(|_| ());
+            set("epoch", JsValue::from(m.epoch() as f64))?;
+            set("secret", js_sys::Uint8Array::from(&m.epoch_secret().map_err(err)?[..]).into())?;
+            set("info", js_sys::Uint8Array::from(&m.group_info().map_err(err)?[..]).into())?;
+            set("me", JsValue::from(m.my_index()))?;
+            let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+            let members: js_sys::Array = m
+                .members()
+                .into_iter()
+                .map(|(i, k)| -> JsValue {
+                    let x = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&x, &"index".into(), &JsValue::from(i));
+                    let _ = js_sys::Reflect::set(&x, &"key".into(), &JsValue::from(hex(&k)));
+                    x.into()
+                })
+                .collect();
+            set("members", members.into())?;
+            set("state", js_sys::Uint8Array::from(&m.save().map_err(err)?[..]).into())?;
+            Ok(o)
+        }
+    }
+
+    impl Default for Mls {
+        fn default() -> Self {
+            Self::new()
+        }
     }
 }

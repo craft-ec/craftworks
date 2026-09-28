@@ -94,6 +94,14 @@ pub enum Request {
     /// account's data key, which never leaves. (Last in the list: the variants before keep their encoding, so earlier
     /// builds still read a Handover.)
     TableKey { table: String, gen: u8 },
+    /// KEEP this member's MLS state (the account's group, run by the page) and the secret of its current epoch. The
+    /// home site only: whoever holds the state can act in the group.
+    MlsSave { state: Vec<u8>, epoch: u64, secret: [u8; 32] },
+    /// The member's MLS state, to the home site only.
+    MlsLoad,
+    /// The key of table `table` in MLS epoch `epoch` (`None`: the newest this member holds): from that epoch's secret,
+    /// kept here; to a site allowed that table only.
+    TableKeyAt { table: String, epoch: Option<u64> },
 }
 
 /// What the identity answers.
@@ -118,6 +126,9 @@ pub enum Answer {
     Revoked,
     Refused(Why),
     TableKey { key: [u8; 32] },
+    MlsSaved,
+    MlsState { state: Option<Vec<u8>> },
+    TableKeyAt { epoch: u64, key: [u8; 32] },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,6 +169,8 @@ pub enum Why {
     NoDataKey,
     /// Not a request this identity reads.
     Unreadable,
+    /// No MLS epoch secret is held here (for that epoch, or at all yet).
+    NoEpoch,
 }
 
 /// Wrong PINs in a row allowed before PIN unlock is locked on this node.
@@ -212,6 +225,21 @@ pub const CATALOG: &str = "tables";
 
 /// The key that seals a table: from the account's data key, the table's name and its generation. The same on every node
 /// of the account; a new generation is a new key (what a revoked site held does not open what is written after).
+/// A table's key in an MLS epoch: from the epoch's secret and the table's name. The ONE derivation (the core's `mls` uses
+/// this).
+pub fn epoch_table_key(epoch_secret: &[u8; 32], table: &str) -> [u8; 32] {
+    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-09-28 mls table key");
+    h.update(epoch_secret);
+    h.update(table.as_bytes());
+    *h.finalize().as_bytes()
+}
+
+/// `MLS ‖ member` → this member's MLS state; `EPOCH ‖ member ‖ epoch (u64 BE)` → that epoch's secret;
+/// `EPOCH_LATEST ‖ member` → the newest epoch held (u64 BE).
+pub const MLS: &[u8] = b"identity_mls/";
+pub const EPOCH: &[u8] = b"identity_epoch/";
+pub const EPOCH_LATEST: &[u8] = b"identity_epoch_latest/";
+
 pub fn table_key(data_seed: &[u8; 32], table: &str, gen: u8) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key("craftworks 2026-09-28 table key");
     h.update(data_seed);
@@ -479,6 +507,49 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 return Refused(Why::NotSaved);
             }
             Revoked
+        }
+        Request::MlsSave { state, epoch, secret } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            let m = a.public();
+            let latest = h.get_secret(&[EPOCH_LATEST, &m[..]].concat()).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes);
+            // Epoch secret first, then the state, then the newest mark: a crash between leaves a secret nobody points
+            // at, never a state whose epoch has no secret.
+            if !h.set_secret(&[EPOCH, &m[..], &epoch.to_be_bytes()].concat(), &secret)
+                || !h.set_secret(&[MLS, &m[..]].concat(), &state)
+                || (latest.is_none_or(|l| epoch >= l) && !h.set_secret(&[EPOCH_LATEST, &m[..]].concat(), &epoch.to_be_bytes()))
+            {
+                return Refused(Why::NotSaved);
+            }
+            MlsSaved
+        }
+        Request::MlsLoad => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            MlsState { state: h.get_secret(&[MLS, &a.public()[..]].concat()).filter(|s| !s.is_empty()) }
+        }
+        Request::TableKeyAt { table, epoch } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if !table_ok(&table) {
+                return Refused(Why::BadTable);
+            }
+            let m = a.public();
+            let may = a.home == app || granted(h, &m, &app, &table) || (table == CATALOG && grants(h, &m).iter().any(|(g, _)| *g == app));
+            if !may {
+                return Refused(Why::NotGranted { table });
+            }
+            let epoch = match epoch.or_else(|| h.get_secret(&[EPOCH_LATEST, &m[..]].concat()).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes)) {
+                Some(e) => e,
+                None => return Refused(Why::NoEpoch),
+            };
+            match h.get_secret(&[EPOCH, &m[..], &epoch.to_be_bytes()].concat()).and_then(|b| <[u8; 32]>::try_from(b).ok()) {
+                Some(secret) => TableKeyAt { epoch, key: epoch_table_key(&secret, &table) },
+                None => Refused(Why::NoEpoch),
+            }
         }
         Request::TableKey { table, gen } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };

@@ -5,6 +5,8 @@
 //   const s = await login.session({ tab: "login" | "register" })   // the person; the dialog if nobody is; null if closed
 export async function start(ctx) {
   const auth = await ctx.require("auth");
+  // Loaded before anyone logs in: after a words login it takes this node into the account's MLS group.
+  await ctx.require("keys");
   const { glue } = await ctx.require("node");
 
   async function session({ tab = "login" } = {}) {

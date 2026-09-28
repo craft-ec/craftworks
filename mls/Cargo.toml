@@ -1,0 +1,25 @@
+[package]
+name = "craftworks-mls"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "MLS (the keys capability's wasm): the account's group on this node. Its own package, loaded only by `keys`."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+craftworks-account = { path = "../account" }
+craftworks-identity = { path = "../identity" }
+craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
+mls-rs = { version = "=0.56.0", default-features = false, features = ["std", "tree_index", "fast_serialize"] }
+mls-rs-crypto-rustcrypto = "=0.22.1"
+mls-rs-core = "=0.27.0"
+zeroize = "1"
+ed25519-dalek = { version = "=2.2.0", default-features = false }
+blake3 = { version = "1", default-features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.128"
+js-sys = "0.3"

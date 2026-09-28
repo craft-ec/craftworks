@@ -47,7 +47,10 @@ export async function start(ctx) {
     current = null;
     ctx.log("logged out", {});
     announce();
+    // The app starts again, at home: every capability holds per-session things (grants asked, tables and their keys,
+    // the account's group), and none of them may reach the next person to log in on this page.
     location.hash = "#/";
+    location.reload();
   }
 
   // Put one of the account's contracts; resolves when the node accepts it.
@@ -128,6 +131,7 @@ export async function start(ctx) {
   // ONCE and the first that answers wins, so the one that does not exist never holds the login up. Neither: an
   // account from before the key log, whose inception is put now (its tables and nodes stay where they were).
   let joining = null;
+  const joined = [];
   async function join(entropy, pin, { fresh = false } = {}) {
     if (!joining || joining.entropyHex !== hex(entropy)) {
       const [setCode, idlogCode, registerCode] = await codes();
@@ -152,7 +156,11 @@ export async function start(ctx) {
     }
     const r = await id.provision(joining.member, joining.did, pin, joining.data);
     if (r.unlocked) {
-      made = r.unlocked.did;
+      // Only a REGISTRATION makes an account that has nothing on the network yet; a words login opens one that does.
+      if (fresh) made = r.unlocked.did;
+      // While the words are still here: whoever needs them to act for the account (the `keys` capability: this node
+      // joins the account's MLS group). A failure there is reported, never a failed login.
+      for (const f of joined) await f({ entropy: joining.entropy, did: joining.did, fresh }).catch(e => ctx.log("after login", { what: e?.message ?? String(e) }));
       joining.member.fill(0);
       joining.entropy.fill(0);
       joining.data.fill(0);
@@ -161,7 +169,14 @@ export async function start(ctx) {
     return r;
   }
 
-  return { check, accept: opened, unlock, join, logout, nodes, changeWords, current: () => current, identity: id };
+  // Read the account's key log (so the core holds it): true if the network has it.
+  const readKeyLog = async didBytes => get(glue.CraftworksCore.idlog_id((await codes())[1], didBytes), "reading the account's key log");
+
+  return {
+    check, accept: opened, unlock, join, logout, nodes, changeWords, readKeyLog, current: () => current, identity: id,
+    // `fn({ entropy, did, fresh })`, called after a words login or a registration, before the words are wiped.
+    onJoined: f => joined.push(f),
+  };
 }
 
 

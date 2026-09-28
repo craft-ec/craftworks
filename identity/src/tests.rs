@@ -434,3 +434,25 @@ fn a_table_key_is_given_to_the_home_site_and_to_a_site_only_once_granted() {
     assert_eq!(key(&mut m, OTHER, "pins", 0), Answer::Refused(Why::NotGranted { table: "pins".into() }), "only what was granted");
     assert_eq!(key(&mut m, OTHER, "Bad!", 0), Answer::Refused(Why::BadTable));
 }
+
+#[test]
+fn the_vault_keeps_mls_state_for_the_home_site_and_gives_epoch_table_keys_to_granted_sites() {
+    let mut m = provisioned(APP);
+    let at = |m: &mut Map, app, t: &str, epoch| serve(m, Request::TableKeyAt { table: t.into(), epoch }, app);
+    assert_eq!(at(&mut m, APP, "notes", None), Answer::Refused(Why::NoEpoch), "nothing before the group exists");
+    assert_eq!(serve(&mut m, Request::MlsLoad, APP), Answer::MlsState { state: None });
+    assert_eq!(serve(&mut m, Request::MlsSave { state: b"s1".to_vec(), epoch: 1, secret: [1; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::MlsSave { state: b"s2".to_vec(), epoch: 2, secret: [2; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::MlsLoad, APP), Answer::MlsState { state: Some(b"s2".to_vec()) });
+    // The newest epoch by default; an older one by name (blocks sealed then).
+    assert_eq!(at(&mut m, APP, "notes", None), Answer::TableKeyAt { epoch: 2, key: epoch_table_key(&[2; 32], "notes") });
+    assert_eq!(at(&mut m, APP, "notes", Some(1)), Answer::TableKeyAt { epoch: 1, key: epoch_table_key(&[1; 32], "notes") });
+    assert_eq!(at(&mut m, APP, "notes", Some(7)), Answer::Refused(Why::NoEpoch));
+    // Another site: no state at all, and table keys only for what it was granted.
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    assert_eq!(serve(&mut m, Request::MlsLoad, OTHER), Answer::Refused(Why::NotHome));
+    assert_eq!(serve(&mut m, Request::MlsSave { state: vec![], epoch: 3, secret: [3; 32] }, OTHER), Answer::Refused(Why::NotHome));
+    assert_eq!(at(&mut m, OTHER, "notes", None), Answer::Refused(Why::NotGranted { table: "notes".into() }));
+    assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
+    assert_eq!(at(&mut m, OTHER, "notes", None), Answer::TableKeyAt { epoch: 2, key: epoch_table_key(&[2; 32], "notes") });
+}

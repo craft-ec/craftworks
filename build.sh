@@ -8,6 +8,20 @@ cd "$root"
 target="${CARGO_TARGET_DIR:-$root/target}"
 cargo build -q --release -p craftworks-core --target wasm32-unknown-unknown
 wasm-bindgen --target web --out-name craftworks_core --out-dir packages/build "$target/wasm32-unknown-unknown/release/craftworks_core.wasm"
+# MLS: its own package (the keys capability's), never in the core.
+cargo build -q --release -p craftworks-mls --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-name craftworks_mls --out-dir packages/build "$target/wasm32-unknown-unknown/release/craftworks_mls.wasm"
+
+for name in craftworks_core craftworks_mls; do
+  # Optimised for size (binaryen, the same flags freenet-contracts uses): every page load fetches these.
+  wasm-opt -Os --enable-bulk-memory-opt --enable-bulk-memory "packages/build/${name}_bg.wasm" -o "packages/build/${name}_bg.opt.wasm"
+  [ -s "packages/build/${name}_bg.opt.wasm" ] || { echo "wasm-opt wrote nothing for $name" >&2; exit 1; }
+  mv "packages/build/${name}_bg.opt.wasm" "packages/build/${name}_bg.wasm"
+  # A package is loaded as bytes, not as a file beside others: wasm-bindgen's snippet files (inline JS a crate asked
+  # for) are put INTO the glue, so it imports nothing by path.
+  python3 tools/inline-snippets.py "packages/build/${name}.js"
+  echo "$name: $(wc -c < "packages/build/${name}_bg.wasm" | tr -d ' ') B"
+done
 
 cargo build -q --release -p craftworks-identity --target wasm32-unknown-unknown --features freenet-main-delegate
 cargo build -q --release -p probe --bin import-gate
