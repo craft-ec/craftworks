@@ -22,55 +22,55 @@ export async function mount(ctx, el) {
   }
   el.innerHTML = `
     <style>
-      .keep { --line: #8884; position: relative; }
-      .keep [hidden] { display: none !important; }
-      .keep .composer { max-width: 600px; margin: 8px auto 28px; border: 1px solid var(--line); border-radius: 8px;
-        box-shadow: 0 1px 3px #0002; padding: 10px 16px; display: grid; gap: 8px; }
+      .keep { position: relative; }
+            .keep .composer { max-width: 600px; margin: 8px auto 28px; border: 1px solid var(--cw-line); border-radius: var(--cw-radius);
+        box-shadow: var(--cw-shadow); padding: 10px var(--cw-space-4); display: grid; gap: var(--cw-space-2); background: var(--cw-surface); }
       .keep .composer input, .keep .composer textarea, .keep .editor input, .keep .editor textarea { font: inherit;
         border: 0; outline: 0; background: transparent; color: inherit; resize: none; width: 100%; }
       .keep .composer .title, .keep .editor .title { font-weight: 600; }
       .keep .composer .row, .keep .editor .row { display: flex; align-items: center; gap: 6px; }
       .keep .row .end { margin-left: auto; }
-      .keep .section { font-size: .72rem; letter-spacing: .08em; opacity: .7; margin: 18px 0 8px; }
+      .keep .section { font-size: var(--cw-text-xs); letter-spacing: .08em; color: var(--cw-muted); margin: 18px 0 var(--cw-space-2); }
       .keep .cards { columns: 240px; column-gap: 12px; }
       .keep.list .cards { columns: 1; max-width: 600px; margin: 0 auto; }
-      .keep .card { break-inside: avoid; margin: 0 0 12px; border: 1px solid var(--line); border-radius: 8px;
+      .keep .card { break-inside: avoid; margin: 0 0 var(--cw-space-3); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-surface);
         padding: 12px 14px 6px; cursor: default; position: relative; }
-      .keep .card[style*="background"] { color: #202124; border-color: transparent; }
+      .keep .card[style*="background"] { color: var(--cw-on-pastel); border-color: transparent; }
       .keep .card .t { font-weight: 600; margin-bottom: 6px; overflow-wrap: anywhere; }
       .keep .card .b { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18em; overflow: hidden; }
       .keep .card .tools { display: flex; gap: 2px; opacity: 0; transition: opacity .15s; margin-top: 6px; }
       .keep .card:hover .tools, .keep .card:focus-visible .tools, .keep .card:has(:focus-visible) .tools { opacity: 1; }
       .keep .tools button, .keep .row button, .keep .pin { border: 0; background: none; cursor: pointer; font-size: 15px;
-        padding: 4px 6px; border-radius: 50%; color: inherit; }
-      .keep .tools button:hover, .keep .row button:hover { background: #0001; }
-      /* The pin's look is the pins package's; here only where a card's sits, and that it shows on hover. */
+        padding: var(--cw-space-1) 6px; border-radius: 50%; color: inherit; }
+      .keep .tools button:hover, .keep .row button:hover { background: var(--cw-hover); }
+      /* The pin's look is the pin-button component's; here only where a card's sits, and that it shows on hover. */
       .keep .card .cw-pin { position: absolute; top: 6px; right: 6px; }
       .keep .card .cw-pin[aria-pressed="false"] { opacity: 0; }
       .keep .card:hover .cw-pin[aria-pressed="false"] { opacity: .45; }
-      .keep .swatches { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; border: 1px solid var(--line);
-        border-radius: 8px; background: Canvas; position: absolute; z-index: 5; width: max-content; max-width: 90vw;
-        box-shadow: 0 2px 10px #0003; }
-      .keep .swatches button { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line); }
-      .keep .empty { text-align: center; opacity: .6; margin-top: 40px; }
-      .keep .said { text-align: center; font-size: .9em; }
-      .keep dialog.editor { position: fixed; overflow: visible; width: min(600px, calc(100vw - 32px)); border: 0; border-radius: 8px; padding: 14px 16px;
-        box-shadow: 0 4px 24px #0006; display: grid; gap: 8px; }
-      .keep dialog.editor[style*="background"] { color: #202124; }
+      .keep .swatches { display: flex; flex-wrap: wrap; gap: var(--cw-space-1); padding: 6px; border: 1px solid var(--cw-line);
+        border-radius: var(--cw-radius); background: var(--cw-surface); position: absolute; z-index: 5; width: max-content; max-width: 90vw;
+        box-shadow: var(--cw-shadow-lg); }
+      .keep .swatches button { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--cw-line); }
+      .keep .empty { text-align: center; color: var(--cw-muted); margin-top: 40px; }
+      .keep .said { text-align: center; font-size: var(--cw-text-sm); }
+      .keep dialog.editor { position: fixed; overflow: visible; width: min(600px, calc(100vw - 32px)); border: 0; border-radius: var(--cw-radius); padding: 14px var(--cw-space-4);
+        box-shadow: var(--cw-shadow-lg); display: grid; gap: var(--cw-space-2); }
+      .keep dialog.editor[style*="background"] { color: var(--cw-on-pastel); }
       .keep dialog.editor:not([open]) { display: none; }
-      .keep .card .cw-chips { margin-top: 8px; }
+      .keep .card .cw-chips { margin-top: var(--cw-space-2); }
       .keep .labelbar { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 0 auto 12px; max-width: 800px; }
       .keep .labelbar:has(> :only-child) { display: none; }
-      .keep .labelbar button { font: inherit; font-size: .85rem; border: 1px solid var(--line); background: none; color: inherit;
-        border-radius: 14px; padding: 3px 12px; cursor: pointer; }
-      .keep .labelbar button[aria-pressed="true"] { background: #feefc3; color: #202124; border-color: transparent; }
+      .keep .labelbar button { font-size: var(--cw-text-sm); border: 1px solid var(--cw-line); background: none;
+        border-radius: var(--cw-radius-pill); padding: 3px var(--cw-space-3); cursor: pointer; }
+      .keep .labelbar button:hover { background: var(--cw-hover); }
+      .keep .labelbar button[aria-pressed="true"] { background: var(--cw-selected); color: var(--cw-on-selected); border-color: transparent; }
       .keep .labelbar .edit-labels { border-style: dashed; }
-      .keep dialog.labels-editor { border: 0; border-radius: 8px; padding: 14px 16px; width: min(320px, calc(100vw - 32px));
-        box-shadow: 0 4px 24px #0006; }
+      .keep dialog.labels-editor { border: 0; border-radius: var(--cw-radius); padding: 14px var(--cw-space-4); width: min(320px, calc(100vw - 32px));
+        box-shadow: var(--cw-shadow-lg); }
       .keep dialog.labels-editor:not([open]) { display: none; }
       .keep .labels-editor h3 { margin: 0 0 10px; font-size: 1rem; }
       .keep .labels-editor .line { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
-      .keep .labels-editor input { flex: 1; font: inherit; border: 0; border-bottom: 1px solid var(--line); background: transparent;
+      .keep .labels-editor input { flex: 1; font: inherit; border: 0; border-bottom: 1px solid var(--cw-line); border-radius: 0; background: transparent;
         color: inherit; outline: 0; padding: 3px 0; }
       .keep .labels-editor button { border: 0; background: none; cursor: pointer; font: inherit; color: inherit; }
       .keep .labels-editor .done-l { display: block; margin: 12px 0 0 auto; }
@@ -162,7 +162,7 @@ export async function mount(ctx, el) {
       b.type = "button";
       b.title = name;
       b.setAttribute("aria-label", name);
-      b.style.background = c || "Canvas";
+      b.style.background = c || "var(--cw-surface)";
       b.onclick = e => {
         e.stopPropagation();
         box.remove();

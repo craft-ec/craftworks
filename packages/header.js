@@ -6,14 +6,14 @@
 export function mount(ctx, el) {
   el.innerHTML = `
     <style>
-      .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid #8884; padding-bottom: 8px; }
-      .bar .home { text-decoration: none; font-size: 1.1rem; }
+      .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--cw-line); padding-bottom: var(--cw-space-2); }
+      .bar .home { text-decoration: none; font-size: 1.1rem; color: inherit; }
       .bar .name { font-weight: 600; }
       .bar .actions { display: flex; gap: 10px; align-items: center; }
-      .bar .actions button { border: 0; background: none; padding: 2px 4px; cursor: pointer; font: inherit; }
-      .bar .actions button:hover { background: #8882; border-radius: 4px; }
-      .bar .actions button[aria-pressed="true"] { background: #8883; border-radius: 4px; }
-      .bar .actions .search { font: inherit; padding: 4px 10px; border: 1px solid #8885; border-radius: 16px; width: 16em; }
+      .bar .actions button { border: 0; background: none; padding: 2px var(--cw-space-1); cursor: pointer; border-radius: var(--cw-radius-sm); }
+      .bar .actions button:hover { background: var(--cw-hover); }
+      .bar .actions button[aria-pressed="true"] { background: var(--cw-pressed); }
+      .bar .actions .search { padding: var(--cw-space-1) 10px; border-radius: var(--cw-radius-pill); width: 16em; }
       .bar .account { margin-left: auto; }
     </style>
     <nav class="bar">

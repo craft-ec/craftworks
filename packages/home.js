@@ -17,15 +17,15 @@ export async function mount(ctx, el) {
   const desktop = async () => {
     el.innerHTML = `
       <style>
-        .desk h3 { margin: 1.2em 0 .5em; font-size: 1rem; opacity: .75; }
-        .desk .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 12px; }
+        .desk h3 { margin: 1.2em 0 .5em; font-size: 1rem; color: var(--cw-muted); }
+        .desk .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: var(--cw-space-3); }
         .desk .tile { position: relative; }
-        .desk .app { display: grid; justify-items: center; gap: 6px; padding: 12px 6px;
-          border-radius: 12px; text-decoration: none; color: inherit; }
-        .desk .app:hover { background: #8881; }
+        .desk .app { display: grid; justify-items: center; gap: 6px; padding: var(--cw-space-3) 6px;
+          border-radius: var(--cw-radius); text-decoration: none; color: inherit; }
+        .desk .app:hover { background: var(--cw-hover); }
         .desk .icon { font-size: 40px; line-height: 1; }
         .desk .cw-pin { position: absolute; top: 2px; right: 2px; font-size: 14px; }
-        .desk .empty { opacity: .6; font-size: .9em; }
+        .desk .empty { color: var(--cw-muted); font-size: var(--cw-text-sm); }
       </style>
       <div class="desk">
         <h3>Pinned</h3><div class="grid pinned"></div>

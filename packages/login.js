@@ -17,17 +17,20 @@ export async function start(ctx) {
       box.className = "auth-dialog";
       box.innerHTML = `
         <style>
-          .auth-dialog { position: fixed; inset: 0; background: #0008; display: grid; place-items: center; z-index: 20; }
-          .auth-dialog .card { background: var(--bg, #fff); color: inherit; padding: 1.2em 1.4em; border-radius: 8px;
-            width: min(26em, calc(100vw - 32px)); display: grid; gap: .7em; }
+          .auth-dialog { position: fixed; inset: 0; background: var(--cw-scrim); display: grid; place-items: center; z-index: 20; }
+          .auth-dialog .card { background: var(--cw-surface); color: var(--cw-fg); padding: 1.2em 1.4em; border-radius: var(--cw-radius);
+            box-shadow: var(--cw-shadow-lg); width: min(26em, calc(100vw - 32px)); display: grid; gap: .7em; }
           .auth-dialog .tabs { display: flex; gap: .5em; }
+          .auth-dialog .tabs button { border: 0; background: none; cursor: pointer; padding: var(--cw-space-1) var(--cw-space-2); border-radius: var(--cw-radius-sm); }
+          .auth-dialog .tabs button:hover { background: var(--cw-hover); }
           .auth-dialog .close { margin-left: auto; }
-          .auth-dialog .tabs button[aria-selected="true"] { font-weight: bold; text-decoration: underline; }
+          .auth-dialog .tabs button[aria-selected="true"] { font-weight: 600; box-shadow: inset 0 -2px var(--cw-accent); }
           .auth-dialog form { display: grid; gap: .5em; }
-          .auth-dialog form[hidden] { display: none; }
-          .auth-dialog input, .auth-dialog textarea { font: inherit; padding: .4em; }
-          .auth-dialog .said { min-height: 1.2em; font-size: .9em; margin: 0; }
-          .auth-dialog .note { font-size: .85em; opacity: .8; margin: 0; }
+                    .auth-dialog input:not([type="checkbox"]), .auth-dialog textarea { padding: .4em; }
+          .auth-dialog form > button:not(.swap) { background: var(--cw-accent); color: var(--cw-accent-fg); border: 0; border-radius: var(--cw-radius-sm); padding: var(--cw-space-2); cursor: pointer; }
+          .auth-dialog .swap { border: 0; background: none; color: var(--cw-accent); cursor: pointer; padding: 0; justify-self: start; }
+          .auth-dialog .said { min-height: 1.2em; font-size: var(--cw-text-sm); margin: 0; }
+          .auth-dialog .note { font-size: var(--cw-text-sm); color: var(--cw-muted); margin: 0; }
         </style>
         <div class="card">
           <div class="tabs" role="tablist">

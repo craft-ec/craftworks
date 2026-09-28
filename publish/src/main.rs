@@ -258,7 +258,9 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 23] = [
+    let packages: [(&str, &str, PathBuf); 24] = [
+        // The look: design tokens and base styles, applied by the loader before anything mounts.
+        ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
         ("footer", "module", app.join("packages/footer.js")),
         ("home", "module", app.join("packages/home.js")),
@@ -353,7 +355,7 @@ async fn main() -> Result<()> {
     }
     let prior: Vec<String> = history.iter().rev().filter(|l| **l != this_build).take(8).map(|l| format!("\"{l}\"")).collect();
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ \"/\": [\"home\"], \"/account\": [\"account\"], \"/notes\": [\"notes\"] }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\"],\n  \"identity_prior\": [{}],\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ \"/\": [\"home\"], \"/account\": [\"account\"], \"/notes\": [\"notes\"] }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\"],\n  \"identity_prior\": [{}],\n  \"packages\": {{\n{}\n  }} }}\n",
         prior.join(", "),
         entries.join(",\n")
     );

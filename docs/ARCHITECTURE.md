@@ -62,13 +62,18 @@ a label alike; governance decides who controls one note or a whole company.
 | `blocks` | the one door for tree blocks: fetch raced against parity, rebuild, put |
 | `keep` | lifecycle: re-publishing signed states, retention, flushing when quiet, health |
 
-## 4. Apps, pages, components (10)
+## 4. Apps, pages, components (13)
 
 | Kind | Items |
 |---|---|
 | App shell | `wrapper`, `loader`, `trace` |
-| Components | `header`, `footer`, `login` |
+| Components | `theme`, `header`, `footer`, `login`, `pin-button`, `label-menu` |
 | Pages | `home`, `account`, `notes`, `chat` |
+
+**`theme`** is the one place the look is decided: design tokens as CSS variables (colours, surfaces, lines, accent,
+spacing, radius, type, shadows), light and dark (following the system), and base styles for text, buttons and inputs.
+The app's manifest names its theme and the loader applies it before anything mounts. Every other component and page
+uses the tokens, never its own colours or sizes — so a new look, or a second theme, is one package.
 
 ## 5. Decisions the shape rests on
 
@@ -102,6 +107,7 @@ Each phase: build → the private node (all three sites) → published through B
 | # | Phase | Capabilities | What it delivers | Status |
 |---|---|---|---|---|
 | 0 | **Restructure to the shape** | all | packages renamed/split to §3–4: `data` → `storage`, `auth` → `auth` + `login`, grants → `access`, `pins` + `tags` → `edge` + components `pin-button`, `label-menu`, `timeline` → `trace`; no behaviour change | done |
+| 0b | **Theme** | `theme` | the tokens and base styles; every component and page moved onto them; dark mode everywhere | done |
 | 1 | **Keys and sealing** | `keys`, `identity`, `storage` | MLS in the core; your account as an MLS group of your nodes; table key = export(epoch, table); escrow to the words; sealing of whole tree nodes (a hook in freenet-prolly); tables sealed today by row are sealed over | — |
 | 2 | **Writers and merge** | `storage` | one sequence per writer (per node now, per member later); readers merge, causally ordered | — |
 | 3 | **Reads** | `storage`, `blocks` | range (latest N, older pages) and change-only reads (tree diff) | — |

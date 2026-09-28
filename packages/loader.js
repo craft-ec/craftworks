@@ -205,6 +205,8 @@ export async function run(boot) {
     // build still is, until its next login moves it here.
     ctx.identityPrior = manifest.identity_prior ?? [];
     document.title = manifest.app;
+    // The app's THEME (its manifest names it): applied before anything mounts, so nothing shows unstyled.
+    if (manifest.theme) await require(manifest.theme);
     ctx.log("manifest read", {
       what: `${manifest.app}: ${Object.keys(manifest.packages).length} packages, ${Object.keys(manifest.pages).length} pages`,
       bytes: m.bytes.length,

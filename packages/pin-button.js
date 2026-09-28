@@ -12,10 +12,10 @@ export async function start(ctx) {
   // One look for a pin everywhere: unpinned grey and faint, pinned in colour. A page places it (position, size).
   const style = document.createElement("style");
   style.textContent = `
-    .cw-pin { border: 0; background: none; cursor: pointer; font: inherit; line-height: 1; padding: 4px; border-radius: 50%; }
+    .cw-pin { border: 0; background: none; cursor: pointer; line-height: 1; padding: var(--cw-space-1); border-radius: 50%; }
     .cw-pin[aria-pressed="false"] { filter: grayscale(1); opacity: .45; }
     .cw-pin[aria-pressed="true"] { opacity: 1; }
-    .cw-pin:hover { background: #8882; }`;
+    .cw-pin:hover { background: var(--cw-hover); }`;
   document.head.append(style);
 
   // Every live button follows the table: a pin changed anywhere (this page, another tab, another node) shows at once.
