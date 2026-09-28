@@ -163,6 +163,83 @@ async fn put_all(
     Ok(owed.into_keys().chain(refused.into_keys()).collect())
 }
 
+async fn follow(ws: &str, sites: &[String]) -> Result<()> {
+    use futures::{SinkExt, StreamExt};
+    let (mut tx, mut rx) = tokio_tungstenite::connect_async(ws).await.context("connecting")?.0.split();
+    let mut r = wire::Reassembler::new();
+    for (i, site) in sites.iter().enumerate() {
+        let id: [u8; 32] = *ContractInstanceId::from_base58(site).map_err(|e| anyhow::anyhow!("{site}: not a site id: {e}"))?;
+        let t = Instant::now();
+        for f in wire::frame_get(wire::contract_id(id), true, i as u32 + 2).map_err(|e| anyhow::anyhow!(e))? {
+            tx.send(Message::Binary(f.into())).await?;
+        }
+        let said = loop {
+            match tokio::time::timeout(Duration::from_secs(120), rx.next()).await {
+                Err(_) => break "no answer in 120 s".to_string(),
+                Ok(None) => bail!("the node closed the connection"),
+                Ok(Some(Err(e))) => bail!("the connection: {e}"),
+                Ok(Some(Ok(Message::Binary(b)))) => match wire::unframe(&mut r, &b) {
+                    wire::Incoming::Got { state, .. } => break format!("got {} B", state.len()),
+                    wire::Incoming::GetFailed { why, .. } => break format!("get failed: {why:?}"),
+                    _ => {}
+                },
+                Ok(Some(Ok(_))) => {}
+            }
+        };
+        println!("follow {site}: {said} in {} ms", t.elapsed().as_millis());
+    }
+    Ok(())
+}
+
+async fn relay(from: &str, to: &str, sites: &[String]) -> Result<()> {
+    use freenet_stdlib::client_api::{ClientRequest, ContractRequest, ContractResponse, HostResponse};
+    use futures::{SinkExt, StreamExt};
+    let (mut ftx, mut frx) = tokio_tungstenite::connect_async(from).await.context("connecting to the source")?.0.split();
+    let (mut ttx, mut trx) = tokio_tungstenite::connect_async(to).await.context("connecting to the target")?.0.split();
+    for (i, site) in sites.iter().enumerate() {
+        let key = ContractInstanceId::from_base58(site).map_err(|e| anyhow::anyhow!("{site}: not a site id: {e}"))?;
+        let req = ClientRequest::ContractOp(ContractRequest::Get { key, return_contract_code: true, subscribe: false, blocking_subscribe: false });
+        ftx.send(Message::Binary(bincode::serialize(&req)?.into())).await?;
+        let mut r = wire::Reassembler::new();
+        let (contract, state) = loop {
+            let m = tokio::time::timeout(Duration::from_secs(120), frx.next()).await.context("the source did not answer in 120 s")?;
+            let Some(Ok(Message::Binary(b))) = m else { continue };
+            let resp = match wire::Reassembler::decode(&b) {
+                Ok(HostResponse::StreamChunk { stream_id, index, total, data }) => match r.chunk(stream_id, index, total, data.to_vec()) {
+                    Ok(Some(whole)) => wire::Reassembler::decode(&whole).map_err(|e| anyhow::anyhow!("{e:?}"))?,
+                    Ok(None) => continue,
+                    Err(e) => bail!("a broken stream from the source: {e:?}"),
+                },
+                Ok(x) => x,
+                Err(e) => bail!("the source said: {e:?}"),
+            };
+            if let HostResponse::ContractResponse(ContractResponse::GetResponse { contract: Some(c), state, .. }) = resp {
+                break (c, state);
+            }
+        };
+        let bytes = state.as_ref().len();
+        for f in wire::frame_put(contract, state, i as u32 + 2).map_err(|e| anyhow::anyhow!(e))? {
+            ttx.send(Message::Binary(f.into())).await?;
+        }
+        let mut r = wire::Reassembler::new();
+        let said = loop {
+            match tokio::time::timeout(Duration::from_secs(120), trx.next()).await {
+                Err(_) => break "no answer in 120 s".to_string(),
+                Ok(None) => bail!("the target closed the connection"),
+                Ok(Some(Err(e))) => bail!("the target: {e}"),
+                Ok(Some(Ok(Message::Binary(b)))) => match wire::unframe(&mut r, &b) {
+                    wire::Incoming::Ack(wire::AckKind::Put(_)) => break "taken".to_string(),
+                    wire::Incoming::PutFailed { said, .. } | wire::Incoming::PutFailedByText { said, .. } => break format!("refused: {said}"),
+                    _ => {}
+                },
+                Ok(Some(Ok(_))) => {}
+            }
+        };
+        println!("relay {site}: {bytes} B, {said}");
+    }
+    Ok(())
+}
+
 struct Driver {
     sock: probe::live::Sock,
     io: PageIo,
@@ -211,6 +288,20 @@ async fn main() -> Result<()> {
             println!("{}", delegate_id(&read(Path::new(wasm))?));
             return Ok(());
         }
+    }
+    // FOLLOW: a node that holds a site answers a plain GET from its copy; a GET that SUBSCRIBES has it ask the site's
+    // peers and keep following it. Only GETs are sent — nothing is written — so this is the one mode allowed on the
+    // owner's node, when the owner asks for it (a stale copy of their site).
+    // RELAY: a site's current version, as `from` has it (its contract and signed state), PUT into `to` — for a node
+    // holding an old copy that following did not bring up to date. The site contract checks the state's signature, so
+    // only the real publication is taken.
+    if a.first().map(String::as_str) == Some("relay") {
+        let [_, from, to, sites @ ..] = a.as_slice() else { bail!("usage: publish-craftworks relay <from_ws> <to_ws> <site id>…") };
+        return relay(from, to, sites).await;
+    }
+    if a.first().map(String::as_str) == Some("follow") {
+        let [_, ws, sites @ ..] = a.as_slice() else { bail!("usage: publish-craftworks follow <ws_url> <site id>…") };
+        return follow(ws, sites).await;
     }
     let [ws, root] = a.as_slice() else { bail!("usage: publish-craftworks <ws_url> <craftworks_root>") };
     probe::node::allowed_port(ws)?;

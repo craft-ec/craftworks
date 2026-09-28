@@ -30,7 +30,7 @@ export async function mount(ctx, el) {
         <div class="hero">
           <p class="tag">Craftec · Craft The Future</p>
           <h2>Craftworks</h2>
-          <p class="lead">One stop centre for everything Freenet. Notes, messages and chat that live on the Freenet network
+          <p class="lead">One stop centre for everything Freenet. Notes, messages, chat and mail that live on the Freenet network
             itself: no server in between, no company holding your data.</p>
           <div class="go"><button type="button" class="main" data-tab="register">Create an account</button>
             <button type="button" data-tab="login">Log in</button></div>

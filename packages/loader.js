@@ -5,9 +5,9 @@
 // LAYOUT (what fills the header and the footer) and its PAGES (a route -> what fills the body, and any header/footer
 // of its own). The loader only makes the three SLOTS; what fills them is the app's, so a header, a body or a footer is
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
-// loads the first time something asks for it (`ctx.require(name)`), once. A page that needs no node never loads the
-// node's code at all.
-const VERSION = "19";
+// loads the first time something asks for it (`ctx.require(name)`), once. The node's code is loaded after the first
+// page is up even where the page needs none: to FOLLOW the app's and the loader's sites (below).
+const VERSION = "20";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -342,8 +342,53 @@ export async function run(boot) {
     traceToggle();
     addEventListener("hashchange", () => show(route()).catch(fail));
     await show(route());
+    setTimeout(() => follow(m.bytes).catch(e => ctx.log("newest", { what: `following: ${e.message}` })), 2000);
   } catch (e) {
     fail(e);
+  }
+
+  // FOLLOWING: a node answers a plain GET of a site from the copy it holds, so a node that fetched an app once would
+  // keep serving that version. Every page load has this node follow (subscribe to) the app's site and the loader's:
+  // the network then sends it each new version. When one lands — the node says the site changed, or its manifest
+  // (read again every minute and on focus) differs from the one this page runs — a notice offers to load it.
+  async function follow(running) {
+    const node = await require("node");
+    const sites = [stack.appSite(), stack.loaderSite()].filter(Boolean);
+    let told = false;
+    const newer = () => {
+      if (told) return;
+      told = true;
+      ctx.log("newest", { what: "a newer version is on this node" });
+      const n = document.createElement("div");
+      n.setAttribute("role", "status");
+      n.style.cssText =
+        "position:fixed;left:50%;bottom:44px;transform:translateX(-50%);z-index:2147483002;display:flex;gap:10px;align-items:center;" +
+        "background:Canvas;color:CanvasText;border:1px solid #8886;border-radius:999px;box-shadow:0 4px 18px #0004;padding:6px 8px 6px 14px;font-size:.9rem";
+      n.textContent = "A newer version is ready.";
+      const b = document.createElement("button");
+      b.textContent = "Reload";
+      b.style.cssText = "border:0;border-radius:999px;padding:4px 12px;background:AccentColor;color:AccentColorText;cursor:pointer";
+      b.onclick = () => location.reload();
+      n.append(b);
+      document.body.append(n);
+    };
+    const check = async () => {
+      const r = await fetch(new URL("manifest.json", location.href), { cache: "no-store" }).catch(() => null);
+      if (!r?.ok) return;
+      const now = new Uint8Array(await r.arrayBuffer());
+      if (now.length !== running.length || now.some((x, i) => x !== running[i])) newer();
+    };
+    node.listen(said => {
+      if (said.kind !== "changed" || !sites.includes(said.key)) return;
+      if (said.key === stack.loaderSite()) newer();
+      else check();
+    });
+    await stack.fresh();
+    await check();
+    // And the node's copy looked at again now and then, and when the page comes back into view: however it got there.
+    const again = () => !told && check().catch(() => {});
+    setInterval(again, 60000);
+    addEventListener("focus", again);
   }
 
   function fail(e) {

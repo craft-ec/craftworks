@@ -465,6 +465,7 @@ name = "craftworks-publish"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "blake3",
  "core-types",
  "ed25519-dalek",
