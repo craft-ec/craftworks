@@ -22,7 +22,9 @@ per-credential secret that seals an account key stored on the network; the passk
 - The shell's own document at `http://localhost:<port>`: create + get with PRF work (Chromium, virtual authenticator:
   32-byte PRF output).
 - A real Mac: a passkey created for rp id `localhost` (Edge → iCloud Keychain, platform authenticator, Touch ID) —
-  PRF supported, the same secret on every sign-in, and the passkey appears on the person's iPhone (synced).
+  PRF supported, the same secret on every sign-in, and the passkey appears on the person's iPhone (synced). Signing in
+  from SAFARI on the same Mac with that passkey gives the same PRF secret (`c0c404621af2`, a fingerprint): the secret
+  is the credential's, not the browser's.
 - `http://127.0.0.1:<port>`: `SecurityError: This is an invalid domain` — an IP is not a relying party id. Nodes are
   reached at `localhost` for this to work.
 
