@@ -89,7 +89,10 @@ uses the tokens, never its own colours or sizes — so a new look, or a second t
   generation. MLS is the one key manager: a space's members, or your account's nodes. Epoch secrets are also escrowed
   to the recovery words, so the words alone recover history. Newcomers' access to history is a per-space policy.
 - **Sealing covers whole tree nodes**, so keys stay ordered inside sealed blocks (range reads work) and counts and shape
-  are hidden.
+  are hidden. Each block (node, value, parity) is sealed whole and lives in a **Sealed** contract at a keyed hash of
+  its id, so only the account can name it; the tree library is untouched (it works on the blocks in the clear). The
+  tail's rows are sealed one by one; a flush opens them into the tree. Rows and blocks carry which key sealed them
+  (the table's own key for the `mls` channel, else an epoch), and are only ever sealed over to a newer key.
 - **Federated data.** Nobody writes into another's store: a message, comment or reaction is content in the **author's**
   table plus a **pointer** in the target's index (sealed for private use). A group's data is one table per writer,
   merged by readers.
@@ -108,7 +111,7 @@ Each phase: build → the private node (all three sites) → published through B
 |---|---|---|---|---|
 | 0 | **Restructure to the shape** | all | packages renamed/split to §3–4: `data` → `storage`, `auth` → `auth` + `login`, grants → `access`, `pins` + `tags` → `edge` + components `pin-button`, `label-menu`, `timeline` → `trace`; no behaviour change | done |
 | 0b | **Theme** | `theme` | the tokens and base styles; every component and page moved onto them; dark mode everywhere | done |
-| 1 | **Keys and sealing** | `keys`, `identity`, `storage` | MLS in the core; your account as an MLS group of your nodes; table key = export(epoch, table); escrow to the words; sealing of whole tree nodes (a hook in freenet-prolly); tables sealed today by row are sealed over | — |
+| 1 | **Keys and sealing** | `keys`, `identity`, `storage` | MLS in the core; your account as an MLS group of your nodes; table key = export(epoch, table); escrow to the words; sealing of whole tree nodes (Sealed contracts at keyed addresses); tables sealed today by row are sealed over | — |
 | 2 | **Writers and merge** | `storage` | one sequence per writer (per node now, per member later); readers merge, causally ordered | — |
 | 3 | **Reads** | `storage`, `blocks` | range (latest N, older pages) and change-only reads (tree diff) | — |
 | 4 | **Lifecycle** | `keep` | re-publishing, retention, flush when quiet, health; blinded table names | — |

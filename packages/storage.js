@@ -14,8 +14,10 @@ export async function start(ctx) {
   const access = await ctx.require("access");
   const { core, glue, ask, listen } = await ctx.require("node");
   const tailCode = await ctx.require("tail-wasm");
-  // A table's tree lives in Block contracts: the core names them from this code.
+  // A table's tree lives in Sealed contracts, sealed whole (a tree from before, in Block contracts): the core names
+  // them from this code.
   core.set_block_code(await ctx.require("block-wasm"));
+  core.set_sealed_code(await ctx.require("sealed-wasm"));
   const Core = glue.CraftworksCore;
   const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
 
@@ -23,22 +25,39 @@ export async function start(ctx) {
   const blocks = await ctx.require("blocks");
 
   // A table's VIEW, walked to the end: the tail names the tree's root; a view that needs tree blocks names their
-  // Block contracts, fetched (raced, rebuilt if missing) until the rows are all there. Returns the last view:
-  // `{ kind: "tail", tail: { rows, … } }`, or `tail-unreadable`.
+  // contracts, fetched (raced, rebuilt if missing) until the rows are all there; one that names EPOCHS gets their keys
+  // for this table from the identity (none, for an epoch this node has no key of: what is sealed with it stays
+  // unread). Returns the last view: `{ kind: "tail", tail: { rows, … } }`, or `tail-unreadable`.
   async function settle(view, app) {
-    for (let round = 0; view.kind === "tail-need"; round++) {
-      if (round >= 16) throw new Error(`${app}: the tree did not finish loading`);
-      await blocks.fetch(view.id, view.blocks, app);
+    for (let round = 0; view.kind === "tail-need" || view.kind === "tail-keys"; round++) {
+      if (round >= 24) throw new Error(`${app}: the tree did not finish loading`);
+      if (view.kind === "tail-keys") await epochKeys(view.id, view.epochs, app);
+      else await blocks.fetch(view.id, view.blocks, app);
       view = JSON.parse(core.tail_view(bytes(view.id)));
     }
     if (view.kind === "tail-unreadable") throw new Error(`${app}: ${view.said}`);
     return view;
   }
 
+  // Whether this node was REMOVED from the account (its group says so): it reads what it still can, and writes
+  // nothing — not even sealing rows over, which would take them out of reach of the nodes that remain.
+  async function removed() {
+    const st = await (await ctx.require("keys")).ready().catch(() => null);
+    return !!st?.removed;
+  }
+
+  async function epochKeys(idHex, epochs, app) {
+    for (const e of epochs) {
+      const k = await access.keyAt(app, e, { catalog: app === "tables" });
+      core.tail_epoch_key(bytes(idHex), e, k.key ? bytes(k.key) : new Uint8Array(0), false);
+      if (!k.key) ctx.log("table sealed", { what: `${app}: no key here for epoch ${e} (${k.why})` });
+    }
+  }
+
   const tables = new Map(); // id hex -> Promise<table> (opened once per page)
   const live = new Map(); // id hex -> table, for what the node pushes
   listen(said => {
-    const t = (said.kind === "tail" || said.kind === "tail-need") && live.get(said.id);
+    const t = (said.kind === "tail" || said.kind === "tail-need" || said.kind === "tail-keys") && live.get(said.id);
     if (t)
       settle(said, t.app).then(
         v => {
@@ -113,6 +132,15 @@ export async function start(ctx) {
       t.sealed = !!k.key;
       if (k.key) core.tail_seal(id, bytes(k.key));
       else ctx.log("table sealed", { what: `${app}: no key here (${k.why}): nothing of it reads` });
+      // WRITES are sealed with the account's newest EPOCH (a node removed from the account then reads nothing written
+      // after): the group brought current first. Not the `mls` channel itself (a node reads it before it has any
+      // epoch), and not the catalog, which the group's own table is listed in. No group on this node: the table's key.
+      if (k.key && app !== "mls") {
+        if (!isCatalog) await (await ctx.require("keys")).ready().catch(() => null);
+        const e = await access.keyAt(app, -1, { catalog: isCatalog });
+        if (e.key) core.tail_epoch_key(id, e.epoch, bytes(e.key), true);
+        else ctx.log("table sealed", { what: `${app}: no epoch here (${e.why}): written with the table's key` });
+      }
       const known = isCatalog ? (s.fresh ? false : null) : await listed(app);
       if (known === false) {
         core.tail_absent(id);
@@ -131,7 +159,7 @@ export async function start(ctx) {
       // A new account's catalog is created now, so the next page finds it.
       if (isCatalog && t.absent && s.fresh) await t.put("tables", JSON.stringify({ at: Date.now(), complete: true }));
       // Rows from before tables were sealed: sealed over now, a batch per step (in the write queue).
-      if (legacy > 0) t.sealOld = queue = queue.catch(() => {}).then(sealOld);
+      if (legacy > 0 || reseal) t.sealOld = queue = queue.catch(() => {}).then(sealOld);
       return t;
     })();
     tables.set(idHex, ready);
@@ -153,7 +181,7 @@ export async function start(ctx) {
       const [, frames] = core.tail_get(id);
       let said;
       try {
-        said = await ask(frames, x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, 30000);
+        said = await ask(frames, x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "tail-keys" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, 30000);
       } catch (e) {
         ctx.log("table not found yet", { what: `${app}: ${e.message}; opened empty` });
         said = { kind: "get-failed" };
@@ -162,17 +190,14 @@ export async function start(ctx) {
       // would write over rows it could not see).
       if (said.kind !== "get-failed") said = await settle(said, app);
       t.absent = said.kind !== "tail";
-      if (said.kind === "tail") {
-        legacy = said.tail.legacy ?? 0;
-        t.info = { rows: said.tail.rows.length, pending: said.tail.pending, flushed: !!said.tail.root, legacy, unreadable: said.tail.unreadable ?? 0 };
-        t.took(said.tail.rows);
-      }
+      if (said.kind === "tail") took(said.tail);
       else core.tail_absent(id);
     }
 
     // One write: prepared by the core, signed by the identity delegate with the data key, sent as one delta.
     async function write(key, value) {
       if (!(await allowed())) throw new Error(`this app may not change your “${app}”: allow it when your node asks`);
+      if (await removed()) throw new Error("this node was removed from your account: it cannot change it");
       // Listed BEFORE it is created: a failure between the two leaves a listed table that is empty, never data the
       // catalog does not name.
       if (t.absent && !isCatalog) await list(app);
@@ -217,16 +242,23 @@ export async function start(ctx) {
     }
 
     let legacy = 0;
+    let reseal = false;
+    function took(tail) {
+      legacy = tail.legacy ?? 0;
+      reseal = !!tail.resealTree;
+      t.info = { rows: tail.rows.length, pending: tail.pending, flushed: !!tail.root, legacy, unreadable: tail.unreadable ?? 0, writes: tail.writes };
+      t.took(tail.rows);
+    }
     async function view() {
       const v = await settle(JSON.parse(core.tail_view(id)), app);
-      legacy = v.tail.legacy ?? 0;
-      t.info = { rows: v.tail.rows.length, pending: v.tail.pending, flushed: !!v.tail.root, legacy, unreadable: v.tail.unreadable ?? 0 };
-      t.took(v.tail.rows);
+      took(v.tail);
     }
 
-    // SEAL OVER the plaintext rows from before sealing: 16 rows a step, each sealed and its plaintext deleted in that
-    // same step, signed like any write.
+    // SEAL OVER the rows under an older key (plaintext from before sealing, the table's key, an earlier epoch): 16
+    // rows a step, each sealed with the newest key and its old copy deleted in that same step, signed like any write.
+    // A tree from before sealing whole is built again, sealed, by a flush.
     async function sealOld() {
+      if (await removed()) return;
       let n = 0;
       for (let round = 0; round < 64; round++) {
         const p = core.tail_migrate(id, 16);
@@ -234,8 +266,8 @@ export async function start(ctx) {
         await step(p, "sealing");
         n += 1;
       }
-      if (n) ctx.log("sealed", { what: `${app}: rows from before sealing, sealed over in ${n} step(s)` });
-      if (core.tail_pending(id) >= Core.flush_at()) await flush();
+      if (n) ctx.log("sealed", { what: `${app}: rows under an older key, sealed over in ${n} step(s)` });
+      if (reseal || core.tail_pending(id) >= Core.flush_at()) await flush();
     }
 
     // FLUSH: the tree's new blocks PUT first (a tail must never name a root whose blocks are not there), then the step
@@ -244,8 +276,8 @@ export async function start(ctx) {
       const t0 = performance.now();
       for (let round = 0; round < 16; round++) {
         const f = core.tail_flush(id);
-        if (f.need) {
-          await settle({ kind: "tail-need", id: idHex, blocks: f.need }, app);
+        if (f.need || f.keys) {
+          await settle(f.need ? { kind: "tail-need", id: idHex, blocks: f.need } : { kind: "tail-keys", id: idHex, epochs: f.keys }, app);
           continue;
         }
         try {

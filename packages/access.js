@@ -42,9 +42,19 @@ export async function start(ctx) {
     return k?.tableKey ? { key: k.tableKey } : { why: k?.refused ?? "no key" };
   }
 
+  // The key of one of the account's EPOCHS for a table (`epoch` omitted: the newest this node holds): `{ epoch, key }`,
+  // or `{ why }` (no grant, or no key for that epoch here — a node removed from the account has none after it). The
+  // same grant as the table's own key.
+  async function keyAt(table, epoch = -1, { catalog = false } = {}) {
+    const ok = catalog || (await allowed(table).catch(() => false));
+    if (!ok) return { why: "not allowed" };
+    const k = await auth.identity.tableKeyAt(table, epoch).catch(e => ({ refused: e?.message ?? String(e) }));
+    return k?.tableKey ? { epoch: k.epoch, key: k.tableKey } : { why: k?.refused ?? "no key" };
+  }
+
   // The grants the person gave (the home site sees all of them, a site its own), and withdrawing one.
   const grants = async () => (await auth.identity.grants()).grants ?? [];
   const revoke = (app, table) => auth.identity.revoke(app, table);
 
-  return { allowed, key, grants, revoke };
+  return { allowed, key, keyAt, grants, revoke };
 }

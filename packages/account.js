@@ -87,7 +87,7 @@ export async function mount(ctx, el) {
     const facts = [
       log ? `Recovery words changed ${log.changes} time${log.changes === 1 ? "" : "s"} (your key log has ${log.events} event${log.events === 1 ? "" : "s"}).` : "Your key log is not on the network yet.",
       st?.removed ? "This node was removed from your account: it holds no keys for anything written since." :
-      st ? `Your data is sealed with the keys of epoch ${st.epoch}; ${st.members.length} node${st.members.length === 1 ? "" : "s"} hold them.` : "This site does not hold your account's keys.",
+      st ? `Your data is sealed with the keys of epoch ${st.epoch}; ${st.members.length} ${st.members.length === 1 ? "node holds" : "nodes hold"} them.` : "This site does not hold your account's keys.",
       escrowed === null ? null : `${escrowed} epoch${escrowed === 1 ? "" : "s"} kept in escrow for your recovery words: with the words alone, every one of them opens again.`,
     ].filter(Boolean);
     sec.querySelector(".facts").replaceChildren(...facts.map(t => Object.assign(document.createElement("li"), { textContent: t })));
@@ -110,7 +110,7 @@ export async function mount(ctx, el) {
             return tr;
           }
           const where = t.flushed ? (t.pending ? `tree + ${t.pending} in the tail` : "tree") : `tail (${t.pending} row${t.pending === 1 ? "" : "s"})`;
-          for (const v of [t.name, String(t.rows), t.sealed ? "yes" : "no key here", where]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
+          for (const v of [t.name, String(t.rows), t.sealed ? (t.writes === "table" ? "table key" : t.writes ?? "yes") : "no key here", where]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
           return tr;
         }),
       );

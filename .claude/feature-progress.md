@@ -210,7 +210,17 @@ Out of scope now: recovery quorum (guardians), data-key rotation (moves tails), 
     is listed by name, never opened, so no prompt). A REMOVED node learns it from the commit (mls `removed`, kept across
     saves), applies nothing after it, and the page says so. Live: register → words join → remove the first node (epoch 2,
     3 escrowed) → first node by PIN: "This node was removed…", same after a reload.
-  - [ ] 1e sealing whole tree nodes (a hook in freenet-prolly); tables sealed over
+  - [x] 1e sealing: rows sealed with the account's newest EPOCH key (TableKeyAt; header `[2, epoch]`), the `mls`
+    channel with the table's own key (`[1, 0]`); readers ask the identity for each epoch they meet (`tail-keys`). Whole
+    tree blocks sealed (`seal_block`) in the new SEALED contract (contracts-src/sealed, first write wins, 81 KB) at
+    `block_address(table key, cid)`; the tree holds rows in the clear inside (flush opens the tail's rows), marker row
+    `\0sealed-tree`. No freenet-prolly change (the ARCHITECTURE "hook" replaced in place). A tree from before is read
+    from Block contracts and rebuilt whole, sealed, by the next flush; rows sealed over UPWARD only. A node that knows
+    it was removed writes nothing (it had still sealed a catalog row over). Tests: removal (no epoch 2 → old rows only,
+    new tree unreadable; controls both ways), upward-only, tree-from-before rebuilt. Live: register → 33 notes → flush →
+    reload reads the sealed tree; words-join 2nd member (epoch 0 via escrow) → remove the 1st → note at epoch 2 → 1st
+    by PIN reads 32 old notes, not the new one, and cannot write; 2nd reads everything.
+    OPEN: a removed node still holds the account's DATA key (tail signing) — writers per space in phase 2.
   - [x] `ordering` capability (packages/ordering.js): one agreed order per object, several types behind one interface
     (`tail` built: the account's nodes share one key, the table's write sequence decides; `log` for spaces and
     `witnessed` later). keys' commits now go through it (append at the epoch it moved from; taken → join again).

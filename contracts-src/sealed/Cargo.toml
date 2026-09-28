@@ -1,0 +1,28 @@
+[package]
+name = "craftworks-sealed-contract"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "SEALED: one sealed tree block at an address only its account computes. First write wins."
+
+# Own workspace: own lockfile, so the wasm hash (= part of every block's contract id) is stable.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+freenet-stdlib = { version = "0.10.0", features = ["contract"] }
+
+[features]
+default = ["freenet-main-contract"]
+freenet-main-contract = []
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false

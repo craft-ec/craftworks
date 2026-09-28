@@ -77,8 +77,10 @@ pub struct Core {
     got: std::collections::HashMap<[u8; 32], Vec<u8>>,
     /// Open tails (this member's, to write; the account's other members', to read), by contract id.
     tails: std::collections::HashMap<[u8; 32], data::Open>,
-    /// The Block contract's code: a table's tree blocks live in Block contracts.
+    /// The Block contract's code: a tree from before sealing whole lives in Block contracts.
     block_code: Vec<u8>,
+    /// The Sealed contract's code: a table's tree blocks, sealed whole, each at its address.
+    sealed_code: Vec<u8>,
     /// Tree blocks asked of the network: Block contract id -> (the tail that needs it, the block's id).
     wanted: std::collections::HashMap<[u8; 32], ([u8; 32], freenet_prolly::Cid)>,
     /// Repairs under way: the lost block's contract id -> (its tail, its group).
@@ -87,7 +89,7 @@ pub struct Core {
 
 impl Core {
     pub fn new(identity_wasm: &[u8]) -> Core {
-        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1, got: Default::default(), tails: Default::default(), block_code: Vec::new(), wanted: Default::default(), repairs: Default::default() }
+        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1, got: Default::default(), tails: Default::default(), block_code: Vec::new(), sealed_code: Vec::new(), wanted: Default::default(), repairs: Default::default() }
     }
 
     pub fn identity_key(&self) -> String {
@@ -186,6 +188,10 @@ impl Core {
         self.block_code = code.to_vec();
     }
 
+    pub fn set_sealed_code(&mut self, code: &[u8]) {
+        self.sealed_code = code.to_vec();
+    }
+
     /// An open table as the page sees it: `{ kind: "tail", tail: { rows, … } }` once every tree block it needs is
     /// held; else `{ kind: "tail-need", blocks: [Block contract ids] }`, each to GET (its answer comes back through
     /// `take`, which feeds it in and gives the next view).
@@ -197,16 +203,20 @@ impl Core {
                 let blocks = self.want(id, &cids);
                 json!({ "kind": "tail-need", "id": hex(id), "blocks": blocks })
             }
+            Ok(data::Step::Keys(epochs)) => json!({ "kind": "tail-keys", "id": hex(id), "epochs": epochs }),
             Err(e) => json!({ "kind": "tail-unreadable", "id": hex(id), "said": e }),
         }
     }
 
-    /// Record tree blocks `cids` as wanted by tail `id`; their Block contract ids (hex), to GET.
+    /// Record tree blocks `cids` as wanted by tail `id`; the contract ids (hex) they live in, to GET: a sealed
+    /// tree's Sealed contracts at their addresses, or a tree from before's Block contracts.
     fn want(&mut self, id: &[u8; 32], cids: &[freenet_prolly::Cid]) -> Vec<String> {
-        cids.iter()
-            .map(|cid| {
-                let c = wire::block::contract_for(&self.block_code, cid);
-                self.wanted.insert(c, (*id, *cid));
+        let Some(o) = self.tails.get(id) else { return Vec::new() };
+        let at: Vec<_> = cids.iter().filter_map(|c| Some((*c, o.block_params(c)?))).collect();
+        at.into_iter()
+            .map(|(cid, (sealed, params))| {
+                let c = wire::block::contract_for(if sealed { &self.sealed_code } else { &self.block_code }, &params);
+                self.wanted.insert(c, (*id, cid));
                 hex(&c)
             })
             .collect()
@@ -250,11 +260,14 @@ impl Core {
         let step = self.tail(id)?.flush()?;
         match step {
             data::Step::Need(cids) => Ok(FlushOut::Need(self.want(id, &cids))),
+            data::Step::Keys(epochs) => Ok(FlushOut::Keys(epochs)),
             data::Step::Ready(f) => {
+                let tk = self.tail(id)?.table_key.ok_or("this table's key is not held here")?;
                 let mut puts = Vec::new();
                 for (cid, state) in f.blocks {
                     let s = self.stream();
-                    let c = wire::block::block_contract(&self.block_code, &cid);
+                    // Sealed whole, at its address.
+                    let c = wire::block::block_contract(&self.sealed_code, &data::block_address(&tk, &cid));
                     let name = c.key().id().encode();
                     puts.push((name, wire::frame_put(c, freenet_stdlib::prelude::WrappedState::new(state), s)?));
                 }
@@ -300,6 +313,8 @@ impl Core {
 /// and the step to sign.
 pub enum FlushOut {
     Need(Vec<String>),
+    /// The keys of these epochs, first (a row is sealed under one not held yet).
+    Keys(Vec<u64>),
     Ready { seq: u64, hash: [u8; 32], puts: Vec<(String, Vec<Vec<u8>>)> },
 }
 
@@ -591,16 +606,25 @@ mod js {
         /// valueHash }`, what the identity delegate signs; nothing moves until `tail_commit`.
         pub fn tail_prepare(&mut self, id: &[u8], key: &[u8], value: &[u8]) -> Result<js_sys::Object, JsValue> {
             let o = self.0.tail(&b32(id)?).map_err(err)?;
-            if o.seal.is_none() {
+            if o.writes.is_none() {
                 return Err(err("this table's key is not held here: it cannot be written".into()));
             }
             let (seq, hash) = o.prepare_row(key, value).ok_or_else(|| err("the tail refuses that write (too large?)".into()))?;
             prepared(&o.params, seq, hash)
         }
 
-        /// The key that seals an open table (from the identity delegate): its sealed rows read, and writes are sealed.
+        /// The table's own key (from the identity delegate): rows and blocks under it read, its blocks' addresses come
+        /// from it, and — until an epoch's key is given — writes are sealed with it.
         pub fn tail_seal(&mut self, id: &[u8], key: &[u8]) -> Result<(), JsValue> {
-            self.0.tail(&b32(id)?).map_err(err)?.seal = Some(b32(key)?);
+            self.0.tail(&b32(id)?).map_err(err)?.set_table_key(b32(key)?);
+            Ok(())
+        }
+
+        /// An epoch's key for an open table (from the identity delegate; empty: it has none for that epoch). `current`:
+        /// new rows and blocks are sealed with it.
+        pub fn tail_epoch_key(&mut self, id: &[u8], epoch: f64, key: &[u8], current: bool) -> Result<(), JsValue> {
+            let k = if key.is_empty() { None } else { Some(b32(key)?) };
+            self.0.tail(&b32(id)?).map_err(err)?.epoch_key(epoch as u64, k, current);
             Ok(())
         }
 
@@ -634,6 +658,10 @@ mod js {
             self.0.set_block_code(code);
         }
 
+        pub fn set_sealed_code(&mut self, code: &[u8]) {
+            self.0.set_sealed_code(code);
+        }
+
         /// A tree block's group: the Block contract ids (hex) to GET with it (the race).
         pub fn tail_group(&mut self, id: &[u8], block_hex: &str) -> Result<js_sys::Array, JsValue> {
             let b = bytes32("block", block_hex).map_err(err)?;
@@ -664,6 +692,10 @@ mod js {
                 FlushOut::Need(blocks) => {
                     let a: js_sys::Array = blocks.into_iter().map(JsValue::from).collect();
                     js_sys::Reflect::set(&out, &"need".into(), &a.into())?;
+                }
+                FlushOut::Keys(epochs) => {
+                    let a: js_sys::Array = epochs.into_iter().map(|e| JsValue::from(e as f64)).collect();
+                    js_sys::Reflect::set(&out, &"keys".into(), &a.into())?;
                 }
                 FlushOut::Ready { seq, hash, puts } => {
                     let params = self.0.tail(&id).map_err(err)?.params.clone();
