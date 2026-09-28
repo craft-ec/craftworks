@@ -28,6 +28,7 @@
 //   space.tableOf(sp, "channels")           // a space's own table's name
 //   space.channel(server, id, name)         // a CHANNEL: a sub-space of the server
 //   await space.owner(sp)                   // its owner's DID, if its id proves it (else null)
+//   await space.leave(sp)                   // out of this person's list (on every device of the account)
 //
 // A CHANNEL is a SUB-SPACE: it has a `parent` and inherits what it does not set itself. A channel that inherits the
 // server's access has no group of its own — its group, scope and keys are the server's, and its messages are its own
@@ -134,5 +135,11 @@ export async function start(ctx) {
     return sp;
   }
 
-  return { account, tables, mine, create, record, describe, tableOf, channel, owner };
+  // LEAVE: the space out of this person's list — theirs alone to keep, so no owner is asked.
+  async function leave(sp) {
+    await (await (await ctx.require("storage")).table(SPACES)).remove(sp.id);
+    ctx.log("space", { what: `left ${sp.kind} “${sp.name}”` });
+  }
+
+  return { account, tables, mine, create, record, describe, tableOf, channel, owner, leave };
 }

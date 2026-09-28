@@ -8,8 +8,8 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [space, storage, keys, directory, roomUI, conversation, theme, roles, moderation] = await Promise.all(
-    ["space", "storage", "keys", "directory", "room", "conversation", "theme", "roles", "moderation"].map(n => ctx.require(n)),
+  const [space, storage, keys, directory, roomUI, conversation, theme, roles, moderation, settings] = await Promise.all(
+    ["space", "storage", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "server-settings"].map(n => ctx.require(n)),
   );
   const account = await space.account();
   el.classList.add("cw-fill");
@@ -41,10 +41,8 @@ export async function mount(ctx, el) {
       .dc .people li { list-style: none; padding: var(--cw-space-1) 0; display: flex; align-items: center; gap: var(--cw-space-1); }
       .dc .people li .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .dc .people li .r { color: var(--cw-muted); font-size: var(--cw-text-xs); }
-      .dc .people li button, .dc .chans .x { visibility: hidden; border: 0; background: none; color: var(--cw-muted);
-        font-size: var(--cw-text-xs); padding: 2px var(--cw-space-1); border-radius: var(--cw-radius-sm); }
-      .dc .people li:hover button, .dc .chans .ch:hover .x { visibility: visible; }
-      .dc .people li button:hover, .dc .chans .x:hover { background: var(--cw-hover); color: var(--cw-fg); }
+      .dc .people li.who { cursor: pointer; border-radius: var(--cw-radius-sm); padding-left: var(--cw-space-1); }
+      .dc .people li.who:hover { background: var(--cw-hover); }
       .dc .chans .ch { display: flex; align-items: center; }
       .dc .chans .ch > button:first-child { flex: 1; min-width: 0; }
       .dc .empty { color: var(--cw-muted); text-align: center; margin: auto; padding: var(--cw-space-5); }
@@ -95,13 +93,29 @@ export async function mount(ctx, el) {
         b.onclick = () => openServer(s);
         return b;
       }),
-      Object.assign(document.createElement("button"), { type: "button", className: "add", title: "Make a server", textContent: "+", onclick: makeServer }),
+      Object.assign(document.createElement("button"), { type: "button", className: "add", title: "Make a server, or join one with a code", textContent: "+", onclick: plus }),
     );
     return servers;
   }
 
-  async function makeServer() {
-    const name = await ask("Name your server");
+  // +: make a server, or join one with an invite code.
+  async function plus() {
+    const answer = await ask("Name a new server — or paste an invite code (xxxx-xxxx-xxxx-xxxx) to join one", "Go");
+    if (!answer) return;
+    if (/^[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}$/i.test(answer.trim())) return joinWith(answer);
+    return makeServer(answer);
+  }
+  async function joinWith(code) {
+    say("");
+    try {
+      await conversation.join(code);
+      say("Asked to join. You are in as soon as a member who may invite is online — this page looks every 30 s.");
+    } catch (e) {
+      say(`Could not ask to join: ${e?.message ?? e}`);
+    }
+  }
+
+  async function makeServer(name) {
     if (!name) return;
     say("");
     try {
@@ -113,25 +127,59 @@ export async function mount(ctx, el) {
     }
   }
 
-  // The top bar: Invite, once a server is open.
+  // The top bar, once a server is open: Invite (by name or code) and the server's settings.
   const menu = () => {
-    ctx.actions["/chat"] = server && may("invite") ? [{ label: "Invite", run: inviteSomeone }] : [];
+    ctx.actions["/chat"] = server
+      ? [
+          ...(may("invite") ? [{ label: "Invite", run: () => openSettings("invites") }] : []),
+          { label: "Server settings", run: () => openSettings("overview") },
+        ]
+      : [];
     dispatchEvent(new CustomEvent("craftworks:actions"));
   };
-  async function inviteSomeone() {
-    const who = await ask("Invite who? name#abc123 or their id (did:craftec:…)", "Invite");
-    if (!who || !server) return;
-    say("");
-    try {
-      const did = await conversation.person(who);
-      const card = await conversation.invite(server, did);
-      say("");
-      drawMembers(server);
-      ctx.log("chat", { what: `${directory.shown(did, card.handle)} invited to ${server.name}` });
-    } catch (e) {
-      say(`Could not invite them: ${e?.message ?? e}`);
-    }
-  }
+  // The server's CHANNELS, as settings changes them (one set of operations for the list here and the settings page).
+  const channelOps = {
+    list: () => list(),
+    add: async name => {
+      name = String(name ?? "").trim().toLowerCase().replace(/\s+/g, "-");
+      if (!name) throw new Error("name it first");
+      await channelsT.put(newId(4), JSON.stringify({ name, at: Date.now() }));
+    },
+    rename: async (c, name) => {
+      name = String(name ?? "").trim().toLowerCase().replace(/\s+/g, "-");
+      if (!name) throw new Error("name it first");
+      await channelsT.put(c.id.split("/").pop(), JSON.stringify({ name, at: Date.now() }));
+    },
+    remove: async c => {
+      await mod.hide(channelsT.app, c.id.split("/").pop());
+      if (channel?.id === c.id) {
+        channel = null;
+        shown?.close();
+        roomEl.replaceChildren();
+      }
+    },
+  };
+  const openSettings = (tab, focus = null) =>
+    server &&
+    settings.open(server, {
+      tab,
+      focus,
+      channels: channelOps,
+      // Left: off the rail, and the next server open.
+      left: async () => {
+        server = null;
+        shown?.close();
+        const next = (await drawRail())[0];
+        if (next) openServer(next);
+        else {
+          menu();
+          sideName.textContent = "—";
+          chans.replaceChildren();
+          people.replaceChildren();
+          roomEl.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: "No servers yet: make one with +" }));
+        }
+      },
+    });
 
   async function openServer(s) {
     server = s;
@@ -207,8 +255,6 @@ export async function mount(ctx, el) {
         b.setAttribute("aria-current", String(channel?.id === c.id));
         b.onclick = () => openChannel(c);
         row.append(b);
-        if (may("channels"))
-          row.append(Object.assign(document.createElement("button"), { type: "button", className: "x", title: `Delete #${c.name}`, textContent: "✕", onclick: () => deleteChannel(c) }));
         return row;
       }),
       ...(may("channels") ? [Object.assign(document.createElement("button"), { type: "button", className: "new", textContent: "+ Add a channel", onclick: addChannel })] : []),
@@ -216,48 +262,24 @@ export async function mount(ctx, el) {
   }
 
   async function addChannel() {
-    const name = (await ask("Channel name"))?.toLowerCase().replace(/\s+/g, "-");
-    if (!name) return;
-    await channelsT.put(newId(4), JSON.stringify({ name, at: Date.now() })).catch(e => say(`Could not add it: ${e?.message ?? e}`));
+    const name = await ask("Channel name");
+    if (name) await channelOps.add(name).catch(e => say(`Could not add it: ${e?.message ?? e}`));
   }
 
-  async function deleteChannel(c) {
-    if ((await ask(`Delete #${c.name}? Type its name`, "Delete")) !== c.name) return;
-    await mod.hide(channelsT.app, c.id.split("/").pop()).catch(e => say(`Could not delete it: ${e?.message ?? e}`));
-    if (channel?.id === c.id) {
-      channel = null;
-      shown?.close();
-      roomEl.replaceChildren();
-    }
-  }
-
-  // The server's members: the accounts in its group, with their roles; what this person may do to each.
-  const RANK = { owner: 3, admin: 2, member: 1 };
+  // The server's members: the accounts in its group, with their roles. A click opens that person in the settings.
   async function drawMembers(s) {
     const dids = await conversation.members(s);
     if (server !== s || !rs) return;
     if (!dids.length) return people.replaceChildren();
-    const mine = rs.role(account.id);
-    const button = (label, run) => Object.assign(document.createElement("button"), { type: "button", textContent: label, onclick: () => run().catch(e => say(`${label}: ${e?.message ?? e}`)) });
     const draw = names =>
       people.replaceChildren(
         ...dids.map((d, i) => {
-          const li = Object.assign(document.createElement("li"), { title: d });
+          const li = Object.assign(document.createElement("li"), { title: d, className: "who", onclick: () => openSettings("members", d) });
           const role = rs.role(d);
           li.append(
             Object.assign(document.createElement("span"), { className: "n", textContent: `${directory.shown(d, names[i])}${d === account.id ? " (you)" : ""}` }),
             Object.assign(document.createElement("span"), { className: "r", textContent: role === "member" ? "" : role }),
           );
-          if (d !== account.id && mine === "owner" && role !== "owner")
-            li.append(role === "admin" ? button("Make member", () => rs.grant(d, "member")) : button("Make admin", () => rs.grant(d, "admin")));
-          if (d !== account.id && may("remove") && RANK[mine] > RANK[role])
-            li.append(
-              button("Remove", async () => {
-                if ((await ask(`Remove ${directory.shown(d, names[i])} from ${s.name}? Type remove`, "Remove")) !== "remove") return;
-                await mod.remove(d);
-                drawMembers(s);
-              }),
-            );
           return li;
         }),
       );
@@ -272,11 +294,22 @@ export async function mount(ctx, el) {
     shown = await roomUI.show(roomEl, c, `#${c.name}`);
   }
 
-  // Invitations waiting in the inbox (and conversations): joined now.
-  conversation
-    .accept()
-    .then(joined => joined.some(s => s.kind === "server") && drawRail())
-    .catch(e => ctx.log("conversation", { what: e?.message ?? String(e) }));
+  // Welcomes waiting in the inbox: joined now, and every 30 s while Chat is open (a request by code answered). And
+  // this person, where they may invite, lets in who asked by a code of the open server.
+  const tick = async () => {
+    const joined = await conversation.accept().catch(e => (ctx.log("conversation", { what: e?.message ?? String(e) }), []));
+    if (joined.some(s => s.kind === "server")) {
+      say("");
+      drawRail();
+    }
+    if (server && may("invite")) {
+      const s = server;
+      const admitted = await conversation.admit(s).catch(e => (ctx.log("conversation", { what: e?.message ?? String(e) }), []));
+      if (admitted.length && server === s) drawMembers(s);
+    }
+  };
+  tick();
+  const every = setInterval(() => (el.isConnected ? tick() : clearInterval(every)), 30000);
   rail.replaceChildren(theme.loading("", 2));
   chans.replaceChildren(theme.loading("Loading your servers…"));
   const first = (await drawRail())[0];

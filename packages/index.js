@@ -7,6 +7,8 @@
 //   const index = await ctx.require("index");
 //   await index.send(did, { kind: "welcome", … })   // sealed to their inbox key, dropped in their inbox
 //   await index.inbox()                             // this account's items, opened: [{ … }]
+//   await index.request(code, { … })                // an item (plain) in the bag an INVITE CODE names
+//   await index.requests(code)                      // the items in it: only who holds the code finds the bag
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const space = await ctx.require("space");
@@ -41,14 +43,18 @@ export async function start(ctx) {
   }
 
   // THIS account's inbox: every item, opened by the identity (only the account's nodes hold the key).
-  async function inbox() {
-    const sp = await space.account();
-    const address = Core.inbox_address(sp.idBytes);
+  // A bag's items as stored (bytes), or none (a bag nobody made yet).
+  async function payloadsAt(address, what) {
     const id = Core.bag_id(bagCode, address);
     const [, frames] = core.frames_get(bytes(id));
-    const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, "reading the inbox", 30000).catch(() => ({ kind: "get-failed" }));
+    const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, what, 30000).catch(() => ({ kind: "get-failed" }));
     if (said.kind !== "got") return [];
-    const payloads = Array.from(core.bag_payloads(address, id) ?? []);
+    return Array.from(core.bag_payloads(address, id) ?? []);
+  }
+
+  async function inbox() {
+    const sp = await space.account();
+    const payloads = await payloadsAt(Core.inbox_address(sp.idBytes), "reading the inbox");
     if (!payloads.length) return [];
     const r = await auth.identity.inboxOpen(payloads);
     return (r.opened ?? [])
@@ -63,5 +69,24 @@ export async function start(ctx) {
       .filter(Boolean);
   }
 
-  return { send, inbox, makeInbox };
+  // AN INVITE CODE's bag: at an address only the code gives (the inbox's derivation over the code's hash — no DID is
+  // 32 bytes of a hash of text). Its items are plain: whoever holds the code reads them (they name who asks, nothing
+  // secret).
+  const codeAddress = async code =>
+    Core.inbox_address(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(`craftworks invite ${String(code).trim().toLowerCase()}`))));
+  const openRequests = async code => drop(await codeAddress(code), new Uint8Array(0), "making an invite's bag");
+  const request = async (code, item) => drop(await codeAddress(code), enc.encode(JSON.stringify(item)), "asking to join");
+  async function requests(code) {
+    return (await payloadsAt(await codeAddress(code), "reading an invite's requests"))
+      .map(p => {
+        try {
+          return JSON.parse(dec.decode(p));
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  }
+
+  return { send, inbox, makeInbox, request, requests, openRequests };
 }

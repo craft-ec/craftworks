@@ -15,6 +15,10 @@
 //   await conversation.list()        // this account's direct conversations
 //   await conversation.members(sp)   // the accounts (DIDs) whose nodes are in a space's group
 //   await conversation.person(text)  // a DID from `did:craftec:…`, or from `name#abc123` among the people this account knows
+//   await conversation.createInvite(sp, { days, uses })  // an INVITE CODE for a space (0: no limit): "xxxx-xxxx-xxxx-xxxx"
+//   await conversation.revokeInvite(sp, code)
+//   await conversation.join(code)    // ask to join by a code: any member who may invite admits the asker when next online
+//   await conversation.admit(sp)     // the requests under this space's codes in force: each asker welcomed (and recorded)
 //   await conversation.mail.send([did…], subject, body, re)   // a mail (re: the id of the one it answers)
 //   await conversation.mail.fetch()  // mails pointed to in the inbox, opened and kept
 //   await conversation.mail.list("in" | "sent")   // [{ id, from, to, subject, body, at, re }], newest first
@@ -105,6 +109,52 @@ export async function start(ctx) {
     throw new Error(`${t} matches ${found.length} people: give their full id`);
   }
 
+  // INVITE CODES. A code is an act in the space's log (who made it, when it expires, how many it admits: `roles`). Who
+  // holds it drops a request in the bag the code names (`index`); a member who may invite, when online, reads the bags
+  // of the codes in force and welcomes each asker not yet in — recorded as `admitted` (the uses counted from those).
+  const hex4 = () => [...crypto.getRandomValues(new Uint8Array(2))].map(x => x.toString(16).padStart(2, "0")).join("");
+  const codeOf = text => String(text ?? "").trim().toLowerCase().replace(/[^0-9a-f]/g, "").replace(/(.{4})(?=.)/g, "$1-");
+  async function createInvite(sp, { days = 7, uses = 0 } = {}) {
+    const r = await (await ctx.require("roles")).of(sp);
+    const code = [hex4(), hex4(), hex4(), hex4()].join("-");
+    await index.openRequests(code);
+    await r.act({ act: "invite", code, expires: days ? Date.now() + days * 86400000 : 0, uses });
+    return code;
+  }
+  const revokeInvite = async (sp, code) => (await (await ctx.require("roles")).of(sp)).act({ act: "revoke-invite", code });
+  async function join(text) {
+    const me = await space.account();
+    if (!me) throw new Error("nobody is logged in");
+    const code = codeOf(text);
+    if (code.length !== 19) throw new Error("an invite code is 16 letters and digits: xxxx-xxxx-xxxx-xxxx");
+    await directory.publish().catch(() => {}); // the asker's card carries key packages to be added by
+    await index.request(code, { kind: "join", did: me.id, at: Date.now() });
+    return code;
+  }
+  async function admit(sp) {
+    const me = await space.account();
+    const r = await (await ctx.require("roles")).of(sp);
+    await r.refresh();
+    if (!me || !r.can(me.id, "invite")) return [];
+    const inside = new Set(r.members().map(m => m.did));
+    const out = [];
+    for (const inv of r.invites()) {
+      for (const q of await index.requests(inv.code)) {
+        if (q.kind !== "join" || !q.did || inside.has(q.did) || r.removed(q.did) || !r.invites().some(i => i.code === inv.code)) continue;
+        try {
+          await welcome(sp, q.did, sp.name);
+          await r.act({ act: "admitted", code: inv.code, did: q.did });
+          inside.add(q.did);
+          out.push(q.did);
+          ctx.log("conversation", { what: `${directory.shown(q.did)} admitted to ${sp.name} by a code` });
+        } catch (e) {
+          ctx.log("conversation", { what: `could not admit ${short(q.did)}: ${e.message}` });
+        }
+      }
+    }
+    return out;
+  }
+
   // MAIL.
   const MAIL = "mail";
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
@@ -176,5 +226,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, invite, accept, list, members, person, mail };
+  return { direct, invite, accept, list, members, person, mail, createInvite, revokeInvite, join, admit };
 }
