@@ -62,14 +62,41 @@ export async function start(ctx) {
   // nothing — not even sealing rows over, which would take them out of reach of the nodes that remain.
   let refusing = null;
 
+  // Tails holding rows sealed with an epoch this node had no key of when read: `id` → { app, epochs }. When a key
+  // arrives (`craftworks:keys`: the identity kept an epoch — this node caught up, or joined, or another device of the
+  // account moved the group), they are given it and read again: a device added while this page is open is read.
+  const unkeyed = new Map();
   async function epochKeys(idHex, epochs, app) {
     const spaceId = live.get(idHex)?.spaceId ?? null;
     for (const e of epochs) {
       const k = await access.keyAt(app, e, { catalog: app === CATALOG, space: spaceId });
       core.tail_epoch_key(bytes(idHex), e, k.key ? bytes(k.key) : new Uint8Array(0), false);
-      if (!k.key) ctx.log("table sealed", { what: `${app}: no key here for epoch ${e} (${k.why})` });
+      const u = unkeyed.get(idHex) ?? { app, epochs: new Set() };
+      if (k.key) u.epochs.delete(e);
+      else {
+        u.epochs.add(e);
+        ctx.log("table sealed", { what: `${app}: no key here for epoch ${e} (${k.why})` });
+      }
+      if (u.epochs.size) unkeyed.set(idHex, u);
+      else unkeyed.delete(idHex);
     }
   }
+  let rekeying = null;
+  addEventListener("craftworks:keys", () => {
+    if (!unkeyed.size || rekeying) return;
+    rekeying = (async () => {
+      for (const [idHex, u] of [...unkeyed]) {
+        await epochKeys(idHex, [...u.epochs], u.app).catch(() => {});
+        if (unkeyed.has(idHex)) continue;
+        const t = live.get(idHex);
+        const v = t && (await settle(JSON.parse(core.tail_view(bytes(idHex))), u.app).catch(() => null));
+        if (v?.tail) {
+          ctx.log("table opened", { what: `${u.app}: the epoch key arrived` });
+          t.took(v.tail);
+        }
+      }
+    })().finally(() => (rekeying = null));
+  });
 
   const tails = new Map(); // id hex -> Promise<tail> (opened once per page)
   const live = new Map(); // id hex -> tail, for what the node pushes
@@ -349,7 +376,15 @@ export async function start(ctx) {
       self: sp.self,
       opts: () => ({ space: sp }),
       old: async () => null,
-      writers: async () => ((await (await ctx.require("keys")).group(sp).ready())?.members ?? []).map(m => m.key).filter(k => k !== sp.self),
+      // Its WRITERS: every device of every member (the group's members are DIDs; each DID's devices, from its card,
+      // checked against its key log) — this device's own siblings too.
+      writers: async () => {
+        const [keys, directory] = await Promise.all(["keys", "directory"].map(n => ctx.require(n)));
+        const members = (await keys.group(sp).ready())?.members ?? [];
+        const dids = [...new Set(members.filter(m => m.cred).map(m => glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16))))))];
+        const all = (await Promise.all(dids.map(d => directory.devices(d)))).flat();
+        return [...new Set(all)].filter(k => k !== sp.self);
+      },
       catalogOf: w => tail(w, sp.tables.catalog, { space: sp }),
     };
   }

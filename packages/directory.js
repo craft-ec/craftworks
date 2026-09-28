@@ -2,7 +2,9 @@
 // comes from the DID) → their account's data key → their card, a public tail under it. Nobody else can write it; anyone
 // reads it. A card holds a HANDLE (a name to show — not unique: a person is their handle AND their id), the DID's KEY
 // PACKAGES (MLS: with one, anyone adds this person to a conversation while they are away — the person, never a device),
-// and the account's INBOX key (what is sealed to it only the account's nodes open: `index`'s inbox).
+// the account's INBOX key (what is sealed to it only the account's nodes open: `index`'s inbox), and its DEVICES'
+// credentials (each signed by an owner key of the DID's key log: where a device writes on the DID's behalf in a space,
+// readers learn it is that DID's).
 //
 //   const directory = await ctx.require("directory");
 //   await directory.card(did)                 // { did, handle, inbox, keyPackage }, or null (keyPackage: one, at random)
@@ -12,6 +14,7 @@
 //   await directory.name(did)                 // the same, their handle looked up
 //   await directory.publicOf(did, name)       // any public tail of theirs (`card`, `mail`: only their account writes it)
 //   await directory.dataKey(did)              // their account's data key (hex) as their key log names it, or null
+//   await directory.devices(did, fresh?)      // their devices' keys (hex), each credential checked against their key log
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const storage = await ctx.require("storage");
@@ -33,6 +36,15 @@ export async function start(ctx) {
     return {
       handle: rows.find(r => r.key === "handle")?.value ?? null,
       inbox: rows.find(r => r.key === "inbox")?.value ?? null,
+      // The account's devices' credentials (hex), as its key group has them.
+      nodes: (() => {
+        try {
+          const list = JSON.parse(rows.find(r => r.key === "nodes")?.value ?? "[]");
+          return Array.isArray(list) ? list.filter(x => typeof x === "string") : [];
+        } catch {
+          return [];
+        }
+      })(),
       // The DID's key packages (a list; one picked at random for each conversation started).
       keyPackage: (() => {
         let list = [];
@@ -53,8 +65,9 @@ export async function start(ctx) {
     return k ? storage.publicTail(name, k.data) : null;
   }
 
-  async function card(did) {
+  async function card(did, { fresh = false } = {}) {
     const t = await publicOf(did, CARD);
+    if (fresh) await t?.reread?.().catch(() => {});
     if (!t || t.absent) return null;
     return { did: typeof did === "string" ? did : glue.did_of(did), ...read(t) };
   }
@@ -73,7 +86,17 @@ export async function start(ctx) {
       await t.put("inbox", k.inboxKey);
     }
     if (!read(t).keyPackage) await putKeyPackages(t);
+    await putNodes(t);
     return { did: sp.id, ...read(t) };
+  }
+
+  // The account's DEVICES on the card: the credentials its key group holds now (rewritten when they change: a device
+  // joined or was removed).
+  async function putNodes(t) {
+    const st = await (await ctx.require("keys")).ready().catch(() => null);
+    const creds = (st?.members ?? []).map(m => m.cred).filter(Boolean).sort();
+    if (!creds.length || JSON.stringify(creds) === JSON.stringify(read(t).nodes.slice().sort())) return;
+    await t.put("nodes", JSON.stringify(creds));
   }
 
   // NEW key packages (one was used to add this person somewhere: each works once).
@@ -107,5 +130,23 @@ export async function start(ctx) {
     return dataKeys.get(did);
   }
 
-  return { card, publish, renew, handle, shown, name, publicOf, dataKey };
+  // A person's DEVICES: the keys their card's credentials name, each checked against their key log (a credential signed
+  // by a key the log never named counts for nothing). Once per page, or again when asked (`fresh`: a device may have
+  // joined since).
+  const deviceSets = new Map();
+  function devices(did, fresh = false) {
+    if (fresh || !deviceSets.has(did))
+      deviceSets.set(
+        did,
+        (async () => {
+          const c = await card(did, { fresh });
+          if (!c?.nodes.length || !(await keysOf(did))) return [];
+          const creds = c.nodes.map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))));
+          return Array.from(core.account_members(idlogCode, didBytes(did), creds, []));
+        })().catch(() => []),
+      );
+    return deviceSets.get(did);
+  }
+
+  return { card, publish, renew, handle, shown, name, publicOf, dataKey, devices };
 }

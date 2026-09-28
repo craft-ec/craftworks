@@ -464,14 +464,15 @@ export async function start(ctx) {
     return st && !st.removed ? st.epoch + 1 : 0;
   }
 
-  // Once the account's keys are ready here: its CARD carries the DID's key packages (a card from before, or one whose
-  // key packages were used up, gets a fresh set) — nobody who wants to add this person ever finds none.
+  // Once the account's keys are ready here: its CARD is current — the DID's key packages (a card from before, or one
+  // whose key packages were used up, gets a fresh set: nobody who wants to add this person ever finds none) and its
+  // devices' credentials (a device joined since).
   const cardReady = () =>
     ctx
       .require("directory")
       .then(async d => {
         const me = await space.account();
-        if (me && !(await d.card(me.id))?.keyPackage) await d.publish();
+        if (me) await d.publish(); // writes only what is missing or changed: key packages, the devices' credentials
       })
       .catch(e => ctx.log("account keys", { what: `the card: ${e.message}` }));
   const start = () =>

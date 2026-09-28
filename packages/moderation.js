@@ -10,17 +10,17 @@
 //   await m.ban(did)         // the same, and never back (no invite or code lets them in) until `unban`
 //   m.onChange(fn)
 export async function start(ctx) {
-  const [roles, keys] = await Promise.all(["roles", "keys"].map(n => ctx.require(n)));
+  const [roles, keys, directory] = await Promise.all(["roles", "keys", "directory"].map(n => ctx.require(n)));
 
   async function of(sp) {
     const r = await roles.of(sp);
-    // OUT: the act first (what they wrote stays theirs: the act names their member), then their member out of the group.
-    // A ban of someone already out is the act alone.
+    // OUT: the act first — naming their devices, so what they wrote stays theirs after they leave — then their member
+    // out of the group. A ban of someone already out is the act alone.
     async function out(did, act) {
       await r.refresh();
       const nodes = r.nodesOf(did);
       if (!nodes.length && act !== "ban") throw new Error("they are not in this space");
-      await r.act({ act, did, nodes: nodes.map(n => n.key) });
+      await r.act({ act, did, nodes: await directory.devices(did) });
       if (nodes.length) await keys.group(r.space).remove(nodes.map(n => n.index));
       await r.refresh();
     }

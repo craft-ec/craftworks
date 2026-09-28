@@ -83,9 +83,12 @@ uses the tokens, never its own colours or sizes — so a new look, or a second t
 - **Your account is a space** whose members are your nodes. Its log is the key log.
 - **A DID is the member; a device is a way to sign in** (owner, 2026-09-28). Every other space knows PEOPLE: its group
   has one member per DID, whose keys are the ACCOUNT's — kept sealed in the account's storage, so any device logged in
-  to the account uses them (as it uses the data key). Devices never appear in a space: adding one is logging in;
-  removing one refreshes the account's member in each space (from a device that remains), so the removed one reads
-  nothing newer. Two devices changing a space at once: the epoch log's order decides, the other reloads.
+  to the account uses them (as it uses the data key). Adding a device is logging in; removing one refreshes the
+  account's member in each space (from a device that remains), so the removed one reads nothing newer. Two devices
+  changing a space at once: the epoch log's order decides, the other reloads. WRITING stays per device (every writer
+  its own feed): a DID's devices write their own feeds in a space on its behalf; the DID's card lists its devices'
+  credentials (signed by an owner key of its key log), so readers gather every member's devices and attribute what
+  they wrote to the DID. (Measured 2026-09-29: one DID-wide feed written by two devices lost writes both ways.)
 - **Ordering.** Shared state changes by acts in an ordered log; an act counts only if its signer's role allowed it at
   that point. First: one log per object/space with a deterministic tie-break. Later, when needed: witnessed snapshots
   (a known witness set, quorums that intersect).

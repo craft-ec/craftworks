@@ -46,10 +46,10 @@ export async function start(ctx) {
   async function open(sp) {
     const [first, me, t] = await Promise.all([space.owner(sp), space.account(), storage.table(space.tableOf(sp, "acts"), sp)]);
     const g = keys.group(sp);
-    // WRITERS: each member of the group (one per DID) → its DID, where the credential is really that DID's: signed by
-    // the data key its key log names (a credential names any DID it likes; the key log says whose it is). Members who
-    // left stay known (what they wrote is still theirs): learned from the group as it was when seen, and from the
-    // removals that name them.
+    // MEMBERS: each member of the group (one per DID), where its credential is really that DID's: signed by the data
+    // key its key log names (a credential names any DID it likes; the key log says whose it is). WRITERS: each of their
+    // devices → the DID. Members who left stay known (what they wrote is still theirs): learned from the group as it
+    // was when seen, and from the removals that name them.
     const writers = new Map();
     let group = [];
     let left = false;
@@ -59,7 +59,10 @@ export async function start(ctx) {
       const real = await Promise.all(all.map(async m => (await directory.dataKey(m.did)) === m.signer));
       for (const [i, m] of all.entries()) if (!real[i]) ctx.log("roles", { what: `a member claims ${m.did.slice(12, 20)}… with a key that is not its: left out` });
       group = all.filter((_, i) => real[i]);
-      for (const m of group) writers.set(m.key, m.did);
+      // Each member's DEVICES write on its behalf (their feeds): device key → the DID (the DID's card, checked
+      // against its key log).
+      const sets = await Promise.all(group.map(m => directory.devices(m.did)));
+      group.forEach((m, i) => sets[i].forEach(k => writers.set(k, m.did)));
     };
     await learn(await g.ready().catch(() => null));
     const author = row => (row?.id ? (writers.get(row.id.slice(0, 64)) ?? null) : null);

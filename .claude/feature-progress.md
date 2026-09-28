@@ -440,3 +440,17 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       #5764 is approved. Worktree: jobs tmp fc-passkey (delete after the PR).
 - [ ] Our side: the account key sealed on the network, opened by words / passphrase now, by the passkey PRF when the
       shell supports it; PIN for daily use; passkey step-up for account acts.
+
+## Two devices, one account (2026-09-29) — measured on a private 3-node network (A gateway, B, C; same binary)
+- [x] Words login on a second device: the same account. Mail: one copy on each device. DM from Y: both devices join
+      once, no duplicate.
+- [x] FIXED: a tail sealed under an epoch this node had no key for yet (a device joined while the page was open) was
+      never retried — `craftworks:keys` (identity, on each epoch kept) re-opens it. Notes B→A: missing → live in 3 s.
+- [x] FIXED: a space's feed was the DID's, written by both devices → lost writes both ways (measured). Now each
+      device writes its own feed; the card lists the devices' credentials (`directory.devices`, key-log checked);
+      space writers = every member DID's devices; roles map device → DID. Live: B→A and A→B immediate, Y saw both
+      (one after its 30 s re-read), both attributed to X. Messages written under the old DID-wide feed (test
+      servers Kiln, Anvil) are no longer read: dev data.
+- [ ] The identity's `SpaceMember.writer` (DID-wide feed key) is unused now: drop it at the next delegate change.
+- [ ] A space table open before a member's device first writes picks that feed up on the 30 s re-read; a push on the
+      catalog would make it immediate.
