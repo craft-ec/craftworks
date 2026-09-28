@@ -234,6 +234,13 @@ pub const TABLE: &[u8] = b"t/";
 /// Written by the member's home site, or by any site the person allowed some table: listing a table is part of using
 /// it.
 pub const CATALOG: &str = "tables";
+/// The account's MEMBERS table: every node's credentials and the removals it made, gossiped in its own feed. Read with
+/// any grant (whose feeds count is part of reading any table); written by the home site only (where the group runs).
+pub const MEMBERS: &str = "members";
+/// A table whose key comes with ANY grant of the site.
+fn with_any_grant(table: &str) -> bool {
+    table == CATALOG || table == MEMBERS
+}
 
 /// The key that seals a table: from the account's data key, the table's name and its generation. The same on every node
 /// of the account; a new generation is a new key (what a revoked site held does not open what is written after).
@@ -607,7 +614,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 return Refused(Why::BadTable);
             }
             let m = a.public();
-            let may = a.home == app || granted(h, &m, &app, &table) || (table == CATALOG && grants(h, &m).iter().any(|(g, _)| *g == app));
+            let may = a.home == app || granted(h, &m, &app, &table) || (with_any_grant(&table) && grants(h, &m).iter().any(|(g, _)| *g == app));
             if !may {
                 return Refused(Why::NotGranted { table });
             }
@@ -628,7 +635,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             let member = a.public();
             let may = a.home == app
                 || granted(h, &member, &app, &table)
-                || (table == CATALOG && grants(h, &member).iter().any(|(g, _)| *g == app));
+                || (with_any_grant(&table) && grants(h, &member).iter().any(|(g, _)| *g == app));
             if !may {
                 return Refused(Why::NotGranted { table });
             }
@@ -652,6 +659,8 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             let member = a.public();
             let may = if table == CATALOG {
                 a.home == app || grants(h, &member).iter().any(|(g, _)| *g == app)
+            } else if table == MEMBERS {
+                a.home == app
             } else {
                 granted(h, &member, &app, table)
             };

@@ -515,3 +515,18 @@ fn a_members_keys_go_to_the_next_build_on_its_pin_to_its_home_only() {
     assert_eq!(provision(&mut m, BOB, BOB_DID, BOB_PIN, APP), bob());
     assert_eq!(keys(&mut m, BOB_PIN, APP), Answer::HandedKeys { mls: None, epochs: vec![] });
 }
+
+#[test]
+fn the_members_table_is_read_with_any_grant_and_written_by_the_home_only() {
+    let mut m = provisioned(APP);
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    let key = |m: &mut Map, app| serve(m, Request::TableKey { table: MEMBERS.into(), gen: 0 }, app);
+    // Another site with no grant at all: nothing. With a grant for something else: the members' key too.
+    assert_eq!(key(&mut m, OTHER), Answer::Refused(Why::NotGranted { table: MEMBERS.into() }));
+    assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
+    assert!(matches!(key(&mut m, OTHER), Answer::TableKey { .. }));
+    // Writing it: the home site signs its own feed of it; another site, even granted, does not.
+    let feed = params(public(ALICE), b"t/members");
+    assert!(matches!(sign(&mut m, APP, &feed, 1, [1; 32]), Answer::Signed { .. }));
+    assert_eq!(sign(&mut m, OTHER, &feed, 2, [2; 32]), Answer::Refused(Why::NotGranted { table: MEMBERS.into() }));
+}

@@ -507,6 +507,23 @@ mod js {
             }
         }
 
+        /// WHO BELONGS to the account (`account::members`): the node keys (hex) that the gathered credentials (bytes) make
+        /// members, less the removals that count (`[[by, node, epoch]]`, each found in its remover's own feed), checked
+        /// against the account's (got) key log.
+        pub fn account_members(&self, idlog_code: &[u8], did: &[u8], creds: js_sys::Array, removals: js_sys::Array) -> Result<js_sys::Array, JsValue> {
+            let did = b32(did)?;
+            let id = account::idlog_put(idlog_code, &did, None).id_bytes;
+            let st = self.0.got(&id).ok_or_else(|| err("the account's key log has not been read".into()))?;
+            let log = craftworks_idlog_contract::read(&did, st).ok_or_else(|| err("the account's key log does not verify".into()))?;
+            let creds: Vec<Vec<u8>> = creds.iter().map(|c| js_sys::Uint8Array::new(&c).to_vec()).collect();
+            let mut rs = Vec::new();
+            for r in removals.iter() {
+                let r = js_sys::Array::from(&r);
+                rs.push((b32(&js_sys::Uint8Array::new(&r.get(0)).to_vec())?, b32(&js_sys::Uint8Array::new(&r.get(1)).to_vec())?, r.get(2).as_f64().unwrap_or(0.0) as u64));
+            }
+            Ok(account::members(&did, &log, &creds, &rs).iter().map(|n| JsValue::from(hex(n))).collect())
+        }
+
         /// `{ events, changes }` of the account's (got) key log: its events, and how many times its keys changed (each
         /// change of the words is two events).
         pub fn idlog_info(&self, idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Object, JsValue> {

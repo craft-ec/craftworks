@@ -51,6 +51,10 @@ export async function start(ctx) {
   };
 
   let status = null; // the group as this page holds it
+  const watchers = []; // told the group's status whenever it changes (`membership` gossips its members from it)
+  const told = st => {
+    for (const f of watchers) Promise.resolve(f(st)).catch(e => ctx.log("account keys", { what: e?.message ?? String(e) }));
+  };
   let published = null; // the group info last written
   let busy = Promise.resolve();
 
@@ -68,6 +72,7 @@ export async function start(ctx) {
       published = info;
     }
     status = { epoch: st.epoch, me: st.me, members: st.members, removed: st.removed };
+    told(status);
     return status;
   }
 
@@ -208,5 +213,5 @@ export async function start(ctx) {
     else ready().catch(err => ctx.log("account keys", { what: err?.message ?? String(err) }));
   });
 
-  return { ready, remove, escrowed };
+  return { ready, remove, escrowed, onChange: f => watchers.push(f) };
 }

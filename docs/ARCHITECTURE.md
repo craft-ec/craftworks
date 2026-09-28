@@ -106,8 +106,9 @@ uses the tokens, never its own colours or sizes — so a new look, or a second t
   key and checked against the key log; a removal is signed by the member that made it. Each node lists every node and
   removal it knows in its own feed; a reader starts from its own node and takes the union, so no single writer can hide
   a node or a removal. A removal first moves the removed node's winning rows into the remover's feed, then the
-  removed node's feed stops counting. Ordering (the account's MLS commits) runs over the members' feeds too (`log`), so
-  the account's shared data key signs nothing: a removed node can write nowhere that counts.
+  removed node's feed stops counting. Ordering is the one exception to "every writer its own feed": MLS epochs admit
+  no forks, so each epoch's commits keep one sequence — a tail signed with a key derived from that epoch's secret, so
+  only the nodes in the group at that epoch can write it, and a removed node can write nowhere that counts.
 - **Indexes are one shape** with a visibility — public (directory, tag index, comments) or sealed (inbox) — as edges
   are (public tags, private labels).
 - **Durability.** Immutable blocks are erasure-coded (every node's children and the root's group of one) and read by a
@@ -126,7 +127,7 @@ Each phase: build → the private node (all three sites) → published through B
 | 1 | **Keys and sealing** | `keys`, `identity`, `storage` | MLS in the core; your account as an MLS group of your nodes; table key = export(epoch, table); escrow to the words; sealing of whole tree nodes (Sealed contracts at keyed addresses); tables sealed today by row are sealed over; a removed node forgets its member | done |
 | 2a | **Feeds and merge** | `storage`, `identity` | every node writes its own feed per table (its node key signs); rows carry id + the version they replace; readers merge causally; the shared-key tail read as the oldest writer | — |
 | 2b | **Membership and removal** | `membership`, `keys` | owner-signed node credentials and member-signed removals, gossiped in each node's feed; removal moves the removed node's winning rows, then drops its feed | — |
-| 2c | **Ordering over feeds** | `ordering`, `keys` | the `log` type: MLS commits in the members' feeds, one valid commit per epoch; the data key signs nothing | — |
+| 2c | **Ordering per epoch** | `ordering`, `keys`, `identity` | the account's commits keep ONE sequence (MLS has no forks), but each epoch's sequence is its own tail under a key derived from that epoch's secret — only the nodes in the group at that epoch sign it, so a removed node writes no later epoch's; a words-joiner walks from epoch 0 (escrowed to the words at registration) through each epoch's next-epoch escrow; the data key signs only tables from before feeds and that first pointer | — |
 | 3 | **Reads** | `storage`, `blocks` | range (latest N, older pages) and change-only reads (tree diff) | — |
 | 4 | **Lifecycle** | `keep` | re-publishing, retention, flush when quiet, health; blinded table names | — |
 | 5 | **Rules over objects** | `ordering`, `governance`, `roles`, `access`, `membership`, `administration`, `moderation`, `space` | the Log for objects and spaces; acts and their rules; spaces | — |

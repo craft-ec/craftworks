@@ -13,7 +13,6 @@
 //!
 //! Where the commits and the group info travel (one agreed order) is the caller's: see `storage`.
 
-use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use mls_rs::client_builder::{BaseConfig, WithCryptoProvider, WithIdentityProvider};
 use mls_rs::group::ReceivedMessage;
 use mls_rs::identity::basic::BasicCredential;
@@ -29,33 +28,10 @@ use std::sync::{Arc, Mutex};
 use zeroize::Zeroizing;
 
 pub const SUITE: CipherSuite = CipherSuite::CURVE25519_AES128;
-const CRED: &[u8; 4] = b"CWMB";
 const TABLE_KEYS: &[u8] = b"craftworks table keys";
 
-/// A member's credential: its account, its node key, its MLS signing key, and an owner key's signature over them.
-pub fn credential(did: &[u8; 32], node: &[u8; 32], signing_pub: &[u8], owner_seed: &[u8; 32]) -> Vec<u8> {
-    let owner = SigningKey::from_bytes(owner_seed);
-    let sig = owner.sign(&cred_message(did, node, signing_pub)).to_bytes();
-    [&CRED[..], did, &owner.verifying_key().to_bytes(), node, signing_pub, &sig].concat()
-}
-
-fn cred_message(did: &[u8; 32], node: &[u8; 32], signing_pub: &[u8]) -> Vec<u8> {
-    [b"craftworks mls member".as_slice(), did, node, signing_pub].concat()
-}
-
-/// `(did, owner key, node key, signing key)` of a credential whose owner signature holds.
-fn read_credential(b: &[u8]) -> Option<([u8; 32], [u8; 32], [u8; 32], Vec<u8>)> {
-    let rest = b.strip_prefix(CRED)?;
-    let (did, rest) = rest.split_at_checked(32)?;
-    let (owner, rest) = rest.split_at_checked(32)?;
-    let (node, rest) = rest.split_at_checked(32)?;
-    let (sp, sig) = rest.split_at_checked(rest.len().checked_sub(64)?)?;
-    let did: [u8; 32] = did.try_into().ok()?;
-    let node: [u8; 32] = node.try_into().ok()?;
-    let vk = VerifyingKey::from_bytes(owner.try_into().ok()?).ok()?;
-    vk.verify(&cred_message(&did, &node, sp), &ed25519_dalek::Signature::from_slice(sig).ok()?).ok()?;
-    Some((did, owner.try_into().ok()?, node, sp.to_vec()))
-}
+// A member's credential (its format and check) is the ACCOUNT's: one source, shared with `membership` in the page.
+pub use craftworks_account::{credential, read_credential};
 
 /// THE ACCOUNT'S RULE for who is a member: a credential of THIS account, signed by one of its owner keys, whose
 /// signing key is the one the member uses.
@@ -289,8 +265,8 @@ impl Account {
         self.group.current_epoch()
     }
 
-    /// The members — the account's NODES: `(index, node key)`, each from its owner-signed credential.
-    pub fn members(&self) -> Vec<(u32, Vec<u8>)> {
+    /// The members — the account's NODES: `(index, node key, credential)`, each from its owner-signed credential.
+    pub fn members(&self) -> Vec<(u32, Vec<u8>, Vec<u8>)> {
         self.group
             .roster()
             .members()
@@ -298,7 +274,7 @@ impl Account {
             .filter_map(|m| {
                 let basic = m.signing_identity.credential.as_basic()?;
                 let (_, _, node, _) = read_credential(&basic.identifier)?;
-                Some((m.index, node.to_vec()))
+                Some((m.index, node.to_vec(), basic.identifier.clone()))
             })
             .collect()
     }
@@ -353,6 +329,7 @@ pub use craftworks_identity::epoch_table_key as table_key;
 
 #[cfg(test)]
 mod tests {
+    use ed25519_dalek::SigningKey;
     use super::*;
 
     fn ident(owners: &[[u8; 32]]) -> AccountIdentity {
@@ -387,7 +364,7 @@ mod tests {
         assert!(c2.removed, "kept across a save");
         assert!(!a.removed && !b.removed);
         assert_eq!(a.members().len(), 2);
-        let nodes: Vec<Vec<u8>> = a.members().into_iter().map(|(_, k)| k).collect();
+        let nodes: Vec<Vec<u8>> = a.members().into_iter().map(|(_, k, _)| k).collect();
         assert!(nodes.contains(&vec![0xA; 32]) && nodes.contains(&vec![0xB; 32]) && !nodes.contains(&vec![0xC; 32]), "the roster names the nodes");
         // Saved and loaded (the delegate keeps the blob): the same member, the same epoch.
         let blob = a.save().unwrap();
@@ -507,7 +484,7 @@ mod js {
             Ok(js_sys::Uint8Array::from(&s[..]))
         }
 
-        /// `{ epoch, secret, escrow, info, me, members: [{ index, key }], state }`: `escrow` is this epoch's secret sealed
+        /// `{ epoch, secret, escrow, info, me, members: [{ index, key, cred }], state }`: `escrow` is this epoch's secret sealed
         /// to the account's encryption key (to publish), with a fresh one-time key.
         pub fn status(&mut self) -> Result<js_sys::Object, JsValue> {
             let enc = self.1;
@@ -527,10 +504,11 @@ mod js {
             let members: js_sys::Array = m
                 .members()
                 .into_iter()
-                .map(|(i, k)| -> JsValue {
+                .map(|(i, k, c)| -> JsValue {
                     let x = js_sys::Object::new();
                     let _ = js_sys::Reflect::set(&x, &"index".into(), &JsValue::from(i));
                     let _ = js_sys::Reflect::set(&x, &"key".into(), &JsValue::from(hex(&k)));
+                    let _ = js_sys::Reflect::set(&x, &"cred".into(), &JsValue::from(hex(&c)));
                     x.into()
                 })
                 .collect();

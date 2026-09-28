@@ -38,6 +38,8 @@ export async function start(ctx) {
   // reads to say whose feeds count).
   const CHANNELS = new Set(["mls"]);
   const CATALOG = "tables";
+  // Tables whose key comes with ANY grant of the site: the catalog, and the account's members.
+  const ANY_GRANT = new Set([CATALOG, "members"]);
 
   // A tail's VIEW, walked to the end: the tail names the tree's root; a view that needs tree blocks names their
   // contracts, fetched (raced, rebuilt if missing) until the rows are all there; one that names EPOCHS gets their keys
@@ -326,8 +328,9 @@ export async function start(ctx) {
       // recovered its epochs) is left out and COUNTED, never fatal: this node writes only its own feed, so nothing it
       // cannot see is written over. Its own feed must open.
       let unopened = 0;
+      const catalogKey = ANY_GRANT.has(name);
       const theirs = (owner, known) =>
-        tail(owner, name, { known }).catch(e => {
+        tail(owner, name, { known, catalogKey }).catch(e => {
           unopened += 1;
           ctx.log("feed not read", { what: `${name}: ${owner.slice(0, 12)}…: ${e.message}` });
           return null;
@@ -343,7 +346,7 @@ export async function start(ctx) {
       const listMine = async () => {
         if (!lists(mine, name)) await versioned(mine, name, JSON.stringify({ at: Date.now() }), own(mine).find(r => r.key === name)?.id);
       };
-      const mineFeed = tail(s.member, name, { known: lists(mine, name) ? null : false, beforeCreate: listMine });
+      const mineFeed = tail(s.member, name, { known: lists(mine, name) ? null : false, catalogKey, beforeCreate: listMine });
       feeds.push(mineFeed);
       const all = (await Promise.all(feeds)).filter(Boolean);
       const me = all[all.length - 1];
@@ -420,5 +423,47 @@ export async function start(ctx) {
     return out;
   }
 
-  return { table, describe, refuse: why => (refusing = why) };
+  // The nodes the directory lists as having feeds (hex keys): where `membership` starts gathering.
+  async function nodes() {
+    return (await directory()).rows().filter(r => r.key.startsWith("node:")).map(r => r.key.slice(5));
+  }
+
+  // The OWN ROWS of table `name` in each of `owners`' feeds (where its catalog lists one): `[{ owner, rows }]`. A
+  // union, not a merge — for what must not be overwritten by one writer (a removal stays found in its remover's feed).
+  async function feedsOf(name, owners) {
+    const out = [];
+    await Promise.all(
+      owners.map(async owner => {
+        const cat = await catalogOf(owner).catch(() => null);
+        if (!cat || !own(cat).some(r => r.key === name)) return;
+        const t = await tail(owner, name, { known: true, catalogKey: ANY_GRANT.has(name) }).catch(() => null);
+        if (t) out.push({ owner, rows: own(t) });
+      }),
+    );
+    return out;
+  }
+
+  // ADOPT a node's current rows (before it is removed): every row whose current version is `node`'s is written again
+  // in this node's own feed, replacing it — so when its feed stops counting, nothing it wrote is lost.
+  async function adopt(node) {
+    const s = await auth.check();
+    const d = await directory();
+    const cats = await Promise.all([s.member, node].map(o => catalogOf(o).catch(() => null)));
+    const names = new Set(cats.filter(Boolean).flatMap(c => own(c).map(r => r.key)));
+    for (const n of d.rows().map(r => r.key)) if (n !== CATALOG && !n.startsWith("node:")) names.add(n);
+    let moved = 0;
+    for (const name of names) {
+      if (CHANNELS.has(name)) continue;
+      const t = await table(name).catch(() => null);
+      if (!t) continue;
+      for (const r of t.rows().filter(r => r.id?.startsWith(node))) {
+        await t.put(r.key, r.value);
+        moved += 1;
+      }
+    }
+    ctx.log("adopted", { what: `${moved} row(s) of ${node.slice(0, 12)}… now in this node's feeds` });
+    return moved;
+  }
+
+  return { table, describe, nodes, feedsOf, adopt, refuse: why => (refusing = why) };
 }

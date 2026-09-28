@@ -264,5 +264,19 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
   - Live: B writes → directory `node:`, catalog feed PUT, notes feed PUT, merged shows it. D registers + note, E by
     words: sees D's note, edits it (one note, E's version); D by PIN sees E's edit, deletes; E sees it gone.
   - Live (fresh account): F registers, G and H by words (3 nodes, epoch 2); H writes a note; F by PIN reads it.
-- [ ] 2b membership and removal (credentials + removals gossiped in each node's feed; removal moves winning rows)
+- [x] 2b membership and removal:
+  - the credential (format + check) moved from `mls` into `account` (one source; mls re-exports); `account::members`
+    = credentials checked against the key log, minus removals by nodes still in, in epoch order (lower remover key
+    first within an epoch). Test incl. a stranger's credential, a non-member's removal, mutual removal both orders.
+  - identity: `members` table read with ANY grant (like the catalog), written by the home site only. Test.
+  - membership: gossips in each node's own `members` feed (`n/<node>` credentials it knows, `x/<node>` its removals);
+    `writers()` = BFS from this node + the directory over the UNION of members feeds (not a merge: a removal can't be
+    overwritten), then the account's rule via the core. `keys` only reports status changes (`onChange`).
+  - removal (membership.remove): group removal (keys) → `storage.adopt(node)` (its current rows rewritten in this
+    node's feeds) → `x/<node>` told.
+  - Live: P registers, Q and R by words; R reads P's and Q's notes (credentials gossiped); P removes R: "4 row(s)
+    adopted", removal told; after a reload P's notes come from 1 feed and include R's note. Q removed earlier and,
+    logging in by PIN, forgot itself (its PIN opens nothing).
+  - OPEN: in the first removal run (two browser scripts overlapped) Q's note was NOT adopted; the page's trace was
+    lost to the overlap — cause unknown; the clean rerun adopted correctly. Re-test on the next removal.
 - [ ] 2c ordering over feeds (`log`; the data key signs nothing)

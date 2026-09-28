@@ -21,7 +21,7 @@
 //! the Account page can show the words when the person sets up recovery.
 
 use bip39::Mnemonic;
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use freenet_stdlib::prelude::{ContractContainer, WrappedState};
 use hmac::{Hmac, Mac};
 use sha2::Sha512;
@@ -293,6 +293,60 @@ pub fn did(did: &[u8; 32]) -> String {
 }
 
 
+/// A NODE's CREDENTIAL (its membership of the account, self-certifying): its account, its node key, its MLS signing
+/// key, and an owner key's signature over them — `CWMB ‖ did ‖ owner ‖ node ‖ signing key ‖ signature`. Whoever holds
+/// the recovery words proves the node is theirs; anyone checks it against the account's key log.
+const CRED: &[u8; 4] = b"CWMB";
+
+pub fn credential(did: &[u8; 32], node: &[u8; 32], signing_pub: &[u8], owner_seed: &[u8; 32]) -> Vec<u8> {
+    let owner = SigningKey::from_bytes(owner_seed);
+    let sig = owner.sign(&cred_message(did, node, signing_pub)).to_bytes();
+    [&CRED[..], did, &owner.verifying_key().to_bytes(), node, signing_pub, &sig].concat()
+}
+
+fn cred_message(did: &[u8; 32], node: &[u8; 32], signing_pub: &[u8]) -> Vec<u8> {
+    [b"craftworks mls member".as_slice(), did, node, signing_pub].concat()
+}
+
+/// `(did, owner key, node key, signing key)` of a credential whose owner signature holds.
+pub fn read_credential(b: &[u8]) -> Option<([u8; 32], [u8; 32], [u8; 32], Vec<u8>)> {
+    let rest = b.strip_prefix(CRED)?;
+    let (did, rest) = rest.split_at_checked(32)?;
+    let (owner, rest) = rest.split_at_checked(32)?;
+    let (node, rest) = rest.split_at_checked(32)?;
+    let (sp, sig) = rest.split_at_checked(rest.len().checked_sub(64)?)?;
+    let did: [u8; 32] = did.try_into().ok()?;
+    let node: [u8; 32] = node.try_into().ok()?;
+    let vk = VerifyingKey::from_bytes(owner.try_into().ok()?).ok()?;
+    vk.verify(&cred_message(&did, &node, sp), &ed25519_dalek::Signature::from_slice(sig).ok()?).ok()?;
+    Some((did, owner.try_into().ok()?, node, sp.to_vec()))
+}
+
+/// The node a credential makes a member of the account `did` whose key log is `log`: signed by an owner key the log
+/// ever had (rotating the words does not orphan the nodes already in).
+pub fn member_node(did: &[u8; 32], log: &Log, cred: &[u8]) -> Option<[u8; 32]> {
+    let (d, owner, node, _) = read_credential(cred)?;
+    (d == *did && log.events.iter().any(|e| e.key == owner)).then_some(node)
+}
+
+/// WHO BELONGS (ARCHITECTURE: membership is self-certifying and gossiped): the account's nodes from every credential
+/// and removal gathered from the nodes' feeds. A node counts if a credential names it (checked against the key log). A
+/// removal `(by, node, epoch)` — found in `by`'s own feed — counts if `by` counts and was not itself removed first:
+/// removals are taken in epoch order, and within one epoch by the remover's key, so two nodes removing each other at
+/// once end the same way everywhere. A removal is never taken back.
+pub fn members(did: &[u8; 32], log: &Log, creds: &[Vec<u8>], removals: &[([u8; 32], [u8; 32], u64)]) -> Vec<[u8; 32]> {
+    let valid: std::collections::BTreeSet<[u8; 32]> = creds.iter().filter_map(|c| member_node(did, log, c)).collect();
+    let mut order: Vec<&([u8; 32], [u8; 32], u64)> = removals.iter().filter(|(by, _, _)| valid.contains(by)).collect();
+    order.sort_by_key(|(by, node, epoch)| (*epoch, *by, *node));
+    let mut removed = std::collections::BTreeSet::new();
+    for (by, node, _) in order {
+        if !removed.contains(by) {
+            removed.insert(*node);
+        }
+    }
+    valid.into_iter().filter(|n| !removed.contains(n)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,4 +452,34 @@ mod tests {
         assert_eq!(data_seed(&[3; 16]), Some(data), "the same on every node");
         assert_eq!(data, slip10(&Mnemonic::from_entropy(&[3; 16]).unwrap().to_seed_normalized(""), &DATA_PATH));
     }
+
+    /// MEMBERSHIP: credentials checked against the key log (control: another account's words sign nothing here), and
+    /// removals applied in epoch order by removers still in — two nodes removing each other end the same way.
+    #[test]
+    fn members_are_the_credentials_minus_the_removals_that_count() {
+        let words = [3u8; 16];
+        let e = inception(&words).unwrap();
+        let did = e.id();
+        let log = Log { events: vec![e] };
+        let owner = owner_seed(&words).unwrap();
+        let (a, b, c) = ([0xA; 32], [0xB; 32], [0xC; 32]);
+        let cred = |n: &[u8; 32]| credential(&did, n, &[1; 32], &owner);
+        let creds = vec![cred(&a), cred(&b), cred(&c)];
+        assert_eq!(members(&did, &log, &creds, &[]), vec![a, b, c]);
+        // Another account's owner signs a credential for this DID: not a member.
+        let stranger = credential(&did, &[0xD; 32], &[1; 32], &owner_seed(&[9; 16]).unwrap());
+        assert_eq!(members(&did, &log, &[stranger], &[]), Vec::<[u8; 32]>::new());
+        // A removes C: C is out.
+        assert_eq!(members(&did, &log, &creds, &[(a, c, 2)]), vec![a, b]);
+        // A removal made by a node that is no member counts for nothing.
+        assert_eq!(members(&did, &log, &creds, &[([0xE; 32], a, 1)]), vec![a, b, c]);
+        // C removed A at epoch 3, after A removed C at 2: C was out already, so A stays.
+        assert_eq!(members(&did, &log, &creds, &[(c, a, 3), (a, c, 2)]), vec![a, b]);
+        // A and B remove each other at the same epoch: the lower key's removal is taken first — the same everywhere.
+        let x = members(&did, &log, &creds, &[(a, b, 4), (b, a, 4)]);
+        assert_eq!(x, members(&did, &log, &creds, &[(b, a, 4), (a, b, 4)]));
+        assert_eq!(x, vec![a, c]);
+    }
+
 }
+
