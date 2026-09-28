@@ -1,16 +1,17 @@
 // DIRECTORY, a capability: every person's public CARD — found from their DID alone: DID → their key log (its address
 // comes from the DID) → their account's data key → their card, a public tail under it. Nobody else can write it; anyone
-// reads it. A card holds a HANDLE (a name to show — not unique: a person is their handle AND their id), a KEY
-// PACKAGE per node (MLS: with it, anyone adds that node to a conversation while it is away), and the account's INBOX
-// key (what is sealed to it only the account's nodes open: `index`'s inbox).
+// reads it. A card holds a HANDLE (a name to show — not unique: a person is their handle AND their id), the DID's KEY
+// PACKAGES (MLS: with one, anyone adds this person to a conversation while they are away — the person, never a device),
+// and the account's INBOX key (what is sealed to it only the account's nodes open: `index`'s inbox).
 //
 //   const directory = await ctx.require("directory");
-//   await directory.card(did)                 // { did, handle, inbox, keyPackages: [{ node, keyPackage }] }, or null
-//   await directory.publish({ handle })       // this person's handle, and this node's key package
+//   await directory.card(did)                 // { did, handle, inbox, keyPackage }, or null (keyPackage: one, at random)
+//   await directory.publish({ handle })       // this person's handle, and their key packages
 //   await directory.handle(did)               // their handle, or null (each card read once per page)
 //   directory.shown(did, handle)              // how a person is SHOWN everywhere: `pat#8r4orC`
 //   await directory.name(did)                 // the same, their handle looked up
 //   await directory.publicOf(did, name)       // any public tail of theirs (`card`, `mail`: only their account writes it)
+//   await directory.dataKey(did)              // their account's data key (hex) as their key log names it, or null
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const storage = await ctx.require("storage");
@@ -32,19 +33,14 @@ export async function start(ctx) {
     return {
       handle: rows.find(r => r.key === "handle")?.value ?? null,
       inbox: rows.find(r => r.key === "inbox")?.value ?? null,
-      // Each node's key packages (a list; one picked at random for each conversation started).
-      keyPackages: rows
-        .filter(r => r.key.startsWith("kp/"))
-        .map(r => {
-          let list;
-          try {
-            list = JSON.parse(r.value);
-          } catch {
-            list = [r.value];
-          }
-          if (!Array.isArray(list)) list = [r.value];
-          return { node: r.key.slice(3), keyPackage: list[Math.floor(Math.random() * list.length)], count: list.length };
-        }),
+      // The DID's key packages (a list; one picked at random for each conversation started).
+      keyPackage: (() => {
+        let list = [];
+        try {
+          list = JSON.parse(rows.find(r => r.key === "kp")?.value ?? "[]");
+        } catch {}
+        return Array.isArray(list) && list.length ? list[Math.floor(Math.random() * list.length)] : null;
+      })(),
     };
   };
 
@@ -76,20 +72,20 @@ export async function start(ctx) {
       await (await ctx.require("index")).makeInbox();
       await t.put("inbox", k.inboxKey);
     }
-    if (!read(t).keyPackages.some(k => k.node === sp.self)) await putKeyPackages(t, sp);
+    if (!read(t).keyPackage) await putKeyPackages(t);
     return { did: sp.id, ...read(t) };
   }
 
-  // NEW key packages for this node (one of them was used to add it somewhere: each works once).
+  // NEW key packages (one was used to add this person somewhere: each works once).
   async function renew() {
     const sp = await space.account();
-    await putKeyPackages(await storage.publicTail(CARD, sp.shared), sp);
+    await putKeyPackages(await storage.publicTail(CARD, sp.shared));
   }
 
-  // This node's key packages on the card: a fresh set (the ones before stay usable: their secrets are kept here).
-  async function putKeyPackages(t, sp) {
+  // The DID's key packages on the card: a fresh set (the ones before stay usable: their secrets are the account's).
+  async function putKeyPackages(t) {
     const kps = await (await ctx.require("keys")).keyPackages();
-    if (kps) await t.put(`kp/${sp.self}`, JSON.stringify(kps));
+    if (kps?.length) await t.put("kp", JSON.stringify(kps));
   }
 
   // A person's HANDLE, read once per page (a name to show; the id is what makes them them).
@@ -104,5 +100,12 @@ export async function start(ctx) {
   const shown = (did, handle) => `${handle ?? ""}#${String(did).replace(/^did:craftec:/, "").slice(0, 6)}`;
   const name = async did => shown(did, await handle(did));
 
-  return { card, publish, renew, handle, shown, name, publicOf };
+  // A person's DATA key, from their key log (once per page): what signs their member's credential in a space.
+  const dataKeys = new Map();
+  function dataKey(did) {
+    if (!dataKeys.has(did)) dataKeys.set(did, keysOf(did).then(k => k?.data ?? null, () => null));
+    return dataKeys.get(did);
+  }
+
+  return { card, publish, renew, handle, shown, name, publicOf, dataKey };
 }

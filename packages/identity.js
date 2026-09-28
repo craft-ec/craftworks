@@ -122,6 +122,8 @@ export async function start(ctx) {
     revoke: (app, table) => call(core.frames_revoke(app, table), "removing an app's access"),
     // The account's INBOX key (its public half, for its card), and opening items sealed to it (the home site only).
     inboxKey: () => call(core.frames_inbox_key(), "reading the inbox key"),
+    // The DID's member for spaces (the same on every device of the account): its MLS seed and keys, its credential.
+    spaceMember: () => call(core.frames_space_member(), "the account's member for spaces"),
     inboxOpen: items => call(core.frames_inbox_open(items), "opening the inbox"),
     publicOf: seed => glue.CraftworksCore.public_of(seed),
     // HANDOVER: ask an earlier build (`<key>:<code hash>`) for the member `pin` opens there. `{ handed }` with its keys,

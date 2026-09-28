@@ -404,8 +404,11 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       space's feed is the DID's). Tests.
 - [x] P2 mls: a member from (seed, credential); key packages and their secrets exportable (shared by the account's
       devices); create/join/load a space as the DID. Tests.
-- [ ] P3 pages: `keys.group` state + key packages in the account table `spacekeys` (any device loads the newest; the
+- [x] P3 pages: `keys.group` state + key packages in the account table `spacekeys` (any device loads the newest; the
       epoch log's order settles two devices); storage's space scope writes as the DID; `roles` maps writer → DID
       verified against the key log (closes: a credential's DID was never checked); card `kp` per DID; one welcome.
-- [ ] P4 live: new server, invite by DID, post both ways; state loaded from `spacekeys` on a cold device cache.
+- [x] P4 live (Kiln, test v85, new identity delegate): U's card republished with the DID's key packages on load; S
+      made Kiln ("made the space's group: epoch 0"), invited U (one welcome); U joined at epoch 1 as its DID, kept 1
+      earlier epoch, read S's message, replied; S read the reply. Members: one per DID. (Multi-device not exercised:
+      one node per test account; the shared state path is the one every device takes.)
 - [ ] P5 (later) removing a device refreshes the DID's member in each space.

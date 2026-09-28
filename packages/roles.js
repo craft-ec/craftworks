@@ -18,7 +18,7 @@
 //   await r.act({ act: "grant", did, role })   // an act, as this person (refused here if it would not count)
 //   await r.grant(did, role)  r.onChange(fn)  r.settled
 export async function start(ctx) {
-  const [space, storage, keys, node] = await Promise.all(["space", "storage", "keys", "node"].map(n => ctx.require(n)));
+  const [space, storage, keys, node, directory] = await Promise.all(["space", "storage", "keys", "node", "directory"].map(n => ctx.require(n)));
 
   const CAN = {
     owner: new Set(["post", "invite", "channels", "moderate", "remove", "grant"]),
@@ -26,7 +26,10 @@ export async function start(ctx) {
     member: new Set(["post", "invite"]),
   };
   const RANK = { owner: 3, admin: 2, member: 1 };
-  const cred = h => new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16)));
+  // A member's credential (hex): `CWMB ‖ did ‖ signer ‖ writer ‖ MLS key ‖ signature` (the identity's format; MLS
+  // checked the signature when it admitted it).
+  const didOf = h => new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16)));
+  const signerOf = h => h.slice(72, 136);
   const newId = () => [...crypto.getRandomValues(new Uint8Array(8))].map(x => x.toString(16).padStart(2, "0")).join("");
 
   const spaces = new Map();
@@ -39,17 +42,22 @@ export async function start(ctx) {
   async function open(sp) {
     const [owner, me, t] = await Promise.all([space.owner(sp), space.account(), storage.table(space.tableOf(sp, "acts"), sp)]);
     const g = keys.group(sp);
-    // WRITERS: each node of the group → the DID its credential names. Nodes that left stay known (what they wrote is
-    // still theirs): learned from the group as it was when seen, and from the removals that name them.
+    // WRITERS: each member of the group (one per DID) → its DID, where the credential is really that DID's: signed by
+    // the data key its key log names (a credential names any DID it likes; the key log says whose it is). Members who
+    // left stay known (what they wrote is still theirs): learned from the group as it was when seen, and from the
+    // removals that name them.
     const writers = new Map();
     let group = [];
     let left = false;
-    const learn = st => {
+    const learn = async st => {
       left = !!st?.removed;
-      group = (st?.members ?? []).filter(m => m.cred).map(m => ({ key: m.key, index: m.index, did: node.glue.did_of(cred(m.cred)) }));
+      const all = (st?.members ?? []).filter(m => m.cred).map(m => ({ key: m.key, index: m.index, did: node.glue.did_of(didOf(m.cred)), signer: signerOf(m.cred) }));
+      const real = await Promise.all(all.map(async m => (await directory.dataKey(m.did)) === m.signer));
+      for (const [i, m] of all.entries()) if (!real[i]) ctx.log("roles", { what: `a member claims ${m.did.slice(12, 20)}… with a key that is not its: left out` });
+      group = all.filter((_, i) => real[i]);
       for (const m of group) writers.set(m.key, m.did);
     };
-    learn(await g.ready().catch(() => null));
+    await learn(await g.ready().catch(() => null));
     const author = row => (row?.id ? (writers.get(row.id.slice(0, 64)) ?? null) : null);
 
     // THE REPLAY: the acts in order, each kept only if its signer could.
@@ -110,11 +118,11 @@ export async function start(ctx) {
       },
       // The people of the space now: its group's accounts, with their roles.
       members: () => [...new Set(group.map(m => m.did))].map(did => ({ did, role: role(did) })).filter(m => m.role),
-      // The group's nodes of a person (to remove them).
+      // A person's member in the group (to remove them): one per DID.
       nodesOf: did => group.filter(m => m.did === did),
       // Brought current with the group (a member added or removed).
       refresh: async () => {
-        learn(await g.ready().catch(() => null));
+        await learn(await g.ready().catch(() => null));
         replay();
       },
       async act(a) {

@@ -294,8 +294,35 @@ export async function start(ctx) {
     }));
   }
 
-  // A SPACE's GROUP on this node (a server, a chat): made here by its first member, or loaded as the identity kept it,
-  // and brought current through its epoch logs — each sealed with its epoch's own key (a space has no shared key).
+  // THE DID's MEMBER in spaces (ARCHITECTURE: a DID is the member, a device only signs in): its keys from the identity
+  // (the same on every device of the account), its key packages' secrets in the account's table `spacekeys` — one
+  // row per batch (`packages/<id>`), so two devices making key packages never write over each other's.
+  const SPACEKEYS = "spacekeys";
+  const newId = () => hexOf(crypto.getRandomValues(new Uint8Array(8)));
+  let memberKeys = null;
+  const keysOfMember = () =>
+    (memberKeys ??= auth.identity.spaceMember().then(r => {
+      if (!r.spaceMember) throw new Error(`no member for spaces here: ${r.refused ?? JSON.stringify(r)}`);
+      return r.spaceMember;
+    })).catch(e => {
+      memberKeys = null;
+      throw e;
+    });
+  const spacekeys = async () => {
+    const t = await storage.table(SPACEKEYS);
+    await t.settled;
+    return t;
+  };
+  const memberWith = async packages => {
+    const k = await keysOfMember();
+    return new mlsGlue.SpaceMember(bytes(k.seed), bytes(k.credential), packages ? bytes(packages) : new Uint8Array(0));
+  };
+
+  // A SPACE's GROUP, as this DID's member (a server, a chat): made by its first member, or joined from a welcome; its
+  // state the ACCOUNT's (the table `spacekeys`, row `s/<space>`: the newest any device saved), brought current through
+  // the space's epoch logs — each sealed with its epoch's own key. This device keeps each epoch's secret it holds (its
+  // identity signs and seals with them). A commit this DID made on another device is not processed here (MLS: a
+  // member's own): the state that device saved is loaded instead.
   const groups = new Map();
   function group(sp) {
     if (groups.has(sp.id)) return groups.get(sp.id);
@@ -303,6 +330,7 @@ export async function start(ctx) {
     let st = null;
     let queue = Promise.resolve();
     const ch = sp.tables.channel;
+    const at = `s/${sp.id}`;
     const logs = logsOf({
       mls: () => m,
       space: sp.idBytes,
@@ -310,86 +338,119 @@ export async function start(ctx) {
       seal: async e => (await auth.identity.tableKeyAt(ch, e, sp.idBytes)).tableKey,
       label: `${sp.name ?? "space"} keys`,
     });
-    async function keep(made, prev = null) {
+    const status = s => (st = { epoch: s.epoch, me: s.me, members: s.members, removed: s.removed });
+    // SAVE: this epoch's secret on this device, the state for the account's devices, the epoch's log.
+    async function save(made, prev = null) {
       const s = m.status();
-      const r = await auth.identity.mlsSave(s.state, s.epoch, s.secret, sp.idBytes);
-      if (!r.mlsSaved) throw new Error(`the identity would not keep the space's keys: ${r.refused ?? JSON.stringify(r)}`);
+      const k = await auth.identity.epochKeep(s.epoch, s.secret, sp.idBytes);
+      if (!k.mlsSaved) throw new Error(`the identity would not keep the space's key: ${k.refused ?? JSON.stringify(k)}`);
+      await (await spacekeys()).put(at, JSON.stringify({ epoch: s.epoch, state: hexOf(s.state) }));
       await logs.ensure(s, made, prev);
-      st = { epoch: s.epoch, me: s.me, members: s.members, removed: s.removed };
-      return st;
+      return status(s);
+    }
+    // LOAD the account's newest state of this space, where it is newer than this device's (or this device has none):
+    // its secret kept here, and — on a device that never held this space — every earlier epoch its log hands on.
+    async function load() {
+      const v = (await spacekeys()).rows().find(r => r.key === at)?.value;
+      if (!v) return false;
+      const r = JSON.parse(v);
+      if (m && m.status().epoch >= r.epoch) return false;
+      const first = !m;
+      m = mlsGlue.Mls.load_space(sp.idBytes, bytes(r.state));
+      const s = m.status();
+      await auth.identity.epochKeep(s.epoch, s.secret, sp.idBytes);
+      if (first) {
+        const n = await logs.history(s).catch(() => 0);
+        if (n) ctx.log(`${sp.name ?? "space"} keys`, { what: `${n} earlier epoch(s) kept on this device` });
+      }
+      status(s);
+      return true;
+    }
+    // A commit that did not apply here (this DID's own, from another device): its state, when that device has saved it.
+    async function current() {
+      for (let tries = 0; ; tries++) {
+        try {
+          if (await logs.catchUp()) return save(false);
+          return status(m.status());
+        } catch (e) {
+          if (await load()) continue;
+          if (tries >= 3) throw e;
+          await new Promise(r => setTimeout(r, 1500));
+          await (await spacekeys()).reread?.();
+        }
+      }
+    }
+    // A change of the group (add, remove): its commit in the log of the epoch it moves from, then saved. Lost to
+    // another change first: this device takes the newer group and says so.
+    async function change(make) {
+      if (!m) throw new Error("this account is not in the space's group");
+      const from = m.status();
+      const [commit, out] = make();
+      const r = await logs.commitAt(from.epoch, from.secret, commit);
+      if (!r.ok) {
+        m = null;
+        await load();
+        await current().catch(() => {});
+        throw new Error("the group moved meanwhile: try again");
+      }
+      await save(true, hexOf(from.secret));
+      return out;
     }
     const g = {
-      // ADD a node by its key package (from someone's card): its commit in the group's log; the WELCOME (hex) for it.
+      // ADD a person (a DID) by a key package from their card: the WELCOME (hex) for them.
       add: keyPackage =>
-        (queue = queue.then(async () => {
-          if (!m) throw new Error("this node is not in the space's group");
-          const from = m.status();
-          const [commit, welcome] = m.add(bytes(keyPackage));
-          const r = await logs.commitAt(from.epoch, from.secret, commit);
-          if (!r.ok) {
-            const kept = await auth.identity.mlsLoad(sp.idBytes);
-            m = mlsGlue.Mls.load_space(sp.idBytes, bytes(kept.mlsState));
-            throw new Error("the group moved meanwhile: add them again");
-          }
-          await keep(true, hexOf(from.secret));
-          return hexOf(welcome);
-        })),
-      // REMOVE nodes (their indexes in the group): one commit each, a new epoch each, which they cannot read.
+        (queue = queue.then(() =>
+          change(() => {
+            const [commit, welcome] = m.add(bytes(keyPackage));
+            return [commit, hexOf(welcome)];
+          }),
+        )),
+      // REMOVE members (their indexes in the group): one commit each, a new epoch each, which they cannot read.
       remove: indexes =>
         (queue = queue.then(async () => {
-          if (!m) throw new Error("this node is not in the space's group");
-          // Highest first: a removal leaves the other indexes as they are.
-          for (const i of [...indexes].sort((a, b) => b - a)) {
-            const from = m.status();
-            const commit = m.remove(i);
-            const r = await logs.commitAt(from.epoch, from.secret, commit);
-            if (!r.ok) {
-              const kept = await auth.identity.mlsLoad(sp.idBytes);
-              m = mlsGlue.Mls.load_space(sp.idBytes, bytes(kept.mlsState));
-              throw new Error("the group moved meanwhile: remove them again");
-            }
-            await keep(true, hexOf(from.secret));
-          }
-          ctx.log(`${sp.name ?? "space"} keys`, { what: `${indexes.length} node(s) removed: epoch ${m.status().epoch}` });
+          for (const i of [...indexes].sort((a, b) => b - a)) await change(() => [m.remove(i), null]);
+          ctx.log(`${sp.name ?? "space"} keys`, { what: `${indexes.length} member(s) removed: epoch ${m.status().epoch}` });
           return st;
         })),
-      // JOINED from a welcome (this node was added): the group kept, and this node's account state saved (its key
-      // package is used up).
+      // JOINED from a welcome (someone added this DID): answered by whichever batch of key packages holds its key
+      // package; that batch kept without it (a key package works once).
       join: welcome =>
         (queue = queue.then(async () => {
-          if (!(await ready())) throw new Error("this node is not in its account's group here");
-          m = mls.join_space(sp.idBytes, bytes(welcome));
-          const acc = mls.status();
-          await auth.identity.mlsSave(acc.state, acc.epoch, acc.secret);
-          ctx.log(`${sp.name ?? "space"} keys`, { what: `this node joined the space's group: epoch ${m.status().epoch}` });
-          const kept = await keep(false);
-          const n = await logs.history(m.status()).catch(e => (ctx.log(`${sp.name ?? "space"} keys`, { what: `its history: ${e.message}` }), 0));
-          if (n) ctx.log(`${sp.name ?? "space"} keys`, { what: `${n} earlier epoch(s) of its history kept` });
-          return kept;
+          const t = await spacekeys();
+          await t.reread?.();
+          let last = null;
+          for (const row of t.rows().filter(r => r.key.startsWith("packages/"))) {
+            const mb = await memberWith(row.value);
+            try {
+              m = mb.join_space(sp.idBytes, bytes(welcome));
+            } catch (e) {
+              last = e;
+              continue;
+            }
+            await t.put(row.key, hexOf(mb.packages()));
+            ctx.log(`${sp.name ?? "space"} keys`, { what: `joined the space's group: epoch ${m.status().epoch}` });
+            const kept = await save(false);
+            const n = await logs.history(m.status()).catch(e => (ctx.log(`${sp.name ?? "space"} keys`, { what: `its history: ${e.message}` }), 0));
+            if (n) ctx.log(`${sp.name ?? "space"} keys`, { what: `${n} earlier epoch(s) of its history kept` });
+            return kept;
+          }
+          throw new Error(`no key package of this account answers that welcome${last ? `: ${last.message ?? last}` : ""}`);
         })),
-      // MADE by this node, its first member (with its account membership's credential).
+      // MADE by this DID, its first member.
       create: () =>
         (queue = queue.then(async () => {
-          if (!(await ready())) throw new Error("this node is not in its account's group here: log in once with your recovery words");
-          m = mls.create_space(sp.idBytes);
-          ctx.log(`${sp.name ?? "space"} keys`, { what: "this node made the space's group: epoch 0" });
-          return keep(true);
+          m = (await memberWith(null)).create_space(sp.idBytes);
+          ctx.log(`${sp.name ?? "space"} keys`, { what: "made the space's group: epoch 0" });
+          return save(true);
         })),
-      // Loaded and brought current; null where this node is not in the space's group.
+      // Loaded and brought current; null where this account is not in the space's group.
       ready: () =>
         (queue = queue.catch(() => {}).then(async () => {
-          if (!m) {
-            const r = await auth.identity.mlsLoad(sp.idBytes);
-            if (!r.mlsState) return null;
-            m = mlsGlue.Mls.load_space(sp.idBytes, bytes(r.mlsState));
-          }
-          if (await logs.catchUp()) return keep(false);
-          if (!st) {
-            const s = m.status();
-            await logs.ensure(s, false);
-            st = { epoch: s.epoch, me: s.me, members: s.members, removed: s.removed };
-          }
-          return st;
+          if (!m && !(await load())) return null;
+          const s = await current();
+          if (!s) return null;
+          await logs.ensure(m.status(), false);
+          return s;
         })),
     };
     groups.set(sp.id, g);
@@ -403,24 +464,34 @@ export async function start(ctx) {
     return st && !st.removed ? st.epoch + 1 : 0;
   }
 
-  ready().catch(e => ctx.log("account keys", { what: e?.message ?? String(e) }));
+  // Once the account's keys are ready here: its CARD carries the DID's key packages (a card from before, or one whose
+  // key packages were used up, gets a fresh set) — nobody who wants to add this person ever finds none.
+  const cardReady = () =>
+    ctx
+      .require("directory")
+      .then(async d => {
+        const me = await space.account();
+        if (me && !(await d.card(me.id))?.keyPackage) await d.publish();
+      })
+      .catch(e => ctx.log("account keys", { what: `the card: ${e.message}` }));
+  const start = () =>
+    ready()
+      .then(st => st && !st.removed && setTimeout(cardReady))
+      .catch(e => ctx.log("account keys", { what: e?.message ?? String(e) }));
+  start();
   addEventListener("craftworks:auth", e => {
     if (!e.detail) status = null;
-    else ready().catch(err => ctx.log("account keys", { what: err?.message ?? String(err) }));
+    else start();
   });
 
-  // KEY PACKAGES of this node (for the directory): another person adds this node with one while it is away (each works
-  // once; several, so two people starting a conversation at once rarely pick the same). Their secrets are kept with
-  // this node's state (saved now); null where this node is not in its account's group.
+  // KEY PACKAGES of this DID (for its card): anyone adds it to a space with one while it is away (each works once;
+  // several, so two people starting a conversation at once rarely pick the same). A fresh batch, its secrets kept in
+  // the account's table (any device of the account answers the welcome).
   async function keyPackages(n = 4) {
-    return (busy = busy.then(async () => {
-      if (!status || status.removed) return null;
-      const kps = Array.from({ length: n }, () => hexOf(mls.key_package()));
-      const st = mls.status();
-      const r = await auth.identity.mlsSave(st.state, st.epoch, st.secret);
-      if (!r.mlsSaved) throw new Error(`the identity would not keep the key packages: ${r.refused ?? JSON.stringify(r)}`);
-      return kps;
-    }));
+    const mb = await memberWith(null);
+    const kps = Array.from({ length: n }, () => hexOf(mb.key_package()));
+    await (await spacekeys()).put(`packages/${newId()}`, hexOf(mb.packages()));
+    return kps;
   }
 
   return { ready, remove, escrowed, group, keyPackages, onChange: f => watchers.push(f) };

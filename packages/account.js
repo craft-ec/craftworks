@@ -39,7 +39,7 @@ export async function mount(ctx, el) {
         .card(s.did)
         .then(c => {
           if (c?.handle) cardForm.elements.handle.value = c.handle;
-          cardSaid.textContent = c ? `Published as ${directory.shown(s.did, c.handle)}, with ${c.keyPackages.length} node key(s).` : "Not published yet.";
+          cardSaid.textContent = c ? `Published as ${directory.shown(s.did, c.handle)}${c.keyPackage ? "" : " (no key packages yet)"}.` : "Not published yet.";
         })
         .catch(e => (cardSaid.textContent = `Could not read your card: ${e?.message ?? e}`));
       cardForm.onsubmit = async e => {
@@ -47,7 +47,7 @@ export async function mount(ctx, el) {
         cardSaid.textContent = "Publishing…";
         try {
           const c = await directory.publish({ handle: cardForm.elements.handle.value.trim() || null });
-          cardSaid.textContent = `Published as ${directory.shown(s.did, c.handle)} · ${c.keyPackages.length} node key(s).`;
+          cardSaid.textContent = `Published as ${directory.shown(s.did, c.handle)}.`;
         } catch (err) {
           cardSaid.textContent = `Could not publish: ${err?.message ?? err}`;
         }

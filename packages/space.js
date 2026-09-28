@@ -9,8 +9,10 @@
 // - `id`: what names it (your account: its DID).
 // - `governance`: the root that admits members — whose signature makes a credential count (your account: the owner
 //   keys of its key log, `{ kind: "key-log" }`).
-// - `self`: this node's writer key in it (your account: this node's member key); `shared`: the space's shared key (your
-//   account: its data key — the tables from before feeds, and the channel).
+// - `self`: the writer key its feeds are written under here (your account: this node's member key — the account's
+//   members are its nodes; any other space: the DID's writer, the same on every device of the account — a DID is the
+//   member, a device only signs in); `shared`: the space's shared key (your account: its data key — the tables from
+//   before feeds, and the channel).
 // - `tables`: the names of its own tables — `catalog` (each writer's tables), `members` (credentials and removals,
 //   gossiped), `channel` (its group's pointer and commits). Named once, by the identity (its rules name them too).
 //
@@ -57,9 +59,21 @@ export async function start(ctx) {
     });
   }
 
+  // The DID's writer in spaces (from the identity: the same on every device).
+  let writerOf = null;
+  const writer = () =>
+    (writerOf ??= auth.identity.spaceMember().then(r => {
+      if (!r.spaceMember) throw new Error(`no member for spaces here: ${r.refused ?? JSON.stringify(r)}`);
+      return r.spaceMember.writer;
+    })).catch(e => {
+      writerOf = null;
+      throw e;
+    });
+  addEventListener("craftworks:auth", () => (writerOf = null));
+
   // A space from its row in the account's `spaces`.
-  function made(id, v, acc) {
-    const sp = { kind: v.kind, id, idBytes: bytes(id), name: v.name, with: v.with ?? null, governance: Object.freeze({ kind: "owner", owner: v.owner, nonce: v.nonce ?? null }), self: acc.self };
+  function made(id, v, acc, self) {
+    const sp = { kind: v.kind, id, idBytes: bytes(id), name: v.name, with: v.with ?? null, governance: Object.freeze({ kind: "owner", owner: v.owner, nonce: v.nonce ?? null }), self };
     sp.tables = Object.freeze({ catalog: tableOf(sp, "tables"), members: tableOf(sp, "members"), channel: tableOf(sp, "log") });
     // A space that is itself a conversation (a direct one): its messages, in its own scope.
     sp.messages = tableOf(sp, "messages");
@@ -75,12 +89,12 @@ export async function start(ctx) {
   async function mine() {
     const acc = await account();
     if (!acc) return [];
-    const t = await (await ctx.require("storage")).table(SPACES);
+    const [t, self] = await Promise.all([(await ctx.require("storage")).table(SPACES), writer()]);
     return t
       .rows()
       .map(r => {
         try {
-          return made(r.key, JSON.parse(r.value), acc);
+          return made(r.key, JSON.parse(r.value), acc, self);
         } catch {
           return null;
         }
@@ -93,11 +107,11 @@ export async function start(ctx) {
   async function record(id, v) {
     const acc = await account();
     await (await (await ctx.require("storage")).table(SPACES)).put(id, JSON.stringify({ ...v, at: v.at ?? Date.now() }));
-    return made(id, v, acc);
+    return made(id, v, acc, await writer());
   }
 
   // A space as it would be listed, before it is (to join its group first).
-  const describe = async (id, v) => made(id, v, await account());
+  const describe = async (id, v) => made(id, v, await account(), await writer());
 
   // The id an owner's space has with a nonce.
   const idOf = async (owner, nonce) => hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`craftworks space\0${owner}\0${nonce}`))));
@@ -113,7 +127,7 @@ export async function start(ctx) {
     if (!acc) throw new Error("nobody is logged in");
     const nonce = hex(crypto.getRandomValues(new Uint8Array(16)));
     const v = { kind, name, owner: acc.id, nonce, at: Date.now(), ...extra };
-    const sp = made(await idOf(acc.id, nonce), v, acc);
+    const sp = made(await idOf(acc.id, nonce), v, acc, await writer());
     await (await ctx.require("keys")).group(sp).create();
     await (await (await ctx.require("storage")).table(SPACES)).put(sp.id, JSON.stringify(v));
     ctx.log("space", { what: `${kind} “${name}” made: ${sp.id.slice(0, 12)}…` });

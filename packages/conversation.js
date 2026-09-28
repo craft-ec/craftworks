@@ -22,20 +22,18 @@ export async function start(ctx) {
   const [space, keys, directory, index, content] = await Promise.all(["space", "keys", "directory", "index", "content"].map(n => ctx.require(n)));
   const short = did => `${did.replace(/^did:craftec:/, "").slice(0, 8)}…`;
 
-  // WELCOME a person into a space: each of their nodes added to its group (from their card's key packages), and the
-  // welcome — what the space is, and one per node — sealed into their inbox. `name`: what the space is called for them.
+  // WELCOME a person into a space: they (their DID) added to its group by a key package from their card, and the welcome
+  // — what the space is — sealed into their inbox. `name`: what the space is called for them.
   async function welcome(sp, did, name) {
     const me = await space.account();
     if (!me) throw new Error("nobody is logged in");
     if (did === me.id) throw new Error("that is you");
     const card = await directory.card(did);
-    if (!card?.inbox || !card.keyPackages.length) throw new Error("that person has no card yet");
-    const g = keys.group(sp);
-    const welcomes = [];
-    for (const k of card.keyPackages) welcomes.push({ node: k.node, welcome: await g.add(k.keyPackage) });
+    if (!card?.inbox || !card.keyPackage) throw new Error("that person has no card yet");
+    const welcome = await keys.group(sp).add(card.keyPackage);
     const { owner, nonce } = sp.governance;
-    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcomes });
-    ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind}: ${welcomes.length} node(s)` });
+    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome });
+    ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind}` });
     return card;
   }
 
@@ -61,12 +59,11 @@ export async function start(ctx) {
     const out = [];
     for (const it of await index.inbox()) {
       if (it.kind !== "welcome" || listed.has(it.space)) continue;
-      const w = it.welcomes?.find(x => x.node === me.self);
-      if (!w) continue;
+      if (!it.welcome) continue;
       const v = { kind: it.spaceKind, name: it.name, owner: it.owner ?? it.from, nonce: it.nonce ?? null, ...(it.spaceKind === "direct" ? { with: it.from } : {}) };
       try {
         const sp = await space.describe(it.space, v);
-        await keys.group(sp).join(w.welcome);
+        await keys.group(sp).join(it.welcome);
         await space.record(it.space, v);
         await (await content.in(sp)).post("system", "joined");
         out.push(sp);
