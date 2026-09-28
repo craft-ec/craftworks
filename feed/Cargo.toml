@@ -1,0 +1,14 @@
+[package]
+name = "craftworks-feed"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "FEEDS (the storage capability's wasm): a row as a version, and the causal merge of writers' feeds. Its own package."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.128"
+js-sys = "0.3"

@@ -283,11 +283,18 @@ fn grants_are_per_person_and_the_home_lists_and_revokes_them() {
 }
 
 #[test]
-fn only_the_accounts_data_key_signs_and_only_a_table() {
+fn only_the_members_own_feed_or_the_accounts_data_key_signs_and_only_a_table() {
     let mut m = provisioned(APP);
     assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
-    // The member's own key, or anyone else's, signs no table.
-    assert_eq!(sign(&mut m, APP, &params(public(ALICE), b"t/notes"), 1, [1; 32]), Answer::Refused(Why::NotThisKey));
+    // The member's own key signs its own FEED of a table: a signature that verifies under that key.
+    let own = params(public(ALICE), b"t/notes");
+    let Answer::Signed { sig } = sign(&mut m, APP, &own, 1, [1; 32]) else { panic!("its own feed is signed") };
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(&public(ALICE)).unwrap();
+    let msg = Params::parse(&own).unwrap().signed_message(false, 1, &[1; 32]);
+    assert!(vk.verify(&msg, &Signature::from_slice(&sig).unwrap()).is_ok());
+    // Its own key, but not a table label.
+    assert_eq!(sign(&mut m, APP, &params(public(ALICE), b"head"), 1, [1; 32]), Answer::Refused(Why::NotATable));
+    // Anyone else's key signs nothing.
     assert_eq!(sign(&mut m, APP, &table([3; 32], "notes"), 1, [1; 32]), Answer::Refused(Why::NotThisKey));
     assert_eq!(sign(&mut m, APP, b"nonsense", 1, [1; 32]), Answer::Refused(Why::BadParams));
     // The data key, but not a table label.

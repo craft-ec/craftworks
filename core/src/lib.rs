@@ -635,6 +635,29 @@ mod js {
 
         /// The table's own key (from the identity delegate): rows and blocks under it read, its blocks' addresses come
         /// from it, and — until an epoch's key is given — writes are sealed with it.
+        /// An open tail's rows AS STORED (bytes: a feed's are versions, for the `feed` package), `[[key, value]]`, once
+        /// read to the end; `null` while its view still needs blocks or keys (settle it, then ask again).
+        pub fn tail_raw(&mut self, id: &[u8]) -> Result<JsValue, JsValue> {
+            match self.0.tail(&b32(id)?).map_err(err)?.opened().map_err(err)? {
+                data::Step::Ready(rows) => Ok(rows
+                    .into_iter()
+                    .map(|(k, v)| -> JsValue {
+                        [JsValue::from(js_sys::Uint8Array::from(&k[..])), JsValue::from(js_sys::Uint8Array::from(&v[..]))]
+                            .into_iter()
+                            .collect::<js_sys::Array>()
+                            .into()
+                    })
+                    .collect::<js_sys::Array>()
+                    .into()),
+                _ => Ok(JsValue::NULL),
+            }
+        }
+
+        /// The key an open tail is under (its writer's), and the sequence its next write will have.
+        pub fn tail_next(&mut self, id: &[u8]) -> Result<f64, JsValue> {
+            Ok((self.0.tail(&b32(id)?).map_err(err)?.writer.seq() + 1) as f64)
+        }
+
         pub fn tail_seal(&mut self, id: &[u8], key: &[u8]) -> Result<(), JsValue> {
             self.0.tail(&b32(id)?).map_err(err)?.set_table_key(b32(key)?);
             Ok(())

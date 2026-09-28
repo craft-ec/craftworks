@@ -12,7 +12,11 @@ wasm-bindgen --target web --out-name craftworks_core --out-dir packages/build "$
 cargo build -q --release -p craftworks-mls --target wasm32-unknown-unknown
 wasm-bindgen --target web --out-name craftworks_mls --out-dir packages/build "$target/wasm32-unknown-unknown/release/craftworks_mls.wasm"
 
-for name in craftworks_core craftworks_mls; do
+# FEEDS: its own package (the storage capability's): a row as a version, and the merge of writers' feeds.
+cargo build -q --release -p craftworks-feed --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-name craftworks_feed --out-dir packages/build "$target/wasm32-unknown-unknown/release/craftworks_feed.wasm"
+
+for name in craftworks_core craftworks_mls craftworks_feed; do
   # Optimised for size (binaryen, the same flags freenet-contracts uses): every page load fetches these.
   wasm-opt -Os --enable-bulk-memory-opt --enable-bulk-memory "packages/build/${name}_bg.wasm" -o "packages/build/${name}_bg.opt.wasm"
   [ -s "packages/build/${name}_bg.opt.wasm" ] || { echo "wasm-opt wrote nothing for $name" >&2; exit 1; }

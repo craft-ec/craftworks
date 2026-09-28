@@ -240,3 +240,29 @@ Out of scope now: recovery quorum (guardians), data-key rotation (moves tails), 
   the Account page's grants through `access` (grants, revoke); storage's three sign-send loops → one `step()`.
   Core wasm 569 KB. Live: register → note → words join (Account: 2 nodes, this one marked) → change words → new-words
   node (2 epochs recovered) → first node by PIN (3 nodes) → note still there.
+
+## PHASE 2 — writers and merge (Scuttlebutt feeds + Matrix causality + Nostr self-certifying membership)
+Design in docs/ARCHITECTURE.md (decisions: writers/versions/membership; plan rows 2a–2c). Owner: implement over
+capabilities, one source of truth, everything composes, no duplicate code, packages not the core.
+- [x] 2a feeds and merge:
+  - `feed` package (own crate + wasm, 72 KB): a row as a VERSION (id = writer + feed seq, `after` = the version it
+    replaces, a delete is a version); MERGE = heads, longest chain then highest id; rows from before feeds are the
+    oldest version; a version naming another writer is refused; cycles neither hang nor win. 5 tests + a core test of
+    two real feeds through a sealed tree (edit, flush, delete).
+  - identity: a member's own key signs its own feed of a table (grant rules unchanged); data key still signs the
+    shared tails (channels, tables from before feeds) until 2c.
+  - core: back to tails + sealing only (`tail_raw` rows as stored, `tail_next`); no feed rules in it.
+  - storage: two layers — ONE TAIL (read/settle/keys/write/flush/seal-over, parametrised by its writer key) and a
+    TABLE (the writers' feeds merged through `feed`). Existence never guessed: each writer's CATALOG feed lists its
+    tables (listed before made); the shared DIRECTORY lists nodes with feeds (`node:<key>`) and tables from before
+    feeds. `membership.writers()` says whose feeds count. Another writer's unreadable feed is skipped and counted
+    (Storage shows it); only the own feed must open. Channels (`mls`) stay one shared tail.
+  - keys: each commit row carries the group info after it (a joiner starts from the newest commit even when the node
+    that committed died before publishing `info` — FOUND live: a words join committed, failed before publishing, and
+    every later join looped "the group kept moving"; that dev account (HK8k) stays stuck: its only member lost its
+    state across delegate builds).
+  - Live: B writes → directory `node:`, catalog feed PUT, notes feed PUT, merged shows it. D registers + note, E by
+    words: sees D's note, edits it (one note, E's version); D by PIN sees E's edit, deletes; E sees it gone.
+  - Live (fresh account): F registers, G and H by words (3 nodes, epoch 2); H writes a note; F by PIN reads it.
+- [ ] 2b membership and removal (credentials + removals gossiped in each node's feed; removal moves winning rows)
+- [ ] 2c ordering over feeds (`log`; the data key signs nothing)

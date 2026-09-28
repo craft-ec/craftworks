@@ -177,6 +177,8 @@ pub struct Open {
     stale: BTreeMap<Vec<u8>, (Vec<Vec<u8>>, Vec<u8>)>,
     /// Sealed blocks fetched before their epoch's key was held: opened when it is.
     locked: HashMap<Cid, Vec<u8>>,
+    /// The key this tail is under: its writer's.
+    pub writer_key: [u8; 32],
     /// What this page's flushes put, by block id (the tests' network).
     #[cfg(test)]
     sent: HashMap<Cid, Vec<u8>>,
@@ -226,6 +228,7 @@ impl Open {
             writes: None,
             stale: BTreeMap::new(),
             locked: HashMap::new(),
+            writer_key: *key,
             #[cfg(test)]
             sent: HashMap::new(),
         }
@@ -311,7 +314,8 @@ impl Open {
     }
 
     /// One row written (an empty value deletes it), SEALED with the key writes use: the step to sign. `None` without
-    /// that key, or if the tail would refuse it. The row's copies under older keys are deleted in the same step.
+    /// that key, or if the tail would refuse it. The row's copies under older keys are deleted in the same step. (A
+    /// feed's value is already a version, shaped by the `feed` package; a delete there is a version, never empty.)
     pub fn prepare_row(&mut self, key: &[u8], value: &[u8]) -> Option<(u64, [u8; 32])> {
         let by = self.writes?;
         let tk = self.key_for(by)?;
@@ -627,6 +631,18 @@ impl Open {
         }
         let stale = under.into_iter().filter_map(|(pk, old)| all.get(&pk).map(|v| (pk, (old, v.clone())))).collect();
         Ok(Step::Ready(Rows { rows: all, stale, unreadable }))
+    }
+
+    /// Every row in the clear, as stored (a feed's: versions), for the merge. `Need`/`Keys` as for `rows`.
+    pub fn opened(&mut self) -> Result<Step<BTreeMap<Vec<u8>, Vec<u8>>>, String> {
+        Ok(match self.collect()? {
+            Step::Ready(r) => {
+                self.stale = r.stale;
+                Step::Ready(r.rows)
+            }
+            Step::Need(x) => Step::Need(x),
+            Step::Keys(k) => Step::Keys(k),
+        })
     }
 
     /// The rows, for the page. `Need` names the tree blocks to fetch first, `Keys` the epochs whose keys to get
@@ -1081,6 +1097,51 @@ mod tests {
         flush(&key, &mut o);
         assert!(o.sealed_tree() && !o.reseal_tree());
         assert_eq!(read_with(&o, &member, [7; 32], &[]), Ok((vec!["a=1".into(), "b=2".into(), "c=3".into()], 0)), "every block was put again");
+    }
+
+    /// FEEDS: two nodes each write their own feed of one table (versions shaped by the `feed` package, stored and
+    /// sealed here); merged, a version replaces the one it names, a delete is a version, and it all survives a flush
+    /// into the (sealed) tree.
+    #[test]
+    fn two_nodes_feeds_merge_causally_through_the_tree() {
+        use craftworks_feed::{envelope, merge};
+        let (ka, kb) = (SigningKey::from_bytes(&[5; 32]), SigningKey::from_bytes(&[6; 32]));
+        let (wa, wb) = (ka.verifying_key().to_bytes(), kb.verifying_key().to_bytes());
+        let open = |w: &[u8; 32]| {
+            let mut o = Open::new(CODE, w, "notes");
+            o.set_table_key([7; 32]);
+            o.epoch_key(1, Some([11; 32]), true);
+            o
+        };
+        let (mut a, mut b) = (open(&wa), open(&wb));
+        let merged = |a: &mut Open, b: &mut Open| {
+            let (Ok(Step::Ready(ra)), Ok(Step::Ready(rb))) = (a.opened(), b.opened()) else { panic!("held") };
+            merge(&[(a.writer_key, &ra), (b.writer_key, &rb)])
+        };
+        let put = |key: &SigningKey, o: &mut Open, k: &str, v: Option<&str>, after| {
+            let ver = envelope((o.writer_key, o.writer.seq() + 1), after, v.map(str::as_bytes));
+            let (seq, h) = o.prepare_row(k.as_bytes(), &ver).unwrap();
+            o.commit(sign(key, o, seq, h)).unwrap();
+        };
+        put(&ka, &mut a, "n", Some("from a"), None);
+        let m = merged(&mut a, &mut b);
+        let seen = m[&b"n".to_vec()].id;
+        assert_eq!(seen, Some((wa, 1)));
+        put(&kb, &mut b, "n", Some("b edits it"), seen);
+        let m = merged(&mut a, &mut b);
+        assert_eq!(String::from_utf8_lossy(&m[&b"n".to_vec()].value), "b edits it");
+        // A flushes its feed into its tree: the versions go with it.
+        for i in 0..3 {
+            put(&ka, &mut a, &format!("x{i}"), Some("filler"), None);
+        }
+        let Ok(Step::Ready(f)) = a.flush() else { panic!("ready") };
+        a.commit(sign(&ka, &a, f.seq, f.hash)).unwrap();
+        let m = merged(&mut a, &mut b);
+        assert_eq!(String::from_utf8_lossy(&m[&b"n".to_vec()].value), "b edits it", "b's version still replaces a's from a's tree");
+        // A deletes what it now sees (b's): gone.
+        put(&ka, &mut a, "n", None, Some((wb, 1)));
+        assert!(!merged(&mut a, &mut b).contains_key(&b"n".to_vec()));
+        assert_eq!(merged(&mut a, &mut b).len(), 3, "control: the other rows are there");
     }
 
     #[test]

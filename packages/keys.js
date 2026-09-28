@@ -2,7 +2,8 @@
 // is where every table key comes from. The protocol runs here, in the page's core; the identity delegate keeps this
 // node's member state and each epoch's secret, and gives table keys to granted sites.
 //
-// THE CHANNEL is the account's table `mls`: `info` = the group info a node holding the words joins from; the COMMITS in
+// THE CHANNEL is the account's table `mls`: `info` = the group info a node holding the words joins from (each commit
+// carries the info after it too); the COMMITS in
 // one agreed order through the `ordering` capability (a `tail` log, `c/<epoch>` = the commit that moved the group FROM
 // that epoch — a position is an epoch); `e/<epoch>` = that
 // epoch's secret in ESCROW, sealed to the account's encryption key, so the recovery words alone reopen every epoch
@@ -37,6 +38,17 @@ export async function start(ctx) {
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
   const escrowKey = e => `e/${String(e).padStart(12, "0")}`;
+  // A COMMIT's row carries the group info AFTER it (the state travels with the event): a node joining later starts
+  // from the newest commit whether or not anyone is online to publish the info. (Rows from before: the commit alone.)
+  const entryOf = commit => JSON.stringify({ commit: hexOf(commit), info: hexOf(mls.status().info) });
+  const parse = e => {
+    try {
+      const j = JSON.parse(e);
+      return typeof j === "object" && j ? j : { commit: e };
+    } catch {
+      return { commit: e };
+    }
+  };
 
   let status = null; // the group as this page holds it
   let published = null; // the group info last written
@@ -70,7 +82,7 @@ export async function start(ctx) {
     }
     let n = 0;
     for (const { entry } of pending) {
-      mls.process(bytes(entry));
+      mls.process(bytes(parse(entry).commit));
       n += 1;
       if (mls.status().removed) {
         ctx.log("account keys", { what: "this node was removed from the account: it keeps what it could read, and gets nothing newer" });
@@ -90,11 +102,13 @@ export async function start(ctx) {
       if (home.refused) return;
       const channel = await storage.table("mls");
       for (let round = 0; round < 4; round++) {
-        const info = channel.rows().find(x => x.key === "info")?.value;
+        // The group info to join from: the newest commit's, else the one published beside them.
+        const last = (await commitLog()).from(0).at(-1);
+        const info = (last && parse(last.entry).info) || channel.rows().find(x => x.key === "info")?.value;
         const [kind, commit] = mls.with_words(did, await keyLog(did), entropy, node, info ? bytes(info) : new Uint8Array(0));
         if (kind === "joined") {
           // The join's commit at the epoch it moved from: if another node moved the group first, join again.
-          const r = await (await commitLog()).append(mls.status().epoch - 1, hexOf(commit));
+          const r = await (await commitLog()).append(mls.status().epoch - 1, entryOf(commit));
           if (!r.ok) continue;
         }
         const st = await keep(channel);
@@ -167,7 +181,7 @@ export async function start(ctx) {
       if (!status) throw new Error("the account's keys are not held on this site");
       const channel = await storage.table("mls");
       const commit = mls.remove(index);
-      const r = await (await commitLog()).append(mls.status().epoch - 1, hexOf(commit));
+      const r = await (await commitLog()).append(mls.status().epoch - 1, entryOf(commit));
       if (!r.ok) {
         const kept = await auth.identity.mlsLoad();
         const s = await auth.check();

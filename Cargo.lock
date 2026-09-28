@@ -383,6 +383,7 @@ dependencies = [
  "chacha20poly1305",
  "craftec-register-contract",
  "craftworks-account",
+ "craftworks-feed",
  "craftworks-identity",
  "craftworks-idlog-contract",
  "ed25519-dalek",
@@ -397,6 +398,14 @@ dependencies = [
  "wasm-bindgen",
  "wire",
  "x25519-dalek",
+]
+
+[[package]]
+name = "craftworks-feed"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
 ]
 
 [[package]]

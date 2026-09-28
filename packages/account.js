@@ -109,7 +109,7 @@ export async function mount(ctx, el) {
             for (const v of [t.name, "—", "—", "another app's"]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
             return tr;
           }
-          const where = t.flushed ? (t.pending ? `tree + ${t.pending} in the tail` : "tree") : `tail (${t.pending} row${t.pending === 1 ? "" : "s"})`;
+          const where = (t.unopened ? `${t.unopened} feed(s) not readable here — log in with your recovery words; ` : "") + (t.flushed ? (t.pending ? `tree + ${t.pending} in the tail` : "tree") : `tail (${t.pending} row${t.pending === 1 ? "" : "s"})`);
           for (const v of [t.name, String(t.rows), t.sealed ? (t.writes === "table" ? "table key" : t.writes ?? "yes") : "no key here", where]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
           return tr;
         }),

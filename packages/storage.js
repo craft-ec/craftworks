@@ -1,12 +1,19 @@
-// STORAGE, a capability: the logged-in ACCOUNT's tables (notes, desktop, …). A table is a TAIL under the account's data key
-// (every node of the account holds it, in its identity delegate), labelled `t/<table>`: the account's, not a site's or
-// a node's. Any node of the account, and any SITE the person allows, reads and writes the same table: another
-// developer's front end, or a second address for the same app, shows the same data. Writing needs the person's GRANT
-// for this site and table; the first time, the node itself asks them. The table is followed, so a row written
-// elsewhere arrives here as it lands.
+// STORAGE, a capability: the logged-in ACCOUNT's tables (notes, pins, …). It composes: the core (a tail under one key:
+// read, sealed, written, flushed into its tree), `feed` (a row as a version, and the merge), `membership` (whose feeds
+// count), `blocks` (tree blocks) and `access` (the grant and the keys that come with it).
+//
+// Every node writes its OWN FEED of a table — a tail under its node key, labelled `t/<table>` — and reads the table as
+// the MERGE of the feeds of the account's nodes (ARCHITECTURE: every writer its own feed; versions are causal). Tables
+// from before feeds, under the account's shared data key, are read as the oldest writer. Any SITE the person allows
+// reads and writes the same table (the grant is per site and table; the first time, the node asks them). Every feed is
+// followed, so a row written elsewhere arrives here as it lands.
+//
+// Nothing is asked of the network that is not known to exist (a GET of a tail nobody wrote gets no answer): each
+// writer's CATALOG feed lists the tables it has a feed of, listed BEFORE the feed is made; the account's DIRECTORY (its
+// shared catalog) lists the nodes that have feeds, and the tables from before feeds.
 //
 //   const notes = await (await ctx.require("storage")).table("notes");
-//   notes.rows()                [{ key, value }]
+//   notes.rows()                [{ key, value, id }]
 //   await notes.put(key, value)   await notes.remove(key)   notes.onChange(fn)
 export async function start(ctx) {
   const auth = await ctx.require("auth");
@@ -19,12 +26,20 @@ export async function start(ctx) {
   core.set_block_code(await ctx.require("block-wasm"));
   core.set_sealed_code(await ctx.require("sealed-wasm"));
   const Core = glue.CraftworksCore;
-  const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
-
   // Tree blocks go through the ONE door for them (fetch raced against parity, put).
   const blocks = await ctx.require("blocks");
+  // A row as a VERSION, and the MERGE of feeds: its own package.
+  const feed = await ctx.require("feed-glue");
+  await feed.default({ module_or_path: await ctx.require("feed-wasm") });
+  const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
+  // The account's own CHANNELS: one shared tail each, outside the catalog's feeds (the MLS group's, which `membership`
+  // reads to say whose feeds count).
+  const CHANNELS = new Set(["mls"]);
+  const CATALOG = "tables";
 
-  // A table's VIEW, walked to the end: the tail names the tree's root; a view that needs tree blocks names their
+  // A tail's VIEW, walked to the end: the tail names the tree's root; a view that needs tree blocks names their
   // contracts, fetched (raced, rebuilt if missing) until the rows are all there; one that names EPOCHS gets their keys
   // for this table from the identity (none, for an epoch this node has no key of: what is sealed with it stays
   // unread). Returns the last view: `{ kind: "tail", tail: { rows, … } }`, or `tail-unreadable`.
@@ -45,65 +60,32 @@ export async function start(ctx) {
 
   async function epochKeys(idHex, epochs, app) {
     for (const e of epochs) {
-      const k = await access.keyAt(app, e, { catalog: app === "tables" });
+      const k = await access.keyAt(app, e, { catalog: app === CATALOG });
       core.tail_epoch_key(bytes(idHex), e, k.key ? bytes(k.key) : new Uint8Array(0), false);
       if (!k.key) ctx.log("table sealed", { what: `${app}: no key here for epoch ${e} (${k.why})` });
     }
   }
 
-  const tables = new Map(); // id hex -> Promise<table> (opened once per page)
-  const live = new Map(); // id hex -> table, for what the node pushes
+  const tails = new Map(); // id hex -> Promise<tail> (opened once per page)
+  const live = new Map(); // id hex -> tail, for what the node pushes
   listen(said => {
     const t = (said.kind === "tail" || said.kind === "tail-need" || said.kind === "tail-keys") && live.get(said.id);
     if (t)
       settle(said, t.app).then(
         v => {
-          ctx.log("table changed", { what: `${t.app}: seq ${v.tail.seq}, ${v.tail.rows.length} row(s), pushed by the node` });
-          t.took(v.tail.rows);
+          ctx.log("table changed", { what: `${t.app}: seq ${v.tail.seq}, pushed by the node` });
+          t.took(v.tail);
         },
         e => ctx.log("table changed", { what: `${t.app}: ${e.message}` }),
       );
   });
 
-  // The account's CATALOG (table `tables`): one row per table that exists. A page reads the catalog, then fetches only
-  // the tables it lists; a table it does not list is new, opened empty WITHOUT a read (nothing to find), and listed on
-  // its first write. A new account's catalog is created at once; an account from before the catalog has none, so its
-  // tables are read as before and listed as they are found.
-  let catalogOpen = null;
-  function catalog() {
-    return (catalogOpen ??= open("tables", { catalog: true }));
-  }
-  // Listed: true. Not listed in a COMPLETE catalog (one made with the account, so every table since went through
-  // it): false, nothing to read. Otherwise (no catalog, or one made later for an account that already had tables):
-  // null, unknown, read the table.
-  async function listed(name) {
-    const c = await catalog();
-    if (c.rows().some(r => r.key === name)) return true;
-    const self = c.rows().find(r => r.key === "tables");
-    const complete = !!self && (() => { try { return JSON.parse(self.value).complete === true; } catch { return false; } })();
-    return complete ? false : null;
-  }
-  async function list(name) {
-    const c = await catalog();
-    if (c.rows().some(r => r.key === name)) return;
-    // No catalog yet (an account from before it): this write creates it, NOT complete, since tables may exist that it
-    // does not name.
-    if (c.absent && !c.rows().length) await c.put("tables", JSON.stringify({ at: Date.now(), complete: false }));
-    await c.put(name, JSON.stringify({ at: Date.now() }));
-  }
-
-  const openedNames = new Set(); // the tables this page asked for
-  function table(name) {
-    openedNames.add(name);
-    return open(name, {});
-  }
-
-  async function open(app, { catalog: isCatalog = false }) {
-    const s = await auth.check();
-    if (!s) throw new Error("nobody is logged in");
-    if (!s.data) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
-    const idHex = core.tail_open(tailCode, bytes(s.data), app);
-    if (tables.has(idHex)) return tables.get(idHex);
+  // ONE TAIL: writer `owner`'s (a key, hex) tail of `app`. `known`: whether it exists (true), is new (false: opened
+  // empty, no read), or is unknown (null: read). `beforeCreate`: run once before its first write makes it (its
+  // listing). Its rows AS STORED are `raw()` (bytes); `rows()` are its view's.
+  function tail(owner, app, { known = null, catalogKey = false, beforeCreate = null } = {}) {
+    const idHex = core.tail_open(tailCode, bytes(owner), app);
+    if (tails.has(idHex)) return tails.get(idHex);
     const id = bytes(idHex);
     const name = Core.id_name(id);
     let rows = [];
@@ -111,69 +93,54 @@ export async function start(ctx) {
     let queue = Promise.resolve(); // one write at a time: each builds on the step before it
     const t = {
       app,
+      owner,
+      id,
       absent: false,
-      took: r => {
-        rows = r;
-        for (const f of changed) f();
-      },
+      took: tail => took(tail),
       rows: () => rows,
+      raw: () => core.tail_raw(id) ?? [],
       onChange: f => changed.push(f),
+      // `value`: bytes, text, or a function giving the bytes at the moment of writing (a version names the feed's
+      // next sequence, so it is made in the write's own turn).
       put: (key, value) => (queue = queue.catch(() => {}).then(() => write(key, value))),
       remove: key => (queue = queue.catch(() => {}).then(() => write(key, ""))),
+      tailNext: () => core.tail_next(id),
     };
     const ready = (async () => {
       // THE TABLE'S KEY: the table is sealed, so reading it needs its key, and the key comes only with the person's
       // grant for this site (asked NOW: the node prompts the first time). No grant: nothing of the table reads here.
       // The catalog's key comes with any grant: listing a table is part of using it.
-      const k = await access.key(app, { catalog: isCatalog });
+      const k = await access.key(app, { catalog: catalogKey });
       t.sealed = !!k.key;
       if (k.key) core.tail_seal(id, bytes(k.key));
       else ctx.log("table sealed", { what: `${app}: no key here (${k.why}): nothing of it reads` });
       // WRITES are sealed with the account's newest EPOCH (a node removed from the account then reads nothing written
-      // after): the group brought current first. Not the `mls` channel itself (a node reads it before it has any
-      // epoch), and not the catalog, which the group's own table is listed in. No group on this node: the table's key.
-      if (k.key && app !== "mls") {
-        if (!isCatalog) await (await ctx.require("keys")).ready().catch(() => null);
-        const e = await access.keyAt(app, -1, { catalog: isCatalog });
+      // after): the group brought current first. Not a channel (a node reads the MLS channel before it has any epoch),
+      // and the catalog not after the group (the group's channel is found through it). No group here: the table's key.
+      if (k.key && !CHANNELS.has(app)) {
+        if (!catalogKey) await (await ctx.require("keys")).ready().catch(() => null);
+        const e = await access.keyAt(app, -1, { catalog: catalogKey });
         if (e.key) core.tail_epoch_key(id, e.epoch, bytes(e.key), true);
         else ctx.log("table sealed", { what: `${app}: no epoch here (${e.why}): written with the table's key` });
       }
-      const known = isCatalog ? (s.fresh ? false : null) : await listed(app);
       if (known === false) {
         core.tail_absent(id);
         t.absent = true;
-        ctx.log("table open", { what: `${app}: new, nothing to read` });
       } else {
         await read();
-        ctx.log("table open", { what: `${app}: ${rows.length} row(s)` });
-        // Found but not listed (an account from before the catalog): list it.
-        // Once this site may write it (listing is part of writing).
-        if (!isCatalog && known === null && !t.absent)
-          allowed()
-            .then(ok => ok && list(app))
-            .catch(e => ctx.log("not listed", { what: `${app}: ${e.message}` }));
       }
-      // A new account's catalog is created now, so the next page finds it.
-      if (isCatalog && t.absent && s.fresh) await t.put("tables", JSON.stringify({ at: Date.now(), complete: true }));
-      // Rows from before tables were sealed: sealed over now, a batch per step (in the write queue).
-      if (legacy > 0 || reseal) t.sealOld = queue = queue.catch(() => {}).then(sealOld);
+      // Rows under an older key: sealed over now, a batch per step (in the write queue), where this node signs the tail.
+      const s = await auth.check();
+      if ((legacy > 0 || reseal) && (owner === s?.member || owner === s?.data)) queue = queue.catch(() => {}).then(sealOld);
       return t;
     })();
-    tables.set(idHex, ready);
+    tails.set(idHex, ready);
     live.set(idHex, t);
 
-    let writable = isCatalog ? true : null;
-    t.writable = () => writable === true;
-    function allowed() {
-      if (isCatalog) return Promise.resolve(true);
-      return access.allowed(app).then(ok => {
-        writable = ok;
-        return ok;
-      });
-    }
+    const allowed = () => (catalogKey ? Promise.resolve(true) : access.allowed(app));
 
     // Read it and follow it. None on the network: its first write is a PUT. No answer at all: the same as none, so
-    // the page opens empty; a first write the network then refuses resets the table and reads it again.
+    // it opens empty; a first write the network then refuses resets it and reads it again.
     async function read() {
       const [, frames] = core.tail_get(id);
       let said;
@@ -191,29 +158,22 @@ export async function start(ctx) {
       else core.tail_absent(id);
     }
 
-    // One write: prepared by the core, signed by the identity delegate with the data key, sent as one delta.
+    // One write: prepared by the core, signed by the identity delegate with this tail's key, sent as one delta.
     async function write(key, value) {
       if (!(await allowed())) throw new Error(`this app may not change your “${app}”: allow it when your node asks`);
       if (refusing) throw new Error(refusing);
-      // Listed BEFORE it is created: a failure between the two leaves a listed table that is empty, never data the
-      // catalog does not name.
-      if (t.absent && !isCatalog) await list(app);
-      const enc = new TextEncoder();
-      try {
-        await step(core.tail_prepare(id, enc.encode(key), enc.encode(value)), "saving to");
-      } catch (e) {
-        // It was there after all (made on another page before it was listed): list it now.
-        if (!isCatalog && !t.absent) list(app).catch(err => ctx.log("not listed", { what: `${app}: ${err.message}` }));
-        throw e;
-      }
+      // Listed BEFORE it is created: a failure between the two leaves a listed tail that is empty, never one nobody
+      // can find.
+      if (t.absent && beforeCreate) await beforeCreate();
+      const v = typeof value === "function" ? value() : typeof value === "string" ? enc.encode(value) : value;
+      await step(core.tail_prepare(id, enc.encode(key), v), "saving to");
       // FLUSH once the tail is long: its rows into the tree, the tail emptied (in this write's turn of the queue).
       if (core.tail_pending(id) >= Core.flush_at()) await flush().catch(e => ctx.log("flush failed", { what: `${app}: ${e.message}` }));
       t.absent = false;
     }
-    // ONE STEP of this table, the one way a table moves: the prepared step signed by the identity delegate (the data
-    // key), sent (the first as a PUT, then one delta each), and confirmed. Refused anywhere — by the identity or by the
-    // node — it never landed: what this page holds is dropped and the table read again, so the next step builds on
-    // what the network has.
+    // ONE STEP of this tail, the one way a tail moves: the prepared step signed by the identity delegate, sent (the
+    // first as a PUT, then one delta each), and confirmed. Refused anywhere — by the identity or by the node — it never
+    // landed: what this page holds is dropped and the tail read again, so the next step builds on what the network has.
     async function step(p, doing) {
       const t0 = performance.now();
       const r = await auth.identity.sign(p.params, p.seq, p.valueHash);
@@ -244,7 +204,8 @@ export async function start(ctx) {
       legacy = tail.legacy ?? 0;
       reseal = !!tail.resealTree;
       t.info = { rows: tail.rows.length, pending: tail.pending, flushed: !!tail.root, legacy, unreadable: tail.unreadable ?? 0, writes: tail.writes };
-      t.took(tail.rows);
+      rows = tail.rows;
+      for (const f of changed) f();
     }
     async function view() {
       const v = await settle(JSON.parse(core.tail_view(id)), app);
@@ -294,20 +255,167 @@ export async function start(ctx) {
     return ready;
   }
 
-  // Every table of the account the catalog lists, as `{ name, rows, pending, flushed, sealed, legacy, unreadable }`
-  // (for the Account page's Storage section). Only the tables this site uses, or this page already opened, are opened:
-  // another app's table is listed by its name (`{ name, closed: true }`), never asked for — no prompt from a list.
+  // A feed's own current rows, merged alone: `[{ key, value, id }]` (text; its deletes left out).
+  const decoded = rows => rows.map(r => ({ key: dec.decode(r.key), value: dec.decode(r.value), id: r.id }));
+  const own = t => decoded(Array.from(feed.merge_feeds([[bytes(t.owner), t.raw()]])));
+  // A write to a feed, as a VERSION replacing `after` (the id of the version current where it is written).
+  const versioned = (t, key, value, after) =>
+    t.put(key, () => feed.version(bytes(t.owner), t.tailNext(), after ?? "", value === null ? undefined : enc.encode(value)));
+
+  // THE DIRECTORY: the account's shared catalog (its data key). Its rows: the tables from before feeds (and whether
+  // it was made COMPLETE, with the account), and `node:<key>` for every node that has feeds. A new account's is made at
+  // once; an account from before the catalog has none, so its old tables are read as before.
+  let directoryOpen = null;
+  function directory() {
+    return (directoryOpen ??= (async () => {
+      const s = await auth.check();
+      const d = await tail(s.data, CATALOG, { known: s.fresh ? false : null, catalogKey: true });
+      if (d.absent && s.fresh) await d.put(CATALOG, JSON.stringify({ at: Date.now(), complete: true }));
+      return d;
+    })());
+  }
+  // A table from before feeds: listed (true), not listed in a COMPLETE directory (false), or unknown (null: read).
+  function legacyListed(d, name) {
+    if (d.rows().some(r => r.key === name)) return true;
+    const self = d.rows().find(r => r.key === CATALOG);
+    const complete = !!self && (() => { try { return JSON.parse(self.value).complete === true; } catch { return false; } })();
+    return complete ? false : null;
+  }
+  async function listInDirectory(key) {
+    const d = await directory();
+    if (d.rows().some(r => r.key === key)) return;
+    if (d.absent && !d.rows().length) await d.put(CATALOG, JSON.stringify({ at: Date.now(), complete: false }));
+    await d.put(key, JSON.stringify({ at: Date.now() }));
+  }
+
+  // A WRITER's CATALOG feed: the tables it has a feed of. Known to exist once the directory lists its node.
+  async function catalogOf(writer) {
+    const d = await directory();
+    const listed = d.rows().some(r => r.key === `node:${writer}`);
+    return tail(writer, CATALOG, { known: listed ? null : false, catalogKey: true, beforeCreate: () => listInDirectory(`node:${writer}`) });
+  }
+  // The other writers whose feeds count: the nodes the directory lists, those the account's group holds (where it is
+  // kept; elsewhere every listed node, until membership is gossiped in the feeds).
+  async function writers(me) {
+    const d = await directory();
+    const listed = d.rows().filter(r => r.key.startsWith("node:")).map(r => r.key.slice(5));
+    const members = await (await ctx.require("membership")).writers().catch(() => null);
+    return listed.filter(k => k !== me && (!members || members.includes(k)));
+  }
+
+  // A CHANNEL: one shared tail, listed in the directory before it is made.
+  async function channel(name) {
+    const s = await auth.check();
+    const d = await directory();
+    const listed = legacyListed(d, name);
+    return tail(s.data, name, { known: listed === false ? false : null, beforeCreate: () => listInDirectory(name) });
+  }
+
+  // A TABLE: the merge of its writers' feeds, and this node's feed to write.
+  const tables = new Map(); // name -> Promise<table>
+  function merged(name) {
+    if (tables.has(name)) return tables.get(name);
+    const ready = (async () => {
+      const s = await auth.check();
+      if (!s) throw new Error("nobody is logged in");
+      if (!s.data) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
+      const d = await directory();
+      const [mine, others] = await Promise.all([catalogOf(s.member), writers(s.member)]);
+      const lists = (cat, n) => own(cat).some(r => r.key === n);
+      // Another writer's feed that does not open here (sealed under a key this node lacks — a node that has not
+      // recovered its epochs) is left out and COUNTED, never fatal: this node writes only its own feed, so nothing it
+      // cannot see is written over. Its own feed must open.
+      let unopened = 0;
+      const theirs = (owner, known) =>
+        tail(owner, name, { known }).catch(e => {
+          unopened += 1;
+          ctx.log("feed not read", { what: `${name}: ${owner.slice(0, 12)}…: ${e.message}` });
+          return null;
+        });
+      const feeds = [];
+      // The table from before feeds: the oldest writer.
+      const old = legacyListed(d, name);
+      if (old !== false) feeds.push(theirs(s.data, old));
+      // The other nodes' feeds of it, where their catalogs list one.
+      const cats = await Promise.all(others.map(o => catalogOf(o).catch(() => null)));
+      for (const c of cats) if (c && lists(c, name)) feeds.push(theirs(c.owner, true));
+      // This node's: listed in its catalog BEFORE it is made.
+      const listMine = async () => {
+        if (!lists(mine, name)) await versioned(mine, name, JSON.stringify({ at: Date.now() }), own(mine).find(r => r.key === name)?.id);
+      };
+      const mineFeed = tail(s.member, name, { known: lists(mine, name) ? null : false, beforeCreate: listMine });
+      feeds.push(mineFeed);
+      const all = (await Promise.all(feeds)).filter(Boolean);
+      const me = all[all.length - 1];
+      let rows = [];
+      const changed = [];
+      const remerge = () => {
+        rows = decoded(Array.from(feed.merge_feeds(all.map(f => [bytes(f.owner), f.raw()]))));
+        for (const f of changed) f();
+      };
+      for (const f of all) f.onChange(remerge);
+      remerge();
+      ctx.log("table open", { what: `${name}: ${rows.length} row(s) from ${all.filter(f => !f.absent).length} feed(s)` });
+      const write = (key, value) => versioned(me, key, value, rows.find(r => r.key === key)?.id);
+      const t = {
+        app: name,
+        rows: () => rows,
+        onChange: f => changed.push(f),
+        put: (key, value) => write(key, value),
+        remove: key => write(key, null),
+        get sealed() {
+          return me.sealed;
+        },
+        get info() {
+          const i = all.map(f => f.info).filter(Boolean);
+          return {
+            rows: rows.length,
+            pending: me.info?.pending ?? 0,
+            flushed: i.some(x => x.flushed),
+            legacy: i.reduce((n, x) => n + x.legacy, 0),
+            unreadable: i.reduce((n, x) => n + x.unreadable, 0),
+            writes: me.info?.writes,
+            feeds: all.filter(f => !f.absent).length,
+            unopened,
+          };
+        },
+      };
+      return t;
+    })();
+    tables.set(name, ready);
+    return ready;
+  }
+
+  const openedNames = new Set(); // the tables this page asked for
+  function table(name) {
+    if (CHANNELS.has(name)) return channel(name);
+    openedNames.add(name);
+    return merged(name);
+  }
+
+  // Every table of the account, as `{ name, rows, pending, flushed, sealed, legacy, unreadable, feeds }` (for the
+  // Account page's Storage section): the directory's tables from before feeds and every writer's catalog. Only the
+  // tables this site uses, or this page already opened, are opened: another app's table is listed by its name
+  // (`{ name, closed: true }`), never asked for — no prompt from a list.
   async function describe() {
-    const c = await catalog();
-    const names = c.rows().map(r => r.key).filter(n => n !== "tables");
+    const s = await auth.check();
+    const d = await directory();
+    const cats = await Promise.all([s.member, ...(await writers(s.member))].map(catalogOf));
+    const names = new Set(d.rows().map(r => r.key).filter(n => n !== CATALOG && !n.startsWith("node:")));
+    for (const c of cats) for (const r of own(c)) names.add(r.key);
     const out = [];
     for (const name of names) {
+      if (CHANNELS.has(name)) {
+        const c = await channel(name);
+        out.push({ name, sealed: !!c.sealed, ...(c.info ?? { rows: c.rows().length, pending: 0, flushed: false, legacy: 0, unreadable: 0 }), feeds: 1 });
+        continue;
+      }
       if (!ctx.uses.includes(name) && !openedNames.has(name)) {
         out.push({ name, closed: true });
         continue;
       }
       const t = await table(name).catch(() => null);
-      if (t) out.push({ name, sealed: !!t.sealed, ...(t.info ?? { rows: t.rows().length, pending: 0, flushed: false, legacy: 0, unreadable: 0 }) });
+      if (t) out.push({ name, sealed: !!t.sealed, ...t.info });
     }
     return out;
   }

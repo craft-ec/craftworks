@@ -638,11 +638,14 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
         Request::Sign { params, seq, value_hash } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             let Some(p) = Params::parse(&params) else { return Refused(Why::BadParams) };
-            // The account's data key, for one of the account's tables, by a site the person allowed.
-            let Some(key) = a.data_key() else { return Refused(Why::NoDataKey) };
-            if !matches!(&p.authority, Authority::One(v) if *v == key.verifying_key()) {
-                return Refused(Why::NotThisKey);
-            }
+            // One of the account's tables, by a site the person allowed: this node's own FEED of it (the member's key),
+            // or the account's shared tail (its data key; the account's ordering until it moves onto the feeds).
+            let own = a.key();
+            let key = match &p.authority {
+                Authority::One(v) if *v == own.verifying_key() => own,
+                Authority::One(v) if a.data_key().is_some_and(|d| d.verifying_key() == *v) => a.data_key().expect("checked"),
+                _ => return Refused(if a.data_key().is_none() { Why::NoDataKey } else { Why::NotThisKey }),
+            };
             let Some(table) = p.label.strip_prefix(TABLE).and_then(|t| std::str::from_utf8(t).ok()).filter(|t| table_ok(t)) else {
                 return Refused(Why::NotATable);
             };
