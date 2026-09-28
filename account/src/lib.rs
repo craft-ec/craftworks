@@ -21,7 +21,7 @@
 //! the Account page can show the words when the person sets up recovery.
 
 use bip39::Mnemonic;
-use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey};
 use freenet_stdlib::prelude::{ContractContainer, WrappedState};
 use hmac::{Hmac, Mac};
 use sha2::Sha512;
@@ -274,34 +274,9 @@ pub fn did_bytes(text: &str) -> Option<[u8; 32]> {
 }
 
 
-/// A NODE's CREDENTIAL (its membership of the account, self-certifying): its account, its node key, its MLS signing
-/// key, and an owner key's signature over them — `CWMB ‖ did ‖ owner ‖ node ‖ signing key ‖ signature`. Whoever holds
-/// the recovery words proves the node is theirs; anyone checks it against the account's key log.
-const CRED: &[u8; 4] = b"CWMB";
-
-pub fn credential(did: &[u8; 32], node: &[u8; 32], signing_pub: &[u8], owner_seed: &[u8; 32]) -> Vec<u8> {
-    let owner = SigningKey::from_bytes(owner_seed);
-    let sig = owner.sign(&cred_message(did, node, signing_pub)).to_bytes();
-    [&CRED[..], did, &owner.verifying_key().to_bytes(), node, signing_pub, &sig].concat()
-}
-
-fn cred_message(did: &[u8; 32], node: &[u8; 32], signing_pub: &[u8]) -> Vec<u8> {
-    [b"craftworks mls member".as_slice(), did, node, signing_pub].concat()
-}
-
-/// `(did, owner key, node key, signing key)` of a credential whose owner signature holds.
-pub fn read_credential(b: &[u8]) -> Option<([u8; 32], [u8; 32], [u8; 32], Vec<u8>)> {
-    let rest = b.strip_prefix(CRED)?;
-    let (did, rest) = rest.split_at_checked(32)?;
-    let (owner, rest) = rest.split_at_checked(32)?;
-    let (node, rest) = rest.split_at_checked(32)?;
-    let (sp, sig) = rest.split_at_checked(rest.len().checked_sub(64)?)?;
-    let did: [u8; 32] = did.try_into().ok()?;
-    let node: [u8; 32] = node.try_into().ok()?;
-    let vk = VerifyingKey::from_bytes(owner.try_into().ok()?).ok()?;
-    vk.verify(&cred_message(&did, &node, sp), &ed25519_dalek::Signature::from_slice(sig).ok()?).ok()?;
-    Some((did, owner.try_into().ok()?, node, sp.to_vec()))
-}
+// A member's CREDENTIAL (its format and check) is the identity's: one source, for the account's nodes and for a DID's
+// member in a space.
+pub use craftworks_identity::{credential, read_credential};
 
 /// The node a credential makes a member of the account `did` whose key log is `log`: signed by an owner key the log
 /// ever had (rotating the words does not orphan the nodes already in).

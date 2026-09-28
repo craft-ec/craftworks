@@ -397,3 +397,15 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
    Reload" (live: 39 s after a publish to the private node). "Get the newest" in the trace's Stack tab. Loader v20.
    OPEN: a node the network never updates stays stale until a relay — publish.sh could relay to the owner's node
    after each publish (owner's say).
+
+## One member per DID in a space (owner 2026-09-28: "a DID is the member; a device only signs in")
+- [x] P1 identity: `SpaceMember` — the DID's member key (derived from the data seed: the same on every device), its
+      credential signed by the DATA key (checked against the DID's key log by anyone), and Sign allows that key (a
+      space's feed is the DID's). Tests.
+- [ ] P2 mls: a member from (seed, credential); key packages and their secrets exportable (shared by the account's
+      devices); create/join/load a space as the DID. Tests.
+- [ ] P3 pages: `keys.group` state + key packages in the account table `spacekeys` (any device loads the newest; the
+      epoch log's order settles two devices); storage's space scope writes as the DID; `roles` maps writer → DID
+      verified against the key log (closes: a credential's DID was never checked); card `kp` per DID; one welcome.
+- [ ] P4 live: new server, invite by DID, post both ways; state loaded from `spacekeys` on a cold device cache.
+- [ ] P5 (later) removing a device refreshes the DID's member in each space.

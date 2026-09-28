@@ -121,6 +121,9 @@ pub enum Request {
     /// With `HandoverKeys`, to the next build: the member's SPACES on the right PIN — each space's group state and every
     /// epoch's secret it holds — so an update never costs a member a server or a conversation. Its home only.
     HandoverSpaces { pin: String },
+    /// The DID's MEMBER for spaces (the same on every device): its MLS signing key's seed and public key, its
+    /// credential (signed by the data key), and its feed key. The home site only.
+    SpaceMember,
 }
 
 /// What the identity answers.
@@ -154,6 +157,7 @@ pub enum Answer {
     Opened { items: Vec<Option<Vec<u8>>> },
     /// A member's spaces, handed to the next build: `(space id, its group state, its epochs' secrets)`.
     HandedSpaces { spaces: Vec<([u8; 32], Option<Vec<u8>>, Vec<(u64, [u8; 32])>)> },
+    SpaceMember { seed: [u8; 32], public: [u8; 32], writer: [u8; 32], credential: Vec<u8> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,6 +254,50 @@ pub const CATALOG: &str = "tables";
 /// The account's MEMBERS table: every node's credentials and the removals it made, gossiped in its own feed. Read with
 /// any grant (whose feeds count is part of reading any table); written by the home site only (where the group runs).
 pub const MEMBERS: &str = "members";
+/// The DID's MEMBER in every space other than the account (ARCHITECTURE: a DID is the member, a device only signs in):
+/// its MLS key and the key its feeds are written under, both from the account's data seed — the same on every device
+/// of the account. The MLS key goes to the page (MLS runs there); the feed key signs only here.
+pub fn space_member_seed(data_seed: &[u8; 32]) -> [u8; 32] {
+    blake3::derive_key("craftworks 2026-09-28 space member mls", data_seed)
+}
+pub fn space_writer(data_seed: &[u8; 32]) -> SigningKey {
+    SigningKey::from_bytes(&blake3::derive_key("craftworks 2026-09-28 space member writer", data_seed))
+}
+/// The DID's member credential: its writer and MLS keys, signed by the account's data key.
+pub fn space_member_credential(did: &[u8; 32], data_seed: &[u8; 32], mls_pub: &[u8]) -> Vec<u8> {
+    credential(did, &space_writer(data_seed).verifying_key().to_bytes(), mls_pub, data_seed)
+}
+
+/// A member's CREDENTIAL (self-certifying): its account, a key it writes with, its MLS signing key, and a signature over
+/// them by a key the account's key log names — `CWMB ‖ did ‖ signer ‖ writer ‖ MLS key ‖ signature`. A NODE of the
+/// account: signed by an owner key, `writer` its node key. A DID's MEMBER in a space: signed by the account's DATA key,
+/// `writer` the key its feeds in that space are written under. Anyone checks the signer against the key log.
+const CRED: &[u8; 4] = b"CWMB";
+
+pub fn credential(did: &[u8; 32], node: &[u8; 32], signing_pub: &[u8], owner_seed: &[u8; 32]) -> Vec<u8> {
+    let owner = SigningKey::from_bytes(owner_seed);
+    let sig = owner.sign(&cred_message(did, node, signing_pub)).to_bytes();
+    [&CRED[..], did, &owner.verifying_key().to_bytes(), node, signing_pub, &sig].concat()
+}
+
+fn cred_message(did: &[u8; 32], node: &[u8; 32], signing_pub: &[u8]) -> Vec<u8> {
+    [b"craftworks mls member".as_slice(), did, node, signing_pub].concat()
+}
+
+/// `(did, owner key, node key, signing key)` of a credential whose owner signature holds.
+pub fn read_credential(b: &[u8]) -> Option<([u8; 32], [u8; 32], [u8; 32], Vec<u8>)> {
+    let rest = b.strip_prefix(CRED)?;
+    let (did, rest) = rest.split_at_checked(32)?;
+    let (owner, rest) = rest.split_at_checked(32)?;
+    let (node, rest) = rest.split_at_checked(32)?;
+    let (sp, sig) = rest.split_at_checked(rest.len().checked_sub(64)?)?;
+    let did: [u8; 32] = did.try_into().ok()?;
+    let node: [u8; 32] = node.try_into().ok()?;
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(owner.try_into().ok()?).ok()?;
+    ed25519_dalek::Verifier::verify(&vk, &cred_message(&did, &node, sp), &ed25519_dalek::Signature::from_slice(sig).ok()?).ok()?;
+    Some((did, owner.try_into().ok()?, node, sp.to_vec()))
+}
+
 /// The account's CHANNEL: its shared tail (the account's data key) — the pointer to its group's first epoch, and its
 /// commits until they move onto the epoch logs.
 pub const CHANNEL: &str = "mls";
@@ -753,6 +801,16 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 HandedSpaces { spaces }
             }
         },
+        Request::SpaceMember => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            let Some(data) = a.data else { return Refused(Why::NoDataKey) };
+            let seed = space_member_seed(&data);
+            let public = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+            SpaceMember { seed, public, writer: space_writer(&data).verifying_key().to_bytes(), credential: space_member_credential(&a.did, &data, &public) }
+        }
         Request::InboxKey => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             let Some(data) = a.data else { return Refused(Why::NoDataKey) };
@@ -834,6 +892,8 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             };
             let key = match &p.authority {
                 Authority::One(v) if *v == own.verifying_key() => own,
+                // A space's feed: the DID's writer (the same on every device of the account).
+                Authority::One(v) if space.is_some() && a.data.is_some_and(|d| space_writer(&d).verifying_key() == *v) => space_writer(&a.data.expect("checked")),
                 Authority::One(v) if a.data_key().is_some_and(|d| d.verifying_key() == *v) => a.data_key().expect("checked"),
                 _ => match epoch_log() {
                     Some(k) => k,

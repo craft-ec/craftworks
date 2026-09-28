@@ -626,3 +626,30 @@ fn a_members_spaces_go_to_the_next_build_on_its_pin_to_its_home_only() {
     assert_eq!(spaces(&mut m, ALICE_PIN, OTHER), Answer::Refused(Why::NotHome));
     assert!(matches!(spaces(&mut m, "000000", APP), Answer::WrongPin { .. }));
 }
+
+/// A DID's MEMBER in a space is the same on every device of the account (two members of Alice's DID), is Bob's for
+/// Bob, and its credential is signed by the account's data key; its feed key signs in a space only, from the home site.
+#[test]
+fn a_dids_space_member_is_the_same_on_every_device_and_signs_in_spaces_only() {
+    let mut m = provisioned(APP);
+    let Answer::SpaceMember { seed, public: mls_pub, writer, credential: cred } = serve(&mut m, Request::SpaceMember, APP) else { panic!("a space member") };
+    assert_eq!(mls_pub, public(seed));
+    // Its credential: Alice's DID, signed by Alice's DATA key (the key log names it), writer and MLS key as given.
+    let (did, signer, w, mls) = read_credential(&cred).expect("a credential that holds");
+    assert_eq!((did, signer, w, mls), (ALICE_DID, public(ALICE_DATA), writer, mls_pub.to_vec()));
+    // A second device of the same DID: the same member.
+    assert_eq!(provision(&mut m, ALICE2, ALICE_DID, ALICE2_PIN, APP), opened(ALICE2, ALICE_DID));
+    assert_eq!(serve(&mut m, Request::SpaceMember, APP), Answer::SpaceMember { seed, public: mls_pub, writer, credential: cred.clone() });
+    // Bob's is Bob's (control: a different data key gives a different member).
+    assert_eq!(provision(&mut m, BOB, BOB_DID, BOB_PIN, APP), bob());
+    let Answer::SpaceMember { public: bobs, .. } = serve(&mut m, Request::SpaceMember, APP) else { panic!("bob's member") };
+    assert_ne!(bobs, mls_pub);
+    // Another site: not its to have.
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    assert_eq!(serve(&mut m, Request::SpaceMember, OTHER), Answer::Refused(Why::NotHome));
+    // The feed key signs a space's table (the DID's feed there), and nothing of the account's own.
+    assert_eq!(unlock(&mut m, ALICE_PIN, APP), alice());
+    let feed = params(writer, b"t/x0123456789ab-messages");
+    assert!(matches!(serve(&mut m, Request::Sign { params: feed.clone(), seq: 1, value_hash: [1; 32], space: Some([0x5A; 32]) }, APP), Answer::Signed { .. }));
+    assert_eq!(serve(&mut m, Request::Sign { params: feed, seq: 2, value_hash: [2; 32], space: None }, APP), Answer::Refused(Why::NotThisKey));
+}
