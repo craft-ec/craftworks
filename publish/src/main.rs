@@ -258,7 +258,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 27] = [
+    let packages: [(&str, &str, PathBuf); 28] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -271,6 +271,8 @@ async fn main() -> Result<()> {
         ("login", "service", app.join("packages/login.js")),
         ("access", "service", app.join("packages/access.js")),
         // The account's MLS group on this node: the source of every table key.
+        // One agreed order of entries per object (several types: tail now; log, witnessed later).
+        ("ordering", "service", app.join("packages/ordering.js")),
         ("keys", "service", app.join("packages/keys.js")),
         // MLS: its own wasm package, loaded only by `keys`.
         ("mls-glue", "module", built.join("craftworks_mls.js")),

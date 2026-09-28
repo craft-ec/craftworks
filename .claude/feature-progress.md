@@ -205,3 +205,7 @@ Out of scope now: recovery quorum (guardians), data-key rotation (moves tails), 
     words), after a rotation with the new words only. Live: register → join (1 epoch recovered) → change words
     (2 re-sealed) → NEW words join (2 recovered) → first node by PIN applies both joins.
   - [ ] 1e sealing whole tree nodes (a hook in freenet-prolly); tables sealed over
+  - [x] `ordering` capability (packages/ordering.js): one agreed order per object, several types behind one interface
+    (`tail` built: the account's nodes share one key, the table's write sequence decides; `log` for spaces and
+    `witnessed` later). keys' commits now go through it (append at the epoch it moved from; taken → join again).
+    Live: register → join → PIN catch-up unchanged.

@@ -48,7 +48,7 @@ a label alike; governance decides who controls one note or a whole company.
 | `membership` | joining, leaving, inviting, removing — for objects with members |
 | `administration` | an object's settings and policies |
 | `moderation` | acts on objects (hide, remove, label) and on actors (mute, ban) |
-| `ordering` | one agreed order of acts on an object: its own log, or its container's |
+| `ordering` | one agreed order of entries on an object: positions 0, 1, 2 …; one entry per position; a lost tie is told, re-reads, retries. A position is an MLS epoch, a snapshot number, a membership version. Several TYPES by who writes and how a tie is decided: `tail` (writers sharing one key — your account's nodes; built), `log` (a space's members, each with their own key; lowest hash wins), `witnessed` (k of a known witness set co-sign) |
 
 ### Underneath
 

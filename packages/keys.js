@@ -2,8 +2,9 @@
 // is where every table key comes from. The protocol runs here, in the page's core; the identity delegate keeps this
 // node's member state and each epoch's secret, and gives table keys to granted sites.
 //
-// THE CHANNEL is the account's table `mls` (one writer sequence: one agreed order): `info` = the group info a node
-// holding the words joins from; `c/<epoch>` = the commit that moved the group FROM that epoch; `e/<epoch>` = that
+// THE CHANNEL is the account's table `mls`: `info` = the group info a node holding the words joins from; the COMMITS in
+// one agreed order through the `ordering` capability (a `tail` log, `c/<epoch>` = the commit that moved the group FROM
+// that epoch — a position is an epoch); `e/<epoch>` = that
 // epoch's secret in ESCROW, sealed to the account's encryption key, so the recovery words alone reopen every epoch
 // (a node never can: it holds no words — a removed node opens nothing escrowed after its removal). It is sealed with the
 // words-derived key, not an MLS one: a node must read it before it has any epoch.
@@ -18,6 +19,10 @@
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const storage = await ctx.require("storage");
+  // The group's commits in one agreed order: the account's nodes share one key, so a `tail` ordering.
+  const ordering = await ctx.require("ordering");
+  let commits = null;
+  const commitLog = async () => (commits ??= await ordering.open({ type: "tail", table: "mls", prefix: "c/" }));
   const { core } = await ctx.require("node");
   const idlogCode = await ctx.require("idlog-wasm");
   // MLS is its own wasm package, loaded here only: no other page pays for it.
@@ -31,7 +36,6 @@ export async function start(ctx) {
   };
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
-  const commitKey = e => `c/${String(e).padStart(12, "0")}`;
   const escrowKey = e => `e/${String(e).padStart(12, "0")}`;
 
   let status = null; // the group as this page holds it
@@ -57,18 +61,14 @@ export async function start(ctx) {
 
   // Apply every commit newer than this node's epoch, in order. First the group is loaded again with the key log as it
   // is NOW: a node joining after the words changed carries the new owner's signature.
-  async function catchUp(channel) {
-    let n = 0;
-    if (channel.rows().some(x => x.key === commitKey(mls.status().epoch))) {
+  async function catchUp() {
+    const pending = (await commitLog()).from(mls.status().epoch);
+    if (pending.length) {
       const s = await auth.check();
       mls.load(s.didBytes, await keyLog(s.didBytes), mls.status().state);
     }
-    for (;;) {
-      const next = channel.rows().find(x => x.key === commitKey(mls.status().epoch));
-      if (!next) break;
-      mls.process(bytes(next.value));
-      n += 1;
-    }
+    for (const { entry } of pending) mls.process(bytes(entry));
+    const n = pending.length;
     if (n) ctx.log("account keys", { what: `${n} commit(s) applied: epoch ${mls.status().epoch}` });
     return n;
   }
@@ -85,14 +85,9 @@ export async function start(ctx) {
         const info = channel.rows().find(x => x.key === "info")?.value;
         const [kind, commit] = mls.with_words(did, await keyLog(did), entropy, info ? bytes(info) : new Uint8Array(0));
         if (kind === "joined") {
-          const from = mls.status().epoch - 1;
-          if (channel.rows().some(x => x.key === commitKey(from))) continue; // moved meanwhile: join again
-          try {
-            await channel.put(commitKey(from), hexOf(commit));
-          } catch (e) {
-            ctx.log("account keys", { what: `the join's commit was not written (${e?.message ?? e}): reading again` });
-            continue;
-          }
+          // The join's commit at the epoch it moved from: if another node moved the group first, join again.
+          const r = await (await commitLog()).append(mls.status().epoch - 1, hexOf(commit));
+          if (!r.ok) continue;
         }
         const st = await keep(channel);
         ctx.log("account keys", { what: `this node ${kind} the account's group: epoch ${st.epoch}, ${st.members.length} node(s)` });
@@ -133,7 +128,7 @@ export async function start(ctx) {
         mls.load(s.didBytes, await keyLog(s.didBytes), bytes(r.mlsState));
       }
       const channel = await storage.table("mls");
-      if (await catchUp(channel)) await keep(channel);
+      if (await catchUp()) await keep(channel);
       else status ??= (({ epoch, me, members }) => ({ epoch, me, members }))(mls.status());
       return status;
     }));
