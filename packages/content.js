@@ -1,8 +1,10 @@
 // CONTENT, a capability: the SHAPE of an authored item — a message, a post, a comment, a note — defined once, for
 // every container it lives in (a channel, a thread, a notebook). UI never defines its own: a page shows content.
 //
-// An item is `{ id, kind, body, at, by }`: its own id, what kind it is ("message", …), its body (text), when it was
-// made, and its author (a DID). It lives in its CONTAINER's table — each item in its author's own feed (`storage`), so
+// An item is `{ id, kind, body, at, by, re, edited, reactions }`: its own id, what kind it is ("message", …), its body
+// (text), when it was made, its author (a DID), the item it answers (`re`), when it was last edited, and the
+// REACTIONS to it (`{ "👍": [did…] }`) — each a small item of kind "reaction" in the same table, keyed by the item,
+// the emoji and its author (so two people's never meet in one row), never listed itself. It lives in its CONTAINER's table — each item in its author's own feed (`storage`), so
 // nobody writes into another's; readers see every author's merged. In a space its author is its feed's WRITER, as the
 // space's roles know it (never what the item claims). Only its author edits or removes it; removing another's is a
 // moderator's hide (`moderation`), and what is hidden is left out.
@@ -11,6 +13,8 @@
 //   const room = await content.in(channel)     // a container: a channel (a sub-space), or the account (none)
 //   room.list()                                // [{ id, kind, body, at, by }], oldest first
 //   await room.post("message", "hello")        // the new item's id
+//   await room.post("message", "hi", { re })  // a REPLY: `re` the id of the item it answers
+//   await room.react(id, "👍", on)             // this person's reaction to an item, on or off
 //   await room.edit(id, body)   await room.remove(id)   room.onChange(fn)
 //   room.mayRemove(item)                      // its author, or a moderator here
 //   await room.settled                        // every author's feed tried once (more may still arrive)
@@ -37,7 +41,17 @@ export async function start(ctx) {
     const item = row => {
       try {
         const v = JSON.parse(row.value);
-        return { id: row.key, kind: v.kind ?? "message", body: String(v.body ?? v.text ?? ""), at: Number(v.at) || 0, by: (r ? r.author(row) : null) ?? v.by ?? null };
+        return {
+          id: row.key,
+          kind: v.kind ?? "message",
+          body: String(v.body ?? v.text ?? ""),
+          at: Number(v.at) || 0,
+          by: (r ? r.author(row) : null) ?? v.by ?? null,
+          re: typeof v.re === "string" ? v.re : null,
+          edited: Number(v.edited) || 0,
+          item: typeof v.item === "string" ? v.item : null,
+          emoji: typeof v.emoji === "string" ? v.emoji : null,
+        };
       } catch {
         return null;
       }
@@ -47,11 +61,22 @@ export async function start(ctx) {
     const list = () => {
       const hidden = m ? m.hidden(container.messages) : new Set();
       const unseen = people.unseen();
-      return t
+      const all = t
         .rows()
         .filter(row => !hidden.has(row.key))
         .map(item)
-        .filter(it => it && !unseen.has(it.by))
+        .filter(it => it && !unseen.has(it.by));
+      // Reactions gathered onto the items they react to.
+      const reactions = new Map();
+      for (const x of all) {
+        if (x.kind !== "reaction" || !x.item || !x.emoji || !x.by) continue;
+        const on = reactions.get(x.item) ?? {};
+        (on[x.emoji] ??= []).includes(x.by) || on[x.emoji].push(x.by);
+        reactions.set(x.item, on);
+      }
+      return all
+        .filter(x => x.kind !== "reaction")
+        .map(x => ({ ...x, reactions: reactions.get(x.id) ?? {} }))
         .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
     };
     const mine = id => {
@@ -69,14 +94,21 @@ export async function start(ctx) {
       settled: Promise.all([t.settled, r?.settled]).then(() => {}),
       onChange: f => changed.push(f),
       mayRemove: it => it.by === me || !!r?.can(me, "moderate"),
-      async post(kind, body) {
+      async post(kind, body, { re = null } = {}) {
         const id = newId();
-        await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me }));
+        await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me, ...(re ? { re } : {}) }));
         return id;
+      },
+      // A REACTION: this person's, to one item, one emoji — its own row (the author in its key), put or taken back.
+      async react(id, emoji, on) {
+        const code = [...emoji].map(c => c.codePointAt(0).toString(16)).join("-");
+        const key = `r-${id}-${code}-${me.slice(12, 24)}`;
+        if (on) await t.put(key, JSON.stringify({ kind: "reaction", item: id, emoji, at: Date.now(), by: me }));
+        else await t.remove(key);
       },
       async edit(id, body) {
         const it = mine(id);
-        await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: me, edited: Date.now() }));
+        await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: me, edited: Date.now(), ...(it.re ? { re: it.re } : {}) }));
       },
       async remove(id) {
         const it = list().find(x => x.id === id);

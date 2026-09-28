@@ -461,8 +461,10 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       (tag = its route; a click opens it). `conversation.channels(server)`: one home for a server's channels (Chat
       uses it). Live (two-node private net): Home badge 1→2, notification in 3 s with the DM's route, list badge 2→0
       on opening, Home cleared.
-- [ ] 1b replies, reactions, @mentions (compositions: an item's `re`, an edge to an item, a mention in the body)
-- [ ] 1c edit your own message; paging long histories
+- [x] 1b replies (`re`, a quote), reactions (their own rows keyed item+emoji+author, gathered onto the item),
+      @mentions (suggested while typing; a message mentioning you stands out). Live X↔Y: quote, 👍 chip, mention highlighted.
+- [x] 1c edit (inline, "(edited)"); the newest 60 shown, earlier on asking. FIXED on the way: an end-aligned grid
+      made the top of a long room unreachable (flex column + margin-top:auto). Live: 60 of 71 → 71, from the top.
 - [ ] 2a account key sealed on the network: open with words or a passphrase (passkey slot for #5764)
 - [ ] 2b removing a device refreshes the DID's member in every space
 - [ ] 3 social content: posts, comments, votes; a feed from follows
