@@ -30,6 +30,11 @@ bip39 = { version = "2", default-features = false, features = ["alloc"] }
 hmac = "0.12"
 # The DID's text form: base58 of the owner key.
 bs58 = "0.5"
+# The account's key event log: its format and chain check, the ONE implementation (the contract's own crate).
+craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
+# The account's encryption key (X25519) and its vault (XChaCha20-Poly1305).
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 sha2 = { version = "0.10", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

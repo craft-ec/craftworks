@@ -131,3 +131,26 @@ device + the same PIN opens the same account. Adding a second device: pairing wi
   against their id; each block asked once. Live (private node): reads mixed "arrived first" and "from their group
   first (rebuilt, verified)" — the rebuild path now runs on real network blocks, not only in tests; 67 rows, a write
   after. B app v33.
+
+## Rotatable identity (2026-09-28) — DID = hash of the inception event, keys rotate under it
+Why: today DID = owner public key, derived from the words; new words = new DID and new table addresses. A DID must be
+a stable "phone number" whose keys rotate (KERI-style self-certifying key event log).
+- [x] I1. `contracts/idlog` contract (own workspace, freenet-contracts' reproducible build): params = DID; state = the
+      event chain. Inception {K0, next=H(K1), data pub, enc pub (X25519), vault}; Rotation n {prev, K_n revealed ==
+      committed, next=H(K_{n+1}), data, enc, vault, sig by K_n}. Valid = verifies from the DID. Merge = longer valid
+      chain; same-position equivocation → lowest hash. Tests incl. controls (wrong key, broken commitment, forks).
+- [x] I2. core: per-epoch keys from words (owner m/44'/25458'/0'/i', enc /2'/i'), data seed from the original words
+      (/1'), vault = data seed sealed to the epoch's enc key; build inception / rotation; resolve a chain; whoami
+      Register (key → DID) for words that were rotated in.
+- [x] I3. page: register writes the log (PUT); words login resolves DID (whoami, else inception), opens the vault,
+      provisions; members Set under the CURRENT owner key; Account: DID shown, "Change recovery words" (two
+      rotations + whoami + re-admit this node).
+- [x] I4. publish idlog.wasm (SHA256SUMS); verify private node (register, rotate words, log in with NEW words on a
+      fresh member: same DID, same notes; OLD words refused); B; commit.
+Out of scope now: recovery quorum (guardians), data-key rotation (moves tails), handles (@name → DID).
+  Verified (private node, test site): register → DID CQGVSX… (id of the inception); a note; Account → "Change recovery
+  words" (old words typed, new shown once) → "Done", same DID; log out; NEW words on a fresh member (new PIN) → same
+  DID, the note there, Your nodes = 2 (the first re-admitted under the new owner key); OLD words → "these recovery
+  words were replaced by newer ones". idlog.wasm ea00f4e8… (reproducible: two builds, same hash), node accepted it.
+  Members from before the log: Account says "log in once with your recovery words (and a new PIN)"; that login puts
+  the inception (same data key → same tables, same member Set). All three private sites + B (app v34) published.

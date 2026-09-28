@@ -1,0 +1,4 @@
+*.wasm
+build/
+.contract-build.sh
+idlog/target/

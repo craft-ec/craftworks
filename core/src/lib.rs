@@ -392,18 +392,105 @@ mod js {
         /// The account of these recovery words (their entropy), with `member` admitted to it: `{ did, didBytes,
         /// members: { id, frames } }`. The DID is the owner's public key, so the same words always name the same
         /// account; the member PUT merges into the account's Set. So this is both "register" and "log in with words".
-        pub fn account(&mut self, set_code: &[u8], entropy: &[u8], member: &[u8], ts: f64) -> Result<js_sys::Object, JsValue> {
+        /// `{ id, frames }` of a PUT, for the page.
+        fn put_obj(&mut self, p: &account::Put) -> Result<JsValue, JsValue> {
+            let o = js_sys::Object::new();
+            js_sys::Reflect::set(&o, &"id".into(), &p.id.clone().into())?;
+            js_sys::Reflect::set(&o, &"idBytes".into(), &js_sys::Uint8Array::from(&p.id_bytes[..]).into())?;
+            js_sys::Reflect::set(&o, &"frames".into(), &frames(self.0.frames_put(p).map_err(err)?).into())?;
+            Ok(o.into())
+        }
+
+        /// What words W may hold, before anything is read: their `whoami` Register (to GET: it names the DID if W
+        /// were rotated in) and the DID of their own inception (if they are an account's original words).
+        pub fn words_plan(&mut self, register_code: &[u8], entropy: &[u8]) -> Result<js_sys::Object, JsValue> {
             let bad = || err("recovery entropy: 16 or 32 bytes".into());
-            let owner = account::owner(entropy).ok_or_else(bad)?;
-            let members = account::admit(set_code, entropy, &b32(member)?, ts as u64, "").ok_or_else(bad)?;
+            let who = account::whoami_address(register_code, entropy).ok_or_else(bad)?;
+            let e = account::inception(entropy).ok_or_else(bad)?;
+            let o = js_sys::Object::new();
+            js_sys::Reflect::set(&o, &"whoamiId".into(), &js_sys::Uint8Array::from(&who.id_bytes[..]).into())?;
+            js_sys::Reflect::set(&o, &"inceptionDid".into(), &js_sys::Uint8Array::from(&e.id()[..]).into())?;
+            Ok(o)
+        }
+
+        /// The DID the got `whoami` Register of W names, or null.
+        pub fn whoami_did(&self, register_code: &[u8], entropy: &[u8]) -> Result<JsValue, JsValue> {
+            let id = account::whoami_address(register_code, entropy).ok_or_else(|| err("recovery entropy: 16 or 32 bytes".into()))?.id_bytes;
+            Ok(match self.0.got(&id).and_then(|st| account::whoami_did(entropy, st)) {
+                Some(d) => js_sys::Uint8Array::from(&d[..]).into(),
+                None => JsValue::NULL,
+            })
+        }
+
+        /// The key event log's contract id (32 bytes) for a DID.
+        pub fn idlog_id(idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&account::idlog_put(idlog_code, &b32(did)?, None).id_bytes[..]))
+        }
+
+        /// The got log of `did`, verified; or, for W's own DID with nothing on the network, W's inception (to PUT).
+        fn log_of(&self, idlog_code: &[u8], did: &[u8; 32], entropy: &[u8]) -> Result<craftworks_idlog_contract::Log, JsValue> {
+            let id = account::idlog_put(idlog_code, did, None).id_bytes;
+            if let Some(st) = self.0.got(&id) {
+                return craftworks_idlog_contract::read(did, st).ok_or_else(|| err("the account's key log does not verify".into()));
+            }
+            match account::inception(entropy) {
+                Some(e) if e.id() == *did => Ok(craftworks_idlog_contract::Log { events: vec![e] }),
+                _ => Err(err("the account's key log is not on the network".into())),
+            }
+        }
+
+        /// JOIN the account words W hold, as `member` (this node's key): the log (PUT again: re-publishing a signed
+        /// log is always safe, and keeps it on the network), this node admitted to the member Set under the CURRENT
+        /// owner key, and the data key's seed out of the vault. Refused if W are not the account's current words.
+        pub fn join_account(&mut self, idlog_code: &[u8], set_code: &[u8], entropy: &[u8], did: &[u8], member: &[u8], ts: f64) -> Result<js_sys::Object, JsValue> {
+            let did = b32(did)?;
+            let log = self.log_of(idlog_code, &did, entropy)?;
+            let (_, owner, data) = account::open_log(entropy, &log)
+                .ok_or_else(|| err("these recovery words were replaced by newer ones: use the newest words".into()))?;
+            let members = account::admit(set_code, &owner, &b32(member)?, ts as u64, "").ok_or_else(|| err("admission failed".into()))?;
             let o = js_sys::Object::new();
             let set = |k: &str, v: JsValue| js_sys::Reflect::set(&o, &k.into(), &v).map(|_| ());
-            set("did", account::did(&owner).into())?;
-            set("didBytes", js_sys::Uint8Array::from(&owner[..]).into())?;
-            let p = js_sys::Object::new();
-            js_sys::Reflect::set(&p, &"id".into(), &members.id.clone().into())?;
-            js_sys::Reflect::set(&p, &"frames".into(), &frames(self.0.frames_put(&members).map_err(err)?).into())?;
-            set("members", p.into())?;
+            set("did", account::did(&did).into())?;
+            set("didBytes", js_sys::Uint8Array::from(&did[..]).into())?;
+            set("data", js_sys::Uint8Array::from(&data[..]).into())?;
+            set("owner", js_sys::Uint8Array::from(&ed25519_dalek::SigningKey::from_bytes(&owner).verifying_key().to_bytes()[..]).into())?;
+            let lp = account::idlog_put(idlog_code, &did, Some(&log));
+            set("log", self.put_obj(&lp)?)?;
+            set("members", self.put_obj(&members)?)?;
+            Ok(o)
+        }
+
+        /// The account's current owner key (32 bytes) from its got log: whose member Set is the account's now.
+        pub fn idlog_owner(&self, idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            let did = b32(did)?;
+            let id = account::idlog_put(idlog_code, &did, None).id_bytes;
+            let st = self.0.got(&id).ok_or_else(|| err("the account's key log has not been read".into()))?;
+            let log = craftworks_idlog_contract::read(&did, st).ok_or_else(|| err("the account's key log does not verify".into()))?;
+            Ok(js_sys::Uint8Array::from(&log.head().key[..]))
+        }
+
+        /// CHANGE THE RECOVERY WORDS from `old` to `new` (both entered on this page): the log with its two rotations,
+        /// the new words' `whoami`, and the member Set under the new owner key with these `members` (32-byte keys,
+        /// concatenated) admitted again. Everything to PUT.
+        #[allow(clippy::too_many_arguments)]
+        pub fn change_words(&mut self, idlog_code: &[u8], register_code: &[u8], set_code: &[u8], did: &[u8], old: &[u8], new: &[u8], members: &[u8], ts: f64) -> Result<js_sys::Object, JsValue> {
+            let did = b32(did)?;
+            let log = self.log_of(idlog_code, &did, old)?;
+            let next = account::change_words(&log, old, new)
+                .ok_or_else(|| err("the current recovery words are needed to change them (these are not)".into()))?;
+            let owner = account::owner_seed(new).ok_or_else(|| err("new recovery entropy: 16 or 32 bytes".into()))?;
+            let o = js_sys::Object::new();
+            let set = |k: &str, v: JsValue| js_sys::Reflect::set(&o, &k.into(), &v).map(|_| ());
+            let lp = account::idlog_put(idlog_code, &did, Some(&next));
+            set("log", self.put_obj(&lp)?)?;
+            let who = account::whoami_put(register_code, new, &did).ok_or_else(|| err("whoami".into()))?;
+            set("whoami", self.put_obj(&who)?)?;
+            let admitted = js_sys::Array::new();
+            for m in members.chunks_exact(32) {
+                let p = account::admit(set_code, &owner, &b32(m)?, ts as u64, "").ok_or_else(|| err("admission failed".into()))?;
+                admitted.push(&self.put_obj(&p)?);
+            }
+            set("members", admitted.into())?;
             Ok(o)
         }
 

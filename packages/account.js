@@ -25,6 +25,11 @@ export async function mount(ctx, el) {
   box.append(dev);
   auth.nodes().then(
     list => {
+      if (list === null) {
+        dev.querySelector(".line").textContent =
+          "This node joined before accounts had a key log. Log out and log in once with your recovery words (and a new PIN) to bring it onto your account's key log.";
+        return;
+      }
       const ul = document.createElement("ul");
       for (const m of list.sort((a, b) => a.since - b.since)) {
         const li = document.createElement("li");
@@ -73,12 +78,74 @@ export async function mount(ctx, el) {
   };
   drawGrants().catch(e => (access.querySelector(".grants").textContent = `Could not read: ${e?.message ?? e}`));
 
-  // RECOVERY WORDS: shown once, at registration; no node keeps them.
+  // RECOVERY WORDS: shown once, at registration; no node keeps them. They can be CHANGED: the account (its DID, its
+  // data) stays; the old words stop opening it.
   const rec = document.createElement("section");
   rec.innerHTML = `<h3>Recovery words</h3>
-    <p>Your recovery words were shown once, when you registered. They are your account: with them you log in on any
-    node and get your account back. No node keeps them, so a lost or stolen node cannot give your account away.</p>`;
+    <p>Your recovery words were shown once, when you registered. With them you log in on any node and get your
+    account back. No node keeps them, so a lost or stolen node cannot give your account away.</p>
+    <p>You can change them: your account and its data stay the same, and the old words stop working.</p>
+    <button type="button" class="change">Change recovery words</button>
+    <form class="old" hidden>
+      <label>Your current recovery words<textarea name="words" rows="3" autocomplete="off" spellcheck="false"></textarea></label>
+      <button>Next</button> <button type="button" class="cancel">Cancel</button>
+    </form>
+    <form class="new" hidden>
+      <p><strong>Your new recovery words.</strong> Write them down and keep them offline. They are shown only now.</p>
+      <ol class="shown"></ol>
+      <label><input type="checkbox" name="kept" required> I have written them down</label>
+      <button>Change to these words</button> <button type="button" class="cancel">Cancel</button>
+    </form>
+    <p class="said"></p>`;
   box.append(rec);
+  {
+    const [change, oldF, newF, said] = [".change", "form.old", "form.new", ".said"].map(q => rec.querySelector(q));
+    const glue = (await ctx.require("node")).glue.CraftworksCore;
+    let old = null;
+    let fresh = null;
+    const reset = () => {
+      old?.fill(0);
+      fresh?.fill(0);
+      old = fresh = null;
+      oldF.reset();
+      newF.reset();
+      oldF.hidden = newF.hidden = true;
+      change.hidden = false;
+      newF.querySelector(".shown").replaceChildren();
+    };
+    for (const c of rec.querySelectorAll(".cancel")) c.onclick = reset;
+    change.onclick = () => {
+      change.hidden = true;
+      oldF.hidden = false;
+      said.textContent = "";
+    };
+    oldF.onsubmit = e => {
+      e.preventDefault();
+      try {
+        old = glue.entropy_of(oldF.words.value);
+      } catch (err) {
+        said.textContent = String(err);
+        return;
+      }
+      fresh = crypto.getRandomValues(new Uint8Array(16));
+      newF.querySelector(".shown").replaceChildren(
+        ...glue.words_of(fresh).split(" ").map(w => Object.assign(document.createElement("li"), { textContent: w })),
+      );
+      oldF.hidden = true;
+      newF.hidden = false;
+    };
+    newF.onsubmit = async e => {
+      e.preventDefault();
+      said.textContent = "Changing your recovery words…";
+      try {
+        await auth.changeWords(old, fresh);
+        said.textContent = "Done. Your new words open your account; the old ones no longer do.";
+      } catch (err) {
+        said.textContent = `Could not change them: ${err?.message ?? err}`;
+      }
+      reset();
+    };
+  }
 
   const out = document.createElement("button");
   out.textContent = "Log out";

@@ -1,0 +1,30 @@
+[package]
+name = "craftworks-idlog-contract"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "IDLOG: an account's key event log. The DID is the hash of its inception event; its keys rotate under it."
+
+# Own workspace: own lockfile, so the wasm hash (= part of every log's key) is stable.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+freenet-stdlib = { version = "0.10.0", features = ["contract"] }
+blake3 = { version = "1", default-features = false }
+ed25519-dalek = { version = "=2.2.0", default-features = false }
+
+[features]
+default = ["freenet-main-contract"]
+freenet-main-contract = []
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false

@@ -1,5 +1,7 @@
 [workspace]
 members = ["core", "identity", "publish"]
+# This repo's own contracts: each its own workspace and lockfile (the wasm hash is part of every instance's key).
+exclude = ["contracts-src"]
 resolver = "2"
 
 # THE SDK, pinned: only its proven parts are used — wire (the node's message format), page / page-io / engine (a

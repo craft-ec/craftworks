@@ -67,14 +67,38 @@ export async function start(ctx) {
     return said.kind === "got";
   }
 
-  // The account's members, from the network: `[{ key, name, since }]`.
+  const codes = () => Promise.all(["set-wasm", "idlog-wasm", "register-wasm"].map(n => ctx.require(n)));
+
+  // The account's members, from the network: `[{ key, name, since }]`. The DID names the account's key log; the log
+  // names the CURRENT owner key; the member list is that key's. `null`: the account has no key log (a member made
+  // before the log existed: logging in once with the recovery words brings it over).
   async function nodes() {
     const s = await check();
     if (!s) return [];
-    // The DID is the owner's key, so the member list's address is derived from it: nothing to look up first.
-    const setCode = await ctx.require("set-wasm");
-    if (!(await get(core.members_id(setCode, s.didBytes), "reading the account's members"))) return [];
-    return JSON.parse(core.members(setCode, s.didBytes));
+    const [setCode, idlogCode] = await codes();
+    if (!(await get(glue.CraftworksCore.idlog_id(idlogCode, s.didBytes), "reading the account's key log"))) return null;
+    const owner = core.idlog_owner(idlogCode, s.didBytes);
+    if (!(await get(core.members_id(setCode, owner), "reading the account's members"))) return [];
+    return JSON.parse(core.members(setCode, owner));
+  }
+
+  // CHANGE THE RECOVERY WORDS: `old` (the current words, typed again) hands the account to `fresh` (new words, shown
+  // once). The log gets its two rotations, the new words their whoami, and every node of the account its place under
+  // the new owner key. Afterwards the old words open nothing.
+  async function changeWords(old, fresh) {
+    const s = await check();
+    if (!s) throw new Error("nobody is logged in");
+    const [setCode, idlogCode, registerCode] = await codes();
+    if (!(await get(glue.CraftworksCore.idlog_id(idlogCode, s.didBytes), "reading the account's key log")))
+      throw new Error("this account has no key log yet: log in once with its recovery words first");
+    const list = (await nodes()) ?? [];
+    const keys = new Uint8Array(list.length * 32);
+    list.forEach((m, i) => keys.set(hexBytes(m.key), i * 32));
+    const c = core.change_words(idlogCode, registerCode, setCode, s.didBytes, old, fresh, keys, Date.now());
+    await put(c.log, "the account's key log");
+    await put(c.whoami, "the new words' account");
+    for (const m of c.members) await put(m, "a node's place in the account");
+    ctx.log("recovery words changed", { what: `${s.did.slice(0, 24)}…: ${list.length} node(s) moved to the new owner key` });
   }
 
   // Log in with the PIN. A member made by an EARLIER build of the identity delegate is not in this one (a delegate's
@@ -100,24 +124,42 @@ export async function start(ctx) {
     return r;
   }
 
-  // This node as a member of the account the words name. Kept across a retry with another PIN, so one attempt
+  // This node as a member of the account the words hold. Kept across a retry with another PIN, so one attempt
   // mints one member key.
+  //
+  // WHICH account: new words (`fresh`, just made) hold their own inception's. Typed words hold either their own
+  // inception's (an account's original words) or the one their whoami names (words rotated in): both are asked AT
+  // ONCE and the first that answers wins, so the one that does not exist never holds the login up. Neither: an
+  // account from before the key log, whose inception is put now (its tables and nodes stay where they were).
   let joining = null;
-  async function join(entropy, pin) {
+  async function join(entropy, pin, { fresh = false } = {}) {
     if (!joining || joining.entropyHex !== hex(entropy)) {
+      const [setCode, idlogCode, registerCode] = await codes();
       const member = crypto.getRandomValues(new Uint8Array(32));
-      const a = core.account(await ctx.require("set-wasm"), entropy, id.publicOf(member), Date.now());
+      const plan = core.words_plan(registerCode, entropy);
+      const logOf = d => glue.CraftworksCore.idlog_id(idlogCode, d);
+      let did = plan.inceptionDid;
+      if (!fresh) {
+        const own = get(logOf(plan.inceptionDid), "reading the account's key log").then(ok => (ok ? plan.inceptionDid : Promise.reject()));
+        const named = get(plan.whoamiId, "asking which account these words hold").then(async ok => {
+          const d = ok && core.whoami_did(registerCode, entropy);
+          if (!d || !(await get(logOf(d), "reading the account's key log"))) throw new Error("none");
+          return d;
+        });
+        did = await Promise.any([own, named]).catch(() => plan.inceptionDid);
+      }
+      const a = core.join_account(idlogCode, setCode, entropy, did, id.publicOf(member), Date.now());
+      await put(a.log, "the account's key log");
       await put(a.members, "this node's place in the account");
       ctx.log("account", { what: `${a.did}, this node admitted` });
-      joining = { entropyHex: hex(entropy), entropy, did: a.didBytes, member };
+      joining = { entropyHex: hex(entropy), entropy, did: a.didBytes, data: a.data, member };
     }
-    const data = glue.CraftworksCore.data_seed(joining.entropy);
-    const r = await id.provision(joining.member, joining.did, pin, data);
-    data.fill(0);
+    const r = await id.provision(joining.member, joining.did, pin, joining.data);
     if (r.unlocked) {
       made = r.unlocked.did;
       joining.member.fill(0);
       joining.entropy.fill(0);
+      joining.data.fill(0);
       joining = null;
     }
     return r;
@@ -212,7 +254,7 @@ export async function start(ctx) {
         form.addEventListener("submit", async e => {
           e.preventDefault();
           say(form, "Working…");
-          const r = await run().catch(err => ({ error: err.message }));
+          const r = await run().catch(err => ({ error: err?.message ?? String(err) }));
           if (r?.unlocked) return done(r);
           if (r) say(form, why(r));
         });
@@ -257,7 +299,7 @@ export async function start(ctx) {
         return null;
       });
       on(once, async () => {
-        const r = await join(fresh, register.pin.value);
+        const r = await join(fresh, register.pin.value, { fresh: true });
         if (r.unlocked) once.querySelector(".shown").replaceChildren();
         if (r.refused === "PinTaken") {
           once.hidden = true;
@@ -271,7 +313,7 @@ export async function start(ctx) {
     });
   }
 
-  return { check, session, logout, nodes, current: () => current, identity: id };
+  return { check, session, logout, nodes, changeWords, current: () => current, identity: id };
 }
 
 
