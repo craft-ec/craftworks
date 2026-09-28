@@ -292,6 +292,11 @@ pub fn did(did: &[u8; 32]) -> String {
     format!("did:craftec:{}", bs58::encode(did).into_string())
 }
 
+/// The DID a text names (`did:craftec:<base58>`, or the base58 alone): its 32 bytes.
+pub fn did_bytes(text: &str) -> Option<[u8; 32]> {
+    bs58::decode(text.trim().trim_start_matches("did:craftec:")).into_vec().ok()?.try_into().ok()
+}
+
 
 /// A NODE's CREDENTIAL (its membership of the account, self-certifying): its account, its node key, its MLS signing
 /// key, and an owner key's signature over them — `CWMB ‖ did ‖ owner ‖ node ‖ signing key ‖ signature`. Whoever holds

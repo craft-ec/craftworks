@@ -21,6 +21,33 @@ export async function mount(ctx, el) {
   line("Account (DID)", s.did);
   line("This node's member key", s.member);
 
+  // YOUR CARD: the public face others find you by (your id, and a handle — not unique: people tell you apart by your
+  // id), with this node's key so people can start a conversation with you while you are away.
+  const card = document.createElement("section");
+  card.innerHTML = `<h3>Your card</h3><p class="note">Public: anyone with your id sees it. Your handle is a name to show; your id is what makes you you.</p>
+    <form class="card-form"><label>Handle <input name="handle" maxlength="40" autocomplete="off"></label> <button>Publish</button></form><p class="line said"></p>`;
+  box.append(card);
+  const directory = await ctx.require("directory");
+  const cardForm = card.querySelector(".card-form");
+  const cardSaid = card.querySelector(".said");
+  directory
+    .card(s.did)
+    .then(c => {
+      if (c?.handle) cardForm.elements.handle.value = c.handle;
+      cardSaid.textContent = c ? `Published, with ${c.keyPackages.length} node key(s).` : "Not published yet.";
+    })
+    .catch(e => (cardSaid.textContent = `Could not read your card: ${e?.message ?? e}`));
+  cardForm.onsubmit = async e => {
+    e.preventDefault();
+    cardSaid.textContent = "Publishing…";
+    try {
+      const c = await directory.publish({ handle: cardForm.elements.handle.value.trim() || null });
+      cardSaid.textContent = `Published: ${c.handle ?? "(no handle)"} · ${c.keyPackages.length} node key(s).`;
+    } catch (err) {
+      cardSaid.textContent = `Could not publish: ${err?.message ?? err}`;
+    }
+  };
+
   // YOUR NODES: the account's members — its MLS group's. A node that is lost, stolen or retired is REMOVED: the group
   // moves to a new epoch, and that node reads nothing written from then on.
   const dev = document.createElement("section");

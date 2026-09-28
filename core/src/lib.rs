@@ -535,6 +535,19 @@ mod js {
             Ok(account::members(&did, &log, &creds, &rs).iter().map(|n| JsValue::from(hex(n))).collect())
         }
 
+        /// An account's current PUBLIC keys from its (got) key log's head: `{ data, enc }` (hex) — its data key (its
+        /// tables and card are addressed by it) and its encryption key (what is sealed to the account).
+        pub fn idlog_keys(&self, idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Object, JsValue> {
+            let did = b32(did)?;
+            let id = account::idlog_put(idlog_code, &did, None).id_bytes;
+            let st = self.0.got(&id).ok_or_else(|| err("the account's key log has not been read".into()))?;
+            let log = craftworks_idlog_contract::read(&did, st).ok_or_else(|| err("the account's key log does not verify".into()))?;
+            let o = js_sys::Object::new();
+            js_sys::Reflect::set(&o, &"data".into(), &JsValue::from(hex(&log.head().data)))?;
+            js_sys::Reflect::set(&o, &"enc".into(), &JsValue::from(hex(&log.head().enc)))?;
+            Ok(o)
+        }
+
         /// `{ events, changes }` of the account's (got) key log: its events, and how many times its keys changed (each
         /// change of the words is two events).
         pub fn idlog_info(&self, idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Object, JsValue> {
@@ -654,7 +667,7 @@ mod js {
         /// valueHash }`, what the identity delegate signs; nothing moves until `tail_commit`.
         pub fn tail_prepare(&mut self, id: &[u8], key: &[u8], value: &[u8]) -> Result<js_sys::Object, JsValue> {
             let o = self.0.tail(&b32(id)?).map_err(err)?;
-            if o.writes.is_none() {
+            if o.writes.is_none() && !o.public {
                 return Err(err("this table's key is not held here: it cannot be written".into()));
             }
             let (seq, hash) = o.prepare_row(key, value).ok_or_else(|| err("the tail refuses that write (too large?)".into()))?;
@@ -684,6 +697,12 @@ mod js {
         /// The key an open tail is under (its writer's), and the sequence its next write will have.
         pub fn tail_next(&mut self, id: &[u8]) -> Result<f64, JsValue> {
             Ok((self.0.tail(&b32(id)?).map_err(err)?.writer.seq() + 1) as f64)
+        }
+
+        /// Make an open tail PUBLIC (a person's card): rows in the clear.
+        pub fn tail_public(&mut self, id: &[u8]) -> Result<(), JsValue> {
+            self.0.tail(&b32(id)?).map_err(err)?.public = true;
+            Ok(())
         }
 
         pub fn tail_seal(&mut self, id: &[u8], key: &[u8]) -> Result<(), JsValue> {
@@ -802,6 +821,12 @@ mod js {
     #[wasm_bindgen]
     pub fn did_of(owner: &[u8]) -> Result<String, JsValue> {
         Ok(account::did(&b32(owner)?))
+    }
+
+    /// A DID's 32 bytes from its text (`did:craftec:<base58>`, or the base58 alone).
+    #[wasm_bindgen]
+    pub fn did_bytes(text: &str) -> Result<js_sys::Uint8Array, JsValue> {
+        Ok(js_sys::Uint8Array::from(&account::did_bytes(text).ok_or_else(|| err("not a DID".into()))?[..]))
     }
 
     /// The names of an account space's own tables — the identity's constants (the delegate's rules name them), given to

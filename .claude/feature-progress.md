@@ -306,7 +306,16 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
   inheriting the server); `content` capability (authored item shape; author-only edits); Chat page (Discord layout).
   Live: server “Craft” made in 0.8 s (group, log, listed), #general, a message posted and there after a reload.
   Bugs fixed on the way: `tail`'s `space` option shadowed the capability; the account group passed an empty space id.
-- [ ] M private messaging: directory (card + key packages), inbox (sealed pointers = MLS welcomes), DM = two-person space
+- [ ] M private messaging — `conversation` kinds: direct, group, mail (owner: broadcast/thread are NOT kinds —
+  roles and relations compose them; reddit/facebook/twitter are social content, not messaging)
+  - [x] M1 mls: key packages (secrets in the node's saved state; old states load), add → (commit, welcome), join a
+    space from a welcome (space checked BEFORE joining: a wrong welcome cannot use up the key package). Test across
+    two accounts.
+  - [x] M2 directory: a person's public CARD (handle + a key package per node), a public tail under their account's data
+    key, found from the DID alone (key log head: data + enc keys, `idlog_keys`); core public tails (in the clear, never
+    flushed; test); own card listed in the directory before made. Account page "Your card". Live: "sam" published with
+    1 node key, read back from the network. OPEN: someone else's missing card costs the 30 s GET.
+  - [ ] M3 inbox, M4 direct conversation, M5 UI
 - [ ] C3 invites (join request, a member adds), C4 roles/moderation, C5 every node of each member
 - OPEN: a space's group state is not carried by HandoverKeys yet (the next delegate build loses space groups).
 - OWNER ASKED (published size): manifest 54 KB lists every piece of every package; plan: one hash per package (pieces

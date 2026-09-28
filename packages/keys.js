@@ -341,5 +341,18 @@ export async function start(ctx) {
     else ready().catch(err => ctx.log("account keys", { what: err?.message ?? String(err) }));
   });
 
-  return { ready, remove, escrowed, group, onChange: f => watchers.push(f) };
+  // A KEY PACKAGE of this node (for the directory): another person adds this node with it while it is away. Its
+  // secrets are kept with this node's state (saved now); null where this node is not in its account's group.
+  async function keyPackage() {
+    return (busy = busy.then(async () => {
+      if (!status || status.removed) return null;
+      const kp = mls.key_package();
+      const st = mls.status();
+      const r = await auth.identity.mlsSave(st.state, st.epoch, st.secret);
+      if (!r.mlsSaved) throw new Error(`the identity would not keep the key package: ${r.refused ?? JSON.stringify(r)}`);
+      return hexOf(kp);
+    }));
+  }
+
+  return { ready, remove, escrowed, group, keyPackage, onChange: f => watchers.push(f) };
 }

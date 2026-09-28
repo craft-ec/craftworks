@@ -90,7 +90,7 @@ export async function start(ctx) {
   // listing). `sealWith` (hex): its sealing key, given (a space's epoch log: its epoch's own), instead of the table's.
   // `space` (id bytes): the space it belongs to, not the account — signed in that space, with no site grant. Its rows AS
   // STORED are `raw()` (bytes); `rows()` are its view's.
-  function tail(owner, app, { known = null, catalogKey = false, beforeCreate = null, sealWith = null, space: inSpace = null } = {}) {
+  function tail(owner, app, { known = null, catalogKey = false, beforeCreate = null, sealWith = null, space: inSpace = null, public: open = false } = {}) {
     // The space: an object (a table of a space: its group keeps it current) or its id's bytes (an epoch log).
     const spaceId = inSpace?.idBytes ?? inSpace;
     const idHex = core.tail_open(tailCode, bytes(owner), app);
@@ -120,10 +120,12 @@ export async function start(ctx) {
       // THE TABLE'S KEY: the table is sealed, so reading it needs its key, and the key comes only with the person's
       // grant for this site (asked NOW: the node prompts the first time). No grant: nothing of the table reads here.
       // The catalog's key comes with any grant: listing a table is part of using it.
-      const k = sealWith ? { key: sealWith } : await access.key(app, { catalog: catalogKey, space: spaceId });
+      // A PUBLIC tail (a person's card): in the clear, no key.
+      if (open) core.tail_public(id);
+      const k = open ? {} : sealWith ? { key: sealWith } : await access.key(app, { catalog: catalogKey, space: spaceId });
       t.sealed = !!k.key;
       if (k.key) core.tail_seal(id, bytes(k.key));
-      else ctx.log("table sealed", { what: `${app}: no key here (${k.why}): nothing of it reads` });
+      else if (!open) ctx.log("table sealed", { what: `${app}: no key here (${k.why}): nothing of it reads` });
       // WRITES are sealed with the account's newest EPOCH (a node removed from the account then reads nothing written
       // after): the group brought current first. Not a channel (a node reads the MLS channel before it has any epoch),
       // and the catalog not after the group (the group's channel is found through it). No group here: the table's key.
@@ -469,6 +471,17 @@ export async function start(ctx) {
     return tail(owner, name, { known, sealWith, space });
   }
 
+  // A PUBLIC tail under `owner`'s key (a person's card, under their account's data key): anyone reads it. This
+  // account's own is listed in its directory before it is made (so it is never asked for while it does not exist).
+  async function publicTail(name, owner) {
+    const sp = await space.account();
+    if (sp && owner === sp.shared) {
+      const listed = legacyListed(await directory(), name);
+      return tail(owner, name, { public: true, known: listed === false ? false : null, beforeCreate: () => listInDirectory(name) });
+    }
+    return tail(owner, name, { public: true });
+  }
+
   // The nodes the directory lists as having feeds (hex keys): where `membership` starts gathering.
   async function nodes() {
     return (await directory()).rows().filter(r => r.key.startsWith("node:")).map(r => r.key.slice(5));
@@ -511,5 +524,5 @@ export async function start(ctx) {
     return moved;
   }
 
-  return { table, log, describe, nodes, feedsOf, adopt, refuse: why => (refusing = why) };
+  return { table, log, publicTail, describe, nodes, feedsOf, adopt, refuse: why => (refusing = why) };
 }

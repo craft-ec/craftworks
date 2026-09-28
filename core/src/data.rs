@@ -179,6 +179,9 @@ pub struct Open {
     locked: HashMap<Cid, Vec<u8>>,
     /// The key this tail is under: its writer's.
     pub writer_key: [u8; 32],
+    /// A PUBLIC tail (a person's card): rows in the clear, readable by anyone who can name it; never sealed, never
+    /// flushed (a few rows).
+    pub public: bool,
     /// What this page's flushes put, by block id (the tests' network).
     #[cfg(test)]
     sent: HashMap<Cid, Vec<u8>>,
@@ -229,6 +232,7 @@ impl Open {
             stale: BTreeMap::new(),
             locked: HashMap::new(),
             writer_key: *key,
+            public: false,
             #[cfg(test)]
             sent: HashMap::new(),
         }
@@ -317,6 +321,10 @@ impl Open {
     /// that key, or if the tail would refuse it. The row's copies under older keys are deleted in the same step. (A
     /// feed's value is already a version, shaped by the `feed` package; a delete there is a version, never empty.)
     pub fn prepare_row(&mut self, key: &[u8], value: &[u8]) -> Option<(u64, [u8; 32])> {
+        if self.public {
+            let op = if value.is_empty() { Op::Delete { key: key.to_vec() } } else { Op::Set { key: key.to_vec(), value: value.to_vec() } };
+            return self.prepare(vec![op]);
+        }
         let by = self.writes?;
         let tk = self.key_for(by)?;
         let sk = seal_key(&tk, by, key);
@@ -442,6 +450,9 @@ impl Open {
     /// are not there. `Need` when the old tree's blocks along the edited paths are not held yet; `Keys` when a row is
     /// sealed under an epoch whose key is not held yet.
     pub fn flush(&mut self) -> Result<Step<Flush>, String> {
+        if self.public {
+            return Err("a public tail is never flushed".into());
+        }
         let by = self.writes.ok_or("this table's key is not held here")?;
         let tk = self.key_for(by).ok_or("this table's key is not held here")?;
         let reseal = self.reseal_tree();
@@ -1142,6 +1153,32 @@ mod tests {
         put(&ka, &mut a, "n", None, Some((wb, 1)));
         assert!(!merged(&mut a, &mut b).contains_key(&b"n".to_vec()));
         assert_eq!(merged(&mut a, &mut b).len(), 3, "control: the other rows are there");
+    }
+
+    /// A PUBLIC tail (a person's card): its rows are in the clear in what the network holds, anyone reads them with no
+    /// key, a delete removes one, and it is never flushed.
+    #[test]
+    fn a_public_tail_is_readable_by_anyone_and_never_flushed() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let owner = key.verifying_key().to_bytes();
+        let mut o = Open::new(CODE, &owner, "card");
+        o.public = true;
+        put_row(&key, &mut o, "handle", "alice");
+        put_row(&key, &mut o, "kp/node", "abcdef");
+        assert!(contains(&o.writer.state(), b"alice"), "in the clear, by design");
+        let mut r = Open::new(CODE, &owner, "card");
+        r.absorb(&o.writer.state());
+        let Ok(Step::Ready(v)) = r.rows() else { panic!() };
+        assert_eq!(keys(&v), ["handle=alice", "kp/node=abcdef"], "no key needed to read");
+        put_row(&key, &mut o, "kp/node", "");
+        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        assert_eq!(keys(&v), ["handle=alice"]);
+        assert!(o.flush().is_err());
+        // Control: the same rows in a sealed tail do not show.
+        let mut sealed = Open::new(CODE, &owner, "card");
+        sealed.set_table_key([7; 32]);
+        put_row(&key, &mut sealed, "handle", "alice");
+        assert!(!contains(&sealed.writer.state(), b"alice"));
     }
 
     #[test]
