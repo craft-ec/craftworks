@@ -1,15 +1,19 @@
-// LABELS, a service: the account's labels, for every page and app. One table (`labels`, the account's):
-//   `l/<id>`          { name }   a label
-//   `a/<id>/<ref>`    { at }     that label on a thing, named as pins name it (`notes:<id>`, …)
-// and the label UI every page uses, so labels look and behave the same everywhere:
+// TAGS, a service: the account's tags, for every page and app. A page may call them what suits it — Notes says
+// "labels", as Keep does — but it is one mechanism with one name. These are PRIVATE tags: the account's own names on
+// its own things (renaming one renames it everywhere, for this account only). Public tags, shared words other people
+// find things by, are the same shape with a visibility and an index; they come with communities.
+// One table (`tags`, the account's):
+//   `l/<id>`          { name }   a tag
+//   `a/<id>/<ref>`    { at }     that tag on a thing, named as pins name it (`notes:<id>`, …)
+// and the UI every page uses (the words shown are the page's: `title`, e.g. "Label note"):
 //
-//   const labels = await ctx.require("labels");
+//   const labels = await ctx.require("tags");
 //   labels.list()   labels.of("notes:<id>")   labels.refs(id, "notes:")   labels.onChange(fn)
 //   await labels.create(name)   labels.rename(id, name)   labels.remove(id)   labels.set(ref, id, on)   labels.clear(ref)
 //   labels.menu(anchor, ref)    // "Label note": a box of labels to tick, and "Create “…”" from what is typed
 //   el.append(labels.chips(ref, { onPick: id => … }))   // the thing's labels as chips, kept in step by itself
 export async function start(ctx) {
-  const t = await (await ctx.require("data")).table("labels");
+  const t = await (await ctx.require("data")).table("tags");
 
   const style = document.createElement("style");
   style.textContent = `
@@ -81,7 +85,7 @@ export async function start(ctx) {
   async function clear(ref) {
     for (const l of of(ref)) await t.remove(`a/${l.id}/${ref}`);
   }
-  const fail = e => ctx.log("label failed", { what: e?.message ?? String(e) });
+  const fail = e => ctx.log("tag failed", { what: e?.message ?? String(e) });
 
   // CHIPS: a thing's labels, following the table.
   const chipSets = new Set();

@@ -5,7 +5,7 @@
 // row: its key an id that sorts by creation, its value JSON { title, body, color, archived, edited }. A row that is
 // not JSON (the first notes were plain text) is read as a body. PINS are not a note's field: they are the account's
 // (the `pins` package, ref `notes:<id>`), with its one pin button. A note saved with the old `pinned` field is moved
-// into the pins once, when Notes opens. LABELS likewise are the account's (the `labels` package): a note's labels show
+// into the pins once, when Notes opens. LABELS are the account's tags (the `tags` package; Keep's word here): a note's labels show
 // as chips, 🏷️ opens the label menu, the label bar shows one label's notes, and "Edit labels" makes, renames and
 // deletes them.
 const COLORS = [
@@ -110,7 +110,7 @@ export async function mount(ctx, el) {
   let notes, pins, labels;
   try {
     const data = await ctx.require("data");
-    [notes, pins, labels] = await Promise.all([data.table("notes"), ctx.require("pins"), ctx.require("labels")]);
+    [notes, pins, labels] = await Promise.all([data.table("notes"), ctx.require("pins"), ctx.require("tags")]);
   } catch (e) {
     return said(`Could not open your notes: ${e?.message ?? e}`);
   }

@@ -276,8 +276,8 @@ async fn main() -> Result<()> {
         ("data", "service", app.join("packages/data.js")),
         // The account's pins and the one pin button, for every page.
         ("pins", "service", app.join("packages/pins.js")),
-        // The account's labels and the label UI (menu, chips), for every page.
-        ("labels", "service", app.join("packages/labels.js")),
+        // The account's tags and their UI (menu, chips), for every page; Notes calls them labels.
+        ("tags", "service", app.join("packages/tags.js")),
         ("notes", "module", app.join("packages/notes.js")),
         ("tail-wasm", "bytes", contracts.join("tail.wasm")),
         // The Block contract: a table's tree blocks, after a flush.
@@ -346,7 +346,7 @@ async fn main() -> Result<()> {
     }
     let prior: Vec<String> = history.iter().rev().filter(|l| **l != this_build).take(8).map(|l| format!("\"{l}\"")).collect();
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ \"/\": [\"home\"], \"/account\": [\"account\"], \"/notes\": [\"notes\"] }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"labels\"],\n  \"identity_prior\": [{}],\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ \"/\": [\"home\"], \"/account\": [\"account\"], \"/notes\": [\"notes\"] }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\"],\n  \"identity_prior\": [{}],\n  \"packages\": {{\n{}\n  }} }}\n",
         prior.join(", "),
         entries.join(",\n")
     );
