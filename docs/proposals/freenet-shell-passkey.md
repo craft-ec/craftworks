@@ -50,6 +50,22 @@ A shell-bridge message, like `clipboard` / `download` / `notification`:
 4. **Only the PRF output and the credential id** go back to the app — never assertions usable elsewhere.
 5. Refused when the shell's host is not a valid rp id (an IP): the app falls back to its own methods.
 
+## Security
+
+1. **One rp id for every app** (`localhost`): the shell binds the PRF salt to the requesting app. The contract id comes
+   from WHICH iframe sent the message (`event.source` against the shell's own frame), never from the message — an app
+   cannot name another app.
+2. **Other pages on `localhost`** (rp ids ignore ports): any web server on this machine can prompt for the same passkey
+   and compute the same binding (it cannot be secret). Mitigated only by the platform's prompt, which names the site
+   asking; a local process that can serve pages is already inside the person's machine (it can read the node's data
+   directory). A node served at its own name (e.g. `freenet.localhost`) moves the rp id off plain `localhost` and cuts
+   accidental overlap with dev servers, not a determined local attacker.
+3. **The prompt is the shell's**, drawn above the iframe (the app cannot cover or restyle it); one at a time, and
+   rate-limited per app.
+4. **Discoverable credentials**: a get may list every `localhost` passkey the person has; choosing another only yields
+   a different secret, which unlocks nothing.
+5. **What the app receives** is its own secret; what it does with it is the app's (as with any app-held key).
+
 ## Not in scope
 
 - Hosted gateways (a public domain) work the same way, with that domain as the rp id.
