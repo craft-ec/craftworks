@@ -7,7 +7,7 @@
 export function mount(ctx, el) {
   el.innerHTML = `
     <style>
-      .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--cw-line); padding: var(--cw-space-1) 0 var(--cw-space-2);
+      .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--cw-line); height: var(--cw-bar); box-sizing: border-box;
         font-size: var(--cw-text-sm); }
       .bar .home { text-decoration: none; font-size: 1.1rem; color: inherit; }
       .bar .name { font-weight: 600; }

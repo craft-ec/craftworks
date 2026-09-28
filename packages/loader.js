@@ -195,7 +195,7 @@ export async function run(boot) {
     const b = document.createElement("button");
     b.textContent = "trace";
     b.title = "Show what this page loaded, in order";
-    b.style.cssText = "position:fixed;right:12px;bottom:12px;font-size:12px;padding:4px 8px;opacity:.7;z-index:2147483001";
+    b.style.cssText = "position:fixed;right:16px;bottom:6px;font-size:12px;padding:4px 8px;opacity:.7;z-index:2147483001";
     const panel = document.createElement("section");
     panel.id = "trace";
     panel.hidden = true;

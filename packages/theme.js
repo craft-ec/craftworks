@@ -83,9 +83,10 @@ export async function start() {
     html, body { height: 100%; overflow: hidden; }
     body { box-sizing: border-box; max-width: none; margin: 0; padding: 0 16px; }
     #app { height: 100dvh; display: flex; flex-direction: column; }
-    #app > .slot-header { flex: none; padding-top: var(--cw-space-3); }
-    #app > .slot-footer { flex: none; }
-    #app > .slot-footer p { margin: 0; padding-bottom: var(--cw-space-2); }
+    /* The two bars: a fixed height each, their content on the bar's middle line. */
+    :root { --cw-bar: 48px; --cw-bar-low: 36px; }
+    #app > .slot-header, #app > .slot-footer { flex: none; }
+    #app > .slot-header > section, #app > .slot-footer > section { margin: 0; }
     #app > .slot-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; }
     #app > .slot-body > section { flex: none; }
     #app > .slot-body > section.cw-fill { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
