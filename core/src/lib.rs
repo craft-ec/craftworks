@@ -479,58 +479,38 @@ mod js {
             Ok(js_sys::Uint8Array::from(st))
         }
 
-        /// JOIN the account words W hold, as `member` (this node's key): the log (PUT again: re-publishing a signed
-        /// log is always safe, and keeps it on the network), this node admitted to the member Set under the CURRENT
-        /// owner key, and the data key's seed out of the vault. Refused if W are not the account's current words.
-        pub fn join_account(&mut self, idlog_code: &[u8], set_code: &[u8], entropy: &[u8], did: &[u8], member: &[u8], ts: f64) -> Result<js_sys::Object, JsValue> {
+        /// JOIN the account words W hold: the log (PUT again: re-publishing a signed log is always safe, and keeps it
+        /// on the network) and the data key's seed out of the vault. Refused if W are not the account's current words.
+        /// (Which NODES are the account's is its MLS group's roster: the `keys` capability.)
+        pub fn join_account(&mut self, idlog_code: &[u8], entropy: &[u8], did: &[u8]) -> Result<js_sys::Object, JsValue> {
             let did = b32(did)?;
             let log = self.log_of(idlog_code, &did, entropy)?;
-            let (_, owner, data) = account::open_log(entropy, &log)
+            let (_, _, data) = account::open_log(entropy, &log)
                 .ok_or_else(|| err("these recovery words were replaced by newer ones: use the newest words".into()))?;
-            let members = account::admit(set_code, &owner, &b32(member)?, ts as u64, "").ok_or_else(|| err("admission failed".into()))?;
             let o = js_sys::Object::new();
             let set = |k: &str, v: JsValue| js_sys::Reflect::set(&o, &k.into(), &v).map(|_| ());
             set("did", account::did(&did).into())?;
             set("didBytes", js_sys::Uint8Array::from(&did[..]).into())?;
             set("data", js_sys::Uint8Array::from(&data[..]).into())?;
-            set("owner", js_sys::Uint8Array::from(&ed25519_dalek::SigningKey::from_bytes(&owner).verifying_key().to_bytes()[..]).into())?;
             let lp = account::idlog_put(idlog_code, &did, Some(&log));
             set("log", self.put_obj(&lp)?)?;
-            set("members", self.put_obj(&members)?)?;
             Ok(o)
         }
 
-        /// The account's current owner key (32 bytes) from its got log: whose member Set is the account's now.
-        pub fn idlog_owner(&self, idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
-            let did = b32(did)?;
-            let id = account::idlog_put(idlog_code, &did, None).id_bytes;
-            let st = self.0.got(&id).ok_or_else(|| err("the account's key log has not been read".into()))?;
-            let log = craftworks_idlog_contract::read(&did, st).ok_or_else(|| err("the account's key log does not verify".into()))?;
-            Ok(js_sys::Uint8Array::from(&log.head().key[..]))
-        }
-
-        /// CHANGE THE RECOVERY WORDS from `old` to `new` (both entered on this page): the log with its two rotations,
-        /// the new words' `whoami`, and the member Set under the new owner key with these `members` (32-byte keys,
-        /// concatenated) admitted again. Everything to PUT.
-        #[allow(clippy::too_many_arguments)]
-        pub fn change_words(&mut self, idlog_code: &[u8], register_code: &[u8], set_code: &[u8], did: &[u8], old: &[u8], new: &[u8], members: &[u8], ts: f64) -> Result<js_sys::Object, JsValue> {
+        /// CHANGE THE RECOVERY WORDS from `old` to `new` (both entered on this page): the log with its two rotations and
+        /// the new words' `whoami`, to PUT. (The account's nodes stay its MLS group's members: every owner key the log
+        /// ever had signs for them.)
+        pub fn change_words(&mut self, idlog_code: &[u8], register_code: &[u8], did: &[u8], old: &[u8], new: &[u8]) -> Result<js_sys::Object, JsValue> {
             let did = b32(did)?;
             let log = self.log_of(idlog_code, &did, old)?;
             let next = account::change_words(&log, old, new)
                 .ok_or_else(|| err("the current recovery words are needed to change them (these are not)".into()))?;
-            let owner = account::owner_seed(new).ok_or_else(|| err("new recovery entropy: 16 or 32 bytes".into()))?;
             let o = js_sys::Object::new();
             let set = |k: &str, v: JsValue| js_sys::Reflect::set(&o, &k.into(), &v).map(|_| ());
             let lp = account::idlog_put(idlog_code, &did, Some(&next));
             set("log", self.put_obj(&lp)?)?;
             let who = account::whoami_put(register_code, new, &did).ok_or_else(|| err("whoami".into()))?;
             set("whoami", self.put_obj(&who)?)?;
-            let admitted = js_sys::Array::new();
-            for m in members.chunks_exact(32) {
-                let p = account::admit(set_code, &owner, &b32(m)?, ts as u64, "").ok_or_else(|| err("admission failed".into()))?;
-                admitted.push(&self.put_obj(&p)?);
-            }
-            set("members", admitted.into())?;
             Ok(o)
         }
 
@@ -558,22 +538,6 @@ mod js {
             let id = b32(id)?;
             let f = self.0.frames_get(id).map_err(err)?;
             Ok([JsValue::from(hex(&id)), JsValue::from(frames(f))].into_iter().collect())
-        }
-
-        /// The member Set's contract id (32 bytes) for an owner key.
-        pub fn members_id(&self, set_code: &[u8], owner: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
-            let p = account::members_address(set_code, &b32(owner)?).ok_or_else(|| err("not an owner key".into()))?;
-            Ok(js_sys::Uint8Array::from(&p.id_bytes[..]))
-        }
-
-        /// The members the got member Set names, as JSON text `[{ key, name, since }]` (every signature checked).
-        pub fn members(&self, set_code: &[u8], owner: &[u8]) -> Result<String, JsValue> {
-            let owner = b32(owner)?;
-            let id = account::members_address(set_code, &owner).ok_or_else(|| err("not an owner key".into()))?.id_bytes;
-            let state = self.0.got(&id).ok_or_else(|| err("the member list has not been read".into()))?;
-            let list = account::members(&owner, state).ok_or_else(|| err("the member list does not verify".into()))?;
-            let v: Vec<Value> = list.iter().map(|m| json!({ "key": hex(&m.key), "name": m.name, "since": m.since })).collect();
-            Ok(Value::from(v).to_string())
         }
 
         /// The 32 bytes of a contract id written in base58 (as in a `/v1/contract/web/<id>/` path).

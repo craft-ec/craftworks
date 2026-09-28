@@ -173,36 +173,45 @@ export async function start(ctx) {
       // catalog does not name.
       if (t.absent && !isCatalog) await list(app);
       const enc = new TextEncoder();
-      const p = core.tail_prepare(id, enc.encode(key), enc.encode(value));
-      const t0 = performance.now();
-      const r = await auth.identity.sign(p.params, p.seq, p.valueHash);
-      if (!r.signed) {
-        ctx.log("write refused", { what: `${app} seq ${p.seq}: the identity said ${r.refused ?? JSON.stringify(r)}` });
-        core.tail_reset(id);
-        await read();
-        throw new Error(`the identity would not sign: ${r.refused ?? JSON.stringify(r)}`);
-      }
-      const [kind, frames] = core.tail_commit(id, r.signed);
-      const ok = kind === "put" ? "put" : "updated";
-      const said = await ask(frames, x => (x.kind === ok && x.key === name) || x.kind === "refused", `saving to ${app}`, 60000);
-      ctx.log(said.kind === "refused" ? "write refused" : "written", {
-        what: `${app} seq ${p.seq} as ${kind === "put" ? "a PUT" : "an UPDATE (one delta)"}${said.kind === "refused" ? `: ${said.said}` : ""}`,
-        ms: Math.round(performance.now() - t0),
-      });
-      if (said.kind === "refused") {
-        // The step never landed: drop what this page holds and read the table again, so the next write builds on
-        // what the network has.
-        core.tail_reset(id);
-        await read();
+      try {
+        await step(core.tail_prepare(id, enc.encode(key), enc.encode(value)), "saving to");
+      } catch (e) {
         // It was there after all (made on another page before it was listed): list it now.
-        if (!isCatalog && !t.absent) list(app).catch(e => ctx.log("not listed", { what: `${app}: ${e.message}` }));
-        throw new Error(`the node refused the write: ${said.said}`);
+        if (!isCatalog && !t.absent) list(app).catch(err => ctx.log("not listed", { what: `${app}: ${err.message}` }));
+        throw e;
       }
-      await view();
       // FLUSH once the tail is long: its rows into the tree, the tail emptied (in this write's turn of the queue).
       if (core.tail_pending(id) >= Core.flush_at()) await flush().catch(e => ctx.log("flush failed", { what: `${app}: ${e.message}` }));
       t.absent = false;
     }
+    // ONE STEP of this table, the one way a table moves: the prepared step signed by the identity delegate (the data
+    // key), sent (the first as a PUT, then one delta each), and confirmed. Refused anywhere — by the identity or by the
+    // node — it never landed: what this page holds is dropped and the table read again, so the next step builds on
+    // what the network has.
+    async function step(p, doing) {
+      const t0 = performance.now();
+      const r = await auth.identity.sign(p.params, p.seq, p.valueHash);
+      let refused = r.signed ? null : `the identity said ${r.refused ?? JSON.stringify(r)}`;
+      let kind = null;
+      if (!refused) {
+        const [k, frames] = core.tail_commit(id, r.signed);
+        kind = k;
+        const ok = k === "put" ? "put" : "updated";
+        const said = await ask(frames, x => (x.kind === ok && x.key === name) || x.kind === "refused", `${doing} ${app}`, 60000);
+        if (said.kind === "refused") refused = `the node said ${said.said}`;
+      }
+      ctx.log(refused ? "write refused" : "written", {
+        what: `${app} seq ${p.seq}${refused ? `: ${refused}` : ` as ${kind === "put" ? "a PUT" : "an UPDATE (one delta)"}`}`,
+        ms: Math.round(performance.now() - t0),
+      });
+      if (refused) {
+        core.tail_reset(id);
+        await read();
+        throw new Error(`the write was refused: ${refused}`);
+      }
+      await view();
+    }
+
     let legacy = 0;
     async function view() {
       const v = await settle(JSON.parse(core.tail_view(id)), app);
@@ -217,12 +226,7 @@ export async function start(ctx) {
       for (let round = 0; round < 64; round++) {
         const p = core.tail_migrate(id, 16);
         if (!p) break;
-        const r = await auth.identity.sign(p.params, p.seq, p.valueHash);
-        if (!r.signed) throw new Error(`the identity would not sign: ${r.refused ?? JSON.stringify(r)}`);
-        const [, frames] = core.tail_commit(id, r.signed);
-        const said = await ask(frames, x => (x.kind === "updated" && x.key === name) || x.kind === "refused", `sealing ${app}`, 60000);
-        if (said.kind === "refused") throw new Error(`the node refused: ${said.said}`);
-        await view();
+        await step(p, "sealing");
         n += 1;
       }
       if (n) ctx.log("sealed", { what: `${app}: rows from before sealing, sealed over in ${n} step(s)` });
@@ -246,21 +250,8 @@ export async function start(ctx) {
           await read();
           throw e;
         }
-        const r = await auth.identity.sign(f.params, f.seq, f.valueHash);
-        if (!r.signed) {
-          core.tail_reset(id);
-          await read();
-          throw new Error(`the identity would not sign the flush: ${r.refused ?? JSON.stringify(r)}`);
-        }
-        const [, frames] = core.tail_commit(id, r.signed);
-        const said = await ask(frames, x => (x.kind === "updated" && x.key === name) || x.kind === "refused", `flushing ${app}`, 60000);
-        if (said.kind === "refused") {
-          core.tail_reset(id);
-          await read();
-          throw new Error(`the node refused the flush: ${said.said}`);
-        }
+        await step(f, "flushing");
         ctx.log("flushed", { what: `${app}: ${f.puts.length} tree block(s) put, the tail emptied (seq ${f.seq})`, ms: Math.round(performance.now() - t0) });
-        await view();
         return;
       }
       throw new Error("the tree did not finish loading");

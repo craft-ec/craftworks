@@ -209,3 +209,9 @@ Out of scope now: recovery quorum (guardians), data-key rotation (moves tails), 
     (`tail` built: the account's nodes share one key, the table's write sequence decides; `log` for spaces and
     `witnessed` later). keys' commits now go through it (append at the epoch it moved from; taken → join again).
     Live: register → join → PIN catch-up unchanged.
+- [x] PHASE 0c (capabilities doing their own work): membership = the MLS roster (credentials name the node key;
+  `membership.nodes()`); the member Set RETIRED (code, bindings, set.wasm, dependency) — one list of nodes; key log,
+  which-account-words-hold and changing words moved from `auth` into `identity` (auth keeps sessions and the ways in);
+  the Account page's grants through `access` (grants, revoke); storage's three sign-send loops → one `step()`.
+  Core wasm 569 KB. Live: register → note → words join (Account: 2 nodes, this one marked) → change words → new-words
+  node (2 epochs recovered) → first node by PIN (3 nodes) → note still there.

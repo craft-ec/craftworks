@@ -1,7 +1,7 @@
 // ACCOUNT, a PRIVATE page: it shows nothing until someone is logged in. It asks `login`, which shows its dialog if
 // nobody is; closing the dialog goes home.
 export async function mount(ctx, el) {
-  const [auth, login] = await Promise.all([ctx.require("auth"), ctx.require("login")]);
+  const [auth, login, grantsOf, membership] = await Promise.all([ctx.require("auth"), ctx.require("login"), ctx.require("access"), ctx.require("membership")]);
   const s = await login.session();
   if (!s) {
     location.hash = "#/";
@@ -23,24 +23,24 @@ export async function mount(ctx, el) {
   const dev = document.createElement("section");
   dev.innerHTML = `<h3>Your nodes</h3><p class="line">Reading your account from the network…</p>`;
   box.append(dev);
-  auth.nodes().then(
+  membership.nodes().then(
     list => {
       if (list === null) {
         dev.querySelector(".line").textContent =
-          "This node joined before accounts had a key log. Log out and log in once with your recovery words (and a new PIN) to bring it onto your account's key log.";
+          "This node is not in your account's group yet: log out and log in once with your recovery words (and a new PIN).";
         return;
       }
       const ul = document.createElement("ul");
-      for (const m of list.sort((a, b) => a.since - b.since)) {
+      for (const m of list) {
         const li = document.createElement("li");
         const code = document.createElement("code");
         code.textContent = `${m.key.slice(0, 16)}…`;
         // A node is shown by its key: a name guessed from the browser was wrong (the browser is not the member).
-        li.append("Node ", code, ` · since ${new Date(m.since).toLocaleString()}`);
-        if (m.key === s.member) li.append(" (this node)");
+        li.append("Node ", code);
+        if (m.me) li.append(" (this node)");
         ul.append(li);
       }
-      dev.querySelector(".line").replaceWith(list.length ? ul : "No nodes listed yet: this account was made before the member list.");
+      dev.querySelector(".line").replaceWith(ul);
     },
     e => (dev.querySelector(".line").textContent = `Could not read your nodes: ${e?.message ?? e}`),
   );
@@ -52,8 +52,7 @@ export async function mount(ctx, el) {
   box.append(access);
   const drawGrants = async () => {
     const ul = access.querySelector(".grants");
-    const r = await auth.identity.grants();
-    const list = r.grants ?? [];
+    const list = await grantsOf.grants();
     ul.replaceChildren();
     if (!list.length) ul.append(Object.assign(document.createElement("li"), { textContent: "None yet." }));
     const here = location.pathname.split("/")[4];
@@ -68,7 +67,7 @@ export async function mount(ctx, el) {
       tables.forEach((table, i) => {
         const chip = Object.assign(document.createElement("button"), { type: "button", textContent: `${table} ✕`, title: `Remove its access to your ${table}` });
         chip.onclick = async () => {
-          await auth.identity.revoke(app, table);
+          await grantsOf.revoke(app, table);
           drawGrants();
         };
         li.append(i ? " " : "", chip);
@@ -138,7 +137,7 @@ export async function mount(ctx, el) {
       e.preventDefault();
       said.textContent = "Changing your recovery words…";
       try {
-        await auth.changeWords(old, fresh);
+        await auth.identity.changeWords(s.didBytes, old, fresh);
         said.textContent = "Done. Your new words open your account; the old ones no longer do.";
       } catch (err) {
         said.textContent = `Could not change them: ${err?.message ?? err}`;

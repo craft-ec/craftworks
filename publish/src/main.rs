@@ -274,6 +274,8 @@ async fn main() -> Result<()> {
         // One agreed order of entries per object (several types: tail now; log, witnessed later).
         ("ordering", "service", app.join("packages/ordering.js")),
         ("keys", "service", app.join("packages/keys.js")),
+        // Who belongs: your account's nodes (its MLS group's members), and later spaces' members.
+        ("membership", "service", app.join("packages/membership.js")),
         // MLS: its own wasm package, loaded only by `keys`.
         ("mls-glue", "module", built.join("craftworks_mls.js")),
         ("mls-wasm", "bytes", built.join("craftworks_mls_bg.wasm")),
@@ -281,8 +283,6 @@ async fn main() -> Result<()> {
         ("core-wasm", "bytes", built.join("craftworks_core_bg.wasm")),
         // The identity delegate's code (the node needs it to run it).
         ("identity-wasm", "bytes", built.join("identity.wasm")),
-        // The Set's code: the account's member list (admitting this device, and reading it back).
-        ("set-wasm", "bytes", contracts.join("set.wasm")),
         // The account's key event log (its DID names it) and the Register (a set of words' whoami).
         ("idlog-wasm", "bytes", contracts.join("idlog.wasm")),
         ("register-wasm", "bytes", contracts.join("register.wasm")),

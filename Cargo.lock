@@ -347,16 +347,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "craftec-set-contract"
-version = "0.1.0"
-source = "git+https://github.com/craft-ec/freenet-contracts?rev=689ca61#689ca6190b810362ff30b1b293d9ca8f033b5312"
-dependencies = [
- "blake3",
- "ed25519-dalek",
- "freenet-stdlib",
-]
-
-[[package]]
 name = "craftec-tail-contract"
 version = "0.1.0"
 source = "git+https://github.com/craft-ec/freenet-contracts?rev=689ca61#689ca6190b810362ff30b1b293d9ca8f033b5312"
@@ -374,7 +364,6 @@ dependencies = [
  "bs58",
  "chacha20poly1305",
  "craftec-register-contract",
- "craftec-set-contract",
  "craftworks-idlog-contract",
  "ed25519-dalek",
  "freenet-stdlib",
@@ -393,7 +382,6 @@ dependencies = [
  "bs58",
  "chacha20poly1305",
  "craftec-register-contract",
- "craftec-set-contract",
  "craftworks-account",
  "craftworks-identity",
  "craftworks-idlog-contract",

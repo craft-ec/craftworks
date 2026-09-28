@@ -4,12 +4,11 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "The ACCOUNT (identity capability, pure): recovery words, the key log and its owner keys, the member list. Linked by the core and by mls, one source."
+description = "The ACCOUNT (identity capability, pure): recovery words, the key log and its owner keys. Linked by the core and by mls, one source."
 
 [dependencies]
 wire = { workspace = true }
 craftec-register-contract = { workspace = true }
-craftec-set-contract = { workspace = true }
 craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
 freenet-stdlib = { version = "0.10.0", features = ["contract"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false }

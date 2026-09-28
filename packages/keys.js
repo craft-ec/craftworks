@@ -31,7 +31,7 @@ export async function start(ctx) {
   const mls = new mlsGlue.Mls();
   // The account's key log, as the core read it (mls verifies it again against the DID).
   const keyLog = async did => {
-    if (!(await auth.readKeyLog(did))) throw new Error("the account's key log is not on the network");
+    if (!(await auth.identity.readKeyLog(did))) throw new Error("the account's key log is not on the network");
     return core.idlog_state(idlogCode, did);
   };
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
@@ -75,7 +75,7 @@ export async function start(ctx) {
 
   // MADE or JOINED with the words. A join whose epoch someone else moved first is refused by the channel's order:
   // read again and join from the newer group info.
-  auth.onJoined(({ entropy, did }) =>
+  auth.onJoined(({ entropy, did, node }) =>
     (busy = busy.then(async () => {
       // Only the home site keeps the account's keys: anywhere else, nothing to do (and no table to ask for).
       const home = await auth.identity.mlsLoad();
@@ -83,7 +83,7 @@ export async function start(ctx) {
       const channel = await storage.table("mls");
       for (let round = 0; round < 4; round++) {
         const info = channel.rows().find(x => x.key === "info")?.value;
-        const [kind, commit] = mls.with_words(did, await keyLog(did), entropy, info ? bytes(info) : new Uint8Array(0));
+        const [kind, commit] = mls.with_words(did, await keyLog(did), entropy, node, info ? bytes(info) : new Uint8Array(0));
         if (kind === "joined") {
           // The join's commit at the epoch it moved from: if another node moved the group first, join again.
           const r = await (await commitLog()).append(mls.status().epoch - 1, hexOf(commit));
@@ -106,7 +106,7 @@ export async function start(ctx) {
 
   // NEW WORDS: every escrow sealed again for them (the old words open nothing after the change), and from now on escrows
   // are sealed for them.
-  auth.onWordsChanged(({ old, fresh }) =>
+  auth.identity.onWordsChanged(({ old, fresh }) =>
     (busy = busy.then(async () => {
       const home = await auth.identity.mlsLoad();
       if (home.refused) return;

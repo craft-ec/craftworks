@@ -2,8 +2,9 @@
 //! epoch secret gives every table key (`table key = derive(epoch secret, table)`), so removing a node moves the epoch
 //! and a removed node reads nothing written afterwards.
 //!
-//! - **Members** carry a credential signed by an OWNER key of the account's key log (`CWMB ‖ did ‖ member signing key
-//!   ‖ owner signature`): whoever holds the recovery words proves the node is theirs. Any owner key the log ever had
+//! - **Members** carry a credential signed by an OWNER key of the account's key log (`CWMB ‖ did ‖ owner ‖ node key ‖
+//!   member signing key ‖ owner signature`): whoever holds the recovery words proves the node is theirs, and the NODE
+//!   KEY (the identity delegate's member key) names which node it is — the group's roster IS the account's node list. Any owner key the log ever had
 //!   is accepted, so rotating the words does not orphan the nodes already in.
 //! - **A node joins by itself** with an EXTERNAL COMMIT from the group's published group info: the words sign its
 //!   credential, and no other node needs to be online.
@@ -31,27 +32,29 @@ pub const SUITE: CipherSuite = CipherSuite::CURVE25519_AES128;
 const CRED: &[u8; 4] = b"CWMB";
 const TABLE_KEYS: &[u8] = b"craftworks table keys";
 
-/// A member's credential: its account, its MLS signing key, and an owner key's signature over both.
-pub fn credential(did: &[u8; 32], signing_pub: &[u8], owner_seed: &[u8; 32]) -> Vec<u8> {
+/// A member's credential: its account, its node key, its MLS signing key, and an owner key's signature over them.
+pub fn credential(did: &[u8; 32], node: &[u8; 32], signing_pub: &[u8], owner_seed: &[u8; 32]) -> Vec<u8> {
     let owner = SigningKey::from_bytes(owner_seed);
-    let sig = owner.sign(&cred_message(did, signing_pub)).to_bytes();
-    [&CRED[..], did, &owner.verifying_key().to_bytes(), signing_pub, &sig].concat()
+    let sig = owner.sign(&cred_message(did, node, signing_pub)).to_bytes();
+    [&CRED[..], did, &owner.verifying_key().to_bytes(), node, signing_pub, &sig].concat()
 }
 
-fn cred_message(did: &[u8; 32], signing_pub: &[u8]) -> Vec<u8> {
-    [b"craftworks mls member".as_slice(), did, signing_pub].concat()
+fn cred_message(did: &[u8; 32], node: &[u8; 32], signing_pub: &[u8]) -> Vec<u8> {
+    [b"craftworks mls member".as_slice(), did, node, signing_pub].concat()
 }
 
-/// `(did, owner key, signing key)` of a credential whose owner signature holds.
-fn read_credential(b: &[u8]) -> Option<([u8; 32], [u8; 32], Vec<u8>)> {
+/// `(did, owner key, node key, signing key)` of a credential whose owner signature holds.
+fn read_credential(b: &[u8]) -> Option<([u8; 32], [u8; 32], [u8; 32], Vec<u8>)> {
     let rest = b.strip_prefix(CRED)?;
     let (did, rest) = rest.split_at_checked(32)?;
     let (owner, rest) = rest.split_at_checked(32)?;
+    let (node, rest) = rest.split_at_checked(32)?;
     let (sp, sig) = rest.split_at_checked(rest.len().checked_sub(64)?)?;
     let did: [u8; 32] = did.try_into().ok()?;
+    let node: [u8; 32] = node.try_into().ok()?;
     let vk = VerifyingKey::from_bytes(owner.try_into().ok()?).ok()?;
-    vk.verify(&cred_message(&did, sp), &ed25519_dalek::Signature::from_slice(sig).ok()?).ok()?;
-    Some((did, owner.try_into().ok()?, sp.to_vec()))
+    vk.verify(&cred_message(&did, &node, sp), &ed25519_dalek::Signature::from_slice(sig).ok()?).ok()?;
+    Some((did, owner.try_into().ok()?, node, sp.to_vec()))
 }
 
 /// THE ACCOUNT'S RULE for who is a member: a credential of THIS account, signed by one of its owner keys, whose
@@ -75,7 +78,7 @@ impl mls_rs_core::error::IntoAnyError for NotAMember {}
 impl AccountIdentity {
     fn check(&self, id: &SigningIdentity) -> Result<Vec<u8>, NotAMember> {
         let basic = id.credential.as_basic().ok_or(NotAMember("not a basic credential"))?;
-        let (did, owner, sp) = read_credential(&basic.identifier).ok_or(NotAMember("the owner's signature does not hold"))?;
+        let (did, owner, _node, sp) = read_credential(&basic.identifier).ok_or(NotAMember("the owner's signature does not hold"))?;
         if did != self.did {
             return Err(NotAMember("another account's member"));
         }
@@ -226,9 +229,9 @@ fn e<E: std::fmt::Debug>(x: E) -> String {
 
 impl Account {
     /// The account's group, made by its first node (whose credential the owner key signs).
-    pub fn create(ident: AccountIdentity, owner_seed: &[u8; 32]) -> Result<Account, String> {
+    pub fn create(ident: AccountIdentity, owner_seed: &[u8; 32], node: &[u8; 32]) -> Result<Account, String> {
         let signer = new_signer()?;
-        let cred = credential(&ident.did, &signer.1, owner_seed);
+        let cred = credential(&ident.did, node, &signer.1, owner_seed);
         let store = Store::default();
         let c = client(&ident, &store, &signer, &cred);
         let mut group = c.create_group_with_id(ident.did.to_vec(), ExtensionList::default(), Default::default(), None).map_err(e)?;
@@ -238,9 +241,9 @@ impl Account {
 
     /// Join the account's group with the words alone: an external commit from its published group info. Returns the
     /// member and the commit, which every other member processes (the caller publishes it in the group's order).
-    pub fn join(ident: AccountIdentity, owner_seed: &[u8; 32], group_info: &[u8]) -> Result<(Account, Vec<u8>), String> {
+    pub fn join(ident: AccountIdentity, owner_seed: &[u8; 32], node: &[u8; 32], group_info: &[u8]) -> Result<(Account, Vec<u8>), String> {
         let signer = new_signer()?;
-        let cred = credential(&ident.did, &signer.1, owner_seed);
+        let cred = credential(&ident.did, node, &signer.1, owner_seed);
         let store = Store::default();
         let c = client(&ident, &store, &signer, &cred);
         let info = MlsMessage::from_bytes(group_info).map_err(e)?;
@@ -276,9 +279,18 @@ impl Account {
         self.group.current_epoch()
     }
 
-    /// The members: `(index, signing key)`.
+    /// The members — the account's NODES: `(index, node key)`, each from its owner-signed credential.
     pub fn members(&self) -> Vec<(u32, Vec<u8>)> {
-        self.group.roster().members().into_iter().map(|m| (m.index, m.signing_identity.signature_key.as_bytes().to_vec())).collect()
+        self.group
+            .roster()
+            .members()
+            .into_iter()
+            .filter_map(|m| {
+                let basic = m.signing_identity.credential.as_basic()?;
+                let (_, _, node, _) = read_credential(&basic.identifier)?;
+                Some((m.index, node.to_vec()))
+            })
+            .collect()
     }
 
     pub fn my_index(&self) -> u32 {
@@ -339,15 +351,15 @@ mod tests {
     fn nodes_join_with_the_words_share_the_epoch_and_a_removed_node_is_left_behind() {
         let owner = [1u8; 32];
         let id = ident(&[owner]);
-        let mut a = Account::create(id.clone(), &owner).unwrap();
+        let mut a = Account::create(id.clone(), &owner, &[0xA; 32]).unwrap();
         // Node B joins by itself (no one else online) from the published group info.
-        let (mut b, commit) = Account::join(id.clone(), &owner, &a.group_info().unwrap()).unwrap();
+        let (mut b, commit) = Account::join(id.clone(), &owner, &[0xB; 32], &a.group_info().unwrap()).unwrap();
         a.process(&commit).unwrap();
         assert_eq!(a.epoch(), b.epoch());
         assert_eq!(a.epoch_secret().unwrap(), b.epoch_secret().unwrap(), "one epoch, one secret");
         assert_eq!(table_key(&a.epoch_secret().unwrap(), "notes"), table_key(&b.epoch_secret().unwrap(), "notes"));
         // Node C, then C is removed (lost): A and B move on; C's last secret is not theirs any more.
-        let (c, commit) = Account::join(id.clone(), &owner, &a.group_info().unwrap()).unwrap();
+        let (c, commit) = Account::join(id.clone(), &owner, &[0xC; 32], &a.group_info().unwrap()).unwrap();
         a.process(&commit).unwrap();
         b.process(&commit).unwrap();
         let c_secret = c.epoch_secret().unwrap();
@@ -356,6 +368,8 @@ mod tests {
         assert_eq!(a.epoch_secret().unwrap(), b.epoch_secret().unwrap());
         assert_ne!(a.epoch_secret().unwrap(), c_secret, "the removed node's secret opens nothing written now");
         assert_eq!(a.members().len(), 2);
+        let nodes: Vec<Vec<u8>> = a.members().into_iter().map(|(_, k)| k).collect();
+        assert!(nodes.contains(&vec![0xA; 32]) && nodes.contains(&vec![0xB; 32]) && !nodes.contains(&vec![0xC; 32]), "the roster names the nodes");
         // Saved and loaded (the delegate keeps the blob): the same member, the same epoch.
         let blob = a.save().unwrap();
         let a2 = Account::load(id.clone(), &blob).unwrap();
@@ -365,14 +379,14 @@ mod tests {
     #[test]
     fn only_the_owner_admits_and_a_rotated_owner_keeps_the_nodes() {
         let (owner, stranger, next) = ([1u8; 32], [9u8; 32], [2u8; 32]);
-        let a = Account::create(ident(&[owner]), &owner).unwrap();
+        let a = Account::create(ident(&[owner]), &owner, &[0xA; 32]).unwrap();
         // A credential not signed by the account's owner: the join is refused.
-        assert!(Account::join(ident(&[owner]), &stranger, &a.group_info().unwrap()).is_err(), "control: a stranger cannot join");
+        assert!(Account::join(ident(&[owner]), &stranger, &[0xB; 32], &a.group_info().unwrap()).is_err(), "control: a stranger cannot join");
         // After the words changed (a new owner key in the log), a node admitted by the old owner is still a member,
         // and the new owner admits more.
         let rotated = ident(&[owner, next]);
         let mut a = Account::load(rotated.clone(), &{ let mut a = a; a.save().unwrap() }).unwrap();
-        let (d, commit) = Account::join(rotated.clone(), &next, &a.group_info().unwrap()).unwrap();
+        let (d, commit) = Account::join(rotated.clone(), &next, &[0xD; 32], &a.group_info().unwrap()).unwrap();
         a.process(&commit).unwrap();
         assert_eq!(a.epoch_secret().unwrap(), d.epoch_secret().unwrap());
     }
@@ -414,14 +428,15 @@ mod js {
 
         /// With the WORDS (their owner key is derived here and never leaves): the group made (`group_info` empty) or
         /// joined by an external commit. `[kind, commit]`: "created" (no commit) or "joined".
-        pub fn with_words(&mut self, did: &[u8], log: &[u8], entropy: &[u8], group_info: &[u8]) -> Result<js_sys::Array, JsValue> {
+        pub fn with_words(&mut self, did: &[u8], log: &[u8], entropy: &[u8], node: &[u8], group_info: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let node: [u8; 32] = node.try_into().map_err(|_| err("a node key is 32 bytes"))?;
             let did = did32(did)?;
             let log = log_of(&did, log)?;
             let (_, owner, _) = craftworks_account::open_log(entropy, &log).ok_or_else(|| err("these recovery words were replaced by newer ones"))?;
             let (acc, kind, commit) = if group_info.is_empty() {
-                (Account::create(ident(did, &log), &owner).map_err(err)?, "created", Vec::new())
+                (Account::create(ident(did, &log), &owner, &node).map_err(err)?, "created", Vec::new())
             } else {
-                let (a, c) = Account::join(ident(did, &log), &owner, group_info).map_err(err)?;
+                let (a, c) = Account::join(ident(did, &log), &owner, &node, group_info).map_err(err)?;
                 (a, "joined", c)
             };
             self.0 = Some(acc);

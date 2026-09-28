@@ -22,7 +22,7 @@ a label alike; governance decides who controls one note or a whole company.
 | **Tail** | one writer's signed sequence | a table's head and newest rows |
 | **Log** | an ordered, self-certifying chain of signed events | an account's key log (the DID); an object's or space's log of acts |
 | **Register** | one signed value | whoami (words → DID), site versions |
-| **Set** | small owner-signed items | the account's member list today (replaced by the account's log, §4) |
+| **Set** | small owner-signed items | not used (the account's member list moved to its MLS group's roster) |
 | **Bag** | unordered pointers ranked by proof of work, no signer | every index: inbox, directory, comments |
 | **Site** | a web container of erasure-coded pieces | app delivery |
 | **Delegate** | node-local secrets | identity; MLS state |
@@ -45,7 +45,7 @@ a label alike; governance decides who controls one note or a whole company.
 | `governance` | who holds authority over an object; inherited from its container (realm → space → object), overridable per object |
 | `roles` | named permission sets through which authority is held: built-in, published templates, or defined in one space |
 | `access` | who may read (holds the key) and write (a role that permits it); a site acts only with the person's grant |
-| `membership` | joining, leaving, inviting, removing — for objects with members |
+| `membership` | who belongs: joining, leaving, inviting, removing. Your account's members are its nodes = its MLS group's roster (one list; each credential names its node key) |
 | `administration` | an object's settings and policies |
 | `moderation` | acts on objects (hide, remove, label) and on actors (mute, ban) |
 | `ordering` | one agreed order of entries on an object: positions 0, 1, 2 …; one entry per position; a lost tie is told, re-reads, retries. A position is an MLS epoch, a snapshot number, a membership version. Several TYPES by who writes and how a tie is decided: `tail` (writers sharing one key — your account's nodes; built), `log` (a space's members, each with their own key; lowest hash wins), `witnessed` (k of a known witness set co-sign) |
@@ -55,7 +55,7 @@ a label alike; governance decides who controls one note or a whole company.
 | Capability | Owns |
 |---|---|
 | `node` | the connection to this machine's freenet node |
-| `identity` | the DID (its key log), the identity delegate: members (nodes), PINs, sessions, signing, MLS state |
+| `identity` | what an account IS: its DID and key log, which account words hold, changing the words; and the identity delegate on this node — members (node keys), PINs, sessions, signing, the kept MLS state and epoch secrets |
 | `auth` | sessions, PIN login, recovery words, changing words (no UI: the dialog is `login`) |
 | `keys` | table keys per epoch (MLS), handed to granted sites; escrow of epoch secrets to the recovery words. The MLS protocol runs in the page's core (mls-rs needs the page's randomness and clock); the identity delegate is the vault — it keeps the member state and the epoch secrets, and derives table keys for granted sites |
 | `storage` | tables: tail + tree, one sequence per writer merged by readers, sealed nodes, catalog, range and change-only reads |

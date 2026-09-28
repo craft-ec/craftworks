@@ -19,7 +19,6 @@ tail = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "615c9d5" }
 freenet-prolly = { git = "https://github.com/craft-ec/freenet-prolly", rev = "17d67d8" }
 # The Register crate at the revision the SDK pins (one crate source).
 craftec-register-contract = { git = "https://github.com/craft-ec/freenet-contracts", rev = "689ca61", default-features = false, features = ["library"] }
-craftec-set-contract = { git = "https://github.com/craft-ec/freenet-contracts", rev = "689ca61", default-features = false }
 
 [profile.release]
 opt-level = "s"

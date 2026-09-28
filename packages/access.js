@@ -42,5 +42,9 @@ export async function start(ctx) {
     return k?.tableKey ? { key: k.tableKey } : { why: k?.refused ?? "no key" };
   }
 
-  return { allowed, key };
+  // The grants the person gave (the home site sees all of them, a site its own), and withdrawing one.
+  const grants = async () => (await auth.identity.grants()).grants ?? [];
+  const revoke = (app, table) => auth.identity.revoke(app, table);
+
+  return { allowed, key, grants, revoke };
 }
