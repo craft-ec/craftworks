@@ -167,3 +167,6 @@ Out of scope now: recovery quorum (guardians), data-key rotation (moves tails), 
   nothing of it reads", 0 notes (the stale build there showed the rows as ciphertext garbage — proof they are sealed).
   NOT hidden yet (step 7): row count, sizes, table names in their addresses. Old TREE BLOCKS written in plaintext
   before sealing stay on the network (immutable); only what is written from now on is sealed.
+
+## ARCHITECTURE (2026-09-28): docs/ARCHITECTURE.md is the shape — capabilities vs apps; 18 capabilities, 10 apps/pages/
+## components. The messaging track above is superseded by its Implementation plan (phases 0–10); next: phase 0.
