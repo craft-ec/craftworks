@@ -349,7 +349,9 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
 1. [x] spaces carried across delegate builds: `HandoverSpaces` (each space's state + epoch secrets; test); the page asks
    earlier builds through ONE helper (`askPrior`: handover, keys, spaces). LIVE CHECK PENDING: needs a later delegate
    build with this one as the prior (this build lost the spaces made before it, once more: "Craft", sam↔pat).
-2. [ ] every account gets a card at registration; several key packages per node, renewed as used
+2. [x] every account gets a card at registration (and each node joining with the words adds itself); 4 key packages
+   per node, one picked at random per conversation, a fresh set on accepting (older secrets kept). Live: U registered
+   → card by itself; sam and pat each started a conversation with U while U was away; U opened Messages → joined both.
 3. [ ] manifest: one hash per package (pieces derived), split per page
 4. [ ] server invites by id (a member adds a person's nodes from their card; welcome in their inbox)
 5. [ ] roles and moderation

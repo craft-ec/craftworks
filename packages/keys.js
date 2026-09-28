@@ -179,6 +179,9 @@ export async function start(ctx) {
         const st = await keep(channel, { made: true });
         ctx.log("account keys", { what: `this node ${kind} the account's group: epoch ${st.epoch}, ${st.members.length} node(s)` });
         if (kept.size) ctx.log("account keys", { what: `${kept.size} earlier epoch(s) recovered from escrow` });
+        // Every account has a CARD from the start (its inbox, this node's key packages): nobody who wants to write to it
+        // ever waits on one that does not exist. After this turn of the queue (the card asks for key packages).
+        setTimeout(() => ctx.require("directory").then(d => d.publish()).catch(e => ctx.log("account keys", { what: `the card: ${e.message}` })));
         return;
       }
       throw new Error("the account's group kept moving: joining it again next time");
@@ -367,18 +370,19 @@ export async function start(ctx) {
     else ready().catch(err => ctx.log("account keys", { what: err?.message ?? String(err) }));
   });
 
-  // A KEY PACKAGE of this node (for the directory): another person adds this node with it while it is away. Its
-  // secrets are kept with this node's state (saved now); null where this node is not in its account's group.
-  async function keyPackage() {
+  // KEY PACKAGES of this node (for the directory): another person adds this node with one while it is away (each works
+  // once; several, so two people starting a conversation at once rarely pick the same). Their secrets are kept with
+  // this node's state (saved now); null where this node is not in its account's group.
+  async function keyPackages(n = 4) {
     return (busy = busy.then(async () => {
       if (!status || status.removed) return null;
-      const kp = mls.key_package();
+      const kps = Array.from({ length: n }, () => hexOf(mls.key_package()));
       const st = mls.status();
       const r = await auth.identity.mlsSave(st.state, st.epoch, st.secret);
-      if (!r.mlsSaved) throw new Error(`the identity would not keep the key package: ${r.refused ?? JSON.stringify(r)}`);
-      return hexOf(kp);
+      if (!r.mlsSaved) throw new Error(`the identity would not keep the key packages: ${r.refused ?? JSON.stringify(r)}`);
+      return kps;
     }));
   }
 
-  return { ready, remove, escrowed, group, keyPackage, onChange: f => watchers.push(f) };
+  return { ready, remove, escrowed, group, keyPackages, onChange: f => watchers.push(f) };
 }

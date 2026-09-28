@@ -31,7 +31,19 @@ export async function start(ctx) {
     return {
       handle: rows.find(r => r.key === "handle")?.value ?? null,
       inbox: rows.find(r => r.key === "inbox")?.value ?? null,
-      keyPackages: rows.filter(r => r.key.startsWith("kp/")).map(r => ({ node: r.key.slice(3), keyPackage: r.value })),
+      // Each node's key packages (a list; one picked at random for each conversation started).
+      keyPackages: rows
+        .filter(r => r.key.startsWith("kp/"))
+        .map(r => {
+          let list;
+          try {
+            list = JSON.parse(r.value);
+          } catch {
+            list = [r.value];
+          }
+          if (!Array.isArray(list)) list = [r.value];
+          return { node: r.key.slice(3), keyPackage: list[Math.floor(Math.random() * list.length)], count: list.length };
+        }),
     };
   };
 
@@ -56,19 +68,20 @@ export async function start(ctx) {
       await (await ctx.require("index")).makeInbox();
       await t.put("inbox", k.inboxKey);
     }
-    if (!read(t).keyPackages.some(k => k.node === sp.self)) {
-      const kp = await (await ctx.require("keys")).keyPackage();
-      if (kp) await t.put(`kp/${sp.self}`, kp);
-    }
+    if (!read(t).keyPackages.some(k => k.node === sp.self)) await putKeyPackages(t, sp);
     return { did: sp.id, ...read(t) };
   }
 
-  // A NEW key package for this node (its last one was used to add it somewhere: one use each).
+  // NEW key packages for this node (one of them was used to add it somewhere: each works once).
   async function renew() {
     const sp = await space.account();
-    const t = await storage.publicTail(CARD, sp.shared);
-    const kp = await (await ctx.require("keys")).keyPackage();
-    if (kp) await t.put(`kp/${sp.self}`, kp);
+    await putKeyPackages(await storage.publicTail(CARD, sp.shared), sp);
+  }
+
+  // This node's key packages on the card: a fresh set (the ones before stay usable: their secrets are kept here).
+  async function putKeyPackages(t, sp) {
+    const kps = await (await ctx.require("keys")).keyPackages();
+    if (kps) await t.put(`kp/${sp.self}`, JSON.stringify(kps));
   }
 
   // A person's HANDLE, read once per page (a name to show; the id is what makes them them).
