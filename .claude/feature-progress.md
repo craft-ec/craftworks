@@ -352,7 +352,12 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
 2. [x] every account gets a card at registration (and each node joining with the words adds itself); 4 key packages
    per node, one picked at random per conversation, a fresh set on accepting (older secrets kept). Live: U registered
    → card by itself; sam and pat each started a conversation with U while U was away; U opened Messages → joined both.
-3. [ ] manifest: one hash per package (pieces derived), split per page
+3. [x] manifest split: the root names each package by kind + sha256 only, and each page's needs; each package's entry
+   (its pieces) is its own file of the site `p/<sha16>.json`, read only when needed, the page's asked at once; publish
+   skips a package whose hash is already live. 54 KB → 8.2 KB. (Derived piece addresses were NOT possible: the loader
+   fetches pieces over the node's web path, whose addresses hash their content.) Measured: needs are 39–40 of 40 per
+   page — login pulls the whole keys/storage graph — so today's gain is the 7× smaller manifest and parallel entry
+   reads, not fewer bytes per page. Loader v15. Live: messages, notes, chat, account/storage load.
 4. [ ] server invites by id (a member adds a person's nodes from their card; welcome in their inbox)
 5. [ ] roles and moderation
 6. [ ] mail

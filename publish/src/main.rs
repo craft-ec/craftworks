@@ -316,14 +316,11 @@ async fn main() -> Result<()> {
     // manifest.json as the node serves it). A package whose pieces are all there is not sent again.
     let published: std::collections::HashSet<String> = match std::env::var("PUBLISHED_MANIFEST") {
         Ok(f) => match std::fs::read(&f).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()) {
+            // By the package's own hash: its pieces are a function of its bytes, so a live package with the same hash
+            // has every one of them up already.
             Some(m) => m["packages"]
                 .as_object()
-                .map(|p| {
-                    p.values()
-                        .flat_map(|v| v["pieces"].as_array().cloned().unwrap_or_default())
-                        .filter_map(|x| x["address"].as_str().map(String::from))
-                        .collect()
-                })
+                .map(|p| p.values().filter_map(|v| v["sha256"].as_str().map(String::from)).collect())
                 .unwrap_or_default(),
             None => Default::default(),
         },
@@ -332,13 +329,22 @@ async fn main() -> Result<()> {
     let mut all = Vec::new();
     // Per package sent: its name, its k, and its pieces' addresses.
     let mut sent: Vec<(String, usize, Vec<String>)> = Vec::new();
+    // Each package's ENTRY (its pieces), as its own file of the site named by its hash: a page reads only the ones it
+    // needs. The manifest names each by kind and hash alone.
+    let mut entry_files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut sources: Vec<(String, String)> = Vec::new();
     for (name, kind, path) in &packages {
         let bytes = read(path)?;
         let file = path.file_name().and_then(|n| n.to_str()).context("a package file name")?;
         let (pieces, fields) = cut_package(&webapp_code, file, &bytes)?;
-        let up = pieces.iter().all(|p| published.contains(&p.address));
+        let sha = sha256_hex(&bytes);
+        let up = published.contains(&sha);
         println!("package {name}: {} B as {} pieces{}", bytes.len(), pieces.len(), if up { " (already published)" } else { "" });
-        entries.push(format!(r#"    "{name}": {{ "kind": "{kind}", {fields} }}"#));
+        entries.push(format!(r#"    "{name}": {{ "kind": "{kind}", "sha256": "{sha}" }}"#));
+        entry_files.push((format!("p/{}.json", &sha[..16]), format!(r#"{{ "kind": "{kind}", {fields} }}"#).into_bytes()));
+        if *kind != "bytes" {
+            sources.push((name.to_string(), String::from_utf8_lossy(&bytes).into_owned()));
+        }
         if !up {
             let k = pieces.len() - M;
             sent.push((name.to_string(), k, pieces.iter().map(|p| p.address.clone()).collect()));
@@ -373,9 +379,34 @@ async fn main() -> Result<()> {
         std::fs::write(&history_file, history.join("\n") + "\n").context("writing contracts/identity-history")?;
     }
     let prior: Vec<String> = history.iter().rev().filter(|l| **l != this_build).take(8).map(|l| format!("\"{l}\"")).collect();
+    // Each page's NEEDS: every package its code could ask for — its own, the layout's and the theme, and, through
+    // them, every package name any of them mentions (a name in a string: over-counting costs a few small reads; missing
+    // one would only cost a read later). The loader asks for them all at once when the page opens.
+    let names: Vec<&str> = packages.iter().map(|(n, _, _)| *n).collect();
+    let mentions = |src: &str| -> Vec<&str> { names.iter().copied().filter(|n| src.contains(&format!("\"{n}\""))).collect() };
+    // The app's PAGES (route → its package): the manifest's `pages`, and where each page's needs start.
+    let pages: [(&str, &str); 5] = [("/", "home"), ("/account", "account"), ("/notes", "notes"), ("/chat", "chat"), ("/messages", "messages")];
+    let mut needs = Vec::new();
+    for (route, page) in pages {
+        let mut have: Vec<&str> = vec!["theme", "header", "footer", page];
+        let mut i = 0;
+        while i < have.len() {
+            if let Some((_, src)) = sources.iter().find(|(n, _)| n == have[i]) {
+                for m in mentions(src) {
+                    if !have.contains(&m) {
+                        have.push(m);
+                    }
+                }
+            }
+            i += 1;
+        }
+        needs.push(format!("\"{route}\": [{}]", have.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")));
+    }
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ \"/\": [\"home\"], \"/account\": [\"account\"], \"/notes\": [\"notes\"], \"/chat\": [\"chat\"], \"/messages\": [\"messages\"] }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\" }}, {{ \"name\": \"Messages\", \"icon\": \"✉️\", \"route\": \"/messages\" }}, {{ \"name\": \"Chat\", \"icon\": \"💬\", \"route\": \"/chat\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\"],\n  \"identity_prior\": [{}],\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\" }}, {{ \"name\": \"Messages\", \"icon\": \"✉️\", \"route\": \"/messages\" }}, {{ \"name\": \"Chat\", \"icon\": \"💬\", \"route\": \"/chat\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
+        pages.iter().map(|(r, p)| format!("\"{r}\": [\"{p}\"]")).collect::<Vec<_>>().join(", "),
         prior.join(", "),
+        needs.join(", "),
         entries.join(",\n")
     );
 
@@ -398,12 +429,11 @@ async fn main() -> Result<()> {
         bail!("wrapper/boot.js has no __LOADER_SITE__ to fill in");
     }
     let boot = boot.replace("__LOADER_SITE__", &loader_site);
-    let app_web = wire::webapp::app_web(&[
-        ("index.html", &read(&app.join("wrapper/index.html"))?),
-        ("boot.js", boot.as_bytes()),
-        ("manifest.json", manifest.as_bytes()),
-    ])
-    .map_err(|e| anyhow::anyhow!(e))?;
+    let index_html = read(&app.join("wrapper/index.html"))?;
+    let mut files: Vec<(&str, &[u8])> = vec![("index.html", &index_html), ("boot.js", boot.as_bytes()), ("manifest.json", manifest.as_bytes())];
+    files.extend(entry_files.iter().map(|(p, b)| (p.as_str(), b.as_slice())));
+    let app_web = wire::webapp::app_web(&files).map_err(|e| anyhow::anyhow!(e))?;
+    println!("manifest: {} B ({} package entries in their own files)", manifest.len(), entry_files.len());
     d.publish(&site_name, &site_code, app_web).await?;
     println!("OPEN: /v1/contract/web/{app_site}/");
     println!("SITE {app_site}");

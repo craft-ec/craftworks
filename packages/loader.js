@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. A page that needs no node never loads the
 // node's code at all.
-const VERSION = "14";
+const VERSION = "15";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -72,9 +72,23 @@ export async function run(boot) {
     return { bytes, ms: Math.round(performance.now() - t), used: raced.pieces.filter(Boolean).length, asked: raced.asked.length };
   }
 
+  // A package's ENTRY (its pieces), in its own file of the site named by the package's hash: read once, and only when
+  // it is needed — the manifest itself names each package by kind and hash alone. (A manifest from before: inline.)
+  const entries = new Map();
+  function entry(name) {
+    const head = manifest.packages[name];
+    if (!head) return Promise.reject(new Error(`package "${name}" is not in this app's manifest`));
+    if (head.pieces) return Promise.resolve(head);
+    if (!entries.has(name))
+      entries.set(
+        name,
+        boot.get(new URL(`p/${head.sha256.slice(0, 16)}.json`, location.href), `${name}'s entry`).then(r => ({ ...head, ...JSON.parse(new TextDecoder().decode(r.bytes)) })),
+      );
+    return entries.get(name);
+  }
+
   async function load(name) {
-    const p = manifest.packages[name];
-    if (!p) throw new Error(`package "${name}" is not in this app's manifest`);
+    const p = await entry(name);
     for (const d of p.needs ?? []) await require(d);
     const { bytes, ms, used, asked } = await fetchPackage(p, name);
     ctx.log("loaded", { what: `${name} (${used} of ${p.k}+${p.m} pieces; asked ${asked})`, bytes: bytes.length, hash: p.sha256.slice(0, 12), ms });
@@ -124,6 +138,8 @@ export async function run(boot) {
     ctx.log("page", { what: full });
     ctx.route = route;
     ctx.sub = full.slice(route.length).replace(/^\//, "");
+    // Every entry this page will need, asked for at once (the manifest lists them): no chain of one-by-one reads.
+    for (const n of manifest.needs?.[route] ?? []) entry(n).catch(() => {});
     for (const slot of ["header", "footer"]) {
       const names = page[slot] ?? manifest.layout?.[slot] ?? [];
       const key = JSON.stringify(names);
