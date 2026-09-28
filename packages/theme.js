@@ -77,19 +77,21 @@ export async function start() {
     dialog { background: var(--cw-surface); color: var(--cw-fg); }
     dialog::backdrop { background: var(--cw-scrim); }
     [hidden] { display: none !important; }
-    /* THE SHELL, like an app on a phone: the window never scrolls. The header on top and the footer at the bottom stay;
-       only the body between them scrolls. The whole window, edge to edge. A page that fills the body (its own
-       panes scroll) marks its component .cw-fill. */
+    /* THE SHELL, like an app on a phone: the window and the canvas never scroll. The header on top and the footer at
+       the bottom stay; between them, each component of the page is a PANEL that scrolls itself. The whole window, edge
+       to edge. A page with panes of its own (each scrolling) marks its component .cw-fill: it gets the canvas bare. */
     html, body { height: 100%; overflow: hidden; }
-    body { box-sizing: border-box; max-width: none; margin: 0; padding: 0 16px; }
+    body { box-sizing: border-box; max-width: none; margin: 0; padding: 0; }
     #app { height: 100dvh; display: flex; flex-direction: column; }
     /* The two bars: a fixed height each, their content on the bar's middle line. */
-    :root { --cw-bar: 48px; --cw-bar-low: 36px; }
+    :root { --cw-bar: 48px; --cw-bar-low: 36px; --cw-gutter: 16px; }
     #app > .slot-header, #app > .slot-footer { flex: none; }
     #app > .slot-header > section, #app > .slot-footer > section { margin: 0; }
-    #app > .slot-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; }
-    #app > .slot-body > section { flex: none; }
-    #app > .slot-body > section.cw-fill { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    #app > .slot-header .bar, #app > .slot-footer p { padding-left: var(--cw-gutter); padding-right: var(--cw-gutter); }
+    #app > .slot-body { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+    #app > .slot-body > section { flex: 1 1 auto; min-height: 0; margin: 0; overflow-y: auto; overscroll-behavior: contain;
+      padding: var(--cw-space-3) var(--cw-gutter); box-sizing: border-box; }
+    #app > .slot-body > section.cw-fill { overflow: hidden; padding: 0; display: flex; flex-direction: column; }
     #app > .slot-body > section.cw-fill > * { flex: 1 1 auto; min-height: 0; }
     #status { position: fixed; left: 16px; bottom: 40px; margin: 0; }
     .cw-loading { display: grid; gap: var(--cw-space-2); padding: var(--cw-space-3) 0; color: var(--cw-muted); font-size: var(--cw-text-sm); }

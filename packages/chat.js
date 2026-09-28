@@ -16,7 +16,7 @@ export async function mount(ctx, el) {
   el.innerHTML = `
     <style>
       .dc { display: grid; grid-template-columns: 72px 240px 1fr 220px; min-height: 420px;
-        border: 1px solid var(--cw-line); border-radius: var(--cw-radius); overflow: hidden; background: var(--cw-surface); }
+        overflow: hidden; background: var(--cw-surface); }
       .dc button { font: inherit; cursor: pointer; }
       .dc .rail { background: var(--cw-bg); border-right: 1px solid var(--cw-line); display: flex; flex-direction: column;
         align-items: center; gap: var(--cw-space-2); padding: var(--cw-space-3) 0; overflow-y: auto; }

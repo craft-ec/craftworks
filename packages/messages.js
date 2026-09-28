@@ -13,7 +13,7 @@ export async function mount(ctx, el) {
   el.innerHTML = `
     <style>
       .dm { display: grid; grid-template-columns: 260px 1fr; min-height: 420px;
-        border: 1px solid var(--cw-line); border-radius: var(--cw-radius); overflow: hidden; background: var(--cw-surface); }
+        overflow: hidden; background: var(--cw-surface); }
       .dm button { font: inherit; cursor: pointer; }
       .dm .list { background: var(--cw-bg); border-right: 1px solid var(--cw-line); display: flex; flex-direction: column; min-width: 0; }
       .dm .list h2 { margin: 0; font-size: 1rem; padding: 12px var(--cw-space-4); border-bottom: 1px solid var(--cw-line); }
