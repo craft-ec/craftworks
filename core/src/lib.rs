@@ -33,6 +33,7 @@ pub fn answer_json(a: &Answer) -> Value {
         }
         Answer::Revoked => json!({ "revoked": true }),
         Answer::Refused(why) => json!({ "refused": format!("{why:?}") }),
+        Answer::TableKey { key } => json!({ "tableKey": hex(key) }),
     }
 }
 
@@ -185,7 +186,7 @@ impl Core {
     /// held; else `{ kind: "tail-need", blocks: [Block contract ids] }`, each to GET (its answer comes back through
     /// `take`, which feeds it in and gives the next view).
     pub fn tail_view(&mut self, id: &[u8; 32]) -> Value {
-        let Some(o) = self.tails.get(id) else { return json!({ "kind": "error", "said": "that tail is not open" }) };
+        let Some(o) = self.tails.get_mut(id) else { return json!({ "kind": "error", "said": "that tail is not open" }) };
         match o.rows() {
             Ok(data::Step::Ready(rows)) => json!({ "kind": "tail", "id": hex(id), "tail": rows }),
             Ok(data::Step::Need(cids)) => {
@@ -298,6 +299,15 @@ pub enum FlushOut {
     Ready { seq: u64, hash: [u8; 32], puts: Vec<(String, Vec<Vec<u8>>)> },
 }
 
+#[cfg(target_arch = "wasm32")]
+fn prepared(params: &[u8], seq: u64, hash: [u8; 32]) -> Result<js_sys::Object, wasm_bindgen::JsValue> {
+    let out = js_sys::Object::new();
+    js_sys::Reflect::set(&out, &"params".into(), &js_sys::Uint8Array::from(params).into())?;
+    js_sys::Reflect::set(&out, &"seq".into(), &wasm_bindgen::JsValue::from(seq as f64))?;
+    js_sys::Reflect::set(&out, &"valueHash".into(), &js_sys::Uint8Array::from(&hash[..]).into())?;
+    Ok(out)
+}
+
 /// 32 bytes from hex, or an error naming what.
 pub fn bytes32(what: &str, h: &str) -> Result<[u8; 32], String> {
     unhex(h).and_then(|b| b.try_into().ok()).ok_or_else(|| format!("{what}: not 32 bytes of hex"))
@@ -375,6 +385,10 @@ mod js {
         /// minute).
         pub fn frames_grant(&mut self, tables: Vec<String>) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Grant { tables })
+        }
+        /// The key that seals table `table` (generation `gen`): given to a granted site only.
+        pub fn frames_table_key(&mut self, table: String, gen: u8) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::TableKey { table, gen })
         }
         pub fn frames_grants(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Grants)
@@ -574,17 +588,27 @@ mod js {
         /// valueHash }`, what the identity delegate signs; nothing moves until `tail_commit`.
         pub fn tail_prepare(&mut self, id: &[u8], key: &[u8], value: &[u8]) -> Result<js_sys::Object, JsValue> {
             let o = self.0.tail(&b32(id)?).map_err(err)?;
-            let op = if value.is_empty() {
-                tail::Op::Delete { key: key.to_vec() }
-            } else {
-                tail::Op::Set { key: key.to_vec(), value: value.to_vec() }
-            };
-            let (seq, hash) = o.prepare(vec![op]).ok_or_else(|| err("the tail refuses that write (too large?)".into()))?;
-            let out = js_sys::Object::new();
-            js_sys::Reflect::set(&out, &"params".into(), &js_sys::Uint8Array::from(&o.params[..]).into())?;
-            js_sys::Reflect::set(&out, &"seq".into(), &JsValue::from(seq as f64))?;
-            js_sys::Reflect::set(&out, &"valueHash".into(), &js_sys::Uint8Array::from(&hash[..]).into())?;
-            Ok(out)
+            if o.seal.is_none() {
+                return Err(err("this table's key is not held here: it cannot be written".into()));
+            }
+            let (seq, hash) = o.prepare_row(key, value).ok_or_else(|| err("the tail refuses that write (too large?)".into()))?;
+            prepared(&o.params, seq, hash)
+        }
+
+        /// The key that seals an open table (from the identity delegate): its sealed rows read, and writes are sealed.
+        pub fn tail_seal(&mut self, id: &[u8], key: &[u8]) -> Result<(), JsValue> {
+            self.0.tail(&b32(id)?).map_err(err)?.seal = Some(b32(key)?);
+            Ok(())
+        }
+
+        /// SEAL OVER up to `n` of the table's plaintext rows from before sealing, as one step: `{ params, seq,
+        /// valueHash }` to sign as for a write, or null when none are left.
+        pub fn tail_migrate(&mut self, id: &[u8], n: u32) -> Result<JsValue, JsValue> {
+            let o = self.0.tail(&b32(id)?).map_err(err)?;
+            match o.migrate(n as usize) {
+                Some((seq, hash)) => Ok(prepared(&o.params, seq, hash)?.into()),
+                None => Ok(JsValue::NULL),
+            }
         }
 
         /// The delegate's signature (hex) for the prepared write: `[kind, frames]`, kind "put" or "update".

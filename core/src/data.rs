@@ -30,6 +30,63 @@ pub const FLUSH_AT: usize = 32;
 /// reader missing the root still finds them. Hidden from the rows; never written into the tree.
 pub const ROOT_PARITY: &[u8] = b"\0root-parity";
 
+/// A SEALED row's key and value start with these two bytes: the format (1), then the generation of the table key
+/// that sealed it. A row without them is plaintext, written before tables were sealed: read, then sealed over
+/// ([`Open::migrate`]).
+pub const SEALED: u8 = 1;
+
+fn subkey(tk: &[u8; 32], what: &str) -> [u8; 32] {
+    blake3::derive_key(what, tk)
+}
+
+fn nonce(key: &[u8; 32], parts: &[&[u8]]) -> [u8; 24] {
+    let mut h = blake3::Hasher::new_keyed(key);
+    for p in parts {
+        h.update(&(p.len() as u32).to_le_bytes());
+        h.update(p);
+    }
+    h.finalize().as_bytes()[..24].try_into().expect("24")
+}
+
+fn aead(key: &[u8; 32], n: &[u8; 24], aad: &[u8], data: &[u8], open: bool) -> Option<Vec<u8>> {
+    use chacha20poly1305::aead::{Aead, Payload};
+    use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce};
+    let c = XChaCha20Poly1305::new(key.into());
+    let p = Payload { msg: data, aad };
+    if open {
+        c.decrypt(XNonce::from_slice(n), p).ok()
+    } else {
+        c.encrypt(XNonce::from_slice(n), p).ok()
+    }
+}
+
+/// A row key, sealed DETERMINISTICALLY (the nonce from the key itself): the same row always seals to the same bytes,
+/// so a write or delete of a row finds the row; nothing else about the key shows.
+pub fn seal_key(tk: &[u8; 32], gen: u8, key: &[u8]) -> Vec<u8> {
+    let k = subkey(tk, "craftworks 2026-09-28 sealed row key");
+    let n = nonce(&k, &[key]);
+    [&[SEALED, gen][..], &n, &aead(&k, &n, &[SEALED, gen], key, false).expect("seals")].concat()
+}
+
+/// A row value, sealed and BOUND to its sealed key (a value moved to another row does not open).
+pub fn seal_value(tk: &[u8; 32], gen: u8, sealed_key: &[u8], value: &[u8]) -> Vec<u8> {
+    let k = subkey(tk, "craftworks 2026-09-28 sealed row value");
+    let n = nonce(&k, &[sealed_key, value]);
+    [&[SEALED, gen][..], &n, &aead(&k, &n, sealed_key, value, false).expect("seals")].concat()
+}
+
+pub fn open_key(tk: &[u8; 32], raw: &[u8]) -> Option<Vec<u8>> {
+    let (head, rest) = raw.split_at_checked(2)?;
+    let (n, ct) = rest.split_at_checked(24)?;
+    aead(&subkey(tk, "craftworks 2026-09-28 sealed row key"), n.try_into().ok()?, head, ct, true)
+}
+
+pub fn open_value(tk: &[u8; 32], sealed_key: &[u8], raw: &[u8]) -> Option<Vec<u8>> {
+    let (_, rest) = raw.split_at_checked(2)?;
+    let (n, ct) = rest.split_at_checked(24)?;
+    aead(&subkey(tk, "craftworks 2026-09-28 sealed row value"), n.try_into().ok()?, sealed_key, ct, true)
+}
+
 
 pub struct Open {
     pub params: Vec<u8>,
@@ -43,6 +100,12 @@ pub struct Open {
     pub blocks: MemBlocks,
     /// A flush's new blocks, kept until its step is signed and sent: then they are this page's too.
     staged: Option<MemBlocks>,
+    /// The key that seals this table (generation 0), from the identity delegate. Without it the table's sealed rows
+    /// do not read, and nothing is written.
+    pub seal: Option<[u8; 32]>,
+    /// Plaintext rows (from before sealing) the last read found: sealed over by `migrate`, and deleted by a write of
+    /// the same row.
+    legacy: BTreeMap<Vec<u8>, Vec<u8>>,
 }
 
 /// A flush, ready: the blocks to put FIRST (as Block contract states), then the step to sign.
@@ -65,7 +128,17 @@ impl Open {
         let params = wire::register_params(key, &[b"t/".as_slice(), table.as_bytes()].concat());
         let (_, contract, _) = wire::puts::contract(tail_code, &params, &[]);
         let writer = Writer::new(&params).expect("our own params parse");
-        Open { params, contract, writer, on_network: false, pending: None, blocks: MemBlocks::default(), staged: None }
+        Open {
+            params,
+            contract,
+            writer,
+            on_network: false,
+            pending: None,
+            blocks: MemBlocks::default(),
+            staged: None,
+            seal: None,
+            legacy: BTreeMap::new(),
+        }
     }
 
     pub fn id(&self) -> String {
@@ -96,6 +169,39 @@ impl Open {
             }
             _ => false,
         }
+    }
+
+    /// One row written (an empty value deletes it), SEALED: the step to sign. `None` without the table's key, or if
+    /// the tail would refuse it. A plaintext copy of the row from before sealing goes in the same step.
+    pub fn prepare_row(&mut self, key: &[u8], value: &[u8]) -> Option<(u64, [u8; 32])> {
+        let tk = self.seal?;
+        let sk = seal_key(&tk, 0, key);
+        let mut ops = vec![if value.is_empty() {
+            Op::Delete { key: sk }
+        } else {
+            let v = seal_value(&tk, 0, &sk, value);
+            Op::Set { key: sk, value: v }
+        }];
+        if self.legacy.contains_key(key) {
+            ops.push(Op::Delete { key: key.to_vec() });
+        }
+        self.prepare(ops)
+    }
+
+    /// SEAL OVER up to `n` plaintext rows from before sealing: each written sealed and its plaintext deleted, in ONE
+    /// step. `None` when there are none (or no key).
+    pub fn migrate(&mut self, n: usize) -> Option<(u64, [u8; 32])> {
+        let tk = self.seal?;
+        let mut ops = Vec::new();
+        for (k, v) in self.legacy.iter().take(n) {
+            let sk = seal_key(&tk, 0, k);
+            ops.push(Op::Set { value: seal_value(&tk, 0, &sk, v), key: sk });
+            ops.push(Op::Delete { key: k.clone() });
+        }
+        if ops.is_empty() {
+            return None;
+        }
+        self.prepare(ops)
     }
 
     /// The next step: what to sign (the Register's message fields).
@@ -208,7 +314,7 @@ impl Open {
 
     /// The rows, for the page: the TREE's (at the tail's root) with the TAIL's pending rows over them (a pending
     /// delete hides a tree row). `Need` names the tree blocks to fetch first.
-    pub fn rows(&self) -> Result<Step<Value>, String> {
+    pub fn rows(&mut self) -> Result<Step<Value>, String> {
         let body = self.writer.body();
         let mut all: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
         if let Some(root) = &body.root {
@@ -243,9 +349,32 @@ impl Open {
                 None => all.remove(k),
             };
         }
+        // Opened: sealed rows with this table's key; plaintext rows from before sealing as they are (a sealed copy of
+        // the same row wins); a row sealed under a key not held is counted, not shown.
+        let (mut sealed, mut legacy, mut unreadable) = (BTreeMap::new(), BTreeMap::new(), 0usize);
+        for (k, v) in all {
+            match k.first() {
+                Some(&SEALED) => match self.seal.filter(|_| k.get(1) == Some(&0)).and_then(|tk| Some((open_key(&tk, &k)?, open_value(&tk, &k, &v)?))) {
+                    Some((pk, pv)) => {
+                        sealed.insert(pk, pv);
+                    }
+                    None => unreadable += 1,
+                },
+                Some(0) => {} // the tail's own rows
+                _ => {
+                    legacy.insert(k, v);
+                }
+            }
+        }
+        let mut shown = legacy.clone();
+        shown.extend(sealed);
+        self.legacy = legacy;
         let rows: Vec<Value> =
-            all.iter().map(|(k, v)| json!({ "key": String::from_utf8_lossy(k), "value": String::from_utf8_lossy(v) })).collect();
-        Ok(Step::Ready(json!({ "id": self.id(), "seq": self.writer.seq(), "rows": rows, "root": body.root.map(|r| crate::hex(&r)), "pending": body.entries.len() })))
+            shown.iter().map(|(k, v)| json!({ "key": String::from_utf8_lossy(k), "value": String::from_utf8_lossy(v) })).collect();
+        Ok(Step::Ready(json!({
+            "id": self.id(), "seq": self.writer.seq(), "rows": rows, "root": body.root.map(|r| crate::hex(&r)),
+            "pending": body.entries.len(), "legacy": self.legacy.len(), "unreadable": unreadable,
+        })))
     }
 }
 
@@ -460,6 +589,91 @@ mod tests {
         assert!(repaired, "the leaf was rebuilt");
         assert_eq!(rows, whole);
         assert_eq!(rows.len(), 6 * FLUSH_AT);
+    }
+
+    fn contains(hay: &[u8], needle: &[u8]) -> bool {
+        hay.windows(needle.len()).any(|w| w == needle)
+    }
+
+    fn put_row(key: &SigningKey, o: &mut Open, k: &str, v: &str) {
+        let (seq, h) = o.prepare_row(k.as_bytes(), v.as_bytes()).unwrap();
+        o.commit(sign(key, o, seq, h)).unwrap();
+    }
+
+    #[test]
+    fn a_sealed_table_shows_nothing_to_the_network_and_nothing_without_its_key() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        let mut o = Open::new(CODE, &member, "notes");
+        assert!(o.prepare_row(b"a", b"x").is_none(), "no key, no write");
+        o.seal = Some([7; 32]);
+        put_row(&key, &mut o, "shopping", "buy oat milk");
+        put_row(&key, &mut o, "trip", "book the train");
+        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        assert_eq!(keys(&v), ["shopping=buy oat milk", "trip=book the train"]);
+        // What the network holds: none of it in plaintext.
+        let state = o.writer.state();
+        for secret in ["shopping", "buy oat milk", "trip", "book the train"] {
+            assert!(!contains(&state, secret.as_bytes()), "{secret} is in the stored state");
+        }
+        // Control: the same rows written plaintext DO show — the check can see them.
+        let mut plain = Open::new(CODE, &member, "plain");
+        let (seq, h) = plain.prepare(vec![Op::Set { key: b"shopping".to_vec(), value: b"buy oat milk".to_vec() }]).unwrap();
+        plain.commit(sign(&key, &plain, seq, h)).unwrap();
+        assert!(contains(&plain.writer.state(), b"buy oat milk"));
+        // Another reader: without the key, nothing; with the wrong key, nothing; with the key, all.
+        let read = |seal: Option<[u8; 32]>| {
+            let mut r = Open::new(CODE, &member, "notes");
+            r.absorb(&o.writer.state());
+            r.seal = seal;
+            let Ok(Step::Ready(v)) = r.rows() else { panic!() };
+            (keys(&v).len(), v["unreadable"].as_u64().unwrap())
+        };
+        assert_eq!(read(None), (0, 2));
+        assert_eq!(read(Some([8; 32])), (0, 2));
+        assert_eq!(read(Some([7; 32])), (2, 0));
+        // Rewriting and deleting a row find it (the sealed key is the same every time).
+        put_row(&key, &mut o, "trip", "booked");
+        put_row(&key, &mut o, "shopping", "");
+        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        assert_eq!(keys(&v), ["trip=booked"]);
+        // Through a flush and the tree: still sealed, still readable.
+        let Ok(Step::Ready(f)) = o.flush() else { panic!() };
+        o.commit(sign(&key, &o, f.seq, f.hash)).unwrap();
+        assert!(o.blocks.0.values().all(|b| !contains(b, b"booked")), "no tree block holds plaintext");
+        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        assert_eq!(keys(&v), ["trip=booked"]);
+    }
+
+    #[test]
+    fn rows_from_before_sealing_are_read_then_sealed_over_without_doubles() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        let mut o = Open::new(CODE, &member, "notes");
+        for (k, v) in [("a", "plain-one"), ("b", "plain-two"), ("c", "plain-three")] {
+            write(&key, &mut o, k, v); // plaintext, as before sealing
+        }
+        o.seal = Some([7; 32]);
+        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        assert_eq!((keys(&v), v["legacy"].as_u64()), (vec!["a=plain-one".into(), "b=plain-two".into(), "c=plain-three".into()], Some(3)));
+        // A write to an old row seals it and drops its plaintext in the same step: no double.
+        put_row(&key, &mut o, "b", "two");
+        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        assert_eq!((keys(&v), v["legacy"].as_u64()), (vec!["a=plain-one".into(), "b=two".into(), "c=plain-three".into()], Some(2)));
+        // The rest, two at a time.
+        while let Some((seq, h)) = o.migrate(2) {
+            o.commit(sign(&key, &o, seq, h)).unwrap();
+            o.rows().unwrap();
+        }
+        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        assert_eq!((keys(&v), v["legacy"].as_u64()), (vec!["a=plain-one".into(), "b=two".into(), "c=plain-three".into()], Some(0)));
+        // No plaintext VALUE is left anywhere in the stored state (the old keys remain only as deletions until the
+        // next flush applies them to the tree).
+        let state = o.writer.state();
+        for secret in ["plain-one", "plain-two", "plain-three"] {
+            assert!(!contains(&state, secret.as_bytes()), "{secret} is still stored");
+        }
+        assert!(o.writer.body().entries.iter().all(|(k, e)| k.first() == Some(&SEALED) || e.value.is_none()), "only sealed rows carry values");
     }
 
     #[test]

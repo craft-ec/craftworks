@@ -25,6 +25,8 @@ export async function start(ctx) {
     // minute), so this waits longer than any other call.
     grant: tables => call(core.frames_grant(tables), `asking for ${tables.map(t => `“${t}”`).join(", ")}`, 90000),
     grants: () => call(core.frames_grants(), "listing the apps with access"),
+    // The key that seals a table (generation 0): only for a site the person allowed that table.
+    tableKey: table => call(core.frames_table_key(table, 0), `the key of “${table}”`),
     revoke: (app, table) => call(core.frames_revoke(app, table), "removing an app's access"),
     publicOf: seed => glue.CraftworksCore.public_of(seed),
     // HANDOVER: ask an earlier build (`<key>:<code hash>`) for the member `pin` opens there. `{ handed }` with its keys,

@@ -154,3 +154,16 @@ Out of scope now: recovery quorum (guardians), data-key rotation (moves tails), 
   words were replaced by newer ones". idlog.wasm ea00f4e8… (reproducible: two builds, same hash), node accepted it.
   Members from before the log: Account says "log in once with your recovery words (and a new PIN)"; that login puts
   the inception (same data key → same tables, same member Set). All three private sites + B (app v34) published.
+
+## Messaging track (order agreed 2026-09-28): 1 seal own tables → 2 inbox per DID → 3 spaces (governance, membership,
+## ordered space log) → 4 MLS + chat → 5 moderation/access → 6 discovery → 7 privacy hardening → 8 keep/health
+- [x] 1. SEALED TABLES. Table key = derive(data seed, generation, table) inside the identity delegate; given (TableKey)
+  only to the home site or a site granted that table (catalog: any grant) — so a grant now covers READ too. Rows:
+  key sealed deterministically (same row → same bytes: updates/deletes find it), value XChaCha20-Poly1305 bound to
+  its sealed key; both prefixed [1, generation]. Plaintext rows from before: read, sealed over 16 per step, plaintext
+  deleted in the same step (no doubles); a write to an old row drops its plaintext too. Tests: stored state and tree
+  blocks hold no plaintext (control: plaintext rows DO show), no key / wrong key read nothing, migration leaves no
+  plaintext value. Live: old note sealed over, new note sealed, reload reads both; alt site DENIED → "no key here:
+  nothing of it reads", 0 notes (the stale build there showed the rows as ciphertext garbage — proof they are sealed).
+  NOT hidden yet (step 7): row count, sizes, table names in their addresses. Old TREE BLOCKS written in plaintext
+  before sealing stay on the network (immutable); only what is written from now on is sealed.

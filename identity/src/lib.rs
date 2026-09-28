@@ -89,6 +89,11 @@ pub enum Request {
     Grants,
     /// Withdraw one: the home app withdraws any, a site its own.
     Revoke { app: [u8; 32], table: String },
+    /// The KEY that seals table `table` of the session member's account (generation `gen`): given only to a site the
+    /// person allowed that table (its home app always), because with it a site READS the table. Derived here from the
+    /// account's data key, which never leaves. (Last in the list: the variants before keep their encoding, so earlier
+    /// builds still read a Handover.)
+    TableKey { table: String, gen: u8 },
 }
 
 /// What the identity answers.
@@ -112,6 +117,7 @@ pub enum Answer {
     Grants { list: Vec<([u8; 32], String)> },
     Revoked,
     Refused(Why),
+    TableKey { key: [u8; 32] },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,6 +209,16 @@ pub const TABLE: &[u8] = b"t/";
 /// Written by the member's home site, or by any site the person allowed some table: listing a table is part of using
 /// it.
 pub const CATALOG: &str = "tables";
+
+/// The key that seals a table: from the account's data key, the table's name and its generation. The same on every node
+/// of the account; a new generation is a new key (what a revoked site held does not open what is written after).
+pub fn table_key(data_seed: &[u8; 32], table: &str, gen: u8) -> [u8; 32] {
+    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-09-28 table key");
+    h.update(data_seed);
+    h.update(&[gen]);
+    h.update(table.as_bytes());
+    *h.finalize().as_bytes()
+}
 
 fn table_ok(t: &str) -> bool {
     (1..=32).contains(&t.len()) && t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
@@ -463,6 +479,21 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 return Refused(Why::NotSaved);
             }
             Revoked
+        }
+        Request::TableKey { table, gen } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if !table_ok(&table) {
+                return Refused(Why::BadTable);
+            }
+            let member = a.public();
+            let may = a.home == app
+                || granted(h, &member, &app, &table)
+                || (table == CATALOG && grants(h, &member).iter().any(|(g, _)| *g == app));
+            if !may {
+                return Refused(Why::NotGranted { table });
+            }
+            let Some(data) = a.data else { return Refused(Why::NoDataKey) };
+            TableKey { key: table_key(&data, &table, gen) }
         }
         Request::Sign { params, seq, value_hash } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };

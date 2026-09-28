@@ -124,10 +124,15 @@ export async function start(ctx) {
       remove: key => (queue = queue.catch(() => {}).then(() => write(key, ""))),
     };
     const ready = (async () => {
-      // Leave to write it: the person's grant for this site (the node asks them the first time). Reading needs none;
-      // without it the table is read-only here, and a write says why. Asked NOW, beside the read, so a slow read never
-      // holds the prompt back. The catalog needs none of its own: listing a table is part of using it.
-      if (!isCatalog) allowed().catch(() => {});
+      // THE TABLE'S KEY: the table is sealed, so reading it needs its key, and the key comes only with the person's
+      // grant for this site (asked NOW: the node prompts the first time). No grant: nothing of the table reads here.
+      // The catalog's key comes with any grant: listing a table is part of using it.
+      const key = (isCatalog ? Promise.resolve(true) : allowed().catch(() => false)).then(async ok => {
+        const k = ok ? await auth.identity.tableKey(app).catch(() => null) : null;
+        if (k?.tableKey) core.tail_seal(id, bytes(k.tableKey));
+        else ctx.log("table sealed", { what: `${app}: no key here (${k?.refused ?? "not allowed"}): nothing of it reads` });
+      });
+      await key;
       const known = isCatalog ? (s.fresh ? false : null) : await listed(app);
       if (known === false) {
         core.tail_absent(id);
@@ -145,6 +150,8 @@ export async function start(ctx) {
       }
       // A new account's catalog is created now, so the next page finds it.
       if (isCatalog && t.absent && s.fresh) await t.put("tables", JSON.stringify({ at: Date.now(), complete: true }));
+      // Rows from before tables were sealed: sealed over now, a batch per step (in the write queue).
+      if (legacy > 0) t.sealOld = queue = queue.catch(() => {}).then(sealOld);
       return t;
     })();
     tables.set(idHex, ready);
@@ -175,7 +182,10 @@ export async function start(ctx) {
       // would write over rows it could not see).
       if (said.kind !== "get-failed") said = await settle(said, app);
       t.absent = said.kind !== "tail";
-      if (said.kind === "tail") t.took(said.tail.rows);
+      if (said.kind === "tail") {
+        legacy = said.tail.legacy ?? 0;
+        t.took(said.tail.rows);
+      }
       else core.tail_absent(id);
     }
 
@@ -216,9 +226,30 @@ export async function start(ctx) {
       if (core.tail_pending(id) >= Core.flush_at()) await flush().catch(e => ctx.log("flush failed", { what: `${app}: ${e.message}` }));
       t.absent = false;
     }
+    let legacy = 0;
     async function view() {
       const v = await settle(JSON.parse(core.tail_view(id)), app);
+      legacy = v.tail.legacy ?? 0;
       t.took(v.tail.rows);
+    }
+
+    // SEAL OVER the plaintext rows from before sealing: 16 rows a step, each sealed and its plaintext deleted in that
+    // same step, signed like any write.
+    async function sealOld() {
+      let n = 0;
+      for (let round = 0; round < 64; round++) {
+        const p = core.tail_migrate(id, 16);
+        if (!p) break;
+        const r = await auth.identity.sign(p.params, p.seq, p.valueHash);
+        if (!r.signed) throw new Error(`the identity would not sign: ${r.refused ?? JSON.stringify(r)}`);
+        const [, frames] = core.tail_commit(id, r.signed);
+        const said = await ask(frames, x => (x.kind === "updated" && x.key === name) || x.kind === "refused", `sealing ${app}`, 60000);
+        if (said.kind === "refused") throw new Error(`the node refused: ${said.said}`);
+        await view();
+        n += 1;
+      }
+      if (n) ctx.log("sealed", { what: `${app}: rows from before sealing, sealed over in ${n} step(s)` });
+      if (core.tail_pending(id) >= Core.flush_at()) await flush();
     }
 
     // FLUSH: the tree's new blocks PUT first (a tail must never name a root whose blocks are not there), then the step

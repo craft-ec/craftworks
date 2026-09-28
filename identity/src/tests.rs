@@ -417,3 +417,20 @@ fn the_catalog_is_written_by_the_home_site_or_a_site_allowed_some_table() {
     assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
     assert!(matches!(sign(&mut m, OTHER, &table(ALICE_DATA, CATALOG), 2, [2; 32]), Answer::Signed { .. }));
 }
+
+#[test]
+fn a_table_key_is_given_to_the_home_site_and_to_a_site_only_once_granted() {
+    let mut m = provisioned(APP);
+    let key = |m: &mut Map, app, t: &str, gen| serve(m, Request::TableKey { table: t.into(), gen }, app);
+    let Answer::TableKey { key: home } = key(&mut m, APP, "notes", 0) else { panic!("the home site holds its tables") };
+    assert_eq!(home, table_key(&ALICE_DATA, "notes", 0), "derived from the data key");
+    assert_ne!(home, table_key(&ALICE_DATA, "pins", 0), "each table its own");
+    assert_ne!(home, table_key(&ALICE_DATA, "notes", 1), "each generation its own");
+    // Another site: nothing until the person allows it that table; then the same key.
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    assert_eq!(key(&mut m, OTHER, "notes", 0), Answer::Refused(Why::NotGranted { table: "notes".into() }));
+    assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
+    assert_eq!(key(&mut m, OTHER, "notes", 0), Answer::TableKey { key: home });
+    assert_eq!(key(&mut m, OTHER, "pins", 0), Answer::Refused(Why::NotGranted { table: "pins".into() }), "only what was granted");
+    assert_eq!(key(&mut m, OTHER, "Bad!", 0), Answer::Refused(Why::BadTable));
+}
