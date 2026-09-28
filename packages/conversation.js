@@ -14,7 +14,7 @@
 //   await conversation.members(sp)   // the accounts (DIDs) whose nodes are in a space's group
 //   await conversation.person(text)  // a DID from `did:craftec:…`, or from `name#abc123` among the people this account knows
 export async function start(ctx) {
-  const [space, keys, directory, index, content, node] = await Promise.all(["space", "keys", "directory", "index", "content", "node"].map(n => ctx.require(n)));
+  const [space, keys, directory, index, content] = await Promise.all(["space", "keys", "directory", "index", "content"].map(n => ctx.require(n)));
   const short = did => `${did.replace(/^did:craftec:/, "").slice(0, 8)}…`;
 
   // WELCOME a person into a space: each of their nodes added to its group (from their card's key packages), and the
@@ -28,7 +28,8 @@ export async function start(ctx) {
     const g = keys.group(sp);
     const welcomes = [];
     for (const k of card.keyPackages) welcomes.push({ node: k.node, welcome: await g.add(k.keyPackage) });
-    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, name, welcomes });
+    const { owner, nonce } = sp.governance;
+    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcomes });
     ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind}: ${welcomes.length} node(s)` });
     return card;
   }
@@ -57,7 +58,7 @@ export async function start(ctx) {
       if (it.kind !== "welcome" || listed.has(it.space)) continue;
       const w = it.welcomes?.find(x => x.node === me.self);
       if (!w) continue;
-      const v = { kind: it.spaceKind, name: it.name, owner: it.from, ...(it.spaceKind === "direct" ? { with: it.from } : {}) };
+      const v = { kind: it.spaceKind, name: it.name, owner: it.owner ?? it.from, nonce: it.nonce ?? null, ...(it.spaceKind === "direct" ? { with: it.from } : {}) };
       try {
         const sp = await space.describe(it.space, v);
         await keys.group(sp).join(w.welcome);
@@ -76,11 +77,11 @@ export async function start(ctx) {
 
   const list = async () => (await space.mine()).filter(s => s.kind === "direct");
 
-  // A space's MEMBERS: the accounts its group's nodes' credentials name (each node's credential carries its DID).
+  // A space's MEMBERS: its people, as `roles` has them (the accounts its group's nodes' credentials name).
   async function members(sp) {
-    const st = await keys.group(sp).ready().catch(() => null);
-    const cred = h => new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16)));
-    return [...new Set((st?.members ?? []).filter(m => m.cred).map(m => node.glue.did_of(cred(m.cred))))];
+    const r = await (await ctx.require("roles")).of(sp);
+    await r.refresh();
+    return r.members().map(m => m.did);
   }
 
   // A PERSON from what someone typed: a DID as it is, or `name#abc123` (as people are shown) matched among the people

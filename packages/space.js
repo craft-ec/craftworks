@@ -15,7 +15,8 @@
 //   gossiped), `channel` (its group's pointer and commits). Named once, by the identity (its rules name them too).
 //
 // A SERVER (the first space made by people, Discord's): made by one person, who owns it (`governance: { kind: "owner",
-// owner: <DID> }`); its group is its members' nodes; its tables are named `x<first 12 hex of its id>-<name>`. The spaces
+// owner: <DID>, nonce }`). Its id PROVES its owner: the id is sha-256 of the owner and a nonce drawn at making, so no
+// member can claim another (`space.owner(sp)`: the owner, if the id proves it). Its group is its members' nodes; its tables are named `x<first 12 hex of its id>-<name>`. The spaces
 // a person belongs to are listed in their account's table `spaces` (`<id>` → `{ kind, name, owner, at }`).
 //
 //   const space = await ctx.require("space");
@@ -24,6 +25,7 @@
 //   await space.create("server", name)      // a new server: made here, listed in the account
 //   space.tableOf(sp, "channels")           // a space's own table's name
 //   space.channel(server, id, name)         // a CHANNEL: a sub-space of the server
+//   await space.owner(sp)                   // its owner's DID, if its id proves it (else null)
 //
 // A CHANNEL is a SUB-SPACE: it has a `parent` and inherits what it does not set itself. A channel that inherits the
 // server's access has no group of its own — its group, scope and keys are the server's, and its messages are its own
@@ -57,7 +59,7 @@ export async function start(ctx) {
 
   // A space from its row in the account's `spaces`.
   function made(id, v, acc) {
-    const sp = { kind: v.kind, id, idBytes: bytes(id), name: v.name, with: v.with ?? null, governance: Object.freeze({ kind: "owner", owner: v.owner }), self: acc.self };
+    const sp = { kind: v.kind, id, idBytes: bytes(id), name: v.name, with: v.with ?? null, governance: Object.freeze({ kind: "owner", owner: v.owner, nonce: v.nonce ?? null }), self: acc.self };
     sp.tables = Object.freeze({ catalog: tableOf(sp, "tables"), members: tableOf(sp, "members"), channel: tableOf(sp, "log") });
     // A space that is itself a conversation (a direct one): its messages, in its own scope.
     sp.messages = tableOf(sp, "messages");
@@ -97,17 +99,26 @@ export async function start(ctx) {
   // A space as it would be listed, before it is (to join its group first).
   const describe = async (id, v) => made(id, v, await account());
 
-  // A NEW space: its id drawn here, its group made by this node (its first member), then listed in the account.
+  // The id an owner's space has with a nonce.
+  const idOf = async (owner, nonce) => hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`craftworks space\0${owner}\0${nonce}`))));
+  const owner = async sp => {
+    const g = (sp.parent ?? sp).governance;
+    return g?.owner && g.nonce && (await idOf(g.owner, g.nonce)) === (sp.parent ?? sp).id ? g.owner : null;
+  };
+
+  // A NEW space: its id from its owner (this person) and a nonce, its group made by this node (its first member), then
+  // listed in the account.
   async function create(kind, name, extra = {}) {
     const acc = await account();
     if (!acc) throw new Error("nobody is logged in");
-    const v = { kind, name, owner: acc.id, at: Date.now(), ...extra };
-    const sp = made(hex(crypto.getRandomValues(new Uint8Array(32))), v, acc);
+    const nonce = hex(crypto.getRandomValues(new Uint8Array(16)));
+    const v = { kind, name, owner: acc.id, nonce, at: Date.now(), ...extra };
+    const sp = made(await idOf(acc.id, nonce), v, acc);
     await (await ctx.require("keys")).group(sp).create();
     await (await (await ctx.require("storage")).table(SPACES)).put(sp.id, JSON.stringify(v));
     ctx.log("space", { what: `${kind} “${name}” made: ${sp.id.slice(0, 12)}…` });
     return sp;
   }
 
-  return { account, tables, mine, create, record, describe, tableOf, channel };
+  return { account, tables, mine, create, record, describe, tableOf, channel, owner };
 }

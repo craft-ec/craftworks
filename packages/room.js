@@ -18,6 +18,11 @@ export async function start(ctx) {
     .cw-room .msg time { color: var(--cw-muted); font-size: var(--cw-text-xs); }
     .cw-room .msg .text { white-space: pre-wrap; overflow-wrap: anywhere; }
     .cw-room .msg.system { color: var(--cw-muted); font-size: var(--cw-text-sm); }
+    .cw-room .msg { position: relative; }
+    .cw-room .msg .del { position: absolute; top: 0; right: 0; visibility: hidden; border: 0; background: none; cursor: pointer;
+      color: var(--cw-muted); font-size: var(--cw-text-xs); padding: 2px var(--cw-space-1); border-radius: var(--cw-radius-sm); }
+    .cw-room .msg:hover .del { visibility: visible; }
+    .cw-room .msg .del:hover { background: var(--cw-hover); color: var(--cw-danger); }
     .cw-room .empty { color: var(--cw-muted); text-align: center; margin: auto; padding: var(--cw-space-5); }
     .cw-room .said { color: var(--cw-danger); font-size: var(--cw-text-sm); padding: 0 var(--cw-space-4); margin: 0; }
     .cw-room .compose { padding: var(--cw-space-3) var(--cw-space-4) var(--cw-space-4); }
@@ -71,6 +76,20 @@ export async function start(ctx) {
             el("time", { textContent: new Date(m.at).toLocaleString() }),
             el("div", { className: "text", textContent: m.body }),
           );
+          // Its author removes it; a moderator hides someone else's (content decides which).
+          if (m.kind !== "system" && room.mayRemove(m))
+            li.append(
+              el("button", {
+                type: "button",
+                className: "del",
+                textContent: m.by === me ? "Delete" : "Remove",
+                onclick: () =>
+                  room.remove(m.id).catch(err => {
+                    said.textContent = `Not removed: ${err?.message ?? err}`;
+                    said.hidden = false;
+                  }),
+              }),
+            );
           return li;
         }),
       );

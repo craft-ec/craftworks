@@ -335,7 +335,7 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
     pat#8r4orC, the conversation shows sam#EAsepm / pat#8r4orC, a message sent from it; Account "Published as sam#EAsepm".
   - OPEN: a space's group (a server, a conversation) is not carried by HandoverKeys: the next delegate build loses it
     (this build change lost S's server "Craft"). Next to fix, before more spaces are relied on.
-- [ ] C3 invites (join request, a member adds), C4 roles/moderation, C5 every node of each member
+- [ ] C3 invites (join request, a member adds), C5 every node of each member   (C4 roles/moderation: done, plan step 5)
 - OPEN: a space's group state is not carried by HandoverKeys yet (the next delegate build loses space groups).
 - OWNER ASKED (published size): manifest 54 KB lists every piece of every package; plan: one hash per package (pieces
   derived), split per page. Not done yet.
@@ -371,5 +371,14 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
    People by `name#abc123` (`conversation.person`): matched among the people this account knows (its conversations,
    its servers' members); a stranger needs the full id (a 6-character prefix locates no card). Invite and New message
    take either. Live: Google#H33CU9, #8r4orC, pat#8r4orC resolved; nobody#ZZZZZZ refused.
-5. [ ] roles and moderation
+5. [x] roles and moderation (`roles`, `moderation` packages). A space's id is sha-256(owner, nonce): the owner is
+   proven, not claimed (servers from before have none: nobody holds rights there — dev data). Acts (`grant`, `remove`,
+   `hide`) in the space's `acts` table, replayed by (at, id), each counted only if its signer's role allowed it then;
+   a row's signer is its feed's writer node → account (group credentials; removed nodes stay attributed). Owner: all;
+   admin: invite, channels, hide, remove members; member: post, invite. Chat: roles in the member list, Make admin /
+   member, Remove (their nodes out: one commit each), channel add/delete gated, a message's Delete / Remove. Content's
+   author = the row's writer (never the claimed `by`). A removed node sees "You were removed". Live (Anvil): S owner,
+   U + P invited; P (member) had no channel controls; S made U admin; U added #news, hid P's "spam", removed P, posted;
+   S saw all of it; P saw the removal. Ordering by the signer's claimed time: witnessed ordering is the documented
+   later step (ARCHITECTURE §5 Ordering).
 6. [ ] mail

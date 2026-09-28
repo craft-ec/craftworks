@@ -258,7 +258,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 40] = [
+    let packages: [(&str, &str, PathBuf); 42] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -302,6 +302,8 @@ async fn main() -> Result<()> {
         ("directory", "service", app.join("packages/directory.js")),
         ("index", "service", app.join("packages/index.js")),
         ("conversation", "service", app.join("packages/conversation.js")),
+        ("roles", "service", app.join("packages/roles.js")),
+        ("moderation", "service", app.join("packages/moderation.js")),
         ("chat", "module", app.join("packages/chat.js")),
         ("messages", "module", app.join("packages/messages.js")),
         ("room", "service", app.join("packages/room.js")),

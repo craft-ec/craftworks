@@ -8,8 +8,8 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [space, storage, keys, directory, roomUI, conversation, theme] = await Promise.all(
-    ["space", "storage", "keys", "directory", "room", "conversation", "theme"].map(n => ctx.require(n)),
+  const [space, storage, keys, directory, roomUI, conversation, theme, roles, moderation] = await Promise.all(
+    ["space", "storage", "keys", "directory", "room", "conversation", "theme", "roles", "moderation"].map(n => ctx.require(n)),
   );
   const account = await space.account();
   el.classList.add("cw-fill");
@@ -38,7 +38,15 @@ export async function mount(ctx, el) {
       .dc .room { min-width: 0; min-height: 0; }
       .dc .people h3 { font-size: var(--cw-text-xs); letter-spacing: .08em; color: var(--cw-muted); margin: 0 0 var(--cw-space-2); }
       .dc .people ul { margin: 0; padding: 0; }
-      .dc .people li { list-style: none; padding: var(--cw-space-1) 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dc .people li { list-style: none; padding: var(--cw-space-1) 0; display: flex; align-items: center; gap: var(--cw-space-1); }
+      .dc .people li .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dc .people li .r { color: var(--cw-muted); font-size: var(--cw-text-xs); }
+      .dc .people li button, .dc .chans .x { visibility: hidden; border: 0; background: none; color: var(--cw-muted);
+        font-size: var(--cw-text-xs); padding: 2px var(--cw-space-1); border-radius: var(--cw-radius-sm); }
+      .dc .people li:hover button, .dc .chans .ch:hover .x { visibility: visible; }
+      .dc .people li button:hover, .dc .chans .x:hover { background: var(--cw-hover); color: var(--cw-fg); }
+      .dc .chans .ch { display: flex; align-items: center; }
+      .dc .chans .ch > button:first-child { flex: 1; min-width: 0; }
       .dc .empty { color: var(--cw-muted); text-align: center; margin: auto; padding: var(--cw-space-5); }
       .dc .said { color: var(--cw-danger); font-size: var(--cw-text-sm); padding: var(--cw-space-2) var(--cw-space-4); margin: 0; }
       .dc dialog.ask { border: 0; border-radius: var(--cw-radius); padding: var(--cw-space-4); width: min(360px, calc(100vw - 32px));
@@ -75,7 +83,8 @@ export async function mount(ctx, el) {
       field.focus();
     });
 
-  let server = null, channelsT = null, channel = null, shown = null;
+  let server = null, channelsT = null, channel = null, shown = null, rs = null, mod = null;
+  const may = what => !!rs?.can(account.id, what);
 
   async function drawRail() {
     const servers = (await space.mine()).filter(s => s.kind === "server");
@@ -106,7 +115,7 @@ export async function mount(ctx, el) {
 
   // The top bar: Invite, once a server is open.
   const menu = () => {
-    ctx.actions["/chat"] = server ? [{ label: "Invite", run: inviteSomeone }] : [];
+    ctx.actions["/chat"] = server && may("invite") ? [{ label: "Invite", run: inviteSomeone }] : [];
     dispatchEvent(new CustomEvent("craftworks:actions"));
   };
   async function inviteSomeone() {
@@ -127,6 +136,7 @@ export async function mount(ctx, el) {
   async function openServer(s) {
     server = s;
     channel = null;
+    channelsT = null;
     menu();
     sideName.textContent = s.name;
     drawRail();
@@ -135,6 +145,23 @@ export async function mount(ctx, el) {
     roomEl.replaceChildren(theme.loading(`Opening ${s.name}…`));
     try {
       await keys.group(s).ready();
+      [rs, mod] = await Promise.all([roles.of(s), moderation.of(s)]);
+      await rs.refresh();
+      if (server !== s) return;
+      menu();
+      if (rs.left) {
+        const gone = `You were removed from ${s.name}.`;
+        chans.replaceChildren();
+        people.replaceChildren();
+        roomEl.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: gone }));
+        return;
+      }
+      rs.onChange(() => {
+        if (server !== s) return;
+        drawChannels();
+        drawMembers(s);
+        menu();
+      });
       const t = (channelsT = await storage.table(space.tableOf(s, "channels"), s));
       t.onChange(() => server === s && drawChannels());
       t.settled.finally(() => {
@@ -153,9 +180,12 @@ export async function mount(ctx, el) {
     }
   }
 
-  const list = () =>
-    channelsT
+  // The server's channels: those made by someone who may make channels, less the ones hidden (deleted).
+  const list = () => {
+    const hidden = mod?.hidden(channelsT.app) ?? new Set();
+    return channelsT
       .rows()
+      .filter(r => !hidden.has(r.key) && rs?.can(rs.author(r), "channels"))
       .map(r => {
         let v = {};
         try {
@@ -164,18 +194,24 @@ export async function mount(ctx, el) {
         return space.channel(server, r.key, v.name ?? r.key);
       })
       .sort((a, b) => a.name.localeCompare(b.name));
+  };
 
   function drawChannels() {
+    if (!channelsT) return;
     // A server's channels come from its members' feeds: none yet is not "none" until every one has been tried.
     if (!list().length && !channelsT.done) return chans.replaceChildren(theme.loading("Loading channels…"));
     chans.replaceChildren(
       ...list().map(c => {
+        const row = Object.assign(document.createElement("div"), { className: "ch" });
         const b = Object.assign(document.createElement("button"), { type: "button", textContent: `# ${c.name}` });
         b.setAttribute("aria-current", String(channel?.id === c.id));
         b.onclick = () => openChannel(c);
-        return b;
+        row.append(b);
+        if (may("channels"))
+          row.append(Object.assign(document.createElement("button"), { type: "button", className: "x", title: `Delete #${c.name}`, textContent: "✕", onclick: () => deleteChannel(c) }));
+        return row;
       }),
-      Object.assign(document.createElement("button"), { type: "button", className: "new", textContent: "+ Add a channel", onclick: addChannel }),
+      ...(may("channels") ? [Object.assign(document.createElement("button"), { type: "button", className: "new", textContent: "+ Add a channel", onclick: addChannel })] : []),
     );
   }
 
@@ -185,13 +221,46 @@ export async function mount(ctx, el) {
     await channelsT.put(newId(4), JSON.stringify({ name, at: Date.now() })).catch(e => say(`Could not add it: ${e?.message ?? e}`));
   }
 
-  // The server's members: the accounts in its group.
+  async function deleteChannel(c) {
+    if ((await ask(`Delete #${c.name}? Type its name`, "Delete")) !== c.name) return;
+    await mod.hide(channelsT.app, c.id.split("/").pop()).catch(e => say(`Could not delete it: ${e?.message ?? e}`));
+    if (channel?.id === c.id) {
+      channel = null;
+      shown?.close();
+      roomEl.replaceChildren();
+    }
+  }
+
+  // The server's members: the accounts in its group, with their roles; what this person may do to each.
+  const RANK = { owner: 3, admin: 2, member: 1 };
   async function drawMembers(s) {
     const dids = await conversation.members(s);
-    if (server !== s) return;
+    if (server !== s || !rs) return;
     if (!dids.length) return people.replaceChildren();
+    const mine = rs.role(account.id);
+    const button = (label, run) => Object.assign(document.createElement("button"), { type: "button", textContent: label, onclick: () => run().catch(e => say(`${label}: ${e?.message ?? e}`)) });
     const draw = names =>
-      people.replaceChildren(...dids.map((d, i) => Object.assign(document.createElement("li"), { textContent: `${directory.shown(d, names[i])}${d === account.id ? " (you)" : ""}`, title: d })));
+      people.replaceChildren(
+        ...dids.map((d, i) => {
+          const li = Object.assign(document.createElement("li"), { title: d });
+          const role = rs.role(d);
+          li.append(
+            Object.assign(document.createElement("span"), { className: "n", textContent: `${directory.shown(d, names[i])}${d === account.id ? " (you)" : ""}` }),
+            Object.assign(document.createElement("span"), { className: "r", textContent: role === "member" ? "" : role }),
+          );
+          if (d !== account.id && mine === "owner" && role !== "owner")
+            li.append(role === "admin" ? button("Make member", () => rs.grant(d, "member")) : button("Make admin", () => rs.grant(d, "admin")));
+          if (d !== account.id && may("remove") && RANK[mine] > RANK[role])
+            li.append(
+              button("Remove", async () => {
+                if ((await ask(`Remove ${directory.shown(d, names[i])} from ${s.name}? Type remove`, "Remove")) !== "remove") return;
+                await mod.remove(d);
+                drawMembers(s);
+              }),
+            );
+          return li;
+        }),
+      );
     draw([]);
     draw(await Promise.all(dids.map(d => directory.handle(d))));
   }

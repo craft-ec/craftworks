@@ -334,6 +334,25 @@ export async function start(ctx) {
           await keep(true, hexOf(from.secret));
           return hexOf(welcome);
         })),
+      // REMOVE nodes (their indexes in the group): one commit each, a new epoch each, which they cannot read.
+      remove: indexes =>
+        (queue = queue.then(async () => {
+          if (!m) throw new Error("this node is not in the space's group");
+          // Highest first: a removal leaves the other indexes as they are.
+          for (const i of [...indexes].sort((a, b) => b - a)) {
+            const from = m.status();
+            const commit = m.remove(i);
+            const r = await logs.commitAt(from.epoch, from.secret, commit);
+            if (!r.ok) {
+              const kept = await auth.identity.mlsLoad(sp.idBytes);
+              m = mlsGlue.Mls.load_space(sp.idBytes, bytes(kept.mlsState));
+              throw new Error("the group moved meanwhile: remove them again");
+            }
+            await keep(true, hexOf(from.secret));
+          }
+          ctx.log(`${sp.name ?? "space"} keys`, { what: `${indexes.length} node(s) removed: epoch ${m.status().epoch}` });
+          return st;
+        })),
       // JOINED from a welcome (this node was added): the group kept, and this node's account state saved (its key
       // package is used up).
       join: welcome =>
