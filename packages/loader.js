@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. A page that needs no node never loads the
 // node's code at all.
-const VERSION = "13";
+const VERSION = "14";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -114,12 +114,16 @@ export async function run(boot) {
   }
 
   // What a page shows: `["a", "b"]` is its body; `{ body, header?, footer? }` overrides the layout's slots.
-  async function show(route) {
-    const raw = manifest.pages[route] ?? manifest.pages["/"];
+  // A route names its page by the LONGEST page route it starts with; the rest is the page's SUB-PAGE (`#/account/nodes`:
+  // the page `/account`, `ctx.sub` "nodes").
+  async function show(full) {
+    const route = Object.keys(manifest.pages).filter(r => full === r || full.startsWith(r === "/" ? "/" : `${r}/`)).sort((a, b) => b.length - a.length)[0] ?? "/";
+    const raw = manifest.pages[route];
     const page = Array.isArray(raw) ? { body: raw } : raw;
     const t0 = performance.now();
-    ctx.log("page", { what: route });
+    ctx.log("page", { what: full });
     ctx.route = route;
+    ctx.sub = full.slice(route.length).replace(/^\//, "");
     for (const slot of ["header", "footer"]) {
       const names = page[slot] ?? manifest.layout?.[slot] ?? [];
       const key = JSON.stringify(names);

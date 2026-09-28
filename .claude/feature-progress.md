@@ -339,3 +339,8 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
 - OPEN: a space's group state is not carried by HandoverKeys yet (the next delegate build loses space groups).
 - OWNER ASKED (published size): manifest 54 KB lists every piece of every package; plan: one hash per package (pieces
   derived), split per page. Not done yet.
+- [x] Mac-style top bar for every app (owner): the header draws the app's MENU from `ctx.actions[route]` — sub-page links
+  (`{ label, href, on }`), actions, ending actions at the right (`end`: Log out); the loader routes a page by its longest
+  route prefix and gives the rest as `ctx.sub` (`#/account/nodes`); loader v14. Account split into Card, Nodes,
+  Security, Storage, Apps, Recovery (only the open one runs). Live: bar "⌂ Account Card Nodes Security Storage Apps
+  Recovery … Log out", each sub-page alone.
