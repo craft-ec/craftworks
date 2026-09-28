@@ -12,13 +12,18 @@
 //   await conversation.direct(did)   // a direct conversation with that person (made, and they are welcomed)
 //   await conversation.invite(sp, did) // that person into a space (a server): their nodes added, the welcome sent
 //   await conversation.accept()      // conversations waiting in this account's inbox: joined
-//   await conversation.list()        // this account's direct conversations
+//   await conversation.list()        // this account's conversations: direct ones and groups
+//   await conversation.group([did…], name)   // a group conversation (you and two or more others), each welcomed
 //   await conversation.members(sp)   // the accounts (DIDs) whose nodes are in a space's group
 //   await conversation.person(text)  // a DID from `did:craftec:…`, or from `name#abc123` among the people this account knows
 //   await conversation.createInvite(sp, { days, uses })  // an INVITE CODE for a space (0: no limit): "xxxx-xxxx-xxxx-xxxx"
 //   await conversation.revokeInvite(sp, code)
 //   await conversation.join(code)    // ask to join by a code: any member who may invite admits the asker when next online
 //   await conversation.admit(sp)     // the requests under this space's codes in force: each asker welcomed (and recorded)
+//   await conversation.befriend(did) // a FRIEND request (their inbox); friends once both have asked, or they accept
+//   await conversation.friendRequests()   // who asked this person, not yet answered: [did]
+//   await conversation.answerFriend(did, yes)
+//   (A BLOCKED person's welcomes, mail and requests are left unopened: `edge.people`.)
 //   await conversation.mail.send([did…], subject, body, re)   // a mail (re: the id of the one it answers)
 //   await conversation.mail.fetch()  // mails pointed to in the inbox, opened and kept
 //   await conversation.mail.list("in" | "sent")   // [{ id, from, to, subject, body, at, re }], newest first
@@ -41,8 +46,10 @@ export async function start(ctx) {
     return card;
   }
 
-  // DIRECT: a two-person space, the other welcomed.
+  // DIRECT: a two-person space, the other welcomed — or the one this person already has with them.
   async function direct(did) {
+    const had = (await space.mine()).find(s => s.kind === "direct" && s.with === did);
+    if (had) return had;
     const me = await space.account();
     const card = await directory.card(did);
     if (!card) throw new Error("that person has no card yet");
@@ -53,16 +60,60 @@ export async function start(ctx) {
   }
 
   // INVITE a person into a space this node is in (a server): their nodes join its group from the welcome.
-  const invite = (sp, did) => welcome(sp, did, sp.name);
+  // (Recorded as `added`: someone removed before is back by this.)
+  async function invite(sp, did) {
+    const r = await (await ctx.require("roles")).of(sp);
+    if (r.banned(did)) throw new Error("they are banned from this server");
+    const card = await welcome(sp, did, sp.name);
+    await r.act({ act: "added", did }).catch(e => ctx.log("conversation", { what: `recording the invite: ${e.message}` }));
+    return card;
+  }
+
+  const people = () => ctx.require("edge").then(e => e.people());
+
+  // FRIENDS: a request in their inbox; both asked (or one accepts) → friends on both sides.
+  async function befriend(did) {
+    const me = await space.account();
+    if (!me) throw new Error("nobody is logged in");
+    if (did === me.id) throw new Error("that is you");
+    const p = await people();
+    await p.set("asked", did, true);
+    await index.send(did, { kind: "friend", from: me.id, at: Date.now() });
+  }
+  async function friendRequests() {
+    const [p, items] = await Promise.all([people(), index.inbox()]);
+    await p.settled;
+    const asking = new Set();
+    for (const it of items) {
+      if (!it.from || p.is("block", it.from) || p.is("friend", it.from)) continue;
+      // Their yes to this person's request: friends.
+      if ((it.kind === "friend-yes" || it.kind === "friend") && p.is("asked", it.from)) {
+        await p.set("friend", it.from, true);
+        await p.set("asked", it.from, false);
+        if (it.kind === "friend") await index.send(it.from, { kind: "friend-yes", from: (await space.account()).id, at: Date.now() }).catch(() => {});
+        continue;
+      }
+      if (it.kind === "friend" && !p.is("declined", it.from)) asking.add(it.from);
+    }
+    return [...asking];
+  }
+  async function answerFriend(did, yes) {
+    const p = await people();
+    if (!yes) return p.set("declined", did, true);
+    await p.set("friend", did, true);
+    await p.set("declined", did, false);
+    await index.send(did, { kind: "friend-yes", from: (await space.account()).id, at: Date.now() });
+  }
 
   // WELCOMES in this account's inbox: every conversation not yet joined here, joined (with this node's key package).
   async function accept() {
     const me = await space.account();
     if (!me) return [];
     const listed = new Set((await space.mine()).map(s => s.id));
+    const p = await people();
     const out = [];
     for (const it of await index.inbox()) {
-      if (it.kind !== "welcome" || listed.has(it.space)) continue;
+      if (it.kind !== "welcome" || listed.has(it.space) || p.is("block", it.from)) continue;
       if (!it.welcome) continue;
       const v = { kind: it.spaceKind, name: it.name, owner: it.owner ?? it.from, nonce: it.nonce ?? null, ...(it.spaceKind === "direct" ? { with: it.from } : {}) };
       try {
@@ -81,7 +132,20 @@ export async function start(ctx) {
     return out;
   }
 
-  const list = async () => (await space.mine()).filter(s => s.kind === "direct");
+  // This person's conversations (Messages): direct ones and groups.
+  const list = async () => (await space.mine()).filter(s => s.kind === "direct" || s.kind === "group");
+
+  // A GROUP conversation: a space of several people (no channels, no roles to set up), each welcomed.
+  async function group(dids, name) {
+    const me = await space.account();
+    const others = [...new Set(dids)].filter(d => d !== me.id);
+    if (others.length < 2) throw new Error("a group is you and at least two others");
+    const names = await Promise.all(others.map(d => directory.name(d)));
+    const sp = await space.create("group", name?.trim() || names.join(", "));
+    for (const d of others) await welcome(sp, d, sp.name);
+    await (await content.in(sp)).post("system", "started the group");
+    return sp;
+  }
 
   // A space's MEMBERS: its people, as `roles` has them (the accounts its group's nodes' credentials name).
   async function members(sp) {
@@ -140,7 +204,7 @@ export async function start(ctx) {
     const out = [];
     for (const inv of r.invites()) {
       for (const q of await index.requests(inv.code)) {
-        if (q.kind !== "join" || !q.did || inside.has(q.did) || r.removed(q.did) || !r.invites().some(i => i.code === inv.code)) continue;
+        if (q.kind !== "join" || !q.did || inside.has(q.did) || r.banned(q.did) || !r.invites().some(i => i.code === inv.code)) continue;
         try {
           await welcome(sp, q.did, sp.name);
           await r.act({ act: "admitted", code: inv.code, did: q.did });
@@ -190,8 +254,9 @@ export async function start(ctx) {
       const t = await kept();
       const have = new Set(t.rows().map(r => r.key));
       let n = 0;
+      const p = await people();
       for (const it of await index.inbox()) {
-        if (it.kind !== "mail" || !it.from || !it.key || have.has(`in/${it.key}`)) continue;
+        if (it.kind !== "mail" || !it.from || !it.key || have.has(`in/${it.key}`) || p.is("block", it.from)) continue;
         try {
           const box = await directory.publicOf(it.from, MAIL);
           const sealed = box?.rows().find(r => r.key === it.key)?.value;
@@ -226,5 +291,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, invite, accept, list, members, person, mail, createInvite, revokeInvite, join, admit };
+  return { direct, group, invite, accept, list, members, person, mail, createInvite, revokeInvite, join, admit, befriend, friendRequests, answerFriend };
 }

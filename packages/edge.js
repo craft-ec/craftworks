@@ -7,7 +7,11 @@
 //   const labels = await edge.labels();  labels.list()  labels.of(ref)  labels.refs(id, prefix)  labels.onChange(fn)
 //     await labels.create(name)  labels.rename(id, name)  labels.remove(id)  labels.set(ref, id, on)  labels.clear(ref)
 //   await edge.adoptPinnedField(table, prefix)   // rows saved with an old `pinned: true` field → pins, field dropped
+//   const people = await edge.people(); people.is("follow", did)  people.list("friend")  await people.set("hide", did, on)
+//     people.onChange(fn) — me → a PERSON: follow · friend · asked (a friend request sent) · hide (their items unseen
+//     here) · block (hidden, and their welcomes, mail and requests refused)
 //
+// PEOPLE: table `people`, a row `<relation>/<did>` per link (one table: the relations are one mechanism).
 // PINS: table `pins`, a row per pinned ref. LABELS: table `tags` (its name from before; private tags):
 //   `l/<id>` { name } a label;  `a/<id>/<ref>` { at } that label on a thing.
 export async function start(ctx) {
@@ -100,5 +104,21 @@ export async function start(ctx) {
     }
   }
 
-  return { pins, labels, adoptPinnedField };
+  let peopleOpen = null;
+  const RELATIONS = new Set(["follow", "friend", "asked", "declined", "hide", "block"]);
+  function people() {
+    return (peopleOpen ??= storage.table("people").then(t => {
+      const is = (rel, did) => t.rows().some(r => r.key === `${rel}/${did}`);
+      const list = rel => t.rows().filter(r => r.key.startsWith(`${rel}/`)).map(r => r.key.slice(rel.length + 1));
+      const set = (rel, did, on) => {
+        if (!RELATIONS.has(rel)) throw new Error(`no relation “${rel}”`);
+        return on ? t.put(`${rel}/${did}`, JSON.stringify({ at: Date.now() })) : t.remove(`${rel}/${did}`);
+      };
+      // Whose items this person does not see: hidden or blocked.
+      const unseen = () => new Set([...list("hide"), ...list("block")]);
+      return { is, list, set, unseen, onChange: t.onChange, settled: t.settled };
+    }));
+  }
+
+  return { pins, labels, people, adoptPinnedField };
 }

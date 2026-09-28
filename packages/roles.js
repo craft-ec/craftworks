@@ -69,6 +69,7 @@ export async function start(ctx) {
     let counted = [];
     let owner = first;
     let invites = new Map();
+    let bans = new Set();
     function replay() {
       const acts = [];
       for (const r of t.rows()) {
@@ -83,6 +84,7 @@ export async function start(ctx) {
       roles = new Map(owner ? [[owner, "owner"]] : []);
       invites = new Map();
       const removed = new Set();
+      const banned = new Set();
       const roleAt = d => (removed.has(d) ? null : (roles.get(d) ?? "member"));
       counted = [];
       for (const a of acts) {
@@ -91,15 +93,24 @@ export async function start(ctx) {
         const inv = a.code && invites.get(a.code);
         const ok =
           (a.act === "grant" && r === "owner" && a.did !== owner && ["admin", "member"].includes(a.role)) ||
-          (a.act === "remove" && CAN[r]?.has("remove") && a.did !== a.by && RANK[r] > RANK[roleAt(a.did)]) ||
+          ((a.act === "remove" || a.act === "ban") && CAN[r]?.has("remove") && a.did !== a.by && RANK[r] > RANK[roleAt(a.did) ?? "member"]) ||
+          (a.act === "unban" && CAN[r]?.has("remove") && banned.has(a.did)) ||
+          (a.act === "added" && CAN[r]?.has("invite") && a.did && !banned.has(a.did)) ||
           (a.act === "hide" && CAN[r]?.has("moderate")) ||
           (a.act === "transfer" && r === "owner" && a.did && a.did !== a.by && !removed.has(a.did)) ||
           (a.act === "invite" && CAN[r]?.has("invite") && typeof a.code === "string" && a.code && !invites.has(a.code)) ||
           (a.act === "revoke-invite" && inv && (inv.by === a.by || CAN[r]?.has("moderate"))) ||
-          (a.act === "admitted" && CAN[r]?.has("invite") && inv && live(inv, a.at) && a.did && !removed.has(a.did));
+          (a.act === "admitted" && CAN[r]?.has("invite") && inv && live(inv, a.at) && a.did && !banned.has(a.did));
         if (!ok) continue;
         if (a.act === "grant") roles.set(a.did, a.role);
-        if (a.act === "remove") removed.add(a.did);
+        // Removed: out, and back only by an invite or a code (which clears it). Banned: out, and never back until unbanned.
+        if (a.act === "remove" || a.act === "ban") {
+          removed.add(a.did);
+          roles.delete(a.did);
+        }
+        if (a.act === "ban") banned.add(a.did);
+        if (a.act === "unban") banned.delete(a.did);
+        if (a.act === "added" || a.act === "admitted") removed.delete(a.did);
         if (a.act === "transfer") {
           roles.set(owner, "admin");
           owner = a.did;
@@ -108,9 +119,11 @@ export async function start(ctx) {
         if (a.act === "invite") invites.set(a.code, { code: a.code, by: a.by, at: a.at, expires: Number(a.expires) || 0, uses: Number(a.uses) || 0, admitted: [] });
         if (a.act === "revoke-invite") inv.revoked = a.at;
         if (a.act === "admitted" && !inv.admitted.includes(a.did)) inv.admitted.push(a.did);
+        if (a.act === "admitted") removed.delete(a.did);
         counted.push(a);
       }
       for (const d of removed) roles.set(d, null);
+      bans = banned;
     }
     replay();
 
@@ -136,7 +149,8 @@ export async function start(ctx) {
       author,
       acts: kind => (kind ? counted.filter(a => a.act === kind) : [...counted]),
       invites: () => [...invites.values()].filter(i => live(i)),
-      removed: did => counted.some(a => a.act === "remove" && a.did === did),
+      banned: did => bans.has(did),
+      bannedList: () => [...bans],
       // This node was removed from the space's group: it reads nothing newer.
       get left() {
         return left;
@@ -152,7 +166,7 @@ export async function start(ctx) {
       },
       async act(a) {
         if (!me) throw new Error("nobody is logged in");
-        const need = { grant: "grant", remove: "remove", hide: "moderate", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite" }[a.act];
+        const need = { grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite" }[a.act];
         if (!need || !can(me.id, need)) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
         await t.put(newId(), JSON.stringify({ ...a, at: Date.now() }));
       },

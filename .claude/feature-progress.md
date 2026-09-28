@@ -412,3 +412,14 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       earlier epoch, read S's message, replied; S read the reply. Members: one per DID. (Multi-device not exercised:
       one node per test account; the shared state path is the one every device takes.)
 - [ ] P5 (later) removing a device refreshes the DID's member in each space.
+
+## People and group conversations (owner 2026-09-28)
+- [x] `edge.people`: follow · friend · asked · declined · hide · block (one table, one mechanism). Friend requests via the
+      inbox (both asked, or accepted → friends both sides). Block: welcomes, mail, requests refused; hide/block: their
+      items unseen (content filters).
+- [x] roles: remove (back by invite/code, which clears it) vs ban (never, until unban); invites record `added`.
+- [x] `person` menu from any name (rooms, Chat members): Message (reuses the DM; opens `#/messages/<id>`), friend,
+      follow, hide, block; in a space by role: role selector (owner), Remove, Ban/Unban.
+- [x] Messages: group conversations (`conversation.group`, kind "group"; several people in New message), friend requests
+      at the top. Live: S → pat's menu, Message opened the DM; S made "Trio" with U and P (both joined, U posted);
+      P accepted S's friend request; U hid S in Kiln (3 → 2 messages).

@@ -14,7 +14,8 @@ export async function start(ctx) {
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cw-room .msgs { flex: 1; overflow-y: auto; margin: 0; padding: var(--cw-space-3) var(--cw-space-4); list-style: none; display: grid;
       align-content: end; gap: var(--cw-space-3); }
-    .cw-room .msg .who { font-weight: 600; margin-right: var(--cw-space-2); }
+    .cw-room .msg .who { font-weight: 600; margin-right: var(--cw-space-2); cursor: pointer; }
+    .cw-room .msg .who:hover { text-decoration: underline; }
     .cw-room .msg time { color: var(--cw-muted); font-size: var(--cw-text-xs); }
     .cw-room .msg .text { white-space: pre-wrap; overflow-wrap: anywhere; }
     .cw-room .msg.system { color: var(--cw-muted); font-size: var(--cw-text-sm); }
@@ -29,6 +30,9 @@ export async function start(ctx) {
     .cw-room .compose input { width: 100%; box-sizing: border-box; padding: 10px var(--cw-space-3); border-radius: var(--cw-radius); }`;
   document.head.append(style);
   const el = (tag, props) => Object.assign(document.createElement(tag), props);
+  // A name clicked: what can be done with that person (asked for the first time a name is clicked).
+  let personing = null;
+  const person = { then: f => (personing ??= ctx.require("person")).then(f) };
 
   async function show(host, conversation, title) {
     const me = (await space.account()).id;
@@ -72,7 +76,7 @@ export async function start(ctx) {
         ...items.map(m => {
           const li = el("li", { className: m.kind === "system" ? "msg system" : "msg" });
           li.append(
-            el("span", { className: "who", textContent: nameOf(m.by), title: m.by ?? "" }),
+            el("span", { className: "who", textContent: nameOf(m.by), title: m.by ?? "", onclick: e => m.by && person.then(p => p.open(e.currentTarget, m.by, { space: conversation })) }),
             el("time", { textContent: new Date(m.at).toLocaleString() }),
             el("div", { className: "text", textContent: m.body }),
           );

@@ -25,6 +25,11 @@ export async function mount(ctx, el) {
       .dm .new { margin: var(--cw-space-2); border: 1px solid var(--cw-line); background: none; color: var(--cw-accent);
         border-radius: var(--cw-radius-sm); padding: 8px; }
       .dm .room { min-width: 0; min-height: 0; }
+      .dm .req { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: var(--cw-space-2); border-radius: var(--cw-radius-sm);
+        background: var(--cw-hover); font-size: var(--cw-text-sm); margin-bottom: var(--cw-space-2); }
+      .dm .req span { flex: 1 1 100%; }
+      .dm .req button { border: 1px solid var(--cw-line); background: none; color: var(--cw-fg); border-radius: var(--cw-radius-sm); padding: 2px var(--cw-space-2); }
+      .dm .req button.yes { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       .dm .empty { color: var(--cw-muted); text-align: center; margin: auto; padding: var(--cw-space-5); }
       .dm .said { color: var(--cw-danger); font-size: var(--cw-text-sm); padding: 0 var(--cw-space-3); margin: 0; }
       .dm dialog.ask { border: 0; border-radius: var(--cw-radius); padding: var(--cw-space-4); width: min(420px, calc(100vw - 32px));
@@ -40,7 +45,8 @@ export async function mount(ctx, el) {
     <div class="dm listing">
       <aside class="list"><h2>Messages</h2><button class="new" type="button">+ New message</button><div class="people"></div><p class="said" hidden></p></aside>
       <section class="room"><p class="empty">Pick a conversation, or start one.</p></section>
-      <dialog class="ask"><form method="dialog"><label>Who? name#abc123 or their id (did:craftec:…) <input name="answer" autocomplete="off" required></label>
+      <dialog class="ask"><form method="dialog"><label>Who? One person, or several separated by commas for a group — name#abc123 or did:craftec:… <input name="answer" autocomplete="off" required></label>
+        <label>Group name (for several) <input name="group" autocomplete="off"></label>
         <div class="row"><button value="cancel" formnovalidate>Cancel</button><button value="ok">Start</button></div></form></dialog>
     </div>`;
   const $ = s => el.querySelector(s);
@@ -53,12 +59,31 @@ export async function mount(ctx, el) {
   let checking = true;
   people.replaceChildren(theme.loading("Loading conversations…"));
 
+  // FRIEND REQUESTS waiting: at the top, each answered here.
+  const requestsBox = document.createElement("div");
+  async function drawRequests() {
+    const asking = await conversation.friendRequests().catch(() => []);
+    const names = await Promise.all(asking.map(d => directory.name(d)));
+    requestsBox.replaceChildren(
+      ...asking.map((d, i) => {
+        const row = Object.assign(document.createElement("div"), { className: "req" });
+        const yes = Object.assign(document.createElement("button"), { type: "button", textContent: "Accept", className: "yes" });
+        const no = Object.assign(document.createElement("button"), { type: "button", textContent: "Decline" });
+        yes.onclick = () => conversation.answerFriend(d, true).then(drawRequests, e => say(e.message));
+        no.onclick = () => conversation.answerFriend(d, false).then(drawRequests, e => say(e.message));
+        row.append(Object.assign(document.createElement("span"), { textContent: `${names[i]} wants to be friends`, title: d }), yes, no);
+        return row;
+      }),
+    );
+  }
+
   async function drawList() {
     const list = await conversation.list();
     const names = await Promise.all(list.map(sp => (sp.with ? directory.name(sp.with) : sp.name)));
     people.replaceChildren(
+      requestsBox,
       ...list.map((sp, i) => {
-        const b = Object.assign(document.createElement("button"), { type: "button", textContent: names[i], title: sp.with ?? "" });
+        const b = Object.assign(document.createElement("button"), { type: "button", textContent: `${sp.kind === "group" ? "👥 " : ""}${names[i]}`, title: sp.with ?? "" });
         b.setAttribute("aria-current", String(open?.id === sp.id));
         b.onclick = () => show(sp, names[i]);
         return b;
@@ -73,7 +98,7 @@ export async function mount(ctx, el) {
     box.classList.remove("listing");
     drawList();
     shown?.close();
-    shown = await roomUI.show(roomEl, sp, `@${name}`);
+    shown = await roomUI.show(roomEl, sp, sp.kind === "group" ? name : `@${name}`);
   }
 
   $(".new").onclick = () => {
@@ -85,7 +110,13 @@ export async function mount(ctx, el) {
       if (!who) return;
       say("");
       try {
-        const did = await conversation.person(who);
+        const dids = await Promise.all(who.split(",").map(x => x.trim()).filter(Boolean).map(x => conversation.person(x)));
+        if (dids.length > 1) {
+          const sp = await conversation.group(dids, d.querySelector('input[name="group"]').value);
+          await drawList();
+          return show(sp, sp.name);
+        }
+        const did = dids[0];
         const sp = await conversation.direct(did);
         await show(sp, await directory.name(did));
       } catch (e) {
@@ -97,12 +128,21 @@ export async function mount(ctx, el) {
   };
 
   await drawList();
+  // Opened at a conversation (`#/messages/<id>`: from a person's Message): shown at once.
+  const at = async () => {
+    if (!ctx.sub) return;
+    const sp = (await conversation.list()).find(c => c.id === ctx.sub);
+    if (sp && open?.id !== sp.id) show(sp, sp.with ? await directory.name(sp.with) : sp.name);
+  };
+  at();
+  addEventListener("craftworks:route", () => el.isConnected && at());
+  drawRequests();
   // Conversations started with this person while they were away: joined now.
   conversation
     .accept()
     .catch(e => (ctx.log("conversation", { what: e?.message ?? String(e) }), []))
     .then(() => {
       checking = false;
-      return drawList();
+      return drawList().then(at);
     });
 }

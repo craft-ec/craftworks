@@ -8,8 +8,8 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [space, storage, keys, directory, roomUI, conversation, theme, roles, moderation, settings] = await Promise.all(
-    ["space", "storage", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "server-settings"].map(n => ctx.require(n)),
+  const [space, storage, keys, directory, roomUI, conversation, theme, roles, moderation, settings, person] = await Promise.all(
+    ["space", "storage", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "server-settings", "person"].map(n => ctx.require(n)),
   );
   const account = await space.account();
   el.classList.add("cw-fill");
@@ -268,7 +268,7 @@ export async function mount(ctx, el) {
     if (name) await channelOps.add(name).catch(e => say(`Could not add it: ${e?.message ?? e}`));
   }
 
-  // The server's members: the accounts in its group, with their roles. A click opens that person in the settings.
+  // The server's members: the accounts in its group, with their roles. A click: what can be done with that person.
   async function drawMembers(s) {
     const dids = await conversation.members(s);
     if (server !== s || !rs) return;
@@ -276,7 +276,7 @@ export async function mount(ctx, el) {
     const draw = names =>
       people.replaceChildren(
         ...dids.map((d, i) => {
-          const li = Object.assign(document.createElement("li"), { title: d, className: "who", onclick: () => openSettings("members", d) });
+          const li = Object.assign(document.createElement("li"), { title: d, className: "who", onclick: e => person.open(e.currentTarget, d, { space: s }) });
           const role = rs.role(d);
           li.append(
             Object.assign(document.createElement("span"), { className: "n", textContent: `${directory.shown(d, names[i])}${d === account.id ? " (you)" : ""}` }),

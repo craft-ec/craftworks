@@ -42,13 +42,16 @@ export async function start(ctx) {
         return null;
       }
     };
+    // What this person does not see: what moderation hid (for everyone), and whom they hid or blocked (for them).
+    const people = await (await ctx.require("edge")).people();
     const list = () => {
       const hidden = m ? m.hidden(container.messages) : new Set();
+      const unseen = people.unseen();
       return t
         .rows()
         .filter(row => !hidden.has(row.key))
         .map(item)
-        .filter(Boolean)
+        .filter(it => it && !unseen.has(it.by))
         .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
     };
     const mine = id => {
@@ -60,6 +63,7 @@ export async function start(ctx) {
     const changed = [];
     t.onChange(() => changed.forEach(f => f()));
     r?.onChange(() => changed.forEach(f => f()));
+    people.onChange(() => changed.forEach(f => f()));
     return {
       list,
       settled: Promise.all([t.settled, r?.settled]).then(() => {}),
