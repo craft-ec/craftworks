@@ -197,5 +197,11 @@ Out of scope now: recovery quorum (guardians), data-key rotation (moves tails), 
     only a REGISTRATION marks the account new (a words login used to, treating an existing catalog as absent).
     OPEN: a member that only ever logs in by PIN and never joined can't join without the words (Add by another member
     comes with spaces).
-  - [ ] 1d escrow: epoch secrets sealed to the words, so words alone recover history
+  - [x] 1d escrow: each epoch's secret sealed to the account's encryption PUBLIC key (key log head) as `e/<epoch>` in
+    the mls channel — only the words open it (a removed node, holding no words, cannot). A node joining with the words
+    recovers every earlier epoch into its delegate (EpochKeep, home only). Changing the words re-seals every escrow for
+    the new words and escrows after that go to them; before applying commits a node reloads the group with the current
+    key log (a join signed by the new owner is accepted). Tests: escrow opens with the words only (control: other
+    words), after a rotation with the new words only. Live: register → join (1 epoch recovered) → change words
+    (2 re-sealed) → NEW words join (2 recovered) → first node by PIN applies both joins.
   - [ ] 1e sealing whole tree nodes (a hook in freenet-prolly); tables sealed over

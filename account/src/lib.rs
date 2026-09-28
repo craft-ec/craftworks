@@ -118,6 +118,11 @@ fn public_of(seed: &[u8; 32]) -> [u8; 32] {
     SigningKey::from_bytes(seed).verifying_key().to_bytes()
 }
 
+/// The words' encryption PUBLIC key at index `j` (what their key-log events publish, and escrows are sealed to).
+pub fn enc_public_at(entropy: &[u8], j: u32) -> Option<[u8; 32]> {
+    Some(enc_public_of(&enc_seed_at(entropy, j)?))
+}
+
 fn enc_public_of(seed: &[u8; 32]) -> [u8; 32] {
     x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(*seed)).to_bytes()
 }
@@ -143,6 +148,43 @@ pub fn vault_open(enc_seed: &[u8; 32], vault: &[u8]) -> Option<[u8; 32]> {
     let (n, ct) = vault.split_at_checked(24)?;
     let pt = XChaCha20Poly1305::new((&vault_key(enc_seed)).into()).decrypt(XNonce::from_slice(n), ct).ok()?;
     pt.try_into().ok()
+}
+
+/// ESCROW: a secret (an MLS epoch's) sealed to the account's encryption PUBLIC key (in its key log), so the recovery
+/// words alone open it — and a node, which holds no words, never can (a removed node cannot open what is escrowed after
+/// its removal). X25519 with a one-time key (`eph_seed`, fresh randomness from the caller), then XChaCha20-Poly1305:
+/// `one-time public ‖ nonce ‖ sealed`.
+pub fn escrow_seal(enc_public: &[u8; 32], secret: &[u8; 32], eph_seed: [u8; 32]) -> Vec<u8> {
+    use chacha20poly1305::{aead::Aead, KeyInit, XChaCha20Poly1305, XNonce};
+    let eph = x25519_dalek::StaticSecret::from(eph_seed);
+    let eph_pub = x25519_dalek::PublicKey::from(&eph).to_bytes();
+    let shared = eph.diffie_hellman(&x25519_dalek::PublicKey::from(*enc_public));
+    let key = escrow_key(shared.as_bytes(), &eph_pub, enc_public);
+    let n = blake3::keyed_hash(&key, b"nonce");
+    let nonce = XNonce::from_slice(&n.as_bytes()[..24]);
+    let ct = XChaCha20Poly1305::new((&key).into()).encrypt(nonce, secret.as_slice()).expect("sealing 32 bytes cannot fail");
+    [&eph_pub[..], &n.as_bytes()[..24], &ct].concat()
+}
+
+fn escrow_key(shared: &[u8; 32], eph_pub: &[u8; 32], enc_public: &[u8; 32]) -> [u8; 32] {
+    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-09-28 escrow key");
+    h.update(shared);
+    h.update(eph_pub);
+    h.update(enc_public);
+    *h.finalize().as_bytes()
+}
+
+/// Open an escrow with the words (their encryption key at index 0: the key the words' own events publish).
+pub fn escrow_open(entropy: &[u8], blob: &[u8]) -> Option<[u8; 32]> {
+    use chacha20poly1305::{aead::Aead, KeyInit, XChaCha20Poly1305, XNonce};
+    let (eph_pub, rest) = blob.split_at_checked(32)?;
+    let (n, ct) = rest.split_at_checked(24)?;
+    let enc = x25519_dalek::StaticSecret::from(enc_seed_at(entropy, 0)?);
+    let enc_public = x25519_dalek::PublicKey::from(&enc).to_bytes();
+    let eph_pub: [u8; 32] = eph_pub.try_into().ok()?;
+    let shared = enc.diffie_hellman(&x25519_dalek::PublicKey::from(eph_pub));
+    let key = escrow_key(shared.as_bytes(), &eph_pub, &enc_public);
+    XChaCha20Poly1305::new((&key).into()).decrypt(XNonce::from_slice(n), ct).ok()?.try_into().ok()
 }
 
 /// The first event of the account these words make: owner key 0, the commitment to key 1, the data key (from these
@@ -397,6 +439,22 @@ mod tests {
         let again = change_words(&rotated, &new, &[7; 16]).unwrap();
         assert!(again.verify(&did));
         assert_eq!(open_log(&[7; 16], &again).unwrap().2, data);
+    }
+
+    #[test]
+    fn an_escrow_opens_with_the_words_and_nothing_else() {
+        let (words, other) = ([3u8; 16], [4u8; 16]);
+        let e = inception(&words).unwrap();
+        let secret = [77u8; 32];
+        let blob = escrow_seal(&e.enc, &secret, [9; 32]);
+        assert_eq!(escrow_open(&words, &blob), Some(secret));
+        assert_eq!(escrow_open(&other, &blob), None, "control: other words open nothing");
+        assert!(!blob.windows(32).any(|w| w == secret), "the secret is not in the blob");
+        // After the words changed, the head names the new words' key: escrows sealed to it open with them.
+        let rotated = change_words(&Log { events: vec![e] }, &words, &other).unwrap();
+        let blob2 = escrow_seal(&rotated.head().enc, &secret, [8; 32]);
+        assert_eq!(escrow_open(&other, &blob2), Some(secret));
+        assert_eq!(escrow_open(&words, &blob2), None);
     }
 
     #[test]

@@ -3,7 +3,9 @@
 // node's member state and each epoch's secret, and gives table keys to granted sites.
 //
 // THE CHANNEL is the account's table `mls` (one writer sequence: one agreed order): `info` = the group info a node
-// holding the words joins from; `c/<epoch>` = the commit that moved the group FROM that epoch. It is sealed with the
+// holding the words joins from; `c/<epoch>` = the commit that moved the group FROM that epoch; `e/<epoch>` = that
+// epoch's secret in ESCROW, sealed to the account's encryption key, so the recovery words alone reopen every epoch
+// (a node never can: it holds no words — a removed node opens nothing escrowed after its removal). It is sealed with the
 // words-derived key, not an MLS one: a node must read it before it has any epoch.
 //
 // - After a registration or a words login (`auth.onJoined`, while the words are in hand): the group is made (no group
@@ -30,6 +32,7 @@ export async function start(ctx) {
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
   const commitKey = e => `c/${String(e).padStart(12, "0")}`;
+  const escrowKey = e => `e/${String(e).padStart(12, "0")}`;
 
   let status = null; // the group as this page holds it
   let published = null; // the group info last written
@@ -40,6 +43,8 @@ export async function start(ctx) {
     const st = mls.status();
     const r = await auth.identity.mlsSave(st.state, st.epoch, st.secret);
     if (!r.mlsSaved) throw new Error(`the identity would not keep the account's keys: ${r.refused ?? JSON.stringify(r)}`);
+    // This epoch in escrow, once.
+    if (!channel.rows().some(x => x.key === escrowKey(st.epoch))) await channel.put(escrowKey(st.epoch), hexOf(st.escrow));
     const info = hexOf(st.info);
     const row = channel.rows().find(x => x.key === "info")?.value;
     if (info !== row && info !== published) {
@@ -50,9 +55,14 @@ export async function start(ctx) {
     return status;
   }
 
-  // Apply every commit newer than this node's epoch, in order.
+  // Apply every commit newer than this node's epoch, in order. First the group is loaded again with the key log as it
+  // is NOW: a node joining after the words changed carries the new owner's signature.
   async function catchUp(channel) {
     let n = 0;
+    if (channel.rows().some(x => x.key === commitKey(mls.status().epoch))) {
+      const s = await auth.check();
+      mls.load(s.didBytes, await keyLog(s.didBytes), mls.status().state);
+    }
     for (;;) {
       const next = channel.rows().find(x => x.key === commitKey(mls.status().epoch));
       if (!next) break;
@@ -86,9 +96,30 @@ export async function start(ctx) {
         }
         const st = await keep(channel);
         ctx.log("account keys", { what: `this node ${kind} the account's group: epoch ${st.epoch}, ${st.members.length} node(s)` });
+        // The epochs before this node joined: out of escrow with the words, kept here, so it reads what was written then.
+        let recovered = 0;
+        for (const row of channel.rows().filter(x => x.key.startsWith("e/") && Number(x.key.slice(2)) < st.epoch)) {
+          const secret = mlsGlue.Mls.open_escrow(entropy, bytes(row.value));
+          const r = await auth.identity.epochKeep(Number(row.key.slice(2)), secret);
+          if (r.mlsSaved) recovered += 1;
+        }
+        if (recovered) ctx.log("account keys", { what: `${recovered} earlier epoch(s) recovered from escrow` });
         return;
       }
       throw new Error("the account's group kept moving: joining it again next time");
+    })));
+
+  // NEW WORDS: every escrow sealed again for them (the old words open nothing after the change), and from now on escrows
+  // are sealed for them.
+  auth.onWordsChanged(({ old, fresh }) =>
+    (busy = busy.then(async () => {
+      const home = await auth.identity.mlsLoad();
+      if (home.refused) return;
+      const channel = await storage.table("mls");
+      const rows = channel.rows().filter(x => x.key.startsWith("e/"));
+      for (const row of rows) await channel.put(row.key, hexOf(mlsGlue.Mls.reseal_escrow(old, fresh, bytes(row.value))));
+      mls.escrow_to(fresh);
+      ctx.log("account keys", { what: `${rows.length} escrow(s) sealed again for the new words` });
     })));
 
   // Loaded (after a PIN login) and brought current.

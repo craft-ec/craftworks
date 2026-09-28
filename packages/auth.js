@@ -94,6 +94,9 @@ export async function start(ctx) {
     const keys = new Uint8Array(list.length * 32);
     list.forEach((m, i) => keys.set(hexBytes(m.key), i * 32));
     const c = core.change_words(idlogCode, registerCode, setCode, s.didBytes, old, fresh, keys, Date.now());
+    // Whoever holds something sealed for the old words re-seals it for the new ones, before the change is published
+    // (the `keys` capability: every epoch's escrow).
+    for (const f of wordsChanged) await f({ old, fresh });
     await put(c.log, "the account's key log");
     await put(c.whoami, "the new words' account");
     for (const m of c.members) await put(m, "a node's place in the account");
@@ -132,6 +135,7 @@ export async function start(ctx) {
   // account from before the key log, whose inception is put now (its tables and nodes stay where they were).
   let joining = null;
   const joined = [];
+  const wordsChanged = [];
   async function join(entropy, pin, { fresh = false } = {}) {
     if (!joining || joining.entropyHex !== hex(entropy)) {
       const [setCode, idlogCode, registerCode] = await codes();
@@ -176,6 +180,8 @@ export async function start(ctx) {
     check, accept: opened, unlock, join, logout, nodes, changeWords, readKeyLog, current: () => current, identity: id,
     // `fn({ entropy, did, fresh })`, called after a words login or a registration, before the words are wiped.
     onJoined: f => joined.push(f),
+    // `fn({ old, fresh })`, called while the words change, both in hand; an error stops the change.
+    onWordsChanged: f => wordsChanged.push(f),
   };
 }
 

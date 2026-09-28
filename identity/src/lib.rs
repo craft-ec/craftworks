@@ -102,6 +102,8 @@ pub enum Request {
     /// The key of table `table` in MLS epoch `epoch` (`None`: the newest this member holds): from that epoch's secret,
     /// kept here; to a site allowed that table only.
     TableKeyAt { table: String, epoch: Option<u64> },
+    /// KEEP an earlier epoch's secret (recovered from its escrow with the words): the home site only.
+    EpochKeep { epoch: u64, secret: [u8; 32] },
 }
 
 /// What the identity answers.
@@ -521,6 +523,16 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 || !h.set_secret(&[MLS, &m[..]].concat(), &state)
                 || (latest.is_none_or(|l| epoch >= l) && !h.set_secret(&[EPOCH_LATEST, &m[..]].concat(), &epoch.to_be_bytes()))
             {
+                return Refused(Why::NotSaved);
+            }
+            MlsSaved
+        }
+        Request::EpochKeep { epoch, secret } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            if !h.set_secret(&[EPOCH, &a.public()[..], &epoch.to_be_bytes()].concat(), &secret) {
                 return Refused(Why::NotSaved);
             }
             MlsSaved

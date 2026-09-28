@@ -23,3 +23,5 @@ blake3 = { version = "1", default-features = false }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.128"
 js-sys = "0.3"
+# The page's randomness (a one-time key per escrow): the same source mls-rs already uses here.
+getrandom = { version = "0.2", features = ["js"] }

@@ -401,14 +401,15 @@ mod js {
         AccountIdentity { did, owners: log.events.iter().map(|e| e.key).collect() }
     }
 
+    /// This node's member, and the account's encryption public key (its key log's head): where escrows are sealed.
     #[wasm_bindgen]
-    pub struct Mls(Option<Account>);
+    pub struct Mls(Option<Account>, [u8; 32]);
 
     #[wasm_bindgen]
     impl Mls {
         #[wasm_bindgen(constructor)]
         pub fn new() -> Mls {
-            Mls(None)
+            Mls(None, [0; 32])
         }
 
         /// With the WORDS (their owner key is derived here and never leaves): the group made (`group_info` empty) or
@@ -424,6 +425,7 @@ mod js {
                 (a, "joined", c)
             };
             self.0 = Some(acc);
+            self.1 = log.head().enc;
             Ok([JsValue::from(kind), js_sys::Uint8Array::from(&commit[..]).into()].into_iter().collect())
         }
 
@@ -432,6 +434,7 @@ mod js {
             let did = did32(did)?;
             let log = log_of(&did, log)?;
             self.0 = Some(Account::load(ident(did, &log), state).map_err(err)?);
+            self.1 = log.head().enc;
             Ok(())
         }
 
@@ -449,13 +452,40 @@ mod js {
             Ok(js_sys::Uint8Array::from(&self.member()?.remove(index).map_err(err)?[..]))
         }
 
-        /// `{ epoch, secret, info, me, members: [{ index, key }], state }`.
+        /// NEW WORDS: an escrow sealed for the old words, sealed again for the new (both are in hand while they change).
+        pub fn reseal_escrow(old: &[u8], new: &[u8], blob: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            let secret = craftworks_account::escrow_open(old, blob).ok_or_else(|| err("that escrow does not open with the old words"))?;
+            let enc = craftworks_account::enc_public_at(new, 0).ok_or_else(|| err("new recovery entropy: 16 or 32 bytes"))?;
+            let mut eph = [0u8; 32];
+            getrandom::getrandom(&mut eph).map_err(err)?;
+            Ok(js_sys::Uint8Array::from(&craftworks_account::escrow_seal(&enc, &secret, eph)[..]))
+        }
+
+        /// From now on, escrows are sealed for these words (after they replaced the old ones).
+        pub fn escrow_to(&mut self, entropy: &[u8]) -> Result<(), JsValue> {
+            self.1 = craftworks_account::enc_public_at(entropy, 0).ok_or_else(|| err("recovery entropy: 16 or 32 bytes"))?;
+            Ok(())
+        }
+
+        /// An epoch's secret out of its escrow, with the words (a node joining with them recovers the epochs before).
+        pub fn open_escrow(entropy: &[u8], blob: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            let s = craftworks_account::escrow_open(entropy, blob).ok_or_else(|| err("that escrow does not open with these words"))?;
+            Ok(js_sys::Uint8Array::from(&s[..]))
+        }
+
+        /// `{ epoch, secret, escrow, info, me, members: [{ index, key }], state }`: `escrow` is this epoch's secret sealed
+        /// to the account's encryption key (to publish), with a fresh one-time key.
         pub fn status(&mut self) -> Result<js_sys::Object, JsValue> {
+            let enc = self.1;
             let m = self.member()?;
             let o = js_sys::Object::new();
             let set = |k: &str, v: JsValue| js_sys::Reflect::set(&o, &k.into(), &v).map(|_| ());
             set("epoch", JsValue::from(m.epoch() as f64))?;
-            set("secret", js_sys::Uint8Array::from(&m.epoch_secret().map_err(err)?[..]).into())?;
+            let secret = m.epoch_secret().map_err(err)?;
+            set("secret", js_sys::Uint8Array::from(&secret[..]).into())?;
+            let mut eph = [0u8; 32];
+            getrandom::getrandom(&mut eph).map_err(err)?;
+            set("escrow", js_sys::Uint8Array::from(&craftworks_account::escrow_seal(&enc, &secret, eph)[..]).into())?;
             set("info", js_sys::Uint8Array::from(&m.group_info().map_err(err)?[..]).into())?;
             set("me", JsValue::from(m.my_index()))?;
             let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();

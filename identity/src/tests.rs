@@ -448,10 +448,15 @@ fn the_vault_keeps_mls_state_for_the_home_site_and_gives_epoch_table_keys_to_gra
     assert_eq!(at(&mut m, APP, "notes", None), Answer::TableKeyAt { epoch: 2, key: epoch_table_key(&[2; 32], "notes") });
     assert_eq!(at(&mut m, APP, "notes", Some(1)), Answer::TableKeyAt { epoch: 1, key: epoch_table_key(&[1; 32], "notes") });
     assert_eq!(at(&mut m, APP, "notes", Some(7)), Answer::Refused(Why::NoEpoch));
+    // An earlier epoch recovered from escrow: kept, readable by its number, the newest unchanged.
+    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 0, secret: [9; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(at(&mut m, APP, "notes", Some(0)), Answer::TableKeyAt { epoch: 0, key: epoch_table_key(&[9; 32], "notes") });
+    assert_eq!(at(&mut m, APP, "notes", None), Answer::TableKeyAt { epoch: 2, key: epoch_table_key(&[2; 32], "notes") });
     // Another site: no state at all, and table keys only for what it was granted.
     assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
     assert_eq!(serve(&mut m, Request::MlsLoad, OTHER), Answer::Refused(Why::NotHome));
     assert_eq!(serve(&mut m, Request::MlsSave { state: vec![], epoch: 3, secret: [3; 32] }, OTHER), Answer::Refused(Why::NotHome));
+    assert_eq!(serve(&mut m, Request::EpochKeep { epoch: 3, secret: [3; 32] }, OTHER), Answer::Refused(Why::NotHome));
     assert_eq!(at(&mut m, OTHER, "notes", None), Answer::Refused(Why::NotGranted { table: "notes".into() }));
     assert_eq!(ask(&mut m, OTHER, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
     assert_eq!(at(&mut m, OTHER, "notes", None), Answer::TableKeyAt { epoch: 2, key: epoch_table_key(&[2; 32], "notes") });

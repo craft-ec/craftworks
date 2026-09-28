@@ -394,6 +394,10 @@ mod js {
         pub fn frames_mls_save(&mut self, state: &[u8], epoch: f64, secret: &[u8]) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::MlsSave { state: state.to_vec(), epoch: epoch as u64, secret: b32(secret)? })
         }
+        /// Keep an earlier epoch's secret (recovered from escrow).
+        pub fn frames_epoch_keep(&mut self, epoch: f64, secret: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::EpochKeep { epoch: epoch as u64, secret: b32(secret)? })
+        }
         pub fn frames_mls_load(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::MlsLoad)
         }

@@ -30,6 +30,7 @@ export async function start(ctx) {
     // The account's MLS group on this node: its state and the current epoch's secret, kept by the delegate (home only).
     mlsSave: (state, epoch, secret) => call(core.frames_mls_save(state, epoch, secret), "keeping the account's keys"),
     mlsLoad: () => call(core.frames_mls_load(), "reading the account's keys"),
+    epochKeep: (epoch, secret) => call(core.frames_epoch_keep(epoch, secret), "keeping an earlier epoch's key"),
     // A table's key in an MLS epoch (-1: the newest this node holds).
     tableKeyAt: (table, epoch = -1) => call(core.frames_table_key_at(table, epoch), `the key of “${table}”`),
     revoke: (app, table) => call(core.frames_revoke(app, table), "removing an app's access"),
