@@ -8,6 +8,18 @@
 export async function start(ctx) {
   // No space named: the account's own group.
   const NONE = new Uint8Array(0);
+  // Ask an EARLIER build (`<key>:<code hash>`) one of the handover questions: its answer, or null (a build from before
+  // the question answers nothing readable; a node that never ran it answers nothing at all).
+  async function askPrior(prior, [id, frames], what) {
+    const key = prior.split(":")[0];
+    const said = await ask(
+      frames,
+      s => (s.kind === "identity" && s.answers.some(a => a.id === id || a.id === 0)) || (s.kind === "delegate-missing" && String(s.delegate).includes(key)),
+      `asking an earlier identity build for ${what}`,
+      20000,
+    ).catch(() => ({ kind: "none" }));
+    return said.kind === "identity" ? said.answers.find(a => a.id === id)?.answer ?? null : null;
+  }
   const { core, glue, ask } = await ctx.require("node");
   const reg = await ask(core.frames_register_identity(), s => s.kind === "registered" || s.kind === "refused", "registering the identity delegate");
   if (reg.kind !== "registered") throw new Error(`the node refused the identity delegate: ${reg.said}`);
@@ -116,33 +128,23 @@ export async function start(ctx) {
     // or its refusal, or `{ missing: true }` when this node never ran that build.
     // A member's KEYS from an earlier build (its group state, every epoch's secret), kept here: after `handoverFrom`,
     // so an update keeps its place in the account's group. A build from before this answers nothing it can read.
+    // A member's KEYS from an earlier build, kept here: its account group (state, every epoch's secret), then each of
+    // its SPACES' groups — so an update keeps its place in every group. A build from before either answers nothing it
+    // can read: that part is simply not moved.
     moveKeysFrom: async (prior, pin) => {
-      const [id, frames] = core.frames_handover_keys_from(prior, pin);
-      const key = prior.split(":")[0];
-      const said = await ask(
-        frames,
-        s => (s.kind === "identity" && s.answers.some(a => a.id === id || a.id === 0)) || (s.kind === "delegate-missing" && String(s.delegate).includes(key)),
-        "asking an earlier identity build for the member's keys",
-        20000,
-      ).catch(() => ({ kind: "none" }));
-      const k = said.kind === "identity" ? said.answers.find(a => a.id === id)?.answer?.handedKeys : null;
-      if (!k) return { moved: 0 };
       const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
-      for (const [e, secret] of k.epochs) await call(core.frames_epoch_keep(e, bytes(secret), NONE), "keeping an epoch's key");
-      const newest = k.epochs[k.epochs.length - 1];
-      if (k.mls && newest) await call(core.frames_mls_save(bytes(k.mls), newest[0], bytes(newest[1]), NONE), "keeping the account's keys");
-      return { moved: k.epochs.length, group: !!k.mls };
+      // One group into this build: every epoch's secret, then its state with the newest one.
+      const keepGroup = async (mls, epochs, space) => {
+        for (const [e, secret] of epochs) await call(core.frames_epoch_keep(e, bytes(secret), space), "keeping an epoch's key");
+        const newest = epochs[epochs.length - 1];
+        if (mls && newest) await call(core.frames_mls_save(bytes(mls), newest[0], bytes(newest[1]), space), "keeping a group's keys");
+      };
+      const k = (await askPrior(prior, core.frames_handover_keys_from(prior, pin), "the member's keys"))?.handedKeys;
+      if (k) await keepGroup(k.mls, k.epochs, NONE);
+      const sp = (await askPrior(prior, core.frames_handover_spaces_from(prior, pin), "the member's spaces"))?.handedSpaces ?? [];
+      for (const x of sp) await keepGroup(x.mls, x.epochs, bytes(x.space));
+      return { moved: k?.epochs.length ?? 0, group: !!k?.mls, spaces: sp.length };
     },
-    handoverFrom: async (prior, pin) => {
-      const [id, frames] = core.frames_handover_from(prior, pin);
-      const key = prior.split(":")[0];
-      const said = await ask(
-        frames,
-        s => (s.kind === "identity" && s.answers.some(a => a.id === id)) || (s.kind === "delegate-missing" && String(s.delegate).includes(key)),
-        "asking an earlier identity build",
-        20000,
-      );
-      return said.kind === "identity" ? said.answers.find(a => a.id === id).answer : { missing: true };
-    },
+    handoverFrom: async (prior, pin) => (await askPrior(prior, core.frames_handover_from(prior, pin), "the member")) ?? { missing: true },
   };
 }

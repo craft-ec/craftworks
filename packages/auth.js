@@ -68,7 +68,7 @@ export async function start(ctx) {
       // Its keys too (the account's group, the epochs it could read), before anything reads a table.
       if (p.unlocked) {
         const k = await id.moveKeysFrom(prior, pin).catch(e => ({ moved: 0, said: e.message }));
-        ctx.log("member moved", { what: `its keys: ${k.group ? "the account's group and " : ""}${k.moved} epoch(s)${k.said ? ` (${k.said})` : ""}` });
+        ctx.log("member moved", { what: `its keys: ${k.group ? "the account's group and " : ""}${k.moved} epoch(s), ${k.spaces ?? 0} space(s)${k.said ? ` (${k.said})` : ""}` });
       }
       return p;
     }

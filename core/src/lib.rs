@@ -39,6 +39,10 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::MlsState { state } => json!({ "mlsState": state.as_ref().map(|s| hex(s)) }),
         Answer::TableKeyAt { epoch, key } => json!({ "tableKey": hex(key), "epoch": epoch }),
         Answer::InboxKey { public } => json!({ "inboxKey": hex(public) }),
+        Answer::HandedSpaces { spaces } => json!({ "handedSpaces": spaces.iter().map(|(id, st, eps)| json!({
+            "space": hex(id), "mls": st.as_ref().map(|s| hex(s)),
+            "epochs": eps.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>() }),
         Answer::Opened { items } => json!({ "opened": items.iter().map(|i| i.as_ref().map(|b| hex(b))).collect::<Vec<_>>() }),
         Answer::HandedKeys { mls, epochs } => json!({ "handedKeys": {
             "mls": mls.as_ref().map(|s| hex(s)),
@@ -122,7 +126,7 @@ impl Core {
     /// Ask an EARLIER build of the identity delegate, named `<key>:<code hash>` (base58, as the manifest's
     /// `identity_prior` lists them): only to move a member to this build — `Handover`, then `HandoverKeys`.
     pub fn frames_prior(&mut self, prior: &str, req: &Request) -> Result<(u32, Vec<Vec<u8>>), String> {
-        if !matches!(req, Request::Handover { .. } | Request::HandoverKeys { .. }) {
+        if !matches!(req, Request::Handover { .. } | Request::HandoverKeys { .. } | Request::HandoverSpaces { .. }) {
             return Err("an earlier build is asked only to hand a member over".into());
         }
         let b32 = |s: &str| -> Result<[u8; 32], String> {
@@ -405,6 +409,11 @@ mod js {
         /// `[id, frames]` of a Handover asked of an earlier build (`<key>:<code hash>`).
         pub fn frames_handover_from(&mut self, prior: &str, pin: String) -> Result<js_sys::Array, JsValue> {
             let (id, f) = self.0.frames_handover(prior, pin).map_err(err)?;
+            Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
+        }
+        /// `[id, frames]` of a HandoverSpaces asked of an earlier build: the member's spaces' groups and epoch secrets.
+        pub fn frames_handover_spaces_from(&mut self, prior: &str, pin: String) -> Result<js_sys::Array, JsValue> {
+            let (id, f) = self.0.frames_prior(prior, &Request::HandoverSpaces { pin }).map_err(err)?;
             Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
         }
         /// `[id, frames]` of a HandoverKeys asked of an earlier build: the member's group state and epoch secrets.

@@ -609,3 +609,20 @@ fn the_inbox_is_opened_by_the_accounts_nodes_for_the_home_site_only() {
     assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
     assert_eq!(open(&mut m, OTHER), Answer::Refused(Why::NotHome));
 }
+
+#[test]
+fn a_members_spaces_go_to_the_next_build_on_its_pin_to_its_home_only() {
+    let mut m = provisioned(APP);
+    let x = [0x51; 32];
+    assert_eq!(serve(&mut m, Request::MlsSave { space: Some(x), state: b"server x".to_vec(), epoch: 2, secret: [2; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::EpochKeep { space: Some(x), epoch: 0, secret: [9; 32] }, APP), Answer::MlsSaved);
+    // The account's own group is not a space: not in the list.
+    assert_eq!(serve(&mut m, Request::MlsSave { space: None, state: b"account".to_vec(), epoch: 1, secret: [1; 32] }, APP), Answer::MlsSaved);
+    let spaces = |m: &mut Map, pin: &str, app| serve(m, Request::HandoverSpaces { pin: pin.into() }, app);
+    assert_eq!(
+        spaces(&mut m, ALICE_PIN, APP),
+        Answer::HandedSpaces { spaces: vec![(x, Some(b"server x".to_vec()), vec![(0, [9; 32]), (2, [2; 32])])] }
+    );
+    assert_eq!(spaces(&mut m, ALICE_PIN, OTHER), Answer::Refused(Why::NotHome));
+    assert!(matches!(spaces(&mut m, "000000", APP), Answer::WrongPin { .. }));
+}

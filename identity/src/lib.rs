@@ -118,6 +118,9 @@ pub enum Request {
     /// OPEN items sealed to the account's inbox key: each opened, or `None` (not sealed to it). The home site only: the
     /// inbox is the person's, not a site's.
     InboxOpen { items: Vec<Vec<u8>> },
+    /// With `HandoverKeys`, to the next build: the member's SPACES on the right PIN — each space's group state and every
+    /// epoch's secret it holds — so an update never costs a member a server or a conversation. Its home only.
+    HandoverSpaces { pin: String },
 }
 
 /// What the identity answers.
@@ -149,6 +152,8 @@ pub enum Answer {
     HandedKeys { mls: Option<Vec<u8>>, epochs: Vec<(u64, [u8; 32])> },
     InboxKey { public: [u8; 32] },
     Opened { items: Vec<Option<Vec<u8>>> },
+    /// A member's spaces, handed to the next build: `(space id, its group state, its epochs' secrets)`.
+    HandedSpaces { spaces: Vec<([u8; 32], Option<Vec<u8>>, Vec<(u64, [u8; 32])>)> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -724,6 +729,28 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                         .collect(),
                 };
                 HandedKeys { mls: h.get_secret(&[MLS, &m[..]].concat()).filter(|s| !s.is_empty()), epochs }
+            }
+        },
+        Request::HandoverSpaces { pin } => match try_pin(h, &pin) {
+            Err(answer) => answer,
+            Ok(a) if a.home != app => Refused(Why::NotHome),
+            Ok(a) => {
+                if !h.set_secret(TRIES, &[0]) {
+                    return Refused(Why::NotSaved);
+                }
+                let m = a.public();
+                let spaces = spaces_of(h, &m)
+                    .into_iter()
+                    .map(|id| {
+                        let sp = Some(id);
+                        let epochs = match latest_in(h, &m, &sp) {
+                            None => Vec::new(),
+                            Some(l) => (0..=l).filter_map(|e| Some((e, secret_in(h, &m, &sp, e)?))).collect(),
+                        };
+                        (id, h.get_secret(&in_space(MLS, &m, &sp)).filter(|s| !s.is_empty()), epochs)
+                    })
+                    .collect();
+                HandedSpaces { spaces }
             }
         },
         Request::InboxKey => {
