@@ -297,6 +297,40 @@ mod tests {
         assert!(!r.absorb_block(&other, &wire::block::block_state(id, body).unwrap()));
     }
 
+    /// ERASURE: once a table's tree is past one leaf, its root lists parity for its children, and every one of
+    /// those parity blocks is among what the flush PUT (none is owed and left unsent). A single-leaf tree has no
+    /// children, so no parity: the control.
+    #[test]
+    fn a_tree_past_one_leaf_puts_parity_for_its_blocks() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let mut o = Open::new(CODE, &key.verifying_key().to_bytes(), "notes");
+        let mut put: std::collections::HashSet<Cid> = Default::default();
+        let mut flush = |o: &mut Open, round: usize, n: usize, size: usize| {
+            for i in 0..n {
+                write(&key, o, &format!("{round:02}-{i:03}"), &"x".repeat(size));
+            }
+            let Ok(Step::Ready(f)) = o.flush() else { panic!("ready") };
+            put.extend(f.blocks.iter().map(|(c, _)| *c));
+            o.commit(sign(&key, o, f.seq, f.hash)).unwrap();
+        };
+        // Small: one leaf, a root with no children, so nothing to code.
+        flush(&mut o, 0, 3, 10);
+        let root = o.writer.body().root.unwrap();
+        let node = freenet_prolly::store::load(&o.blocks, &root).unwrap();
+        assert_eq!((node.level(), node.parity_count()), (0, 0), "control: a one-leaf tree has no parity");
+        // Past one leaf.
+        for round in 1..6 {
+            flush(&mut o, round, FLUSH_AT, 200);
+        }
+        let root = o.writer.body().root.unwrap();
+        let node = freenet_prolly::store::load(&o.blocks, &root).unwrap();
+        assert!(node.level() >= 1, "the tree grew a branch");
+        assert!(node.parity_count() >= freenet_prolly::parity::PARITY, "the root's children are coded");
+        for p in node.parity() {
+            assert!(put.contains(&p), "parity block {} was put by a flush", crate::hex(&p));
+        }
+    }
+
     #[test]
     fn a_wrong_signature_sends_nothing() {
         let key = SigningKey::from_bytes(&[5; 32]);
