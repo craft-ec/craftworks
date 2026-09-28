@@ -335,7 +335,7 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
     pat#8r4orC, the conversation shows sam#EAsepm / pat#8r4orC, a message sent from it; Account "Published as sam#EAsepm".
   - OPEN: a space's group (a server, a conversation) is not carried by HandoverKeys: the next delegate build loses it
     (this build change lost S's server "Craft"). Next to fix, before more spaces are relied on.
-- [ ] C3 invites (join request, a member adds), C5 every node of each member   (C4 roles/moderation: done, plan step 5)
+- [ ] C3 invites (join request, a member adds), C5 → REPLACED (owner 09-28): one member per DID in a space, its keys the account's (devices only sign in) (C4 roles/moderation: done, plan step 5)
 - OPEN: a space's group state is not carried by HandoverKeys yet (the next delegate build loses space groups).
 - OWNER ASKED (published size): manifest 54 KB lists every piece of every package; plan: one hash per package (pieces
   derived), split per page. Not done yet.

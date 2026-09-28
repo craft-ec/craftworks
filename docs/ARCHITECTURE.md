@@ -81,12 +81,17 @@ uses the tokens, never its own colours or sizes — so a new look, or a second t
   self-certifying key log (each event reveals the key the one before committed to). Recovery words can be changed; the
   DID and the data stay. People are shown as **handle + id**: handles are not unique.
 - **Your account is a space** whose members are your nodes. Its log is the key log.
+- **A DID is the member; a device is a way to sign in** (owner, 2026-09-28). Every other space knows PEOPLE: its group
+  has one member per DID, whose keys are the ACCOUNT's — kept sealed in the account's storage, so any device logged in
+  to the account uses them (as it uses the data key). Devices never appear in a space: adding one is logging in;
+  removing one refreshes the account's member in each space (from a device that remains), so the removed one reads
+  nothing newer. Two devices changing a space at once: the epoch log's order decides, the other reloads.
 - **Ordering.** Shared state changes by acts in an ordered log; an act counts only if its signer's role allowed it at
   that point. First: one log per object/space with a deterministic tie-break. Later, when needed: witnessed snapshots
   (a known witness set, quorums that intersect).
 - **Roles are per space** (holding a role never crosses spaces); definitions are built-in, published templates, or local.
 - **Confidentiality.** Every private table is sealed; its key is **MLS export(epoch secret, table)**, the epoch being its
-  generation. MLS is the one key manager: a space's members, or your account's nodes. Epoch secrets are also escrowed
+  generation. MLS is the one key manager: a space's members (one per DID), or your account's nodes. Epoch secrets are also escrowed
   to the recovery words, so the words alone recover history. Newcomers' access to history is a per-space policy.
 - **Sealing covers whole tree nodes**, so keys stay ordered inside sealed blocks (range reads work) and counts and shape
   are hidden. Each block (node, value, parity) is sealed whole and lives in a **Sealed** contract at a keyed hash of
