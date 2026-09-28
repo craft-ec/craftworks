@@ -7,11 +7,13 @@ export async function start(ctx) {
   await glue.default({ module_or_path: await ctx.require("core-wasm") });
   ctx.log("core started", { what: "wire framing (wasm)" });
 
-  // The node that served this page, unless `?node=` names another on this machine.
-  const port = Number(ctx.params.get("node") ?? location.port);
-  if (!port) throw new Error("no node port: this page was not served by a node, and no ?node= names one");
+  // The node that served this page — at its own origin, so a gateway on https (try.freenet.org) is reached over wss —
+  // unless `?node=` names another on this machine.
+  const other = ctx.params.get("node");
   const core = new glue.CraftworksCore(await ctx.require("identity-wasm"));
-  const url = glue.ws_url(location.hostname, port);
+  const url = other
+    ? glue.ws_url(location.hostname, Number(other))
+    : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/v1/contract/command?encodingProtocol=native`;
 
   const ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
