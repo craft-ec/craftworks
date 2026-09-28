@@ -92,7 +92,8 @@ export async function start(ctx) {
     };
     input.disabled = false;
     input.focus();
-    return { close: () => (open = false) };
+    // Its messages still arriving (every author's feed tried): whoever shows the room waits on it with it.
+    return { close: () => (open = false), settled: room.settled };
   }
 
   return { show };

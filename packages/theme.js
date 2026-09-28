@@ -92,6 +92,12 @@ export async function start() {
     #app > .slot-body > section { flex: 1 1 auto; min-height: 0; margin: 0; overflow-y: auto; overscroll-behavior: contain;
       padding: var(--cw-space-3) var(--cw-gutter); box-sizing: border-box; }
     #app > .slot-body > section { position: relative; }
+    /* A panel still working after its first load: a thin moving line along its top. */
+    #app > .slot-body > section[aria-busy="true"]::before { content: ""; position: sticky; top: 0; z-index: 6; display: block;
+      flex: none; height: 2px; margin-bottom: -2px; background: linear-gradient(90deg, transparent, var(--cw-accent), transparent)
+      0 0 / 40% 100% no-repeat; animation: cw-busy 1.1s ease-in-out infinite; }
+    @keyframes cw-busy { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+    @media (prefers-reduced-motion: reduce) { #app > .slot-body > section[aria-busy="true"]::before { animation: none; background-size: 100% 100%; } }
     .cw-loading.cw-cover { position: absolute; inset: 0; z-index: 5; align-content: start; background: var(--cw-bg);
       padding: var(--cw-space-3) var(--cw-gutter); }
     #app > .slot-body > section.cw-fill { overflow: hidden; padding: 0; display: flex; flex-direction: column; }

@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. A page that needs no node never loads the
 // node's code at all.
-const VERSION = "17";
+const VERSION = "18";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -119,21 +119,62 @@ export async function run(boot) {
 
   // A component still on its way shows the theme's placeholder in its place, until it has drawn itself (it replaces
   // its element's contents) or its mount is over. Every component of a slot gets one at once: what is coming, shown.
-  // It stays until the component is SETTLED: mounted, and everything it said it is waiting on (`ctx.pending(promise)`:
-  // storage says it for each table it opens — every writer's feed tried) is in, or 20 s have passed. A component that
-  // draws itself at once (replacing its element's contents) keeps the placeholder over it meanwhile.
-  const placeholders = new Map(); // element -> placeholder
-  const pendingOf = new Map(); // component name -> Set of promises it waits on
-  ctx.pending = p => pendingOf.get(working.at(-1))?.add(Promise.resolve(p).catch(() => {}));
-  async function settle(name) {
-    const waits = pendingOf.get(name) ?? new Set();
-    const cap = new Promise(r => setTimeout(r, 20000));
-    for (let seen = -1; seen !== waits.size; ) {
-      seen = waits.size;
-      await Promise.race([Promise.all(waits), cap]);
-    }
-    pendingOf.delete(name);
+  // A component's LOADING is INHERITED from the capabilities it uses: each component gets its own view of them
+  // (`ctx.require` in the ctx it is mounted with), and every call through that view still running — and every result
+  // that says it is still arriving (a `settled` promise: a table, a room) — is that component's work. Until its first
+  // work is done (or 20 s) the placeholder covers it; later work marks its panel busy (`aria-busy`: the theme's line).
+  // `ctx.pending(promise)`: anything else a component waits on.
+  const CAP = 20000;
+  function tracker(el) {
+    let n = 0;
+    let first = null;
+    const idle = [];
+    const work = p => {
+      const w = Promise.race([Promise.resolve(p), new Promise(r => setTimeout(r, CAP))]).catch(() => {});
+      n += 1;
+      el.setAttribute("aria-busy", "true");
+      w.finally(() => {
+        n -= 1;
+        if (n) return;
+        el.removeAttribute("aria-busy");
+        for (const f of idle.splice(0)) f();
+      });
+      return p;
+    };
+    // Settled: mounted, then nothing of its own running (checked a turn later: a call may follow another's result).
+    const settled = mounted =>
+      (first ??= Promise.race([new Promise(r => setTimeout(r, CAP)), mounted.then(
+        () =>
+          new Promise(function check(done) {
+            setTimeout(() => (n ? idle.push(() => check(done)) : done()));
+          }),
+      )]));
+    return { work, settled };
   }
+  // A capability as a component sees it: its functions, each call counted as the component's work. What a call gives
+  // back is seen the same way (a table's own calls count too), and a result's `settled` is waited on. Only plain
+  // objects are viewed (a capability, a table); data, bytes and DOM pass as they are.
+  const plain = v => v && typeof v === "object" && [Object.prototype, null].includes(Object.getPrototypeOf(v));
+  function view(v, work) {
+    if (!plain(v) || !Object.values(v).some(x => typeof x === "function")) return v;
+    return new Proxy(v, {
+      get(t, k) {
+        const x = Reflect.get(t, k, t);
+        if (typeof x !== "function") return x;
+        return (...args) => {
+          const r = x.apply(t, args);
+          if (!(r instanceof Promise)) return plain(r) ? view(r, work) : r;
+          return work(
+            r.then(got => {
+              if (got?.settled instanceof Promise) work(got.settled);
+              return view(got, work);
+            }),
+          );
+        };
+      },
+    });
+  }
+  const placeholders = new Map(); // element -> placeholder
   async function fill(slot, names) {
     slots[slot].replaceChildren();
     const theme = manifest.theme ? await require(manifest.theme) : null;
@@ -163,11 +204,16 @@ export async function run(boot) {
       const mod = await require(name);
       const t = performance.now();
       working.push(name);
-      pendingOf.set(name, new Set());
       const p = placeholders.get(el);
-      await Promise.resolve(mod.mount(ctx, el)).finally(() => working.pop());
+      const track = tracker(el);
+      const own = Object.create(ctx);
+      own.require = n => require(n).then(v => view(v, track.work));
+      own.pending = track.work;
+      const mounted = Promise.resolve(mod.mount(own, el)).finally(() => working.pop());
+      await mounted.catch(() => {});
       // Not awaited: the next component mounts meanwhile; this one's placeholder goes when it is settled.
-      settle(name).finally(() => p?.done());
+      track.settled(mounted).finally(() => p?.done());
+      await mounted;
       ctx.log("mounted", { what: `${slot}: ${name}`, ms: Math.round(performance.now() - t) });
     }
   }
