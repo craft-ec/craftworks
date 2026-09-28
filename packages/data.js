@@ -17,29 +17,16 @@ export async function start(ctx) {
   const Core = glue.CraftworksCore;
   const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
 
-  // A table's VIEW, walked to the end: the tail names the tree's root; a view that needs tree blocks names their
-  // Block contracts, each fetched (its answer is the next view), until the rows are all there. Returns the last view:
-  // `{ kind: "tail", tail: { rows, … } }`, or `tail-unreadable`.
-  // One tree block, by its Block contract id: its answer is the table's next view, or `get-failed`.
-  const fetchBlock = (b, app) => {
-    const [, frames] = core.frames_get(bytes(b));
-    return ask(frames, x => x.block === b || (x.kind === "get-failed" && x.id === b), `reading ${app}'s tree`, 30000).catch(() => ({ kind: "get-failed", id: b }));
-  };
+  // Tree blocks go through the ONE door for them (fetch raced against parity, put).
+  const blocks = await ctx.require("blocks");
 
+  // A table's VIEW, walked to the end: the tail names the tree's root; a view that needs tree blocks names their
+  // Block contracts, fetched (raced, rebuilt if missing) until the rows are all there. Returns the last view:
+  // `{ kind: "tail", tail: { rows, … } }`, or `tail-unreadable`.
   async function settle(view, app) {
     for (let round = 0; view.kind === "tail-need"; round++) {
       if (round >= 16) throw new Error(`${app}: the tree did not finish loading`);
-      const t0 = performance.now();
-      const answers = await Promise.all(view.blocks.map(b => fetchBlock(b, app)));
-      ctx.log("tree read", { what: `${app}: ${view.blocks.length} block(s)`, ms: Math.round(performance.now() - t0) });
-      // A block the network no longer has: rebuilt from its group (any k of its k + 8), verified against its id.
-      for (const lost of answers.filter(a => a.kind === "get-failed").map(a => a.id)) {
-        const t1 = performance.now();
-        const group = Array.from(core.tail_repair(bytes(view.id), lost));
-        await Promise.all(group.map(b => fetchBlock(b, app)));
-        core.tail_rebuild(lost);
-        ctx.log("tree repaired", { what: `${app}: block ${lost.slice(0, 12)}… rebuilt from ${group.length} of its group`, ms: Math.round(performance.now() - t1) });
-      }
+      await blocks.fetch(view.id, view.blocks, app);
       view = JSON.parse(core.tail_view(bytes(view.id)));
     }
     if (view.kind === "tail-unreadable") throw new Error(`${app}: ${view.said}`);
@@ -244,14 +231,12 @@ export async function start(ctx) {
           await settle({ kind: "tail-need", id: idHex, blocks: f.need }, app);
           continue;
         }
-        const puts = await Promise.all(
-          f.puts.map(([key, frames]) => ask(frames, x => (x.kind === "put" && x.key === key) || x.kind === "refused", `putting ${app}'s tree`, 60000)),
-        );
-        const refused = puts.find(p => p.kind === "refused");
-        if (refused) {
+        try {
+          await blocks.put(f.puts, app);
+        } catch (e) {
           core.tail_reset(id);
           await read();
-          throw new Error(`a tree block was refused: ${refused.said}`);
+          throw e;
         }
         const r = await auth.identity.sign(f.params, f.seq, f.valueHash);
         if (!r.signed) {

@@ -1,0 +1,92 @@
+// BLOCKS, a service: the ONE door for tree blocks — fetching them (raced, and rebuilt from parity when they are
+// missing) and putting them. Every table's tree goes through here; nothing else asks the node for a block.
+//
+// A FETCH RACES (the owner's rule 11, sdk#303; the SDK engine's `race_get`): a block and every other block of its
+// sibling group are asked AT ONCE, and whichever comes first ends it — the block itself, or any k of its group, from
+// which the core rebuilds it and keeps it only if it hashes to the id asked for. A slow or silent block costs nothing
+// extra, and a lost one is not waited on. Each block is asked ONCE however many reads want it. A block no held node
+// names a group for (a root written before root parity) is asked alone.
+//
+//   const blocks = await ctx.require("blocks");
+//   await blocks.fetch(tailIdHex, [blockContractHex, …], "notes")   // all held, or throws
+//   await blocks.put([[name, frames], …], "notes")                   // all accepted, or throws
+export async function start(ctx) {
+  const { core, ask } = await ctx.require("node");
+  const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
+
+  // One GET per block in flight: its answer is the table's next view (tagged with the block), or `get-failed`.
+  const inflight = new Map();
+  function get(b, what) {
+    if (!inflight.has(b)) {
+      const [, frames] = core.frames_get(bytes(b));
+      const p = ask(frames, x => x.block === b || (x.kind === "get-failed" && x.id === b), what, 30000)
+        .catch(() => ({ kind: "get-failed", id: b }))
+        .finally(() => inflight.delete(b));
+      inflight.set(b, p);
+    }
+    return inflight.get(b);
+  }
+
+  // One block, raced against its group. Resolves "direct" or "rebuilt"; rejects when neither can happen.
+  function race(tail, b, what) {
+    let group = [];
+    try {
+      group = Array.from(core.tail_group(bytes(tail), b));
+    } catch {
+      // No group names it: asked alone.
+    }
+    return new Promise((resolve, reject) => {
+      let open = 1 + group.length;
+      let done = false;
+      const settle = () => {
+        if (done) return;
+        let held = false;
+        try {
+          held = group.length ? core.tail_rebuild(b) : false;
+        } catch {}
+        if (held) {
+          done = true;
+          resolve("rebuilt");
+        } else if (open === 0) {
+          done = true;
+          reject(new Error(`${what}: block ${b.slice(0, 12)}… is not on the network, and too little of its group is to rebuild it`));
+        }
+      };
+      get(b, what).then(a => {
+        open--;
+        if (done) return;
+        if (a.kind !== "get-failed") {
+          done = true;
+          if (group.length) core.tail_rebuild(b); // forget the race: the block itself is held
+          resolve("direct");
+        } else settle();
+      });
+      for (const g of group)
+        get(g, what).then(() => {
+          open--;
+          settle();
+        });
+    });
+  }
+
+  async function fetch(tail, ids, what) {
+    const t0 = performance.now();
+    const how = await Promise.all(ids.map(b => race(tail, b, `reading ${what}'s tree`)));
+    const rebuilt = how.filter(h => h === "rebuilt").length;
+    ctx.log("tree read", {
+      what: `${what}: ${ids.length} block(s), ${ids.length - rebuilt} arrived first, ${rebuilt} from their group first (rebuilt, verified)`,
+      ms: Math.round(performance.now() - t0),
+    });
+  }
+
+  // PUT a flush's blocks: every one accepted, or the first refusal thrown.
+  async function put(puts, what) {
+    const said = await Promise.all(
+      puts.map(([key, frames]) => ask(frames, x => (x.kind === "put" && x.key === key) || x.kind === "refused", `putting ${what}'s tree`, 60000)),
+    );
+    const refused = said.find(s => s.kind === "refused");
+    if (refused) throw new Error(`a tree block was refused: ${refused.said}`);
+  }
+
+  return { fetch, put };
+}

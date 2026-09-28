@@ -258,7 +258,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 17] = [
+    let packages: [(&str, &str, PathBuf); 18] = [
         ("header", "module", app.join("packages/header.js")),
         ("footer", "module", app.join("packages/footer.js")),
         ("home", "module", app.join("packages/home.js")),
@@ -273,6 +273,8 @@ async fn main() -> Result<()> {
         // The Set's code: the account's member list (admitting this device, and reading it back).
         ("set-wasm", "bytes", contracts.join("set.wasm")),
         // The data: each node's rows for this app, as its own tail.
+        // Tree blocks: the one door (fetch raced against parity, put).
+        ("blocks", "service", app.join("packages/blocks.js")),
         ("data", "service", app.join("packages/data.js")),
         // The account's pins and the one pin button, for every page.
         ("pins", "service", app.join("packages/pins.js")),

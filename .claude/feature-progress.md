@@ -126,3 +126,8 @@ device + the same PIN opens the same account. Adding a second device: pairing wi
   hides unlisted tables; a table is listed BEFORE its first write.
 - [x] Publish: a piece a peer refuses (peers with a full disk budget: 166 MiB / 128 MiB) is a missing piece, retried,
   judged by k-of-n — not fatal. B app v27, loader v9.
+- [x] BLOCKS package: the one door for tree blocks (fetch, put), out of data.js. Fetch RACES (rule 11, sdk#303): a
+  block and its whole group asked at once, first of {the block, any k of its group} wins, rebuilt blocks verified
+  against their id; each block asked once. Live (private node): reads mixed "arrived first" and "from their group
+  first (rebuilt, verified)" — the rebuild path now runs on real network blocks, not only in tests; 67 rows, a write
+  after. B app v33.

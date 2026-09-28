@@ -207,9 +207,11 @@ impl Core {
             .collect()
     }
 
-    /// REPAIR a tree block the network no longer has (its GET failed): its group, found in what the table holds.
-    /// Returns the group's other blocks to GET (Block contract ids, hex); their answers come back through `take`.
-    pub fn tail_repair(&mut self, id: &[u8; 32], lost_contract: &[u8; 32]) -> Result<Vec<String>, String> {
+    /// A tree block's GROUP, found in what the table holds: its other blocks to GET at the same time as the block
+    /// itself (Block contract ids, hex) — the RACE (rule 11): whichever comes first, the block or any k of its group,
+    /// ends the read. Their answers come back through `take`. `Err`: nothing held names a group for it (a root written
+    /// before root parity): it is fetched alone.
+    pub fn tail_group(&mut self, id: &[u8; 32], lost_contract: &[u8; 32]) -> Result<Vec<String>, String> {
         let cid = self
             .wanted
             .get(lost_contract)
@@ -224,14 +226,17 @@ impl Core {
         Ok(self.want(id, &missing))
     }
 
-    /// After the group's blocks came back: rebuild the lost one (verified against its id).
-    pub fn tail_rebuild(&mut self, lost_contract: &[u8; 32]) -> Result<(), String> {
-        let (id, group) = self.repairs.remove(lost_contract).ok_or("no repair under way for that block")?;
-        let r = self.tail(&id)?.rebuild(&group);
-        if r.is_ok() {
+    /// Settle a raced block: `Ok(true)` once it is held — it arrived itself, or enough of its group did and it was
+    /// rebuilt (verified against its id); `Ok(false)` while neither is so yet. Held: the race is forgotten.
+    pub fn tail_rebuild(&mut self, lost_contract: &[u8; 32]) -> Result<bool, String> {
+        let (id, group) = self.repairs.get(lost_contract).cloned().ok_or("no race under way for that block")?;
+        let o = self.tail(&id)?;
+        let held = o.blocks.0.contains_key(&group.missing) || o.rebuild(&group).is_ok();
+        if held {
+            self.repairs.remove(lost_contract);
             self.wanted.remove(lost_contract);
         }
-        r
+        Ok(held)
     }
 
     /// FLUSH an open table: `Ready` with the frames that PUT its new tree blocks (send and see them all accepted
@@ -515,16 +520,16 @@ mod js {
             self.0.set_block_code(code);
         }
 
-        /// REPAIR a tree block whose GET failed: the Block contract ids (hex) of its group's other blocks, to GET.
-        pub fn tail_repair(&mut self, id: &[u8], lost_contract_hex: &str) -> Result<js_sys::Array, JsValue> {
-            let lost = bytes32("block", lost_contract_hex).map_err(err)?;
-            Ok(self.0.tail_repair(&b32(id)?, &lost).map_err(err)?.into_iter().map(JsValue::from).collect())
+        /// A tree block's group: the Block contract ids (hex) to GET with it (the race).
+        pub fn tail_group(&mut self, id: &[u8], block_hex: &str) -> Result<js_sys::Array, JsValue> {
+            let b = bytes32("block", block_hex).map_err(err)?;
+            Ok(self.0.tail_group(&b32(id)?, &b).map_err(err)?.into_iter().map(JsValue::from).collect())
         }
 
-        /// Rebuild it from what came back.
-        pub fn tail_rebuild(&mut self, lost_contract_hex: &str) -> Result<(), JsValue> {
-            let lost = bytes32("block", lost_contract_hex).map_err(err)?;
-            self.0.tail_rebuild(&lost).map_err(err)
+        /// Settle a raced block: true once held (arrived, or rebuilt and verified from its group).
+        pub fn tail_rebuild(&mut self, block_hex: &str) -> Result<bool, JsValue> {
+            let b = bytes32("block", block_hex).map_err(err)?;
+            self.0.tail_rebuild(&b).map_err(err)
         }
 
         /// How many rows wait in an open table's tail (a flush is due at `data::FLUSH_AT`).
