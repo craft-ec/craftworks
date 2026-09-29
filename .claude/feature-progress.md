@@ -729,8 +729,14 @@ Design (owner 09-30: RLNC, not RS): encrypt-then-code; 256 KiB chunks; generatio
 systematic + 8 coded, GF(2^8), coefficients in each fragment); sealed contracts at key-derived addresses; an index of
 fragment hashes checked against the reference `{ key, index hash, size, name, type }`. Homomorphic checks (Pedersen)
 come with keepers as a new codec version.
-- [ ] F1 core: crate `files` (pure): adaptive chunks, encrypt, RLNC over GF(2^8) (systematic + minted), content keys
-      (public / space salt), addresses, index tree; tests (any 16 of n, single-chunk read, tamper, resume determinism).
+- [x] F1 core: crate `files` (pure, builds for wasm): adaptive chunks (size/16 in 16–256 KiB), XChaCha per chunk,
+      systematic RLNC over GF(2^8) (16 per generation, 8 coded, `mint` for more, coefficients in each fragment), content
+      keys (public: content alone; else + the space's salt), key-derived addresses, the index as a tree (leaves of 192
+      generations, inner levels of 7000: no size limit), `Decoder` (checked against the index, incremental elimination),
+      `read_chunk` (a seek). Tests 11 (any 16 of 24 in the worst order, 15 not enough, a minted replacement, forged
+      fragment/index/key refused, redundant recognised, one chunk alone, same content+space = same file (dedup,
+      resume), another space/public differ, a short last generation from coded fragments only, an inner index level,
+      pieces fit a sealed contract); planted bugs (no hash check; coded = a copy) turn 1 and 3 red.
 - [ ] F2 capability `files` (page): streaming upload (a generation at a time, raced, minted replacements, resume from
       the account's `uploads`), download raced per generation (to memory or disk), inline small files. Live.
 - [ ] F3 attachments + previews: Messages, Chat, Mail, Board — pick, thumbnail inline, open, download.
