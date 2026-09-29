@@ -780,10 +780,10 @@ come with keepers as a new codec version.
     inviter could reuse a spent key package from a stale card (table `keypacks`); ban/leave acts name nodes; any
     member (not only admins) takes gone members' nodes out of the group; per-row owner rank + takeover, progress in
     the space table. fx/fy: B rejoined, uploaded, left → own file copied in 12 s; A: B out, salt rotated.
-    OPEN (pre-existing, measured): a space table's writers are the CURRENT group's devices only
-    (storage.js space `writers`), so everything a removed/left/banned member wrote vanishes for everyone (their posts,
-    messages, file key rows) — against roles' "what they wrote is still theirs". Fix needs gone members' feeds read up
-    to their head at removal (bounded, since they keep old epoch keys). Also space RK on fx: re-invites after the
+    FIXED (was pre-existing): a space table read only the CURRENT group's devices, so all a departed member wrote
+    vanished for everyone. Now the member taking their nodes out records where each feed stands (space table
+    `departed`, before the commit) and readers count those feeds up to there. fx: B left RK2 → A's fresh page still
+    sees B's file row (re-keyed, read 92160 B); B then wrote after leaving (its feed at seq 2, cap 1) → not counted. Also space RK on fx: re-invites after the
     spent-package welcome never open (WelcomeKeyPackageNotFound) while fresh spaces RK2/RK3 invite fine — cause unknown.
     Verified (09-30): 17573 — rotate stand-in re-keyed in 3 s, bytes equal via the old ref; board public→members
     re-keyed in 8 s; adopted copy in 3 s. fx/fy two accounts — A removes B: salt 0→1 and the file re-keyed 4 s

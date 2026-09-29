@@ -132,9 +132,13 @@ uses the tokens, never its own colours or sizes — so a new look, or a second t
   key and checked against the key log; a removal is signed by the member that made it. Each node lists every node and
   removal it knows in its own feed; a reader starts from its own node and takes the union, so no single writer can hide
   a node or a removal. A removal first moves the removed node's winning rows into the remover's feed, then the
-  removed node's feed stops counting. Ordering is the one exception to "every writer its own feed": MLS epochs admit
-  no forks, so each epoch's commits keep one sequence — a tail signed with a key derived from that epoch's secret, so
-  only the nodes in the group at that epoch can write it, and a removed node can write nowhere that counts.
+  removed node's feed stops counting. In a SPACE, a person who departs (removed, banned, or left) keeps what they
+  wrote: before the commit that takes their nodes out, the member making it records where each of their feeds stands
+  (the space's table `departed`: node → its feeds' last sequence), and every reader counts those feeds up to there —
+  nothing after, since a departed node still holds older epochs' keys. Ordering is the one exception to "every
+  writer its own feed": MLS epochs admit no forks, so each epoch's commits keep one sequence — a tail signed with a key
+  derived from that epoch's secret, so only the nodes in the group at that epoch can write it, and a removed node can
+  write nowhere that counts.
 - **A person is shown as `handle#id`** everywhere (owner): the handle from their card and the start of their DID —
   handles are not unique, the id is. One definition (`directory.shown`); no page formats a person itself.
 - **Indexes are one shape** with a visibility — public (directory, tag index, comments) or sealed (inbox) — as edges

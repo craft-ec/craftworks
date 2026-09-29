@@ -318,6 +318,43 @@ export async function start(ctx) {
     return ready;
   }
 
+  // A stored version's sequence in its feed (an envelope: magic ‖ writer ‖ seq ‖ …); a row from before feeds: none.
+  const seqOf = v => (v?.length >= 42 && v[0] === 0xcf && v[1] === 0x01 ? Number(new DataView(v.buffer, v.byteOffset + 34, 8).getBigUint64(0)) : Infinity);
+  // A feed as it stood at sequence `cap`: its versions up to there.
+  const capped = (f, cap) => ({
+    owner: f.owner,
+    raw: () => (f.raw() ?? []).filter(([, v]) => seqOf(v) <= cap),
+    onChange: fn => f.onChange(fn),
+    get absent() {
+      return f.absent;
+    },
+    get info() {
+      return f.info;
+    },
+  });
+  // Each of `nodes`' feeds in a space, as it stands now: `{ node: { table: last sequence } }` — what a departure
+  // records before the commit that takes them out.
+  async function headsOf(sp, nodes) {
+    const scope = scopeOf(sp);
+    const out = {};
+    await Promise.all(
+      nodes.map(async node => {
+        const cat = await scope.catalogOf(node).catch(() => null);
+        if (!cat || cat.absent) return;
+        const heads = {};
+        await Promise.all(
+          own(cat).map(async r => {
+            const t = await tail(node, r.key, { known: true, ...scope.opts(r.key) }).catch(() => null);
+            if (!t || t.absent) return;
+            const seqs = (t.raw() ?? []).map(([, v]) => seqOf(v)).filter(Number.isFinite);
+            if (seqs.length) heads[r.key] = Math.max(...seqs);
+          }),
+        );
+        out[node] = heads;
+      }),
+    );
+    return out;
+  }
   // A feed's own current rows, merged alone: `[{ key, value, id }]` (text; its deletes left out).
   const decoded = rows => rows.map(r => ({ key: dec.decode(r.key), value: dec.decode(r.value), id: r.id }));
   const own = t => decoded(Array.from(feed.merge_feeds([[bytes(t.owner), t.raw()]])));
@@ -430,6 +467,11 @@ export async function start(ctx) {
         })().catch(() => {});
       },
       catalogOf: w => tail(w, sp.tables.catalog, { space: sp }),
+      // DEPARTED writers (removed, banned, left): the space's table `departed` — written by the member who took their
+      // nodes out of the group, BEFORE the commit — gives each node's feeds' last sequence then (`heads`), and what
+      // they wrote up to there still counts; nothing after (they keep older epochs' keys). The table itself: none.
+      departedTable: () => merged(space.tableOf(sp, "departed"), sp),
+      departed: name => name !== space.tableOf(sp, "departed"),
     };
   }
 
@@ -511,7 +553,27 @@ export async function start(ctx) {
         }
         await open();
       };
-      const settled = Promise.all(others.map(o => gather(o).catch(() => {})));
+      // DEPARTED writers' feeds, capped where they stood when they left (a space's).
+      const departedDone = new Set();
+      const gatherDeparted = async () => {
+        if (!scope.departed?.(name)) return;
+        const d = await scope.departedTable();
+        await d.settled;
+        const current = new Set(await scope.writers().catch(() => others));
+        for (const r of d.rows()) {
+          if (!r.value || current.has(r.key) || r.key === scope.self || departedDone.has(r.key)) continue;
+          let cap;
+          try {
+            cap = JSON.parse(r.value)?.heads?.[name];
+          } catch {}
+          if (typeof cap !== "number") continue;
+          departedDone.add(r.key);
+          const f = await theirs(r.key, true);
+          if (f) take(capped(f, cap));
+        }
+      };
+      const settled = Promise.all([...others.map(o => gather(o).catch(() => {})), gatherDeparted().catch(e => ctx.log("feed not read", { what: `${name}: departed writers: ${e.message}` }))]);
+      if (scope.departed?.(name)) scope.departedTable().then(d => d.onChange(() => gatherDeparted().catch(() => {})), () => {});
       // A WRITER NEW since the table opened (a member's new device, a new member): gathered when the scope says so.
       const seen = new Set(others);
       scope.watch?.(async () => {
@@ -687,5 +749,5 @@ export async function start(ctx) {
     return { rows: () => rows, onChange: f => changed.push(f), settled, add };
   }
 
-  return { table, log, publicTail, readOnly, describe, nodes, feedsOf, adopt, sealNewest, refuse: why => (refusing = why) };
+  return { table, log, publicTail, readOnly, describe, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why) };
 }

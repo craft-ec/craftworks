@@ -18,7 +18,18 @@
 //   lists.flagged({ by, ref, space })   // on a list this reader applies (a post: its author, its ref, its space)
 //   await lists.flag(kind, ref, reason)   await lists.unflag(kind, ref)   lists.mine()  lists.followed()  lists.onChange(fn)
 export async function start(ctx) {
-  const [roles, keys, directory] = await Promise.all(["roles", "keys", "directory"].map(n => ctx.require(n)));
+  const [roles, keys, directory, storage, space] = await Promise.all(["roles", "keys", "directory", "storage", "space"].map(n => ctx.require(n)));
+
+  // DEPARTED: before a commit takes a person's nodes out, where each of their feeds stands — so what they wrote still
+  // counts, up to there, for everyone who opens the space later (`storage`: the space's table `departed`).
+  async function departed(sp, did) {
+    const nodes = await directory.devices(did).catch(() => []);
+    if (!nodes.length) return;
+    const heads = await storage.headsOf(sp, nodes);
+    const t = await storage.table(space.tableOf(sp, "departed"), sp);
+    await t.settled;
+    for (const [node, h] of Object.entries(heads)) if (Object.keys(h).length) await t.put(node, JSON.stringify({ did, heads: h, at: Date.now() }));
+  }
 
   async function of(sp) {
     const r = await roles.of(sp);
@@ -29,6 +40,7 @@ export async function start(ctx) {
       const nodes = r.nodesOf(did);
       if (!nodes.length && act !== "ban") throw new Error("they are not in this space");
       await r.act({ act, did, nodes: await directory.devices(did) });
+      if (nodes.length) await departed(r.space, did).catch(e => ctx.log("moderation", { what: `where their feeds stand: ${e.message}` }));
       if (nodes.length) await keys.group(r.space).remove(nodes.map(n => n.index));
       await r.refresh();
     }
@@ -43,8 +55,10 @@ export async function start(ctx) {
       enforce: async () => {
         await r.refresh();
         // The banned, and anyone the acts put out (removed, or left: a leaver cannot commit their own removal).
-        const nodes = [...new Set([...r.bannedList(), ...r.goneList()])].flatMap(did => r.nodesOf(did));
+        const out = [...new Set([...r.bannedList(), ...r.goneList()])].filter(did => r.nodesOf(did).length);
+        const nodes = out.flatMap(did => r.nodesOf(did));
         if (!nodes.length) return 0;
+        for (const did of out) await departed(r.space, did).catch(e => ctx.log("moderation", { what: `where their feeds stand: ${e.message}` }));
         await keys.group(r.space).remove(nodes.map(n => n.index));
         await r.refresh();
         return nodes.length;
