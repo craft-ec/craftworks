@@ -416,6 +416,7 @@ dependencies = [
  "craftworks-account",
  "craftworks-bag-contract",
  "craftworks-feed",
+ "craftworks-gov",
  "craftworks-identity",
  "craftworks-idlog-contract",
  "ed25519-dalek",
@@ -438,6 +439,13 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "craftworks-gov"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

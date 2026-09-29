@@ -34,6 +34,8 @@ craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features 
 craftworks-bag-contract = { path = "../contracts-src/bag", default-features = false }
 # The account (words, key log, owner keys, members): its own crate, shared with mls.
 craftworks-account = { path = "../account" }
+# A space's governance: the one replay of its acts (the identity delegate reads a space by it too).
+craftworks-gov = { path = "../gov" }
 # The account's encryption key (X25519) and its vault (XChaCha20-Poly1305).
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }

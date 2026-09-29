@@ -41,27 +41,10 @@
 export async function start(ctx) {
   const [space, storage, keys, node, directory] = await Promise.all(["space", "storage", "keys", "node", "directory"].map(n => ctx.require(n)));
 
-  const CAN = {
-    owner: new Set(["post", "invite", "channels", "moderate", "remove", "grant", "apps"]),
-    admin: new Set(["post", "invite", "channels", "moderate", "remove", "apps"]),
-    member: new Set(["post", "invite"]),
-  };
-  const RANK = { owner: 3, admin: 2, member: 1 };
-  const ACTIONS = ["read", "post", "comment", "vote", "edit", "join", "invite"];
-  const WHO = ["anyone", "members", "admins", "owner", "nobody", "inherit"];
-  // The settings from before policies (`config` acts), as policies — their defaults ("everyone", "members",
-  // "invite") as INHERIT (no policy of their own), never as an override.
-  const OLD = {
-    "chat/post": { path: "chat", action: "post", who: v => (v === "admins" ? "admins" : null) },
-    "board/post": { path: "board", action: "post", who: v => (v === "admins" ? "admins" : null) },
-    "board/read": { path: "board", action: "read", who: v => (v === "public" ? "anyone" : null) },
-    "notes/edit": { path: "notes", action: "edit", who: v => (v === "admins" ? "admins" : null) },
-    "space/join": { path: "", action: "join", who: v => (v === "open" ? "anyone" : null) },
-  };
-  // The apps a shared space may use (each app's key: its route).
-  const APPS = ["chat", "board", "notes"];
-  // An invite code in force at `at`: not revoked, not expired, and uses left (0: no limit).
-  const live = (inv, at = Date.now()) => !inv.revoked && (!inv.expires || at < inv.expires) && (!inv.uses || inv.admitted.length < inv.uses);
+  // THE REPLAY and its rules are the core's (`Governance`, the one implementation: the identity delegate reads a
+  // space by it too). What is gathered here: the acts' rows, the group's members, each member's devices.
+  const G = node.glue.Governance;
+  const ACTIONS = G.actions();
   // A member's credential (hex): `CWMB ‖ did ‖ signer ‖ writer ‖ MLS key ‖ signature` (the identity's format; MLS
   // checked the signature when it admitted it).
   const didOf = h => new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16)));
@@ -121,113 +104,23 @@ export async function start(ctx) {
     if (!out) await learn(await g.ready().catch(() => null));
     const author = row => (row?.id ? (writers.get(row.id.slice(0, 64)) ?? null) : null);
 
-    // THE REPLAY: the acts in order, each kept only if its signer could.
-    let roles = new Map();
+    // THE REPLAY: the acts in order, each kept only if its signer could (the core's `Governance`).
+    let gv = null;
     let counted = [];
     let owner = first;
-    let invites = new Map();
-    let apps = new Map();
-    let configs = new Map();
-    let history = new Map(); // `${path}|${action}` → [{ at, who }], in the order they counted
-    let roster = new Set(); // the DIDs the acts name as members (the owner, added, admitted, rostered)
-    // A POLICY set at a path (its history: time-aware), and the EFFECTIVE one — walked up the path to the space.
-    const setPolicy = (path, action, who, at) => {
-      const k = `${path}|${action}`;
-      (history.get(k) ?? history.set(k, []).get(k)).push({ at: Number(at) || 0, who });
-    };
-    const policyAt = (path, action, at = Infinity) => (history.get(`${path}|${action}`) ?? []).filter(x => x.at <= at).pop()?.who ?? null;
-    // Does a role pass a policy's `who` (anyone here means any member: only members act in a space).
-    const passes = (who, r) => (who === "nobody" || !r ? false : who === "owner" ? r === "owner" : who === "admins" ? RANK[r] >= RANK.admin : true);
-    // INVITING (codes, adding by id, letting askers in): the space's `invite` policy as it was then (default: members).
-    const mayInvite = (r, at) => passes(effective("", "invite", at), r);
-    const effective = (path, action, at = Infinity) => {
-      const parts = String(path ?? "").split("/").filter(Boolean);
-      for (let i = parts.length; i >= 0; i--) {
-        const who = policyAt(parts.slice(0, i).join("/"), action, at);
-        if (who) return who;
-      }
-      return "members";
-    };
+    let roster = new Set(first ? [first] : []);
     let bans = new Set();
     function replay() {
-      const acts = [];
-      for (const r of t.rows()) {
-        try {
-          const v = JSON.parse(r.value);
-          for (const n of v.nodes ?? []) if (v.act === "remove" && v.did) writers.set(n, writers.get(n) ?? v.did);
-          acts.push({ ...v, id: r.key, by: author(r) });
-        } catch {}
-      }
-      acts.sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0) || (a.id < b.id ? -1 : 1));
-      owner = first;
-      roles = new Map(owner ? [[owner, "owner"]] : []);
-      invites = new Map();
-      apps = new Map();
-      configs = new Map();
-      history = new Map();
-      roster = new Set(first ? [first] : []);
-      const removed = new Set();
-      const banned = new Set();
-      const roleAt = d => (removed.has(d) ? null : (roles.get(d) ?? "member"));
-      counted = [];
-      for (const a of acts) {
-        if (!a.by || removed.has(a.by)) continue;
-        const r = roleAt(a.by);
-        const inv = a.code && invites.get(a.code);
-        const ok =
-          (a.act === "grant" && r === "owner" && a.did !== owner && ["admin", "member"].includes(a.role)) ||
-          ((a.act === "remove" || a.act === "ban") && CAN[r]?.has("remove") && a.did !== a.by && RANK[r] > RANK[roleAt(a.did) ?? "member"]) ||
-          (a.act === "unban" && CAN[r]?.has("remove") && banned.has(a.did)) ||
-          (a.act === "added" && mayInvite(r, a.at) && a.did && !banned.has(a.did)) ||
-          (a.act === "hide" && CAN[r]?.has("moderate")) ||
-          (a.act === "transfer" && r === "owner" && a.did && a.did !== a.by && !removed.has(a.did)) ||
-          (a.act === "invite" && mayInvite(r, a.at) && typeof a.code === "string" && a.code && !invites.has(a.code)) ||
-          (a.act === "revoke-invite" && inv && (inv.by === a.by || CAN[r]?.has("moderate"))) ||
-          (a.act === "admitted" && mayInvite(r, a.at) && inv && live(inv, a.at) && a.did && !banned.has(a.did)) ||
-          (a.act === "app" && CAN[r]?.has("apps") && APPS.includes(a.app)) ||
-          // Who may READ an app (members, or anyone) is the owner's: making it public publishes the space's acts.
-          // The space's own settings are app "space" (who may join: "invite" or "open").
-          (a.act === "config" && CAN[r]?.has("apps") && (APPS.includes(a.app) || a.app === "space") && typeof a.key === "string" && a.key.length <= 32 && (a.key !== "read" || r === "owner")) ||
-          // A POLICY: who may do an action at a path (reading is the owner's: public reading publishes the space's acts).
-          (a.act === "policy" && CAN[r]?.has("apps") && typeof a.path === "string" && a.path.length <= 120 && ACTIONS.includes(a.action) && WHO.includes(a.who) && (a.action !== "read" || r === "owner")) ||
-          // Admitted by asking, while the space was OPEN (no code).
-          (a.act === "admitted" && a.code === "open" && mayInvite(r, a.at) && policyAt("", "join") === "anyone" && a.did && !banned.has(a.did)) ||
-          (a.act === "member" && mayInvite(r, a.at) && a.did && !banned.has(a.did));
-        if (!ok) continue;
-        if (a.act === "grant") roles.set(a.did, a.role);
-        // Removed: out, and back only by an invite or a code (which clears it). Banned: out, and never back until unbanned.
-        if (a.act === "remove" || a.act === "ban") {
-          removed.add(a.did);
-          roles.delete(a.did);
-        }
-        if (a.act === "ban") banned.add(a.did);
-        if (a.act === "unban") banned.delete(a.did);
-        if (a.act === "added" || a.act === "admitted") removed.delete(a.did);
-        if (a.act === "transfer") {
-          roles.set(owner, "admin");
-          owner = a.did;
-          roles.set(owner, "owner");
-        }
-        if (a.act === "invite") invites.set(a.code, { code: a.code, by: a.by, at: a.at, expires: Number(a.expires) || 0, uses: Number(a.uses) || 0, admitted: [] });
-        if (a.act === "revoke-invite") inv.revoked = a.at;
-        if (a.act === "admitted" && inv && !inv.admitted.includes(a.did)) inv.admitted.push(a.did);
-        if (a.act === "admitted") removed.delete(a.did);
-        if (a.act === "member") removed.delete(a.did);
-        if (a.act === "added" || a.act === "admitted" || a.act === "member") roster.add(a.did);
-        if (a.act === "app") apps.set(a.app, !!a.on);
-        if (a.act === "config") {
-          configs.set(`${a.app}/${a.key}`, a.value);
-          // The settings from before policies, read as the policies they are.
-          const as = OLD[`${a.app}/${a.key}`];
-          if (as) setPolicy(as.path, as.action, as.who(a.value), a.at);
-        }
-        // `inherit`: the override removed (the parent's policy applies again).
-        if (a.act === "policy") setPolicy(a.path, a.action, a.who === "inherit" ? null : a.who, a.at);
-        counted.push(a);
-      }
-      for (const d of removed) roles.set(d, null);
-      for (const d of removed) roster.delete(d);
-      bans = banned;
+      const rows = t.rows().map(r => [r.key, r.value, r.id ? r.id.slice(0, 64) : null]);
+      const next = G.replay(JSON.stringify(rows), JSON.stringify(Object.fromEntries(writers)), first ?? undefined, Date.now());
+      // A removed member's nodes, named by the removal: their rows stay theirs.
+      for (const [n, d] of JSON.parse(next.learned())) if (!writers.has(n)) writers.set(n, d);
+      gv?.free();
+      gv = next;
+      counted = JSON.parse(gv.counted());
+      owner = gv.owner() ?? null;
+      roster = new Set(gv.roster());
+      bans = new Set(gv.bans());
     }
     replay();
     // FROM OUTSIDE: the members are the roster; each one's devices are writers, whose public acts are read too — until
@@ -256,17 +149,15 @@ export async function start(ctx) {
       if (out) widen().then(() => ((group = [...roster].map(did => ({ did }))), changed.forEach(f => f())));
       for (const f of changed) f();
     });
-    // Public: an app of the space reads in public.
     // PUBLIC: something of the space is anyone's — an app read by anyone, or joining open to anyone (an open space is
     // listed in Discover: whoever looks must see who is in it and how to join).
-    const isPublic = () => policyAt("", "join") === "anyone" || [...history.keys()].some(k => k.endsWith("|read") && policyAt(k.slice(0, -5), "read") === "anyone");
+    const isPublic = () => gv.is_public();
     const role = did => {
       if (!did || (left && did === me?.id)) return null;
-      if (roles.has(did)) return roles.get(did);
-      return group.some(m => m.did === did) ? "member" : null;
+      return gv.role(did, group.some(m => m.did === did)) ?? null;
     };
     // Inviting is the space's policy (`invite`); everything else its role's.
-    const can = (did, what) => (what === "invite" ? passes(effective("", "invite"), role(did)) : !!CAN[role(did)]?.has(what));
+    const can = (did, what) => (what === "invite" ? G.passes(gv.effective("", "invite", Infinity), role(did)) : G.can_role(role(did), what));
 
     const r = {
       space: sp,
@@ -277,19 +168,18 @@ export async function start(ctx) {
       can,
       author,
       acts: kind => (kind ? counted.filter(a => a.act === kind) : [...counted]),
-      invites: () => [...invites.values()].filter(i => live(i)),
-      apps: () => APPS.filter(x => apps.get(x) === true),
-      config: (app, key, dflt = null) => configs.get(`${app}/${key}`) ?? dflt,
-      policy: (path, action, at = Infinity) => effective(path, action, at),
+      invites: () => JSON.parse(gv.invites(Date.now())),
+      apps: () => gv.apps(),
+      config: (app, key, dflt = null) => {
+        const c = gv.config(app, key);
+        return (c === undefined ? null : JSON.parse(c)) ?? dflt;
+      },
+      policy: (path, action, at = Infinity) => gv.effective(path, action, at),
       // The policies set at exactly this path (not inherited): { action: who }.
-      policiesAt: path => Object.fromEntries(ACTIONS.filter(x => policyAt(path, x)).map(x => [x, policyAt(path, x)])),
+      policiesAt: path => Object.fromEntries(ACTIONS.map(x => [x, gv.policy_at(path, x, Infinity)]).filter(([, w]) => w)),
       allows: (action, did, path = "", at = Infinity) => {
-        const who = effective(path, action, at);
-        if (who === "anyone") return true;
-        if (who === "nobody") return false;
-        const r = role(did);
-        if (!r) return false;
-        return who === "owner" ? r === "owner" : who === "admins" ? RANK[r] >= RANK.admin : true;
+        const who = gv.effective(path, action, at);
+        return who === "anyone" || G.passes(who, role(did));
       },
       banned: did => bans.has(did),
       bannedList: () => [...bans],
@@ -335,5 +225,5 @@ export async function start(ctx) {
     return r;
   }
 
-  return { of, ofPublic, can: (role, what) => !!CAN[role]?.has(what), names: Object.keys(CAN) };
+  return { of, ofPublic, can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"] };
 }

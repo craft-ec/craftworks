@@ -636,6 +636,21 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       per wake-up since). Live on net139: clock 1790695519 at hand-over → 1790695699 after 3 wake-ups vs real
       1790695687 (+12 s: wake-ups fire a little early; fine for MLS lifetimes). getrandom's custom hook (identity
       delegate build only, feature freenet-main-delegate) comes with MLS in P5.
+      REPLANNED 09-29 (value first): ADMIT is the half that stalls (an asker waits for an inviter's page); ACCEPT is the
+      joiner's own page, and the joiner is the one waiting with it open. So the delegate does ADMIT first. Admit needs:
+      governance replay, the space's acts feeds read, the requests bag, the asker's card, MLS add + commit, the welcome
+      sealed to the asker's inbox, an `admitted` act written. Each piece moves into Rust ONCE, used by page and delegate.
+      PORT P3 DONE: GOVERNANCE in Rust — crate `gov` (the replay, policies, invites; pure, `now` from the caller), the
+      page's roles.js calls it through the core (`Governance`); its own replay deleted. Unit tests 11 (a planted ban bug
+      turns one red). DIFFERENTIAL vs the former JS replay (verbatim from HEAD, run twice = its settled answer): 8 seeds
+      × 4000 random logs, ~400k rows, ~54k counted acts, ZERO differing fields. Two deliberate changes found by it: (1) a
+      removal's named nodes are learned in one pass (JS: by row order until its next replay — same settled answer);
+      (2) grant/remove/ban naming nobody no longer count (JS stored `undefined`; the page never writes them). Live on
+      net139 (0.2.139): new space, app, open join, board post admins-only, invite code: every answer right, Home and
+      Permissions dialog right, no console errors. Harness: jobs tmp gov-diff.py + gov-old.cjs + gov example `replay`.
+      NOT on the owner's sites: publishing ships the new identity delegate (consent card) — held until the port lands.
+      NEXT P4: table READS in Rust for the delegate (a space's acts: feeds of each writer, epoch keys, merge) — core
+      `data::Open` + `feed::merge` driven by delegate messages.
 - [ ] (old note) NO PAGE OPEN AT ALL: node v0.2.139 (freenet-core #5747) wakes a delegate periodically (manifest `wakeups`, ≥ 60 s,
       the person's Background grant). Needs the joining logic (MLS welcome/add, spacekeys) moved into the identity
       delegate (a delegate change: handover; bundle the SpaceMember.writer drop) and nodes on ≥ 0.2.139 (owner's and

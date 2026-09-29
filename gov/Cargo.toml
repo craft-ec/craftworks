@@ -1,0 +1,10 @@
+[package]
+name = "craftworks-gov"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "GOVERNANCE (a space's roles and access): the replay of its acts. The one implementation: the page (through the core) and the identity delegate (upkeep, no page open) both read a space by it."
+
+[dependencies]
+serde_json = "1"

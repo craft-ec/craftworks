@@ -957,6 +957,83 @@ mod js {
     pub fn ws_url(host: &str, port: u16) -> Result<String, JsValue> {
         wire::ws_url(host, port).map_err(err)
     }
+
+    /// A space's GOVERNANCE (`craftworks_gov`, the one replay: the identity delegate reads a space by it too).
+    #[wasm_bindgen]
+    pub struct Governance(craftworks_gov::Gov);
+
+    #[wasm_bindgen]
+    impl Governance {
+        /// Replay acts: `rows` JSON `[[id, value, writer | null]]`, `writers` JSON `{ node: did }`, the first owner,
+        /// now (ms).
+        pub fn replay(rows: &str, writers: &str, first: Option<String>, now: f64) -> Result<Governance, JsValue> {
+            let rows: Vec<(String, String, Option<String>)> = serde_json::from_str(rows).map_err(|e| err(e.to_string()))?;
+            let writers: std::collections::HashMap<String, String> = serde_json::from_str(writers).map_err(|e| err(e.to_string()))?;
+            let rows: Vec<craftworks_gov::Row> = rows.into_iter().map(|(id, value, writer)| craftworks_gov::Row { id, value, writer }).collect();
+            Ok(Governance(craftworks_gov::Gov::replay(&rows, &writers, first.as_deref(), now)))
+        }
+        pub fn owner(&self) -> Option<String> {
+            self.0.owner.clone()
+        }
+        /// By the acts (null: removed), else a member if the group has them.
+        pub fn role(&self, did: &str, in_group: bool) -> Option<String> {
+            self.0.role(did, in_group)
+        }
+        /// The actions a policy names.
+        pub fn actions() -> Vec<String> {
+            craftworks_gov::ACTIONS.iter().map(|a| a.to_string()).collect()
+        }
+        /// The acts that counted (JSON), all or of one kind.
+        pub fn counted(&self, kind: Option<String>) -> String {
+            serde_json::Value::Array(self.0.counted.iter().filter(|a| kind.as_deref().is_none_or(|k| a.get("act").and_then(|x| x.as_str()) == Some(k))).cloned().collect()).to_string()
+        }
+        /// The invite codes in force at `now` (JSON: `[{ code, by, at, expires, uses, admitted }]`).
+        pub fn invites(&self, now: f64) -> String {
+            serde_json::Value::Array(
+                self.0
+                    .live_invites(now)
+                    .iter()
+                    .map(|i| serde_json::json!({ "code": i.code, "by": i.by, "at": i.at, "expires": i.expires, "uses": i.uses, "admitted": i.admitted }))
+                    .collect(),
+            )
+            .to_string()
+        }
+        pub fn apps(&self) -> Vec<String> {
+            craftworks_gov::APPS.iter().filter(|a| self.0.apps.get(**a) == Some(&true)).map(|a| a.to_string()).collect()
+        }
+        /// An app's content setting (JSON), or none.
+        pub fn config(&self, app: &str, key: &str) -> Option<String> {
+            self.0.configs.get(&format!("{app}/{key}")).map(|v| v.to_string())
+        }
+        pub fn effective(&self, path: &str, action: &str, at: f64) -> String {
+            self.0.effective(path, action, at).to_string()
+        }
+        pub fn policy_at(&self, path: &str, action: &str, at: f64) -> Option<String> {
+            self.0.policy_at(path, action, at).map(str::to_string)
+        }
+        pub fn banned(&self, did: &str) -> bool {
+            self.0.bans.contains(did)
+        }
+        pub fn bans(&self) -> Vec<String> {
+            self.0.bans.iter().cloned().collect()
+        }
+        pub fn roster(&self) -> Vec<String> {
+            self.0.roster.iter().cloned().collect()
+        }
+        pub fn is_public(&self) -> bool {
+            self.0.is_public()
+        }
+        /// Node → DID learned from removals (JSON `[[node, did]]`).
+        pub fn learned(&self) -> String {
+            serde_json::to_string(&self.0.learned).expect("strings")
+        }
+        pub fn passes(who: &str, role: Option<String>) -> bool {
+            craftworks_gov::passes(who, role.as_deref())
+        }
+        pub fn can_role(role: Option<String>, what: &str) -> bool {
+            craftworks_gov::can_role(role.as_deref(), what)
+        }
+    }
 }
 
 #[cfg(test)]
