@@ -729,9 +729,11 @@ Design (owner 09-30: RLNC, not RS): encrypt-then-code; 256 KiB chunks; generatio
 systematic + 8 coded, GF(2^8), coefficients in each fragment); sealed contracts at key-derived addresses; an index of
 fragment hashes checked against the reference `{ key, index hash, size, name, type }`. Homomorphic checks (Pedersen)
 come with keepers as a new codec version.
-- [ ] F1 core: crate `files` (pure): encrypt chunks, RLNC encode/decode over GF(2^8), addresses, index; tests.
-- [ ] F2 capability `files` (page): put(blob) with progress → reference; open(reference) → bytes / object URL, raced per
-      group, verified per piece. Live: a multi-MB file up, down, a piece lost and rebuilt.
-- [ ] F3 attachments: Messages, Chat, Mail, Board posts — pick a file, image preview, download.
-- [ ] F4 streaming: video/audio play as groups arrive.
-- [ ] F5 Drive app: the account's files (and a space's), folders.
+- [ ] F1 core: crate `files` (pure): adaptive chunks, encrypt, RLNC over GF(2^8) (systematic + minted), content keys
+      (public / space salt), addresses, index tree; tests (any 16 of n, single-chunk read, tamper, resume determinism).
+- [ ] F2 capability `files` (page): streaming upload (a generation at a time, raced, minted replacements, resume from
+      the account's `uploads`), download raced per generation (to memory or disk), inline small files. Live.
+- [ ] F3 attachments + previews: Messages, Chat, Mail, Board — pick, thumbnail inline, open, download.
+- [ ] F4 video: CMAF segments, renditions (AV1+Opus, H.264+AAC), remux (mp4box) or WebCodecs encode, MediaSource ABR,
+      poster + scrub strip, subtitles.
+- [ ] F5 re-key on removal (per-space setting); Drive app (the account's and spaces' files, folders).

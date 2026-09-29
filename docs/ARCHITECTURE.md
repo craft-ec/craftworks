@@ -146,27 +146,44 @@ uses the tokens, never its own colours or sizes — so a new look, or a second t
 
 ## 6. Files and media
 
-A FILE is cut into 256 KiB CHUNKS, each ENCRYPTED with the file's own random KEY (XChaCha20-Poly1305, its nonce from
-the key and the chunk's place) — then CODED: RLNC (random linear network coding) over GF(2⁸), in GENERATIONS of 16
-chunks (4 MiB). A generation has 24 FRAGMENTS: the first 16 are its chunks as they are (systematic: a healthy file
-reads with no decoding), the other 8 random combinations of them; ANY 16 independent fragments rebuild it, and more
-can be minted at any time (rateless). Each fragment carries its coefficient vector, so fragments minted later — by a
-keeper, from the fragments it holds, without the key (coding runs over ciphertext) — need no format change.
+**Bytes.** A file is cut into CHUNKS — 16 KiB to 256 KiB, the file's size ÷ 16 within those bounds, so every file
+codes about 16 of them — each ENCRYPTED (XChaCha20-Poly1305, its nonce from the key and the chunk's place), then CODED:
+RLNC (random linear network coding) over GF(2⁸), in GENERATIONS of 16 chunks. A generation's first 16 fragments are
+its chunks as they are (systematic: a healthy file reads with no decoding, and ONE chunk reads alone — a seek fetches
+just the chunk it needs); further fragments are random combinations, and any 16 independent ones rebuild it. Rateless:
+more are minted whenever one is slow or refused. Each fragment carries its coefficients, so fragments a keeper mints
+later, from the ciphertext it holds (no key), need no format change. Files up to 64 KiB are not coded at all: they
+ride INLINE in the item (tables already keep values that size with parity).
 
-Every fragment lives in a `sealed` contract at an ADDRESS only the key gives (a keyed hash of the key, the generation
-and the fragment's number): nobody without the key can name a file's pieces or count them. A read asks a generation's
-fragments AT ONCE (raced, as tree blocks are) and decodes on the first 16 innovative, valid ones; streaming reads
-come a generation at a time, in order.
+**Addresses and the index.** Every fragment lives in a `sealed` contract at an ADDRESS only the key gives (a keyed hash
+of the key, the generation and the fragment's number): nobody without the key can name a file's pieces or count them.
+The INDEX — codec, size, chunk size, and per generation the fragments stored and their hashes — is a TREE of sealed
+pieces (a root listing index pieces), so a file has NO size limit; the upload streams a generation at a time, and the
+index goes up LAST, listing exactly the fragments stored — a file is readable only once complete, and an upload
+RESUMES (same key, same fragments, same addresses: only the missing are sent). The REFERENCE is `{ key, root hash,
+size, name, type, preview }`: every index piece and fragment is checked against it the moment it arrives.
 
-The file's INDEX — codec, size, chunk and generation sizes, and the hash of every fragment — is one more sealed piece
-at the key's address for it. The REFERENCE to a file is `{ key, index hash, size, name, type }`, carried inside an item
-(a message, a post, a note): it is all a reader needs, and every fragment is checked against the index (itself checked
-against the reference) the moment it arrives, so nobody who learns the key can slip a different piece in. PRIVATE or
-PUBLIC is only where the reference is: in a sealed table only the members hold the key; on a public board anyone does.
+**Reading.** Raced both ways: a generation's fragments are asked at once and decoded on the first 16 valid,
+innovative ones; uploads send all at once and replace a slow one by a new fragment. Downloads stream a generation at a
+time (to disk for large files) and resume by generation.
 
-Checking fragments a keeper mints later (not in the index) needs homomorphic hashes over a prime field — Pedersen
-commitments, the archived design's plan — and comes with keepers, as a new codec version the index names; until then
-fragments are checked by the index's hash list (the archived design's own fallback).
+**Deduplication.** The key is derived from the content: a PUBLIC file's from its content alone (the whole network
+dedups it); any other file's from its content and its SPACE's dedup salt (a secret in the space's sealed table; the
+account is the personal space) — members' uploads dedup, and nobody outside can test whether a file is in it.
+
+**Access.** Who reads a file is who reads the row holding its reference: the space's policies and epoch keys
+(ARCHITECTURE §4). Revoking what a removed member could read RE-KEYS the file (a new salt, re-coded, re-uploaded, the
+row updated; the old fragments are no longer kept and fade) — a per-space setting. Only a copy already saved stays.
+
+**Video.** Stored as SEGMENTS (CMAF: fragmented MP4, 2–4 s each), each its own coded object, in RENDITIONS that each name
+their codec: AV1 + Opus first, H.264 + AAC for compatibility (a newer codec — AV2 when browsers decode it — is one more
+rendition). The upload remuxes in the browser when the codec already plays (mp4box), else encodes with WebCodecs
+(hardware) into a small bitrate ladder, with a poster and a scrub strip; playback is MediaSource with adaptive bitrate,
+seeking fetches one segment, subtitles as tracks. Previews: images and video carry a small thumbnail inline.
+
+Checking fragments a keeper mints later (not listed in the index) needs homomorphic hashes over a prime field —
+Pedersen commitments — and comes with keepers as a new codec version the index names. Files are outside every table's
+tree (the tree holds the reference only); keeping them alive follows the references (phase 4, Lifecycle).
 
 ## Implementation plan
 
