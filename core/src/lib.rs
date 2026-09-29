@@ -183,6 +183,24 @@ impl Core {
         self.got.get(id).map(Vec::as_slice)
     }
 
+    /// The state the node sent for `id`, TAKEN (a file's fragments: read once, never kept here).
+    pub fn take_got(&mut self, id: &[u8; 32]) -> Option<Vec<u8>> {
+        self.got.remove(id)
+    }
+
+    /// A FILE PIECE to put: the `sealed` contract at its address, as `(id hex, frames)`.
+    pub fn frames_piece(&mut self, p: &craftworks_files::Piece) -> Result<(String, Vec<Vec<u8>>), String> {
+        let s = self.stream();
+        let c = wire::block::block_contract(&self.sealed_code, &p.address);
+        let name = c.key().id().encode();
+        Ok((name, wire::frame_put(c, freenet_stdlib::prelude::WrappedState::new(p.state.clone()), s)?))
+    }
+
+    /// The contract id (bytes) of the `sealed` contract at `address`: where a file piece is fetched.
+    pub fn piece_id(&self, address: &[u8; 32]) -> [u8; 32] {
+        wire::block::contract_for(&self.sealed_code, address)
+    }
+
     /// Open the account's table `table` under the data key `key` (idempotent). Returns its contract id.
     pub fn tail_open(&mut self, tail_code: &[u8], key: &[u8; 32], table: &str) -> [u8; 32] {
         let o = data::Open::new(tail_code, key, table);
@@ -1006,6 +1024,164 @@ mod js {
     #[wasm_bindgen]
     pub fn ws_url(host: &str, port: u16) -> Result<String, JsValue> {
         wire::ws_url(host, port).map_err(err)
+    }
+
+    /// FILES (ARCHITECTURE §6: `craftworks_files`): a file's pieces made and read here; the page moves them.
+    fn plan_js(p: &craftworks_files::Plan) -> String {
+        serde_json::json!({ "size": p.size, "chunk": p.chunk, "chunks": p.chunks, "gens": p.gens }).to_string()
+    }
+    fn listed_of(json: &str) -> Result<craftworks_files::Listed, JsValue> {
+        let v: Vec<(u8, String)> = serde_json::from_str(json).map_err(|e| err(e.to_string()))?;
+        v.into_iter().map(|(j, h)| Ok((j, unhex(&h).and_then(|b| b.try_into().ok()).ok_or_else(|| err("a hash is 32 bytes".into()))?))).collect()
+    }
+    fn file_err(e: craftworks_files::Error) -> JsValue {
+        err(format!("{e:?}"))
+    }
+    /// `[j, id hex, frames]` per piece.
+    fn pieces_js(core: &mut CraftworksCore, pieces: Vec<(u8, craftworks_files::Piece)>) -> Result<js_sys::Array, JsValue> {
+        let out = js_sys::Array::new();
+        for (j, p) in pieces {
+            let h = hex(&p.hash());
+            let (id, f) = core.0.frames_piece(&p).map_err(err)?;
+            out.push(&[JsValue::from(j), JsValue::from(id), JsValue::from(frames(f)), JsValue::from(h)].into_iter().collect::<js_sys::Array>());
+        }
+        Ok(out)
+    }
+
+    /// The BLAKE3 of a file's content, fed a slice at a time (a large file is never whole in memory).
+    #[wasm_bindgen]
+    pub struct FileHasher(blake3::Hasher);
+    #[wasm_bindgen]
+    impl FileHasher {
+        #[wasm_bindgen(constructor)]
+        pub fn new() -> FileHasher {
+            FileHasher(blake3::Hasher::new())
+        }
+        pub fn update(&mut self, b: &[u8]) {
+            self.0.update(b);
+        }
+        pub fn finish(&self) -> js_sys::Uint8Array {
+            js_sys::Uint8Array::from(&self.0.finalize().as_bytes()[..])
+        }
+    }
+
+    /// A file's generation being rebuilt (`craftworks_files::Decoder`).
+    #[wasm_bindgen]
+    pub struct FileDecoder(craftworks_files::Decoder);
+    #[wasm_bindgen]
+    impl FileDecoder {
+        #[wasm_bindgen(constructor)]
+        pub fn new(key: &[u8], size: f64, g: f64, listed: &str) -> Result<FileDecoder, JsValue> {
+            let plan = craftworks_files::Plan::of(size as u64);
+            Ok(FileDecoder(craftworks_files::Decoder::new(&b32(key)?, &plan, g as u64, listed_of(listed)?)))
+        }
+        /// "ok", "redundant", or an error (forged, malformed).
+        pub fn add(&mut self, j: u8, state: &[u8]) -> Result<String, JsValue> {
+            match self.0.add(j, state) {
+                Ok(()) => Ok("ok".into()),
+                Err(craftworks_files::Error::Redundant) => Ok("redundant".into()),
+                Err(e) => Err(file_err(e)),
+            }
+        }
+        pub fn done(&self) -> bool {
+            self.0.done()
+        }
+        pub fn rank(&self) -> u32 {
+            self.0.rank() as u32
+        }
+        pub fn plain(&self) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&self.0.plain().map_err(file_err)?[..]))
+        }
+    }
+
+    #[wasm_bindgen]
+    impl CraftworksCore {
+        /// The state the node sent for a contract (hex id), taken: or null.
+        pub fn take_got(&mut self, id_hex: &str) -> Result<JsValue, JsValue> {
+            let id = bytes32("got", id_hex).map_err(err)?;
+            Ok(self.0.take_got(&id).map(|s| JsValue::from(js_sys::Uint8Array::from(&s[..]))).unwrap_or(JsValue::NULL))
+        }
+        /// A generation coded: `[[j, id hex, frames, hash hex]]` (fragments `0 .. k + extra`).
+        pub fn file_encode(&mut self, key: &[u8], size: f64, g: f64, plain: &[u8], extra: u32) -> Result<js_sys::Array, JsValue> {
+            let plan = craftworks_files::Plan::of(size as u64);
+            let pieces = craftworks_files::encode(&b32(key)?, &plan, g as u64, plain, extra as usize);
+            pieces_js(self, pieces)
+        }
+        /// One more fragment `j` (a slow or refused one replaced): `[j, id hex, frames, hash hex]`.
+        pub fn file_mint(&mut self, key: &[u8], size: f64, g: f64, plain: &[u8], j: u8) -> Result<js_sys::Array, JsValue> {
+            let plan = craftworks_files::Plan::of(size as u64);
+            let p = craftworks_files::mint(&b32(key)?, &plan, g as u64, plain, j);
+            Ok(pieces_js(self, vec![(j, p)])?.get(0).into())
+        }
+        /// The INDEX for the fragments stored (JSON `[[[j, hash hex]]]` per generation): `{ root, puts: [[id, frames]] }`,
+        /// the root's put LAST.
+        pub fn file_index(&mut self, key: &[u8], size: f64, stored: &str) -> Result<js_sys::Object, JsValue> {
+            let plan = craftworks_files::Plan::of(size as u64);
+            let v: Vec<serde_json::Value> = serde_json::from_str(stored).map_err(|e| err(e.to_string()))?;
+            let stored: Vec<craftworks_files::Listed> = v.iter().map(|g| listed_of(&g.to_string())).collect::<Result<_, _>>()?;
+            let (pieces, root) = craftworks_files::index(&b32(key)?, &plan, &stored);
+            let puts = js_sys::Array::new();
+            for p in pieces {
+                let (id, f) = self.0.frames_piece(&p).map_err(err)?;
+                puts.push(&[JsValue::from(id), JsValue::from(frames(f))].into_iter().collect::<js_sys::Array>());
+            }
+            let o = js_sys::Object::new();
+            js_sys::Reflect::set(&o, &"root".into(), &JsValue::from(hex(&root)))?;
+            js_sys::Reflect::set(&o, &"puts".into(), &puts)?;
+            Ok(o)
+        }
+        /// Where a file's pieces are fetched (contract ids, hex): its root, an index piece, a fragment.
+        pub fn file_root_id(&self, key: &[u8]) -> Result<String, JsValue> {
+            Ok(hex(&self.0.piece_id(&craftworks_files::root_address(&b32(key)?))))
+        }
+        pub fn file_index_id(&self, key: &[u8], level: u8, n: f64) -> Result<String, JsValue> {
+            Ok(hex(&self.0.piece_id(&craftworks_files::index_address(&b32(key)?, level, n as u64))))
+        }
+        pub fn file_fragment_id(&self, key: &[u8], g: f64, j: u8) -> Result<String, JsValue> {
+            Ok(hex(&self.0.piece_id(&craftworks_files::fragment_address(&b32(key)?, g as u64, j))))
+        }
+    }
+
+    /// A file's plan: `{ size, chunk, chunks, gens }`.
+    #[wasm_bindgen]
+    pub fn file_plan(size: f64) -> String {
+        plan_js(&craftworks_files::Plan::of(size as u64))
+    }
+    /// A file's key from its content hash, with its space's salt (none: a public file).
+    #[wasm_bindgen]
+    pub fn file_key(content: &[u8], salt: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+        let salt = if salt.is_empty() { None } else { Some(b32(salt)?) };
+        Ok(js_sys::Uint8Array::from(&craftworks_files::content_key(&b32(content)?, salt.as_ref())[..]))
+    }
+    /// A file's ROOT opened: `{ plan, depth, children: [hex] }`.
+    #[wasm_bindgen]
+    pub fn file_root(key: &[u8], root_hash: &str, state: &[u8]) -> Result<String, JsValue> {
+        let h = bytes32("root", root_hash).map_err(err)?;
+        let r = craftworks_files::Root::open(&b32(key)?, &h, state).map_err(file_err)?;
+        Ok(serde_json::json!({
+            "plan": serde_json::from_str::<serde_json::Value>(&plan_js(&r.plan)).unwrap(),
+            "depth": r.depth, "children": r.children.iter().map(|c| hex(c)).collect::<Vec<_>>(),
+        }).to_string())
+    }
+    /// An inner index piece opened: its children's hashes.
+    #[wasm_bindgen]
+    pub fn file_inner(key: &[u8], level: u8, n: f64, hash: &str, state: &[u8]) -> Result<Vec<String>, JsValue> {
+        let h = bytes32("inner", hash).map_err(err)?;
+        Ok(craftworks_files::open_inner(&b32(key)?, level, n as u64, &h, state).map_err(file_err)?.iter().map(|c| hex(c)).collect())
+    }
+    /// A leaf opened: per generation it covers, `[[j, hash hex]]`.
+    #[wasm_bindgen]
+    pub fn file_leaf(key: &[u8], size: f64, n: f64, hash: &str, state: &[u8]) -> Result<String, JsValue> {
+        let h = bytes32("leaf", hash).map_err(err)?;
+        let plan = craftworks_files::Plan::of(size as u64);
+        let gens = craftworks_files::open_leaf(&b32(key)?, &plan, n as u64, &h, state).map_err(file_err)?;
+        Ok(serde_json::Value::Array(gens.iter().map(|l| serde_json::json!(l.iter().map(|(j, h)| serde_json::json!([j, hex(h)])).collect::<Vec<_>>())).collect()).to_string())
+    }
+    /// ONE CHUNK alone (a seek): chunk `i` from its systematic fragment, checked.
+    #[wasm_bindgen]
+    pub fn file_read_chunk(key: &[u8], size: f64, listed: &str, i: f64, state: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+        let plan = craftworks_files::Plan::of(size as u64);
+        Ok(js_sys::Uint8Array::from(&craftworks_files::read_chunk(&b32(key)?, &plan, &listed_of(listed)?, i as u64, state).map_err(file_err)?[..]))
     }
 
     /// A space's GOVERNANCE (`craftworks_gov`, the one replay: the identity delegate reads a space by it too).

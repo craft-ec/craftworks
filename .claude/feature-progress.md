@@ -737,8 +737,15 @@ come with keepers as a new codec version.
       fragment/index/key refused, redundant recognised, one chunk alone, same content+space = same file (dedup,
       resume), another space/public differ, a short last generation from coded fragments only, an inner index level,
       pieces fit a sealed contract); planted bugs (no hash check; coded = a copy) turn 1 and 3 red.
-- [ ] F2 capability `files` (page): streaming upload (a generation at a time, raced, minted replacements, resume from
-      the account's `uploads`), download raced per generation (to memory or disk), inline small files. Live.
+- [x] F2 capability `files` (page) + core bindings: put (content hash in 4 MiB slices, key from the space's salt or
+      public, a generation at a time: 24 fragments at once, a fragment not stored replaced by a minted one, progress in
+      the account's `uploads` → resume, index last), get / stream (a generation raced: every listed fragment at once,
+      decoded on the first 16 valid), chunk (a seek), inline ≤ 64 KiB; `core.take_got` so fragments never pile up in
+      the core. LIVE on 17573 (one node): 20 MiB (81 chunks, 6 generations) up 6.4 s, down 0.25 s, same SHA-256, chunk
+      21 exact, inline round-trips. TWO NODES (fx gateway :17691 + fy :17692, 0.2.139, own webapp caches, a rehearsal
+      site EckhKs… via PUBLISH_KEY_SEED — a fresh node's signer holds no site key): up on X 49.5 s, down on Y 0.7 s,
+      same SHA-256, a seek on Y 8 ms; no console errors. Y's speed likely = fragments already propagated to it by X's
+      PUTs (its only peer): correctness across nodes proven, network fetch time not measured.
 - [ ] F3 attachments + previews: Messages, Chat, Mail, Board — pick, thumbnail inline, open, download.
 - [ ] F4 video: CMAF segments, renditions (AV1+Opus, H.264+AAC), remux (mp4box) or WebCodecs encode, MediaSource ABR,
       poster + scrub strip, subtitles.

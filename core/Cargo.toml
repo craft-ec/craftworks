@@ -38,6 +38,8 @@ craftworks-account = { path = "../account" }
 craftworks-gov = { path = "../gov" }
 # A table as a tail (read, sealed, written, flushed): its own crate, driven by the identity delegate too.
 craftworks-data = { path = "../data" }
+# Files: RLNC-coded, sealed pieces (ARCHITECTURE §6).
+craftworks-files = { path = "../files" }
 # The account's encryption key (X25519) and its vault (XChaCha20-Poly1305).
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
