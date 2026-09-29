@@ -650,7 +650,21 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       Permissions dialog right, no console errors. Harness: jobs tmp gov-diff.py + gov-old.cjs + gov example `replay`.
       NOT on the owner's sites: publishing ships the new identity delegate (consent card) — held until the port lands.
       NEXT P4: table READS in Rust for the delegate (a space's acts: feeds of each writer, epoch keys, merge) — core
-      `data::Open` + `feed::merge` driven by delegate messages.
+      `data::Open` + `feed::merge` driven by delegate messages. [SUPERSEDED: see P4 below — no table reads in the
+      delegate: the page hands it a MANDATE per space.]
+      P4 (design, 09-30): the delegate ADMITS from a MANDATE the page hands it each tick (per space: open?, live codes
+      with uses left, bans, members, MLS state, name/kind/governance) — no space-table reads in the delegate. Its own
+      admissions are kept in its secrets (dedupe, uses) and written as `admitted` acts by the next page. Staleness
+      accepted: a ban by another admin while every page is closed can still be admitted until a page runs; a removal
+      fixes it. Delegate I/O per admission: GET the requests bag; GET the asker's key log (→ data key) and card (key
+      package, inbox) — node 0.2.139 fetches unseen contracts for a delegate (#5542, checked in v0.2.139 source); MLS
+      add; UPDATE the epoch log (commit), PUT the next epoch's log ("open"); seal the welcome to the asker's inbox.
+      P4a DONE: `data` is its own crate (core re-exports it) and free of freenet-stdlib: the SDK moved the pure ids
+      (register_params, block_state/_of_state) into contract-keys (sdk PR #577, merged f079914; wire re-exports; its
+      one-writer control moved with it); craftworks pinned to f079914. Core builds the stdlib container when it sends.
+      The identity delegate now links data + mls-rs + the getrandom hook (upkeep's pool) and passes the import gate.
+      Live on net139: new space (PUT), acts + a note (UPDATEs), read back after reload, no console errors.
+      NEXT P4b: the delegate's I/O job (secrets-backed state machine: GET/PUT/UPDATE out, responses in) + the mandate.
 - [ ] (old note) NO PAGE OPEN AT ALL: node v0.2.139 (freenet-core #5747) wakes a delegate periodically (manifest `wakeups`, ≥ 60 s,
       the person's Background grant). Needs the joining logic (MLS welcome/add, spacekeys) moved into the identity
       delegate (a delegate change: handover; bundle the SpaceMember.writer drop) and nodes on ≥ 0.2.139 (owner's and

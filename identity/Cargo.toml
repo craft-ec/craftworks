@@ -31,5 +31,16 @@ ed25519-dalek = { version = "=2.2.0", default-features = false }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 
+# UPKEEP with no page open (admitting askers): a table as a tail, MLS, a space's governance — the same crates the page
+# runs.
+craftworks-data = { path = "../data" }
+mls-rs = { version = "=0.56.0", default-features = false, features = ["std", "tree_index", "fast_serialize"] }
+mls-rs-core = "=0.27.0"
+mls-rs-crypto-rustcrypto = "=0.22.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# The delegate's randomness: upkeep's pool (the page stirs it), through getrandom's custom hook.
+getrandom = { version = "0.2", features = ["custom"] }
+
 [dev-dependencies]
 craftec-register-contract = { workspace = true, features = ["testing"] }

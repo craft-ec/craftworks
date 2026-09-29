@@ -316,7 +316,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 [[package]]
 name = "contract-keys"
 version = "0.1.0"
-source = "git+https://github.com/craft-ec/craftworks-sdk?rev=615c9d5#615c9d56e2e205a97df0061b28a58588b099f599"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
 dependencies = [
  "blake3",
  "core-types",
@@ -335,7 +335,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 [[package]]
 name = "core-types"
 version = "0.1.0"
-source = "git+https://github.com/craft-ec/craftworks-sdk?rev=615c9d5#615c9d56e2e205a97df0061b28a58588b099f599"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
 dependencies = [
  "serde",
 ]
@@ -415,7 +415,7 @@ dependencies = [
  "craftec-register-contract",
  "craftworks-account",
  "craftworks-bag-contract",
- "craftworks-feed",
+ "craftworks-data",
  "craftworks-gov",
  "craftworks-identity",
  "craftworks-idlog-contract",
@@ -431,6 +431,23 @@ dependencies = [
  "wasm-bindgen",
  "wire",
  "x25519-dalek",
+]
+
+[[package]]
+name = "craftworks-data"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "bs58",
+ "chacha20poly1305",
+ "contract-keys",
+ "craftec-register-contract",
+ "craftworks-feed",
+ "ed25519-dalek",
+ "engine",
+ "freenet-prolly",
+ "serde_json",
+ "tail",
 ]
 
 [[package]]
@@ -456,8 +473,13 @@ dependencies = [
  "blake3",
  "chacha20poly1305",
  "craftec-register-contract",
+ "craftworks-data",
  "ed25519-dalek",
  "freenet-stdlib 0.12.1",
+ "getrandom 0.2.17",
+ "mls-rs",
+ "mls-rs-core",
+ "mls-rs-crypto-rustcrypto",
  "serde",
  "serde_json",
  "x25519-dalek",
@@ -516,7 +538,7 @@ dependencies = [
 [[package]]
 name = "craftworks-sdk"
 version = "0.1.0"
-source = "git+https://github.com/craft-ec/craftworks-sdk?rev=615c9d5#615c9d56e2e205a97df0061b28a58588b099f599"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
 dependencies = [
  "blake3",
  "core-types",
@@ -858,7 +880,7 @@ dependencies = [
 [[package]]
 name = "engine"
 version = "0.1.0"
-source = "git+https://github.com/craft-ec/craftworks-sdk?rev=615c9d5#615c9d56e2e205a97df0061b28a58588b099f599"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
 dependencies = [
  "bincode",
  "blake3",
@@ -1628,7 +1650,7 @@ dependencies = [
 [[package]]
 name = "page"
 version = "0.1.0"
-source = "git+https://github.com/craft-ec/craftworks-sdk?rev=615c9d5#615c9d56e2e205a97df0061b28a58588b099f599"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
 dependencies = [
  "blake3",
  "engine",
@@ -1641,7 +1663,7 @@ dependencies = [
 [[package]]
 name = "page-io"
 version = "0.1.0"
-source = "git+https://github.com/craft-ec/craftworks-sdk?rev=615c9d5#615c9d56e2e205a97df0061b28a58588b099f599"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
 dependencies = [
  "blake3",
  "contract-keys",
@@ -1702,7 +1724,7 @@ dependencies = [
 [[package]]
 name = "pieces"
 version = "0.1.0"
-source = "git+https://github.com/craft-ec/craftworks-sdk?rev=615c9d5#615c9d56e2e205a97df0061b28a58588b099f599"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
 dependencies = [
  "core-types",
  "freenet-prolly",
@@ -1792,7 +1814,7 @@ dependencies = [
 [[package]]
 name = "probe"
 version = "0.1.0"
-source = "git+https://github.com/craft-ec/craftworks-sdk?rev=615c9d5#615c9d56e2e205a97df0061b28a58588b099f599"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
 dependencies = [
  "anyhow",
  "base64",
@@ -1836,7 +1858,7 @@ dependencies = [
 [[package]]
 name = "protocol"
 version = "0.1.0"
-source = "git+https://github.com/craft-ec/craftworks-sdk?rev=615c9d5#615c9d56e2e205a97df0061b28a58588b099f599"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
 dependencies = [
  "bincode",
  "core-types",
@@ -2183,7 +2205,7 @@ dependencies = [
 [[package]]
 name = "signer"
 version = "0.1.0"
-source = "git+https://github.com/craft-ec/craftworks-sdk?rev=615c9d5#615c9d56e2e205a97df0061b28a58588b099f599"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
 dependencies = [
  "bincode",
  "contract-keys",
@@ -2197,7 +2219,7 @@ dependencies = [
 [[package]]
 name = "signer-proto"
 version = "0.1.0"
-source = "git+https://github.com/craft-ec/craftworks-sdk?rev=615c9d5#615c9d56e2e205a97df0061b28a58588b099f599"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
 dependencies = [
  "bincode",
  "craftec-register-contract",
@@ -2282,7 +2304,7 @@ dependencies = [
 [[package]]
 name = "tail"
 version = "0.1.0"
-source = "git+https://github.com/craft-ec/craftworks-sdk?rev=615c9d5#615c9d56e2e205a97df0061b28a58588b099f599"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
 dependencies = [
  "craftec-register-contract",
  "craftec-tail-contract",
@@ -2664,7 +2686,7 @@ dependencies = [
 [[package]]
 name = "wire"
 version = "0.1.0"
-source = "git+https://github.com/craft-ec/craftworks-sdk?rev=615c9d5#615c9d56e2e205a97df0061b28a58588b099f599"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
 dependencies = [
  "bincode",
  "blake3",

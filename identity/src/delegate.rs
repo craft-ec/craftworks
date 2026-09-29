@@ -79,3 +79,15 @@ impl DelegateInterface for Identity {
         }
     }
 }
+
+// A delegate has no randomness of its own: upkeep's pool, stirred by the page, ratcheted per draw (never before a stir).
+static mut DRAW: Option<[u8; 32]> = None;
+fn upkeep_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
+    let Some(seed) = (unsafe { DRAW }) else { return Err(getrandom::Error::UNSUPPORTED) };
+    let mut out = blake3::Hasher::new_derive_key("craftworks identity upkeep stream");
+    out.update(&seed);
+    out.finalize_xof().fill(buf);
+    unsafe { DRAW = Some(blake3::derive_key("craftworks identity upkeep stream next", &seed)) };
+    Ok(())
+}
+getrandom::register_custom_getrandom!(upkeep_getrandom);

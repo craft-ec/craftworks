@@ -4,7 +4,8 @@
 
 /// The account: its own crate (shared with mls), under its old name here.
 pub use craftworks_account as account;
-pub mod data;
+/// A table as a tail: its own crate (the identity delegate drives it too).
+pub use craftworks_data as data;
 
 use craftworks_identity::{decode_answer, encode_request, Answer, Request};
 use serde_json::{json, Value};
@@ -195,9 +196,10 @@ impl Core {
         let o = self.tail(id)?;
         match send {
             data::Send::Put(state) => {
-                wire::frame_put(o.contract.clone(), freenet_stdlib::prelude::WrappedState::new(state), s)
+                let (_, c, state) = wire::puts::contract(&o.code, &o.params, &state);
+                wire::frame_put(c, state, s)
             }
-            data::Send::Update(delta) => wire::frame_update_delta(o.key(), delta, s),
+            data::Send::Update(delta) => wire::frame_update_delta(wire::puts::contract(&o.code, &o.params, &[]).1.key(), delta, s),
         }
     }
 

@@ -16,10 +16,13 @@ use freenet_prolly::apply::ApplyError;
 use freenet_prolly::range::{range, read_value, PageEnd, Range, RangeError};
 use freenet_prolly::store::{MemBlocks, ReadError};
 use freenet_prolly::Cid;
-use freenet_stdlib::prelude::{ContractContainer, ContractKey};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use tail::{Op, Unsigned, Writer};
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
 
 /// A table's tail is FLUSHED into its tree once it holds this many rows: the tail stays small (every write re-signs
 /// and every reader re-reads the whole tail), the tree holds the rest.
@@ -153,7 +156,9 @@ pub fn block_address(tk: &[u8; 32], cid: &Cid) -> [u8; 32] {
 
 pub struct Open {
     pub params: Vec<u8>,
-    pub contract: ContractContainer,
+    /// The Tail contract's code (the node needs it for the first PUT) and its hash (what names the instance).
+    pub code: std::sync::Arc<Vec<u8>>,
+    pub code_hash: [u8; 32],
     pub writer: Writer,
     /// Whether the network holds this tail (a GET found it, or this page put it). Before, the first write is a PUT
     /// of the whole state; after, every write is an UPDATE carrying one delta.
@@ -214,12 +219,12 @@ struct Rows {
 impl Open {
     /// Table `table` of the account whose data key is `key`.
     pub fn new(tail_code: &[u8], key: &[u8; 32], table: &str) -> Open {
-        let params = wire::register_params(key, &[b"t/".as_slice(), table.as_bytes()].concat());
-        let (_, contract, _) = wire::puts::contract(tail_code, &params, &[]);
+        let params = contract_keys::register_params(key, &[b"t/".as_slice(), table.as_bytes()].concat());
         let writer = Writer::new(&params).expect("our own params parse");
         Open {
             params,
-            contract,
+            code: std::sync::Arc::new(tail_code.to_vec()),
+            code_hash: contract_keys::code_hash(tail_code),
             writer,
             on_network: false,
             pending: None,
@@ -238,16 +243,14 @@ impl Open {
         }
     }
 
+    /// The instance id, as the node writes it (base58).
     pub fn id(&self) -> String {
-        self.contract.key().id().encode()
+        bs58::encode(self.id_bytes()).into_string()
     }
 
+    /// The instance id: `contract_keys::instance` (the node's derivation, pinned to the stdlib by the SDK's tests).
     pub fn id_bytes(&self) -> [u8; 32] {
-        self.contract.key().id().as_bytes().try_into().expect("32 bytes")
-    }
-
-    pub fn key(&self) -> ContractKey {
-        self.contract.key()
+        contract_keys::instance(&self.code_hash, &self.params)
     }
 
     /// The table's own key: rows and blocks under it read, and — until an epoch's key is given — writes use it.
@@ -383,7 +386,7 @@ impl Open {
     }
 
     fn take_block(&mut self, want: &Cid, state: &[u8]) -> bool {
-        match wire::block::block_of_state(state) {
+        match contract_keys::block::block_of_state(state) {
             Some((id, body)) if id == *want => {
                 self.blocks.insert(id, body);
                 true
@@ -502,7 +505,7 @@ impl Open {
         }
         let mut blocks = Vec::new();
         for (cid, body) in staging.0.iter().filter(|(c, _)| reseal || !self.blocks.0.contains_key(*c)) {
-            let state = wire::block::block_state(cid, body).ok_or_else(|| format!("block {} is of no known kind", crate::hex(cid)))?;
+            let state = contract_keys::block::block_state(cid, body).ok_or_else(|| format!("block {} is of no known kind", hex(cid)))?;
             blocks.push((*cid, seal_block(&tk, by, cid, &state)));
         }
         let (seq, hash) = self
@@ -674,7 +677,7 @@ impl Open {
             None => Value::Null,
         };
         Ok(Step::Ready(json!({
-            "id": self.id(), "seq": self.writer.seq(), "rows": rows, "root": body.root.map(|r| crate::hex(&r)),
+            "id": self.id(), "seq": self.writer.seq(), "rows": rows, "root": body.root.map(|r| hex(&r)),
             "pending": self.pending_rows(), "legacy": self.stale.len(), "unreadable": r.unreadable,
             "resealTree": self.reseal_tree(), "sealedTree": self.sealed_tree(), "writes": writes,
         })))
@@ -732,7 +735,7 @@ mod tests {
     fn net(o: &Open, id: &Cid) -> Vec<u8> {
         let by = o.writes.unwrap();
         let tk = o.key_for(by).unwrap();
-        seal_block(&tk, by, id, &wire::block::block_state(id, o.blocks.0.get(id).expect("the writer made it")).unwrap())
+        seal_block(&tk, by, id, &contract_keys::block::block_state(id, o.blocks.0.get(id).expect("the writer made it")).unwrap())
     }
 
     fn keys(v: &Value) -> Vec<String> {
@@ -814,7 +817,7 @@ mod tests {
         assert!(node.level() >= 1, "the tree grew a branch");
         assert!(node.parity_count() >= freenet_prolly::parity::PARITY, "the root's children are coded");
         for p in node.parity() {
-            assert!(put.contains(&p), "parity block {} was put by a flush", crate::hex(&p));
+            assert!(put.contains(&p), "parity block {} was put by a flush", hex(&p));
         }
     }
 

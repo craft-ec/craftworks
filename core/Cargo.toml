@@ -36,6 +36,8 @@ craftworks-bag-contract = { path = "../contracts-src/bag", default-features = fa
 craftworks-account = { path = "../account" }
 # A space's governance: the one replay of its acts (the identity delegate reads a space by it too).
 craftworks-gov = { path = "../gov" }
+# A table as a tail (read, sealed, written, flushed): its own crate, driven by the identity delegate too.
+craftworks-data = { path = "../data" }
 # The account's encryption key (X25519) and its vault (XChaCha20-Poly1305).
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
@@ -46,5 +48,4 @@ wasm-bindgen = "=0.2.128"
 js-sys = "0.3"
 
 [dev-dependencies]
-craftworks-feed = { path = "../feed" }
 craftec-register-contract = { workspace = true, features = ["testing"] }

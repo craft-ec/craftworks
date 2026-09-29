@@ -1,0 +1,24 @@
+[package]
+name = "craftworks-data"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "DATA: an account's (or a space's) table as a tail — read, sealed, written, flushed into its tree. No I/O: the page (through the core) and the identity delegate (upkeep, no page open) drive it."
+
+[dependencies]
+# The tail's params and ids, sans-IO (`contract_keys`: no client API — the identity delegate links this crate too).
+contract-keys = { workspace = true }
+bs58 = "0.5"
+craftec-register-contract = { workspace = true }
+tail = { workspace = true }
+freenet-prolly = { workspace = true }
+engine = { workspace = true }
+serde_json = "1"
+blake3 = { version = "1", default-features = false }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+craftworks-feed = { path = "../feed" }
+craftec-register-contract = { workspace = true, features = ["testing"] }
+ed25519-dalek = { version = "=2.2.0", default-features = false }
