@@ -456,9 +456,6 @@ mod js {
         pub fn frames_sign(&mut self, params: &[u8], seq: u64, value_hash: &[u8], space: &[u8]) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::Sign { params: params.to_vec(), seq, value_hash: b32(value_hash)?, space: space_of(space)? })
         }
-        pub fn frames_export(&mut self) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::Export)
-        }
         /// Leave to write these tables, asked in one prompt (the node may prompt the person; the answer can take a
         /// minute).
         pub fn frames_grant(&mut self, tables: Vec<String>) -> Result<js_sys::Array, JsValue> {

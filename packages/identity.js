@@ -111,7 +111,6 @@ export async function start(ctx) {
     forget: () => call(core.frames_forget(), "forgetting this node's member"),
     who: () => call(core.frames_who(), "asking who is logged in"),
     sign: (params, seq, valueHash, space = NONE) => call(core.frames_sign(params, BigInt(seq), valueHash, space), "signing"),
-    exportKey: () => call(core.frames_export(), "exporting the key"),
     // Leave to write one of the account's tables. The node may ask the person (its own prompt, which waits up to a
     // minute), so this waits longer than any other call.
     grant: tables => call(core.frames_grant(tables), `asking for ${tables.map(t => `“${t}”`).join(", ")}`, 90000),

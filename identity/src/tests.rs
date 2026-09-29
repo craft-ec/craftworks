@@ -92,9 +92,6 @@ fn sign(m: &mut Map, app: [u8; 32], p: &[u8], seq: u64, v: [u8; 32]) -> Answer {
     serve(m, Request::Sign { params: p.to_vec(), seq, value_hash: v, space: None }, app)
 }
 
-fn export(m: &mut Map, app: [u8; 32]) -> Answer {
-    serve(m, Request::Export, app)
-}
 
 /// The page's answer bytes (a request that is not a grant is always answered at once).
 fn now(o: Out) -> Vec<u8> {
@@ -192,7 +189,7 @@ fn a_pin_already_used_is_refused_and_counted_as_a_guess() {
 }
 
 #[test]
-fn five_wrong_pins_lock_the_node_until_a_key_file_resets_a_pin() {
+fn five_wrong_pins_lock_the_node_until_the_account_s_words_reopen_it() {
     let mut m = provisioned(APP);
     assert_eq!(provision(&mut m, BOB, BOB_DID, BOB_PIN, APP), bob());
     for left in (1..MAX_TRIES).rev() {
@@ -201,14 +198,18 @@ fn five_wrong_pins_lock_the_node_until_a_key_file_resets_a_pin() {
     assert_eq!(unlock(&mut m, "000000", APP), Answer::Locked);
     assert_eq!(unlock(&mut m, ALICE_PIN, APP), Answer::Locked);
     assert_eq!(unlock(&mut m, BOB_PIN, APP), Answer::Locked);
-    // Alice's key file sets her a new PIN, from any app; her old PIN no longer opens anything.
-    assert_eq!(provision(&mut m, ALICE, ALICE_DID, "555555", OTHER), alice());
+    // Someone without Alice's words: a new member of her account without her data key, or of an account with no
+    // member here, is not even answered.
+    let fresh = [0x31; 32];
+    assert_eq!(serve(&mut m, Request::Provision { seed: fresh, did: ALICE_DID, pin: "555555".into(), data: [0xEE; 32].to_vec() }, APP), Answer::Locked);
+    assert_eq!(serve(&mut m, Request::Provision { seed: fresh, did: [0xD9; 32], pin: "555555".into(), data: data_of([0xD9; 32]).to_vec() }, APP), Answer::Locked);
+    // Alice's WORDS (her account's data key): a new member of her account, and the lock is cleared for everyone.
+    assert_eq!(provision(&mut m, fresh, ALICE_DID, "555555", APP), opened(fresh, ALICE_DID));
     assert_eq!(unlock(&mut m, BOB_PIN, APP), bob(), "the lock is cleared for everyone");
-    assert_eq!(unlock(&mut m, "555555", APP), alice());
-    assert_eq!(unlock(&mut m, ALICE_PIN, APP), Answer::WrongPin { tries_left: MAX_TRIES - 1 });
-    // Her home did not move with the key file.
-    assert_eq!(unlock(&mut m, "555555", APP), alice());
-    assert_eq!(export(&mut m, APP), Answer::Exported { seed: ALICE });
+    assert_eq!(unlock(&mut m, "555555", APP), opened(fresh, ALICE_DID));
+    // A handover's own key again still sets a member's PIN anew; the key file's export is gone.
+    assert_eq!(provision(&mut m, ALICE, ALICE_DID, "777777", OTHER), alice());
+    assert_eq!(serve(&mut m, Request::Export, APP), Answer::Refused(Why::Retired));
     assert_eq!(provision(&mut m, ALICE, BOB_DID, "666666", APP), Answer::Refused(Why::OtherDid));
 }
 
@@ -340,13 +341,13 @@ fn nothing_is_signed_unless_the_guard_was_saved() {
 }
 
 #[test]
-fn only_the_home_exports_a_key() {
+fn no_app_takes_a_member_s_key_out() {
+    // The key file was dropped: no app, the home included, gets a member's seed.
     let mut m = provisioned(APP);
-    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
-    assert_eq!(export(&mut m, OTHER), Answer::Refused(Why::NotHome));
-    assert_eq!(export(&mut m, APP), Answer::Exported { seed: ALICE });
-    assert_eq!(lock(&mut m, APP), Answer::LoggedOut);
-    assert_eq!(export(&mut m, APP), Answer::Refused(Why::NoSession));
+    for app in [APP, OTHER] {
+        assert_eq!(unlock(&mut m, ALICE_PIN, app), alice());
+        assert_eq!(serve(&mut m, Request::Export, app), Answer::Refused(Why::Retired));
+    }
 }
 
 #[test]

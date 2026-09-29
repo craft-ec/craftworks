@@ -120,7 +120,7 @@ export async function start(ctx) {
       });
       const why = r =>
         r.wrongPin ? `Wrong PIN. ${r.wrongPin.triesLeft} tries left on this node.`
-        : r.locked ? "Too many wrong PINs: this node is locked. Log in with your recovery words."
+        : r.locked ? "Too many wrong PINs: this node is locked. Log in with your recovery words or your passphrase: that opens it again."
         : r.refused === "PinTaken" ? "That PIN is taken on this node: choose another."
         : r.error ?? `Refused: ${r.refused}`;
       const on = (form, run) =>

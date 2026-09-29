@@ -12,12 +12,13 @@
 //!   make one, with the PIN the person sets; no two members share a PIN. The same node and the same PIN (`Unlock`)
 //!   open the same member. Several members on one node may belong to one DID or to different people's.
 //! - **Wrong PINs:** five in a row, by anyone, lock PIN unlock on this node (a new member refused for a taken PIN
-//!   counts too: it reveals that PIN opens a member). A good unlock clears the count. A locked node is opened by a key
-//!   file: `Provision` with a member's own key sets its PIN anew and clears the lock.
+//!   counts too: it reveals that PIN opens a member). A good unlock clears the count. A locked node is opened by the
+//!   account's WORDS (or its passphrase, which carries them): `Provision` of a new member of an account that has a
+//!   member here, with that account's data key — which only the words give — clears the lock. (A member's own key
+//!   again, from a handover, sets its PIN anew too.)
 //! - **Sessions:** an unlock opens a session for that APP on this node, naming one member, kept here until the app
 //!   logs out (a reload, another tab or another browser on the node is still logged in). One app's session is never
-//!   another's. Who, Sign and Export all go through it.
-//! - **Export** (the key file): the member's home app only.
+//!   another's. Who and Sign go through it. (No key file: `Export` is retired, kept only for the requests' wire order.)
 //! - **No recovery words here.** The words are the account's owner: a node that kept them would lose the account to
 //!   anyone who copied its disk, and an owner cannot be rotated away. Shown once at registration, typed when needed.
 //! - **The account's data key:** each member keeps its account's DATA key (derived from the words, the same on every
@@ -77,7 +78,8 @@ pub enum Request {
     /// Sign `params.signed_message(false, seq, value_hash)` with the session's member, the account's data key, or the
     /// key of an epoch's log of `space` (`None`: the account).
     Sign { params: Vec<u8>, seq: u64, value_hash: [u8; HASH_LEN], space: Option<[u8; 32]> },
-    /// The session member's seed, for a key file. Its home app only.
+    /// RETIRED (the key file was dropped, 2026-09-30): refused. Kept so every later request keeps its wire number (an
+    /// earlier build is still asked the handover questions).
     Export,
     /// For the next version of this delegate: the member this PIN opens, to its home app. Counted as an unlock try.
     Handover { pin: String },
@@ -180,7 +182,7 @@ pub enum Answer {
     Unlocked { public: [u8; KEY_LEN], did: [u8; 32], data: Option<[u8; KEY_LEN]> },
     /// No member has this PIN.
     WrongPin { tries_left: u8 },
-    /// Too many wrong PINs: only a key file opens this node again.
+    /// Too many wrong PINs: only the account's words (a new member with its data key) open this node again.
     Locked,
     /// The session is closed.
     LoggedOut,
@@ -261,6 +263,8 @@ pub enum Why {
     Unreadable,
     /// No MLS epoch secret is held here (for that epoch, or at all yet).
     NoEpoch,
+    /// A request no longer served (a key file's export).
+    Retired,
 }
 
 /// Wrong PINs in a row allowed before PIN unlock is locked on this node.
@@ -758,6 +762,16 @@ impl Member {
     }
 }
 
+/// `ACCOUNT_CHECK ‖ DID` → a one-way check of the account's data key: a new member bringing that key proves the
+/// account's words (they alone give it), which is what opens a node locked by wrong PINs.
+pub const ACCOUNT_CHECK: &[u8] = b"identity_account_check/";
+fn account_check(data: &[u8; 32]) -> [u8; 32] {
+    blake3::derive_key("craftworks identity account check", data)
+}
+fn owns_account<H: Host>(h: &H, did: &[u8; 32], data: &[u8; 32]) -> bool {
+    h.get_secret(&[ACCOUNT_CHECK, &did[..]].concat()).is_some_and(|c| c == account_check(data))
+}
+
 fn member<H: Host>(h: &H, public: &[u8]) -> Option<Member> {
     h.get_secret(&[MEMBER, public].concat()).and_then(|b| Member::decode(&b))
 }
@@ -828,9 +842,10 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             let public = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
             let existing = member(h, &public);
             // Refusing a taken PIN tells the asker it opens someone's member, so it is a GUESS like a wrong unlock:
-            // counted, and not answered at all once the node is locked (only a key file gets through then).
+            // counted, and not answered at all once the node is locked — except for the account's words: a new member
+            // of an account that has one here, bringing that account's data key (only its words give it).
             let t = tries(h);
-            if existing.is_none() && t >= MAX_TRIES {
+            if existing.is_none() && t >= MAX_TRIES && !data.is_some_and(|d| owns_account(h, &did, &d)) {
                 return Locked;
             }
             if by_pin(h, &pin).is_some_and(|a| a.public() != public) {
@@ -853,10 +868,11 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 }
                 None => Member { seed, did, pin, home: app, data },
             };
-            // The member before its PIN entry: a crash between leaves a member its key file can reach, never a
-            // PIN that points at nothing.
+            // The member before its PIN entry: a crash between leaves a member a handover can reach, never a PIN that
+            // points at nothing. And the account's check: what its words prove on a locked node.
             if !h.set_secret(&[MEMBER, &public[..]].concat(), &a.encode())
                 || !h.set_secret(&[PIN, &pin[..]].concat(), &public)
+                || a.data.is_some_and(|d| !h.set_secret(&[ACCOUNT_CHECK, &a.did[..]].concat(), &account_check(&d)))
             {
                 return Refused(Why::NotSaved);
             }
@@ -877,11 +893,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             Some(a) => a.unlocked(),
             None => Refused(Why::NoSession),
         },
-        Request::Export => match session(h, &app) {
-            None => Refused(Why::NoSession),
-            Some(a) if a.home != app => Refused(Why::NotHome),
-            Some(a) => Exported { seed: a.seed },
-        },
+        Request::Export => Refused(Why::Retired),
         Request::Handover { pin } => match try_pin(h, &pin) {
             Err(answer) => answer,
             // The right PIN from another app is not a handover: that app never held this member.

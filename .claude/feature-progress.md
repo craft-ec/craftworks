@@ -54,13 +54,14 @@ device + the same PIN opens the same account. Adding a second device: pairing wi
   contract imports in the page wasm).
 - [x] B. data: each device's own feed per table (tail + tree, sealed per epoch), merged; subscribed (built through the
   storage/feed work; see "Two devices, one account").
-- [ ] C. pairing admits a member without the words — NOT BUILT. Superseded in practice (audit 09-30): a new device
-  gets in with the words, or with the account id + the RECOVERY PASSPHRASE (Account → Recovery). Owner to say if
-  device-to-device pairing is still wanted.
-- [~] D. auth dialog: built (Login: this node's PIN · words · passphrase; Register). Key file: the identity can export
-  (`Export`, `identity.exportKey`) but no page offers export or import — the passphrase took that role.
-- [ ] E. keycraft — NOT BUILT (no code in craftworks). Owner to say if still wanted.
-- [ ] F. device id + PIN pairing — NOT BUILT (needs C).
+- [-] C. pairing without the words — DROPPED (owner 09-30): words or account id + recovery passphrase.
+- [x] D. auth dialog (Login: this node's PIN · words · passphrase; Register). KEY FILE DROPPED (owner 09-30): the
+  identity's `Export` is refused (`Why::Retired`; the variant kept for the wire order), the page API removed. What the
+  key file did — reopen a node LOCKED by wrong PINs — the words do now: a new member of an account that has one here,
+  bringing its data key (checked against `ACCOUNT_CHECK ‖ DID`, a one-way check written at provisioning). Test + a
+  planted bug turning two red.
+- [ ] E. keycraft — LATER (owner 09-30).
+- [-] F. device id + PIN pairing — DROPPED with C.
 - [x] G. the sites publish under the node's signer (loader, craftworks, test/alt sites; B's).
 
 ## 2026-09-28 — reviewed against freenet's dapp-builder skill (github.com/freenet/freenet-agent-skills)
