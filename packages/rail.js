@@ -8,17 +8,17 @@ export async function mount(ctx, el) {
   const [auth, space, conversation, directory] = await Promise.all(["auth", "space", "conversation", "directory"].map(n => ctx.require(n)));
   el.innerHTML = `
     <style>
-      .rail { width: 64px; box-sizing: border-box; border-right: 1px solid var(--cw-line); background: var(--cw-bg); display: flex; flex-direction: column;
+      .cw-rail { width: 64px; box-sizing: border-box; border-right: 1px solid var(--cw-line); background: var(--cw-bg); display: flex; flex-direction: column;
         align-items: center; gap: var(--cw-space-2); padding: var(--cw-space-2) 0; overflow-y: auto; overscroll-behavior: contain; }
-      .rail a, .rail button { position: relative; width: 44px; height: 44px; flex: none; border-radius: 50%; display: grid; place-items: center;
+      .cw-rail a, .cw-rail button { position: relative; width: 44px; height: 44px; flex: none; border-radius: 50%; display: grid; place-items: center;
         background: var(--cw-surface); border: 1px solid var(--cw-line); color: var(--cw-fg); text-decoration: none; font: inherit; font-weight: 700;
         font-size: .85rem; cursor: pointer; transition: border-radius .15s; }
-      .rail a:hover, .rail button:hover { border-radius: 14px; }
-      .rail a[aria-current="page"] { border-radius: 14px; background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
-      .rail a[aria-current="page"]::before { content: ""; position: absolute; left: -10px; width: 4px; height: 28px; border-radius: 0 4px 4px 0; background: var(--cw-fg); }
-      .rail .sep { width: 28px; height: 2px; border-radius: 1px; background: var(--cw-line); flex: none; }
-      .rail .add { color: var(--cw-accent); font-size: 1.3rem; font-weight: 400; }
-      .rail .cw-badge { position: absolute; right: -6px; bottom: -4px; margin: 0; }
+      .cw-rail a:hover, .cw-rail button:hover { border-radius: 14px; }
+      .cw-rail a[aria-current="page"] { border-radius: 14px; background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
+      .cw-rail a[aria-current="page"]::before { content: ""; position: absolute; left: -10px; width: 4px; height: 28px; border-radius: 0 4px 4px 0; background: var(--cw-fg); }
+      .cw-rail .sep { width: 28px; height: 2px; border-radius: 1px; background: var(--cw-line); flex: none; }
+      .cw-rail .add { color: var(--cw-accent); font-size: 1.3rem; font-weight: 400; }
+      .cw-rail .cw-badge { position: absolute; right: -6px; bottom: -4px; margin: 0; }
       .rail-ask { border: 0; border-radius: var(--cw-radius); padding: var(--cw-space-4); width: min(380px, calc(100vw - 32px)); box-shadow: var(--cw-shadow-lg);
         background: var(--cw-surface); color: var(--cw-fg); }
       .rail-ask h3 { margin: 0 0 var(--cw-space-2); font-size: 1rem; }
@@ -28,10 +28,10 @@ export async function mount(ctx, el) {
       .rail-ask button { font: inherit; border: 0; border-radius: var(--cw-radius-sm); padding: 6px var(--cw-space-3); background: var(--cw-accent); color: var(--cw-accent-fg); cursor: pointer; }
       .rail-ask .said { color: var(--cw-danger); }
       .rail-ask .waiting { margin: 0; padding-left: 1.2em; color: var(--cw-muted); font-size: var(--cw-text-sm); }
-      @media (max-width: 600px) { .rail { width: 52px; } .rail a, .rail button { width: 38px; height: 38px; } }
+      @media (max-width: 600px) { .cw-rail { width: 52px; } .cw-rail a, .cw-rail button { width: 38px; height: 38px; } }
     </style>
-    <nav class="rail" aria-label="Spaces"></nav>`;
-  const nav = el.querySelector(".rail");
+    <nav class="cw-rail" aria-label="Spaces"></nav>`;
+  const nav = el.querySelector(".cw-rail");
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
     e.append(...kids.filter(Boolean));

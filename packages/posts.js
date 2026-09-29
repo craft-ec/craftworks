@@ -185,7 +185,16 @@ export async function start(ctx) {
     let out;
     // A space's PUBLIC board, seen from outside (`where.outside`: its description); DISCOVER: every public space's.
     if (where.outside) out = await boardPosts(where.outside, { outside: true });
-    else if (where.discover) out = (await Promise.all((await publicSpaces()).map(d => boardPosts(d, { outside: true }).catch(() => [])))).flat();
+    // DISCOVER: every public space's board, and the profile posts (public by being there) of the people shown in
+    // Discover (each chose to be).
+    else if (where.discover) {
+      const people = await (await ctx.require("directory")).listed().catch(() => []);
+      const [spacesPosts, profile] = await Promise.all([
+        Promise.all((await publicSpaces()).map(d => boardPosts(d, { outside: true }).catch(() => []))).then(x => x.flat()),
+        profilePosts(people).catch(() => []),
+      ]);
+      out = [...spacesPosts, ...profile];
+    }
     // DISCOVER is filtered by the moderation lists this person applies (theirs, and whom they chose).
     if (where.outside || where.discover) {
       const lists = await (await ctx.require("moderation")).lists();

@@ -39,10 +39,12 @@ export async function mount(ctx, el) {
       ctx.actions["/board"] = [{ label: "All public boards", href: base(), on: !!w.discover }];
       return dispatchEvent(new CustomEvent("craftworks:actions"));
     }
+    // The same tabs on every page of a board (an open post, a profile, the Feed): a space's Posts, or — personal —
+    // Feed and Your posts; and Create post. Each lit only on its own page.
     ctx.actions["/board"] = [
       ...(ctx.space ? [] : [{ label: "Feed", href: "#/board/feed", on: !!w.feed }]),
-      { label: w.board ? "Posts" : w.by === me ? "Your posts" : "Posts", href: base(), on: !w.post && !w.submit && (!!w.board || w.by === me) },
-      ...(w.board || w.by === me || w.feed || w.submit ? [{ label: "Create post", href: `${base()}/submit`, on: !!w.submit }] : []),
+      { label: ctx.space ? "Posts" : "Your posts", href: base(), on: !w.post && !w.submit && !w.feed && (!!ctx.space || w.by === me) },
+      { label: "Create post", href: `${base()}/submit`, on: !!w.submit },
     ];
     dispatchEvent(new CustomEvent("craftworks:actions"));
   };
