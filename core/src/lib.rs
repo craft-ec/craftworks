@@ -42,6 +42,7 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::SpaceMember { seed, public, credential } => json!({ "spaceMember": {
             "seed": hex(seed), "public": hex(public), "credential": hex(credential),
         } }),
+        Answer::Upkeep { wakeups, inbox, inbox_len } => json!({ "upkeep": { "wakeups": wakeups, "inbox": inbox.map(|i| hex(&i)), "inboxLen": inbox_len } }),
         Answer::HandedSpaces { spaces } => json!({ "handedSpaces": spaces.iter().map(|(id, st, eps)| json!({
             "space": hex(id), "mls": st.as_ref().map(|s| hex(s)),
             "epochs": eps.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>(),
@@ -471,6 +472,14 @@ mod js {
         /// The DID's member for spaces (the home site only): its MLS seed, keys and credential.
         pub fn frames_space_member(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::SpaceMember)
+        }
+        /// UPKEEP with no page open: the account's inbox contract (its instance id), for the delegate to watch and read
+        /// at each wake-up (the home site only); and what upkeep has done.
+        pub fn frames_upkeep_watch(&mut self, inbox: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::UpkeepWatch { inbox: b32(inbox)? })
+        }
+        pub fn frames_upkeep_status(&mut self) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::UpkeepStatus)
         }
         /// Open items sealed to the account's inbox key (the home site only).
         pub fn frames_inbox_open(&mut self, items: js_sys::Array) -> Result<js_sys::Array, JsValue> {

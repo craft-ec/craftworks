@@ -124,6 +124,11 @@ pub enum Request {
     /// The DID's MEMBER for spaces (the same on every device): its MLS signing key's seed and public key, its
     /// credential (signed by the data key), and its feed key. The home site only.
     SpaceMember,
+    /// UPKEEP with no page open (the node wakes this delegate: its manifest's `upkeep`): the contract the session
+    /// account's INBOX is (a bag's instance id, the page computes it) — watched and read at each wake-up. Home only.
+    UpkeepWatch { inbox: [u8; 32] },
+    /// What upkeep did: the wake-ups run, and the inbox as last read (its state's length; `None`: not read yet).
+    UpkeepStatus,
 }
 
 /// What the identity answers.
@@ -158,6 +163,8 @@ pub enum Answer {
     /// A member's spaces, handed to the next build: `(space id, its group state, its epochs' secrets)`.
     HandedSpaces { spaces: Vec<([u8; 32], Option<Vec<u8>>, Vec<(u64, [u8; 32])>)> },
     SpaceMember { seed: [u8; 32], public: [u8; 32], credential: Vec<u8> },
+    /// Upkeep so far: wake-ups run, the watched inbox (if set) and its state's length when last read.
+    Upkeep { wakeups: u64, inbox: Option<[u8; 32]>, inbox_len: Option<u64> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -225,6 +232,32 @@ pub fn decode_answer(b: &[u8]) -> Option<(u32, Answer)> {
 pub trait Host {
     fn get_secret(&self, key: &[u8]) -> Option<Vec<u8>>;
     fn set_secret(&mut self, key: &[u8], value: &[u8]) -> bool;
+}
+
+/// UPKEEP's own record (no page open: the node wakes this delegate): the inbox contract to watch, how many wake-ups
+/// ran, and the inbox's state length when last read.
+pub const UPKEEP_INBOX: &[u8] = b"identity_upkeep/inbox";
+pub const UPKEEP_WAKEUPS: &[u8] = b"identity_upkeep/wakeups";
+pub const UPKEEP_INBOX_LEN: &[u8] = b"identity_upkeep/inbox_len";
+fn u64_of(v: Option<Vec<u8>>) -> Option<u64> {
+    v.and_then(|b| b.try_into().ok()).map(u64::from_le_bytes)
+}
+pub fn upkeep_status<H: Host>(h: &H) -> Answer {
+    Answer::Upkeep {
+        wakeups: u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0),
+        inbox: h.get_secret(UPKEEP_INBOX).and_then(|b| b.try_into().ok()),
+        inbox_len: u64_of(h.get_secret(UPKEEP_INBOX_LEN)),
+    }
+}
+/// A WAKE-UP: counted; the inbox to read (and watch), if one is set.
+pub fn upkeep_woke<H: Host>(h: &mut H) -> Option<[u8; 32]> {
+    let n = u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0) + 1;
+    h.set_secret(UPKEEP_WAKEUPS, &n.to_le_bytes());
+    h.get_secret(UPKEEP_INBOX).and_then(|b| b.try_into().ok())
+}
+/// The inbox as read at a wake-up: its state's length kept (what the page reads back).
+pub fn upkeep_read<H: Host>(h: &mut H, len: u64) {
+    h.set_secret(UPKEEP_INBOX_LEN, &len.to_le_bytes());
 }
 
 /// `MEMBER ‖ public key` → the member (seed, DID, PIN hash, home, data key): one secret, one write.
@@ -811,6 +844,15 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             let public = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
             SpaceMember { seed, public, credential: space_member_credential(&a.did, &data, &public) }
         }
+        Request::UpkeepWatch { inbox } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            h.set_secret(UPKEEP_INBOX, &inbox);
+            upkeep_status(h)
+        }
+        Request::UpkeepStatus => upkeep_status(h),
         Request::InboxKey => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             let Some(data) = a.data else { return Refused(Why::NoDataKey) };

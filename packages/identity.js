@@ -130,6 +130,9 @@ export async function start(ctx) {
     inboxKey: () => call(core.frames_inbox_key(), "reading the inbox key"),
     // The DID's member for spaces (the same on every device of the account): its MLS seed and keys, its credential.
     spaceMember: () => call(core.frames_space_member(), "the account's member for spaces"),
+    // UPKEEP with no page open: the inbox the delegate watches at each wake-up, and what it has done.
+    upkeepWatch: inbox => call(core.frames_upkeep_watch(inbox), "handing upkeep the inbox"),
+    upkeepStatus: () => call(core.frames_upkeep_status(), "upkeep's status"),
     inboxOpen: items => call(core.frames_inbox_open(items), "opening the inbox"),
     publicOf: seed => glue.CraftworksCore.public_of(seed),
     // HANDOVER: ask an earlier build (`<key>:<code hash>`) for the member `pin` opens there. `{ handed }` with its keys,

@@ -24,6 +24,20 @@ export async function start(ctx) {
       running = false;
     }
   }
+  // THE DELEGATE's upkeep (no page open: the node wakes it — node ≥ 0.2.139, with the Background grant): told which
+  // contract the account's inbox is, once per login.
+  async function handOver() {
+    const me = await space.account();
+    if (!me) return;
+    const [{ glue, core }, bagCode, auth] = await Promise.all([ctx.require("node"), ctx.require("bag-wasm"), ctx.require("auth")]);
+    const Core = glue.CraftworksCore;
+    const id = Core.bag_id(bagCode, Core.inbox_address(me.idBytes));
+    const bytes = new Uint8Array(id.match(/../g).map(x => parseInt(x, 16)));
+    const r = await auth.identity.upkeepWatch(bytes).catch(e => ({ refused: e.message }));
+    ctx.log("upkeep", { what: r.upkeep ? `the delegate watches the inbox (${r.upkeep.wakeups} wake-up(s) so far)` : `the delegate: ${r.refused ?? JSON.stringify(r)}` });
+  }
+  handOver().catch(() => {});
+  addEventListener("craftworks:auth", () => handOver().catch(() => {}));
   tick();
   setInterval(tick, 30000);
   addEventListener("craftworks:auth", () => tick());

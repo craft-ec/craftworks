@@ -54,8 +54,26 @@ impl DelegateInterface for Identity {
                 .map(reply)
                 .into_iter()
                 .collect()),
-            // A WAKE-UP or a lifecycle event: nothing yet (upkeep moves here next).
-            InboundDelegateMsg::WakeupFired { .. } | InboundDelegateMsg::Lifecycle(_) => Ok(Vec::new()),
+            // A WAKE-UP: counted; the account's inbox read (and watched, so the node keeps it current).
+            InboundDelegateMsg::WakeupFired { .. } => {
+                let mut c = Ctx(ctx);
+                Ok(match crate::upkeep_woke(&mut c) {
+                    Some(inbox) => {
+                        let id = ContractInstanceId::new(inbox);
+                        vec![
+                            OutboundDelegateMsg::SubscribeContractRequest(SubscribeContractRequest::new(id)),
+                            OutboundDelegateMsg::GetContractRequest(GetContractRequest::new(id)),
+                        ]
+                    }
+                    None => Vec::new(),
+                })
+            }
+            // The inbox as the node holds it.
+            InboundDelegateMsg::GetContractResponse(r) => {
+                crate::upkeep_read(&mut Ctx(ctx), r.state.map(|s| s.as_ref().len() as u64).unwrap_or(0));
+                Ok(Vec::new())
+            }
+            InboundDelegateMsg::Lifecycle(_) => Ok(Vec::new()),
             // The identity issues no GET, PUT, UPDATE or SUBSCRIBE, so nothing else can answer it.
             _ => Ok(Vec::new()),
         }
