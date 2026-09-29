@@ -108,7 +108,7 @@ export async function mount(ctx, el) {
       h(
         "div",
         { className: "top" },
-        h("h2", { textContent: sp.name }),
+        h("h2", { textContent: space.shown(sp) }),
         r.can(me, "invite") ? h("button", { type: "button", className: "btn main", textContent: "Invite", onclick: () => openSettings("invites") }) : null,
         // PERMISSIONS (owner, admins): the space's policies, which every app inherits unless it says otherwise.
         r.can(me, "apps")

@@ -29,6 +29,7 @@
 //   space.board(sp)                         // its BOARD: posts beside its messages (same members and roles)
 //   await space.owner(sp)                   // its owner's DID, if its id proves it (else null)
 //   await space.leave(sp)                   // out of this person's list (on every device of the account)
+//   space.shown(sp)                         // how it is shown: `name#abc123` (names are not unique)
 //
 // A CHANNEL is a SUB-SPACE: it has a `parent` and inherits what it does not set itself. A channel that inherits the
 // server's access has no group of its own — its group, scope and keys are the server's, and its messages are its own
@@ -139,5 +140,9 @@ export async function start(ctx) {
     ctx.log("space", { what: `left ${sp.kind} “${sp.name}”` });
   }
 
-  return { account, tables, mine, create, record, describe, tableOf, channel, board, owner, leave };
+  // How a space is SHOWN, everywhere: its name and the start of its id — `Makers#30fe18` (names are not unique; the id
+  // is), as people are (`pat#8r4orC`).
+  const shown = sp => `${String(sp?.name ?? "").trim() || "space"}#${String(sp?.id ?? "").slice(0, 6)}`;
+
+  return { account, tables, mine, create, record, describe, tableOf, channel, board, owner, leave, shown };
 }

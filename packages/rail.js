@@ -99,7 +99,7 @@ export async function mount(ctx, el) {
       discover,
       h("div", { className: "sep" }),
       ...shared.map(s => {
-        const a = h("a", { href: `#/s/${s.id}`, title: s.name, textContent: initials(s.name) });
+        const a = h("a", { href: `#/s/${s.id}`, title: space.shown(s), textContent: initials(s.name) });
         if (ctx.space === s.id) a.setAttribute("aria-current", "page");
         const n = activity?.of(s.id) ?? 0;
         if (n) a.append(h("span", { className: "cw-badge", textContent: String(n) }));

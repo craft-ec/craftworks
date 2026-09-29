@@ -110,7 +110,7 @@ export function mount(ctx, el) {
         r.onChange(() => ctx.space === sp.id && switcher());
       }
       entries = [
-        { label: `${sp?.name ?? "Space"} · Home`, href: `#/s/${ctx.space}`, on: ctx.route === "/space" },
+        { label: `${sp ? space.shown(sp) : "Space"} · Home`, href: `#/s/${ctx.space}`, on: ctx.route === "/space" },
         ...ctx.apps.filter(a => (a.views ?? []).includes("shared") && on.includes(a.route.slice(1))).map(a => ({ label: `${a.icon ?? ""} ${a.name}`, href: `#/s/${ctx.space}${a.route}`, on: a.route === ctx.route })),
       ];
     } else

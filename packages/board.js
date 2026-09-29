@@ -127,7 +127,7 @@ export async function mount(ctx, el) {
     directory.name(did).then(t => (n.textContent = t), () => {});
     return n;
   };
-  const boardLink = b => h("span", { className: "b", textContent: `b/${b.name}` });
+  const boardLink = b => h("span", { className: "b", textContent: `b/${space.shown(b)}` });
   const errorTo = said => e => ((said.textContent = e?.message ?? String(e)), (said.hidden = false));
 
   const flag = async (kind, ref) => {
@@ -299,7 +299,7 @@ export async function mount(ctx, el) {
     return h(
       "div",
       { className: "panel" },
-      h("h3", { textContent: `b/${d.name}` }),
+      h("h3", { textContent: `b/${space.shown(d)}` }),
       h("p", { textContent: `🌐 A public board: anyone reads it; its ${pr.members().length} member${pr.members().length === 1 ? "" : "s"} post, comment and vote.` }),
       mine ? h("a", { className: "go", href: `#/s/${d.id}/board`, textContent: "Open in your space" }) : join ?? h("p", { textContent: "Joining is by invite." }),
       said,
@@ -312,7 +312,7 @@ export async function mount(ctx, el) {
       const d = w.pub ? spaces.find(x => x.id === w.pub) : null;
       return [
         d ? await publicPanel(d) : null,
-        h("div", { className: "panel" }, h("h3", { textContent: "Public spaces" }), spaces.length ? h("ul", {}, ...spaces.map(x => h("li", {}, h("a", { href: `#/discover/board/b/${x.id}`, textContent: `b/${x.name}` })))) : h("p", { textContent: "None listed yet." })),
+        h("div", { className: "panel" }, h("h3", { textContent: "Public spaces" }), spaces.length ? h("ul", {}, ...spaces.map(x => h("li", {}, h("a", { href: `#/discover/board/b/${x.id}`, textContent: `b/${space.shown(x)}` })))) : h("p", { textContent: "None listed yet." })),
       ].filter(Boolean);
     }
     const create = h("a", { className: "go", href: `${base()}/submit`, textContent: "Create post" });
@@ -352,7 +352,7 @@ export async function mount(ctx, el) {
         h(
           "div",
           { className: "panel" },
-          h("h3", { textContent: `b/${sp.name}` }),
+          h("h3", { textContent: `b/${space.shown(sp)}` }),
           h("p", { textContent: `${n} member${n === 1 ? "" : "s"} · you: ${r.role(me) ?? "member"}` }),
           r.policy("board", "read") === "anyone" ? h("p", { textContent: "🌐 Public: anyone reads new posts." }) : null,
           mayPost ? create : h("p", { textContent: "Only admins post here; comment and vote on any post." }),
@@ -386,12 +386,12 @@ export async function mount(ctx, el) {
     const outside = w.pub ? await descOf(w.pub) : null;
     const list = await posts.list(w.discover ? { discover: true } : outside ? { outside } : w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, sort);
     if (w.discover || w.pub) {
-      const head = h("div", { className: "panel banner" }, h("h2", { textContent: w.pub ? `b/${outside?.name ?? "?"} · 🌐 public` : "🧭 Public boards" }));
+      const head = h("div", { className: "panel banner" }, h("h2", { textContent: w.pub ? `b/${outside ? space.shown(outside) : "?"} · 🌐 public` : "🧭 Public boards" }));
       return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: "No public posts yet." })])];
     }
     const sp = w.board ? await posts.boardOf(w.board) : null;
     const head = w.board
-      ? h("div", { className: "panel banner" }, h("h2", { textContent: `b/${sp?.name ?? "?"}` }))
+      ? h("div", { className: "panel banner" }, h("h2", { textContent: `b/${sp ? space.shown(sp) : "?"}` }))
       : w.by
         ? h("div", { className: "panel banner" }, h("h2", {}, who(w.by)))
         : null;
@@ -437,7 +437,7 @@ export async function mount(ctx, el) {
       { className: "panel reply" },
       h("h3", { textContent: "Create a post" }),
       sp
-        ? h("p", {}, `To b/${sp.name}: its members read it.`)
+        ? h("p", {}, `To b/${space.shown(sp)}: its members read it.`)
         : // YOUR PROFILE: who sees this post — everyone (public: what your followers read) or only you (private).
           h(
             "label",

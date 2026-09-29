@@ -1,6 +1,7 @@
 // ACCOUNT, a PRIVATE page: it shows nothing until someone is logged in. It asks `login`, which shows its dialog if
 // nobody is; closing the dialog goes home. Its SUB-PAGES are in the top bar (`#/account/<sub>`), one shown at a time:
-// Card, Nodes, Security, Storage, Apps, Recovery, Moderation; Log out is the bar's action.
+// Card, Nodes, Security (how the keys stand), Storage, Apps, Recovery (the words, and a passphrase carrying them),
+// Moderation; Log out is the bar's action.
 export async function mount(ctx, el) {
   const [auth, login, grantsOf, membership, keys, storage, blocks] = await Promise.all(
     ["auth", "login", "access", "membership", "keys", "storage", "blocks"].map(n => ctx.require(n)),
@@ -109,7 +110,7 @@ export async function mount(ctx, el) {
     },
 
     async security() {
-      // SECURITY: how the account's keys stand.
+      // SECURITY: how the account's keys stand (getting back in — the words, a passphrase — is Recovery).
       const sec = document.createElement("section");
       sec.innerHTML = `<ul class="facts"><li>Reading…</li></ul>`;
       box.append(sec);
@@ -129,46 +130,6 @@ export async function mount(ctx, el) {
       }
       drawSecurity().catch(e => (sec.querySelector(".facts").textContent = `Could not read: ${e?.message ?? e}`));
 
-      // RECOVERY PASSPHRASE: a new device opens the account with it (and the account's id) instead of the words.
-      const rec = document.createElement("section");
-      rec.innerHTML = `<h3>Recovery passphrase</h3>
-        <p class="note">Set one to log in on a new device without typing your recovery words: your account's id and this
-        passphrase are enough. The sealed copy is on the network where anyone can try guesses, so make it long — a
-        sentence of 4 or more words.</p>
-        <p class="line state">Reading…</p>
-        <form class="rec-form"><label>Your recovery words (once, to seal them) <textarea name="words" rows="2" autocomplete="off" spellcheck="false" required></textarea></label>
-          <label>Passphrase (12 or more) <input name="passphrase" type="password" minlength="12" autocomplete="off" required></label>
-          <label>Confirm it <input name="again" type="password" minlength="12" autocomplete="off" required></label>
-          <button>Set the passphrase</button> <button type="button" class="clear">Remove it</button></form>
-        <p class="line said"></p>`;
-      box.append(rec);
-      const recovery = await ctx.require("recovery");
-      const recSaid = rec.querySelector(".said");
-      const recState = async () => {
-        const on = await recovery.has().catch(() => false);
-        rec.querySelector(".state").textContent = on ? "A recovery passphrase is set." : "No recovery passphrase yet.";
-        rec.querySelector(".clear").hidden = !on;
-      };
-      recState();
-      const recForm = rec.querySelector(".rec-form");
-      recForm.onsubmit = async e => {
-        e.preventDefault();
-        if (recForm.passphrase.value !== recForm.again.value) return (recSaid.textContent = "The two passphrases differ.");
-        recSaid.textContent = "Sealing (a few seconds: the stretch that makes guessing slow)…";
-        try {
-          await recovery.set(recForm.words.value, recForm.passphrase.value);
-          recForm.reset();
-          recSaid.textContent = "Set. On a new device: Log in → Use a passphrase instead.";
-          recState();
-        } catch (err) {
-          recSaid.textContent = `Not set: ${err?.message ?? err}`;
-        }
-      };
-      rec.querySelector(".clear").onclick = async () => {
-        await recovery.clear().catch(err => (recSaid.textContent = err.message));
-        recSaid.textContent = "Removed.";
-        recState();
-      };
     },
 
     async storage() {
@@ -237,9 +198,11 @@ export async function mount(ctx, el) {
       // RECOVERY WORDS: shown once, at registration; no node keeps them. They can be CHANGED: the account (its DID, its
       // data) stays; the old words stop opening it.
       const rec = document.createElement("section");
-      rec.innerHTML = `<h3>Recovery words</h3>
-        <p>Your recovery words were shown once, when you registered. With them you log in on any node and get your
-        account back. No node keeps them, so a lost or stolen node cannot give your account away.</p>
+      rec.innerHTML = `<p class="note">Two ways back into your account on a new device: your recovery words (the key itself),
+        and — if you set one — a passphrase that carries them.</p>
+        <h3>1 · Recovery words</h3>
+        <p>Your account's master key: twelve words, shown once when you registered. With them you log in on any node and
+        get your account back. No node keeps them, so a lost or stolen node cannot give your account away.</p>
         <p>You can change them: your account and its data stay the same, and the old words stop working.</p>
         <button type="button" class="change">Change recovery words</button>
         <form class="old" hidden>
@@ -302,6 +265,47 @@ export async function mount(ctx, el) {
           reset();
         };
       }
+      // RECOVERY PASSPHRASE: a new device opens the account with it (and the account's id) instead of the words.
+      const pass = document.createElement("section");
+      pass.innerHTML = `<h3>2 · Recovery passphrase (optional)</h3>
+        <p>A shortcut for your words: they are sealed with a passphrase you choose, and the sealed copy is kept on your
+        card. On a new device you then log in with your account's id and this passphrase (Log in → Use a passphrase
+        instead) — no words to type. It does not replace the words; changing the words removes it (set it again).</p>
+        <p class="note">Anyone can fetch the sealed copy and try guesses, so make it long: a sentence of 4 or more words.</p>
+        <p class="line state">Reading…</p>
+        <form class="rec-form"><label>Your recovery words (once, to seal them) <textarea name="words" rows="2" autocomplete="off" spellcheck="false" required></textarea></label>
+          <label>Passphrase (12 or more) <input name="passphrase" type="password" minlength="12" autocomplete="off" required></label>
+          <label>Confirm it <input name="again" type="password" minlength="12" autocomplete="off" required></label>
+          <button>Set the passphrase</button> <button type="button" class="clear">Remove it</button></form>
+        <p class="line said"></p>`;
+      box.append(pass);
+      const recovery = await ctx.require("recovery");
+      const recSaid = pass.querySelector(".said");
+      const recState = async () => {
+        const on = await recovery.has().catch(() => false);
+        pass.querySelector(".state").textContent = on ? "A recovery passphrase is set." : "No recovery passphrase yet.";
+        pass.querySelector(".clear").hidden = !on;
+      };
+      recState();
+      const recForm = pass.querySelector(".rec-form");
+      recForm.onsubmit = async e => {
+        e.preventDefault();
+        if (recForm.passphrase.value !== recForm.again.value) return (recSaid.textContent = "The two passphrases differ.");
+        recSaid.textContent = "Sealing (a few seconds: the stretch that makes guessing slow)…";
+        try {
+          await recovery.set(recForm.words.value, recForm.passphrase.value);
+          recForm.reset();
+          recSaid.textContent = "Set. On a new device: Log in → Use a passphrase instead.";
+          recState();
+        } catch (err) {
+          recSaid.textContent = `Not set: ${err?.message ?? err}`;
+        }
+      };
+      pass.querySelector(".clear").onclick = async () => {
+        await recovery.clear().catch(err => (recSaid.textContent = err.message));
+        recSaid.textContent = "Removed.";
+        recState();
+      };
     },
   };
   // MODERATION: what this person sees in Discover — their own list (what they flagged) and the lists they apply.
