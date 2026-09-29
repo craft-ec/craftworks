@@ -182,7 +182,8 @@ export async function start(ctx) {
     }
 
     function draw() {
-      const items = room.list();
+      // A conversation (Messages) shows what people said, never lines about it ("started the conversation", "joined").
+      const items = room.list().filter(m => !(m.kind === "system" && (conversation.kind === "direct" || conversation.kind === "group")));
       if (!items.length) {
         if (!settled) return;
         msgs.replaceChildren(el("li", { className: "empty", textContent: `This is the start of ${title}.` }));

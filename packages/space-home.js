@@ -180,5 +180,7 @@ export async function mount(ctx, el) {
   };
   tick();
   const every = setInterval(() => (el.isConnected ? tick() : clearInterval(every)), 30000);
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/space" && draw());
+  // Drawn again only for another space (the route event right after mounting names this one).
+  let drawnFor = ctx.space;
+  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/space" && ctx.space !== drawnFor && ((drawnFor = ctx.space), draw()));
 }

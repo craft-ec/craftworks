@@ -59,7 +59,6 @@ export async function start(ctx) {
     if (!card) throw new Error("that person has no card yet");
     const sp = await space.create("direct", card.handle ?? short(did), { with: did });
     await welcome(sp, did, (await directory.card(me.id))?.handle ?? short(me.id));
-    await (await content.in(sp)).post("system", "started the conversation");
     return sp;
   }
 
@@ -141,7 +140,6 @@ export async function start(ctx) {
         const sp = await space.describe(it.space, v);
         await keys.group(sp).join(it.welcome);
         await space.record(it.space, v);
-        await (await content.in(sp)).post("system", "joined");
         out.push(sp);
         ctx.log("conversation", { what: `joined a ${it.spaceKind} conversation with ${short(it.from)}` });
       } catch (e) {
@@ -164,7 +162,7 @@ export async function start(ctx) {
     const names = await Promise.all(others.map(d => directory.name(d)));
     const sp = await space.create("group", name?.trim() || names.join(", "));
     for (const d of others) await welcome(sp, d, sp.name);
-    await (await content.in(sp)).post("system", "started the group");
+
     return sp;
   }
 

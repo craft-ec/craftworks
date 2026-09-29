@@ -468,7 +468,12 @@ export async function mount(ctx, el) {
     return [f];
   }
 
+  // What is drawn (its route): the loader's route event right after mounting names the same page — drawing it again
+  // would replace the page under someone typing (and a comment sent from the old page would land where nobody looks).
+  let drawnFor = null;
+  const routeKey = () => `${ctx.space ?? ""}|${ctx.sub ?? ""}`;
   async function draw() {
+    drawnFor = routeKey();
     const w = where();
     await setActions(w);
     here = discovering() ? null : w.board ? await posts.boardOf(w.board) : w.post?.startsWith("space:") ? await posts.boardOf(w.post) : null;
@@ -486,5 +491,5 @@ export async function mount(ctx, el) {
   main.replaceChildren(theme.loading("Reading the posts…"));
   await draw();
   posts.onChange(redraw);
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/board" && draw());
+  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/board" && routeKey() !== drawnFor && draw());
 }
