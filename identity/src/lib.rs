@@ -125,8 +125,9 @@ pub enum Request {
     /// credential (signed by the data key), and its feed key. The home site only.
     SpaceMember,
     /// UPKEEP with no page open (the node wakes this delegate: its manifest's `upkeep`): the contract the session
-    /// account's INBOX is (a bag's instance id, the page computes it) — watched and read at each wake-up. Home only.
-    UpkeepWatch { inbox: [u8; 32] },
+    /// account's INBOX is (a bag's instance id, the page computes it) — watched and read at each wake-up; with the
+    /// page's RANDOMNESS (stirred into upkeep's pool) and TIME in seconds (upkeep's clock). Home only.
+    UpkeepWatch { inbox: [u8; 32], seed: [u8; 32], now: u64 },
     /// What upkeep did: the wake-ups run, and the inbox as last read (its state's length; `None`: not read yet).
     UpkeepStatus,
 }
@@ -164,7 +165,7 @@ pub enum Answer {
     HandedSpaces { spaces: Vec<([u8; 32], Option<Vec<u8>>, Vec<(u64, [u8; 32])>)> },
     SpaceMember { seed: [u8; 32], public: [u8; 32], credential: Vec<u8> },
     /// Upkeep so far: wake-ups run, the watched inbox (if set) and its state's length when last read.
-    Upkeep { wakeups: u64, inbox: Option<[u8; 32]>, inbox_len: Option<u64> },
+    Upkeep { wakeups: u64, inbox: Option<[u8; 32]>, inbox_len: Option<u64>, now: Option<u64> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -247,6 +248,7 @@ pub fn upkeep_status<H: Host>(h: &H) -> Answer {
         wakeups: u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0),
         inbox: h.get_secret(UPKEEP_INBOX).and_then(|b| b.try_into().ok()),
         inbox_len: u64_of(h.get_secret(UPKEEP_INBOX_LEN)),
+        now: upkeep_now(h),
     }
 }
 /// A WAKE-UP: counted; the inbox to read (and watch), if one is set.
@@ -258,6 +260,40 @@ pub fn upkeep_woke<H: Host>(h: &mut H) -> Option<[u8; 32]> {
 /// The inbox as read at a wake-up: its state's length kept (what the page reads back).
 pub fn upkeep_read<H: Host>(h: &mut H, len: u64) {
     h.set_secret(UPKEEP_INBOX_LEN, &len.to_le_bytes());
+}
+
+/// RANDOMNESS for upkeep (a delegate has none of its own): a POOL the page stirs with the browser's (`UpkeepWatch`'s
+/// seed), ratcheted on every draw — the next pool is stored BEFORE the draw is returned, so no draw ever repeats, even
+/// across a crash. Nothing is drawn before a page has stirred it.
+pub const UPKEEP_POOL: &[u8] = b"identity_upkeep/pool";
+/// The CLOCK (a delegate has none either): `now ‖ wake-ups then`, the page's time when it last handed it over.
+pub const UPKEEP_CLOCK: &[u8] = b"identity_upkeep/clock";
+/// Wake-ups come every `UPKEEP_EVERY` seconds at the soonest (the manifest's `upkeep = 60`).
+pub const UPKEEP_EVERY: u64 = 60;
+pub fn upkeep_stir<H: Host>(h: &mut H, seed: &[u8; 32]) {
+    let mut x = h.get_secret(UPKEEP_POOL).unwrap_or_default();
+    x.extend_from_slice(seed);
+    h.set_secret(UPKEEP_POOL, &blake3::derive_key("craftworks identity upkeep pool", &x));
+}
+pub fn upkeep_random<H: Host>(h: &mut H) -> Option<[u8; 32]> {
+    let pool: [u8; 32] = h.get_secret(UPKEEP_POOL)?.try_into().ok()?;
+    if !h.set_secret(UPKEEP_POOL, &blake3::derive_key("craftworks identity upkeep next", &pool)) {
+        return None;
+    }
+    Some(blake3::derive_key("craftworks identity upkeep draw", &pool))
+}
+pub fn upkeep_set_clock<H: Host>(h: &mut H, now: u64) {
+    let wakeups = u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0);
+    h.set_secret(UPKEEP_CLOCK, &[now.to_le_bytes(), wakeups.to_le_bytes()].concat());
+}
+/// Now, in seconds, ROUGHLY: the page's last time plus a minute per wake-up since. The node fires a little early at times
+/// (measured: +12 s over 3 wake-ups) and not at all while it sleeps (slow): good for MLS lifetimes (days), not for
+/// ordering. None before a page has handed one over.
+pub fn upkeep_now<H: Host>(h: &H) -> Option<u64> {
+    let c = h.get_secret(UPKEEP_CLOCK)?;
+    let (then, at) = (u64_of(Some(c.get(..8)?.to_vec()))?, u64_of(Some(c.get(8..16)?.to_vec()))?);
+    let wakeups = u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0);
+    Some(then + wakeups.saturating_sub(at) * UPKEEP_EVERY)
 }
 
 /// `MEMBER ‖ public key` → the member (seed, DID, PIN hash, home, data key): one secret, one write.
@@ -844,12 +880,14 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             let public = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
             SpaceMember { seed, public, credential: space_member_credential(&a.did, &data, &public) }
         }
-        Request::UpkeepWatch { inbox } => {
+        Request::UpkeepWatch { inbox, seed, now } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {
                 return Refused(Why::NotHome);
             }
             h.set_secret(UPKEEP_INBOX, &inbox);
+            upkeep_stir(h, &seed);
+            upkeep_set_clock(h, now);
             upkeep_status(h)
         }
         Request::UpkeepStatus => upkeep_status(h),

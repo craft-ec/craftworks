@@ -42,7 +42,7 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::SpaceMember { seed, public, credential } => json!({ "spaceMember": {
             "seed": hex(seed), "public": hex(public), "credential": hex(credential),
         } }),
-        Answer::Upkeep { wakeups, inbox, inbox_len } => json!({ "upkeep": { "wakeups": wakeups, "inbox": inbox.map(|i| hex(&i)), "inboxLen": inbox_len } }),
+        Answer::Upkeep { wakeups, inbox, inbox_len, now } => json!({ "upkeep": { "wakeups": wakeups, "inbox": inbox.map(|i| hex(&i)), "inboxLen": inbox_len, "now": now } }),
         Answer::HandedSpaces { spaces } => json!({ "handedSpaces": spaces.iter().map(|(id, st, eps)| json!({
             "space": hex(id), "mls": st.as_ref().map(|s| hex(s)),
             "epochs": eps.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>(),
@@ -475,8 +475,9 @@ mod js {
         }
         /// UPKEEP with no page open: the account's inbox contract (its instance id), for the delegate to watch and read
         /// at each wake-up (the home site only); and what upkeep has done.
-        pub fn frames_upkeep_watch(&mut self, inbox: &[u8]) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::UpkeepWatch { inbox: b32(inbox)? })
+        /// The inbox to watch, with the page's randomness and time (the delegate has neither).
+        pub fn frames_upkeep_watch(&mut self, inbox: &[u8], seed: &[u8], now: f64) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::UpkeepWatch { inbox: b32(inbox)?, seed: b32(seed)?, now: (now / 1000.0) as u64 })
         }
         pub fn frames_upkeep_status(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::UpkeepStatus)

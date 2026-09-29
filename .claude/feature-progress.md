@@ -631,6 +631,11 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       Date.now in `mls::client`). Probe (create_group, custom getrandom): 415 KB, zero imports. mls tests 5/5, build.sh
       import gate ok. Next P2: delegate randomness (seed from the page + ratchet) and clock (page-handed time /
       wake-up count). Then P3 table reads, P4 table writes, P5 accept, P6 admit, P7 coexistence, P8 live + publish.
+      PORT P2 DONE: `UpkeepWatch { inbox, seed, now }` — the page stirs upkeep's randomness POOL (ratcheted per draw,
+      next pool stored before the draw is returned; nothing drawn before a stir) and sets its CLOCK (page time + 60 s
+      per wake-up since). Live on net139: clock 1790695519 at hand-over → 1790695699 after 3 wake-ups vs real
+      1790695687 (+12 s: wake-ups fire a little early; fine for MLS lifetimes). getrandom's custom hook (identity
+      delegate build only, feature freenet-main-delegate) comes with MLS in P5.
 - [ ] (old note) NO PAGE OPEN AT ALL: node v0.2.139 (freenet-core #5747) wakes a delegate periodically (manifest `wakeups`, ≥ 60 s,
       the person's Background grant). Needs the joining logic (MLS welcome/add, spacekeys) moved into the identity
       delegate (a delegate change: handover; bundle the SpaceMember.writer drop) and nodes on ≥ 0.2.139 (owner's and

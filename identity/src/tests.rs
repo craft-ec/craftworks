@@ -655,3 +655,34 @@ fn a_dids_space_member_is_the_same_on_every_device_and_signs_in_spaces_only() {
     assert!(matches!(serve(&mut m, Request::Sign { params: feed.clone(), seq: 1, value_hash: [1; 32], space: Some([0x5A; 32]) }, APP), Answer::Signed { .. }));
     assert_eq!(serve(&mut m, Request::Sign { params: feed, seq: 2, value_hash: [2; 32], space: None }, APP), Answer::Refused(Why::NotThisKey));
 }
+
+#[test]
+fn upkeep_draws_nothing_before_a_page_stirs_and_never_repeats_a_draw() {
+    let mut m = Map::default();
+    assert_eq!(upkeep_random(&mut m), None);
+    upkeep_stir(&mut m, &[1; 32]);
+    let (a, b) = (upkeep_random(&mut m).unwrap(), upkeep_random(&mut m).unwrap());
+    assert_ne!(a, b);
+    // Stirred with another seed from the same pool: not the draw the pool alone would have made.
+    let mut same = Map { s: m.s.clone(), refuse: false };
+    let alone = upkeep_random(&mut same).unwrap();
+    upkeep_stir(&mut m, &[2; 32]);
+    assert_ne!(upkeep_random(&mut m).unwrap(), alone);
+    // A pool that cannot move on draws nothing (a draw it could not ratchet past would come again).
+    m.refuse = true;
+    assert_eq!(upkeep_random(&mut m), None);
+}
+
+#[test]
+fn upkeep_clock_is_the_pages_time_plus_a_minute_per_wake_up_since() {
+    let mut m = Map::default();
+    assert_eq!(upkeep_now(&m), None);
+    upkeep_woke(&mut m);
+    upkeep_set_clock(&mut m, 1_000);
+    assert_eq!(upkeep_now(&m), Some(1_000));
+    upkeep_woke(&mut m);
+    upkeep_woke(&mut m);
+    assert_eq!(upkeep_now(&m), Some(1_000 + 2 * UPKEEP_EVERY));
+    upkeep_set_clock(&mut m, 5_000);
+    assert_eq!(upkeep_now(&m), Some(5_000));
+}
