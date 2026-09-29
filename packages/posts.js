@@ -12,8 +12,9 @@
 //
 //   const posts = await ctx.require("posts");
 //   await posts.submit({ board, title, body })       // `board`: a space's id, or none (this person's profile): its ref
-//   await posts.list({ board } | { by }, sort)        // a space's board, or a profile (confined: never across spaces);
-//                                                     // sort "hot" | "new" | "top"
+//   await posts.list({ board } | { by } | { feed }, sort)   // a space's board, a profile, or the FEED (the PERSONAL
+//                                                     // view: the boards of every space this person is in, their own
+//                                                     // profile and those they follow); sort "hot" | "new" | "top"
 //   await posts.get(ref)   await posts.thread(ref)    // one post; its comments as a tree (`replies`), best first
 //   await posts.comment(post, re, body)   await posts.vote(ref, 1 | -1 | 0, post)   await posts.remove(ref)
 //   await posts.boards()                             // the spaces this person is in: their boards
@@ -121,6 +122,9 @@ export async function start(ctx) {
       const sp = await boardOf(where.board);
       if (!sp) throw new Error("you are not in that board's space: join it with an invite");
       out = await boardPosts(sp);
+    } else if (where.feed) {
+      const [bs, people] = await Promise.all([boards(), following()]);
+      out = [...(await Promise.all(bs.map(sp => boardPosts(sp).catch(() => [])))).flat(), ...(await profilePosts([await me(), ...people]))];
     } else out = await profilePosts([where.by ?? (await me())]);
     return out.sort(SORTS[sort] ?? SORTS.hot);
   }

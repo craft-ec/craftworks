@@ -536,8 +536,10 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       (content `governed` only for servers). `space-apps` deleted. Live (17573, S): rail S A C F G K M2 M9 +; + made
       "Studio" with no apps; Add Chat → #general; Add Board; switcher Home · Chat · Board; Studio post on its board only;
       Makers switcher Home·Notes → Home·Notes·Chat·Board after adding; DM with P: no Remove on P's messages.
-- [ ] R2b Board's personal view gains FEED (owner: "app composes that in personal space view"): boards of every
+- [x] R2b Board's personal view gains FEED (owner: "app composes that in personal space view"): boards of every
       space you are in + profiles you follow; a shared view never crosses spaces, the personal view may (it is you).
+      Done: `#/board/feed` (top bar Feed · Your posts · Create post); a space's post opens in its space (the rail follows).
+      Live: Feed listed Studio's, Makers' and profile posts; a Studio post opened in Studio.
 - [ ] R4 per-app settings: Chat (channels, who may post), Board (rules, who may post), Notes (who may edit)
 - (after R2) Feed: a personal-space lens over the boards of the spaces you are in (Reddit's Home).
 - (later) Discover's public views: public spaces (anyone reads/joins) listed in public bags; Board's public posts,

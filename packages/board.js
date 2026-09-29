@@ -1,7 +1,8 @@
 // BOARD, a page: posts, Reddit-style, CONFINED to the space open on the rail. In a SHARED space
 // (`#/s/<space>/board`): its own posts only — its members post, its roles and moderation apply. In the PERSONAL space
 // (`#/board`): your own posts, your profile (public: what your followers read); another person's profile is
-// `#/board/u/<did>`. A POST with its comment tree: `…/board/p/<ref>`; CREATE: `…/board/submit`. Sorted Hot, New or Top.
+// `#/board/u/<did>`; and the FEED (`#/board/feed`: the personal view gathers — the boards of every space you are in,
+// and the profiles you follow). A POST with its comment tree: `…/board/p/<ref>`; CREATE: `…/board/submit`. Sorted Hot, New or Top.
 // UI only: posts are `posts`', names `directory`'s, and a name opens the one `person` menu (follow; in a space, its
 // role and removal). The space itself (its members, settings, invites) is its Home's.
 export async function mount(ctx, el) {
@@ -21,14 +22,16 @@ export async function mount(ctx, el) {
     const at = ctx.space ? { board: ctx.space } : {};
     if (s.startsWith("p/")) return { ...at, post: s.slice(2) };
     if (s === "submit") return { ...at, submit: true };
+    if (!ctx.space && s === "feed") return { feed: true };
     if (!ctx.space && s.startsWith("u/")) return { by: s.slice(2) };
     return ctx.space ? at : { by: me };
   };
   // The top bar: its sub-pages — the posts, and Create post.
   const setActions = async w => {
     ctx.actions["/board"] = [
+      ...(ctx.space ? [] : [{ label: "Feed", href: "#/board/feed", on: !!w.feed }]),
       { label: w.board ? "Posts" : w.by === me ? "Your posts" : "Posts", href: base(), on: !w.post && !w.submit && (!!w.board || w.by === me) },
-      ...(w.board || w.by === me || w.submit ? [{ label: "Create post", href: `${base()}/submit`, on: !!w.submit }] : []),
+      ...(w.board || w.by === me || w.feed || w.submit ? [{ label: "Create post", href: `${base()}/submit`, on: !!w.submit }] : []),
     ];
     dispatchEvent(new CustomEvent("craftworks:actions"));
   };
@@ -139,7 +142,8 @@ export async function mount(ctx, el) {
   // A POST: in a list (a link to its page, the text cut short) or on its own page.
   function postCard(p, full = false) {
     const said = h("p", { className: "said", hidden: true });
-    const open = () => (location.hash = `${base()}/p/${p.ref}`);
+    // A space's post opens in its space (the rail follows); a profile's in the personal space.
+    const open = () => (location.hash = p.board ? `#/s/${p.board.id}/board/p/${p.ref}` : `#/board/p/${p.ref}`);
     const acts = h(
       "div",
       { className: "acts" },
@@ -249,6 +253,7 @@ export async function mount(ctx, el) {
   // THE SIDE PANEL: the space's board (its name, members, Create post), or a profile.
   async function sidePanel(w) {
     const create = h("a", { className: "go", href: `${base()}/submit`, textContent: "Create post" });
+    if (w.feed) return [h("div", { className: "panel" }, h("h3", { textContent: "Feed" }), h("p", { textContent: "The boards of every space you are in, and the people you follow." }), create)];
     if (w.board) {
       const sp = await posts.boardOf(w.board);
       if (!sp) return [];
@@ -279,14 +284,14 @@ export async function mount(ctx, el) {
     );
 
   async function listPage(w) {
-    const list = await posts.list(w.board ? { board: w.board } : w.by ? { by: w.by } : {}, sort);
+    const list = await posts.list(w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, sort);
     const sp = w.board ? await posts.boardOf(w.board) : null;
     const head = w.board
       ? h("div", { className: "panel banner" }, h("h2", { textContent: `b/${sp?.name ?? "?"}` }))
       : w.by
         ? h("div", { className: "panel banner" }, h("h2", {}, who(w.by)))
         : null;
-    const empty = w.board ? "No posts here yet. Be the first." : w.by === me ? "You have not posted yet." : "No posts yet.";
+    const empty = w.board ? "No posts here yet. Be the first." : w.feed ? "Nothing yet: your spaces' boards and the people you follow post here." : w.by === me ? "You have not posted yet." : "No posts yet.";
     return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: empty })])];
   }
 
