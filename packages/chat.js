@@ -8,8 +8,8 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [space, storage, keys, directory, roomUI, conversation, theme, roles, moderation, settings, person, activity, places] = await Promise.all(
-    ["space", "storage", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "server-settings", "person", "activity", "places"].map(n => ctx.require(n)),
+  const [space, storage, keys, directory, roomUI, conversation, theme, roles, moderation, settings, person, activity, spaceApps] = await Promise.all(
+    ["space", "storage", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "server-settings", "person", "activity", "space-apps"].map(n => ctx.require(n)),
   );
   const account = await space.account();
   el.classList.add("cw-fill");
@@ -137,11 +137,12 @@ export async function mount(ctx, el) {
   }
 
   // The top bar, once a server is open: Invite (by name or code) and the server's settings.
-  const menu = () => {
+  const menu = async () => {
+    const apps = server ? await spaceApps.menu(server, "messages") : [];
     ctx.actions["/chat"] = server
       ? [
-          // The server's places (the same space): its messages (here), board and notes.
-          ...places.of(server, "messages"),
+          // The server's apps (the same space): its messages (here), and what was added.
+          ...apps,
           ...(may("invite") ? [{ label: "Invite", run: () => openSettings("invites") }] : []),
           { label: "Server settings", run: () => openSettings("overview") },
         ]

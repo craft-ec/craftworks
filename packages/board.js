@@ -11,8 +11,8 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [posts, directory, person, theme, space, conversation, roles, settings, places] = await Promise.all(
-    ["posts", "directory", "person", "theme", "space", "conversation", "roles", "server-settings", "places"].map(n => ctx.require(n)),
+  const [posts, directory, person, theme, space, conversation, roles, settings, spaceApps] = await Promise.all(
+    ["posts", "directory", "person", "theme", "space", "conversation", "roles", "server-settings", "space-apps"].map(n => ctx.require(n)),
   );
   const me = (await space.account()).id;
   let sort = "hot";
@@ -25,13 +25,13 @@ export async function mount(ctx, el) {
     if (s === "submit" || s.startsWith("submit/")) return { submit: s.slice(7) };
     return {};
   };
-  // The top bar: on a space's board (or your profile, the personal space's), that space's places; then Home and
+  // The top bar: on a space's board (or your profile, the personal space's), that space's apps; then Home and
   // Create post.
   const account = await space.account();
   const setActions = async w => {
     const sp = w.board ? await posts.boardOf(w.board) : w.by === me ? account : null;
     ctx.actions["/board"] = [
-      ...(sp ? places.of(sp, "board") : []),
+      ...(sp ? await spaceApps.menu(sp, "board") : []),
       { label: "Home", href: "#/board", on: !w.board && !w.by && !w.post && w.submit == null },
       { label: "Create post", href: `#/board/submit${w.board ? `/${w.board}` : ""}`, on: w.submit != null },
     ];

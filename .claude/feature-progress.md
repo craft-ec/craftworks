@@ -495,9 +495,14 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       moderator's Remove hides). Every space has one — server, group, direct. A space's NOTES: its table `notes`
       (`#/notes/s/<id>`; pins and labels stay the person's, ref `notes:<space>/<key>`). The PERSONAL space (the account):
       Messages = your conversations, Board = your profile (public tail `posts`, what followers see), Notes = your notes.
-      `places` component (shared): ONE dropdown in the top bar of every page on a space, `<space> · <place> ▾`, listing
-      Messages · Board · Notes (owner: switching places is a suite's move, not something general apps show); the header
-      has a `menu` action kind (closes on a choice, outside click, Escape). New board on Board = a new server (with #general, so Chat shows it). Live (17573): S made a board, posted,
+      SPACE APPS (owner: "it is apps for that space, like Teams"): `space-apps` component (shared) — ONE dropdown in the
+      top bar of every page on a space, `<space> · <app> ▾` (owner: switching is a suite's move, kept out of the way),
+      listing the space's apps and, for owner/admins, "Add or remove apps…" (a dialog). Which apps a space has is
+      governance: an `app` act ({ app, on }) in the space's acts, counted if the signer may `apps` (owner, admin);
+      `roles.apps()` = Messages + those on (a space nobody changed has Board and Notes). A space without Board is left
+      off Board Home; without Notes, its notes page says so. Header: `menu` action kind (links, and actions as buttons —
+      a `#` link is the loader's). Live (17573): S (owner) removed Notes → S's and P's (member, no manage entry) menus
+      showed Messages · Board; the notes page said it has none; S added it back. New board on Board = a new server (with #general, so Chat shows it). Live (17573): S made a board, posted,
       invited; P joined by code on Board, commented; S (owner) removed it; Chat shows the same server; P's note in the
       server's notes seen by S, not in P's own notes; every top bar shows the three places; panel 2 members.
       OPEN: an old S↔P direct conversation (from before per-device feeds) opens with no feeds on P — old test data.

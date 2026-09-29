@@ -403,7 +403,7 @@ async fn main() -> Result<()> {
         ("contacts", "module", app.join("packages/contacts.js")),
         ("posts", "service", app.join("packages/posts.js")),
         ("board", "module", app.join("packages/board.js")),
-        ("places", "service", app.join("packages/places.js")),
+        ("space-apps", "service", app.join("packages/space-apps.js")),
         ("chat", "module", app.join("packages/chat.js")),
         ("messages", "module", app.join("packages/messages.js")),
         ("mail", "module", app.join("packages/mail.js")),

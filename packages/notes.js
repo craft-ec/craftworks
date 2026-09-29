@@ -1,7 +1,7 @@
 // NOTES, an app in the manner of Google Keep: a "Take a note…" composer, notes as coloured cards in a masonry grid,
 // pinned notes first, archive, search, and grid or list. A PRIVATE page: nothing shows until someone is logged in.
-// YOUR notes (`#/notes`: the account's), or a SPACE's (`#/notes/s/<space id>`: one of its places, beside its messages
-// and board — its table `notes`, written by its members, read by its members; the top bar names its places).
+// YOUR notes (`#/notes`: the account's), or a SPACE's (`#/notes/s/<space id>`: one of its apps, when added — its table
+// `notes`, written by its members, read by its members; the top bar's dropdown lists the space's apps).
 //
 // The notes are one table of the ACCOUNT (the `data` service), the same on every node of the account. A note is one
 // row: its key an id that sorts by creation, its value JSON { title, body, color, archived, edited }. A row that is
@@ -109,16 +109,17 @@ export async function mount(ctx, el) {
     </div>`;
   const root = el.querySelector(".keep");
   const said = t => (root.querySelector(".said").textContent = t);
-  let notes, edge, pins, labels, pinUI, labelUI, sp = null, places = null;
+  let notes, edge, pins, labels, pinUI, labelUI, sp = null, spaceApps = null;
   try {
     const storage = await ctx.require("storage");
     edge = await ctx.require("edge");
     // A space's notes: its own table, in its scope.
-    places = await ctx.require("places");
+    spaceApps = await ctx.require("space-apps");
     if ((ctx.sub || "").startsWith("s/")) {
       const space = await ctx.require("space");
       sp = (await space.mine()).find(s => s.id === ctx.sub.slice(2)) ?? null;
       if (!sp) throw new Error("you are not in that space");
+      if (!(await spaceApps.has(sp, "notes"))) throw new Error(`${sp.name} has no Notes: its owner or an admin adds it (Add or remove apps…)`);
     }
     [notes, pins, labels, pinUI, labelUI] = await Promise.all([
       sp ? storage.table((await ctx.require("space")).tableOf(sp, "notes"), sp) : storage.table("notes"),
@@ -389,11 +390,11 @@ export async function mount(ctx, el) {
   labels.onChange(() => lEditor.open && lines());
 
   // THE TOP BAR while Notes is open: search, grid or list, and Notes or Archive.
-  const placeOf = sp ?? (await (await ctx.require("space")).account());
+  const appsMenu = await spaceApps.menu(sp ?? (await (await ctx.require("space")).account()), "notes");
   const actions = () => {
     ctx.actions["/notes"] = [
-      // The space's places (yours: the personal space's).
-      ...places.of(placeOf, "notes"),
+      // The space's apps (yours: the personal space's).
+      ...appsMenu,
       { search: v => ((query = v), render()), placeholder: sp ? `Search ${sp.name}'s notes` : "Search your notes", value: query },
       { label: list ? "Grid view" : "List view", run: () => ((list = !list), render(), actions()) },
       { label: "Archive", on: archive, run: () => ((archive = !archive), render(), actions()) },

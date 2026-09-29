@@ -2,7 +2,7 @@
 // sub-pages and actions; on the right: the app's ending actions, and Account. It changes with the app: on Home it reads
 // "Home"; in an app, the app's name (from the manifest's apps) and what the app put under its route in `ctx.actions`:
 // `{ label, href }` (a sub-page: a link; `on` when it is the one shown), `{ label, run }` (an action; `end`: at the
-// right), a search box, or a MENU (`{ label, menu: [{ label, href, on }] }`: a button opening a dropdown of links, closed
+// right), a search box, or a MENU (`{ label, menu: [{ label, href, on } | { label, run }] }`: a button opening a dropdown, closed
 // by a choice, a click outside or Escape). An app that changes them later says so with a `craftworks:actions` event. The app's own
 // component (the layout names it), so editing it is publishing the app, never the loader.
 export function mount(ctx, el) {
@@ -28,7 +28,8 @@ export function mount(ctx, el) {
       .bar .drop .list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 60; min-width: 12em; display: grid; padding: var(--cw-space-1);
         background: var(--cw-surface); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); box-shadow: var(--cw-shadow-lg); }
       .bar .drop .list[hidden] { display: none; }
-      .bar .drop .list a { padding: 6px var(--cw-space-3); }
+      .bar .drop .list a, .bar .drop .list button { padding: 6px var(--cw-space-3); text-align: left; font: inherit; color: inherit; }
+      .bar .drop .list button { border-top: 1px solid var(--cw-line); border-radius: 0; margin-top: var(--cw-space-1); }
       .bar .drop .list a[aria-current="page"] { font-weight: 600; }
 
     </style>
@@ -63,7 +64,12 @@ export function mount(ctx, el) {
         if (a.menu) {
           const list = Object.assign(document.createElement("div"), { className: "list", hidden: true });
           list.setAttribute("role", "menu");
-          list.append(...a.menu.map(item));
+          list.append(
+            ...a.menu.map(
+              // A link, or an action (a button: a `#` link is the loader's, never a click handler's).
+              m => item(m) ?? Object.assign(document.createElement("button"), { type: "button", textContent: m.label, onclick: () => m.run() }),
+            ),
+          );
           const b = Object.assign(document.createElement("button"), { type: "button", textContent: `${a.label} ▾` });
           b.setAttribute("aria-haspopup", "menu");
           const close = () => {
@@ -79,7 +85,7 @@ export function mount(ctx, el) {
             addEventListener("click", outside, true);
             addEventListener("keydown", esc);
           };
-          list.onclick = e => e.target.closest("a") && close();
+          list.onclick = e => e.target.closest("a, button") && close();
           const wrap = Object.assign(document.createElement("span"), { className: "drop" });
           wrap.append(b, list);
           return wrap;

@@ -1,7 +1,7 @@
 // POSTS, a capability: posts Reddit-shaped — a POST (a title and text), COMMENTS on it (answering the post or another
 // comment), VOTES on either — in one of two places:
-// - A BOARD: a SPACE's (`space.board(sp)`) — every space has one beside its messages: a server beside its channels, a
-//   group or direct conversation beside its messages — the same members, roles, governance and moderation. Its posts
+// - A BOARD: a SPACE's (`space.board(sp)`), one of its apps (added by its owner or admins) beside its messages — a
+//   server's, a group or direct conversation's — the same members, roles, governance and moderation. Its posts
 //   are `content` in the space's table `board`: members write, moderators hide, what is hidden is left out, and a
 //   person removed or banned there writes no more. Joined by joining the space (an invite, a welcome).
 // - A person's PROFILE: `content` in their own public tail `posts` (only their account writes it; anyone reads it) —
@@ -41,8 +41,13 @@ export async function start(ctx) {
     }
     return rooms.get(key);
   };
-  // Every space this person is in has its board: a server's, a group conversation's, a direct one's.
-  const boards = async () => space.mine();
+  // The spaces this person is in that have a Board (an app of the space, added by its owner or admins: `roles`).
+  const roles = await ctx.require("roles");
+  const boards = async () => {
+    const all = await space.mine();
+    const on = await Promise.all(all.map(sp => roles.of(sp).then(r => r.apps().includes("board"), () => false)));
+    return all.filter((_, i) => on[i]);
+  };
   const boardOf = async x => {
     const id = String(x).startsWith("space:") ? String(x).slice(6, String(x).indexOf("/")) : x;
     return (await boards()).find(s => s.id === id) ?? null;

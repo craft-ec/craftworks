@@ -1,7 +1,7 @@
 // ROLES, a capability: who holds what authority IN A SPACE (a server, a direct conversation — any space; a channel is
 // its parent's). Roles are per space: holding one never crosses spaces. Built in, for now:
 //   owner   everything; first the one who made the space (its id proves it: `space.owner`), then whom they hand it to
-//   admin   invite (by id or code), make and delete channels, hide others' items, remove members
+//   admin   invite (by id or code), make and delete channels, hide others' items, remove members, add and remove apps
 //   member  post, invite (by id or code)
 // Authority changes by ACTS in the space's table `acts` (each member's own feed). An act counts only if its signer's
 // role allowed it at that point: every reader replays the acts in one order (when made, then id) from the owner — the
@@ -17,17 +17,21 @@
 //   r.acts("hide")           // the acts of a kind that COUNTED, in order (`r.acts()`: all of them — the space's log)
 //   r.owner                  // who owns it now (a `transfer` act hands it on)
 //   r.invites()              // the invite codes in force: [{ code, by, at, expires, uses, admitted }]
+//   r.apps()                 // the space's APPS: "messages" always, and those added (an `app` act: { app, on });
+//                            // a space nobody changed has every one (board, notes)
 //   await r.act({ act: "grant", did, role })   // an act, as this person (refused here if it would not count)
 //   await r.grant(did, role)  r.onChange(fn)  r.settled
 export async function start(ctx) {
   const [space, storage, keys, node, directory] = await Promise.all(["space", "storage", "keys", "node", "directory"].map(n => ctx.require(n)));
 
   const CAN = {
-    owner: new Set(["post", "invite", "channels", "moderate", "remove", "grant"]),
-    admin: new Set(["post", "invite", "channels", "moderate", "remove"]),
+    owner: new Set(["post", "invite", "channels", "moderate", "remove", "grant", "apps"]),
+    admin: new Set(["post", "invite", "channels", "moderate", "remove", "apps"]),
     member: new Set(["post", "invite"]),
   };
   const RANK = { owner: 3, admin: 2, member: 1 };
+  // The apps a space may add (Messages is every space's).
+  const APPS = ["board", "notes"];
   // An invite code in force at `at`: not revoked, not expired, and uses left (0: no limit).
   const live = (inv, at = Date.now()) => !inv.revoked && (!inv.expires || at < inv.expires) && (!inv.uses || inv.admitted.length < inv.uses);
   // A member's credential (hex): `CWMB ‖ did ‖ signer ‖ writer ‖ MLS key ‖ signature` (the identity's format; MLS
@@ -72,6 +76,7 @@ export async function start(ctx) {
     let counted = [];
     let owner = first;
     let invites = new Map();
+    let apps = new Map();
     let bans = new Set();
     function replay() {
       const acts = [];
@@ -86,6 +91,7 @@ export async function start(ctx) {
       owner = first;
       roles = new Map(owner ? [[owner, "owner"]] : []);
       invites = new Map();
+      apps = new Map();
       const removed = new Set();
       const banned = new Set();
       const roleAt = d => (removed.has(d) ? null : (roles.get(d) ?? "member"));
@@ -103,7 +109,8 @@ export async function start(ctx) {
           (a.act === "transfer" && r === "owner" && a.did && a.did !== a.by && !removed.has(a.did)) ||
           (a.act === "invite" && CAN[r]?.has("invite") && typeof a.code === "string" && a.code && !invites.has(a.code)) ||
           (a.act === "revoke-invite" && inv && (inv.by === a.by || CAN[r]?.has("moderate"))) ||
-          (a.act === "admitted" && CAN[r]?.has("invite") && inv && live(inv, a.at) && a.did && !banned.has(a.did));
+          (a.act === "admitted" && CAN[r]?.has("invite") && inv && live(inv, a.at) && a.did && !banned.has(a.did)) ||
+          (a.act === "app" && CAN[r]?.has("apps") && APPS.includes(a.app));
         if (!ok) continue;
         if (a.act === "grant") roles.set(a.did, a.role);
         // Removed: out, and back only by an invite or a code (which clears it). Banned: out, and never back until unbanned.
@@ -123,6 +130,7 @@ export async function start(ctx) {
         if (a.act === "revoke-invite") inv.revoked = a.at;
         if (a.act === "admitted" && !inv.admitted.includes(a.did)) inv.admitted.push(a.did);
         if (a.act === "admitted") removed.delete(a.did);
+        if (a.act === "app") apps.set(a.app, !!a.on);
         counted.push(a);
       }
       for (const d of removed) roles.set(d, null);
@@ -152,6 +160,7 @@ export async function start(ctx) {
       author,
       acts: kind => (kind ? counted.filter(a => a.act === kind) : [...counted]),
       invites: () => [...invites.values()].filter(i => live(i)),
+      apps: () => ["messages", ...APPS.filter(x => apps.get(x) ?? true)],
       banned: did => bans.has(did),
       bannedList: () => [...bans],
       // This node was removed from the space's group: it reads nothing newer.
@@ -169,7 +178,7 @@ export async function start(ctx) {
       },
       async act(a) {
         if (!me) throw new Error("nobody is logged in");
-        const need = { grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite" }[a.act];
+        const need = { grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite" }[a.act];
         if (!need || !can(me.id, need)) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
         await t.put(newId(), JSON.stringify({ ...a, at: Date.now() }));
       },
