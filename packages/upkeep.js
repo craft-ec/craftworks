@@ -32,6 +32,9 @@ export async function start(ctx) {
         if (let_in.length) ctx.log("upkeep", { what: `${let_in.length} let into ${sp.name}` });
       }
       await mandate(me).catch(e => ctx.log("upkeep", { what: `the mandate: ${e.message}` }));
+      // Boards: what this person wrote is public exactly while its board reads in public (a board made public shows
+      // what was written before; one made private takes it back).
+      await (await ctx.require("posts")).syncPublic().catch(e => ctx.log("upkeep", { what: `boards: ${e.message}` }));
     } finally {
       running = false;
     }

@@ -21,6 +21,7 @@
 //   room.mayRemove(item)                      // its author, or a moderator here
 //   room.mayPost()   room.postingRule()        // this person may post here now; "everyone" | "admins" (the app's setting)
 //   room.reactions()                           // every reaction row here [{ item, emoji, by }] (also to items elsewhere)
+//   room.own()   await room.putOwn(key, value)   await room.dropOwn(key)   // this person's rows as stored (a copy's)
 //   await room.settled                        // every author's feed tried once (more may still arrive)
 //
 // A PUBLIC container `{ kind: "public", did, name }` is one person's public tail `name` (`directory.publicOf`): only
@@ -159,6 +160,14 @@ export async function start(ctx) {
         const it = mine(id);
         await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: me, edited: Date.now(), ...(it.re ? { re: it.re } : {}), ...(it.title ? { title: it.title } : {}), ...(it.in ? { in: it.in } : {}) }));
       },
+      // THIS PERSON's ROWS as stored (items, reactions): to copy them into another table of the same place (a board's
+      // public table: `posts`), and to put or drop one there by its key — only ever this person's own.
+      own: () => t.rows().filter(row => row.value && (open ? true : r ? r.author(row) === me : true)).map(row => ({ key: row.key, value: row.value })),
+      putOwn: (key, value) => {
+        if (outside) throw new Error("only the space's members write here");
+        return t.put(key, value);
+      },
+      dropOwn: key => t.remove(key),
       async remove(id) {
         const it = list().find(x => x.id === id);
         if (!it) throw new Error("no such item");

@@ -17,6 +17,7 @@
 //                                                     // profile, those they follow and their friends'); sort "hot" | "new" | "top"
 //   await posts.get(ref)   await posts.thread(ref)    // one post; its comments as a tree (`replies`), best first
 //   await posts.comment(post, re, body)   await posts.vote(ref, 1 | -1 | 0, post)   await posts.remove(ref)
+//   await posts.syncPublic()      // this person's items on each board, public exactly while the board reads in public
 //   await posts.boards()                             // the spaces this person is in: their boards
 //   await posts.boardOf(ref | id)                    // the space a board post or board id is in (null: a profile's)
 //   posts.onChange(fn)
@@ -57,27 +58,54 @@ export async function start(ctx) {
     const id = String(x).startsWith("space:") ? String(x).slice(6, String(x).indexOf("/")) : x;
     return (await boards()).find(s => s.id === id) ?? null;
   };
-  // A BOARD's room: its two tables as one — the sealed board (members read) and the PUBLIC board (anyone reads), a
-  // post going where the board reads now (`config` read), a comment or a vote beside what it is on. Outside (`desc`:
-  // not a member): the public board alone.
+  // A BOARD's room: its two tables as one — the SEALED board (members read) and the PUBLIC board (anyone reads). What
+  // is public follows the board's setting NOW, not when something was written: each person's items (posts, comments,
+  // votes) live in the sealed table, and while the board reads in public their copy is in the public table too — put
+  // there by their own page (`sync`: only an author's own feed can carry their items, so the author's page copies
+  // them), taken out again when the board goes private. Outside (`desc`: not a member): the public board alone.
   const boardRoom = sp =>
     opened(`space:${sp.id}`, async () => {
       const [a, b, r] = await Promise.all([content.in(space.board(sp)), content.in(space.board(sp, { pub: true })), roles.of(sp)]);
-      const roomOf = id => (b.list().some(x => x.id === id) ? b : a);
+      const pubNow = () => r.policy("board", "read") === "anyone";
+      // THE SYNC: this person's rows — a public copy of each while the board is public, none while it is not. Rows only
+      // in the public table (written there before the sealed table held everything) move into the sealed one first.
+      let syncing = null;
+      const sync = () =>
+        (syncing ??= (async () => {
+          await Promise.all([a.settled, b.settled]);
+          const inA = new Map(a.own().map(x => [x.key, x.value]));
+          const inB = new Map(b.own().map(x => [x.key, x.value]));
+          for (const [k, v] of inB) if (!inA.has(k)) (await a.putOwn(k, v), inA.set(k, v));
+          if (pubNow()) {
+            for (const [k, v] of inA) if (inB.get(k) !== v) await b.putOwn(k, v);
+          } else for (const k of inB.keys()) await b.dropOwn(k);
+        })().finally(() => (syncing = null)));
+      const dedupe = (list, key) => {
+        const seen = new Set();
+        return list.filter(x => !seen.has(key(x)) && seen.add(key(x)));
+      };
+      const rooms = [a, b];
       return {
-        list: () => [...a.list().map(x => ({ ...x, pub: false })), ...b.list().map(x => ({ ...x, pub: true }))],
-        reactions: () => [...a.reactions(), ...b.reactions()],
-        mayRemove: it => (it.pub ? b : a).mayRemove(it),
+        list: () => dedupe([...a.list(), ...b.list()], x => x.id).map(x => ({ ...x, pub: pubNow() })),
+        // A vote in both tables is one vote.
+        reactions: () => dedupe([...a.reactions(), ...b.reactions()], x => `${x.item}|${x.emoji}|${x.by}`),
+        mayRemove: it => a.mayRemove(it),
         mayPost: () => a.mayPost(),
         onChange: f => (a.onChange(f), b.onChange(f)),
         settled: Promise.all([a.settled, b.settled]),
-        // A comment or a vote goes beside its post — found once both boards were read (a public post's comment is public).
+        sync,
         post: async (kind, body, opts = {}) => {
-          if (kind !== "post") await Promise.all([a.settled, b.settled]);
-          return (kind === "post" ? (r.policy("board", "read") === "anyone" ? b : a) : roomOf(opts.in)).post(kind, body, opts);
+          await Promise.all([a.settled, b.settled]);
+          const id = await a.post(kind, body, opts);
+          await sync();
+          return id;
         },
-        react: async (id, e, on) => (await Promise.all([a.settled, b.settled]), roomOf(id).react(id, e, on)),
-        remove: id => roomOf(id).remove(id),
+        react: async (id, e, on) => (await Promise.all([a.settled, b.settled]), await sync(), await a.react(id, e, on), await sync()),
+        edit: async (id, body) => (await sync(), await a.edit(id, body), await sync()),
+        // Out of both tables (an author's own; a moderator's hide, in each table it is listed in).
+        remove: async id => {
+          for (const x of rooms) if (x.list().some(it => it.id === id)) await x.remove(id);
+        },
       };
     });
   const outsideRoom = desc =>
@@ -333,5 +361,10 @@ export async function start(ctx) {
     await (await profileRoom(self)).remove(idOf(ref));
   }
 
-  return { submit, list, get, thread, comment, vote, remove, boards, boardOf, publicSpaces, onChange: f => changed.push(f) };
+  // Every board this person is in: their items' public copies as the board reads NOW (`upkeep`, every tick).
+  async function syncPublic() {
+    for (const sp of await boards().catch(() => [])) await (await boardRoom(sp)).sync().catch(e => ctx.log("posts", { what: `${sp.name}: public copies: ${e.message}` }));
+  }
+
+  return { submit, list, get, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
 }

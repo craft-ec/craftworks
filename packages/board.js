@@ -343,7 +343,7 @@ export async function mount(ctx, el) {
           { className: "panel" },
           h("h3", { textContent: `b/${space.shown(sp)}` }),
           h("p", { textContent: `${n} member${n === 1 ? "" : "s"} · you: ${r.role(me) ?? "member"}` }),
-          r.policy("board", "read") === "anyone" ? h("p", { textContent: "🌐 Public: anyone reads new posts." }) : null,
+          r.policy("board", "read") === "anyone" ? h("p", { textContent: "🌐 Public: anyone reads its posts." }) : null,
           mayPost ? create : h("p", { textContent: "Only admins post here; comment and vote on any post." }),
           settingsBtn,
         ),
