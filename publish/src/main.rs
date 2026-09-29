@@ -402,7 +402,7 @@ async fn main() -> Result<()> {
         ("recovery", "service", app.join("packages/recovery.js")),
         ("contacts", "module", app.join("packages/contacts.js")),
         ("posts", "service", app.join("packages/posts.js")),
-        ("social", "module", app.join("packages/social.js")),
+        ("board", "module", app.join("packages/board.js")),
         ("chat", "module", app.join("packages/chat.js")),
         ("messages", "module", app.join("packages/messages.js")),
         ("mail", "module", app.join("packages/mail.js")),
@@ -487,7 +487,7 @@ async fn main() -> Result<()> {
     let names: Vec<&str> = packages.iter().map(|(n, _, _)| *n).collect();
     let mentions = |src: &str| -> Vec<&str> { names.iter().copied().filter(|n| src.contains(&format!("\"{n}\""))).collect() };
     // The app's PAGES (route → its package): the manifest's `pages`, and where each page's needs start.
-    let pages: [(&str, &str); 8] = [("/", "home"), ("/account", "account"), ("/notes", "notes"), ("/chat", "chat"), ("/messages", "messages"), ("/mail", "mail"), ("/contacts", "contacts"), ("/social", "social")];
+    let pages: [(&str, &str); 8] = [("/", "home"), ("/account", "account"), ("/notes", "notes"), ("/chat", "chat"), ("/messages", "messages"), ("/mail", "mail"), ("/contacts", "contacts"), ("/board", "board")];
     let mut needs = Vec::new();
     for (route, page) in pages {
         let mut have: Vec<&str> = vec!["theme", "header", "footer", page];
@@ -505,7 +505,7 @@ async fn main() -> Result<()> {
         needs.push(format!("\"{route}\": [{}]", have.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")));
     }
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\", \"about\": \"Write and keep notes, tagged and pinned, on every node of your account.\" }}, {{ \"name\": \"Messages\", \"icon\": \"✉️\", \"route\": \"/messages\", \"counts\": \"messages\", \"about\": \"Private conversations with one person, sealed end to end.\" }}, {{ \"name\": \"Chat\", \"icon\": \"💬\", \"route\": \"/chat\", \"counts\": \"chat\", \"about\": \"Servers and channels for a group, Discord-style.\" }}, {{ \"name\": \"Mail\", \"icon\": \"📮\", \"route\": \"/mail\", \"about\": \"Mail to anyone by their id: signed by your account, sealed to theirs.\" }}, {{ \"name\": \"Contacts\", \"icon\": \"👤\", \"route\": \"/contacts\", \"about\": \"The people you know: friends, following, requests. Find anyone by their id.\" }}, {{ \"name\": \"Social\", \"icon\": \"📰\", \"route\": \"/social\", \"about\": \"Posts in public from the people you follow; comment and vote.\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\", \"mailbox\", \"spacekeys\", \"reads\", \"people\", \"posts\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\", \"about\": \"Write and keep notes, tagged and pinned, on every node of your account.\" }}, {{ \"name\": \"Messages\", \"icon\": \"✉️\", \"route\": \"/messages\", \"counts\": \"messages\", \"about\": \"Private conversations with one person, sealed end to end.\" }}, {{ \"name\": \"Chat\", \"icon\": \"💬\", \"route\": \"/chat\", \"counts\": \"chat\", \"about\": \"Servers and channels for a group, Discord-style.\" }}, {{ \"name\": \"Mail\", \"icon\": \"📮\", \"route\": \"/mail\", \"about\": \"Mail to anyone by their id: signed by your account, sealed to theirs.\" }}, {{ \"name\": \"Contacts\", \"icon\": \"👤\", \"route\": \"/contacts\", \"about\": \"The people you know: friends, following, requests. Find anyone by their id.\" }}, {{ \"name\": \"Board\", \"icon\": \"📋\", \"route\": \"/board\", \"about\": \"Boards anyone can post in, Reddit-style: vote, comment, follow people and join boards.\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\", \"mailbox\", \"spacekeys\", \"reads\", \"people\", \"posts\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
         pages.iter().map(|(r, p)| format!("\"{r}\": [\"{p}\"]")).collect::<Vec<_>>().join(", "),
         prior.join(", "),
         needs.join(", "),

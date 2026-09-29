@@ -1,8 +1,9 @@
 // CONTENT, a capability: the SHAPE of an authored item — a message, a post, a comment, a note — defined once, for
 // every container it lives in (a channel, a thread, a notebook). UI never defines its own: a page shows content.
 //
-// An item is `{ id, kind, body, at, by, re, edited, reactions }`: its own id, what kind it is ("message", …), its body
-// (text), when it was made, its author (a DID), the item it answers (`re`), when it was last edited, and the
+// An item is `{ id, kind, body, at, by, re, title, in, edited, reactions }`: its own id, what kind it is ("message", …),
+// its body (text), when it was made, its author (a DID), the item it answers (`re`), a title (a post's), where it was
+// put when that is not its table (`in`: a post's board, a comment's post), when it was last edited, and the
 // REACTIONS to it (`{ "👍": [did…] }`) — each a small item of kind "reaction" in the same table, keyed by the item,
 // the emoji and its author (so two people's never meet in one row), never listed itself. It lives in its CONTAINER's table — each item in its author's own feed (`storage`), so
 // nobody writes into another's; readers see every author's merged. In a space its author is its feed's WRITER, as the
@@ -14,6 +15,7 @@
 //   room.list()                                // [{ id, kind, body, at, by }], oldest first
 //   await room.post("message", "hello")        // the new item's id
 //   await room.post("message", "hi", { re })  // a REPLY: `re` the id of the item it answers
+//   await room.post("post", body, { title, in })  // a titled item, put in a place (`in`) its table is not
 //   await room.react(id, "👍", on)             // this person's reaction to an item, on or off
 //   await room.edit(id, body)   await room.remove(id)   room.onChange(fn)
 //   room.mayRemove(item)                      // its author, or a moderator here
@@ -59,6 +61,8 @@ export async function start(ctx) {
           at: Number(v.at) || 0,
           by: open ? container.did : ((r ? r.author(row) : null) ?? v.by ?? null),
           re: typeof v.re === "string" ? v.re : null,
+          title: typeof v.title === "string" ? v.title : null,
+          in: typeof v.in === "string" ? v.in : null,
           edited: Number(v.edited) || 0,
           item: typeof v.item === "string" ? v.item : null,
           emoji: typeof v.emoji === "string" ? v.emoji : null,
@@ -110,9 +114,9 @@ export async function start(ctx) {
       settled: Promise.all([t.settled, r?.settled]).then(() => {}),
       onChange: f => changed.push(f),
       mayRemove: it => it.by === me || !!r?.can(me, "moderate"),
-      async post(kind, body, { re = null } = {}) {
+      async post(kind, body, { re = null, title = null, in: where = null } = {}) {
         const id = newId();
-        await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me, ...(re ? { re } : {}) }));
+        await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me, ...(re ? { re } : {}), ...(title ? { title } : {}), ...(where ? { in: where } : {}) }));
         return id;
       },
       // A REACTION: this person's, to one item, one emoji — its own row (the author in its key), put or taken back.
@@ -124,7 +128,7 @@ export async function start(ctx) {
       },
       async edit(id, body) {
         const it = mine(id);
-        await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: me, edited: Date.now(), ...(it.re ? { re: it.re } : {}) }));
+        await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: me, edited: Date.now(), ...(it.re ? { re: it.re } : {}), ...(it.title ? { title: it.title } : {}), ...(it.in ? { in: it.in } : {}) }));
       },
       async remove(id) {
         const it = list().find(x => x.id === id);

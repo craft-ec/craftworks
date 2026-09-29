@@ -80,7 +80,7 @@ export async function start(ctx) {
       const self = did === me.id;
       const posts = act("Posts", () => {
         close();
-        location.hash = `#/social/${did}`;
+        location.hash = `#/board/u/${did}`;
       });
       const personal = self
         ? [el("p", { className: "id", textContent: "This is you." }), el("div", { className: "grid" }, posts)]
