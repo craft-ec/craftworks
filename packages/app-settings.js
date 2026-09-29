@@ -37,14 +37,22 @@ export async function start(ctx) {
   // ONE POLICY's choice: Inherit (what the parent says), or a who. Reading by anyone is offered to the owner only.
   function who(r, path, action, { me = null } = {}) {
     const own = r.policiesAt(path)[action] ?? "";
-    const parent = parentOf(path);
-    const inherited = parent == null ? "members" : r.policy(parent, action);
+    // What this path would get without a policy of its own: the nearest level above that sets one — named — else the
+    // built-in default (a space's reading, say, is always its members': nothing above sets it).
+    let from = null;
+    for (let p = parentOf(path); p != null; p = parentOf(p))
+      if (r.policiesAt(p)[action]) {
+        from = p;
+        break;
+      }
+    const inherited = from == null ? "members" : r.policy(from, action);
+    const LEVEL = p => (p === "" ? "the space" : p === "chat" ? "Chat" : p === "board" ? "Board" : p === "notes" ? "Notes" : p);
     const options = ["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || action === "read" || action === "join");
     const sel = h(
       "select",
       { ariaLabel: `${action} at ${path || "the space"}` },
-      // The space itself has nothing above it: its "inherit" is the built-in default (a tenant, later, will be its parent).
-      h("option", { value: "", textContent: `${parent == null ? "Default" : "Inherit"} (${NAMES[inherited] ?? inherited})` }),
+      // Inherit, from where; or the built-in default (the space itself has nothing above it — a tenant, later, will).
+      h("option", { value: "", textContent: from == null ? `Default (${NAMES[inherited] ?? inherited})` : `Inherit from ${LEVEL(from)} (${NAMES[inherited] ?? inherited})` }),
       ...options.map(w => h("option", { value: w, textContent: NAMES[w] })),
     );
     sel.value = own;
