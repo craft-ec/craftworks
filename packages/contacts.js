@@ -1,13 +1,15 @@
 // CONTACTS, a page: the people this person knows — friend requests, friends, following, hidden, blocked (the one
 // `people-list`) — and FIND someone by `name#abc123` or their id, opening what can be done with them (the one `person`
-// menu: message, friend, follow, hide, block). UI only.
+// menu: message, friend, follow, hide, block); and "Show me in Discover". In DISCOVER (`#/discover/contacts`, its
+// public view): the people who chose to be shown, each opening the same menu. UI only: people are `directory`'s.
 export async function mount(ctx, el) {
   const login = await ctx.require("login");
   if (!(await login.session())) {
     location.hash = "#/";
     return;
   }
-  const [conversation, person, list] = await Promise.all(["conversation", "person", "people-list"].map(n => ctx.require(n)));
+  const [conversation, person, list, directory] = await Promise.all(["conversation", "person", "people-list", "directory"].map(n => ctx.require(n)));
+  if (ctx.space === "discover") return people(ctx, el, { directory, person });
   el.innerHTML = `
     <style>
       .ct { max-width: 640px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
@@ -15,10 +17,12 @@ export async function mount(ctx, el) {
       .ct form input { flex: 1; min-width: 0; padding: 8px var(--cw-space-3); border-radius: var(--cw-radius); }
       .ct form button { font: inherit; border: 0; border-radius: var(--cw-radius); padding: 0 var(--cw-space-4); background: var(--cw-accent); color: var(--cw-accent-fg); cursor: pointer; }
       .ct .said { color: var(--cw-danger); font-size: var(--cw-text-sm); margin: 0; padding: 0 var(--cw-space-3); }
+      .ct .listed { display: flex; gap: var(--cw-space-2); align-items: center; padding: 0 var(--cw-space-3); font-size: var(--cw-text-sm); color: var(--cw-muted); }
     </style>
     <div class="ct">
       <form><input name="who" autocomplete="off" placeholder="Find someone: name#abc123 or did:craftec:…" aria-label="Find someone"><button>Find</button></form>
       <p class="said" hidden></p>
+      <label class="listed"><input type="checkbox"> Show me in Discover (anyone can find your name, id and public posts)</label>
       <div class="list"></div>
     </div>`;
   const said = el.querySelector(".said");
@@ -34,5 +38,53 @@ export async function mount(ctx, el) {
       said.hidden = false;
     }
   };
+  // SHOW ME IN DISCOVER: this person's own choice (their card says it).
+  const box = el.querySelector(".listed input");
+  directory.isListed().then(on => (box.checked = on), () => {});
+  box.onchange = () =>
+    directory.listMe(box.checked).catch(e => {
+      box.checked = !box.checked;
+      said.textContent = e?.message ?? String(e);
+      said.hidden = false;
+    });
   await list.show(el.querySelector(".list"));
+}
+
+// DISCOVER → Contacts: the people who chose to be shown (and not flagged by a moderation list you apply).
+async function people(ctx, el, { directory, person }) {
+  const [moderation, posts, theme] = await Promise.all(["moderation", "posts", "theme"].map(n => ctx.require(n)));
+  el.innerHTML = `
+    <style>
+      .ppl { max-width: 880px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
+      .ppl h2 { margin: 0; font-size: 1.4rem; }
+      .ppl .note { margin: 0; color: var(--cw-muted); font-size: var(--cw-text-sm); }
+      .ppl .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--cw-space-3); }
+      .ppl .card { display: grid; gap: 4px; padding: var(--cw-space-3); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-surface); cursor: pointer; }
+      .ppl .card:hover { border-color: var(--cw-muted); }
+      .ppl .card b { overflow-wrap: anywhere; }
+      .ppl .card span { color: var(--cw-muted); font-size: var(--cw-text-sm); }
+    </style>
+    <div class="ppl"><h2>👤 People</h2><p class="note">People who chose to be shown in Discover. Show yourself from your Contacts.</p><div class="grid"></div></div>`;
+  ctx.actions["/contacts"] = [];
+  dispatchEvent(new CustomEvent("craftworks:actions"));
+  const grid = el.querySelector(".grid");
+  grid.replaceChildren(theme.loading("Finding people…"));
+  const lists = await moderation.lists().catch(() => null);
+  const dids = (await directory.listed()).filter(d => !lists?.flagged({ by: d }));
+  const h = (tag, props = {}, ...kids) => {
+    const e = Object.assign(document.createElement(tag), props);
+    e.append(...kids.filter(Boolean));
+    return e;
+  };
+  grid.replaceChildren(
+    ...(dids.length
+      ? dids.map(d => {
+          const name = h("b", { textContent: directory.shown(d) });
+          const about = h("span", { textContent: "public profile" });
+          directory.name(d).then(t => (name.textContent = t), () => {});
+          posts.list({ by: d }).then(ps => (about.textContent = `${ps.length} public post${ps.length === 1 ? "" : "s"}`), () => {});
+          return h("div", { className: "card", onclick: e => person.open(e.currentTarget, d) }, name, about);
+        })
+      : [h("p", { className: "note", textContent: "Nobody listed yet: show yourself from your Contacts (Show me in Discover)." })]),
+  );
 }

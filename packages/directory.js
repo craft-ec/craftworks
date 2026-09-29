@@ -16,6 +16,8 @@
 //   await directory.dataKey(did)              // their account's data key (hex) as their key log names it, or null
 //   await directory.devices(did, fresh?)      // their devices' keys (hex), each credential checked against their key log
 //   directory.onDevices(did, fn)              // their devices changed (their card moved)
+//   await directory.listMe(on)   directory.isListed()   // shown in DISCOVER (Contacts' public view), or not
+//   await directory.listed()                  // the people shown in Discover: [did] (each one's card says so)
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const storage = await ctx.require("storage");
@@ -179,5 +181,24 @@ export async function start(ctx) {
     return deviceSets.get(did);
   }
 
-  return { card, publish, renew, handle, shown, name, publicOf, dataKey, devices, onDevices };
+  // DISCOVER's people: whoever chose to be shown. A pointer in one public bag says where to look; their own CARD says
+  // whether they still want it (row `listed`): a bag keeps its pointers, so leaving is the card's word.
+  const PEOPLE = "discover:people";
+  async function listMe(on) {
+    const sp = await space.account();
+    const t = await storage.publicTail(CARD, sp.shared);
+    await t.put("listed", on ? "1" : "");
+    if (on) await (await ctx.require("index")).point(PEOPLE, { did: sp.id });
+  }
+  const isListed = async () => {
+    const sp = await space.account();
+    return (await storage.publicTail(CARD, sp.shared)).rows().some(r => r.key === "listed" && r.value === "1");
+  };
+  async function listed() {
+    const dids = [...new Set((await (await ctx.require("index")).pointers(PEOPLE).catch(() => [])).map(p => p.did).filter(d => typeof d === "string" && d.startsWith("did:craftec:")))];
+    const ok = await Promise.all(dids.map(d => publicOf(d, CARD).then(t => !!t?.rows().some(r => r.key === "listed" && r.value === "1"), () => false)));
+    return dids.filter((_, i) => ok[i]);
+  }
+
+  return { card, publish, renew, handle, shown, name, publicOf, dataKey, devices, onDevices, listMe, isListed, listed };
 }
