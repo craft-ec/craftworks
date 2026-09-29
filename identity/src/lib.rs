@@ -157,7 +157,7 @@ pub enum Answer {
     Opened { items: Vec<Option<Vec<u8>>> },
     /// A member's spaces, handed to the next build: `(space id, its group state, its epochs' secrets)`.
     HandedSpaces { spaces: Vec<([u8; 32], Option<Vec<u8>>, Vec<(u64, [u8; 32])>)> },
-    SpaceMember { seed: [u8; 32], public: [u8; 32], writer: [u8; 32], credential: Vec<u8> },
+    SpaceMember { seed: [u8; 32], public: [u8; 32], credential: Vec<u8> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -809,7 +809,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             let Some(data) = a.data else { return Refused(Why::NoDataKey) };
             let seed = space_member_seed(&data);
             let public = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
-            SpaceMember { seed, public, writer: space_writer(&data).verifying_key().to_bytes(), credential: space_member_credential(&a.did, &data, &public) }
+            SpaceMember { seed, public, credential: space_member_credential(&a.did, &data, &public) }
         }
         Request::InboxKey => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };

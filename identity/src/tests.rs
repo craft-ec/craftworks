@@ -632,14 +632,16 @@ fn a_members_spaces_go_to_the_next_build_on_its_pin_to_its_home_only() {
 #[test]
 fn a_dids_space_member_is_the_same_on_every_device_and_signs_in_spaces_only() {
     let mut m = provisioned(APP);
-    let Answer::SpaceMember { seed, public: mls_pub, writer, credential: cred } = serve(&mut m, Request::SpaceMember, APP) else { panic!("a space member") };
+    let Answer::SpaceMember { seed, public: mls_pub, credential: cred } = serve(&mut m, Request::SpaceMember, APP) else { panic!("a space member") };
+    // The writer its credential names: the DID's space writer (from its data key; the answer no longer carries it).
+    let writer = crate::space_writer(&ALICE_DATA).verifying_key().to_bytes();
     assert_eq!(mls_pub, public(seed));
     // Its credential: Alice's DID, signed by Alice's DATA key (the key log names it), writer and MLS key as given.
     let (did, signer, w, mls) = read_credential(&cred).expect("a credential that holds");
     assert_eq!((did, signer, w, mls), (ALICE_DID, public(ALICE_DATA), writer, mls_pub.to_vec()));
     // A second device of the same DID: the same member.
     assert_eq!(provision(&mut m, ALICE2, ALICE_DID, ALICE2_PIN, APP), opened(ALICE2, ALICE_DID));
-    assert_eq!(serve(&mut m, Request::SpaceMember, APP), Answer::SpaceMember { seed, public: mls_pub, writer, credential: cred.clone() });
+    assert_eq!(serve(&mut m, Request::SpaceMember, APP), Answer::SpaceMember { seed, public: mls_pub, credential: cred.clone() });
     // Bob's is Bob's (control: a different data key gives a different member).
     assert_eq!(provision(&mut m, BOB, BOB_DID, BOB_PIN, APP), bob());
     let Answer::SpaceMember { public: bobs, .. } = serve(&mut m, Request::SpaceMember, APP) else { panic!("bob's member") };

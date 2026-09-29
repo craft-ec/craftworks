@@ -20,7 +20,9 @@ fn reply(answer: Vec<u8>) -> OutboundDelegateMsg {
 
 pub struct Identity;
 
-#[delegate]
+// THE MANIFEST: woken every minute (node ≥ 0.2.139, once the person grants this app Background) for UPKEEP with no
+// page open; a node that predates wake-ups ignores `wakeups` and runs it as before.
+#[delegate(manifest(lifecycle = [NodeStarted], capabilities = [Background], wakeups = [upkeep = 60]))]
 impl DelegateInterface for Identity {
     fn process(
         ctx: &mut DelegateCtx,
@@ -52,6 +54,8 @@ impl DelegateInterface for Identity {
                 .map(reply)
                 .into_iter()
                 .collect()),
+            // A WAKE-UP or a lifecycle event: nothing yet (upkeep moves here next).
+            InboundDelegateMsg::WakeupFired { .. } | InboundDelegateMsg::Lifecycle(_) => Ok(Vec::new()),
             // The identity issues no GET, PUT, UPDATE or SUBSCRIBE, so nothing else can answer it.
             _ => Ok(Vec::new()),
         }

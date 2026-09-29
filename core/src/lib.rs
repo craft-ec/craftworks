@@ -39,8 +39,8 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::MlsState { state } => json!({ "mlsState": state.as_ref().map(|s| hex(s)) }),
         Answer::TableKeyAt { epoch, key } => json!({ "tableKey": hex(key), "epoch": epoch }),
         Answer::InboxKey { public } => json!({ "inboxKey": hex(public) }),
-        Answer::SpaceMember { seed, public, writer, credential } => json!({ "spaceMember": {
-            "seed": hex(seed), "public": hex(public), "writer": hex(writer), "credential": hex(credential),
+        Answer::SpaceMember { seed, public, credential } => json!({ "spaceMember": {
+            "seed": hex(seed), "public": hex(public), "credential": hex(credential),
         } }),
         Answer::HandedSpaces { spaces } => json!({ "handedSpaces": spaces.iter().map(|(id, st, eps)| json!({
             "space": hex(id), "mls": st.as_ref().map(|s| hex(s)),

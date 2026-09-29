@@ -29,6 +29,7 @@ done
 
 cargo build -q --release -p craftworks-identity --target wasm32-unknown-unknown --features freenet-main-delegate
 cargo build -q --release -p probe --bin import-gate
-wasm-tools strip --all "$target/wasm32-unknown-unknown/release/craftworks_identity.wasm" -o packages/build/identity.wasm
+# Every custom section but the MANIFEST (`freenet-manifest`: the delegate's wake-ups) removed.
+wasm-tools strip -d '^(name|producers|target_features|\.debug.*|linking|reloc\..*|component-type.*)$' "$target/wasm32-unknown-unknown/release/craftworks_identity.wasm" -o packages/build/identity.wasm
 "$target/release/import-gate" packages/build/identity.wasm
 echo "identity: $(wc -c < packages/build/identity.wasm | tr -d ' ') B, sha256 $(shasum -a 256 packages/build/identity.wasm | cut -c1-16)…"

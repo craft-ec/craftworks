@@ -389,7 +389,7 @@ dependencies = [
  "craftworks-identity",
  "craftworks-idlog-contract",
  "ed25519-dalek",
- "freenet-stdlib",
+ "freenet-stdlib 0.10.0",
  "hmac",
  "sha2",
  "wire",
@@ -401,7 +401,7 @@ name = "craftworks-bag-contract"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "freenet-stdlib",
+ "freenet-stdlib 0.10.0",
 ]
 
 [[package]]
@@ -421,7 +421,7 @@ dependencies = [
  "ed25519-dalek",
  "engine",
  "freenet-prolly",
- "freenet-stdlib",
+ "freenet-stdlib 0.10.0",
  "hmac",
  "js-sys",
  "serde_json",
@@ -449,7 +449,7 @@ dependencies = [
  "chacha20poly1305",
  "craftec-register-contract",
  "ed25519-dalek",
- "freenet-stdlib",
+ "freenet-stdlib 0.12.1",
  "serde",
  "serde_json",
  "x25519-dalek",
@@ -461,7 +461,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
- "freenet-stdlib",
+ "freenet-stdlib 0.10.0",
 ]
 
 [[package]]
@@ -492,7 +492,7 @@ dependencies = [
  "core-types",
  "ed25519-dalek",
  "engine",
- "freenet-stdlib",
+ "freenet-stdlib 0.10.0",
  "futures",
  "page",
  "page-io",
@@ -925,6 +925,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "freenet-macros"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6447ac80d17ad1a22d87f470d1c170ca3cfa976a433883de6472c1ede381e525"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "freenet-prolly"
 version = "0.1.0"
 source = "git+https://github.com/craft-ec/freenet-prolly?rev=17d67d8#17d67d84f29b346bee8e2795d874a5ac0c3b5ebe"
@@ -945,7 +956,7 @@ dependencies = [
  "bytes",
  "chrono",
  "flatbuffers",
- "freenet-macros",
+ "freenet-macros 0.2.0",
  "futures",
  "js-sys",
  "semver",
@@ -960,6 +971,30 @@ dependencies = [
  "tracing-subscriber",
  "wasm-bindgen",
  "web-sys",
+]
+
+[[package]]
+name = "freenet-stdlib"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d1d34436ce7088f277e65a616951ab8ea43091e04bb18f9af562651019b656f"
+dependencies = [
+ "bincode",
+ "blake3",
+ "bs58",
+ "byteorder",
+ "bytes",
+ "chrono",
+ "flatbuffers",
+ "freenet-macros 0.3.1",
+ "futures",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1611,7 +1646,7 @@ dependencies = [
  "core-types",
  "engine",
  "freenet-prolly",
- "freenet-stdlib",
+ "freenet-stdlib 0.10.0",
  "page",
  "pieces",
  "protocol",
@@ -1770,7 +1805,7 @@ dependencies = [
  "ed25519-dalek",
  "engine",
  "freenet-prolly",
- "freenet-stdlib",
+ "freenet-stdlib 0.10.0",
  "futures",
  "getrandom 0.2.17",
  "page",
@@ -2152,7 +2187,7 @@ dependencies = [
  "contract-keys",
  "craftec-register-contract",
  "freenet-prolly",
- "freenet-stdlib",
+ "freenet-stdlib 0.10.0",
  "serde",
  "signer-proto",
 ]
@@ -2635,7 +2670,7 @@ dependencies = [
  "core-types",
  "craftec-register-contract",
  "freenet-prolly",
- "freenet-stdlib",
+ "freenet-stdlib 0.10.0",
  "pieces",
  "serde",
  "signer-proto",
