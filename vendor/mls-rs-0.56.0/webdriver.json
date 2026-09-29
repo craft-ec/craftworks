@@ -1,0 +1,8 @@
+{
+  "goog:chromeOptions": {
+    "args": [
+      "--disable-dev-shm-usage",
+      "--disable-gpu"
+    ]
+  }
+}

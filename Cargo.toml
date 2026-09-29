@@ -20,6 +20,12 @@ freenet-prolly = { git = "https://github.com/craft-ec/freenet-prolly", rev = "17
 # The Register crate at the revision the SDK pins (one crate source).
 craftec-register-contract = { git = "https://github.com/craft-ec/freenet-contracts", rev = "689ca61", default-features = false, features = ["library"] }
 
+# CRAFTWORKS PATCHES (vendor/): mls-rs without forced browser randomness, mls-rs-core with a host clock — so MLS
+# runs inside the identity delegate (no browser there: freenet-core #5747's wake-ups), and the page as before.
+[patch.crates-io]
+mls-rs = { path = "vendor/mls-rs-0.56.0" }
+mls-rs-core = { path = "vendor/mls-rs-core-0.27.0" }
+
 [profile.release]
 opt-level = "s"
 lto = true

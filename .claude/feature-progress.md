@@ -626,6 +626,11 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       NEXT 2b: accept welcomes in the delegate — open inbox items (key is here), MLS join (openmls into the delegate),
       write the account's `spaces` + `spacekeys` rows (tail prepare/sign/PUT from the delegate: GET/PUT/UPDATE are
       available to delegates). 2c: admit askers. Then publish (owner's node + B need ≥ 0.2.139).
+      PORT P1 DONE: MLS builds for the delegate with NO browser imports — vendor/ patched mls-rs 0.56.0 (no forced
+      getrandom "js", no wasm-bindgen dep) + mls-rs-core 0.27.0 (`time::set_clock`: the host's clock; the page registers
+      Date.now in `mls::client`). Probe (create_group, custom getrandom): 415 KB, zero imports. mls tests 5/5, build.sh
+      import gate ok. Next P2: delegate randomness (seed from the page + ratchet) and clock (page-handed time /
+      wake-up count). Then P3 table reads, P4 table writes, P5 accept, P6 admit, P7 coexistence, P8 live + publish.
 - [ ] (old note) NO PAGE OPEN AT ALL: node v0.2.139 (freenet-core #5747) wakes a delegate periodically (manifest `wakeups`, ≥ 60 s,
       the person's Background grant). Needs the joining logic (MLS welcome/add, spacekeys) moved into the identity
       delegate (a delegate change: handover; bundle the SpaceMember.writer drop) and nodes on ≥ 0.2.139 (owner's and

@@ -1429,8 +1429,6 @@ dependencies = [
 [[package]]
 name = "mls-rs"
 version = "0.56.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4392c3b3ed7d835ca8f318f85ca65d3f0d3e879538d6e70679827a2f3af72029"
 dependencies = [
  "async-trait",
  "cfg-if",
@@ -1450,7 +1448,6 @@ dependencies = [
  "spin",
  "subtle",
  "thiserror",
- "wasm-bindgen",
  "zeroize",
 ]
 
@@ -1481,8 +1478,6 @@ dependencies = [
 [[package]]
 name = "mls-rs-core"
 version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e282079e5bd2fe95a009ac8af6a8e510924d876234ee494cd97f15f52de53cb0"
 dependencies = [
  "async-trait",
  "hex",
@@ -1490,7 +1485,6 @@ dependencies = [
  "mls-rs-codec",
  "serde",
  "thiserror",
- "wasm-bindgen",
  "zeroize",
 ]
 
