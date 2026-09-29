@@ -686,3 +686,36 @@ fn upkeep_clock_is_the_pages_time_plus_a_minute_per_wake_up_since() {
     upkeep_set_clock(&mut m, 5_000);
     assert_eq!(upkeep_now(&m), Some(5_000));
 }
+
+#[test]
+fn an_invite_address_is_the_one_pages_named_before_it_moved_here() {
+    // SHA-256 of `craftworks invite <code, trimmed, lower case>` by Node's own crypto (as index.js computed it), then the
+    // inbox derivation over it.
+    let h = |x: &str| -> [u8; 32] { (0..32).map(|i| u8::from_str_radix(&x[2 * i..2 * i + 2], 16).unwrap()).collect::<Vec<_>>().try_into().unwrap() };
+    let a = h("30432b2a2ddd7042a8c522c4e7a15fe601437062455ef4d931971abe15cfe2fb");
+    assert_eq!(invite_address("ab12-cd34-ef56-7890"), inbox_address(&a));
+    assert_eq!(invite_address(" AB12-CD34-EF56-7890 "), inbox_address(&a));
+    let o = h("0dad123e7d7c6e717eb661f3bf60e937663ac7aaf646e3de15caaf852ff517fb");
+    assert_eq!(invite_address("open 637d16a1c5a6fae78b6bb4c6c7b4ad6b48743a49f87a8be6bb9e2ba92bd6d997"), inbox_address(&o));
+}
+
+#[test]
+fn a_mandate_older_than_upkeep_s_own_group_is_not_taken() {
+    let mut m = provisioned(APP);
+    let space = [0x5A; 32];
+    let mandate = |epoch: u64| Mandate { space, name: "s".into(), kind: "server".into(), owner: "did:o".into(), nonce: None, channel: "c".into(), open: true, codes: vec![], bans: vec![], members: vec![], epoch, state: vec![epoch as u8] };
+    let ask = |m: &mut Map, spaces: Vec<Mandate>| serve(m, Request::UpkeepMandate { me: "did:me".into(), spaces }, APP);
+    ask(&mut m, vec![mandate(3)]);
+    // Upkeep moved the group to 4 meanwhile.
+    let (me, mut spaces) = upkeep_mandate(&m).unwrap();
+    spaces[0].epoch = 4;
+    spaces[0].state = vec![4];
+    upkeep_set_mandate(&mut m, &me, &spaces);
+    let Answer::Upkeep { stale, .. } = ask(&mut m, vec![mandate(3)]) else { panic!("an upkeep answer") };
+    let (_, held) = upkeep_mandate(&m).unwrap();
+    assert_eq!((held[0].epoch, held[0].state.clone()), (4, vec![4]));
+    assert_eq!(stale, vec![space]);
+    // A page that loaded 4 hands 4 over: taken.
+    ask(&mut m, vec![mandate(5)]);
+    assert_eq!(upkeep_mandate(&m).unwrap().1[0].epoch, 5);
+}

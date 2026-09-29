@@ -3,8 +3,13 @@
 // let this person into appears on the rail), and, in every shared space where this person may invite, whoever ASKED
 // to join (an invite code, an open space) let in. The pages that did this only while open (Chat, a space's Home) no
 // longer need to.
+//
+// With NO page open, the IDENTITY DELEGATE admits (the node wakes it every minute; node ≥ 0.2.139, with the Background
+// grant) by the MANDATE handed over here each tick: per space where this person may invite, how people get in, who is
+// in, and its MLS group. What it did meanwhile is taken first on every tick: the groups it moved, loaded; the people it
+// let in, written as `admitted` acts (when it happened). A page that ticks keeps the delegate out of its way.
 export async function start(ctx) {
-  const [space, conversation, roles] = await Promise.all(["space", "conversation", "roles"].map(n => ctx.require(n)));
+  const [space, conversation, roles, keys, auth] = await Promise.all(["space", "conversation", "roles", "keys", "auth"].map(n => ctx.require(n)));
   let running = false;
   async function tick() {
     if (running) return;
@@ -12,6 +17,7 @@ export async function start(ctx) {
     try {
       const me = await space.account();
       if (!me) return;
+      await absorb(me).catch(e => ctx.log("upkeep", { what: `what the delegate did: ${e.message}` }));
       const joined = await conversation.accept().catch(e => (ctx.log("upkeep", { what: `the inbox: ${e.message}` }), []));
       if (joined.length) ctx.log("upkeep", { what: `joined ${joined.length} space(s) from the inbox` });
       for (const sp of (await space.mine()).filter(s => s.kind === "server")) {
@@ -20,20 +26,61 @@ export async function start(ctx) {
         const let_in = await conversation.admit(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: ${e.message}` }), []));
         if (let_in.length) ctx.log("upkeep", { what: `${let_in.length} let into ${sp.name}` });
       }
+      await mandate(me).catch(e => ctx.log("upkeep", { what: `the mandate: ${e.message}` }));
     } finally {
       running = false;
     }
+  }
+  // WHAT THE DELEGATE DID with no page open: each group it moved, loaded; each person it let in, an `admitted` act (by
+  // this person, who may invite: at the time it happened); then forgotten there.
+  async function absorb(me) {
+    const st = (await auth.identity.upkeepStatus())?.upkeep;
+    if (!st) return;
+    const mine = await space.mine();
+    const of = id => mine.find(s => s.id === id);
+    for (const g of st.groups ?? []) if (of(g.space)) await keys.group(of(g.space)).adopt(g.epoch, g.state);
+    const written = [];
+    for (const a of st.admitted ?? []) {
+      const sp = of(a.space);
+      if (!sp) continue;
+      const r = await roles.of(sp);
+      await r.refresh();
+      await r.act({ act: "admitted", code: a.code, did: a.did, at: a.at });
+      written.push([a.space, a.did]);
+      ctx.log("upkeep", { what: `the delegate let ${a.did.slice(12, 20)}… into ${sp.name} while no page ran` });
+    }
+    if (written.length) await auth.identity.upkeepAck(written);
+  }
+  // THE MANDATE: every shared space where this person may invite, as this page knows it now.
+  async function mandate(me) {
+    const spaces = [];
+    for (const sp of (await space.mine()).filter(s => s.kind === "server")) {
+      const r = await roles.of(sp).catch(() => null);
+      if (!r?.can(me.id, "invite")) continue;
+      const g = await keys.group(sp).snapshot().catch(() => null);
+      if (!g) continue;
+      spaces.push({
+        space: sp.id, name: sp.name, kind: sp.kind, owner: sp.governance.owner, nonce: sp.governance.nonce ?? null, channel: sp.tables.channel,
+        open: r.policy("", "join") === "anyone",
+        codes: r.invites().map(i => [i.code, i.expires || 0, i.uses ? i.uses - i.admitted.length : 0]),
+        bans: r.bannedList(), members: r.members().map(m => m.did), epoch: g.epoch, state: g.state,
+      });
+    }
+    const r = await auth.identity.upkeepMandate(me.id, spaces);
+    if (r.upkeep?.stale?.length) ctx.log("upkeep", { what: `${r.upkeep.stale.length} space(s): the delegate's group is newer (loaded next tick)` });
   }
   // THE DELEGATE's upkeep (no page open: the node wakes it — node ≥ 0.2.139, with the Background grant): told which
   // contract the account's inbox is, once per login.
   async function handOver() {
     const me = await space.account();
     if (!me) return;
-    const [{ glue, core }, bagCode, auth] = await Promise.all([ctx.require("node"), ctx.require("bag-wasm"), ctx.require("auth")]);
+    const [{ glue }, bagCode, tailCode, idlogCode] = await Promise.all([ctx.require("node"), ctx.require("bag-wasm"), ctx.require("tail-wasm"), ctx.require("idlog-wasm")]);
     const Core = glue.CraftworksCore;
     const id = Core.bag_id(bagCode, Core.inbox_address(me.idBytes));
     const bytes = new Uint8Array(id.match(/../g).map(x => parseInt(x, 16)));
     const r = await auth.identity.upkeepWatch(bytes).catch(e => ({ refused: e.message }));
+    // The contracts it writes (their code) and reads: handed over when they are not the ones it holds.
+    if (r.upkeep && r.upkeep.codes !== Core.upkeep_codes_hash(bagCode, tailCode, idlogCode)) await auth.identity.upkeepCodes(bagCode, tailCode, idlogCode).catch(() => {});
     ctx.log("upkeep", { what: r.upkeep ? `the delegate watches the inbox (${r.upkeep.wakeups} wake-up(s) so far)` : `the delegate: ${r.refused ?? JSON.stringify(r)}` });
   }
   handOver().catch(() => {});

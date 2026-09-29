@@ -29,7 +29,15 @@ craftworks-bag-contract = { path = "../contracts-src/bag", default-features = fa
 craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
 contract-keys = { workspace = true }
 mls-rs-core = "=0.27.0"
+craftworks-account = { path = "../account", default-features = false }
+craftec-register-contract = { workspace = true }
+ed25519-dalek = { version = "=2.2.0", default-features = false }
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # The delegate's randomness: upkeep's pool (the page stirs it), through getrandom's custom hook.
 getrandom = { version = "0.2", features = ["custom"] }
+
+[dev-dependencies]
+tail = { workspace = true }

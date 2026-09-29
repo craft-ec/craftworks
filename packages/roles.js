@@ -216,7 +216,8 @@ export async function start(ctx) {
         if (!need || !can(me.id, need)) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
         // A public space's acts are public (readers outside must know them); a private one's sealed.
         const toPublic = isPublic() || (a.act === "policy" && (a.action === "read" || a.action === "join") && a.who === "anyone");
-        await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify({ ...a, at: Date.now() }));
+        // Its time: now — or when it happened (upkeep let someone in while no page ran: the act says when).
+        await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify({ at: Date.now(), ...a }));
       },
       grant: (did, to) => r.act({ act: "grant", did, role: to }),
       onChange: f => changed.push(f),

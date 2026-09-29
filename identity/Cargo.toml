@@ -21,6 +21,8 @@ ed25519-dalek = { version = "=2.2.0", default-features = false }
 # Sealing to a public key (the inbox; escrow): X25519 and XChaCha20-Poly1305, the same as the account's.
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+# An invite code's bag address (`invite_address`: SHA-256 of the code, as pages have always named it).
+sha2 = { version = "0.10", default-features = false }
 
 [dev-dependencies]
 craftec-register-contract = { workspace = true, features = ["testing"] }

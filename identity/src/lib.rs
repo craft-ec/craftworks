@@ -129,6 +129,47 @@ pub enum Request {
     UpkeepWatch { inbox: [u8; 32], seed: [u8; 32], now: u64 },
     /// What upkeep did: the wake-ups run, and the inbox as last read (its state's length; `None`: not read yet).
     UpkeepStatus,
+    /// The contracts upkeep writes (their CODE: a PUT needs it) — the bag (inboxes, invite requests) and the tail
+    /// (epoch logs) — and the key log's code HASH (it only reads those). Home only; once per build.
+    UpkeepCodes { bag: Vec<u8>, tail: Vec<u8>, idlog: [u8; 32] },
+    /// The MANDATE (what a page that may invite knows now): per space, how people get in and who is in, and its MLS
+    /// group. Upkeep admits askers by it while no page runs. A space's mandate older than the group upkeep itself moved
+    /// is not taken (answered in `stale`): the page loads upkeep's newer group first. Home only.
+    UpkeepMandate { me: String, spaces: Vec<Mandate> },
+    /// The admissions the page has written as acts (and the groups it has loaded): forgotten here.
+    UpkeepAck { admitted: Vec<([u8; 32], String)> },
+}
+
+/// A space as upkeep may admit into it: the page's knowledge when it handed it over.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mandate {
+    pub space: [u8; 32],
+    pub name: String,
+    pub kind: String,
+    /// Its governance, as the welcome names it: the owner's DID and the nonce.
+    pub owner: String,
+    pub nonce: Option<String>,
+    /// The table its epoch logs are named by (the space's channel).
+    pub channel: String,
+    /// Anyone may join (who asks at `open <space id>` is let in).
+    pub open: bool,
+    /// Invite codes in force: `(code, expires ms or 0, uses left or 0 for no limit)`.
+    pub codes: Vec<(String, u64, u32)>,
+    pub bans: Vec<String>,
+    pub members: Vec<String>,
+    /// The group: its epoch and its MLS state.
+    pub epoch: u64,
+    pub state: Vec<u8>,
+}
+
+/// Someone upkeep let in: into `space`, by `code` ("open": no code), at `at` (ms), the group then at `epoch`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Admitted {
+    pub space: [u8; 32],
+    pub did: String,
+    pub code: String,
+    pub at: u64,
+    pub epoch: u64,
 }
 
 /// What the identity answers.
@@ -164,7 +205,20 @@ pub enum Answer {
     HandedSpaces { spaces: Vec<([u8; 32], Option<Vec<u8>>, Vec<(u64, [u8; 32])>)> },
     SpaceMember { seed: [u8; 32], public: [u8; 32], credential: Vec<u8> },
     /// Upkeep so far: wake-ups run, the watched inbox (if set) and its state's length when last read.
-    Upkeep { wakeups: u64, inbox: Option<[u8; 32]>, inbox_len: Option<u64>, now: Option<u64> },
+    Upkeep {
+        wakeups: u64,
+        inbox: Option<[u8; 32]>,
+        inbox_len: Option<u64>,
+        now: Option<u64>,
+        /// The codes' hash upkeep holds (`upkeep_codes_hash`), if any.
+        codes: Option<[u8; 32]>,
+        /// Who upkeep let in, not yet acknowledged; and each space whose group it moved: `(space, epoch, state)`.
+        admitted: Vec<Admitted>,
+        groups: Vec<([u8; 32], u64, Vec<u8>)>,
+        /// Spaces of the last mandate not taken (upkeep's group is newer); what upkeep last did or met.
+        stale: Vec<[u8; 32]>,
+        said: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,12 +302,98 @@ pub fn upkeep_status<H: Host>(h: &H) -> Answer {
         inbox: h.get_secret(UPKEEP_INBOX).and_then(|b| b.try_into().ok()),
         inbox_len: u64_of(h.get_secret(UPKEEP_INBOX_LEN)),
         now: upkeep_now(h),
+        codes: h.get_secret(UPKEEP_CODES_HASH).and_then(|b| b.try_into().ok()),
+        admitted: upkeep_admitted(h),
+        groups: upkeep_mandate(h).map(|(_, ms)| ms.into_iter().filter(|m| upkeep_moved(h, &m.space)).map(|m| (m.space, m.epoch, m.state)).collect()).unwrap_or_default(),
+        stale: h.get_secret(UPKEEP_STALE).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default(),
+        said: h.get_secret(UPKEEP_SAID).and_then(|b| String::from_utf8(b).ok()),
     }
+}
+
+/// UPKEEP's MANDATE and what it did (see `Request::UpkeepMandate`): the member it acts for (the home session's, when
+/// the page handed over), the contracts' code, the mandate, the admissions, the spaces whose group it moved.
+pub const UPKEEP_MEMBER: &[u8] = b"identity_upkeep/member";
+pub const UPKEEP_BAG: &[u8] = b"identity_upkeep/bag";
+pub const UPKEEP_TAIL: &[u8] = b"identity_upkeep/tail";
+pub const UPKEEP_IDLOG: &[u8] = b"identity_upkeep/idlog";
+pub const UPKEEP_CODES_HASH: &[u8] = b"identity_upkeep/codes";
+pub const UPKEEP_MANDATE: &[u8] = b"identity_upkeep/mandate";
+pub const UPKEEP_ADMITTED: &[u8] = b"identity_upkeep/admitted";
+pub const UPKEEP_MOVED: &[u8] = b"identity_upkeep/moved/";
+pub const UPKEEP_STALE: &[u8] = b"identity_upkeep/stale";
+pub const UPKEEP_SAID: &[u8] = b"identity_upkeep/said";
+/// When a page last handed the mandate over (the wake-up count then): a page that ticks keeps upkeep out of its way.
+pub const UPKEEP_TICK: &[u8] = b"identity_upkeep/tick";
+
+pub fn upkeep_codes_hash(bag: &[u8], tail: &[u8], idlog: &[u8; 32]) -> [u8; 32] {
+    let mut h = blake3::Hasher::new_derive_key("craftworks identity upkeep codes");
+    h.update(blake3::hash(bag).as_bytes()).update(blake3::hash(tail).as_bytes()).update(idlog);
+    *h.finalize().as_bytes()
+}
+/// The member upkeep acts for, and the mandate: `(me, spaces)`.
+pub fn upkeep_mandate<H: Host>(h: &H) -> Option<(String, Vec<Mandate>)> {
+    h.get_secret(UPKEEP_MANDATE).and_then(|b| bincode::deserialize(&b).ok())
+}
+pub fn upkeep_set_mandate<H: Host>(h: &mut H, me: &str, spaces: &[Mandate]) -> bool {
+    h.set_secret(UPKEEP_MANDATE, &bincode::serialize(&(me, spaces)).expect("a mandate encodes"))
+}
+pub fn upkeep_member<H: Host>(h: &H) -> Option<[u8; KEY_LEN]> {
+    h.get_secret(UPKEEP_MEMBER).and_then(|b| b.try_into().ok())
+}
+pub fn upkeep_admitted<H: Host>(h: &H) -> Vec<Admitted> {
+    h.get_secret(UPKEEP_ADMITTED).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
+}
+pub fn upkeep_set_admitted<H: Host>(h: &mut H, all: &[Admitted]) -> bool {
+    h.set_secret(UPKEEP_ADMITTED, &bincode::serialize(all).expect("admissions encode"))
+}
+/// Whether upkeep moved this space's group since a page last handed it over.
+pub fn upkeep_moved<H: Host>(h: &H, space: &[u8; 32]) -> bool {
+    h.get_secret(&[UPKEEP_MOVED, &space[..]].concat()).is_some_and(|b| b == [1])
+}
+pub fn upkeep_set_moved<H: Host>(h: &mut H, space: &[u8; 32], moved: bool) -> bool {
+    h.set_secret(&[UPKEEP_MOVED, &space[..]].concat(), &[u8::from(moved)])
+}
+pub fn upkeep_say<H: Host>(h: &mut H, what: &str) {
+    h.set_secret(UPKEEP_SAID, what.as_bytes());
+}
+/// Wake-ups since a page last handed the mandate over.
+pub fn upkeep_since_tick<H: Host>(h: &H) -> u64 {
+    let now = u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0);
+    now.saturating_sub(u64_of(h.get_secret(UPKEEP_TICK)).unwrap_or(0))
+}
+
+/// A space's EPOCH SECRET this member holds, and keeping one (upkeep moves a group while no page runs).
+pub fn epoch_secret<H: Host>(h: &H, m: &[u8; KEY_LEN], space: [u8; 32], epoch: u64) -> Option<[u8; 32]> {
+    secret_in(h, m, &Some(space), epoch)
+}
+pub fn keep_epoch<H: Host>(h: &mut H, m: &[u8; KEY_LEN], space: Option<[u8; 32]>, epoch: u64, secret: &[u8; 32]) -> bool {
+    let latest = latest_in(h, m, &space);
+    // The secret, then the newest mark if this epoch is newer (a node joining with the words keeps the epochs it
+    // walks before its group's state exists: it signs the log of the one it joins at).
+    note_space(h, m, &space)
+        && h.set_secret(&[in_space(EPOCH, m, &space), epoch.to_be_bytes().to_vec()].concat(), secret)
+        && (latest.is_some_and(|l| epoch <= l) || h.set_secret(&in_space(EPOCH_LATEST, m, &space), &epoch.to_be_bytes()))
+}
+
+/// The address of an INVITE CODE's bag (its requests): the inbox derivation over the code's hash — no DID is 32 bytes
+/// of a hash of text. `open <space id>`: an open space's.
+pub fn invite_address(code: &str) -> [u8; 32] {
+    use sha2::Digest;
+    let h: [u8; 32] = sha2::Sha256::digest(format!("craftworks invite {}", code.trim().to_lowercase()).as_bytes()).into();
+    inbox_address(&h)
+}
+/// The address of an account's INBOX (a bag): from its DID.
+pub fn inbox_address(did: &[u8; 32]) -> [u8; 32] {
+    blake3::derive_key("craftworks 2026-09-28 inbox address", did)
 }
 /// A WAKE-UP: counted; the inbox to read (and watch), if one is set.
 pub fn upkeep_woke<H: Host>(h: &mut H) -> Option<[u8; 32]> {
     let n = u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0) + 1;
     h.set_secret(UPKEEP_WAKEUPS, &n.to_le_bytes());
+    h.get_secret(UPKEEP_INBOX).and_then(|b| b.try_into().ok())
+}
+/// The inbox upkeep watches, if one was handed over.
+pub fn upkeep_inbox<H: Host>(h: &H) -> Option<[u8; 32]> {
     h.get_secret(UPKEEP_INBOX).and_then(|b| b.try_into().ok())
 }
 /// The inbox as read at a wake-up: its state's length kept (what the page reads back).
@@ -780,14 +920,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             if a.home != app {
                 return Refused(Why::NotHome);
             }
-            let m = a.public();
-            let latest = latest_in(h, &m, &space);
-            // The secret, then the newest mark if this epoch is newer (a node joining with the words keeps the epochs it
-            // walks before its group's state exists: it signs the log of the one it joins at).
-            if !note_space(h, &m, &space)
-                || !h.set_secret(&[in_space(EPOCH, &m, &space), epoch.to_be_bytes().to_vec()].concat(), &secret)
-                || (latest.is_none_or(|l| epoch > l) && !h.set_secret(&in_space(EPOCH_LATEST, &m, &space), &epoch.to_be_bytes()))
-            {
+            if !keep_epoch(h, &a.public(), space, epoch, &secret) {
                 return Refused(Why::NotSaved);
             }
             MlsSaved
@@ -885,8 +1018,60 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 return Refused(Why::NotHome);
             }
             h.set_secret(UPKEEP_INBOX, &inbox);
+            h.set_secret(UPKEEP_MEMBER, &a.public());
             upkeep_stir(h, &seed);
             upkeep_set_clock(h, now);
+            upkeep_status(h)
+        }
+        Request::UpkeepCodes { bag, tail, idlog } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            if !(h.set_secret(UPKEEP_BAG, &bag) && h.set_secret(UPKEEP_TAIL, &tail) && h.set_secret(UPKEEP_IDLOG, &idlog)) {
+                return Refused(Why::NotSaved);
+            }
+            h.set_secret(UPKEEP_CODES_HASH, &upkeep_codes_hash(&bag, &tail, &idlog));
+            upkeep_status(h)
+        }
+        Request::UpkeepMandate { me, spaces } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            // A space whose group upkeep moved since keeps upkeep's (newer) group until the page loads it.
+            let held = upkeep_mandate(h).map(|(_, s)| s).unwrap_or_default();
+            let mut stale = Vec::new();
+            let spaces: Vec<Mandate> = spaces
+                .into_iter()
+                .map(|m| match held.iter().find(|x| x.space == m.space) {
+                    Some(x) if x.epoch > m.epoch => {
+                        stale.push(m.space);
+                        x.clone()
+                    }
+                    _ => m,
+                })
+                .collect();
+            let wakeups = u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0);
+            if !(upkeep_set_mandate(h, &me, &spaces) && h.set_secret(UPKEEP_STALE, &bincode::serialize(&stale).expect("ids encode")) && h.set_secret(UPKEEP_TICK, &wakeups.to_le_bytes())) {
+                return Refused(Why::NotSaved);
+            }
+            upkeep_status(h)
+        }
+        Request::UpkeepAck { admitted } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            let left: Vec<Admitted> = upkeep_admitted(h).into_iter().filter(|x| !admitted.iter().any(|(s, d)| *s == x.space && *d == x.did)).collect();
+            for (s, _) in &admitted {
+                if !left.iter().any(|x| x.space == *s) {
+                    upkeep_set_moved(h, s, false);
+                }
+            }
+            if !upkeep_set_admitted(h, &left) {
+                return Refused(Why::NotSaved);
+            }
             upkeep_status(h)
         }
         Request::UpkeepStatus => upkeep_status(h),

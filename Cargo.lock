@@ -454,17 +454,23 @@ dependencies = [
 name = "craftworks-delegate"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "blake3",
  "contract-keys",
+ "craftec-register-contract",
+ "craftworks-account",
  "craftworks-bag-contract",
  "craftworks-data",
  "craftworks-identity",
  "craftworks-idlog-contract",
  "craftworks-mls",
+ "ed25519-dalek",
  "freenet-stdlib 0.12.1",
  "getrandom 0.2.17",
  "mls-rs-core",
+ "serde",
  "serde_json",
+ "tail",
 ]
 
 [[package]]
@@ -493,6 +499,7 @@ dependencies = [
  "ed25519-dalek",
  "serde",
  "serde_json",
+ "sha2",
  "x25519-dalek",
 ]
 

@@ -466,6 +466,23 @@ export async function start(ctx) {
           ctx.log(`${sp.name ?? "space"} keys`, { what: "made the space's group: epoch 0" });
           return save(true);
         })),
+      // UPKEEP's view (`upkeep`): the group's epoch and state, for the mandate the identity delegate admits by while no
+      // page runs; and a NEWER group it made meanwhile (it let someone in), ADOPTED here (kept for the account's
+      // devices, loaded).
+      snapshot: () =>
+        (queue = queue.catch(() => {}).then(async () => {
+          if (!m && !(await load())) return null;
+          const s = m.status();
+          return s.removed ? null : { epoch: s.epoch, state: hexOf(s.state) };
+        })),
+      adopt: (epoch, stateHex) =>
+        (queue = queue.catch(() => {}).then(async () => {
+          if (m && m.status().epoch >= epoch) return false;
+          await (await spacekeys()).put(at, JSON.stringify({ epoch, state: stateHex }));
+          await load();
+          ctx.log(`${sp.name ?? "space"} keys`, { what: `the group upkeep moved (someone let in): epoch ${epoch}` });
+          return true;
+        })),
       // Loaded and brought current; null where this account is not in the space's group. `fresh`: its log read again
       // from the network first (before a write: sealed with the newest epoch, never one a removed member holds).
       ready: ({ fresh = false } = {}) =>

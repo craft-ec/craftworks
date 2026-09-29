@@ -43,7 +43,12 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::SpaceMember { seed, public, credential } => json!({ "spaceMember": {
             "seed": hex(seed), "public": hex(public), "credential": hex(credential),
         } }),
-        Answer::Upkeep { wakeups, inbox, inbox_len, now } => json!({ "upkeep": { "wakeups": wakeups, "inbox": inbox.map(|i| hex(&i)), "inboxLen": inbox_len, "now": now } }),
+        Answer::Upkeep { wakeups, inbox, inbox_len, now, codes, admitted, groups, stale, said } => json!({ "upkeep": {
+            "wakeups": wakeups, "inbox": inbox.map(|i| hex(&i)), "inboxLen": inbox_len, "now": now, "codes": codes.map(|c| hex(&c)),
+            "admitted": admitted.iter().map(|a| json!({ "space": hex(&a.space), "did": a.did, "code": a.code, "at": a.at, "epoch": a.epoch })).collect::<Vec<_>>(),
+            "groups": groups.iter().map(|(s, e, st)| json!({ "space": hex(s), "epoch": e, "state": hex(st) })).collect::<Vec<_>>(),
+            "stale": stale.iter().map(|s| hex(s)).collect::<Vec<_>>(), "said": said,
+        } }),
         Answer::HandedSpaces { spaces } => json!({ "handedSpaces": spaces.iter().map(|(id, st, eps)| json!({
             "space": hex(id), "mls": st.as_ref().map(|s| hex(s)),
             "epochs": eps.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>(),
@@ -484,6 +489,48 @@ mod js {
         pub fn frames_upkeep_status(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::UpkeepStatus)
         }
+        /// The contracts upkeep writes (bag, tail: their code) and reads (the key log: its code's hash).
+        pub fn frames_upkeep_codes(&mut self, bag: &[u8], tail: &[u8], idlog: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::UpkeepCodes { bag: bag.to_vec(), tail: tail.to_vec(), idlog: *blake3::hash(idlog).as_bytes() })
+        }
+        /// The codes' hash upkeep would hold for these (to hand them over only when they changed).
+        pub fn upkeep_codes_hash(bag: &[u8], tail: &[u8], idlog: &[u8]) -> String {
+            hex(&craftworks_identity::upkeep_codes_hash(bag, tail, blake3::hash(idlog).as_bytes()))
+        }
+        /// The MANDATE: `me` (the account's DID) and, per space, JSON `{ space, name, kind, owner, nonce, channel, open,
+        /// codes: [[code, expires, left]], bans, members, epoch, state }` (ids and the state in hex).
+        pub fn frames_upkeep_mandate(&mut self, me: &str, spaces: &str) -> Result<js_sys::Array, JsValue> {
+            let v: Vec<serde_json::Value> = serde_json::from_str(spaces).map_err(|e| err(e.to_string()))?;
+            let spaces = v
+                .iter()
+                .map(|m| -> Option<craftworks_identity::Mandate> {
+                    let s = |k: &str| m.get(k).and_then(|x| x.as_str()).map(str::to_string);
+                    let list = |k: &str| m.get(k).and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>());
+                    Some(craftworks_identity::Mandate {
+                        space: unhex(&s("space")?)?.try_into().ok()?,
+                        name: s("name").unwrap_or_default(),
+                        kind: s("kind")?,
+                        owner: s("owner")?,
+                        nonce: s("nonce"),
+                        channel: s("channel")?,
+                        open: m.get("open").and_then(|x| x.as_bool()).unwrap_or(false),
+                        codes: m.get("codes")?.as_array()?.iter().filter_map(|c| Some((c.get(0)?.as_str()?.to_string(), c.get(1)?.as_f64()? as u64, c.get(2)?.as_f64()? as u32))).collect(),
+                        bans: list("bans").unwrap_or_default(),
+                        members: list("members")?,
+                        epoch: m.get("epoch")?.as_f64()? as u64,
+                        state: unhex(&s("state")?)?,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| err("a space of the mandate does not read".into()))?;
+            self.ask(Request::UpkeepMandate { me: me.to_string(), spaces })
+        }
+        /// Admissions written as acts (JSON `[[space hex, did]]`): upkeep forgets them.
+        pub fn frames_upkeep_ack(&mut self, admitted: &str) -> Result<js_sys::Array, JsValue> {
+            let v: Vec<(String, String)> = serde_json::from_str(admitted).map_err(|e| err(e.to_string()))?;
+            let admitted = v.into_iter().filter_map(|(s, d)| Some((unhex(&s)?.try_into().ok()?, d))).collect();
+            self.ask(Request::UpkeepAck { admitted })
+        }
         /// Open items sealed to the account's inbox key (the home site only).
         pub fn frames_inbox_open(&mut self, items: js_sys::Array) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::InboxOpen { items: items.iter().map(|i| js_sys::Uint8Array::new(&i).to_vec()).collect() })
@@ -696,8 +743,12 @@ mod js {
 
         /// A person's INBOX: its address (the bag's params) from their DID — every sender computes the same.
         pub fn inbox_address(did: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
-            let d = b32(did)?;
-            Ok(js_sys::Uint8Array::from(&blake3::derive_key("craftworks 2026-09-28 inbox address", &d)[..]))
+            Ok(js_sys::Uint8Array::from(&craftworks_identity::inbox_address(&b32(did)?)[..]))
+        }
+
+        /// An INVITE CODE's bag address (`identity::invite_address`; `open <space id>`: an open space's).
+        pub fn invite_address(code: &str) -> js_sys::Uint8Array {
+            js_sys::Uint8Array::from(&craftworks_identity::invite_address(code)[..])
         }
 
         /// SEAL `data` to a public key (`identity::seal_to`), with a one-time key the page draws (`eph`, 32 bytes).

@@ -664,7 +664,25 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       one-writer control moved with it); craftworks pinned to f079914. Core builds the stdlib container when it sends.
       The identity delegate now links data + mls-rs + the getrandom hook (upkeep's pool) and passes the import gate.
       Live on net139: new space (PUT), acts + a note (UPDATEs), read back after reload, no console errors.
-      NEXT P4b: the delegate's I/O job (secrets-backed state machine: GET/PUT/UPDATE out, responses in) + the mandate.
+      P4b-P7 DONE (09-30) — ADMIT WITH NO PAGE OPEN, LIVE: the delegate's entry is its own crate `delegate/` (built as
+      identity.wasm, 1.17 MB, imports only the node's 3 secret functions); identity a library; mls page bindings behind
+      `page`, account's PUT builders behind `puts`, bag/idlog readers without stdlib (both contracts rebuild
+      byte-identical). identity holds upkeep's records (codes, mandate, admissions, member, epoch helpers,
+      `invite_address`/`inbox_address` — ONE home; index.js/core use them; Node-SHA256 known answer pinned). The engine
+      `delegate/src/upkeep.rs`: a round per wake-up when no page handed the mandate over for 2 wake-ups — request bags →
+      key log → card → MLS add → commit into epoch e's log (taken: stop) → next epoch's log → welcome sealed to their
+      inbox → recorded. Tests: 3 (a whole round against the real pieces: the asker's own member JOINS from the welcome;
+      banned/page-present/expired; commit position taken) — two planted bugs each turn one red. Page: upkeep absorbs
+      first (adopts the delegate's newer group, writes `admitted` acts at their time, acks), then admits, then hands the
+      mandate over; a mandate older than the delegate's group is refused (stale) — no epoch rolled back.
+      LIVE (two 0.2.139 private nodes, A gateway net139 :17681 + B net139b :17682): A's page CLOSED; a new person on B
+      asked to join open space Gov 323 → joined after 42 s. A's delegate said "admitted (epoch 1)" (wake-up 5); A's page
+      reopened: group epoch 1 adopted, ONE `admitted` act (code open, the delegate's time), members owner + new member
+      on both nodes.
+      KNOWN LIMITS: upkeep state is per node, not per member (the last home session's member acts; one person per node
+      is the norm); a ban made while every inviter page is closed is not seen until a page hands a new mandate over;
+      ACCEPT on the joiner's side stays page-side (the joiner is the one with a page open).
+      NEXT: publish — needs the owner's node and B on ≥ 0.2.139 (the owner's call) and the Background grant on each.
 - [ ] (old note) NO PAGE OPEN AT ALL: node v0.2.139 (freenet-core #5747) wakes a delegate periodically (manifest `wakeups`, ≥ 60 s,
       the person's Background grant). Needs the joining logic (MLS welcome/add, spacekeys) moved into the identity
       delegate (a delegate change: handover; bundle the SpaceMember.writer drop) and nodes on ≥ 0.2.139 (owner's and

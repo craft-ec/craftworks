@@ -78,8 +78,7 @@ export async function start(ctx) {
   // AN INVITE CODE's bag: at an address only the code gives (the inbox's derivation over the code's hash — no DID is
   // 32 bytes of a hash of text). Its items are plain: whoever holds the code reads them (they name who asks, nothing
   // secret).
-  const codeAddress = async code =>
-    Core.inbox_address(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(`craftworks invite ${String(code).trim().toLowerCase()}`))));
+  const codeAddress = async code => Core.invite_address(String(code));
   const openRequests = async code => drop(await codeAddress(code), new Uint8Array(0), "making an invite's bag");
   const request = async (code, item) => drop(await codeAddress(code), enc.encode(JSON.stringify(item)), "asking to join");
   const parse = payloads =>
