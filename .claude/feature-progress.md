@@ -754,4 +754,12 @@ come with keepers as a new codec version.
       self with a 300 KB file shown in Sent; no console errors.
 - [ ] F4 video: CMAF segments, renditions (AV1+Opus, H.264+AAC), remux (mp4box) or WebCodecs encode, MediaSource ABR,
       poster + scrub strip, subtitles.
-- [ ] F5 re-key on removal (per-space setting); Drive app (the account's and spaces' files, folders).
+- [x] F5a DRIVE (owner 09-30: every uploaded file is in Drive; attach from Drive; choose any space's Drive):
+      `drive-store` (a `drive` table per space, the account's included: rows = references + when, folder, from; every
+      upload lists in yours and in its space's), the Drive app (personal + shared views, a chooser of every Drive,
+      folders, upload into the folder open, open/download, Move, Remove from Drive; in-app dialogs, no browser
+      prompts), the 📎 picker (From this device / From Drive with the same chooser), "Save to Drive" on a file someone
+      shared; `gov` APPS gains "drive". LIVE on 17573: upload in Drive, New folder, Move into it, the chooser listing
+      every space, attach from Your Drive into a space's chat with a device file, the device file listed in both Drives;
+      no console errors.
+- [ ] F5b re-key on removal (per-space setting).

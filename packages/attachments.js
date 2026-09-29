@@ -1,5 +1,6 @@
-// ATTACHMENTS, a component: FILES on an item (a message, a post, a mail) — picked with 📎 (each sent at once, with its
-// progress; the item waits for them), and SHOWN: an image as its thumbnail (made here when picked, kept in the
+// ATTACHMENTS, a component: FILES on an item (a message, a post, a mail) — picked with 📎: a file from this device
+// (sent at once, with its progress, and listed in Drive: every upload is), or one ALREADY in Drive (yours, or the
+// space's: its reference given, nothing sent again); the item waits for them. And SHOWN: an image as its thumbnail (made here when picked, kept in the
 // reference: a list never downloads the image), opened full on a click; any other file as its name and size, with
 // Download. The bytes are `files`' (sealed, coded, raced); the reference rides in the item, so who reads the item
 // reads its files — and nobody else.
@@ -9,7 +10,7 @@
 //                                                // public: a boolean, or a function asked when each file is picked
 //   host.append(att.show(item.files))            // nothing for none
 export async function start(ctx) {
-  const files = await ctx.require("files");
+  const [files, drive, spaces] = await Promise.all(["files", "drive-store", "space"].map(n => ctx.require(n)));
   const style = document.createElement("style");
   style.textContent = `
     .cw-att-pick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -28,8 +29,28 @@ export async function start(ctx) {
       padding: 6px var(--cw-space-2); font-size: var(--cw-text-sm); background: var(--cw-surface); max-width: 100%; }
     .cw-att .file .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
     .cw-att .file .s { color: var(--cw-muted); font-size: var(--cw-text-xs); }
+    .cw-att button.save { font: inherit; font-size: var(--cw-text-xs); border: 0; background: none; color: var(--cw-muted); cursor: pointer; padding: 2px 0; }
+    .cw-att button.save:hover { color: var(--cw-fg); text-decoration: underline; }
     .cw-att .file button { font: inherit; border: 1px solid var(--cw-line); background: none; color: var(--cw-fg); border-radius: var(--cw-radius-sm);
       padding: 2px 8px; cursor: pointer; }
+    .cw-att-pick { position: relative; }
+    .cw-att-menu { position: absolute; bottom: 100%; left: 0; z-index: 5; display: grid; background: var(--cw-surface); border: 1px solid var(--cw-line);
+      border-radius: var(--cw-radius-sm); box-shadow: var(--cw-shadow-lg); padding: 4px; min-width: 160px; }
+    .cw-att-menu[hidden] { display: none; }
+    .cw-att-menu button { font: inherit; text-align: left; border: 0; background: none; color: var(--cw-fg); padding: 6px 10px; cursor: pointer; border-radius: var(--cw-radius-sm); }
+    .cw-att-menu button:hover { background: var(--cw-hover); }
+    .cw-att-drive { border: 0; border-radius: var(--cw-radius); padding: var(--cw-space-4); width: min(520px, calc(100vw - 32px)); box-shadow: var(--cw-shadow-lg);
+      background: var(--cw-surface); color: var(--cw-fg); }
+    .cw-att-drive h3 { margin: 0 0 var(--cw-space-2); font-size: 1rem; }
+    .cw-att-drive select { font: inherit; padding: 4px 8px; border-radius: var(--cw-radius-sm); margin-bottom: var(--cw-space-2); max-width: 100%; }
+    .cw-att-drive ul { list-style: none; margin: 0 0 var(--cw-space-3); padding: 0; max-height: 60vh; overflow: auto; display: grid; gap: 4px; }
+    .cw-att-drive li { display: flex; align-items: center; gap: var(--cw-space-2); padding: 6px; border-radius: var(--cw-radius-sm); cursor: pointer; }
+    .cw-att-drive li:hover { background: var(--cw-hover); }
+    .cw-att-drive li img { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; }
+    .cw-att-drive li .ic { width: 40px; text-align: center; font-size: 1.4rem; }
+    .cw-att-drive li .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cw-att-drive li .s { color: var(--cw-muted); font-size: var(--cw-text-xs); }
+    .cw-att-drive > button { font: inherit; border: 1px solid var(--cw-line); background: none; color: var(--cw-fg); border-radius: var(--cw-radius-sm); padding: 4px 12px; cursor: pointer; }
     .cw-att-full { border: 0; padding: 0; background: transparent; max-width: 96vw; max-height: 96vh; }
     .cw-att-full::backdrop { background: rgba(0, 0, 0, .8); }
     .cw-att-full img, .cw-att-full video { max-width: 96vw; max-height: 92vh; display: block; }
@@ -62,10 +83,15 @@ export async function start(ctx) {
     }
   }
 
-  function picker({ space = null, public: pub = false } = {}) {
+  function picker({ space = null, public: pub = false, from = null } = {}) {
     const input = h("input", { type: "file", multiple: true, hidden: true });
     const chips = h("span", { className: "cw-att-pick" });
-    const el = h("span", { className: "cw-att-pick" }, h("button", { type: "button", className: "clip", title: "Attach files", ariaLabel: "Attach files", textContent: "📎", onclick: () => input.click() }), chips, input);
+    // 📎: this device, or Drive.
+    const menu = h("span", { className: "cw-att-menu", hidden: true },
+      h("button", { type: "button", textContent: "From this device", onclick: () => ((menu.hidden = true), input.click()) }),
+      h("button", { type: "button", textContent: "From Drive", onclick: () => ((menu.hidden = true), fromDrive()) }),
+    );
+    const el = h("span", { className: "cw-att-pick" }, h("button", { type: "button", className: "clip", title: "Attach files", ariaLabel: "Attach files", textContent: "📎", onclick: () => (menu.hidden = !menu.hidden) }), menu, chips, input);
     const items = []; // { file, ref, busy, error, chip }
     const changed = [];
     const tell = () => changed.forEach(f => f());
@@ -73,6 +99,43 @@ export async function start(ctx) {
       for (const file of input.files) add(file);
       input.value = "";
     };
+    // FROM DRIVE: yours, or ANY space's you are in (chosen at the top), each file attached as its reference (ready at
+    // once): the item's readers read it — as a file forwarded.
+    async function fromDrive() {
+      const all = (await spaces.mine().catch(() => [])).filter(s => s.kind === "server");
+      const choose = h("select", { ariaLabel: "Drive" }, h("option", { value: "", textContent: "Your Drive" }), ...all.map(s => h("option", { value: s.id, textContent: `${spaces.shown(s)} Drive` })));
+      if (space && space.kind === "server") choose.value = space.id;
+      const d = h("dialog", { className: "cw-att-drive" });
+      const listEl = h("ul", {});
+      const drawList = async () => {
+        const sp = all.find(s => s.id === choose.value) ?? null;
+        listEl.replaceChildren(h("li", { textContent: "Loading…" }));
+        const rows = await drive.list(sp).catch(() => []);
+        listEl.replaceChildren(
+          ...(rows.length
+            ? rows.map(r => {
+                const src = r.ref.preview ?? (isImage(r.ref) && r.ref.inline ? `data:${r.ref.type};base64,${r.ref.inline}` : null);
+                return h("li", { onclick: () => (ready(r.ref), d.close()) }, src ? h("img", { src, alt: "" }) : h("span", { className: "ic", textContent: /^video\//.test(r.ref.type) ? "🎬" : /^image\//.test(r.ref.type) ? "🖼️" : "📄" }), h("span", { className: "n", textContent: r.ref.name }), h("span", { className: "s", textContent: `${sizeOf(r.ref.size)} · ${r.folder}` }));
+              })
+            : [h("li", { textContent: "Nothing in this Drive yet." })]),
+        );
+      };
+      choose.onchange = drawList;
+      d.append(h("h3", { textContent: "Attach from Drive" }), choose, listEl, h("button", { type: "button", textContent: "Close", onclick: () => d.close() }));
+      drawList();
+      d.addEventListener("click", e => e.target === d && d.close());
+      d.addEventListener("close", () => d.remove());
+      document.body.append(d);
+      d.showModal();
+    }
+    function ready(ref) {
+      if (items.some(i => i.ref && (i.ref.root ?? i.ref.inline) === (ref.root ?? ref.inline))) return;
+      const it = { file: null, ref, busy: false, error: null };
+      it.chip = h("span", { className: "cw-att-chip" }, h("span", { className: "n", textContent: ref.name, title: ref.name }), h("span", { className: "p", textContent: sizeOf(ref.size) }), h("button", { type: "button", title: "Remove", textContent: "✕", onclick: () => (items.splice(items.indexOf(it), 1), it.chip.remove(), tell()) }));
+      chips.append(it.chip);
+      items.push(it);
+      tell();
+    }
     function add(file) {
       const it = { file, ref: null, busy: true, error: null };
       const pct = h("span", { className: "p", textContent: "0%" });
@@ -82,7 +145,7 @@ export async function start(ctx) {
       tell();
       (async () => {
         const preview = isImage(file) ? await thumbnail(file) : null;
-        const ref = await files.put(file, { space, public: typeof pub === "function" ? !!pub() : pub, onProgress: e => (pct.textContent = e.phase === "reading" ? "reading…" : `${Math.round((100 * e.done) / e.size)}%`) });
+        const ref = await drive.upload(file, { space, from, public: typeof pub === "function" ? !!pub() : pub, onProgress: e => (pct.textContent = e.phase === "reading" ? "reading…" : `${Math.round((100 * e.done) / e.size)}%`) });
         it.ref = preview ? { ...ref, preview } : ref;
         pct.textContent = sizeOf(file.size);
       })()
@@ -130,6 +193,16 @@ export async function start(ctx) {
     }
   }
 
+  // SAVE TO DRIVE: a file someone shared, listed in yours (its reference: nothing is copied).
+  const saveButton = (r, note) =>
+    h("button", {
+      type: "button",
+      className: "save",
+      title: "Save to your Drive",
+      textContent: "Save to Drive",
+      onclick: e => drive.add(r, { from: { saved: true } }).then(() => ((e.target.textContent = "In Drive ✓"), (e.target.disabled = true)), err => (note.textContent = err.message)),
+    });
+
   function show(refs) {
     const list = (Array.isArray(refs) ? refs : []).filter(r => r && typeof r === "object" && r.name && (r.inline || (r.key && r.root)));
     if (!list.length) return null;
@@ -140,11 +213,11 @@ export async function start(ctx) {
         const note = h("span", { className: "s" });
         const src = r.preview ?? (isImage(r) && r.inline ? `data:${r.type};base64,${r.inline}` : null);
         if (src)
-          return h("figure", { style: "margin:0" }, h("img", { src, alt: r.name, title: `${r.name} · ${sizeOf(r.size)}`, onclick: () => openFull(r, note) }), note);
-        return h("span", { className: "file" }, h("span", { textContent: /^video\//.test(r.type) ? "🎬" : /^audio\//.test(r.type) ? "🎵" : "📄" }), h("span", { className: "n", textContent: r.name, title: r.name }), h("span", { className: "s", textContent: sizeOf(r.size) }), h("button", { type: "button", textContent: /^video\//.test(r.type) ? "Play" : "Download", onclick: () => openFull(r, note) }), note);
+          return h("figure", { style: "margin:0" }, h("img", { src, alt: r.name, title: `${r.name} · ${sizeOf(r.size)}`, onclick: () => openFull(r, note) }), h("div", {}, saveButton(r, note), note));
+        return h("span", { className: "file" }, h("span", { textContent: /^video\//.test(r.type) ? "🎬" : /^audio\//.test(r.type) ? "🎵" : "📄" }), h("span", { className: "n", textContent: r.name, title: r.name }), h("span", { className: "s", textContent: sizeOf(r.size) }), h("button", { type: "button", textContent: /^video\//.test(r.type) ? "Play" : "Download", onclick: () => openFull(r, note) }), saveButton(r, note), note);
       }),
     );
   }
 
-  return { picker, show };
+  return { picker, show, open: (ref, note = document.createElement("span")) => openFull(ref, note), sizeOf, isImage };
 }
