@@ -26,6 +26,7 @@
 //   await space.create("server", name)      // a new server: made here, listed in the account
 //   space.tableOf(sp, "channels")           // a space's own table's name
 //   space.channel(server, id, name)         // a CHANNEL: a sub-space of the server
+//   space.board(sp)                         // its BOARD: posts beside its messages (same members and roles)
 //   await space.owner(sp)                   // its owner's DID, if its id proves it (else null)
 //   await space.leave(sp)                   // out of this person's list (on every device of the account)
 //
@@ -72,6 +73,13 @@ export async function start(ctx) {
   // A CHANNEL of a server: a sub-space inheriting the server's access (its group, members, keys and scope).
   function channel(server, id, name) {
     return Object.freeze({ kind: "channel", id: `${server.id}/${id}`, name, parent: server, inherits: true, messages: tableOf(server, `c${id}`), scope: server });
+  }
+
+  // A space's BOARD: its posts (Reddit's), beside its messages — a sub-space like a channel: the same group, members,
+  // roles and moderation, its posts in the space's own table `board`. Every space has one (a server, a group, a
+  // direct conversation).
+  function board(sp) {
+    return Object.freeze({ kind: "board", id: `${sp.id}/board`, name: sp.name, parent: sp, inherits: true, messages: tableOf(sp, "board"), scope: sp });
   }
 
   async function mine() {
@@ -128,5 +136,5 @@ export async function start(ctx) {
     ctx.log("space", { what: `left ${sp.kind} “${sp.name}”` });
   }
 
-  return { account, tables, mine, create, record, describe, tableOf, channel, owner, leave };
+  return { account, tables, mine, create, record, describe, tableOf, channel, board, owner, leave };
 }

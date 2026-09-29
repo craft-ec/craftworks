@@ -1,5 +1,7 @@
 // NOTES, an app in the manner of Google Keep: a "Take a note…" composer, notes as coloured cards in a masonry grid,
 // pinned notes first, archive, search, and grid or list. A PRIVATE page: nothing shows until someone is logged in.
+// YOUR notes (`#/notes`: the account's), or a SPACE's (`#/notes/s/<space id>`: one of its places, beside its messages
+// and board — its table `notes`, written by its members, read by its members; the top bar names its places).
 //
 // The notes are one table of the ACCOUNT (the `data` service), the same on every node of the account. A note is one
 // row: its key an id that sorts by creation, its value JSON { title, body, color, archived, edited }. A row that is
@@ -107,12 +109,19 @@ export async function mount(ctx, el) {
     </div>`;
   const root = el.querySelector(".keep");
   const said = t => (root.querySelector(".said").textContent = t);
-  let notes, edge, pins, labels, pinUI, labelUI;
+  let notes, edge, pins, labels, pinUI, labelUI, sp = null, places = null;
   try {
     const storage = await ctx.require("storage");
     edge = await ctx.require("edge");
+    // A space's notes: its own table, in its scope.
+    places = await ctx.require("places");
+    if ((ctx.sub || "").startsWith("s/")) {
+      const space = await ctx.require("space");
+      sp = (await space.mine()).find(s => s.id === ctx.sub.slice(2)) ?? null;
+      if (!sp) throw new Error("you are not in that space");
+    }
     [notes, pins, labels, pinUI, labelUI] = await Promise.all([
-      storage.table("notes"),
+      sp ? storage.table((await ctx.require("space")).tableOf(sp, "notes"), sp) : storage.table("notes"),
       edge.pins(),
       edge.labels(),
       ctx.require("pin-button"),
@@ -123,7 +132,8 @@ export async function mount(ctx, el) {
   }
 
   // A row as a note: JSON, or (the first notes) plain text as the body. `pinned` comes from the account's pins.
-  const ref = key => `notes:${key}`;
+  // A pin or a label is this person's, on a note: a space's notes are named with the space.
+  const ref = key => (sp ? `notes:${sp.id}/${key}` : `notes:${key}`);
   const note = r => {
     let n = { title: "", body: r.value, color: "", archived: false, edited: 0 };
     try {
@@ -137,7 +147,7 @@ export async function mount(ctx, el) {
     return notes.put(key, JSON.stringify({ title, body, color, archived, edited: Date.now() })).catch(e => said(`Could not save: ${e?.message ?? e}`));
   };
   // Notes saved with the old `pinned` field: into the pins (the edge capability's one-time adoption).
-  edge.adoptPinnedField(notes, "notes:").catch(e => said(`Could not move a pin: ${e?.message ?? e}`));
+  if (!sp) edge.adoptPinnedField(notes, "notes:").catch(e => said(`Could not move a pin: ${e?.message ?? e}`));
   const remove = key =>
     notes
       .remove(key)
@@ -300,7 +310,7 @@ export async function mount(ctx, el) {
     if (label && !labels.list().some(l => l.id === label)) label = null; // deleted meanwhile
     bar();
     const q = query.toLowerCase();
-    const inLabel = label ? new Set(labels.refs(label, "notes:")) : null;
+    const inLabel = label ? new Set(labels.refs(label, sp ? `notes:${sp.id}/` : "notes:")) : null;
     const all = notes
       .rows()
       .map(note)
@@ -379,9 +389,12 @@ export async function mount(ctx, el) {
   labels.onChange(() => lEditor.open && lines());
 
   // THE TOP BAR while Notes is open: search, grid or list, and Notes or Archive.
+  const placeOf = sp ?? (await (await ctx.require("space")).account());
   const actions = () => {
     ctx.actions["/notes"] = [
-      { search: v => ((query = v), render()), placeholder: "Search your notes", value: query },
+      // The space's places (yours: the personal space's).
+      ...places.of(placeOf, "notes"),
+      { search: v => ((query = v), render()), placeholder: sp ? `Search ${sp.name}'s notes` : "Search your notes", value: query },
       { label: list ? "Grid view" : "List view", run: () => ((list = !list), render(), actions()) },
       { label: "Archive", on: archive, run: () => ((archive = !archive), render(), actions()) },
     ];
@@ -392,4 +405,14 @@ export async function mount(ctx, el) {
   pins.onChange(() => root.isConnected && render());
   labels.onChange(() => root.isConnected && render());
   render();
+  // Another place's notes (yours, or another space's): opened afresh.
+  const at = ctx.sub;
+  const moved = () => {
+    if (!root.isConnected || !location.hash.startsWith("#/notes")) return removeEventListener("craftworks:route", moved);
+    if (ctx.sub === at) return;
+    removeEventListener("craftworks:route", moved);
+    el.replaceChildren();
+    mount(ctx, el);
+  };
+  addEventListener("craftworks:route", moved);
 }

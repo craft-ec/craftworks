@@ -489,6 +489,17 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       votes on comments, fold, reply; side panel = the post's board (Join, Create post). Live (17573, S and P): S
       submitted to a new board (0.8 s); P found it through the board's bag (1.3 s), joined, voted, commented, replied
       nested; S saw the tree and score 1.
+- [x] SPACE = MESSAGES + BOARD + NOTES (owner 2026-09-29: "they are literally the same spaces"; "space have multiple
+      capabilities composed in it"; "each account has personal space"). The ownerless b/name boards are gone: a BOARD is
+      a space's (`space.board(sp)`, table `board` in the space: its members write, its roles and moderation apply, a
+      moderator's Remove hides). Every space has one — server, group, direct. A space's NOTES: its table `notes`
+      (`#/notes/s/<id>`; pins and labels stay the person's, ref `notes:<space>/<key>`). The PERSONAL space (the account):
+      Messages = your conversations, Board = your profile (public tail `posts`, what followers see), Notes = your notes.
+      `places` component: the top bar of every page on a space shows Messages · Board · Notes (Chat, Messages, Board,
+      Notes). New board on Board = a new server (with #general, so Chat shows it). Live (17573): S made a board, posted,
+      invited; P joined by code on Board, commented; S (owner) removed it; Chat shows the same server; P's note in the
+      server's notes seen by S, not in P's own notes; every top bar shows the three places; panel 2 members.
+      OPEN: an old S↔P direct conversation (from before per-device feeds) opens with no feeds on P — old test data.
 - [x] 4 upkeep. NEW WRITERS: an open table's writers were fixed at open and `directory.devices` cached per page, so a
       member's new device (or a new member) was never seen without a reload. Now `directory.onDevices(did)` (the
       member's card followed) and the group moving (`craftworks:keys`) re-gather writers into every open table; the

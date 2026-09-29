@@ -50,6 +50,10 @@ export async function mount(ctx, el) {
   const box = $(".dm"), people = $(".people"), roomEl = $(".room"), said = $(".said");
   const say = m => ((said.textContent = m), (said.hidden = !m));
   let open = null, shown = null;
+  // No conversation open: the personal space's places (Messages is its messages).
+  const places = await ctx.require("places");
+  ctx.actions["/messages"] = places.of(await (await ctx.require("space")).account(), "messages");
+  dispatchEvent(new CustomEvent("craftworks:actions"));
   // While the inbox is read (conversations begun while this account was away), the list says so at its end.
   let checking = true;
   people.replaceChildren(theme.loading("Loading conversations…"));
@@ -77,6 +81,9 @@ export async function mount(ctx, el) {
     drawList();
     shown?.close();
     shown = await roomUI.show(roomEl, sp, sp.kind === "group" ? name : `@${name}`);
+    // The conversation's places (the same space): its messages, board and notes.
+    ctx.actions["/messages"] = places.of(sp, "messages");
+    dispatchEvent(new CustomEvent("craftworks:actions"));
   }
 
   $(".new").onclick = () => {

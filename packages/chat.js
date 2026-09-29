@@ -8,8 +8,8 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [space, storage, keys, directory, roomUI, conversation, theme, roles, moderation, settings, person, activity] = await Promise.all(
-    ["space", "storage", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "server-settings", "person", "activity"].map(n => ctx.require(n)),
+  const [space, storage, keys, directory, roomUI, conversation, theme, roles, moderation, settings, person, activity, places] = await Promise.all(
+    ["space", "storage", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "server-settings", "person", "activity", "places"].map(n => ctx.require(n)),
   );
   const account = await space.account();
   el.classList.add("cw-fill");
@@ -140,6 +140,8 @@ export async function mount(ctx, el) {
   const menu = () => {
     ctx.actions["/chat"] = server
       ? [
+          // The server's places (the same space): its messages (here), board and notes.
+          ...places.of(server, "messages"),
           ...(may("invite") ? [{ label: "Invite", run: () => openSettings("invites") }] : []),
           { label: "Server settings", run: () => openSettings("overview") },
         ]

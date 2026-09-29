@@ -1,26 +1,26 @@
-// POSTS, a capability: what people say in PUBLIC, Reddit-shaped — a POST (a title and text) submitted to a BOARD
-// (`b/<name>`: nobody owns it, anyone submits to it), COMMENTS on it (answering the post or another comment), and VOTES
-// on either. All of it is `content` (its one shape) in its AUTHOR's public tail `posts` (only their account writes it:
-// whose tail it is, is who wrote it; anyone reads it): a post an item of kind "post" (`title`, `in`: its board); a
-// comment an item of kind "comment" (`re`: what it answers, `in`: its post); a vote a reaction ▲ or ▼ to either. Each is
-// named by its REF, `<author did>/<id>`.
-// Where to look is POINTERS (`index`, `{ from }`): a board's bag holds one per person who submitted to it, a post's bag
-// one per person who commented or voted on it; the reader resolves each in its author's tail (a pointer to nothing is
-// nothing). Counts and scores are what this reader resolved.
+// POSTS, a capability: posts Reddit-shaped — a POST (a title and text), COMMENTS on it (answering the post or another
+// comment), VOTES on either — in one of two places:
+// - A BOARD: a SPACE's (`space.board(sp)`) — every space has one beside its messages: a server beside its channels, a
+//   group or direct conversation beside its messages — the same members, roles, governance and moderation. Its posts
+//   are `content` in the space's table `board`: members write, moderators hide, what is hidden is left out, and a
+//   person removed or banned there writes no more. Joined by joining the space (an invite, a welcome).
+// - A person's PROFILE: `content` in their own public tail `posts` (only their account writes it; anyone reads it) —
+//   what their FOLLOWERS see. A comment or a vote on someone's profile post is in the commenter's own tail, with a
+//   pointer (`{ from }`) in the post's public bag (`index`) so the post's readers find it.
+// A post is `content` of kind "post" (`title`); a comment of kind "comment" (`re`: what it answers, `in`: its post); a
+// vote a reaction ▲ or ▼. REFS: `space:<server id>/<id>` on a board, `<author did>/<id>` on a profile.
 //
 //   const posts = await ctx.require("posts");
-//   await posts.submit({ board, title, body })       // a new post: its ref
-//   await posts.list({ board } | { by } | {}, sort)   // [post]: a board's, a person's, or HOME (whom this person follows,
-//                                                     // their own, and their boards'); sort "hot" | "new" | "top"
-//   await posts.get(ref)                             // one post, or null
-//   await posts.thread(ref)                          // [comment], each with its `replies`, best first
-//   await posts.comment(post, re, body)              // `re`: the post's ref or a comment's
-//   await posts.vote(ref, 1 | -1 | 0, post?)         // a post, or a comment of `post`
-//   await posts.remove(ref)                          // this person's own post or comment
-//   await posts.boards()   await posts.join(board, on)   posts.boardName(text)
+//   await posts.submit({ board, title, body })       // `board`: a space's id, or none (this person's profile): its ref
+//   await posts.list({ board } | { by } | {}, sort)   // a board's, a profile's, or HOME (this person's boards, and the
+//                                                     // profiles they follow and their own); sort "hot" | "new" | "top"
+//   await posts.get(ref)   await posts.thread(ref)    // one post; its comments as a tree (`replies`), best first
+//   await posts.comment(post, re, body)   await posts.vote(ref, 1 | -1 | 0, post)   await posts.remove(ref)
+//   await posts.boards()                             // the spaces this person is in: their boards
+//   await posts.boardOf(ref | id)                    // the space a board post or board id is in (null: a profile's)
 //   posts.onChange(fn)
-// A post: { ref, id, by, title, body, board, at, edited, comments, score, mine }; a comment: { ref, id, by, body, at,
-// edited, score, mine, replies }.
+// A post: { ref, id, by, title, body, board, at, edited, comments, score, mine, mayRemove }; a comment: the same
+// without title and board, with `replies`.
 export async function start(ctx) {
   const [content, index, space, edge] = await Promise.all(["content", "index", "space", "edge"].map(n => ctx.require(n)));
   const TAIL = "posts";
@@ -28,139 +28,160 @@ export async function start(ctx) {
   const DOWN = "▼";
   const changed = [];
   const fire = () => changed.forEach(f => f());
-
-  // A board's name: lower case, letters, digits and `_`.
-  const boardName = text => {
-    const n = String(text ?? "").trim().replace(/^b\//i, "").toLowerCase();
-    if (!/^[a-z0-9_]{2,24}$/.test(n)) throw new Error("a board's name: 2 to 24 letters, digits or _");
-    return n;
-  };
-  const boardRef = name => `board:${name}`;
-
-  // One room per person's tail (opened once per page).
-  const rooms = new Map();
-  const roomOf = did => {
-    if (!rooms.has(did)) {
-      const p = content.in({ kind: "public", did, name: TAIL }).then(r => (r.onChange(fire), r));
-      p.catch(() => rooms.delete(did));
-      rooms.set(did, p);
-    }
-    return rooms.get(did);
-  };
-  const roomsOf = async dids => (await Promise.all([...new Set(dids)].map(d => roomOf(d).catch(() => null)))).filter(Boolean);
   const me = async () => (await space.account()).id;
-  const mine = async () => roomOf(await me());
   const following = async () => (await edge.people()).list("follow");
-  const pins = () => edge.pins();
-  const authorOf = ref => ref.slice(0, ref.lastIndexOf("/"));
-  const fromPointers = async ref =>
-    (await index.pointers(ref).catch(() => [])).map(p => p.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
 
-  // Votes on anything, from these tails: ref → (did → 1 | -1). Both at once (a change half-made): neither counts.
-  function votesIn(rs) {
-    const votes = new Map();
-    for (const r of rs)
-      for (const x of r.reactions()) {
-        if (x.emoji !== UP && x.emoji !== DOWN) continue;
-        const on = votes.get(x.item) ?? new Map();
-        on.set(x.by, on.has(x.by) ? 0 : x.emoji === UP ? 1 : -1);
-        votes.set(x.item, on);
-      }
+  // ROOMS, opened once per page: a board's, a person's profile tail.
+  const rooms = new Map();
+  const opened = (key, make) => {
+    if (!rooms.has(key)) {
+      const p = make().then(r => (r.onChange(fire), r));
+      p.catch(() => rooms.delete(key));
+      rooms.set(key, p);
+    }
+    return rooms.get(key);
+  };
+  // Every space this person is in has its board: a server's, a group conversation's, a direct one's.
+  const boards = async () => space.mine();
+  const boardOf = async x => {
+    const id = String(x).startsWith("space:") ? String(x).slice(6, String(x).indexOf("/")) : x;
+    return (await boards()).find(s => s.id === id) ?? null;
+  };
+  const boardRoom = sp => opened(`space:${sp.id}`, () => content.in(space.board(sp)));
+  const profileRoom = did => opened(did, () => content.in({ kind: "public", did, name: TAIL }));
+  const profiles = async dids => (await Promise.all([...new Set(dids)].map(d => profileRoom(d).catch(() => null)))).filter(Boolean);
+  const pointersTo = async ref => (await index.pointers(ref).catch(() => [])).map(p => p.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
+  const idOf = ref => ref.slice(ref.lastIndexOf("/") + 1);
+  const whereOf = ref => ref.slice(0, ref.lastIndexOf("/"));
+
+  // VOTES: ref → (did → 1 | -1), from reactions (both at once — a change half-made — counts as neither).
+  function tally(reactions, votes = new Map()) {
+    for (const x of reactions) {
+      if (x.emoji !== UP && x.emoji !== DOWN) continue;
+      const on = votes.get(x.item) ?? new Map();
+      on.set(x.by, on.has(x.by) ? 0 : x.emoji === UP ? 1 : -1);
+      votes.set(x.item, on);
+    }
     return votes;
   }
-  const scored = (ref, votes, self) => {
-    const on = votes.get(ref);
+  const scored = (key, votes, self) => {
+    const on = votes.get(key);
     return { score: on ? [...on.values()].reduce((n, v) => n + v, 0) : 0, mine: on?.get(self) ?? 0 };
   };
-  // A comment's post: `in` (an old comment answering its post directly has none: its `re`).
-  const postOf = c => c.in ?? c.re;
-
-  const SORTS = {
-    // Reddit's: the score's order of magnitude, plus time (every 12.5 hours counts as ten times the votes).
-    hot: (a, b) => hot(b) - hot(a),
-    new: (a, b) => b.at - a.at,
-    top: (a, b) => b.score - a.score || b.at - a.at,
+  const postOf = c => c.in ?? c.re; // a comment's post (an old one answering its post directly has no `in`)
+  const shape = (it, ref, board) => {
+    const [first, ...rest] = it.body.split("\n"); // a post from before titles: its first line is its title
+    return { ref, id: it.id, by: it.by, title: it.title ?? first.slice(0, 300), body: it.title ? it.body : rest.join("\n").trim(), board, at: it.at, edited: it.edited };
   };
-  const hot = p => Math.sign(p.score) * Math.log10(Math.max(Math.abs(p.score), 1)) + p.at / 45000000;
 
-  // Posts (with their scores and comment counts) from these authors' tails, as far as these tails know.
-  async function gather(authors, keep, readers, sort) {
+  // A BOARD's posts: everything is in its one room (reactions keyed by the item's id).
+  async function boardPosts(sp) {
+    const r = await boardRoom(sp);
     const self = await me();
-    const rs = await roomsOf([...authors, ...readers]);
-    const votes = votesIn(rs);
+    const items = r.list();
+    const votes = tally(r.reactions());
     const counts = new Map();
-    for (const r of rs) for (const it of r.list()) if (it.kind === "comment") counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
-    const byAuthor = await roomsOf(authors);
+    for (const it of items) if (it.kind === "comment") counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
+    return items
+      .filter(it => it.kind === "post")
+      .map(it => ({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), comments: counts.get(it.id) ?? 0, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it) }));
+  }
+  // PROFILE posts: from their authors' tails; comments and votes from the tails known here (the reader's, whom they
+  // follow, and whoever `readers` names).
+  async function profilePosts(authors, readers = []) {
+    const self = await me();
+    const rs = await profiles([...authors, self, ...(await following()), ...readers]);
+    const votes = new Map();
+    const counts = new Map();
+    for (const r of rs) {
+      tally(r.reactions(), votes);
+      for (const it of r.list()) if (it.kind === "comment") counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
+    }
     const out = [];
-    for (const r of byAuthor)
+    for (const r of await profiles(authors))
       for (const it of r.list()) {
         if (it.kind !== "post") continue;
         const ref = `${it.by}/${it.id}`;
-        // A post from before titles: its first line is its title.
-        const [first, ...rest] = it.body.split("\n");
-        const board = /^[a-z0-9_]{2,24}$/.test(it.in ?? "") ? it.in : null;
-        const p = { ref, id: it.id, by: it.by, title: it.title ?? first.slice(0, 300), body: it.title ? it.body : rest.join("\n").trim(), board, at: it.at, edited: it.edited };
-        if (!keep(p)) continue;
-        out.push({ ...p, comments: counts.get(ref) ?? 0, ...scored(ref, votes, self) });
+        out.push({ ...shape(it, ref, null), comments: counts.get(ref) ?? 0, ...scored(ref, votes, self), mayRemove: it.by === self });
       }
+    return out;
+  }
+
+  const hot = p => Math.sign(p.score) * Math.log10(Math.max(Math.abs(p.score), 1)) + p.at / 45000000; // Reddit's
+  const SORTS = { hot: (a, b) => hot(b) - hot(a), new: (a, b) => b.at - a.at, top: (a, b) => b.score - a.score || b.at - a.at };
+
+  async function list(where = {}, sort = "hot") {
+    let out;
+    if (where.board) {
+      const sp = await boardOf(where.board);
+      if (!sp) throw new Error("you are not in that board's space: join it with an invite");
+      out = await boardPosts(sp);
+    } else if (where.by) out = await profilePosts([where.by]);
+    else {
+      const [bs, people] = await Promise.all([boards(), following()]);
+      out = [...(await Promise.all(bs.map(sp => boardPosts(sp).catch(() => [])))).flat(), ...(await profilePosts([await me(), ...people]))];
+    }
     return out.sort(SORTS[sort] ?? SORTS.hot);
   }
 
-  async function list(where = {}, sort = "hot") {
-    const self = await me();
-    const follows = await following();
-    if (where.board) {
-      const b = boardName(where.board);
-      const from = await fromPointers(boardRef(b));
-      return gather([self, ...follows, ...from], p => p.board === b, [], sort);
-    }
-    if (where.by) return gather([where.by], () => true, [self, ...follows], sort);
-    // HOME: whom this person follows and their own, and every post in the boards they joined.
-    const joined = await boards();
-    const from = (await Promise.all(joined.map(b => fromPointers(boardRef(b))))).flat();
-    const people = new Set([self, ...follows]);
-    const inBoards = new Set(joined);
-    return gather([...people, ...from], p => people.has(p.by) || inBoards.has(p.board), [], sort);
-  }
-
   async function get(ref) {
-    const author = authorOf(ref);
-    const from = await fromPointers(ref);
-    return (await gather([author], p => p.ref === ref, [await me(), ...(await following()), ...from], "new"))[0] ?? null;
+    if (ref.startsWith("space:")) {
+      const sp = await boardOf(ref);
+      return sp ? ((await boardPosts(sp)).find(p => p.ref === ref) ?? null) : null;
+    }
+    return (await profilePosts([whereOf(ref)], await pointersTo(ref))).find(p => p.ref === ref) ?? null;
   }
 
-  async function submit({ board, title, body }) {
-    const b = boardName(board);
+  async function submit({ board = null, title, body }) {
     title = String(title ?? "").trim();
     body = String(body ?? "").trim();
     if (!title) throw new Error("a post needs a title");
     if (title.length > 300) throw new Error("a title of at most 300 characters");
+    if (board) {
+      const sp = await boardOf(board);
+      if (!sp) throw new Error("you are not in that board's space");
+      return `space:${sp.id}/${await (await boardRoom(sp)).post("post", body, { title })}`;
+    }
     const self = await me();
-    const id = await (await mine()).post("post", body, { title, in: b });
-    const ref = `${self}/${id}`;
-    // Its own pointer bag, made now (nobody reading it waits on one that does not exist); and the board's pointer.
-    await index.openPointers(ref).catch(e => ctx.log("posts", { what: `the pointer bag of ${id}: ${e.message}` }));
-    await pointTo(boardRef(b));
+    const ref = `${self}/${await (await profileRoom(self)).post("post", body, { title })}`;
+    // Its pointer bag, made now: nobody reading it waits on one that does not exist.
+    await index.openPointers(ref).catch(e => ctx.log("posts", { what: `the pointer bag of ${ref}: ${e.message}` }));
     return ref;
   }
 
-  // THE THREAD: the post's pointers resolved; its comments as a tree, best first (a reply whose parent is gone goes
-  // to the top).
+  // THE THREAD: comments as a tree, best first (a reply whose parent is gone goes to the top).
   async function thread(ref) {
     const self = await me();
-    const rs = await roomsOf([authorOf(ref), self, ...(await following()), ...(await fromPointers(ref))]);
-    const votes = votesIn(rs);
     const all = [];
-    for (const r of rs) for (const it of r.list()) if (it.kind === "comment" && postOf(it) === ref) all.push({ ...it, ref: `${it.by}/${it.id}`, replies: [] });
-    const byRef = new Map(all.map(c => [c.ref, Object.assign(c, scored(c.ref, votes, self))]));
+    if (ref.startsWith("space:")) {
+      const sp = await boardOf(ref);
+      if (!sp) return [];
+      const r = await boardRoom(sp);
+      const votes = tally(r.reactions());
+      const post = idOf(ref);
+      for (const it of r.list())
+        if (it.kind === "comment" && postOf(it) === post)
+          all.push({ ...it, ref: `space:${sp.id}/${it.id}`, parent: it.re === post ? ref : `space:${sp.id}/${it.re}`, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it), replies: [] });
+    } else {
+      const rs = await profiles([whereOf(ref), self, ...(await following()), ...(await pointersTo(ref))]);
+      const votes = new Map();
+      for (const r of rs) tally(r.reactions(), votes);
+      for (const r of rs)
+        for (const it of r.list())
+          if (it.kind === "comment" && postOf(it) === ref) {
+            const cref = `${it.by}/${it.id}`;
+            all.push({ ...it, ref: cref, parent: it.re, ...scored(cref, votes, self), mayRemove: it.by === self, replies: [] });
+          }
+    }
+    const byRef = new Map(all.map(c => [c.ref, c]));
     const top = [];
-    for (const c of all) (c.re !== ref && byRef.get(c.re)?.replies ? byRef.get(c.re).replies : top).push(c);
+    for (const c of all) (c.parent !== ref && byRef.get(c.parent) ? byRef.get(c.parent).replies : top).push(c);
     const best = (a, b) => b.score - a.score || a.at - b.at;
     const order = cs => (cs.sort(best), cs.forEach(c => order(c.replies)), cs);
     return order(top);
   }
 
-  // Something of this person's in a place: a pointer to them there, dropped once per page.
+  // Something of this person's about someone's profile post: a pointer to them in its bag, once per page.
   const pointed = new Set();
   async function pointTo(ref) {
     const self = await me();
@@ -172,26 +193,40 @@ export async function start(ctx) {
   async function comment(post, re, body) {
     body = String(body ?? "").trim();
     if (!body) throw new Error("a comment needs something in it");
-    const id = await (await mine()).post("comment", body, { re: re ?? post, in: post });
+    if (post.startsWith("space:")) {
+      const sp = await boardOf(post);
+      if (!sp) throw new Error("you are not in that board's space");
+      await (await boardRoom(sp)).post("comment", body, { re: idOf(re ?? post), in: idOf(post) });
+      return;
+    }
+    await (await profileRoom(await me())).post("comment", body, { re: re ?? post, in: post });
     await pointTo(post);
-    return `${await me()}/${id}`;
   }
+
   async function vote(ref, v, post = ref) {
-    const r = await mine();
-    const had = new Set(r.reactions().filter(x => x.item === ref).map(x => x.emoji));
+    const onBoard = ref.startsWith("space:");
+    const sp = onBoard ? await boardOf(ref) : null;
+    if (onBoard && !sp) throw new Error("you are not in that board's space");
+    const r = onBoard ? await boardRoom(sp) : await profileRoom(await me());
+    const item = onBoard ? idOf(ref) : ref;
+    const self = await me();
+    const had = new Set(r.reactions().filter(x => x.item === item && x.by === self).map(x => x.emoji));
     // Only what changes is written (taking back a vote that is not there writes nothing).
-    for (const [e, on] of [[UP, v === 1], [DOWN, v === -1]]) if (on !== had.has(e)) await r.react(ref, e, on);
-    if (v) await pointTo(post);
+    for (const [e, on] of [[UP, v === 1], [DOWN, v === -1]]) if (on !== had.has(e)) await r.react(item, e, on);
+    if (v && !onBoard) await pointTo(post);
   }
+
+  // REMOVE: this person's own, or — on a board, as its moderator — anyone's (hidden, as the server's moderation does).
   async function remove(ref) {
+    if (ref.startsWith("space:")) {
+      const sp = await boardOf(ref);
+      if (!sp) throw new Error("you are not in that board's space");
+      return (await boardRoom(sp)).remove(idOf(ref));
+    }
     const self = await me();
     if (!ref.startsWith(`${self}/`)) throw new Error("only its author removes it");
-    await (await mine()).remove(ref.slice(self.length + 1));
+    await (await profileRoom(self)).remove(idOf(ref));
   }
 
-  // BOARDS this person joined: pins of `board:<name>` (their home shows them).
-  const boards = async () => (await pins()).refs("board:").map(r => r.slice(6)).sort();
-  const join = async (board, on) => (await pins()).set(boardRef(boardName(board)), on);
-
-  return { submit, list, get, thread, comment, vote, remove, boards, join, boardName, onChange: f => changed.push(f) };
+  return { submit, list, get, thread, comment, vote, remove, boards, boardOf, onChange: f => changed.push(f) };
 }
