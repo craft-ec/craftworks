@@ -312,7 +312,7 @@ export async function mount(ctx, el) {
   const render = () => {
     root.classList.toggle("list", list);
     // The composer: not in the archive, nor for who may not edit here.
-    composer.hidden = archive || (!!rs && !rs.allows("notes", meId, "edit"));
+    composer.hidden = archive || (!!rs && !rs.allows("edit", meId, "notes"));
     if (label && !labels.list().some(l => l.id === label)) label = null; // deleted meanwhile
     bar();
     const q = query.toLowerCase();
@@ -320,7 +320,7 @@ export async function mount(ctx, el) {
     const all = notes
       .rows()
       // A space's note written by someone its Notes setting did not let edit then: not counted.
-      .filter(r => !rs || rs.allows("notes", rs.author(r), "edit", Number(note(r).edited) || Infinity))
+      .filter(r => !rs || rs.allows("edit", rs.author(r), "notes", Number(note(r).edited) || Infinity))
       .map(note)
       .filter(n => n.archived === archive)
       .filter(n => !inLabel || inLabel.has(ref(n.key)))
@@ -400,7 +400,7 @@ export async function mount(ctx, el) {
   const appSettings = sp ? await ctx.require("app-settings") : null;
   // Who may edit here: the composer says so when this person may not.
   const gate = () => {
-    const ok = !rs || rs.allows("notes", meId, "edit");
+    const ok = !rs || rs.allows("edit", meId, "notes");
     composer.hidden = !ok;
   };
   gate();
@@ -409,7 +409,7 @@ export async function mount(ctx, el) {
     ctx.actions["/notes"] = [
       // NOTES' OWN SETTINGS in a space (its owner and admins): who may edit.
       ...(rs?.can(meId, "apps")
-        ? [{ label: "Notes settings", run: () => appSettings.open(sp, "notes", "Notes", [{ key: "edit", label: "Who may add and edit notes", options: [["everyone", "Every member"], ["admins", "Admins only"]] }]) }]
+        ? [{ label: "Notes settings", run: () => appSettings.open(sp, "Notes settings", [{ action: "edit", path: "notes", label: "Who may add and edit notes" }]) }]
         : []),
       { search: v => ((query = v), render()), placeholder: sp ? `Search ${sp.name}'s notes` : "Search your notes", value: query },
       { label: list ? "Grid view" : "List view", run: () => ((list = !list), render(), actions()) },

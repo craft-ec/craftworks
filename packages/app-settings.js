@@ -1,16 +1,19 @@
-// APP SETTINGS, a component: one APP's own settings in one space (Chat's, Board's, Notes'), for its owner and admins —
-// a dialog of fields, each a `config` act in the space's log (`roles`: every member's app then follows it). An app
-// names its fields; a field is a CHOICE (`options`: [[value, label]]) or TEXT. `extra(host)` draws what else the app
-// keeps there (Chat: its channels). The space's own settings (members, roles, invites) are its Home's, never here.
+// PERMISSIONS, a component (the one settings dialog of an app in a space, or of the space itself): a list of fields,
+// each either a POLICY — who may do an action at a path (`roles`' access: inherited along the path; "Inherit" drops
+// this path's own policy so its parent's applies) — or a CONTENT setting of the app (a `config` act: Board's rules).
+// For the space's owner and admins; reading in public is the owner's. `extra(host)` draws what else the app keeps
+// there (Chat: its channels, each with its own policy).
 //
-//   const appSettings = await ctx.require("app-settings");
-//   appSettings.open(sp, "board", "Board", [{ key: "post", label: "Who may post", options: [["everyone", "Every member"], ["admins", "Admins only"]] },
-//     { key: "rules", label: "Rules", text: true }], { extra, saved })   // saved(changed): after a save, what changed
+//   const permissions = await ctx.require("app-settings");
+//   permissions.open(sp, "Board", [
+//     { action: "post", path: "board", label: "Who may post" },
+//     { key: "rules", app: "board", label: "Rules" }], { extra, saved })   // saved(changed): after a save
+//   permissions.who(r, path, action)   // a <select> for one policy (for an app's own rows: a channel)
 export async function start(ctx) {
   const roles = await ctx.require("roles");
   const style = document.createElement("style");
   style.textContent = `
-    .cw-appset { border: 0; border-radius: var(--cw-radius); padding: var(--cw-space-4); width: min(460px, calc(100vw - 32px)); box-shadow: var(--cw-shadow-lg);
+    .cw-appset { border: 0; border-radius: var(--cw-radius); padding: var(--cw-space-4); width: min(480px, calc(100vw - 32px)); box-shadow: var(--cw-shadow-lg);
       background: var(--cw-surface); color: var(--cw-fg); }
     .cw-appset h3 { margin: 0 0 var(--cw-space-3); font-size: 1.05rem; }
     .cw-appset h4 { margin: var(--cw-space-3) 0 var(--cw-space-2); font-size: var(--cw-text-xs); letter-spacing: .08em; text-transform: uppercase; color: var(--cw-muted); }
@@ -28,56 +31,87 @@ export async function start(ctx) {
     e.append(...kids.filter(k => k != null && k !== false));
     return e;
   };
+  const NAMES = { anyone: "Anyone (public)", members: "Members", admins: "Admins", owner: "The owner", nobody: "Nobody" };
+  const parentOf = path => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : path ? "" : null);
 
-  async function open(sp, app, title, fields, { extra = null, saved = null } = {}) {
+  // ONE POLICY's choice: Inherit (what the parent says), or a who. Reading by anyone is offered to the owner only.
+  function who(r, path, action, { me = null } = {}) {
+    const own = r.policiesAt(path)[action] ?? "";
+    const parent = parentOf(path);
+    const inherited = parent == null ? "members" : r.policy(parent, action);
+    const options = ["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || action === "read" || action === "join");
+    const sel = h(
+      "select",
+      { ariaLabel: `${action} at ${path || "the space"}` },
+      h("option", { value: "", textContent: `Inherit (${NAMES[inherited] ?? inherited})` }),
+      ...options.map(w => h("option", { value: w, textContent: NAMES[w] })),
+    );
+    sel.value = own;
+    sel.dataset.was = own;
+    sel.dataset.path = path;
+    sel.dataset.action = action;
+    if (action === "read" && me && r.role(me) !== "owner") sel.disabled = true;
+    return sel;
+  }
+  // Save a policy <select> if it changed: `inherit` drops the override.
+  async function save(r, sel) {
+    if (sel.value === sel.dataset.was) return false;
+    await r.act({ act: "policy", path: sel.dataset.path, action: sel.dataset.action, who: sel.value || "inherit" });
+    sel.dataset.was = sel.value;
+    return true;
+  }
+
+  async function open(sp, title, fields, { extra = null, saved = null } = {}) {
     const r = await roles.of(sp);
+    const me = (await (await ctx.require("space")).account()).id;
     const d = h("dialog", { className: "cw-appset" });
     const said = h("p", { className: "said" });
     const inputs = fields.map(f => {
-      const now = r.config(app, f.key, f.options ? f.options[0][0] : "");
-      const input = f.options
-        ? h("select", {}, ...f.options.map(([v, label]) => h("option", { value: v, textContent: label, selected: v === now })))
-        : h("textarea", { value: now ?? "", maxLength: 2000 });
-      return { f, input, now };
+      if (f.action) return { f, input: who(r, f.path, f.action, { me }) };
+      const now = r.config(f.app, f.key, "");
+      return { f, input: h("textarea", { value: now ?? "", maxLength: 2000 }), now };
     });
-    const save = h("button", { type: "submit", className: "main", textContent: "Save" });
+    const btn = h("button", { type: "submit", className: "main", textContent: "Save" });
     const form = h(
       "form",
       {},
       ...inputs.map(({ f, input }) => h("label", {}, f.label, input)),
-      h("div", { className: "row" }, said, h("button", { type: "button", textContent: "Close", onclick: () => d.close() }), save),
+      h("div", { className: "row" }, said, h("button", { type: "button", textContent: "Close", onclick: () => d.close() }), btn),
     );
+    const more = extra ? h("div", {}) : null;
     form.onsubmit = async e => {
       e.preventDefault();
-      save.disabled = true;
+      btn.disabled = true;
       said.className = "said";
       said.textContent = "";
       try {
-        // Only what changed: an act each.
         const changed = {};
-        for (const { f, input, now } of inputs)
-          if (input.value !== (now ?? "")) {
-            await r.act({ act: "config", app, key: f.key, value: input.value });
+        for (const { f, input, now } of inputs) {
+          if (f.action) {
+            if (await save(r, input)) changed[`${f.path}|${f.action}`] = input.value || "inherit";
+          } else if (input.value !== (now ?? "")) {
+            await r.act({ act: "config", app: f.app, key: f.key, value: input.value });
             changed[f.key] = input.value;
           }
-        // What follows from a change (Board made public: the space's acts published).
+        }
+        // The app's own rows (a channel's policy): saved the same way.
+        for (const sel of more?.querySelectorAll("select[data-path]") ?? []) if (await save(r, sel)) changed[`${sel.dataset.path}|${sel.dataset.action}`] = sel.value || "inherit";
         if (saved) await saved(changed);
         said.className = "ok";
         said.textContent = "Saved.";
       } catch (err) {
         said.textContent = err?.message ?? String(err);
       } finally {
-        save.disabled = false;
+        btn.disabled = false;
       }
     };
-    const more = extra ? h("div", {}) : null;
-    d.append(h("h3", { textContent: `${title} settings · ${sp.name}` }), form, more);
-    if (extra) await extra(more);
+    d.append(h("h3", { textContent: `${title} · ${sp.name}` }), form, more);
+    if (extra) await extra(more, r);
     d.addEventListener("click", e => e.target === d && d.close());
     d.addEventListener("close", () => d.remove());
     document.body.append(d);
     d.showModal();
   }
 
-  return { open };
+  return { open, who: (r, path, action) => who(r, path, action) };
 }

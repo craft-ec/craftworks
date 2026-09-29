@@ -19,7 +19,14 @@
 //   r.invites()              // the invite codes in force: [{ code, by, at, expires, uses, admitted }]
 //   r.apps()                 // the APPS the space uses (chat, board, notes): an `app` act ({ app, on }) adds or
 //                            // removes one; a new space has none (its Home and settings only)
-//   r.config(app, key, dflt) // an APP's setting in this space (a `config` act: { app, key, value }, by who may `apps`):
+//   ACCESS, like row-level security: POLICIES `{ path, action, who }` (a `policy` act, by who may `apps`; `read` by
+//   the owner only), INHERITED along the path — an item (`board/p/<id>`), a container (`chat/<channel>`), an app
+//   (`board`), the space (""): the most specific wins, else its parent's, else the default. Actions: read, post,
+//   comment, vote, edit, join. Who: anyone | members | admins | owner | nobody. Defaults: every action `members`
+//   (join `members`: by an invite from one). Time-aware: an item is judged by the policy in force when it was made.
+//   r.policy(path, action, at?)   // the effective `who`
+//   r.allows(action, did, path, at?)   // may that person do it there (then)
+//   r.config(app, key, dflt) // an APP's content setting (a `config` act; e.g. Board's rules) — not access
 //                            // Chat `post`, Board `post` and `rules`, Notes `edit`
 //   r.allows(app, did, key, at) // may that person do it in that app here — as the setting was at `at` (an item's time:
 //                            // a change never hides what came before it): "everyone" (a member) or "admins"
@@ -40,6 +47,17 @@ export async function start(ctx) {
     member: new Set(["post", "invite"]),
   };
   const RANK = { owner: 3, admin: 2, member: 1 };
+  const ACTIONS = ["read", "post", "comment", "vote", "edit", "join"];
+  const WHO = ["anyone", "members", "admins", "owner", "nobody", "inherit"];
+  // The settings from before policies (`config` acts), as policies — their defaults ("everyone", "members",
+  // "invite") as INHERIT (no policy of their own), never as an override.
+  const OLD = {
+    "chat/post": { path: "chat", action: "post", who: v => (v === "admins" ? "admins" : null) },
+    "board/post": { path: "board", action: "post", who: v => (v === "admins" ? "admins" : null) },
+    "board/read": { path: "board", action: "read", who: v => (v === "public" ? "anyone" : null) },
+    "notes/edit": { path: "notes", action: "edit", who: v => (v === "admins" ? "admins" : null) },
+    "space/join": { path: "", action: "join", who: v => (v === "open" ? "anyone" : null) },
+  };
   // The apps a shared space may use (each app's key: its route).
   const APPS = ["chat", "board", "notes"];
   // An invite code in force at `at`: not revoked, not expired, and uses left (0: no limit).
@@ -110,8 +128,22 @@ export async function start(ctx) {
     let invites = new Map();
     let apps = new Map();
     let configs = new Map();
-    let history = new Map(); // app/key → [{ at, value }], in the order they counted
+    let history = new Map(); // `${path}|${action}` → [{ at, who }], in the order they counted
     let roster = new Set(); // the DIDs the acts name as members (the owner, added, admitted, rostered)
+    // A POLICY set at a path (its history: time-aware), and the EFFECTIVE one — walked up the path to the space.
+    const setPolicy = (path, action, who, at) => {
+      const k = `${path}|${action}`;
+      (history.get(k) ?? history.set(k, []).get(k)).push({ at: Number(at) || 0, who });
+    };
+    const policyAt = (path, action, at = Infinity) => (history.get(`${path}|${action}`) ?? []).filter(x => x.at <= at).pop()?.who ?? null;
+    const effective = (path, action, at = Infinity) => {
+      const parts = String(path ?? "").split("/").filter(Boolean);
+      for (let i = parts.length; i >= 0; i--) {
+        const who = policyAt(parts.slice(0, i).join("/"), action, at);
+        if (who) return who;
+      }
+      return "members";
+    };
     let bans = new Set();
     function replay() {
       const acts = [];
@@ -152,8 +184,10 @@ export async function start(ctx) {
           // Who may READ an app (members, or anyone) is the owner's: making it public publishes the space's acts.
           // The space's own settings are app "space" (who may join: "invite" or "open").
           (a.act === "config" && CAN[r]?.has("apps") && (APPS.includes(a.app) || a.app === "space") && typeof a.key === "string" && a.key.length <= 32 && (a.key !== "read" || r === "owner")) ||
+          // A POLICY: who may do an action at a path (reading is the owner's: public reading publishes the space's acts).
+          (a.act === "policy" && CAN[r]?.has("apps") && typeof a.path === "string" && a.path.length <= 120 && ACTIONS.includes(a.action) && WHO.includes(a.who) && (a.action !== "read" || r === "owner")) ||
           // Admitted by asking, while the space was OPEN (no code).
-          (a.act === "admitted" && a.code === "open" && CAN[r]?.has("invite") && configs.get("space/join") === "open" && a.did && !banned.has(a.did)) ||
+          (a.act === "admitted" && a.code === "open" && CAN[r]?.has("invite") && policyAt("", "join") === "anyone" && a.did && !banned.has(a.did)) ||
           (a.act === "member" && CAN[r]?.has("invite") && a.did && !banned.has(a.did));
         if (!ok) continue;
         if (a.act === "grant") roles.set(a.did, a.role);
@@ -178,10 +212,13 @@ export async function start(ctx) {
         if (a.act === "added" || a.act === "admitted" || a.act === "member") roster.add(a.did);
         if (a.act === "app") apps.set(a.app, !!a.on);
         if (a.act === "config") {
-          const k = `${a.app}/${a.key}`;
-          configs.set(k, a.value);
-          (history.get(k) ?? history.set(k, []).get(k)).push({ at: Number(a.at) || 0, value: a.value });
+          configs.set(`${a.app}/${a.key}`, a.value);
+          // The settings from before policies, read as the policies they are.
+          const as = OLD[`${a.app}/${a.key}`];
+          if (as) setPolicy(as.path, as.action, as.who(a.value), a.at);
         }
+        // `inherit`: the override removed (the parent's policy applies again).
+        if (a.act === "policy") setPolicy(a.path, a.action, a.who === "inherit" ? null : a.who, a.at);
         counted.push(a);
       }
       for (const d of removed) roles.set(d, null);
@@ -216,7 +253,7 @@ export async function start(ctx) {
       for (const f of changed) f();
     });
     // Public: an app of the space reads in public.
-    const isPublic = () => APPS.some(a => configs.get(`${a}/read`) === "public");
+    const isPublic = () => [...history.keys()].some(k => k.endsWith("|read") && policyAt(k.slice(0, -5), "read") === "anyone");
     const role = did => {
       if (!did || (left && did === me?.id)) return null;
       if (roles.has(did)) return roles.get(did);
@@ -236,11 +273,16 @@ export async function start(ctx) {
       invites: () => [...invites.values()].filter(i => live(i)),
       apps: () => APPS.filter(x => apps.get(x) === true),
       config: (app, key, dflt = null) => configs.get(`${app}/${key}`) ?? dflt,
-      allows: (app, did, key = "post", at = Infinity) => {
-        const who = role(did);
-        if (!who) return false;
-        const then = (history.get(`${app}/${key}`) ?? []).filter(x => x.at <= at).pop()?.value ?? "everyone";
-        return then === "admins" ? RANK[who] >= RANK.admin : true;
+      policy: (path, action, at = Infinity) => effective(path, action, at),
+      // The policies set at exactly this path (not inherited): { action: who }.
+      policiesAt: path => Object.fromEntries(ACTIONS.filter(x => policyAt(path, x)).map(x => [x, policyAt(path, x)])),
+      allows: (action, did, path = "", at = Infinity) => {
+        const who = effective(path, action, at);
+        if (who === "anyone") return true;
+        if (who === "nobody") return false;
+        const r = role(did);
+        if (!r) return false;
+        return who === "owner" ? r === "owner" : who === "admins" ? RANK[r] >= RANK.admin : true;
       },
       banned: did => bans.has(did),
       bannedList: () => [...bans],
@@ -273,10 +315,10 @@ export async function start(ctx) {
       async act(a) {
         if (!me) throw new Error("nobody is logged in");
         if (out) throw new Error("not a member of this space");
-        const need = { grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite", member: "invite" }[a.act];
+        const need = { grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", policy: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite", member: "invite" }[a.act];
         if (!need || !can(me.id, need)) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
         // A public space's acts are public (readers outside must know them); a private one's sealed.
-        const toPublic = isPublic() || (a.act === "config" && a.key === "read" && a.value === "public");
+        const toPublic = isPublic() || (a.act === "policy" && a.action === "read" && a.who === "anyone");
         await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify({ ...a, at: Date.now() }));
       },
       grant: (did, to) => r.act({ act: "grant", did, role: to }),

@@ -141,8 +141,8 @@ export async function mount(ctx, el) {
     const down = h("button", { type: "button", className: "down", textContent: "▼", title: "Downvote", ariaPressed: String(it.mine === -1) });
     const cast = v => async e => {
       e.stopPropagation();
-      // From outside (Discover): scores only — members vote.
-      if (discovering()) return;
+      // From outside (Discover): scores only — members vote; nor where the space's policy says you may not.
+      if (discovering() || (here && !(await roles.of(here)).allows("vote", me, "board"))) return;
       const next = it.mine === v ? 0 : v;
       it.score += next - it.mine;
       it.mine = next;
@@ -282,7 +282,7 @@ export async function mount(ctx, el) {
     const mine = (await space.mine()).some(s => s.id === d.id);
     const said = h("p", { hidden: true });
     const join =
-      !mine && pr.config("space", "join", "invite") === "open"
+      !mine && pr.policy("", "join") === "anyone"
         ? h("button", {
             type: "button",
             className: "go",
@@ -333,29 +333,28 @@ export async function mount(ctx, el) {
             onclick: () =>
               appSettings.open(
                 sp,
-                "board",
-                "Board",
+                "Board settings",
                 [
-                  // Who may read: the owner's (public makes the space's members, roles and moderation public too).
-                  ...(r.role(me) === "owner"
-                    ? [{ key: "read", label: "Who may read (public: anyone, and the space's members and moderation are public too; posts made before stay as they were)", options: [["members", "Members only"], ["public", "Anyone (public)"]] }]
-                    : []),
-                  { key: "post", label: "Who may post (every member may comment and vote)", options: [["everyone", "Every member"], ["admins", "Admins only"]] },
-                  { key: "rules", label: "Rules (shown beside the board)" },
+                  // Who may read: the owner's (anyone makes the space's members, roles and moderation public too).
+                  { action: "read", path: "board", label: "Who may read (Anyone: public — its members and moderation too; posts made before stay as they were)" },
+                  { action: "post", path: "board", label: "Who may post" },
+                  { action: "comment", path: "board", label: "Who may comment" },
+                  { action: "vote", path: "board", label: "Who may vote" },
+                  { key: "rules", app: "board", label: "Rules (shown beside the board)" },
                 ],
                 // Made public: its acts published, and the space listed in Discover.
-                { saved: async changed => changed.read === "public" && (await r.publish(), await (await ctx.require("index")).listSpace(sp)) },
+                { saved: async changed => changed["board|read"] === "anyone" && (await r.publish(), await (await ctx.require("index")).listSpace(sp)) },
               ),
           })
         : null;
-      const mayPost = r.allows("board", me, "post");
+      const mayPost = r.allows("post", me, "board");
       return [
         h(
           "div",
           { className: "panel" },
           h("h3", { textContent: `b/${sp.name}` }),
           h("p", { textContent: `${n} member${n === 1 ? "" : "s"} · you: ${r.role(me) ?? "member"}` }),
-          r.config("board", "read", "members") === "public" ? h("p", { textContent: "🌐 Public: anyone reads new posts." }) : null,
+          r.policy("board", "read") === "anyone" ? h("p", { textContent: "🌐 Public: anyone reads new posts." }) : null,
           mayPost ? create : h("p", { textContent: "Only admins post here; comment and vote on any post." }),
           settingsBtn,
         ),
@@ -416,7 +415,18 @@ export async function mount(ctx, el) {
     tree.append(theme.loading("Reading the comments…"));
     again().catch(() => {});
     // From outside (Discover): read only — members comment.
-    return [postCard(p, true), h("div", { className: "panel" }, outside ? h("p", { className: "none", textContent: "Only the space's members comment and vote." }) : replyForm(ref, ref, "Comment", again), tree)];
+    // Who may comment here: the space's policy (a profile's: open).
+    const sp = !outside && p.board ? await posts.boardOf(p.board.id) : null;
+    const mayComment = !sp || (await roles.of(sp)).allows("comment", me, "board");
+    return [
+      postCard(p, true),
+      h(
+        "div",
+        { className: "panel" },
+        outside ? h("p", { className: "none", textContent: "Only the space's members comment and vote." }) : mayComment ? replyForm(ref, ref, "Comment", again) : h("p", { className: "none", textContent: "Comments are closed to you here." }),
+        tree,
+      ),
+    ];
   }
 
   async function submitPage(board) {

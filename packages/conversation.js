@@ -228,7 +228,7 @@ export async function start(ctx) {
   async function setJoin(sp, how) {
     const r = await (await ctx.require("roles")).of(sp);
     if (how === "open") await index.openRequests(openCode(sp.id));
-    await r.act({ act: "config", app: "space", key: "join", value: how });
+    await r.act({ act: "policy", path: "", action: "join", who: how === "open" ? "anyone" : "members" });
   }
   async function admit(sp) {
     const me = await space.account();
@@ -237,7 +237,7 @@ export async function start(ctx) {
     if (!me || !r.can(me.id, "invite")) return [];
     const inside = new Set(r.members().map(m => m.did));
     const out = [];
-    if (r.config("space", "join", "invite") === "open")
+    if (r.policy("", "join") === "anyone")
       for (const q of await index.requests(openCode(sp.id))) {
         if (q.kind !== "join" || !q.did || inside.has(q.did) || r.banned(q.did)) continue;
         try {

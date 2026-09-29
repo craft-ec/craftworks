@@ -264,7 +264,7 @@ export async function start(ctx) {
     const gate = () => {
       const ok = room.mayPost();
       input.disabled = !ok;
-      input.placeholder = ok ? `Message ${title}` : "Only admins post here";
+      input.placeholder = ok ? `Message ${title}` : ({ admins: "Only admins post here", owner: "Only the owner posts here", nobody: "Nobody posts here" }[room.postingRule()] ?? "You may not post here");
     };
     gate();
     room.onChange(gate);

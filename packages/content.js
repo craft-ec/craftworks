@@ -59,9 +59,10 @@ export async function start(ctx) {
     const outside = !!container.outside;
     const inSpace = !open && (outside || container.scope.kind !== "account");
     const governed = inSpace && (outside || container.scope.kind === "server");
-    // The APP this container is (a channel: Chat; a board: Board): its setting says who may post here.
-    const app = { channel: "chat", board: "board" }[container.kind] ?? null;
-    const POSTS = new Set(["message", "post"]);
+    // Its PATH for access (a channel: `chat/<id>`; a board: `board`): the space's policies there say who may post,
+    // comment and vote (inherited from the app and the space).
+    const app = container.kind === "channel" ? `chat/${container.id.split("/").pop()}` : container.kind === "board" ? "board" : null;
+    const ACTION = { message: "post", post: "post", comment: "comment", reaction: "vote" };
     const [r, m] = outside
       ? await ctx.require("roles").then(async x => {
           const pr = await x.ofPublic(container.scope);
@@ -102,7 +103,7 @@ export async function start(ctx) {
         .map(item)
         .filter(it => it && !unseen.has(it.by))
         // A post or message by someone the app's setting did not allow when it was made: not counted.
-        .filter(it => !(governed && app && POSTS.has(it.kind) && !r.allows(app, it.by, "post", it.at)));
+        .filter(it => !(governed && app && ACTION[it.kind] && !r.allows(ACTION[it.kind], it.by, app, it.at)));
     };
     const reactionsOf = all => all.filter(x => x.kind === "reaction" && x.item && x.emoji && x.by).map(({ item, emoji, by }) => ({ item, emoji, by }));
     const list = () => {
@@ -137,8 +138,9 @@ export async function start(ctx) {
       onChange: f => changed.push(f),
       mayRemove: it => it.by === me || (governed && !!r?.can(me, "moderate")),
       // May this person post here now (the app's setting; a conversation: always).
-      mayPost: () => !(governed && app) || r.allows(app, me, "post"),
-      postingRule: () => (governed && app ? r.config(app, "post", "everyone") : "everyone"),
+      mayPost: () => !(governed && app) || r.allows("post", me, app),
+      may: action => !(governed && app) || r.allows(action, me, app),
+      postingRule: () => (governed && app ? r.policy(app, "post") : "members"),
       async post(kind, body, { re = null, title = null, in: where = null } = {}) {
         if (outside) throw new Error("only the space's members post here");
         const id = newId();

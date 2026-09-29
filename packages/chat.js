@@ -235,14 +235,23 @@ export async function mount(ctx, el) {
     return row;
   };
   const chatSettings = () =>
-    appSettings.open(server, "chat", "Chat", [{ key: "post", label: "Who may post", options: [["everyone", "Every member"], ["admins", "Admins only"]] }], {
-      extra: async host => {
+    appSettings.open(server, "Chat settings", [{ action: "post", path: "chat", label: "Who may post (in every channel that does not say otherwise)" }], {
+      extra: async (host, r) => {
         const draw = () => {
           const add = Object.assign(document.createElement("input"), { placeholder: "New channel", ariaLabel: "New channel" });
           const go = Object.assign(document.createElement("button"), { type: "button", textContent: "Add", onclick: () => add.value.trim() && channelOps.add(add.value.trim()).then(draw, e => say(e.message)) });
           const row = Object.assign(document.createElement("div"), { className: "row" });
           row.append(add, go);
-          host.replaceChildren(Object.assign(document.createElement("h4"), { textContent: "Channels" }), ...list().map(CHANNEL_ROW), row);
+          // Each channel: its name, and who may post in it (inherited from Chat's, or its own).
+          host.replaceChildren(
+            Object.assign(document.createElement("h4"), { textContent: "Channels" }),
+            ...list().map(c => {
+              const line = CHANNEL_ROW(c);
+              line.append(appSettings.who(r, `chat/${c.id.split("/").pop()}`, "post"));
+              return line;
+            }),
+            row,
+          );
         };
         draw();
       },

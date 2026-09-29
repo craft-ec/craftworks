@@ -110,14 +110,21 @@ export async function mount(ctx, el) {
         { className: "top" },
         h("h2", { textContent: sp.name }),
         r.can(me, "invite") ? h("button", { type: "button", className: "btn main", textContent: "Invite", onclick: () => openSettings("invites") }) : null,
-        // WHO MAY JOIN (owner, admins): by an invite, or anyone who asks (an open space; Discover shows Join).
+        // PERMISSIONS (owner, admins): the space's policies, which every app inherits unless it says otherwise.
         r.can(me, "apps")
-          ? (() => {
-              const sel = h("select", { className: "btn", ariaLabel: "Who may join" }, h("option", { value: "invite", textContent: "Joining: by invite" }), h("option", { value: "open", textContent: "Joining: anyone may join" }));
-              sel.value = r.config("space", "join", "invite");
-              sel.onchange = () => conversation.setJoin(sp, sel.value).then(draw, e => ((said.textContent = e.message), (said.hidden = false)));
-              return sel;
-            })()
+          ? h("button", {
+              type: "button",
+              className: "btn",
+              textContent: "Permissions",
+              onclick: async () =>
+                (await ctx.require("app-settings")).open(sp, "Permissions", [
+                  { action: "join", path: "", label: "Who may join (Anyone: whoever asks is let in; Members: by an invite from one)" },
+                  { action: "post", path: "", label: "Who may post (every app, unless it says otherwise)" },
+                  { action: "comment", path: "", label: "Who may comment" },
+                  { action: "vote", path: "", label: "Who may vote" },
+                  { action: "edit", path: "", label: "Who may edit (Notes)" },
+                ], { saved: async changed => (changed["|join"] === "anyone" && (await (await ctx.require("index")).openRequests(`open ${sp.id}`)), draw()) }),
+            })
           : null,
         h("button", { type: "button", className: "btn", textContent: "Settings", onclick: () => openSettings("overview") }),
         h("p", { textContent: `${members.length} member${members.length === 1 ? "" : "s"} · you: ${r.role(me) ?? "member"}` }),

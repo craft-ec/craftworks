@@ -591,6 +591,17 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       profile room is both as one (`posts.profileRoom`), a comment/vote on a private post stays in the journal (no
       pointer). Live (17573): P posted one of each + a private comment; P's board showed both (🔒 marked); P's public
       tail held neither the private post nor its comment; S saw only the public one.
+- [x] ACCESS AS INHERITED POLICIES (owner: "like RLS in access control, a setting that is inherited"). `policy` acts
+      { path, action, who } in the space's log (by who may `apps`; `read` owner-only), actions read/post/comment/vote/
+      edit/join, who anyone/members/admins/owner/nobody/inherit; the effective policy walks the path (`chat/<channel>`
+      → `chat` → space "") to the default (members); time-aware. `roles.allows(action, did, path, at)` is the one check:
+      content (a message/post → post, comment → comment, reaction → vote), notes (edit), board (read/post/comment/vote),
+      joining (join: anyone = open). Old `config` settings replay as policies — their defaults as INHERIT (a first cut
+      made them explicit "members" overrides that beat a space-level policy: found by the test). One dialog
+      (`app-settings` = Permissions): space Home → Permissions (join, post, comment, vote, edit); Chat settings (post +
+      each channel's own); Board settings (read, post, comment, vote, rules); Notes settings (edit). Live (17573):
+      Makers space post=admins → Chat and Board inherit; #news override members → P posts in #news, not #general
+      ("Only admins post here"), not on the board, still comments; reverted.
 - (later) Discover's remaining public view: Contacts' profiles. NO public Chat (owner 09-29: Discord has none; its
   Discovery is a directory — Discover's Home lists public spaces with Join). A Discord-style preview channel would be a
   Chat setting later if wanted.

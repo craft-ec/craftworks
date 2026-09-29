@@ -67,7 +67,7 @@ export async function start(ctx) {
         mayPost: () => a.mayPost(),
         onChange: f => (a.onChange(f), b.onChange(f)),
         settled: Promise.all([a.settled, b.settled]),
-        post: (kind, body, opts = {}) => (kind === "post" ? (r.config("board", "read", "members") === "public" ? b : a) : roomOf(opts.in)).post(kind, body, opts),
+        post: (kind, body, opts = {}) => (kind === "post" ? (r.policy("board", "read") === "anyone" ? b : a) : roomOf(opts.in)).post(kind, body, opts),
         react: (id, e, on) => roomOf(id).react(id, e, on),
         remove: id => roomOf(id).remove(id),
       };
