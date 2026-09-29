@@ -128,6 +128,47 @@ export async function mount(ctx, el) {
         sec.querySelector(".facts").replaceChildren(...facts.map(t => Object.assign(document.createElement("li"), { textContent: t })));
       }
       drawSecurity().catch(e => (sec.querySelector(".facts").textContent = `Could not read: ${e?.message ?? e}`));
+
+      // RECOVERY PASSPHRASE: a new device opens the account with it (and the account's id) instead of the words.
+      const rec = document.createElement("section");
+      rec.innerHTML = `<h3>Recovery passphrase</h3>
+        <p class="note">Set one to log in on a new device without typing your recovery words: your account's id and this
+        passphrase are enough. The sealed copy is on the network where anyone can try guesses, so make it long — a
+        sentence of 4 or more words.</p>
+        <p class="line state">Reading…</p>
+        <form class="rec-form"><label>Your recovery words (once, to seal them) <textarea name="words" rows="2" autocomplete="off" spellcheck="false" required></textarea></label>
+          <label>Passphrase (12 or more) <input name="passphrase" type="password" minlength="12" autocomplete="off" required></label>
+          <label>Confirm it <input name="again" type="password" minlength="12" autocomplete="off" required></label>
+          <button>Set the passphrase</button> <button type="button" class="clear">Remove it</button></form>
+        <p class="line said"></p>`;
+      box.append(rec);
+      const recovery = await ctx.require("recovery");
+      const recSaid = rec.querySelector(".said");
+      const recState = async () => {
+        const on = await recovery.has().catch(() => false);
+        rec.querySelector(".state").textContent = on ? "A recovery passphrase is set." : "No recovery passphrase yet.";
+        rec.querySelector(".clear").hidden = !on;
+      };
+      recState();
+      const recForm = rec.querySelector(".rec-form");
+      recForm.onsubmit = async e => {
+        e.preventDefault();
+        if (recForm.passphrase.value !== recForm.again.value) return (recSaid.textContent = "The two passphrases differ.");
+        recSaid.textContent = "Sealing (a few seconds: the stretch that makes guessing slow)…";
+        try {
+          await recovery.set(recForm.words.value, recForm.passphrase.value);
+          recForm.reset();
+          recSaid.textContent = "Set. On a new device: Log in → Use a passphrase instead.";
+          recState();
+        } catch (err) {
+          recSaid.textContent = `Not set: ${err?.message ?? err}`;
+        }
+      };
+      rec.querySelector(".clear").onclick = async () => {
+        await recovery.clear().catch(err => (recSaid.textContent = err.message));
+        recSaid.textContent = "Removed.";
+        recState();
+      };
     },
 
     async storage() {

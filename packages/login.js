@@ -47,7 +47,8 @@ export async function start(ctx) {
               <label>PIN <input name="pin" type="password" inputmode="numeric" autocomplete="off" required></label>
               <button>Log in</button>
               <p class="said"></p>
-              <button type="button" class="swap">Use recovery words instead</button>
+              <button type="button" class="swap" data-to="words">Use recovery words instead</button>
+              <button type="button" class="swap" data-to="pass">Use a passphrase instead</button>
             </form>
             <form class="words" hidden>
               <strong>Log in with recovery words</strong>
@@ -57,7 +58,18 @@ export async function start(ctx) {
               <label>Confirm the PIN <input name="again" type="password" minlength="6" autocomplete="off" required></label>
               <button>Log in</button>
               <p class="said"></p>
-              <button type="button" class="swap">Back to PIN</button>
+              <button type="button" class="swap" data-to="device">Back to PIN</button>
+            </form>
+            <form class="pass" hidden>
+              <strong>Log in with your passphrase</strong>
+              <p class="note">On a new node, without your words: your account's id and the passphrase you set (Account → Security).</p>
+              <label>Your account's id <input name="id" autocomplete="off" spellcheck="false" placeholder="did:craftec:…" required></label>
+              <label>Passphrase <input name="passphrase" type="password" autocomplete="off" required></label>
+              <label>Create a PIN (6 or more) <input name="pin" type="password" minlength="6" autocomplete="off" required></label>
+              <label>Confirm the PIN <input name="again" type="password" minlength="6" autocomplete="off" required></label>
+              <button>Log in</button>
+              <p class="said"></p>
+              <button type="button" class="swap" data-to="device">Back to PIN</button>
             </form>
           </div>
           <div data-panel="register" hidden>
@@ -127,13 +139,11 @@ export async function start(ctx) {
           if (r) say(form, why(r));
         });
 
-      // The Login tab's two ways, one at a time.
+      // The Login tab's ways — this node's PIN, the recovery words, a passphrase — one at a time.
       for (const b of box.querySelectorAll("button.swap")) {
         b.addEventListener("click", () => {
-          const [d, w] = [q("form.device"), q("form.words")];
-          d.hidden = !d.hidden;
-          w.hidden = !w.hidden;
-          (d.hidden ? w : d).querySelector("textarea, input").focus();
+          for (const f of ["device", "words", "pass"]) q(`form.${f}`).hidden = f !== b.dataset.to;
+          q(`form.${b.dataset.to}`).querySelector("textarea, input").focus();
         });
       }
       const device = q("form.device");
@@ -149,6 +159,14 @@ export async function start(ctx) {
           return { error: String(e) };
         }
         return auth.join(entropy, words.pin.value);
+      });
+
+      // A PASSPHRASE: the words' entropy out of the account's recovery copy, then as with the words.
+      const pass = q("form.pass");
+      on(pass, async () => {
+        if (pass.pin.value !== pass.again.value) return { error: "The two PINs differ." };
+        const entropy = await (await ctx.require("recovery")).open(pass.id.value, pass.passphrase.value);
+        return auth.join(entropy, pass.pin.value);
       });
 
       // REGISTER: the PIN, then the new words shown once, then the account.

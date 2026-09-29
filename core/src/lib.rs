@@ -647,6 +647,20 @@ mod js {
             account::words(entropy).ok_or_else(|| err("recovery entropy: 16 or 32 bytes".into()))
         }
 
+        /// RECOVERY: the words' entropy sealed under a passphrase for the account `did` (salt 16 and nonce 24 bytes of
+        /// fresh randomness from the page) — `account::passphrase_seal`.
+        pub fn recovery_seal(passphrase: &str, did: &[u8], entropy: &[u8], salt: &[u8], nonce: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            let salt: [u8; 16] = salt.try_into().map_err(|_| err("a salt is 16 bytes".into()))?;
+            let nonce: [u8; 24] = nonce.try_into().map_err(|_| err("a nonce is 24 bytes".into()))?;
+            let sealed = account::passphrase_seal(passphrase, &b32(did)?, entropy, salt, nonce).ok_or_else(|| err("could not seal the words".into()))?;
+            Ok(js_sys::Uint8Array::from(&sealed[..]))
+        }
+        /// The words' entropy out of a recovery copy, with its passphrase; an error if it does not open.
+        pub fn recovery_open(passphrase: &str, did: &[u8], sealed: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            let e = account::passphrase_open(passphrase, &b32(did)?, sealed).ok_or_else(|| err("that passphrase does not open this account's recovery".into()))?;
+            Ok(js_sys::Uint8Array::from(&e[..]))
+        }
+
         /// The entropy of 12 or 24 BIP39 words; an error names why not.
         pub fn entropy_of(words: &str) -> Result<js_sys::Uint8Array, JsValue> {
             account::entropy(words)

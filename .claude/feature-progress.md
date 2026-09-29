@@ -465,7 +465,11 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       @mentions (suggested while typing; a message mentioning you stands out). Live X↔Y: quote, 👍 chip, mention highlighted.
 - [x] 1c edit (inline, "(edited)"); the newest 60 shown, earlier on asking. FIXED on the way: an end-aligned grid
       made the top of a long room unreachable (flex column + margin-top:auto). Live: 60 of 71 → 71, from the top.
-- [ ] 2a account key sealed on the network: open with words or a passphrase (passkey slot for #5764)
+- [x] 2a recovery by passphrase (`recovery`; `account::passphrase_seal`: Argon2id 64 MiB ×3, XChaCha20-Poly1305, DID
+      as associated data) in the account's public tail `recovery`; set in Account → Security (the words once); login
+      "Use a passphrase" (id + passphrase → the words' entropy → auth.join). New words drop the copy. Passkey: a second
+      copy sealed with its PRF once #5764 lands. Live: set 1.2 s; wrong passphrase refused; new device B logged in as
+      Z in 2 s and read Z's note.
 - [ ] 2b removing a device refreshes the DID's member in every space
 - [ ] 3 social content: posts, comments, votes; a feed from follows
 - [ ] 4 upkeep: a member's new device picked up at once; prune old mail rows and spent key-package batches

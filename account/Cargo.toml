@@ -21,3 +21,5 @@ sha2 = { version = "0.10", default-features = false }
 bs58 = "0.5"
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+# The recovery words sealed under a passphrase (a new device opens the account without the words).
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }

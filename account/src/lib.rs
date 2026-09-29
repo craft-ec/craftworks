@@ -143,6 +143,40 @@ pub fn vault_open(enc_seed: &[u8; 32], vault: &[u8]) -> Option<[u8; 32]> {
     pt.try_into().ok()
 }
 
+/// RECOVERY BY PASSPHRASE: the words' entropy sealed under a key stretched from a passphrase (Argon2id, 64 MiB, 3
+/// passes), so a new device opens the account with the passphrase instead of typing the words. The sealed copy lives on
+/// the network where anyone may fetch it, so the stretch is what stands between a guess and the account: the
+/// passphrase must be long. The DID is bound in (associated data): a copy moved to another account does not open.
+/// `CWR1 ‖ salt (16) ‖ nonce (24) ‖ sealed`. The caller supplies the randomness (salt, nonce).
+const RECOVERY: &[u8; 4] = b"CWR1";
+const RECOVERY_M_KIB: u32 = 64 * 1024;
+const RECOVERY_T: u32 = 3;
+
+fn recovery_key(passphrase: &str, salt: &[u8; 16]) -> Option<[u8; 32]> {
+    let params = argon2::Params::new(RECOVERY_M_KIB, RECOVERY_T, 1, Some(32)).ok()?;
+    let mut key = [0u8; 32];
+    argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
+        .hash_password_into(passphrase.as_bytes(), salt, &mut key)
+        .ok()?;
+    Some(key)
+}
+
+pub fn passphrase_seal(passphrase: &str, did: &[u8; 32], entropy: &[u8], salt: [u8; 16], nonce: [u8; 24]) -> Option<Vec<u8>> {
+    use chacha20poly1305::{aead::{Aead, Payload}, KeyInit, XChaCha20Poly1305, XNonce};
+    let key = recovery_key(passphrase, &salt)?;
+    let ct = XChaCha20Poly1305::new((&key).into()).encrypt(XNonce::from_slice(&nonce), Payload { msg: entropy, aad: did }).ok()?;
+    Some([&RECOVERY[..], &salt, &nonce, &ct].concat())
+}
+
+pub fn passphrase_open(passphrase: &str, did: &[u8; 32], sealed: &[u8]) -> Option<Vec<u8>> {
+    use chacha20poly1305::{aead::{Aead, Payload}, KeyInit, XChaCha20Poly1305, XNonce};
+    let rest = sealed.strip_prefix(RECOVERY)?;
+    let (salt, rest) = rest.split_first_chunk::<16>()?;
+    let (nonce, ct) = rest.split_first_chunk::<24>()?;
+    let key = recovery_key(passphrase, salt)?;
+    XChaCha20Poly1305::new((&key).into()).decrypt(XNonce::from_slice(nonce), Payload { msg: ct, aad: did }).ok()
+}
+
 /// ESCROW: a secret (an MLS epoch's) sealed to the account's encryption PUBLIC key (in its key log), so the recovery
 /// words alone open it — and a node, which holds no words, never can (a removed node cannot open what is escrowed after
 /// its removal). X25519 with a one-time key (`eph_seed`, fresh randomness from the caller), then XChaCha20-Poly1305:
@@ -411,6 +445,21 @@ mod tests {
 
     /// MEMBERSHIP: credentials checked against the key log (control: another account's words sign nothing here), and
     /// removals applied in epoch order by removers still in — two nodes removing each other end the same way.
+    /// RECOVERY: the passphrase opens the entropy for its DID only; a wrong passphrase, another DID, or a changed
+    /// byte opens nothing.
+    #[test]
+    fn a_passphrase_opens_the_words_for_its_account_only() {
+        let (did, entropy) = ([0xD1; 32], [7u8; 16]);
+        let sealed = passphrase_seal("correct horse battery staple", &did, &entropy, [1; 16], [2; 24]).unwrap();
+        assert_eq!(passphrase_open("correct horse battery staple", &did, &sealed).as_deref(), Some(&entropy[..]));
+        assert_eq!(passphrase_open("correct horse battery stapler", &did, &sealed), None, "a wrong passphrase");
+        assert_eq!(passphrase_open("correct horse battery staple", &[0xD2; 32], &sealed), None, "another account");
+        let mut bent = sealed.clone();
+        *bent.last_mut().unwrap() ^= 1;
+        assert_eq!(passphrase_open("correct horse battery staple", &did, &bent), None, "a changed byte");
+        assert_ne!(&sealed[44..], &entropy[..], "sealed, not plain");
+    }
+
     #[test]
     fn members_are_the_credentials_minus_the_removals_that_count() {
         let words = [3u8; 16];
