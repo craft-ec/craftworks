@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. The node's code is loaded after the first
 // page is up even where the page needs none: to FOLLOW the app's and the loader's sites (below).
-const VERSION = "23";
+const VERSION = "24";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -364,27 +364,37 @@ export async function run(boot) {
   // FOLLOWING: a node answers a plain GET of a site from the copy it holds, so a node that fetched an app once would
   // keep serving that version. Every page load has this node follow (subscribe to) the app's site and the loader's:
   // the network then sends it each new version. When one lands — the node says the site changed, or its manifest
-  // (read again every minute and on focus) differs from the one this page runs — a notice offers to load it.
+  // (read again every minute and on focus) differs from the one this page runs — the page loads it by itself.
   async function follow(running) {
     const node = await require("node");
     const sites = [stack.appSite(), stack.loaderSite()].filter(Boolean);
     let told = false;
+    // A newer version: LOADED BY ITSELF, at the first moment nothing would be lost — nobody typing, no text waiting
+    // in a box, no dialog open; looked at every 2 s, and taken at once when the page changes or goes out of view.
     const newer = () => {
       if (told) return;
       told = true;
-      ctx.log("newest", { what: "a newer version is on this node" });
-      const n = document.createElement("div");
-      n.setAttribute("role", "status");
-      n.style.cssText =
-        "position:fixed;left:50%;bottom:44px;transform:translateX(-50%);z-index:2147483002;display:flex;gap:10px;align-items:center;" +
-        "background:Canvas;color:CanvasText;border:1px solid #8886;border-radius:999px;box-shadow:0 4px 18px #0004;padding:6px 8px 6px 14px;font-size:.9rem";
-      n.textContent = "A newer version is ready.";
-      const b = document.createElement("button");
-      b.textContent = "Reload";
-      b.style.cssText = "border:0;border-radius:999px;padding:4px 12px;background:AccentColor;color:AccentColorText;cursor:pointer";
-      b.onclick = () => location.reload();
-      n.append(b);
-      document.body.append(n);
+      ctx.log("newest", { what: "a newer version is on this node: loading it when nothing would be lost" });
+      const editable = el => el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+      const busy = () =>
+        !!document.querySelector("dialog[open]") ||
+        editable(document.activeElement) ||
+        [...document.querySelectorAll("textarea, input[type=text], input:not([type])")].some(x => x.value && !x.closest("header, [role=search]") && x.type !== "search");
+      const go = () => {
+        const n = document.createElement("div");
+        n.setAttribute("role", "status");
+        n.style.cssText =
+          "position:fixed;left:50%;bottom:44px;transform:translateX(-50%);z-index:2147483002;background:Canvas;color:CanvasText;" +
+          "border:1px solid #8886;border-radius:999px;box-shadow:0 4px 18px #0004;padding:6px 14px;font-size:.9rem";
+        n.textContent = "Updating to the newest version…";
+        document.body.append(n);
+        setTimeout(() => location.reload(), 400);
+      };
+      const tryNow = () => !busy() && (clearInterval(poll), go());
+      const poll = setInterval(tryNow, 2000);
+      addEventListener("hashchange", () => (clearInterval(poll), go()), { once: true });
+      document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && (clearInterval(poll), location.reload()));
+      tryNow();
     };
     const check = async () => {
       const r = await fetch(new URL("manifest.json", location.href), { cache: "no-store" }).catch(() => null);
