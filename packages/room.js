@@ -260,8 +260,15 @@ export async function start(ctx) {
         fail("Not sent")(err);
       });
     };
-    input.disabled = false;
-    input.focus();
+    // Who may post here (the app's setting in the space): the composer says so when this person may not.
+    const gate = () => {
+      const ok = room.mayPost();
+      input.disabled = !ok;
+      input.placeholder = ok ? `Message ${title}` : "Only admins post here";
+    };
+    gate();
+    room.onChange(gate);
+    if (!input.disabled) input.focus();
     // On screen: read as it arrives (`activity`), until closed.
     const activity = await ctx.require("activity");
     activity.showing(conversation);

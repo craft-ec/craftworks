@@ -109,7 +109,8 @@ export async function mount(ctx, el) {
     </div>`;
   const root = el.querySelector(".keep");
   const said = t => (root.querySelector(".said").textContent = t);
-  let notes, edge, pins, labels, pinUI, labelUI, sp = null;
+  let notes, edge, pins, labels, pinUI, labelUI, sp = null, rs = null;
+  const meId = (await (await ctx.require("space")).account()).id;
   try {
     const storage = await ctx.require("storage");
     edge = await ctx.require("edge");
@@ -118,7 +119,11 @@ export async function mount(ctx, el) {
       const space = await ctx.require("space");
       sp = (await space.mine()).find(s => s.id === ctx.space) ?? null;
       if (!sp) throw new Error("you are not in that space");
-      if (!(await (await ctx.require("roles")).of(sp)).apps().includes("notes")) throw new Error(`${sp.name} does not use Notes: its owner or an admin adds it on the space's Home`);
+      rs = await (await ctx.require("roles")).of(sp);
+      // The space's log read first (its apps and settings are acts in it).
+      await rs.settled;
+      await rs.refresh().catch(() => {});
+      if (!rs.apps().includes("notes")) throw new Error(`${sp.name} does not use Notes: its owner or an admin adds it on the space's Home`);
     }
     [notes, pins, labels, pinUI, labelUI] = await Promise.all([
       sp ? storage.table((await ctx.require("space")).tableOf(sp, "notes"), sp) : storage.table("notes"),
@@ -128,7 +133,7 @@ export async function mount(ctx, el) {
       ctx.require("label-menu"),
     ]);
   } catch (e) {
-    return said(`Could not open your notes: ${e?.message ?? e}`);
+    return said(`Could not open ${ctx.space ? "the notes" : "your notes"}: ${e?.message ?? e}`);
   }
 
   // A row as a note: JSON, or (the first notes) plain text as the body. `pinned` comes from the account's pins.
@@ -306,13 +311,16 @@ export async function mount(ctx, el) {
 
   const render = () => {
     root.classList.toggle("list", list);
-    composer.hidden = archive;
+    // The composer: not in the archive, nor for who may not edit here.
+    composer.hidden = archive || (!!rs && !rs.allows("notes", meId, "edit"));
     if (label && !labels.list().some(l => l.id === label)) label = null; // deleted meanwhile
     bar();
     const q = query.toLowerCase();
     const inLabel = label ? new Set(labels.refs(label, sp ? `notes:${sp.id}/` : "notes:")) : null;
     const all = notes
       .rows()
+      // A space's note written by someone its Notes setting did not let edit then: not counted.
+      .filter(r => !rs || rs.allows("notes", rs.author(r), "edit", Number(note(r).edited) || Infinity))
       .map(note)
       .filter(n => n.archived === archive)
       .filter(n => !inLabel || inLabel.has(ref(n.key)))
@@ -389,8 +397,20 @@ export async function mount(ctx, el) {
   labels.onChange(() => lEditor.open && lines());
 
   // THE TOP BAR while Notes is open: search, grid or list, and Notes or Archive.
+  const appSettings = sp ? await ctx.require("app-settings") : null;
+  // Who may edit here: the composer says so when this person may not.
+  const gate = () => {
+    const ok = !rs || rs.allows("notes", meId, "edit");
+    composer.hidden = !ok;
+  };
+  gate();
+  rs?.onChange(() => root.isConnected && (gate(), render()));
   const actions = () => {
     ctx.actions["/notes"] = [
+      // NOTES' OWN SETTINGS in a space (its owner and admins): who may edit.
+      ...(rs?.can(meId, "apps")
+        ? [{ label: "Notes settings", run: () => appSettings.open(sp, "notes", "Notes", [{ key: "edit", label: "Who may add and edit notes", options: [["everyone", "Every member"], ["admins", "Admins only"]] }]) }]
+        : []),
       { search: v => ((query = v), render()), placeholder: sp ? `Search ${sp.name}'s notes` : "Search your notes", value: query },
       { label: list ? "Grid view" : "List view", run: () => ((list = !list), render(), actions()) },
       { label: "Archive", on: archive, run: () => ((archive = !archive), render(), actions()) },

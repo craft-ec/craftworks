@@ -11,7 +11,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [posts, directory, person, theme, space, roles] = await Promise.all(["posts", "directory", "person", "theme", "space", "roles"].map(n => ctx.require(n)));
+  const [posts, directory, person, theme, space, roles, appSettings] = await Promise.all(["posts", "directory", "person", "theme", "space", "roles", "app-settings"].map(n => ctx.require(n)));
   const me = (await space.account()).id;
   let sort = "hot";
   // The route: what is shown.
@@ -260,7 +260,32 @@ export async function mount(ctx, el) {
       const r = await roles.of(sp);
       await r.refresh().catch(() => {});
       const n = r.members().length;
-      return [h("div", { className: "panel" }, h("h3", { textContent: `b/${sp.name}` }), h("p", { textContent: `${n} member${n === 1 ? "" : "s"} · you: ${r.role(me) ?? "member"}` }), create)];
+      // BOARD'S OWN SETTINGS (its owner and admins): who may post, and its rules (shown here).
+      const rules = r.config("board", "rules", "");
+      const settingsBtn = r.can(me, "apps")
+        ? h("button", {
+            type: "button",
+            className: "ghost",
+            textContent: "Board settings",
+            onclick: () =>
+              appSettings.open(sp, "board", "Board", [
+                { key: "post", label: "Who may post (every member may comment and vote)", options: [["everyone", "Every member"], ["admins", "Admins only"]] },
+                { key: "rules", label: "Rules (shown beside the board)" },
+              ]),
+          })
+        : null;
+      const mayPost = r.allows("board", me, "post");
+      return [
+        h(
+          "div",
+          { className: "panel" },
+          h("h3", { textContent: `b/${sp.name}` }),
+          h("p", { textContent: `${n} member${n === 1 ? "" : "s"} · you: ${r.role(me) ?? "member"}` }),
+          mayPost ? create : h("p", { textContent: "Only admins post here; comment and vote on any post." }),
+          settingsBtn,
+        ),
+        rules ? h("div", { className: "panel" }, h("h3", { textContent: "Rules" }), h("p", { className: "text", style: "white-space: pre-wrap", textContent: rules })) : null,
+      ].filter(Boolean);
     }
     const by = w.by ?? me;
     return [

@@ -89,7 +89,8 @@ export function mount(ctx, el) {
     const box = el.querySelector(".name");
     const app = ctx.apps.find(a => a.route === ctx.route);
     const here = ctx.route === "/" || ctx.route === "/space" ? "Home" : ctx.route === "/account" ? "Account" : (app?.name ?? "");
-    const session = await ctx.require("login").then(l => l.session()).catch(() => null);
+    // Asked quietly (never a login dialog: the header is on every page).
+    const session = await ctx.require("auth").then(a => a.check()).catch(() => null);
     if (n !== drawing) return;
     if (!session) return box.replaceChildren(here);
     let entries;

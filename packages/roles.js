@@ -19,6 +19,10 @@
 //   r.invites()              // the invite codes in force: [{ code, by, at, expires, uses, admitted }]
 //   r.apps()                 // the APPS the space uses (chat, board, notes): an `app` act ({ app, on }) adds or
 //                            // removes one; a new space has none (its Home and settings only)
+//   r.config(app, key, dflt) // an APP's setting in this space (a `config` act: { app, key, value }, by who may `apps`):
+//                            // Chat `post`, Board `post` and `rules`, Notes `edit`
+//   r.allows(app, did, key, at) // may that person do it in that app here — as the setting was at `at` (an item's time:
+//                            // a change never hides what came before it): "everyone" (a member) or "admins"
 //   await r.act({ act: "grant", did, role })   // an act, as this person (refused here if it would not count)
 //   await r.grant(did, role)  r.onChange(fn)  r.settled
 export async function start(ctx) {
@@ -77,6 +81,8 @@ export async function start(ctx) {
     let owner = first;
     let invites = new Map();
     let apps = new Map();
+    let configs = new Map();
+    let history = new Map(); // app/key → [{ at, value }], in the order they counted
     let bans = new Set();
     function replay() {
       const acts = [];
@@ -92,6 +98,8 @@ export async function start(ctx) {
       roles = new Map(owner ? [[owner, "owner"]] : []);
       invites = new Map();
       apps = new Map();
+      configs = new Map();
+      history = new Map();
       const removed = new Set();
       const banned = new Set();
       const roleAt = d => (removed.has(d) ? null : (roles.get(d) ?? "member"));
@@ -110,7 +118,8 @@ export async function start(ctx) {
           (a.act === "invite" && CAN[r]?.has("invite") && typeof a.code === "string" && a.code && !invites.has(a.code)) ||
           (a.act === "revoke-invite" && inv && (inv.by === a.by || CAN[r]?.has("moderate"))) ||
           (a.act === "admitted" && CAN[r]?.has("invite") && inv && live(inv, a.at) && a.did && !banned.has(a.did)) ||
-          (a.act === "app" && CAN[r]?.has("apps") && APPS.includes(a.app));
+          (a.act === "app" && CAN[r]?.has("apps") && APPS.includes(a.app)) ||
+          (a.act === "config" && CAN[r]?.has("apps") && APPS.includes(a.app) && typeof a.key === "string" && a.key.length <= 32);
         if (!ok) continue;
         if (a.act === "grant") roles.set(a.did, a.role);
         // Removed: out, and back only by an invite or a code (which clears it). Banned: out, and never back until unbanned.
@@ -131,6 +140,11 @@ export async function start(ctx) {
         if (a.act === "admitted" && !inv.admitted.includes(a.did)) inv.admitted.push(a.did);
         if (a.act === "admitted") removed.delete(a.did);
         if (a.act === "app") apps.set(a.app, !!a.on);
+        if (a.act === "config") {
+          const k = `${a.app}/${a.key}`;
+          configs.set(k, a.value);
+          (history.get(k) ?? history.set(k, []).get(k)).push({ at: Number(a.at) || 0, value: a.value });
+        }
         counted.push(a);
       }
       for (const d of removed) roles.set(d, null);
@@ -161,6 +175,13 @@ export async function start(ctx) {
       acts: kind => (kind ? counted.filter(a => a.act === kind) : [...counted]),
       invites: () => [...invites.values()].filter(i => live(i)),
       apps: () => APPS.filter(x => apps.get(x) === true),
+      config: (app, key, dflt = null) => configs.get(`${app}/${key}`) ?? dflt,
+      allows: (app, did, key = "post", at = Infinity) => {
+        const who = role(did);
+        if (!who) return false;
+        const then = (history.get(`${app}/${key}`) ?? []).filter(x => x.at <= at).pop()?.value ?? "everyone";
+        return then === "admins" ? RANK[who] >= RANK.admin : true;
+      },
       banned: did => bans.has(did),
       bannedList: () => [...bans],
       // This node was removed from the space's group: it reads nothing newer.
@@ -178,7 +199,7 @@ export async function start(ctx) {
       },
       async act(a) {
         if (!me) throw new Error("nobody is logged in");
-        const need = { grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite" }[a.act];
+        const need = { grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite" }[a.act];
         if (!need || !can(me.id, need)) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
         await t.put(newId(), JSON.stringify({ ...a, at: Date.now() }));
       },

@@ -57,15 +57,8 @@ export async function mount(ctx, el) {
     const may = r.can(me, "apps");
     const said = h("p", { className: "said", hidden: true });
     const members = r.members();
-    // Its settings; the Channels tab changes the space's channels (`conversation.channels`).
-    const openSettings = async tab => {
-      const c = await conversation.channels(sp);
-      settings.open(sp, {
-        tab,
-        channels: { list: () => c.list(), add: n => c.add(n), rename: (x, n) => c.rename(x, n), remove: x => c.remove(x) },
-        left: () => (location.hash = "#/"),
-      });
-    };
+    // Its settings: the space's own (members and roles, invites, the log, leaving); each app's are in the app.
+    const openSettings = tab => settings.open(sp, { tab, left: () => (location.hash = "#/") });
     const tile = a => {
       const k = keyOf(a);
       const used = on.includes(k);

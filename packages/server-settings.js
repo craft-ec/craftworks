@@ -52,7 +52,6 @@ export async function start(ctx) {
   const TABS = [
     ["overview", "Overview"],
     ["members", "Members & roles"],
-    ["channels", "Channels"],
     ["invites", "Invites"],
     ["log", "Moderation log"],
   ];

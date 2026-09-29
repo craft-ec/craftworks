@@ -9,8 +9,8 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [space, keys, directory, roomUI, conversation, theme, roles, moderation, person, activity] = await Promise.all(
-    ["space", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "person", "activity"].map(n => ctx.require(n)),
+  const [space, keys, directory, roomUI, conversation, theme, roles, moderation, person, activity, appSettings] = await Promise.all(
+    ["space", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "person", "activity", "app-settings"].map(n => ctx.require(n)),
   );
   const account = await space.account();
   el.classList.add("cw-fill");
@@ -106,6 +106,7 @@ export async function mount(ctx, el) {
       [rs, mod] = await Promise.all([roles.of(s), moderation.of(s)]);
       await rs.refresh();
       if (server !== s) return;
+      menu();
       if (rs.left) {
         const gone = `You were removed from ${s.name}.`;
         chans.replaceChildren();
@@ -225,8 +226,32 @@ export async function mount(ctx, el) {
     const c = cid && list().find(x => x.id.endsWith(`/${cid}`));
     if (c && channel?.id !== c.id) openChannel(c);
   };
-  ctx.actions["/chat"] = [];
-  dispatchEvent(new CustomEvent("craftworks:actions"));
+  // CHAT'S OWN SETTINGS (its owner and admins): who may post, and its channels. The space's settings are its Home's.
+  const CHANNEL_ROW = c => {
+    const name = Object.assign(document.createElement("input"), { value: c.name, ariaLabel: "Channel name" });
+    const row = Object.assign(document.createElement("div"), { className: "row" });
+    const b = (t, f) => Object.assign(document.createElement("button"), { type: "button", textContent: t, onclick: f });
+    row.append(name, b("Rename", () => channelOps.rename(c, name.value.trim()).catch(e => say(e.message))), b("Delete", () => channelOps.remove(c).then(() => row.remove(), e => say(e.message))));
+    return row;
+  };
+  const chatSettings = () =>
+    appSettings.open(server, "chat", "Chat", [{ key: "post", label: "Who may post", options: [["everyone", "Every member"], ["admins", "Admins only"]] }], {
+      extra: async host => {
+        const draw = () => {
+          const add = Object.assign(document.createElement("input"), { placeholder: "New channel", ariaLabel: "New channel" });
+          const go = Object.assign(document.createElement("button"), { type: "button", textContent: "Add", onclick: () => add.value.trim() && channelOps.add(add.value.trim()).then(draw, e => say(e.message)) });
+          const row = Object.assign(document.createElement("div"), { className: "row" });
+          row.append(add, go);
+          host.replaceChildren(Object.assign(document.createElement("h4"), { textContent: "Channels" }), ...list().map(CHANNEL_ROW), row);
+        };
+        draw();
+      },
+    });
+  const menu = () => {
+    ctx.actions["/chat"] = server && rs?.can(account.id, "apps") ? [{ label: "Chat settings", run: chatSettings }] : [];
+    dispatchEvent(new CustomEvent("craftworks:actions"));
+  };
+  menu();
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/chat" && at());
   await at();
 }

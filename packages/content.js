@@ -19,6 +19,7 @@
 //   await room.react(id, "👍", on)             // this person's reaction to an item, on or off
 //   await room.edit(id, body)   await room.remove(id)   room.onChange(fn)
 //   room.mayRemove(item)                      // its author, or a moderator here
+//   room.mayPost()   room.postingRule()        // this person may post here now; "everyone" | "admins" (the app's setting)
 //   room.reactions()                           // every reaction row here [{ item, emoji, by }] (also to items elsewhere)
 //   await room.settled                        // every author's feed tried once (more may still arrive)
 //
@@ -50,6 +51,9 @@ export async function start(ctx) {
     const open = container.kind === "public";
     const inSpace = !open && container.scope.kind !== "account";
     const governed = inSpace && container.scope.kind === "server";
+    // The APP this container is (a channel: Chat; a board: Board): its setting says who may post here.
+    const app = { channel: "chat", board: "board" }[container.kind] ?? null;
+    const POSTS = new Set(["message", "post"]);
     const [r, m] = inSpace
       ? await Promise.all([ctx.require("roles").then(x => x.of(container.scope)), governed ? ctx.require("moderation").then(x => x.of(container.scope)) : null])
       : [null, null];
@@ -82,7 +86,9 @@ export async function start(ctx) {
         .rows()
         .filter(row => !hidden.has(row.key))
         .map(item)
-        .filter(it => it && !unseen.has(it.by));
+        .filter(it => it && !unseen.has(it.by))
+        // A post or message by someone the app's setting did not allow when it was made: not counted.
+        .filter(it => !(governed && app && POSTS.has(it.kind) && !r.allows(app, it.by, "post", it.at)));
     };
     const reactionsOf = all => all.filter(x => x.kind === "reaction" && x.item && x.emoji && x.by).map(({ item, emoji, by }) => ({ item, emoji, by }));
     const list = () => {
@@ -116,6 +122,9 @@ export async function start(ctx) {
       settled: Promise.all([t.settled, r?.settled]).then(() => {}),
       onChange: f => changed.push(f),
       mayRemove: it => it.by === me || (governed && !!r?.can(me, "moderate")),
+      // May this person post here now (the app's setting; a conversation: always).
+      mayPost: () => !(governed && app) || r.allows(app, me, "post"),
+      postingRule: () => (governed && app ? r.config(app, "post", "everyone") : "everyone"),
       async post(kind, body, { re = null, title = null, in: where = null } = {}) {
         const id = newId();
         await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me, ...(re ? { re } : {}), ...(title ? { title } : {}), ...(where ? { in: where } : {}) }));
