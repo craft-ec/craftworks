@@ -1,5 +1,5 @@
 // PERSON, a component: what can be done with a person, from wherever their name is shown (a message, a member list, a
-// conversation, a mail). PERSONAL — message them, friend, follow, hide (their items unseen here), block (hidden, and
+// conversation, a mail). PERSONAL — message them, friend, follow, their posts, hide (their items unseen here), block (hidden, and
 // their welcomes, mail and requests refused) — and, in a SPACE where this person may, as its admin or moderator: their
 // role, remove (back by an invite), ban (never back until unbanned). UI only: the links are `edge.people`'s, friend
 // requests and direct conversations `conversation`'s, roles `roles`', removals and bans `moderation`'s.
@@ -78,8 +78,12 @@ export async function start(ctx) {
 
     function draw() {
       const self = did === me.id;
+      const posts = act("Posts", () => {
+        close();
+        location.hash = `#/social/${did}`;
+      });
       const personal = self
-        ? [el("p", { className: "id", textContent: "This is you." })]
+        ? [el("p", { className: "id", textContent: "This is you." }), el("div", { className: "grid" }, posts)]
         : [
             el(
               "div",
@@ -99,6 +103,7 @@ export async function start(ctx) {
                   ? el("button", { type: "button", textContent: "Friend request sent", disabled: true })
                   : act("Add friend", () => conversation.befriend(did)),
               toggle("follow", "Follow", "Following ✓"),
+              posts,
             ),
             el(
               "div",

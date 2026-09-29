@@ -477,5 +477,10 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       B does not; Y sealed with epoch 2.
       Recovery copy moved from its own public tail to the card row `recovery`. OPEN: rows in the separate `recovery`
       public tail showed 0 rows on other nodes (cause unknown; the mail public tail may be affected — measure it).
-- [ ] 3 social content: posts, comments, votes; a feed from follows
+- [x] 3 social content (`posts` + page Social, `#/social`, `#/social/<did>`; "Posts" in the person menu): posts,
+      comments and votes are `content` in the AUTHOR's public tail `posts` (content's public container: the tail's owner
+      is the author); a vote = reaction ▲/▼ with `item` = the post's ref `<did>/<id>`; a comment/vote on another's post
+      drops `{from}` in the post's public pointer bag (`index.point`, made at post time), resolved by the reader. Feed =
+      own + followed tails. Live (private net): post 0.8 s; Y followed → feed at once; Y's vote + comment via UI; A (not
+      following Y) found both through the bag (score 1, 1 comment).
 - [ ] 4 upkeep: a member's new device picked up at once; prune old mail rows and spent key-package batches

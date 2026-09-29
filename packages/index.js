@@ -9,6 +9,9 @@
 //   await index.inbox()                             // this account's items, opened: [{ … }]
 //   await index.request(code, { … })                // an item (plain) in the bag an INVITE CODE names
 //   await index.requests(code)                      // the items in it: only who holds the code finds the bag
+//   await index.openPointers(ref)                    // a THING's public bag, made (by its author, when it is made)
+//   await index.point(ref, { from })                 // a pointer (plain) to where something about `ref` is: its bag
+//   await index.pointers(ref)                        // the pointers in it (claims: the reader resolves each)
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const space = await ctx.require("space");
@@ -76,8 +79,8 @@ export async function start(ctx) {
     Core.inbox_address(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(`craftworks invite ${String(code).trim().toLowerCase()}`))));
   const openRequests = async code => drop(await codeAddress(code), new Uint8Array(0), "making an invite's bag");
   const request = async (code, item) => drop(await codeAddress(code), enc.encode(JSON.stringify(item)), "asking to join");
-  async function requests(code) {
-    return (await payloadsAt(await codeAddress(code), "reading an invite's requests"))
+  const parse = payloads =>
+    payloads
       .map(p => {
         try {
           return JSON.parse(dec.decode(p));
@@ -86,7 +89,14 @@ export async function start(ctx) {
         }
       })
       .filter(Boolean);
-  }
+  const requests = async code => parse(await payloadsAt(await codeAddress(code), "reading an invite's requests"));
 
-  return { send, inbox, makeInbox, request, requests, openRequests };
+  // A THING's POINTERS (comments and votes on a post: `posts`): a public bag at an address its ref gives, so anyone who
+  // knows the thing finds it. A pointer is plain and unsigned: it says where to look, the reader checks what is there.
+  const refAddress = async ref => Core.inbox_address(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(`craftworks pointers ${ref}`))));
+  const openPointers = async ref => drop(await refAddress(ref), new Uint8Array(0), "making a pointer bag");
+  const point = async (ref, item) => drop(await refAddress(ref), enc.encode(JSON.stringify(item)), "pointing");
+  const pointers = async ref => parse(await payloadsAt(await refAddress(ref), "reading pointers"));
+
+  return { send, inbox, makeInbox, request, requests, openRequests, openPointers, point, pointers };
 }

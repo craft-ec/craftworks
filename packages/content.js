@@ -17,7 +17,12 @@
 //   await room.react(id, "👍", on)             // this person's reaction to an item, on or off
 //   await room.edit(id, body)   await room.remove(id)   room.onChange(fn)
 //   room.mayRemove(item)                      // its author, or a moderator here
+//   room.reactions()                           // every reaction row here [{ item, emoji, by }] (also to items elsewhere)
 //   await room.settled                        // every author's feed tried once (more may still arrive)
+//
+// A PUBLIC container `{ kind: "public", did, name }` is one person's public tail `name` (`directory.publicOf`): only
+// their account writes it, so every item in it is THEIRS, whatever it claims; anyone reads it. Their reactions there
+// may name items anywhere (`posts` keeps votes and comments on others' posts in the voter's own tail).
 export async function start(ctx) {
   const storage = await ctx.require("storage");
   const space = await ctx.require("space");
@@ -26,6 +31,11 @@ export async function start(ctx) {
   // Any conversation names its `messages` table and the `scope` (space) it lives in: a channel, its server; a direct
   // conversation, itself.
   async function tableOf(container) {
+    if (container?.kind === "public") {
+      const t = await (await ctx.require("directory")).publicOf(container.did, container.name);
+      if (!t) throw new Error("that person has no key log yet");
+      return t;
+    }
     if (!container?.messages || !container.scope) throw new Error(`content does not live in a ${container?.kind ?? "nothing"}`);
     return storage.table(container.messages, container.scope);
   }
@@ -34,7 +44,8 @@ export async function start(ctx) {
     const t = await tableOf(container);
     const me = (await space.account()).id;
     // In a space (not the account): its roles (who wrote what) and its moderation (what is hidden).
-    const inSpace = container.scope.kind !== "account";
+    const open = container.kind === "public";
+    const inSpace = !open && container.scope.kind !== "account";
     const [r, m] = inSpace
       ? await Promise.all([ctx.require("roles").then(x => x.of(container.scope)), ctx.require("moderation").then(x => x.of(container.scope))])
       : [null, null];
@@ -46,7 +57,7 @@ export async function start(ctx) {
           kind: v.kind ?? "message",
           body: String(v.body ?? v.text ?? ""),
           at: Number(v.at) || 0,
-          by: (r ? r.author(row) : null) ?? v.by ?? null,
+          by: open ? container.did : ((r ? r.author(row) : null) ?? v.by ?? null),
           re: typeof v.re === "string" ? v.re : null,
           edited: Number(v.edited) || 0,
           item: typeof v.item === "string" ? v.item : null,
@@ -58,14 +69,18 @@ export async function start(ctx) {
     };
     // What this person does not see: what moderation hid (for everyone), and whom they hid or blocked (for them).
     const people = await (await ctx.require("edge")).people();
-    const list = () => {
+    const every = () => {
       const hidden = m ? m.hidden(container.messages) : new Set();
       const unseen = people.unseen();
-      const all = t
+      return t
         .rows()
         .filter(row => !hidden.has(row.key))
         .map(item)
         .filter(it => it && !unseen.has(it.by));
+    };
+    const reactionsOf = all => all.filter(x => x.kind === "reaction" && x.item && x.emoji && x.by).map(({ item, emoji, by }) => ({ item, emoji, by }));
+    const list = () => {
+      const all = every();
       // Reactions gathered onto the items they react to.
       const reactions = new Map();
       for (const x of all) {
@@ -91,6 +106,7 @@ export async function start(ctx) {
     people.onChange(() => changed.forEach(f => f()));
     return {
       list,
+      reactions: () => reactionsOf(every()),
       settled: Promise.all([t.settled, r?.settled]).then(() => {}),
       onChange: f => changed.push(f),
       mayRemove: it => it.by === me || !!r?.can(me, "moderate"),
