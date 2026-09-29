@@ -207,7 +207,23 @@ export async function start(ctx) {
     } else if (where.feed) {
       const [bs, people] = await Promise.all([boards(), following()]);
       out = [...(await Promise.all(bs.map(sp => boardPosts(sp).catch(() => [])))).flat(), ...(await profilePosts([await me(), ...people]))];
-    } else out = await profilePosts([where.by ?? (await me())]);
+    } else {
+      // A PERSON's posts (Reddit's profile): their profile's, and theirs on every board this reader can read — the
+      // public boards (anyone's), and the boards of the spaces this reader is in (their members').
+      const by = where.by ?? (await me());
+      const [bs, pub] = await Promise.all([boards().catch(() => []), publicSpaces().catch(() => [])]);
+      const inside = new Set(bs.map(sp => sp.id));
+      const onBoards = (
+        await Promise.all([
+          ...bs.map(sp => boardPosts(sp).catch(() => [])),
+          ...pub.filter(d => !inside.has(d.id)).map(d => boardPosts(d, { outside: true }).catch(() => [])),
+        ])
+      )
+        .flat()
+        .filter(p => p.by === by);
+      const seen = new Set();
+      out = [...(await profilePosts([by])), ...onBoards].filter(p => !seen.has(p.ref) && seen.add(p.ref));
+    }
     return out.sort(SORTS[sort] ?? SORTS.hot);
   }
 
