@@ -110,6 +110,7 @@ export async function start(ctx) {
     let owner = first;
     let roster = new Set(first ? [first] : []);
     let bans = new Set();
+    let gone = new Set();
     function replay() {
       const rows = t.rows().map(r => [r.key, r.value, r.id ? r.id.slice(0, 64) : null]);
       const next = G.replay(JSON.stringify(rows), JSON.stringify(Object.fromEntries(writers)), first ?? undefined, Date.now());
@@ -121,6 +122,7 @@ export async function start(ctx) {
       owner = gv.owner() ?? null;
       roster = new Set(gv.roster());
       bans = new Set(gv.bans());
+      gone = new Set(gv.gone());
     }
     replay();
     // FROM OUTSIDE: the members are the roster; each one's devices are writers, whose public acts are read too — until
@@ -183,6 +185,8 @@ export async function start(ctx) {
       },
       banned: did => bans.has(did),
       bannedList: () => [...bans],
+      // Out by the acts — removed, banned, left — and not added back: their nodes leave the group (`moderation`).
+      goneList: () => [...gone],
       // This node was removed from the space's group: it reads nothing newer.
       get left() {
         return left;
@@ -213,7 +217,9 @@ export async function start(ctx) {
         if (!me) throw new Error("nobody is logged in");
         if (out) throw new Error("not a member of this space");
         const need = { grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", policy: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite", member: "invite" }[a.act];
-        if (!need || !can(me.id, need)) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
+        // Leaving is any member's own act (the owner hands the space on first).
+        const leaving = a.act === "leave" && role(me.id) && role(me.id) !== "owner";
+        if (!leaving && (!need || !can(me.id, need))) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
         // A public space's acts are public (readers outside must know them); a private one's sealed.
         const toPublic = isPublic() || (a.act === "policy" && (a.action === "read" || a.action === "join") && a.who === "anyone");
         // Its time: now — or when it happened (upkeep let someone in while no page ran: the act says when).

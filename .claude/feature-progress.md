@@ -762,4 +762,29 @@ come with keepers as a new codec version.
       shared; `gov` APPS gains "drive". LIVE on 17573: upload in Drive, New folder, Move into it, the chooser listing
       every space, attach from Your Drive into a space's chat with a device file, the device file listed in both Drives;
       no console errors.
-- [ ] F5b re-key on removal (per-space setting).
+- [ ] F5b ACCESS like traditional access control (owner 09-30: "fix the gaps … re-key in the background, queued,
+      trigger based"). ARCHITECTURE §6 Access rewritten. Phases:
+  - [x] R1 one owner of a file's key: `k/<id>` rows in the space's `files` table; refs carry `id` + `in`; readers
+        resolve through the row. Drive-page uploads follow the space's read policy.
+  - [x] R2 due rows re-keyed by any member's page (derived from the table: salt `n`, pub vs policy, adopted, no `h`);
+        salt rotated when a removal is in the group; adopt on cross-space attach / Save to Drive; a post made private.
+  - [x] R3 own uploads kept on removal (the removed page copies them into its own space); public copies carry the
+        current key.
+  - [ ] R4 the delegate works due rows on wake-up (no page open).
+  - [x] R5 leaving a space removes the leaver's nodes from its group (a leave = a removal): gov `leave` act + `gone`
+        set (test 12/12), moderation.enforce takes out gone DIDs' nodes (upkeep, every 30 s on an admin's page).
+  - [ ] R6 BURN old fragments at re-key (immediate revocation, not "fade"): a fragment contract whose params carry
+        H(burn secret from the space's salt) — needs salt history and a measurement of whether an update reaches the
+        network's cached copies.
+    Also fixed on the way: a removed member ignored welcomes to a space still listed (re-invite never worked); an
+    inviter could reuse a spent key package from a stale card (table `keypacks`); ban/leave acts name nodes; any
+    member (not only admins) takes gone members' nodes out of the group; per-row owner rank + takeover, progress in
+    the space table. fx/fy: B rejoined, uploaded, left → own file copied in 12 s; A: B out, salt rotated.
+    OPEN (pre-existing, measured): a space table's writers are the CURRENT group's devices only
+    (storage.js space `writers`), so everything a removed/left/banned member wrote vanishes for everyone (their posts,
+    messages, file key rows) — against roles' "what they wrote is still theirs". Fix needs gone members' feeds read up
+    to their head at removal (bounded, since they keep old epoch keys). Also space RK on fx: re-invites after the
+    spent-package welcome never open (WelcomeKeyPackageNotFound) while fresh spaces RK2/RK3 invite fine — cause unknown.
+    Verified (09-30): 17573 — rotate stand-in re-keyed in 3 s, bytes equal via the old ref; board public→members
+    re-keyed in 8 s; adopted copy in 3 s. fx/fy two accounts — A removes B: salt 0→1 and the file re-keyed 4 s
+    after, A reads by id alone; B: left, the new row unreadable, its salt view 0.

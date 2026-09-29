@@ -1243,6 +1243,10 @@ mod js {
         pub fn bans(&self) -> Vec<String> {
             self.0.bans.iter().cloned().collect()
         }
+        /// Out by the acts (removed, banned, left) and not added back.
+        pub fn gone(&self) -> Vec<String> {
+            self.0.gone.iter().cloned().collect()
+        }
         pub fn roster(&self) -> Vec<String> {
             self.0.roster.iter().cloned().collect()
         }

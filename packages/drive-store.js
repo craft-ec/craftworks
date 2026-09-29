@@ -26,8 +26,8 @@ export async function start(ctx) {
   }
   const tableOf = sp => (shared(sp) ? storage.table(space.tableOf(sp, "drive"), sp) : storage.table("drive"));
   const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
-  // A row's id: the file's (its index root; an inline file's own hash) — the same file listed twice is one row.
-  const idOf = async ref => (ref.root ? ref.root : hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ref.inline ?? ""))).slice(0, 32));
+  // A row's id: the file's (its id — its first index root; an inline file's own hash) — the same file listed twice is one row.
+  const idOf = async ref => ref.id ?? ref.root ?? hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ref.inline ?? ""))).slice(0, 32);
   const clean = f => `/${String(f ?? "").split("/").map(x => x.trim()).filter(Boolean).join("/")}`;
 
   async function add(ref, { space: sp = null, from = null, folder = "/" } = {}) {
@@ -37,13 +37,16 @@ export async function start(ctx) {
     const tables = [await tableOf(null), ...(shared(sp) && (await usesDrive(sp)) ? [await tableOf(sp)] : [])];
     for (const t of tables) {
       await t.settled;
-      if (!t.rows().some(r => r.key === `f/${id}` && r.value)) await t.put(`f/${id}`, JSON.stringify(row));
+      // Listed once; listed again only when the file moved spaces (adopted: its reference names the new one).
+      const had = t.rows().find(r => r.key === `f/${id}` && r.value);
+      const was = had ? parse(had) : null;
+      if (!was || (was.ref.in ?? null) !== (ref.in ?? null)) await t.put(`f/${id}`, JSON.stringify(was ? { ...was, ref, id: undefined } : row));
     }
     return id;
   }
 
   async function upload(file, { space: sp = null, public: pub = false, from = null, folder = "/", onProgress = () => {} } = {}) {
-    const ref = await files.put(file, { space: sp, public: pub, onProgress });
+    const ref = await files.put(file, { space: sp, public: pub, app: from?.app ?? "drive", onProgress });
     await add(ref, { space: sp, from, folder }).catch(e => ctx.log("drive", { what: `listing ${file.name}: ${e.message}` }));
     return ref;
   }
@@ -64,6 +67,8 @@ export async function start(ctx) {
       .filter(r => r.key.startsWith("f/") && r.value)
       .map(parse)
       .filter(Boolean)
+      // A reference from before files named their space: a space's Drive lists its own.
+      .map(r => (r.ref.inline || r.ref.id ? r : { ...r, ref: { ...r.ref, id: r.ref.root, ...(shared(sp) ? { in: sp.id } : {}) } }))
       .sort((a, b) => b.at - a.at);
   }
   async function folders(sp = null) {

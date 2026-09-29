@@ -7,7 +7,7 @@
 // readers learn it is that DID's).
 //
 //   const directory = await ctx.require("directory");
-//   await directory.card(did)                 // { did, handle, inbox, keyPackage }, or null (keyPackage: one, at random)
+//   await directory.card(did)                 // { did, handle, inbox, keyPackage, keyPackages }, or null (keyPackage: one, at random)
 //   await directory.publish({ handle })       // this person's handle, and their key packages
 //   await directory.handle(did)               // their handle, or null (each card read once per page)
 //   directory.shown(did, handle)              // how a person is SHOWN everywhere: `pat#8r4orC`
@@ -48,13 +48,14 @@ export async function start(ctx) {
           return [];
         }
       })(),
-      // The DID's key packages (a list; one picked at random for each conversation started).
-      keyPackage: (() => {
+      // The DID's key packages (a list; one picked at random for each conversation started — `keyPackages`: all).
+      ...(() => {
         let list = [];
         try {
           list = JSON.parse(rows.find(r => r.key === "kp")?.value ?? "[]");
         } catch {}
-        return Array.isArray(list) && list.length ? list[Math.floor(Math.random() * list.length)] : null;
+        list = Array.isArray(list) ? list.filter(x => typeof x === "string") : [];
+        return { keyPackages: list, keyPackage: list.length ? list[Math.floor(Math.random() * list.length)] : null };
       })(),
     };
   };

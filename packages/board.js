@@ -425,7 +425,7 @@ export async function mount(ctx, el) {
     // FILES on the post: public where the post is (a public board, a public profile post: keyed by their content, the
     // whole network dedups them), else sealed for the space (or you) — asked as each is picked.
     const spRoles = sp ? await roles.of(sp) : null;
-    const pick = attachments.picker({ space: sp, public: () => (sp ? spRoles.policy("board", "read") === "anyone" : f.elements.audience?.value !== "private") });
+    const pick = attachments.picker({ space: sp, from: { app: "board" }, public: () => (sp ? spRoles.policy("board", "read") === "anyone" : f.elements.audience?.value !== "private") });
     const f = h(
       "form",
       { className: "panel reply" },

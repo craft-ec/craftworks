@@ -8,12 +8,19 @@
 // fragment; a read asks a generation's listed fragments at once and decodes on the first 16 valid, independent ones.
 // Files up to 64 KiB are not coded: they ride inline in the reference.
 //
+// THE KEY'S ONE OWNER: a coded file's current key and root live in ONE row of its space's table `files`, `k/<id>` →
+// { key, root, h, pub, app, n } (n: the salt it is keyed under; -1: public; -2: adopted from another space). A reference
+// names the file by `id` and `in` (its space; null: the account), and a reader who can read that space's rows reads
+// the row: the key the reference carries is for readers outside it. Re-keying (`file-keys`) changes the row alone.
+//
 //   const files = await ctx.require("files");
-//   const ref = await files.put(file, { space, public: false, onProgress })  // { key, root, size, name, type } or
+//   const ref = await files.put(file, { space, public, app, onProgress })  // { id, in, key, root, size, name, type }, or
 //                                                                            // { inline, size, name, type }
 //   const blob = await files.get(ref, { onProgress })                        // the whole file
 //   for await (const bytes of files.stream(ref, { from: 0 })) …             // a generation at a time, in order
 //   const bytes = await files.chunk(ref, i)                                 // one chunk alone (a seek)
+//   const ref2 = await files.adopt(ref, space)          // a file from another space: listed in this one (then copied)
+//   await files.publicity(refs, space, pub)             // the items holding them are (not) read by anyone now
 export async function start(ctx) {
   const { core, glue, ask } = await ctx.require("node");
   const [storage, space] = await Promise.all(["storage", "space"].map(n => ctx.require(n)));
@@ -28,16 +35,93 @@ export async function start(ctx) {
   const b64 = b => btoa(Array.from(b, c => String.fromCharCode(c)).join(""));
   const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 
-  // A SPACE's dedup salt: a secret in its table `files`, made by the first upload there (two made at once: the merge
-  // keeps one, and a file keyed by the other is still the file it is).
-  async function saltOf(sp) {
-    const t = sp && sp.kind !== "account" ? await storage.table(space.tableOf(sp, "files"), sp) : await storage.table("files");
+  const shared = sp => sp && sp.kind !== "account";
+  const table = async sp => {
+    const t = shared(sp) ? await storage.table(space.tableOf(sp, "files"), sp) : await storage.table("files");
     await t.settled;
-    const had = t.rows().find(r => r.key === "salt")?.value;
-    if (had) return bytes(had);
+    return t;
+  };
+  // A SPACE's dedup SALT: a secret in its table `files` — `{ s, n, removals }` (n counts the salts it has had; removals:
+  // the removals it was made after) — made by the first upload there (two made at once: the merge keeps one, and a
+  // file keyed by the other is still the file it is). A new one after a removal (`rotate`, by `file-keys`).
+  const parseSalt = v => {
+    if (!v) return null;
+    if (/^[0-9a-f]{64}$/.test(v)) return { s: bytes(v), n: 0, removals: 0 };
+    try {
+      const o = JSON.parse(v);
+      return { s: bytes(o.s), n: o.n | 0, removals: o.removals | 0 };
+    } catch {
+      return null;
+    }
+  };
+  async function salt(sp) {
+    const t = await table(sp);
+    const had = parseSalt(t.rows().find(r => r.key === "salt")?.value);
+    if (had) return had;
     const s = crypto.getRandomValues(new Uint8Array(32));
-    await t.put("salt", hex(s));
-    return s;
+    await t.put("salt", JSON.stringify({ s: hex(s), n: 0, removals: 0 }));
+    return { s, n: 0, removals: 0 };
+  }
+  async function rotate(sp, removals) {
+    const t = await table(sp);
+    const was = await salt(sp);
+    const s = crypto.getRandomValues(new Uint8Array(32));
+    await t.put("salt", JSON.stringify({ s: hex(s), n: was.n + 1, removals }));
+    return { s, n: was.n + 1, removals };
+  }
+  const keyFor = (h, s) => hex(glue.file_key(bytes(h), s ?? new Uint8Array(0)));
+
+  // THE KEY ROWS: `k/<id>`.
+  const parseRow = r => {
+    try {
+      const v = JSON.parse(r.value);
+      return v?.key && v?.root ? { id: r.key.slice(2), ...v } : null;
+    } catch {
+      return null;
+    }
+  };
+  const rows = async sp => (await table(sp)).rows().filter(r => r.key.startsWith("k/") && r.value).map(parseRow).filter(Boolean);
+  async function rowOf(sp, id) {
+    const r = (await table(sp)).rows().find(x => x.key === `k/${id}` && x.value);
+    return r ? parseRow(r) : null;
+  }
+  const setRow = async (sp, row) => {
+    const { id, ...v } = row;
+    await (await table(sp)).put(`k/${id}`, JSON.stringify({ ...v, at: Date.now() }));
+  };
+  const inOf = sp => (shared(sp) ? sp.id : null);
+  const spaceOf = async id => (id ? ((await space.mine().catch(() => [])).find(s => s.id === id) ?? undefined) : null);
+
+  // A REFERENCE AS IT IS NOW: its key and root from its space's row, where this person reads that space.
+  async function current(ref) {
+    if (!ref || ref.inline || !ref.id) return ref;
+    const sp = await spaceOf(ref.in);
+    if (sp === undefined) return ref;
+    const row = await rowOf(sp, ref.id).catch(() => null);
+    return row ? { ...ref, key: row.key, root: row.root } : ref;
+  }
+
+  // ADOPT a file into a space (attached there from another space's Drive, saved to yours): listed at once with the key
+  // it has, due to be COPIED under this space's salt (`file-keys`). Its hash comes along when this person reads it.
+  async function adopt(ref, sp, { app = null, pub = false } = {}) {
+    if (!ref || ref.inline || (ref.id && (ref.in ?? null) === inOf(sp))) return ref;
+    const now = await current(ref);
+    const from = ref.id ? await spaceOf(ref.in) : undefined;
+    const src = from !== undefined && ref.id ? await rowOf(from, ref.id).catch(() => null) : null;
+    const id = ref.id ?? ref.root;
+    const had = await rowOf(sp, id).catch(() => null);
+    if (!had) await setRow(sp, { id, key: now.key, root: now.root, ...(src?.h ? { h: src.h } : {}), pub: !!pub, app, n: -2 });
+    return { ...now, id, in: inOf(sp) };
+  }
+
+  // PUBLICITY: the items holding these files are read by anyone (or no longer): their rows say so, and a row keyed
+  // public that no longer is becomes due (a public key is never taken back, only replaced).
+  async function publicity(refs, sp, pub) {
+    for (const ref of refs ?? []) {
+      if (!ref?.id || (ref.in ?? null) !== inOf(sp)) continue;
+      const row = await rowOf(sp, ref.id).catch(() => null);
+      if (row && !!row.pub !== !!pub) await setRow(sp, { ...row, pub: !!pub });
+    }
   }
 
   // One PUT: whether the node stored it (a refusal or no answer in 60 s: not).
@@ -47,7 +131,7 @@ export async function start(ctx) {
       () => false,
     );
 
-  async function put(file, { space: sp = null, public: pub = false, onProgress = () => {} } = {}) {
+  async function put(file, { space: sp = null, public: pub = false, app = null, onProgress = () => {} } = {}) {
     const size = file.size;
     const name = file.name ?? "file";
     const type = file.type || "application/octet-stream";
@@ -58,22 +142,55 @@ export async function start(ctx) {
       h.update(new Uint8Array(await file.slice(at, at + SLICE).arrayBuffer()));
       onProgress({ phase: "reading", done: Math.min(at + SLICE, size), size });
     }
-    const key = glue.file_key(h.finish(), pub ? new Uint8Array(0) : await saltOf(sp));
+    const hash = h.finish();
+    const st = pub ? null : await salt(sp);
+    const key = glue.file_key(hash, pub ? new Uint8Array(0) : st.s);
+    const keyHex = hex(key);
+    const root = await store(key, size, name, type, (a, b) => file.slice(a, b).arrayBuffer().then(x => new Uint8Array(x)), onProgress);
+    const id = root;
+    if (!(await rowOf(sp, id).catch(() => null))) await setRow(sp, { id, key: keyHex, root, h: hex(hash), pub: !!pub, app, n: pub ? -1 : st.n });
+    return { id, in: inOf(sp), key: keyHex, root, size, name, type };
+  }
+
+  // STORE a file under `key`: each generation (`slice(from, to)` → its plaintext) coded and put, then the index.
+  // RESUMES from its PROGRESS: an upload's in the account's table `uploads` (by the key); a re-key's in the space's
+  // table (`p/<id>`: whichever member takes the work over goes on from there). Returns the index root.
+  const uploadsProgress = async keyHex => {
+    const ups = await storage.table("uploads");
+    await ups.settled;
+    return {
+      read: () => ups.rows().find(r => r.key === keyHex)?.value,
+      write: v => ups.put(keyHex, v),
+      done: () => ups.remove(keyHex),
+    };
+  };
+  async function progressOf(sp, id) {
+    const t = await table(sp);
+    const k = `p/${id}`;
+    const at = () => {
+      try {
+        return JSON.parse(t.rows().find(r => r.key === k && r.value)?.value ?? "null");
+      } catch {
+        return null;
+      }
+    };
+    return { at, read: () => t.rows().find(r => r.key === k && r.value)?.value, write: v => t.put(k, v), done: () => t.remove(k) };
+  }
+  async function store(key, size, name, type, slice, onProgress = () => {}, progress = null) {
     const keyHex = hex(key);
     const plan = JSON.parse(glue.file_plan(size));
     // RESUME: the generations already stored (the same key: the same fragments at the same addresses).
-    const ups = await storage.table("uploads");
-    await ups.settled;
+    const prog = progress ?? (await uploadsProgress(keyHex));
     let prev = null;
     try {
-      prev = JSON.parse(ups.rows().find(r => r.key === keyHex)?.value ?? "null");
+      prev = JSON.parse(prog.read() ?? "null");
     } catch {}
-    const stored = prev?.stored ?? [];
+    const stored = prev?.key === undefined || prev.key === keyHex ? (prev?.stored ?? []) : [];
     const genBytes = (plan.chunk * GEN);
     for (let g = 0; g < plan.gens; g++) {
       const k = Math.min(GEN, plan.chunks - g * GEN);
       if ((stored[g]?.length ?? 0) >= k + EXTRA) continue;
-      const plain = new Uint8Array(await file.slice(g * genBytes, Math.min(size, (g + 1) * genBytes)).arrayBuffer());
+      const plain = await slice(g * genBytes, Math.min(size, (g + 1) * genBytes));
       const have = new Set((stored[g] ?? []).map(x => x[0]));
       const ok = [...(stored[g] ?? [])];
       const sent = Array.from(core.file_encode(key, size, g, plain, EXTRA)).filter(f => !have.has(f[0]));
@@ -86,7 +203,7 @@ export async function start(ctx) {
       }
       if (ok.length < k) throw new Error(`${name}: generation ${g} could not be stored (${ok.length} of the ${k} it needs)`);
       stored[g] = ok.sort((a, b) => a[0] - b[0]);
-      await ups.put(keyHex, JSON.stringify({ name, size, type, stored, at: Date.now() })).catch(() => {});
+      await prog.write(JSON.stringify({ key: keyHex, name, size, type, stored, at: Date.now() })).catch(() => {});
       onProgress({ phase: "sending", done: Math.min(size, (g + 1) * genBytes), size });
     }
     // The INDEX last: once it is there, the file reads.
@@ -94,9 +211,9 @@ export async function start(ctx) {
     const puts = Array.from(idx.puts);
     const ok = await Promise.all(puts.slice(0, -1).map(p => putOne([0, ...p], `${name}: its index`)));
     if (ok.includes(false) || !(await putOne([0, ...puts.at(-1)], `${name}: its root`))) throw new Error(`${name}: its index could not be stored (the upload resumes)`);
-    await ups.remove(keyHex).catch(() => {});
+    await prog.done().catch(() => {});
     onProgress({ phase: "done", done: size, size });
-    return { key: keyHex, root: idx.root, size, name, type };
+    return idx.root;
   }
 
   // One GET: the state, taken (a file's pieces are read once, never kept in the core), or null.
@@ -170,6 +287,7 @@ export async function start(ctx) {
 
   async function* stream(ref, { from = 0 } = {}) {
     if (ref.inline) return yield unb64(ref.inline);
+    ref = await current(ref);
     const f = await open(ref);
     for (let g = from; g < f.plan.gens; g++) yield await generation(ref, f, g);
   }
@@ -188,6 +306,7 @@ export async function start(ctx) {
   // ONE CHUNK alone (a seek): its systematic fragment, else its whole generation rebuilt.
   async function chunk(ref, i) {
     if (ref.inline) return unb64(ref.inline);
+    ref = await current(ref);
     const f = await open(ref);
     const g = Math.floor(i / GEN);
     const listed = await f.listed(g);
@@ -202,5 +321,30 @@ export async function start(ctx) {
     return all.slice(at, at + f.plan.chunk);
   }
 
-  return { put, get, stream, chunk, plan: size => JSON.parse(glue.file_plan(size)) };
+  // RE-KEY one row (`file-keys`): read under the key it has, coded under `to` (public, or the space's salt now) — the
+  // new key derived from the content's hash, so a step done twice makes the same fragments — the row changed last.
+  // A row with no hash is read once to hash it first.
+  async function recode(sp, row, { pub }) {
+    const old = { key: row.key, root: row.root, name: row.id };
+    const f = await open(old);
+    const size = f.plan.size;
+    let h = row.h;
+    if (!h) {
+      const hs = new glue.FileHasher();
+      for (let g = 0; g < f.plan.gens; g++) hs.update(await generation(old, f, g));
+      h = hex(hs.finish());
+    }
+    const st = pub ? null : await salt(sp);
+    const key = bytes(keyFor(h, pub ? null : st.s));
+    const n = pub ? -1 : st.n;
+    if (hex(key) === row.key) return setRow(sp, { ...row, h, n });
+    const genBytes = f.plan.chunk * GEN;
+    const root = await store(key, size, row.id, "", async a => generation(old, f, Math.floor(a / genBytes)), () => {}, await progressOf(sp, row.id));
+    await setRow(sp, { ...row, key: hex(key), root, h, n });
+  }
+
+  // When a re-key of this row last moved (its progress, else the row): for taking over from a member gone quiet.
+  const lastMoved = async (sp, row) => Math.max(row.at ?? 0, (await progressOf(sp, row.id)).at()?.at ?? 0);
+
+  return { put, get, stream, chunk, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
 }

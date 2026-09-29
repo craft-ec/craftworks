@@ -158,3 +158,38 @@ fn transfer_hands_the_space_on() {
     assert_eq!(g.role(O, true).as_deref(), Some("admin"));
     assert_eq!(g.role(M, true).as_deref(), Some("member"), "the old owner grants nothing");
 }
+
+#[test]
+fn a_member_leaves_and_is_gone_until_added_back() {
+    let g = gov(&[act("1", "nm", 1, json!({"act":"leave"}))]);
+    assert_eq!(g.role(M, true), None, "left");
+    assert!(g.gone.contains(M));
+    assert_eq!(g.counted.len(), 1);
+    // Only oneself; and not the owner (the space is handed on first).
+    let g = gov(&[act("1", "na", 1, json!({"act":"leave","did":M})), act("2", "no", 2, json!({"act":"leave"}))]);
+    assert!(g.gone.is_empty());
+    assert_eq!(g.role(O, false).as_deref(), Some("owner"));
+    // Added back: no longer gone.
+    let g = gov(&[act("1", "nm", 1, json!({"act":"leave"})), act("2", "no", 2, json!({"act":"added","did":M}))]);
+    assert!(!g.gone.contains(M));
+    assert_eq!(g.role(M, true).as_deref(), Some("member"));
+    // Removed and banned are gone too.
+    let g = gov(&[act("1", "no", 1, json!({"act":"remove","did":M})), act("2", "no", 2, json!({"act":"ban","did":X}))]);
+    assert_eq!(g.gone.iter().cloned().collect::<Vec<_>>(), vec![M.to_string(), X.to_string()]);
+}
+
+#[test]
+fn a_leave_and_a_ban_name_their_nodes_so_their_rows_stay_theirs() {
+    let rows = [
+        act("1", "nm2", 1, json!({"act":"leave","did":M,"nodes":["nm2","nm3"]})),
+        act("2", "no", 2, json!({"act":"ban","did":X,"nodes":["nx2"]})),
+    ];
+    let g = gov(&rows);
+    let learned: HashMap<_, _> = g.learned.iter().cloned().collect();
+    assert_eq!(learned.get("nm3").map(String::as_str), Some(M), "a leaver out of the group: its nodes from its own act");
+    assert!(g.gone.contains(M));
+    // Naming nodes it was not written by: nothing learned (and not counted: its writer is nobody's).
+    let g = gov(&[act("1", "nz", 1, json!({"act":"leave","did":M,"nodes":["nq"]}))]);
+    assert!(g.learned.is_empty() && g.gone.is_empty());
+    assert_eq!(learned.get("nx2").map(String::as_str), Some(X));
+}

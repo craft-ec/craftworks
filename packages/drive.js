@@ -149,13 +149,14 @@ export async function mount(ctx, el) {
     return t;
   }
 
-  // UPLOAD into the folder open (a space's Drive: sealed for its members).
+  // UPLOAD into the folder open: a space's Drive read by anyone, public; otherwise sealed for its members (yours: you).
+  const readsAnyone = async () => (sp ? (await (await ctx.require("roles")).of(sp)).policy("drive", "read") === "anyone" : false);
   async function upload(list) {
     for (const file of list) {
       const line = h("div", { textContent: `${file.name}: starting…` });
       ups.append(line);
       drive
-        .upload(file, { space: sp, folder: folder(), from: { app: "drive" }, onProgress: e => (line.textContent = `${file.name}: ${e.phase === "reading" ? "reading" : `${Math.round((100 * e.done) / Math.max(1, e.size))}%`}`) })
+        .upload(file, { space: sp, public: await readsAnyone(), folder: folder(), from: { app: "drive" }, onProgress: e => (line.textContent = `${file.name}: ${e.phase === "reading" ? "reading" : `${Math.round((100 * e.done) / Math.max(1, e.size))}%`}`) })
         .then(
           () => (line.remove(), draw()),
           e => (line.textContent = `${file.name}: not uploaded — ${e.message ?? e}`),

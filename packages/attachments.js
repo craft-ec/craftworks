@@ -115,7 +115,7 @@ export async function start(ctx) {
           ...(rows.length
             ? rows.map(r => {
                 const src = r.ref.preview ?? (isImage(r.ref) && r.ref.inline ? `data:${r.ref.type};base64,${r.ref.inline}` : null);
-                return h("li", { onclick: () => (ready(r.ref), d.close()) }, src ? h("img", { src, alt: "" }) : h("span", { className: "ic", textContent: /^video\//.test(r.ref.type) ? "🎬" : /^image\//.test(r.ref.type) ? "🖼️" : "📄" }), h("span", { className: "n", textContent: r.ref.name }), h("span", { className: "s", textContent: `${sizeOf(r.ref.size)} · ${r.folder}` }));
+                return h("li", { onclick: () => (take(r.ref), d.close()) }, src ? h("img", { src, alt: "" }) : h("span", { className: "ic", textContent: /^video\//.test(r.ref.type) ? "🎬" : /^image\//.test(r.ref.type) ? "🖼️" : "📄" }), h("span", { className: "n", textContent: r.ref.name }), h("span", { className: "s", textContent: `${sizeOf(r.ref.size)} · ${r.folder}` }));
               })
             : [h("li", { textContent: "Nothing in this Drive yet." })]),
         );
@@ -127,6 +127,12 @@ export async function start(ctx) {
       d.addEventListener("close", () => d.remove());
       document.body.append(d);
       d.showModal();
+    }
+    // A file from ANOTHER space's Drive is adopted into this item's space (listed there, then copied under its key):
+    // who reads it is who reads this space.
+    function take(ref) {
+      const pubNow = typeof pub === "function" ? !!pub() : pub;
+      files.adopt(ref, space, { app: from?.app ?? null, pub: pubNow }).then(ready, e => ctx.log("attachments", { what: `${ref.name}: ${e.message ?? e}` }));
     }
     function ready(ref) {
       if (items.some(i => i.ref && (i.ref.root ?? i.ref.inline) === (ref.root ?? ref.inline))) return;
@@ -193,14 +199,15 @@ export async function start(ctx) {
     }
   }
 
-  // SAVE TO DRIVE: a file someone shared, listed in yours (its reference: nothing is copied).
+  // SAVE TO DRIVE: a file someone shared, made yours — listed at once, copied into your space in the background (so
+  // it stays yours whoever leaves where it came from).
   const saveButton = (r, note) =>
     h("button", {
       type: "button",
       className: "save",
       title: "Save to your Drive",
       textContent: "Save to Drive",
-      onclick: e => drive.add(r, { from: { saved: true } }).then(() => ((e.target.textContent = "In Drive ✓"), (e.target.disabled = true)), err => (note.textContent = err.message)),
+      onclick: e => files.adopt(r, null, { app: "drive" }).then(ref => drive.add(ref, { from: { saved: true } })).then(() => ((e.target.textContent = "In Drive ✓"), (e.target.disabled = true)), err => (note.textContent = err.message)),
     });
 
   function show(refs) {

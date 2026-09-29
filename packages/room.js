@@ -83,7 +83,7 @@ export async function start(ctx) {
     const input = el("input", { name: "text", autocomplete: "off", placeholder: `Message ${title}`, disabled: true });
     const suggest = el("ul", { className: "suggest", hidden: true });
     // FILES with a message: sent as picked (sealed for this conversation's members), shown under it.
-    const pick = attachments.picker({ space: conversation.scope ?? null });
+    const pick = attachments.picker({ space: conversation.scope ?? null, from: { app: "chat" } });
     const line = el("div", { className: "line" }, pick.el, input);
     form.append(replying, suggest, line);
     box.append(el("h2", { textContent: title }), msgs, said, form);

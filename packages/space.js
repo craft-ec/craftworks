@@ -134,8 +134,17 @@ export async function start(ctx) {
     return sp;
   }
 
-  // LEAVE: the space out of this person's list — theirs alone to keep, so no owner is asked.
+  // LEAVE: out of the space — a `leave` act (whoever may remove then takes this person's nodes out of the group, and
+  // its files re-key: a leaver reads nothing newer, like one removed) — and out of this person's list. The owner hands
+  // the space on first; theirs is only the list.
   async function leave(sp) {
+    if (sp.kind === "server") {
+      const r = await (await ctx.require("roles")).of(sp).catch(() => null);
+      const me = (await account())?.id;
+      // Naming its devices (written by one of them), so what this person wrote stays theirs once they are out.
+      const nodes = await (await ctx.require("directory")).devices(me).catch(() => []);
+      if (r && !r.left && r.role(me) && r.role(me) !== "owner") await r.act({ act: "leave", did: me, nodes });
+    }
     await (await (await ctx.require("storage")).table(SPACES)).remove(sp.id);
     ctx.log("space", { what: `left ${sp.kind} “${sp.name}”` });
   }

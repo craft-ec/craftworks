@@ -22,8 +22,9 @@ export async function start(ctx) {
       if (joined.length) ctx.log("upkeep", { what: `joined ${joined.length} space(s) from the inbox` });
       for (const sp of (await space.mine()).filter(s => s.kind === "server")) {
         const r = await roles.of(sp).catch(() => null);
-        // Bans hold in the group: whoever is banned and still in it (let in before the ban reached them), out.
-        if (r?.can(me.id, "remove")) {
+        // The acts hold in the group: whoever is banned, removed or has left and is still in it, out — by ANY member
+        // (the acts already decided it; the group's one order refuses a second commit of the same removal).
+        if (r && !r.left && r.role(me.id)) {
           const n = await (await ctx.require("moderation")).of(sp).then(m => m.enforce()).catch(e => (ctx.log("upkeep", { what: `${sp.name}: bans: ${e.message}` }), 0));
           if (n) ctx.log("upkeep", { what: `${sp.name}: ${n} banned device(s) taken out of the group` });
         }

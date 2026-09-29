@@ -171,9 +171,30 @@ time (to disk for large files) and resume by generation.
 dedups it); any other file's from its content and its SPACE's dedup salt (a secret in the space's sealed table; the
 account is the personal space) — members' uploads dedup, and nobody outside can test whether a file is in it.
 
-**Access.** Who reads a file is who reads the row holding its reference: the space's policies and epoch keys
-(ARCHITECTURE §4). Revoking what a removed member could read RE-KEYS the file (a new salt, re-coded, re-uploaded, the
-row updated; the old fragments are no longer kept and fade) — a per-space setting. Only a copy already saved stays.
+**Access.** A file belongs to a SPACE (the account: the personal space), and its current key has ONE owner: the row
+`k/<id>` of the space's table `files` — `{ key, root, h (the content's hash), pub, app, n (the salt it is keyed
+under; -1: public) }`, sealed like every row with the space's newest epoch. A reference names the file by `id` (its
+first root) and `in` (its space); the key it carries is only what a reader outside the space uses (a public copy, a
+mail). So who reads a file is who reads its space's rows — the space's policies and epoch keys — and changing the key
+changes every reference at once. A file brought from another space (attached or saved from another Drive) is ADOPTED:
+listed at once with the key it has, then COPIED under this space's salt.
+
+RE-KEYING, as traditional access control expects, with no job list to keep: a row is due when its key is not the
+one its space calls for, and the table says which —
+- a member REMOVED, banned or LEAVING (a `leave` act; whoever may remove then takes the leaver's nodes out of the
+  group, as a leaver cannot commit their own removal): the next member to see it — once the removal is in the group
+  and its tables write with the newest epoch — writes a new salt (`salt`: `{ s, n + 1, removals }`); every salted row
+  under an older `n` is due;
+- a read policy NARROWED (a board no longer read by anyone), or a post made private: its public rows are due;
+- an adopted row (keyed by another space) is due until copied; a row with no `h` (from before) is hashed first.
+
+Any member's page works the due rows, triggered by the table, the roles and a new epoch (members' nodes on their
+wake-up, with no page open, are the next step): each generation read under the old key and coded under the new — a
+key DERIVED from `h` and the salt, so two members doing the same row make the same fragments at the same addresses (a
+step resumes and needs no claim) — the row changed last. Rows only move forward (`n` up, public to salted), so a
+member on an older view never undoes one. Old fragments are no longer kept and fade. A member out of a space keeps the
+files they uploaded (their page adopts them into their own space and copies them); what they saved before stays — as
+with any access control.
 
 **Video.** Stored as SEGMENTS (CMAF: fragmented MP4, 2–4 s each), each its own coded object, in RENDITIONS that each name
 their codec: AV1 + Opus first, H.264 + AAC for compatibility (a newer codec — AV2 when browsers decode it — is one more

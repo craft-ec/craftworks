@@ -44,7 +44,18 @@ export async function start(ctx) {
     if (did === me.id) throw new Error("that is you");
     const card = await directory.card(did);
     if (!card?.inbox || !card.keyPackage) throw new Error("that person has no card yet");
-    const welcome = await keys.group(sp).add(card.keyPackage);
+    // A key package works ONCE: never one this account used already (a card read before its person renewed it still
+    // lists the one used last time) — kept in the account's table `keypacks`.
+    const used = await (await ctx.require("storage")).table("keypacks");
+    await used.settled;
+    const tagOf = async kp => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(kp)))].slice(0, 16).map(x => x.toString(16).padStart(2, "0")).join("");
+    const tags = await Promise.all(card.keyPackages.map(tagOf));
+    const spent = new Set(used.rows().filter(r => r.value).map(r => r.key));
+    const unused = card.keyPackages.filter((_, i) => !spent.has(tags[i]));
+    if (!unused.length) throw new Error("their card has no key package left unused (it renews when they are next online): try again then");
+    const kp = unused[Math.floor(Math.random() * unused.length)];
+    await used.put(tags[card.keyPackages.indexOf(kp)], String(Date.now()));
+    const welcome = await keys.group(sp).add(kp);
     const { owner, nonce } = sp.governance;
     await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, ...(code ? { code } : {}) });
     ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind}` });
@@ -126,16 +137,22 @@ export async function start(ctx) {
     await index.send(did, { kind: "friend-yes", from: (await space.account()).id, at: Date.now() });
   }
 
+  const welcomesTried = new Set();
   // WELCOMES in this account's inbox: every conversation not yet joined here, joined (with this node's key package).
   async function accept() {
     const me = await space.account();
     if (!me) return [];
-    const listed = new Set((await space.mine()).map(s => s.id));
+    const mine = await space.mine();
     const p = await people();
     const out = [];
     for (const it of await index.inbox()) {
-      if (it.kind !== "welcome" || listed.has(it.space) || p.is("block", it.from)) continue;
-      if (!it.welcome) continue;
+      if (it.kind !== "welcome" || p.is("block", it.from) || !it.welcome) continue;
+      // Joined already — unless REMOVED since: a welcome after that (invited back) opens again. Each tried once here.
+      const had = mine.find(s => s.id === it.space);
+      if (had && !(await keys.group(had).ready().catch(() => null))?.removed) continue;
+      const tried = `${it.space}|${it.welcome.slice(0, 64)}`;
+      if (had && welcomesTried.has(tried)) continue;
+      welcomesTried.add(tried);
       const v = { kind: it.spaceKind, name: it.name, owner: it.owner ?? it.from, nonce: it.nonce ?? null, ...(it.spaceKind === "direct" ? { with: it.from } : {}) };
       try {
         const sp = await space.describe(it.space, v);

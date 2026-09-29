@@ -63,6 +63,19 @@ export async function start(ctx) {
   // votes) live in the sealed table, and while the board reads in public their copy is in the public table too — put
   // there by their own page (`sync`: only an author's own feed can carry their items, so the author's page copies
   // them), taken out again when the board goes private. Outside (`desc`: not a member): the public board alone.
+  // A public copy's files carry the key they have NOW (a file re-keyed: the copy follows; readers outside the space read
+  // the reference alone).
+  async function currentKeys(v) {
+    let it;
+    try {
+      it = JSON.parse(v);
+    } catch {
+      return v;
+    }
+    if (!Array.isArray(it?.files) || !it.files.length) return v;
+    const files = await ctx.require("files");
+    return JSON.stringify({ ...it, files: await Promise.all(it.files.map(f => files.current(f).catch(() => f))) });
+  }
   const boardRoom = sp =>
     opened(`space:${sp.id}`, async () => {
       const [a, b, r] = await Promise.all([content.in(space.board(sp)), content.in(space.board(sp, { pub: true })), roles.of(sp)]);
@@ -77,7 +90,10 @@ export async function start(ctx) {
           const inB = new Map(b.own().map(x => [x.key, x.value]));
           for (const [k, v] of inB) if (!inA.has(k)) (await a.putOwn(k, v), inA.set(k, v));
           if (pubNow()) {
-            for (const [k, v] of inA) if (inB.get(k) !== v) await b.putOwn(k, v);
+            for (const [k, v0] of inA) {
+              const v = await currentKeys(v0);
+              if (inB.get(k) !== v) await b.putOwn(k, v);
+            }
           } else for (const k of inB.keys()) await b.dropOwn(k);
         })().finally(() => (syncing = null)));
       const dedupe = (list, key) => {
@@ -274,6 +290,8 @@ export async function start(ctx) {
       return `space:${sp.id}/${await (await boardRoom(sp)).post("post", body, { title, files })}`;
     }
     const self = await me();
+    // Its files: public exactly when the post is (one picked while "Everyone" was chosen, posted "Only you": re-keyed).
+    await (await ctx.require("files")).publicity(files, null, !only).catch(e => ctx.log("posts", { what: `its files: ${e.message}` }));
     const ref = `${self}/${await (await profileRoom(self)).post("post", body, { title, private: only, files })}`;
     // Its pointer bag, made now (a public post: nobody reading it waits on one that does not exist).
     if (!only) await index.openPointers(ref).catch(e => ctx.log("posts", { what: `the pointer bag of ${ref}: ${e.message}` }));

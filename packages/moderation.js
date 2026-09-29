@@ -42,7 +42,8 @@ export async function start(ctx) {
       // not know of it yet — the identity delegate, by a page's older mandate) taken out of it. How many.
       enforce: async () => {
         await r.refresh();
-        const nodes = r.bannedList().flatMap(did => r.nodesOf(did));
+        // The banned, and anyone the acts put out (removed, or left: a leaver cannot commit their own removal).
+        const nodes = [...new Set([...r.bannedList(), ...r.goneList()])].flatMap(did => r.nodesOf(did));
         if (!nodes.length) return 0;
         await keys.group(r.space).remove(nodes.map(n => n.index));
         await r.refresh();

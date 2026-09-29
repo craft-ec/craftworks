@@ -178,4 +178,6 @@ export function mount(ctx, el) {
   setTimeout(() => ctx.require("activity").catch(() => {}), 1500);
   // UPKEEP on every page too: welcomes joined, askers let in (whichever page is open).
   setTimeout(() => ctx.require("upkeep").catch(() => {}), 2500);
+  // FILE KEYS too: every file on the key its access calls for (a member removed, a board made private), re-keyed here.
+  setTimeout(() => ctx.require("file-keys").catch(() => {}), 4000);
 }

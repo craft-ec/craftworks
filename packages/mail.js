@@ -114,7 +114,7 @@ export async function mount(ctx, el) {
     }
     dlg.onclose = null;
     // FILES: sent as picked (sealed; the mail's recipients read them).
-    const pick = attachments.picker({});
+    const pick = attachments.picker({ from: { app: "mail" } });
     f.querySelector(".cw-att-pick")?.remove();
     f.querySelector(".row").before(pick.el);
     f.onsubmit = async e => {

@@ -84,6 +84,9 @@ pub struct Gov {
     /// The DIDs the acts name as members (the owner, added, admitted, rostered), less the removed.
     pub roster: BTreeSet<String>,
     pub bans: BTreeSet<String>,
+    /// Out of the space by the acts — removed, banned or left — and not added back since: their nodes are taken out of
+    /// the group by whoever may remove (a leaver cannot commit their own removal).
+    pub gone: BTreeSet<String>,
     /// The acts that counted, in order: each with `id` and `by` set.
     pub counted: Vec<Value>,
     /// Node → DID learned from `remove` acts (their nodes' rows stay theirs).
@@ -191,10 +194,20 @@ impl Gov {
     pub fn replay(rows: &[Row], writers: &HashMap<String, String>, first: Option<&str>, now: f64) -> Gov {
         let mut g = Gov { owner: first.map(str::to_string), ..Gov::default() };
         let parsed: Vec<(&Row, Value)> = rows.iter().filter_map(|r| Some((r, serde_json::from_str::<Value>(&r.value).ok().filter(Value::is_object)?))).collect();
-        // Removed members' nodes: theirs.
+        // Removed, banned and leaving members' nodes, as their act names them: theirs (what they wrote still counts as
+        // theirs once they are out of the group). A leave names its own writer.
         let mut writers = writers.clone();
-        for (_, v) in &parsed {
-            if let (Some("remove"), Some(did), Some(nodes)) = (s(v, "act"), some_s(v, "did"), v.get("nodes").and_then(Value::as_array)) {
+        for (row, v) in &parsed {
+            let act = s(v, "act");
+            let did = match act {
+                Some("remove" | "ban") => some_s(v, "did").map(str::to_string),
+                // Self-certifying: written by one of the nodes it names (a node already known stays whose it is).
+                Some("leave") => some_s(v, "did")
+                    .filter(|_| row.writer.as_deref().is_some_and(|w| v.get("nodes").and_then(Value::as_array).is_some_and(|ns| ns.iter().any(|n| n.as_str() == Some(w)))))
+                    .map(str::to_string),
+                _ => None,
+            };
+            if let (Some(did), Some(nodes)) = (did.as_deref(), v.get("nodes").and_then(Value::as_array)) {
                 for n in nodes.iter().filter_map(Value::as_str) {
                     if !writers.contains_key(n) {
                         writers.insert(n.to_string(), did.to_string());
@@ -242,6 +255,8 @@ impl Gov {
                     did.is_some_and(|d| d != by && rank(r) > rank(role_at(&g, &removed, d).as_deref().or(Some("member")))) && can_role(r, "remove")
                 }
                 "unban" => can_role(r, "remove") && banned_did,
+                // LEAVING: a member's own act (the owner hands the space on first).
+                "leave" => r.is_some() && r != Some("owner") && did.is_none_or(|d| d == by),
                 "added" | "member" => invite_ok && did.is_some() && !banned_did,
                 "hide" => can_role(r, "moderate"),
                 "transfer" => r == Some("owner") && did.is_some_and(|d| d != by && !removed.contains(d)),
@@ -285,6 +300,10 @@ impl Gov {
                 }
                 "unban" => {
                     g.bans.remove(did.unwrap());
+                }
+                "leave" => {
+                    removed.insert(by.clone());
+                    g.roles.remove(&by);
                 }
                 "transfer" => {
                     if let Some(o) = g.owner.clone() {
@@ -337,6 +356,7 @@ impl Gov {
             g.roles.insert(d.clone(), None);
             g.roster.remove(d);
         }
+        g.gone = removed;
         g
     }
 }
