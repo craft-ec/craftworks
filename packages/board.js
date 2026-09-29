@@ -11,7 +11,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [posts, directory, person, theme, space, roles, appSettings] = await Promise.all(["posts", "directory", "person", "theme", "space", "roles", "app-settings"].map(n => ctx.require(n)));
+  const [posts, directory, person, theme, space, roles, appSettings, attachments] = await Promise.all(["posts", "directory", "person", "theme", "space", "roles", "app-settings", "attachments"].map(n => ctx.require(n)));
   const me = (await space.account()).id;
   let sort = "hot";
   // The route: what is shown.
@@ -205,6 +205,7 @@ export async function mount(ctx, el) {
         h("div", { className: "meta" }, p.board ? boardLink(p.board) : h("span", { textContent: "profile" }), p.pub ? h("span", { textContent: "· 🌐 public" }) : null, p.private ? h("span", { textContent: "· 🔒 only you" }) : null, h("span", { textContent: "·" }), h("span", { textContent: "Posted by" }), who(p.by), h("time", { textContent: ago(p.at), title: new Date(p.at).toLocaleString() }), p.edited ? h("span", { textContent: "(edited)" }) : null),
         h("h3", { textContent: p.title }),
         p.body ? h("p", { className: "text", textContent: p.body }) : null,
+        attachments.show(p.files),
         acts,
         said,
       ),
@@ -421,6 +422,10 @@ export async function mount(ctx, el) {
   async function submitPage(board) {
     const sp = board ? await posts.boardOf(board) : null;
     const said = h("p", { className: "said", hidden: true });
+    // FILES on the post: public where the post is (a public board, a public profile post: keyed by their content, the
+    // whole network dedups them), else sealed for the space (or you) — asked as each is picked.
+    const spRoles = sp ? await roles.of(sp) : null;
+    const pick = attachments.picker({ space: sp, public: () => (sp ? spRoles.policy("board", "read") === "anyone" : f.elements.audience?.value !== "private") });
     const f = h(
       "form",
       { className: "panel reply" },
@@ -436,15 +441,17 @@ export async function mount(ctx, el) {
           ),
       h("label", {}, "Title", h("input", { className: "field", name: "title", maxLength: 300, autocomplete: "off", required: true })),
       h("label", {}, "Text (optional)", h("textarea", { name: "body" })),
+      pick.el,
       h("div", { className: "row" }, said, h("button", { className: "go", textContent: "Post" })),
     );
     f.onsubmit = async e => {
       e.preventDefault();
       said.hidden = true;
       const btn = f.querySelector("button.go");
+      if (pick.busy()) return errorTo(said)(new Error("Still sending the files: a moment…"));
       btn.disabled = true;
       try {
-        const ref = await posts.submit({ board: sp?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, private: f.elements.audience?.value === "private" });
+        const ref = await posts.submit({ board: sp?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, private: f.elements.audience?.value === "private", files: pick.files() });
         location.hash = `${base()}/p/${ref}`;
       } catch (err) {
         errorTo(said)(err);

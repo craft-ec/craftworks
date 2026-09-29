@@ -366,12 +366,13 @@ export async function start(ctx) {
   // Kept mail is private: the account's table `mailbox` (not `mail`: that name is the public tail's).
   const kept = async () => (await ctx.require("storage")).table("mailbox");
   const mail = {
-    async send(to, subject, body, re = null) {
+    // `files`: references (`files`), sealed in the mail with the rest: its recipients read them.
+    async send(to, subject, body, re = null, files = []) {
       const me = await space.account();
       if (!me) throw new Error("nobody is logged in");
       to = [...new Set(to)];
       if (!to.length) throw new Error("to nobody");
-      const m = { id: `${Date.now().toString(36)}.${newId()}`, from: me.id, to, subject: String(subject ?? ""), body: String(body ?? ""), at: Date.now(), re };
+      const m = { id: `${Date.now().toString(36)}.${newId()}`, from: me.id, to, subject: String(subject ?? ""), body: String(body ?? ""), at: Date.now(), re, ...(files.length ? { files } : {}) };
       const box = await directory.publicOf(me.id, MAIL);
       const cards = await Promise.all(to.map(d => directory.card(d)));
       const missing = to.filter((d, i) => !cards[i]?.inbox);

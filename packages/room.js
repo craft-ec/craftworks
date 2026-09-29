@@ -10,7 +10,7 @@
 //   const r = await room.show(el, conversation, "# general")   // renders into `el`
 //   r.close()                                                 // stops following it
 export async function start(ctx) {
-  const [content, directory, space] = await Promise.all(["content", "directory", "space"].map(n => ctx.require(n)));
+  const [content, directory, space, attachments] = await Promise.all(["content", "directory", "space", "attachments"].map(n => ctx.require(n)));
   const EMOJI = ["👍", "❤️", "😂", "🎉", "😮", "🙏"];
   const PAGE = 60;
   const MENTION = /@[^\s@#]*#[1-9A-HJ-NP-Za-km-z]{6}/g;
@@ -53,6 +53,8 @@ export async function start(ctx) {
     .cw-room .said { color: var(--cw-danger); font-size: var(--cw-text-sm); padding: 0 var(--cw-space-4); margin: 0; }
     .cw-room .compose { position: relative; padding: var(--cw-space-3) var(--cw-space-4) var(--cw-space-4); }
     .cw-room .compose input { width: 100%; box-sizing: border-box; padding: 10px var(--cw-space-3); border-radius: var(--cw-radius); }
+    .cw-room .compose .line { display: flex; align-items: center; gap: 6px; }
+    .cw-room .compose .line > input { flex: 1; min-width: 0; }
     .cw-room .replying { display: flex; gap: var(--cw-space-2); align-items: center; font-size: var(--cw-text-sm); color: var(--cw-muted);
       margin-bottom: var(--cw-space-1); }
     .cw-room .replying span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -80,7 +82,10 @@ export async function start(ctx) {
     const replying = el("div", { className: "replying", hidden: true });
     const input = el("input", { name: "text", autocomplete: "off", placeholder: `Message ${title}`, disabled: true });
     const suggest = el("ul", { className: "suggest", hidden: true });
-    form.append(replying, suggest, input);
+    // FILES with a message: sent as picked (sealed for this conversation's members), shown under it.
+    const pick = attachments.picker({ space: conversation.scope ?? null });
+    const line = el("div", { className: "line" }, pick.el, input);
+    form.append(replying, suggest, line);
     box.append(el("h2", { textContent: title }), msgs, said, form);
     host.replaceChildren(box);
     const say = m => ((said.textContent = m ?? ""), (said.hidden = !m));
@@ -148,6 +153,8 @@ export async function start(ctx) {
         li.append(field);
         queueMicrotask(() => field.focus());
       } else li.append(bodyOf(m.body));
+      const att = attachments.show(m.files);
+      if (att && editing !== m.id) li.append(att);
       // Reactions: a chip per emoji, yours marked; a click takes yours back or adds it.
       const chips = Object.entries(m.reactions ?? {}).filter(([, who]) => who.length);
       if (chips.length)
@@ -250,13 +257,16 @@ export async function start(ctx) {
     form.onsubmit = async e => {
       e.preventDefault();
       const text = input.value.trim();
-      if (!text) return;
+      if (pick.busy()) return say("Still sending the files: a moment…");
+      const withFiles = pick.files();
+      if (!text && !withFiles.length) return;
       const re = replyTo?.id ?? null;
       input.value = "";
       replyTo = null;
       drawReplying();
       say(null);
-      await room.post("message", text, { re }).catch(err => {
+      pick.clear();
+      await room.post("message", text, { re, files: withFiles }).catch(err => {
         input.value = text;
         fail("Not sent")(err);
       });

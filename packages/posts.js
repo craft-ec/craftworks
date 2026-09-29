@@ -157,7 +157,7 @@ export async function start(ctx) {
   const postOf = c => c.in ?? c.re; // a comment's post (an old one answering its post directly has no `in`)
   const shape = (it, ref, board) => {
     const [first, ...rest] = it.body.split("\n"); // a post from before titles: its first line is its title
-    return { ref, id: it.id, by: it.by, title: it.title ?? first.slice(0, 300), body: it.title ? it.body : rest.join("\n").trim(), board, at: it.at, edited: it.edited, private: !!it.private };
+    return { ref, id: it.id, by: it.by, title: it.title ?? first.slice(0, 300), body: it.title ? it.body : rest.join("\n").trim(), board, at: it.at, edited: it.edited, private: !!it.private, files: it.files ?? [] };
   };
 
   // A BOARD's posts: everything is in its one room (reactions keyed by the item's id).
@@ -263,7 +263,7 @@ export async function start(ctx) {
     return (await profilePosts([whereOf(ref)], await pointersTo(ref))).find(p => p.ref === ref) ?? null;
   }
 
-  async function submit({ board = null, title, body, private: only = false }) {
+  async function submit({ board = null, title, body, private: only = false, files = [] }) {
     title = String(title ?? "").trim();
     body = String(body ?? "").trim();
     if (!title) throw new Error("a post needs a title");
@@ -271,10 +271,10 @@ export async function start(ctx) {
     if (board) {
       const sp = await boardOf(board);
       if (!sp) throw new Error("you are not in that board's space");
-      return `space:${sp.id}/${await (await boardRoom(sp)).post("post", body, { title })}`;
+      return `space:${sp.id}/${await (await boardRoom(sp)).post("post", body, { title, files })}`;
     }
     const self = await me();
-    const ref = `${self}/${await (await profileRoom(self)).post("post", body, { title, private: only })}`;
+    const ref = `${self}/${await (await profileRoom(self)).post("post", body, { title, private: only, files })}`;
     // Its pointer bag, made now (a public post: nobody reading it waits on one that does not exist).
     if (!only) await index.openPointers(ref).catch(e => ctx.log("posts", { what: `the pointer bag of ${ref}: ${e.message}` }));
     return ref;

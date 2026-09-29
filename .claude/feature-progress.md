@@ -746,7 +746,12 @@ come with keepers as a new codec version.
       site EckhKs… via PUBLISH_KEY_SEED — a fresh node's signer holds no site key): up on X 49.5 s, down on Y 0.7 s,
       same SHA-256, a seek on Y 8 ms; no console errors. Y's speed likely = fragments already propagated to it by X's
       PUTs (its only peer): correctness across nodes proven, network fetch time not measured.
-- [ ] F3 attachments + previews: Messages, Chat, Mail, Board — pick, thumbnail inline, open, download.
+- [x] F3 attachments: component `attachments` (📎 picker: sent as picked with progress, the item waits; an image's WebP
+      thumbnail ≤ 320 px made here and kept in the reference; show: images by thumbnail → full in a dialog, other files
+      name · size · Download, video Play); `content` items carry `files`; wired into the room (Chat, Messages), Board
+      posts (public where the post is public) and Mail (sealed in the mail). LIVE on 17573: a 43 KB PNG on a profile
+      post (inline, thumbnail, full view), a 300 KB file in a Chat channel (coded; downloaded byte-identical), a mail to
+      self with a 300 KB file shown in Sent; no console errors.
 - [ ] F4 video: CMAF segments, renditions (AV1+Opus, H.264+AAC), remux (mp4box) or WebCodecs encode, MediaSource ABR,
       poster + scrub strip, subtitles.
 - [ ] F5 re-key on removal (per-space setting); Drive app (the account's and spaces' files, folders).

@@ -1,7 +1,7 @@
 // CONTENT, a capability: the SHAPE of an authored item — a message, a post, a comment, a note — defined once, for
 // every container it lives in (a channel, a thread, a notebook). UI never defines its own: a page shows content.
 //
-// An item is `{ id, kind, body, at, by, re, title, in, edited, reactions }`: its own id, what kind it is ("message", …),
+// An item is `{ id, kind, body, at, by, re, title, in, edited, reactions, files }`: its own id, what kind it is ("message", …),
 // its body (text), when it was made, its author (a DID), the item it answers (`re`), a title (a post's), where it was
 // put when that is not its table (`in`: a post's board, a comment's post), when it was last edited, and the
 // REACTIONS to it (`{ "👍": [did…] }`) — each a small item of kind "reaction" in the same table, keyed by the item,
@@ -88,6 +88,8 @@ export async function start(ctx) {
           edited: Number(v.edited) || 0,
           item: typeof v.item === "string" ? v.item : null,
           emoji: typeof v.emoji === "string" ? v.emoji : null,
+          // FILES on it: their references (`files`; shown by `attachments`).
+          files: Array.isArray(v.files) ? v.files.filter(f => f && typeof f === "object").slice(0, 20) : [],
         };
       } catch {
         return null;
@@ -142,10 +144,10 @@ export async function start(ctx) {
       mayPost: () => !(governed && app) || r.allows("post", me, app),
       may: action => !(governed && app) || r.allows(action, me, app),
       postingRule: () => (governed && app ? r.policy(app, "post") : "members"),
-      async post(kind, body, { re = null, title = null, in: where = null } = {}) {
+      async post(kind, body, { re = null, title = null, in: where = null, files = [] } = {}) {
         if (outside) throw new Error("only the space's members post here");
         const id = newId();
-        await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me, ...(re ? { re } : {}), ...(title ? { title } : {}), ...(where ? { in: where } : {}) }));
+        await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me, ...(re ? { re } : {}), ...(title ? { title } : {}), ...(where ? { in: where } : {}), ...(files.length ? { files } : {}) }));
         return id;
       },
       // A REACTION: this person's, to one item, one emoji — its own row (the author in its key), put or taken back.
@@ -158,7 +160,7 @@ export async function start(ctx) {
       },
       async edit(id, body) {
         const it = mine(id);
-        await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: me, edited: Date.now(), ...(it.re ? { re: it.re } : {}), ...(it.title ? { title: it.title } : {}), ...(it.in ? { in: it.in } : {}) }));
+        await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: me, edited: Date.now(), ...(it.re ? { re: it.re } : {}), ...(it.title ? { title: it.title } : {}), ...(it.in ? { in: it.in } : {}), ...(it.files?.length ? { files: it.files } : {}) }));
       },
       // THIS PERSON's ROWS as stored (items, reactions): to copy them into another table of the same place (a board's
       // public table: `posts`), and to put or drop one there by its key — only ever this person's own.

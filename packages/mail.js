@@ -7,7 +7,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [conversation, directory, theme, person] = await Promise.all(["conversation", "directory", "theme", "person"].map(n => ctx.require(n)));
+  const [conversation, directory, theme, person, attachments] = await Promise.all(["conversation", "directory", "theme", "person", "attachments"].map(n => ctx.require(n)));
   const box = ctx.sub === "sent" ? "sent" : "in";
   ctx.actions["/mail"] = [
     { label: "Inbox", href: "#/mail", on: box === "in" },
@@ -97,6 +97,7 @@ export async function mount(ctx, el) {
       node("h2", { textContent: m.subject || "(no subject)" }),
       meta,
       node("div", { className: "body", textContent: m.body }),
+      attachments.show(m.files) ?? "",
     );
     if (box === "in") read.append(node("button", { type: "button", className: "reply", textContent: "Reply", onclick: () => compose(m) }));
   }
@@ -112,13 +113,18 @@ export async function mount(ctx, el) {
       f.elements.subject.value = /^re:/i.test(re.subject) ? re.subject : `Re: ${re.subject}`;
     }
     dlg.onclose = null;
+    // FILES: sent as picked (sealed; the mail's recipients read them).
+    const pick = attachments.picker({});
+    f.querySelector(".cw-att-pick")?.remove();
+    f.querySelector(".row").before(pick.el);
     f.onsubmit = async e => {
       if (e.submitter?.value !== "ok") return;
       e.preventDefault();
       said.hidden = true;
       try {
+        if (pick.busy()) throw new Error("still sending the files: a moment");
         const to = await Promise.all(f.elements.to.value.split(",").map(x => x.trim()).filter(Boolean).map(x => conversation.person(x)));
-        await conversation.mail.send(to, f.elements.subject.value.trim(), f.elements.body.value, re?.id ?? null);
+        await conversation.mail.send(to, f.elements.subject.value.trim(), f.elements.body.value, re?.id ?? null, pick.files());
         dlg.close();
         if (box === "sent") draw();
         else location.hash = "#/mail/sent";
