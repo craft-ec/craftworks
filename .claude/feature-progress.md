@@ -451,7 +451,7 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       space writers = every member DID's devices; roles map device → DID. Live: B→A and A→B immediate, Y saw both
       (one after its 30 s re-read), both attributed to X. Messages written under the old DID-wide feed (test
       servers Kiln, Anvil) are no longer read: dev data.
-- [ ] The identity's `SpaceMember.writer` (DID-wide feed key) is unused now: drop it at the next delegate change.
+- [x] The identity's `SpaceMember.writer` (DID-wide feed key) dropped (901e47f).
 - [x] A space table open before a member's device first writes: now re-gathered on the member's card change (item 4).
 
 ## Queue 1–4 (owner 2026-09-29: "Proceed with 1-4")
@@ -616,14 +616,15 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
 - [x] UPKEEP on every page (`upkeep`, started by the header): welcomes accepted + askers admitted every 30 s from any
       page (was only Chat / a space's Home — a joiner on Discover never finished joining). Live: newbie joined Makers
       from Discover; S on Home only let them in; Makers on newbie's rail 3 s later, directory "Open".
-- [~] NO PAGE OPEN AT ALL (owner "go ahead" 09-29): step 1 DONE (901e47f) — identity on freenet-stdlib 0.12.1, manifest
+- [x] NO PAGE OPEN AT ALL (owner "go ahead" 09-29) — built and live on private 0.2.139 nodes; PUBLISH waits on the
+      owner's node + B ≥ 0.2.139. History: step 1 DONE (901e47f) — identity on freenet-stdlib 0.12.1, manifest
       NodeStarted + Background + wakeup `upkeep` 60 s, SpaceMember.writer dropped; handover live across 2 builds incl.
       spaces (first live check of HandoverSpaces). Node 0.2.138 shows the Background consent card on first run ("run
       when installed / each start, tab closed") — so NOT published to the owner's sites until upkeep does real work.
       Slice 2a DONE: the delegate on WakeupFired subscribes + GETs the inbox; live on a v0.2.139 private node
       (binary in jobs tmp fn139, node net139 :17681): 1 → 4 wake-ups in 3 min with the app tab CLOSED, inbox read.
       NOTE: the consent card must be answered (no answer = nothing stored, asked again at next registration).
-      NEXT 2b: accept welcomes in the delegate — open inbox items (key is here), MLS join (openmls into the delegate),
+      [superseded by the replan below] 2b: accept welcomes in the delegate — open inbox items (key is here), MLS join (openmls into the delegate),
       write the account's `spaces` + `spacekeys` rows (tail prepare/sign/PUT from the delegate: GET/PUT/UPDATE are
       available to delegates). 2c: admit askers. Then publish (owner's node + B need ≥ 0.2.139).
       PORT P1 DONE: MLS builds for the delegate with NO browser imports — vendor/ patched mls-rs 0.56.0 (no forced
@@ -700,13 +701,9 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       B asked by a one-use code with A's page closed — listed as waiting across a reload, joined, the welcome named
       the code, the waiting line gone.
       NEXT: publish — needs the owner's node and B on ≥ 0.2.139 (the owner's call) and the Background grant on each.
-- [ ] (old note) NO PAGE OPEN AT ALL: node v0.2.139 (freenet-core #5747) wakes a delegate periodically (manifest `wakeups`, ≥ 60 s,
-      the person's Background grant). Needs the joining logic (MLS welcome/add, spacekeys) moved into the identity
-      delegate (a delegate change: handover; bundle the SpaceMember.writer drop) and nodes on ≥ 0.2.139 (owner's and
-      B have auto-update off).
 - [x] HOMES ALIKE: `app-icons` (one tile: icon, name, pill, pin or "+ Add") for the personal Home, a space's Home and
       Discover's; a space's Chat pill = its unread. Live: newbie saw Chat "1" on Makers' Home, matching the rail.
-- (later) Discover's remaining public view: Contacts' profiles. NO public Chat (owner 09-29: Discord has none; its
+- [x] Discover's Contacts view: people who chose to be shown (339afd9). NO public Chat (owner 09-29: Discord has none; its
   Discovery is a directory — Discover's Home lists public spaces with Join). A Discord-style preview channel would be a
   Chat setting later if wanted.
 - (parked, owner 09-29) Blog: a lens over profile posts.
