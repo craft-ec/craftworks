@@ -22,7 +22,7 @@
 //   ACCESS, like row-level security: POLICIES `{ path, action, who }` (a `policy` act, by who may `apps`; `read` by
 //   the owner only), INHERITED along the path — an item (`board/p/<id>`), a container (`chat/<channel>`), an app
 //   (`board`), the space (""): the most specific wins, else its parent's, else the default. Actions: read, post,
-//   comment, vote, edit, join. Who: anyone | members | admins | owner | nobody. Defaults: every action `members`
+//   comment, vote, edit, join, invite. Who: anyone | members | admins | owner | nobody. Defaults: every action `members`
 //   (join `members`: by an invite from one). Time-aware: an item is judged by the policy in force when it was made.
 //   r.policy(path, action, at?)   // the effective `who`
 //   r.allows(action, did, path, at?)   // may that person do it there (then)
@@ -47,7 +47,7 @@ export async function start(ctx) {
     member: new Set(["post", "invite"]),
   };
   const RANK = { owner: 3, admin: 2, member: 1 };
-  const ACTIONS = ["read", "post", "comment", "vote", "edit", "join"];
+  const ACTIONS = ["read", "post", "comment", "vote", "edit", "join", "invite"];
   const WHO = ["anyone", "members", "admins", "owner", "nobody", "inherit"];
   // The settings from before policies (`config` acts), as policies — their defaults ("everyone", "members",
   // "invite") as INHERIT (no policy of their own), never as an override.
@@ -136,6 +136,10 @@ export async function start(ctx) {
       (history.get(k) ?? history.set(k, []).get(k)).push({ at: Number(at) || 0, who });
     };
     const policyAt = (path, action, at = Infinity) => (history.get(`${path}|${action}`) ?? []).filter(x => x.at <= at).pop()?.who ?? null;
+    // Does a role pass a policy's `who` (anyone here means any member: only members act in a space).
+    const passes = (who, r) => (who === "nobody" || !r ? false : who === "owner" ? r === "owner" : who === "admins" ? RANK[r] >= RANK.admin : true);
+    // INVITING (codes, adding by id, letting askers in): the space's `invite` policy as it was then (default: members).
+    const mayInvite = (r, at) => passes(effective("", "invite", at), r);
     const effective = (path, action, at = Infinity) => {
       const parts = String(path ?? "").split("/").filter(Boolean);
       for (let i = parts.length; i >= 0; i--) {
@@ -174,12 +178,12 @@ export async function start(ctx) {
           (a.act === "grant" && r === "owner" && a.did !== owner && ["admin", "member"].includes(a.role)) ||
           ((a.act === "remove" || a.act === "ban") && CAN[r]?.has("remove") && a.did !== a.by && RANK[r] > RANK[roleAt(a.did) ?? "member"]) ||
           (a.act === "unban" && CAN[r]?.has("remove") && banned.has(a.did)) ||
-          (a.act === "added" && CAN[r]?.has("invite") && a.did && !banned.has(a.did)) ||
+          (a.act === "added" && mayInvite(r, a.at) && a.did && !banned.has(a.did)) ||
           (a.act === "hide" && CAN[r]?.has("moderate")) ||
           (a.act === "transfer" && r === "owner" && a.did && a.did !== a.by && !removed.has(a.did)) ||
-          (a.act === "invite" && CAN[r]?.has("invite") && typeof a.code === "string" && a.code && !invites.has(a.code)) ||
+          (a.act === "invite" && mayInvite(r, a.at) && typeof a.code === "string" && a.code && !invites.has(a.code)) ||
           (a.act === "revoke-invite" && inv && (inv.by === a.by || CAN[r]?.has("moderate"))) ||
-          (a.act === "admitted" && CAN[r]?.has("invite") && inv && live(inv, a.at) && a.did && !banned.has(a.did)) ||
+          (a.act === "admitted" && mayInvite(r, a.at) && inv && live(inv, a.at) && a.did && !banned.has(a.did)) ||
           (a.act === "app" && CAN[r]?.has("apps") && APPS.includes(a.app)) ||
           // Who may READ an app (members, or anyone) is the owner's: making it public publishes the space's acts.
           // The space's own settings are app "space" (who may join: "invite" or "open").
@@ -187,8 +191,8 @@ export async function start(ctx) {
           // A POLICY: who may do an action at a path (reading is the owner's: public reading publishes the space's acts).
           (a.act === "policy" && CAN[r]?.has("apps") && typeof a.path === "string" && a.path.length <= 120 && ACTIONS.includes(a.action) && WHO.includes(a.who) && (a.action !== "read" || r === "owner")) ||
           // Admitted by asking, while the space was OPEN (no code).
-          (a.act === "admitted" && a.code === "open" && CAN[r]?.has("invite") && policyAt("", "join") === "anyone" && a.did && !banned.has(a.did)) ||
-          (a.act === "member" && CAN[r]?.has("invite") && a.did && !banned.has(a.did));
+          (a.act === "admitted" && a.code === "open" && mayInvite(r, a.at) && policyAt("", "join") === "anyone" && a.did && !banned.has(a.did)) ||
+          (a.act === "member" && mayInvite(r, a.at) && a.did && !banned.has(a.did));
         if (!ok) continue;
         if (a.act === "grant") roles.set(a.did, a.role);
         // Removed: out, and back only by an invite or a code (which clears it). Banned: out, and never back until unbanned.
@@ -261,7 +265,8 @@ export async function start(ctx) {
       if (roles.has(did)) return roles.get(did);
       return group.some(m => m.did === did) ? "member" : null;
     };
-    const can = (did, what) => !!CAN[role(did)]?.has(what);
+    // Inviting is the space's policy (`invite`); everything else its role's.
+    const can = (did, what) => (what === "invite" ? passes(effective("", "invite"), role(did)) : !!CAN[role(did)]?.has(what));
 
     const r = {
       space: sp,
