@@ -563,6 +563,13 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       keys); content's `outside` container; outsiders cannot post or vote. Live (17573): Studio public → P (not a
       member) read "Public hello" in 2 s, not the members-only posts, post refused; Makers public → P (member) posted
       public → an outside view counted P as member and listed P's post.
+- [x] P2 DISCOVER: 🧭 second on the rail (`#/discover`, loader v22: `ctx.space` "discover"); its Home (space-home)
+      lists the apps with a public view and the public spaces; header switcher: Discover · Home + public-view apps.
+      Public spaces list themselves (`index.listSpace`: one public bag "discover:spaces", the space's description) when
+      the owner makes the board public; readers keep one per id, each proved by its id (`space.owner`). Board's public
+      view: `#/discover/board` (every public board, Hot/New/Top), `…/b/<id>` (one), `…/p/<ref>` (read-only: members
+      comment and vote). Live (17573): Studio + Makers listed; P saw both in Discover, the global feed with both public
+      posts, a post read-only.
 - (later) Discover's public views: public spaces (anyone reads/joins) listed in public bags; Board's public posts,
   Chat's public spaces, Contacts' profiles; filtered by blocks + followed moderation lists.
 - (parked, owner 09-29) Blog: a lens over profile posts.

@@ -12,6 +12,9 @@
 //   await index.openPointers(ref)                    // a THING's public bag, made (by its author, when it is made)
 //   await index.point(ref, { from })                 // a pointer (plain) to where something about `ref` is: its bag
 //   await index.pointers(ref)                        // the pointers in it (claims: the reader resolves each)
+//   await index.listSpace(desc)   await index.spaces()   // DISCOVER's list of public spaces: a space's description
+//                                                    // ({ id, name, governance }) in one public bag; each a claim
+//                                                    // (the id proves its owner: `space.owner`)
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const space = await ctx.require("space");
@@ -98,5 +101,9 @@ export async function start(ctx) {
   const point = async (ref, item) => drop(await refAddress(ref), enc.encode(JSON.stringify(item)), "pointing");
   const pointers = async ref => parse(await payloadsAt(await refAddress(ref), "reading pointers"));
 
-  return { send, inbox, makeInbox, request, requests, openRequests, openPointers, point, pointers };
+  const SPACES = "discover:spaces";
+  const listSpace = desc => point(SPACES, { id: desc.id, name: desc.name, kind: desc.kind, governance: { owner: desc.governance.owner, nonce: desc.governance.nonce } });
+  const spaces = () => pointers(SPACES);
+
+  return { send, inbox, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces };
 }

@@ -136,10 +136,22 @@ export async function start(ctx) {
   const hot = p => Math.sign(p.score) * Math.log10(Math.max(Math.abs(p.score), 1)) + p.at / 45000000; // Reddit's
   const SORTS = { hot: (a, b) => hot(b) - hot(a), new: (a, b) => b.at - a.at, top: (a, b) => b.score - a.score || b.at - a.at };
 
+  // DISCOVER: the public spaces listed (their descriptions), each proved by its id (its owner), one per id.
+  async function publicSpaces() {
+    const seen = new Map();
+    for (const d of await index.spaces().catch(() => [])) {
+      if (!d?.id || seen.has(d.id) || !d.governance?.owner) continue;
+      if ((await space.owner(d).catch(() => null)) !== d.governance.owner) continue;
+      seen.set(d.id, { id: d.id, name: String(d.name ?? "").slice(0, 100), kind: "server", governance: d.governance });
+    }
+    return [...seen.values()];
+  }
+
   async function list(where = {}, sort = "hot") {
     let out;
-    // A space's PUBLIC board, seen from outside (`where.outside`: its description).
+    // A space's PUBLIC board, seen from outside (`where.outside`: its description); DISCOVER: every public space's.
     if (where.outside) out = await boardPosts(where.outside, { outside: true });
+    else if (where.discover) out = (await Promise.all((await publicSpaces()).map(d => boardPosts(d, { outside: true }).catch(() => [])))).flat();
     else if (where.board) {
       const sp = await boardOf(where.board);
       if (!sp) throw new Error("you are not in that board's space: join it with an invite");
@@ -255,5 +267,5 @@ export async function start(ctx) {
     await (await profileRoom(self)).remove(idOf(ref));
   }
 
-  return { submit, list, get, thread, comment, vote, remove, boards, boardOf, onChange: f => changed.push(f) };
+  return { submit, list, get, thread, comment, vote, remove, boards, boardOf, publicSpaces, onChange: f => changed.push(f) };
 }

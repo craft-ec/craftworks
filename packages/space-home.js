@@ -48,7 +48,26 @@ export async function mount(ctx, el) {
   const keyOf = a => a.route.slice(1);
   const sharedApps = ctx.apps.filter(a => (a.views ?? []).includes("shared"));
 
+  // DISCOVER's Home: the public network — the apps with a public view, and the public spaces listed.
+  async function drawDiscover() {
+    const pub = ctx.apps.filter(a => (a.views ?? []).includes("public"));
+    const spaces = await (await ctx.require("posts")).publicSpaces().catch(() => []);
+    root.replaceChildren(
+      h("div", { className: "top" }, h("h2", { textContent: "🧭 Discover" }), h("p", { textContent: "The public network: what public spaces publish. Nobody owns it; what you hid or blocked stays hidden." })),
+      h("section", {}, h("h3", { textContent: "Apps" }), h("div", { className: "apps" }, ...pub.map(a => h("a", { className: "app", href: `#/discover${a.route}` }, h("b", { textContent: `${a.icon ?? ""} ${a.name}` }), h("span", { textContent: a.about ?? "" }))))),
+      h(
+        "section",
+        {},
+        h("h3", { textContent: "Public spaces" }),
+        spaces.length
+          ? h("ul", {}, ...spaces.map(s => h("li", { onclick: () => (location.hash = `#/discover/board/b/${s.id}`) }, s.name)))
+          : h("p", { className: "none", textContent: "No public spaces yet: a space's owner makes its board public in Board settings." }),
+      ),
+    );
+  }
+
   async function draw() {
+    if (ctx.space === "discover") return drawDiscover();
     const sp = ctx.space && (await space.mine()).find(s => s.id === ctx.space && s.kind === "server");
     if (!sp) return root.replaceChildren(h("p", { className: "none", textContent: "You are not in this space (left, or not joined yet)." }));
     const r = await roles.of(sp);
@@ -134,6 +153,7 @@ export async function mount(ctx, el) {
   if (sp0) (await roles.of(sp0)).onChange(() => el.isConnected && ctx.route === "/space" && ctx.space === sp0.id && draw());
   // Welcomes waiting (a space joined by a code), and who asked by a code of this space let in (as Chat does).
   const tick = async () => {
+    if (ctx.space === "discover") return;
     await conversation.accept().catch(() => []);
     const sp = ctx.space && (await space.mine()).find(s => s.id === ctx.space);
     if (sp && (await roles.of(sp)).can(me, "invite")) await conversation.admit(sp).catch(() => []);

@@ -1,5 +1,6 @@
 // RAIL, a component (the layout's side): the SPACES, always there, Discord-style — PERSONAL first (your space: the whole
-// canvas, the default), then the SHARED spaces you are in, then + (make a space, or join one by an invite code). The
+// canvas, the default), DISCOVER (the public network), then the SHARED spaces you are in, then + (make a space, or join
+// one by an invite code). The
 // space open is marked; a shared space shows what is unread in it. Choosing a space opens its Home (`#/s/<id>`;
 // Personal: `#/`). Nothing shows until someone is logged in. UI only: spaces are `space`'s, joining `conversation`'s,
 // counts `activity`'s.
@@ -90,8 +91,12 @@ export async function mount(ctx, el) {
     const mine = await directory.handle(me.did).catch(() => null);
     const personal = h("a", { href: "#/", title: "Personal", textContent: initials(mine ?? "Me") });
     if (!ctx.space) personal.setAttribute("aria-current", "page");
+    // DISCOVER: the public network (nobody's space), under Personal.
+    const discover = h("a", { href: "#/discover", title: "Discover: the public network", textContent: "🧭" });
+    if (ctx.space === "discover") discover.setAttribute("aria-current", "page");
     nav.replaceChildren(
       personal,
+      discover,
       h("div", { className: "sep" }),
       ...shared.map(s => {
         const a = h("a", { href: `#/s/${s.id}`, title: s.name, textContent: initials(s.name) });

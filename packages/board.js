@@ -16,9 +16,16 @@ export async function mount(ctx, el) {
   let sort = "hot";
   // The route: what is shown.
   // Where Board is: the space open (`ctx.space`), or the personal space.
-  const base = () => (ctx.space ? `#/s/${ctx.space}/board` : "#/board");
+  const discovering = () => ctx.space === "discover";
+  const base = () => (discovering() ? "#/discover/board" : ctx.space ? `#/s/${ctx.space}/board` : "#/board");
   const where = () => {
     const s = ctx.sub || "";
+    // DISCOVER (the public view): every public board, one space's (`b/<id>`), or a public post (`p/<ref>`).
+    if (discovering()) {
+      if (s.startsWith("b/")) return { pub: s.slice(2) };
+      if (s.startsWith("p/")) return { post: s.slice(2), pub: s.slice(2).match(/^space:([0-9a-f]{64})\//)?.[1] };
+      return { discover: true };
+    }
     const at = ctx.space ? { board: ctx.space } : {};
     if (s.startsWith("p/")) return { ...at, post: s.slice(2) };
     if (s === "submit") return { ...at, submit: true };
@@ -28,6 +35,10 @@ export async function mount(ctx, el) {
   };
   // The top bar: its sub-pages — the posts, and Create post.
   const setActions = async w => {
+    if (discovering()) {
+      ctx.actions["/board"] = [{ label: "All public boards", href: base(), on: !!w.discover }];
+      return dispatchEvent(new CustomEvent("craftworks:actions"));
+    }
     ctx.actions["/board"] = [
       ...(ctx.space ? [] : [{ label: "Feed", href: "#/board/feed", on: !!w.feed }]),
       { label: w.board ? "Posts" : w.by === me ? "Your posts" : "Posts", href: base(), on: !w.post && !w.submit && (!!w.board || w.by === me) },
@@ -126,6 +137,8 @@ export async function mount(ctx, el) {
     const down = h("button", { type: "button", className: "down", textContent: "▼", title: "Downvote", ariaPressed: String(it.mine === -1) });
     const cast = v => async e => {
       e.stopPropagation();
+      // From outside (Discover): scores only — members vote.
+      if (discovering()) return;
       const next = it.mine === v ? 0 : v;
       it.score += next - it.mine;
       it.mine = next;
@@ -143,7 +156,8 @@ export async function mount(ctx, el) {
   function postCard(p, full = false) {
     const said = h("p", { className: "said", hidden: true });
     // A space's post opens in its space (the rail follows); a profile's in the personal space.
-    const open = () => (location.hash = p.board ? `#/s/${p.board.id}/board/p/${p.ref}` : `#/board/p/${p.ref}`);
+    // A post opens where it lives: in Discover (read from outside), in its space, or in the personal space.
+    const open = () => (location.hash = discovering() ? `#/discover/board/p/${p.ref}` : p.board ? `#/s/${p.board.id}/board/p/${p.ref}` : `#/board/p/${p.ref}`);
     const acts = h(
       "div",
       { className: "acts" },
@@ -252,6 +266,15 @@ export async function mount(ctx, el) {
 
   // THE SIDE PANEL: the space's board (its name, members, Create post), or a profile.
   async function sidePanel(w) {
+    // Discover: the public spaces; one public space: its name (joining is a member's way to post).
+    if (discovering()) {
+      const spaces = await posts.publicSpaces();
+      const d = w.pub ? spaces.find(x => x.id === w.pub) : null;
+      return [
+        d ? h("div", { className: "panel" }, h("h3", { textContent: `b/${d.name}` }), h("p", { textContent: "🌐 A public board: anyone reads it; its members post, comment and vote." })) : null,
+        h("div", { className: "panel" }, h("h3", { textContent: "Public spaces" }), spaces.length ? h("ul", {}, ...spaces.map(x => h("li", {}, h("a", { href: `#/discover/board/b/${x.id}`, textContent: `b/${x.name}` })))) : h("p", { textContent: "None listed yet." })),
+      ].filter(Boolean);
+    }
     const create = h("a", { className: "go", href: `${base()}/submit`, textContent: "Create post" });
     if (w.feed) return [h("div", { className: "panel" }, h("h3", { textContent: "Feed" }), h("p", { textContent: "The boards of every space you are in, and the people you follow." }), create)];
     if (w.board) {
@@ -280,7 +303,8 @@ export async function mount(ctx, el) {
                   { key: "post", label: "Who may post (every member may comment and vote)", options: [["everyone", "Every member"], ["admins", "Admins only"]] },
                   { key: "rules", label: "Rules (shown beside the board)" },
                 ],
-                { saved: async changed => changed.read === "public" && (await r.publish()) },
+                // Made public: its acts published, and the space listed in Discover.
+                { saved: async changed => changed.read === "public" && (await r.publish(), await (await ctx.require("index")).listSpace(sp)) },
               ),
           })
         : null;
@@ -320,7 +344,12 @@ export async function mount(ctx, el) {
     );
 
   async function listPage(w) {
-    const list = await posts.list(w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, sort);
+    const outside = w.pub ? await descOf(w.pub) : null;
+    const list = await posts.list(w.discover ? { discover: true } : outside ? { outside } : w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, sort);
+    if (w.discover || w.pub) {
+      const head = h("div", { className: "panel banner" }, h("h2", { textContent: w.pub ? `b/${outside?.name ?? "?"} · 🌐 public` : "🧭 Public boards" }));
+      return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: "No public posts yet." })])];
+    }
     const sp = w.board ? await posts.boardOf(w.board) : null;
     const head = w.board
       ? h("div", { className: "panel banner" }, h("h2", { textContent: `b/${sp?.name ?? "?"}` }))
@@ -331,18 +360,23 @@ export async function mount(ctx, el) {
     return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: empty })])];
   }
 
+  // A public space's description (Discover): from the public list.
+  const descOf = async id => (await posts.publicSpaces()).find(d => d.id === id) ?? null;
   let shownPost = null;
   async function postPage(ref) {
-    const p = (shownPost = await posts.get(ref));
+    const w = where();
+    const outside = w.pub ? await descOf(w.pub) : null;
+    const p = (shownPost = await posts.get(ref, { outside }));
     if (!p) return [h("p", { className: "none", textContent: "This post is not there (removed, or not found yet)." })];
     const tree = h("div", { className: "comments" });
     const again = async () => {
-      const cs = await posts.thread(ref);
+      const cs = await posts.thread(ref, { outside });
       tree.replaceChildren(...(cs.length ? cs.map(c => commentTree(c, ref, again)) : [h("p", { className: "none", textContent: "No comments yet." })]));
     };
     tree.append(theme.loading("Reading the comments…"));
     again().catch(() => {});
-    return [postCard(p, true), h("div", { className: "panel" }, replyForm(ref, ref, "Comment", again), tree)];
+    // From outside (Discover): read only — members comment.
+    return [postCard(p, true), h("div", { className: "panel" }, outside ? h("p", { className: "none", textContent: "Only the space's members comment and vote." }) : replyForm(ref, ref, "Comment", again), tree)];
   }
 
   async function submitPage(board) {
@@ -377,10 +411,10 @@ export async function mount(ctx, el) {
   async function draw() {
     const w = where();
     await setActions(w);
-    here = w.board ? await posts.boardOf(w.board) : w.post?.startsWith("space:") ? await posts.boardOf(w.post) : null;
+    here = discovering() ? null : w.board ? await posts.boardOf(w.board) : w.post?.startsWith("space:") ? await posts.boardOf(w.post) : null;
     const parts = await (w.post ? postPage(w.post) : w.submit ? submitPage(w.board) : listPage(w));
     // A post's page: its board's panel (or its author's profile).
-    const sidebar = await sidePanel(w.post ? (shownPost?.board ? { board: shownPost.board.id } : { by: shownPost?.by }) : w);
+    const sidebar = await sidePanel(discovering() ? w : w.post ? (shownPost?.board ? { board: shownPost.board.id } : { by: shownPost?.by }) : w);
     main.replaceChildren(...parts.filter(Boolean));
     side.replaceChildren(...sidebar);
   }

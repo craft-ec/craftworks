@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. The node's code is loaded after the first
 // page is up even where the page needs none: to FOLLOW the app's and the loader's sites (below).
-const VERSION = "21";
+const VERSION = "22";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -223,9 +223,10 @@ export async function run(boot) {
   // A route names its page by the LONGEST page route it starts with; the rest is the page's SUB-PAGE (`#/account/nodes`:
   // the page `/account`, `ctx.sub` "nodes").
   // A SPACE: `/s/<space id>/…` is the rest's page IN that space (`ctx.space`: its id; none: the personal space), and
-  // `/s/<space id>` alone the space's own page, `/space` (its Home).
+  // `/s/<space id>` alone the space's own page, `/space` (its Home). DISCOVER (the public network, nobody's space):
+  // `/discover/…`, `ctx.space` "discover".
   async function show(at) {
-    const inSpace = at.match(/^\/s\/([0-9a-f]{64})(\/.*)?$/);
+    const inSpace = at.match(/^\/s\/([0-9a-f]{64})(\/.*)?$/) ?? at.match(/^\/(discover)(\/.*)?$/);
     ctx.space = inSpace ? inSpace[1] : null;
     const full = inSpace ? (inSpace[2] && inSpace[2] !== "/" ? inSpace[2] : "/space") : at;
     const route = Object.keys(manifest.pages).filter(r => full === r || full.startsWith(r === "/" ? "/" : `${r}/`)).sort((a, b) => b.length - a.length)[0] ?? "/";
