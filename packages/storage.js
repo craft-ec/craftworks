@@ -262,6 +262,8 @@ export async function start(ctx) {
     let legacy = 0;
     let reseal = false;
     function took(tail) {
+      // Rows arrived (pushed, or read): it exists now, whatever an earlier read found.
+      t.absent = false;
       legacy = tail.legacy ?? 0;
       reseal = !!tail.resealTree;
       t.info = { rows: tail.rows.length, pending: tail.pending, flushed: !!tail.root, legacy, unreadable: tail.unreadable ?? 0, writes: tail.writes };

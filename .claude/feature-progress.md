@@ -474,8 +474,8 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       update (`Account::update`, test `a_members_update_leaves_a_stale_copy_behind`). Space writes catch up with a fresh
       epoch-log read and `sealNewest` before sealing. Live (private net A/B/C): Y's DM after A removed B → A sees it,
       B does not; Y sealed with epoch 2.
-      Recovery copy moved from its own public tail to the card row `recovery`. OPEN: rows in the separate `recovery`
-      public tail showed 0 rows on other nodes (cause unknown; the mail public tail may be affected — measure it).
+      Recovery copy moved from its own public tail to the card row `recovery`. (Rows missing from the separate `recovery`
+      public tail on other nodes: measured 09-29, not reproduced — see Housekeeping.)
 - [x] 3 social content (`posts`; page BOARD since owner 09-29 "Reddit style", below; "Posts" in the person menu): posts,
       comments and votes are `content` in the AUTHOR's public tail `posts` (content's public container: the tail's owner
       is the author); a vote = reaction ▲/▼ with `item` = the post's ref `<did>/<id>`; a comment/vote on another's post
@@ -606,6 +606,10 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       space (join: anyone) is public — its acts published (who is in, how to join) and listed in Discover; `#/discover/
       chat` lists open spaces with Chat (name#id, members, apps; Join / Open). Board's Discover list = public boards
       only. Live (17573): Studio + Makers open → both in the directory; Board's list the public boards.
+- [x] Housekeeping: PUBLIC-TAIL ROW LOSS measured (private 2-node net, X on A writes, Y on B reads): a new tail's
+      3 rows seen by Y at once; a later row pushed within 8 s; a card row read; and a tail Y opened BEFORE it existed
+      got X's rows by push in 3–9 s. NOT reproduced (the earlier recovery-tail loss was on older code); mail's public
+      tail uses the same path. Found + fixed: a tail opened absent stayed `absent` after rows were pushed (took()).
 - Housekeeping: dropping `SpaceMember.writer` = an identity.wasm change (NOT the frozen signer): each device re-logs
   via the handover from the prior build (HandoverSpaces never live-checked) — bundle it with the next real identity
   delegate change (owner told 09-29).
