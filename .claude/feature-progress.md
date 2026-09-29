@@ -602,6 +602,13 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       each channel's own); Board settings (read, post, comment, vote, rules); Notes settings (edit). Live (17573):
       Makers space post=admins → Chat and Board inherit; #news override members → P posts in #news, not #general
       ("Only admins post here"), not on the board, still comments; reverted.
+- [x] CHAT'S PUBLIC VIEW = a directory (owner: chat public/discover before contacts; content stays members'): an OPEN
+      space (join: anyone) is public — its acts published (who is in, how to join) and listed in Discover; `#/discover/
+      chat` lists open spaces with Chat (name#id, members, apps; Join / Open). Board's Discover list = public boards
+      only. Live (17573): Studio + Makers open → both in the directory; Board's list the public boards.
+- Housekeeping: dropping `SpaceMember.writer` = an identity.wasm change (NOT the frozen signer): each device re-logs
+  via the handover from the prior build (HandoverSpaces never live-checked) — bundle it with the next real identity
+  delegate change (owner told 09-29).
 - (later) Discover's remaining public view: Contacts' profiles. NO public Chat (owner 09-29: Discord has none; its
   Discovery is a directory — Discover's Home lists public spaces with Join). A Discord-style preview channel would be a
   Chat setting later if wanted.

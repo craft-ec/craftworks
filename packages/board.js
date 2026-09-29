@@ -308,7 +308,9 @@ export async function mount(ctx, el) {
   async function sidePanel(w) {
     // Discover: the public spaces; one public space: its name (joining is a member's way to post).
     if (discovering()) {
-      const spaces = await posts.publicSpaces();
+      // Public boards only (a space may be listed for joining, its board still its members').
+      const listed = await posts.publicSpaces();
+      const spaces = (await Promise.all(listed.map(async x => ((await roles.ofPublic(x).catch(() => null))?.policy("board", "read") === "anyone" ? x : null)))).filter(Boolean);
       const d = w.pub ? spaces.find(x => x.id === w.pub) : null;
       return [
         d ? await publicPanel(d) : null,

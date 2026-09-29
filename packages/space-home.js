@@ -123,7 +123,19 @@ export async function mount(ctx, el) {
                   { action: "comment", path: "", label: "Who may comment" },
                   { action: "vote", path: "", label: "Who may vote" },
                   { action: "edit", path: "", label: "Who may edit (Notes)" },
-                ], { saved: async changed => (changed["|join"] === "anyone" && (await (await ctx.require("index")).openRequests(`open ${sp.id}`)), draw()) }),
+                ], {
+                  // Open to anyone: its join requests' bag made, its acts published (who is in, how to join), and the space
+                  // listed in Discover.
+                  saved: async changed => {
+                    if (changed["|join"] === "anyone") {
+                      const index = await ctx.require("index");
+                      await index.openRequests(`open ${sp.id}`);
+                      await r.publish().catch(() => {}); // the owner's: an admin's space goes public from here on
+                      await index.listSpace(sp);
+                    }
+                    await draw();
+                  },
+                }),
             })
           : null,
         h("button", { type: "button", className: "btn", textContent: "Settings", onclick: () => openSettings("overview") }),

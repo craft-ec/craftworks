@@ -13,6 +13,8 @@ export async function mount(ctx, el) {
     ["space", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "person", "activity", "app-settings"].map(n => ctx.require(n)),
   );
   const account = await space.account();
+  // DISCOVER (Chat's public view): the directory of open spaces with Chat — to join (chat itself stays its members').
+  if (ctx.space === "discover") return openSpaces(ctx, el, { space, roles, conversation, theme });
   el.classList.add("cw-fill");
   el.innerHTML = `
     <style>
@@ -263,4 +265,56 @@ export async function mount(ctx, el) {
   menu();
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/chat" && at());
   await at();
+}
+
+// THE DIRECTORY (Discover → Chat): every space listed in Discover that is open to join and uses Chat — its name, how
+// many are in it, and Join (or Open, when you are in). What is said in them is their members' only: nothing of it here.
+async function openSpaces(ctx, el, { space, roles, conversation, theme }) {
+  const posts = await ctx.require("posts");
+  el.innerHTML = `
+    <style>
+      .dir { max-width: 880px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
+      .dir h2 { margin: 0; font-size: 1.4rem; }
+      .dir .note { margin: 0; color: var(--cw-muted); font-size: var(--cw-text-sm); }
+      .dir .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--cw-space-3); }
+      .dir .card { display: grid; gap: var(--cw-space-2); padding: var(--cw-space-3); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-surface); }
+      .dir .card b { font-size: 1.05rem; overflow-wrap: anywhere; }
+      .dir .card span { color: var(--cw-muted); font-size: var(--cw-text-sm); }
+      .dir .card button, .dir .card a { justify-self: start; font: inherit; border: 0; border-radius: var(--cw-radius-pill); padding: 6px var(--cw-space-4);
+        background: var(--cw-accent); color: var(--cw-accent-fg); cursor: pointer; text-decoration: none; font-weight: 600; }
+      .dir .card .said { color: var(--cw-muted); font-size: var(--cw-text-sm); margin: 0; }
+    </style>
+    <div class="dir"><h2>💬 Open spaces</h2><p class="note">Spaces anyone may join. What is said in them is for their members.</p><div class="grid"></div></div>`;
+  const grid = el.querySelector(".grid");
+  const h = (tag, props = {}, ...kids) => {
+    const e = Object.assign(document.createElement(tag), props);
+    e.append(...kids.filter(k => k != null && k !== false));
+    return e;
+  };
+  ctx.actions["/chat"] = [];
+  dispatchEvent(new CustomEvent("craftworks:actions"));
+  grid.replaceChildren(theme.loading("Finding open spaces…"));
+  const mine = new Set((await space.mine()).map(s => s.id));
+  const cards = [];
+  for (const d of await posts.publicSpaces()) {
+    const r = await roles.ofPublic(d).catch(() => null);
+    if (!r || r.policy("", "join") !== "anyone" || !r.apps().includes("chat")) continue;
+    const said = h("p", { className: "said", hidden: true });
+    const n = r.members().length;
+    const act = mine.has(d.id)
+      ? h("a", { href: `#/s/${d.id}/chat`, textContent: "Open" })
+      : h("button", {
+          type: "button",
+          textContent: "Join",
+          onclick: async e => {
+            e.target.disabled = true;
+            await conversation.joinOpen(d).then(
+              () => ((said.textContent = "Asked to join: you are in once a member who may invite is online."), (said.hidden = false)),
+              err => ((said.textContent = err.message), (said.hidden = false), (e.target.disabled = false)),
+            );
+          },
+        });
+    cards.push(h("div", { className: "card" }, h("b", { textContent: space.shown(d) }), h("span", { textContent: `${n} member${n === 1 ? "" : "s"} · ${r.apps().join(", ")}` }), act, said));
+  }
+  grid.replaceChildren(...(cards.length ? cards : [h("p", { className: "note", textContent: "No open spaces yet: a space's owner or admins open it (its Home → Permissions → Who may join: Anyone)." })]));
 }

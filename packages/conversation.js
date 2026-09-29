@@ -229,6 +229,8 @@ export async function start(ctx) {
     const r = await (await ctx.require("roles")).of(sp);
     if (how === "open") await index.openRequests(openCode(sp.id));
     await r.act({ act: "policy", path: "", action: "join", who: how === "open" ? "anyone" : "members" });
+    // Open: listed in Discover, its acts published (who is in, how to join).
+    if (how === "open") (await r.publish().catch(() => {}), await index.listSpace(sp));
   }
   async function admit(sp) {
     const me = await space.account();

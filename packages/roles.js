@@ -253,7 +253,9 @@ export async function start(ctx) {
       for (const f of changed) f();
     });
     // Public: an app of the space reads in public.
-    const isPublic = () => [...history.keys()].some(k => k.endsWith("|read") && policyAt(k.slice(0, -5), "read") === "anyone");
+    // PUBLIC: something of the space is anyone's — an app read by anyone, or joining open to anyone (an open space is
+    // listed in Discover: whoever looks must see who is in it and how to join).
+    const isPublic = () => policyAt("", "join") === "anyone" || [...history.keys()].some(k => k.endsWith("|read") && policyAt(k.slice(0, -5), "read") === "anyone");
     const role = did => {
       if (!did || (left && did === me?.id)) return null;
       if (roles.has(did)) return roles.get(did);
@@ -318,7 +320,7 @@ export async function start(ctx) {
         const need = { grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", policy: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite", member: "invite" }[a.act];
         if (!need || !can(me.id, need)) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
         // A public space's acts are public (readers outside must know them); a private one's sealed.
-        const toPublic = isPublic() || (a.act === "policy" && a.action === "read" && a.who === "anyone");
+        const toPublic = isPublic() || (a.act === "policy" && (a.action === "read" || a.action === "join") && a.who === "anyone");
         await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify({ ...a, at: Date.now() }));
       },
       grant: (did, to) => r.act({ act: "grant", did, role: to }),
