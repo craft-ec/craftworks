@@ -394,7 +394,9 @@ export async function start(ctx) {
     return {
       key: sp.id,
       self: sp.self,
-      opts: () => ({ space: sp }),
+      // A PUBLIC table of the space (its own name starts `pub-`: a public board, the public acts): written in the
+      // clear, so anyone reads it; still signed in the space (only its members write it).
+      opts: name => ({ space: sp, public: /^x[0-9a-f]{12}-pub-/.test(name) }),
       old: async () => null,
       // Its WRITERS: every device of every member (the group's members are DIDs; each DID's devices, from its card,
       // checked against its key log) — this device's own siblings too.
@@ -653,5 +655,35 @@ export async function start(ctx) {
     return moved;
   }
 
-  return { table, log, publicTail, describe, nodes, feedsOf, adopt, sealNewest, refuse: why => (refusing = why) };
+  // A PUBLIC TABLE READ FROM OUTSIDE (not a member: no catalog, no keys): the merge of these writers' public tails of
+  // `name` (each at the address its writer and name give). Read-only; `add(writers)` takes more writers in.
+  function readOnly(name, owners = []) {
+    let rows = [];
+    const all = [];
+    const seen = new Set();
+    const changed = [];
+    const remerge = () => {
+      rows = decoded(Array.from(feed.merge_feeds(all.filter(t => !t.absent).map(t => [bytes(t.owner), t.raw()]))));
+      for (const f of changed) f();
+    };
+    const add = list =>
+      Promise.all(
+        list
+          .filter(o => !seen.has(o) && seen.add(o))
+          .map(o =>
+            tail(o, name, { public: true }).then(
+              t => {
+                all.push(t);
+                t.onChange(remerge);
+                remerge();
+              },
+              () => {},
+            ),
+          ),
+      );
+    const settled = add(owners);
+    return { rows: () => rows, onChange: f => changed.push(f), settled, add };
+  }
+
+  return { table, log, publicTail, readOnly, describe, nodes, feedsOf, adopt, sealNewest, refuse: why => (refusing = why) };
 }

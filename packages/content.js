@@ -34,6 +34,13 @@ export async function start(ctx) {
   // Any conversation names its `messages` table and the `scope` (space) it lives in: a channel, its server; a direct
   // conversation, itself.
   async function tableOf(container) {
+    // A space's PUBLIC table read from OUTSIDE (not a member): its writers are the public acts' (`roles.ofPublic`).
+    if (container?.outside) {
+      const r = await (await ctx.require("roles")).ofPublic(container.scope);
+      const t = storage.readOnly(container.messages, r.writerKeys());
+      r.onChange(() => t.add(r.writerKeys()));
+      return t;
+    }
     if (container?.kind === "public") {
       const t = await (await ctx.require("directory")).publicOf(container.did, container.name);
       if (!t) throw new Error("that person has no key log yet");
@@ -49,14 +56,21 @@ export async function start(ctx) {
     // In a space (not the account): its roles (who wrote what); in a SHARED space (a server) its moderation too (what is
     // hidden). A conversation (direct, group) is between equals: nobody moderates another's items.
     const open = container.kind === "public";
-    const inSpace = !open && container.scope.kind !== "account";
-    const governed = inSpace && container.scope.kind === "server";
+    const outside = !!container.outside;
+    const inSpace = !open && (outside || container.scope.kind !== "account");
+    const governed = inSpace && (outside || container.scope.kind === "server");
     // The APP this container is (a channel: Chat; a board: Board): its setting says who may post here.
     const app = { channel: "chat", board: "board" }[container.kind] ?? null;
     const POSTS = new Set(["message", "post"]);
-    const [r, m] = inSpace
-      ? await Promise.all([ctx.require("roles").then(x => x.of(container.scope)), governed ? ctx.require("moderation").then(x => x.of(container.scope)) : null])
-      : [null, null];
+    const [r, m] = outside
+      ? await ctx.require("roles").then(async x => {
+          const pr = await x.ofPublic(container.scope);
+          // From outside, what moderation hid is the public acts' hides.
+          return [pr, { hidden: table => new Set(pr.acts("hide").filter(a => a.table === table).map(a => a.item)) }];
+        })
+      : inSpace
+        ? await Promise.all([ctx.require("roles").then(x => x.of(container.scope)), governed ? ctx.require("moderation").then(x => x.of(container.scope)) : null])
+        : [null, null];
     const item = row => {
       try {
         const v = JSON.parse(row.value);
@@ -126,12 +140,14 @@ export async function start(ctx) {
       mayPost: () => !(governed && app) || r.allows(app, me, "post"),
       postingRule: () => (governed && app ? r.config(app, "post", "everyone") : "everyone"),
       async post(kind, body, { re = null, title = null, in: where = null } = {}) {
+        if (outside) throw new Error("only the space's members post here");
         const id = newId();
         await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me, ...(re ? { re } : {}), ...(title ? { title } : {}), ...(where ? { in: where } : {}) }));
         return id;
       },
       // A REACTION: this person's, to one item, one emoji — its own row (the author in its key), put or taken back.
       async react(id, emoji, on) {
+        if (outside) throw new Error("only the space's members vote here");
         const code = [...emoji].map(c => c.codePointAt(0).toString(16)).join("-");
         const key = `r-${id}-${code}-${me.slice(12, 24)}`;
         if (on) await t.put(key, JSON.stringify({ kind: "reaction", item: id, emoji, at: Date.now(), by: me }));

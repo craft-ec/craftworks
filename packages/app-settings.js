@@ -5,7 +5,7 @@
 //
 //   const appSettings = await ctx.require("app-settings");
 //   appSettings.open(sp, "board", "Board", [{ key: "post", label: "Who may post", options: [["everyone", "Every member"], ["admins", "Admins only"]] },
-//     { key: "rules", label: "Rules", text: true }], { extra })
+//     { key: "rules", label: "Rules", text: true }], { extra, saved })   // saved(changed): after a save, what changed
 export async function start(ctx) {
   const roles = await ctx.require("roles");
   const style = document.createElement("style");
@@ -29,7 +29,7 @@ export async function start(ctx) {
     return e;
   };
 
-  async function open(sp, app, title, fields, { extra = null } = {}) {
+  async function open(sp, app, title, fields, { extra = null, saved = null } = {}) {
     const r = await roles.of(sp);
     const d = h("dialog", { className: "cw-appset" });
     const said = h("p", { className: "said" });
@@ -54,7 +54,14 @@ export async function start(ctx) {
       said.textContent = "";
       try {
         // Only what changed: an act each.
-        for (const { f, input, now } of inputs) if (input.value !== (now ?? "")) await r.act({ act: "config", app, key: f.key, value: input.value });
+        const changed = {};
+        for (const { f, input, now } of inputs)
+          if (input.value !== (now ?? "")) {
+            await r.act({ act: "config", app, key: f.key, value: input.value });
+            changed[f.key] = input.value;
+          }
+        // What follows from a change (Board made public: the space's acts published).
+        if (saved) await saved(changed);
         said.className = "ok";
         said.textContent = "Saved.";
       } catch (err) {

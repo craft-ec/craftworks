@@ -78,8 +78,11 @@ export async function start(ctx) {
   // A space's BOARD: its posts (Reddit's), beside its messages — a sub-space like a channel: the same group, members,
   // roles and moderation, its posts in the space's own table `board`. Every space has one (a server, a group, a
   // direct conversation).
-  function board(sp) {
-    return Object.freeze({ kind: "board", id: `${sp.id}/board`, name: sp.name, parent: sp, inherits: true, messages: tableOf(sp, "board"), scope: sp });
+  // Its PUBLIC board (`pub-board`: written in the clear — anyone reads; its members write), when the board reads in
+  // public; `outside`: the same seen by someone not in the space (`sp`: its description, { id, name, governance }).
+  function board(sp, { pub = false, outside = false } = {}) {
+    const name = pub || outside ? "pub-board" : "board";
+    return Object.freeze({ kind: "board", id: `${sp.id}/${name}`, name: sp.name, parent: sp, inherits: true, messages: tableOf(sp, name), scope: sp, outside });
   }
 
   async function mine() {

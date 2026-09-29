@@ -25,6 +25,12 @@
 //                            // a change never hides what came before it): "everyone" (a member) or "admins"
 //   await r.act({ act: "grant", did, role })   // an act, as this person (refused here if it would not count)
 //   await r.grant(did, role)  r.onChange(fn)  r.settled
+//   r.isPublic()             // an app of the space reads in public (`config` read: "public"): its acts are public too
+//   await r.publish()        // (the owner) the acts so far and the roster (a `member` act per member) into the PUBLIC
+//                            // acts (`pub-acts`, in the clear): what a reader outside needs to know whose posts count
+//   await roles.ofPublic(desc)  // a space seen from OUTSIDE (`desc`: { id, name, governance }): its public acts only —
+//                            // its writers found from its owner (the id proves them) and the roster, each DID's devices
+//                            // from its card; the same `r` to read by (role, author, config, allows, members, acts)
 export async function start(ctx) {
   const [space, storage, keys, node, directory] = await Promise.all(["space", "storage", "keys", "node", "directory"].map(n => ctx.require(n)));
 
@@ -45,15 +51,37 @@ export async function start(ctx) {
   const newId = () => [...crypto.getRandomValues(new Uint8Array(8))].map(x => x.toString(16).padStart(2, "0")).join("");
 
   const spaces = new Map();
+  const outside = new Map();
+  function ofPublic(desc) {
+    if (!outside.has(desc.id)) outside.set(desc.id, open(desc, { outside: true }));
+    return outside.get(desc.id);
+  }
   function of(sp) {
     sp = sp.parent ?? sp;
     if (!spaces.has(sp.id)) spaces.set(sp.id, open(sp));
     return spaces.get(sp.id);
   }
 
-  async function open(sp) {
-    const [first, me, t] = await Promise.all([space.owner(sp), space.account(), storage.table(space.tableOf(sp, "acts"), sp)]);
-    const g = keys.group(sp);
+  async function open(sp, { outside: out = false } = {}) {
+    // THE ACTS: the sealed ones and the PUBLIC ones (the same act in both — a copy — counts once: by its key). From
+    // outside, only the public ones, read from the writers found so far.
+    const pubName = space.tableOf(sp, "pub-acts");
+    const [first, me, sealedActs, pubActs] = await Promise.all([
+      space.owner(sp),
+      space.account(),
+      out ? null : storage.table(space.tableOf(sp, "acts"), sp),
+      out ? storage.readOnly(pubName, []) : storage.table(pubName, sp),
+    ]);
+    const t = {
+      rows: () => {
+        const byKey = new Map();
+        for (const r of [...(sealedActs?.rows() ?? []), ...pubActs.rows()]) if (!byKey.has(r.key)) byKey.set(r.key, r);
+        return [...byKey.values()];
+      },
+      onChange: f => (sealedActs?.onChange(f), pubActs.onChange(f)),
+      settled: Promise.all([sealedActs?.settled, pubActs.settled]),
+    };
+    const g = out ? null : keys.group(sp);
     // MEMBERS: each member of the group (one per DID), where its credential is really that DID's: signed by the data
     // key its key log names (a credential names any DID it likes; the key log says whose it is). WRITERS: each of their
     // devices → the DID. Members who left stay known (what they wrote is still theirs): learned from the group as it
@@ -72,7 +100,7 @@ export async function start(ctx) {
       const sets = await Promise.all(group.map(m => directory.devices(m.did)));
       group.forEach((m, i) => sets[i].forEach(k => writers.set(k, m.did)));
     };
-    await learn(await g.ready().catch(() => null));
+    if (!out) await learn(await g.ready().catch(() => null));
     const author = row => (row?.id ? (writers.get(row.id.slice(0, 64)) ?? null) : null);
 
     // THE REPLAY: the acts in order, each kept only if its signer could.
@@ -83,6 +111,7 @@ export async function start(ctx) {
     let apps = new Map();
     let configs = new Map();
     let history = new Map(); // app/key → [{ at, value }], in the order they counted
+    let roster = new Set(); // the DIDs the acts name as members (the owner, added, admitted, rostered)
     let bans = new Set();
     function replay() {
       const acts = [];
@@ -100,6 +129,7 @@ export async function start(ctx) {
       apps = new Map();
       configs = new Map();
       history = new Map();
+      roster = new Set(first ? [first] : []);
       const removed = new Set();
       const banned = new Set();
       const roleAt = d => (removed.has(d) ? null : (roles.get(d) ?? "member"));
@@ -119,7 +149,9 @@ export async function start(ctx) {
           (a.act === "revoke-invite" && inv && (inv.by === a.by || CAN[r]?.has("moderate"))) ||
           (a.act === "admitted" && CAN[r]?.has("invite") && inv && live(inv, a.at) && a.did && !banned.has(a.did)) ||
           (a.act === "app" && CAN[r]?.has("apps") && APPS.includes(a.app)) ||
-          (a.act === "config" && CAN[r]?.has("apps") && APPS.includes(a.app) && typeof a.key === "string" && a.key.length <= 32);
+          // Who may READ an app (members, or anyone) is the owner's: making it public publishes the space's acts.
+          (a.act === "config" && CAN[r]?.has("apps") && APPS.includes(a.app) && typeof a.key === "string" && a.key.length <= 32 && (a.key !== "read" || r === "owner")) ||
+          (a.act === "member" && CAN[r]?.has("invite") && a.did && !banned.has(a.did));
         if (!ok) continue;
         if (a.act === "grant") roles.set(a.did, a.role);
         // Removed: out, and back only by an invite or a code (which clears it). Banned: out, and never back until unbanned.
@@ -139,6 +171,8 @@ export async function start(ctx) {
         if (a.act === "revoke-invite") inv.revoked = a.at;
         if (a.act === "admitted" && !inv.admitted.includes(a.did)) inv.admitted.push(a.did);
         if (a.act === "admitted") removed.delete(a.did);
+        if (a.act === "member") removed.delete(a.did);
+        if (a.act === "added" || a.act === "admitted" || a.act === "member") roster.add(a.did);
         if (a.act === "app") apps.set(a.app, !!a.on);
         if (a.act === "config") {
           const k = `${a.app}/${a.key}`;
@@ -148,15 +182,38 @@ export async function start(ctx) {
         counted.push(a);
       }
       for (const d of removed) roles.set(d, null);
+      for (const d of removed) roster.delete(d);
       bans = banned;
     }
     replay();
+    // FROM OUTSIDE: the members are the roster; each one's devices are writers, whose public acts are read too — until
+    // no new member turns up.
+    const known = new Set();
+    async function widen() {
+      if (!out) return;
+      for (;;) {
+        const fresh = [...roster].filter(d => !known.has(d));
+        if (!fresh.length) return;
+        fresh.forEach(d => known.add(d));
+        const sets = await Promise.all(fresh.map(d => directory.devices(d).catch(() => [])));
+        fresh.forEach((d, i) => sets[i].forEach(k => writers.set(k, d)));
+        await pubActs.add(sets.flat());
+        replay();
+      }
+    }
+    if (out) {
+      await widen();
+      group = [...roster].map(did => ({ did }));
+    }
 
     const changed = [];
     t.onChange(() => {
       replay();
+      if (out) widen().then(() => ((group = [...roster].map(did => ({ did }))), changed.forEach(f => f())));
       for (const f of changed) f();
     });
+    // Public: an app of the space reads in public.
+    const isPublic = () => APPS.some(a => configs.get(`${a}/read`) === "public");
     const role = did => {
       if (!did || (left && did === me?.id)) return null;
       if (roles.has(did)) return roles.get(did);
@@ -194,21 +251,37 @@ export async function start(ctx) {
       nodesOf: did => group.filter(m => m.did === did),
       // Brought current with the group (a member added or removed).
       refresh: async () => {
+        if (out) return widen();
         await learn(await g.ready().catch(() => null));
         replay();
       },
+      isPublic,
+      // All writers known here (their devices' keys): whose public tails a reader outside reads.
+      writerKeys: () => [...writers.keys()],
+      // PUBLISH (the owner): the counted acts so far, and a `member` act for each member, into the public acts.
+      async publish() {
+        if (out || !me || role(me.id) !== "owner") throw new Error("only the owner makes the space's acts public");
+        const have = new Set(pubActs.rows().map(x => x.key));
+        const ids = new Set(counted.map(a => a.id));
+        for (const row of sealedActs.rows()) if (ids.has(row.key) && !have.has(row.key)) await pubActs.put(row.key, row.value);
+        const listed = new Set(counted.filter(a => ["member", "added", "admitted"].includes(a.act)).map(a => a.did));
+        for (const m of r.members()) if (m.did !== owner && !listed.has(m.did)) await pubActs.put(newId(), JSON.stringify({ act: "member", did: m.did, at: Date.now() }));
+      },
       async act(a) {
         if (!me) throw new Error("nobody is logged in");
-        const need = { grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite" }[a.act];
+        if (out) throw new Error("not a member of this space");
+        const need = { grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite", member: "invite" }[a.act];
         if (!need || !can(me.id, need)) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
-        await t.put(newId(), JSON.stringify({ ...a, at: Date.now() }));
+        // A public space's acts are public (readers outside must know them); a private one's sealed.
+        const toPublic = isPublic() || (a.act === "config" && a.key === "read" && a.value === "public");
+        await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify({ ...a, at: Date.now() }));
       },
       grant: (did, to) => r.act({ act: "grant", did, role: to }),
       onChange: f => changed.push(f),
-      settled: t.settled ?? Promise.resolve(),
+      settled: t.settled,
     };
     return r;
   }
 
-  return { of, can: (role, what) => !!CAN[role]?.has(what), names: Object.keys(CAN) };
+  return { of, ofPublic, can: (role, what) => !!CAN[role]?.has(what), names: Object.keys(CAN) };
 }

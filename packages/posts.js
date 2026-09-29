@@ -53,7 +53,27 @@ export async function start(ctx) {
     const id = String(x).startsWith("space:") ? String(x).slice(6, String(x).indexOf("/")) : x;
     return (await boards()).find(s => s.id === id) ?? null;
   };
-  const boardRoom = sp => opened(`space:${sp.id}`, () => content.in(space.board(sp)));
+  // A BOARD's room: its two tables as one — the sealed board (members read) and the PUBLIC board (anyone reads), a
+  // post going where the board reads now (`config` read), a comment or a vote beside what it is on. Outside (`desc`:
+  // not a member): the public board alone.
+  const boardRoom = sp =>
+    opened(`space:${sp.id}`, async () => {
+      const [a, b, r] = await Promise.all([content.in(space.board(sp)), content.in(space.board(sp, { pub: true })), roles.of(sp)]);
+      const roomOf = id => (b.list().some(x => x.id === id) ? b : a);
+      return {
+        list: () => [...a.list().map(x => ({ ...x, pub: false })), ...b.list().map(x => ({ ...x, pub: true }))],
+        reactions: () => [...a.reactions(), ...b.reactions()],
+        mayRemove: it => (it.pub ? b : a).mayRemove(it),
+        mayPost: () => a.mayPost(),
+        onChange: f => (a.onChange(f), b.onChange(f)),
+        settled: Promise.all([a.settled, b.settled]),
+        post: (kind, body, opts = {}) => (kind === "post" ? (r.config("board", "read", "members") === "public" ? b : a) : roomOf(opts.in)).post(kind, body, opts),
+        react: (id, e, on) => roomOf(id).react(id, e, on),
+        remove: id => roomOf(id).remove(id),
+      };
+    });
+  const outsideRoom = desc =>
+    opened(`outside:${desc.id}`, () => content.in(space.board(desc, { outside: true })).then(b => ({ ...b, list: () => b.list().map(x => ({ ...x, pub: true })), mayRemove: () => false })));
   const profileRoom = did => opened(did, () => content.in({ kind: "public", did, name: TAIL }));
   const profiles = async dids => (await Promise.all([...new Set(dids)].map(d => profileRoom(d).catch(() => null)))).filter(Boolean);
   const pointersTo = async ref => (await index.pointers(ref).catch(() => [])).map(p => p.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
@@ -81,8 +101,8 @@ export async function start(ctx) {
   };
 
   // A BOARD's posts: everything is in its one room (reactions keyed by the item's id).
-  async function boardPosts(sp) {
-    const r = await boardRoom(sp);
+  async function boardPosts(sp, { outside = false } = {}) {
+    const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
     const self = await me();
     const items = r.list();
     const votes = tally(r.reactions());
@@ -90,7 +110,7 @@ export async function start(ctx) {
     for (const it of items) if (it.kind === "comment") counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
     return items
       .filter(it => it.kind === "post")
-      .map(it => ({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), comments: counts.get(it.id) ?? 0, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it) }));
+      .map(it => ({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), pub: it.pub, comments: counts.get(it.id) ?? 0, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it) }));
   }
   // PROFILE posts: from their authors' tails; comments and votes from the tails known here (the reader's, whom they
   // follow, and whoever `readers` names).
@@ -118,7 +138,9 @@ export async function start(ctx) {
 
   async function list(where = {}, sort = "hot") {
     let out;
-    if (where.board) {
+    // A space's PUBLIC board, seen from outside (`where.outside`: its description).
+    if (where.outside) out = await boardPosts(where.outside, { outside: true });
+    else if (where.board) {
       const sp = await boardOf(where.board);
       if (!sp) throw new Error("you are not in that board's space: join it with an invite");
       out = await boardPosts(sp);
@@ -129,10 +151,10 @@ export async function start(ctx) {
     return out.sort(SORTS[sort] ?? SORTS.hot);
   }
 
-  async function get(ref) {
+  async function get(ref, { outside = null } = {}) {
     if (ref.startsWith("space:")) {
-      const sp = await boardOf(ref);
-      return sp ? ((await boardPosts(sp)).find(p => p.ref === ref) ?? null) : null;
+      const sp = outside ?? (await boardOf(ref));
+      return sp ? ((await boardPosts(sp, { outside: !!outside })).find(p => p.ref === ref) ?? null) : null;
     }
     return (await profilePosts([whereOf(ref)], await pointersTo(ref))).find(p => p.ref === ref) ?? null;
   }
@@ -155,13 +177,13 @@ export async function start(ctx) {
   }
 
   // THE THREAD: comments as a tree, best first (a reply whose parent is gone goes to the top).
-  async function thread(ref) {
+  async function thread(ref, { outside = null } = {}) {
     const self = await me();
     const all = [];
     if (ref.startsWith("space:")) {
-      const sp = await boardOf(ref);
+      const sp = outside ?? (await boardOf(ref));
       if (!sp) return [];
-      const r = await boardRoom(sp);
+      const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
       const votes = tally(r.reactions());
       const post = idOf(ref);
       for (const it of r.list())

@@ -175,7 +175,7 @@ export async function mount(ctx, el) {
       h(
         "div",
         { className: "in" },
-        h("div", { className: "meta" }, p.board ? boardLink(p.board) : h("span", { textContent: "profile" }), h("span", { textContent: "·" }), h("span", { textContent: "Posted by" }), who(p.by), h("time", { textContent: ago(p.at), title: new Date(p.at).toLocaleString() }), p.edited ? h("span", { textContent: "(edited)" }) : null),
+        h("div", { className: "meta" }, p.board ? boardLink(p.board) : h("span", { textContent: "profile" }), p.pub ? h("span", { textContent: "· 🌐 public" }) : null, h("span", { textContent: "·" }), h("span", { textContent: "Posted by" }), who(p.by), h("time", { textContent: ago(p.at), title: new Date(p.at).toLocaleString() }), p.edited ? h("span", { textContent: "(edited)" }) : null),
         h("h3", { textContent: p.title }),
         p.body ? h("p", { className: "text", textContent: p.body }) : null,
         acts,
@@ -268,10 +268,20 @@ export async function mount(ctx, el) {
             className: "ghost",
             textContent: "Board settings",
             onclick: () =>
-              appSettings.open(sp, "board", "Board", [
-                { key: "post", label: "Who may post (every member may comment and vote)", options: [["everyone", "Every member"], ["admins", "Admins only"]] },
-                { key: "rules", label: "Rules (shown beside the board)" },
-              ]),
+              appSettings.open(
+                sp,
+                "board",
+                "Board",
+                [
+                  // Who may read: the owner's (public makes the space's members, roles and moderation public too).
+                  ...(r.role(me) === "owner"
+                    ? [{ key: "read", label: "Who may read (public: anyone, and the space's members and moderation are public too; posts made before stay as they were)", options: [["members", "Members only"], ["public", "Anyone (public)"]] }]
+                    : []),
+                  { key: "post", label: "Who may post (every member may comment and vote)", options: [["everyone", "Every member"], ["admins", "Admins only"]] },
+                  { key: "rules", label: "Rules (shown beside the board)" },
+                ],
+                { saved: async changed => changed.read === "public" && (await r.publish()) },
+              ),
           })
         : null;
       const mayPost = r.allows("board", me, "post");
@@ -281,6 +291,7 @@ export async function mount(ctx, el) {
           { className: "panel" },
           h("h3", { textContent: `b/${sp.name}` }),
           h("p", { textContent: `${n} member${n === 1 ? "" : "s"} · you: ${r.role(me) ?? "member"}` }),
+          r.config("board", "read", "members") === "public" ? h("p", { textContent: "🌐 Public: anyone reads new posts." }) : null,
           mayPost ? create : h("p", { textContent: "Only admins post here; comment and vote on any post." }),
           settingsBtn,
         ),

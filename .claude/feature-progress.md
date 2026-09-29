@@ -552,6 +552,17 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       admins, rules, added #news; P: chat composer "Only admins post here", board rules + no Create post, notes
       composer hidden, P's earlier note/post still shown; reverted.
 - (after R2) Feed: a personal-space lens over the boards of the spaces you are in (Reddit's Home).
+- [x] P1 PUBLIC READ per app (Board first): Board settings "Who may read" (owner only: `config` read, counted only
+      for the owner). Public posts go to the space's `pub-board` table — written in the clear (storage: a space table
+      named `pub-…` is unsealed, still signed in the space: only members write); members read both boards as one room
+      (`posts.boardRoom`: a post goes where the board reads now; a comment/vote beside its post), so earlier posts stay
+      members-only. The space's governance goes public with it: acts in `pub-acts` (read by roles with the sealed ones,
+      one per key); `r.publish()` (owner) copies the counted acts and a `member` act per member (the ROSTER). From
+      OUTSIDE (`roles.ofPublic(desc)`): writers found from the owner (the id proves them) + the roster, each DID's
+      devices from its card, their `pub-acts` and `pub-board` tails read by address (`storage.readOnly`: no catalog, no
+      keys); content's `outside` container; outsiders cannot post or vote. Live (17573): Studio public → P (not a
+      member) read "Public hello" in 2 s, not the members-only posts, post refused; Makers public → P (member) posted
+      public → an outside view counted P as member and listed P's post.
 - (later) Discover's public views: public spaces (anyone reads/joins) listed in public bags; Board's public posts,
   Chat's public spaces, Contacts' profiles; filtered by blocks + followed moderation lists.
 - (parked, owner 09-29) Blog: a lens over profile posts.
