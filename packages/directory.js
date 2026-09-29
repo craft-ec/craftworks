@@ -15,6 +15,7 @@
 //   await directory.publicOf(did, name)       // any public tail of theirs (`card`, `mail`: only their account writes it)
 //   await directory.dataKey(did)              // their account's data key (hex) as their key log names it, or null
 //   await directory.devices(did, fresh?)      // their devices' keys (hex), each credential checked against their key log
+//   directory.onDevices(did, fn)              // their devices changed (their card moved)
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const storage = await ctx.require("storage");
@@ -134,6 +135,23 @@ export async function start(ctx) {
   // by a key the log never named counts for nothing). Once per page, or again when asked (`fresh`: a device may have
   // joined since).
   const deviceSets = new Map();
+  // A person's devices CHANGED (their card moved: a device added or removed): `fn(did)`. Their card is followed once,
+  // and the devices read again on its next change.
+  const deviceWatch = new Map(); // did → [fn]
+  function onDevices(did, fn) {
+    if (!deviceWatch.has(did)) {
+      deviceWatch.set(did, []);
+      publicOf(did, CARD)
+        .then(t =>
+          t?.onChange(() => {
+            deviceSets.delete(did);
+            for (const f of deviceWatch.get(did)) f(did);
+          }),
+        )
+        .catch(() => {});
+    }
+    deviceWatch.get(did).push(fn);
+  }
   function devices(did, fresh = false) {
     if (fresh || !deviceSets.has(did))
       deviceSets.set(
@@ -148,5 +166,5 @@ export async function start(ctx) {
     return deviceSets.get(did);
   }
 
-  return { card, publish, renew, handle, shown, name, publicOf, dataKey, devices };
+  return { card, publish, renew, handle, shown, name, publicOf, dataKey, devices, onDevices };
 }

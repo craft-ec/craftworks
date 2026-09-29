@@ -515,8 +515,29 @@ export async function start(ctx) {
   async function keyPackages(n = 4) {
     const mb = await memberWith(null);
     const kps = Array.from({ length: n }, () => hexOf(mb.key_package()));
-    await (await spacekeys()).put(`packages/${newId()}`, hexOf(mb.packages()));
+    // Its id starts with when it was made (base 36): what retires the batches before it.
+    await (await spacekeys()).put(`packages/${Date.now().toString(36)}-${newId()}`, hexOf(mb.packages()));
+    prunePackages().catch(e => ctx.log("account keys", { what: `pruning key packages: ${e.message}` }));
     return kps;
+  }
+  // SPENT BATCHES: a batch is off the card once the next one is made; a welcome made from one of its key packages
+  // before that may still arrive, so it is kept a WEEK longer, then dropped. The newest is always kept. (A batch from
+  // before ids carried their time counts as the oldest.)
+  const WEEK = 7 * 24 * 3600 * 1000;
+  async function prunePackages() {
+    const t = await spacekeys();
+    const made = key => {
+      const m = /^packages\/([0-9a-z]+)-/.exec(key);
+      return m ? parseInt(m[1], 36) : 0;
+    };
+    const batches = t.rows().filter(r => r.key.startsWith("packages/") && r.value).map(r => ({ key: r.key, at: made(r.key) })).sort((a, b) => a.at - b.at);
+    for (let i = 0; i + 1 < batches.length; i++) {
+      const retired = batches[i + 1].at;
+      if (retired && Date.now() - retired > WEEK) {
+        await t.remove(batches[i].key);
+        ctx.log("account keys", { what: `a spent batch of key packages dropped (${batches[i].key})` });
+      }
+    }
   }
 
   return { ready, remove, escrowed, group, keyPackages, onChange: f => watchers.push(f) };

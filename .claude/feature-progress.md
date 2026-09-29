@@ -452,8 +452,7 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       (one after its 30 s re-read), both attributed to X. Messages written under the old DID-wide feed (test
       servers Kiln, Anvil) are no longer read: dev data.
 - [ ] The identity's `SpaceMember.writer` (DID-wide feed key) is unused now: drop it at the next delegate change.
-- [ ] A space table open before a member's device first writes picks that feed up on the 30 s re-read; a push on the
-      catalog would make it immediate.
+- [x] A space table open before a member's device first writes: now re-gathered on the member's card change (item 4).
 
 ## Queue 1–4 (owner 2026-09-29: "Proceed with 1-4")
 - [x] 1a unread + notifications (`activity`): read marks in the account table `reads`; counts on Messages, Chat
@@ -483,4 +482,11 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       drops `{from}` in the post's public pointer bag (`index.point`, made at post time), resolved by the reader. Feed =
       own + followed tails. Live (private net): post 0.8 s; Y followed → feed at once; Y's vote + comment via UI; A (not
       following Y) found both through the bag (score 1, 1 comment).
-- [ ] 4 upkeep: a member's new device picked up at once; prune old mail rows and spent key-package batches
+- [x] 4 upkeep. NEW WRITERS: an open table's writers were fixed at open and `directory.devices` cached per page, so a
+      member's new device (or a new member) was never seen without a reload. Now `directory.onDevices(did)` (the
+      member's card followed) and the group moving (`craftworks:keys`) re-gather writers into every open table; the
+      account scope follows its directory. An absent catalog is polled ONCE per catalog (5 s, 10 s, 20 s, then 30 s).
+      Live: V's new device (passphrase) wrote in the DM; Y's open page had it without a reload.
+      PRUNE: key-package batch ids carry their time; a batch retired (the next one made) over a week ago is dropped
+      (live: 10-day-retired dropped, just-retired kept). Mail ids carry their time; the sender's sealed public copies
+      older than 30 days are dropped after each send (live: 40-day row dropped, recent kept).

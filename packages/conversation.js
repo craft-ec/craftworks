@@ -30,6 +30,7 @@
 //   await conversation.mail.send([did…], subject, body, re)   // a mail (re: the id of the one it answers)
 //   await conversation.mail.fetch()  // mails pointed to in the inbox, opened and kept
 //   await conversation.mail.list("in" | "sent")   // [{ id, from, to, subject, body, at, re }], newest first
+//   await conversation.mail.prune()  // this account's sealed copies older than 30 days dropped (after each send)
 export async function start(ctx) {
   const [space, keys, directory, index, content] = await Promise.all(["space", "keys", "directory", "index", "content"].map(n => ctx.require(n)));
   const short = did => `${did.replace(/^did:craftec:/, "").slice(0, 8)}…`;
@@ -295,6 +296,7 @@ export async function start(ctx) {
 
   // MAIL.
   const MAIL = "mail";
+  const MONTH = 30 * 24 * 3600 * 1000;
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   const bytesOf = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
   const newId = () => hexOf(crypto.getRandomValues(new Uint8Array(8)));
@@ -307,7 +309,7 @@ export async function start(ctx) {
       if (!me) throw new Error("nobody is logged in");
       to = [...new Set(to)];
       if (!to.length) throw new Error("to nobody");
-      const m = { id: newId(), from: me.id, to, subject: String(subject ?? ""), body: String(body ?? ""), at: Date.now(), re };
+      const m = { id: `${Date.now().toString(36)}.${newId()}`, from: me.id, to, subject: String(subject ?? ""), body: String(body ?? ""), at: Date.now(), re };
       const box = await directory.publicOf(me.id, MAIL);
       const cards = await Promise.all(to.map(d => directory.card(d)));
       const missing = to.filter((d, i) => !cards[i]?.inbox);
@@ -319,7 +321,21 @@ export async function start(ctx) {
         await index.send(d, { kind: "mail", from: me.id, key });
       }
       await (await kept()).put(`sent/${m.id}`, JSON.stringify(m));
+      mail.prune().catch(e => ctx.log("mail", { what: `pruning: ${e.message}` }));
       return m;
+    },
+    // OLD MAIL in this account's public tail: each recipient keeps what they opened (their `mailbox`), so a sealed
+    // copy older than 30 days is dropped (a mail's id starts with when it was sent, base 36; one without is left).
+    async prune() {
+      const me = await space.account();
+      const box = me && (await directory.publicOf(me.id, MAIL));
+      if (!box) return 0;
+      const old = box.rows().filter(r => {
+        const m = /^([0-9a-z]+)\./.exec(r.key);
+        return r.value && m && Date.now() - parseInt(m[1], 36) > MONTH;
+      });
+      for (const r of old) await box.remove(r.key);
+      return old.length;
     },
     // Every mail pointed to in the inbox and not kept yet: read from its sender's own tail, opened, kept.
     async fetch() {

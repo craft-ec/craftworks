@@ -387,6 +387,8 @@ export async function start(ctx) {
           return o === false ? null : { owner: sp.shared, known: o };
         },
         writers: () => writers(sp.self),
+        // New nodes of the account: listed in its directory.
+        watch: fn => directory().then(d => d.onChange(fn)),
         catalogOf,
       };
     return {
@@ -403,8 +405,43 @@ export async function start(ctx) {
         const all = (await Promise.all(dids.map(d => directory.devices(d)))).flat();
         return [...new Set(all)].filter(k => k !== sp.self);
       },
+      // New writers: a member's devices changed (their card), or the members did (the group moved).
+      watch: fn => {
+        addEventListener("craftworks:keys", fn);
+        (async () => {
+          const [keys, directory] = await Promise.all(["keys", "directory"].map(n => ctx.require(n)));
+          const members = (await keys.group(sp).ready())?.members ?? [];
+          const watched = new Set();
+          const each = () => {
+            for (const m of members.filter(m => m.cred)) {
+              const d = glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16))));
+              if (!watched.has(d)) watched.add(d), directory.onDevices(d, fn);
+            }
+          };
+          each();
+          addEventListener("craftworks:keys", async () => {
+            members.splice(0, members.length, ...((await keys.group(sp).ready().catch(() => null))?.members ?? []));
+            each();
+          });
+        })().catch(() => {});
+      },
       catalogOf: w => tail(w, sp.tables.catalog, { space: sp }),
     };
+  }
+
+  // A writer's catalog not there yet (a device that has not written here): asked again, soon at first (it may be
+  // writing now), then every 30 s — ONE poll per catalog, however many tables wait on it (each follows its changes).
+  const polled = new Set();
+  function absentCatalog(c) {
+    if (polled.has(c)) return;
+    polled.add(c);
+    const again = (n = 0) =>
+      setTimeout(async () => {
+        await c.reread().catch(() => {});
+        if (c.absent) again(n + 1);
+        else polled.delete(c);
+      }, [5000, 10000, 20000][n] ?? 30000);
+    again();
   }
 
   // A TABLE: the merge of its writers' feeds, and this node's feed to write.
@@ -465,18 +502,17 @@ export async function start(ctx) {
         };
         c.onChange(() => open().catch(() => {}));
         if (c.absent) {
-          const again = () =>
-            setTimeout(async () => {
-              await c.reread().catch(() => {});
-              if (c.absent) again();
-              else await open();
-            }, 30000);
-          again();
+          absentCatalog(c);
           return;
         }
         await open();
       };
       const settled = Promise.all(others.map(o => gather(o).catch(() => {})));
+      // A WRITER NEW since the table opened (a member's new device, a new member): gathered when the scope says so.
+      const seen = new Set(others);
+      scope.watch?.(async () => {
+        for (const o of await scope.writers().catch(() => [])) if (!seen.has(o)) seen.add(o), gather(o).catch(() => {});
+      });
       ctx.log("table open", { what: `${name}: ${rows.length} row(s) from ${all.filter(f => !f.absent).length} feed(s)` });
       // A write in a space: its group brought current first, so what is written is sealed with the newest epoch's key
       // (never one a member removed since still holds).
