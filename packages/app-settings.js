@@ -43,7 +43,8 @@ export async function start(ctx) {
     const sel = h(
       "select",
       { ariaLabel: `${action} at ${path || "the space"}` },
-      h("option", { value: "", textContent: `Inherit (${NAMES[inherited] ?? inherited})` }),
+      // The space itself has nothing above it: its "inherit" is the built-in default (a tenant, later, will be its parent).
+      h("option", { value: "", textContent: `${parent == null ? "Default" : "Inherit"} (${NAMES[inherited] ?? inherited})` }),
       ...options.map(w => h("option", { value: w, textContent: NAMES[w] })),
     );
     sel.value = own;
