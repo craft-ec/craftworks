@@ -144,6 +144,26 @@ uses the tokens, never its own colours or sizes — so a new look, or a second t
 - **Grants.** A site gets a table's key only with the person's grant (once per site, for all the kinds it uses); the
   home site needs none.
 
+## 6. Files and media
+
+A FILE is a sequence of 256 KiB CHUNKS, each sealed (XChaCha20-Poly1305) with the file's own random KEY and kept in a
+`sealed` contract at an ADDRESS only that key gives (a keyed hash of the key and the piece's place). Every 16 chunks —
+a GROUP — carry 4 PARITY pieces (Reed-Solomon, `freenet-prolly`'s `rs`), sealed and addressed the same way: a group
+reads on ANY 16 of its 20 pieces, asked AT ONCE (raced, as tree blocks are), so up to 4 lost pieces per group cost
+nothing. The file's INDEX — its size, chunk and group counts, and the plaintext hash of every piece — is one more sealed
+piece at the key's address for it.
+
+The REFERENCE to a file is `{ key, index hash, size, name, type }`, carried inside an item (a message, a post, a note):
+it is all a reader needs — the addresses come from the key, and every piece is checked against the index (itself
+checked against the reference) the moment it arrives, so nobody who learns the key can slip a different piece in.
+PRIVATE or PUBLIC is only where the reference is: in a sealed table only the members hold the key; on a public board
+anyone does. One mechanism, no public copy of anything.
+
+Chosen over the provisional RLNC design (archived ARCHITECTURE §Media): RLNC's gain is re-encoding by keepers in a
+keeper market, which does not exist yet, at the cost of homomorphic checks on every fragment on a phone; Reed-Solomon
+over fixed groups needs a hash per piece, reuses the code, contract and racing already in use, and a later keeper
+re-puts the same pieces. Streaming reads come a group at a time (4 MiB), in order.
+
 ## Implementation plan
 
 Each phase: build → the private node (all three sites) → published through B → committed. Status as of 2026-09-28.
@@ -161,6 +181,7 @@ Each phase: build → the private node (all three sites) → published through B
 | M | **Private messaging** (owner: the foundation of messages) | `directory`, `index`, `conversation`, `space`, `content` | a person's public card (handle + id, their nodes' key packages, the inbox key); the inbox (a `bag`: sealed items, admitted by work, no signer); `conversation` kinds direct / group / mail (only where the mechanism differs) — direct: a two-person space, the welcome in the other's inbox, each person's messages in their own feed; mail: the mail in the sender's public tail `mail` (only their account writes it: the proof of who sent it), sealed to each recipient's inbox key, a pointer in each inbox, kept by the recipient in their `mailbox` | done (direct, mail) |
 | C4 | **Roles and moderation** | `roles`, `moderation`, `space`, `content`, `keys` | a space's id proves its owner (sha-256 of owner + nonce); built-in roles owner / admin / member; authority changes by ACTS in the space's `acts` table, replayed in one order by every reader, each counted only if its signer could (the signer = the feed's writer node → its account, from the group's credentials); moderation hides any object (a message, a channel) and removes a person (their nodes out of the group: a new epoch); `content`'s author is its row's writer, hidden items left out | done |
 | C3 | **Invites, governance UI** | `roles`, `conversation`, `index`, `space`, `server-settings` | invite CODES as acts (expiry, uses; revoke); a joiner drops a request in the bag the code names; any member who may invite admits askers when online (`admitted` act) — and, with no page open, their node's identity delegate does (the mandate: codes in force, bans, members, the group; its admissions written as acts by the next page); ownership TRANSFER act; leave = out of the person's own list; Server settings: overview/ownership/leave, members & roles, channels, invites, moderation log | done |
+| F | **Files and media** (§6) | `files`, `storage`, `content` | a file as sealed 256 KiB chunks + parity per 16, raced reads, an index checked against its reference; attachments in Messages, Chat, Mail and Board; streaming reads; Drive | in progress |
 | 3 | **Reads** | `storage`, `blocks` | range (latest N, older pages) and change-only reads (tree diff) | — |
 | 4 | **Lifecycle** | `keep` | re-publishing, retention, flush when quiet, health; blinded table names | — |
 | 5 | **Rules over objects** | `ordering`, `governance`, `roles`, `access`, `membership`, `administration`, `moderation`, `space` | the Log for objects and spaces; acts and their rules; spaces | — |

@@ -723,3 +723,14 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
   policies: who creates spaces, apps allowed, guests). Personal tenant = today's personal space; business tenants
   onboard companies. Rail gets a tenant switcher. Open: company-issued (managed) identities vs own accounts; what a
   leaver's content leaves behind. R1 builds the rail tenant-shaped (Personal first).
+
+## Files and media (owner 2026-09-30: next after joining; then Reads, then Lifecycle) — ARCHITECTURE §6
+Design (core dev, owner welcomed a better one than the archived RLNC): sealed 256 KiB chunks at key-derived addresses
+(`sealed` contract), 4 RS parity per 16 (`rs`), an index of piece hashes checked against the reference
+`{ key, index hash, size, name, type }`; private/public = where the reference is.
+- [ ] F1 core: crate `files` (pure): chunking, sealing, addresses, index, group parity + repair; tests.
+- [ ] F2 capability `files` (page): put(blob) with progress → reference; open(reference) → bytes / object URL, raced per
+      group, verified per piece. Live: a multi-MB file up, down, a piece lost and rebuilt.
+- [ ] F3 attachments: Messages, Chat, Mail, Board posts — pick a file, image preview, download.
+- [ ] F4 streaming: video/audio play as groups arrive.
+- [ ] F5 Drive app: the account's files (and a space's), folders.
