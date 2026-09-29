@@ -216,6 +216,20 @@ export async function start(ctx) {
     await index.request(code, { kind: "join", did: me.id, at: Date.now() });
     return code;
   }
+  // OPEN SPACES: who may join without a code (the space's `config` space/join: "open"). The asker drops a request in
+  // the bag the space's id names; a member who may invite welcomes them, recorded `admitted` (code "open").
+  const openCode = id => `open ${id}`;
+  async function joinOpen(desc) {
+    const me = await space.account();
+    if (!me) throw new Error("nobody is logged in");
+    await directory.publish().catch(() => {});
+    await index.request(openCode(desc.id), { kind: "join", did: me.id, at: Date.now() });
+  }
+  async function setJoin(sp, how) {
+    const r = await (await ctx.require("roles")).of(sp);
+    if (how === "open") await index.openRequests(openCode(sp.id));
+    await r.act({ act: "config", app: "space", key: "join", value: how });
+  }
   async function admit(sp) {
     const me = await space.account();
     const r = await (await ctx.require("roles")).of(sp);
@@ -223,6 +237,19 @@ export async function start(ctx) {
     if (!me || !r.can(me.id, "invite")) return [];
     const inside = new Set(r.members().map(m => m.did));
     const out = [];
+    if (r.config("space", "join", "invite") === "open")
+      for (const q of await index.requests(openCode(sp.id))) {
+        if (q.kind !== "join" || !q.did || inside.has(q.did) || r.banned(q.did)) continue;
+        try {
+          await welcome(sp, q.did, sp.name);
+          await r.act({ act: "admitted", code: "open", did: q.did });
+          inside.add(q.did);
+          out.push(q.did);
+          ctx.log("conversation", { what: `${directory.shown(q.did)} joined ${sp.name} (open)` });
+        } catch (e) {
+          ctx.log("conversation", { what: `could not admit ${short(q.did)}: ${e.message}` });
+        }
+      }
     for (const inv of r.invites()) {
       for (const q of await index.requests(inv.code)) {
         if (q.kind !== "join" || !q.did || inside.has(q.did) || r.banned(q.did) || !r.invites().some(i => i.code === inv.code)) continue;
@@ -381,5 +408,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, list, members, person, mail, createInvite, revokeInvite, join, admit, befriend, friendRequests, answerFriend, unfriend, channels };
+  return { direct, group, invite, accept, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels };
 }

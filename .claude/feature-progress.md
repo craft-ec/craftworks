@@ -570,6 +570,13 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       view: `#/discover/board` (every public board, Hot/New/Top), `…/b/<id>` (one), `…/p/<ref>` (read-only: members
       comment and vote). Live (17573): Studio + Makers listed; P saw both in Discover, the global feed with both public
       posts, a post read-only.
+- [x] P3 OPEN JOIN: the space's own setting `config` space/join ("invite" | "open"; owner, admins — on its Home). An
+      open space's join requests go in the bag its id names (no code); a member who may invite welcomes them
+      (`conversation.admit`), recorded `admitted` code "open" — counted only while the space was open. Discover shows
+      Join on an open public space (read from its public acts), "Open in your space" once in. FIXED: the replay
+      crashed on an open admission (no invite to count it on) — P's roles, so its board, failed to load. Live (17573):
+      S opened Studio; P joined from Discover; S's Studio Home admitted P; P: Studio on the rail, 2 members, its
+      public + members-only posts, Create post.
 - (later) Discover's public views: public spaces (anyone reads/joins) listed in public bags; Board's public posts,
   Chat's public spaces, Contacts' profiles; filtered by blocks + followed moderation lists.
 - (parked, owner 09-29) Blog: a lens over profile posts.

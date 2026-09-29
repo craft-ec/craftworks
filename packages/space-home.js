@@ -118,6 +118,15 @@ export async function mount(ctx, el) {
         { className: "top" },
         h("h2", { textContent: sp.name }),
         r.can(me, "invite") ? h("button", { type: "button", className: "btn main", textContent: "Invite", onclick: () => openSettings("invites") }) : null,
+        // WHO MAY JOIN (owner, admins): by an invite, or anyone who asks (an open space; Discover shows Join).
+        r.can(me, "apps")
+          ? (() => {
+              const sel = h("select", { className: "btn", ariaLabel: "Who may join" }, h("option", { value: "invite", textContent: "Joining: by invite" }), h("option", { value: "open", textContent: "Joining: anyone may join" }));
+              sel.value = r.config("space", "join", "invite");
+              sel.onchange = () => conversation.setJoin(sp, sel.value).then(draw, e => ((said.textContent = e.message), (said.hidden = false)));
+              return sel;
+            })()
+          : null,
         h("button", { type: "button", className: "btn", textContent: "Settings", onclick: () => openSettings("overview") }),
         h("p", { textContent: `${members.length} member${members.length === 1 ? "" : "s"} · you: ${r.role(me) ?? "member"}` }),
       ),

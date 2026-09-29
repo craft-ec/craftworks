@@ -150,7 +150,10 @@ export async function start(ctx) {
           (a.act === "admitted" && CAN[r]?.has("invite") && inv && live(inv, a.at) && a.did && !banned.has(a.did)) ||
           (a.act === "app" && CAN[r]?.has("apps") && APPS.includes(a.app)) ||
           // Who may READ an app (members, or anyone) is the owner's: making it public publishes the space's acts.
-          (a.act === "config" && CAN[r]?.has("apps") && APPS.includes(a.app) && typeof a.key === "string" && a.key.length <= 32 && (a.key !== "read" || r === "owner")) ||
+          // The space's own settings are app "space" (who may join: "invite" or "open").
+          (a.act === "config" && CAN[r]?.has("apps") && (APPS.includes(a.app) || a.app === "space") && typeof a.key === "string" && a.key.length <= 32 && (a.key !== "read" || r === "owner")) ||
+          // Admitted by asking, while the space was OPEN (no code).
+          (a.act === "admitted" && a.code === "open" && CAN[r]?.has("invite") && configs.get("space/join") === "open" && a.did && !banned.has(a.did)) ||
           (a.act === "member" && CAN[r]?.has("invite") && a.did && !banned.has(a.did));
         if (!ok) continue;
         if (a.act === "grant") roles.set(a.did, a.role);
@@ -169,7 +172,7 @@ export async function start(ctx) {
         }
         if (a.act === "invite") invites.set(a.code, { code: a.code, by: a.by, at: a.at, expires: Number(a.expires) || 0, uses: Number(a.uses) || 0, admitted: [] });
         if (a.act === "revoke-invite") inv.revoked = a.at;
-        if (a.act === "admitted" && !inv.admitted.includes(a.did)) inv.admitted.push(a.did);
+        if (a.act === "admitted" && inv && !inv.admitted.includes(a.did)) inv.admitted.push(a.did);
         if (a.act === "admitted") removed.delete(a.did);
         if (a.act === "member") removed.delete(a.did);
         if (a.act === "added" || a.act === "admitted" || a.act === "member") roster.add(a.did);

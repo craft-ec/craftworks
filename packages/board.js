@@ -265,13 +265,42 @@ export async function mount(ctx, el) {
   }
 
   // THE SIDE PANEL: the space's board (its name, members, Create post), or a profile.
+  // A PUBLIC space seen from Discover: what it is, and Join when it is open (or you are in: open it).
+  async function publicPanel(d) {
+    const pr = await roles.ofPublic(d);
+    const mine = (await space.mine()).some(s => s.id === d.id);
+    const said = h("p", { hidden: true });
+    const join =
+      !mine && pr.config("space", "join", "invite") === "open"
+        ? h("button", {
+            type: "button",
+            className: "go",
+            textContent: "Join",
+            onclick: async e => {
+              e.target.disabled = true;
+              await (await ctx.require("conversation")).joinOpen(d).then(
+                () => ((said.textContent = "Asked to join: you are in once a member who may invite is online."), (said.hidden = false)),
+                err => ((said.textContent = err.message), (said.hidden = false), (e.target.disabled = false)),
+              );
+            },
+          })
+        : null;
+    return h(
+      "div",
+      { className: "panel" },
+      h("h3", { textContent: `b/${d.name}` }),
+      h("p", { textContent: `🌐 A public board: anyone reads it; its ${pr.members().length} member${pr.members().length === 1 ? "" : "s"} post, comment and vote.` }),
+      mine ? h("a", { className: "go", href: `#/s/${d.id}/board`, textContent: "Open in your space" }) : join ?? h("p", { textContent: "Joining is by invite." }),
+      said,
+    );
+  }
   async function sidePanel(w) {
     // Discover: the public spaces; one public space: its name (joining is a member's way to post).
     if (discovering()) {
       const spaces = await posts.publicSpaces();
       const d = w.pub ? spaces.find(x => x.id === w.pub) : null;
       return [
-        d ? h("div", { className: "panel" }, h("h3", { textContent: `b/${d.name}` }), h("p", { textContent: "🌐 A public board: anyone reads it; its members post, comment and vote." })) : null,
+        d ? await publicPanel(d) : null,
         h("div", { className: "panel" }, h("h3", { textContent: "Public spaces" }), spaces.length ? h("ul", {}, ...spaces.map(x => h("li", {}, h("a", { href: `#/discover/board/b/${x.id}`, textContent: `b/${x.name}` })))) : h("p", { textContent: "None listed yet." })),
       ].filter(Boolean);
     }
