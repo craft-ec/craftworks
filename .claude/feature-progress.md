@@ -586,6 +586,11 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
 - [x] Discover's Home = app tiles only, like every Home (owner: "home for discover is aggregate for all apps"). The
       public-spaces directory is Board's public view (side panel, Join); moderation lists are the person's settings:
       Account → Moderation (your entries with Remove, the lists you apply with Stop applying).
+- [x] PERSONAL BOARD AUDIENCE PER POST (owner: "perhaps that is per post instead"): Create post on your profile asks
+      "Who sees it": 🌐 Everyone (the public tail `posts`) or 🔒 Only you (sealed account table `journal`); your
+      profile room is both as one (`posts.profileRoom`), a comment/vote on a private post stays in the journal (no
+      pointer). Live (17573): P posted one of each + a private comment; P's board showed both (🔒 marked); P's public
+      tail held neither the private post nor its comment; S saw only the public one.
 - (later) Discover's remaining public view: Contacts' profiles. NO public Chat (owner 09-29: Discord has none; its
   Discovery is a directory — Discover's Home lists public spaces with Join). A Discord-style preview channel would be a
   Chat setting later if wanted.

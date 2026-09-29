@@ -74,7 +74,31 @@ export async function start(ctx) {
     });
   const outsideRoom = desc =>
     opened(`outside:${desc.id}`, () => content.in(space.board(desc, { outside: true })).then(b => ({ ...b, list: () => b.list().map(x => ({ ...x, pub: true })), mayRemove: () => false })));
-  const profileRoom = did => opened(did, () => content.in({ kind: "public", did, name: TAIL }));
+  // A PROFILE's room: their public tail. YOURS also holds your PRIVATE posts (per post: "only you"), sealed in your
+  // account's table `journal` — with their comments and votes, so nothing of them reaches the public tail.
+  const JOURNAL = "journal";
+  const profileRoom = did =>
+    opened(did, async () => {
+      const pub = await content.in({ kind: "public", did, name: TAIL });
+      const acc = await space.account();
+      if (did !== acc.id) return pub;
+      const priv = await content.in({ kind: "journal", messages: JOURNAL, scope: acc });
+      const isPrivate = id => priv.list().some(x => x.id === id);
+      const roomOf = id => (isPrivate(id) ? priv : pub);
+      const idIn = ref => String(ref ?? "").slice(String(ref ?? "").lastIndexOf("/") + 1);
+      return {
+        list: () => [...pub.list(), ...priv.list().map(x => ({ ...x, private: true }))],
+        reactions: () => [...pub.reactions(), ...priv.reactions()],
+        mayRemove: it => it.by === acc.id,
+        onChange: f => (pub.onChange(f), priv.onChange(f)),
+        settled: Promise.all([pub.settled, priv.settled]),
+        isPrivate: ref => isPrivate(idIn(ref)),
+        post: (kind, body, opts = {}) => (kind === "post" ? (opts.private ? priv : pub) : roomOf(idIn(opts.in))).post(kind, body, opts),
+        react: (item, e, on) => roomOf(idIn(item)).react(item, e, on),
+        remove: id => roomOf(id).remove(id),
+        edit: (id, body) => roomOf(id).edit(id, body),
+      };
+    });
   const profiles = async dids => (await Promise.all([...new Set(dids)].map(d => profileRoom(d).catch(() => null)))).filter(Boolean);
   const pointersTo = async ref => (await index.pointers(ref).catch(() => [])).map(p => p.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
   const idOf = ref => ref.slice(ref.lastIndexOf("/") + 1);
@@ -97,7 +121,7 @@ export async function start(ctx) {
   const postOf = c => c.in ?? c.re; // a comment's post (an old one answering its post directly has no `in`)
   const shape = (it, ref, board) => {
     const [first, ...rest] = it.body.split("\n"); // a post from before titles: its first line is its title
-    return { ref, id: it.id, by: it.by, title: it.title ?? first.slice(0, 300), body: it.title ? it.body : rest.join("\n").trim(), board, at: it.at, edited: it.edited };
+    return { ref, id: it.id, by: it.by, title: it.title ?? first.slice(0, 300), body: it.title ? it.body : rest.join("\n").trim(), board, at: it.at, edited: it.edited, private: !!it.private };
   };
 
   // A BOARD's posts: everything is in its one room (reactions keyed by the item's id).
@@ -178,7 +202,7 @@ export async function start(ctx) {
     return (await profilePosts([whereOf(ref)], await pointersTo(ref))).find(p => p.ref === ref) ?? null;
   }
 
-  async function submit({ board = null, title, body }) {
+  async function submit({ board = null, title, body, private: only = false }) {
     title = String(title ?? "").trim();
     body = String(body ?? "").trim();
     if (!title) throw new Error("a post needs a title");
@@ -189,9 +213,9 @@ export async function start(ctx) {
       return `space:${sp.id}/${await (await boardRoom(sp)).post("post", body, { title })}`;
     }
     const self = await me();
-    const ref = `${self}/${await (await profileRoom(self)).post("post", body, { title })}`;
-    // Its pointer bag, made now: nobody reading it waits on one that does not exist.
-    await index.openPointers(ref).catch(e => ctx.log("posts", { what: `the pointer bag of ${ref}: ${e.message}` }));
+    const ref = `${self}/${await (await profileRoom(self)).post("post", body, { title, private: only })}`;
+    // Its pointer bag, made now (a public post: nobody reading it waits on one that does not exist).
+    if (!only) await index.openPointers(ref).catch(e => ctx.log("posts", { what: `the pointer bag of ${ref}: ${e.message}` }));
     return ref;
   }
 
@@ -245,8 +269,10 @@ export async function start(ctx) {
       await (await boardRoom(sp)).post("comment", body, { re: idOf(re ?? post), in: idOf(post) });
       return;
     }
-    await (await profileRoom(await me())).post("comment", body, { re: re ?? post, in: post });
-    await pointTo(post);
+    const mine = await profileRoom(await me());
+    await mine.post("comment", body, { re: re ?? post, in: post });
+    // On a private post: private too, and no pointer anywhere.
+    if (!mine.isPrivate?.(post)) await pointTo(post);
   }
 
   async function vote(ref, v, post = ref) {
@@ -259,7 +285,7 @@ export async function start(ctx) {
     const had = new Set(r.reactions().filter(x => x.item === item && x.by === self).map(x => x.emoji));
     // Only what changes is written (taking back a vote that is not there writes nothing).
     for (const [e, on] of [[UP, v === 1], [DOWN, v === -1]]) if (on !== had.has(e)) await r.react(item, e, on);
-    if (v && !onBoard) await pointTo(post);
+    if (v && !onBoard && !r.isPrivate?.(post)) await pointTo(post);
   }
 
   // REMOVE: this person's own, or — on a board, as its moderator — anyone's (hidden, as the server's moderation does).

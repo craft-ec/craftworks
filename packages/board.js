@@ -200,7 +200,7 @@ export async function mount(ctx, el) {
       h(
         "div",
         { className: "in" },
-        h("div", { className: "meta" }, p.board ? boardLink(p.board) : h("span", { textContent: "profile" }), p.pub ? h("span", { textContent: "· 🌐 public" }) : null, h("span", { textContent: "·" }), h("span", { textContent: "Posted by" }), who(p.by), h("time", { textContent: ago(p.at), title: new Date(p.at).toLocaleString() }), p.edited ? h("span", { textContent: "(edited)" }) : null),
+        h("div", { className: "meta" }, p.board ? boardLink(p.board) : h("span", { textContent: "profile" }), p.pub ? h("span", { textContent: "· 🌐 public" }) : null, p.private ? h("span", { textContent: "· 🔒 only you" }) : null, h("span", { textContent: "·" }), h("span", { textContent: "Posted by" }), who(p.by), h("time", { textContent: ago(p.at), title: new Date(p.at).toLocaleString() }), p.edited ? h("span", { textContent: "(edited)" }) : null),
         h("h3", { textContent: p.title }),
         p.body ? h("p", { className: "text", textContent: p.body }) : null,
         acts,
@@ -426,7 +426,15 @@ export async function mount(ctx, el) {
       "form",
       { className: "panel reply" },
       h("h3", { textContent: "Create a post" }),
-      h("p", {}, sp ? `To b/${sp.name}: its members read it.` : "To your profile: in public, what your followers read."),
+      sp
+        ? h("p", {}, `To b/${sp.name}: its members read it.`)
+        : // YOUR PROFILE: who sees this post — everyone (public: what your followers read) or only you (private).
+          h(
+            "label",
+            {},
+            "Who sees it",
+            h("select", { className: "field", name: "audience" }, h("option", { value: "public", textContent: "🌐 Everyone (public, your followers read it)" }), h("option", { value: "private", textContent: "🔒 Only you" })),
+          ),
       h("label", {}, "Title", h("input", { className: "field", name: "title", maxLength: 300, autocomplete: "off", required: true })),
       h("label", {}, "Text (optional)", h("textarea", { name: "body" })),
       h("div", { className: "row" }, said, h("button", { className: "go", textContent: "Post" })),
@@ -437,7 +445,7 @@ export async function mount(ctx, el) {
       const btn = f.querySelector("button.go");
       btn.disabled = true;
       try {
-        const ref = await posts.submit({ board: sp?.id ?? null, title: f.elements.title.value, body: f.elements.body.value });
+        const ref = await posts.submit({ board: sp?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, private: f.elements.audience?.value === "private" });
         location.hash = `${base()}/p/${ref}`;
       } catch (err) {
         errorTo(said)(err);
