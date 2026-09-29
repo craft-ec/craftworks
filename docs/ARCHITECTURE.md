@@ -20,6 +20,14 @@ your own posts — your profile —, Account as its settings). A SHARED space is
 default) and the shared spaces; each space has a Home listing its apps; an app shows only the space selected — a board is its space's posts only (no feed across spaces). Messages
 is personal only: conversations between equals, no roles — who needs governance makes a space.
 
+**An app's three views.** An app declares (in the manifest) up to three views, each optional — PERSONAL (the account's
+space), SHARED (a given shared space) and PUBLIC (DISCOVER: the ownerless public network, second on the rail) — and the
+rail composes itself: Personal's Home lists the apps with a personal view, a shared space's Home those with a shared view
+that the space added, Discover's Home those with a public view. Capabilities never know the view: they take a SCOPE (the
+account, a shared space, or the public index — bags that public spaces and posts list themselves in), so one lens points
+at three scopes and no view gets a store of its own. Discover has no owner and no log: what shows there is filtered by
+the reader's own blocks and the signed moderation lists they follow.
+
 A capability that applies to things applies to **every** kind of thing: moderation moderates a post, a comment, a vote or
 a label alike; governance decides who controls one note or a whole company.
 

@@ -516,7 +516,8 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       older than 30 days are dropped after each send (live: 40-day row dropped, recent kept).
 
 ## Spaces rail (owner 2026-09-29, agreed shape; ARCHITECTURE §1)
-- [ ] R1 rail: Personal (default) + shared spaces + create/join; each space's Home lists its apps; shared-space
+- [ ] R1 rail: Personal (default) · Discover · shared spaces · create/join; the manifest declares each app's views
+      (personal / shared / public) and every Home composes from them; each space's Home lists its apps; shared-space
       settings (members, roles, invites, bans, apps) on its Home; routes `#/s/<id>/<app>`; folds on phones
 - [ ] R2 apps scoped to the space selected: Chat (channels only; its server rail gone), Board (CONFINED: a shared
       space's board = its own posts only; personal = your own posts only, your profile — no aggregate feed, no "Your
@@ -525,6 +526,9 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
 - [ ] R3 Messages personal only: direct and group conversations without roles, moderation or owner; no Board or
       Notes on conversations
 - [ ] R4 per-app settings: Chat (channels, who may post), Board (rules, who may post), Notes (who may edit)
+- (after R2) Feed: a personal-space lens over the boards of the spaces you are in (Reddit's Home).
+- (later) Discover's public views: public spaces (anyone reads/joins) listed in public bags; Board's public posts,
+  Chat's public spaces, Contacts' profiles; filtered by blocks + followed moderation lists.
 - (parked, owner 09-29) Blog: a lens over profile posts.
 - (later, owner 09-29) TENANTS: a tenant = a top-level space holding spaces (sub-spaces inherit its members and admins;
   policies: who creates spaces, apps allowed, guests). Personal tenant = today's personal space; business tenants
