@@ -89,9 +89,7 @@ fn world() -> World {
     h.set_secret(identity::UPKEEP_BAG, BAG);
     h.set_secret(identity::UPKEEP_TAIL, TAIL);
     h.set_secret(identity::UPKEEP_IDLOG, &contract_keys::code_hash(IDLOG));
-    h.set_secret(identity::UPKEEP_MEMBER, &MEMBER);
-    h.set_secret(identity::UPKEEP_WAKEUPS, &10u64.to_le_bytes());
-    h.set_secret(identity::UPKEEP_TICK, &5u64.to_le_bytes());
+    h.set_secret(identity::UPKEEP_WAKEUPS, &5u64.to_le_bytes());
     identity::upkeep_stir(&mut h, &[7; 32]);
     let epoch = g.epoch();
     assert!(identity::keep_epoch(&mut h, &MEMBER, Some(SPACE), epoch, &g.epoch_secret().unwrap()));
@@ -110,7 +108,10 @@ fn world() -> World {
         epoch,
         state: g.save().unwrap(),
     };
-    identity::upkeep_set_mandate(&mut h, &me, &[m]);
+    // The owner's page handed the mandate over at wake-up 5; it is 10 now (the page is away).
+    identity::upkeep_set_mandate(&mut h, &MEMBER, &me, &[m]);
+    identity::upkeep_set_tick(&mut h, &MEMBER);
+    h.set_secret(identity::UPKEEP_WAKEUPS, &10u64.to_le_bytes());
     World { h, owner, asker, asker_member, kp, epoch }
 }
 fn join(p: &Person) -> serde_json::Value {
@@ -169,20 +170,21 @@ fn an_asker_is_admitted_with_no_page_open_and_their_welcome_joins_them() {
     let item: serde_json::Value = serde_json::from_slice(&opened).unwrap();
     assert_eq!((item["kind"].as_str(), item["name"].as_str(), item["spaceKind"].as_str()), (Some("welcome"), Some("Makers"), Some("server")));
     assert_eq!(item["from"].as_str(), Some(craftworks_account::did(&w.owner.did).as_str()));
+    assert_eq!(item["code"].as_str(), Some(CODE), "the welcome says which request it answers");
     let unhex = |s: &str| (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect::<Vec<u8>>();
     assert_eq!(unhex(item["space"].as_str().unwrap()), SPACE.to_vec());
     let joined = w.asker_member.join_space(SPACE, &unhex(item["welcome"].as_str().unwrap())).unwrap();
     assert_eq!(joined.epoch(), w.epoch + 1);
     // UPKEEP holds the group as it is now: the mandate's epoch and members, the code used up, the new epoch's secret
     // kept for the member, the admission for a page to write.
-    let (_, spaces) = identity::upkeep_mandate(&w.h).unwrap();
+    let (_, spaces) = identity::upkeep_mandate(&w.h, &MEMBER).unwrap();
     assert_eq!(spaces[0].epoch, w.epoch + 1);
     assert!(spaces[0].members.contains(&asker_did));
     assert!(spaces[0].codes.is_empty(), "a one-use code is used up");
     assert_eq!(identity::epoch_secret(&w.h, &MEMBER, SPACE, w.epoch + 1), Some(joined.epoch_secret().unwrap()));
-    let admitted = identity::upkeep_admitted(&w.h);
+    let admitted = identity::upkeep_admitted(&w.h, &MEMBER);
     assert_eq!((admitted.len(), admitted[0].did.as_str(), admitted[0].code.as_str()), (1, asker_did.as_str(), CODE));
-    assert!(identity::upkeep_moved(&w.h, &SPACE));
+    assert!(identity::upkeep_moved(&w.h, &MEMBER, &SPACE));
     // The next round finds them in: nothing more is written.
     identity::Host::set_secret(&mut w.h, identity::UPKEEP_WAKEUPS, &20u64.to_le_bytes());
     let w2 = world_clone(&w);
@@ -196,23 +198,23 @@ fn an_asker_is_admitted_with_no_page_open_and_their_welcome_joins_them() {
 fn nobody_is_admitted_while_a_page_ticks_nor_the_banned_nor_the_members() {
     // A page handed the mandate over at this wake-up: upkeep stays out of its way.
     let mut w = world();
-    identity::Host::set_secret(&mut w.h, identity::UPKEEP_TICK, &10u64.to_le_bytes());
+    identity::upkeep_set_tick(&mut w.h, &MEMBER);
     assert!(upkeep::woke(&mut w.h, NOW).is_empty());
     // Banned: read, not admitted.
     let mut w = world();
-    let (me, mut spaces) = identity::upkeep_mandate(&w.h).unwrap();
+    let (me, mut spaces) = identity::upkeep_mandate(&w.h, &MEMBER).unwrap();
     spaces[0].bans.push(craftworks_account::did(&w.asker.did));
-    identity::upkeep_set_mandate(&mut w.h, &me, &spaces);
+    identity::upkeep_set_mandate(&mut w.h, &MEMBER, &me, &spaces);
     let w2 = world_clone(&w);
     let reqs = vec![join(&w.asker)];
     let asked = run(&mut w, &mut network(&w2, reqs));
     assert_eq!(asked.len(), 1, "only the bag read: {asked:?}");
-    assert!(identity::upkeep_admitted(&w.h).is_empty());
+    assert!(identity::upkeep_admitted(&w.h, &MEMBER).is_empty());
     // An expired code's bag is not even read.
     let mut w = world();
-    let (me, mut spaces) = identity::upkeep_mandate(&w.h).unwrap();
+    let (me, mut spaces) = identity::upkeep_mandate(&w.h, &MEMBER).unwrap();
     spaces[0].codes[0].1 = NOW - 1;
-    identity::upkeep_set_mandate(&mut w.h, &me, &spaces);
+    identity::upkeep_set_mandate(&mut w.h, &MEMBER, &me, &spaces);
     assert!(upkeep::woke(&mut w.h, NOW).is_empty());
 }
 
@@ -221,7 +223,7 @@ fn a_commit_position_already_taken_stops_the_round_and_moves_nothing() {
     let mut w = world();
     let w2 = world_clone(&w);
     // Epoch e's log already holds a commit from e (another member moved the group first).
-    let (_, spaces) = identity::upkeep_mandate(&w.h).unwrap();
+    let (_, spaces) = identity::upkeep_mandate(&w.h, &MEMBER).unwrap();
     let secret = identity::epoch_secret(&w.h, &MEMBER, SPACE, w.epoch).unwrap();
     let key = identity::epoch_log_key(&secret);
     let mut log = data::Open::new(TAIL, &key.verifying_key().to_bytes(), &spaces[0].channel);
@@ -237,8 +239,8 @@ fn a_commit_position_already_taken_stops_the_round_and_moves_nothing() {
         other => inner(other),
     });
     assert!(asked.iter().all(|x| matches!(x, Io::Get { .. })), "nothing written: {asked:?}");
-    assert_eq!(identity::upkeep_mandate(&w.h).unwrap().1[0].epoch, w.epoch, "the group did not move here");
-    assert!(identity::upkeep_admitted(&w.h).is_empty());
+    assert_eq!(identity::upkeep_mandate(&w.h, &MEMBER).unwrap().1[0].epoch, w.epoch, "the group did not move here");
+    assert!(identity::upkeep_admitted(&w.h, &MEMBER).is_empty());
 }
 
 /// The network's view needs the people, not upkeep's secrets.
@@ -251,4 +253,31 @@ fn world_clone(w: &World) -> World {
         kp: w.kp.clone(),
         epoch: w.epoch,
     }
+}
+
+#[test]
+fn on_a_shared_node_each_person_is_upkept_by_their_own_mandate() {
+    // The owner's page is away; a second person on the same node has their page open with a mandate of their own
+    // (another space, same code): only the owner's round runs, and it touches only the owner's records.
+    let mut w = world();
+    let other: [u8; 32] = [0x88; 32];
+    let (_, spaces) = identity::upkeep_mandate(&w.h, &MEMBER).unwrap();
+    let mut theirs = spaces[0].clone();
+    theirs.space = [0x6B; 32];
+    identity::upkeep_set_mandate(&mut w.h, &other, "did:other", &[theirs]);
+    identity::upkeep_set_tick(&mut w.h, &other);
+    // Both pages open: nobody's spaces are run.
+    identity::upkeep_set_tick(&mut w.h, &MEMBER);
+    assert!(upkeep::woke(&mut w.h, NOW).is_empty(), "each person's own page keeps upkeep away from their spaces");
+    // The owner's page goes away (five wake-ups pass; the other person's page ticks on).
+    identity::Host::set_secret(&mut w.h, identity::UPKEEP_WAKEUPS, &15u64.to_le_bytes());
+    identity::upkeep_set_tick(&mut w.h, &other);
+    let w2 = world_clone(&w);
+    let reqs = vec![join(&w.asker)];
+    run(&mut w, &mut network(&w2, reqs));
+    assert_eq!(identity::upkeep_admitted(&w.h, &MEMBER).len(), 1);
+    assert!(identity::upkeep_admitted(&w.h, &other).is_empty(), "their page is open: their spaces are theirs to run");
+    assert_eq!(identity::upkeep_mandate(&w.h, &other).unwrap().1[0].epoch, w.epoch, "their group untouched");
+    // Only their page being open keeps upkeep away: the owner's absence alone does not stop them being served later.
+    assert_eq!(identity::upkeep_members(&w.h), vec![MEMBER, other]);
 }

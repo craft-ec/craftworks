@@ -296,70 +296,91 @@ pub const UPKEEP_INBOX_LEN: &[u8] = b"identity_upkeep/inbox_len";
 fn u64_of(v: Option<Vec<u8>>) -> Option<u64> {
     v.and_then(|b| b.try_into().ok()).map(u64::from_le_bytes)
 }
-pub fn upkeep_status<H: Host>(h: &H) -> Answer {
+/// Upkeep's status; its mandate, admissions and groups are the member's (`m`: the session's), none without one.
+pub fn upkeep_status<H: Host>(h: &H, m: Option<&[u8; KEY_LEN]>) -> Answer {
+    let mine = |f: &dyn Fn(&[u8; KEY_LEN]) -> Option<Vec<u8>>| m.and_then(f);
     Answer::Upkeep {
         wakeups: u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0),
         inbox: h.get_secret(UPKEEP_INBOX).and_then(|b| b.try_into().ok()),
         inbox_len: u64_of(h.get_secret(UPKEEP_INBOX_LEN)),
         now: upkeep_now(h),
         codes: h.get_secret(UPKEEP_CODES_HASH).and_then(|b| b.try_into().ok()),
-        admitted: upkeep_admitted(h),
-        groups: upkeep_mandate(h).map(|(_, ms)| ms.into_iter().filter(|m| upkeep_moved(h, &m.space)).map(|m| (m.space, m.epoch, m.state)).collect()).unwrap_or_default(),
-        stale: h.get_secret(UPKEEP_STALE).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default(),
-        said: h.get_secret(UPKEEP_SAID).and_then(|b| String::from_utf8(b).ok()),
+        admitted: m.map(|m| upkeep_admitted(h, m)).unwrap_or_default(),
+        groups: m
+            .and_then(|m| upkeep_mandate(h, m).map(|(_, ms)| ms.into_iter().filter(|x| upkeep_moved(h, m, &x.space)).map(|x| (x.space, x.epoch, x.state)).collect()))
+            .unwrap_or_default(),
+        stale: mine(&|m| h.get_secret(&of(UPKEEP_STALE, m))).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default(),
+        said: mine(&|m| h.get_secret(&of(UPKEEP_SAID, m))).and_then(|b| String::from_utf8(b).ok()),
     }
 }
 
-/// UPKEEP's MANDATE and what it did (see `Request::UpkeepMandate`): the member it acts for (the home session's, when
-/// the page handed over), the contracts' code, the mandate, the admissions, the spaces whose group it moved.
-pub const UPKEEP_MEMBER: &[u8] = b"identity_upkeep/member";
+/// UPKEEP's MANDATES and what it did (see `Request::UpkeepMandate`), PER MEMBER (a household shares a node: each
+/// person's page hands over their own): the members with a mandate, each one's mandate, admissions, the spaces whose
+/// group it moved, when their page last ticked. The contracts' code is the node's.
+pub const UPKEEP_MEMBERS: &[u8] = b"identity_upkeep/members";
 pub const UPKEEP_BAG: &[u8] = b"identity_upkeep/bag";
 pub const UPKEEP_TAIL: &[u8] = b"identity_upkeep/tail";
 pub const UPKEEP_IDLOG: &[u8] = b"identity_upkeep/idlog";
 pub const UPKEEP_CODES_HASH: &[u8] = b"identity_upkeep/codes";
-pub const UPKEEP_MANDATE: &[u8] = b"identity_upkeep/mandate";
-pub const UPKEEP_ADMITTED: &[u8] = b"identity_upkeep/admitted";
+pub const UPKEEP_MANDATE: &[u8] = b"identity_upkeep/mandate/";
+pub const UPKEEP_ADMITTED: &[u8] = b"identity_upkeep/admitted/";
 pub const UPKEEP_MOVED: &[u8] = b"identity_upkeep/moved/";
-pub const UPKEEP_STALE: &[u8] = b"identity_upkeep/stale";
-pub const UPKEEP_SAID: &[u8] = b"identity_upkeep/said";
-/// When a page last handed the mandate over (the wake-up count then): a page that ticks keeps upkeep out of its way.
-pub const UPKEEP_TICK: &[u8] = b"identity_upkeep/tick";
+pub const UPKEEP_STALE: &[u8] = b"identity_upkeep/stale/";
+pub const UPKEEP_SAID: &[u8] = b"identity_upkeep/said/";
+/// When the member's page last handed the mandate over (the wake-up count then): a page that ticks keeps upkeep out
+/// of its way.
+pub const UPKEEP_TICK: &[u8] = b"identity_upkeep/tick/";
+fn of(prefix: &[u8], m: &[u8; KEY_LEN]) -> Vec<u8> {
+    [prefix, &m[..]].concat()
+}
 
 pub fn upkeep_codes_hash(bag: &[u8], tail: &[u8], idlog: &[u8; 32]) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key("craftworks identity upkeep codes");
     h.update(blake3::hash(bag).as_bytes()).update(blake3::hash(tail).as_bytes()).update(idlog);
     *h.finalize().as_bytes()
 }
-/// The member upkeep acts for, and the mandate: `(me, spaces)`.
-pub fn upkeep_mandate<H: Host>(h: &H) -> Option<(String, Vec<Mandate>)> {
-    h.get_secret(UPKEEP_MANDATE).and_then(|b| bincode::deserialize(&b).ok())
+/// The members with a mandate here.
+pub fn upkeep_members<H: Host>(h: &H) -> Vec<[u8; KEY_LEN]> {
+    h.get_secret(UPKEEP_MEMBERS).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
 }
-pub fn upkeep_set_mandate<H: Host>(h: &mut H, me: &str, spaces: &[Mandate]) -> bool {
-    h.set_secret(UPKEEP_MANDATE, &bincode::serialize(&(me, spaces)).expect("a mandate encodes"))
+/// A member's mandate: `(their DID, spaces)`.
+pub fn upkeep_mandate<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Option<(String, Vec<Mandate>)> {
+    h.get_secret(&of(UPKEEP_MANDATE, m)).and_then(|b| bincode::deserialize(&b).ok())
 }
-pub fn upkeep_member<H: Host>(h: &H) -> Option<[u8; KEY_LEN]> {
-    h.get_secret(UPKEEP_MEMBER).and_then(|b| b.try_into().ok())
+pub fn upkeep_set_mandate<H: Host>(h: &mut H, m: &[u8; KEY_LEN], me: &str, spaces: &[Mandate]) -> bool {
+    let mut all = upkeep_members(h);
+    if !all.contains(m) {
+        all.push(*m);
+        if !h.set_secret(UPKEEP_MEMBERS, &bincode::serialize(&all).expect("members encode")) {
+            return false;
+        }
+    }
+    h.set_secret(&of(UPKEEP_MANDATE, m), &bincode::serialize(&(me, spaces)).expect("a mandate encodes"))
 }
-pub fn upkeep_admitted<H: Host>(h: &H) -> Vec<Admitted> {
-    h.get_secret(UPKEEP_ADMITTED).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
+pub fn upkeep_admitted<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Vec<Admitted> {
+    h.get_secret(&of(UPKEEP_ADMITTED, m)).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
 }
-pub fn upkeep_set_admitted<H: Host>(h: &mut H, all: &[Admitted]) -> bool {
-    h.set_secret(UPKEEP_ADMITTED, &bincode::serialize(all).expect("admissions encode"))
+pub fn upkeep_set_admitted<H: Host>(h: &mut H, m: &[u8; KEY_LEN], all: &[Admitted]) -> bool {
+    h.set_secret(&of(UPKEEP_ADMITTED, m), &bincode::serialize(all).expect("admissions encode"))
 }
-/// Whether upkeep moved this space's group since a page last handed it over.
-pub fn upkeep_moved<H: Host>(h: &H, space: &[u8; 32]) -> bool {
-    h.get_secret(&[UPKEEP_MOVED, &space[..]].concat()).is_some_and(|b| b == [1])
+/// Whether upkeep moved this space's group (for this member) since their page last handed it over.
+pub fn upkeep_moved<H: Host>(h: &H, m: &[u8; KEY_LEN], space: &[u8; 32]) -> bool {
+    h.get_secret(&[UPKEEP_MOVED, &m[..], &space[..]].concat()).is_some_and(|b| b == [1])
 }
-pub fn upkeep_set_moved<H: Host>(h: &mut H, space: &[u8; 32], moved: bool) -> bool {
-    h.set_secret(&[UPKEEP_MOVED, &space[..]].concat(), &[u8::from(moved)])
+pub fn upkeep_set_moved<H: Host>(h: &mut H, m: &[u8; KEY_LEN], space: &[u8; 32], moved: bool) -> bool {
+    h.set_secret(&[UPKEEP_MOVED, &m[..], &space[..]].concat(), &[u8::from(moved)])
 }
-pub fn upkeep_say<H: Host>(h: &mut H, what: &str) {
-    h.set_secret(UPKEEP_SAID, what.as_bytes());
+pub fn upkeep_say<H: Host>(h: &mut H, m: &[u8; KEY_LEN], what: &str) {
+    h.set_secret(&of(UPKEEP_SAID, m), what.as_bytes());
 }
-/// Wake-ups since a page last handed the mandate over.
-pub fn upkeep_since_tick<H: Host>(h: &H) -> u64 {
+/// Wake-ups since the member's page last handed the mandate over.
+pub fn upkeep_since_tick<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> u64 {
     let now = u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0);
-    now.saturating_sub(u64_of(h.get_secret(UPKEEP_TICK)).unwrap_or(0))
+    now.saturating_sub(u64_of(h.get_secret(&of(UPKEEP_TICK, m))).unwrap_or(0))
+}
+pub fn upkeep_set_tick<H: Host>(h: &mut H, m: &[u8; KEY_LEN]) -> bool {
+    let now = u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0);
+    h.set_secret(&of(UPKEEP_TICK, m), &now.to_le_bytes())
 }
 
 /// A space's EPOCH SECRET this member holds, and keeping one (upkeep moves a group while no page runs).
@@ -1018,10 +1039,9 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 return Refused(Why::NotHome);
             }
             h.set_secret(UPKEEP_INBOX, &inbox);
-            h.set_secret(UPKEEP_MEMBER, &a.public());
             upkeep_stir(h, &seed);
             upkeep_set_clock(h, now);
-            upkeep_status(h)
+            upkeep_status(h, Some(&a.public()))
         }
         Request::UpkeepCodes { bag, tail, idlog } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
@@ -1032,15 +1052,16 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 return Refused(Why::NotSaved);
             }
             h.set_secret(UPKEEP_CODES_HASH, &upkeep_codes_hash(&bag, &tail, &idlog));
-            upkeep_status(h)
+            upkeep_status(h, Some(&a.public()))
         }
         Request::UpkeepMandate { me, spaces } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {
                 return Refused(Why::NotHome);
             }
+            let m = a.public();
             // A space whose group upkeep moved since keeps upkeep's (newer) group until the page loads it.
-            let held = upkeep_mandate(h).map(|(_, s)| s).unwrap_or_default();
+            let held = upkeep_mandate(h, &m).map(|(_, s)| s).unwrap_or_default();
             let mut stale = Vec::new();
             let spaces: Vec<Mandate> = spaces
                 .into_iter()
@@ -1052,29 +1073,29 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                     _ => m,
                 })
                 .collect();
-            let wakeups = u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0);
-            if !(upkeep_set_mandate(h, &me, &spaces) && h.set_secret(UPKEEP_STALE, &bincode::serialize(&stale).expect("ids encode")) && h.set_secret(UPKEEP_TICK, &wakeups.to_le_bytes())) {
+            if !(upkeep_set_mandate(h, &m, &me, &spaces) && h.set_secret(&of(UPKEEP_STALE, &m), &bincode::serialize(&stale).expect("ids encode")) && upkeep_set_tick(h, &m)) {
                 return Refused(Why::NotSaved);
             }
-            upkeep_status(h)
+            upkeep_status(h, Some(&m))
         }
         Request::UpkeepAck { admitted } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {
                 return Refused(Why::NotHome);
             }
-            let left: Vec<Admitted> = upkeep_admitted(h).into_iter().filter(|x| !admitted.iter().any(|(s, d)| *s == x.space && *d == x.did)).collect();
+            let m = a.public();
+            let left: Vec<Admitted> = upkeep_admitted(h, &m).into_iter().filter(|x| !admitted.iter().any(|(s, d)| *s == x.space && *d == x.did)).collect();
             for (s, _) in &admitted {
                 if !left.iter().any(|x| x.space == *s) {
-                    upkeep_set_moved(h, s, false);
+                    upkeep_set_moved(h, &m, s, false);
                 }
             }
-            if !upkeep_set_admitted(h, &left) {
+            if !upkeep_set_admitted(h, &m, &left) {
                 return Refused(Why::NotSaved);
             }
-            upkeep_status(h)
+            upkeep_status(h, Some(&m))
         }
-        Request::UpkeepStatus => upkeep_status(h),
+        Request::UpkeepStatus => upkeep_status(h, session(h, &app).map(|a| a.public()).as_ref()),
         Request::InboxKey => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             let Some(data) = a.data else { return Refused(Why::NoDataKey) };

@@ -79,6 +79,8 @@ enum Step {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Round {
+    /// Whose round (each person on the node has their own mandate).
+    member: [u8; 32],
     step: Step,
     /// Askers still to admit after this one.
     asks: Vec<Ask>,
@@ -135,44 +137,50 @@ pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
         if let Step::Welcome { ask, add, tries } = &r.step {
             if *tries < 5 {
                 let (ask, add, tries) = (ask.clone(), add.clone(), tries + 1);
-                let io = welcome_io(h, &ask, &add);
+                let io = welcome_io(h, &r.member, &ask, &add);
                 r.step = Step::Welcome { ask, add, tries };
                 r.moved = w;
                 keep(h, Some(&r));
                 return io;
             }
         }
-        identity::upkeep_say(h, "a round did not finish: dropped");
+        identity::upkeep_say(h, &r.member, "a round did not finish: dropped");
         keep(h, None);
     }
-    if identity::upkeep_since_tick(h) < PAGE_AWAY {
-        return Vec::new();
-    }
-    let (Some((_, spaces)), Some(c)) = (identity::upkeep_mandate(h), codes(h)) else { return Vec::new() };
-    let mut waiting = Vec::new();
-    for m in &spaces {
-        let mut bags: Vec<String> = m.codes.iter().filter(|(_, exp, _)| *exp == 0 || now_ms < *exp).map(|(code, _, _)| code.clone()).collect();
-        if m.open {
-            bags.push("open".into());
+    let Some(c) = codes(h) else { return Vec::new() };
+    // Each person's turn in order: the first whose page is away and who has a request bag to read.
+    for member in identity::upkeep_members(h) {
+        if identity::upkeep_since_tick(h, &member) < PAGE_AWAY {
+            continue;
         }
-        for code in bags {
-            let name = if code == "open" { format!("open {}", hex(&m.space)) } else { code.clone() };
-            waiting.push((id_of(&c.bag_hash, &identity::invite_address(&name)), m.space, code));
+        let Some((_, spaces)) = identity::upkeep_mandate(h, &member) else { continue };
+        let mut waiting = Vec::new();
+        for m in &spaces {
+            let mut bags: Vec<String> = m.codes.iter().filter(|(_, exp, _)| *exp == 0 || now_ms < *exp).map(|(code, _, _)| code.clone()).collect();
+            if m.open {
+                bags.push("open".into());
+            }
+            for code in bags {
+                let name = if code == "open" { format!("open {}", hex(&m.space)) } else { code.clone() };
+                waiting.push((id_of(&c.bag_hash, &identity::invite_address(&name)), m.space, code));
+            }
         }
+        if waiting.is_empty() {
+            continue;
+        }
+        let io = waiting.iter().map(|(id, _, _)| Io::Get { id: *id, subscribe: true }).collect();
+        keep(h, Some(&Round { member, step: Step::Requests { waiting }, asks: Vec::new(), moved: w }));
+        return io;
     }
-    if waiting.is_empty() {
-        return Vec::new();
-    }
-    let io = waiting.iter().map(|(id, _, _)| Io::Get { id: *id, subscribe: true }).collect();
-    keep(h, Some(&Round { step: Step::Requests { waiting }, asks: Vec::new(), moved: w }));
-    io
+    Vec::new()
 }
 
 /// An ANSWER from the network: the round moved on. What to send next.
 pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
     let Some(mut r) = round(h) else { return Vec::new() };
     let Some(c) = codes(h) else { return Vec::new() };
-    let Some((me, spaces)) = identity::upkeep_mandate(h) else {
+    let member = r.member;
+    let Some((me, spaces)) = identity::upkeep_mandate(h, &member) else {
         keep(h, None);
         return Vec::new();
     };
@@ -189,7 +197,7 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
                     let (Some("join"), Some(did)) = (q["kind"].as_str(), q["did"].as_str()) else { continue };
                     let Some(did_bytes) = craftworks_account::did_bytes(did) else { continue };
                     let known = r.asks.iter().any(|a| a.space == space && a.did == did);
-                    let admitted = identity::upkeep_admitted(h).iter().any(|a| a.space == space && a.did == did);
+                    let admitted = identity::upkeep_admitted(h, &member).iter().any(|a| a.space == space && a.did == did);
                     if did == me || known || admitted || m.members.iter().any(|x| x == did) || m.bans.iter().any(|x| x == did) {
                         continue;
                     }
@@ -206,7 +214,7 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
         (Step::KeyLog { ask }, Reply::Got { state, .. }) => {
             let log = state.and_then(|st| craftworks_idlog_contract::read(&ask.did_bytes, &st));
             let Some(log) = log else {
-                identity::upkeep_say(h, &format!("{}: no key log", ask.did));
+                identity::upkeep_say(h, &member, &format!("{}: no key log", ask.did));
                 return next_ask(h, r, &c);
             };
             let data = log.head().data;
@@ -217,7 +225,7 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
         }
         (Step::Card { ask, data }, Reply::Got { state, .. }) => {
             let Some(m) = space_of(&ask.space) else { return next_ask(h, r, &c) };
-            match add(h, &c, &m, &data, state) {
+            match add(h, &member, &c, &m, &data, state) {
                 Ok(add) => {
                     // The commit goes into the log of the epoch it moves FROM: read it first (taken: stop).
                     let log = epoch_log(&c, &m.channel, &add.from_secret);
@@ -226,7 +234,7 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
                     vec![Io::Get { id: log.id_bytes(), subscribe: false }]
                 }
                 Err(why) => {
-                    identity::upkeep_say(h, &format!("{} not admitted: {why}", ask.did));
+                    identity::upkeep_say(h, &member, &format!("{} not admitted: {why}", ask.did));
                     next_ask(h, r, &c)
                 }
             }
@@ -242,14 +250,14 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             if taken {
                 // Another member moved the group from this epoch first: the mandate is behind. Stop until a page
                 // hands a newer one over.
-                identity::upkeep_say(h, &format!("{}: the group moved from epoch {} meanwhile", m.name, add.from_epoch));
+                identity::upkeep_say(h, &member, &format!("{}: the group moved from epoch {} meanwhile", m.name, add.from_epoch));
                 keep(h, None);
                 return Vec::new();
             }
             let entry = serde_json::json!({ "commit": hex(&add.commit), "info": hex(&add.info) }).to_string();
             let key = identity::epoch_log_key(&add.from_secret);
             let Some(send) = signed(&mut log, &key, at.as_bytes(), entry.as_bytes()) else {
-                identity::upkeep_say(h, "the epoch's log would not take the commit");
+                identity::upkeep_say(h, &member, "the epoch's log would not take the commit");
                 keep(h, None);
                 return Vec::new();
             };
@@ -260,21 +268,21 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
         }
         (Step::Commit { ask, add }, Reply::Updated { ok, .. } | Reply::Put { ok, .. }) => {
             if !ok {
-                identity::upkeep_say(h, "the commit was refused: the group moved meanwhile");
+                identity::upkeep_say(h, &member, "the commit was refused: the group moved meanwhile");
                 keep(h, None);
                 return Vec::new();
             }
             // The group moved: held here now (this epoch's secret kept, the mandate's group this one) — whatever
             // happens next, what upkeep holds is the group as it is.
             let Some(m) = space_of(&ask.space) else { return next_ask(h, r, &c) };
-            moved(h, &me, &spaces, &ask, &add);
+            moved(h, &member, &me, &spaces, &ask, &add);
             // The next epoch's log, made: its `open` row (the group info after, and the epoch before's secret, so
             // whoever holds this epoch opens every earlier one).
             let mut next = epoch_log(&c, &m.channel, &add.secret);
             let open = serde_json::json!({ "info": hex(&add.info), "prev": hex(&add.from_secret) }).to_string();
             let key = identity::epoch_log_key(&add.secret);
             let Some(send) = signed(&mut next, &key, b"open", open.as_bytes()) else {
-                identity::upkeep_say(h, "the next epoch's log would not take its first row");
+                identity::upkeep_say(h, &member, "the next epoch's log would not take its first row");
                 keep(h, None);
                 return Vec::new();
             };
@@ -285,7 +293,7 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
         }
         (Step::Next { ask, add }, Reply::Put { .. } | Reply::Updated { .. }) => {
             // Made or not (a node that fetched it first: the same row), the welcome goes: they are in the group.
-            let io = welcome_io(h, &ask, &add);
+            let io = welcome_io(h, &member, &ask, &add);
             r.step = Step::Welcome { ask, add, tries: 0 };
             keep(h, Some(&r));
             io
@@ -297,10 +305,10 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
                 keep(h, Some(&r));
                 return Vec::new();
             }
-            let mut all = identity::upkeep_admitted(h);
+            let mut all = identity::upkeep_admitted(h, &member);
             all.push(Admitted { space: ask.space, did: ask.did.clone(), code: ask.code.clone(), at: now_ms, epoch: add.epoch });
-            identity::upkeep_set_admitted(h, &all);
-            identity::upkeep_say(h, &format!("{} admitted (epoch {})", ask.did, add.epoch));
+            identity::upkeep_set_admitted(h, &member, &all);
+            identity::upkeep_say(h, &member, &format!("{} admitted (epoch {})", ask.did, add.epoch));
             next_ask(h, r, &c)
         }
         // An answer this step does not wait for (a late one): nothing.
@@ -345,13 +353,13 @@ fn send_io(o: &data::Open, send: data::Send, code: Code) -> Io {
 }
 
 /// The WELCOME, sealed to the asker's inbox key, dropped in their inbox (a PUT the hosts merge).
-fn welcome_io<H: Host>(h: &mut H, ask: &Ask, add: &Add) -> Vec<Io> {
-    let Some((me, spaces)) = identity::upkeep_mandate(h) else { return Vec::new() };
+fn welcome_io<H: Host>(h: &mut H, member: &[u8; 32], ask: &Ask, add: &Add) -> Vec<Io> {
+    let Some((me, spaces)) = identity::upkeep_mandate(h, member) else { return Vec::new() };
     let Some(m) = spaces.iter().find(|m| m.space == ask.space) else { return Vec::new() };
     let Some(eph) = identity::upkeep_random(h) else { return Vec::new() };
     let item = serde_json::json!({
         "kind": "welcome", "space": hex(&m.space), "spaceKind": m.kind, "from": me, "owner": m.owner, "nonce": m.nonce,
-        "name": m.name, "welcome": hex(&add.welcome),
+        "name": m.name, "welcome": hex(&add.welcome), "code": ask.code,
     })
     .to_string();
     let sealed = identity::seal_to(&add.inbox, item.as_bytes(), eph);
@@ -362,10 +370,8 @@ fn welcome_io<H: Host>(h: &mut H, ask: &Ask, add: &Add) -> Vec<Io> {
 
 /// The GROUP moved to `add`'s epoch: its secret kept for the member, the mandate's group and members this one, the
 /// code's use counted; a page loads it (`moved`).
-fn moved<H: Host>(h: &mut H, me: &str, spaces: &[Mandate], ask: &Ask, add: &Add) {
-    if let Some(m) = identity::upkeep_member(h) {
-        identity::keep_epoch(h, &m, Some(ask.space), add.epoch, &add.secret);
-    }
+fn moved<H: Host>(h: &mut H, member: &[u8; 32], me: &str, spaces: &[Mandate], ask: &Ask, add: &Add) {
+    identity::keep_epoch(h, member, Some(ask.space), add.epoch, &add.secret);
     let spaces: Vec<Mandate> = spaces
         .iter()
         .cloned()
@@ -387,15 +393,14 @@ fn moved<H: Host>(h: &mut H, me: &str, spaces: &[Mandate], ask: &Ask, add: &Add)
             m
         })
         .collect();
-    identity::upkeep_set_mandate(h, me, &spaces);
-    identity::upkeep_set_moved(h, &ask.space, true);
+    identity::upkeep_set_mandate(h, member, me, &spaces);
+    identity::upkeep_set_moved(h, member, &ask.space, true);
 }
 
 /// The ADDITION: the asker's card read (a key package, the inbox key), the group loaded from the mandate, the asker
 /// added. Randomness is upkeep's pool (armed here, ratcheted); the clock upkeep's.
-fn add<H: Host>(h: &mut H, c: &Codes, m: &Mandate, data: &[u8; 32], card: Option<Vec<u8>>) -> Result<Add, String> {
-    let member = identity::upkeep_member(h).ok_or("no member for upkeep")?;
-    let from_secret = identity::epoch_secret(h, &member, m.space, m.epoch).ok_or(format!("no secret of epoch {} here", m.epoch))?;
+fn add<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, m: &Mandate, data: &[u8; 32], card: Option<Vec<u8>>) -> Result<Add, String> {
+    let from_secret = identity::epoch_secret(h, member, m.space, m.epoch).ok_or(format!("no secret of epoch {} here", m.epoch))?;
     let card = card.ok_or("they have no card")?;
     let (packages, inbox) = read_card(c, data, &card).ok_or("their card has no key package or no inbox")?;
     let pick = identity::upkeep_random(h).ok_or("no randomness yet (a page stirs it)")?;

@@ -37,7 +37,8 @@ export async function start(ctx) {
 
   // WELCOME a person into a space: they (their DID) added to its group by a key package from their card, and the welcome
   // — what the space is — sealed into their inbox. `name`: what the space is called for them.
-  async function welcome(sp, did, name) {
+  // `code`: the request it answers (an invite code, or "open"), so the asker knows which of theirs is answered.
+  async function welcome(sp, did, name, code = null) {
     const me = await space.account();
     if (!me) throw new Error("nobody is logged in");
     if (did === me.id) throw new Error("that is you");
@@ -45,7 +46,7 @@ export async function start(ctx) {
     if (!card?.inbox || !card.keyPackage) throw new Error("that person has no card yet");
     const welcome = await keys.group(sp).add(card.keyPackage);
     const { owner, nonce } = sp.governance;
-    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome });
+    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, ...(code ? { code } : {}) });
     ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind}` });
     return card;
   }
@@ -140,9 +141,11 @@ export async function start(ctx) {
         const sp = await space.describe(it.space, v);
         await keys.group(sp).join(it.welcome);
         await space.record(it.space, v);
-        // Its request answered: no longer waiting (a request by code is answered by whichever welcome came after it).
+        // Its request answered: no longer waiting — the space's, and the code the welcome names (a welcome from before
+        // welcomes named it: any request by code).
         const t = await asks().catch(() => null);
-        if (t) for (const r of t.rows().filter(x => x.value && (x.key === it.space || x.key.startsWith("code:")))) await t.remove(r.key).catch(() => {});
+        const answered = x => x.key === it.space || (it.code ? x.key === `code:${it.code}` : x.key.startsWith("code:"));
+        if (t) for (const r of t.rows().filter(x => x.value && answered(x))) await t.remove(r.key).catch(() => {});
         out.push(sp);
         ctx.log("conversation", { what: `joined a ${it.spaceKind} conversation with ${short(it.from)}` });
       } catch (e) {
@@ -273,7 +276,7 @@ export async function start(ctx) {
       for (const q of await index.requests(openCode(sp.id))) {
         if (q.kind !== "join" || !q.did || inside.has(q.did) || r.banned(q.did)) continue;
         try {
-          await welcome(sp, q.did, sp.name);
+          await welcome(sp, q.did, sp.name, "open");
           await r.act({ act: "admitted", code: "open", did: q.did });
           inside.add(q.did);
           out.push(q.did);
@@ -286,7 +289,7 @@ export async function start(ctx) {
       for (const q of await index.requests(inv.code)) {
         if (q.kind !== "join" || !q.did || inside.has(q.did) || r.banned(q.did) || !r.invites().some(i => i.code === inv.code)) continue;
         try {
-          await welcome(sp, q.did, sp.name);
+          await welcome(sp, q.did, sp.name, inv.code);
           await r.act({ act: "admitted", code: inv.code, did: q.did });
           inside.add(q.did);
           out.push(q.did);

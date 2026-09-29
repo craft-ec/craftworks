@@ -704,18 +704,19 @@ fn a_mandate_older_than_upkeep_s_own_group_is_not_taken() {
     let mut m = provisioned(APP);
     let space = [0x5A; 32];
     let mandate = |epoch: u64| Mandate { space, name: "s".into(), kind: "server".into(), owner: "did:o".into(), nonce: None, channel: "c".into(), open: true, codes: vec![], bans: vec![], members: vec![], epoch, state: vec![epoch as u8] };
+    let Answer::Unlocked { public: me, .. } = who(&mut m, APP) else { panic!("a session") };
     let ask = |m: &mut Map, spaces: Vec<Mandate>| serve(m, Request::UpkeepMandate { me: "did:me".into(), spaces }, APP);
     ask(&mut m, vec![mandate(3)]);
     // Upkeep moved the group to 4 meanwhile.
-    let (me, mut spaces) = upkeep_mandate(&m).unwrap();
+    let (did, mut spaces) = upkeep_mandate(&m, &me).unwrap();
     spaces[0].epoch = 4;
     spaces[0].state = vec![4];
-    upkeep_set_mandate(&mut m, &me, &spaces);
+    upkeep_set_mandate(&mut m, &me, &did, &spaces);
     let Answer::Upkeep { stale, .. } = ask(&mut m, vec![mandate(3)]) else { panic!("an upkeep answer") };
-    let (_, held) = upkeep_mandate(&m).unwrap();
+    let (_, held) = upkeep_mandate(&m, &me).unwrap();
     assert_eq!((held[0].epoch, held[0].state.clone()), (4, vec![4]));
     assert_eq!(stale, vec![space]);
     // A page that loaded 4 hands 4 over: taken.
     ask(&mut m, vec![mandate(5)]);
-    assert_eq!(upkeep_mandate(&m).unwrap().1[0].epoch, 5);
+    assert_eq!(upkeep_mandate(&m, &me).unwrap().1[0].epoch, 5);
 }

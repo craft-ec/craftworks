@@ -679,8 +679,7 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       asked to join open space Gov 323 → joined after 42 s. A's delegate said "admitted (epoch 1)" (wake-up 5); A's page
       reopened: group epoch 1 adopted, ONE `admitted` act (code open, the delegate's time), members owner + new member
       on both nodes.
-      KNOWN LIMITS: upkeep state is per node, not per member (the last home session's member acts; one person per node
-      is the norm); a ban made while every inviter page is closed is not seen until a page hands a new mandate over;
+      KNOWN LIMITS: [per-member since 09-30, see below] a ban made while every inviter page is closed is not seen until a page hands a new mandate over;
       ACCEPT on the joiner's side stays page-side (the joiner is the one with a page open).
       BANS HOLD (09-30): moderation.enforce() on every upkeep tick of someone who may remove — anyone banned still in the
       group (admitted late by the delegate) taken out. Live: ban act alone → next tick: epoch 1→2, 2→1 members.
@@ -694,6 +693,12 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       with FREENET_WEBAPP_CACHE_DIR per node; 6 broken shared entries repaired (marker removed → re-unpack). 544/544
       pieces served, no console errors. 17573 still on the shared cache (owner uses it: restart asked). Upstream: the
       node trusts the marker without checking the dir (report only with the owner's say + traces).
+      PER MEMBER (09-30): a household shares a node — mandate, admissions, moved groups, stale, said and the page tick are
+      each member's (the session's); a wake-up runs the first member whose page is away. Tests 4 (+ shared node: both
+      pages open → nothing; one away → only theirs; a planted "ignore the tick" bug turns two red). Welcomes name the
+      request they answer (`code`); accepting one clears that request only (older welcomes: every code request). Live:
+      B asked by a one-use code with A's page closed — listed as waiting across a reload, joined, the welcome named
+      the code, the waiting line gone.
       NEXT: publish — needs the owner's node and B on ≥ 0.2.139 (the owner's call) and the Background grant on each.
 - [ ] (old note) NO PAGE OPEN AT ALL: node v0.2.139 (freenet-core #5747) wakes a delegate periodically (manifest `wakeups`, ≥ 60 s,
       the person's Background grant). Needs the joining logic (MLS welcome/add, spacekeys) moved into the identity
