@@ -78,7 +78,7 @@ export async function start(ctx) {
         if (!chs) continue;
         const add = () =>
           chs.list().forEach(c =>
-            watch(c, "chat", { serverId: sp.id, serverName: sp.name, route: `#/chat/${sp.id}/${c.id.split("/").pop()}` }).catch(() => {}),
+            watch(c, "chat", { serverId: sp.id, serverName: sp.name, route: `#/s/${sp.id}/chat/${c.id.split("/").pop()}` }).catch(() => {}),
           );
         if (!chs.watched) {
           chs.watched = true;

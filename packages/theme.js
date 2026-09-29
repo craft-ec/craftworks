@@ -82,7 +82,10 @@ export async function start() {
        to edge. A page with panes of its own (each scrolling) marks its component .cw-fill: it gets the canvas bare. */
     html, body { height: 100%; overflow: hidden; }
     body { box-sizing: border-box; max-width: none; margin: 0; padding: 0; }
-    #app { height: 100dvh; display: flex; flex-direction: column; }
+    #app { height: 100dvh; display: grid; grid-template: "head head" auto "side body" minmax(0, 1fr) "foot foot" auto / auto minmax(0, 1fr); }
+    #app > .slot-header { grid-area: head; } #app > .slot-footer { grid-area: foot; } #app > .slot-body { grid-area: body; }
+    #app > .slot-side { grid-area: side; min-height: 0; overflow: hidden; display: flex; }
+    #app > .slot-side > section { margin: 0; display: flex; min-height: 0; }
     /* The two bars: a fixed height each, their content on the bar's middle line. */
     :root { --cw-bar: 48px; --cw-bar-low: 36px; --cw-gutter: 16px; }
     #app > .slot-header, #app > .slot-footer { flex: none; }

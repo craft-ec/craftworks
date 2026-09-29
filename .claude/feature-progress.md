@@ -516,15 +516,28 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       older than 30 days are dropped after each send (live: 40-day row dropped, recent kept).
 
 ## Spaces rail (owner 2026-09-29, agreed shape; ARCHITECTURE §1)
-- [ ] R1 rail: Personal (default) · Discover · shared spaces · create/join; the manifest declares each app's views
+- [x] R1 rail: Personal (default) · Discover · shared spaces · create/join; the manifest declares each app's views
       (personal / shared / public) and every Home composes from them; each space's Home lists its apps; shared-space
       settings (members, roles, invites, bans, apps) on its Home; routes `#/s/<id>/<app>`; folds on phones
-- [ ] R2 apps scoped to the space selected: Chat (channels only; its server rail gone), Board (CONFINED: a shared
+- [x] R2 apps scoped to the space selected: Chat (channels only; its server rail gone), Board (CONFINED: a shared
       space's board = its own posts only; personal = your own posts only, your profile — no aggregate feed, no "Your
       boards"; following keeps a person in Contacts, their profile one click away), Notes; the space-apps dropdown and
       cross-app links gone
-- [ ] R3 Messages personal only: direct and group conversations without roles, moderation or owner; no Board or
+- [x] R3 Messages personal only: direct and group conversations without roles, moderation or owner; no Board or
       Notes on conversations
+      DONE 09-29 (R1–R3 together: the rail made Chat's own rail and the dropdown throwaway). Loader v21: side slot
+      (layout `side: ["rail"]`, a grid beside the body), `/s/<id>/…` sets `ctx.space` (`/s/<id>` = page `/space`).
+      `rail` (Personal, shared spaces with unread, + make/join), `space-home` (apps: add/remove by owner/admin — Chat
+      added makes #general —, members, Invite, Settings), header APP SWITCHER (owner: "the dropdown change of app on the
+      header menu": a shared space's Home + the apps it uses; Personal: Home + personal-view apps). A NEW space has no
+      apps (owner: "most basic home and settings, without chat even"): `roles.apps()` counts only `app` acts that turned
+      one on — old test spaces need their apps re-added. Manifest `views` per app; personal Home lists personal-view apps.
+      Board confined (`#/board` = your posts, `#/s/<id>/board` = the space's). Conversations: no moderation, no role menu
+      (content `governed` only for servers). `space-apps` deleted. Live (17573, S): rail S A C F G K M2 M9 +; + made
+      "Studio" with no apps; Add Chat → #general; Add Board; switcher Home · Chat · Board; Studio post on its board only;
+      Makers switcher Home·Notes → Home·Notes·Chat·Board after adding; DM with P: no Remove on P's messages.
+- [ ] R2b Board's personal view gains FEED (owner: "app composes that in personal space view"): boards of every
+      space you are in + profiles you follow; a shared view never crosses spaces, the personal view may (it is you).
 - [ ] R4 per-app settings: Chat (channels, who may post), Board (rules, who may post), Notes (who may edit)
 - (after R2) Feed: a personal-space lens over the boards of the spaces you are in (Reddit's Home).
 - (later) Discover's public views: public spaces (anyone reads/joins) listed in public bags; Board's public posts,

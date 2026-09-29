@@ -45,11 +45,13 @@ export async function start(ctx) {
   async function in_(container) {
     const t = await tableOf(container);
     const me = (await space.account()).id;
-    // In a space (not the account): its roles (who wrote what) and its moderation (what is hidden).
+    // In a space (not the account): its roles (who wrote what); in a SHARED space (a server) its moderation too (what is
+    // hidden). A conversation (direct, group) is between equals: nobody moderates another's items.
     const open = container.kind === "public";
     const inSpace = !open && container.scope.kind !== "account";
+    const governed = inSpace && container.scope.kind === "server";
     const [r, m] = inSpace
-      ? await Promise.all([ctx.require("roles").then(x => x.of(container.scope)), ctx.require("moderation").then(x => x.of(container.scope))])
+      ? await Promise.all([ctx.require("roles").then(x => x.of(container.scope)), governed ? ctx.require("moderation").then(x => x.of(container.scope)) : null])
       : [null, null];
     const item = row => {
       try {
@@ -113,7 +115,7 @@ export async function start(ctx) {
       reactions: () => reactionsOf(every()),
       settled: Promise.all([t.settled, r?.settled]).then(() => {}),
       onChange: f => changed.push(f),
-      mayRemove: it => it.by === me || !!r?.can(me, "moderate"),
+      mayRemove: it => it.by === me || (governed && !!r?.can(me, "moderate")),
       async post(kind, body, { re = null, title = null, in: where = null } = {}) {
         const id = newId();
         await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me, ...(re ? { re } : {}), ...(title ? { title } : {}), ...(where ? { in: where } : {}) }));

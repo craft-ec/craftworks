@@ -50,10 +50,7 @@ export async function mount(ctx, el) {
   const box = $(".dm"), people = $(".people"), roomEl = $(".room"), said = $(".said");
   const say = m => ((said.textContent = m), (said.hidden = !m));
   let open = null, shown = null;
-  // No conversation open: the personal space's apps (Messages is its messages).
-  const spaceApps = await ctx.require("space-apps");
-  ctx.actions["/messages"] = await spaceApps.menu(await (await ctx.require("space")).account(), "messages");
-  dispatchEvent(new CustomEvent("craftworks:actions"));
+
   // While the inbox is read (conversations begun while this account was away), the list says so at its end.
   let checking = true;
   people.replaceChildren(theme.loading("Loading conversations…"));
@@ -81,9 +78,6 @@ export async function mount(ctx, el) {
     drawList();
     shown?.close();
     shown = await roomUI.show(roomEl, sp, sp.kind === "group" ? name : `@${name}`);
-    // The conversation's apps (the same space): its messages, and what was added.
-    ctx.actions["/messages"] = await spaceApps.menu(sp, "messages");
-    dispatchEvent(new CustomEvent("craftworks:actions"));
   }
 
   $(".new").onclick = () => {

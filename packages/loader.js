@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. The node's code is loaded after the first
 // page is up even where the page needs none: to FOLLOW the app's and the loader's sites (below).
-const VERSION = "20";
+const VERSION = "21";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -110,12 +110,13 @@ export async function run(boot) {
 
   // THE SLOTS: made once. Each holds the components the layout or the page names, mounted in order.
   const slots = {};
-  for (const [name, tag] of [["header", "header"], ["body", "main"], ["footer", "footer"]]) {
+  // The SIDE slot (the layout's `side`: a rail of spaces) sits beside the body, the whole height between the bars.
+  for (const [name, tag] of [["header", "header"], ["side", "aside"], ["body", "main"], ["footer", "footer"]]) {
     slots[name] = document.createElement(tag);
     slots[name].className = `slot-${name}`;
     root.append(slots[name]);
   }
-  const filled = { header: null, footer: null };
+  const filled = { header: null, side: null, footer: null };
 
   // A component still on its way shows the theme's placeholder in its place, until it has drawn itself (it replaces
   // its element's contents) or its mount is over. Every component of a slot gets one at once: what is coming, shown.
@@ -218,10 +219,15 @@ export async function run(boot) {
     }
   }
 
-  // What a page shows: `["a", "b"]` is its body; `{ body, header?, footer? }` overrides the layout's slots.
+  // What a page shows: `["a", "b"]` is its body; `{ body, header?, side?, footer? }` overrides the layout's slots.
   // A route names its page by the LONGEST page route it starts with; the rest is the page's SUB-PAGE (`#/account/nodes`:
   // the page `/account`, `ctx.sub` "nodes").
-  async function show(full) {
+  // A SPACE: `/s/<space id>/…` is the rest's page IN that space (`ctx.space`: its id; none: the personal space), and
+  // `/s/<space id>` alone the space's own page, `/space` (its Home).
+  async function show(at) {
+    const inSpace = at.match(/^\/s\/([0-9a-f]{64})(\/.*)?$/);
+    ctx.space = inSpace ? inSpace[1] : null;
+    const full = inSpace ? (inSpace[2] && inSpace[2] !== "/" ? inSpace[2] : "/space") : at;
     const route = Object.keys(manifest.pages).filter(r => full === r || full.startsWith(r === "/" ? "/" : `${r}/`)).sort((a, b) => b.length - a.length)[0] ?? "/";
     const raw = manifest.pages[route];
     const page = Array.isArray(raw) ? { body: raw } : raw;
@@ -234,7 +240,7 @@ export async function run(boot) {
     ctx.sub = full.slice(route.length).replace(/^\//, "");
     // Every entry this page will need, asked for at once (the manifest lists them): no chain of one-by-one reads.
     for (const n of manifest.needs?.[route] ?? []) entry(n).catch(() => {});
-    for (const slot of ["header", "footer"]) {
+    for (const slot of ["header", "side", "footer"]) {
       const names = page[slot] ?? manifest.layout?.[slot] ?? [];
       const key = JSON.stringify(names);
       // A header or footer the new page shares is kept, not rebuilt; each shown component hears the new route.

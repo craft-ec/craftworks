@@ -349,7 +349,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 52] = [
+    let packages: [(&str, &str, PathBuf); 53] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -403,7 +403,8 @@ async fn main() -> Result<()> {
         ("contacts", "module", app.join("packages/contacts.js")),
         ("posts", "service", app.join("packages/posts.js")),
         ("board", "module", app.join("packages/board.js")),
-        ("space-apps", "service", app.join("packages/space-apps.js")),
+        ("rail", "module", app.join("packages/rail.js")),
+        ("space-home", "module", app.join("packages/space-home.js")),
         ("chat", "module", app.join("packages/chat.js")),
         ("messages", "module", app.join("packages/messages.js")),
         ("mail", "module", app.join("packages/mail.js")),
@@ -488,10 +489,10 @@ async fn main() -> Result<()> {
     let names: Vec<&str> = packages.iter().map(|(n, _, _)| *n).collect();
     let mentions = |src: &str| -> Vec<&str> { names.iter().copied().filter(|n| src.contains(&format!("\"{n}\""))).collect() };
     // The app's PAGES (route → its package): the manifest's `pages`, and where each page's needs start.
-    let pages: [(&str, &str); 8] = [("/", "home"), ("/account", "account"), ("/notes", "notes"), ("/chat", "chat"), ("/messages", "messages"), ("/mail", "mail"), ("/contacts", "contacts"), ("/board", "board")];
+    let pages: [(&str, &str); 9] = [("/space", "space-home"), ("/", "home"), ("/account", "account"), ("/notes", "notes"), ("/chat", "chat"), ("/messages", "messages"), ("/mail", "mail"), ("/contacts", "contacts"), ("/board", "board")];
     let mut needs = Vec::new();
     for (route, page) in pages {
-        let mut have: Vec<&str> = vec!["theme", "header", "footer", page];
+        let mut have: Vec<&str> = vec!["theme", "header", "rail", "footer", page];
         let mut i = 0;
         while i < have.len() {
             if let Some((_, src)) = sources.iter().find(|(n, _)| n == have[i]) {
@@ -506,7 +507,7 @@ async fn main() -> Result<()> {
         needs.push(format!("\"{route}\": [{}]", have.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")));
     }
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"icon\": \"📝\", \"route\": \"/notes\", \"about\": \"Write and keep notes, tagged and pinned, on every node of your account.\" }}, {{ \"name\": \"Messages\", \"icon\": \"✉️\", \"route\": \"/messages\", \"counts\": \"messages\", \"about\": \"Private conversations with one person, sealed end to end.\" }}, {{ \"name\": \"Chat\", \"icon\": \"💬\", \"route\": \"/chat\", \"counts\": \"chat\", \"about\": \"Servers and channels for a group, Discord-style.\" }}, {{ \"name\": \"Mail\", \"icon\": \"📮\", \"route\": \"/mail\", \"about\": \"Mail to anyone by their id: signed by your account, sealed to theirs.\" }}, {{ \"name\": \"Contacts\", \"icon\": \"👤\", \"route\": \"/contacts\", \"about\": \"The people you know: friends, following, requests. Find anyone by their id.\" }}, {{ \"name\": \"Board\", \"icon\": \"📋\", \"route\": \"/board\", \"about\": \"Boards anyone can post in, Reddit-style: vote, comment, follow people and join boards.\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\", \"mailbox\", \"spacekeys\", \"reads\", \"people\", \"posts\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"side\": [\"rail\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"views\": [\"personal\", \"shared\"], \"icon\": \"📝\", \"route\": \"/notes\", \"about\": \"Notes, tagged and pinned: yours, or a space's, kept together.\" }}, {{ \"name\": \"Messages\", \"views\": [\"personal\"], \"icon\": \"✉️\", \"route\": \"/messages\", \"counts\": \"messages\", \"about\": \"Private conversations with one person, sealed end to end.\" }}, {{ \"name\": \"Chat\", \"views\": [\"shared\"], \"icon\": \"💬\", \"route\": \"/chat\", \"counts\": \"chat\", \"about\": \"A space's channels, Discord-style.\" }}, {{ \"name\": \"Mail\", \"views\": [\"personal\"], \"icon\": \"📮\", \"route\": \"/mail\", \"about\": \"Mail to anyone by their id: signed by your account, sealed to theirs.\" }}, {{ \"name\": \"Contacts\", \"views\": [\"personal\"], \"icon\": \"👤\", \"route\": \"/contacts\", \"about\": \"The people you know: friends, following, requests. Find anyone by their id.\" }}, {{ \"name\": \"Board\", \"views\": [\"personal\", \"shared\"], \"icon\": \"📋\", \"route\": \"/board\", \"about\": \"Posts, comments and votes, Reddit-style: a space's, or your own profile.\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\", \"mailbox\", \"spacekeys\", \"reads\", \"people\", \"posts\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
         pages.iter().map(|(r, p)| format!("\"{r}\": [\"{p}\"]")).collect::<Vec<_>>().join(", "),
         prior.join(", "),
         needs.join(", "),

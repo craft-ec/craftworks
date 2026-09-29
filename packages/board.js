@@ -1,39 +1,34 @@
-// BOARD, a page: posts, Reddit-style. A BOARD is a server's (`#/board/b/<server id>`: the server Chat shows — the same
-// members, roles, invites and moderation); a PERSON's profile posts (`#/board/u/<did>`: what their followers see); HOME
-// (`#/board`: your boards' and the profiles you follow, and your own); a POST with its comment tree (`#/board/p/<ref>`);
-// CREATE (`#/board/submit[/<server id>]`). Sorted Hot, New or Top; a side panel for the board (your role, create a post,
-// invite, settings, its chat) or your boards (join by an invite code, a new board). UI only: posts are `posts`', servers
-// `space`'s and `conversation`'s, settings the one `server-settings`, names `directory`'s, and a name opens the one
-// `person` menu (follow; on a board, its role and removal).
+// BOARD, a page: posts, Reddit-style, CONFINED to the space open on the rail. In a SHARED space
+// (`#/s/<space>/board`): its own posts only — its members post, its roles and moderation apply. In the PERSONAL space
+// (`#/board`): your own posts, your profile (public: what your followers read); another person's profile is
+// `#/board/u/<did>`. A POST with its comment tree: `…/board/p/<ref>`; CREATE: `…/board/submit`. Sorted Hot, New or Top.
+// UI only: posts are `posts`', names `directory`'s, and a name opens the one `person` menu (follow; in a space, its
+// role and removal). The space itself (its members, settings, invites) is its Home's.
 export async function mount(ctx, el) {
   const login = await ctx.require("login");
   if (!(await login.session())) {
     location.hash = "#/";
     return;
   }
-  const [posts, directory, person, theme, space, conversation, roles, settings, spaceApps] = await Promise.all(
-    ["posts", "directory", "person", "theme", "space", "conversation", "roles", "server-settings", "space-apps"].map(n => ctx.require(n)),
-  );
+  const [posts, directory, person, theme, space, roles] = await Promise.all(["posts", "directory", "person", "theme", "space", "roles"].map(n => ctx.require(n)));
   const me = (await space.account()).id;
   let sort = "hot";
   // The route: what is shown.
+  // Where Board is: the space open (`ctx.space`), or the personal space.
+  const base = () => (ctx.space ? `#/s/${ctx.space}/board` : "#/board");
   const where = () => {
     const s = ctx.sub || "";
-    if (s.startsWith("b/")) return { board: s.slice(2) };
-    if (s.startsWith("u/")) return { by: s.slice(2) };
-    if (s.startsWith("p/")) return { post: s.slice(2) };
-    if (s === "submit" || s.startsWith("submit/")) return { submit: s.slice(7) };
-    return {};
+    const at = ctx.space ? { board: ctx.space } : {};
+    if (s.startsWith("p/")) return { ...at, post: s.slice(2) };
+    if (s === "submit") return { ...at, submit: true };
+    if (!ctx.space && s.startsWith("u/")) return { by: s.slice(2) };
+    return ctx.space ? at : { by: me };
   };
-  // The top bar: on a space's board (or your profile, the personal space's), that space's apps; then Home and
-  // Create post.
-  const account = await space.account();
+  // The top bar: its sub-pages — the posts, and Create post.
   const setActions = async w => {
-    const sp = w.board ? await posts.boardOf(w.board) : w.by === me ? account : null;
     ctx.actions["/board"] = [
-      ...(sp ? await spaceApps.menu(sp, "board") : []),
-      { label: "Home", href: "#/board", on: !w.board && !w.by && !w.post && w.submit == null },
-      { label: "Create post", href: `#/board/submit${w.board ? `/${w.board}` : ""}`, on: w.submit != null },
+      { label: w.board ? "Posts" : w.by === me ? "Your posts" : "Posts", href: base(), on: !w.post && !w.submit && (!!w.board || w.by === me) },
+      ...(w.board || w.by === me || w.submit ? [{ label: "Create post", href: `${base()}/submit`, on: !!w.submit }] : []),
     ];
     dispatchEvent(new CustomEvent("craftworks:actions"));
   };
@@ -118,7 +113,7 @@ export async function mount(ctx, el) {
     directory.name(did).then(t => (n.textContent = t), () => {});
     return n;
   };
-  const boardLink = b => h("a", { className: "b", href: `#/board/b/${b.id}`, textContent: `b/${b.name}`, onclick: e => e.stopPropagation() });
+  const boardLink = b => h("span", { className: "b", textContent: `b/${b.name}` });
   const errorTo = said => e => ((said.textContent = e?.message ?? String(e)), (said.hidden = false));
 
   // VOTES on a post or a comment: ▲ score ▼, changed here at once, then written.
@@ -144,7 +139,7 @@ export async function mount(ctx, el) {
   // A POST: in a list (a link to its page, the text cut short) or on its own page.
   function postCard(p, full = false) {
     const said = h("p", { className: "said", hidden: true });
-    const open = () => (location.hash = `#/board/p/${p.ref}`);
+    const open = () => (location.hash = `${base()}/p/${p.ref}`);
     const acts = h(
       "div",
       { className: "acts" },
@@ -164,7 +159,7 @@ export async function mount(ctx, el) {
             onclick: async e => {
               e.stopPropagation();
               if (e.target.dataset.armed !== "1") return ((e.target.dataset.armed = "1"), (e.target.textContent = `Confirm: ${p.by === me ? "delete" : "remove"}`));
-              await posts.remove(p.ref).then(() => (full ? (location.hash = p.board ? `#/board/b/${p.board.id}` : "#/board") : draw()), errorTo(said));
+              await posts.remove(p.ref).then(() => (full ? (location.hash = base()) : draw()), errorTo(said));
             },
           })
         : null,
@@ -251,81 +246,27 @@ export async function mount(ctx, el) {
     return f;
   }
 
-  // THE SIDE PANEL: the board (its server: your role, create a post, invite, settings, its chat), a person, or home
-  // (your boards; join one by an invite code; a new board — a new server).
-  async function yourBoards() {
-    const bs = await posts.boards();
-    const join = h("form", {}, h("input", { name: "code", placeholder: "Invite code: xxxx-xxxx-xxxx-xxxx", autocomplete: "off", ariaLabel: "Invite code" }), h("button", { className: "go", textContent: "Join" }));
-    const joinSaid = h("p", { hidden: true });
-    join.onsubmit = async e => {
-      e.preventDefault();
-      joinSaid.hidden = true;
-      try {
-        await conversation.join(join.elements.code.value);
-        joinSaid.textContent = "Asked to join. You are in once a member who may invite is online (looked at every 30 s).";
-        joinSaid.hidden = false;
-        join.elements.code.value = "";
-      } catch (err) {
-        errorTo(joinSaid)(err);
-      }
-    };
-    const make = h("form", {}, h("input", { name: "name", placeholder: "A new board's name", autocomplete: "off", ariaLabel: "New board" }), h("button", { className: "go", textContent: "Create" }));
-    const makeSaid = h("p", { className: "said", hidden: true });
-    make.onsubmit = async e => {
-      e.preventDefault();
-      const name = make.elements.name.value.trim();
-      if (!name) return;
-      try {
-        // A new board is a new server: made as Chat makes one (with its first channel), so both show it.
-        const s = await space.create("server", name);
-        await (await conversation.channels(s)).add("general");
-        location.hash = `#/board/b/${s.id}`;
-      } catch (err) {
-        errorTo(makeSaid)(err);
-      }
-    };
-    return h(
-      "div",
-      { className: "panel" },
-      h("h3", { textContent: "Your boards" }),
-      // Your personal space's board (your profile) first, then every space's.
-      h("ul", {}, h("li", {}, h("a", { href: `#/board/u/${me}`, textContent: "Your profile" })), ...bs.map(b => h("li", {}, h("a", { href: `#/board/b/${b.id}`, textContent: `b/${b.name}` })))),
-      bs.length ? null : h("p", { textContent: "Every space has a board beside its messages: a server, a group, a conversation." }),
-      join,
-      joinSaid,
-      make,
-      makeSaid,
-    );
-  }
+  // THE SIDE PANEL: the space's board (its name, members, Create post), or a profile.
   async function sidePanel(w) {
-    const yours = await yourBoards();
-    const create = h("a", { className: "go", href: `#/board/submit${w.board ? `/${w.board}` : ""}`, textContent: "Create post" });
+    const create = h("a", { className: "go", href: `${base()}/submit`, textContent: "Create post" });
     if (w.board) {
       const sp = await posts.boardOf(w.board);
-      if (!sp) return [yours];
+      if (!sp) return [];
       const r = await roles.of(sp);
       await r.refresh().catch(() => {});
-      const mine = r.role(me) ?? "member";
-      const server = sp.kind === "server";
-      const chs = server ? await conversation.channels(sp) : null;
-      const ops = chs && { list: () => chs.list(), add: n => chs.add(n), rename: (c, n) => chs.rename(c, n), remove: c => chs.remove(c) };
-      const open = tab => settings.open(sp, { tab, channels: ops, left: () => (location.hash = "#/board") });
-      return [
-        h(
-          "div",
-          { className: "panel" },
-          h("h3", { textContent: `b/${sp.name}` }),
-          h("p", { textContent: `${r.members().length} member${r.members().length === 1 ? "" : "s"} · you: ${mine}. The same space as its ${server ? "chat" : "conversation"}.` }),
-          create,
-          server && r.can(me, "invite") ? h("button", { type: "button", className: "ghost", textContent: "Invite", onclick: () => open("invites") }) : null,
-          server ? h("button", { type: "button", className: "ghost", textContent: "Settings", onclick: () => open("overview") }) : null,
-
-        ),
-        yours,
-      ];
+      const n = r.members().length;
+      return [h("div", { className: "panel" }, h("h3", { textContent: `b/${sp.name}` }), h("p", { textContent: `${n} member${n === 1 ? "" : "s"} · you: ${r.role(me) ?? "member"}` }), create)];
     }
-    if (w.by) return [h("div", { className: "panel" }, h("h3", {}, who(w.by)), w.by === me ? h("p", { textContent: "Your profile: posts your followers see." }) : h("button", { type: "button", className: "ghost", textContent: "Follow, message…", onclick: e => person.open(e.currentTarget, w.by) }), w.by === me ? create : null), yours];
-    return [h("div", { className: "panel" }, h("h3", { textContent: "Home" }), h("p", { textContent: "Posts from your boards and the people you follow." }), create), yours];
+    const by = w.by ?? me;
+    return [
+      h(
+        "div",
+        { className: "panel" },
+        h("h3", {}, who(by)),
+        by === me ? h("p", { textContent: "Your profile: posts your followers read." }) : h("button", { type: "button", className: "ghost", textContent: "Follow, message…", onclick: e => person.open(e.currentTarget, by) }),
+        by === me ? create : null,
+      ),
+    ];
   }
 
   const sortBar = () =>
@@ -345,7 +286,7 @@ export async function mount(ctx, el) {
       : w.by
         ? h("div", { className: "panel banner" }, h("h2", {}, who(w.by)))
         : null;
-    const empty = w.board ? "No posts here yet. Be the first." : w.by ? "No posts yet." : "Nothing here yet. Join a board, follow people (from their name), or create a post.";
+    const empty = w.board ? "No posts here yet. Be the first." : w.by === me ? "You have not posted yet." : "No posts yet.";
     return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: empty })])];
   }
 
@@ -364,13 +305,13 @@ export async function mount(ctx, el) {
   }
 
   async function submitPage(board) {
-    const bs = await posts.boards();
+    const sp = board ? await posts.boardOf(board) : null;
     const said = h("p", { className: "said", hidden: true });
     const f = h(
       "form",
       { className: "panel reply" },
       h("h3", { textContent: "Create a post" }),
-      h("label", {}, "Post to", h("select", { className: "field", name: "board" }, h("option", { value: "", textContent: "Your profile (your followers)" }), ...bs.map(b => h("option", { value: b.id, textContent: `b/${b.name}`, selected: b.id === board })))),
+      h("p", {}, sp ? `To b/${sp.name}: its members read it.` : "To your profile: in public, what your followers read."),
       h("label", {}, "Title", h("input", { className: "field", name: "title", maxLength: 300, autocomplete: "off", required: true })),
       h("label", {}, "Text (optional)", h("textarea", { name: "body" })),
       h("div", { className: "row" }, said, h("button", { className: "go", textContent: "Post" })),
@@ -381,8 +322,8 @@ export async function mount(ctx, el) {
       const btn = f.querySelector("button.go");
       btn.disabled = true;
       try {
-        const ref = await posts.submit({ board: f.elements.board.value || null, title: f.elements.title.value, body: f.elements.body.value });
-        location.hash = `#/board/p/${ref}`;
+        const ref = await posts.submit({ board: sp?.id ?? null, title: f.elements.title.value, body: f.elements.body.value });
+        location.hash = `${base()}/p/${ref}`;
       } catch (err) {
         errorTo(said)(err);
       } finally {
@@ -396,28 +337,19 @@ export async function mount(ctx, el) {
     const w = where();
     await setActions(w);
     here = w.board ? await posts.boardOf(w.board) : w.post?.startsWith("space:") ? await posts.boardOf(w.post) : null;
-    const parts = await (w.post ? postPage(w.post) : w.submit != null ? submitPage(w.submit) : listPage(w));
-    // A post's page: its board's panel.
-    const sidebar = await sidePanel(w.post ? { board: shownPost?.board?.id } : w);
+    const parts = await (w.post ? postPage(w.post) : w.submit ? submitPage(w.board) : listPage(w));
+    // A post's page: its board's panel (or its author's profile).
+    const sidebar = await sidePanel(w.post ? (shownPost?.board ? { board: shownPost.board.id } : { by: shownPost?.by }) : w);
     main.replaceChildren(...parts.filter(Boolean));
     side.replaceChildren(...sidebar);
   }
   let drawing = null;
   const redraw = () => {
-    if (!el.isConnected || drawing || where().submit != null || where().post) return;
+    if (!el.isConnected || drawing || where().submit || where().post) return;
     drawing = draw().finally(() => (drawing = null));
   };
   main.replaceChildren(theme.loading("Reading the posts…"));
   await draw();
   posts.onChange(redraw);
-  // Welcomes waiting (a board joined by a code: its server), and — where this person may invite — who asked by a code
-  // of the board shown, let in: now and every 30 s while Board is open (as Chat does).
-  const tick = async () => {
-    const joined = await conversation.accept().catch(() => []);
-    if (joined.length) redraw();
-    if (here && (await roles.of(here)).can(me, "invite")) await conversation.admit(here).catch(() => []);
-  };
-  tick();
-  const every = setInterval(() => (el.isConnected ? tick() : clearInterval(every)), 30000);
-  addEventListener("craftworks:route", () => el.isConnected && location.hash.startsWith("#/board") && draw());
+  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/board" && draw());
 }

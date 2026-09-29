@@ -49,8 +49,10 @@ export async function start(ctx) {
     box.style.top = `${Math.min(at.bottom + 6, innerHeight - 380)}px`;
     document.body.append(box);
     const said = el("p", { className: "said" });
-    const [people, r, handle] = await Promise.all([edge.people(), sp ? roles.of(sp.parent ?? sp) : null, directory.handle(did)]);
-    const mod = sp ? await moderation.of(sp.parent ?? sp) : null;
+    // Roles, removal and bans only in a SHARED space (a server): a conversation is between equals.
+    const shared = sp && (sp.parent ?? sp).kind === "server" ? sp.parent ?? sp : null;
+    const [people, r, handle] = await Promise.all([edge.people(), shared ? roles.of(shared) : null, directory.handle(did)]);
+    const mod = shared ? await moderation.of(shared) : null;
     const RANK = { owner: 3, admin: 2, member: 1 };
     // A button that does something, then redraws; `confirm`: a lasting act asks again on the button itself.
     const act = (label, run, cls = "", confirm = null) => {

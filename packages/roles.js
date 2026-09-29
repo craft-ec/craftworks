@@ -17,8 +17,8 @@
 //   r.acts("hide")           // the acts of a kind that COUNTED, in order (`r.acts()`: all of them — the space's log)
 //   r.owner                  // who owns it now (a `transfer` act hands it on)
 //   r.invites()              // the invite codes in force: [{ code, by, at, expires, uses, admitted }]
-//   r.apps()                 // the space's APPS: "messages" always, and those added (an `app` act: { app, on });
-//                            // a space nobody changed has every one (board, notes)
+//   r.apps()                 // the APPS the space uses (chat, board, notes): an `app` act ({ app, on }) adds or
+//                            // removes one; a new space has none (its Home and settings only)
 //   await r.act({ act: "grant", did, role })   // an act, as this person (refused here if it would not count)
 //   await r.grant(did, role)  r.onChange(fn)  r.settled
 export async function start(ctx) {
@@ -30,8 +30,8 @@ export async function start(ctx) {
     member: new Set(["post", "invite"]),
   };
   const RANK = { owner: 3, admin: 2, member: 1 };
-  // The apps a space may add (Messages is every space's).
-  const APPS = ["board", "notes"];
+  // The apps a shared space may use (each app's key: its route).
+  const APPS = ["chat", "board", "notes"];
   // An invite code in force at `at`: not revoked, not expired, and uses left (0: no limit).
   const live = (inv, at = Date.now()) => !inv.revoked && (!inv.expires || at < inv.expires) && (!inv.uses || inv.admitted.length < inv.uses);
   // A member's credential (hex): `CWMB ‖ did ‖ signer ‖ writer ‖ MLS key ‖ signature` (the identity's format; MLS
@@ -160,7 +160,7 @@ export async function start(ctx) {
       author,
       acts: kind => (kind ? counted.filter(a => a.act === kind) : [...counted]),
       invites: () => [...invites.values()].filter(i => live(i)),
-      apps: () => ["messages", ...APPS.filter(x => apps.get(x) ?? true)],
+      apps: () => APPS.filter(x => apps.get(x) === true),
       banned: did => bans.has(did),
       bannedList: () => [...bans],
       // This node was removed from the space's group: it reads nothing newer.

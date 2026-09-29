@@ -110,10 +110,12 @@ export async function mount(ctx, el) {
       if (!el.isConnected) return;
       const on = pinned();
       const [pinnedGrid, allGrid] = [el.querySelector(".pinned"), el.querySelector(".all")];
-      const mine = ctx.apps.filter(a => on.has(a.route));
+      // The PERSONAL space's apps: those with a personal view (a shared space's are on its own Home).
+      const personal = ctx.apps.filter(a => (a.views ?? ["personal"]).includes("personal"));
+      const mine = personal.filter(a => on.has(a.route));
       pinnedGrid.replaceChildren(...mine.map(icon));
       if (!mine.length) pinnedGrid.append(Object.assign(document.createElement("p"), { className: "empty", textContent: "Pin an app with 📌 to keep it here." }));
-      allGrid.replaceChildren(...ctx.apps.map(icon));
+      allGrid.replaceChildren(...personal.map(icon));
     };
     render();
     Promise.all([ctx.require("edge").then(e => e.pins()), ctx.require("pin-button")]).then(

@@ -25,7 +25,8 @@ space), SHARED (a given shared space) and PUBLIC (DISCOVER: the ownerless public
 rail composes itself: Personal's Home lists the apps with a personal view, a shared space's Home those with a shared view
 that the space added, Discover's Home those with a public view. Capabilities never know the view: they take a SCOPE (the
 account, a shared space, or the public index — bags that public spaces and posts list themselves in), so one lens points
-at three scopes and no view gets a store of its own. Discover has no owner and no log: what shows there is filtered by
+at three scopes and no view gets a store of its own. A SHARED view never crosses spaces; the PERSONAL view may gather
+across every space the person is in (it is them: Board's Feed, unread across spaces). Discover has no owner and no log: what shows there is filtered by
 the reader's own blocks and the signed moderation lists they follow.
 
 A capability that applies to things applies to **every** kind of thing: moderation moderates a post, a comment, a vote or
