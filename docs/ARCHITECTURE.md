@@ -15,9 +15,9 @@ Every package is exactly one of two kinds.
   adds a view, never a store or a mechanism.
 
 **Spaces and the rail.** Every account has a PERSONAL space (the whole canvas: Messages, Mail, Contacts, Notes, Board as
-your feed and profile, Account as its settings). A SHARED space is made and joined by invite: one governance log
+your own posts — your profile —, Account as its settings). A SHARED space is made and joined by invite: one governance log
 (members, roles, invites, bans, which apps it uses) that every app on it reads. A permanent rail lists Personal (the
-default) and the shared spaces; each space has a Home listing its apps; an app shows only the space selected. Messages
+default) and the shared spaces; each space has a Home listing its apps; an app shows only the space selected — a board is its space's posts only (no feed across spaces). Messages
 is personal only: conversations between equals, no roles — who needs governance makes a space.
 
 A capability that applies to things applies to **every** kind of thing: moderation moderates a post, a comment, a vote or

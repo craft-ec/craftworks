@@ -518,9 +518,11 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
 ## Spaces rail (owner 2026-09-29, agreed shape; ARCHITECTURE §1)
 - [ ] R1 rail: Personal (default) + shared spaces + create/join; each space's Home lists its apps; shared-space
       settings (members, roles, invites, bans, apps) on its Home; routes `#/s/<id>/<app>`; folds on phones
-- [ ] R2 apps scoped to the space selected: Chat (channels only; its server rail gone), Board (a space's board;
-      personal = feed + profile), Notes; the space-apps dropdown and cross-app links gone
+- [ ] R2 apps scoped to the space selected: Chat (channels only; its server rail gone), Board (CONFINED: a shared
+      space's board = its own posts only; personal = your own posts only, your profile — no aggregate feed, no "Your
+      boards"; following keeps a person in Contacts, their profile one click away), Notes; the space-apps dropdown and
+      cross-app links gone
 - [ ] R3 Messages personal only: direct and group conversations without roles, moderation or owner; no Board or
       Notes on conversations
 - [ ] R4 per-app settings: Chat (channels, who may post), Board (rules, who may post), Notes (who may edit)
-- [ ] R5 Blog: a lens over profile posts (long-form view, drafts sealed until published, a public reading page)
+- (parked, owner 09-29) Blog: a lens over profile posts.
