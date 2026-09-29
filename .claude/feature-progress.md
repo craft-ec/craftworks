@@ -682,6 +682,18 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       KNOWN LIMITS: upkeep state is per node, not per member (the last home session's member acts; one person per node
       is the norm); a ban made while every inviter page is closed is not seen until a page hands a new mandate over;
       ACCEPT on the joiner's side stays page-side (the joiner is the one with a page open).
+      BANS HOLD (09-30): moderation.enforce() on every upkeep tick of someone who may remove — anyone banned still in the
+      group (admitted late by the delegate) taken out. Live: ban act alone → next tick: epoch 1→2, 2→1 members.
+      JOIN STATUS (09-30, owner: "left as Join and that is confusing"): component `join-button` (Join → Requested ✓,
+      when, what happens next → Open), used by Board's and Chat's Discover views; requests kept in the account's table
+      `asks` (every device; gone once in); the rail's code form lists requests by code still waiting. Live on B:
+      Requested survived a reload, turned Open by itself when A's delegate admitted (A's page closed).
+      CONSOLE 404s FIXED (09-30): pieces 404'd because my test nodes shared the per-user webapp cache
+      (~/Library/Caches/The-Freenet-Project-Inc.freenet/webapp_cache, 64 MiB LRU, per-process locks): cross-process
+      sweeps left `.hash` markers with missing/empty dirs → the node never re-unpacks → 404 forever. Test nodes now run
+      with FREENET_WEBAPP_CACHE_DIR per node; 6 broken shared entries repaired (marker removed → re-unpack). 544/544
+      pieces served, no console errors. 17573 still on the shared cache (owner uses it: restart asked). Upstream: the
+      node trusts the marker without checking the dir (report only with the owner's say + traces).
       NEXT: publish — needs the owner's node and B on ≥ 0.2.139 (the owner's call) and the Background grant on each.
 - [ ] (old note) NO PAGE OPEN AT ALL: node v0.2.139 (freenet-core #5747) wakes a delegate periodically (manifest `wakeups`, ≥ 60 s,
       the person's Background grant). Needs the joining logic (MLS welcome/add, spacekeys) moved into the identity

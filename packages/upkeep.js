@@ -22,6 +22,11 @@ export async function start(ctx) {
       if (joined.length) ctx.log("upkeep", { what: `joined ${joined.length} space(s) from the inbox` });
       for (const sp of (await space.mine()).filter(s => s.kind === "server")) {
         const r = await roles.of(sp).catch(() => null);
+        // Bans hold in the group: whoever is banned and still in it (let in before the ban reached them), out.
+        if (r?.can(me.id, "remove")) {
+          const n = await (await ctx.require("moderation")).of(sp).then(m => m.enforce()).catch(e => (ctx.log("upkeep", { what: `${sp.name}: bans: ${e.message}` }), 0));
+          if (n) ctx.log("upkeep", { what: `${sp.name}: ${n} banned device(s) taken out of the group` });
+        }
         if (!r?.can(me.id, "invite")) continue;
         const let_in = await conversation.admit(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: ${e.message}` }), []));
         if (let_in.length) ctx.log("upkeep", { what: `${let_in.length} let into ${sp.name}` });

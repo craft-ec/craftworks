@@ -349,7 +349,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 56] = [
+    let packages: [(&str, &str, PathBuf); 57] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -406,6 +406,7 @@ async fn main() -> Result<()> {
         ("rail", "module", app.join("packages/rail.js")),
         ("upkeep", "service", app.join("packages/upkeep.js")),
         ("app-icons", "service", app.join("packages/app-icons.js")),
+        ("join-button", "service", app.join("packages/join-button.js")),
         ("app-settings", "service", app.join("packages/app-settings.js")),
         ("space-home", "module", app.join("packages/space-home.js")),
         ("chat", "module", app.join("packages/chat.js")),
@@ -510,7 +511,7 @@ async fn main() -> Result<()> {
         needs.push(format!("\"{route}\": [{}]", have.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")));
     }
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"side\": [\"rail\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"views\": [\"personal\", \"shared\"], \"icon\": \"📝\", \"route\": \"/notes\", \"about\": \"Notes, tagged and pinned: yours, or a space's, kept together.\" }}, {{ \"name\": \"Messages\", \"views\": [\"personal\"], \"icon\": \"✉️\", \"route\": \"/messages\", \"counts\": \"messages\", \"about\": \"Private conversations with one person, sealed end to end.\" }}, {{ \"name\": \"Chat\", \"views\": [\"shared\", \"public\"], \"icon\": \"💬\", \"route\": \"/chat\", \"counts\": \"chat\", \"about\": \"A space's channels, Discord-style.\" }}, {{ \"name\": \"Mail\", \"views\": [\"personal\"], \"icon\": \"📮\", \"route\": \"/mail\", \"about\": \"Mail to anyone by their id: signed by your account, sealed to theirs.\" }}, {{ \"name\": \"Contacts\", \"views\": [\"personal\", \"public\"], \"icon\": \"👤\", \"route\": \"/contacts\", \"about\": \"The people you know: friends, following, requests. Find anyone by their id.\" }}, {{ \"name\": \"Board\", \"views\": [\"personal\", \"shared\", \"public\"], \"icon\": \"📋\", \"route\": \"/board\", \"about\": \"Posts, comments and votes, Reddit-style: a space's, or your own profile.\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\", \"mailbox\", \"spacekeys\", \"reads\", \"people\", \"posts\", \"journal\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"side\": [\"rail\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"views\": [\"personal\", \"shared\"], \"icon\": \"📝\", \"route\": \"/notes\", \"about\": \"Notes, tagged and pinned: yours, or a space's, kept together.\" }}, {{ \"name\": \"Messages\", \"views\": [\"personal\"], \"icon\": \"✉️\", \"route\": \"/messages\", \"counts\": \"messages\", \"about\": \"Private conversations with one person, sealed end to end.\" }}, {{ \"name\": \"Chat\", \"views\": [\"shared\", \"public\"], \"icon\": \"💬\", \"route\": \"/chat\", \"counts\": \"chat\", \"about\": \"A space's channels, Discord-style.\" }}, {{ \"name\": \"Mail\", \"views\": [\"personal\"], \"icon\": \"📮\", \"route\": \"/mail\", \"about\": \"Mail to anyone by their id: signed by your account, sealed to theirs.\" }}, {{ \"name\": \"Contacts\", \"views\": [\"personal\", \"public\"], \"icon\": \"👤\", \"route\": \"/contacts\", \"about\": \"The people you know: friends, following, requests. Find anyone by their id.\" }}, {{ \"name\": \"Board\", \"views\": [\"personal\", \"shared\", \"public\"], \"icon\": \"📋\", \"route\": \"/board\", \"about\": \"Posts, comments and votes, Reddit-style: a space's, or your own profile.\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\", \"mailbox\", \"spacekeys\", \"reads\", \"people\", \"posts\", \"journal\", \"asks\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
         pages.iter().map(|(r, p)| format!("\"{r}\": [\"{p}\"]")).collect::<Vec<_>>().join(", "),
         prior.join(", "),
         needs.join(", "),

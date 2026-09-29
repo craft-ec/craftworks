@@ -280,29 +280,14 @@ export async function mount(ctx, el) {
   async function publicPanel(d) {
     const pr = await roles.ofPublic(d);
     const mine = (await space.mine()).some(s => s.id === d.id);
-    const said = h("p", { hidden: true });
-    const join =
-      !mine && pr.policy("", "join") === "anyone"
-        ? h("button", {
-            type: "button",
-            className: "go",
-            textContent: "Join",
-            onclick: async e => {
-              e.target.disabled = true;
-              await (await ctx.require("conversation")).joinOpen(d).then(
-                () => ((said.textContent = "Asked to join: you are in once a member who may invite is online."), (said.hidden = false)),
-                err => ((said.textContent = err.message), (said.hidden = false), (e.target.disabled = false)),
-              );
-            },
-          })
-        : null;
+    // Join, Requested (while a member lets you in), Open: the one join control.
+    const join = !mine && pr.policy("", "join") === "anyone" ? await (await ctx.require("join-button")).control(d, { open: `#/s/${d.id}/board` }) : null;
     return h(
       "div",
       { className: "panel" },
       h("h3", { textContent: `b/${space.shown(d)}` }),
       h("p", { textContent: `🌐 A public board: anyone reads it; its ${pr.members().length} member${pr.members().length === 1 ? "" : "s"} post, comment and vote.` }),
       mine ? h("a", { className: "go", href: `#/s/${d.id}/board`, textContent: "Open in your space" }) : join ?? h("p", { textContent: "Joining is by invite." }),
-      said,
     );
   }
   async function sidePanel(w) {

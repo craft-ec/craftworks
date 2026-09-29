@@ -38,6 +38,16 @@ export async function start(ctx) {
       remove: did => out(did, "remove"),
       ban: did => out(did, "ban"),
       unban: did => r.act({ act: "unban", did }),
+      // A BAN HOLDS in the group too: anyone banned still in the space's group (let in after the ban by someone who did
+      // not know of it yet — the identity delegate, by a page's older mandate) taken out of it. How many.
+      enforce: async () => {
+        await r.refresh();
+        const nodes = r.bannedList().flatMap(did => r.nodesOf(did));
+        if (!nodes.length) return 0;
+        await keys.group(r.space).remove(nodes.map(n => n.index));
+        await r.refresh();
+        return nodes.length;
+      },
       onChange: f => r.onChange(f),
       settled: r.settled,
     };

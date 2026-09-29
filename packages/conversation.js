@@ -140,6 +140,9 @@ export async function start(ctx) {
         const sp = await space.describe(it.space, v);
         await keys.group(sp).join(it.welcome);
         await space.record(it.space, v);
+        // Its request answered: no longer waiting (a request by code is answered by whichever welcome came after it).
+        const t = await asks().catch(() => null);
+        if (t) for (const r of t.rows().filter(x => x.value && (x.key === it.space || x.key.startsWith("code:")))) await t.remove(r.key).catch(() => {});
         out.push(sp);
         ctx.log("conversation", { what: `joined a ${it.spaceKind} conversation with ${short(it.from)}` });
       } catch (e) {
@@ -212,6 +215,7 @@ export async function start(ctx) {
     if (code.length !== 19) throw new Error("an invite code is 16 letters and digits: xxxx-xxxx-xxxx-xxxx");
     await directory.publish().catch(() => {}); // the asker's card carries key packages to be added by
     await index.request(code, { kind: "join", did: me.id, at: Date.now() });
+    await noteAsk(`code:${code}`, { code });
     return code;
   }
   // OPEN SPACES: who may join without a code (the space's `config` space/join: "open"). The asker drops a request in
@@ -222,6 +226,34 @@ export async function start(ctx) {
     if (!me) throw new Error("nobody is logged in");
     await directory.publish().catch(() => {});
     await index.request(openCode(desc.id), { kind: "join", did: me.id, at: Date.now() });
+    await noteAsk(desc.id, { name: desc.name ?? null });
+  }
+  // REQUESTS this account made and is still waiting on (its table `asks`: every device shows them): by space id, or
+  // `code:<code>` (the space is not known until the welcome). Gone once in.
+  const asks = async () => (await ctx.require("storage")).table("asks");
+  async function noteAsk(key, v) {
+    await (await asks()).put(key, JSON.stringify({ ...v, at: Date.now() })).catch(e => ctx.log("conversation", { what: `keeping the request: ${e.message}` }));
+  }
+  const parseAsk = r => {
+    try {
+      return { key: r.key, ...JSON.parse(r.value) };
+    } catch {
+      return null;
+    }
+  };
+  // The request for this space, while not in it: `{ at, name }`, or null.
+  async function asked(id) {
+    if ((await space.mine()).some(s => s.id === id)) return null;
+    const t = await asks();
+    await t.settled;
+    const r = t.rows().find(x => x.key === id && x.value);
+    return r ? parseAsk(r) : null;
+  }
+  // Requests by CODE still waiting (none joined since they were made): `[{ code, at }]`.
+  async function askedCodes() {
+    const t = await asks();
+    await t.settled;
+    return t.rows().filter(x => x.key.startsWith("code:") && x.value).map(parseAsk).filter(Boolean);
   }
   async function setJoin(sp, how) {
     const r = await (await ctx.require("roles")).of(sp);
@@ -408,5 +440,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels };
+  return { direct, group, invite, accept, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels };
 }

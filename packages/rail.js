@@ -27,6 +27,7 @@ export async function mount(ctx, el) {
       .rail-ask input { flex: 1; min-width: 0; padding: 6px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
       .rail-ask button { font: inherit; border: 0; border-radius: var(--cw-radius-sm); padding: 6px var(--cw-space-3); background: var(--cw-accent); color: var(--cw-accent-fg); cursor: pointer; }
       .rail-ask .said { color: var(--cw-danger); }
+      .rail-ask .waiting { margin: 0; padding-left: 1.2em; color: var(--cw-muted); font-size: var(--cw-text-sm); }
       @media (max-width: 600px) { .rail { width: 52px; } .rail a, .rail button { width: 38px; height: 38px; } }
     </style>
     <nav class="rail" aria-label="Spaces"></nav>`;
@@ -69,13 +70,23 @@ export async function mount(ctx, el) {
         await conversation.join(join.elements.code.value);
         said.hidden = false;
         said.className = "";
-        said.textContent = "Asked to join: you are in once a member who may invite is online.";
+        said.textContent = "Requested ✓ A member who may invite lets you in — it takes a moment, and happens even while their app is closed. The space appears here when you are in.";
+        drawWaiting();
       } catch (err) {
         said.className = "said";
         fail(err);
       }
     };
-    d.append(h("h3", { textContent: "Make a space" }), h("p", { textContent: "Its members and roles are its own; add its apps (Chat, Board, Notes) on its Home." }), make, h("h3", { textContent: "Join a space" }), join, said);
+    // Requests by code still waiting: shown, so nobody asks again wondering whether it went through.
+    const waiting = h("ul", { className: "waiting" });
+    const drawWaiting = () =>
+      conversation.askedCodes().then(
+        list =>
+          waiting.replaceChildren(...list.map(a => h("li", { textContent: `Requested with ${a.code} · ${new Date(a.at).toLocaleString()} — waiting to be let in` }))),
+        () => {},
+      );
+    drawWaiting();
+    d.append(h("h3", { textContent: "Make a space" }), h("p", { textContent: "Its members and roles are its own; add its apps (Chat, Board, Notes) on its Home." }), make, h("h3", { textContent: "Join a space" }), join, said, waiting);
     d.addEventListener("click", e => e.target === d && d.close());
     d.addEventListener("close", () => d.remove());
     document.body.append(d);

@@ -284,27 +284,15 @@ async function openSpaces(ctx, el, { space, roles, conversation, theme }) {
   ctx.actions["/chat"] = [];
   dispatchEvent(new CustomEvent("craftworks:actions"));
   grid.replaceChildren(theme.loading("Finding open spaces…"));
-  const mine = new Set((await space.mine()).map(s => s.id));
+  const joins = await ctx.require("join-button");
   const cards = [];
   for (const d of await posts.publicSpaces()) {
     const r = await roles.ofPublic(d).catch(() => null);
     if (!r || r.policy("", "join") !== "anyone" || !r.apps().includes("chat")) continue;
-    const said = h("p", { className: "said", hidden: true });
     const n = r.members().length;
-    const act = mine.has(d.id)
-      ? h("a", { href: `#/s/${d.id}/chat`, textContent: "Open" })
-      : h("button", {
-          type: "button",
-          textContent: "Join",
-          onclick: async e => {
-            e.target.disabled = true;
-            await conversation.joinOpen(d).then(
-              () => ((said.textContent = "Asked to join: you are in once a member who may invite is online."), (said.hidden = false)),
-              err => ((said.textContent = err.message), (said.hidden = false), (e.target.disabled = false)),
-            );
-          },
-        });
-    cards.push(h("div", { className: "card" }, h("b", { textContent: space.shown(d) }), h("span", { textContent: `${n} member${n === 1 ? "" : "s"} · ${r.apps().join(", ")}` }), act, said));
+    // Join, Requested (while a member lets you in), Open: the one join control.
+    const act = await joins.control(d, { open: `#/s/${d.id}/chat` });
+    cards.push(h("div", { className: "card" }, h("b", { textContent: space.shown(d) }), h("span", { textContent: `${n} member${n === 1 ? "" : "s"} · ${r.apps().join(", ")}` }), act));
   }
   grid.replaceChildren(...(cards.length ? cards : [h("p", { className: "note", textContent: "No open spaces yet: a space's owner or admins open it (its Home → Permissions → Who may join: Anyone)." })]));
 }
