@@ -85,7 +85,12 @@ export async function start() {
     #app { height: 100dvh; display: grid; grid-template: "head head" auto "side body" minmax(0, 1fr) "foot foot" auto / auto minmax(0, 1fr); }
     #app > .slot-header { grid-area: head; } #app > .slot-footer { grid-area: foot; } #app > .slot-body { grid-area: body; }
     #app > .slot-side { grid-area: side; min-height: 0; overflow: hidden; display: flex; }
-    #app > .slot-side > section { margin: 0; display: flex; min-height: 0; }
+    #app > .slot-side > section { margin: 0; display: flex; min-height: 0; position: relative; min-width: 64px; }
+    /* The rail's placeholder: its bars only (no room for words). */
+    #app > .slot-side > section > .cw-loading.cw-cover { padding: var(--cw-space-2); font-size: 0; }
+    #app > .slot-side > section > .cw-loading.cw-cover i { height: 10px; }
+    #app > .slot-side > section[aria-busy="true"]::before { content: ""; position: absolute; top: 0; left: 0; right: 0; z-index: 6; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--cw-accent), transparent) 0 0 / 40% 100% no-repeat; animation: cw-busy 1.1s ease-in-out infinite; }
     /* The two bars: a fixed height each, their content on the bar's middle line. */
     :root { --cw-bar: 48px; --cw-bar-low: 36px; --cw-gutter: 16px; }
     #app > .slot-header, #app > .slot-footer { flex: none; }

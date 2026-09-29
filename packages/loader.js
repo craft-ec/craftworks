@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. The node's code is loaded after the first
 // page is up even where the page needs none: to FOLLOW the app's and the loader's sites (below).
-const VERSION = "22";
+const VERSION = "23";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -79,14 +79,18 @@ export async function run(boot) {
   // A package's ENTRY (its pieces), in its own file of the site named by the package's hash: read once, and only when
   // it is needed — the manifest itself names each package by kind and hash alone. (A manifest from before: inline.)
   const entries = new Map();
+  const read = new Map(); // name → its entry, once read (what the trace's Stack shows: its pieces)
   function entry(name) {
     const head = manifest.packages[name];
     if (!head) return Promise.reject(new Error(`package "${name}" is not in this app's manifest`));
-    if (head.pieces) return Promise.resolve(head);
+    if (head.pieces) return (read.set(name, head), Promise.resolve(head));
     if (!entries.has(name))
       entries.set(
         name,
-        boot.get(new URL(`p/${head.sha256.slice(0, 16)}.json`, location.href), `${name}'s entry`).then(r => ({ ...head, ...JSON.parse(new TextDecoder().decode(r.bytes)) })),
+        boot
+          .get(new URL(`p/${head.sha256.slice(0, 16)}.json`, location.href), `${name}'s entry`)
+          .then(r => ({ ...head, ...JSON.parse(new TextDecoder().decode(r.bytes)) }))
+          .then(e => (read.set(name, e), e)),
       );
     return entries.get(name);
   }
@@ -182,7 +186,8 @@ export async function run(boot) {
     const els = names.map(name => {
       const el = document.createElement("section");
       el.dataset.component = name;
-      if (theme?.loading && slot === "body") {
+      // The body's components and the side's (the rail) show the theme's placeholder until drawn.
+      if (theme?.loading && (slot === "body" || slot === "side")) {
         const p = theme.loading(`Loading ${name}…`);
         p.dataset.name = name;
         p.classList.add("cw-cover");
@@ -264,6 +269,8 @@ export async function run(boot) {
     loaderSite: () => boot.loaderBase.pathname.split("/")[4] ?? "",
     loaderVersion: VERSION,
     loaded: name => loaded.has(name),
+    // Its pieces (k data + m parity), once its entry was read (null: not needed yet).
+    pieces: name => (read.has(name) ? `${read.get(name).k}+${read.get(name).m}` : null),
     askedBy: name => askedBy.get(name),
     // GET THE NEWEST: this node follows (subscribes to) the app's site and the loader's — a node holding a copy answers
     // a plain GET from it — then the page loads again. Returns what each said.

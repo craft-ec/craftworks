@@ -49,7 +49,7 @@ export function mount(ctx, el, stack) {
     // for one no slot names, the component or service that asked for it.
     const placed = name => {
       const at = [];
-      for (const s of ["header", "footer"]) if ((m.layout?.[s] ?? []).includes(name)) at.push(`${s} · every page`);
+      for (const s of ["header", "side", "footer"]) if ((m.layout?.[s] ?? []).includes(name)) at.push(`${s} · every page`);
       for (const [route, v] of Object.entries(m.pages)) {
         const p = Array.isArray(v) ? { body: v } : v;
         for (const s of ["header", "body", "footer"]) if ((p[s] ?? []).includes(name)) at.push(`${s} · ${route}`);
@@ -59,7 +59,8 @@ export function mount(ctx, el, stack) {
       return by ? `via <b>${esc(by)}</b>` : stack.loaded(name) ? "the loader" : "<i>not asked for yet</i>";
     };
     const pkgs = Object.entries(m.packages).map(([name, p]) =>
-      row([`<b>${esc(name)}</b>`, placed(name), esc(p.kind), esc(`${p.k}+${p.m}`), short(p.sha256), stack.loaded(name) ? "loaded" : "not yet"]),
+      // Its pieces: from its entry (read when the package is first needed; before that, not known here).
+      row([`<b>${esc(name)}</b>`, placed(name), esc(p.kind), esc(stack.pieces?.(name) ?? (p.k != null ? `${p.k}+${p.m}` : "—")), short(p.sha256), stack.loaded(name) ? "loaded" : "not yet"]),
     );
     pane.innerHTML = `
       <p style="margin:0 0 8px"><button type="button" class="fresh">Get the newest</button>
