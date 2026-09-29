@@ -171,15 +171,8 @@ export async function mount(ctx, el) {
   // Its roles or apps changing (an act from anyone): drawn again.
   const sp0 = ctx.space && (await space.mine()).find(s => s.id === ctx.space);
   if (sp0) (await roles.of(sp0)).onChange(() => el.isConnected && ctx.route === "/space" && ctx.space === sp0.id && draw());
-  // Welcomes waiting (a space joined by a code), and who asked by a code of this space let in (as Chat does).
-  const tick = async () => {
-    if (ctx.space === "discover") return;
-    await conversation.accept().catch(() => []);
-    const sp = ctx.space && (await space.mine()).find(s => s.id === ctx.space);
-    if (sp && (await roles.of(sp)).can(me, "invite")) await conversation.admit(sp).catch(() => []);
-  };
-  tick();
-  const every = setInterval(() => (el.isConnected ? tick() : clearInterval(every)), 30000);
+  // Welcomes and askers are `upkeep`'s (every page, every 30 s): asked once now.
+  ctx.require("upkeep").then(u => u.tick(), () => {});
   // Drawn again only for another space (the route event right after mounting names this one).
   let drawnFor = ctx.space;
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/space" && ctx.space !== drawnFor && ((drawnFor = ctx.space), draw()));

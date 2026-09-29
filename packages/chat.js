@@ -196,18 +196,8 @@ export async function mount(ctx, el) {
     shown = await roomUI.show(roomEl, c, `#${c.name}`);
   }
 
-  // Welcomes waiting in the inbox: joined now, and every 30 s while Chat is open (a request by code answered). And
-  // this person, where they may invite, lets in who asked by a code of this space.
-  const tick = async () => {
-    await conversation.accept().catch(e => (ctx.log("conversation", { what: e?.message ?? String(e) }), []));
-    if (server && may("invite")) {
-      const s = server;
-      const admitted = await conversation.admit(s).catch(e => (ctx.log("conversation", { what: e?.message ?? String(e) }), []));
-      if (admitted.length && server === s) drawMembers(s);
-    }
-  };
-  tick();
-  const every = setInterval(() => (el.isConnected ? tick() : clearInterval(every)), 30000);
+  // Welcomes and askers are `upkeep`'s (every page, every 30 s): asked once now, for whoever is waiting on this one.
+  ctx.require("upkeep").then(u => u.tick(), () => {});
   // New since read: the channel list says so.
   activity.onChange(() => el.isConnected && drawChannels());
   // THE SPACE on the rail (`ctx.space`), at a channel (`ctx.sub`: a notification clicked, a link) or its first.

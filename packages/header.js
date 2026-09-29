@@ -163,4 +163,6 @@ export function mount(ctx, el) {
   // ACTIVITY runs on every page (the header is on every page): new messages notify, whichever app is open. After the
   // page is up, never holding it.
   setTimeout(() => ctx.require("activity").catch(() => {}), 1500);
+  // UPKEEP on every page too: welcomes joined, askers let in (whichever page is open).
+  setTimeout(() => ctx.require("upkeep").catch(() => {}), 2500);
 }
