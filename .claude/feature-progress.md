@@ -470,6 +470,12 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       "Use a passphrase" (id + passphrase → the words' entropy → auth.join). New words drop the copy. Passkey: a second
       copy sealed with its PRF once #5764 lands. Live: set 1.2 s; wrong passphrase refused; new device B logged in as
       Z in 2 s and read Z's note.
-- [ ] 2b removing a device refreshes the DID's member in every space
+- [x] 2b removing a device refreshes the DID's member in every space: after an account `remove`, the open tails move
+      to the newest epoch (`storage.sealNewest`), the card is republished, and every space's group commits an MLS
+      update (`Account::update`, test `a_members_update_leaves_a_stale_copy_behind`). Space writes catch up with a fresh
+      epoch-log read and `sealNewest` before sealing. Live (private net A/B/C): Y's DM after A removed B → A sees it,
+      B does not; Y sealed with epoch 2.
+      Recovery copy moved from its own public tail to the card row `recovery`. OPEN: rows in the separate `recovery`
+      public tail showed 0 rows on other nodes (cause unknown; the mail public tail may be affected — measure it).
 - [ ] 3 social content: posts, comments, votes; a feed from follows
 - [ ] 4 upkeep: a member's new device picked up at once; prune old mail rows and spent key-package batches

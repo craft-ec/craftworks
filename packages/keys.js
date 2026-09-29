@@ -84,11 +84,13 @@ export async function start(ctx) {
   function logsOf(g) {
     const open = async (e, secret, known = null) =>
       ordering.open({ type: "tail", table: g.channel, prefix: "c/", owner: glue.epoch_log_public(secret), known, sealWith: await g.seal(e), space: g.space });
-    // The commit that moved the group FROM epoch e.
-    async function commitFrom(e, secret) {
+    // The commit that moved the group FROM epoch e (`fresh`: the log read again from the network, not as last seen).
+    async function commitFrom(e, secret, fresh = false) {
       const old = g.before && (await g.before()).from(e)[0];
       if (old) return old.entry;
-      return (await open(e, secret)).from(e)[0]?.entry ?? null;
+      const log = await open(e, secret);
+      if (fresh) await log.reread?.().catch(() => {});
+      return log.from(e)[0]?.entry ?? null;
     }
     // COMMIT from epoch e: into e's log, with the group info after it (and, for the account, the next secret in escrow).
     async function commitAt(e, secret, commit) {
@@ -121,13 +123,13 @@ export async function start(ctx) {
     }
     // Apply every commit newer than this node's epoch, in order, keeping every epoch passed (rows sealed then must open
     // here too). `reload(st)` first, before the first (the account: its key log as it is NOW).
-    async function catchUp(reload) {
+    async function catchUp(reload, fresh = false) {
       const m = g.mls();
       if (m.status().removed) return 0; // removed: nothing after that applies
       let n = 0;
       for (;;) {
         const st = m.status();
-        const entry = await commitFrom(st.epoch, st.secret);
+        const entry = await commitFrom(st.epoch, st.secret, fresh);
         if (!entry) break;
         if (!n && reload) await reload(st);
         m.process(bytes(parse(entry).commit));
@@ -290,6 +292,19 @@ export async function start(ctx) {
       }
       const st = await keep(channel, { made: true });
       ctx.log("account keys", { what: `a node removed: epoch ${st.epoch}, ${st.members.length} node(s)` });
+      // Every space this account is in: its member's keys refreshed, so the removed node — which held them — follows
+      // nothing there from now on (after this turn: each space's queue, not the account's).
+      setTimeout(async () => {
+        // Writes onto the new epoch first (the removed node holds the old ones), then the card: the removed node no
+        // longer listed as the account's (what it writes counts for nothing).
+        await storage.sealNewest().catch(() => {});
+        await ctx.require("directory").then(d => d.publish()).catch(e => ctx.log("account keys", { what: `the card: ${e.message}` }));
+        for (const sp of await space.mine().catch(() => [])) {
+          const g = group(sp);
+          if (!(await g.ready().catch(() => null))) continue;
+          await g.refresh().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `refreshing after the removal: ${e.message}` }));
+        }
+      });
       return st;
     }));
   }
@@ -367,10 +382,10 @@ export async function start(ctx) {
       return true;
     }
     // A commit that did not apply here (this DID's own, from another device): its state, when that device has saved it.
-    async function current() {
+    async function current(fresh = false) {
       for (let tries = 0; ; tries++) {
         try {
-          if (await logs.catchUp()) return save(false);
+          if (await logs.catchUp(undefined, fresh)) return save(false);
           return status(m.status());
         } catch (e) {
           if (await load()) continue;
@@ -412,6 +427,14 @@ export async function start(ctx) {
           ctx.log(`${sp.name ?? "space"} keys`, { what: `${indexes.length} member(s) removed: epoch ${m.status().epoch}` });
           return st;
         })),
+      // REFRESH this DID's own keys in the space (a device of the account was removed: what it held follows nothing
+      // after this commit).
+      refresh: () =>
+        (queue = queue.then(async () => {
+          await change(() => [m.update(), null]);
+          ctx.log(`${sp.name ?? "space"} keys`, { what: `this account's keys refreshed: epoch ${m.status().epoch}` });
+          return st;
+        })),
       // JOINED from a welcome (someone added this DID): answered by whichever batch of key packages holds its key
       // package; that batch kept without it (a key package works once).
       join: welcome =>
@@ -443,11 +466,12 @@ export async function start(ctx) {
           ctx.log(`${sp.name ?? "space"} keys`, { what: "made the space's group: epoch 0" });
           return save(true);
         })),
-      // Loaded and brought current; null where this account is not in the space's group.
-      ready: () =>
+      // Loaded and brought current; null where this account is not in the space's group. `fresh`: its log read again
+      // from the network first (before a write: sealed with the newest epoch, never one a removed member holds).
+      ready: ({ fresh = false } = {}) =>
         (queue = queue.catch(() => {}).then(async () => {
           if (!m && !(await load())) return null;
-          const s = await current();
+          const s = await current(fresh);
           if (!s) return null;
           await logs.ensure(m.status(), false);
           return s;

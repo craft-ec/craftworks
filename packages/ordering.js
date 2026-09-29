@@ -46,6 +46,8 @@ export async function start(ctx) {
           return at(n) === entry ? { ok: true } : { ok: false, taken: true };
         },
         onAppend: f => t.onChange(f),
+        // Read again from the network (what another writer appended since).
+        reread: () => t.reread?.(),
       };
     },
   };

@@ -357,6 +357,15 @@ impl Account {
         self.group.write_to_storage().map_err(e)
     }
 
+    /// UPDATE this member's own keys (a commit with no proposals: MLS gives it a fresh path — new leaf keys): what anyone
+    /// holding this member's old keys (a device removed from the account) followed stops here. The commit to publish.
+    pub fn update(&mut self) -> Result<Vec<u8>, String> {
+        let out = self.group.commit_builder().build().map_err(e)?;
+        self.group.apply_pending_commit().map_err(e)?;
+        self.group.write_to_storage().map_err(e)?;
+        out.commit_message.to_bytes().map_err(e)
+    }
+
     /// Remove the member at `index` (a lost or stolen node): the commit to publish; this member's epoch moves now.
     pub fn remove(&mut self, index: u32) -> Result<Vec<u8>, String> {
         let out = self.group.commit_builder().remove_member(index).map_err(e)?.build().map_err(e)?;
@@ -565,6 +574,34 @@ mod tests {
         assert!(SpaceMember::new(&seed, other, &[]).is_err());
     }
 
+    /// UPDATE: a DID's member refreshes its keys (a device of the account was removed). The other member follows; a
+    /// copy of the member from before the update (what the removed device holds) cannot follow the next change —
+    /// control: without the update, that copy follows it.
+    #[test]
+    fn a_members_update_leaves_a_stale_copy_behind() {
+        let (alice, bob) = (member([0xA; 32], [0xAA; 32], &[]), member([0xB; 32], [0xBB; 32], &[]));
+        let (carol, dave) = (member([0xC; 32], [0xCC; 32], &[]), member([0xD; 32], [0xDD; 32], &[]));
+        let space = [0x5A; 32];
+        let mut a = alice.create_space(space).unwrap();
+        let (_, welcome) = a.add(&bob.key_package().unwrap()).unwrap();
+        let mut b = bob.join_space(space, &welcome).unwrap();
+        let copy_of = |b: &mut Account| Account::load(Rule::Space(space), &b.save().unwrap()).unwrap();
+        // Control: a copy of Bob, keys current — follows Alice adding Carol.
+        let mut copy = copy_of(&mut b);
+        let (add_carol, _) = a.add(&carol.key_package().unwrap()).unwrap();
+        assert!(copy.process(&add_carol).is_ok(), "control: a copy follows while its keys are current");
+        b.process(&add_carol).unwrap();
+        // Bob refreshes his keys; Alice follows; the copy from before cannot follow what comes next.
+        let mut copy = copy_of(&mut b);
+        let up = b.update().unwrap();
+        a.process(&up).unwrap();
+        assert_eq!(a.epoch_secret().unwrap(), b.epoch_secret().unwrap(), "Alice follows Bob's update");
+        let (add_dave, _) = a.add(&dave.key_package().unwrap()).unwrap();
+        b.process(&add_dave).unwrap();
+        assert!(copy.process(&up).is_err(), "the member's own update is not the copy's to follow");
+        assert!(copy.process(&add_dave).is_err(), "and what follows it is out of the copy's reach");
+    }
+
     #[test]
     fn nodes_join_with_the_words_share_the_epoch_and_a_removed_node_is_left_behind() {
         let owner = [1u8; 32];
@@ -685,6 +722,11 @@ mod js {
         /// Another member's commit (a join, a removal), applied.
         pub fn process(&mut self, commit: &[u8]) -> Result<(), JsValue> {
             self.member()?.process(commit).map_err(err)
+        }
+
+        /// UPDATE this member's own keys: the commit to publish (a removed device's copy follows nothing after it).
+        pub fn update(&mut self) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&self.member()?.update().map_err(err)?[..]))
         }
 
         /// Remove the member at `index`: the commit to publish.

@@ -81,6 +81,22 @@ export async function start(ctx) {
       else unkeyed.delete(idHex);
     }
   }
+  // WRITES MOVE ONTO THE NEWEST EPOCH: an open tail seals with the epoch current when it opened; when the group has
+  // moved since (a node removed: it holds the older epochs), what is written from now on is sealed with the newest.
+  let resealing = null;
+  const sealNewest = () =>
+    (resealing ??= (async () => {
+      for (const [idHex, t] of live) {
+        const w = t.sealing;
+        if (!w) continue;
+        const e = await access.keyAt(w.app, -1, { catalog: w.catalog, space: w.space }).catch(() => ({}));
+        if (!e.key || e.epoch <= w.epoch) continue;
+        core.tail_epoch_key(bytes(idHex), e.epoch, bytes(e.key), true);
+        w.epoch = e.epoch;
+        ctx.log("table sealing", { what: `${w.app}: writes now with epoch ${e.epoch}` });
+      }
+    })().finally(() => (resealing = null)));
+  addEventListener("craftworks:keys", () => sealNewest());
   let rekeying = null;
   addEventListener("craftworks:keys", () => {
     if (!unkeyed.size || rekeying) return;
@@ -165,6 +181,8 @@ export async function start(ctx) {
         const e = await access.keyAt(app, -1, { catalog: catalogKey, space: spaceId });
         if (e.key) core.tail_epoch_key(id, e.epoch, bytes(e.key), true);
         else ctx.log("table sealed", { what: `${app}: no epoch here (${e.why}): written with the table's key` });
+        // Kept: when a newer epoch arrives (the group moved: a node removed, one added), writes move onto it.
+        t.sealing = { app, catalog: catalogKey, space: spaceId, epoch: e.key ? e.epoch : -1 };
       }
       if (known === false) {
         core.tail_absent(id);
@@ -460,7 +478,15 @@ export async function start(ctx) {
       };
       const settled = Promise.all(others.map(o => gather(o).catch(() => {})));
       ctx.log("table open", { what: `${name}: ${rows.length} row(s) from ${all.filter(f => !f.absent).length} feed(s)` });
-      const write = (key, value) => versioned(me, key, value, rows.find(r => r.key === key)?.id);
+      // A write in a space: its group brought current first, so what is written is sealed with the newest epoch's key
+      // (never one a member removed since still holds).
+      const current = sp.kind === "account" ? async () => {} : async () => (await ctx.require("keys")).group(sp).ready({ fresh: true }).catch(() => null);
+      const write = async (key, value) => {
+        await current();
+        // A newer epoch just learned: the open tails move onto it before this is sealed.
+        if (sp.kind !== "account") await sealNewest().catch(() => {});
+        return versioned(me, key, value, rows.find(r => r.key === key)?.id);
+      };
       const t = {
         app: name,
         // Every writer tried once (some may still arrive later): for what needs the whole table now (adopting a node's
@@ -591,5 +617,5 @@ export async function start(ctx) {
     return moved;
   }
 
-  return { table, log, publicTail, describe, nodes, feedsOf, adopt, refuse: why => (refusing = why) };
+  return { table, log, publicTail, describe, nodes, feedsOf, adopt, sealNewest, refuse: why => (refusing = why) };
 }
