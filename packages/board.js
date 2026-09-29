@@ -318,7 +318,7 @@ export async function mount(ctx, el) {
       ].filter(Boolean);
     }
     const create = h("a", { className: "go", href: `${base()}/submit`, textContent: "Create post" });
-    if (w.feed) return [h("div", { className: "panel" }, h("h3", { textContent: "Feed" }), h("p", { textContent: "The boards of every space you are in, and the people you follow." }), create)];
+    if (w.feed) return [h("div", { className: "panel" }, h("h3", { textContent: "Feed" }), h("p", { textContent: "The boards of every space you are in, the people you follow, and your friends." }), create)];
     if (w.board) {
       const sp = await posts.boardOf(w.board);
       if (!sp) return [];
@@ -397,7 +397,7 @@ export async function mount(ctx, el) {
       : w.by
         ? h("div", { className: "panel banner" }, h("h2", {}, who(w.by)))
         : null;
-    const empty = w.board ? "No posts here yet. Be the first." : w.feed ? "Nothing yet: your spaces' boards and the people you follow post here." : w.by === me ? "You have not posted yet." : "No posts yet.";
+    const empty = w.board ? "No posts here yet. Be the first." : w.feed ? "Nothing yet: your spaces' boards, the people you follow and your friends post here." : w.by === me ? "You have not posted yet." : "No posts yet.";
     return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: empty })])];
   }
 

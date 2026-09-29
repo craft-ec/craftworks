@@ -14,7 +14,7 @@
 //   await posts.submit({ board, title, body })       // `board`: a space's id, or none (this person's profile): its ref
 //   await posts.list({ board } | { by } | { feed }, sort)   // a space's board, a profile, or the FEED (the PERSONAL
 //                                                     // view: the boards of every space this person is in, their own
-//                                                     // profile and those they follow); sort "hot" | "new" | "top"
+//                                                     // profile, those they follow and their friends'); sort "hot" | "new" | "top"
 //   await posts.get(ref)   await posts.thread(ref)    // one post; its comments as a tree (`replies`), best first
 //   await posts.comment(post, re, body)   await posts.vote(ref, 1 | -1 | 0, post)   await posts.remove(ref)
 //   await posts.boards()                             // the spaces this person is in: their boards
@@ -30,7 +30,11 @@ export async function start(ctx) {
   const changed = [];
   const fire = () => changed.forEach(f => f());
   const me = async () => (await space.account()).id;
-  const following = async () => (await edge.people()).list("follow");
+  // Whose profiles this person reads: whom they follow, and their friends (friends need no follow as well).
+  const following = async () => {
+    const p = await edge.people();
+    return [...new Set([...p.list("follow"), ...p.list("friend")])];
+  };
 
   // ROOMS, opened once per page: a board's, a person's profile tail.
   const rooms = new Map();
