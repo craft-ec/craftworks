@@ -411,7 +411,7 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       made Kiln ("made the space's group: epoch 0"), invited U (one welcome); U joined at epoch 1 as its DID, kept 1
       earlier epoch, read S's message, replied; S read the reply. Members: one per DID. (Multi-device not exercised:
       one node per test account; the shared state path is the one every device takes.)
-- [ ] P5 (later) removing a device refreshes the DID's member in each space.
+- [x] P5 removing a device refreshes the DID's member in each space (fbc9c20: `keys.remove` → each space's `g.refresh()`).
 
 ## People and group conversations (owner 2026-09-28)
 - [x] `edge.people`: follow · friend · asked · declined · hide · block (one table, one mechanism). Friend requests via the
