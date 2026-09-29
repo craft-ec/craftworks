@@ -616,7 +616,17 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
 - [x] UPKEEP on every page (`upkeep`, started by the header): welcomes accepted + askers admitted every 30 s from any
       page (was only Chat / a space's Home — a joiner on Discover never finished joining). Live: newbie joined Makers
       from Discover; S on Home only let them in; Makers on newbie's rail 3 s later, directory "Open".
-- [ ] NO PAGE OPEN AT ALL: node v0.2.139 (freenet-core #5747) wakes a delegate periodically (manifest `wakeups`, ≥ 60 s,
+- [~] NO PAGE OPEN AT ALL (owner "go ahead" 09-29): step 1 DONE (901e47f) — identity on freenet-stdlib 0.12.1, manifest
+      NodeStarted + Background + wakeup `upkeep` 60 s, SpaceMember.writer dropped; handover live across 2 builds incl.
+      spaces (first live check of HandoverSpaces). Node 0.2.138 shows the Background consent card on first run ("run
+      when installed / each start, tab closed") — so NOT published to the owner's sites until upkeep does real work.
+      Slice 2a DONE: the delegate on WakeupFired subscribes + GETs the inbox; live on a v0.2.139 private node
+      (binary in jobs tmp fn139, node net139 :17681): 1 → 4 wake-ups in 3 min with the app tab CLOSED, inbox read.
+      NOTE: the consent card must be answered (no answer = nothing stored, asked again at next registration).
+      NEXT 2b: accept welcomes in the delegate — open inbox items (key is here), MLS join (openmls into the delegate),
+      write the account's `spaces` + `spacekeys` rows (tail prepare/sign/PUT from the delegate: GET/PUT/UPDATE are
+      available to delegates). 2c: admit askers. Then publish (owner's node + B need ≥ 0.2.139).
+- [ ] (old note) NO PAGE OPEN AT ALL: node v0.2.139 (freenet-core #5747) wakes a delegate periodically (manifest `wakeups`, ≥ 60 s,
       the person's Background grant). Needs the joining logic (MLS welcome/add, spacekeys) moved into the identity
       delegate (a delegate change: handover; bundle the SpaceMember.writer drop) and nodes on ≥ 0.2.139 (owner's and
       B have auto-update off).
