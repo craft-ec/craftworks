@@ -48,38 +48,13 @@ export async function mount(ctx, el) {
   const keyOf = a => a.route.slice(1);
   const sharedApps = ctx.apps.filter(a => (a.views ?? []).includes("shared"));
 
-  // DISCOVER's Home: the public network — the apps with a public view, and the public spaces listed.
+  // DISCOVER's Home: like every Home, its apps — those with a public view (what each shows of the public network is
+  // its own: Board's public spaces and posts). What you see there is filtered by your moderation lists (Account).
   async function drawDiscover() {
     const pub = ctx.apps.filter(a => (a.views ?? []).includes("public"));
-    const spaces = await (await ctx.require("posts")).publicSpaces().catch(() => []);
     root.replaceChildren(
-      h("div", { className: "top" }, h("h2", { textContent: "🧭 Discover" }), h("p", { textContent: "The public network: what public spaces publish. Nobody owns it; what you hid or blocked stays hidden." })),
+      h("div", { className: "top" }, h("h2", { textContent: "🧭 Discover" }), h("p", { textContent: "The public network: what public spaces publish. Nobody owns it; your moderation lists (Account → Moderation) filter what you see." })),
       h("section", {}, h("h3", { textContent: "Apps" }), h("div", { className: "apps" }, ...pub.map(a => h("a", { className: "app", href: `#/discover${a.route}` }, h("b", { textContent: `${a.icon ?? ""} ${a.name}` }), h("span", { textContent: a.about ?? "" }))))),
-      await (async () => {
-        // The MODERATION LISTS applied here: yours, and whom you chose (from a person's menu).
-        const lists = await (await ctx.require("moderation")).lists();
-        const who = lists.followed();
-        const ul = h("ul", {}, ...who.map(did => {
-          const li = h("li", { onclick: e => person.open(e.currentTarget, did) }, directory.shown(did));
-          directory.name(did).then(t => (li.textContent = t), () => {});
-          return li;
-        }));
-        return h(
-          "section",
-          {},
-          h("h3", { textContent: "Moderation lists" }),
-          h("p", { className: "none", style: "text-align: left; padding: 0 0 var(--cw-space-2)", textContent: `Your list flags ${lists.mine()} thing${lists.mine() === 1 ? "" : "s"}. ${who.length ? "You also apply the lists of:" : "Apply someone's list from their name (Use their moderation list)."}` }),
-          who.length ? ul : null,
-        );
-      })(),
-      h(
-        "section",
-        {},
-        h("h3", { textContent: "Public spaces" }),
-        spaces.length
-          ? h("ul", {}, ...spaces.map(s => h("li", { onclick: () => (location.hash = `#/discover/board/b/${s.id}`) }, s.name)))
-          : h("p", { className: "none", textContent: "No public spaces yet: a space's owner makes its board public in Board settings." }),
-      ),
     );
   }
 

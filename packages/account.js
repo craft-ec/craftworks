@@ -1,6 +1,6 @@
 // ACCOUNT, a PRIVATE page: it shows nothing until someone is logged in. It asks `login`, which shows its dialog if
 // nobody is; closing the dialog goes home. Its SUB-PAGES are in the top bar (`#/account/<sub>`), one shown at a time:
-// Card, Nodes, Security, Storage, Apps, Recovery; Log out is the bar's action.
+// Card, Nodes, Security, Storage, Apps, Recovery, Moderation; Log out is the bar's action.
 export async function mount(ctx, el) {
   const [auth, login, grantsOf, membership, keys, storage, blocks] = await Promise.all(
     ["auth", "login", "access", "membership", "keys", "storage", "blocks"].map(n => ctx.require(n)),
@@ -304,7 +304,40 @@ export async function mount(ctx, el) {
       }
     },
   };
-  const titles = { card: "Card", nodes: "Nodes", security: "Security", storage: "Storage", apps: "Apps", recovery: "Recovery" };
+  // MODERATION: what this person sees in Discover — their own list (what they flagged) and the lists they apply.
+  sections.moderation = async () => {
+    const [moderation, directory] = await Promise.all(["moderation", "directory"].map(n => ctx.require(n)));
+    const lists = await moderation.lists();
+    const sec = document.createElement("section");
+    const el = (tag, props = {}, ...kids) => {
+      const e = Object.assign(document.createElement(tag), props);
+      e.append(...kids.filter(Boolean));
+      return e;
+    };
+    const draw = () => {
+      const who = lists.followed();
+      const entries = lists.entries();
+      sec.replaceChildren(
+        el("p", { className: "note", textContent: "Discover (the public network) has no owner: what you see there is filtered by your own list and the lists you choose to apply." }),
+        el("h3", { textContent: `Your list (${entries.length})` }),
+        entries.length
+          ? el("ul", {}, ...entries.map(x => el("li", {}, `${x.kind}: ${x.ref.slice(0, 48)}${x.ref.length > 48 ? "…" : ""} `, el("button", { type: "button", textContent: "Remove", onclick: () => lists.unflag(x.kind, x.ref).then(draw) }))))
+          : el("p", { className: "note", textContent: "Nothing flagged. Flag a post or its author in Discover." }),
+        el("h3", { textContent: "Lists you apply" }),
+        who.length
+          ? el("ul", {}, ...who.map(did => {
+              const n = el("span", { textContent: directory.shown(did) });
+              directory.name(did).then(t => (n.textContent = t), () => {});
+              return el("li", {}, n, " ", el("button", { type: "button", textContent: "Stop applying", onclick: async () => ((await (await (await ctx.require("edge")).people()).set("modlist", did, false)), draw()) }));
+            }))
+          : el("p", { className: "note", textContent: "None. Apply someone's list from their name: Use their moderation list." }),
+      );
+    };
+    draw();
+    lists.onChange(draw);
+    box.append(sec);
+  };
+  const titles = { card: "Card", nodes: "Nodes", security: "Security", storage: "Storage", apps: "Apps", recovery: "Recovery", moderation: "Moderation" };
   const sub = sections[ctx.sub] ? ctx.sub : "card";
   // The top bar: the sub-pages, and Log out.
   ctx.actions["/account"] = [

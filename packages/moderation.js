@@ -78,6 +78,12 @@ export async function start(ctx) {
         flag: (kind, ref, reason = "") => mineT.put(`${kind}:${ref}`, JSON.stringify({ reason: String(reason).slice(0, 200), at: Date.now() })),
         unflag: (kind, ref) => mineT.remove(`${kind}:${ref}`),
         mine: () => mineT.rows().filter(r => r.value).length,
+        // This person's own entries: [{ kind, ref }].
+        entries: () =>
+          mineT
+            .rows()
+            .filter(r => r.value)
+            .map(r => ({ kind: r.key.slice(0, r.key.indexOf(":")), ref: r.key.slice(r.key.indexOf(":") + 1) })),
         followed: () => people.list("modlist"),
         onChange: f => changed.push(f),
       };

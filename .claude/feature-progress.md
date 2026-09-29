@@ -583,6 +583,9 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       Board and public-space list leave out what any applied list flags; "Flag post" / "Flag author" on Discover posts;
       Discover's Home shows your list's size and whose lists you apply. Live (17573): P flagged S's public post → gone
       for P; S applied P's list → gone for S too; S un-applied.
+- [x] Discover's Home = app tiles only, like every Home (owner: "home for discover is aggregate for all apps"). The
+      public-spaces directory is Board's public view (side panel, Join); moderation lists are the person's settings:
+      Account → Moderation (your entries with Remove, the lists you apply with Stop applying).
 - (later) Discover's remaining public view: Contacts' profiles. NO public Chat (owner 09-29: Discord has none; its
   Discovery is a directory — Discover's Home lists public spaces with Join). A Discord-style preview channel would be a
   Chat setting later if wanted.
