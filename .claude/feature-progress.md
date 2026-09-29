@@ -178,8 +178,10 @@ Out of scope now: recovery quorum (guardians), data-key rotation (moves tails), 
 - [x] PHASE 0b (theme): packages/theme.js tokens (light + dark), loader applies manifest.theme first; header, footer, home, login, pin-button, label-menu, notes on tokens (only the note palette, which is data, keeps its colours). Screens checked light + dark.
 - [ ] PHASE 1 (keys and sealing). MLS library: mls-rs 0.56 (spike: builds for wasm32, 362–698 KB; OpenMLS needs a
   newer getrandom backend with no gain). mls-rs forces getrandom's JS backend and reads Date.now() through JS on wasm,
-  so it cannot run inside a delegate without patched crypto deps → DECIDED: the protocol runs in the page's core; the
-  delegate is the vault (state + epoch secrets; table keys for granted sites).
+  so it cannot run inside a delegate without patched crypto deps → the protocol runs in the page's core; the
+  delegate is the vault (state + epoch secrets; table keys for granted sites). SINCE 09-30 the crates are vendored and
+  patched (no forced JS randomness, a host clock): MLS runs in the identity delegate too, for upkeep (admitting with
+  no page open).
   - [x] 1a core `mls`: the account group — create; a node JOINS BY ITSELF with the words (external commit from the
     published group info; credential signed by an owner key of the key log, any owner the log ever had); remove a node;
     epoch secret → table key; save/load one blob. Tests: two nodes share one secret; a removed node's secret no longer
@@ -306,7 +308,7 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
   inheriting the server); `content` capability (authored item shape; author-only edits); Chat page (Discord layout).
   Live: server “Craft” made in 0.8 s (group, log, listed), #general, a message posted and there after a reload.
   Bugs fixed on the way: `tail`'s `space` option shadowed the capability; the account group passed an empty space id.
-- [ ] M private messaging — `conversation` kinds: direct, group, mail (owner: broadcast/thread are NOT kinds —
+- [x] M private messaging (M1–M5 done) — `conversation` kinds: direct, group, mail (owner: broadcast/thread are NOT kinds —
   roles and relations compose them; reddit/facebook/twitter are social content, not messaging)
   - [x] M1 mls: key packages (secrets in the node's saved state; old states load), add → (commit, welcome), join a
     space from a welcome (space checked BEFORE joining: a wrong welcome cannot use up the key package). Test across
