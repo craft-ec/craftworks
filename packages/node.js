@@ -15,11 +15,15 @@ export async function start(ctx) {
     ? glue.ws_url(location.hostname, Number(other))
     : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/v1/contract/command?encodingProtocol=native`;
 
-  const ws = new WebSocket(url);
-  ws.binaryType = "arraybuffer";
+  // THE CONNECTION, and its RECOVERY: a socket that closes (the machine slept, the network changed, the node
+  // restarted) is opened again, every 2 s until it is; a question asked meanwhile waits for it (its own deadline still
+  // runs). Once back, the page is told (`craftworks:node-back`): what it followed was the old socket's, so the loader
+  // loads the page again as soon as nothing would be lost.
   const waiters = [];
   const listeners = [];
-  ws.onmessage = ev => {
+  let ws = null;
+  let up = null; // a promise: the socket open now
+  const onmessage = ev => {
     const said = JSON.parse(core.take(new Uint8Array(ev.data)));
     if (said.kind === "partial") return;
     const i = waiters.findIndex(w => w.match(said));
@@ -27,20 +31,50 @@ export async function start(ctx) {
     else if (listeners.length) for (const f of listeners) f(said);
     else ctx.log("node said", { what: JSON.stringify(said).slice(0, 160) });
   };
+  const open = () =>
+    new Promise((resolve, reject) => {
+      const s = new WebSocket(url);
+      s.binaryType = "arraybuffer";
+      s.onmessage = onmessage;
+      s.onopen = () => resolve(s);
+      s.onerror = () => reject(new Error(`could not connect to ${url}`));
+    });
+  let lost = false;
+  function watch(s) {
+    s.onclose = () => {
+      if (s !== ws) return;
+      ctx.log("node lost", { what: "the connection to the node closed: opening it again" });
+      lost = true;
+      up = (async () => {
+        for (;;) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            ws = await open();
+            watch(ws);
+            ctx.log("connected", { what: `${url} (again)` });
+            dispatchEvent(new CustomEvent("craftworks:node-back"));
+            return ws;
+          } catch {}
+        }
+      })();
+    };
+  }
   const listen = f => listeners.push(f);
-  await new Promise((resolve, reject) => {
-    ws.onopen = resolve;
-    ws.onerror = () => reject(new Error(`could not connect to ${url}`));
-  });
+  ws = await open();
+  watch(ws);
+  up = Promise.resolve(ws);
   ctx.log("connected", { what: url });
 
   // Send frames and wait for the first answer `match` accepts. Never silent: a timeout is an error with its reason.
   const ask = (frames, match, what, ms = 15000) =>
     new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error(`${what}: no answer from the node in ${ms / 1000} s`)), ms);
+      const t = setTimeout(() => reject(new Error(`${what}: no answer from the node in ${ms / 1000} s${lost ? " (reconnecting to it)" : ""}`)), ms);
       waiters.push({ match, resolve: v => (clearTimeout(t), resolve(v)) });
-      for (const f of frames) ws.send(f);
+      up.then(s => {
+        for (const f of frames) s.send(f);
+      });
     });
 
-  return { core, glue, ask, listen, url };
+  // `drop()`: close the connection as a sleep or a network change does (to see the recovery work).
+  return { core, glue, ask, listen, url, drop: () => ws.close() };
 }

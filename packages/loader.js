@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. The node's code is loaded after the first
 // page is up even where the page needs none: to FOLLOW the app's and the loader's sites (below).
-const VERSION = "24";
+const VERSION = "25";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -411,6 +411,13 @@ export async function run(boot) {
     await check();
     // And the node's copy looked at again now and then, and when the page comes back into view: however it got there.
     const again = () => !told && check().catch(() => {});
+    // The node connection came back after a loss: what the page followed was on the old one — loaded again, the same
+    // careful way (nothing lost).
+    addEventListener("craftworks:node-back", () => {
+      ctx.log("newest", { what: "the node is back: loading the page again when nothing would be lost" });
+      told = false;
+      newer();
+    });
     setInterval(again, 60000);
     addEventListener("focus", again);
   }
