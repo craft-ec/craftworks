@@ -12,6 +12,9 @@ export function mount(ctx, el) {
       .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--cw-line); height: var(--cw-bar); box-sizing: border-box;
         font-size: var(--cw-text-sm); }
       .bar .home { text-decoration: none; font-size: 1.1rem; color: inherit; }
+      /* The rail's ☰: on a phone only (the rail folds away there). */
+      .bar .rail-toggle { display: none; border: 0; background: none; font-size: 1.2rem; cursor: pointer; padding: 2px 6px; color: inherit; }
+      @media (max-width: 600px) { .bar .rail-toggle { display: inline-block; } }
       .bar .name { font-weight: 600; }
       .bar .name .drop > button { border: 0; background: none; font-weight: 700; padding: 2px var(--cw-space-2); }
       .bar .name .drop > button:hover { background: var(--cw-hover); }
@@ -37,6 +40,7 @@ export function mount(ctx, el) {
 
     </style>
     <nav class="bar">
+      <button type="button" class="rail-toggle" title="Spaces" aria-label="Spaces">☰</button>
       <a class="home" href="#/" title="Home">⌂</a>
       <span class="name"></span>
       <span class="actions"></span>
@@ -122,6 +126,15 @@ export function mount(ctx, el) {
     box.replaceChildren(dropdown(here, entries, link));
   }
 
+  // ☰: the rail in or out (a phone); a choice made on it, a tap outside it or Escape puts it away.
+  const side = () => document.querySelector("#app > .slot-side");
+  el.querySelector(".rail-toggle").onclick = e => {
+    e.stopPropagation();
+    side()?.classList.toggle("open");
+  };
+  addEventListener("click", e => side()?.classList.contains("open") && !side().contains(e.target) && side().classList.remove("open"), true);
+  addEventListener("keydown", e => e.key === "Escape" && side()?.classList.remove("open"));
+  addEventListener("hashchange", () => side()?.classList.remove("open"));
   const draw = () => {
     switcher();
     const actions = el.querySelector(".actions");

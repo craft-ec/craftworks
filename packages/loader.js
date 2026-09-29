@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. The node's code is loaded after the first
 // page is up even where the page needs none: to FOLLOW the app's and the loader's sites (below).
-const VERSION = "25";
+const VERSION = "26";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -53,15 +53,20 @@ export async function run(boot) {
 
   const hex = buf => [...new Uint8Array(buf)].map(x => x.toString(16).padStart(2, "0")).join("");
 
-  async function fetchPackage(p, name) {
+  // A PIECE never changes (its address is its content's): the browser's copy is used when it has one — a reload asks
+  // the node for nothing it already holds. The package's hash is checked after decoding anyway; a mismatch asks the
+  // node again, bypassing the copy.
+  async function fetchPackage(p, name, fresh = false) {
     const { raceK, openPieces, dec } = await racing();
     const t = performance.now();
+    const cache = fresh ? "reload" : "force-cache";
     const spec = {
       k: p.k,
       m: p.m,
       pieces: p.pieces.map(x => ({ url: new URL(`/v1/contract/web/${x.address}/piece`, location.href).href, sha256: x.sha256 })),
     };
     const raced = await raceK(spec, {
+      fetch: (u, init) => fetch(u, { ...(init ?? {}), cache }),
       onWait: w => {
         const what = `${w.verified} of ${w.k} pieces`;
         ctx.log("waiting", { what: `${name}: ${what}` });
@@ -72,7 +77,10 @@ export async function run(boot) {
     const bytes = files.get(p.file);
     if (!bytes) throw new Error(`${name}: its pieces decode to no file "${p.file}"`);
     const got = hex(await crypto.subtle.digest("SHA-256", bytes));
-    if (got !== p.sha256) throw new Error(`${name}: decoded to bytes hashing ${got.slice(0, 12)}…, not ${p.sha256.slice(0, 12)}…`);
+    if (got !== p.sha256) {
+      if (!fresh) return fetchPackage(p, name, true);
+      throw new Error(`${name}: decoded to bytes hashing ${got.slice(0, 12)}…, not ${p.sha256.slice(0, 12)}…`);
+    }
     return { bytes, ms: Math.round(performance.now() - t), used: raced.pieces.filter(Boolean).length, asked: raced.asked.length };
   }
 
