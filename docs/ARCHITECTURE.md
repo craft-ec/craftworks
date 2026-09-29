@@ -9,7 +9,16 @@ Every package is exactly one of two kinds.
 
 - **A capability** has no UI. It defines a **shape** (what a kind of thing is) or a **rule** (what may be done to things),
   once, for every object it applies to. Capabilities never know which app uses them.
-- **An app, page or component** is UI only. It composes capabilities and owns no data model of its own.
+- **An app, page or component** is UI only. It composes capabilities and owns no data model of its own. An app is a
+  LENS over the one global data set: two apps over the same data are two views, never two copies (Board and Blog are
+  the same posts, as a feed and as articles; Chat and Board on one space share its members, roles and bans). A new app
+  adds a view, never a store or a mechanism.
+
+**Spaces and the rail.** Every account has a PERSONAL space (the whole canvas: Messages, Mail, Contacts, Notes, Board as
+your feed and profile, Account as its settings). A SHARED space is made and joined by invite: one governance log
+(members, roles, invites, bans, which apps it uses) that every app on it reads. A permanent rail lists Personal (the
+default) and the shared spaces; each space has a Home listing its apps; an app shows only the space selected. Messages
+is personal only: conversations between equals, no roles — who needs governance makes a space.
 
 A capability that applies to things applies to **every** kind of thing: moderation moderates a post, a comment, a vote or
 a label alike; governance decides who controls one note or a whole company.

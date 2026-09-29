@@ -514,3 +514,13 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       PRUNE: key-package batch ids carry their time; a batch retired (the next one made) over a week ago is dropped
       (live: 10-day-retired dropped, just-retired kept). Mail ids carry their time; the sender's sealed public copies
       older than 30 days are dropped after each send (live: 40-day row dropped, recent kept).
+
+## Spaces rail (owner 2026-09-29, agreed shape; ARCHITECTURE §1)
+- [ ] R1 rail: Personal (default) + shared spaces + create/join; each space's Home lists its apps; shared-space
+      settings (members, roles, invites, bans, apps) on its Home; routes `#/s/<id>/<app>`; folds on phones
+- [ ] R2 apps scoped to the space selected: Chat (channels only; its server rail gone), Board (a space's board;
+      personal = feed + profile), Notes; the space-apps dropdown and cross-app links gone
+- [ ] R3 Messages personal only: direct and group conversations without roles, moderation or owner; no Board or
+      Notes on conversations
+- [ ] R4 per-app settings: Chat (channels, who may post), Board (rules, who may post), Notes (who may edit)
+- [ ] R5 Blog: a lens over profile posts (long-form view, drafts sealed until published, a public reading page)
