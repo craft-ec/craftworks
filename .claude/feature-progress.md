@@ -613,6 +613,15 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
 - Housekeeping: dropping `SpaceMember.writer` = an identity.wasm change (NOT the frozen signer): each device re-logs
   via the handover from the prior build (HandoverSpaces never live-checked) — bundle it with the next real identity
   delegate change (owner told 09-29).
+- [x] UPKEEP on every page (`upkeep`, started by the header): welcomes accepted + askers admitted every 30 s from any
+      page (was only Chat / a space's Home — a joiner on Discover never finished joining). Live: newbie joined Makers
+      from Discover; S on Home only let them in; Makers on newbie's rail 3 s later, directory "Open".
+- [ ] NO PAGE OPEN AT ALL: node v0.2.139 (freenet-core #5747) wakes a delegate periodically (manifest `wakeups`, ≥ 60 s,
+      the person's Background grant). Needs the joining logic (MLS welcome/add, spacekeys) moved into the identity
+      delegate (a delegate change: handover; bundle the SpaceMember.writer drop) and nodes on ≥ 0.2.139 (owner's and
+      B have auto-update off).
+- [x] HOMES ALIKE: `app-icons` (one tile: icon, name, pill, pin or "+ Add") for the personal Home, a space's Home and
+      Discover's; a space's Chat pill = its unread. Live: newbie saw Chat "1" on Makers' Home, matching the rail.
 - (later) Discover's remaining public view: Contacts' profiles. NO public Chat (owner 09-29: Discord has none; its
   Discovery is a directory — Discover's Home lists public spaces with Join). A Discord-style preview channel would be a
   Chat setting later if wanted.

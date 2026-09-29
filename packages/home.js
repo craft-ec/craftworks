@@ -90,22 +90,9 @@ export async function mount(ctx, el) {
     // An app's pin is the account's pin of `app:<route>`: the same pins every app uses.
     const pinned = () => new Set((pins?.refs("app:") ?? []).map(r => r.slice(4)));
     // A tile is the app's link and, beside it (never inside: the loader takes every click on a `#` link), its pin.
-    const icon = a => {
-      const tile = document.createElement("div");
-      tile.className = "tile";
-      const link = document.createElement("a");
-      link.className = "app";
-      link.href = `#${a.route}`;
-      link.innerHTML = `<span class="icon"></span><span class="name"></span>`;
-      link.querySelector(".icon").textContent = a.icon ?? "▫️";
-      link.querySelector(".name").textContent = a.name;
-      // What is new in it (an app that counts: the manifest says what — `activity`'s totals).
-      const n = a.counts && activity ? activity.total(a.counts) : 0;
-      if (n) link.append(Object.assign(document.createElement("span"), { className: "cw-badge new", textContent: String(n) }));
-      tile.append(link);
-      if (pins) tile.append(pinUI.button(`app:${a.route}`));
-      return tile;
-    };
+    // A tile: the one `app-icons` look — its pill (what is new: `activity`'s totals, the manifest says what) and its pin.
+    const icons = await ctx.require("app-icons");
+    const item = a => ({ app: a, href: `#${a.route}`, count: a.counts && activity ? activity.total(a.counts) : 0, pin: pins && pinUI ? pinUI.button(`app:${a.route}`) : null });
     const render = () => {
       if (!el.isConnected) return;
       const on = pinned();
@@ -113,9 +100,8 @@ export async function mount(ctx, el) {
       // The PERSONAL space's apps: those with a personal view (a shared space's are on its own Home).
       const personal = ctx.apps.filter(a => (a.views ?? ["personal"]).includes("personal"));
       const mine = personal.filter(a => on.has(a.route));
-      pinnedGrid.replaceChildren(...mine.map(icon));
-      if (!mine.length) pinnedGrid.append(Object.assign(document.createElement("p"), { className: "empty", textContent: "Pin an app with 📌 to keep it here." }));
-      allGrid.replaceChildren(...personal.map(icon));
+      icons.grid(pinnedGrid, mine.map(item), "Pin an app with 📌 to keep it here.");
+      icons.grid(allGrid, personal.map(item));
     };
     render();
     Promise.all([ctx.require("edge").then(e => e.pins()), ctx.require("pin-button")]).then(

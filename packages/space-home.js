@@ -8,9 +8,12 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [space, roles, conversation, directory, person, settings, theme] = await Promise.all(
-    ["space", "roles", "conversation", "directory", "person", "server-settings", "theme"].map(n => ctx.require(n)),
+  const [space, roles, conversation, directory, person, settings, theme, icons] = await Promise.all(
+    ["space", "roles", "conversation", "directory", "person", "server-settings", "theme", "app-icons"].map(n => ctx.require(n)),
   );
+  // What is new in each app (Chat's unread in this space): its pill, kept current.
+  let activity = null;
+  ctx.require("activity").then(a => ((activity = a), a.onChange(() => el.isConnected && ctx.route === "/space" && draw())), () => {});
   const me = (await space.account()).id;
   el.innerHTML = `
     <style>
@@ -22,14 +25,7 @@ export async function mount(ctx, el) {
       .sh .btn { border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); border-radius: var(--cw-radius-sm); padding: 6px var(--cw-space-3); }
       .sh .btn.main { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       .sh h3 { margin: 0 0 var(--cw-space-2); font-size: var(--cw-text-xs); letter-spacing: .08em; text-transform: uppercase; color: var(--cw-muted); }
-      .sh .apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--cw-space-3); }
-      .sh .app { display: grid; gap: var(--cw-space-1); padding: var(--cw-space-3); border: 1px solid var(--cw-line); border-radius: var(--cw-radius);
-        background: var(--cw-surface); color: inherit; text-decoration: none; }
       .sh a.app:hover { border-color: var(--cw-muted); }
-      .sh .app b { font-size: 1.05rem; }
-      .sh .app span { color: var(--cw-muted); font-size: var(--cw-text-sm); }
-      .sh .app.off { border-style: dashed; }
-      .sh .app .row { display: flex; justify-content: flex-end; }
       .sh ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--cw-space-2); }
       .sh li { border: 1px solid var(--cw-line); border-radius: var(--cw-radius-pill); padding: 2px var(--cw-space-3); cursor: pointer; font-size: var(--cw-text-sm); }
       .sh li:hover { background: var(--cw-hover); }
@@ -54,7 +50,11 @@ export async function mount(ctx, el) {
     const pub = ctx.apps.filter(a => (a.views ?? []).includes("public"));
     root.replaceChildren(
       h("div", { className: "top" }, h("h2", { textContent: "🧭 Discover" }), h("p", { textContent: "The public network: what public spaces publish. Nobody owns it; your moderation lists (Account → Moderation) filter what you see." })),
-      h("section", {}, h("h3", { textContent: "Apps" }), h("div", { className: "apps" }, ...pub.map(a => h("a", { className: "app", href: `#/discover${a.route}` }, h("b", { textContent: `${a.icon ?? ""} ${a.name}` }), h("span", { textContent: a.about ?? "" }))))),
+      (() => {
+        const grid = h("div", {});
+        icons.grid(grid, pub.map(a => ({ app: a, href: `#/discover${a.route}` })));
+        return h("section", {}, grid);
+      })(),
     );
   }
 
@@ -70,29 +70,31 @@ export async function mount(ctx, el) {
     const members = r.members();
     // Its settings: the space's own (members and roles, invites, the log, leaving); each app's are in the app.
     const openSettings = tab => settings.open(sp, { tab, left: () => (location.hash = "#/") });
-    const tile = a => {
-      const k = keyOf(a);
-      const used = on.includes(k);
-      if (used) return h("a", { className: "app", href: `#/s/${sp.id}${a.route}` }, h("b", { textContent: `${a.icon ?? ""} ${a.name}` }), h("span", { textContent: a.about ?? "" }));
-      if (!may) return null;
-      const add = h("button", { type: "button", className: "btn main", textContent: "Add" });
-      add.onclick = async () => {
-        try {
-          await r.act({ act: "app", app: k, on: true });
-          // Chat added: its first channel, if it has none.
-          if (k === "chat") {
-            const c = await conversation.channels(sp);
-            await c.settled;
-            if (!c.list().length) await c.add("general");
-          }
-          await draw();
-        } catch (e) {
-          said.textContent = e.message;
-          said.hidden = false;
+    // Its apps, as every Home shows them (`app-icons`): a pill with what is new (Chat: its unread), and — for who may —
+    // the apps it does not use yet, dimmed, with Add.
+    const add = k => async () => {
+      try {
+        await r.act({ act: "app", app: k, on: true });
+        // Chat added: its first channel, if it has none.
+        if (k === "chat") {
+          const c = await conversation.channels(sp);
+          await c.settled;
+          if (!c.list().length) await c.add("general");
         }
-      };
-      return h("div", { className: "app off" }, h("b", { textContent: `${a.icon ?? ""} ${a.name}` }), h("span", { textContent: a.about ?? "" }), h("div", { className: "row" }, add));
+        await draw();
+      } catch (e) {
+        said.textContent = e.message;
+        said.hidden = false;
+      }
     };
+    const appGrid = h("div", {});
+    icons.grid(
+      appGrid,
+      sharedApps
+        .filter(a => on.includes(keyOf(a)) || may)
+        .map(a => (on.includes(keyOf(a)) ? { app: a, href: `#/s/${sp.id}${a.route}`, count: keyOf(a) === "chat" && activity ? activity.of(sp.id) : 0 } : { app: a, add: add(keyOf(a)) })),
+      "No apps yet: its owner or an admin adds them.",
+    );
     const removable = may ? sharedApps.filter(a => on.includes(keyOf(a))) : [];
     const people = h(
       "ul",
@@ -145,7 +147,7 @@ export async function mount(ctx, el) {
         "section",
         {},
         h("h3", { textContent: "Apps" }),
-        on.length || may ? h("div", { className: "apps" }, ...sharedApps.map(tile)) : h("p", { className: "none", textContent: "No apps yet: its owner or an admin adds them." }),
+        appGrid,
       ),
       removable.length
         ? h(
