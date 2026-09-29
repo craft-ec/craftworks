@@ -1,5 +1,6 @@
 // DRIVE STORE, a capability: the catalogue of FILES. Every file uploaded is listed in its uploader's PERSONAL Drive (the
-// account's table `drive`) and, uploaded in a SPACE, in that space's Drive (its table `drive`, read by its members) —
+// account's table `drive`) and, uploaded in a SPACE that uses Drive, in that space's Drive (its table `drive`, read by
+// its members) —
 // each row the file's reference (`files`) with when, in which folder, and where it came from (an app, an item). A file
 // attached from Drive is its reference given to the item: its readers read it; nothing is uploaded again. Removing a
 // row stops listing the file (its pieces are kept or not by Lifecycle, like everything else).
@@ -11,9 +12,18 @@
 //   await drive.folders(space)                          // ["/", "/Photos", …]
 //   await drive.mkdir(space, path)   await drive.move(space, id, folder)   await drive.remove(space, id)
 //   await drive.onChange(space, fn)
+//   await drive.drives()                                // the spaces whose Drive this person can pick (Drive in use)
 export async function start(ctx) {
-  const [storage, space, files] = await Promise.all(["storage", "space", "files"].map(n => ctx.require(n)));
+  const [storage, space, files, roles] = await Promise.all(["storage", "space", "files", "roles"].map(n => ctx.require(n)));
   const shared = sp => sp && sp.kind !== "account";
+  // A space HAS a Drive only when it uses the Drive app (an `app` act); yours always.
+  const usesDrive = async sp => !shared(sp) || (await roles.of(sp).then(r => r.apps().includes("drive"), () => false));
+  // THE DRIVES this person can pick from: theirs, and every space they are in that uses Drive.
+  async function drives() {
+    const all = (await space.mine().catch(() => [])).filter(s => s.kind === "server");
+    const on = await Promise.all(all.map(usesDrive));
+    return all.filter((_, i) => on[i]);
+  }
   const tableOf = sp => (shared(sp) ? storage.table(space.tableOf(sp, "drive"), sp) : storage.table("drive"));
   const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
   // A row's id: the file's (its index root; an inline file's own hash) — the same file listed twice is one row.
@@ -24,7 +34,7 @@ export async function start(ctx) {
     const id = await idOf(ref);
     const row = { ref, at: Date.now(), folder: clean(folder), ...(from ? { from } : {}) };
     // Yours always; the space's too when it is one.
-    const tables = [await tableOf(null), ...(shared(sp) ? [await tableOf(sp)] : [])];
+    const tables = [await tableOf(null), ...(shared(sp) && (await usesDrive(sp)) ? [await tableOf(sp)] : [])];
     for (const t of tables) {
       await t.settled;
       if (!t.rows().some(r => r.key === `f/${id}` && r.value)) await t.put(`f/${id}`, JSON.stringify(row));
@@ -79,5 +89,5 @@ export async function start(ctx) {
   const remove = async (sp, id) => (await tableOf(sp)).remove(`f/${id}`);
   const onChange = async (sp, f) => (await tableOf(sp)).onChange(f);
 
-  return { upload, add, list, folders, mkdir, move, remove, onChange };
+  return { upload, add, list, folders, mkdir, move, remove, onChange, drives, usesDrive };
 }

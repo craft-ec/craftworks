@@ -90,7 +90,7 @@ export async function mount(ctx, el) {
     }, "");
     const input = h("input", { type: "file", multiple: true, hidden: true, onchange: () => (upload([...input.files]), (input.value = "")) });
     // WHICH DRIVE: yours, or any space's you are in (its Drive: uploads here are sealed for its members).
-    const all = (await space.mine().catch(() => [])).filter(s => s.kind === "server");
+    const all = await drive.drives();
     const which = h("select", { ariaLabel: "Drive", onchange: () => (location.hash = which.value ? `#/s/${which.value}/drive` : "#/drive") }, h("option", { value: "", textContent: "Your Drive" }), ...all.map(s => h("option", { value: s.id, textContent: `${space.shown(s)} Drive` })));
     which.value = sp?.id ?? "";
     const top = h(

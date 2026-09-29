@@ -102,9 +102,9 @@ export async function start(ctx) {
     // FROM DRIVE: yours, or ANY space's you are in (chosen at the top), each file attached as its reference (ready at
     // once): the item's readers read it — as a file forwarded.
     async function fromDrive() {
-      const all = (await spaces.mine().catch(() => [])).filter(s => s.kind === "server");
+      const all = await drive.drives();
       const choose = h("select", { ariaLabel: "Drive" }, h("option", { value: "", textContent: "Your Drive" }), ...all.map(s => h("option", { value: s.id, textContent: `${spaces.shown(s)} Drive` })));
-      if (space && space.kind === "server") choose.value = space.id;
+      if (space && all.some(s => s.id === space.id)) choose.value = space.id;
       const d = h("dialog", { className: "cw-att-drive" });
       const listEl = h("ul", {});
       const drawList = async () => {
