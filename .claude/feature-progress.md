@@ -618,8 +618,13 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
 - [x] UPKEEP on every page (`upkeep`, started by the header): welcomes accepted + askers admitted every 30 s from any
       page (was only Chat / a space's Home — a joiner on Discover never finished joining). Live: newbie joined Makers
       from Discover; S on Home only let them in; Makers on newbie's rail 3 s later, directory "Open".
-- [x] NO PAGE OPEN AT ALL (owner "go ahead" 09-29) — built and live on private 0.2.139 nodes; PUBLISH waits on the
-      owner's node + B ≥ 0.2.139. History: step 1 DONE (901e47f) — identity on freenet-stdlib 0.12.1, manifest
+- [x] NO PAGE OPEN AT ALL (owner "go ahead" 09-29) — built, live on private 0.2.139 nodes, and PUBLISHED 09-30: owner
+      said upgrade both → owner's node (launchd ec.craft.freenet-node, ~/.local/bin/freenet; old kept as
+      freenet-0.2.138.bak) and B (freenet-blob.service, /usr/local/bin/freenet; old kept as freenet-0.2.138.bak) on
+      0.2.139, each restarted once; 17573 on 0.2.139 with its own webapp cache. Published: 17573 craftworks-test v151,
+      craftworks v116, craftworks-alt v86; B site v112 (178/180 pieces). Owner's node serves the new manifest. Each
+      person answers the node's "run in the background" card once, and logs in once (the delegate's handover).
+      History: step 1 DONE (901e47f) — identity on freenet-stdlib 0.12.1, manifest
       NodeStarted + Background + wakeup `upkeep` 60 s, SpaceMember.writer dropped; handover live across 2 builds incl.
       spaces (first live check of HandoverSpaces). Node 0.2.138 shows the Background consent card on first run ("run
       when installed / each start, tab closed") — so NOT published to the owner's sites until upkeep does real work.
