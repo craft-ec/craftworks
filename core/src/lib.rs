@@ -101,6 +101,8 @@ pub struct Core {
     block_code: Vec<u8>,
     /// The Sealed contract's code: a table's tree blocks, sealed whole, each at its address.
     sealed_code: Vec<u8>,
+    /// The `piece` contract's code: a file's pieces since burning (a burn hash in each).
+    piece_code: Vec<u8>,
     /// Tree blocks asked of the network: Block contract id -> (the tail that needs it, the block's id).
     wanted: std::collections::HashMap<[u8; 32], ([u8; 32], freenet_prolly::Cid)>,
     /// Repairs under way: the lost block's contract id -> (its tail, its group).
@@ -109,7 +111,7 @@ pub struct Core {
 
 impl Core {
     pub fn new(identity_wasm: &[u8]) -> Core {
-        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1, got: Default::default(), tails: Default::default(), block_code: Vec::new(), sealed_code: Vec::new(), wanted: Default::default(), repairs: Default::default() }
+        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1, got: Default::default(), tails: Default::default(), block_code: Vec::new(), sealed_code: Vec::new(), piece_code: Vec::new(), wanted: Default::default(), repairs: Default::default() }
     }
 
     pub fn identity_key(&self) -> String {
@@ -188,17 +190,38 @@ impl Core {
         self.got.remove(id)
     }
 
-    /// A FILE PIECE to put: the `sealed` contract at its address, as `(id hex, frames)`.
-    pub fn frames_piece(&mut self, p: &craftworks_files::Piece) -> Result<(String, Vec<Vec<u8>>), String> {
+    /// A FILE PIECE to put, as `(id hex, frames)`: with a BURN HASH, the `piece` contract at its address (its state
+    /// `LIVE ‖ burn hash ‖ piece`); without, the `sealed` contract (a file from before burning).
+    pub fn frames_piece(&mut self, p: &craftworks_files::Piece, burn: Option<&[u8; 32]>) -> Result<(String, Vec<Vec<u8>>), String> {
         let s = self.stream();
-        let c = wire::block::block_contract(&self.sealed_code, &p.address);
+        let (code, state) = match burn {
+            Some(h) => (&self.piece_code, [&[2u8][..], h, &p.state].concat()),
+            None => (&self.sealed_code, p.state.clone()),
+        };
+        let c = wire::block::block_contract(code, &p.address);
         let name = c.key().id().encode();
-        Ok((name, wire::frame_put(c, freenet_stdlib::prelude::WrappedState::new(p.state.clone()), s)?))
+        Ok((name, wire::frame_put(c, freenet_stdlib::prelude::WrappedState::new(state), s)?))
     }
 
-    /// The contract id (bytes) of the `sealed` contract at `address`: where a file piece is fetched.
-    pub fn piece_id(&self, address: &[u8; 32]) -> [u8; 32] {
-        wire::block::contract_for(&self.sealed_code, address)
+    /// BURN the piece at `address`: its `piece` contract given `BURNED ‖ sha-256(secret) ‖ secret` (it takes it only
+    /// if that is the burn hash its first write named). `(id hex, frames)`.
+    pub fn frames_burn(&mut self, address: &[u8; 32], secret: &[u8; 32]) -> Result<(String, Vec<Vec<u8>>), String> {
+        use sha2::Digest;
+        let s = self.stream();
+        let state = [&[3u8][..], sha2::Sha256::digest(secret).as_slice(), secret].concat();
+        let c = wire::block::block_contract(&self.piece_code, address);
+        let name = c.key().id().encode();
+        Ok((name, wire::frame_put(c, freenet_stdlib::prelude::WrappedState::new(state), s)?))
+    }
+
+    /// The contract id (bytes) where a file piece at `address` is fetched: the `piece` contract's (`burnable`), else
+    /// the `sealed` one's.
+    pub fn piece_id(&self, address: &[u8; 32], burnable: bool) -> [u8; 32] {
+        wire::block::contract_for(if burnable { &self.piece_code } else { &self.sealed_code }, address)
+    }
+
+    pub fn set_piece_code(&mut self, code: &[u8]) {
+        self.piece_code = code.to_vec();
     }
 
     /// Open the account's table `table` under the data key `key` (idempotent). Returns its contract id.
@@ -919,6 +942,9 @@ mod js {
         pub fn set_sealed_code(&mut self, code: &[u8]) {
             self.0.set_sealed_code(code);
         }
+        pub fn set_piece_code(&mut self, code: &[u8]) {
+            self.0.set_piece_code(code);
+        }
 
         /// A tree block's group: the Block contract ids (hex) to GET with it (the race).
         pub fn tail_group(&mut self, id: &[u8], block_hex: &str) -> Result<js_sys::Array, JsValue> {
@@ -1038,11 +1064,16 @@ mod js {
         err(format!("{e:?}"))
     }
     /// `[j, id hex, frames]` per piece.
-    fn pieces_js(core: &mut CraftworksCore, pieces: Vec<(u8, craftworks_files::Piece)>) -> Result<js_sys::Array, JsValue> {
+    /// A burn hash from JS: 32 bytes (the `piece` contract), or none (empty: the `sealed` one, a file from before).
+    fn burn_of(b: &[u8]) -> Result<Option<[u8; 32]>, JsValue> {
+        if b.is_empty() { Ok(None) } else { b32(b).map(Some) }
+    }
+
+    fn pieces_js(core: &mut CraftworksCore, pieces: Vec<(u8, craftworks_files::Piece)>, burn: Option<[u8; 32]>) -> Result<js_sys::Array, JsValue> {
         let out = js_sys::Array::new();
         for (j, p) in pieces {
             let h = hex(&p.hash());
-            let (id, f) = core.0.frames_piece(&p).map_err(err)?;
+            let (id, f) = core.0.frames_piece(&p, burn.as_ref()).map_err(err)?;
             out.push(&[JsValue::from(j), JsValue::from(id), JsValue::from(frames(f)), JsValue::from(h)].into_iter().collect::<js_sys::Array>());
         }
         Ok(out)
@@ -1101,28 +1132,30 @@ mod js {
             let id = bytes32("got", id_hex).map_err(err)?;
             Ok(self.0.take_got(&id).map(|s| JsValue::from(js_sys::Uint8Array::from(&s[..]))).unwrap_or(JsValue::NULL))
         }
-        /// A generation coded: `[[j, id hex, frames, hash hex]]` (fragments `0 .. k + extra`).
-        pub fn file_encode(&mut self, key: &[u8], size: f64, g: f64, plain: &[u8], extra: u32) -> Result<js_sys::Array, JsValue> {
+        /// A generation coded: `[[j, id hex, frames, hash hex]]` (fragments `0 .. k + extra`). `burn`: the file's burn
+        /// hash (32 bytes: the `piece` contract; empty: the `sealed` one).
+        pub fn file_encode(&mut self, key: &[u8], size: f64, g: f64, plain: &[u8], extra: u32, burn: &[u8]) -> Result<js_sys::Array, JsValue> {
             let plan = craftworks_files::Plan::of(size as u64);
             let pieces = craftworks_files::encode(&b32(key)?, &plan, g as u64, plain, extra as usize);
-            pieces_js(self, pieces)
+            pieces_js(self, pieces, burn_of(burn)?)
         }
         /// One more fragment `j` (a slow or refused one replaced): `[j, id hex, frames, hash hex]`.
-        pub fn file_mint(&mut self, key: &[u8], size: f64, g: f64, plain: &[u8], j: u8) -> Result<js_sys::Array, JsValue> {
+        pub fn file_mint(&mut self, key: &[u8], size: f64, g: f64, plain: &[u8], j: u8, burn: &[u8]) -> Result<js_sys::Array, JsValue> {
             let plan = craftworks_files::Plan::of(size as u64);
             let p = craftworks_files::mint(&b32(key)?, &plan, g as u64, plain, j);
-            Ok(pieces_js(self, vec![(j, p)])?.get(0).into())
+            Ok(pieces_js(self, vec![(j, p)], burn_of(burn)?)?.get(0).into())
         }
         /// The INDEX for the fragments stored (JSON `[[[j, hash hex]]]` per generation): `{ root, puts: [[id, frames]] }`,
         /// the root's put LAST.
-        pub fn file_index(&mut self, key: &[u8], size: f64, stored: &str) -> Result<js_sys::Object, JsValue> {
+        pub fn file_index(&mut self, key: &[u8], size: f64, stored: &str, burn: &[u8]) -> Result<js_sys::Object, JsValue> {
+            let burn = burn_of(burn)?;
             let plan = craftworks_files::Plan::of(size as u64);
             let v: Vec<serde_json::Value> = serde_json::from_str(stored).map_err(|e| err(e.to_string()))?;
             let stored: Vec<craftworks_files::Listed> = v.iter().map(|g| listed_of(&g.to_string())).collect::<Result<_, _>>()?;
             let (pieces, root) = craftworks_files::index(&b32(key)?, &plan, &stored);
             let puts = js_sys::Array::new();
             for p in pieces {
-                let (id, f) = self.0.frames_piece(&p).map_err(err)?;
+                let (id, f) = self.0.frames_piece(&p, burn.as_ref()).map_err(err)?;
                 puts.push(&[JsValue::from(id), JsValue::from(frames(f))].into_iter().collect::<js_sys::Array>());
             }
             let o = js_sys::Object::new();
@@ -1130,15 +1163,29 @@ mod js {
             js_sys::Reflect::set(&o, &"puts".into(), &puts)?;
             Ok(o)
         }
-        /// Where a file's pieces are fetched (contract ids, hex): its root, an index piece, a fragment.
-        pub fn file_root_id(&self, key: &[u8]) -> Result<String, JsValue> {
-            Ok(hex(&self.0.piece_id(&craftworks_files::root_address(&b32(key)?))))
+        /// Where a file's pieces are fetched (contract ids, hex): its root, an index piece, a fragment. `burnable`: a
+        /// file with a burn hash (the `piece` contract).
+        pub fn file_root_id(&self, key: &[u8], burnable: bool) -> Result<String, JsValue> {
+            Ok(hex(&self.0.piece_id(&craftworks_files::root_address(&b32(key)?), burnable)))
         }
-        pub fn file_index_id(&self, key: &[u8], level: u8, n: f64) -> Result<String, JsValue> {
-            Ok(hex(&self.0.piece_id(&craftworks_files::index_address(&b32(key)?, level, n as u64))))
+        pub fn file_index_id(&self, key: &[u8], level: u8, n: f64, burnable: bool) -> Result<String, JsValue> {
+            Ok(hex(&self.0.piece_id(&craftworks_files::index_address(&b32(key)?, level, n as u64), burnable)))
         }
-        pub fn file_fragment_id(&self, key: &[u8], g: f64, j: u8) -> Result<String, JsValue> {
-            Ok(hex(&self.0.piece_id(&craftworks_files::fragment_address(&b32(key)?, g as u64, j))))
+        pub fn file_fragment_id(&self, key: &[u8], g: f64, j: u8, burnable: bool) -> Result<String, JsValue> {
+            Ok(hex(&self.0.piece_id(&craftworks_files::fragment_address(&b32(key)?, g as u64, j), burnable)))
+        }
+        /// BURN a file's piece (`what`: "root", "index" with `a` = level and `b` = n, "fragment" with `a` = g and
+        /// `b` = j) with its secret: `[id hex, frames]`.
+        pub fn file_burn(&mut self, key: &[u8], what: &str, a: f64, b: f64, secret: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let key = b32(key)?;
+            let address = match what {
+                "root" => craftworks_files::root_address(&key),
+                "index" => craftworks_files::index_address(&key, a as u8, b as u64),
+                "fragment" => craftworks_files::fragment_address(&key, a as u64, b as u8),
+                _ => return Err(err(format!("no such piece: {what}"))),
+            };
+            let (id, f) = self.0.frames_burn(&address, &b32(secret)?).map_err(err)?;
+            Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
         }
     }
 

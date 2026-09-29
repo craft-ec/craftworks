@@ -1,0 +1,29 @@
+[package]
+name = "craftworks-piece-contract"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "PIECE: one sealed piece of a file at an address only its key computes. First write wins; BURNED by whoever shows the secret its first write named."
+
+# Own workspace: own lockfile, so the wasm hash (= part of every piece's contract id) is stable.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+freenet-stdlib = { version = "0.10.0", features = ["contract"] }
+sha2 = { version = "0.10", default-features = false }
+
+[features]
+default = ["freenet-main-contract"]
+freenet-main-contract = []
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false

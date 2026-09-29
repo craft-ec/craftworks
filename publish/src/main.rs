@@ -349,7 +349,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 62] = [
+    let packages: [(&str, &str, PathBuf); 63] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -422,6 +422,8 @@ async fn main() -> Result<()> {
         // The Block contract: a table's tree blocks, after a flush.
         ("block-wasm", "bytes", contracts.join("block.wasm")),
         ("sealed-wasm", "bytes", contracts.join("sealed.wasm")),
+        // The Piece contract: a file's pieces since burning.
+        ("piece-wasm", "bytes", contracts.join("piece.wasm")),
         ("bag-wasm", "bytes", contracts.join("bag.wasm")),
     ];
     let mut entries = Vec::new();

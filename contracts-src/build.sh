@@ -14,6 +14,7 @@ case $1 in
   idlog) crate=craftworks-idlog-contract ;;
   sealed) crate=craftworks-sealed-contract ;;
   bag) crate=craftworks-bag-contract ;;
+  piece) crate=craftworks-piece-contract ;;
   *) echo "unknown contract: $1" >&2; exit 1 ;;
 esac
 ln -sf "$ck/contract-build.sh" "$here/.contract-build.sh"

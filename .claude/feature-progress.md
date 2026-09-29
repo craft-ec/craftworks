@@ -773,9 +773,11 @@ come with keepers as a new codec version.
   - [ ] R4 the delegate works due rows on wake-up (no page open).
   - [x] R5 leaving a space removes the leaver's nodes from its group (a leave = a removal): gov `leave` act + `gone`
         set (test 12/12), moderation.enforce takes out gone DIDs' nodes (upkeep, every 30 s on an admin's page).
-  - [ ] R6 BURN old fragments at re-key (immediate revocation, not "fade"): a fragment contract whose params carry
-        H(burn secret from the space's salt) — needs salt history and a measurement of whether an update reaches the
-        network's cached copies.
+  - [x] R6 BURN old pieces at re-key: new `piece` contract (contracts-src/piece, 2 tests; wasm d48911c4…), first
+        write names sha-256(burn secret); BURNED state for good; refs/rows carry `b`, rows keep secret `x`; old
+        `sealed` files still read (no `b`). fx/fy: B read 300 KB (its node cached it), A removed B → re-key 27 s,
+        old root BURNED on both nodes, B's old ref "not found", members read the new copy. Found + fixed: two salts
+        made at once in one page (worker + upload) — creation serialized; secret kept in the row.
     Also fixed on the way: a removed member ignored welcomes to a space still listed (re-invite never worked); an
     inviter could reuse a spent key package from a stale card (table `keypacks`); ban/leave acts name nodes; any
     member (not only admins) takes gone members' nodes out of the group; per-row owner rank + takeover, progress in

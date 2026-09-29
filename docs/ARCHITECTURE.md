@@ -176,8 +176,8 @@ dedups it); any other file's from its content and its SPACE's dedup salt (a secr
 account is the personal space) — members' uploads dedup, and nobody outside can test whether a file is in it.
 
 **Access.** A file belongs to a SPACE (the account: the personal space), and its current key has ONE owner: the row
-`k/<id>` of the space's table `files` — `{ key, root, h (the content's hash), pub, app, n (the salt it is keyed
-under; -1: public) }`, sealed like every row with the space's newest epoch. A reference names the file by `id` (its
+`k/<id>` of the space's table `files` — `{ key, root, b (its burn hash), x (its burn secret), h (the content's
+hash), pub, app, n (the salt it is keyed under; -1: public) }`, sealed like every row with the space's newest epoch. A reference names the file by `id` (its
 first root) and `in` (its space); the key it carries is only what a reader outside the space uses (a public copy, a
 mail). So who reads a file is who reads its space's rows — the space's policies and epoch keys — and changing the key
 changes every reference at once. A file brought from another space (attached or saved from another Drive) is ADOPTED:
@@ -196,7 +196,11 @@ Any member's page works the due rows, triggered by the table, the roles and a ne
 wake-up, with no page open, are the next step): each generation read under the old key and coded under the new — a
 key DERIVED from `h` and the salt, so two members doing the same row make the same fragments at the same addresses (a
 step resumes and needs no claim) — the row changed last. Rows only move forward (`n` up, public to salted), so a
-member on an older view never undoes one. Old fragments are no longer kept and fade. A member out of a space keeps the
+member on an older view never undoes one. The OLD pieces are then BURNED: every file piece is a `piece` contract
+whose first write names the sha-256 of a burn SECRET (from the space's salt and the key; kept in the file's row;
+public files name zero and are never burned), and the re-keyer puts `BURNED ‖ hash ‖ secret` to each old piece —
+root, index, fragments — once no row still names that key; the contract takes it only for its own hash, for good, and
+the burn reaches nodes that already held the piece. Files from before burning (the `sealed` contract) only fade. A member out of a space keeps the
 files they uploaded (their page adopts them into their own space and copies them); what they saved before stays — as
 with any access control.
 
