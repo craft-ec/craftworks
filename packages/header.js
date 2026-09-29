@@ -2,7 +2,8 @@
 // sub-pages and actions; on the right: the app's ending actions, and Account. It changes with the app: on Home it reads
 // "Home"; in an app, the app's name (from the manifest's apps) and what the app put under its route in `ctx.actions`:
 // `{ label, href }` (a sub-page: a link; `on` when it is the one shown), `{ label, run }` (an action; `end`: at the
-// right), or a search box. An app that changes them later says so with a `craftworks:actions` event. The app's own
+// right), a search box, or a MENU (`{ label, menu: [{ label, href, on }] }`: a button opening a dropdown of links, closed
+// by a choice, a click outside or Escape). An app that changes them later says so with a `craftworks:actions` event. The app's own
 // component (the layout names it), so editing it is publishing the app, never the loader.
 export function mount(ctx, el) {
   el.innerHTML = `
@@ -21,6 +22,14 @@ export function mount(ctx, el) {
       .bar .end button { border: 0; background: none; padding: 2px var(--cw-space-1); cursor: pointer; border-radius: var(--cw-radius-sm); }
       .bar .end button:hover { background: var(--cw-hover); }
       .bar .actions .search { padding: var(--cw-space-1) 10px; border-radius: var(--cw-radius-pill); width: 16em; }
+      .bar .drop { position: relative; }
+      .bar .drop > button { border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); padding: 2px var(--cw-space-2); font-weight: 600;
+        max-width: 22em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .bar .drop .list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 60; min-width: 12em; display: grid; padding: var(--cw-space-1);
+        background: var(--cw-surface); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); box-shadow: var(--cw-shadow-lg); }
+      .bar .drop .list[hidden] { display: none; }
+      .bar .drop .list a { padding: 6px var(--cw-space-3); }
+      .bar .drop .list a[aria-current="page"] { font-weight: 600; }
 
     </style>
     <nav class="bar">
@@ -50,6 +59,31 @@ export function mount(ctx, el) {
       ...all.filter(a => !a.end).map(a => {
         const link = item(a);
         if (link) return link;
+        // A MENU: a button, and its dropdown of links.
+        if (a.menu) {
+          const list = Object.assign(document.createElement("div"), { className: "list", hidden: true });
+          list.setAttribute("role", "menu");
+          list.append(...a.menu.map(item));
+          const b = Object.assign(document.createElement("button"), { type: "button", textContent: `${a.label} ▾` });
+          b.setAttribute("aria-haspopup", "menu");
+          const close = () => {
+            list.hidden = true;
+            removeEventListener("click", outside, true);
+            removeEventListener("keydown", esc);
+          };
+          const outside = e => !wrap.contains(e.target) && close();
+          const esc = e => e.key === "Escape" && close();
+          b.onclick = () => {
+            if (!list.hidden) return close();
+            list.hidden = false;
+            addEventListener("click", outside, true);
+            addEventListener("keydown", esc);
+          };
+          list.onclick = e => e.target.closest("a") && close();
+          const wrap = Object.assign(document.createElement("span"), { className: "drop" });
+          wrap.append(b, list);
+          return wrap;
+        }
         // A search box ({ search: fn, placeholder, value }) or a button ({ label, run, on }).
         if (a.search) {
           const input = document.createElement("input");

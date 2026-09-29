@@ -495,8 +495,9 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       moderator's Remove hides). Every space has one — server, group, direct. A space's NOTES: its table `notes`
       (`#/notes/s/<id>`; pins and labels stay the person's, ref `notes:<space>/<key>`). The PERSONAL space (the account):
       Messages = your conversations, Board = your profile (public tail `posts`, what followers see), Notes = your notes.
-      `places` component: the top bar of every page on a space shows Messages · Board · Notes (Chat, Messages, Board,
-      Notes). New board on Board = a new server (with #general, so Chat shows it). Live (17573): S made a board, posted,
+      `places` component (shared): ONE dropdown in the top bar of every page on a space, `<space> · <place> ▾`, listing
+      Messages · Board · Notes (owner: switching places is a suite's move, not something general apps show); the header
+      has a `menu` action kind (closes on a choice, outside click, Escape). New board on Board = a new server (with #general, so Chat shows it). Live (17573): S made a board, posted,
       invited; P joined by code on Board, commented; S (owner) removed it; Chat shows the same server; P's note in the
       server's notes seen by S, not in P's own notes; every top bar shows the three places; panel 2 members.
       OPEN: an old S↔P direct conversation (from before per-device feeds) opens with no feeds on P — old test data.
