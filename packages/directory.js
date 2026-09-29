@@ -79,6 +79,8 @@ export async function start(ctx) {
     if (!sp?.shared) throw new Error("this node does not hold the account's data key");
     const t = await storage.publicTail(CARD, sp.shared);
     if (handle != null && read(t).handle !== handle) await t.put("handle", handle);
+    // Shown at once, everywhere on this page.
+    if (handle != null) handles.set(sp.id, Promise.resolve(handle));
     // The inbox key, and the (empty) inbox made now: nobody ever waits on an inbox that does not exist yet.
     if (!read(t).inbox) {
       const k = await auth.identity.inboxKey();
@@ -113,9 +115,20 @@ export async function start(ctx) {
   }
 
   // A person's HANDLE, read once per page (a name to show; the id is what makes them them).
+  // Kept while known: NOT when there is none yet (a card read before its name was set — a new person's own page — would
+  // otherwise show no name until a reload), and dropped when their card changes (the node pushes it).
   const handles = new Map();
+  const watchedCards = new Set();
   function handle(did) {
-    if (!handles.has(did)) handles.set(did, card(did).then(c => c?.handle ?? null, () => null));
+    if (!handles.has(did)) {
+      const p = card(did).then(c => c?.handle ?? null, () => null);
+      handles.set(did, p);
+      p.then(h => h == null && handles.get(did) === p && handles.delete(did));
+      if (!watchedCards.has(did)) {
+        watchedCards.add(did);
+        publicOf(did, CARD).then(t => t?.onChange(() => handles.delete(did)), () => {});
+      }
+    }
     return handles.get(did);
   }
 
