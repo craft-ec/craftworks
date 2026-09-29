@@ -583,8 +583,9 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       Board and public-space list leave out what any applied list flags; "Flag post" / "Flag author" on Discover posts;
       Discover's Home shows your list's size and whose lists you apply. Live (17573): P flagged S's public post → gone
       for P; S applied P's list → gone for S too; S un-applied.
-- (later) Discover's public views: public spaces (anyone reads/joins) listed in public bags; Board's public posts,
-  Chat's public spaces, Contacts' profiles; filtered by blocks + followed moderation lists.
+- (later) Discover's remaining public view: Contacts' profiles. NO public Chat (owner 09-29: Discord has none; its
+  Discovery is a directory — Discover's Home lists public spaces with Join). A Discord-style preview channel would be a
+  Chat setting later if wanted.
 - (parked, owner 09-29) Blog: a lens over profile posts.
 - (later, owner 09-29) TENANTS: a tenant = a top-level space holding spaces (sub-spaces inherit its members and admins;
   policies: who creates spaces, apps allowed, guests). Personal tenant = today's personal space; business tenants
