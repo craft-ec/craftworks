@@ -92,7 +92,7 @@ export async function mount(ctx, el) {
       appGrid,
       sharedApps
         .filter(a => on.includes(keyOf(a)) || may)
-        .map(a => (on.includes(keyOf(a)) ? { app: a, href: `#/s/${sp.id}${a.route}`, count: keyOf(a) === "chat" && activity ? activity.of(sp.id) : 0 } : { app: a, add: add(keyOf(a)) })),
+        .map(a => (on.includes(keyOf(a)) ? { app: a, href: `#/s/${sp.id}${a.route}`, count: activity && ["chat", "board"].includes(keyOf(a)) ? activity.of(sp.id, keyOf(a)) : 0 } : { app: a, add: add(keyOf(a)) })),
       "No apps yet: its owner or an admin adds them.",
     );
     const removable = may ? sharedApps.filter(a => on.includes(keyOf(a))) : [];

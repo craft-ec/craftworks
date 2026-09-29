@@ -6,18 +6,20 @@
 //   const activity = await ctx.require("activity");
 //   activity.unread(id)          // unread items in a container (a conversation, a channel)
 //   activity.total("messages")   // across direct and group conversations; "chat": across servers' channels
-//   activity.of(serverId)        // across one server's channels
-//   activity.showing(container)  // on screen now (null: nothing)
+//   activity.of(serverId, kind?) // across one space's channels and board (kind "chat" | "board": only those)
+//   activity.showing(container)  // on screen now: a container, or several (a board's two tables); null: nothing
+// A space's BOARD is watched too (its members' and its public table): a new post or comment by someone else counts,
+// and notifies ("sam posted in b/Makers#30fe18: …").
 //   activity.onChange(fn)
 export async function start(ctx) {
-  const [space, storage, conversation, content, directory] = await Promise.all(["space", "storage", "conversation", "content", "directory"].map(n => ctx.require(n)));
+  const [space, storage, conversation, content, directory, roles] = await Promise.all(["space", "storage", "conversation", "content", "directory", "roles"].map(n => ctx.require(n)));
   const watched = new Map(); // container id → { container, kind, route, serverId, serverName, room, seen }
   const changed = [];
   const fire = () => changed.forEach(f => f());
   const since = Date.now(); // what arrived before this page never notifies
   let me = null;
   let reads = null;
-  let onScreen = null;
+  let onScreen = new Set(); // container ids on screen now
 
   const readAt = id => {
     try {
@@ -44,8 +46,15 @@ export async function start(ctx) {
   async function notify(w, m) {
     const who = await directory.name(m.by);
     const title =
-      w.kind === "chat" ? `${who} in #${w.container.name} · ${w.serverName}` : w.container.kind === "direct" ? who : `${who} in ${w.container.name}`;
-    parent.postMessage({ __freenet_shell__: true, type: "notification", title, body: m.body.slice(0, 140), tag: w.route }, "*");
+      w.kind === "board"
+        ? `${who} ${m.kind === "comment" ? "commented" : "posted"} in b/${w.serverName}`
+        : w.kind === "chat"
+          ? `${who} in #${w.container.name} · ${w.serverName}`
+          : w.container.kind === "direct"
+            ? who
+            : `${who} in ${w.container.name}`;
+    const body = w.kind === "board" && m.title ? m.title : m.body;
+    parent.postMessage({ __freenet_shell__: true, type: "notification", title, body: body.slice(0, 140), tag: w.route }, "*");
   }
 
   async function watch(container, kind, extra) {
@@ -54,13 +63,13 @@ export async function start(ctx) {
     watched.set(container.id, w);
     w.room = await content.in(container);
     for (const m of w.room.list()) w.seen.add(m.id);
-    if (onScreen === container.id && visible()) markRead(container.id);
+    if (onScreen.has(container.id) && visible()) markRead(container.id);
     w.room.onChange(() => {
       for (const m of w.room.list()) {
         if (w.seen.has(m.id)) continue;
         w.seen.add(m.id);
         if (m.by === me.id || m.kind === "system" || m.at < since) continue;
-        if (onScreen === container.id && visible()) markRead(container.id);
+        if (onScreen.has(container.id) && visible()) markRead(container.id);
         else if (m.at > readAt(container.id)) notify(w, m).catch(() => {});
       }
       fire();
@@ -74,6 +83,13 @@ export async function start(ctx) {
     for (const sp of await space.mine().catch(() => [])) {
       if (sp.kind === "direct" || sp.kind === "group") watch(sp, "messages", { route: `#/messages/${sp.id}` }).catch(() => {});
       else if (sp.kind === "server") {
+        // Its BOARD (both tables), when it uses Board.
+        const r = await roles.of(sp).catch(() => null);
+        if (r?.apps().includes("board")) {
+          const extra = { serverId: sp.id, serverName: space.shown(sp), route: `#/s/${sp.id}/board` };
+          watch(space.board(sp), "board", extra).catch(() => {});
+          watch(space.board(sp, { pub: true }), "board", extra).catch(() => {});
+        }
         const chs = await conversation.channels(sp).catch(() => null);
         if (!chs) continue;
         const add = () =>
@@ -109,15 +125,18 @@ export async function start(ctx) {
     if (d?.__freenet_shell__ && d.type === "notification_click" && typeof d.tag === "string" && d.tag.startsWith("#/")) location.hash = d.tag;
   });
   // Back in view: what is on screen is read.
-  document.addEventListener("visibilitychange", () => visible() && onScreen && markRead(onScreen));
+  document.addEventListener("visibilitychange", () => visible() && onScreen.forEach(id => markRead(id)));
+  // Another page: nothing on screen until it says what it shows.
+  addEventListener("hashchange", () => (onScreen = new Set()));
 
   return {
     unread,
     total: kind => [...watched.values()].filter(w => w.kind === kind).reduce((n, w) => n + unread(w.container.id), 0),
-    of: serverId => [...watched.values()].filter(w => w.serverId === serverId).reduce((n, w) => n + unread(w.container.id), 0),
+    of: (serverId, kind = null) => [...watched.values()].filter(w => w.serverId === serverId && (!kind || w.kind === kind)).reduce((n, w) => n + unread(w.container.id), 0),
     showing(container) {
-      onScreen = container?.id ?? null;
-      if (onScreen && visible()) markRead(onScreen);
+      const list = Array.isArray(container) ? container : container ? [container] : [];
+      onScreen = new Set(list.map(c => c.id));
+      if (visible()) for (const id of onScreen) markRead(id);
     },
     onChange: f => changed.push(f),
   };
