@@ -13,12 +13,13 @@ description = "BAG: an unordered set of sealed items at an address, admitted by 
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-freenet-stdlib = { version = "0.10.0", features = ["contract"] }
+# Only the contract itself (its entry points): its readers link without it (the identity delegate is on another stdlib).
+freenet-stdlib = { version = "0.10.0", features = ["contract"], optional = true }
 blake3 = { version = "1", default-features = false }
 
 [features]
 default = ["freenet-main-contract"]
-freenet-main-contract = []
+freenet-main-contract = ["dep:freenet-stdlib"]
 
 [profile.release]
 opt-level = "z"

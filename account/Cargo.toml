@@ -6,13 +6,20 @@ license = "MIT OR Apache-2.0"
 publish = false
 description = "The ACCOUNT (identity capability, pure): recovery words, the key log and its owner keys. Linked by the core and by mls, one source."
 
+[features]
+default = ["puts"]
+puts = ["dep:wire", "dep:freenet-stdlib"]
+
 [dependencies]
-wire = { workspace = true }
+# Only for `puts` (a node client builds contracts to PUT): the account's pure parts link without the client API (the
+# identity delegate is on another stdlib).
+wire = { workspace = true, optional = true }
+contract-keys = { workspace = true }
 # Sealing to a public key: the identity's one definition.
 craftworks-identity = { path = "../identity" }
 craftec-register-contract = { workspace = true }
 craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
-freenet-stdlib = { version = "0.10.0", features = ["contract"] }
+freenet-stdlib = { version = "0.10.0", features = ["contract"], optional = true }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = { version = "1", default-features = false }
 bip39 = { version = "2", default-features = false, features = ["alloc"] }

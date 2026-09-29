@@ -1,11 +1,14 @@
-//! The entry the node calls: `serve_bytes` over the real delegate context. Behind `freenet-main-delegate` (OFF
-//! natively).
+//! THE IDENTITY DELEGATE the node runs: the identity's rules (`craftworks_identity::serve_bytes`) over the real delegate
+//! context, and UPKEEP when the node wakes it. The entry is behind `freenet-main-delegate` (OFF natively).
 
+#![cfg(feature = "freenet-main-delegate")]
+
+use craftworks_identity as identity;
 use freenet_stdlib::prelude::*;
 
 struct Ctx<'a>(&'a mut DelegateCtx);
 
-impl crate::Host for Ctx<'_> {
+impl identity::Host for Ctx<'_> {
     fn get_secret(&self, key: &[u8]) -> Option<Vec<u8>> {
         self.0.get_secret(key)
     }
@@ -38,11 +41,11 @@ impl DelegateInterface for Identity {
                     Some(MessageOrigin::WebApp(id)) => Some(*id),
                     _ => None,
                 };
-                match crate::serve_bytes(&mut Ctx(ctx), &m.payload, app) {
-                    crate::Out::Answer(answer) => Ok(vec![reply(answer)]),
+                match identity::serve_bytes(&mut Ctx(ctx), &m.payload, app) {
+                    identity::Out::Answer(answer) => Ok(vec![reply(answer)]),
                     // A question only the person can answer: the NODE shows it (naming the asking app itself), and
                     // re-enters here with their choice.
-                    crate::Out::Ask(p) => Ok(vec![OutboundDelegateMsg::RequestUserInput(UserInputRequest {
+                    identity::Out::Ask(p) => Ok(vec![OutboundDelegateMsg::RequestUserInput(UserInputRequest {
                         request_id: p.id,
                         message: NotificationMessage::try_from(&serde_json::Value::String(p.message))
                             .map_err(|_| DelegateError::Other("prompt".into()))?,
@@ -50,14 +53,14 @@ impl DelegateInterface for Identity {
                     })]),
                 }
             }
-            InboundDelegateMsg::UserResponse(r) => Ok(crate::serve_answer(&mut Ctx(ctx), r.request_id, &r.response)
+            InboundDelegateMsg::UserResponse(r) => Ok(identity::serve_answer(&mut Ctx(ctx), r.request_id, &r.response)
                 .map(reply)
                 .into_iter()
                 .collect()),
             // A WAKE-UP: counted; the account's inbox read (and watched, so the node keeps it current).
             InboundDelegateMsg::WakeupFired { .. } => {
                 let mut c = Ctx(ctx);
-                Ok(match crate::upkeep_woke(&mut c) {
+                Ok(match identity::upkeep_woke(&mut c) {
                     Some(inbox) => {
                         let id = ContractInstanceId::new(inbox);
                         vec![
@@ -70,7 +73,7 @@ impl DelegateInterface for Identity {
             }
             // The inbox as the node holds it.
             InboundDelegateMsg::GetContractResponse(r) => {
-                crate::upkeep_read(&mut Ctx(ctx), r.state.map(|s| s.as_ref().len() as u64).unwrap_or(0));
+                identity::upkeep_read(&mut Ctx(ctx), r.state.map(|s| s.as_ref().len() as u64).unwrap_or(0));
                 Ok(Vec::new())
             }
             InboundDelegateMsg::Lifecycle(_) => Ok(Vec::new()),

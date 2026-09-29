@@ -27,9 +27,9 @@ for name in craftworks_core craftworks_mls craftworks_feed; do
   echo "$name: $(wc -c < "packages/build/${name}_bg.wasm" | tr -d ' ') B"
 done
 
-cargo build -q --release -p craftworks-identity --target wasm32-unknown-unknown --features freenet-main-delegate
+cargo build -q --release -p craftworks-delegate --target wasm32-unknown-unknown --features freenet-main-delegate
 cargo build -q --release -p probe --bin import-gate
 # Every custom section but the MANIFEST (`freenet-manifest`: the delegate's wake-ups) removed.
-wasm-tools strip -d '^(name|producers|target_features|\.debug.*|linking|reloc\..*|component-type.*)$' "$target/wasm32-unknown-unknown/release/craftworks_identity.wasm" -o packages/build/identity.wasm
+wasm-tools strip -d '^(name|producers|target_features|\.debug.*|linking|reloc\..*|component-type.*)$' "$target/wasm32-unknown-unknown/release/craftworks_delegate.wasm" -o packages/build/identity.wasm
 "$target/release/import-gate" packages/build/identity.wasm
 echo "identity: $(wc -c < packages/build/identity.wasm | tr -d ' ') B, sha256 $(shasum -a 256 packages/build/identity.wasm | cut -c1-16)…"

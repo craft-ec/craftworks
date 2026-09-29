@@ -55,8 +55,7 @@ use craftec_register_contract::wire::{Authority, Params, HASH_LEN, KEY_LEN};
 use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "freenet-main-delegate")]
-mod delegate;
+
 
 /// Every identity message starts with this, so a page tells an identity answer from any other delegate's.
 pub const MAGIC: &[u8; 4] = b"ID01";

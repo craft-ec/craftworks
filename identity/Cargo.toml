@@ -4,17 +4,10 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "The IDENTITY delegate on each node: holds this device's key and signs records for it (ARCHITECTURE §4)."
+description = "The IDENTITY delegate's rules (ARCHITECTURE §4): holds this device's key and signs records for it. Its entry the node runs is the `delegate` crate."
 
 [lib]
-crate-type = ["cdylib", "rlib"]
-
-[features]
-# The node's entry point, only in the wasm the node runs (build.sh turns it on). Native builds and tests export nothing.
-default = []
-freenet-main-delegate = []
-# Named by the stdlib `#[delegate]` macro's cfg; unused here.
-trace = []
+crate-type = ["rlib"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -22,25 +15,12 @@ bincode = "1"
 # The prompt's text, as the node reads it (a JSON string).
 serde_json = "1"
 blake3 = { version = "1", default-features = false }
-# 0.12: a delegate MANIFEST (periodic wake-ups, lifecycle events: freenet-core #5747). The contracts stay on theirs.
-freenet-stdlib = { version = "0.12.1", features = ["contract"] }
 # The Register's params and signed message: the ONE format a tail's signature covers (the tail is built on it).
 craftec-register-contract = { workspace = true }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 # Sealing to a public key (the inbox; escrow): X25519 and XChaCha20-Poly1305, the same as the account's.
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
-
-# UPKEEP with no page open (admitting askers): a table as a tail, MLS, a space's governance — the same crates the page
-# runs.
-craftworks-data = { path = "../data" }
-mls-rs = { version = "=0.56.0", default-features = false, features = ["std", "tree_index", "fast_serialize"] }
-mls-rs-core = "=0.27.0"
-mls-rs-crypto-rustcrypto = "=0.22.1"
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-# The delegate's randomness: upkeep's pool (the page stirs it), through getrandom's custom hook.
-getrandom = { version = "0.2", features = ["custom"] }
 
 [dev-dependencies]
 craftec-register-contract = { workspace = true, features = ["testing"] }

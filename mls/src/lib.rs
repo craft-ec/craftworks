@@ -282,7 +282,7 @@ pub struct Account {
 
 fn client(ident: &Rule, store: &Store, kps: &KeyPackages, signer: &(Vec<u8>, Vec<u8>), cred: &[u8]) -> Client<Config> {
     // MLS's clock on a page is the browser's (mls-rs-core, vendored, reads the host's; see Cargo.toml's patch).
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", feature = "page"))]
     mls_rs_core::time::set_clock(|| (js_sys::Date::now() / 1000.0) as u64);
     let id = SigningIdentity::new(BasicCredential::new(cred.to_vec()).into_credential(), SignaturePublicKey::new(signer.1.clone()));
     Client::builder()
@@ -658,7 +658,7 @@ mod tests {
 }
 
 /// The page's side: one `Mls` per page, this node's member of the account's group.
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "page"))]
 mod js {
     use super::*;
     use wasm_bindgen::prelude::*;

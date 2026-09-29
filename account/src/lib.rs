@@ -21,7 +21,10 @@
 //! the Account page can show the words when the person sets up recovery.
 
 use bip39::Mnemonic;
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::SigningKey;
+#[cfg(feature = "puts")]
+use ed25519_dalek::Signer;
+#[cfg(feature = "puts")]
 use freenet_stdlib::prelude::{ContractContainer, WrappedState};
 use hmac::{Hmac, Mac};
 use sha2::Sha512;
@@ -38,7 +41,8 @@ pub const ENC_PATH: [u32; 3] = [44, 25458, 2];
 pub const WHOAMI_LABEL: &[u8] = b"did";
 use craftworks_idlog_contract::{commit, Event, Log};
 
-/// One Register to PUT: its contract, its state, and the id the node names it by.
+/// One Register to PUT: its contract, its state, and the id the node names it by (feature `puts`: a node client).
+#[cfg(feature = "puts")]
 pub struct Put {
     pub id: String,
     pub id_bytes: [u8; 32],
@@ -242,21 +246,24 @@ pub fn change_words(log: &Log, old: &[u8], new: &[u8]) -> Option<Log> {
 }
 
 /// The key event log's contract for a DID: its PUT (with a state) or its address (without).
+#[cfg(feature = "puts")]
 pub fn idlog_put(code: &[u8], did: &[u8; 32], log: Option<&Log>) -> Put {
     put(code, did, &log.map(Log::encode).unwrap_or_default())
 }
 
 /// The `whoami` Register of words W: under W's first key, it names the DID W were rotated into.
 pub fn whoami_params(entropy: &[u8]) -> Option<Vec<u8>> {
-    Some(wire::register_params(&public_of(&owner_seed_at(entropy, 0)?), WHOAMI_LABEL))
+    Some(contract_keys::register_params(&public_of(&owner_seed_at(entropy, 0)?), WHOAMI_LABEL))
 }
 
+#[cfg(feature = "puts")]
 pub fn whoami_put(register_code: &[u8], entropy: &[u8], did: &[u8; 32]) -> Option<Put> {
     let params = whoami_params(entropy)?;
     let state = contract_keys_head(&params, &owner_seed_at(entropy, 0)?, did)?;
     Some(put(register_code, &params, &state))
 }
 
+#[cfg(feature = "puts")]
 pub fn whoami_address(register_code: &[u8], entropy: &[u8]) -> Option<Put> {
     Some(put(register_code, &whoami_params(entropy)?, &[]))
 }
@@ -269,6 +276,7 @@ pub fn whoami_did(entropy: &[u8], state: &[u8]) -> Option<[u8; 32]> {
 }
 
 /// A mode-0 Register state holding `value`, signed by `seed` (seq 1: a whoami is written once).
+#[cfg(feature = "puts")]
 fn contract_keys_head(params: &[u8], seed: &[u8; 32], value: &[u8]) -> Option<Vec<u8>> {
     use craftec_register_contract::wire::{Params, RegState, Record, Signed};
     let p = Params::parse(params)?;
@@ -280,6 +288,7 @@ fn contract_keys_head(params: &[u8], seed: &[u8; 32], value: &[u8]) -> Option<Ve
     Some(RegState { record: Some(record), evidence: None }.encode(&p.authority))
 }
 
+#[cfg(feature = "puts")]
 fn put(code: &[u8], params: &[u8], state: &[u8]) -> Put {
     let (id, contract, state) = wire::puts::contract(code, params, state);
     let id_bytes = contract.key().id().as_bytes().try_into().expect("a contract id is 32 bytes");

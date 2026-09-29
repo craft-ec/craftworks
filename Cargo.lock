@@ -385,6 +385,7 @@ dependencies = [
  "blake3",
  "bs58",
  "chacha20poly1305",
+ "contract-keys",
  "craftec-register-contract",
  "craftworks-identity",
  "craftworks-idlog-contract",
@@ -401,7 +402,6 @@ name = "craftworks-bag-contract"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "freenet-stdlib 0.10.0",
 ]
 
 [[package]]
@@ -451,6 +451,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-delegate"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "contract-keys",
+ "craftworks-bag-contract",
+ "craftworks-data",
+ "craftworks-identity",
+ "craftworks-idlog-contract",
+ "craftworks-mls",
+ "freenet-stdlib 0.12.1",
+ "getrandom 0.2.17",
+ "mls-rs-core",
+ "serde_json",
+]
+
+[[package]]
 name = "craftworks-feed"
 version = "0.1.0"
 dependencies = [
@@ -473,13 +490,7 @@ dependencies = [
  "blake3",
  "chacha20poly1305",
  "craftec-register-contract",
- "craftworks-data",
  "ed25519-dalek",
- "freenet-stdlib 0.12.1",
- "getrandom 0.2.17",
- "mls-rs",
- "mls-rs-core",
- "mls-rs-crypto-rustcrypto",
  "serde",
  "serde_json",
  "x25519-dalek",
@@ -491,7 +502,6 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
- "freenet-stdlib 0.10.0",
 ]
 
 [[package]]

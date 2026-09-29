@@ -10,7 +10,7 @@ description = "MLS (the keys capability's wasm): the account's group on this nod
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-craftworks-account = { path = "../account" }
+craftworks-account = { path = "../account", default-features = false }
 craftworks-identity = { path = "../identity" }
 craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
 mls-rs = { version = "=0.56.0", default-features = false, features = ["std", "tree_index", "fast_serialize"] }
@@ -20,8 +20,13 @@ zeroize = "1"
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = { version = "1", default-features = false }
 
+[features]
+# The PAGE's bindings (the keys capability's wasm): off in the identity delegate, which links the group logic alone.
+default = ["page"]
+page = ["dep:wasm-bindgen", "dep:js-sys", "dep:getrandom"]
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "=0.2.128"
-js-sys = "0.3"
+wasm-bindgen = { version = "=0.2.128", optional = true }
+js-sys = { version = "0.3", optional = true }
 # The page's randomness (a one-time key per escrow): the same source mls-rs already uses here.
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { version = "0.2", features = ["js"], optional = true }
