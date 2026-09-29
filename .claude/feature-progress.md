@@ -52,12 +52,16 @@ device + the same PIN opens the same account. Adding a second device: pairing wi
   that key's seat must be the DID) → owner → member Set. Account page lists the devices. Verified on the private
   node: register → 1 device; words-login → 2 devices, same DID. The Set crate links with default-features off (no
   contract imports in the page wasm).
-- [ ] B. data: device tail per app (identity signs), subscribe, write rows, flush into the tree, read tail→tree
-- [ ] C. pairing admits a member without the words (the admitted device holding the words signs the addition)
-- [ ] D. auth package: on-demand sign-in dialog; import/export key file
-- [ ] E. auth: keycraft
-- [ ] F. auth: device id + PIN (pairing through the admitted device's inbox; needs C)
-- [ ] G. republish Craftworks under the new identity; retire the old signer
+- [x] B. data: each device's own feed per table (tail + tree, sealed per epoch), merged; subscribed (built through the
+  storage/feed work; see "Two devices, one account").
+- [ ] C. pairing admits a member without the words — NOT BUILT. Superseded in practice (audit 09-30): a new device
+  gets in with the words, or with the account id + the RECOVERY PASSPHRASE (Account → Recovery). Owner to say if
+  device-to-device pairing is still wanted.
+- [~] D. auth dialog: built (Login: this node's PIN · words · passphrase; Register). Key file: the identity can export
+  (`Export`, `identity.exportKey`) but no page offers export or import — the passphrase took that role.
+- [ ] E. keycraft — NOT BUILT (no code in craftworks). Owner to say if still wanted.
+- [ ] F. device id + PIN pairing — NOT BUILT (needs C).
+- [x] G. the sites publish under the node's signer (loader, craftworks, test/alt sites; B's).
 
 ## 2026-09-28 — reviewed against freenet's dapp-builder skill (github.com/freenet/freenet-agent-skills)
 - DID = the owner's public key (`did:craftec:<base58>`), never a contract address (an address moves with every code
