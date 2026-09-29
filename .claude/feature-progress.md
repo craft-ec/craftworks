@@ -526,3 +526,7 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       Notes on conversations
 - [ ] R4 per-app settings: Chat (channels, who may post), Board (rules, who may post), Notes (who may edit)
 - (parked, owner 09-29) Blog: a lens over profile posts.
+- (later, owner 09-29) TENANTS: a tenant = a top-level space holding spaces (sub-spaces inherit its members and admins;
+  policies: who creates spaces, apps allowed, guests). Personal tenant = today's personal space; business tenants
+  onboard companies. Rail gets a tenant switcher. Open: company-issued (managed) identities vs own accounts; what a
+  leaver's content leaves behind. R1 builds the rail tenant-shaped (Personal first).
