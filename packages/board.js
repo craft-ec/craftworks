@@ -130,6 +130,10 @@ export async function mount(ctx, el) {
   const boardLink = b => h("span", { className: "b", textContent: `b/${b.name}` });
   const errorTo = said => e => ((said.textContent = e?.message ?? String(e)), (said.hidden = false));
 
+  const flag = async (kind, ref) => {
+    await (await (await ctx.require("moderation")).lists()).flag(kind, ref);
+    await draw();
+  };
   // VOTES on a post or a comment: ▲ score ▼, changed here at once, then written.
   function votes(it, post) {
     const n = h("span", { className: "n", textContent: String(it.score) });
@@ -170,6 +174,13 @@ export async function mount(ctx, el) {
           navigator.clipboard.writeText(p.ref).then(() => (e.target.textContent = "Copied"), () => {});
         },
       }),
+      // DISCOVER: flag it on your moderation list (what you, and whoever applies your list, no longer see there).
+      ...(discovering() && p.by !== me
+        ? [
+            h("button", { type: "button", textContent: "Flag post", onclick: e => (e.stopPropagation(), flag("post", p.ref)) }),
+            h("button", { type: "button", textContent: "Flag author", onclick: e => (e.stopPropagation(), flag("person", p.by)) }),
+          ]
+        : []),
       p.mayRemove
         ? h("button", {
             type: "button",

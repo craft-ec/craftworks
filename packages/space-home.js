@@ -55,6 +55,23 @@ export async function mount(ctx, el) {
     root.replaceChildren(
       h("div", { className: "top" }, h("h2", { textContent: "🧭 Discover" }), h("p", { textContent: "The public network: what public spaces publish. Nobody owns it; what you hid or blocked stays hidden." })),
       h("section", {}, h("h3", { textContent: "Apps" }), h("div", { className: "apps" }, ...pub.map(a => h("a", { className: "app", href: `#/discover${a.route}` }, h("b", { textContent: `${a.icon ?? ""} ${a.name}` }), h("span", { textContent: a.about ?? "" }))))),
+      await (async () => {
+        // The MODERATION LISTS applied here: yours, and whom you chose (from a person's menu).
+        const lists = await (await ctx.require("moderation")).lists();
+        const who = lists.followed();
+        const ul = h("ul", {}, ...who.map(did => {
+          const li = h("li", { onclick: e => person.open(e.currentTarget, did) }, directory.shown(did));
+          directory.name(did).then(t => (li.textContent = t), () => {});
+          return li;
+        }));
+        return h(
+          "section",
+          {},
+          h("h3", { textContent: "Moderation lists" }),
+          h("p", { className: "none", style: "text-align: left; padding: 0 0 var(--cw-space-2)", textContent: `Your list flags ${lists.mine()} thing${lists.mine() === 1 ? "" : "s"}. ${who.length ? "You also apply the lists of:" : "Apply someone's list from their name (Use their moderation list)."}` }),
+          who.length ? ul : null,
+        );
+      })(),
       h(
         "section",
         {},

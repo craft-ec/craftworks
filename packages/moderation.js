@@ -9,6 +9,14 @@
 //   await m.remove(did)      // that person out of the space's group (a new epoch they cannot read); back by an invite
 //   await m.ban(did)         // the same, and never back (no invite or code lets them in) until `unban`
 //   m.onChange(fn)
+//
+// MODERATION LISTS — the PUBLIC network's (Discover has no owner, so nobody's acts count there): a person's list is
+// their public tail `modlist` (only their account writes it: signed by them), entries `<kind>:<ref>` → { reason, at },
+// kind person | post | space. Each reader applies their own list and the lists of whom they chose (`edge` relation
+// "modlist"): what is on any of them is left out of Discover.
+//   const lists = await moderation.lists()
+//   lists.flagged({ by, ref, space })   // on a list this reader applies (a post: its author, its ref, its space)
+//   await lists.flag(kind, ref, reason)   await lists.unflag(kind, ref)   lists.mine()  lists.followed()  lists.onChange(fn)
 export async function start(ctx) {
   const [roles, keys, directory] = await Promise.all(["roles", "keys", "directory"].map(n => ctx.require(n)));
 
@@ -35,5 +43,46 @@ export async function start(ctx) {
     };
   }
 
-  return { of };
+  let listsOpen = null;
+  function lists() {
+    return (listsOpen ??= (async () => {
+      const [space, edge] = await Promise.all(["space", "edge"].map(n => ctx.require(n)));
+      const people = await edge.people();
+      const me = (await space.account()).id;
+      const LIST = "modlist";
+      const mineT = await directory.publicOf(me, LIST);
+      const tails = new Map(); // did → tail
+      const changed = [];
+      const fire = () => changed.forEach(f => f());
+      mineT.onChange(fire);
+      const follow = async () => {
+        for (const did of people.list("modlist"))
+          if (!tails.has(did)) {
+            const t = await directory.publicOf(did, LIST).catch(() => null);
+            if (t) (tails.set(did, t), t.onChange(fire));
+          }
+      };
+      await follow();
+      people.onChange(() => follow().then(fire));
+      const entries = () => {
+        const on = new Set();
+        for (const t of [mineT, ...[...tails.entries()].filter(([d]) => people.is("modlist", d)).map(([, t]) => t)])
+          for (const r of t.rows()) if (r.value) on.add(r.key);
+        return on;
+      };
+      return {
+        flagged: ({ by = null, ref = null, space: sid = null } = {}) => {
+          const on = entries();
+          return (by && on.has(`person:${by}`)) || (ref && on.has(`post:${ref}`)) || (sid && on.has(`space:${sid}`));
+        },
+        flag: (kind, ref, reason = "") => mineT.put(`${kind}:${ref}`, JSON.stringify({ reason: String(reason).slice(0, 200), at: Date.now() })),
+        unflag: (kind, ref) => mineT.remove(`${kind}:${ref}`),
+        mine: () => mineT.rows().filter(r => r.value).length,
+        followed: () => people.list("modlist"),
+        onChange: f => changed.push(f),
+      };
+    })());
+  }
+
+  return { of, lists };
 }

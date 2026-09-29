@@ -10,7 +10,8 @@
 //   const people = await edge.people(); people.is("follow", did)  people.list("friend")  await people.set("hide", did, on)
 //     people.onChange(fn) — me → a PERSON: follow · friend · asked (a friend request sent) · answered (their request,
 //     when: yes, no or ended — a request older than it is not asked again) · hide (their items unseen
-//     here) · block (hidden, and their welcomes, mail and requests refused)
+//     here) · block (hidden, and their welcomes, mail and requests refused) · modlist (their moderation list applied
+//     to what this person sees in Discover: `moderation.lists`)
 //
 // PEOPLE: table `people`, a row `<relation>/<did>` per link (one table: the relations are one mechanism).
 // PINS: table `pins`, a row per pinned ref. LABELS: table `tags` (its name from before; private tags):
@@ -106,7 +107,7 @@ export async function start(ctx) {
   }
 
   let peopleOpen = null;
-  const RELATIONS = new Set(["follow", "friend", "asked", "answered", "hide", "block"]);
+  const RELATIONS = new Set(["follow", "friend", "asked", "answered", "hide", "block", "modlist"]);
   function people() {
     return (peopleOpen ??= storage.table("people").then(t => {
       const is = (rel, did) => t.rows().some(r => r.key === `${rel}/${did}`);

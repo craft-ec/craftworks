@@ -577,6 +577,12 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
       crashed on an open admission (no invite to count it on) — P's roles, so its board, failed to load. Live (17573):
       S opened Studio; P joined from Discover; S's Studio Home admitted P; P: Studio on the rail, 2 members, its
       public + members-only posts, Create post.
+- [x] P4 MODERATION LISTS (Discover's only moderation: nobody owns it). A person's list = their public tail `modlist`
+      (only their account writes it), entries `person:<did>` | `post:<ref>` | `space:<id>`. Each reader applies their
+      own and those of whom they chose (edge relation `modlist`: person menu "Use their moderation list"). Discover's
+      Board and public-space list leave out what any applied list flags; "Flag post" / "Flag author" on Discover posts;
+      Discover's Home shows your list's size and whose lists you apply. Live (17573): P flagged S's public post → gone
+      for P; S applied P's list → gone for S too; S un-applied.
 - (later) Discover's public views: public spaces (anyone reads/joins) listed in public bags; Board's public posts,
   Chat's public spaces, Contacts' profiles; filtered by blocks + followed moderation lists.
 - (parked, owner 09-29) Blog: a lens over profile posts.

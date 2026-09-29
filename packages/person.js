@@ -106,6 +106,7 @@ export async function start(ctx) {
                   : act("Add friend", () => conversation.befriend(did)),
               toggle("follow", "Follow", "Following ✓"),
               posts,
+              toggle("modlist", "Use their moderation list", "Their list applies ✓"),
             ),
             el(
               "div",

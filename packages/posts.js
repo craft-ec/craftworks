@@ -139,9 +139,11 @@ export async function start(ctx) {
   // DISCOVER: the public spaces listed (their descriptions), each proved by its id (its owner), one per id.
   async function publicSpaces() {
     const seen = new Map();
+    const lists = await (await ctx.require("moderation")).lists().catch(() => null);
     for (const d of await index.spaces().catch(() => [])) {
       if (!d?.id || seen.has(d.id) || !d.governance?.owner) continue;
       if ((await space.owner(d).catch(() => null)) !== d.governance.owner) continue;
+      if (lists?.flagged({ space: d.id, by: d.governance.owner })) continue;
       seen.set(d.id, { id: d.id, name: String(d.name ?? "").slice(0, 100), kind: "server", governance: d.governance });
     }
     return [...seen.values()];
@@ -152,6 +154,11 @@ export async function start(ctx) {
     // A space's PUBLIC board, seen from outside (`where.outside`: its description); DISCOVER: every public space's.
     if (where.outside) out = await boardPosts(where.outside, { outside: true });
     else if (where.discover) out = (await Promise.all((await publicSpaces()).map(d => boardPosts(d, { outside: true }).catch(() => [])))).flat();
+    // DISCOVER is filtered by the moderation lists this person applies (theirs, and whom they chose).
+    if (where.outside || where.discover) {
+      const lists = await (await ctx.require("moderation")).lists();
+      out = out.filter(p => !lists.flagged({ by: p.by, ref: p.ref, space: p.board?.id }));
+    }
     else if (where.board) {
       const sp = await boardOf(where.board);
       if (!sp) throw new Error("you are not in that board's space: join it with an invite");
