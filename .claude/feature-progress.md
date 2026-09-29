@@ -725,10 +725,11 @@ capabilities, one source of truth, everything composes, no duplicate code, packa
   leaver's content leaves behind. R1 builds the rail tenant-shaped (Personal first).
 
 ## Files and media (owner 2026-09-30: next after joining; then Reads, then Lifecycle) — ARCHITECTURE §6
-Design (core dev, owner welcomed a better one than the archived RLNC): sealed 256 KiB chunks at key-derived addresses
-(`sealed` contract), 4 RS parity per 16 (`rs`), an index of piece hashes checked against the reference
-`{ key, index hash, size, name, type }`; private/public = where the reference is.
-- [ ] F1 core: crate `files` (pure): chunking, sealing, addresses, index, group parity + repair; tests.
+Design (owner 09-30: RLNC, not RS): encrypt-then-code; 256 KiB chunks; generations of 16, 24 fragments (16
+systematic + 8 coded, GF(2^8), coefficients in each fragment); sealed contracts at key-derived addresses; an index of
+fragment hashes checked against the reference `{ key, index hash, size, name, type }`. Homomorphic checks (Pedersen)
+come with keepers as a new codec version.
+- [ ] F1 core: crate `files` (pure): encrypt chunks, RLNC encode/decode over GF(2^8), addresses, index; tests.
 - [ ] F2 capability `files` (page): put(blob) with progress → reference; open(reference) → bytes / object URL, raced per
       group, verified per piece. Live: a multi-MB file up, down, a piece lost and rebuilt.
 - [ ] F3 attachments: Messages, Chat, Mail, Board posts — pick a file, image preview, download.
