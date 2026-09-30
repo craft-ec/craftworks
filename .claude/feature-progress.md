@@ -855,5 +855,11 @@ Uses what freenet-prolly already has (rev 17d67d8: `range`/`range_with` + `front
 - [x] R3f ONE FEED BAR for every content app (owner: "implement the same across all content app. video and audio
       too"): `feed-bar` component (feed/window/top-by/sort ▲▼, New's auto-older) used by Board, Videos, Audio and
       Subtitles. 17573: all four show it; Top adds window + top-by; a sort adds direction; 0 errors.
+- [x] R3g ATTACHED ITEMS UNBOUNDED BY WINDOWS (owner: "browsing subtitle can use that but loading subtitle for
+      video/audio should not limit by time"): what attaches to an item (tracks, comments) is always newer than it, so
+      `attached`, `thread`, `get` and the team-space track search read from the item's time on (the earlier of the
+      item's and its manifest's `at`: a later copy still finds older tracks) — complete, never a list window, never the
+      place whole. Items from before time ids: the place whole. 17573: a new video's track found, get works, board
+      stays lazy; legacy-id videos fall back to whole (as they must).
 - Verified 17573: a 150-message channel opens with the newest 50 (lazy: no whole read), pages back to all 150 in
   order, "Load earlier" in Chat, a new message live; Board and Videos unaffected; 0 errors.

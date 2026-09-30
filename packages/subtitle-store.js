@@ -49,6 +49,12 @@ export async function start(ctx) {
     if (!m) return null;
     return JSON.parse(await (await files.get(m)).text()).vid ?? null;
   }
+  // When a video was MADE (its manifest's `at`; none for one from before).
+  async function madeOf(mediaRef) {
+    const item = await items.get(mediaRef).catch(() => null);
+    const m = item?.files?.find(f => f.type === "application/vnd.craftworks.video+json");
+    return m ? (JSON.parse(await (await files.get(m)).text()).at ?? null) : null;
+  }
   // WHERE a track is kept, and whether it is public there: with the video — as the video is; in a space — as that
   // space's subtitles are; this person's own — public, unless it is about a private item of theirs.
   async function keep(mediaRef, place) {
@@ -76,7 +82,13 @@ export async function start(ctx) {
       const teams = [];
       for (const s of (await space.mine()).filter(x => x.kind === "server")) if ((await roles.of(s).catch(() => null))?.apps().includes("subtitles")) teams.push(s);
       const me = (await space.account()).id;
-      elsewhere = (await items.inPlaces({ spaces: teams, people: [me, ...(await items.following())] }, KIND).catch(() => [])).map(shape).filter(t => (vid && t.for === vid) || t.in === mediaRef);
+      // Only what was made after the VIDEO was (every track is): the earlier of this item's time and its manifest's.
+      const own = mediaRef.slice(mediaRef.lastIndexOf("/") + 1);
+      const itemAt = /^t([0-9a-z]{9})/.test(own) ? parseInt(own.slice(1, 10), 36) : null;
+      const madeAt = await madeOf(mediaRef);
+      const from = itemAt == null ? null : Math.min(itemAt, madeAt ?? itemAt);
+      const after = from == null ? null : `t${Math.floor(from).toString(36).padStart(9, "0")}`;
+      elsewhere = (await items.inPlaces({ spaces: teams, people: [me, ...(await items.following())] }, KIND, { after }).catch(() => [])).map(shape).filter(t => (vid && t.for === vid) || t.in === mediaRef);
     }
     const seen = new Set();
     return [...withIt, ...elsewhere].filter(t => !seen.has(t.ref) && seen.add(t.ref)).sort((a, b) => a.at - b.at);

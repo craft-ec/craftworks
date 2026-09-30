@@ -258,8 +258,9 @@ export async function start(ctx) {
   const sinceOf = w => (w === "all" || w == null ? null : Date.now() - (typeof w === "number" ? w * 86400e3 : (WINDOW[w] ?? WINDOW.month)));
   async function boardPosts(sp, { outside = false, kinds = ["post"], window = "all" } = {}) {
     const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
-    const since = sinceOf(window) ?? 0;
-    if (!outside) {
+    // `window: "held"`: what is read already (a caller read its own span: one item and what came after it).
+    const since = window === "held" ? 0 : (sinceOf(window) ?? 0);
+    if (!outside && window !== "held") {
       if (!since) await r.loadAll?.();
       else await r.since?.(since);
     }
@@ -376,7 +377,10 @@ export async function start(ctx) {
   async function get(ref, { outside = null } = {}) {
     if (ref.startsWith("space:")) {
       const sp = outside ?? (await boardOf(ref));
-      return sp ? ((await boardPosts(sp, { outside: !!outside, kinds: [...TOP] })).find(p => p.ref === ref) ?? null) : null;
+      if (!sp) return null;
+      // ONE item: its place read from its time on (it, its votes and comments) — never the place whole.
+      if (!outside) await sinceItem(await boardRoom(sp), idOf(ref));
+      return (await boardPosts(sp, { outside: !!outside, kinds: [...TOP], window: outside ? "all" : "held" })).find(p => p.ref === ref) ?? null;
     }
     return (await profilePosts([whereOf(ref)], await pointersTo(ref), [...TOP])).find(p => p.ref === ref) ?? null;
   }
@@ -410,8 +414,9 @@ export async function start(ctx) {
       const sp = outside ?? (await boardOf(ref));
       if (!sp) return [];
       const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
-      // A thread's comments may be from any time: its place read whole.
-      if (!outside) await r.loadAll?.();
+      // A thread's comments are all made AFTER its post: the place read from the post's time on — complete, whatever
+      // the list's window, and nothing older (a post from before time ids: the place whole).
+      if (!outside) await sinceItem(r, idOf(ref));
       const votes = tally(r.reactions());
       const post = idOf(ref);
       for (const it of r.list())
@@ -510,6 +515,12 @@ export async function start(ctx) {
     if (!mine.isPrivate?.(post)) await pointTo(post);
     return `${await me()}/${id}`;
   }
+  // A place read from an item's time on (its id: `t` ‖ time in ms, base 36): everything made after it; an item from
+  // before time ids — its place whole.
+  async function sinceItem(r, id) {
+    const m = /^t([0-9a-z]{9})/.exec(id);
+    return m ? r.since?.(parseInt(m[1], 36)) : r.loadAll?.();
+  }
   async function attached(ref, kind, { outside = null } = {}) {
     const self = await me();
     const out = [];
@@ -517,6 +528,8 @@ export async function start(ctx) {
       const sp = outside ?? (await boardOf(ref));
       if (!sp) return [];
       const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
+      // What attaches to an item is made AFTER it: read from its time on — never bounded by a list's window.
+      if (!outside) await sinceItem(r, idOf(ref));
       for (const it of r.list()) if (it.kind === kind && it.in === idOf(ref)) out.push({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), mayRemove: r.mayRemove(it) });
     } else {
       for (const r of await profiles([whereOf(ref), self, ...(await following()), ...(await pointersTo(ref))]))
@@ -546,9 +559,14 @@ export async function start(ctx) {
   }
 
   // Items of a KIND in exactly these places, read whole (few, chosen places: a subtitle's lookup), never every board.
-  async function inPlaces({ spaces = [], people: dids = [] }, kind) {
+  // `after` (an item id): only what was made after it (a subtitle is always newer than its video) — a bound, not a window.
+  async function inPlaces({ spaces = [], people: dids = [] }, kind, { after = null } = {}) {
     const ks = kindsFor(kind);
-    const [a, b] = await Promise.all([Promise.all(spaces.map(sp => boardPosts(sp, { kinds: ks, window: "all" }).catch(() => []))), profilePosts(dids, [], ks).catch(() => [])]);
+    const read = async sp => {
+      if (after) await sinceItem(await boardRoom(sp), after);
+      return boardPosts(sp, { kinds: ks, window: after ? "held" : "all" });
+    };
+    const [a, b] = await Promise.all([Promise.all(spaces.map(sp => read(sp).catch(() => []))), profilePosts(dids, [], ks).catch(() => [])]);
     return [...a.flat(), ...b];
   }
 

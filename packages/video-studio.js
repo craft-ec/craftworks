@@ -173,6 +173,7 @@ export async function start(ctx) {
       height: track.displayHeight,
       source,
       vid,
+      at: Date.now(), // when the video was made: nothing about it (a subtitle) is older
       renditions,
       pending: plan.filter(r => r !== first).map(({ codec, height, bitrate, audio }) => ({ codec, height, bitrate, audio })),
       ...(sp ? { strip: { ref: stripRef, n: sp.n, cols: sp.cols, w: sp.w, h: sp.h, every: sp.every } } : {}),
@@ -205,6 +206,7 @@ export async function start(ctx) {
     const manifest = {
       v: 1,
       audio: true,
+      at: Date.now(),
       name: file.name,
       duration,
       vid,
