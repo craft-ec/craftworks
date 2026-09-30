@@ -6,7 +6,8 @@
 // reads its files — and nobody else.
 //
 //   const att = await ctx.require("attachments");
-//   const pick = att.picker({ space, public })   // { el, files(): [ref], busy(): bool, clear(), onChange(fn) }
+//   const pick = att.picker({ space, public })   // { el, files(): [ref], busy(): bool, clear(), onChange(fn),
+//                                                //   addFiles([File]), preset([ref]), onReady(fn(ref, File|null)) }
 //                                                // public: a boolean, or a function asked when each file is picked
 //   host.append(att.show(item.files))            // nothing for none
 export async function start(ctx) {
@@ -83,7 +84,9 @@ export async function start(ctx) {
     }
   }
 
-  function picker({ space = null, public: pub = false, from = null } = {}) {
+  // `media`: a video or an audio goes through the media pipeline (`video-studio`: streamed, its poster or album cover,
+  // its length, its video id — what its subtitles, lyrics and transcripts are found by), as in Videos and Audio.
+  function picker({ space = null, public: pub = false, from = null, media = false } = {}) {
     const input = h("input", { type: "file", multiple: true, hidden: true });
     const chips = h("span", { className: "cw-att-pick" });
     // 📎: this device, or Drive.
@@ -95,6 +98,8 @@ export async function start(ctx) {
     const items = []; // { file, ref, busy, error, chip }
     const changed = [];
     const tell = () => changed.forEach(f => f());
+    const readied = []; // told each file once it is ready: (ref, the File it came from, or null from Drive)
+    const told = (ref, file) => readied.forEach(f => f(ref, file));
     input.onchange = () => {
       for (const file of input.files) add(file);
       input.value = "";
@@ -134,13 +139,14 @@ export async function start(ctx) {
       const pubNow = typeof pub === "function" ? !!pub() : pub;
       files.adopt(ref, space, { app: from?.app ?? null, pub: pubNow }).then(ready, e => ctx.log("attachments", { what: `${ref.name}: ${e.message ?? e}` }));
     }
-    function ready(ref) {
+    function ready(ref, { quiet = false } = {}) {
       if (items.some(i => i.ref && (i.ref.root ?? i.ref.inline) === (ref.root ?? ref.inline))) return;
       const it = { file: null, ref, busy: false, error: null };
       it.chip = h("span", { className: "cw-att-chip" }, h("span", { className: "n", textContent: ref.name, title: ref.name }), h("span", { className: "p", textContent: sizeOf(ref.size) }), h("button", { type: "button", title: "Remove", textContent: "✕", onclick: () => (items.splice(items.indexOf(it), 1), it.chip.remove(), tell()) }));
       chips.append(it.chip);
       items.push(it);
       tell();
+      if (!quiet) told(ref, null);
     }
     function add(file) {
       const it = { file, ref: null, busy: true, error: null };
@@ -150,10 +156,21 @@ export async function start(ctx) {
       items.push(it);
       tell();
       (async () => {
-        const preview = isImage(file) ? await thumbnail(file) : null;
+        if (media && /^(video|audio)\//.test(file.type)) {
+          const studio = await ctx.require("video-studio");
+          const ref = await studio.make(file, { space, public: typeof pub === "function" ? !!pub() : pub, onProgress: e => (pct.textContent = `${e.stage} ${Math.round((e.p || 0) * 100)}%`) });
+          it.ref = { ...ref, name: file.name };
+          pct.textContent = sizeOf(file.size);
+          told(it.ref, file);
+          return;
+        }
+        // A COVER to show before anything plays: an image's thumbnail, a video's poster frame (and its length).
+        const vm = /^video\//.test(file.type) ? await (await ctx.require("video-player")).meta(file).catch(() => null) : null;
+        const preview = isImage(file) ? await thumbnail(file) : vm?.poster ?? null;
         const ref = await drive.upload(file, { space, from, public: typeof pub === "function" ? !!pub() : pub, onProgress: e => (pct.textContent = e.phase === "reading" ? "reading…" : `${Math.round((100 * e.done) / e.size)}%`) });
-        it.ref = preview ? { ...ref, preview } : ref;
+        it.ref = { ...ref, ...(preview ? { preview } : {}), ...(vm?.duration ? { duration: vm.duration } : {}) };
         pct.textContent = sizeOf(file.size);
+        told(it.ref, file);
       })()
         .catch(e => {
           it.error = e.message ?? String(e);
@@ -170,6 +187,11 @@ export async function start(ctx) {
       failed: () => items.some(i => i.error),
       clear: () => (items.splice(0), chips.replaceChildren(), tell()),
       onChange: f => changed.push(f),
+      // Files sent from elsewhere (the editor's 🖼); files already on the item (an edit: listed, nothing sent again);
+      // told when each file is ready.
+      addFiles: list => list.forEach(add),
+      preset: refs => (refs ?? []).forEach(r => ready(r, { quiet: true })),
+      onReady: f => readied.push(f),
     };
   }
 

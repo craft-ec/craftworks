@@ -23,7 +23,7 @@
 //                                                     // view: the boards of every space this person is in, their own
 //                                                     // profile, those they follow and their friends'); sort "hot" | "new" | "top"
 //   await posts.get(ref)   await posts.thread(ref)    // one post; its comments as a tree (`replies`), best first
-//   await posts.comment(post, re, body)   await posts.vote(ref, 1 | -1 | 0, post)   await posts.remove(ref)
+//   await posts.comment(post, re, body, { files })   await posts.vote(ref, 1 | -1 | 0, post)   await posts.remove(ref)
 //   await posts.syncPublic()      // this person's items on each board, public exactly while the board reads in public
 //   await posts.boards()                             // the spaces this person is in: their boards
 //   await posts.boardOf(ref | id)                    // the space a board post or board id is in (null: a profile's)
@@ -459,17 +459,17 @@ export async function start(ctx) {
     pointed.add(ref);
   }
 
-  async function comment(post, re, body) {
+  async function comment(post, re, body, { files = [] } = {}) {
     body = String(body ?? "").trim();
-    if (!body) throw new Error("a comment needs something in it");
+    if (!body && !files.length) throw new Error("a comment needs something in it");
     if (post.startsWith("space:")) {
       const sp = await boardOf(post);
       if (!sp) throw new Error("you are not in that board's space");
-      await (await boardRoom(sp)).post("comment", body, { re: idOf(re ?? post), in: idOf(post) });
+      await (await boardRoom(sp)).post("comment", body, { re: idOf(re ?? post), in: idOf(post), files });
       return;
     }
     const mine = await profileRoom(await me());
-    await mine.post("comment", body, { re: re ?? post, in: post });
+    await mine.post("comment", body, { re: re ?? post, in: post, files });
     // On a private post: private too, and no pointer anywhere.
     if (!mine.isPrivate?.(post)) await pointTo(post);
   }

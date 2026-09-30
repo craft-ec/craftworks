@@ -184,6 +184,15 @@ time (to disk for large files) and resume by generation.
 dedups it); any other file's from its content and its SPACE's dedup salt (a secret in the space's sealed table; the
 account is the personal space) — members' uploads dedup, and nobody outside can test whether a file is in it.
 
+**Text and media inline.** What a person writes at length (a post, a comment) is MARKDOWN (`markdown`, Grid's
+renderer: the source escaped first, so the only markup is the rules'). A file is written where it shows —
+`![name](file:KEY)`, KEY naming one of the ITEM's own files (its id; a small inline file: a hash of its bytes) — so a
+file shows only to who reads the item. An image shows its preview, then loads once in view; a video or an audio shows a
+COVER (its poster or album cover, ▶, its length) and loads only when played. Video and audio written inline go through
+the media pipeline (`video-studio`: streamed, a cover, a video id), so their subtitles, lyrics and transcripts are found
+by that id (`subtitle-store.forFile`) as in Videos and Audio. The editor (`md-editor`): a toolbar, a preview, 🖼 media
+inline, growing with its text; posts and comments are edited in place by their authors.
+
 **Access.** A file belongs to a SPACE (the account: the personal space), and its current key has ONE owner: the row
 `k/<id>` of the space's table `files` — `{ key, root, b (its burn hash), x (its burn secret), h (the content's
 hash), pub, app, n (the salt it is keyed under; -1: public) }`, sealed like every row with the space's newest epoch. A reference names the file by `id` (its

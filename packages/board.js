@@ -14,7 +14,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [posts, directory, person, theme, space, roles, appSettings, attachments] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "app-settings", "attachments"].map(n => ctx.require(n)));
+  const [posts, directory, person, theme, space, roles, appSettings, attachments, markdown, mdEditor] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "app-settings", "attachments", "markdown", "md-editor"].map(n => ctx.require(n)));
   const me = (await space.account()).id;
   // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.
   const bar = (await ctx.require("feed-bar")).create({ start: "hot", onChange: () => draw() });
@@ -92,8 +92,8 @@ export async function mount(ctx, el) {
       .bd .meta .b { color: var(--cw-fg); font-weight: 700; }
       .bd .meta .b:hover, .bd .meta .by:hover { text-decoration: underline; cursor: pointer; }
       .bd .post h3 { margin: 0; font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
-      .bd .post .text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; margin: 0; font-size: var(--cw-text-sm); }
-      .bd .post.link .text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: var(--cw-muted); }
+      .bd .post .text { overflow-wrap: anywhere; line-height: 1.5; margin: 0; font-size: var(--cw-text-sm); }
+      .bd .post.link .text { color: var(--cw-muted); }
       .bd .acts { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; }
       .bd .acts button { border: 0; background: none; color: var(--cw-muted); font-size: var(--cw-text-xs); font-weight: 600; padding: 4px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
       .bd .acts button:hover { background: var(--cw-hover); color: var(--cw-fg); }
@@ -108,7 +108,8 @@ export async function mount(ctx, el) {
       .bd .c > .rail::before { content: ""; width: 2px; background: var(--cw-line); border-radius: 1px; }
       .bd .c > .rail:hover::before { background: var(--cw-accent); }
       .bd .c > .body { display: grid; gap: 4px; min-width: 0; }
-      .bd .c .text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; margin: 0; }
+      .bd .c .text { overflow-wrap: anywhere; line-height: 1.5; margin: 0; }
+      .bd .post.link .text .preview { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 0; }
       .bd .c .kids { display: grid; gap: var(--cw-space-2); margin-top: var(--cw-space-1); }
       .bd .c.folded .text, .bd .c.folded .acts, .bd .c.folded .kids, .bd .c.folded form { display: none; }
       .bd .c .fold { border: 0; background: none; color: var(--cw-muted); font-size: var(--cw-text-xs); padding: 0; }
@@ -165,6 +166,39 @@ export async function mount(ctx, el) {
   }
 
   // A POST: in a list (a link to its page, the text cut short) or on its own page.
+  // WHAT SOMEONE WROTE, as Markdown (`markdown`): its images, videos and audio where they were written; the item's
+  // other files below it, as attachments.
+  // In a LIST: a plain preview and the files' thumbnails (a list never plays anything).
+  const bodyOf = (it, full = true) =>
+    full
+      ? h("div", { className: "text" }, it.body ? markdown.render(it.body, it.files) : null, attachments.show((it.files ?? []).filter(f => !markdown.inlined(it.body).has(markdown.keyOf(f)))))
+      : h("div", { className: "text" }, it.body ? h("p", { className: "preview", textContent: markdown.plain(it.body) }) : null, attachments.show(it.files));
+  // WHERE an item's files are kept: its board's space (public while the board reads in public), or the profile
+  // (public unless the post is only its author's).
+  const placeOf = async it => ({ sp: it.board ? await posts.boardOf(it.board.id) : threadAt.sp, pub: it.board ? !!it.pub : threadAt.sp ? threadAt.pub : !it.private && threadAt.pub !== false });
+  // The EDITOR for a post or a comment (`md-editor`, with its files: kept, others added).
+  function editorFor({ value = "", files = [], sp = null, pub = false, placeholder = "", label = "" } = {}) {
+    const pick = attachments.picker({ space: sp, from: { app: "board" }, public: () => pub, media: true });
+    pick.preset(files);
+    return mdEditor.create({ value, pick, placeholder, label });
+  }
+  // EDIT one's own post or comment in place: its text and files; saved as a new version (shown "(edited)").
+  async function editIn(host, it, done) {
+    const at = await placeOf(it);
+    const ed = editorFor({ value: it.body ?? "", files: it.files ?? [], ...at, label: "Edit" });
+    const said = h("p", { className: "said", hidden: true });
+    const save = h("button", { type: "button", className: "go", textContent: "Save" });
+    save.onclick = async e => {
+      e.stopPropagation();
+      if (ed.busy()) return errorTo(said)(new Error("Still sending the files: a moment…"));
+      save.disabled = true;
+      await posts.editItem(it.ref, ed.value().trim(), { files: ed.files() }).then(done, errorTo(said));
+      save.disabled = false;
+    };
+    host.replaceChildren(h("div", { className: "reply", onclick: e => e.stopPropagation() }, ed.el, h("div", { className: "row" }, said, h("button", { type: "button", className: "ghost", textContent: "Cancel", onclick: e => (e.stopPropagation(), done()) }), save)));
+    ed.focus();
+  }
+
   function postCard(p, full = false) {
     const said = h("p", { className: "said", hidden: true });
     // A space's post opens in its space (the rail follows); a profile's in the personal space.
@@ -189,6 +223,7 @@ export async function mount(ctx, el) {
             h("button", { type: "button", textContent: "Flag author", onclick: e => (e.stopPropagation(), flag("person", p.by)) }),
           ]
         : []),
+      full && p.by === me && !discovering() ? h("button", { type: "button", textContent: "Edit", onclick: e => (e.stopPropagation(), editIn(body, p, () => draw())) }) : null,
       p.mayRemove
         ? h("button", {
             type: "button",
@@ -201,6 +236,7 @@ export async function mount(ctx, el) {
           })
         : null,
     );
+    const body = h("div", {}, bodyOf(p, full));
     return h(
       "article",
       { className: `post${full ? "" : " link"}`, onclick: full ? null : open },
@@ -210,8 +246,7 @@ export async function mount(ctx, el) {
         { className: "in" },
         h("div", { className: "meta" }, p.board ? boardLink(p.board) : h("span", { textContent: "profile" }), p.pub ? h("span", { textContent: "· 🌐 public" }) : null, p.private ? h("span", { textContent: "· 🔒 only you" }) : null, h("span", { textContent: "·" }), h("span", { textContent: "Posted by" }), who(p.by), h("time", { textContent: ago(p.at), title: new Date(p.at).toLocaleString() }), p.edited ? h("span", { textContent: "(edited)" }) : null),
         h("h3", { textContent: p.title }),
-        p.body ? h("p", { className: "text", textContent: p.body }) : null,
-        attachments.show(p.files),
+        body,
         acts,
         said,
       ),
@@ -238,18 +273,20 @@ export async function mount(ctx, el) {
         onclick: () => {
           if (replyAt.firstChild) return replyAt.replaceChildren();
           replyAt.replaceChildren(replyForm(post, c.ref, "Reply", again, () => replyAt.replaceChildren()));
-          replyAt.querySelector("textarea").focus();
+          replyAt.querySelector("textarea")?.focus();
         },
       }),
+      c.by === me ? h("button", { type: "button", textContent: "Edit", onclick: () => editIn(text, c, again) }) : null,
       c.mayRemove ? h("button", { type: "button", textContent: c.by === me ? "Delete" : "Remove", onclick: () => posts.remove(c.ref).then(again, errorTo(said)) }) : null,
     );
+    const text = h("div", {}, bodyOf(c));
     box.append(
       h("div", { className: "rail", title: "Fold", onclick: fold }),
       h(
         "div",
         { className: "body" },
         h("div", { className: "meta" }, who(c.by), h("time", { textContent: ago(c.at), title: new Date(c.at).toLocaleString() }), c.edited ? h("span", { textContent: "(edited)" }) : null, h("button", { type: "button", className: "fold", textContent: count ? `[–] ${count} more` : "[–]", onclick: fold })),
-        h("p", { className: "text", textContent: c.body }),
+        text,
         acts,
         said,
         replyAt,
@@ -260,20 +297,22 @@ export async function mount(ctx, el) {
   }
   function replyForm(post, re, label, again, cancel = null) {
     const said = h("p", { className: "said", hidden: true });
+    const ed = editorFor({ sp: threadAt.sp, pub: threadAt.pub, placeholder: re === post ? "What are your thoughts?" : "Write a reply", label });
     const f = h(
       "form",
       { className: "reply" },
-      h("textarea", { name: "body", placeholder: re === post ? "What are your thoughts?" : "Write a reply", ariaLabel: label }),
+      ed.el,
       h("div", { className: "row" }, said, cancel ? h("button", { type: "button", className: "ghost", textContent: "Cancel", onclick: cancel }) : null, h("button", { className: "go", textContent: label })),
     );
     f.onsubmit = async e => {
       e.preventDefault();
       said.hidden = true;
       const btn = f.querySelector("button.go");
+      if (ed.busy()) return errorTo(said)(new Error("Still sending the files: a moment…"));
       btn.disabled = true;
       try {
-        await posts.comment(post, re, f.elements.body.value);
-        f.elements.body.value = "";
+        await posts.comment(post, re, ed.value(), { files: ed.files() });
+        ed.clear();
         await again();
       } catch (err) {
         errorTo(said)(err);
@@ -394,6 +433,7 @@ export async function mount(ctx, el) {
   // A public space's description (Discover): from the public list.
   const descOf = async id => (await posts.publicSpaces()).find(d => d.id === id) ?? null;
   let shownPost = null;
+  let threadAt = { sp: null, pub: true }; // the thread shown: where its comments' files are kept
   async function postPage(ref) {
     const w = where();
     const outside = w.pub ? await descOf(w.pub) : null;
@@ -409,6 +449,8 @@ export async function mount(ctx, el) {
     // From outside (Discover): read only — members comment.
     // Who may comment here: the space's policy (a profile's: open).
     const sp = !outside && p.board ? await posts.boardOf(p.board.id) : null;
+    // Where the thread's files go: the post's space (public as the post is), or the profile (public unless private).
+    threadAt = { sp, pub: sp ? !!p.pub : !p.private };
     const mayComment = !sp || (await roles.of(sp)).allows("comment", me, "board");
     return [
       postCard(p, true),
@@ -427,7 +469,8 @@ export async function mount(ctx, el) {
     // FILES on the post: public where the post is (a public board, a public profile post: keyed by their content, the
     // whole network dedups them), else sealed for the space (or you) — asked as each is picked.
     const spRoles = sp ? await roles.of(sp) : null;
-    const pick = attachments.picker({ space: sp, from: { app: "board" }, public: () => (sp ? spRoles.policy("board", "read") === "anyone" : f.elements.audience?.value !== "private") });
+    const pick = attachments.picker({ space: sp, from: { app: "board" }, media: true, public: () => (sp ? spRoles.policy("board", "read") === "anyone" : f.elements.audience?.value !== "private") });
+    const ed = mdEditor.create({ pick, label: "Text" });
     const f = h(
       "form",
       { className: "panel reply" },
@@ -442,8 +485,8 @@ export async function mount(ctx, el) {
             h("select", { className: "field", name: "audience" }, h("option", { value: "public", textContent: "🌐 Everyone (public, your followers read it)" }), h("option", { value: "private", textContent: "🔒 Only you" })),
           ),
       h("label", {}, "Title", h("input", { className: "field", name: "title", maxLength: 300, autocomplete: "off", required: true })),
-      h("label", {}, "Text (optional)", h("textarea", { name: "body" })),
-      pick.el,
+      h("label", {}, "Text (optional) — Markdown; 🖼 puts an image, a video or an audio where you write it"),
+      ed.el,
       h("div", { className: "row" }, said, h("button", { className: "go", textContent: "Post" })),
     );
     f.onsubmit = async e => {
@@ -453,7 +496,7 @@ export async function mount(ctx, el) {
       if (pick.busy()) return errorTo(said)(new Error("Still sending the files: a moment…"));
       btn.disabled = true;
       try {
-        const ref = await posts.submit({ board: sp?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, private: f.elements.audience?.value === "private", files: pick.files() });
+        const ref = await posts.submit({ board: sp?.id ?? null, title: f.elements.title.value, body: ed.value(), private: f.elements.audience?.value === "private", files: pick.files() });
         location.hash = `${base()}/p/${ref}`;
       } catch (err) {
         errorTo(said)(err);

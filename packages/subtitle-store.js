@@ -15,6 +15,7 @@
 //   await subs.update(ref, { lang, label, text })  await subs.remove(ref)
 //   await subs.text(sub)   subs.toSrt(vttText)      // its WebVTT; the same as SRT
 //   await subs.mine()                              // this person's subtitles, everywhere they are (the app's list)
+//   await subs.forFile(fileRef)                     // a media FILE's tracks (inline in a post): [{ label, lang, text }]
 export async function start(ctx) {
   const [items, files, space] = await Promise.all(["items", "files", "space"].map(n => ctx.require(n)));
   const KIND = "subtitle";
@@ -93,6 +94,28 @@ export async function start(ctx) {
     const seen = new Set();
     return [...withIt, ...elsewhere].filter(t => !seen.has(t.ref) && seen.add(t.ref)).sort((a, b) => a.at - b.at);
   }
+  // A FILE's tracks (a video or an audio written inline in a post): found by its video id — its manifest's `vid` —
+  // in the places this person reads (as `of` finds tracks made elsewhere), made after the file was; an audio with none
+  // shows the lyrics its tags carried. `[{ label, lang, text }]` (WebVTT).
+  async function forFile(ref) {
+    if (ref?.type !== "application/vnd.craftworks.video+json") return [];
+    const m = JSON.parse(await (await files.get(ref)).text());
+    const out = [];
+    if (m.vid) {
+      const roles = await ctx.require("roles");
+      const teams = [];
+      for (const s of (await space.mine()).filter(x => x.kind === "server")) if ((await roles.of(s).catch(() => null))?.apps().includes("subtitles")) teams.push(s);
+      const me = (await space.account()).id;
+      const after = m.at ? `t${Math.floor(m.at).toString(36).padStart(9, "0")}` : null;
+      const found = (await items.inPlaces({ spaces: teams, people: [me, ...(await items.following())] }, KIND, { after }).catch(() => [])).map(shape).filter(t => t.for === m.vid);
+      for (const t of found) {
+        const text = await (async () => toVtt(await (await files.get(t.file)).text()))().catch(() => null);
+        if (text) out.push({ label: t.label || t.lang, lang: t.lang, text });
+      }
+    }
+    if (!out.length && m.tags?.lyrics) out.push({ label: "Lyrics", lang: "", text: `WEBVTT\n\n00:00:00.000 --> ${new Date(Math.max(1, m.duration || 3600) * 1000).toISOString().slice(11, 23)}\n${String(m.tags.lyrics).trim()}\n` });
+    return out;
+  }
   async function store(where, vtt, name) {
     // Never inline: a long film's cues outgrow a row.
     return files.put(new File([vtt], name, { type: "text/vtt" }), { space: where.sp, public: where.pub, app: "subtitles", inline: false });
@@ -123,5 +146,5 @@ export async function start(ctx) {
     const me = (await space.account()).id;
     return (await items.list({ by: me }, sort, KIND, options)).map(shape);
   }
-  return { of, add, update, remove, text, toSrt, toVtt, mine, videoId, KIND };
+  return { of, forFile, add, update, remove, text, toSrt, toVtt, mine, videoId, KIND };
 }
