@@ -85,7 +85,7 @@ export async function mount(ctx, el) {
       h("p", { className: "s", textContent: "Every subtitle, lyrics or transcript track you made, on any video or audio. Add one from its page." }),
       bar.el(),
       list.length ? h("ul", {}, ...(await Promise.all(list.map(row)))) : h("p", { className: "none", textContent: `None ${bar.span()}.` }),
-      bar.older(),
+      bar.older("Older", list.length),
     );
   }
 

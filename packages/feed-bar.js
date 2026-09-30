@@ -8,7 +8,9 @@
 //   host.append(bar.el())                         // the controls (drawn again with each list)
 //   await items.list(where, bar.sort(), kind, bar.options())   // the feed and its window
 //   bar.reorder(list)                              // the shown set in the chosen sort
-//   bar.older()                                    // New: a button (and scroll trigger) reaching a month further back
+//   bar.older(label, shown)                        // New: a button reaching a month further back — and, while the last
+//                                                  // month added items (`shown`: how many are listed), its end in view
+//                                                  // reaches further on its own; an empty or stalled list waits for a click
 //   bar.span()                                     // words for the window ("this week", "in the last 30 days")
 export async function start() {
   const h = (tag, props = {}, ...kids) => {
@@ -27,7 +29,7 @@ export async function start() {
   document.head.append(style);
 
   function create({ onChange = () => {}, start = "new" } = {}) {
-    const st = { sort: start, window: "week", by: "votes", reorder: "ranked", desc: true, months: 1 };
+    const st = { sort: start, window: "week", by: "votes", reorder: "ranked", desc: true, months: 1, counts: [] };
     const changed = () => onChange(st);
     const pick = (options, value, set) => h("select", { onchange: e => (set(e.target.value), changed()) }, ...options.map(([v, t]) => h("option", { value: v, textContent: t, selected: v === value })));
     return {
@@ -39,7 +41,7 @@ export async function start() {
           "div",
           { className: "cw-feedbar" },
           h("span", { className: "lbl", textContent: "feed" }),
-          pick([["new", "✨ New"], ["hot", "🔥 Hot"], ["best", "👍 Best"], ["rising", "📈 Rising"], ["top", "🏆 Top"]], st.sort, v => ((st.sort = v), (st.months = 1))),
+          pick([["new", "✨ New"], ["hot", "🔥 Hot"], ["best", "👍 Best"], ["rising", "📈 Rising"], ["top", "🏆 Top"]], st.sort, v => ((st.sort = v), (st.months = 1), (st.counts = []))),
           st.sort === "new" ? null : pick([["day", "Today"], ["week", "This week"], ["month", "This month"]], st.window, v => (st.window = v)),
           st.sort === "top" ? pick([["votes", "Top votes"], ["comments", "Top comments"]], st.by, v => (st.by = v)) : null,
           h("span", { className: "lbl", textContent: "sort" }),
@@ -51,11 +53,15 @@ export async function start() {
         const key = { time: p => p.at, votes: p => p.score ?? 0, comments: p => p.comments ?? 0 }[st.reorder];
         return [...list].sort((a, b) => (st.desc ? key(b) - key(a) : key(a) - key(b)) || b.at - a.at);
       },
-      // NEW reaches a month further back — on a click, or as the end comes into view.
-      older: (label = "Older") => {
+      // NEW reaches a month further back — on a click, or as the end comes into view, but only while reaching back
+      // still finds items (the month before added some): an empty list, or one a month added nothing to, would
+      // otherwise reach back forever on its own.
+      older: (label = "Older", shown = 0) => {
         if (st.sort !== "new") return null;
+        st.counts[st.months] = shown;
         const b = h("button", { type: "button", className: "cw-feedbar-older", textContent: label, onclick: () => ((st.months += 1), changed()) });
-        new IntersectionObserver((es, io) => es.some(e => e.isIntersecting) && (io.disconnect(), b.click()), { rootMargin: "300px" }).observe(b);
+        const grew = shown > 0 && shown > (st.counts[st.months - 1] ?? 0);
+        if (grew) new IntersectionObserver((es, io) => es.some(e => e.isIntersecting) && (io.disconnect(), b.click()), { rootMargin: "300px" }).observe(b);
         return b;
       },
       span: () => (st.sort === "new" ? `in the last ${30 * st.months} days` : { day: "today", week: "this week", month: "this month" }[st.window]),

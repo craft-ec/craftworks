@@ -374,9 +374,9 @@ export async function mount(ctx, el) {
 
   async function listPage(w) {
     const outside = w.pub ? await descOf(w.pub) : null;
-    const older = bar.older("Older posts");
     const span = bar.span();
     const list = bar.reorder(await posts.list(w.discover ? { discover: true } : outside ? { outside } : w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, bar.sort(), "post", bar.options()));
+    const older = bar.older("Older posts", list.length);
     if (w.discover || w.pub) {
       const head = h("div", { className: "panel banner" }, h("h2", { textContent: w.pub ? `b/${outside ? space.shown(outside) : "?"} · 🌐 public` : "🧭 Public boards" }));
       return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: `No public posts ${span}.` })]), older];

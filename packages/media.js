@@ -170,7 +170,7 @@ export async function mount(ctx, el) {
     const shown = only ? vs.filter(v => v.kind === only) : vs;
     const when = bar.span();
     const none = w.saved ? `Nothing saved: “Save” on a ${C.one} keeps it here.` : w.feed ? `No ${C.ones} ${when} from you or what you follow.` : w.discover ? `No public ${C.ones} ${when}.` : w.by === me ? `Nothing ${when}: upload a ${C.one}.` : `No ${C.ones} ${when}.`;
-    const older = w.saved ? null : bar.older();
+    const older = w.saved ? null : bar.older("Older", shown.length);
     return shown.length ? h("div", {}, h("div", { className: `grid${C.audio ? " sq" : ""}` }, ...shown.map(card)), older) : h("div", {}, h("p", { className: "none", textContent: none }), older);
   }
 
