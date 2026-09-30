@@ -11,6 +11,7 @@ export async function mount(ctx, el) {
     return;
   }
   const [posts, directory, person, theme, space, roles, drive, player, kinds, edge] = await Promise.all(["posts", "directory", "person", "theme", "space", "roles", "drive-store", "video-player", "kinds", "edge"].map(n => ctx.require(n)));
+  const [studio, files] = await Promise.all(["video-studio", "files"].map(n => ctx.require(n)));
   const [pins, people] = await Promise.all([edge.pins(), edge.people()]);
   const VIDEO = kinds.inDomain("video");
   const me = (await space.account()).id;
@@ -48,6 +49,12 @@ export async function mount(ctx, el) {
       .vd form { display: grid; gap: var(--cw-space-2); max-width: 640px; }
       .vd input, .vd textarea, .vd select { font: inherit; padding: 6px 8px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); }
       .vd .said { color: var(--cw-danger); margin: 0; }
+      .vd .scrub { position: relative; height: 10px; background: var(--cw-hover); border-radius: 5px; cursor: pointer; }
+      .vd .scrub .done { position: absolute; inset: 0 auto 0 0; background: var(--cw-accent); border-radius: 5px; pointer-events: none; }
+      .vd .scrub .tip { position: absolute; bottom: 16px; transform: translateX(-50%); border: 2px solid #fff; border-radius: 6px; box-shadow: var(--cw-shadow-lg);
+        background-repeat: no-repeat; pointer-events: none; display: none; }
+      .vd .scrub .tip span { position: absolute; bottom: 2px; left: 0; right: 0; text-align: center; color: #fff; font-size: 11px; text-shadow: 0 0 3px #000; }
+      .vd .level { font-size: var(--cw-text-xs); color: var(--cw-muted); }
     </style>
     <div class="vd"></div>`;
   const root = el.querySelector(".vd");
@@ -93,7 +100,7 @@ export async function mount(ctx, el) {
     directory.name(did).then(t => (n.textContent = t), () => {});
     return n;
   };
-  const fileOf = v => v.files?.find(f => /^video\//.test(f.type ?? "")) ?? v.files?.[0] ?? null;
+  const fileOf = v => v.files?.find(f => f.type === studio.MANIFEST || /^video\//.test(f.type ?? "")) ?? v.files?.[0] ?? null;
 
   let spaceName = null;
   function top(w) {
@@ -141,6 +148,7 @@ export async function mount(ctx, el) {
     if (!v) return h("p", { className: "none", textContent: "This video is not here (removed, or not shared with you)." });
     const f = fileOf(v);
     const note = h("span", { className: "s" });
+    const level = h("span", { className: "level" });
     const video = h("video", { controls: true, playsInline: true, poster: f?.preview ?? "" });
     const like = h("button", { type: "button", className: v.mine === 1 ? "on" : "", disabled: !!outside, title: outside ? "Join to like" : "", textContent: `▲ ${v.score ?? 0}`, onclick: async () => ((like.disabled = true), await posts.vote(ref, v.mine === 1 ? 0 : 1).catch(() => {}), draw()) });
     const saved = () => pins.has(SAVED(ref));
@@ -173,8 +181,35 @@ export async function mount(ctx, el) {
       outside ? null : form,
       comments,
     );
+    // THE SCRUB BAR: the video's strip of frames, shown where the pointer is; a click seeks.
+    const scrub = h("div", { className: "scrub" });
+    const doneBar = h("div", { className: "done" });
+    const tip = h("div", { className: "tip" }, h("span"));
+    scrub.append(doneBar, tip);
+    video.addEventListener("timeupdate", () => video.duration && (doneBar.style.width = `${(100 * video.currentTime) / video.duration}%`));
+    const tAt = e => Math.max(0, Math.min(1, (e.clientX - scrub.getBoundingClientRect().left) / scrub.clientWidth)) * (video.duration || f?.duration || 0);
+    scrub.onclick = e => (video.currentTime = tAt(e));
+    const scrubStrip = async () => {
+      if (f?.type !== studio.MANIFEST) return;
+      const m = await player.manifest(f);
+      if (!m.strip) return;
+      const url = URL.createObjectURL(await files.get(m.strip.ref));
+      const st = m.strip;
+      Object.assign(tip.style, { width: `${st.w}px`, height: `${st.h}px`, backgroundImage: `url(${url})` });
+      scrub.onmousemove = e => {
+        const t = tAt(e);
+        const i = Math.min(st.n - 1, Math.floor(t / st.every));
+        tip.style.display = "block";
+        tip.style.left = `${e.clientX - scrub.getBoundingClientRect().left}px`;
+        tip.style.backgroundPosition = `-${(i % st.cols) * st.w}px -${Math.floor(i / st.cols) * st.h}px`;
+        tip.firstChild.textContent = clock(t);
+      };
+      scrub.onmouseleave = () => (tip.style.display = "none");
+    };
+    out.insertBefore(h("div", {}, scrub, level), note);
     queueMicrotask(() => {
-      if (f) player.play(video, f, { onNote: t => (note.textContent = t) }).catch(e => (note.textContent = e.message ?? String(e)));
+      if (f) player.play(video, f, { onNote: t => (note.textContent = t), onLevel: l => (level.textContent = l) }).catch(e => (note.textContent = e.message ?? String(e)));
+      scrubStrip().catch(() => {});
       drawComments();
     });
     return out;
@@ -193,6 +228,7 @@ export async function mount(ctx, el) {
       "form",
       {},
       h("input", { type: "file", name: "file", accept: "video/*", required: true }),
+      h("label", { className: "s" }, "Subtitles (.vtt or .srt, optional) ", h("input", { type: "file", name: "subs", accept: ".vtt,.srt,text/vtt", multiple: true })),
       h("input", { name: "title", placeholder: "Title", required: true, maxLength: 300 }),
       h("textarea", { name: "body", rows: 4, placeholder: "Description" }),
       h("label", { className: "s" }, "What it is ", kindSel),
@@ -210,10 +246,17 @@ export async function mount(ctx, el) {
       btn.disabled = true;
       try {
         progress.textContent = "Reading the video…";
-        const m = await player.meta(file);
         const pub = inSpace ? (await roles.of(inSpace)).policy("board", "read") === "anyone" : f.elements.audience.value !== "private";
-        const up = await drive.upload(file, { space: inSpace, public: pub, from: { app: "videos" }, onProgress: p => (progress.textContent = p.phase === "reading" ? "Reading…" : `Uploading ${Math.round((100 * p.done) / Math.max(1, p.size))}%`) });
-        const ref = { ...up, ...(m.poster ? { preview: m.poster } : {}), ...(m.duration ? { duration: m.duration } : {}) };
+        // MADE READY TO STREAM (renditions, strip, subtitles, a manifest); a browser that cannot encode sends the file as it is.
+        const ref = await studio
+          .make(file, { space: inSpace, public: pub, subtitles: [...(f.elements.subs.files ?? [])], onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`) })
+          .catch(async err => {
+            ctx.log("videos", { what: `not encoded here (${err.message ?? err}): the file as it is` });
+            const m = await player.meta(file);
+            const up = await files.put(file, { space: inSpace, public: pub, app: "videos", onProgress: p => (progress.textContent = `Uploading ${Math.round((100 * p.done) / Math.max(1, p.size))}%`) });
+            return { ...up, ...(m.poster ? { preview: m.poster } : {}), ...(m.duration ? { duration: m.duration } : {}) };
+          });
+        await drive.add(ref, { space: inSpace, from: { app: "videos" } }).catch(() => {});
         const meta = Object.fromEntries(kinds.of(kindSel.value).fields.map(x => [x, String(f.elements[`meta.${x}`]?.value ?? "").trim()]).filter(([, v]) => v));
         const posted = await posts.submit({ board: inSpace?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, kind: kindSel.value, meta, private: !inSpace && !pub, files: [ref] });
         location.hash = `${base()}/w/${encodeURIComponent(posted)}`;

@@ -349,7 +349,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 67] = [
+    let packages: [(&str, &str, PathBuf); 69] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -414,6 +414,7 @@ async fn main() -> Result<()> {
         ("drive", "module", app.join("packages/drive.js")),
         ("kinds", "service", app.join("packages/kinds.js")),
         ("video-player", "service", app.join("packages/video-player.js")),
+        ("video-studio", "service", app.join("packages/video-studio.js")),
         ("videos", "module", app.join("packages/videos.js")),
         ("app-settings", "service", app.join("packages/app-settings.js")),
         ("space-home", "module", app.join("packages/space-home.js")),
@@ -429,6 +430,8 @@ async fn main() -> Result<()> {
         ("piece-wasm", "bytes", contracts.join("piece.wasm")),
         // mp4box.js (vendor/mp4box): run by `video-player` to stream an MP4 by range.
         ("mp4box", "bytes", app.join("vendor/mp4box/mp4box.all.min.js")),
+        // Mediabunny (vendor/mediabunny, MPL-2.0): run by `video-studio` to make a video's renditions.
+        ("mediabunny", "bytes", app.join("vendor/mediabunny/mediabunny.min.mjs")),
         ("bag-wasm", "bytes", contracts.join("bag.wasm")),
     ];
     let mut entries = Vec::new();

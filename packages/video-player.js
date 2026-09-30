@@ -4,8 +4,13 @@
 // Anything that does not stream (not an MP4, a codec this browser lacks, no MediaSource) is loaded WHOLE instead.
 // From the archived craftworks-video.js (the grid app's), fed by `files` here.
 //
+// A video made by `video-studio` is a MANIFEST: its renditions (fragmented MP4s, their fragments indexed by byte range
+// and time) played ADAPTIVELY — the codec family this browser plays smoothly (AV1, else H.264), the rendition switched
+// at fragment boundaries by the measured throughput, a seek going straight to the fragment holding that time.
+//
 //   const player = await ctx.require("video-player");
-//   await player.play(videoEl, ref, { onNote })   // "stream" | "whole"; videoEl in the document first
+//   await player.play(videoEl, ref, { onNote, onLevel })   // "adaptive" | "stream" | "whole"; videoEl in the document
+//   await player.manifest(ref)                              // a manifest's contents (its strip, subtitles, renditions)
 //   player.meta(file) -> { poster (a data URL), duration (s), width, height }   // at upload, from the file itself
 export async function start(ctx) {
   const files = await ctx.require("files");
@@ -150,8 +155,119 @@ export async function start(ctx) {
     return true;
   }
 
-  async function play(video, ref, { onNote = () => {} } = {}) {
+  const MANIFEST = "application/vnd.craftworks.video+json";
+  const manifests = new Map();
+  const manifest = ref => {
+    const k = ref.root ?? ref.inline?.slice(0, 64);
+    if (!manifests.has(k)) manifests.set(k, files.get(ref).then(b => b.text()).then(JSON.parse));
+    return manifests.get(k);
+  };
+
+  // ADAPTIVE: one SourceBuffer; fragments appended in order ahead of the playhead; the rendition picked per fragment.
+  async function adaptive(video, ref, { onNote, onLevel }) {
+    if (!canStream()) return false;
+    const m = await manifest(ref);
+    const smooth = async r =>
+      MediaSource.isTypeSupported(r.mime) &&
+      (await navigator.mediaCapabilities
+        ?.decodingInfo({ type: "media-source", video: { contentType: r.mime.replace(/, *mp4a[^"]*|, *opus/i, ""), width: r.width, height: r.height, bitrate: r.bitrate, framerate: 30 } })
+        .then(x => x.supported && x.smooth, () => true)) !== false;
+    const fam = async codec => {
+      const rs = m.renditions.filter(r => r.codec === codec).sort((a, b) => a.height - b.height);
+      const ok = [];
+      for (const r of rs) if (await smooth(r)) ok.push(r);
+      return ok;
+    };
+    const rs = (await fam("av1")).length ? await fam("av1") : await fam("avc");
+    if (!rs.length) return false;
+    const ms = new MediaSource();
+    video.src = URL.createObjectURL(ms);
+    await new Promise(r => ms.addEventListener("sourceopen", r, { once: true }));
+    try {
+      ms.duration = m.duration;
+    } catch {}
+    // Start at what the element shows (not above 720p before anything is measured).
+    const want = Math.min(720, (video.clientHeight || 360) * (devicePixelRatio || 1));
+    let level = Math.max(0, rs.findLastIndex(r => r.height <= want));
+    let sb = ms.addSourceBuffer(rs[level].mime);
+    const appended = buf => new Promise((ok, no) => ((sb.onupdateend = ok), (sb.onerror = no), sb.appendBuffer(buf)));
+    let initOf = -1;
+    let bps = 0; // measured throughput, bits/s (a moving average)
+    let next = 0; // the next fragment's time
+    let busy = false;
+    let done = false;
+    const segAt = (r, t) => Math.max(0, r.index.segments.findLastIndex(s => s.t <= t + 0.05));
+    const ahead = () => {
+      const b = video.buffered;
+      for (let i = 0; i < b.length; i++) if (video.currentTime >= b.start(i) - 0.3 && video.currentTime <= b.end(i)) return b.end(i) - video.currentTime;
+      return 0;
+    };
+    async function pump() {
+      if (busy || done || ms.readyState !== "open") return;
+      busy = true;
+      try {
+        while (!done && ahead() < 30) {
+          // THE LEVEL: the highest rendition whose bitrate fits under 3/4 of the throughput measured.
+          if (bps) {
+            const fit = rs.findLastIndex(r => r.bitrate < bps * 0.75);
+            level = Math.max(0, fit);
+          }
+          const r = rs[level];
+          if (initOf !== level) {
+            if (sb.updating) await new Promise(ok => (sb.onupdateend = ok));
+            if (initOf !== -1 && typeof sb.changeType === "function") sb.changeType(r.mime);
+            await appended(await files.range(r.ref, 0, r.index.init));
+            initOf = level;
+            onLevel?.(`${r.codec === "av1" ? "AV1" : "H.264"} ${r.height}p`);
+          }
+          const i = segAt(r, next);
+          const seg = r.index.segments[i];
+          const t0 = performance.now();
+          const bytes = await files.range(r.ref, seg.start, seg.end - seg.start);
+          const secs = Math.max(0.05, (performance.now() - t0) / 1000);
+          const rate = (bytes.byteLength * 8) / secs;
+          bps = bps ? 0.7 * bps + 0.3 * rate : rate;
+          await appended(bytes);
+          const after = r.index.segments[i + 1];
+          if (!after) {
+            done = true;
+            if (!sb.updating) ms.endOfStream();
+          } else next = after.t;
+        }
+      } catch (e) {
+        onNote(e.message ?? String(e));
+      } finally {
+        busy = false;
+      }
+    }
+    // A SEEK: go on from the fragment holding that time.
+    video.addEventListener("seeking", () => {
+      next = video.currentTime;
+      if (done && ms.readyState === "ended") return;
+      done = false;
+      pump();
+    });
+    const tick = setInterval(() => (video.isConnected ? pump() : clearInterval(tick)), 1000);
+    // SUBTITLES as tracks.
+    for (const s of m.subtitles ?? []) {
+      const text = await (await files.get(s.ref)).text().catch(() => null);
+      if (text) video.append(Object.assign(document.createElement("track"), { kind: "subtitles", label: s.label, srclang: s.lang || "und", src: URL.createObjectURL(new Blob([text], { type: "text/vtt" })) }));
+    }
+    await pump();
+    onNote("");
+    return true;
+  }
+
+  async function play(video, ref, { onNote = () => {}, onLevel = null } = {}) {
     onNote("Loading…");
+    if (ref.type === MANIFEST) {
+      if (await adaptive(video, ref, { onNote, onLevel }).catch(e => (onNote(e.message ?? String(e)), false))) return "adaptive";
+      // No MediaSource here: the lowest H.264 rendition whole.
+      const m = await manifest(ref);
+      const low = m.renditions.filter(r => r.codec === "avc").sort((a, b) => a.height - b.height)[0];
+      if (!low) throw new Error("this video has no rendition this browser plays");
+      ref = { ...low.ref, type: "video/mp4" };
+    }
     if (await stream(video, ref).catch(() => false)) {
       onNote("");
       return "stream";
@@ -185,5 +301,5 @@ export async function start(ctx) {
     }
   }
 
-  return { play, meta, canStream };
+  return { play, meta, canStream, manifest, MANIFEST };
 }
