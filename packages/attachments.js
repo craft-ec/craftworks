@@ -96,6 +96,10 @@ export async function start(ctx) {
       h("button", { type: "button", textContent: "From Drive", onclick: () => ((menu.hidden = true), fromDrive()) }),
     );
     const el = h("span", { className: "cw-att-pick" }, h("button", { type: "button", className: "clip", title: "Attach files", ariaLabel: "Attach files", textContent: "📎", onclick: () => (menu.hidden = !menu.hidden) }), menu, chips, input);
+    // The menu closes on a click anywhere outside it (and its 📎).
+    document.addEventListener("pointerdown", e => {
+      if (el.isConnected && !menu.hidden && !el.contains(e.target)) menu.hidden = true;
+    });
     const items = []; // { file, ref, busy, error, chip }
     const changed = [];
     const tell = () => changed.forEach(f => f());

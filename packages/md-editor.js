@@ -18,9 +18,9 @@ export async function start(ctx) {
       border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); background: var(--cw-surface); color: var(--cw-fg); }
     .cw-mde .bar button:hover, .cw-mde .bar button.on { border-color: var(--cw-accent); color: var(--cw-accent); }
     .cw-mde .bar .sp { flex: 1; }
-    .cw-mde .bar .menu { display: inline-flex; gap: 3px; }
-    .cw-mde .bar .menu button { font-weight: 400; }
-    .cw-mde textarea { font: inherit; width: 100%; box-sizing: border-box; min-height: 110px; resize: none; overflow-y: hidden; padding: var(--cw-space-2);
+    .cw-mde .bar .cw-att-menu button { border: 0; font-weight: 400; min-width: 0; font-size: inherit; width: 100%; text-align: left; padding: 6px 10px; white-space: nowrap; }
+    .cw-mde .bar .cw-att-menu button:hover { background: var(--cw-hover); color: var(--cw-fg); }
+    div.cw-mde > textarea { font: inherit; width: 100%; box-sizing: border-box; min-height: 110px; resize: none; overflow-y: hidden; padding: var(--cw-space-2);
       border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); background: var(--cw-surface); color: var(--cw-fg); }
     .cw-mde .prev { min-height: 110px; padding: var(--cw-space-2); border: 1px dashed var(--cw-line); border-radius: var(--cw-radius-sm); }
     .cw-mde .none { color: var(--cw-muted); }`;
@@ -85,7 +85,7 @@ export async function start(ctx) {
     // 🖼: from this device, or from Drive (the drives this person reads; taken in, it is read by the item's readers).
     const mediaMenu = h(
       "span",
-      { className: "menu", hidden: true },
+      { className: "cw-att-menu", hidden: true },
       h("button", { type: "button", textContent: "From this device", onclick: e => (e.preventDefault(), (mediaMenu.hidden = true), mediaIn.click()) }),
       h("button", { type: "button", textContent: "From Drive", onclick: e => (e.preventDefault(), (mediaMenu.hidden = true), pick?.fromDrive?.({ media: true })) }),
     );
@@ -120,13 +120,17 @@ export async function start(ctx) {
       btn("▦", "Table", () => insert("| Column | Column |\n| --- | --- |\n| | |")),
       btn("—", "Divider", () => insert("\n---\n")),
       // MEDIA and FILES side by side: 🖼 inline, 📎 attached below.
-      pick ? btn("🖼", "Image, video or audio (inline): from this device or from Drive", () => (mediaMenu.hidden = !mediaMenu.hidden)) : null,
-      mediaMenu,
+      pick ? h("span", { className: "cw-att-pick" }, btn("🖼", "Image, video or audio (inline): from this device or from Drive", () => (mediaMenu.hidden = !mediaMenu.hidden)), mediaMenu) : null,
       pick?.el ?? null,
       h("span", { className: "sp" }),
       pv,
     );
     const el = h("div", { className: "cw-mde" }, bar, ta, prev, mediaIn);
+    // A menu closes on a click anywhere outside it (and its button).
+    document.addEventListener("pointerdown", e => {
+      if (!el.isConnected) return;
+      if (!mediaMenu.hidden && !mediaMenu.parentElement.contains(e.target)) mediaMenu.hidden = true;
+    });
     return {
       el,
       textarea: ta,
