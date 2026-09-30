@@ -752,6 +752,15 @@ come with keepers as a new codec version.
       posts (public where the post is public) and Mail (sealed in the mail). LIVE on 17573: a 43 KB PNG on a profile
       post (inline, thumbnail, full view), a 300 KB file in a Chat channel (coded; downloaded byte-identical), a mail to
       self with a 300 KB file shown in Sent; no console errors.
+- [x] F4a VIDEOS app, the basic (owner 09-30: name "Videos"; basic first, commercial packaging later): upload (file
+      as is + poster + duration), a space's/your list, watch page streaming MP4 by byte range (MSE + mp4box.js from the
+      archived craftworks-video.js), whole-file fallback. gov APPS += videos.
+      Built as a LENS (owner: "maybe it is content kind?", "refer handcraft"): `kinds` = handcraft's layers (domain
+      derived ← kind with its fields ← context = tags ← bundle later); a video is a `posts` item of a video-domain kind
+      (video, movie, episode, music-video, short) with `meta`; Videos lists that domain, Board the posts. Channel-first
+      (owner: YouTube/TikTok have no spaces; spaces are a side effect). Likes = the post vote; subscribe = follow edge.
+      17573: 5.3 MB 720p H.264 uploaded as a Movie (year 2026), feed card with poster + 0:20, watch STREAMS by range
+      (mode stream), seek to 15 s plays to the end, like ▲ 1, comment shown, 0 console errors.
 - [ ] F4 video: CMAF segments, renditions (AV1+Opus, H.264+AAC), remux (mp4box) or WebCodecs encode, MediaSource ABR,
       poster + scrub strip, subtitles.
 - [x] F5a DRIVE (owner 09-30: every uploaded file is in Drive; attach from Drive; choose any space's Drive):

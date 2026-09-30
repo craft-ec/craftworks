@@ -204,6 +204,14 @@ the burn reaches nodes that already held the piece. Files from before burning (t
 files they uploaded (their page adopts them into their own space and copies them); what they saved before stays — as
 with any access control.
 
+**Video — the basic first (the VIDEOS app, owner 09-30).** A video is a FILE as uploaded, with a poster frame and its
+duration taken in the browser at upload. Like Board, in both places: YOUR videos (your channel — each public, on
+your profile, or only you) and a SPACE's (any space that adds the Videos app: its members', and public exactly while
+its `videos` app reads in public). A video is a row of the place's table `videos` (`{ ref, title, about, poster,
+duration, at }`, the file's reference as `files` makes it). Playing: an MP4 by BYTE RANGE — MediaSource fed by mp4box.js, which fragments
+it on the fly — the range read as the file's chunks (a seek reads only the chunks it lands in); any other container
+(or a browser without MediaSource) loads whole. What follows is where it goes once the basic works.
+
 **Video.** Stored as SEGMENTS (CMAF: fragmented MP4, 2–4 s each), each its own coded object, in RENDITIONS that each name
 their codec: AV1 + Opus first, H.264 + AAC for compatibility (a newer codec — AV2 when browsers decode it — is one more
 rendition). The upload remuxes in the browser when the codec already plays (mp4box), else encodes with WebCodecs

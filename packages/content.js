@@ -63,7 +63,8 @@ export async function start(ctx) {
     // Its PATH for access (a channel: `chat/<id>`; a board: `board`): the space's policies there say who may post,
     // comment and vote (inherited from the app and the space).
     const app = container.kind === "channel" ? `chat/${container.id.split("/").pop()}` : container.kind === "board" ? "board" : null;
-    const ACTION = { message: "post", post: "post", comment: "comment", reaction: "vote" };
+    // Anything that stands on its own (a post, a video, …: `kinds`) is posted; a comment commented; a reaction voted.
+    const ACTION = { message: "post", comment: "comment", reaction: "vote", ...Object.fromEntries((await ctx.require("kinds")).all().map(k => [k, "post"])) };
     const [r, m] = outside
       ? await ctx.require("roles").then(async x => {
           const pr = await x.ofPublic(container.scope);
@@ -90,6 +91,8 @@ export async function start(ctx) {
           emoji: typeof v.emoji === "string" ? v.emoji : null,
           // FILES on it: their references (`files`; shown by `attachments`).
           files: Array.isArray(v.files) ? v.files.filter(f => f && typeof f === "object").slice(0, 20) : [],
+          // Its kind's own FIELDS (`kinds`: a movie's year, an episode's season …).
+          meta: v.meta && typeof v.meta === "object" && !Array.isArray(v.meta) ? v.meta : {},
         };
       } catch {
         return null;
@@ -144,10 +147,10 @@ export async function start(ctx) {
       mayPost: () => !(governed && app) || r.allows("post", me, app),
       may: action => !(governed && app) || r.allows(action, me, app),
       postingRule: () => (governed && app ? r.policy(app, "post") : "members"),
-      async post(kind, body, { re = null, title = null, in: where = null, files = [] } = {}) {
+      async post(kind, body, { re = null, title = null, in: where = null, files = [], meta = null } = {}) {
         if (outside) throw new Error("only the space's members post here");
         const id = newId();
-        await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me, ...(re ? { re } : {}), ...(title ? { title } : {}), ...(where ? { in: where } : {}), ...(files.length ? { files } : {}) }));
+        await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me, ...(re ? { re } : {}), ...(title ? { title } : {}), ...(where ? { in: where } : {}), ...(files.length ? { files } : {}), ...(meta && Object.keys(meta).length ? { meta } : {}) }));
         return id;
       },
       // A REACTION: this person's, to one item, one emoji — its own row (the author in its key), put or taken back.

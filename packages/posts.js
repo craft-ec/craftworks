@@ -7,12 +7,16 @@
 // - A person's PROFILE: `content` in their own public tail `posts` (only their account writes it; anyone reads it) —
 //   what their FOLLOWERS see. A comment or a vote on someone's profile post is in the commenter's own tail, with a
 //   pointer (`{ from }`) in the post's public bag (`index`) so the post's readers find it.
-// A post is `content` of kind "post" (`title`); a comment of kind "comment" (`re`: what it answers, `in`: its post); a
-// vote a reaction ▲ or ▼. REFS: `space:<server id>/<id>` on a board, `<author did>/<id>` on a profile.
+// A post is `content` of kind "post" (`title`); a VIDEO the same, of kind "video" (its file, with its poster and
+// duration, in `files`: the Videos app lists these, Board the posts); a comment of kind "comment" (`re`: what it
+// answers, `in`: its post); a vote a reaction ▲ or ▼. REFS: `space:<server id>/<id>` on a board, `<author did>/<id>` on
+// a profile.
 //
 //   const posts = await ctx.require("posts");
-//   await posts.submit({ board, title, body })       // `board`: a space's id, or none (this person's profile): its ref
-//   await posts.list({ board } | { by } | { feed }, sort)   // a space's board, a profile, or the FEED (the PERSONAL
+//   await posts.submit({ board, title, body, kind })  // `board`: a space's id, or none (this person's profile): its ref
+//                                                     // (`kind`: "post", or "video")
+//   await posts.list({ board } | { by } | { feed }, sort, kind)   // (`kind`: a kind, or kinds — a domain's)
+//                                                     // a space's board, a profile, or the FEED (the PERSONAL
 //                                                     // view: the boards of every space this person is in, their own
 //                                                     // profile, those they follow and their friends'); sort "hot" | "new" | "top"
 //   await posts.get(ref)   await posts.thread(ref)    // one post; its comments as a tree (`replies`), best first
@@ -28,6 +32,11 @@ export async function start(ctx) {
   const TAIL = "posts";
   const UP = "▲";
   const DOWN = "▼";
+  // What stands on its own (a post, a video, a movie …: `kinds`): comments and votes answer these.
+  const kinds = await ctx.require("kinds");
+  const TOP = new Set(kinds.all());
+  // What a list shows: a kind, or KINDS (a domain's: `kinds.inDomain("video")` — videos, movies, episodes …).
+  const kindsFor = k => (Array.isArray(k) ? k : [k]);
   const changed = [];
   const fire = () => changed.forEach(f => f());
   const me = async () => (await space.account()).id;
@@ -145,7 +154,7 @@ export async function start(ctx) {
         onChange: f => (pub.onChange(f), priv.onChange(f)),
         settled: Promise.all([pub.settled, priv.settled]),
         isPrivate: ref => isPrivate(idIn(ref)),
-        post: (kind, body, opts = {}) => (kind === "post" ? (opts.private ? priv : pub) : roomOf(idIn(opts.in))).post(kind, body, opts),
+        post: (kind, body, opts = {}) => (TOP.has(kind) ? (opts.private ? priv : pub) : roomOf(idIn(opts.in))).post(kind, body, opts),
         react: (item, e, on) => roomOf(idIn(item)).react(item, e, on),
         remove: id => roomOf(id).remove(id),
         edit: (id, body) => roomOf(id).edit(id, body),
@@ -173,11 +182,11 @@ export async function start(ctx) {
   const postOf = c => c.in ?? c.re; // a comment's post (an old one answering its post directly has no `in`)
   const shape = (it, ref, board) => {
     const [first, ...rest] = it.body.split("\n"); // a post from before titles: its first line is its title
-    return { ref, id: it.id, by: it.by, title: it.title ?? first.slice(0, 300), body: it.title ? it.body : rest.join("\n").trim(), board, at: it.at, edited: it.edited, private: !!it.private, files: it.files ?? [] };
+    return { ref, id: it.id, kind: it.kind, by: it.by, title: it.title ?? first.slice(0, 300), body: it.title ? it.body : rest.join("\n").trim(), board, at: it.at, edited: it.edited, private: !!it.private, files: it.files ?? [], meta: it.meta ?? {} };
   };
 
   // A BOARD's posts: everything is in its one room (reactions keyed by the item's id).
-  async function boardPosts(sp, { outside = false } = {}) {
+  async function boardPosts(sp, { outside = false, kinds = ["post"] } = {}) {
     const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
     const self = await me();
     const items = r.list();
@@ -185,12 +194,12 @@ export async function start(ctx) {
     const counts = new Map();
     for (const it of items) if (it.kind === "comment") counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
     return items
-      .filter(it => it.kind === "post")
+      .filter(it => kinds.includes(it.kind))
       .map(it => ({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), pub: it.pub, comments: counts.get(it.id) ?? 0, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it) }));
   }
   // PROFILE posts: from their authors' tails; comments and votes from the tails known here (the reader's, whom they
   // follow, and whoever `readers` names).
-  async function profilePosts(authors, readers = []) {
+  async function profilePosts(authors, readers = [], kinds = ["post"]) {
     const self = await me();
     const rs = await profiles([...authors, self, ...(await following()), ...readers]);
     const votes = new Map();
@@ -202,7 +211,7 @@ export async function start(ctx) {
     const out = [];
     for (const r of await profiles(authors))
       for (const it of r.list()) {
-        if (it.kind !== "post") continue;
+        if (!kinds.includes(it.kind)) continue;
         const ref = `${it.by}/${it.id}`;
         out.push({ ...shape(it, ref, null), comments: counts.get(ref) ?? 0, ...scored(ref, votes, self), mayRemove: it.by === self });
       }
@@ -225,17 +234,18 @@ export async function start(ctx) {
     return [...seen.values()];
   }
 
-  async function list(where = {}, sort = "hot") {
+  async function list(where = {}, sort = "hot", kind = "post") {
+    const kinds = kindsFor(kind);
     let out;
     // A space's PUBLIC board, seen from outside (`where.outside`: its description); DISCOVER: every public space's.
-    if (where.outside) out = await boardPosts(where.outside, { outside: true });
+    if (where.outside) out = await boardPosts(where.outside, { outside: true, kinds });
     // DISCOVER: every public space's board, and the profile posts (public by being there) of the people shown in
     // Discover (each chose to be).
     else if (where.discover) {
       const people = await (await ctx.require("directory")).listed().catch(() => []);
       const [spacesPosts, profile] = await Promise.all([
-        Promise.all((await publicSpaces()).map(d => boardPosts(d, { outside: true }).catch(() => []))).then(x => x.flat()),
-        profilePosts(people).catch(() => []),
+        Promise.all((await publicSpaces()).map(d => boardPosts(d, { outside: true, kinds }).catch(() => []))).then(x => x.flat()),
+        profilePosts(people, [], kinds).catch(() => []),
       ]);
       out = [...spacesPosts, ...profile];
     }
@@ -247,10 +257,10 @@ export async function start(ctx) {
     else if (where.board) {
       const sp = await boardOf(where.board);
       if (!sp) throw new Error("you are not in that board's space: join it with an invite");
-      out = await boardPosts(sp);
+      out = await boardPosts(sp, { kinds });
     } else if (where.feed) {
       const [bs, people] = await Promise.all([boards(), following()]);
-      out = [...(await Promise.all(bs.map(sp => boardPosts(sp).catch(() => [])))).flat(), ...(await profilePosts([await me(), ...people]))];
+      out = [...(await Promise.all(bs.map(sp => boardPosts(sp, { kinds }).catch(() => [])))).flat(), ...(await profilePosts([await me(), ...people], [], kinds))];
     } else {
       // A PERSON's posts (Reddit's profile): their profile's, and theirs on every board this reader can read — the
       // public boards (anyone's), and the boards of the spaces this reader is in (their members').
@@ -259,14 +269,14 @@ export async function start(ctx) {
       const inside = new Set(bs.map(sp => sp.id));
       const onBoards = (
         await Promise.all([
-          ...bs.map(sp => boardPosts(sp).catch(() => [])),
-          ...pub.filter(d => !inside.has(d.id)).map(d => boardPosts(d, { outside: true }).catch(() => [])),
+          ...bs.map(sp => boardPosts(sp, { kinds }).catch(() => [])),
+          ...pub.filter(d => !inside.has(d.id)).map(d => boardPosts(d, { outside: true, kinds }).catch(() => [])),
         ])
       )
         .flat()
         .filter(p => p.by === by);
       const seen = new Set();
-      out = [...(await profilePosts([by])), ...onBoards].filter(p => !seen.has(p.ref) && seen.add(p.ref));
+      out = [...(await profilePosts([by], [], kinds)), ...onBoards].filter(p => !seen.has(p.ref) && seen.add(p.ref));
     }
     return out.sort(SORTS[sort] ?? SORTS.hot);
   }
@@ -274,25 +284,26 @@ export async function start(ctx) {
   async function get(ref, { outside = null } = {}) {
     if (ref.startsWith("space:")) {
       const sp = outside ?? (await boardOf(ref));
-      return sp ? ((await boardPosts(sp, { outside: !!outside })).find(p => p.ref === ref) ?? null) : null;
+      return sp ? ((await boardPosts(sp, { outside: !!outside, kinds: [...TOP] })).find(p => p.ref === ref) ?? null) : null;
     }
-    return (await profilePosts([whereOf(ref)], await pointersTo(ref))).find(p => p.ref === ref) ?? null;
+    return (await profilePosts([whereOf(ref)], await pointersTo(ref), [...TOP])).find(p => p.ref === ref) ?? null;
   }
 
-  async function submit({ board = null, title, body, private: only = false, files = [] }) {
+  async function submit({ board = null, title, body, private: only = false, files = [], kind = "post", meta = {} }) {
     title = String(title ?? "").trim();
     body = String(body ?? "").trim();
-    if (!title) throw new Error("a post needs a title");
+    if (!TOP.has(kind)) throw new Error(`not something to post: ${kind}`);
+    if (!title) throw new Error(`a ${kind} needs a title`);
     if (title.length > 300) throw new Error("a title of at most 300 characters");
     if (board) {
       const sp = await boardOf(board);
       if (!sp) throw new Error("you are not in that board's space");
-      return `space:${sp.id}/${await (await boardRoom(sp)).post("post", body, { title, files })}`;
+      return `space:${sp.id}/${await (await boardRoom(sp)).post(kind, body, { title, files, meta })}`;
     }
     const self = await me();
     // Its files: public exactly when the post is (one picked while "Everyone" was chosen, posted "Only you": re-keyed).
     await (await ctx.require("files")).publicity(files, null, !only).catch(e => ctx.log("posts", { what: `its files: ${e.message}` }));
-    const ref = `${self}/${await (await profileRoom(self)).post("post", body, { title, private: only, files })}`;
+    const ref = `${self}/${await (await profileRoom(self)).post(kind, body, { title, private: only, files, meta })}`;
     // Its pointer bag, made now (a public post: nobody reading it waits on one that does not exist).
     if (!only) await index.openPointers(ref).catch(e => ctx.log("posts", { what: `the pointer bag of ${ref}: ${e.message}` }));
     return ref;

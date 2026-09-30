@@ -19,6 +19,7 @@
 //   const blob = await files.get(ref, { onProgress })                        // the whole file
 //   for await (const bytes of files.stream(ref, { from: 0 })) …             // a generation at a time, in order
 //   const bytes = await files.chunk(ref, i)                                 // one chunk alone (a seek)
+//   const bytes = await files.range(ref, start, length)                     // a byte range (its chunks alone)
 //   const ref2 = await files.adopt(ref, space)          // a file from another space: listed in this one (then copied)
 //   await files.publicity(refs, space, pub)             // the items holding them are (not) read by anyone now
 export async function start(ctx) {
@@ -403,5 +404,30 @@ export async function start(ctx) {
   // When a re-key of this row last moved (its progress, else the row): for taking over from a member gone quiet.
   const lastMoved = async (sp, row) => Math.max(row.at ?? 0, (await progressOf(sp, row.id)).at()?.at ?? 0);
 
-  return { put, get, stream, chunk, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
+  // A BYTE RANGE of a file (a video played by range): the chunks it covers, each read alone (a seek reads only what it
+  // lands in), the last few kept.
+  const chunks = new Map(); // `${root}/${i}` → Promise<bytes>, the latest 24
+  const chunkOnce = (ref, i) => {
+    const k = `${ref.root}/${i}`;
+    if (!chunks.has(k)) {
+      chunks.set(k, chunk(ref, i).catch(e => (chunks.delete(k), Promise.reject(e))));
+      while (chunks.size > 24) chunks.delete(chunks.keys().next().value);
+    }
+    return chunks.get(k);
+  };
+  async function range(ref, start, len) {
+    if (ref.inline) return unb64(ref.inline).subarray(start, start + len);
+    ref = await current(ref);
+    const size = (await open(ref)).plan.chunk;
+    const end = Math.min(ref.size, start + len);
+    const out = new Uint8Array(Math.max(0, end - start));
+    for (let i = Math.floor(start / size); i * size < end; i++) {
+      const c = await chunkOnce(ref, i);
+      const from = Math.max(start, i * size);
+      out.set(c.subarray(from - i * size, Math.min(end, (i + 1) * size) - i * size), from - start);
+    }
+    return out;
+  }
+
+  return { put, get, stream, chunk, range, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
 }

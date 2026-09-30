@@ -349,7 +349,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 63] = [
+    let packages: [(&str, &str, PathBuf); 67] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -412,6 +412,9 @@ async fn main() -> Result<()> {
         ("attachments", "service", app.join("packages/attachments.js")),
         ("drive-store", "service", app.join("packages/drive-store.js")),
         ("drive", "module", app.join("packages/drive.js")),
+        ("kinds", "service", app.join("packages/kinds.js")),
+        ("video-player", "service", app.join("packages/video-player.js")),
+        ("videos", "module", app.join("packages/videos.js")),
         ("app-settings", "service", app.join("packages/app-settings.js")),
         ("space-home", "module", app.join("packages/space-home.js")),
         ("chat", "module", app.join("packages/chat.js")),
@@ -424,6 +427,8 @@ async fn main() -> Result<()> {
         ("sealed-wasm", "bytes", contracts.join("sealed.wasm")),
         // The Piece contract: a file's pieces since burning.
         ("piece-wasm", "bytes", contracts.join("piece.wasm")),
+        // mp4box.js (vendor/mp4box): run by `video-player` to stream an MP4 by range.
+        ("mp4box", "bytes", app.join("vendor/mp4box/mp4box.all.min.js")),
         ("bag-wasm", "bytes", contracts.join("bag.wasm")),
     ];
     let mut entries = Vec::new();
@@ -500,7 +505,7 @@ async fn main() -> Result<()> {
     let names: Vec<&str> = packages.iter().map(|(n, _, _)| *n).collect();
     let mentions = |src: &str| -> Vec<&str> { names.iter().copied().filter(|n| src.contains(&format!("\"{n}\""))).collect() };
     // The app's PAGES (route → its package): the manifest's `pages`, and where each page's needs start.
-    let pages: [(&str, &str); 10] = [("/space", "space-home"), ("/", "home"), ("/account", "account"), ("/notes", "notes"), ("/chat", "chat"), ("/messages", "messages"), ("/mail", "mail"), ("/contacts", "contacts"), ("/board", "board"), ("/drive", "drive")];
+    let pages: [(&str, &str); 11] = [("/videos", "videos"), ("/space", "space-home"), ("/", "home"), ("/account", "account"), ("/notes", "notes"), ("/chat", "chat"), ("/messages", "messages"), ("/mail", "mail"), ("/contacts", "contacts"), ("/board", "board"), ("/drive", "drive")];
     let mut needs = Vec::new();
     for (route, page) in pages {
         let mut have: Vec<&str> = vec!["theme", "header", "rail", "footer", page];
@@ -518,7 +523,7 @@ async fn main() -> Result<()> {
         needs.push(format!("\"{route}\": [{}]", have.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")));
     }
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"side\": [\"rail\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"views\": [\"personal\", \"shared\"], \"icon\": \"📝\", \"route\": \"/notes\", \"about\": \"Notes, tagged and pinned: yours, or a space's, kept together.\" }}, {{ \"name\": \"Messages\", \"views\": [\"personal\"], \"icon\": \"✉️\", \"route\": \"/messages\", \"counts\": \"messages\", \"about\": \"Private conversations with one person, sealed end to end.\" }}, {{ \"name\": \"Chat\", \"views\": [\"shared\", \"public\"], \"icon\": \"💬\", \"route\": \"/chat\", \"counts\": \"chat\", \"about\": \"A space's channels, Discord-style.\" }}, {{ \"name\": \"Mail\", \"views\": [\"personal\"], \"icon\": \"📮\", \"route\": \"/mail\", \"about\": \"Mail to anyone by their id: signed by your account, sealed to theirs.\" }}, {{ \"name\": \"Contacts\", \"views\": [\"personal\", \"public\"], \"icon\": \"👤\", \"route\": \"/contacts\", \"about\": \"The people you know: friends, following, requests. Find anyone by their id.\" }}, {{ \"name\": \"Board\", \"views\": [\"personal\", \"shared\", \"public\"], \"icon\": \"📋\", \"route\": \"/board\", \"about\": \"Posts, comments and votes, Reddit-style: a space's, or your own profile.\" }}, {{ \"name\": \"Drive\", \"views\": [\"personal\", \"shared\"], \"icon\": \"🗂️\", \"route\": \"/drive\", \"about\": \"Every file you upload or attach, in folders: yours, or a space's.\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\", \"mailbox\", \"spacekeys\", \"reads\", \"people\", \"posts\", \"journal\", \"asks\", \"files\", \"uploads\", \"drive\", \"keypacks\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"side\": [\"rail\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"views\": [\"personal\", \"shared\"], \"icon\": \"📝\", \"route\": \"/notes\", \"about\": \"Notes, tagged and pinned: yours, or a space's, kept together.\" }}, {{ \"name\": \"Messages\", \"views\": [\"personal\"], \"icon\": \"✉️\", \"route\": \"/messages\", \"counts\": \"messages\", \"about\": \"Private conversations with one person, sealed end to end.\" }}, {{ \"name\": \"Chat\", \"views\": [\"shared\", \"public\"], \"icon\": \"💬\", \"route\": \"/chat\", \"counts\": \"chat\", \"about\": \"A space's channels, Discord-style.\" }}, {{ \"name\": \"Mail\", \"views\": [\"personal\"], \"icon\": \"📮\", \"route\": \"/mail\", \"about\": \"Mail to anyone by their id: signed by your account, sealed to theirs.\" }}, {{ \"name\": \"Contacts\", \"views\": [\"personal\", \"public\"], \"icon\": \"👤\", \"route\": \"/contacts\", \"about\": \"The people you know: friends, following, requests. Find anyone by their id.\" }}, {{ \"name\": \"Board\", \"views\": [\"personal\", \"shared\", \"public\"], \"icon\": \"📋\", \"route\": \"/board\", \"about\": \"Posts, comments and votes, Reddit-style: a space's, or your own profile.\" }}, {{ \"name\": \"Drive\", \"views\": [\"personal\", \"shared\"], \"icon\": \"🗂️\", \"route\": \"/drive\", \"about\": \"Every file you upload or attach, in folders: yours, or a space's.\" }}, {{ \"name\": \"Videos\", \"views\": [\"personal\", \"shared\"], \"icon\": \"▶️\", \"route\": \"/videos\", \"about\": \"Your channel and those you follow: videos, movies, episodes, shorts.\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\", \"mailbox\", \"spacekeys\", \"reads\", \"people\", \"posts\", \"journal\", \"asks\", \"files\", \"uploads\", \"drive\", \"keypacks\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
         pages.iter().map(|(r, p)| format!("\"{r}\": [\"{p}\"]")).collect::<Vec<_>>().join(", "),
         prior.join(", "),
         needs.join(", "),
