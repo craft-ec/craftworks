@@ -55,7 +55,17 @@ export async function start(ctx) {
     if (!unused.length) throw new Error("their card has no key package left unused (it renews when they are next online): try again then");
     const kp = unused[Math.floor(Math.random() * unused.length)];
     await used.put(tags[card.keyPackages.indexOf(kp)], String(Date.now()));
-    const welcome = await keys.group(sp).add(kp);
+    // WELCOMED AGAIN (a welcome that never opened — its key package lost — or a member who lost the space): whatever
+    // of theirs the group still holds is taken out first; the group admits one entry per key.
+    const g = keys.group(sp);
+    const { glue } = await ctx.require("node");
+    const didOfCred = h => glue.did_of(new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16))));
+    const stale = ((await g.ready().catch(() => null))?.members ?? []).filter(m => m.cred && didOfCred(m.cred) === did).map(m => m.index);
+    if (stale.length) {
+      await g.remove(stale);
+      ctx.log("conversation", { what: `${directory.shown(did, card.handle)}: an earlier entry in the group taken out before welcoming again` });
+    }
+    const welcome = await g.add(kp);
     const { owner, nonce } = sp.governance;
     await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, ...(code ? { code } : {}) });
     ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind}` });

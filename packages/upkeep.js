@@ -17,6 +17,7 @@ export async function start(ctx) {
     return t;
   };
   let running = false;
+  let renewed = false; // key packages renewed this page (once)
   async function tick() {
     if (running) return;
     running = true;
@@ -24,6 +25,15 @@ export async function start(ctx) {
       const me = await space.account();
       if (!me) return;
       await absorb(me).catch(e => ctx.log("upkeep", { what: `what the delegate did: ${e.message}` }));
+      // KEY PACKAGES held: none (lost — their table gone from the network) means every welcome to this account fails;
+      // a fresh set is made and put on the card (whoever invites next picks one of them).
+      if (!renewed && !(await keys.holdsPackages().catch(() => true))) {
+        renewed = true;
+        await (await ctx.require("directory")).renew().then(
+          () => ctx.log("upkeep", { what: "no key packages were held here: a fresh set made and put on the card" }),
+          e => ((renewed = false), ctx.log("upkeep", { what: `renewing the key packages: ${e.message}` })),
+        );
+      }
       const joined = await conversation.accept().catch(e => (ctx.log("upkeep", { what: `the inbox: ${e.message}` }), []));
       if (joined.length) ctx.log("upkeep", { what: `joined ${joined.length} space(s) from the inbox` });
       for (const sp of (await space.mine()).filter(s => s.kind === "server")) {

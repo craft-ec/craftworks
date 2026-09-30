@@ -557,5 +557,7 @@ export async function start(ctx) {
     }
   }
 
-  return { ready, remove, escrowed, group, keyPackages, onChange: f => watchers.push(f) };
+  // Whether this account holds ANY batch of key packages (none: the ones its card offers answer nothing).
+  const holdsPackages = async () => (await spacekeys()).rows().some(r => r.key.startsWith("packages/") && r.value);
+  return { ready, remove, escrowed, group, keyPackages, holdsPackages, onChange: f => watchers.push(f) };
 }

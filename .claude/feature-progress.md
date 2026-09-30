@@ -900,8 +900,16 @@ Uses what freenet-prolly already has (rev 17d67d8: `range`/`range_with` + `front
   file is ~12 contracts, a 4K video hundreds. So on ONE machine, data beyond ~1,600 contracts is lost, whatever
   keeping does. Options for the owner: raise the node's `--hosting-mem-share` (config, the owner's node), and/or
   fewer contracts per file/tree (packing — the 09-27 ruling said packs were not worth it; this is new evidence).
-- [ ] L4e BLINDED TABLE NAMES: params carry `t/<table>` (and `x<space12>-…`) in the clear → keyed hash; the identity's
-      grant check must take the name beside the params; every table re-keyed → needs a migration.
+- [x] L4e BLINDED TABLE NAMES (see the design below): identity `blind_name` + `Sign.table` (test
+      `a_blinded_label_signs_only_with_its_name_and_grant`); data `adopt` (test `a_table_moves_to_a_new_label_in_one_step`:
+      60 rows — tree 40, tail 20 — read at the new label); storage opens the blinded label, MOVES its own legacy tables
+      (one whole signed step), reads others' where they are. fx: 23 tables moved on first open (files 22 rows before
+      and after, spaces 7); a note written, read back at the blinded label after a reload; two accounts: A made a
+      space, B joined and read A's post from A's blinded board feed.
+- [x] RE-INVITE fixed for real: B's `spacekeys` was GONE from the network (evicted under the old contract cap) while
+      its card still offered 4 key packages → every welcome failed; and a second welcome to a DID still in the group
+      failed `DuplicateLeafData`. Now: no batch held → upkeep makes a fresh set and puts it on the card; welcoming
+      again takes the DID's old entry out of the group first. fx: B renewed, A re-invited, B joined.
 - UPSTREAM (09-30): measured a fresh node (fill example, f2ad0b8): immutable one-module contracts cost ~0.107 MiB
   marginal RSS each, vs the node's 1 MiB constant; posted on freenet-core#5647 (issuecomment-5907919358). Owner's
   call: keep small raced pieces (no packing); the count cap is the node's accounting. Until upstream changes it, nodes
