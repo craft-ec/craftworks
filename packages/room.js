@@ -10,7 +10,7 @@
 //   const r = await room.show(el, conversation, "# general")   // renders into `el`
 //   r.close()                                                 // stops following it
 export async function start(ctx) {
-  const [content, directory, space, attachments] = await Promise.all(["content", "directory", "space", "attachments"].map(n => ctx.require(n)));
+  const [content, directory, space, attachments, markdown, mdEditor] = await Promise.all(["content", "directory", "space", "attachments", "markdown", "md-editor"].map(n => ctx.require(n)));
   const EMOJI = ["👍", "❤️", "😂", "🎉", "😮", "🙏"];
   const PAGE = 60;
   const MENTION = /@[^\s@#]*#[1-9A-HJ-NP-Za-km-z]{6}/g;
@@ -32,7 +32,9 @@ export async function start(ctx) {
     .cw-room .msg .who:hover { text-decoration: underline; }
     .cw-room .msg time, .cw-room .msg .edited { color: var(--cw-muted); font-size: var(--cw-text-xs); }
     .cw-room .msg .edited { margin-left: var(--cw-space-1); }
-    .cw-room .msg .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .cw-room .msg .text { overflow-wrap: anywhere; }
+    .cw-room .msg .text .cw-md p:last-child { margin-bottom: 0; }
+    .cw-room .msg .editing .hint { color: var(--cw-muted); font-size: var(--cw-text-xs); }
     .cw-room .msg .text .mention { color: var(--cw-accent); font-weight: 600; }
     .cw-room .msg .quote { color: var(--cw-muted); font-size: var(--cw-text-sm); border-left: 2px solid var(--cw-line); padding-left: var(--cw-space-2);
       margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -54,6 +56,7 @@ export async function start(ctx) {
     .cw-room .compose { position: relative; padding: var(--cw-space-3) var(--cw-space-4) var(--cw-space-4); }
     .cw-room .compose input { width: 100%; box-sizing: border-box; padding: 10px var(--cw-space-3); border-radius: var(--cw-radius); }
     .cw-room .compose .line { display: flex; align-items: center; gap: 6px; }
+    .cw-room .compose .line > .cw-mde { flex: 1; min-width: 0; }
     .cw-room .compose .line > input { flex: 1; min-width: 0; }
     .cw-room .replying { display: flex; gap: var(--cw-space-2); align-items: center; font-size: var(--cw-text-sm); color: var(--cw-muted);
       margin-bottom: var(--cw-space-1); }
@@ -80,12 +83,17 @@ export async function start(ctx) {
     const said = el("p", { className: "said", hidden: true });
     const form = el("form", { className: "compose" });
     const replying = el("div", { className: "replying", hidden: true });
-    const input = el("input", { name: "text", autocomplete: "off", placeholder: `Message ${title}`, disabled: true });
-    const suggest = el("ul", { className: "suggest", hidden: true });
-    // FILES with a message: sent as picked (sealed for this conversation's members), shown under it.
-    const pick = attachments.picker({ space: conversation.scope ?? null, from: { app: "chat" } });
-    const line = el("div", { className: "line" }, pick.el, input);
-    form.append(replying, suggest, line);
+    // THE COMPOSER (`md-editor`, compact): rich text or Markdown, Enter sends, "@" suggests the room's people; FILES
+    // with a message (sealed for this conversation's members) — media inline, others under it.
+    const pick = attachments.picker({ space: conversation.scope ?? null, from: { app: "chat" }, media: true });
+    const suggestPeople = async q => {
+      q = q.toLowerCase();
+      return (await candidates()).filter(p => p.shown.toLowerCase().startsWith(q) || p.shown.toLowerCase().includes(q)).map(p => p.shown);
+    };
+    const ed = mdEditor.create({ compact: true, pick, placeholder: `Message ${title}`, label: `Message ${title}`, onSubmit: () => form.requestSubmit(), suggest: suggestPeople });
+    ed.disable(true, `Message ${title}`);
+    const line = el("div", { className: "line" }, ed.el);
+    form.append(replying, line);
     box.append(el("h2", { textContent: title }), msgs, said, form);
     host.replaceChildren(box);
     const say = m => ((said.textContent = m ?? ""), (said.hidden = !m));
@@ -112,15 +120,22 @@ export async function start(ctx) {
       }
       return directory.shown(did, names.get(did));
     };
-    // The body, its mentions marked.
-    const bodyOf = text => {
-      const out = el("div", { className: "text" });
-      let last = 0;
-      for (const m of text.matchAll(MENTION)) {
-        out.append(text.slice(last, m.index), el("span", { className: "mention", textContent: m[0] }));
-        last = m.index + m[0].length;
+    // The body, as Markdown (`markdown`: its media where written), its mentions marked.
+    const bodyOf = (text, files = []) => {
+      const out = el("div", { className: "text" }, markdown.render(text ?? "", files));
+      const walker = document.createTreeWalker(out, NodeFilter.SHOW_TEXT);
+      const hits = [];
+      while (walker.nextNode()) if (MENTION.test(walker.currentNode.textContent) && !walker.currentNode.parentElement.closest("code, a")) hits.push(walker.currentNode);
+      for (const n of hits) {
+        const parts = [];
+        let last = 0;
+        for (const m of n.textContent.matchAll(MENTION)) {
+          parts.push(n.textContent.slice(last, m.index), el("span", { className: "mention", textContent: m[0] }));
+          last = m.index + m[0].length;
+        }
+        parts.push(n.textContent.slice(last));
+        n.replaceWith(...parts);
       }
-      out.append(text.slice(last));
       return out;
     };
     const mentionsMe = text => [...text.matchAll(MENTION)].some(m => m[0].endsWith(`#${me.replace(/^did:craftec:/, "").slice(0, 6)}`));
@@ -130,7 +145,7 @@ export async function start(ctx) {
       const li = el("li", { className: m.kind === "system" ? "msg system" : `msg${m.by !== me && mentionsMe(m.body) ? " me-mentioned" : ""}` });
       if (m.re) {
         const q = byId.get(m.re);
-        li.append(el("div", { className: "quote", textContent: q ? `↪ ${nameOf(q.by)}: ${q.body}` : "↪ a message not shown" }));
+        li.append(el("div", { className: "quote", textContent: q ? `↪ ${nameOf(q.by)}: ${markdown.plain(q.body)}` : "↪ a message not shown" }));
       }
       li.append(
         el("span", { className: "who", textContent: nameOf(m.by), title: m.by ?? "", onclick: e => m.by && person.then(p => p.open(e.currentTarget, m.by, { space: conversation })) }),
@@ -138,23 +153,21 @@ export async function start(ctx) {
       );
       if (m.edited) li.append(el("span", { className: "edited", textContent: "(edited)" }));
       if (editing === m.id) {
-        const field = el("input", { className: "editing", value: m.body });
-        field.onkeydown = e => {
-          if (e.key === "Escape") {
-            editing = null;
-            draw();
-          } else if (e.key === "Enter") {
-            e.preventDefault();
-            const body = field.value.trim();
-            editing = null;
-            if (body && body !== m.body) room.edit(m.id, body).catch(fail("Not edited"));
-            draw();
-          }
+        // EDITING: the same editor, its text and files; Enter saves, Escape leaves it as it was.
+        const epick = attachments.picker({ space: conversation.scope ?? null, from: { app: "chat" }, media: true });
+        epick.preset(m.files ?? []);
+        const save = () => {
+          const body = fed.value();
+          editing = null;
+          if ((body || fed.files().length) && (body !== m.body || fed.files().length !== (m.files ?? []).length)) room.edit(m.id, body, { files: fed.files() }).catch(fail("Not edited"));
+          draw();
         };
-        li.append(field);
-        queueMicrotask(() => field.focus());
-      } else li.append(bodyOf(m.body));
-      const att = attachments.show(m.files);
+        const fed = mdEditor.create({ compact: true, pick: epick, value: m.body, label: "Edit the message", onSubmit: save });
+        fed.el.addEventListener("keydown", e => e.key === "Escape" && ((editing = null), draw()));
+        li.append(el("div", { className: "editing" }, fed.el, el("div", { className: "hint", textContent: "Enter saves · Escape cancels" })));
+        queueMicrotask(() => fed.focus());
+      } else li.append(bodyOf(m.body, m.files));
+      const att = attachments.show((m.files ?? []).filter(f => !markdown.inlined(m.body).has(markdown.keyOf(f))));
       if (att && editing !== m.id) li.append(att);
       // Reactions: a chip per emoji, yours marked; a click takes yours back or adds it.
       const chips = Object.entries(m.reactions ?? {}).filter(([, who]) => who.length);
@@ -178,7 +191,7 @@ export async function start(ctx) {
       const tools = el("div", { className: "tools" });
       const pick = el("div", { className: "pick", hidden: true }, ...EMOJI.map(emoji => el("button", { type: "button", textContent: emoji, onclick: () => room.react(m.id, emoji, !(m.reactions?.[emoji] ?? []).includes(me)).catch(fail("Not reacted")) })));
       tools.append(
-        el("button", { type: "button", textContent: "Reply", onclick: () => ((replyTo = m), drawReplying(), input.focus()) }),
+        el("button", { type: "button", textContent: "Reply", onclick: () => ((replyTo = m), drawReplying(), ed.focus()) }),
         el("button", { type: "button", textContent: "React", onclick: () => ((pick.hidden = !pick.hidden), tools.classList.toggle("open", !pick.hidden)) }),
         pick,
       );
@@ -222,7 +235,7 @@ export async function start(ctx) {
       replying.hidden = !replyTo;
       if (!replyTo) return;
       replying.replaceChildren(
-        el("span", { textContent: `Replying to ${nameOf(replyTo.by)}: ${replyTo.body}` }),
+        el("span", { textContent: `Replying to ${nameOf(replyTo.by)}: ${markdown.plain(replyTo.body)}` }),
         el("button", { type: "button", title: "Cancel the reply", textContent: "✕", onclick: () => ((replyTo = null), drawReplying()) }),
       );
     }
@@ -239,57 +252,35 @@ export async function start(ctx) {
       }
       return people;
     };
-    input.oninput = async () => {
-      const m = input.value.slice(0, input.selectionStart).match(/@([^\s@]*)$/);
-      if (!m) return (suggest.hidden = true);
-      const q = m[1].toLowerCase();
-      const found = (await candidates()).filter(p => p.shown.toLowerCase().startsWith(q) || p.shown.toLowerCase().includes(q)).slice(0, 6);
-      suggest.replaceChildren(
-        ...found.map(p =>
-          el("li", {
-            textContent: p.shown,
-            onmousedown: e => {
-              e.preventDefault();
-              const before = input.value.slice(0, input.selectionStart).replace(/@[^\s@]*$/, `@${p.shown} `);
-              input.value = before + input.value.slice(input.selectionStart);
-              suggest.hidden = true;
-              input.focus();
-            },
-          }),
-        ),
-      );
-      suggest.hidden = !found.length;
-    };
-    input.onblur = () => setTimeout(() => (suggest.hidden = true), 150);
 
     room.onChange(() => open && editing === null && draw());
     draw();
     form.onsubmit = async e => {
       e.preventDefault();
-      const text = input.value.trim();
+      const text = ed.value();
       if (pick.busy()) return say("Still sending the files: a moment…");
       const withFiles = pick.files();
       if (!text && !withFiles.length) return;
       const re = replyTo?.id ?? null;
-      input.value = "";
+      ed.clear();
       replyTo = null;
       drawReplying();
       say(null);
-      pick.clear();
       await room.post("message", text, { re, files: withFiles }).catch(err => {
-        input.value = text;
+        ed.set(text);
         fail("Not sent")(err);
       });
     };
     // Who may post here (the app's setting in the space): the composer says so when this person may not.
+    let mayPostNow = false;
     const gate = () => {
       const ok = room.mayPost();
-      input.disabled = !ok;
-      input.placeholder = ok ? `Message ${title}` : ({ admins: "Only admins post here", owner: "Only the owner posts here", nobody: "Nobody posts here" }[room.postingRule()] ?? "You may not post here");
+      ed.disable(!ok, ok ? `Message ${title}` : ({ admins: "Only admins post here", owner: "Only the owner posts here", nobody: "Nobody posts here" }[room.postingRule()] ?? "You may not post here"));
+      mayPostNow = ok;
     };
     gate();
     room.onChange(gate);
-    if (!input.disabled) input.focus();
+    if (mayPostNow) ed.focus();
     // On screen: read as it arrives (`activity`), until closed.
     const activity = await ctx.require("activity");
     activity.showing(conversation);

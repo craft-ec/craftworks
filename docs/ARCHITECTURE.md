@@ -190,8 +190,10 @@ renderer: the source escaped first, so the only markup is the rules'). A file is
 file shows only to who reads the item. An image shows its preview, then loads once in view; a video or an audio shows a
 COVER (its poster or album cover, ▶, its length) and loads only when played. Video and audio written inline go through
 the media pipeline (`video-studio`: streamed, a cover, a video id), so their subtitles, lyrics and transcripts are found
-by that id (`subtitle-store.forFile`) as in Videos and Audio. The editor (`md-editor`): a toolbar, a preview, 🖼 media
-inline, growing with its text; posts and comments are edited in place by their authors.
+by that id (`subtitle-store.forFile`) as in Videos and Audio. The editor (`md-editor`, Reddit's): RICH TEXT by default —
+formatted as it reads, media shown as itself — with Markdown as the alternative (the choice kept); what is kept is always
+Markdown. 🖼 media inline (this device or Drive), 📎 files; posts, comments and messages (Chat, Messages: compact,
+Enter sends, "@" mentions) are written and edited in it.
 
 **Access.** A file belongs to a SPACE (the account: the personal space), and its current key has ONE owner: the row
 `k/<id>` of the space's table `files` — `{ key, root, b (its burn hash), x (its burn secret), h (the content's
