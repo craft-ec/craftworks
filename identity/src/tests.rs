@@ -220,6 +220,18 @@ fn a_wrong_pin_that_cannot_be_counted_is_not_answered() {
     assert_eq!(unlock(&mut m, "000000", APP), Answer::Refused(Why::NotSaved));
 }
 
+/// A NEW BUILD holding no member yet: an unknown PIN is not counted (nothing here to guess; the page moves the member in
+/// from the earlier build next) — so a slow update never locks anyone out. Control: once a member is here, it counts.
+#[test]
+fn a_pin_is_not_counted_before_this_build_holds_a_member() {
+    let mut m = Map::default();
+    for _ in 0..(MAX_TRIES + 2) {
+        assert_eq!(unlock(&mut m, ALICE_PIN, APP), Answer::WrongPin { tries_left: MAX_TRIES });
+    }
+    let mut m = provisioned(APP);
+    assert_eq!(unlock(&mut m, "000000", APP), Answer::WrongPin { tries_left: MAX_TRIES - 1 });
+}
+
 #[test]
 fn the_signature_verifies_as_a_register_record_of_the_data_key() {
     let mut m = provisioned(APP);

@@ -119,7 +119,8 @@ export async function start(ctx) {
         resolve(null);
       });
       const why = r =>
-        r.wrongPin ? `Wrong PIN. ${r.wrongPin.triesLeft} tries left on this node.`
+        r.slow ? "Your node is still loading the new version of your login (a minute, after an update): try again shortly — this did not count as a wrong PIN here."
+        : r.wrongPin ? `Wrong PIN. ${r.wrongPin.triesLeft} tries left on this node.`
         : r.locked ? "Too many wrong PINs: this node is locked. Log in with your recovery words or your passphrase: that opens it again."
         : r.refused === "PinTaken" ? "That PIN is taken on this node: choose another."
         : r.error ?? `Refused: ${r.refused}`;

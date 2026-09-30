@@ -486,6 +486,9 @@ pub const MEMBER: &[u8] = b"identity_member/";
 pub const PIN: &[u8] = b"identity_pin/";
 /// Wrong PINs in a row on this node (one byte).
 pub const TRIES: &[u8] = b"identity_tries";
+/// Set once this build holds a member (provisioned, or handed over from an earlier build): before, a PIN has nothing to
+/// open here, so an unknown one is not a guess and is not counted (a new build, its members still to move in).
+pub const ANY_MEMBER: &[u8] = b"identity_any_member";
 /// `SESSION ‖ app contract id` → the public key of the member it opened (empty: closed).
 pub const SESSION: &[u8] = b"identity_session/";
 /// `GUARD ‖ params hash` → `seq ‖ value hash` of the last signature for that record.
@@ -847,6 +850,8 @@ fn try_pin<H: Host>(h: &mut H, pin: &str) -> Result<Member, Answer> {
     }
     match by_pin(h, &pin_hash(pin)) {
         Some(a) => Ok(a),
+        // Nothing held here yet: not a guess at anything (the page asks the earlier builds next).
+        None if h.get_secret(ANY_MEMBER).is_none() => Err(Answer::WrongPin { tries_left: MAX_TRIES - t }),
         None => {
             if !h.set_secret(TRIES, &[t + 1]) {
                 return Err(Answer::Refused(Why::NotSaved));
@@ -903,6 +908,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             // points at nothing. And the account's check: what its words prove on a locked node.
             if !h.set_secret(&[MEMBER, &public[..]].concat(), &a.encode())
                 || !h.set_secret(&[PIN, &pin[..]].concat(), &public)
+                || !h.set_secret(ANY_MEMBER, &[1])
                 || a.data.is_some_and(|d| !h.set_secret(&[ACCOUNT_CHECK, &a.did[..]].concat(), &account_check(&d)))
             {
                 return Refused(Why::NotSaved);

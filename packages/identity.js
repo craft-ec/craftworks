@@ -16,8 +16,11 @@ export async function start(ctx) {
       frames,
       s => (s.kind === "identity" && s.answers.some(a => a.id === id || a.id === 0)) || (s.kind === "delegate-missing" && String(s.delegate).includes(key)),
       `asking an earlier identity build for ${what}`,
-      20000,
-    ).catch(() => ({ kind: "none" }));
+      30000,
+    ).catch(() => ({ kind: "silent" }));
+    // No answer in time (the node still loading that build — a compile can take a minute): said so, never taken for
+    // "it does not know this PIN".
+    if (said.kind === "silent") return { silent: true };
     return said.kind === "identity" ? said.answers.find(a => a.id === id)?.answer ?? null : null;
   }
   const { core, glue, ask } = await ctx.require("node");

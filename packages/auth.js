@@ -53,15 +53,23 @@ export async function start(ctx) {
   async function unlock(pin) {
     const r = await id.unlock(pin);
     if (!r.wrongPin) return r;
+    let silent = false;
     for (const prior of ctx.identityPrior) {
       let h;
-      try {
-        h = await id.handoverFrom(prior, pin);
-      } catch (e) {
-        ctx.log("earlier build", { what: `${prior.slice(0, 12)}…: ${e.message}` });
-        continue;
+      // An earlier build the node is still loading answers nothing for a while: asked again, up to about 90 s.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          h = await id.handoverFrom(prior, pin);
+        } catch (e) {
+          ctx.log("earlier build", { what: `${prior.slice(0, 12)}…: ${e.message}` });
+          h = null;
+          break;
+        }
+        if (!h?.silent) break;
+        ctx.log("earlier build", { what: `${prior.slice(0, 12)}…: no answer yet (the node is loading it)` });
       }
-      if (!h.handed) continue;
+      if (h?.silent) silent = true;
+      if (!h?.handed) continue;
       const bytes = x => (x ? hexBytes(x) : new Uint8Array(0));
       const p = await id.provision(bytes(h.handed.seed), bytes(h.handed.did), pin, bytes(h.handed.data));
       ctx.log("member moved", { what: `from the earlier build ${prior.slice(0, 12)}…: ${p.unlocked ? "logged in" : JSON.stringify(p)}` });
@@ -72,6 +80,8 @@ export async function start(ctx) {
       }
       return p;
     }
+    // Not "wrong": an earlier build never answered — the PIN may well be right.
+    if (silent) return { slow: true };
     return r;
   }
 
