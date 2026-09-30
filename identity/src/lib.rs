@@ -77,7 +77,9 @@ pub enum Request {
     Who,
     /// Sign `params.signed_message(false, seq, value_hash)` with the session's member, the account's data key, or the
     /// key of an epoch's log of `space` (`None`: the account).
-    Sign { params: Vec<u8>, seq: u64, value_hash: [u8; HASH_LEN], space: Option<[u8; 32]> },
+    /// `table`: the table's NAME, for a tail whose label is blinded (`blind_name`): checked against the label, and the
+    /// grant is the name's.
+    Sign { params: Vec<u8>, seq: u64, value_hash: [u8; HASH_LEN], space: Option<[u8; 32]>, table: Option<String> },
     /// RETIRED (the key file was dropped, 2026-09-30): refused. Kept so every later request keeps its wire number (an
     /// earlier build is still asked the handover questions).
     Export,
@@ -680,6 +682,17 @@ pub fn table_key(data_seed: &[u8; 32], table: &str, gen: u8) -> [u8; 32] {
     *h.finalize().as_bytes()
 }
 
+/// A table's BLINDED NAME (phase 4, Lifecycle): what its tail's label carries instead of the name — a keyed hash of the
+/// name under the table's own key, so only who holds the key (who reads the table) can tell which table a tail is, or
+/// link a space's tables by their names. `~` and 30 hex (120 bits; a table's name is at most 32 bytes).
+pub fn blind_name(table_key: &[u8; 32], table: &str) -> String {
+    let mut h = blake3::Hasher::new_keyed(table_key);
+    h.update(b"craftworks 2026-09-30 blinded table name ");
+    h.update(table.as_bytes());
+    let b = h.finalize();
+    format!("~{}", b.as_bytes()[..15].iter().map(|x| format!("{x:02x}")).collect::<String>())
+}
+
 fn table_ok(t: &str) -> bool {
     (1..=32).contains(&t.len()) && t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
 }
@@ -1190,7 +1203,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             let Some(data) = a.data else { return Refused(Why::NoDataKey) };
             TableKey { key: table_key(&data, &table, gen) }
         }
-        Request::Sign { params, seq, value_hash, space } => {
+        Request::Sign { params, seq, value_hash, space, table: named } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             let Some(p) = Params::parse(&params) else { return Refused(Why::BadParams) };
             // One of the account's tables, by a site the person allowed: this node's own FEED of it (the member's key),
@@ -1219,7 +1232,27 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                     None => return Refused(if a.data_key().is_none() { Why::NoDataKey } else { Why::NotThisKey }),
                 },
             };
-            let Some(table) = p.label.strip_prefix(TABLE).and_then(|t| std::str::from_utf8(t).ok()).filter(|t| table_ok(t)) else {
+            let Some(label) = p.label.strip_prefix(TABLE).and_then(|t| std::str::from_utf8(t).ok()) else {
+                return Refused(Why::NotATable);
+            };
+            // A BLINDED label (`~…`): the name it stands for, given, must blind to it under the table's key (a space's
+            // from its id; the account's from its data key) — then the grant is the name's.
+            let table: &str = if label.starts_with('~') {
+                let Some(name) = named.as_deref().filter(|t| table_ok(t)) else { return Refused(Why::NotATable) };
+                let tk = match space {
+                    Some(sp) => space_table_key(&sp, name),
+                    None => match a.data {
+                        Some(d) => table_key(&d, name, 0),
+                        None => return Refused(Why::NoDataKey),
+                    },
+                };
+                if blind_name(&tk, name) != label {
+                    return Refused(Why::NotATable);
+                }
+                name
+            } else if table_ok(label) {
+                label
+            } else {
                 return Refused(Why::NotATable);
             };
             let member = a.public();

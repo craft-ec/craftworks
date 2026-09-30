@@ -184,6 +184,8 @@ pub struct Open {
     locked: HashMap<Cid, Vec<u8>>,
     /// The key this tail is under: its writer's.
     pub writer_key: [u8; 32],
+    /// The next commit goes out as a WHOLE state (`adopt`).
+    whole: bool,
     /// A PUBLIC tail (a person's card, a board's public copies): rows in the clear, readable by anyone who can name
     /// it; never sealed — and its tree in the clear too (Block contracts named by their ids, as trees from before
     /// sealing), so it grows past what one tail holds.
@@ -255,6 +257,7 @@ impl Open {
             stale: BTreeMap::new(),
             locked: HashMap::new(),
             writer_key: *key,
+            whole: false,
             public: false,
             #[cfg(test)]
             sent: HashMap::new(),
@@ -606,6 +609,23 @@ impl Open {
 
     /// The signature for the prepared step. Returns what to send: `Put(state)` if the network has no tail yet, else
     /// `Update(delta)`.
+    /// MOVE (blinded table names, phase 4): this tail — new, empty — takes `from`'s state (a legacy tail of the same
+    /// table: the same table key, so its tree blocks and sealed rows are this one's too) as its first step, at `from`'s
+    /// sequence (its rows carry sequences up to there), sent as a WHOLE state. The step to sign; `None` if this tail is
+    /// not empty or `from` holds nothing.
+    pub fn adopt(&mut self, from: &Open) -> Option<(u64, [u8; 32])> {
+        if self.writer.seq() != 0 || from.writer.seq() == 0 {
+            return None;
+        }
+        let body = from.writer.body();
+        let seq = from.writer.seq();
+        let out = (seq, body.hash());
+        self.blocks = from.blocks.clone();
+        self.whole = true;
+        self.pending = Some(Unsigned { seq, ops: Vec::new(), body, message: Vec::new() });
+        Some(out)
+    }
+
     /// SKIP AHEAD: the identity signed this tail through `last`, and the network — asked, and answering — holds less
     /// (those steps never landed, or were lost). The pending step moves to `last + 1`, to go out as a WHOLE state: a
     /// delta must be the exact next step, but a whole state at a higher step replaces a lower one. The step to sign;
@@ -626,8 +646,8 @@ impl Open {
     pub fn commit(&mut self, sig: [u8; 64]) -> Option<Send> {
         let u = self.pending.take()?;
         let signed = Signed { terminal: false, seq: u.seq, value_hash: u.body.hash(), bitmap: 0, sigs: vec![sig] };
-        // A step past the next (`skip_to`): the whole state, checked as any reader checks it.
-        if u.seq > self.writer.seq() + 1 {
+        // A step past the next (`skip_to`), or a moved state (`adopt`): the whole state, checked as any reader checks it.
+        if u.seq > self.writer.seq() + 1 || std::mem::take(&mut self.whole) {
             let p = craftec_register_contract::wire::Params::parse(&self.params)?;
             let state = tail::Tail { signed, body: u.body }.encode(&p.authority);
             let w = Writer::resume(&self.params, &state).filter(|w| w.seq() == u.seq)?;
@@ -1588,6 +1608,45 @@ mod tests {
         let (s2, _) = d.prepare_row(b"handle", b"alice").unwrap();
         assert_eq!(s2, 2);
         assert!(d.skip_to(1).is_none());
+    }
+
+    /// MOVE: a table under a new label (its blinded name) takes the old tail's state in ONE signed step, sent whole;
+    /// a reader of the NEW label, with the table's key, reads every row — the tree's (the same blocks: addressed by the
+    /// table key) and the tail's pending ones. Control: a tail that is not empty takes nothing.
+    #[test]
+    fn a_table_moves_to_a_new_label_in_one_step() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        let mut old = Open::new(CODE, &member, "notes");
+        old.set_table_key([7; 32]);
+        for i in 0..60 {
+            write(&key, &mut old, &format!("n{i:03}"), &format!("note {i}"));
+            if i == 39 {
+                flush(&key, &mut old);
+            }
+        }
+        let mut new = Open::new(CODE, &member, "~0123456789abcdef0123456789abcdef");
+        new.set_table_key([7; 32]);
+        assert_ne!(new.id_bytes(), old.id_bytes(), "another contract");
+        let (seq, h) = new.adopt(&old).expect("adopted");
+        assert_eq!(seq, old.writer.seq());
+        let Some(Send::Put(state)) = new.commit(sign(&key, &new, seq, h)) else { panic!("a whole state") };
+        assert!(new.adopt(&old).is_none(), "control: not empty any more");
+        let mut r = Open::new(CODE, &member, "~0123456789abcdef0123456789abcdef");
+        r.set_table_key([7; 32]);
+        assert!(r.absorb(&state));
+        let v = loop {
+            match r.rows().unwrap() {
+                Step::Ready(v) => break v,
+                Step::Keys(k) => panic!("{k:?}"),
+                Step::Need(ids) => {
+                    for id in ids {
+                        assert!(r.absorb_block(&id, &old.sent[&id]));
+                    }
+                }
+            }
+        };
+        assert_eq!(v["rows"].as_array().unwrap().len(), 60, "the tree's 40 and the tail's 20");
     }
 
     #[test]

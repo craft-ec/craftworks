@@ -155,10 +155,48 @@ export async function start(ctx) {
   // listing). `sealWith` (hex): its sealing key, given (a space's epoch log: its epoch's own), instead of the table's.
   // `space` (id bytes): the space it belongs to, not the account — signed in that space, with no site grant. Its rows AS
   // STORED are `raw()` (bytes); `rows()` are its view's.
-  function tail(owner, app, { known = null, catalogKey = false, beforeCreate = null, sealWith = null, space: inSpace = null, public: open = false, lazy = false } = {}) {
+  // BLINDED NAMES (phase 4, Lifecycle): an account's or a space's table lives at a label only its readers can tell —
+  // its name blinded under its own key (`blind_name`), so hosting nodes see neither which table a tail is nor, by a
+  // shared prefix, which feeds are one space's. Found by name (catalogs, members, channels, epoch logs) or read by
+  // anyone (public tails): at their names. A table still at its NAME (from before) is MOVED by its writer on its next
+  // open — one signed step, its tree kept (the same key addresses it) — and read there by the others until then.
+  // Never on a guess: only when the node ANSWERED for both is a table new here; silence keeps it where it was.
+  const opening = new Map(); // `${owner}|${app}` → Promise<the tail>
+  function tail(owner, app, opts = {}) {
+    const inSpace = opts.space ?? null;
+    const byName = opts.public || opts.sealWith || opts.catalogKey || CHANNELS.has(app) || ANY_GRANT.has(app) || (inSpace?.tables && Object.values(inSpace.tables).includes(app));
+    if (byName) return tailAt(owner, app, app, opts);
+    const k = `${owner}|${app}`;
+    if (!opening.has(k))
+      opening.set(
+        k,
+        (async () => {
+          const key = await access.key(app, { space: inSpace?.idBytes ?? inSpace });
+          if (!key.key) return tailAt(owner, app, app, opts); // no key here: nothing of it reads either way
+          const blinded = await tailAt(owner, app, glue.blind_name(bytes(key.key), app), opts);
+          if (!blinded.absent || opts.known === false) return blinded;
+          const legacy = await tailAt(owner, app, app, { ...opts, known: null, beforeCreate: null });
+          if (legacy.absent && legacy.answered() && blinded.answered()) return blinded; // new: at its blinded name
+          if (legacy.absent) return legacy; // the node silent for one of them: where it was, moved another time
+          const sp = await space.account();
+          if (!(owner === sp?.self || owner === sp?.shared || ownKeys.has(owner))) return legacy; // another's: read there
+          const moved = await blinded.moveFrom(legacy).catch(e => (ctx.log("storage", { what: `${app}: not moved yet — ${e?.message ?? e}` }), false));
+          if (!moved) return legacy;
+          legacy.moved = true;
+          ctx.log("storage", { what: `${app}: moved to its blinded name` });
+          return blinded;
+        })().catch(e => (opening.delete(k), Promise.reject(e))),
+      );
+    const p = opening.get(k);
+    return opts.lazy ? p : p.then(t => (t.lazy ? t.whole().then(() => t) : t));
+  }
+
+  function tailAt(owner, app, label, { known = null, catalogKey = false, beforeCreate = null, sealWith = null, space: inSpace = null, public: open = false, lazy = false } = {}) {
     // The space: an object (a table of a space: its group keeps it current) or its id's bytes (an epoch log).
     const spaceId = inSpace?.idBytes ?? inSpace;
-    const idHex = core.tail_open(tailCode, bytes(owner), app);
+    // Its label: its name, or its blinded name (then its writes are signed by the name, which the identity checks).
+    const blindedAs = label !== app ? app : "";
+    const idHex = core.tail_open(tailCode, bytes(owner), label);
     // Opened already: as it is — or, opened LAZY and now wanted whole, read whole.
     if (tails.has(idHex)) return lazy ? tails.get(idHex) : tails.get(idHex).then(t => (t.lazy ? t.whole().then(() => t) : t));
     const id = bytes(idHex);
@@ -195,6 +233,18 @@ export async function start(ctx) {
       },
       // KEEP it (phase 4, Lifecycle): see `keep` below.
       keep: () => (queue = queue.catch(() => {}).then(keep)),
+      // Whether the node ANSWERED the last read (the tail, or "not found"), not silence.
+      answered: () => answered,
+      // MOVE here (this tail new, at the table's blinded name) the table from where it was (`from`: open, read): its
+      // state as this one's first step. True once moved.
+      moveFrom: from =>
+        (queue = queue.catch(() => {}).then(async () => {
+          const p = core.tail_adopt(id, from.id);
+          if (!p) return false;
+          await step(p, "moving");
+          t.absent = false;
+          return true;
+        })),
     };
     const ready = (async () => {
       // THE TABLE'S KEY: the table is sealed, so reading it needs its key, and the key comes only with the person's
@@ -313,7 +363,7 @@ export async function start(ctx) {
     // landed: what this page holds is dropped and the tail read again, so the next step builds on what the network has.
     async function step(p, doing) {
       const t0 = performance.now();
-      const r = await auth.identity.sign(p.params, p.seq, p.valueHash, spaceId ?? undefined);
+      const r = await auth.identity.sign(p.params, p.seq, p.valueHash, spaceId ?? undefined, blindedAs);
       let refused = r.signed ? null : `the identity said ${r.refused ?? JSON.stringify(r)}`;
       let kind = null;
       if (!refused) {
@@ -912,7 +962,7 @@ export async function start(ctx) {
   async function ownTables() {
     const sp = await space.account();
     const mine = new Set([sp?.self, sp?.shared, ...ownKeys].filter(Boolean));
-    return [...live.values()].filter(t => mine.has(t.owner) && !t.absent);
+    return [...live.values()].filter(t => mine.has(t.owner) && !t.absent && !t.moved);
   }
 
   return { own: ownTables, table, log, publicTail, readOnly, describe, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why) };

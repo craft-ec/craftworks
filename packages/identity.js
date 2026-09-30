@@ -110,7 +110,7 @@ export async function start(ctx) {
     // This node's member forgotten (key, PIN, grants, group state, every epoch's secret): for a removed node.
     forget: () => call(core.frames_forget(), "forgetting this node's member"),
     who: () => call(core.frames_who(), "asking who is logged in"),
-    sign: (params, seq, valueHash, space = NONE) => call(core.frames_sign(params, BigInt(seq), valueHash, space), "signing"),
+    sign: (params, seq, valueHash, space = NONE, table = "") => call(core.frames_sign(params, BigInt(seq), valueHash, space ?? NONE, table), "signing"),
     // Leave to write one of the account's tables. The node may ask the person (its own prompt, which waits up to a
     // minute), so this waits longer than any other call.
     grant: tables => call(core.frames_grant(tables), `asking for ${tables.map(t => `“${t}”`).join(", ")}`, 90000),

@@ -89,7 +89,7 @@ fn lock(m: &mut Map, app: [u8; 32]) -> Answer {
 }
 
 fn sign(m: &mut Map, app: [u8; 32], p: &[u8], seq: u64, v: [u8; 32]) -> Answer {
-    serve(m, Request::Sign { params: p.to_vec(), seq, value_hash: v, space: None }, app)
+    serve(m, Request::Sign { params: p.to_vec(), seq, value_hash: v, space: None, table: None }, app)
 }
 
 
@@ -234,6 +234,28 @@ fn the_signature_verifies_as_a_register_record_of_the_data_key() {
     let signed = Signed { terminal: false, seq: 1, value_hash: v, bitmap: 0, sigs: vec![sig.to_bytes()] };
     assert!(signed.verify(&parsed));
     assert!(!Signed { seq: 2, ..signed }.verify(&parsed));
+}
+
+/// BLINDED NAMES: a tail labelled by its blinded name signs only with the name it stands for (under the table's key),
+/// and only with that name's grant; no name, or another, is refused. Control: the plain label still signs.
+#[test]
+fn a_blinded_label_signs_only_with_its_name_and_grant() {
+    let mut m = provisioned(APP);
+    assert_eq!(ask(&mut m, APP, "notes", ALLOW), Answer::Granted { tables: vec!["notes".into()] });
+    let blind = blind_name(&table_key(&ALICE_DATA, "notes", 0), "notes");
+    assert!(blind.starts_with('~') && blind.len() == 31);
+    let p = table(ALICE_DATA, &blind);
+    let signed = |m: &mut Map, name: Option<&str>, seq| serve(m, Request::Sign { params: p.clone(), seq, value_hash: [seq as u8; 32], space: None, table: name.map(String::from) }, APP);
+    assert!(matches!(signed(&mut m, Some("notes"), 1), Answer::Signed { .. }));
+    assert_eq!(signed(&mut m, None, 2), Answer::Refused(Why::NotATable));
+    assert_eq!(signed(&mut m, Some("pins"), 2), Answer::Refused(Why::NotATable));
+    // Another table's blinded label, named rightly, needs ITS grant.
+    let pins = table(ALICE_DATA, &blind_name(&table_key(&ALICE_DATA, "pins", 0), "pins"));
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    let got = serve(&mut m, Request::Sign { params: pins, seq: 1, value_hash: [1; 32], space: None, table: Some("pins".into()) }, OTHER);
+    assert!(matches!(got, Answer::Refused(Why::NotGranted { .. })), "{got:?}");
+    // Control: the plain label.
+    assert!(matches!(sign(&mut m, APP, &table(ALICE_DATA, "notes"), 1, [1; 32]), Answer::Signed { .. }));
 }
 
 #[test]
@@ -595,8 +617,8 @@ fn each_space_keeps_its_own_group_and_epochs_apart_and_forget_clears_them_all() 
     assert_eq!(serve(&mut m, Request::TableKeyAt { table: "chat".into(), epoch: None, space: x }, OTHER), Answer::Refused(Why::NotGranted { table: "chat".into() }));
     // A space's epoch log is signed in its own space only.
     let log = params(epoch_log_key(&[0x11; 32]).verifying_key().to_bytes(), b"t/chat");
-    assert!(matches!(serve(&mut m, Request::Sign { params: log.clone(), seq: 1, value_hash: [1; 32], space: x }, APP), Answer::Signed { .. }));
-    assert_eq!(serve(&mut m, Request::Sign { params: log, seq: 2, value_hash: [2; 32], space: y }, APP), Answer::Refused(Why::NotThisKey));
+    assert!(matches!(serve(&mut m, Request::Sign { params: log.clone(), seq: 1, value_hash: [1; 32], space: x, table: None }, APP), Answer::Signed { .. }));
+    assert_eq!(serve(&mut m, Request::Sign { params: log, seq: 2, value_hash: [2; 32], space: y, table: None }, APP), Answer::Refused(Why::NotThisKey));
     // Forget: every space's group goes with the member.
     assert_eq!(unlock(&mut m, ALICE_PIN, APP), alice());
     assert_eq!(serve(&mut m, Request::Forget, APP), Answer::LoggedOut);
@@ -659,8 +681,8 @@ fn a_dids_space_member_is_the_same_on_every_device_and_signs_in_spaces_only() {
     // The feed key signs a space's table (the DID's feed there), and nothing of the account's own.
     assert_eq!(unlock(&mut m, ALICE_PIN, APP), alice());
     let feed = params(writer, b"t/x0123456789ab-messages");
-    assert!(matches!(serve(&mut m, Request::Sign { params: feed.clone(), seq: 1, value_hash: [1; 32], space: Some([0x5A; 32]) }, APP), Answer::Signed { .. }));
-    assert_eq!(serve(&mut m, Request::Sign { params: feed, seq: 2, value_hash: [2; 32], space: None }, APP), Answer::Refused(Why::NotThisKey));
+    assert!(matches!(serve(&mut m, Request::Sign { params: feed.clone(), seq: 1, value_hash: [1; 32], space: Some([0x5A; 32]), table: None }, APP), Answer::Signed { .. }));
+    assert_eq!(serve(&mut m, Request::Sign { params: feed, seq: 2, value_hash: [2; 32], space: None, table: None }, APP), Answer::Refused(Why::NotThisKey));
 }
 
 #[test]

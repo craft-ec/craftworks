@@ -585,8 +585,9 @@ mod js {
             self.ask(Request::Who)
         }
         /// Sign a record: `space` (32 bytes, or empty: the account) names whose epoch logs may be meant.
-        pub fn frames_sign(&mut self, params: &[u8], seq: u64, value_hash: &[u8], space: &[u8]) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::Sign { params: params.to_vec(), seq, value_hash: b32(value_hash)?, space: space_of(space)? })
+        /// `table`: the table's name when its label is blinded (empty: the label is the name).
+        pub fn frames_sign(&mut self, params: &[u8], seq: u64, value_hash: &[u8], space: &[u8], table: &str) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Sign { params: params.to_vec(), seq, value_hash: b32(value_hash)?, space: space_of(space)?, table: (!table.is_empty()).then(|| table.to_string()) })
         }
         /// Leave to write these tables, asked in one prompt (the node may prompt the person; the answer can take a
         /// minute).
@@ -957,6 +958,19 @@ mod js {
             prepared(&o.params, seq, hash)
         }
 
+        /// MOVE (`data::Open::adopt`): the open tail `id` (new, empty) takes the open tail `from`'s state as its first
+        /// step (a table moving to its blinded name): the step to sign, or null.
+        pub fn tail_adopt(&mut self, id: &[u8], from: &[u8]) -> Result<JsValue, JsValue> {
+            let (id, from) = (b32(id)?, b32(from)?);
+            let f = self.0.tails.remove(&from).ok_or_else(|| err("that tail is not open".into()))?;
+            let out = self.0.tail(&id).map(|o| o.adopt(&f).map(|(seq, hash)| (o.params.clone(), seq, hash)));
+            self.0.tails.insert(from, f);
+            match out.map_err(err)? {
+                Some((params, seq, hash)) => Ok(prepared(&params, seq, hash)?.into()),
+                None => Ok(JsValue::NULL),
+            }
+        }
+
         /// SKIP AHEAD (`data::Open::skip_to`): the prepared step moved past `last` (the identity signed through it; the
         /// network, which answered, holds less): the step to sign, or null.
         pub fn tail_skip(&mut self, id: &[u8], last: f64) -> Result<JsValue, JsValue> {
@@ -1176,6 +1190,13 @@ mod js {
     #[wasm_bindgen]
     pub fn account_tables() -> String {
         serde_json::json!({ "catalog": craftworks_identity::CATALOG, "members": craftworks_identity::MEMBERS, "channel": craftworks_identity::CHANNEL }).to_string()
+    }
+
+    /// A table's BLINDED NAME (`identity::blind_name`): what its tail's label carries, from the table's key.
+    #[wasm_bindgen]
+    pub fn blind_name(table_key: &[u8], table: &str) -> Result<String, JsValue> {
+        let k: [u8; 32] = table_key.try_into().map_err(|_| err("a table key is 32 bytes".into()))?;
+        Ok(craftworks_identity::blind_name(&k, table))
     }
 
     /// The address key (hex) of a space's table (`identity::space_table_key`).
