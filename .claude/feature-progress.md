@@ -803,3 +803,13 @@ come with keepers as a new codec version.
     Verified (09-30): 17573 — rotate stand-in re-keyed in 3 s, bytes equal via the old ref; board public→members
     re-keyed in 8 s; adopted copy in 3 s. fx/fy two accounts — A removes B: salt 0→1 and the file re-keyed 4 s
     after, A reads by id alone; B: left, the new row unreadable, its salt view 0.
+
+## Phase 3 READS (owner plan 09-30: files+media → Reads → Lifecycle) — ARCHITECTURE row 3
+Uses what freenet-prolly already has (rev 17d67d8: `range`/`range_with` + `frontier_of` fetch only a range's blocks;
+`diff` between roots; `aggregate` counts). Nothing new in the tree.
+- [ ] R3a time-ordered item ids (`content`): `<ms base36>-<rand>` so key order = time; old random ids read as before.
+- [ ] R3b a feed's RANGE in `data`/core: latest N / before a key, fetching only the path's blocks (tail rows merged).
+- [ ] R3c `storage` table pages across feeds (merge by key, versions as now); `content.list({ latest, before })`;
+      Chat, Board, Drive, Videos open with the latest page and load older on scroll.
+- [ ] R3d CHANGE-ONLY: each feed's last root kept; a new root read by `diff` (only changed nodes fetched).
+- Measure: blocks fetched to open a 1000-message channel, before and after.
