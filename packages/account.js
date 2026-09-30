@@ -140,7 +140,7 @@ export async function mount(ctx, el) {
         from its group. HEALTH: a group is whole (all its blocks there), degraded (enough to rebuild), or damaged.</p>
         <p><button type="button" class="keep-now">Keep all now</button> <span class="note kept-said"></span></p>
         <table class="tables"><thead><tr><th>Table</th><th>Rows</th><th>Sealed</th><th>Where</th><th>Kept</th><th>Health</th></tr></thead>
-        <tbody><tr><td colspan="6">Reading…</td></tr></tbody></table><p class="note blocks"></p>`;
+        <tbody><tr><td colspan="6">Reading…</td></tr></tbody></table><p class="files-kept"></p><p class="note blocks"></p>`;
       box.append(sto);
       const keep = await ctx.require("keep");
       const ago = at => {
@@ -151,7 +151,14 @@ export async function mount(ctx, el) {
       const draw = () => Promise.all([storage.describe(), keep.status().catch(() => [])]).then(
         ([list, kept]) => {
           const last = new Map();
-          for (const k of kept) if (!last.has(k.name) || last.get(k.name).at < k.at) last.set(k.name, k);
+          for (const k of kept) if (k.name && (!last.has(k.name) || last.get(k.name).at < k.at)) last.set(k.name, k);
+          // FILES: how the coded files stand (each kept on its own; a damaged one named).
+          const fk = kept.filter(k => k.file);
+          const sum = (f, k) => fk.reduce((n, x) => n + (x[k] ?? 0), 0);
+          const bad = fk.filter(x => x.error || x.damaged);
+          sto.querySelector(".files-kept").textContent = fk.length
+            ? `Files: ${fk.length} kept — ${sum(fk, "whole")}/${sum(fk, "gens")} generation(s) whole, ${sum(fk, "degraded")} degraded, ${sum(fk, "damaged")} damaged; ${sum(fk, "pieces") - sum(fk, "missing")}/${sum(fk, "pieces")} pieces there.${bad.length ? ` Needing attention: ${bad.map(x => `${x.file.slice(0, 8)}…${x.error ? ` (${x.error})` : ""}`).join(", ")}.` : ""}`
+            : "Files: none kept yet.";
           sto.querySelector("tbody").replaceChildren(
             ...list.map(t => {
               const tr = document.createElement("tr");

@@ -410,6 +410,37 @@ export async function start(ctx) {
     return ok;
   }
 
+  // KEEP a file (phase 4, Lifecycle): every piece — its root, its index, each generation's listed fragments — asked,
+  // and put again as it is stored (a burned piece never: it stays burned). HEALTH per generation: WHOLE (every listed
+  // fragment there), DEGRADED (at least the k it decodes from), DAMAGED (fewer). `{ id, at, pieces, missing, gens,
+  // whole, degraded, damaged, put }`.
+  async function keep(sp, row) {
+    const t0 = performance.now();
+    const ref = { key: row.key, root: row.root, name: `${row.id.slice(0, 8)}…`, ...(row.b ? { b: row.b } : {}) };
+    const f = await open(ref);
+    const out = { id: row.id, at: Date.now(), pieces: 0, missing: 0, gens: f.plan.gens, whole: 0, degraded: 0, damaged: 0, put: 0 };
+    const one = async (what, a, b, idHex) => {
+      out.pieces += 1;
+      const st = await fetchState(idHex, `keeping ${ref.name}`);
+      if (!st || (f.burnable && st[0] !== 2)) return (out.missing += 1), false;
+      if (await putOne([0, ...Array.from(core.file_keep(f.key, what, a, b, f.burnable, st))], `keeping ${ref.name}`)) out.put += 1;
+      return true;
+    };
+    await one("root", 0, 0, core.file_root_id(f.key, f.burnable));
+    const leaves = Math.ceil(f.plan.gens / 192);
+    for (let n = 0; n < leaves; n++) await one("index", 0, n, core.file_index_id(f.key, 0, n, f.burnable));
+    for (let level = 1; level <= f.depth; level++) for (let n = 0; n < Math.ceil(leaves / 7000 ** level); n++) await one("index", level, n, core.file_index_id(f.key, level, n, f.burnable));
+    for (let g = 0; g < f.plan.gens; g++) {
+      const listed = await f.listed(g);
+      const there = (await Promise.all(listed.map(([j]) => one("fragment", g, j, core.file_fragment_id(f.key, g, j, f.burnable))))).filter(Boolean).length;
+      const k = Math.min(GEN, f.plan.chunks - g * GEN);
+      out[there === listed.length ? "whole" : there >= k ? "degraded" : "damaged"] += 1;
+    }
+    out.ms = Math.round(performance.now() - t0);
+    ctx.log("kept", { what: `file ${ref.name}: ${out.pieces} piece(s) — ${out.whole}/${out.gens} generation(s) whole${out.degraded ? `, ${out.degraded} degraded` : ""}${out.damaged ? `, ${out.damaged} DAMAGED` : ""}; ${out.put} put again`, ms: out.ms });
+    return out;
+  }
+
   // When a re-key of this row last moved (its progress, else the row): for taking over from a member gone quiet.
   const lastMoved = async (sp, row) => Math.max(row.at ?? 0, (await progressOf(sp, row.id)).at()?.at ?? 0);
 
@@ -438,5 +469,5 @@ export async function start(ctx) {
     return out;
   }
 
-  return { put, keyOf, get, stream, chunk, range, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
+  return { keep, put, keyOf, get, stream, chunk, range, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
 }

@@ -887,6 +887,18 @@ Uses what freenet-prolly already has (rev 17d67d8: `range`/`range_with` + `front
       `uploads` FAILS: a tree block gone from the node and too little of its group to rebuild (data lost before
       keeping existed — shown as failed, never hidden). Missing-block repair is proven by the unit test only (a
       single node holds everything it was given).
-- [ ] L4d files: pieces re-published with the file rows.
+- [x] L4d FILES KEPT: `files.keep(sp, row)` asks every piece (root, index, each generation's listed fragments), puts
+      each back as stored (`core.file_keep`; a burned piece never), health per generation (whole/degraded/damaged);
+      the `keep` service keeps the account's and every space's coded files on the same weekly clock (`f/<space>/<id>`
+      records); Storage shows a Files line naming any needing attention. 17573: the 4 files still there kept whole
+      (11–12 pieces each, ~0.4 s); 80 of 84 file rows have NO ROOT on the node — see FINDING.
+- FINDING (measured 09-30, the 17573 node's own log): the node EVICTS by CONTRACT COUNT, not bytes — "resident-overhead
+  pressure": ~1 MiB estimated per hosted contract against 12.5 % of spare memory (`--hosting-mem-share`, budget
+  ~1.6 GB) → a cap of ~1,600 contracts, while state was 37 MB of a 1 GiB byte budget. 4,365 contracts evicted since
+  09-28 (343 in the last hour), unsubscribed and least-recently-used first: file fragments and tree blocks (one
+  contract each; a small table's tree alone is 9 — its root + 8 root parity). Tails survive (subscribed). A 100 KB
+  file is ~12 contracts, a 4K video hundreds. So on ONE machine, data beyond ~1,600 contracts is lost, whatever
+  keeping does. Options for the owner: raise the node's `--hosting-mem-share` (config, the owner's node), and/or
+  fewer contracts per file/tree (packing — the 09-27 ruling said packs were not worth it; this is new evidence).
 - [ ] L4e BLINDED TABLE NAMES: params carry `t/<table>` (and `x<space12>-…`) in the clear → keyed hash; the identity's
       grant check must take the name beside the params; every table re-keyed → needs a migration.

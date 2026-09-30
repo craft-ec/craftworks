@@ -216,6 +216,15 @@ impl Core {
         Ok((name, wire::frame_put(c, freenet_stdlib::prelude::WrappedState::new(state), s)?))
     }
 
+    /// KEEP a file piece: the state it is stored as (a GET's answer, whole) put again at `address` — the `piece`
+    /// contract (`burnable`) or the `sealed` one. `(id hex, frames)`.
+    pub fn frames_keep_piece(&mut self, address: &[u8; 32], burnable: bool, state: &[u8]) -> Result<(String, Vec<Vec<u8>>), String> {
+        let s = self.stream();
+        let c = wire::block::block_contract(if burnable { &self.piece_code } else { &self.sealed_code }, address);
+        let name = c.key().id().encode();
+        Ok((name, wire::frame_put(c, freenet_stdlib::prelude::WrappedState::new(state.to_vec()), s)?))
+    }
+
     /// The contract id (bytes) where a file piece at `address` is fetched: the `piece` contract's (`burnable`), else
     /// the `sealed` one's.
     pub fn piece_id(&self, address: &[u8; 32], burnable: bool) -> [u8; 32] {
@@ -1296,6 +1305,18 @@ mod js {
         }
         pub fn file_fragment_id(&self, key: &[u8], g: f64, j: u8, burnable: bool) -> Result<String, JsValue> {
             Ok(hex(&self.0.piece_id(&craftworks_files::fragment_address(&b32(key)?, g as u64, j), burnable)))
+        }
+        /// KEEP a file's piece (`what` and `a`, `b` as `file_burn`): the state a GET gave, put again. `[id, frames]`.
+        pub fn file_keep(&mut self, key: &[u8], what: &str, a: f64, b: f64, burnable: bool, state: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let key = b32(key)?;
+            let address = match what {
+                "root" => craftworks_files::root_address(&key),
+                "index" => craftworks_files::index_address(&key, a as u8, b as u64),
+                "fragment" => craftworks_files::fragment_address(&key, a as u64, b as u8),
+                _ => return Err(err(format!("no such piece: {what}"))),
+            };
+            let (id, f) = self.0.frames_keep_piece(&address, burnable, state).map_err(err)?;
+            Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
         }
         /// BURN a file's piece (`what`: "root", "index" with `a` = level and `b` = n, "fragment" with `a` = g and
         /// `b` = j) with its secret: `[id hex, frames]`.
