@@ -12,6 +12,8 @@
 //
 //   const content = await ctx.require("content");
 //   const room = await content.in(channel)     // a container: a channel (a sub-space), or the account (none)
+//   const room = await content.in(channel, { paged: true })   // READ BY PAGES: the newest first; room.older(n) for
+//                                              // more, room.hasMore() — never the whole history (phase 3, Reads)
 //   room.list()                                // [{ id, kind, body, at, by }], oldest first
 //   await room.post("message", "hello")        // the new item's id
 //   await room.post("message", "hi", { re })  // a REPLY: `re` the id of the item it answers
@@ -30,11 +32,14 @@
 export async function start(ctx) {
   const storage = await ctx.require("storage");
   const space = await ctx.require("space");
-  const newId = () => [...crypto.getRandomValues(new Uint8Array(8))].map(x => x.toString(16).padStart(2, "0")).join("");
+  // An item's ID SORTS BY TIME (phase 3, Reads): `t` ‖ its time (ms, base 36, 9 places) ‖ 8 random hex — so a table read
+  // backwards from its end gives the newest first ("latest N", then older pages). `t` sorts after the random hex ids from
+  // before and the reactions' `r-` keys: a scan of `t…` is the items made since.
+  const newId = () => `t${Date.now().toString(36).padStart(9, "0")}${[...crypto.getRandomValues(new Uint8Array(4))].map(x => x.toString(16).padStart(2, "0")).join("")}`;
 
   // Any conversation names its `messages` table and the `scope` (space) it lives in: a channel, its server; a direct
   // conversation, itself.
-  async function tableOf(container) {
+  async function tableOf(container, opts = {}) {
     // A space's PUBLIC table read from OUTSIDE (not a member): its writers are the public acts' (`roles.ofPublic`).
     if (container?.outside) {
       const r = await (await ctx.require("roles")).ofPublic(container.scope);
@@ -48,11 +53,14 @@ export async function start(ctx) {
       return t;
     }
     if (!container?.messages || !container.scope) throw new Error(`content does not live in a ${container?.kind ?? "nothing"}`);
-    return storage.table(container.messages, container.scope);
+    return storage.table(container.messages, container.scope, opts);
   }
 
-  async function in_(container) {
-    const t = await tableOf(container);
+  async function in_(container, { paged = false } = {}) {
+    // PAGED (phase 3, Reads): the table opened LAZY — only the newest page read (`older()` for the next), never the
+    // whole history. (A table read from outside or a person's public tail: read whole, as before.)
+    paged = paged && !container?.outside && container?.kind !== "public";
+    const t = await tableOf(container, { lazy: paged });
     const me = (await space.account()).id;
     // In a space (not the account): its roles (who wrote what); in a SHARED space (a server) its moderation too (what is
     // hidden). A conversation (direct, group) is between equals: nobody moderates another's items.
@@ -102,11 +110,56 @@ export async function start(ctx) {
     };
     // What this person does not see: what moderation hid (for everyone), and whom they hid or blocked (for them).
     const people = await (await ctx.require("edge")).people();
+    // THE ROWS NOW: the whole table's — or, PAGED, the pages read so far with the table's own newer rows over them.
+    const loaded = new Map(); // key → row, from pages
+    let oldest = null; // the oldest item key read (the next page goes on below it)
+    let more = true; // pages left (items with time ids, then the ones from before them)
+    let timesDone = false;
+    const rowsNow = () => {
+      if (!paged) return t.rows();
+      const all = new Map(loaded);
+      for (const row of t.rows()) all.set(row.key, row);
+      return [...all.values()];
+    };
+    // Its REACTIONS, read with each item (keyed `r-<item>-…`: a range per item).
+    const withReactions = async rows => {
+      const items = rows.filter(r => !r.key.startsWith("r-"));
+      const rs = await Promise.all(items.map(r => t.page({ lo: `r-${r.key}-`, hi: `r-${r.key}.`, limit: 500 }).then(p => p.rows, () => [])));
+      return [...rows, ...rs.flat()];
+    };
+    // THE NEXT PAGE, older than what is held: items with time ids newest first; then, once, those from before them.
+    async function older(n = 50) {
+      if (!paged || !more) return 0;
+      let got = [];
+      if (!timesDone) {
+        const p = await t.page({ lo: "t", before: oldest ?? "", limit: n });
+        got = p.rows;
+        if (got.length) oldest = got.at(-1).key;
+        if (!p.next) timesDone = true;
+      }
+      if (timesDone && !got.length) {
+        // Items from before time ids (and their reactions): read once, whole.
+        got = (await t.page({ hi: "t", limit: 100000 })).rows;
+        more = false;
+      }
+      for (const row of await withReactions(got)) loaded.set(row.key, row);
+      changed.forEach(f => f());
+      return got.length;
+    }
+    // CHANGED (a new row, a flush moving rows into the tree): what is held read again, from the newest to the oldest held.
+    let refreshing = null;
+    const refresh = () =>
+      (refreshing ??= (async () => {
+        if (!paged || !oldest) return;
+        const p = await t.page({ lo: oldest, limit: 100000 });
+        for (const row of await withReactions(p.rows)) loaded.set(row.key, row);
+      })()
+        .catch(() => {})
+        .finally(() => (refreshing = null)));
     const every = () => {
       const hidden = m ? m.hidden(container.messages) : new Set();
       const unseen = people.unseen();
-      return t
-        .rows()
+      return rowsNow()
         .filter(row => !hidden.has(row.key))
         .map(item)
         .filter(it => it && !unseen.has(it.by))
@@ -136,13 +189,19 @@ export async function start(ctx) {
       return it;
     };
     const changed = [];
-    t.onChange(() => changed.forEach(f => f()));
+    t.onChange(() => (paged ? refresh().then(() => changed.forEach(f => f())) : changed.forEach(f => f())));
+    // PAGED: the newest page read before it is handed out.
+    const first = paged ? older(50) : Promise.resolve();
     r?.onChange(() => changed.forEach(f => f()));
     people.onChange(() => changed.forEach(f => f()));
     return {
       list,
+      // PAGED: the next older page (how many items it brought); whether any are left.
+      older,
+      hasMore: () => paged && more,
+      paged,
       reactions: () => reactionsOf(every()),
-      settled: Promise.all([t.settled, r?.settled]).then(() => {}),
+      settled: Promise.all([t.settled, r?.settled, first]).then(() => {}),
       onChange: f => changed.push(f),
       mayRemove: it => it.by === me || (governed && !!r?.can(me, "moderate")),
       // May this person post here now (the app's setting; a conversation: always).

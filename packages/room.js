@@ -97,7 +97,8 @@ export async function start(ctx) {
     let limit = PAGE;
     let replyTo = null;
     let editing = null;
-    const room = await content.in(conversation);
+    // Read by PAGES: the newest messages first, older ones as asked (phase 3, Reads).
+    const room = await content.in(conversation, { paged: true });
     room.settled.finally(() => {
       settled = true;
       if (open) draw();
@@ -200,9 +201,18 @@ export async function start(ctx) {
       const byId = new Map(items.map(m => [m.id, m]));
       const shown = items.slice(-limit);
       const earlier = items.length - shown.length;
+      // EARLIER: those held but not shown, else the next page read.
+      const readMore = !earlier && room.hasMore?.();
       msgs.replaceChildren(
-        ...(earlier
-          ? [el("li", {}, el("button", { type: "button", className: "earlier", textContent: `Show earlier messages (${earlier})`, onclick: () => ((limit += PAGE), draw()) }))]
+        ...(earlier || readMore
+          ? [el("li", {}, el("button", { type: "button", className: "earlier", textContent: earlier ? `Show earlier messages (${earlier})` : "Load earlier messages", onclick: async e => {
+              if (earlier) return (limit += PAGE), draw();
+              e.target.disabled = true;
+              e.target.textContent = "Loading…";
+              await room.older(PAGE).catch(() => 0);
+              limit += PAGE;
+              draw();
+            } }))]
           : []),
         ...shown.map(m => message(m, byId)),
       );

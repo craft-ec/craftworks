@@ -271,6 +271,25 @@ impl Core {
     /// An open table as the page sees it: `{ kind: "tail", tail: { rows, … } }` once every tree block it needs is
     /// held; else `{ kind: "tail-need", blocks: [Block contract ids] }`, each to GET (its answer comes back through
     /// `take`, which feeds it in and gives the next view).
+    /// A PAGE of an open tail (phase 3, Reads: `data::Open::page`): `{ kind: "tail-page", rows: [[key hex, value hex]],
+    /// next: hex | null }` once the blocks on its path are held; else `tail-need` / `tail-keys` as for a view.
+    pub fn tail_page(&mut self, id: &[u8; 32], lo: Option<Vec<u8>>, hi: Option<Vec<u8>>, reverse: bool, after: Option<Vec<u8>>, limit: usize) -> Value {
+        let Some(o) = self.tails.get_mut(id) else { return json!({ "kind": "error", "said": "that tail is not open" }) };
+        match o.page(lo, hi, reverse, after, limit) {
+            Ok(data::Step::Ready(p)) => json!({
+                "kind": "tail-page", "id": hex(id),
+                "rows": p.rows.iter().map(|(k, v)| [hex(k), hex(v)]).collect::<Vec<_>>(),
+                "next": p.next.as_deref().map(hex),
+            }),
+            Ok(data::Step::Need(cids)) => {
+                let blocks = self.want(id, &cids);
+                json!({ "kind": "tail-need", "id": hex(id), "blocks": blocks })
+            }
+            Ok(data::Step::Keys(epochs)) => json!({ "kind": "tail-keys", "id": hex(id), "epochs": epochs }),
+            Err(e) => json!({ "kind": "tail-unreadable", "id": hex(id), "said": e }),
+        }
+    }
+
     pub fn tail_view(&mut self, id: &[u8; 32]) -> Value {
         let Some(o) = self.tails.get_mut(id) else { return json!({ "kind": "error", "said": "that tail is not open" }) };
         match o.rows() {
@@ -933,6 +952,11 @@ mod js {
         /// pending } }`, or `{ kind: "tail-need", blocks: [Block contract ids to GET] }`.
         pub fn tail_view(&mut self, id: &[u8]) -> Result<String, JsValue> {
             Ok(self.0.tail_view(&b32(id)?).to_string())
+        }
+        /// A page of an open tail: `lo`/`hi`/`after` as bytes (empty: none), newest key first when `reverse`.
+        pub fn tail_page(&mut self, id: &[u8], lo: &[u8], hi: &[u8], reverse: bool, after: &[u8], limit: u32) -> Result<String, JsValue> {
+            let opt = |b: &[u8]| (!b.is_empty()).then(|| b.to_vec());
+            Ok(self.0.tail_page(&b32(id)?, opt(lo), opt(hi), reverse, opt(after), limit as usize).to_string())
         }
 
         pub fn set_block_code(&mut self, code: &[u8]) {

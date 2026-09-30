@@ -61,7 +61,8 @@ export async function start(ctx) {
     if (watched.has(container.id)) return;
     const w = { container, kind, ...extra, seen: new Set() };
     watched.set(container.id, w);
-    w.room = await content.in(container);
+    // Only the NEWEST page (phase 3, Reads): what is new is all this counts — never a whole history read at startup.
+    w.room = await content.in(container, { paged: true });
     for (const m of w.room.list()) w.seen.add(m.id);
     if (onScreen.has(container.id) && visible()) markRead(container.id);
     w.room.onChange(() => {

@@ -58,6 +58,20 @@ export async function start(ctx) {
     return view;
   }
 
+  // A PAGE of one tail (phase 3, Reads): `{ lo, hi, after, reverse, limit }` (keys as text) → `{ rows: [[key bytes,
+  // stored value bytes]], next }` — the blocks on its path fetched, and only those.
+  async function pageOf(idHex, app, { lo = "", hi = "", after = "", reverse = true, limit = 50 } = {}) {
+    const b = x => (x ? enc.encode(x) : new Uint8Array(0));
+    for (let round = 0; round < 24; round++) {
+      const v = JSON.parse(core.tail_page(bytes(idHex), b(lo), b(hi), reverse, b(after), limit));
+      if (v.kind === "tail-page") return { rows: v.rows.map(([k, val]) => [bytes(k), bytes(val)]), next: v.next ? dec.decode(bytes(v.next)) : null };
+      if (v.kind === "tail-keys") await epochKeys(v.id, v.epochs, app);
+      else if (v.kind === "tail-need") await blocks.fetch(v.id, v.blocks, app);
+      else throw new Error(`${app}: ${v.said ?? v.kind}`);
+    }
+    throw new Error(`${app}: a page did not finish loading`);
+  }
+
   // REFUSING: set by `keys` when the group says this node was REMOVED from the account. From then on it writes
   // nothing — not even sealing rows over, which would take them out of reach of the nodes that remain.
   let refusing = null;
@@ -105,6 +119,10 @@ export async function start(ctx) {
         await epochKeys(idHex, [...u.epochs], u.app).catch(() => {});
         if (unkeyed.has(idHex)) continue;
         const t = live.get(idHex);
+        if (t?.lazy) {
+          t.poke();
+          continue;
+        }
         const v = t && (await settle(JSON.parse(core.tail_view(bytes(idHex))), u.app).catch(() => null));
         if (v?.tail) {
           ctx.log("table opened", { what: `${u.app}: the epoch key arrived` });
@@ -118,6 +136,8 @@ export async function start(ctx) {
   const live = new Map(); // id hex -> tail, for what the node pushes
   listen(said => {
     const t = (said.kind === "tail" || said.kind === "tail-need" || said.kind === "tail-keys") && live.get(said.id);
+    // A LAZY tail (read by pages: phase 3) is only told; its readers page again (the blocks they hold are reused).
+    if (t?.lazy) return void t.poke();
     if (t)
       settle(said, t.app).then(
         v => {
@@ -133,11 +153,12 @@ export async function start(ctx) {
   // listing). `sealWith` (hex): its sealing key, given (a space's epoch log: its epoch's own), instead of the table's.
   // `space` (id bytes): the space it belongs to, not the account — signed in that space, with no site grant. Its rows AS
   // STORED are `raw()` (bytes); `rows()` are its view's.
-  function tail(owner, app, { known = null, catalogKey = false, beforeCreate = null, sealWith = null, space: inSpace = null, public: open = false } = {}) {
+  function tail(owner, app, { known = null, catalogKey = false, beforeCreate = null, sealWith = null, space: inSpace = null, public: open = false, lazy = false } = {}) {
     // The space: an object (a table of a space: its group keeps it current) or its id's bytes (an epoch log).
     const spaceId = inSpace?.idBytes ?? inSpace;
     const idHex = core.tail_open(tailCode, bytes(owner), app);
-    if (tails.has(idHex)) return tails.get(idHex);
+    // Opened already: as it is — or, opened LAZY and now wanted whole, read whole.
+    if (tails.has(idHex)) return lazy ? tails.get(idHex) : tails.get(idHex).then(t => (t.lazy ? t.whole().then(() => t) : t));
     const id = bytes(idHex);
     const name = Core.id_name(id);
     let rows = [];
@@ -160,6 +181,16 @@ export async function start(ctx) {
       tailNext: () => core.tail_next(id),
       // Ask again (a tail that was not there: its writer may have made it since).
       reread: () => read(),
+      // LAZY (phase 3, Reads): its tree read only by PAGES — the blocks on a page's path, never the whole tree.
+      lazy,
+      page: o => pageOf(idHex, app, o),
+      poke: () => changed.forEach(f => f()),
+      // Wanted WHOLE after a lazy open: read whole — unless it is not there yet (a view would mark it made, and its
+      // first write would then skip listing it in the catalog: a table nobody finds after a reload).
+      whole: async () => {
+        t.lazy = false;
+        if (!t.absent) await view();
+      },
     };
     const ready = (async () => {
       // THE TABLE'S KEY: the table is sealed, so reading it needs its key, and the key comes only with the person's
@@ -213,6 +244,13 @@ export async function start(ctx) {
       }
       // The tail is there: its tree must load too. A tree that does not is an error, never an empty table (that
       // would write over rows it could not see).
+      // LAZY: the tail's own state is enough (its pages read the tree when asked).
+      if (t.lazy && said.kind !== "get-failed") {
+        t.absent = false;
+        if (said.kind === "tail") took(said.tail);
+        else for (const f of changed) f();
+        return;
+      }
       if (said.kind !== "get-failed") said = await settle(said, app);
       t.absent = said.kind !== "tail";
       if (said.kind === "tail") took(said.tail);
@@ -271,6 +309,7 @@ export async function start(ctx) {
       for (const f of changed) f();
     }
     async function view() {
+      if (t.lazy) return void t.poke();
       const v = await settle(JSON.parse(core.tail_view(id)), app);
       took(v.tail);
     }
@@ -324,6 +363,11 @@ export async function start(ctx) {
   const capped = (f, cap) => ({
     owner: f.owner,
     raw: () => (f.raw() ?? []).filter(([, v]) => seqOf(v) <= cap),
+    page: async o => {
+      const p = await f.page(o);
+      return { ...p, rows: p.rows.filter(([, v]) => seqOf(v) <= cap) };
+    },
+    whole: () => f.whole?.(),
     onChange: fn => f.onChange(fn),
     get absent() {
       return f.absent;
@@ -492,10 +536,11 @@ export async function start(ctx) {
 
   // A TABLE: the merge of its writers' feeds, and this node's feed to write.
   const tables = new Map(); // scope + name -> Promise<table>
-  function merged(name, sp) {
+  function merged(name, sp, { lazy = false } = {}) {
     const scope = scopeOf(sp);
     const at = `${scope.key}/${name}`;
-    if (tables.has(at)) return tables.get(at);
+    // Opened already: as it is — or, opened LAZY and now wanted whole, every feed read whole.
+    if (tables.has(at)) return lazy ? tables.get(at) : tables.get(at).then(t => (t.lazy ? t.whole().then(() => t) : t));
     const ready = (async () => {
       if (sp.kind === "account" && !sp.shared) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
       const [mine, others] = await Promise.all([scope.catalogOf(scope.self), scope.writers()]);
@@ -507,7 +552,7 @@ export async function start(ctx) {
       let unopened = 0;
       const opts = scope.opts(name);
       const theirs = (owner, known) =>
-        tail(owner, name, { known, ...opts }).catch(e => {
+        tail(owner, name, { known, ...opts, lazy }).catch(e => {
           unopened += 1;
           ctx.log("feed not read", { what: `${name}: ${owner.slice(0, 12)}…: ${e.message}` });
           return null;
@@ -531,7 +576,7 @@ export async function start(ctx) {
       const listMine = async () => {
         if (!lists(mine, name)) await versioned(mine, name, JSON.stringify({ at: Date.now() }), own(mine).find(r => r.key === name)?.id);
       };
-      const me = await tail(scope.self, name, { known: lists(mine, name) ? null : false, ...opts, beforeCreate: listMine });
+      const me = await tail(scope.self, name, { known: lists(mine, name) ? null : false, ...opts, beforeCreate: listMine, lazy });
       take(me);
       // The OTHER writers' feeds, in the background: each merged in as it arrives, never holding the table up. A writer
       // whose catalog is not there yet (a node that has not written here), or does not list this table yet, is asked
@@ -583,14 +628,41 @@ export async function start(ctx) {
       // A write in a space: its group brought current first, so what is written is sealed with the newest epoch's key
       // (never one a member removed since still holds).
       const current = sp.kind === "account" ? async () => {} : async () => (await ctx.require("keys")).group(sp).ready({ fresh: true }).catch(() => null);
+      // A PAGE across the writers (phase 3, Reads): each feed's page, their versions merged, the newest `limit` rows
+      // kept — each feed has at most `limit` keys at or past the page's last, so none is skipped — and where to go on.
+      // `{ lo, hi, before, limit }` (keys as text; `before`: continue below that key).
+      const page = async ({ lo = "", hi = "", before = "", limit = 50 } = {}) => {
+        const got = await Promise.all(all.filter(f => !f.absent && f.page).map(f => f.page({ lo, hi, after: before, reverse: true, limit }).then(p => ({ f, p }), () => null)));
+        const ok = got.filter(Boolean);
+        const merged_ = decoded(Array.from(feed.merge_feeds(ok.map(({ f, p }) => [bytes(f.owner), p.rows])))).sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0));
+        const out = merged_.slice(0, limit);
+        const more = merged_.length > limit || ok.some(({ p }) => p.next);
+        return { rows: out, next: more && out.length ? out.at(-1).key : null };
+      };
+      // A row's current version (to write the next one over it): held, or — a lazy table — read by its one key.
+      const currentId = async key => {
+        const held = rows.find(r => r.key === key);
+        if (held || !t.lazy) return held?.id;
+        return (await page({ lo: key, hi: `${key}\u0000`, limit: 1 })).rows.find(r => r.key === key)?.id;
+      };
       const write = async (key, value) => {
         await current();
         // A newer epoch just learned: the open tails move onto it before this is sealed.
         if (sp.kind !== "account") await sealNewest().catch(() => {});
-        return versioned(me, key, value, rows.find(r => r.key === key)?.id);
+        return versioned(me, key, value, await currentId(key));
       };
       const t = {
         app: name,
+        lazy,
+        page,
+        // What each writer's feed is here (to see why a table reads as it does).
+        feedsNow: () => all.map(f => ({ owner: f.owner.slice(0, 12), absent: !!f.absent, lazy: !!f.lazy, info: f.info ?? null })),
+        // A LAZY table wanted whole: every feed read whole, merged again.
+        whole: async () => {
+          t.lazy = false;
+          await Promise.all(all.map(f => f.whole?.()));
+          remerge();
+        },
         // Every writer tried once (some may still arrive later): for what needs the whole table now (adopting a node's
         // rows before its removal).
         settled,
@@ -623,13 +695,13 @@ export async function start(ctx) {
 
   const openedNames = new Set(); // the account's tables this page asked for
   // A table of the account, or (`sp`) of another space.
-  async function table(name, sp = null) {
-    if (sp && sp.kind !== "account") return merged(name, sp);
+  async function table(name, sp = null, opts = {}) {
+    if (sp && sp.kind !== "account") return merged(name, sp, opts);
     if (CHANNELS.has(name)) return channel(name);
     openedNames.add(name);
     const acc = await space.account();
     if (!acc) throw new Error("nobody is logged in");
-    return merged(name, acc);
+    return merged(name, acc, opts);
   }
 
   // Every table of the account, as `{ name, rows, pending, flushed, sealed, legacy, unreadable, feeds }` (for the

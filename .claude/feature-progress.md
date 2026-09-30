@@ -832,9 +832,18 @@ come with keepers as a new codec version.
 ## Phase 3 READS (owner plan 09-30: files+media → Reads → Lifecycle) — ARCHITECTURE row 3
 Uses what freenet-prolly already has (rev 17d67d8: `range`/`range_with` + `frontier_of` fetch only a range's blocks;
 `diff` between roots; `aggregate` counts). Nothing new in the tree.
-- [ ] R3a time-ordered item ids (`content`): `<ms base36>-<rand>` so key order = time; old random ids read as before.
-- [ ] R3b a feed's RANGE in `data`/core: latest N / before a key, fetching only the path's blocks (tail rows merged).
-- [ ] R3c `storage` table pages across feeds (merge by key, versions as now); `content.list({ latest, before })`;
-      Chat, Board, Drive, Videos open with the latest page and load older on scroll.
-- [ ] R3d CHANGE-ONLY: each feed's last root kept; a new root read by `diff` (only changed nodes fetched).
-- Measure: blocks fetched to open a 1000-message channel, before and after.
+- [x] R3a time-ordered item ids (`content`): `t` ‖ ms base36 (9) ‖ 8 hex — sorts after old hex ids and `r-` reactions.
+- [x] R3b `data::Open::page` (lo/hi/after/reverse/limit; tree walked only along the page's path; tail merged in the
+      span covered; per-row-sealed legacy trees read whole and cut) + core `tail_page`. Test: latest 20 of 600 rows
+      fetched 7 blocks, a whole read 136; pages chain to all 600 in order (data tests 14/14).
+- [x] R3c storage LAZY tails/tables (no tree read at open, pushes only poke), `table.page` across feeds (each feed's
+      top N, merged, top N kept, `next`), write looks up the key's current version on a lazy table; `content.in(c,
+      { paged })` with `older()`/`hasMore()`, reactions by `r-<id>-` ranges, refresh of what is held on change. Chat
+      rooms and ACTIVITY (unread counts: it used to read every channel and board whole at startup) read paged.
+      Board/items still read whole (Top needs every post). BUG found by the test and fixed: upgrading a lazy tail that
+      is not on the network yet marked it made, so its first write skipped the catalog listing (a table no reload
+      finds) — whole() now leaves an absent tail absent.
+- [x] R3d CHANGE-ONLY: already so — blocks are content-addressed and cached per open tail, so a new root reuses
+      every held block and only changed nodes are fetched; a lazy table's readers re-page what they hold.
+- Verified 17573: a 150-message channel opens with the newest 50 (lazy: no whole read), pages back to all 150 in
+  order, "Load earlier" in Chat, a new message live; Board and Videos unaffected; 0 errors.

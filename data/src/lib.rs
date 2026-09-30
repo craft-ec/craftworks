@@ -210,6 +210,13 @@ pub enum Step<T> {
 }
 
 /// Every row in the clear, and what reading them found.
+/// A page of rows (`Open::page`): in its order, and the key to continue after (`None`: done).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page {
+    pub rows: Vec<(Vec<u8>, Vec<u8>)>,
+    pub next: Option<Vec<u8>>,
+}
+
 struct Rows {
     rows: BTreeMap<Vec<u8>, Vec<u8>>,
     stale: BTreeMap<Vec<u8>, (Vec<Vec<u8>>, Vec<u8>)>,
@@ -647,6 +654,88 @@ impl Open {
         Ok(Step::Ready(Rows { rows: all, stale, unreadable }))
     }
 
+    /// A PAGE of rows in the clear (phase 3, Reads): those with keys from `lo` (inclusive) to `hi` (exclusive), at most
+    /// `limit` from the tree, newest-key first when `reverse`, continuing past `after` — the TREE's walked only along
+    /// the page's path (its other blocks never fetched), the TAIL's over them in the span the page covers (a pending
+    /// delete hides a tree row). With it, the key to continue from (`None`: the range is done). `Need`/`Keys` as for
+    /// `rows`. A tree from before whole sealing (rows sealed one by one: keys not in order) is read whole and cut.
+    pub fn page(&mut self, lo: Option<Vec<u8>>, hi: Option<Vec<u8>>, reverse: bool, after: Option<Vec<u8>>, limit: usize) -> Result<Step<Page>, String> {
+        use std::ops::Bound;
+        let inside = |k: &[u8], lo: &Option<Vec<u8>>, hi: &Option<Vec<u8>>| lo.as_deref().is_none_or(|l| k >= l) && hi.as_deref().is_none_or(|h| k < h);
+        let body = self.writer.body();
+        let (tail_rows, keys) = self.tail_rows(&body);
+        if !keys.is_empty() {
+            return Ok(Step::Keys(keys));
+        }
+        let mut rows: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+        let mut next = None;
+        if let Some(root) = body.root {
+            if !self.sealed_tree() {
+                return Ok(match self.collect()? {
+                    Step::Ready(r) => {
+                        let mut all: Vec<_> = r.rows.into_iter().filter(|(k, _)| inside(k, &lo, &hi) && after.as_deref().is_none_or(|a| if reverse { k.as_slice() < a } else { k.as_slice() > a })).collect();
+                        if reverse {
+                            all.reverse();
+                        }
+                        Step::Ready(Page { rows: all, next: None })
+                    }
+                    Step::Need(x) => Step::Need(x),
+                    Step::Keys(k) => Step::Keys(k),
+                });
+            }
+            let r = Range {
+                lo: lo.clone().map_or(Bound::Unbounded, Bound::Included),
+                hi: hi.clone().map_or(Bound::Unbounded, Bound::Excluded),
+                reverse,
+                after: after.clone(),
+                max_entries: limit.max(1),
+                max_bytes: 4 << 20,
+                ..Range::default()
+            };
+            let page = match range(&self.blocks, &root, &r) {
+                Ok(p) => p,
+                Err(RangeError::Read(ReadError::Need(ids))) => return self.need(ids),
+                Err(e) => return Err(format!("the tree does not read: {e:?}")),
+            };
+            if page.end == PageEnd::Blocked {
+                return self.need(page.need.clone());
+            }
+            for (k, v) in &page.entries {
+                match read_value(&self.blocks, *v) {
+                    Ok(b) => {
+                        rows.insert(k.clone(), b.to_vec());
+                    }
+                    Err(ReadError::Need(ids)) => return self.need(ids),
+                    Err(e) => return Err(format!("a value does not read: {e:?}")),
+                }
+            }
+            if page.end == PageEnd::Limit {
+                next = page.next.clone();
+            }
+        }
+        // The TAIL over the tree, in the SPAN this page covers: from where it started to where the tree page stopped
+        // (the whole rest of the range when it did not stop).
+        let started = |k: &[u8]| after.as_deref().is_none_or(|a| if reverse { k < a } else { k > a });
+        let within = |k: &[u8]| match &next {
+            None => true,
+            Some(n) => if reverse { k >= n.as_slice() } else { k <= n.as_slice() },
+        };
+        for (pk, _, pv) in tail_rows {
+            if !inside(&pk, &lo, &hi) || !started(&pk) || !within(&pk) {
+                continue;
+            }
+            match pv {
+                Some(v) => rows.insert(pk, v),
+                None => rows.remove(&pk),
+            };
+        }
+        let mut out: Vec<_> = rows.into_iter().collect();
+        if reverse {
+            out.reverse();
+        }
+        Ok(Step::Ready(Page { rows: out, next }))
+    }
+
     /// Every row in the clear, as stored (a feed's: versions), for the merge. `Need`/`Keys` as for `rows`.
     pub fn opened(&mut self) -> Result<Step<BTreeMap<Vec<u8>, Vec<u8>>>, String> {
         Ok(match self.collect()? {
@@ -784,6 +873,88 @@ mod tests {
         let id = *o.blocks.0.keys().next().unwrap();
         let other = [0u8; 32];
         assert!(!r.absorb_block(&other, &net(&o, &id)));
+    }
+
+    /// READS: a reader asks the LATEST page and fetches only the blocks on its path — fewer than a whole read; pages
+    /// continue back to the start and, together, are every row (the tail's pending rows and deletes included).
+    #[test]
+    fn a_page_reads_only_its_path_and_pages_chain_to_every_row() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        let mut o = Open::new(CODE, &member, "chat");
+        o.set_table_key([7; 32]);
+        for i in 0..600 {
+            write(&key, &mut o, &format!("t{i:05}"), &format!("{i}-{}", "x".repeat(900)));
+            if i % 40 == 39 {
+                flush(&key, &mut o);
+            }
+        }
+        // After the flush: one new row (the newest), one tree row deleted, one tree row changed — in the tail.
+        write(&key, &mut o, "t00600", "newest");
+        write(&key, &mut o, "t00598", "");
+        write(&key, &mut o, "t00597", "changed");
+        let fetches = |o: &Open, mut f: Box<dyn FnMut(&mut Open) -> Result<Step<Page>, String>>| -> (Page, usize) {
+            let mut r = Open::new(CODE, &member, "chat");
+            r.set_table_key([7; 32]);
+            assert!(r.absorb(&o.writer.state()));
+            let mut n = 0;
+            loop {
+                match f(&mut r).unwrap() {
+                    Step::Ready(p) => return (p, n),
+                    Step::Keys(k) => panic!("no epochs: {k:?}"),
+                    Step::Need(ids) => {
+                        n += ids.len();
+                        assert!(n < 10_000);
+                        for id in ids {
+                            assert!(r.absorb_block(&id, &net(o, &id)));
+                        }
+                    }
+                }
+            }
+        };
+        let (latest, few) = fetches(&o, Box::new(|r: &mut Open| r.page(Some(b"t".to_vec()), None, true, None, 20)));
+        let names = |p: &Page| p.rows.iter().map(|(k, _)| String::from_utf8_lossy(k).into_owned()).collect::<Vec<_>>();
+        assert_eq!(names(&latest)[..4], ["t00600", "t00599", "t00597", "t00596"], "newest first; the tail's new row in, its delete out");
+        assert_eq!(latest.rows[2].1, b"changed", "the tail's change over the tree's");
+        // CONTROL: a whole read of the same table fetches more blocks.
+        let (_, all) = fetches(
+            &o,
+            Box::new(|r: &mut Open| {
+                Ok(match r.rows()? {
+                    Step::Ready(_) => Step::Ready(Page { rows: vec![], next: None }),
+                    Step::Need(x) => Step::Need(x),
+                    Step::Keys(k) => Step::Keys(k),
+                })
+            }),
+        );
+        assert!(few < all, "the latest page fetched {few} blocks, a whole read {all}");
+        println!("READS: the latest 20 of 600 rows fetched {few} blocks; a whole read {all}");
+        // Pages chain back to the start: every row, once, newest first.
+        let mut r = Open::new(CODE, &member, "chat");
+        r.set_table_key([7; 32]);
+        assert!(r.absorb(&o.writer.state()));
+        let (mut seen, mut after) = (Vec::new(), None);
+        loop {
+            let p = loop {
+                match r.page(Some(b"t".to_vec()), None, true, after.clone(), 50).unwrap() {
+                    Step::Ready(p) => break p,
+                    Step::Need(ids) => ids.iter().for_each(|id| assert!(r.absorb_block(id, &net(&o, id)))),
+                    Step::Keys(k) => panic!("no epochs: {k:?}"),
+                }
+            };
+            seen.extend(names(&p));
+            match p.next {
+                Some(n) => after = Some(n),
+                None => break,
+            }
+        }
+        assert_eq!(seen.len(), 600, "600 made, one added, one deleted");
+        assert_eq!(seen.first().unwrap(), "t00600");
+        assert_eq!(seen.last().unwrap(), "t00000");
+        let mut sorted = seen.clone();
+        sorted.sort_by(|a, b| b.cmp(a));
+        sorted.dedup();
+        assert_eq!(sorted, seen, "in order, each once");
     }
 
     /// ERASURE: once a table's tree is past one leaf, its root lists parity for its children, and every one of
