@@ -190,7 +190,9 @@ renderer: the source escaped first, so the only markup is the rules'). A file is
 file shows only to who reads the item. An image shows its preview, then loads once in view; a video or an audio shows a
 COVER (its poster or album cover, ▶, its length) and loads only when played. Video and audio written inline go through
 the media pipeline (`video-studio`: streamed, a cover, a video id), so their subtitles, lyrics and transcripts are found
-by that id (`subtitle-store.forFile`) as in Videos and Audio. The editor (`md-editor`, Reddit's): RICH TEXT by default —
+by that id — ONE lookup (`subtitle-store.tracksFor(item, file)`) and ONE view (`media-view`: a cover until played, the player,
+its tracks, "💬" to add or edit, an audio's lines in time) for a Videos or Audio item and for media inline in a post, so
+the same video shows the same tracks wherever it shows. Videos and Audio have a public view (Discover), as Board. The editor (`md-editor`, Reddit's): RICH TEXT by default —
 formatted as it reads, media shown as itself — with Markdown as the alternative (the choice kept); what is kept is always
 Markdown. 🖼 media inline (this device or Drive), 📎 files; posts, comments and messages (Chat, Messages: compact,
 Enter sends, "@" mentions) are written and edited in it.

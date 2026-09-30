@@ -148,5 +148,5 @@ export async function start(ctx) {
     const me = (await space.account()).id;
     return (await items.list({ by: me }, sort, KIND, options)).map(shape);
   }
-  return { of, ofFile, forFile, add, update, remove, text, toSrt, toVtt, mine, videoId, KIND };
+  return { of, ofFile, tracksFor, forFile, add, update, remove, text, toSrt, toVtt, mine, videoId, KIND };
 }

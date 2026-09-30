@@ -13,7 +13,7 @@ export async function mount(ctx, el) {
     return;
   }
   const [items, directory, person, theme, space, roles, drive, player, kinds, edge] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "drive-store", "video-player", "kinds", "edge"].map(n => ctx.require(n)));
-  const [studio, files, subs] = await Promise.all(["video-studio", "files", "subtitle-store"].map(n => ctx.require(n)));
+  const [studio, files, subs, mediaView] = await Promise.all(["video-studio", "files", "subtitle-store", "media-view"].map(n => ctx.require(n)));
   const [pins, people] = await Promise.all([edge.pins(), edge.people()]);
   // WHICH APP this page is (its route): its domain, its words.
   const APPS = {
@@ -179,13 +179,15 @@ export async function mount(ctx, el) {
     const v = await items.get(ref, { outside });
     if (!v) return h("p", { className: "none", textContent: `This ${C.one} is not here (removed, or not shared with you).` });
     const f = fileOf(v);
-    const note = h("span", { className: "s" });
     const level = h("span", { className: "level" });
-    // Video: the picture; audio: its cover, an audio element, and (a podcast, an audiobook) a speed.
-    const video = C.audio ? h("audio", { controls: true }) : h("video", { controls: true, playsInline: true, poster: f?.preview ?? "" });
+    // THE PLAYER (`media-view`: the one way a video or an audio shows — its tracks by its video id, the same as
+    // wherever else it shows); audio: its cover above it, and (a podcast, an audiobook) a speed.
+    const view = mediaView.create({ file: f, item: ref, kind: C.audio ? "audio" : "video", outside, itemKind: v.kind, onLevel: l => (level.textContent = l), place: false });
+    const video = view.media;
+    const note = view.note;
+    const timed = view.timed;
     const coverBox = C.audio ? h("div", { className: "cover" }, f?.preview ? h("img", { src: f.preview, alt: "" }) : h("span", { textContent: "🎵" })) : null;
     const speed = C.audio && ["podcast", "audiobook"].includes(v.kind) ? h("select", { title: "Speed", onchange: e => (video.playbackRate = Number(e.target.value)) }, ...[0.75, 1, 1.25, 1.5, 2].map(x => h("option", { value: x, textContent: `${x}×`, selected: x === 1 }))) : null;
-    const timed = h("div", { className: "timed", hidden: true });
     const like = h("button", { type: "button", className: v.mine === 1 ? "on" : "", disabled: !!outside, title: outside ? "Join to like" : "", textContent: `▲ ${v.score ?? 0}`, onclick: async () => ((like.disabled = true), await items.vote(ref, v.mine === 1 ? 0 : 1).catch(() => {}), draw()) });
     const saved = () => pins.has(SAVED(ref));
     const save = h("button", { type: "button", className: saved() ? "on" : "", textContent: saved() ? "Saved ✓" : "Save", onclick: async () => (await pins.set(SAVED(ref), !saved()), (save.className = saved() ? "on" : ""), (save.textContent = saved() ? "Saved ✓" : "Save")) });
@@ -214,7 +216,7 @@ export async function mount(ctx, el) {
       h("div", { className: "row" }, h("span", { className: "s" }, who(v.by), ` · ${ago(v.at)}${k && v.kind !== VIDEO[0] ? ` · ${k.label}` : ""}${v.private ? " · only you" : ""}`), like, save, speed),
       fields.length ? h("div", { className: "meta" }, ...fields) : null,
       v.body ? h("div", { className: "about", textContent: v.body }) : null,
-      subsLine(ref, outside, v, f, video, timed),
+      view.line,
       timed,
       h("h3", { textContent: `Comments` }),
       outside ? null : form,
@@ -258,62 +260,20 @@ export async function mount(ctx, el) {
     out.insertBefore(h("div", {}, C.audio ? null : scrub, level, making), note);
     setTimeout(showMaking, 500); // once the view is in the page
     queueMicrotask(() => {
-      if (f) player.play(video, f, { onNote: t => (note.textContent = t), onLevel: l => (level.textContent = l) }).catch(e => (note.textContent = e.message ?? String(e)));
+      // The author's subtitles from before (in the manifest) moved over once, then it plays with its tracks.
+      if (f)
+        (async () => {
+          if (v.by === me && f.type === studio.MANIFEST)
+            for (const old of await studio.takeLegacySubtitles(ref).catch(() => [])) {
+              const text = await (await files.get(old.ref)).text();
+              await subs.add(ref, text, { lang: old.lang, label: old.label }).catch(() => {});
+            }
+          await view.play();
+        })().catch(e => (note.textContent = e.message ?? String(e)));
       scrubStrip().catch(() => {});
       drawComments();
     });
     return out;
-  }
-
-  // SUBTITLES (`subtitle-store`: data of their own, anyone who may comment adds one): each a track of the player,
-  // listed, with a way to the Subtitles app. The author's subtitles from before (in the manifest) moved over once.
-  function subsLine(ref, outside, v, f, video, timed) {
-    const NAME = kinds.attachLabel("subtitle", v.kind); // Subtitles, Lyrics, Transcript
-    const line = h("div", { className: "s" });
-    (async () => {
-      if (v.by === me && f?.type === studio.MANIFEST) {
-        for (const old of await studio.takeLegacySubtitles(ref).catch(() => [])) {
-          const text = await (await files.get(old.ref)).text();
-          await subs.add(ref, text, { lang: old.lang, label: old.label }).catch(() => {});
-        }
-      }
-      const tracks = await subs.of(ref, { outside });
-      for (const t of tracks) {
-        const text = await subs.text(t).catch(() => null);
-        if (text) video.append(Object.assign(document.createElement("track"), { kind: "subtitles", label: t.label || t.lang, srclang: t.lang || "und", src: URL.createObjectURL(new Blob([text], { type: "text/vtt" })) }));
-      }
-      line.replaceChildren(
-        `💬 ${NAME}: ${tracks.length ? tracks.map(t => `${t.label || t.lang}${t.lang ? ` (${t.lang})` : ""}`).join(", ") : "none yet"} · `,
-        outside ? "" : h("a", { href: `#/subtitles/for/${encodeURIComponent(ref)}`, textContent: tracks.length ? "Add or edit" : `Add ${NAME.toLowerCase()}` }),
-      );
-      // AUDIO: the first track shown IN TIME beside the player (the line playing lit; a click plays from it).
-      if (C.audio && video.textTracks.length) {
-        const tt = video.textTracks[0];
-        tt.mode = "hidden";
-        const drawCues = () => {
-          const cues = [...(tt.cues ?? [])];
-          if (!cues.length) return;
-          timed.hidden = false;
-          timed.replaceChildren(
-            h("strong", { textContent: NAME }),
-            ...cues.map(c => {
-              const p = h("p", { textContent: c.text, onclick: () => ((video.currentTime = c.startTime), video.play()) });
-              p.setAttribute("data-s", String(c.startTime));
-              return p;
-            }),
-          );
-        };
-        // Drawn once its cues are in (a track loads after it is added).
-        for (const el_ of video.querySelectorAll("track")) el_.addEventListener("load", drawCues);
-        setTimeout(drawCues, 500);
-        tt.oncuechange = () => {
-          const on = new Set([...(tt.activeCues ?? [])].map(c => String(c.startTime)));
-          for (const p of timed.querySelectorAll("p")) p.classList.toggle("on", on.has(p.dataset.s));
-          timed.querySelector("p.on")?.scrollIntoView({ block: "nearest" });
-        };
-      }
-    })().catch(e => (line.textContent = e.message ?? String(e)));
-    return line;
   }
 
   // A cover image made small (320 px wide, JPEG): what rides on the item as its preview.
