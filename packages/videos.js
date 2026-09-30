@@ -11,7 +11,7 @@ export async function mount(ctx, el) {
     return;
   }
   const [posts, directory, person, theme, space, roles, drive, player, kinds, edge] = await Promise.all(["posts", "directory", "person", "theme", "space", "roles", "drive-store", "video-player", "kinds", "edge"].map(n => ctx.require(n)));
-  const [studio, files] = await Promise.all(["video-studio", "files"].map(n => ctx.require(n)));
+  const [studio, files, subs] = await Promise.all(["video-studio", "files", "subtitle-store"].map(n => ctx.require(n)));
   const [pins, people] = await Promise.all([edge.pins(), edge.people()]);
   const VIDEO = kinds.inDomain("video");
   const me = (await space.account()).id;
@@ -180,7 +180,7 @@ export async function mount(ctx, el) {
       h("div", { className: "row" }, h("span", { className: "s" }, who(v.by), ` · ${ago(v.at)}${k && v.kind !== "video" ? ` · ${k.label}` : ""}${v.private ? " · only you" : ""}`), like, save),
       fields.length ? h("div", { className: "meta" }, ...fields) : null,
       v.body ? h("div", { className: "about", textContent: v.body }) : null,
-      v.by === me && f?.type === studio.MANIFEST ? subsPanel(ref, f) : null,
+      subsLine(ref, outside, v, f, video),
       h("h3", { textContent: `Comments` }),
       outside ? null : form,
       comments,
@@ -230,27 +230,28 @@ export async function mount(ctx, el) {
     return out;
   }
 
-  // SUBTITLES, managed by the video's author: each track's label and language, removed, or one added (.vtt, .srt).
-  function subsPanel(ref, f) {
-    const box = h("div", { className: "subs" }, h("strong", { textContent: "Subtitles" }), theme.loading("Reading…"));
-    const said = h("p", { className: "said", hidden: true });
-    const act = async change => {
-      said.hidden = true;
-      await studio.subtitles(ref, change).then(draw, e => ((said.textContent = e.message ?? String(e)), (said.hidden = false)));
-    };
-    player.manifest(f).then(m => {
-      const rows = (m.subtitles ?? []).map((t, i) => {
-        const label = h("input", { name: "label", value: t.label ?? "", placeholder: "Label" });
-        const lang = h("input", { name: "lang", value: t.lang ?? "", placeholder: "en" });
-        return h("div", { className: "row" }, label, lang, h("button", { type: "button", textContent: "Save", onclick: () => act({ set: [{ i, label: label.value, lang: lang.value }] }) }), h("button", { type: "button", textContent: "Remove", onclick: () => act({ remove: [i] }) }));
-      });
-      const file = h("input", { type: "file", accept: ".vtt,.srt,text/vtt" });
-      const label = h("input", { name: "label", placeholder: "Label (e.g. English)" });
-      const lang = h("input", { name: "lang", placeholder: "en" });
-      const add = h("div", { className: "row" }, file, label, lang, h("button", { type: "button", textContent: "Add", onclick: () => file.files[0] && act({ add: [{ file: file.files[0], label: label.value.trim(), lang: lang.value.trim() }] }) }));
-      box.replaceChildren(h("strong", { textContent: "Subtitles" }), ...(rows.length ? rows : [h("span", { className: "s", textContent: "None yet." })]), add, said);
-    }, () => box.remove());
-    return box;
+  // SUBTITLES (`subtitle-store`: data of their own, anyone who may comment adds one): each a track of the player,
+  // listed, with a way to the Subtitles app. The author's subtitles from before (in the manifest) moved over once.
+  function subsLine(ref, outside, v, f, video) {
+    const line = h("div", { className: "s" });
+    (async () => {
+      if (v.by === me && f?.type === studio.MANIFEST) {
+        for (const old of await studio.takeLegacySubtitles(ref).catch(() => [])) {
+          const text = await (await files.get(old.ref)).text();
+          await subs.add(ref, text, { lang: old.lang, label: old.label }).catch(() => {});
+        }
+      }
+      const tracks = await subs.of(ref, { outside });
+      for (const t of tracks) {
+        const text = await subs.text(t).catch(() => null);
+        if (text) video.append(Object.assign(document.createElement("track"), { kind: "subtitles", label: t.label || t.lang, srclang: t.lang || "und", src: URL.createObjectURL(new Blob([text], { type: "text/vtt" })) }));
+      }
+      line.replaceChildren(
+        `💬 Subtitles: ${tracks.length ? tracks.map(t => `${t.label || t.lang}${t.lang ? ` (${t.lang})` : ""}`).join(", ") : "none yet"} · `,
+        outside ? "" : h("a", { href: `#/subtitles/for/${encodeURIComponent(ref)}`, textContent: tracks.length ? "Add or edit" : "Add subtitles" }),
+      );
+    })().catch(e => (line.textContent = e.message ?? String(e)));
+    return line;
   }
 
   async function upload() {
@@ -288,7 +289,7 @@ export async function mount(ctx, el) {
         const pub = inSpace ? (await roles.of(inSpace)).policy("board", "read") === "anyone" : f.elements.audience.value !== "private";
         // MADE READY TO STREAM (renditions, strip, subtitles, a manifest); a browser that cannot encode sends the file as it is.
         const ref = await studio
-          .make(file, { space: inSpace, public: pub, keepOriginal: f.elements.keep.checked, subtitles: [...(f.elements.subs.files ?? [])], onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`) })
+          .make(file, { space: inSpace, public: pub, keepOriginal: f.elements.keep.checked, onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`) })
           .catch(async err => {
             ctx.log("videos", { what: `not encoded here (${err.message ?? err}): the file as it is` });
             const m = await player.meta(file);
@@ -300,6 +301,8 @@ export async function mount(ctx, el) {
         if (kept) await drive.add(kept, { space: inSpace, from: { app: "videos" } }).catch(() => {});
         const meta = Object.fromEntries(kinds.of(kindSel.value).fields.map(x => [x, String(f.elements[`meta.${x}`]?.value ?? "").trim()]).filter(([, v]) => v));
         const posted = await posts.submit({ board: inSpace?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, kind: kindSel.value, meta, private: !inSpace && !pub, files: [ref] });
+        // Its SUBTITLES: items of their own, about it.
+        for (const s of f.elements.subs.files ?? []) await subs.add(posted, s).catch(e => ctx.log("videos", { what: `subtitles ${s.name}: ${e.message}` }));
         location.hash = `${base()}/w/${encodeURIComponent(posted)}`;
       } catch (err) {
         said.textContent = err.message ?? String(err);

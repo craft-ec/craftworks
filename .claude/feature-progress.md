@@ -774,6 +774,10 @@ come with keepers as a new codec version.
       Max: VideoToolbox HW encoders = H.264/HEVC/ProRes/JPEG, NO AV1; Chrome 154: HEVC+AV1 4K decode smooth. 17573:
       4K 10 s clip → posted 12 s, ladder done 32 s, 24.7 MB total (source 26 MB, released), plays HEVC 2160p.
       Fixed on the way: a manifest inline in the item row overflowed it (now always coded, `inline: false`).
+- [x] SUBTITLES as data (owner 09-30): attaching kind "subtitle" (`kinds.attaching`), posts.attach/attached/editItem,
+      `subtitle-store` (of/add/update/remove, WebVTT⇄SRT), Videos composes tracks, SUBTITLES app (#/subtitles: yours,
+      for/<item>, e/<ref> editor + export). Manifest subtitles migrated on the author's watch. 17573: migrated 2
+      (manifest 0 left), edit saved + SRT export correct, paste-add "Español", 0 errors.
 - [ ] F4 video (old plan line): CMAF segments, renditions (AV1+Opus, H.264+AAC), remux (mp4box) or WebCodecs encode, MediaSource ABR,
       poster + scrub strip, subtitles.
 - [x] F5a DRIVE (owner 09-30: every uploaded file is in Drive; attach from Drive; choose any space's Drive):

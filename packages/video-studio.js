@@ -6,8 +6,8 @@
 // device encodes in HARDWARE (measured): AV1 + Opus where it can, else HEVC + AAC (Macs, iPhones, most GPUs) — and
 // H.264 + AAC only at 720p and 360p, the safety net for players that cannot decode that family. A device with no
 // efficient hardware encoder makes an H.264 ladder alone. A
-// POSTER, a SCRUB STRIP (a sprite of frames across the video), SUBTITLES (WebVTT; SRT converted). All of it named by one
-// MANIFEST (JSON, a file of its own): what the Videos item carries.
+// POSTER and a SCRUB STRIP (a sprite of frames across the video). All of it named by one MANIFEST (JSON, a file of its
+// own): what the Videos item carries. (Subtitles are data of their own: `subtitle-store`.)
 //
 // FAST, THEN IN THE BACKGROUND (no server encodes here; the uploader's own devices do): an upload keeps the ORIGINAL,
 // makes ONE rendition (H.264, on the hardware encoder) and posts — watchable in seconds. The rest of the ladder is
@@ -17,7 +17,8 @@
 // over when it goes quiet. Keeping the original also lets a newer codec (AV2) be added later without a new upload.
 //
 //   const studio = await ctx.require("video-studio");
-//   const ref = await studio.make(file, { space, public, subtitles: [file…], onProgress })   // the manifest's reference
+//   const ref = await studio.make(file, { space, public, keepOriginal, onProgress })   // the manifest's reference
+//   (subtitles are `subtitle-store`'s: attached to the item once posted)
 //   studio.progress(ref) -> { stage, p, done, of } | null          // a video still being made (the uploader's devices)
 //   studio.MANIFEST   // its type: "application/vnd.craftworks.video+json"
 export async function start(ctx) {
@@ -119,7 +120,7 @@ export async function start(ctx) {
     return `WEBVTT\n\n${text.replace(/\r/g, "").replace(/(\d\d:\d\d:\d\d),(\d\d\d)/g, "$1.$2")}`;
   }
 
-  async function make(file, { space = null, public: pub = false, subtitles = [], keepOriginal = false, onProgress = () => {} } = {}) {
+  async function make(file, { space = null, public: pub = false, keepOriginal = false, onProgress = () => {} } = {}) {
     const M = await mb();
     const say = (stage, p = 0) => onProgress({ stage, p });
     const input = new M.Input({ source: new M.BlobSource(file), formats: M.ALL_FORMATS });
@@ -159,12 +160,7 @@ export async function start(ctx) {
     if (!made) throw new Error("no H.264 rendition could be made here");
     renditions.push(made);
     const stripRef = sp ? await files.put(new File([sp.blob], `${file.name}.strip.jpg`, { type: "image/jpeg" }), { space, public: pub, app: "videos" }) : null;
-    const subs = [];
-    for (const s of subtitles) {
-      const text = await vtt(s);
-      const ref = await files.put(new File([text], s.name.replace(/\.\w+$/, ".vtt"), { type: "text/vtt" }), { space, public: pub, app: "videos" });
-      subs.push({ label: s.name.replace(/\.\w+$/, ""), lang: (s.name.match(/\.([a-z]{2,3})\.\w+$/i)?.[1] ?? "").toLowerCase(), ref });
-    }
+    // (Subtitles are data of their own — `subtitle-store` — attached to the item once it is posted.)
     say("manifest");
     const manifest = {
       v: 1,
@@ -176,7 +172,6 @@ export async function start(ctx) {
       renditions,
       pending: plan.filter(r => r !== first).map(({ codec, height, bitrate, audio }) => ({ codec, height, bitrate, audio })),
       ...(sp ? { strip: { ref: stripRef, n: sp.n, cols: sp.cols, w: sp.w, h: sp.h, every: sp.every } } : {}),
-      subtitles: subs,
       pub: !!pub,
       // The ORIGINAL is kept for good only when asked (a newer codec later); else released once the ladder is made.
       keepOriginal: !!keepOriginal,
@@ -310,24 +305,16 @@ export async function start(ctx) {
   const replaceManifest = (item, old, ref) =>
     posts.setFiles(item.ref, item.files.map(x => (x === old ? { ...ref, ...(old.preview ? { preview: old.preview } : {}), duration: old.duration, width: old.width, height: old.height } : x)));
 
-  // SUBTITLES, MANAGED after upload (the video's author): `add` [{ file, label, lang }], `remove` [index], `set`
-  // [{ i, label, lang }] — a new manifest, the item's file replaced.
-  async function subtitles(ref, { add = [], remove = [], set = [] } = {}) {
+  // SUBTITLES FROM BEFORE (kept in the manifest, before subtitles were data of their own): taken out of it — a new
+  // manifest without them — and handed back ([{ label, lang, ref }]) to become `subtitle-store` items.
+  async function takeLegacySubtitles(ref) {
     const cur = await latest(ref);
-    if (!cur) throw new Error("not a video made here");
+    if (!cur?.manifest.subtitles?.length) return [];
     const sp = cur.item.board ? (await space.mine()).find(x => x.id === cur.item.board.id) ?? null : null;
-    let subs = [...(cur.manifest.subtitles ?? [])];
-    for (const { i, label, lang } of set) if (subs[i]) subs[i] = { ...subs[i], ...(label != null ? { label: String(label).slice(0, 60) } : {}), ...(lang != null ? { lang: String(lang).toLowerCase().slice(0, 8) } : {}) };
-    subs = subs.filter((_, i) => !remove.includes(i));
-    for (const a of add) {
-      const text = await vtt(a.file);
-      const r = await files.put(new File([text], a.file.name.replace(/\.\w+$/, ".vtt"), { type: "text/vtt" }), { space: sp, public: cur.manifest.pub, app: "videos" });
-      subs.push({ label: a.label || a.file.name.replace(/\.\w+$/, ""), lang: (a.lang || a.file.name.match(/\.([a-z]{2,3})\.\w+$/i)?.[1] || "").toLowerCase(), ref: r });
-    }
-    const r = await putManifest({ ...cur.manifest, subtitles: subs }, sp, cur.manifest.pub);
-    await replaceManifest(cur.item, cur.file, r);
-    return subs;
+    const { subtitles: old, ...rest } = cur.manifest;
+    await replaceManifest(cur.item, cur.file, await putManifest(rest, sp, cur.manifest.pub));
+    return old;
   }
 
-  return { make, progress, kick, subtitles, MANIFEST };
+  return { make, progress, kick, takeLegacySubtitles, MANIFEST };
 }

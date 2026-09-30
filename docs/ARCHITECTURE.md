@@ -212,10 +212,17 @@ duration, at }`, the file's reference as `files` makes it). Playing: an MP4 by B
 it on the fly — the range read as the file's chunks (a seek reads only the chunks it lands in); any other container
 (or a browser without MediaSource) loads whole. What follows is where it goes once the basic works.
 
+**Subtitles — data of their own (built; owner 09-30: "its own capability … all data integrated and portable").** A
+subtitle track is `content` of the ATTACHING kind "subtitle" (`kinds`: it attaches to video and audio items): about a
+media item (`in`), its language and label (`meta`), its cues a WebVTT file (never in the row: a film's run to 100 KB).
+Contributed like a comment — in the item's place (a space's board), or on a profile in the contributor's own tail with
+a pointer on the item — so whoever may comment may add a track or a translation. `subtitle-store` owns it; any player
+composes it (Videos; audio next); the SUBTITLES app is its lens (yours, an item's, an editor); WebVTT or SRT in and out.
+
 **Video — the pipeline (built).** At upload, in the uploader's browser (no server encodes here): Mediabunny (WebCodecs)
 reads any common file and writes each RENDITION as a FRAGMENTED MP4 (CMAF: ~4 s fragments, a key frame every 2 s),
 one file each, its fragments indexed by byte range and time; a MANIFEST names them with a poster, a scrub strip
-(a sprite of frames) and subtitles (WebVTT; SRT converted). A LEAN ladder — every byte is the uploader's upload and the
+(a sprite of frames). A LEAN ladder — every byte is the uploader's upload and the
 network's keeping: ONE EFFICIENT family at full quality up to the source's height (4K included), the one the device
 encodes in HARDWARE, measured (AV1 + Opus where it can; else HEVC + AAC — Macs, iPhones, most GPUs), and H.264 + AAC
 only at 720p and 360p as the safety net; a device with no efficient hardware encoder makes an H.264 ladder alone.

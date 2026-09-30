@@ -260,11 +260,6 @@ export async function start(ctx) {
       pump();
     });
     const tick = setInterval(() => (video.isConnected ? pump() : clearInterval(tick)), 1000);
-    // SUBTITLES as tracks.
-    for (const s of m.subtitles ?? []) {
-      const text = await (await files.get(s.ref)).text().catch(() => null);
-      if (text) video.append(Object.assign(document.createElement("track"), { kind: "subtitles", label: s.label, srclang: s.lang || "und", src: URL.createObjectURL(new Blob([text], { type: "text/vtt" })) }));
-    }
     await pump();
     onNote("");
     return true;

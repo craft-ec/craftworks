@@ -139,6 +139,7 @@ export async function start(ctx) {
         react: async (id, e, on) => (await Promise.all([a.settled, b.settled]), await sync(), await a.react(id, e, on), await sync()),
         edit: async (id, body) => (await sync(), await a.edit(id, body), await sync()),
         setFiles: async (id, files) => (await sync(), await a.setFiles(id, files), await sync()),
+        editFull: async (id, body, o) => (await sync(), await a.edit(id, body, o), await sync()),
         // Out of both tables (an author's own; a moderator's hide, in each table it is listed in).
         remove: async id => {
           for (const x of rooms) if (x.list().some(it => it.id === id)) await x.remove(id);
@@ -171,6 +172,7 @@ export async function start(ctx) {
         remove: id => roomOf(id).remove(id),
         edit: (id, body) => roomOf(id).edit(id, body),
         setFiles: (id, files) => roomOf(id).setFiles(id, files),
+        editFull: (id, body, o) => roomOf(id).edit(id, body, o),
       };
     });
   const profiles = async dids => (await Promise.all([...new Set(dids)].map(d => profileRoom(d).catch(() => null)))).filter(Boolean);
@@ -195,7 +197,7 @@ export async function start(ctx) {
   const postOf = c => c.in ?? c.re; // a comment's post (an old one answering its post directly has no `in`)
   const shape = (it, ref, board) => {
     const [first, ...rest] = it.body.split("\n"); // a post from before titles: its first line is its title
-    return { ref, id: it.id, kind: it.kind, by: it.by, title: it.title ?? first.slice(0, 300), body: it.title ? it.body : rest.join("\n").trim(), board, at: it.at, edited: it.edited, private: !!it.private, files: it.files ?? [], meta: it.meta ?? {} };
+    return { ref, id: it.id, kind: it.kind, in: it.in ?? null, by: it.by, title: it.title ?? first.slice(0, 300), body: it.title ? it.body : rest.join("\n").trim(), board, at: it.at, edited: it.edited, private: !!it.private, files: it.files ?? [], meta: it.meta ?? {} };
   };
 
   // A BOARD's posts: everything is in its one room (reactions keyed by the item's id).
@@ -414,6 +416,45 @@ export async function start(ctx) {
     for (const sp of await boards().catch(() => [])) await (await boardRoom(sp)).sync().catch(e => ctx.log("posts", { what: `${sp.name}: public copies: ${e.message}` }));
   }
 
+  // ATTACHED ITEMS (a subtitle on a video): contributed like a comment — in the item's place (a board), or on a
+  // profile in the contributor's own tail with a pointer on the item (a private item: private too) — and listed with it.
+  async function attach(post, kind, body, { meta = {}, files = [] } = {}) {
+    if (!kinds.attaching().includes(kind)) throw new Error(`${kind} does not attach to an item`);
+    if (post.startsWith("space:")) {
+      const sp = await boardOf(post);
+      if (!sp) throw new Error("you are not in that board's space");
+      return `space:${sp.id}/${await (await boardRoom(sp)).post(kind, body, { in: idOf(post), meta, files })}`;
+    }
+    const mine = await profileRoom(await me());
+    const id = await mine.post(kind, body, { in: post, meta, files });
+    if (!mine.isPrivate?.(post)) await pointTo(post);
+    return `${await me()}/${id}`;
+  }
+  async function attached(ref, kind, { outside = null } = {}) {
+    const self = await me();
+    const out = [];
+    if (ref.startsWith("space:")) {
+      const sp = outside ?? (await boardOf(ref));
+      if (!sp) return [];
+      const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
+      for (const it of r.list()) if (it.kind === kind && it.in === idOf(ref)) out.push({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), mayRemove: r.mayRemove(it) });
+    } else {
+      for (const r of await profiles([whereOf(ref), self, ...(await following()), ...(await pointersTo(ref))]))
+        for (const it of r.list()) if (it.kind === kind && it.in === ref) out.push({ ...shape(it, `${it.by}/${it.id}`, null), mayRemove: it.by === self });
+    }
+    const seen = new Set();
+    return out.filter(x => !seen.has(x.ref) && seen.add(x.ref)).sort((a, b) => a.at - b.at);
+  }
+  // An item of this person's EDITED (a subtitle's text or label): its body, files and meta.
+  async function editItem(ref, body, { files = null, meta = null } = {}) {
+    if (ref.startsWith("space:")) {
+      const sp = await boardOf(ref);
+      if (!sp) throw new Error("you are not in that board's space");
+      return (await boardRoom(sp)).editFull(idOf(ref), body, { files, meta });
+    }
+    return (await profileRoom(await me())).editFull(idOf(ref), body, { files, meta });
+  }
+
   // A post's FILES replaced by its author (a video whose renditions grew): its place's room.
   async function setFiles(ref, files) {
     if (ref.startsWith("space:")) {
@@ -424,5 +465,5 @@ export async function start(ctx) {
     return (await profileRoom(await me())).setFiles(idOf(ref), files);
   }
 
-  return { submit, list, get, setFiles, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
+  return { submit, list, get, setFiles, attach, attached, editItem, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
 }

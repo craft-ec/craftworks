@@ -64,7 +64,9 @@ export async function start(ctx) {
     // comment and vote (inherited from the app and the space).
     const app = container.kind === "channel" ? `chat/${container.id.split("/").pop()}` : container.kind === "board" ? "board" : null;
     // Anything that stands on its own (a post, a video, …: `kinds`) is posted; a comment commented; a reaction voted.
-    const ACTION = { message: "post", comment: "comment", reaction: "vote", ...Object.fromEntries((await ctx.require("kinds")).all().map(k => [k, "post"])) };
+    // (An ATTACHING kind — a subtitle — is contributed like a comment.)
+    const K = await ctx.require("kinds");
+    const ACTION = { message: "post", comment: "comment", reaction: "vote", ...Object.fromEntries(K.all().map(k => [k, "post"])), ...Object.fromEntries(K.attaching().map(k => [k, "comment"])) };
     const [r, m] = outside
       ? await ctx.require("roles").then(async x => {
           const pr = await x.ofPublic(container.scope);
@@ -161,9 +163,10 @@ export async function start(ctx) {
         if (on) await t.put(key, JSON.stringify({ kind: "reaction", item: id, emoji, at: Date.now(), by: me }));
         else await t.remove(key);
       },
-      async edit(id, body, { files = null } = {}) {
+      async edit(id, body, { files = null, meta = null } = {}) {
         const it = mine(id);
         const fs = files ?? it.files ?? [];
+        it.meta = meta ?? it.meta;
         await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: me, edited: Date.now(), ...(it.re ? { re: it.re } : {}), ...(it.title ? { title: it.title } : {}), ...(it.in ? { in: it.in } : {}), ...(fs.length ? { files: fs } : {}), ...(it.meta && Object.keys(it.meta).length ? { meta: it.meta } : {}) }));
       },
       // Its FILES replaced (a video's manifest, once more renditions are made): the author's, the item otherwise as is.

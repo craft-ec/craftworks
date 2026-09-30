@@ -12,6 +12,8 @@
 //   kinds.domain("short")    // "video"
 //   kinds.inDomain("video")  // ["video", "movie", "episode", "music-video", "short"]
 //   kinds.all()              // every kind that stands on its own (a comment answers one; a message is a conversation's)
+//   kinds.attaching()        // kinds that ATTACH to another item (`in`): a subtitle to a video or an audio item
+//   kinds.attachesTo("subtitle")  // the domains it attaches to: ["video", "audio"]
 export async function start() {
   const CATALOG = [
     // Video
@@ -38,10 +40,16 @@ export async function start() {
     // Text
     ["post", "text", "Post", []],
   ];
+  // ATTACHING kinds: their own data, about another item (`in`) — contributed like a comment, listed with what they are
+  // about, and a lens of their own (the Subtitles app). A subtitle: WebVTT (its file), its language and label.
+  const ATTACHING = [["subtitle", "text", "Subtitles", ["lang", "label"], ["video", "audio"]]];
   const byKind = new Map(CATALOG.map(([kind, domain, label, fields]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields) })]));
-  const LABELS = { year: "Year", director: "Director", cast: "Cast", genre: "Genre", show: "Show", season: "Season", episode: "Episode", artist: "Artist", album: "Album", host: "Host", author: "Author", narrator: "Narrator", chapter: "Chapter", location: "Location", taken: "Taken", camera: "Camera", medium: "Medium", publisher: "Publisher", isbn: "ISBN", writer: "Writer", issue: "Issue", format: "Format", software: "Software", platform: "Platform", version: "Version", license: "License", schema: "Schema" };
+  const onTo = new Map(ATTACHING.map(([kind, domain, label, fields, to]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields), to: Object.freeze(to), attaches: true })]));
+  const LABELS = { lang: "Language", label: "Label",  year: "Year", director: "Director", cast: "Cast", genre: "Genre", show: "Show", season: "Season", episode: "Episode", artist: "Artist", album: "Album", host: "Host", author: "Author", narrator: "Narrator", chapter: "Chapter", location: "Location", taken: "Taken", camera: "Camera", medium: "Medium", publisher: "Publisher", isbn: "ISBN", writer: "Writer", issue: "Issue", format: "Format", software: "Software", platform: "Platform", version: "Version", license: "License", schema: "Schema" };
   return {
-    of: kind => byKind.get(kind) ?? null,
+    of: kind => byKind.get(kind) ?? onTo.get(kind) ?? null,
+    attaching: () => [...onTo.keys()],
+    attachesTo: kind => [...(onTo.get(kind)?.to ?? [])],
     domain: kind => byKind.get(kind)?.domain ?? null,
     inDomain: domain => CATALOG.filter(c => c[1] === domain).map(c => c[0]),
     all: () => [...byKind.keys()],
