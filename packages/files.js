@@ -183,6 +183,14 @@ export async function start(ctx) {
     return { id, in: inOf(sp), key: keyHex, root, b: hex(burn), size, name, type };
   }
 
+  // The KEY a file would have (public: its content alone; otherwise with its space's salt) — without storing it: what
+  // a video's id is made from when its original is not kept.
+  async function keyOf(file, { space: sp = null, public: pub = false } = {}) {
+    const h = new glue.FileHasher();
+    for (let at = 0; at < file.size; at += SLICE) h.update(new Uint8Array(await file.slice(at, at + SLICE).arrayBuffer()));
+    return hex(glue.file_key(h.finish(), pub ? new Uint8Array(0) : (await salt(sp)).s));
+  }
+
   // STORE a file under `key`: each generation (`slice(from, to)` → its plaintext) coded and put, then the index.
   // RESUMES from its PROGRESS: an upload's in the account's table `uploads` (by the key); a re-key's in the space's
   // table (`p/<id>`: whichever member takes the work over goes on from there). Returns the index root.
@@ -430,5 +438,5 @@ export async function start(ctx) {
     return out;
   }
 
-  return { put, get, stream, chunk, range, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
+  return { put, keyOf, get, stream, chunk, range, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
 }

@@ -73,7 +73,7 @@ export async function start(ctx) {
   const roles = await ctx.require("roles");
   // A space's board room is its place for every item `posts` keeps — posts, videos, subtitles — so any app on it opens
   // the place (a space with Videos and no Board still takes videos).
-  const PLACE_APPS = ["board", "videos", "subtitles"];
+  const PLACE_APPS = ["board", "videos", "audio", "subtitles"];
   const boards = async () => {
     const all = await space.mine();
     const on = await Promise.all(all.map(sp => roles.of(sp).then(r => r.apps().some(a => PLACE_APPS.includes(a)), () => false)));
@@ -103,7 +103,7 @@ export async function start(ctx) {
   }
   // A DOMAIN's read setting in a space: its own (`text`, `video`, `subtitle` …: content decides, whatever app shows it),
   // else the app-named setting from before (text: "board", video: "videos", subtitle: "subtitles"), else the space's.
-  const LEGACY = { text: "board", video: "videos", subtitle: "subtitles" };
+  const LEGACY = { text: "board", video: "videos", audio: "audio", subtitle: "subtitles" };
   const domainReads = (r, domain) => {
     const own = r.policiesAt(domain).read;
     if (own) return own === "anyone";

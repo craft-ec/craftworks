@@ -11,7 +11,7 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-pub const APPS: [&str; 6] = ["chat", "board", "notes", "drive", "videos", "subtitles"];
+pub const APPS: [&str; 7] = ["chat", "board", "notes", "drive", "videos", "audio", "subtitles"];
 pub const ACTIONS: [&str; 7] = ["read", "post", "comment", "vote", "edit", "join", "invite"];
 pub const WHO: [&str; 6] = ["anyone", "members", "admins", "owner", "nobody", "inherit"];
 

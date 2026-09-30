@@ -14,6 +14,7 @@
 //   kinds.all()              // every kind that stands on its own (a comment answers one; a message is a conversation's)
 //   kinds.attaching()        // kinds that ATTACH to another item (`in`): a subtitle to a video or an audio item
 //   kinds.attachesTo("subtitle")  // the domains it attaches to: ["video", "audio"]
+//   kinds.attachLabel("subtitle", "music")  // "Lyrics" ("Transcript" on a podcast, "Subtitles" on a video)
 //   kinds.policyDomain("movie") // the DOMAIN whose settings govern it in a space ("video"; a post: "text"; a subtitle:
 //                             // "subtitle") — content decides, not the app showing it (one app may show every domain)
 export async function start() {
@@ -57,5 +58,9 @@ export async function start() {
     all: () => [...byKind.keys()],
     fieldLabel: f => LABELS[f] ?? f,
     policyDomain: kind => (onTo.has(kind) ? kind : byKind.get(kind)?.domain ?? "text"),
+    // What an attaching kind is CALLED on an item of `target` kind: a subtitle on a song is its Lyrics, on a podcast
+    // or an audiobook its Transcript — one capability, named for what it is on.
+    attachLabel: (kind, target) =>
+      kind !== "subtitle" ? (onTo.get(kind)?.label ?? kind) : ["music", "music-video"].includes(target) ? "Lyrics" : ["podcast", "audiobook"].includes(target) ? "Transcript" : "Subtitles",
   };
 }

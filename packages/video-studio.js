@@ -71,7 +71,7 @@ export async function start(ctx) {
       output,
       tracks: "primary",
       // H.264 and HEVC on the hardware encoder; AV1 as this browser has it (hardware where there is one).
-      video: { codec, height, bitrate, keyFrameInterval: 2, forceTranscode: true, hardwareAcceleration: codec === "av1" ? "no-preference" : "prefer-hardware" },
+      video: codec === "aac" ? { discard: true } : { codec, height, bitrate, keyFrameInterval: 2, forceTranscode: true, hardwareAcceleration: codec === "av1" ? "no-preference" : "prefer-hardware" },
       audio: audio ? { codec: audio.codec, bitrate: audio.bitrate, forceTranscode: true } : { discard: true },
       showWarnings: false,
     });
@@ -125,7 +125,7 @@ export async function start(ctx) {
     const say = (stage, p = 0) => onProgress({ stage, p });
     const input = new M.Input({ source: new M.BlobSource(file), formats: M.ALL_FORMATS });
     const track = await input.getPrimaryVideoTrack();
-    if (!track) throw new Error("no video in this file");
+    if (!track) return makeAudio(M, file, input, { space, pub, keepOriginal, say });
     const audioTrack = await input.getPrimaryAudioTrack();
     const duration = await input.computeDuration();
     const srcH = track.displayHeight;
@@ -188,6 +188,55 @@ export async function start(ctx) {
   }
 
   const videoId = async key => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array([...new TextEncoder().encode("craftworks video id"), ...key.match(/../g).map(x => parseInt(x, 16))])))].map(x => x.toString(16).padStart(2, "0")).join("");
+  // AUDIO (a song, a podcast, an audiobook): ONE rendition — AAC, which every browser plays — as a fragmented MP4
+  // (streamed and seekable as a video is), its COVER (embedded, or none) and its TAGS (title, artist, album …) kept.
+  async function makeAudio(M, file, input, { space, pub, keepOriginal, say }) {
+    const at = await input.getPrimaryAudioTrack();
+    if (!at) throw new Error("no audio or video in this file");
+    const duration = await input.computeDuration();
+    const tags = await input.getMetadataTags().catch(() => ({}));
+    const img = tags.images?.find(i => i.kind === "coverFront") ?? tags.images?.[0];
+    const cover = img ? await shrink(new Blob([img.data], { type: img.mimeType }), 320).catch(() => null) : null;
+    const source = keepOriginal ? await files.put(file, { space, public: pub, app: "audio", onProgress: e => say("keeping the original", e.done / Math.max(1, e.size)) }) : null;
+    // Its ID by the files' rule (public: the content alone; private: salted by its space) — kept or not.
+    const vid = await videoId(source?.key ?? (await files.keyOf(file, { space, public: pub })));
+    const made = await makeRendition(M, file, { codec: "aac", height: 0, bitrate: 160_000, audio: { codec: "aac", bitrate: 160_000 } }, { space, pub, name: file.name, say, width: 0 });
+    if (!made) throw new Error("this browser cannot encode AAC audio");
+    const manifest = {
+      v: 1,
+      audio: true,
+      name: file.name,
+      duration,
+      vid,
+      renditions: [made],
+      pending: [],
+      tags: { title: tags.title ?? null, artist: tags.artist ?? null, album: tags.album ?? null, genre: tags.genre ?? null, year: tags.date ? new Date(tags.date).getFullYear() : null, lyrics: tags.lyrics ?? null },
+      pub: !!pub,
+      keepOriginal: !!keepOriginal,
+      ...(source ? { source } : {}),
+    };
+    const ref = await putManifest(manifest, space, pub);
+    say("done", 1);
+    return { ...ref, ...(cover ? { preview: cover } : {}), duration, audio: true };
+  }
+  async function shrink(blob, w) {
+    const bmp = await createImageBitmap(blob);
+    const c = new OffscreenCanvas(w, Math.round((w * bmp.height) / bmp.width));
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    const b = await c.convertToBlob({ type: "image/jpeg", quality: 0.75 });
+    return await new Promise(r => {
+      const fr = new FileReader();
+      fr.onload = () => r(fr.result);
+      fr.readAsDataURL(b);
+    });
+  }
+  // The TAGS a file carries (title, artist, album, genre, year; embedded lyrics), to fill the upload form.
+  async function probe(file) {
+    const M = await mb();
+    const input = new M.Input({ source: new M.BlobSource(file), formats: M.ALL_FORMATS });
+    const t = await input.getMetadataTags().catch(() => ({}));
+    return { title: t.title ?? null, artist: t.artist ?? null, album: t.album ?? null, genre: t.genre ?? null, year: t.date ? new Date(t.date).getFullYear() : null, lyrics: t.lyrics ?? null, video: !!(await input.getPrimaryVideoTrack().catch(() => null)) };
+  }
   const widthFor = (w, h, hh) => Math.max(2, Math.round((hh * w) / h / 2) * 2);
   // ONE RENDITION made and stored: its manifest entry (null: this browser's encoder refused it).
   async function makeRendition(M, file, r, { space, pub, name, say, width = null }) {
@@ -321,5 +370,5 @@ export async function start(ctx) {
     return old;
   }
 
-  return { make, progress, kick, takeLegacySubtitles, videoId, MANIFEST };
+  return { make, probe, progress, kick, takeLegacySubtitles, videoId, MANIFEST };
 }

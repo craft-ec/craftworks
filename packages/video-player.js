@@ -169,11 +169,13 @@ export async function start(ctx) {
   async function adaptive(video, ref, { onNote, onLevel }) {
     if (!canStream()) return false;
     const m = await manifest(ref);
+    // Audio (AAC): what MediaSource takes; video: what this device decodes smoothly.
     const smooth = async r =>
       MediaSource.isTypeSupported(r.mime) &&
+      (r.codec === "aac" ||
       (await navigator.mediaCapabilities
         ?.decodingInfo({ type: "media-source", video: { contentType: r.mime.replace(/, *mp4a[^"]*|, *opus/i, ""), width: r.width, height: r.height, bitrate: r.bitrate, framerate: 30 } })
-        .then(x => x.supported && x.smooth, () => true)) !== false;
+        .then(x => x.supported && x.smooth, () => true)) !== false);
     const fam = async codec => {
       const rs = m.renditions.filter(r => r.codec === codec).sort((a, b) => a.height - b.height);
       const ok = [];
@@ -184,7 +186,7 @@ export async function start(ctx) {
     // this screen shows (a family made only up to 1080p in software does not serve a 4K screen while another reaches it).
     const screenH = Math.min(2160, Math.max(360, (screen?.height || 1080) * (devicePixelRatio || 1)));
     const families = [];
-    for (const c of ["av1", "hevc", "avc"]) {
+    for (const c of ["av1", "hevc", "avc", "aac"]) {
       const f = await fam(c);
       if (f.length) families.push(f);
     }
@@ -230,7 +232,7 @@ export async function start(ctx) {
             if (initOf !== -1 && typeof sb.changeType === "function") sb.changeType(r.mime);
             await appended(await files.range(r.ref, 0, r.index.init));
             initOf = level;
-            onLevel?.(`${{ av1: "AV1", hevc: "HEVC", avc: "H.264" }[r.codec] ?? r.codec} ${r.height}p`);
+            onLevel?.(r.codec === "aac" ? `AAC ${Math.round(r.bitrate / 1000)} kbps` : `${{ av1: "AV1", hevc: "HEVC", avc: "H.264" }[r.codec] ?? r.codec} ${r.height}p`);
           }
           const i = segAt(r, next);
           const seg = r.index.segments[i];

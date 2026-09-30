@@ -1,9 +1,11 @@
-// VIDEOS, a page (the Videos app, YouTube-shaped, the basic): a LENS on the video DOMAIN of content (`kinds`: video,
-// movie, TV episode, music video, short) — items `items` keeps, like Board's items. CHANNEL-FIRST: your videos (each
-// public on your profile, or only you) and those of the people you follow (`#/videos`: the feed; `#/videos/mine`: your
-// channel; `#/videos/c/<did>`: someone's). In a SPACE (`#/s/<space>/videos`): its members' videos, on its board, public
-// while its Videos app reads in public. WATCH: `…/videos/w/<ref>` — played by byte range (`video-player`), a like (▲, the
-// post vote), comments. UPLOAD: `…/videos/up`. UI only.
+// MEDIA, a page: ONE page for every MEDIA app — a LENS on a content DOMAIN (`kinds`) chosen by its route: VIDEOS
+// (`#/videos`: video, movie, TV episode, music video, short) and AUDIO (`#/audio`: music, podcast, audiobook), YouTube-
+// and Spotify-shaped; a composed app shows several the same way. Its SUB-TYPES filter the list. CHANNEL-FIRST: yours
+// (each public, or only you) and those you follow (`…`: the feed; `…/mine`; `…/c/<did>`: someone's); SAVED (the pin
+// edge); DISCOVER. In a SPACE (`#/s/<space>/…`): its members' items, public while its domain reads in public. WATCH/
+// LISTEN: `…/w/<ref>` — streamed by byte range (`video-player`), a like (▲), comments, and its timed text
+// (`subtitle-store`: Subtitles on a video, Lyrics on a song, a Transcript on a podcast — shown in time for audio).
+// UPLOAD: `…/up` (tags and cover from the file). UI only.
 export async function mount(ctx, el) {
   const login = await ctx.require("login");
   if (!(await login.session())) {
@@ -13,7 +15,15 @@ export async function mount(ctx, el) {
   const [items, directory, person, theme, space, roles, drive, player, kinds, edge] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "drive-store", "video-player", "kinds", "edge"].map(n => ctx.require(n)));
   const [studio, files, subs] = await Promise.all(["video-studio", "files", "subtitle-store"].map(n => ctx.require(n)));
   const [pins, people] = await Promise.all([edge.pins(), edge.people()]);
-  const VIDEO = kinds.inDomain("video");
+  // WHICH APP this page is (its route): its domain, its words.
+  const APPS = {
+    "/videos": { app: "videos", domain: "video", icon: "▶️", name: "Videos", one: "video", ones: "videos", accept: "video/*", mine: "Your channel", audio: false },
+    "/audio": { app: "audio", domain: "audio", icon: "🎧", name: "Audio", one: "track", ones: "tracks", accept: "audio/*", mine: "Your library", audio: true },
+  };
+  const C_ROUTE = APPS[ctx.route] ? ctx.route : "/videos";
+  const C = APPS[C_ROUTE];
+  const VIDEO = kinds.inDomain(C.domain);
+  let only = null; // a SUB-TYPE the list is filtered to (null: all)
   const me = (await space.account()).id;
   el.innerHTML = `
     <style>
@@ -55,6 +65,16 @@ export async function mount(ctx, el) {
         background-repeat: no-repeat; pointer-events: none; display: none; }
       .vd .scrub .tip span { position: absolute; bottom: 2px; left: 0; right: 0; text-align: center; color: #fff; font-size: 11px; text-shadow: 0 0 3px #000; }
       .vd .level { font-size: var(--cw-text-xs); color: var(--cw-muted); }
+      .vd .chips { flex-basis: 100%; display: flex; gap: 6px; flex-wrap: wrap; }
+      .vd .chips button { padding: 3px 12px; font-size: var(--cw-text-sm); }
+      .vd .grid.sq { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+      .vd .thumb.sq { aspect-ratio: 1; }
+      .vd .cover { width: min(320px, 70vw); aspect-ratio: 1; border-radius: var(--cw-radius); overflow: hidden; background: var(--cw-hover); display: grid; place-items: center; font-size: 4rem; }
+      .vd .cover img { width: 100%; height: 100%; object-fit: cover; }
+      .vd .watch audio { width: 100%; }
+      .vd .timed { max-height: 320px; overflow: auto; border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-3); }
+      .vd .timed p { margin: 4px 0; cursor: pointer; color: var(--cw-muted); }
+      .vd .timed p.on { color: var(--cw-fg); font-weight: 600; }
       .vd .subs { display: grid; gap: 6px; border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-3); }
       .vd .subs .row input[name=label] { width: 12em; }
       .vd .subs .row input[name=lang] { width: 4em; }
@@ -68,7 +88,7 @@ export async function mount(ctx, el) {
   };
   const discovering = () => ctx.space === "discover";
   const sp = () => (ctx.space && !discovering() ? ctx.space : null);
-  const base = () => (discovering() ? "#/discover/videos" : sp() ? `#/s/${sp()}/videos` : "#/videos");
+  const base = () => (discovering() ? `#/discover/${C.app}` : sp() ? `#/s/${sp()}/${C.app}` : `#/${C.app}`);
   const route = () => {
     const s = ctx.sub || "";
     if (s.startsWith("w/")) return { watch: decodeURIComponent(s.slice(2)) };
@@ -85,7 +105,7 @@ export async function mount(ctx, el) {
     if ((await space.mine()).some(x => x.id === id)) return null;
     return (await items.publicSpaces().catch(() => [])).find(d => d.id === id) ?? people.about("follow", id);
   };
-  const SAVED = ref => `videos:${ref}`;
+  const SAVED = ref => `${C.app}:${ref}`;
   const ago = at => {
     const s = Math.max(0, (Date.now() - at) / 1000);
     if (s < 60) return "just now";
@@ -99,27 +119,29 @@ export async function mount(ctx, el) {
     return hh ? `${hh}:${String(mm).padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
   };
   const who = did => {
-    const n = h("span", { className: "by", textContent: directory.shown(did), onclick: e => (e.preventDefault(), e.stopPropagation(), (location.hash = `#/videos/c/${encodeURIComponent(did)}`)) });
+    const n = h("span", { className: "by", textContent: directory.shown(did), onclick: e => (e.preventDefault(), e.stopPropagation(), (location.hash = `#/${C.app}/c/${encodeURIComponent(did)}`)) });
     directory.name(did).then(t => (n.textContent = t), () => {});
     return n;
   };
-  const fileOf = v => v.files?.find(f => f.type === studio.MANIFEST || /^video\//.test(f.type ?? "")) ?? v.files?.[0] ?? null;
+  const fileOf = v => v.files?.find(f => f.type === studio.MANIFEST || /^(video|audio)\//.test(f.type ?? "")) ?? v.files?.[0] ?? null;
 
   let spaceName = null;
   function top(w) {
     const tabs = discovering()
       ? [{ label: "Discover", href: base(), on: !w.watch }]
       : sp()
-        ? [{ label: "Videos", href: base(), on: !w.watch && !w.up }]
+        ? [{ label: C.name, href: base(), on: !w.watch && !w.up }]
         : [
-            { label: "Following", href: "#/videos", on: !!w.feed },
-            { label: "Your channel", href: "#/videos/mine", on: w.by === me },
-            { label: "Saved", href: "#/videos/saved", on: !!w.saved },
-            { label: "Discover", href: "#/discover/videos", on: false },
+            { label: "Following", href: `#/${C.app}`, on: !!w.feed },
+            { label: C.mine, href: `#/${C.app}/mine`, on: w.by === me },
+            { label: "Saved", href: `#/${C.app}/saved`, on: !!w.saved },
+            { label: "Discover", href: `#/discover/${C.app}`, on: false },
           ];
     // In a space, it is a CHANNEL (the space named in this app's own words).
-    const title = sp() ? `▶️ ${spaceName ?? "Channel"} · channel` : "▶️ Videos";
-    return h("div", { className: "top" }, h("h2", { textContent: title }), h("nav", { className: "tabs" }, ...tabs.map(t => h("a", { href: t.href, textContent: t.label, className: t.on ? "on" : "" }))), discovering() ? null : h("a", { className: "up", href: `${base()}/up`, textContent: "⬆ Upload" }));
+    const title = sp() ? `${C.icon} ${spaceName ?? "Channel"} · channel` : `${C.icon} ${C.name}`;
+    // The SUB-TYPES (a filter): all, or one kind of the domain.
+    const chips = w.watch || w.up ? null : h("div", { className: "chips" }, ...[null, ...VIDEO].map(k => h("button", { type: "button", className: only === k ? "on" : "", textContent: k ? kinds.of(k).label : "All", onclick: () => ((only = k), draw()) })));
+    return h("div", { className: "top" }, h("h2", { textContent: title }), h("nav", { className: "tabs" }, ...tabs.map(t => h("a", { href: t.href, textContent: t.label, className: t.on ? "on" : "" }))), discovering() ? null : h("a", { className: "up", href: `${base()}/up`, textContent: "⬆ Upload" }), chips);
   }
 
   function card(v) {
@@ -127,7 +149,8 @@ export async function mount(ctx, el) {
     return h(
       "a",
       { className: "card", href: `${base()}/w/${encodeURIComponent(v.ref)}` },
-      h("div", { className: "thumb" }, f?.preview ? h("img", { src: f.preview, alt: "" }) : "🎬", f?.duration ? h("span", { className: "dur", textContent: clock(f.duration) }) : null, v.kind !== "video" ? h("span", { className: "kind", textContent: kinds.of(v.kind)?.label ?? v.kind }) : null),
+      h("div", { className: `thumb${C.audio ? " sq" : ""}` }, f?.preview ? h("img", { src: f.preview, alt: "" }) : C.audio ? "🎵" : "🎬", f?.duration ? h("span", { className: "dur", textContent: clock(f.duration) }) : null, v.kind !== VIDEO[0] ? h("span", { className: "kind", textContent: kinds.of(v.kind)?.label ?? v.kind }) : null),
+      C.audio && (v.meta?.artist || v.meta?.show || v.meta?.author) ? h("div", { className: "s", textContent: v.meta.artist ?? v.meta.show ?? v.meta.author }) : null,
       h("div", { className: "t", textContent: v.title }),
       h("div", { className: "s" }, who(v.by), ` · ${ago(v.at)}${v.private ? " · only you" : ""}`),
     );
@@ -141,18 +164,23 @@ export async function mount(ctx, el) {
           return items.get(ref, { outside: await outsideOf(ref) }).catch(() => null);
         }))).filter(Boolean)
       : await items.list(w, "new", VIDEO);
-    const none = w.saved ? "Nothing saved: “Save” on a video keeps it here." : w.feed ? "No videos yet from you or what you follow." : w.discover ? "No public videos yet." : w.by === me ? "Your channel is empty: upload a video." : "No videos here yet.";
-    return vs.length ? h("div", { className: "grid" }, ...vs.map(card)) : h("p", { className: "none", textContent: none });
+    const shown = only ? vs.filter(v => v.kind === only) : vs;
+    const none = w.saved ? `Nothing saved: “Save” on a ${C.one} keeps it here.` : w.feed ? `No ${C.ones} yet from you or what you follow.` : w.discover ? `No public ${C.ones} yet.` : w.by === me ? `Nothing here yet: upload a ${C.one}.` : `No ${C.ones} here yet.`;
+    return shown.length ? h("div", { className: `grid${C.audio ? " sq" : ""}` }, ...shown.map(card)) : h("p", { className: "none", textContent: none });
   }
 
   async function watch(ref) {
     const outside = await outsideOf(ref);
     const v = await items.get(ref, { outside });
-    if (!v) return h("p", { className: "none", textContent: "This video is not here (removed, or not shared with you)." });
+    if (!v) return h("p", { className: "none", textContent: `This ${C.one} is not here (removed, or not shared with you).` });
     const f = fileOf(v);
     const note = h("span", { className: "s" });
     const level = h("span", { className: "level" });
-    const video = h("video", { controls: true, playsInline: true, poster: f?.preview ?? "" });
+    // Video: the picture; audio: its cover, an audio element, and (a podcast, an audiobook) a speed.
+    const video = C.audio ? h("audio", { controls: true }) : h("video", { controls: true, playsInline: true, poster: f?.preview ?? "" });
+    const coverBox = C.audio ? h("div", { className: "cover" }, f?.preview ? h("img", { src: f.preview, alt: "" }) : h("span", { textContent: "🎵" })) : null;
+    const speed = C.audio && ["podcast", "audiobook"].includes(v.kind) ? h("select", { title: "Speed", onchange: e => (video.playbackRate = Number(e.target.value)) }, ...[0.75, 1, 1.25, 1.5, 2].map(x => h("option", { value: x, textContent: `${x}×`, selected: x === 1 }))) : null;
+    const timed = h("div", { className: "timed", hidden: true });
     const like = h("button", { type: "button", className: v.mine === 1 ? "on" : "", disabled: !!outside, title: outside ? "Join to like" : "", textContent: `▲ ${v.score ?? 0}`, onclick: async () => ((like.disabled = true), await items.vote(ref, v.mine === 1 ? 0 : 1).catch(() => {}), draw()) });
     const saved = () => pins.has(SAVED(ref));
     const save = h("button", { type: "button", className: saved() ? "on" : "", textContent: saved() ? "Saved ✓" : "Save", onclick: async () => (await pins.set(SAVED(ref), !saved()), (save.className = saved() ? "on" : ""), (save.textContent = saved() ? "Saved ✓" : "Save")) });
@@ -174,13 +202,15 @@ export async function mount(ctx, el) {
     const out = h(
       "div",
       { className: "watch" },
+      coverBox,
       video,
       note,
       h("h1", { textContent: v.title }),
-      h("div", { className: "row" }, h("span", { className: "s" }, who(v.by), ` · ${ago(v.at)}${k && v.kind !== "video" ? ` · ${k.label}` : ""}${v.private ? " · only you" : ""}`), like, save),
+      h("div", { className: "row" }, h("span", { className: "s" }, who(v.by), ` · ${ago(v.at)}${k && v.kind !== VIDEO[0] ? ` · ${k.label}` : ""}${v.private ? " · only you" : ""}`), like, save, speed),
       fields.length ? h("div", { className: "meta" }, ...fields) : null,
       v.body ? h("div", { className: "about", textContent: v.body }) : null,
-      subsLine(ref, outside, v, f, video),
+      subsLine(ref, outside, v, f, video, timed),
+      timed,
       h("h3", { textContent: `Comments` }),
       outside ? null : form,
       comments,
@@ -220,7 +250,7 @@ export async function mount(ctx, el) {
       quiet = pr ? 0 : quiet + 1;
       if (quiet < 6) setTimeout(showMaking, 3000);
     };
-    out.insertBefore(h("div", {}, scrub, level, making), note);
+    out.insertBefore(h("div", {}, C.audio ? null : scrub, level, making), note);
     setTimeout(showMaking, 500); // once the view is in the page
     queueMicrotask(() => {
       if (f) player.play(video, f, { onNote: t => (note.textContent = t), onLevel: l => (level.textContent = l) }).catch(e => (note.textContent = e.message ?? String(e)));
@@ -232,7 +262,8 @@ export async function mount(ctx, el) {
 
   // SUBTITLES (`subtitle-store`: data of their own, anyone who may comment adds one): each a track of the player,
   // listed, with a way to the Subtitles app. The author's subtitles from before (in the manifest) moved over once.
-  function subsLine(ref, outside, v, f, video) {
+  function subsLine(ref, outside, v, f, video, timed) {
+    const NAME = kinds.attachLabel("subtitle", v.kind); // Subtitles, Lyrics, Transcript
     const line = h("div", { className: "s" });
     (async () => {
       if (v.by === me && f?.type === studio.MANIFEST) {
@@ -247,17 +278,51 @@ export async function mount(ctx, el) {
         if (text) video.append(Object.assign(document.createElement("track"), { kind: "subtitles", label: t.label || t.lang, srclang: t.lang || "und", src: URL.createObjectURL(new Blob([text], { type: "text/vtt" })) }));
       }
       line.replaceChildren(
-        `💬 Subtitles: ${tracks.length ? tracks.map(t => `${t.label || t.lang}${t.lang ? ` (${t.lang})` : ""}`).join(", ") : "none yet"} · `,
-        outside ? "" : h("a", { href: `#/subtitles/for/${encodeURIComponent(ref)}`, textContent: tracks.length ? "Add or edit" : "Add subtitles" }),
+        `💬 ${NAME}: ${tracks.length ? tracks.map(t => `${t.label || t.lang}${t.lang ? ` (${t.lang})` : ""}`).join(", ") : "none yet"} · `,
+        outside ? "" : h("a", { href: `#/subtitles/for/${encodeURIComponent(ref)}`, textContent: tracks.length ? "Add or edit" : `Add ${NAME.toLowerCase()}` }),
       );
+      // AUDIO: the first track shown IN TIME beside the player (the line playing lit; a click plays from it).
+      if (C.audio && video.textTracks.length) {
+        const tt = video.textTracks[0];
+        tt.mode = "hidden";
+        const drawCues = () => {
+          const cues = [...(tt.cues ?? [])];
+          if (!cues.length) return;
+          timed.hidden = false;
+          timed.replaceChildren(
+            h("strong", { textContent: NAME }),
+            ...cues.map(c => {
+              const p = h("p", { textContent: c.text, onclick: () => ((video.currentTime = c.startTime), video.play()) });
+              p.setAttribute("data-s", String(c.startTime));
+              return p;
+            }),
+          );
+        };
+        // Drawn once its cues are in (a track loads after it is added).
+        for (const el_ of video.querySelectorAll("track")) el_.addEventListener("load", drawCues);
+        setTimeout(drawCues, 500);
+        tt.oncuechange = () => {
+          const on = new Set([...(tt.activeCues ?? [])].map(c => String(c.startTime)));
+          for (const p of timed.querySelectorAll("p")) p.classList.toggle("on", on.has(p.dataset.s));
+          timed.querySelector("p.on")?.scrollIntoView({ block: "nearest" });
+        };
+      }
     })().catch(e => (line.textContent = e.message ?? String(e)));
     return line;
+  }
+
+  // A cover image made small (320 px wide, JPEG): what rides on the item as its preview.
+  async function coverOf(file) {
+    const bmp = await createImageBitmap(file);
+    const c = Object.assign(document.createElement("canvas"), { width: 320, height: Math.round((320 * bmp.height) / bmp.width) });
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.75);
   }
 
   async function upload() {
     const said = h("p", { className: "said", hidden: true });
     const progress = h("span", { className: "s" });
-    const kindSel = h("select", { name: "kind" }, ...kinds.inDomain("video").map(k => h("option", { value: k, textContent: kinds.of(k).label })));
+    const kindSel = h("select", { name: "kind" }, ...VIDEO.map(k => h("option", { value: k, textContent: kinds.of(k).label })));
     const fieldsBox = h("div", { style: "display:grid;gap:6px" });
     const drawFields = () => fieldsBox.replaceChildren(...kinds.of(kindSel.value).fields.map(x => h("input", { name: `meta.${x}`, placeholder: kinds.fieldLabel(x) })));
     kindSel.onchange = drawFields;
@@ -266,17 +331,30 @@ export async function mount(ctx, el) {
     const f = h(
       "form",
       {},
-      h("input", { type: "file", name: "file", accept: "video/*", required: true }),
-      h("label", { className: "s" }, "Subtitles (.vtt or .srt, optional) ", h("input", { type: "file", name: "subs", accept: ".vtt,.srt,text/vtt", multiple: true })),
+      h("input", { type: "file", name: "file", accept: C.accept, required: true, onchange: e => prefill(e.target.files[0]) }),
+      C.audio ? h("label", { className: "s" }, "Cover (an image, optional: else the file's own) ", h("input", { type: "file", name: "cover", accept: "image/*" })) : null,
+      h("label", { className: "s" }, `${C.audio ? "Lyrics or transcript" : "Subtitles"} (.vtt or .srt, optional) `, h("input", { type: "file", name: "subs", accept: ".vtt,.srt,text/vtt", multiple: true })),
       h("label", { className: "s" }, h("input", { type: "checkbox", name: "keep" }), " Keep the original file too (as large as all the versions together; lets a newer format be made later)"),
       h("input", { name: "title", placeholder: "Title", required: true, maxLength: 300 }),
       h("textarea", { name: "body", rows: 4, placeholder: "Description" }),
       h("label", { className: "s" }, "What it is ", kindSel),
       fieldsBox,
-      inSpace ? h("p", { className: "s", textContent: `For ${space.shown(inSpace)}: its members (and everyone, while its Videos reads in public).` }) : h("select", { name: "audience" }, h("option", { value: "public", textContent: "🌐 Everyone (on your channel)" }), h("option", { value: "private", textContent: "🔒 Only you" })),
+      inSpace ? h("p", { className: "s", textContent: `For ${space.shown(inSpace)}: its members (and everyone, while it reads its ${C.ones} in public).` }) : h("select", { name: "audience" }, h("option", { value: "public", textContent: "🌐 Everyone (on your channel)" }), h("option", { value: "private", textContent: "🔒 Only you" })),
       h("div", { className: "row" }, h("button", { className: "on", textContent: "Upload" }), progress),
       said,
     );
+    // The file's own TAGS fill the form (title; artist, album, year, genre where its kind has them).
+    let tags = null;
+    const prefill = async file => {
+      if (!file) return;
+      tags = await studio.probe(file).catch(() => null);
+      if (!tags) return;
+      if (tags.title && !f.elements.title.value) f.elements.title.value = tags.title;
+      for (const [x, val] of Object.entries({ artist: tags.artist, album: tags.album, year: tags.year, genre: tags.genre })) {
+        const input = f.elements[`meta.${x}`];
+        if (val && input && !input.value) input.value = val;
+      }
+    };
     f.onsubmit = async e => {
       e.preventDefault();
       said.hidden = true;
@@ -285,26 +363,32 @@ export async function mount(ctx, el) {
       const btn = f.querySelector("button");
       btn.disabled = true;
       try {
-        progress.textContent = "Reading the video…";
-        const pub = inSpace ? (await roles.of(inSpace)).policy("videos", "read") === "anyone" : f.elements.audience.value !== "private";
+        progress.textContent = `Reading the ${C.one}…`;
+        const pub = inSpace ? await items.publicIn(inSpace, kindSel.value) : f.elements.audience.value !== "private";
         // MADE READY TO STREAM (renditions, strip, subtitles, a manifest); a browser that cannot encode sends the file as it is.
         const ref = await studio
           .make(file, { space: inSpace, public: pub, keepOriginal: f.elements.keep.checked, onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`) })
           .catch(async err => {
-            ctx.log("videos", { what: `not encoded here (${err.message ?? err}): the file as it is` });
-            const m = await player.meta(file);
-            const up = await files.put(file, { space: inSpace, public: pub, app: "videos", onProgress: p => (progress.textContent = `Uploading ${Math.round((100 * p.done) / Math.max(1, p.size))}%`) });
+            ctx.log(C.app, { what: `not encoded here (${err.message ?? err}): the file as it is` });
+            const m = C.audio ? {} : await player.meta(file);
+            const up = await files.put(file, { space: inSpace, public: pub, app: C.app, onProgress: p => (progress.textContent = `Uploading ${Math.round((100 * p.done) / Math.max(1, p.size))}%`) });
             return { ...up, ...(m.poster ? { preview: m.poster } : {}), ...(m.duration ? { duration: m.duration } : {}) };
           });
         // Drive lists what was uploaded: the original when it is kept, else the video (its manifest) or the file itself.
         const kept = ref.type === studio.MANIFEST && f.elements.keep.checked ? (await player.manifest(ref).catch(() => null))?.source : ref;
-        if (kept) await drive.add(kept, { space: inSpace, from: { app: "videos" } }).catch(() => {});
+        if (kept) await drive.add(kept, { space: inSpace, from: { app: C.app } }).catch(() => {});
+        // A COVER chosen here: over the file's own.
+        const coverFile = f.elements.cover?.files?.[0];
+        if (coverFile) ref.preview = await coverOf(coverFile).catch(() => ref.preview);
         const meta = Object.fromEntries(kinds.of(kindSel.value).fields.map(x => [x, String(f.elements[`meta.${x}`]?.value ?? "").trim()]).filter(([, v]) => v));
         // A file sent as it is (not encoded here) carries its video id on the item (a manifest carries its own).
         if (ref.type !== studio.MANIFEST && ref.key) meta.vid = await studio.videoId(ref.key);
         const posted = await items.submit({ board: inSpace?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, kind: kindSel.value, meta, private: !inSpace && !pub, files: [ref] });
         // Its SUBTITLES: items of their own, about it.
-        for (const s of f.elements.subs.files ?? []) await subs.add(posted, s).catch(e => ctx.log("videos", { what: `subtitles ${s.name}: ${e.message}` }));
+        for (const s of f.elements.subs.files ?? []) await subs.add(posted, s).catch(e => ctx.log(C.app, { what: `timed text ${s.name}: ${e.message}` }));
+        // LYRICS the file carries (untimed): one cue over the whole, when none was given.
+        if (C.audio && tags?.lyrics && !(f.elements.subs.files ?? []).length)
+          await subs.add(posted, `WEBVTT\n\n00:00:00.000 --> ${new Date(Math.max(1, ref.duration || 3600) * 1000).toISOString().slice(11, 23)}\n${tags.lyrics.trim()}\n`, { label: kinds.attachLabel("subtitle", kindSel.value) }).catch(() => {});
         location.hash = `${base()}/w/${encodeURIComponent(posted)}`;
       } catch (err) {
         said.textContent = err.message ?? String(err);
@@ -313,7 +397,7 @@ export async function mount(ctx, el) {
         progress.textContent = "";
       }
     };
-    return h("div", {}, h("h3", { textContent: "Upload a video" }), f);
+    return h("div", {}, h("h3", { textContent: `Upload a ${C.one}` }), f);
   }
 
   let drawn = "";
@@ -321,11 +405,11 @@ export async function mount(ctx, el) {
     const w = route();
     spaceName = sp() ? space.shown((await space.mine()).find(x => x.id === sp()) ?? { id: sp(), name: "" }) : null;
     drawn = `${ctx.space ?? ""}|${ctx.sub ?? ""}`;
-    root.replaceChildren(top(w), theme.loading(w.watch ? "Opening the video…" : "Reading the videos…"));
+    root.replaceChildren(top(w), theme.loading(w.watch ? `Opening the ${C.one}…` : `Reading the ${C.ones}…`));
     const body = await (w.watch ? watch(w.watch) : w.up ? upload() : list(w)).catch(e => h("p", { className: "said", textContent: e.message ?? String(e) }));
     if (drawn === `${ctx.space ?? ""}|${ctx.sub ?? ""}`) root.replaceChildren(top(w), ...(w.by && w.by !== me && !w.watch ? [h("div", { className: "row" }, h("h3", {}, who(w.by)), h("button", { type: "button", textContent: "Follow…", onclick: e => person.open(e.currentTarget, w.by) }))] : []), body);
   }
   await draw();
   items.onChange(() => el.isConnected && !route().watch && !route().up && draw());
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/videos" && `${ctx.space ?? ""}|${ctx.sub ?? ""}` !== drawn && draw());
+  addEventListener("craftworks:route", () => el.isConnected && ctx.route === C_ROUTE && `${ctx.space ?? ""}|${ctx.sub ?? ""}` !== drawn && draw());
 }

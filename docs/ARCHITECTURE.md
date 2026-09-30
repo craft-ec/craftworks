@@ -230,6 +230,13 @@ the spaces they are in, the people and spaces they follow): access control and p
 else is asked. `subtitle-store` owns it; players compose it; the SUBTITLES app is its lens (personal, and in a space:
 a group working on its videos' tracks); WebVTT or SRT in and out.
 
+**Media apps: one page, a domain each (built).** VIDEOS (`#/videos`: video, movie, TV episode, music video, short) and
+AUDIO (`#/audio`: music, podcast, audiobook) are ONE page (`media`) whose route names the domain; its sub-types filter
+the list. Audio is made like video (one AAC rendition, fragmented, streamed and seekable; its cover and tags — title,
+artist, album, year, genre, embedded lyrics — taken from the file). The timed text of an item is ONE capability named
+for what it is on: Subtitles on a video, LYRICS on a song or a music video, a TRANSCRIPT on a podcast or an audiobook
+(`kinds.attachLabel`); for audio it is shown in time beside the player (the line playing lit; a click plays from it).
+
 **Settings are the CONTENT's, not the app's.** In a space, what may be read or written is set per DOMAIN (text,
 video, subtitle …: `kinds.policyDomain`), so any app — one per domain, or one showing every domain (a Handcraft-like
 app) — shows under the same rules; a setting from before under an app's name (board, videos, subtitles) stands for its

@@ -50,14 +50,18 @@ export async function mount(ctx, el) {
     if (s.startsWith("e/")) return { edit: decodeURIComponent(s.slice(2)) };
     return { mine: true };
   };
-  const watchHref = ref => (ref.startsWith("space:") ? `#/s/${ref.slice(6, ref.indexOf("/"))}/videos/w/${encodeURIComponent(ref)}` : `#/videos/w/${encodeURIComponent(ref)}`);
+  // Where an item plays: the app of its domain (Audio for a song or a podcast, else Videos).
+  const kindsCap0 = await ctx.require("kinds");
+  const appOf = kind => (kindsCap0.domain(kind) === "audio" ? "audio" : "videos");
+  const watchHref = (ref, kind = null) => (ref.startsWith("space:") ? `#/s/${ref.slice(6, ref.indexOf("/"))}/${appOf(kind)}/w/${encodeURIComponent(ref)}` : `#/${appOf(kind)}/w/${encodeURIComponent(ref)}`);
   const download = (text, name, type) => {
     const a = h("a", { href: URL.createObjectURL(new Blob([text], { type })), download: name });
     document.body.append(a);
     a.click();
     a.remove();
   };
-  const title = async ref => (await items.get(ref).catch(() => null))?.title ?? "a video";
+  const itemOf = async ref => await items.get(ref).catch(() => null);
+  const title = async ref => (await itemOf(ref))?.title ?? "an item";
   const row = async t =>
     h(
       "li",
@@ -65,7 +69,7 @@ export async function mount(ctx, el) {
       h("span", { className: "n", textContent: t.label || t.lang || "Subtitles" }),
       h("span", { className: "s", textContent: t.lang || "—" }),
       h("span", { className: "s" }, "by ", who(t.by), t.place ? ` · in ${t.place.name ?? "a space"}` : ""),
-      h("a", { href: watchHref(t.in), textContent: `▶ ${await title(t.in)}` }),
+      await (async () => { const it = await itemOf(t.in); return h("a", { href: watchHref(t.in, it?.kind), textContent: `▶ ${it?.title ?? "an item"}` }); })(),
       t.by === me ? h("a", { href: `#/subtitles/e/${encodeURIComponent(t.ref)}`, textContent: "Edit" }) : null,
       h("button", { type: "button", textContent: ".vtt", onclick: async () => download(await subs.text(t), `${t.label || "subtitles"}.vtt`, "text/vtt") }),
       h("button", { type: "button", textContent: ".srt", onclick: async () => download(subs.toSrt(await subs.text(t)), `${t.label || "subtitles"}.srt`, "application/x-subrip") }),
@@ -79,12 +83,12 @@ export async function mount(ctx, el) {
   // A SPACE's subtitle work: its videos, each with its tracks (any member's) and a way to add one.
   async function inSpace(id) {
     const kindsCap = await ctx.require("kinds");
-    const videos = await items.list({ board: id }, "new", kindsCap.inDomain("video"));
-    if (!videos.length) return h("p", { className: "none", textContent: "No videos in this space yet: subtitles go with its videos." });
+    const videos = await items.list({ board: id }, "new", [...kindsCap.inDomain("video"), ...kindsCap.inDomain("audio")]);
+    if (!videos.length) return h("p", { className: "none", textContent: "No videos or audio in this space yet: subtitles, lyrics and transcripts go with them." });
     const blocks = await Promise.all(
       videos.map(async v => {
         const tracks = await subs.of(v.ref);
-        return h("div", {}, h("h3", {}, h("a", { href: watchHref(v.ref), textContent: `▶ ${v.title}` }), " ", h("a", { className: "s", href: `#/subtitles/for/${encodeURIComponent(v.ref)}`, textContent: "Add a track" })), tracks.length ? h("ul", {}, ...(await Promise.all(tracks.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }));
+        return h("div", {}, h("h3", {}, h("a", { href: watchHref(v.ref, v.kind), textContent: `▶ ${v.title}` }), " ", h("a", { className: "s", href: `#/subtitles/for/${encodeURIComponent(v.ref)}`, textContent: "Add a track" })), tracks.length ? h("ul", {}, ...(await Promise.all(tracks.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }));
       }),
     );
     return h("div", {}, h("p", { className: "s", textContent: "This space's videos and their subtitles — any member adds a track or a translation; each edits their own." }), ...blocks);
@@ -126,7 +130,8 @@ export async function mount(ctx, el) {
       const place = v === "with" ? undefined : v === "own" ? null : mine.find(s => s.id === v);
       await subs.add(ref, src, { label: f.elements.label.value.trim(), lang: f.elements.lang.value.trim(), ...(place !== undefined ? { place } : {}) }).then(draw, err => ((said.textContent = err.message ?? String(err)), (said.hidden = false)));
     };
-    return h("div", {}, h("h3", {}, "For ", h("a", { href: watchHref(ref), textContent: `▶ ${await title(ref)}` })), list.length ? h("ul", {}, ...(await Promise.all(list.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }), f);
+    const it = await itemOf(ref);
+    return h("div", {}, h("h3", {}, "For ", h("a", { href: watchHref(ref, it?.kind), textContent: `▶ ${it?.title ?? "an item"}` })), list.length ? h("ul", {}, ...(await Promise.all(list.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }), f);
   }
 
   async function editor(ref) {
@@ -139,7 +144,7 @@ export async function mount(ctx, el) {
     return h(
       "div",
       { className: "ed" },
-      h("div", { className: "row" }, "For ", h("a", { href: watchHref(t.in), textContent: `▶ ${await title(t.in)}` })),
+      await (async () => { const it = await itemOf(t.in); return h("div", { className: "row" }, "For ", h("a", { href: watchHref(t.in, it?.kind), textContent: `▶ ${it?.title ?? "an item"}` })); })(),
       h("div", { className: "row" }, label, lang),
       text,
       h(

@@ -784,6 +784,12 @@ come with keepers as a new codec version.
       feed's places filtered by id. SETTINGS per content domain (`kinds.policyDomain`, legacy app-named fallback;
       owner: "posts→Board is just current implementation"). 17573: same id for the space copy; a team-kept and an
       own-kept track show on both copies. NOT measured: a non-member's view across two accounts (by construction).
+- [x] AUDIO + sub-types (owner 09-30: "same for audio … lyric for song … podcast … video app handle various sub-type?"):
+      `media` page = Videos + Audio by route; sub-type chips; studio audio path (AAC fragmented, cover + tags from the
+      file via Mediabunny, id by files.keyOf); `kinds.attachLabel` (Subtitles / Lyrics / Transcript); timed text in sync
+      for audio; speed for podcasts/audiobooks. 17573: tagged MP3 → prefilled, AAC 160 streamed, cover, lyrics lit at
+      3 s and 8 s, click seeks; chips filter. ACCESS measured fx/fy: A sees both tracks, B (follows A, not in the private
+      space) sees only the public one.
 - [ ] F4 video (old plan line): CMAF segments, renditions (AV1+Opus, H.264+AAC), remux (mp4box) or WebCodecs encode, MediaSource ABR,
       poster + scrub strip, subtitles.
 - [x] F5a DRIVE (owner 09-30: every uploaded file is in Drive; attach from Drive; choose any space's Drive):
