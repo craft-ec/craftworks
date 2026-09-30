@@ -906,3 +906,18 @@ Uses what freenet-prolly already has (rev 17d67d8: `range`/`range_with` + `front
   marginal RSS each, vs the node's 1 MiB constant; posted on freenet-core#5647 (issuecomment-5907919358). Owner's
   call: keep small raced pieces (no packing); the count cap is the node's accounting. Until upstream changes it, nodes
   run with a higher `--hosting-mem-share`.
+
+## Markdown + inline media (owner 09-30: "md for text editor like grid; edit post and comment; image/video/audio inline")
+- [x] `markdown` (Grid's renderer, escape-first; `file:KEY` names the item's own files), `md-editor` (toolbar, preview,
+      🖼 inline media, grows with its text), attachments picker `media: true` (video/audio through `video-studio`:
+      streamed, poster / album cover, video id), covers until played (owner: "like youtube"), subtitles by the file's
+      video id (`subtitle-store.forFile`, lyrics tag as fallback). Board: posts and comments in Markdown, Edit for
+      one's own. A: post with heading/bold/italic/code/link/list/quote + image + video + audio rendered; covers only
+      (0 video elements before a click); both played through the pipeline; editor 110→379 px for 17 lines.
+- [x] FORK RECOVERY (owner 09-30: "set a handle on a new ID on another node … WouldFork { last_seq: 3 }"): the identity
+      signed a tail's steps the page could not read back (never landed, lost, or the read went unanswered). A write it
+      refuses as a fork now reads the network again: caught up → written on it; the node ANSWERED and holds less → the
+      step goes past `last_seq` as a WHOLE state (`data::Open::skip_to`; a delta must be the exact next step, a higher
+      whole state replaces a lower); the node silent → a clear "try again", never a guess that could drop rows.
+      Test `a_write_skips_past_steps_the_network_never_saw`. A: network at 47, identity signed 48–49 unsent → the
+      write went out as 50, read back 50 with its row.

@@ -240,14 +240,17 @@ export async function start(ctx) {
 
     // Read it and follow it. None on the network: its first write is a PUT. No answer at all: the same as none, so
     // it opens empty; a first write the network then refuses resets it and reads it again.
+    let answered = false; // the last read had the node's answer (the tail, or "not found"), not silence
     async function read() {
       const [, frames] = core.tail_get(id);
       let said;
       try {
         said = await ask(frames, x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "tail-keys" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, 30000);
+        answered = true;
       } catch (e) {
         ctx.log("table not found yet", { what: `${app}: ${e.message}; opened empty` });
         said = { kind: "get-failed" };
+        answered = false;
       }
       // The tail is there: its tree must load too. A tree that does not is an error, never an empty table (that
       // would write over rows it could not see).
@@ -271,8 +274,26 @@ export async function start(ctx) {
       // Listed BEFORE it is created: a failure between the two leaves a listed tail that is empty, never one nobody
       // can find.
       if (t.absent && beforeCreate) await beforeCreate();
-      const v = typeof value === "function" ? value() : typeof value === "string" ? enc.encode(value) : value;
-      await step(core.tail_prepare(id, enc.encode(key), v), "saving to");
+      // A step the identity refuses as a FORK (it signed this tail further than this page holds): the network read
+      // again. Caught up — written again on what it holds. The node ANSWERED and holds less — those signed steps never
+      // landed (or were lost): this step goes past them, as a whole state. The node silent — nothing is overwritten
+      // on a guess: try again once it answers.
+      let past = null;
+      for (let attempt = 0; ; attempt++) {
+        const v = typeof value === "function" ? value() : typeof value === "string" ? enc.encode(value) : value;
+        let p = core.tail_prepare(id, enc.encode(key), v);
+        if (past != null) p = core.tail_skip(id, past) ?? p;
+        try {
+          await step(p, "saving to");
+          break;
+        } catch (e) {
+          if (e.forkedAt == null || attempt >= 1) throw e;
+          if (core.tail_next(id) > e.forkedAt) continue;
+          if (!answered) throw new Error(`${app}: your node has written this further than it can read back right now — try again in a minute`);
+          ctx.log("write", { what: `${app}: the identity signed through step ${e.forkedAt}, the network holds step ${core.tail_next(id) - 1}: written past it` });
+          past = e.forkedAt;
+        }
+      }
       // FLUSH once the tail is long: its rows into the tree, the tail emptied (in this write's turn of the queue).
       if (core.tail_pending(id) >= Core.flush_at()) await flush().catch(e => ctx.log("flush failed", { what: `${app}: ${e.message}` }));
       t.absent = false;
@@ -309,7 +330,10 @@ export async function start(ctx) {
       if (refused) {
         core.tail_reset(id);
         await read();
-        throw new Error(`the write was refused: ${refused}`);
+        const err = new Error(`the write was refused: ${refused}`);
+        const fork = /WouldFork \{ last_seq: (\d+) \}/.exec(refused);
+        if (fork) err.forkedAt = Number(fork[1]);
+        throw err;
       }
       await view();
     }

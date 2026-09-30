@@ -606,9 +606,38 @@ impl Open {
 
     /// The signature for the prepared step. Returns what to send: `Put(state)` if the network has no tail yet, else
     /// `Update(delta)`.
+    /// SKIP AHEAD: the identity signed this tail through `last`, and the network — asked, and answering — holds less
+    /// (those steps never landed, or were lost). The pending step moves to `last + 1`, to go out as a WHOLE state: a
+    /// delta must be the exact next step, but a whole state at a higher step replaces a lower one. The step to sign;
+    /// `None` when nothing is pending or it is past `last` already.
+    pub fn skip_to(&mut self, last: u64) -> Option<(u64, [u8; 32])> {
+        let seq = last.checked_add(1)?;
+        let u = self.pending.take()?;
+        if seq <= u.seq {
+            self.pending = Some(u);
+            return None;
+        }
+        let body = self.writer.body().apply(&u.ops, seq)?;
+        let out = (seq, body.hash());
+        self.pending = Some(Unsigned { seq, ops: u.ops, body, message: Vec::new() });
+        Some(out)
+    }
+
     pub fn commit(&mut self, sig: [u8; 64]) -> Option<Send> {
         let u = self.pending.take()?;
         let signed = Signed { terminal: false, seq: u.seq, value_hash: u.body.hash(), bitmap: 0, sigs: vec![sig] };
+        // A step past the next (`skip_to`): the whole state, checked as any reader checks it.
+        if u.seq > self.writer.seq() + 1 {
+            let p = craftec_register_contract::wire::Params::parse(&self.params)?;
+            let state = tail::Tail { signed, body: u.body }.encode(&p.authority);
+            let w = Writer::resume(&self.params, &state).filter(|w| w.seq() == u.seq)?;
+            self.writer = w;
+            if let Some(b) = self.staged.take() {
+                self.blocks = b;
+            }
+            self.on_network = true;
+            return Some(Send::Put(state));
+        }
         let delta = self.writer.commit(u, signed)?;
         if let Some(b) = self.staged.take() {
             self.blocks = b;
@@ -1522,6 +1551,43 @@ mod tests {
         sealed.set_table_key([7; 32]);
         put_row(&key, &mut sealed, "handle", "alice");
         assert!(!contains(&sealed.writer.state(), b"alice"));
+    }
+
+    /// SKIP AHEAD: the identity signed steps 2 and 3, which never reached the network (it holds step 1). The next write
+    /// goes out at step 4 as a WHOLE state; the contract (and any reader holding step 1) takes it — step 1's rows kept,
+    /// the new row there. Control: a step already past `last` is not moved.
+    #[test]
+    fn a_write_skips_past_steps_the_network_never_saw() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let owner = key.verifying_key().to_bytes();
+        let mut o = Open::new(CODE, &owner, "card");
+        o.public = true;
+        put_row(&key, &mut o, "kp/node", "abc");
+        let held = o.writer.state(); // what the network holds: step 1
+        // A page that read step 1 prepares step 2; the identity says it signed through 3.
+        let mut w = Open::new(CODE, &owner, "card");
+        w.public = true;
+        assert!(w.absorb(&held));
+        let (seq, _) = w.prepare_row(b"handle", b"alice").unwrap();
+        assert_eq!(seq, 2);
+        let (seq, h) = w.skip_to(3).expect("moved past 3");
+        assert_eq!(seq, 4);
+        let Some(Send::Put(state)) = w.commit(sign(&key, &w, seq, h)) else { panic!("a whole state") };
+        assert_eq!(w.writer.seq(), 4);
+        // The network (a reader holding step 1) takes it, as the contract does.
+        let mut r = Open::new(CODE, &owner, "card");
+        r.public = true;
+        assert!(r.absorb(&held));
+        assert!(r.absorb(&state), "a higher whole state replaces the lower one");
+        let Ok(Step::Ready(v)) = r.rows() else { panic!() };
+        assert_eq!(keys(&v), ["handle=alice", "kp/node=abc"]);
+        // Control: nothing to skip when the pending step is past `last` already.
+        let mut d = Open::new(CODE, &owner, "card");
+        d.public = true;
+        assert!(d.absorb(&held));
+        let (s2, _) = d.prepare_row(b"handle", b"alice").unwrap();
+        assert_eq!(s2, 2);
+        assert!(d.skip_to(1).is_none());
     }
 
     #[test]

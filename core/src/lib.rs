@@ -956,6 +956,16 @@ mod js {
             prepared(&o.params, seq, hash)
         }
 
+        /// SKIP AHEAD (`data::Open::skip_to`): the prepared step moved past `last` (the identity signed through it; the
+        /// network, which answered, holds less): the step to sign, or null.
+        pub fn tail_skip(&mut self, id: &[u8], last: f64) -> Result<JsValue, JsValue> {
+            let o = self.0.tail(&b32(id)?).map_err(err)?;
+            match o.skip_to(last as u64) {
+                Some((seq, hash)) => Ok(prepared(&o.params, seq, hash)?.into()),
+                None => Ok(JsValue::NULL),
+            }
+        }
+
         /// The table's own key (from the identity delegate): rows and blocks under it read, its blocks' addresses come
         /// from it, and — until an epoch's key is given — writes are sealed with it.
         /// An open tail's rows AS STORED (bytes: a feed's are versions, for the `feed` package), `[[key, value]]`, once
