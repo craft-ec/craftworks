@@ -77,7 +77,8 @@ export async function start(ctx) {
   const PLACE_APPS = ["board", "videos", "audio", "subtitles"];
   const boards = async () => {
     const all = await space.mine();
-    const on = await Promise.all(all.map(sp => roles.of(sp).then(r => r.apps().some(a => PLACE_APPS.includes(a)), () => false)));
+    // Its apps once its acts are read (before, a space shows the default apps: a Chat-only space would open a board).
+    const on = await Promise.all(all.map(sp => roles.of(sp).then(async r => (await r.settled, r.apps().some(a => PLACE_APPS.includes(a))), () => false)));
     return all.filter((_, i) => on[i]);
   };
   const boardOf = async x => {
@@ -256,7 +257,15 @@ export async function start(ctx) {
   // older on asking): what is read is that span of the place, never all of it. `all`: the place read whole.
   const WINDOW = { day: 86400e3, week: 7 * 86400e3, month: 30 * 86400e3 };
   const sinceOf = w => (w === "all" || w == null ? null : Date.now() - (typeof w === "number" ? w * 86400e3 : (WINDOW[w] ?? WINDOW.month)));
-  async function boardPosts(sp, { outside = false, kinds = ["post"], window = "all" } = {}) {
+  // A PLACE that does not answer within PLACE_WAIT is left out of a list (and said), never waited on forever: one
+  // stuck place (a space still opening, a board the network lost) must not hold every list that includes it.
+  const PLACE_WAIT = 20000;
+  const inTime = (p, what) =>
+    Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`${what}: no answer in ${PLACE_WAIT / 1000} s; listed without it`)), PLACE_WAIT))]);
+  async function boardPosts(sp, opts = {}) {
+    return inTime(boardPostsOf(sp, opts), `the board of ${sp.name ?? sp.id?.slice(0, 8)}`).catch(e => (ctx.log("posts", { what: e.message }), Promise.reject(e)));
+  }
+  async function boardPostsOf(sp, { outside = false, kinds = ["post"], window = "all" } = {}) {
     const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
     // `window: "held"`: what is read already (a caller read its own span: one item and what came after it).
     const since = window === "held" ? 0 : (sinceOf(window) ?? 0);

@@ -292,10 +292,10 @@ impl Core {
                 "rows": p.rows.iter().map(|(k, v)| [hex(k), hex(v)]).collect::<Vec<_>>(),
                 "next": p.next.as_deref().map(hex),
             }),
-            Ok(data::Step::Need(cids)) => {
-                let blocks = self.want(id, &cids);
-                json!({ "kind": "tail-need", "id": hex(id), "blocks": blocks })
-            }
+            Ok(data::Step::Need(cids)) => match self.want(id, &cids) {
+                Ok(blocks) => json!({ "kind": "tail-need", "id": hex(id), "blocks": blocks }),
+                Err(e) => json!({ "kind": "tail-unreadable", "id": hex(id), "said": e }),
+            },
             Ok(data::Step::Keys(epochs)) => json!({ "kind": "tail-keys", "id": hex(id), "epochs": epochs }),
             Err(e) => json!({ "kind": "tail-unreadable", "id": hex(id), "said": e }),
         }
@@ -305,10 +305,10 @@ impl Core {
         let Some(o) = self.tails.get_mut(id) else { return json!({ "kind": "error", "said": "that tail is not open" }) };
         match o.rows() {
             Ok(data::Step::Ready(rows)) => json!({ "kind": "tail", "id": hex(id), "tail": rows }),
-            Ok(data::Step::Need(cids)) => {
-                let blocks = self.want(id, &cids);
-                json!({ "kind": "tail-need", "id": hex(id), "blocks": blocks })
-            }
+            Ok(data::Step::Need(cids)) => match self.want(id, &cids) {
+                Ok(blocks) => json!({ "kind": "tail-need", "id": hex(id), "blocks": blocks }),
+                Err(e) => json!({ "kind": "tail-unreadable", "id": hex(id), "said": e }),
+            },
             Ok(data::Step::Keys(epochs)) => json!({ "kind": "tail-keys", "id": hex(id), "epochs": epochs }),
             Err(e) => json!({ "kind": "tail-unreadable", "id": hex(id), "said": e }),
         }
@@ -318,7 +318,7 @@ impl Core {
     /// the contract it lives in (hex); or the blocks to GET first (as a read), or the epochs whose keys to get.
     pub fn tail_asset(&mut self, id: &[u8; 32]) -> Result<AssetOut, String> {
         match self.tail(id)?.asset()? {
-            data::Step::Need(cids) => Ok(AssetOut::Need(self.want(id, &cids))),
+            data::Step::Need(cids) => Ok(AssetOut::Need(self.want(id, &cids)?)),
             data::Step::Keys(e) => Ok(AssetOut::Keys(e)),
             data::Step::Ready(groups) => {
                 let o = self.tails.get(id).ok_or("that tail is not open")?;
@@ -361,16 +361,21 @@ impl Core {
 
     /// Record tree blocks `cids` as wanted by tail `id`; the contract ids (hex) they live in, to GET: a sealed
     /// tree's Sealed contracts at their addresses, or a tree from before's Block contracts.
-    fn want(&mut self, id: &[u8; 32], cids: &[freenet_prolly::Cid]) -> Vec<String> {
-        let Some(o) = self.tails.get(id) else { return Vec::new() };
+    /// A block this table cannot name (a tree sealed with a key not held here — a table opened as public whose tree
+    /// was written sealed), or nothing to ask at all, is an ERROR: a read that asked for nothing would ask again forever.
+    fn want(&mut self, id: &[u8; 32], cids: &[freenet_prolly::Cid]) -> Result<Vec<String>, String> {
+        let o = self.tails.get(id).ok_or("that tail is not open")?;
         let at: Vec<_> = cids.iter().filter_map(|c| Some((*c, o.block_params(c)?))).collect();
-        at.into_iter()
+        if at.is_empty() || at.len() < cids.len() {
+            return Err("its tree is sealed with a key this page does not hold".into());
+        }
+        Ok(at.into_iter()
             .map(|(cid, (sealed, params))| {
                 let c = wire::block::contract_for(if sealed { &self.sealed_code } else { &self.block_code }, &params);
                 self.wanted.insert(c, (*id, cid));
                 hex(&c)
             })
-            .collect()
+            .collect())
     }
 
     /// A tree block's GROUP, found in what the table holds: its other blocks to GET at the same time as the block
@@ -389,7 +394,7 @@ impl Core {
         let missing: Vec<freenet_prolly::Cid> =
             group.slots.iter().filter(|c| **c != cid && !o.blocks.0.contains_key(*c)).copied().collect();
         self.repairs.insert(*lost_contract, (*id, group));
-        Ok(self.want(id, &missing))
+        self.want(id, &missing)
     }
 
     /// Settle a raced block: `Ok(true)` once it is held — it arrived itself, or enough of its group did and it was
@@ -410,7 +415,7 @@ impl Core {
     pub fn tail_flush(&mut self, id: &[u8; 32]) -> Result<FlushOut, String> {
         let step = self.tail(id)?.flush()?;
         match step {
-            data::Step::Need(cids) => Ok(FlushOut::Need(self.want(id, &cids))),
+            data::Step::Need(cids) => Ok(FlushOut::Need(self.want(id, &cids)?)),
             data::Step::Keys(epochs) => Ok(FlushOut::Keys(epochs)),
             data::Step::Ready(f) => {
                 let tk = if f.sealed { Some(self.tail(id)?.table_key.ok_or("this table's key is not held here")?) } else { None };
