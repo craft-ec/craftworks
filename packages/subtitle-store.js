@@ -44,7 +44,8 @@ export async function start(ctx) {
     const pub = sp ? (await (await ctx.require("roles")).of(sp)).policy("board", "read") === "anyone" : !item?.private;
     return { sp, pub };
   }
-  const shape = x => ({ ref: x.ref, in: x.in, lang: x.meta?.lang ?? "", label: x.meta?.label ?? x.body ?? "", by: x.by, at: x.at, edited: x.edited, file: x.files?.[0] ?? null, mayRemove: !!x.mayRemove, board: x.board });
+  // `in` as a full reference (on a board an item names what it is about by id alone).
+  const shape = x => ({ ref: x.ref, in: x.board && x.in && !x.in.startsWith("space:") ? `space:${x.board.id}/${x.in}` : x.in, lang: x.meta?.lang ?? "", label: x.meta?.label ?? x.body ?? "", by: x.by, at: x.at, edited: x.edited, file: x.files?.[0] ?? null, mayRemove: !!x.mayRemove, board: x.board });
 
   async function of(mediaRef, { outside = null } = {}) {
     return (await posts.attached(mediaRef, KIND, { outside })).map(shape);

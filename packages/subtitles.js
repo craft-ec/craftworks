@@ -1,5 +1,6 @@
 // SUBTITLES, a page (the Subtitles app): the lens on subtitle data (`subtitle-store`) — YOURS (`#/subtitles`: every
-// track you made, on any video), a media item's (`#/subtitles/for/<ref>`: its tracks, by anyone, and one added — a
+// track you made, on any video), a SPACE's (`#/s/<space>/subtitles`: a group working on its videos' subtitles — every
+// track on them, by any member, and each of its videos to add one to), a media item's (`#/subtitles/for/<ref>`: its tracks, by anyone, and one added — a
 // file or pasted text), and one track EDITED (`#/subtitles/e/<ref>`: its label, language and cues as WebVTT; exported
 // as WebVTT or SRT: the data is portable). UI only.
 export async function mount(ctx, el) {
@@ -41,8 +42,10 @@ export async function mount(ctx, el) {
     directory.name(did).then(t => (n.textContent = t), () => {});
     return n;
   };
+  const sp = () => (ctx.space && ctx.space !== "discover" ? ctx.space : null);
   const route = () => {
     const s = ctx.sub || "";
+    if (sp() && !s) return { space: sp() };
     if (s.startsWith("for/")) return { for: decodeURIComponent(s.slice(4)) };
     if (s.startsWith("e/")) return { edit: decodeURIComponent(s.slice(2)) };
     return { mine: true };
@@ -71,6 +74,20 @@ export async function mount(ctx, el) {
   async function mine() {
     const list = await subs.mine();
     return h("div", {}, h("p", { className: "s", textContent: "Every subtitle track you made, on any video. Add one from a video's page (“Add subtitles”)." }), list.length ? h("ul", {}, ...(await Promise.all(list.map(row)))) : h("p", { className: "none", textContent: "None yet." }));
+  }
+
+  // A SPACE's subtitle work: its videos, each with its tracks (any member's) and a way to add one.
+  async function inSpace(id) {
+    const kindsCap = await ctx.require("kinds");
+    const videos = await posts.list({ board: id }, "new", kindsCap.inDomain("video"));
+    if (!videos.length) return h("p", { className: "none", textContent: "No videos in this space yet: subtitles go with its videos." });
+    const blocks = await Promise.all(
+      videos.map(async v => {
+        const tracks = await subs.of(v.ref);
+        return h("div", {}, h("h3", {}, h("a", { href: watchHref(v.ref), textContent: `▶ ${v.title}` }), " ", h("a", { className: "s", href: `#/subtitles/for/${encodeURIComponent(v.ref)}`, textContent: "Add a track" })), tracks.length ? h("ul", {}, ...(await Promise.all(tracks.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }));
+      }),
+    );
+    return h("div", {}, h("p", { className: "s", textContent: "This space's videos and their subtitles — any member adds a track or a translation; each edits their own." }), ...blocks);
   }
 
   async function forItem(ref) {
@@ -126,7 +143,7 @@ export async function mount(ctx, el) {
     drawn = ctx.sub ?? "";
     const top = h("div", { className: "top" }, h("h2", { textContent: "🔤 Subtitles" }), h("a", { href: "#/subtitles", textContent: "Yours" }));
     root.replaceChildren(top, theme.loading("Reading…"));
-    const body = await (w.for ? forItem(w.for) : w.edit ? editor(w.edit) : mine()).catch(e => h("p", { className: "said", textContent: e.message ?? String(e) }));
+    const body = await (w.space ? inSpace(w.space) : w.for ? forItem(w.for) : w.edit ? editor(w.edit) : mine()).catch(e => h("p", { className: "said", textContent: e.message ?? String(e) }));
     if (drawn === (ctx.sub ?? "")) root.replaceChildren(top, body);
   }
   await draw();

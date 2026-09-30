@@ -69,9 +69,12 @@ export async function start(ctx) {
   };
   // The spaces this person is in that have a Board (an app of the space, added by its owner or admins: `roles`).
   const roles = await ctx.require("roles");
+  // A space's board room is its place for every item `posts` keeps — posts, videos, subtitles — so any app on it opens
+  // the place (a space with Videos and no Board still takes videos).
+  const PLACE_APPS = ["board", "videos", "subtitles"];
   const boards = async () => {
     const all = await space.mine();
-    const on = await Promise.all(all.map(sp => roles.of(sp).then(r => r.apps().includes("board"), () => false)));
+    const on = await Promise.all(all.map(sp => roles.of(sp).then(r => r.apps().some(a => PLACE_APPS.includes(a)), () => false)));
     return all.filter((_, i) => on[i]);
   };
   const boardOf = async x => {
