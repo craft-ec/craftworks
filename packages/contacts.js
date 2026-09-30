@@ -52,7 +52,7 @@ export async function mount(ctx, el) {
 
 // DISCOVER → Contacts: the people who chose to be shown (and not flagged by a moderation list you apply).
 async function people(ctx, el, { directory, person }) {
-  const [moderation, posts, theme] = await Promise.all(["moderation", "posts", "theme"].map(n => ctx.require(n)));
+  const [moderation, posts, theme] = await Promise.all(["moderation", "items", "theme"].map(n => ctx.require(n)));
   el.innerHTML = `
     <style>
       .ppl { max-width: 880px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }

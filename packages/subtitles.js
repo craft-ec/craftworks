@@ -9,7 +9,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [subs, posts, directory, theme, space] = await Promise.all(["subtitle-store", "posts", "directory", "theme", "space"].map(n => ctx.require(n)));
+  const [subs, items, directory, theme, space] = await Promise.all(["subtitle-store", "items", "directory", "theme", "space"].map(n => ctx.require(n)));
   const me = (await space.account()).id;
   el.innerHTML = `
     <style>
@@ -57,7 +57,7 @@ export async function mount(ctx, el) {
     a.click();
     a.remove();
   };
-  const title = async ref => (await posts.get(ref).catch(() => null))?.title ?? "a video";
+  const title = async ref => (await items.get(ref).catch(() => null))?.title ?? "a video";
   const row = async t =>
     h(
       "li",
@@ -79,7 +79,7 @@ export async function mount(ctx, el) {
   // A SPACE's subtitle work: its videos, each with its tracks (any member's) and a way to add one.
   async function inSpace(id) {
     const kindsCap = await ctx.require("kinds");
-    const videos = await posts.list({ board: id }, "new", kindsCap.inDomain("video"));
+    const videos = await items.list({ board: id }, "new", kindsCap.inDomain("video"));
     if (!videos.length) return h("p", { className: "none", textContent: "No videos in this space yet: subtitles go with its videos." });
     const blocks = await Promise.all(
       videos.map(async v => {

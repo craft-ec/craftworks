@@ -1,8 +1,8 @@
 // VIDEOS, a page (the Videos app, YouTube-shaped, the basic): a LENS on the video DOMAIN of content (`kinds`: video,
-// movie, TV episode, music video, short) — items `posts` keeps, like Board's posts. CHANNEL-FIRST: your videos (each
+// movie, TV episode, music video, short) — items `items` keeps, like Board's items. CHANNEL-FIRST: your videos (each
 // public on your profile, or only you) and those of the people you follow (`#/videos`: the feed; `#/videos/mine`: your
 // channel; `#/videos/c/<did>`: someone's). In a SPACE (`#/s/<space>/videos`): its members' videos, on its board, public
-// while its board reads in public. WATCH: `…/videos/w/<ref>` — played by byte range (`video-player`), a like (▲, the
+// while its Videos app reads in public. WATCH: `…/videos/w/<ref>` — played by byte range (`video-player`), a like (▲, the
 // post vote), comments. UPLOAD: `…/videos/up`. UI only.
 export async function mount(ctx, el) {
   const login = await ctx.require("login");
@@ -10,7 +10,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [posts, directory, person, theme, space, roles, drive, player, kinds, edge] = await Promise.all(["posts", "directory", "person", "theme", "space", "roles", "drive-store", "video-player", "kinds", "edge"].map(n => ctx.require(n)));
+  const [items, directory, person, theme, space, roles, drive, player, kinds, edge] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "drive-store", "video-player", "kinds", "edge"].map(n => ctx.require(n)));
   const [studio, files, subs] = await Promise.all(["video-studio", "files", "subtitle-store"].map(n => ctx.require(n)));
   const [pins, people] = await Promise.all([edge.pins(), edge.people()]);
   const VIDEO = kinds.inDomain("video");
@@ -83,7 +83,7 @@ export async function mount(ctx, el) {
     if (!ref.startsWith("space:")) return null;
     const id = ref.slice(6, ref.indexOf("/"));
     if ((await space.mine()).some(x => x.id === id)) return null;
-    return (await posts.publicSpaces().catch(() => [])).find(d => d.id === id) ?? people.about("follow", id);
+    return (await items.publicSpaces().catch(() => [])).find(d => d.id === id) ?? people.about("follow", id);
   };
   const SAVED = ref => `videos:${ref}`;
   const ago = at => {
@@ -138,22 +138,22 @@ export async function mount(ctx, el) {
     const vs = w.saved
       ? (await Promise.all(pins.refs("videos:").map(async k => {
           const ref = k.slice(7);
-          return posts.get(ref, { outside: await outsideOf(ref) }).catch(() => null);
+          return items.get(ref, { outside: await outsideOf(ref) }).catch(() => null);
         }))).filter(Boolean)
-      : await posts.list(w, "new", VIDEO);
+      : await items.list(w, "new", VIDEO);
     const none = w.saved ? "Nothing saved: “Save” on a video keeps it here." : w.feed ? "No videos yet from you or what you follow." : w.discover ? "No public videos yet." : w.by === me ? "Your channel is empty: upload a video." : "No videos here yet.";
     return vs.length ? h("div", { className: "grid" }, ...vs.map(card)) : h("p", { className: "none", textContent: none });
   }
 
   async function watch(ref) {
     const outside = await outsideOf(ref);
-    const v = await posts.get(ref, { outside });
+    const v = await items.get(ref, { outside });
     if (!v) return h("p", { className: "none", textContent: "This video is not here (removed, or not shared with you)." });
     const f = fileOf(v);
     const note = h("span", { className: "s" });
     const level = h("span", { className: "level" });
     const video = h("video", { controls: true, playsInline: true, poster: f?.preview ?? "" });
-    const like = h("button", { type: "button", className: v.mine === 1 ? "on" : "", disabled: !!outside, title: outside ? "Join to like" : "", textContent: `▲ ${v.score ?? 0}`, onclick: async () => ((like.disabled = true), await posts.vote(ref, v.mine === 1 ? 0 : 1).catch(() => {}), draw()) });
+    const like = h("button", { type: "button", className: v.mine === 1 ? "on" : "", disabled: !!outside, title: outside ? "Join to like" : "", textContent: `▲ ${v.score ?? 0}`, onclick: async () => ((like.disabled = true), await items.vote(ref, v.mine === 1 ? 0 : 1).catch(() => {}), draw()) });
     const saved = () => pins.has(SAVED(ref));
     const save = h("button", { type: "button", className: saved() ? "on" : "", textContent: saved() ? "Saved ✓" : "Save", onclick: async () => (await pins.set(SAVED(ref), !saved()), (save.className = saved() ? "on" : ""), (save.textContent = saved() ? "Saved ✓" : "Save")) });
     const k = kinds.of(v.kind);
@@ -162,13 +162,13 @@ export async function mount(ctx, el) {
     const form = h("form", {}, h("textarea", { name: "body", rows: 2, placeholder: "Add a comment…", required: true }), h("div", {}, h("button", { textContent: "Comment" })));
     form.onsubmit = async e => {
       e.preventDefault();
-      await posts.comment(ref, null, form.elements.body.value).catch(() => {});
+      await items.comment(ref, null, form.elements.body.value).catch(() => {});
       form.reset();
       drawComments();
     };
     const drawOne = c => h("div", { className: "c" }, h("div", { className: "s" }, who(c.by), ` · ${ago(c.at)}`), h("div", { textContent: c.body }), c.replies?.length ? h("div", { className: "rep" }, ...c.replies.map(drawOne)) : null);
     const drawComments = async () => {
-      const cs = await posts.thread(ref, { outside }).catch(() => []);
+      const cs = await items.thread(ref, { outside }).catch(() => []);
       comments.replaceChildren(...(cs.length ? cs.map(drawOne) : [h("p", { className: "s", textContent: "No comments yet." })]));
     };
     const out = h(
@@ -273,7 +273,7 @@ export async function mount(ctx, el) {
       h("textarea", { name: "body", rows: 4, placeholder: "Description" }),
       h("label", { className: "s" }, "What it is ", kindSel),
       fieldsBox,
-      inSpace ? h("p", { className: "s", textContent: `For ${space.shown(inSpace)}: its members (and everyone, while its board reads in public).` }) : h("select", { name: "audience" }, h("option", { value: "public", textContent: "🌐 Everyone (on your channel)" }), h("option", { value: "private", textContent: "🔒 Only you" })),
+      inSpace ? h("p", { className: "s", textContent: `For ${space.shown(inSpace)}: its members (and everyone, while its Videos reads in public).` }) : h("select", { name: "audience" }, h("option", { value: "public", textContent: "🌐 Everyone (on your channel)" }), h("option", { value: "private", textContent: "🔒 Only you" })),
       h("div", { className: "row" }, h("button", { className: "on", textContent: "Upload" }), progress),
       said,
     );
@@ -286,7 +286,7 @@ export async function mount(ctx, el) {
       btn.disabled = true;
       try {
         progress.textContent = "Reading the video…";
-        const pub = inSpace ? (await roles.of(inSpace)).policy("board", "read") === "anyone" : f.elements.audience.value !== "private";
+        const pub = inSpace ? (await roles.of(inSpace)).policy("videos", "read") === "anyone" : f.elements.audience.value !== "private";
         // MADE READY TO STREAM (renditions, strip, subtitles, a manifest); a browser that cannot encode sends the file as it is.
         const ref = await studio
           .make(file, { space: inSpace, public: pub, keepOriginal: f.elements.keep.checked, onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`) })
@@ -300,7 +300,7 @@ export async function mount(ctx, el) {
         const kept = ref.type === studio.MANIFEST && f.elements.keep.checked ? (await player.manifest(ref).catch(() => null))?.source : ref;
         if (kept) await drive.add(kept, { space: inSpace, from: { app: "videos" } }).catch(() => {});
         const meta = Object.fromEntries(kinds.of(kindSel.value).fields.map(x => [x, String(f.elements[`meta.${x}`]?.value ?? "").trim()]).filter(([, v]) => v));
-        const posted = await posts.submit({ board: inSpace?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, kind: kindSel.value, meta, private: !inSpace && !pub, files: [ref] });
+        const posted = await items.submit({ board: inSpace?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, kind: kindSel.value, meta, private: !inSpace && !pub, files: [ref] });
         // Its SUBTITLES: items of their own, about it.
         for (const s of f.elements.subs.files ?? []) await subs.add(posted, s).catch(e => ctx.log("videos", { what: `subtitles ${s.name}: ${e.message}` }));
         location.hash = `${base()}/w/${encodeURIComponent(posted)}`;
@@ -324,6 +324,6 @@ export async function mount(ctx, el) {
     if (drawn === `${ctx.space ?? ""}|${ctx.sub ?? ""}`) root.replaceChildren(top(w), ...(w.by && w.by !== me && !w.watch ? [h("div", { className: "row" }, h("h3", {}, who(w.by)), h("button", { type: "button", textContent: "Follow…", onclick: e => person.open(e.currentTarget, w.by) }))] : []), body);
   }
   await draw();
-  posts.onChange(() => el.isConnected && !route().watch && !route().up && draw());
+  items.onChange(() => el.isConnected && !route().watch && !route().up && draw());
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/videos" && `${ctx.space ?? ""}|${ctx.sub ?? ""}` !== drawn && draw());
 }

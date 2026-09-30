@@ -22,7 +22,7 @@
 //   studio.progress(ref) -> { stage, p, done, of } | null          // a video still being made (the uploader's devices)
 //   studio.MANIFEST   // its type: "application/vnd.craftworks.video+json"
 export async function start(ctx) {
-  const [files, storage, space, posts, kinds] = await Promise.all(["files", "storage", "space", "posts", "kinds"].map(n => ctx.require(n)));
+  const [files, storage, space, items, kinds] = await Promise.all(["files", "storage", "space", "items", "kinds"].map(n => ctx.require(n)));
   const MANIFEST = "application/vnd.craftworks.video+json";
 
   let loading = null;
@@ -237,7 +237,7 @@ export async function start(ctx) {
     if (!me) return;
     const t = await leases();
     await t.settled;
-    const mine = await posts.list({ by: me.id }, "new", kinds.inDomain("video")).catch(() => []);
+    const mine = await items.list({ by: me.id }, "new", kinds.inDomain("video")).catch(() => []);
     for (const v of mine) {
       const f = v.files?.find(x => x.type === MANIFEST);
       if (!f) continue;
@@ -292,18 +292,18 @@ export async function start(ctx) {
     }
   }
   // Started with the page (the header asks for it), and whenever this person's posts change.
-  setTimeout(() => (space.account().then(a => a && kick(), () => {}), posts.onChange(() => kick())), 5000);
+  setTimeout(() => (space.account().then(a => a && kick(), () => {}), items.onChange(() => kick())), 5000);
 
   // A video's item and manifest as they are now.
   async function latest(ref) {
-    const item = await posts.get(ref).catch(() => null);
+    const item = await items.get(ref).catch(() => null);
     const file = item?.files?.find(x => x.type === MANIFEST);
     if (!file) return null;
     return { item, file, manifest: JSON.parse(await (await files.get(file)).text()) };
   }
   // The item's manifest replaced by a new one (its poster and size kept on the reference).
   const replaceManifest = (item, old, ref) =>
-    posts.setFiles(item.ref, item.files.map(x => (x === old ? { ...ref, ...(old.preview ? { preview: old.preview } : {}), duration: old.duration, width: old.width, height: old.height } : x)));
+    items.setFiles(item.ref, item.files.map(x => (x === old ? { ...ref, ...(old.preview ? { preview: old.preview } : {}), duration: old.duration, width: old.width, height: old.height } : x)));
 
   // SUBTITLES FROM BEFORE (kept in the manifest, before subtitles were data of their own): taken out of it — a new
   // manifest without them — and handed back ([{ label, lang, ref }]) to become `subtitle-store` items.

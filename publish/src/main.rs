@@ -401,7 +401,7 @@ async fn main() -> Result<()> {
         ("activity", "service", app.join("packages/activity.js")),
         ("recovery", "service", app.join("packages/recovery.js")),
         ("contacts", "module", app.join("packages/contacts.js")),
-        ("posts", "service", app.join("packages/posts.js")),
+        ("items", "service", app.join("packages/items.js")),
         ("board", "module", app.join("packages/board.js")),
         ("rail", "module", app.join("packages/rail.js")),
         ("upkeep", "service", app.join("packages/upkeep.js")),

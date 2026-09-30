@@ -32,6 +32,15 @@ the reader's own blocks and the signed moderation lists they follow.
 A capability that applies to things applies to **every** kind of thing: moderation moderates a post, a comment, a vote or
 a label alike; governance decides who controls one note or a whole company.
 
+**Items: one structure, composed per app (owner 09-30).** A SPACE is the place (personal: your profile, public or
+only you; shared: its room, public while it reads in public) — shown in each app's own words (Board: a community,
+Videos: a channel). An ITEM stands on its own; its KIND says what it is (`kinds`, after handcraft's content
+architecture: domain derived ← kind with its fields ← context = tags ← bundles later) — `post`, `video`, `movie` …
+are SIBLINGS, never parent and child. ATTACHING kinds are about another item (`in`): a `subtitle` on a video, and
+comments on anything. VOTES, public copies and the feed are the same for every kind (`items`). EDGES are a person's
+links to things (follow a person — their personal space — or a shared space; pin = save; block). An APP is a lens on
+a domain: Board shows posts, Videos the video kinds, Subtitles the subtitles.
+
 ## 2. Primitives (on the network, or on the node)
 
 | Primitive | Is | Used for |

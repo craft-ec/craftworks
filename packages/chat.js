@@ -260,7 +260,7 @@ export async function mount(ctx, el) {
 // THE DIRECTORY (Discover → Chat): every space listed in Discover that is open to join and uses Chat — its name, how
 // many are in it, and Join (or Open, when you are in). What is said in them is their members' only: nothing of it here.
 async function openSpaces(ctx, el, { space, roles, conversation, theme }) {
-  const posts = await ctx.require("posts");
+  const posts = await ctx.require("items");
   el.innerHTML = `
     <style>
       .dir { max-width: 880px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }

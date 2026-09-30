@@ -11,7 +11,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [posts, directory, person, theme, space, roles, appSettings, attachments] = await Promise.all(["posts", "directory", "person", "theme", "space", "roles", "app-settings", "attachments"].map(n => ctx.require(n)));
+  const [posts, directory, person, theme, space, roles, appSettings, attachments] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "app-settings", "attachments"].map(n => ctx.require(n)));
   const me = (await space.account()).id;
   let sort = "hot";
   // The route: what is shown.

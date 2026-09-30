@@ -14,6 +14,8 @@
 //   kinds.all()              // every kind that stands on its own (a comment answers one; a message is a conversation's)
 //   kinds.attaching()        // kinds that ATTACH to another item (`in`): a subtitle to a video or an audio item
 //   kinds.attachesTo("subtitle")  // the domains it attaches to: ["video", "audio"]
+//   kinds.app("movie")        // the APP whose settings govern it in a space ("videos"; a post: "board"); null for an
+//                             // attaching kind (it follows the item it is about)
 export async function start() {
   const CATALOG = [
     // Video
@@ -54,5 +56,6 @@ export async function start() {
     inDomain: domain => CATALOG.filter(c => c[1] === domain).map(c => c[0]),
     all: () => [...byKind.keys()],
     fieldLabel: f => LABELS[f] ?? f,
+    app: kind => (onTo.has(kind) ? null : ({ video: "videos", text: "board" })[byKind.get(kind)?.domain] ?? "board"),
   };
 }

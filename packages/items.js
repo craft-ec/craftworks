@@ -1,5 +1,7 @@
-// POSTS, a capability: posts Reddit-shaped — a POST (a title and text), COMMENTS on it (answering the post or another
-// comment), VOTES on either — in one of two places:
+// ITEMS, a capability: every item that STANDS ON ITS OWN — of any kind in the catalog (`kinds`), siblings: a `post`
+// (text), a `video`, a `movie` … — with what attaches to it (COMMENTS, and attaching kinds: a `subtitle`) and VOTES,
+// in one of two PLACES. Apps are lenses on it by domain (Board: posts; Videos: the video kinds; Subtitles: subtitles).
+// (Once Board's alone, hence `board` in its places' names and API: a space's place is its "board room".)
 // - A BOARD: a SPACE's (`space.board(sp)`), one of its apps (added by its owner or admins) beside its messages — a
 //   server's, a group or direct conversation's — the same members, roles, governance and moderation. Its posts
 //   are `content` in the space's table `board`: members write, moderators hide, what is hidden is left out, and a
@@ -12,7 +14,7 @@
 // answers, `in`: its post); a vote a reaction ▲ or ▼. REFS: `space:<server id>/<id>` on a board, `<author did>/<id>` on
 // a profile.
 //
-//   const posts = await ctx.require("posts");
+//   const items = await ctx.require("items");   (Board names it `posts`: its lens)
 //   await posts.submit({ board, title, body, kind })  // `board`: a space's id, or none (this person's profile): its ref
 //                                                     // (`kind`: "post", or "video")
 //   await posts.list({ board } | { by } | { feed }, sort, kind)   // (`kind`: a kind, or kinds — a domain's)
@@ -99,12 +101,32 @@ export async function start(ctx) {
     const files = await ctx.require("files");
     return JSON.stringify({ ...it, files: await Promise.all(it.files.map(f => files.current(f).catch(() => f))) });
   }
+  // (A space's PLACE: its board room — the same for every kind.)
   const boardRoom = sp =>
     opened(`space:${sp.id}`, async () => {
       const [a, b, r] = await Promise.all([content.in(space.board(sp)), content.in(space.board(sp, { pub: true })), roles.of(sp)]);
-      const pubNow = () => r.policy("board", "read") === "anyone";
-      // THE SYNC: this person's rows — a public copy of each while the board is public, none while it is not. Rows only
-      // in the public table (written there before the sealed table held everything) move into the sealed one first.
+      // PUBLIC is per item, by its own APP's setting now (a video: Videos'; a post: Board's) — what attaches to an item
+      // (a comment, a vote, a subtitle) as that item is. Not bound to Board: a space's place holds every kind.
+      const readsAnyone = app => r.policy(app, "read") === "anyone";
+      const kindOf = new Map(); // item id → kind (every author's, as listed)
+      const learnKinds = () => [...a.list(), ...b.list()].forEach(x => kindOf.set(x.id, x.kind));
+      const rootApp = (kind, about, depth = 0) => {
+        const app = kinds.app(kind);
+        if (app && TOP.has(kind)) return app;
+        const k = kindOf.get(about);
+        return k && depth < 8 ? rootApp(k, null, depth + 1) : "board";
+      };
+      const pubOfValue = v => {
+        try {
+          const x = JSON.parse(v);
+          return readsAnyone(rootApp(x.kind ?? "post", x.in ?? x.item ?? x.re ?? null));
+        } catch {
+          return false;
+        }
+      };
+      const pubOfItem = it => readsAnyone(rootApp(it.kind, it.in ?? it.re ?? null));
+      // THE SYNC: this person's rows — a public copy of each while ITS APP reads in public, none while it does not. Rows
+      // only in the public table (written there before the sealed table held everything) move into the sealed one first.
       let syncing = null;
       const sync = () =>
         (syncing ??= (async () => {
@@ -112,12 +134,13 @@ export async function start(ctx) {
           const inA = new Map(a.own().map(x => [x.key, x.value]));
           const inB = new Map(b.own().map(x => [x.key, x.value]));
           for (const [k, v] of inB) if (!inA.has(k)) (await a.putOwn(k, v), inA.set(k, v));
-          if (pubNow()) {
-            for (const [k, v0] of inA) {
+          learnKinds();
+          for (const [k, v0] of inA) {
+            if (pubOfValue(v0)) {
               const v = await currentKeys(v0);
               if (inB.get(k) !== v) await b.putOwn(k, v);
-            }
-          } else for (const k of inB.keys()) await b.dropOwn(k);
+            } else if (inB.has(k)) await b.dropOwn(k);
+          }
         })().finally(() => (syncing = null)));
       const dedupe = (list, key) => {
         const seen = new Set();
@@ -125,7 +148,7 @@ export async function start(ctx) {
       };
       const rooms = [a, b];
       return {
-        list: () => dedupe([...a.list(), ...b.list()], x => x.id).map(x => ({ ...x, pub: pubNow() })),
+        list: () => (learnKinds(), dedupe([...a.list(), ...b.list()], x => x.id).map(x => ({ ...x, pub: pubOfItem(x) }))),
         // A vote in both tables is one vote.
         reactions: () => dedupe([...a.reactions(), ...b.reactions()], x => `${x.item}|${x.emoji}|${x.by}`),
         mayRemove: it => a.mayRemove(it),
@@ -313,9 +336,10 @@ export async function start(ctx) {
     return (await profilePosts([whereOf(ref)], await pointersTo(ref), [...TOP])).find(p => p.ref === ref) ?? null;
   }
 
-  async function submit({ board = null, title, body, private: only = false, files = [], kind = "post", meta = {} }) {
+  async function submit({ board = null, place = null, title, body, private: only = false, files = [], kind = "post", meta = {} }) {
     title = String(title ?? "").trim();
     body = String(body ?? "").trim();
+    board = board ?? place;
     if (!TOP.has(kind)) throw new Error(`not something to post: ${kind}`);
     if (!title) throw new Error(`a ${kind} needs a title`);
     if (title.length > 300) throw new Error("a title of at most 300 characters");
