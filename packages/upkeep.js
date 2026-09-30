@@ -10,6 +10,12 @@
 // let in, written as `admitted` acts (when it happened). A page that ticks keeps the delegate out of its way.
 export async function start(ctx) {
   const [space, conversation, roles, keys, auth] = await Promise.all(["space", "conversation", "roles", "keys", "auth"].map(n => ctx.require(n)));
+  // The account's record of key packages used (`conversation.welcome` writes it too).
+  const storage = async () => {
+    const t = await (await ctx.require("storage")).table("keypacks");
+    await t.settled;
+    return t;
+  };
   let running = false;
   async function tick() {
     if (running) return;
@@ -49,6 +55,9 @@ export async function start(ctx) {
     const of = id => mine.find(s => s.id === id);
     for (const g of st.groups ?? []) if (of(g.space)) await keys.group(of(g.space)).adopt(g.epoch, g.state);
     const written = [];
+    // The key packages it used: recorded as spent (a key package works once), before the admissions are acknowledged.
+    const used = await storage().catch(() => null);
+    for (const a of st.admitted ?? []) if (used && a.kp) await used.put(a.kp, String(a.at || Date.now())).catch(() => {});
     for (const a of st.admitted ?? []) {
       const sp = of(a.space);
       if (!sp) continue;
@@ -75,7 +84,10 @@ export async function start(ctx) {
         bans: r.bannedList(), members: r.members().map(m => m.did), epoch: g.epoch, state: g.state,
       });
     }
-    const r = await auth.identity.upkeepMandate(me.id, spaces);
+    // With it, the key packages this account used already: upkeep never uses one again.
+    const used = await storage().catch(() => null);
+    const spent = used ? used.rows().filter(r => r.value && /^[0-9a-f]{32}$/.test(r.key)).map(r => r.key) : [];
+    const r = await auth.identity.upkeepMandate(me.id, spaces, spent);
     if (r.upkeep?.stale?.length) ctx.log("upkeep", { what: `${r.upkeep.stale.length} space(s): the delegate's group is newer (loaded next tick)` });
   }
   // THE DELEGATE's upkeep (no page open: the node wakes it — node ≥ 0.2.139, with the Background grant): told which

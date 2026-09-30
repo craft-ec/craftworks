@@ -137,7 +137,8 @@ pub enum Request {
     /// The MANDATE (what a page that may invite knows now): per space, how people get in and who is in, and its MLS
     /// group. Upkeep admits askers by it while no page runs. A space's mandate older than the group upkeep itself moved
     /// is not taken (answered in `stale`): the page loads upkeep's newer group first. Home only.
-    UpkeepMandate { me: String, spaces: Vec<Mandate> },
+    /// `spent`: the key packages this account used already (`kp_tag`s): never used again.
+    UpkeepMandate { me: String, spaces: Vec<Mandate>, spent: Vec<[u8; 16]> },
     /// The admissions the page has written as acts (and the groups it has loaded): forgotten here.
     UpkeepAck { admitted: Vec<([u8; 32], String)> },
 }
@@ -172,6 +173,15 @@ pub struct Admitted {
     pub code: String,
     pub at: u64,
     pub epoch: u64,
+    /// The key package it used (`kp_tag`): the page records it as spent.
+    pub kp: [u8; 16],
+}
+
+/// A KEY PACKAGE's tag (SHA-256 of its hex, 16 bytes) — how the account records one as used (a key package works once),
+/// the same in the page (its table `keypacks`) and in upkeep.
+pub fn kp_tag(hex: &str) -> [u8; 16] {
+    use sha2::Digest;
+    sha2::Sha256::digest(hex.as_bytes())[..16].try_into().expect("16")
 }
 
 /// What the identity answers.
@@ -334,6 +344,11 @@ pub const UPKEEP_ADMITTED: &[u8] = b"identity_upkeep/admitted/";
 pub const UPKEEP_MOVED: &[u8] = b"identity_upkeep/moved/";
 pub const UPKEEP_STALE: &[u8] = b"identity_upkeep/stale/";
 pub const UPKEEP_SAID: &[u8] = b"identity_upkeep/said/";
+/// The key packages the member's account used already (from the page, with the mandate).
+pub const UPKEEP_SPENT: &[u8] = b"identity_upkeep/spent/";
+pub fn upkeep_spent<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Vec<[u8; 16]> {
+    h.get_secret(&of(UPKEEP_SPENT, m)).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
+}
 /// When the member's page last handed the mandate over (the wake-up count then): a page that ticks keeps upkeep out
 /// of its way.
 pub const UPKEEP_TICK: &[u8] = b"identity_upkeep/tick/";
@@ -1069,7 +1084,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             h.set_secret(UPKEEP_CODES_HASH, &upkeep_codes_hash(&bag, &tail, &idlog));
             upkeep_status(h, Some(&a.public()))
         }
-        Request::UpkeepMandate { me, spaces } => {
+        Request::UpkeepMandate { me, spaces, spent } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {
                 return Refused(Why::NotHome);
@@ -1088,7 +1103,11 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                     _ => m,
                 })
                 .collect();
-            if !(upkeep_set_mandate(h, &m, &me, &spaces) && h.set_secret(&of(UPKEEP_STALE, &m), &bincode::serialize(&stale).expect("ids encode")) && upkeep_set_tick(h, &m)) {
+            if !(upkeep_set_mandate(h, &m, &me, &spaces)
+                && h.set_secret(&of(UPKEEP_STALE, &m), &bincode::serialize(&stale).expect("ids encode"))
+                && h.set_secret(&of(UPKEEP_SPENT, &m), &bincode::serialize(&spent).expect("tags encode"))
+                && upkeep_set_tick(h, &m))
+            {
                 return Refused(Why::NotSaved);
             }
             upkeep_status(h, Some(&m))

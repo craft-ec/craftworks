@@ -134,7 +134,7 @@ export async function start(ctx) {
     upkeepWatch: inbox => call(core.frames_upkeep_watch(inbox, crypto.getRandomValues(new Uint8Array(32)), Date.now()), "handing upkeep the inbox"),
     upkeepStatus: () => call(core.frames_upkeep_status(), "upkeep's status"),
     upkeepCodes: (bag, tail, idlog) => call(core.frames_upkeep_codes(bag, tail, idlog), "handing upkeep the contracts"),
-    upkeepMandate: (me, spaces) => call(core.frames_upkeep_mandate(me, JSON.stringify(spaces)), "handing upkeep the mandate"),
+    upkeepMandate: (me, spaces, spent = []) => call(core.frames_upkeep_mandate(me, JSON.stringify(spaces), JSON.stringify(spent)), "handing upkeep the mandate"),
     upkeepAck: admitted => call(core.frames_upkeep_ack(JSON.stringify(admitted)), "telling upkeep what was written"),
     inboxOpen: items => call(core.frames_inbox_open(items), "opening the inbox"),
     publicOf: seed => glue.CraftworksCore.public_of(seed),

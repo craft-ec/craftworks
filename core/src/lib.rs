@@ -45,7 +45,7 @@ pub fn answer_json(a: &Answer) -> Value {
         } }),
         Answer::Upkeep { wakeups, inbox, inbox_len, now, codes, admitted, groups, stale, said } => json!({ "upkeep": {
             "wakeups": wakeups, "inbox": inbox.map(|i| hex(&i)), "inboxLen": inbox_len, "now": now, "codes": codes.map(|c| hex(&c)),
-            "admitted": admitted.iter().map(|a| json!({ "space": hex(&a.space), "did": a.did, "code": a.code, "at": a.at, "epoch": a.epoch })).collect::<Vec<_>>(),
+            "admitted": admitted.iter().map(|a| json!({ "space": hex(&a.space), "did": a.did, "code": a.code, "at": a.at, "epoch": a.epoch, "kp": hex(&a.kp) })).collect::<Vec<_>>(),
             "groups": groups.iter().map(|(s, e, st)| json!({ "space": hex(s), "epoch": e, "state": hex(st) })).collect::<Vec<_>>(),
             "stale": stale.iter().map(|s| hex(s)).collect::<Vec<_>>(), "said": said,
         } }),
@@ -628,7 +628,7 @@ mod js {
         }
         /// The MANDATE: `me` (the account's DID) and, per space, JSON `{ space, name, kind, owner, nonce, channel, open,
         /// codes: [[code, expires, left]], bans, members, epoch, state }` (ids and the state in hex).
-        pub fn frames_upkeep_mandate(&mut self, me: &str, spaces: &str) -> Result<js_sys::Array, JsValue> {
+        pub fn frames_upkeep_mandate(&mut self, me: &str, spaces: &str, spent: &str) -> Result<js_sys::Array, JsValue> {
             let v: Vec<serde_json::Value> = serde_json::from_str(spaces).map_err(|e| err(e.to_string()))?;
             let spaces = v
                 .iter()
@@ -652,7 +652,8 @@ mod js {
                 })
                 .collect::<Option<Vec<_>>>()
                 .ok_or_else(|| err("a space of the mandate does not read".into()))?;
-            self.ask(Request::UpkeepMandate { me: me.to_string(), spaces })
+            let spent: Vec<[u8; 16]> = serde_json::from_str::<Vec<String>>(spent).unwrap_or_default().iter().filter_map(|t| unhex(t)?.try_into().ok()).collect();
+            self.ask(Request::UpkeepMandate { me: me.to_string(), spaces, spent })
         }
         /// Admissions written as acts (JSON `[[space hex, did]]`): upkeep forgets them.
         pub fn frames_upkeep_ack(&mut self, admitted: &str) -> Result<js_sys::Array, JsValue> {

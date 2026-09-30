@@ -62,6 +62,8 @@ struct Add {
     secret: [u8; 32],
     state: Vec<u8>,
     inbox: [u8; 32],
+    /// The key package used (`identity::kp_tag`).
+    kp: [u8; 16],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -306,7 +308,7 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
                 return Vec::new();
             }
             let mut all = identity::upkeep_admitted(h, &member);
-            all.push(Admitted { space: ask.space, did: ask.did.clone(), code: ask.code.clone(), at: now_ms, epoch: add.epoch });
+            all.push(Admitted { space: ask.space, did: ask.did.clone(), code: ask.code.clone(), at: now_ms, epoch: add.epoch, kp: add.kp });
             identity::upkeep_set_admitted(h, &member, &all);
             identity::upkeep_say(h, &member, &format!("{} admitted (epoch {})", ask.did, add.epoch));
             next_ask(h, r, &c)
@@ -403,8 +405,14 @@ fn add<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, m: &Mandate, data: &[u8
     let from_secret = identity::epoch_secret(h, member, m.space, m.epoch).ok_or(format!("no secret of epoch {} here", m.epoch))?;
     let card = card.ok_or("they have no card")?;
     let (packages, inbox) = read_card(c, data, &card).ok_or("their card has no key package or no inbox")?;
+    // A key package works ONCE: never one the account used (the page's record) or upkeep used since (not yet recorded).
+    let used: Vec<[u8; 16]> = identity::upkeep_spent(h, member).into_iter().chain(identity::upkeep_admitted(h, member).into_iter().map(|a| a.kp)).collect();
+    let unused: Vec<&(Vec<u8>, [u8; 16])> = packages.iter().filter(|(_, t)| !used.contains(t)).collect();
+    if unused.is_empty() {
+        return Err("their card has no key package left unused (it renews when they are next online)".into());
+    }
     let pick = identity::upkeep_random(h).ok_or("no randomness yet (a page stirs it)")?;
-    let kp = &packages[pick[0] as usize % packages.len()];
+    let (kp, tag) = unused[pick[0] as usize % unused.len()];
     crate::arm_random(identity::upkeep_random(h).ok_or("no randomness yet")?);
     let mut g = craftworks_mls::Account::load(craftworks_mls::Rule::Space(m.space), &m.state)?;
     if g.epoch() != m.epoch {
@@ -421,11 +429,12 @@ fn add<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, m: &Mandate, data: &[u8
         secret: g.epoch_secret()?,
         state: g.save()?,
         inbox,
+        kp: *tag,
     })
 }
 
 /// A card's key packages (hex list at `kp`) and inbox key (hex at `inbox`).
-fn read_card(c: &Codes, data: &[u8; 32], state: &[u8]) -> Option<(Vec<Vec<u8>>, [u8; 32])> {
+fn read_card(c: &Codes, data: &[u8; 32], state: &[u8]) -> Option<(Vec<(Vec<u8>, [u8; 16])>, [u8; 32])> {
     // A PUBLIC tail under their data key: the state verifies against the params that key gives, or is not taken.
     let mut o = data::Open::new(&c.tail, data, "card");
     o.public = true;
@@ -436,6 +445,6 @@ fn read_card(c: &Codes, data: &[u8; 32], state: &[u8]) -> Option<(Vec<Vec<u8>>, 
     let unhex = |s: &str| -> Option<Vec<u8>> { (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect() };
     let inbox: [u8; 32] = unhex(std::str::from_utf8(rows.get(b"inbox".as_slice())?).ok()?)?.try_into().ok()?;
     let list: Vec<String> = serde_json::from_slice(rows.get(b"kp".as_slice())?).ok()?;
-    let packages: Vec<Vec<u8>> = list.iter().filter_map(|x| unhex(x)).collect();
+    let packages: Vec<(Vec<u8>, [u8; 16])> = list.iter().filter_map(|x| Some((unhex(x)?, identity::kp_tag(x)))).collect();
     (!packages.is_empty()).then_some((packages, inbox))
 }

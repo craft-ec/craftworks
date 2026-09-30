@@ -921,3 +921,25 @@ Uses what freenet-prolly already has (rev 17d67d8: `range`/`range_with` + `front
       whole state replaces a lower); the node silent → a clear "try again", never a guess that could drop rows.
       Test `a_write_skips_past_steps_the_network_never_saw`. A: network at 47, identity signed 48–49 unsent → the
       write went out as 50, read back 50 with its row.
+
+## L4e BLINDED TABLE NAMES — design (09-30, owner: "do all 1-4")
+Today a tail's params carry its label in the clear: `t/notes` under the account key, `t/x<space12>-board` under a
+member's key — hosting nodes read what each table is, and every member's feeds of a space share the space prefix (who
+is in which space links). Design:
+- LABEL `t/~<hex16>` = keyed hash of the table's name with a BLINDING KEY by scope — account tables: from the data
+  key (the account's devices); a space's tables: from the space id (its members); public tails: from the owner key
+  (findable by anyone who can name the owner — obfuscation only, as they must be).
+- The identity signs by the NAME: a sign request carries the plain table; the identity recomputes the blinded label
+  and checks it is the params' label, then checks the grant by name (as now).
+- MOVE, not copy: a table's tree blocks are addressed by its TABLE KEY (from its plain name, unchanged), so the
+  writer's first step at the blinded label is its old state re-signed (root, pending rows, parity ids) — ONE signed
+  step per table per writer. Readers open the blinded tail; absent → the legacy one, read-only, until its writer moves.
+- Phases: B1 label + blinding keys (data, core, identity), a table moved on its writer's next open; B2 readers'
+  fallback; B3 the delegate's reads (card, bags) by the new labels; then the old names stop being written.
+- [x] (4c) RE-INVITE FAILURE (RK): the delegate, admitting with no page open, picked ANY key package on the card — not
+      the account's record of used ones (`keypacks`), nor recording its own — so page and delegate could spend one
+      twice; the second welcome then fails `WelcomeKeyPackageNotFound`. Now the mandate carries the spent tags
+      (`identity::kp_tag`, the page's SHA-256 tag), the delegate skips them and those it used since, reports each
+      one it uses (`Admitted.kp`), and the page records it before acknowledging. Tested: identity (spent kept, tag =
+      page's); a live two-account admission-with-no-page run is still to do.
+- [x] (2) WAKE-UPS measured (fx): 14 in 15.00 min at the 60 s floor + jitter — none refused, at most one skipped.

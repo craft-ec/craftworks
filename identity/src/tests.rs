@@ -712,7 +712,7 @@ fn a_mandate_older_than_upkeep_s_own_group_is_not_taken() {
     let space = [0x5A; 32];
     let mandate = |epoch: u64| Mandate { space, name: "s".into(), kind: "server".into(), owner: "did:o".into(), nonce: None, channel: "c".into(), open: true, codes: vec![], bans: vec![], members: vec![], epoch, state: vec![epoch as u8] };
     let Answer::Unlocked { public: me, .. } = who(&mut m, APP) else { panic!("a session") };
-    let ask = |m: &mut Map, spaces: Vec<Mandate>| serve(m, Request::UpkeepMandate { me: "did:me".into(), spaces }, APP);
+    let ask = |m: &mut Map, spaces: Vec<Mandate>| serve(m, Request::UpkeepMandate { me: "did:me".into(), spaces, spent: vec![kp_tag("aa"), kp_tag("bb")] }, APP);
     ask(&mut m, vec![mandate(3)]);
     // Upkeep moved the group to 4 meanwhile.
     let (did, mut spaces) = upkeep_mandate(&m, &me).unwrap();
@@ -726,4 +726,8 @@ fn a_mandate_older_than_upkeep_s_own_group_is_not_taken() {
     // A page that loaded 4 hands 4 over: taken.
     ask(&mut m, vec![mandate(5)]);
     assert_eq!(upkeep_mandate(&m, &me).unwrap().1[0].epoch, 5);
+    // The key packages the account used, kept for upkeep (never used again); the tag is the page's (SHA-256 of the hex,
+    // 16 bytes).
+    assert_eq!(upkeep_spent(&m, &me), vec![kp_tag("aa"), kp_tag("bb")]);
+    assert_eq!(kp_tag("aa")[..4], [0x96, 0x1b, 0x6d, 0xd3]);
 }
