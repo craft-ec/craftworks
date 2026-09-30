@@ -32,6 +32,9 @@ export async function start(ctx) {
     .cw-md a { color: var(--cw-accent); }
     .cw-md .spoiler { background: var(--cw-fg); color: transparent; border-radius: 3px; cursor: pointer; }
     .cw-md .spoiler.shown { background: none; color: inherit; }
+    .cw-md .spoiler.block { display: inline-block; padding: 2px 6px; }
+    .cw-md li.task { list-style: none; margin-left: -1.2em; }
+    .cw-md sup { font-size: 0.75em; }
     .cw-md .cw-md-media { display: block; max-width: min(560px, 100%); margin: 6px 0; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); }
     .cw-md img.cw-md-media { max-height: 480px; cursor: zoom-in; }
     .cw-md audio.cw-md-media { width: min(560px, 100%); border: 0; background: none; }
@@ -64,19 +67,27 @@ export async function start(ctx) {
   const LINK_RE = new RegExp("\\[([^\\]]+)\\]\\(" + URL_RE + "\\)", "g");
   const FILE = /^file:([A-Za-z0-9_-]{1,80})$/;
 
+  // A backslash keeps the next mark as it is (`\*` shows a star).
+  const ESC = String.fromCharCode(1);
   const inline = s => {
     const codes = [];
+    const kept = [];
+    s = s.replace(/\\([\\`*_{}\[\]()#+\-.!|~^]|&gt;|&lt;)/g, (_, c) => (kept.push(c), ESC + (kept.length - 1) + ESC));
     s = s.replace(/`([^`]+)`/g, (_, c) => (codes.push(c), NUL + (codes.length - 1) + NUL));
     s = s.replace(IMG_RE, (_, a, u) => (FILE.test(u) ? `<span data-file="${FILE.exec(u)[1]}" data-alt="${a}"></span>` : `<img src="${href(u)}" alt="${a}" class="cw-md-media">`));
     s = s.replace(LINK_RE, (_, t, u) => (FILE.test(u) ? `<a data-file-link="${FILE.exec(u)[1]}" href="#">${t}</a>` : `<a href="${href(u)}" target="_blank" rel="noopener">${t}</a>`));
     s = s.replace(/(^|[\s(])((?:https?:\/\/)[^\s<)]+)/g, (_, pre, u) => `${pre}<a href="${href(u)}" target="_blank" rel="noopener">${u}</a>`);
     s = s
+      .replace(/\*\*\*([^*]+)\*\*\*/g, "<strong><em>$1</em></strong>")
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^\w])__([^_]+)__(?!\w)/g, "$1<strong>$2</strong>")
       .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>")
+      .replace(/(^|[^\w])_([^_\s][^_]*)_(?!\w)/g, "$1<em>$2</em>")
       .replace(/~~([^~]+)~~/g, "<del>$1</del>");
-    s = s.replace(/\|\|([^|]+)\|\|/g, '<span class="spoiler" title="Reveal">$1</span>');
+    // HIDDEN (a spoiler): Reddit's >!text!<, and ||text||.
+    s = s.replace(/&gt;!(.+?)!&lt;/g, '<span class="spoiler" title="Reveal">$1</span>').replace(/\|\|([^|]+)\|\|/g, '<span class="spoiler" title="Reveal">$1</span>');
     s = s.replace(/\^\(([^)]+)\)/g, "<sup>$1</sup>").replace(/\^([^\s^]+)/g, "<sup>$1</sup>");
-    return s.replace(new RegExp(NUL + "([0-9]+)" + NUL, "g"), (_, i) => `<code>${codes[+i]}</code>`);
+    return s.replace(new RegExp(NUL + "([0-9]+)" + NUL, "g"), (_, i) => `<code>${codes[+i]}</code>`).replace(new RegExp(ESC + "([0-9]+)" + ESC, "g"), (_, i) => kept[+i]);
   };
   const cells = r =>
     r
@@ -93,7 +104,8 @@ export async function start(ctx) {
       while (stack.length > it.level + 1) close();
       if (stack.length < it.level + 1) open(it.ordered);
       else if (stack.length && stack.at(-1) !== it.ordered && stack.length === it.level + 1) (close(), open(it.ordered));
-      out += `<li>${inline(it.text)}</li>`;
+      const task = /^\[( |x|X)\]\s+(.*)$/.exec(it.text);
+      out += task ? `<li class="task"><input type="checkbox" disabled${task[1] === " " ? "" : " checked"}> ${inline(task[2])}</li>` : `<li>${inline(it.text)}</li>`;
     }
     while (stack.length) close();
     return out;
@@ -124,10 +136,19 @@ export async function start(ctx) {
         i++;
         continue;
       }
-      if (/^&gt;\s?/.test(ln)) {
+      // A HIDDEN paragraph: lines that start with >! (Reddit's), to its closing !< or its end.
+      if (/^&gt;!/.test(ln) && !/!&lt;/.test(ln.slice(5))) {
+        flush();
+        const buf = [ln.slice(5)];
+        i++;
+        while (i < lines.length && lines[i].trim() && !/!&lt;\s*$/.test(buf.at(-1))) buf.push(lines[i++]);
+        out.push(`<p><span class="spoiler block" title="Reveal">${buf.map(l => inline(l.replace(/!&lt;\s*$/, ""))).join("<br>")}</span></p>`);
+        continue;
+      }
+      if (/^&gt;(?!!)\s?/.test(ln)) {
         flush();
         const buf = [];
-        while (i < lines.length && /^&gt;\s?/.test(lines[i])) buf.push(lines[i++].replace(/^&gt;\s?/, ""));
+        while (i < lines.length && /^&gt;(?!!)\s?/.test(lines[i])) buf.push(lines[i++].replace(/^&gt;\s?/, ""));
         out.push("<blockquote>" + blocks(buf) + "</blockquote>");
         continue;
       }
@@ -221,7 +242,8 @@ export async function start(ctx) {
         box.append(el, line);
         cover.replaceWith(box);
         try {
-          if (ref.type === MANIFEST) await (await ctx.require("video-player")).play(el, ref);
+          // Streamed (a manifest adaptively, a plain file by its byte ranges), else read whole: `video-player`.
+          if (!ref.inline) await (await ctx.require("video-player")).play(el, ref);
           else ((el.src = await urlOf(key, ref)), await el.play().catch(() => {}));
         } catch (err) {
           return box.replaceWith(Object.assign(document.createElement("span"), { className: "cw-md-missing", textContent: `${ref.name}: ${err.message ?? err}` }));

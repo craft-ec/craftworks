@@ -18,6 +18,8 @@ export async function start(ctx) {
       border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); background: var(--cw-surface); color: var(--cw-fg); }
     .cw-mde .bar button:hover, .cw-mde .bar button.on { border-color: var(--cw-accent); color: var(--cw-accent); }
     .cw-mde .bar .sp { flex: 1; }
+    .cw-mde .bar .menu { display: inline-flex; gap: 3px; }
+    .cw-mde .bar .menu button { font-weight: 400; }
     .cw-mde textarea { font: inherit; width: 100%; box-sizing: border-box; min-height: 110px; resize: none; overflow-y: hidden; padding: var(--cw-space-2);
       border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); background: var(--cw-surface); color: var(--cw-fg); }
     .cw-mde .prev { min-height: 110px; padding: var(--cw-space-2); border: 1px dashed var(--cw-line); border-radius: var(--cw-radius-sm); }
@@ -80,6 +82,13 @@ export async function start(ctx) {
     // MEDIA: a file picked here goes inline once sent (and one attached with 📎 that is media, too).
     const mediaIn = h("input", { type: "file", accept: "image/*,video/*,audio/*", multiple: true, hidden: true });
     const inlineNext = new Set(); // files picked with 🖼, waiting to be sent
+    // 🖼: from this device, or from Drive (the drives this person reads; taken in, it is read by the item's readers).
+    const mediaMenu = h(
+      "span",
+      { className: "menu", hidden: true },
+      h("button", { type: "button", textContent: "From this device", onclick: e => (e.preventDefault(), (mediaMenu.hidden = true), mediaIn.click()) }),
+      h("button", { type: "button", textContent: "From Drive", onclick: e => (e.preventDefault(), (mediaMenu.hidden = true), pick?.fromDrive?.({ media: true })) }),
+    );
     mediaIn.onchange = () => {
       for (const f of mediaIn.files) inlineNext.add(f);
       pick?.addFiles?.([...mediaIn.files]);
@@ -99,18 +108,25 @@ export async function start(ctx) {
       btn("B", "Bold", () => surround("**")),
       btn("i", "Italic", () => surround("*")),
       btn("S", "Strikethrough", () => surround("~~")),
+      btn("x²", "Superscript", () => surround("^(", ")")),
+      btn("🙈", "Hidden (a spoiler: shown on a click)", () => surround(">!", "!<", "hidden")),
       btn("`", "Inline code", () => surround("`", "`", "code")),
       btn("```", "Code block", () => surround("```\n", "\n```\n", "code")),
       btn("🔗", "Link", () => surround("[", "](https://)", "text")),
       btn("❝", "Quote", () => linePrefix("> ")),
       btn("•", "List", () => linePrefix("- ")),
       btn("1.", "Numbered list", () => linePrefix(i => `${i + 1}. `)),
+      btn("☑", "Task list", () => linePrefix("- [ ] ")),
       btn("▦", "Table", () => insert("| Column | Column |\n| --- | --- |\n| | |")),
-      pick ? btn("🖼", "Image, video or audio (inline)", () => mediaIn.click()) : null,
+      btn("—", "Divider", () => insert("\n---\n")),
+      // MEDIA and FILES side by side: 🖼 inline, 📎 attached below.
+      pick ? btn("🖼", "Image, video or audio (inline): from this device or from Drive", () => (mediaMenu.hidden = !mediaMenu.hidden)) : null,
+      mediaMenu,
+      pick?.el ?? null,
       h("span", { className: "sp" }),
       pv,
     );
-    const el = h("div", { className: "cw-mde" }, bar, ta, prev, mediaIn, pick?.el ?? null);
+    const el = h("div", { className: "cw-mde" }, bar, ta, prev, mediaIn);
     return {
       el,
       textarea: ta,

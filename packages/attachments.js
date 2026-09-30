@@ -43,6 +43,7 @@ export async function start(ctx) {
     .cw-att-drive { border: 0; border-radius: var(--cw-radius); padding: var(--cw-space-4); width: min(520px, calc(100vw - 32px)); box-shadow: var(--cw-shadow-lg);
       background: var(--cw-surface); color: var(--cw-fg); }
     .cw-att-drive h3 { margin: 0 0 var(--cw-space-2); font-size: 1rem; }
+    .cw-att-drive .who { margin: 0 0 var(--cw-space-2); color: var(--cw-muted); font-size: var(--cw-text-sm); }
     .cw-att-drive select { font: inherit; padding: 4px 8px; border-radius: var(--cw-radius-sm); margin-bottom: var(--cw-space-2); max-width: 100%; }
     .cw-att-drive ul { list-style: none; margin: 0 0 var(--cw-space-3); padding: 0; max-height: 60vh; overflow: auto; display: grid; gap: 4px; }
     .cw-att-drive li { display: flex; align-items: center; gap: var(--cw-space-2); padding: 6px; border-radius: var(--cw-radius-sm); cursor: pointer; }
@@ -106,7 +107,10 @@ export async function start(ctx) {
     };
     // FROM DRIVE: yours, or ANY space's you are in (chosen at the top), each file attached as its reference (ready at
     // once): the item's readers read it — as a file forwarded.
-    async function fromDrive() {
+    // `media`: only images, videos and audio (the editor's 🖼). WHO READS IT is said: a file taken from Drive is
+    // adopted into this item's space, readable by exactly the item's readers.
+    const MEDIA = /^(image|video|audio)\//;
+    async function fromDrive({ media = false } = {}) {
       const all = await drive.drives();
       const choose = h("select", { ariaLabel: "Drive" }, h("option", { value: "", textContent: "Your Drive" }), ...all.map(s => h("option", { value: s.id, textContent: `${spaces.shown(s)} Drive` })));
       if (space && all.some(s => s.id === space.id)) choose.value = space.id;
@@ -115,7 +119,7 @@ export async function start(ctx) {
       const drawList = async () => {
         const sp = all.find(s => s.id === choose.value) ?? null;
         listEl.replaceChildren(h("li", { textContent: "Loading…" }));
-        const rows = await drive.list(sp).catch(() => []);
+        const rows = (await drive.list(sp).catch(() => [])).filter(r => !media || MEDIA.test(r.ref.type ?? "") || r.ref.type === "application/vnd.craftworks.video+json");
         listEl.replaceChildren(
           ...(rows.length
             ? rows.map(r => {
@@ -126,7 +130,9 @@ export async function start(ctx) {
         );
       };
       choose.onchange = drawList;
-      d.append(h("h3", { textContent: "Attach from Drive" }), choose, listEl, h("button", { type: "button", textContent: "Close", onclick: () => d.close() }));
+      const pubNow = typeof pub === "function" ? !!pub() : pub;
+      const who = h("p", { className: "who", textContent: pubNow ? "Attached here, it is PUBLIC: anyone who reads this can open it." : space ? `Attached here, it is read by ${spaces.shown(space)}'s members — whoever reads this.` : "Attached here, it is read by whoever reads this." });
+      d.append(h("h3", { textContent: media ? "Media from Drive" : "Attach from Drive" }), choose, who, listEl, h("button", { type: "button", textContent: "Close", onclick: () => d.close() }));
       drawList();
       d.addEventListener("click", e => e.target === d && d.close());
       d.addEventListener("close", () => d.remove());
@@ -190,6 +196,7 @@ export async function start(ctx) {
       // Files sent from elsewhere (the editor's 🖼); files already on the item (an edit: listed, nothing sent again);
       // told when each file is ready.
       addFiles: list => list.forEach(add),
+      fromDrive,
       preset: refs => (refs ?? []).forEach(r => ready(r, { quiet: true })),
       onReady: f => readied.push(f),
     };
