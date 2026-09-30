@@ -9,7 +9,7 @@
 //   const v = mv.create({ file, item, kind, cover, outside, label, onNote, onLevel })
 //   host.append(v.el)      // cover, or the player (with an audio's cover above it)
 //   v.media                // the <video>/<audio> (once playing)      v.line   v.timed   (placed by the caller, or in v.el)
-//   v.play()               // start (a cover: its click does)
+//   v.play()               // start (a cover: its click does)      v.prepare()   // its tracks' line now, nothing played
 export async function start(ctx) {
   const [player, subs, kindsCap] = await Promise.all(["video-player", "subtitle-store", "kinds"].map(n => ctx.require(n)));
   const markdown = await ctx.require("markdown");
@@ -57,6 +57,9 @@ export async function start(ctx) {
     const hasId = () => file?.type === "application/vnd.craftworks.video+json"; // what tracks are made for (its video id)
     const subsHref = () => (item ? `#/subtitles/for/${encodeURIComponent(item)}${cover ? `~${markdown.keyOf(file)}` : ""}` : null);
     let started = false;
+    // Its TRACKS read (a few rows, not the media): shown in its line at once, the player's once it plays.
+    let prepared = null;
+    const prepare = () => (prepared ??= tracks().catch(e => (line.textContent = e.message ?? String(e))));
     async function play() {
       if (started) return;
       started = true;
@@ -69,7 +72,7 @@ export async function start(ctx) {
       } catch (e) {
         note.textContent = `${file?.name ?? "it"}: ${e.message ?? e}`;
       }
-      tracks().catch(e => (line.textContent = e.message ?? String(e)));
+      await prepare();
     }
     async function tracks() {
       const ts = item ? await subs.tracksFor(item, cover ? file : undefined, { outside }) : [];
@@ -121,7 +124,7 @@ export async function start(ctx) {
       el.append(c);
     } else if (place) el.append(media, note, line, timed);
     el.addEventListener("click", e => e.stopPropagation());
-    return { el, media, line, timed, note, play };
+    return { el, media, line, timed, note, play, prepare };
   }
   return { create };
 }

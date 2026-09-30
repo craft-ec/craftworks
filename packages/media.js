@@ -182,11 +182,13 @@ export async function mount(ctx, el) {
     const level = h("span", { className: "level" });
     // THE PLAYER (`media-view`: the one way a video or an audio shows — its tracks by its video id, the same as
     // wherever else it shows); audio: its cover above it, and (a podcast, an audiobook) a speed.
-    const view = mediaView.create({ file: f, item: ref, kind: C.audio ? "audio" : "video", outside, itemKind: v.kind, onLevel: l => (level.textContent = l), place: false });
+    // An AUDIO starts as its album cover with ▶ (nothing read before it is played, as a video's pieces are only read
+    // as it plays); its lyrics or transcript line shows at once.
+    const view = mediaView.create({ file: f, item: ref, kind: C.audio ? "audio" : "video", outside, itemKind: v.kind, onLevel: l => (level.textContent = l), cover: C.audio, place: C.audio });
     const video = view.media;
     const note = view.note;
     const timed = view.timed;
-    const coverBox = C.audio ? h("div", { className: "cover" }, f?.preview ? h("img", { src: f.preview, alt: "" }) : h("span", { textContent: "🎵" })) : null;
+    const coverBox = C.audio ? view.el : null;
     const speed = C.audio && ["podcast", "audiobook"].includes(v.kind) ? h("select", { title: "Speed", onchange: e => (video.playbackRate = Number(e.target.value)) }, ...[0.75, 1, 1.25, 1.5, 2].map(x => h("option", { value: x, textContent: `${x}×`, selected: x === 1 }))) : null;
     const like = h("button", { type: "button", className: v.mine === 1 ? "on" : "", disabled: !!outside, title: outside ? "Join to like" : "", textContent: `▲ ${v.score ?? 0}`, onclick: async () => ((like.disabled = true), await items.vote(ref, v.mine === 1 ? 0 : 1).catch(() => {}), draw()) });
     const saved = () => pins.has(SAVED(ref));
@@ -210,7 +212,7 @@ export async function mount(ctx, el) {
       "div",
       { className: "watch" },
       coverBox,
-      video,
+      C.audio ? null : video,
       note,
       h("h1", { textContent: v.title }),
       h("div", { className: "row" }, h("span", { className: "s" }, who(v.by), ` · ${ago(v.at)}${k && v.kind !== VIDEO[0] ? ` · ${k.label}` : ""}${v.private ? " · only you" : ""}`), like, save, speed),
@@ -268,7 +270,8 @@ export async function mount(ctx, el) {
               const text = await (await files.get(old.ref)).text();
               await subs.add(ref, text, { lang: old.lang, label: old.label }).catch(() => {});
             }
-          await view.play();
+          if (C.audio) await view.prepare();
+          else await view.play();
         })().catch(e => (note.textContent = e.message ?? String(e)));
       scrubStrip().catch(() => {});
       drawComments();
