@@ -55,6 +55,9 @@ export async function mount(ctx, el) {
         background-repeat: no-repeat; pointer-events: none; display: none; }
       .vd .scrub .tip span { position: absolute; bottom: 2px; left: 0; right: 0; text-align: center; color: #fff; font-size: 11px; text-shadow: 0 0 3px #000; }
       .vd .level { font-size: var(--cw-text-xs); color: var(--cw-muted); }
+      .vd .subs { display: grid; gap: 6px; border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-3); }
+      .vd .subs .row input[name=label] { width: 12em; }
+      .vd .subs .row input[name=lang] { width: 4em; }
     </style>
     <div class="vd"></div>`;
   const root = el.querySelector(".vd");
@@ -177,6 +180,7 @@ export async function mount(ctx, el) {
       h("div", { className: "row" }, h("span", { className: "s" }, who(v.by), ` · ${ago(v.at)}${k && v.kind !== "video" ? ` · ${k.label}` : ""}${v.private ? " · only you" : ""}`), like, save),
       fields.length ? h("div", { className: "meta" }, ...fields) : null,
       v.body ? h("div", { className: "about", textContent: v.body }) : null,
+      v.by === me && f?.type === studio.MANIFEST ? subsPanel(ref, f) : null,
       h("h3", { textContent: `Comments` }),
       outside ? null : form,
       comments,
@@ -224,6 +228,29 @@ export async function mount(ctx, el) {
       drawComments();
     });
     return out;
+  }
+
+  // SUBTITLES, managed by the video's author: each track's label and language, removed, or one added (.vtt, .srt).
+  function subsPanel(ref, f) {
+    const box = h("div", { className: "subs" }, h("strong", { textContent: "Subtitles" }), theme.loading("Reading…"));
+    const said = h("p", { className: "said", hidden: true });
+    const act = async change => {
+      said.hidden = true;
+      await studio.subtitles(ref, change).then(draw, e => ((said.textContent = e.message ?? String(e)), (said.hidden = false)));
+    };
+    player.manifest(f).then(m => {
+      const rows = (m.subtitles ?? []).map((t, i) => {
+        const label = h("input", { name: "label", value: t.label ?? "", placeholder: "Label" });
+        const lang = h("input", { name: "lang", value: t.lang ?? "", placeholder: "en" });
+        return h("div", { className: "row" }, label, lang, h("button", { type: "button", textContent: "Save", onclick: () => act({ set: [{ i, label: label.value, lang: lang.value }] }) }), h("button", { type: "button", textContent: "Remove", onclick: () => act({ remove: [i] }) }));
+      });
+      const file = h("input", { type: "file", accept: ".vtt,.srt,text/vtt" });
+      const label = h("input", { name: "label", placeholder: "Label (e.g. English)" });
+      const lang = h("input", { name: "lang", placeholder: "en" });
+      const add = h("div", { className: "row" }, file, label, lang, h("button", { type: "button", textContent: "Add", onclick: () => file.files[0] && act({ add: [{ file: file.files[0], label: label.value.trim(), lang: lang.value.trim() }] }) }));
+      box.replaceChildren(h("strong", { textContent: "Subtitles" }), ...(rows.length ? rows : [h("span", { className: "s", textContent: "None yet." })]), add, said);
+    }, () => box.remove());
+    return box;
   }
 
   async function upload() {

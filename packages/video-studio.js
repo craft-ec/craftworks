@@ -274,11 +274,14 @@ export async function start(ctx) {
       }
       const made = await makeRendition(M, original, r, { space: sp, pub: m.pub, name: m.name ?? "video", say, width: widthFor(m.width, m.height, r.height) });
       // Made, or refused by this encoder after all: out of the pending either way (a refusal is not tried again here).
-      const next = { ...m, renditions: made ? [...m.renditions, made] : m.renditions, pending: m.pending.filter(x => x !== r) };
+      // Applied to the manifest as it is NOW (subtitles may have changed while this was encoding).
+      const cur = (await latest(v.ref)) ?? { item: v, manifest: m, file: f };
+      const same = x => x.codec === r.codec && x.height === r.height;
+      const next = { ...cur.manifest, renditions: made ? [...cur.manifest.renditions, made] : cur.manifest.renditions, pending: (cur.manifest.pending ?? []).filter(x => !same(x)) };
       // All made: the original RELEASED unless it is to be kept (no longer named: Lifecycle stops keeping it).
       if (!next.pending.length && !next.keepOriginal && next.source) delete next.source;
       const ref = await putManifest(next, sp, m.pub);
-      await posts.setFiles(v.ref, v.files.map(x => (x === f ? { ...ref, ...(f.preview ? { preview: f.preview } : {}), duration: f.duration, width: f.width, height: f.height } : x)));
+      await replaceManifest(cur.item, cur.file, ref);
       if (next.pending.length) await lease("next rendition", 0);
       else await t.remove(v.ref);
       again = true;
@@ -296,5 +299,35 @@ export async function start(ctx) {
   // Started with the page (the header asks for it), and whenever this person's posts change.
   setTimeout(() => (space.account().then(a => a && kick(), () => {}), posts.onChange(() => kick())), 5000);
 
-  return { make, progress, kick, MANIFEST };
+  // A video's item and manifest as they are now.
+  async function latest(ref) {
+    const item = await posts.get(ref).catch(() => null);
+    const file = item?.files?.find(x => x.type === MANIFEST);
+    if (!file) return null;
+    return { item, file, manifest: JSON.parse(await (await files.get(file)).text()) };
+  }
+  // The item's manifest replaced by a new one (its poster and size kept on the reference).
+  const replaceManifest = (item, old, ref) =>
+    posts.setFiles(item.ref, item.files.map(x => (x === old ? { ...ref, ...(old.preview ? { preview: old.preview } : {}), duration: old.duration, width: old.width, height: old.height } : x)));
+
+  // SUBTITLES, MANAGED after upload (the video's author): `add` [{ file, label, lang }], `remove` [index], `set`
+  // [{ i, label, lang }] — a new manifest, the item's file replaced.
+  async function subtitles(ref, { add = [], remove = [], set = [] } = {}) {
+    const cur = await latest(ref);
+    if (!cur) throw new Error("not a video made here");
+    const sp = cur.item.board ? (await space.mine()).find(x => x.id === cur.item.board.id) ?? null : null;
+    let subs = [...(cur.manifest.subtitles ?? [])];
+    for (const { i, label, lang } of set) if (subs[i]) subs[i] = { ...subs[i], ...(label != null ? { label: String(label).slice(0, 60) } : {}), ...(lang != null ? { lang: String(lang).toLowerCase().slice(0, 8) } : {}) };
+    subs = subs.filter((_, i) => !remove.includes(i));
+    for (const a of add) {
+      const text = await vtt(a.file);
+      const r = await files.put(new File([text], a.file.name.replace(/\.\w+$/, ".vtt"), { type: "text/vtt" }), { space: sp, public: cur.manifest.pub, app: "videos" });
+      subs.push({ label: a.label || a.file.name.replace(/\.\w+$/, ""), lang: (a.lang || a.file.name.match(/\.([a-z]{2,3})\.\w+$/i)?.[1] || "").toLowerCase(), ref: r });
+    }
+    const r = await putManifest({ ...cur.manifest, subtitles: subs }, sp, cur.manifest.pub);
+    await replaceManifest(cur.item, cur.file, r);
+    return subs;
+  }
+
+  return { make, progress, kick, subtitles, MANIFEST };
 }
