@@ -284,7 +284,8 @@ export async function mount(ctx, el) {
     const pr = await roles.ofPublic(d);
     const mine = (await space.mine()).some(s => s.id === d.id);
     // Join, Requested (while a member lets you in), Open: the one join control.
-    const join = !mine && pr.policy("", "join") === "anyone" ? await (await ctx.require("join-button")).control(d, { open: `#/s/${d.id}/board` }) : null;
+    // Follow always (its public board in your feed); Join too when joining is open.
+    const join = !mine ? await (await ctx.require("join-button")).control(d, { open: `#/s/${d.id}/board`, joinable: pr.policy("", "join") === "anyone" }) : null;
     return h(
       "div",
       { className: "panel" },

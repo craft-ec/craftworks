@@ -41,9 +41,20 @@ export async function start(ctx) {
   const fire = () => changed.forEach(f => f());
   const me = async () => (await space.account()).id;
   // Whose profiles this person reads: whom they follow, and their friends (friends need no follow as well).
+  // A follow names a SPACE: a person's DID (their personal space) or a shared space's id.
   const following = async () => {
     const p = await edge.people();
-    return [...new Set([...p.list("follow"), ...p.list("friend")])];
+    return [...new Set([...p.list("follow"), ...p.list("friend")])].filter(id => id.startsWith("did:"));
+  };
+  // The SHARED spaces followed (not joined): each read from outside, as Discover reads a public one.
+  const followedSpaces = async () => {
+    const p = await edge.people();
+    const inside = new Set((await space.mine()).map(s => s.id));
+    return p
+      .list("follow")
+      .filter(id => !id.startsWith("did:") && !inside.has(id))
+      .map(id => p.about("follow", id))
+      .filter(d => d?.id && d.governance?.owner);
   };
 
   // ROOMS, opened once per page: a board's, a person's profile tail.
@@ -259,8 +270,14 @@ export async function start(ctx) {
       if (!sp) throw new Error("you are not in that board's space: join it with an invite");
       out = await boardPosts(sp, { kinds });
     } else if (where.feed) {
-      const [bs, people] = await Promise.all([boards(), following()]);
-      out = [...(await Promise.all(bs.map(sp => boardPosts(sp, { kinds }).catch(() => [])))).flat(), ...(await profilePosts([await me(), ...people], [], kinds))];
+      // The FEED: every space followed or joined — the spaces this person is in, the people they follow (their
+      // personal spaces) and the shared spaces they follow (read from outside).
+      const [bs, people, fs] = await Promise.all([boards(), following(), followedSpaces()]);
+      out = [
+        ...(await Promise.all(bs.map(sp => boardPosts(sp, { kinds }).catch(() => [])))).flat(),
+        ...(await Promise.all(fs.map(d => boardPosts(d, { outside: true, kinds }).catch(() => [])))).flat(),
+        ...(await profilePosts([await me(), ...people], [], kinds)),
+      ];
     } else {
       // A PERSON's posts (Reddit's profile): their profile's, and theirs on every board this reader can read — the
       // public boards (anyone's), and the boards of the spaces this reader is in (their members').

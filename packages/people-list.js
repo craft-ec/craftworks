@@ -42,7 +42,7 @@ export async function start(ctx) {
       el("li", { title: did }, el("span", { className: "n", textContent: name, onclick: e => person.open(e.currentTarget, did) }), ...extra);
     async function draw() {
       const asking = await conversation.friendRequests().catch(() => []);
-      const all = [...new Set([...asking, ...SECTIONS.flatMap(([rel]) => people.list(rel))])];
+      const all = [...new Set([...asking, ...SECTIONS.flatMap(([rel]) => people.list(rel))])].filter(d => d.startsWith("did:"));
       const names = new Map(await Promise.all(all.map(async d => [d, await directory.name(d)])));
       if (!open) return;
       const parts = [];
@@ -57,7 +57,12 @@ export async function start(ctx) {
       for (const [rel, title, none] of SECTIONS) {
         const list = people.list(rel);
         if (!list.length && !none) continue;
-        parts.push(el("section", {}, el("h4", { textContent: title }), list.length ? el("ul", {}, ...list.map(d => row(d, names.get(d)))) : el("p", { className: "none", textContent: none })));
+        // A followed SHARED space (not a person): its name, and Unfollow.
+        const item = d =>
+          d.startsWith("did:")
+            ? row(d, names.get(d))
+            : el("li", { title: d }, el("span", { className: "n", textContent: `🌐 ${people.about(rel, d)?.name || "a space"}#${d.slice(0, 6)}` }), el("button", { type: "button", textContent: "Unfollow", onclick: () => people.set(rel, d, false) }));
+        parts.push(el("section", {}, el("h4", { textContent: title }), list.length ? el("ul", {}, ...list.map(item)) : el("p", { className: "none", textContent: none })));
       }
       box.replaceChildren(...parts);
     }

@@ -761,6 +761,10 @@ come with keepers as a new codec version.
       (owner: YouTube/TikTok have no spaces; spaces are a side effect). Likes = the post vote; subscribe = follow edge.
       17573: 5.3 MB 720p H.264 uploaded as a Movie (year 2026), feed card with poster + 0:20, watch STREAMS by range
       (mode stream), seek to 15 s plays to the end, like ▲ 1, comment shown, 0 console errors.
+- [x] FOLLOW is uniform (owner 09-30 "make it uniform, nothing new"): a follow names a SPACE — a person's DID is their
+      personal space; a shared space's id with its public description in the edge (`people.about`). The feed (Board's
+      and Videos') reads every followed space; Follow beside Join on a public space; Contacts lists followed spaces.
+      fx/fy: B (not a member) followed A's public space → its post in B's feed in 5 s.
 - [ ] F4 video: CMAF segments, renditions (AV1+Opus, H.264+AAC), remux (mp4box) or WebCodecs encode, MediaSource ABR,
       poster + scrub strip, subtitles.
 - [x] F5a DRIVE (owner 09-30: every uploaded file is in Drive; attach from Drive; choose any space's Drive):

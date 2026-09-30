@@ -8,7 +8,8 @@
 //     await labels.create(name)  labels.rename(id, name)  labels.remove(id)  labels.set(ref, id, on)  labels.clear(ref)
 //   await edge.adoptPinnedField(table, prefix)   // rows saved with an old `pinned: true` field → pins, field dropped
 //   const people = await edge.people(); people.is("follow", did)  people.list("friend")  await people.set("hide", did, on)
-//     people.onChange(fn) — me → a PERSON: follow · friend · asked (a friend request sent) · answered (their request,
+//     people.onChange(fn) — me → a PERSON (or, for `follow`, any SPACE: a person's DID is their personal space's id; a
+//     shared space's id follows it, `people.about("follow", id)` its public description): follow · friend · asked (a friend request sent) · answered (their request,
 //     when: yes, no or ended — a request older than it is not asked again) · hide (their items unseen
 //     here) · block (hidden, and their welcomes, mail and requests refused) · modlist (their moderation list applied
 //     to what this person sees in Discover: `moderation.lists`)
@@ -120,14 +121,23 @@ export async function start(ctx) {
         }
       };
       const list = rel => t.rows().filter(r => r.key.startsWith(`${rel}/`)).map(r => r.key.slice(rel.length + 1));
-      // `at`: when the link holds from (default now; what it answers may be older).
-      const set = (rel, did, on, at = Date.now()) => {
+      // `at`: when the link holds from (default now; what it answers may be older). `about`: what is needed to read
+      // the thing it points at — a followed SHARED space's public description (a person needs none: their DID is their
+      // personal space, found by it).
+      const set = (rel, did, on, at = Date.now(), about = null) => {
         if (!RELATIONS.has(rel)) throw new Error(`no relation “${rel}”`);
-        return on ? t.put(`${rel}/${did}`, JSON.stringify({ at })) : t.remove(`${rel}/${did}`);
+        return on ? t.put(`${rel}/${did}`, JSON.stringify({ at, ...(about ? { about } : {}) })) : t.remove(`${rel}/${did}`);
+      };
+      const about = (rel, id) => {
+        try {
+          return JSON.parse(t.rows().find(r => r.key === `${rel}/${id}`)?.value ?? "{}").about ?? null;
+        } catch {
+          return null;
+        }
       };
       // Whose items this person does not see: hidden or blocked.
       const unseen = () => new Set([...list("hide"), ...list("block")]);
-      return { is, at, list, set, unseen, onChange: t.onChange, settled: t.settled };
+      return { is, at, list, set, about, unseen, onChange: t.onChange, settled: t.settled };
     }));
   }
 
