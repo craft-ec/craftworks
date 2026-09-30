@@ -863,3 +863,6 @@ Uses what freenet-prolly already has (rev 17d67d8: `range`/`range_with` + `front
       stays lazy; legacy-id videos fall back to whole (as they must).
 - Verified 17573: a 150-message channel opens with the newest 50 (lazy: no whole read), pages back to all 150 in
   order, "Load earlier" in Chat, a new message live; Board and Videos unaffected; 0 errors.
+- [ ] VIEW COUNTS → roadmap row 9 (owner 09-30: "cover later under observability and analytics"). Shape noted in
+      ARCHITECTURE row 9: one entry per viewer per item (Grid's tally: deduped), windowed like the feeds, counted
+      where the item's access allows; adds Popular to the feed bar. Not built; the feed bar has no Popular until then.

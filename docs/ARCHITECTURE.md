@@ -285,7 +285,7 @@ Each phase: build → the private node (all three sites) → published through B
 | 6 | **Shapes** | `content`, `edge` | notes as content; pins, labels, likes, votes as edges | — |
 | 7 | **Index** | `index` | the Bag: inbox (sealed pointers), directory (public, handle + id), comments | — |
 | 8 | **Chat** | `chat` page | a space + its MLS group + content (messages) + index (inbox) | — |
-| 9 | **Privacy and observability** | all | padding, sealed senders, no time-sortable ids in private spaces; health in `trace`/`account` | — |
+| 9 | **Privacy and observability** | all | padding, sealed senders, no time-sortable ids in private spaces; health in `trace`/`account`; ANALYTICS: view counts (one entry per viewer per item, as Grid's tally — deduped, windowed like the feeds, public item counted publicly, private item only among its readers) and the feed bar's Popular | — |
 | 10 | **When needed** | `ordering`, `roles`, `keys` | witnessed snapshots; enterprise role templates and escrow | — |
 
 Built already (in the shape since phase 0): identity with rotatable keys (key log contract `idlog`), PIN
