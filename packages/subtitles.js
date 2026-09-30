@@ -48,7 +48,11 @@ export async function mount(ctx, el) {
   const route = () => {
     const s = ctx.sub || "";
     if (sp() && !s) return { space: sp() };
-    if (s.startsWith("for/")) return { for: decodeURIComponent(s.slice(4)) };
+    // `for/<item>~<file key>`: a media file inside an item (inline in a post).
+    if (s.startsWith("for/")) {
+      const [item, key] = s.slice(4).split("~");
+      return { for: decodeURIComponent(item), file: key ?? null };
+    }
     if (s.startsWith("e/")) return { edit: decodeURIComponent(s.slice(2)) };
     return { mine: true };
   };
@@ -56,6 +60,8 @@ export async function mount(ctx, el) {
   const kindsCap0 = await ctx.require("kinds");
   const appOf = kind => (kindsCap0.domain(kind) === "audio" ? "audio" : "videos");
   const watchHref = (ref, kind = null) => (ref.startsWith("space:") ? `#/s/${ref.slice(6, ref.indexOf("/"))}/${appOf(kind)}/w/${encodeURIComponent(ref)}` : `#/${appOf(kind)}/w/${encodeURIComponent(ref)}`);
+  // Where a post (or a comment) is read: its board's page.
+  const postHref = ref => (ref.startsWith("space:") ? `#/s/${ref.slice(6, ref.indexOf("/"))}/board/p/${ref}` : `#/board/p/${ref}`);
   const download = (text, name, type) => {
     const a = h("a", { href: URL.createObjectURL(new Blob([text], { type })), download: name });
     document.body.append(a);
@@ -103,8 +109,13 @@ export async function mount(ctx, el) {
     return h("div", {}, h("p", { className: "s", textContent: "This space's videos and their subtitles — any member adds a track or a translation; each edits their own." }), ...blocks);
   }
 
-  async function forItem(ref) {
-    const list = await subs.of(ref);
+  async function forItem(ref, fileKey = null) {
+    // A FILE inside the item: its own tracks (by its video id), made for it.
+    const itemNow = fileKey ? await itemOf(ref) : null;
+    const markdownCap = fileKey ? await ctx.require("markdown") : null;
+    const file = fileKey ? (itemNow?.files ?? []).find(f => markdownCap.keyOf(f) === fileKey) ?? null : null;
+    if (fileKey && !file) return h("p", { className: "none", textContent: "That file is not in this item (any more)." });
+    const list = file ? await subs.ofFile(ref, file) : await subs.of(ref);
     // The places a track can be kept: with the video (where this person may add), their own, their spaces with Subtitles.
     const roles = await ctx.require("roles");
     const mine = await space.mine();
@@ -137,10 +148,10 @@ export async function mount(ctx, el) {
       said.hidden = true;
       const v = placeSel.value;
       const place = v === "with" ? undefined : v === "own" ? null : mine.find(s => s.id === v);
-      await subs.add(ref, src, { label: f.elements.label.value.trim(), lang: f.elements.lang.value.trim(), ...(place !== undefined ? { place } : {}) }).then(draw, err => ((said.textContent = err.message ?? String(err)), (said.hidden = false)));
+      await subs.add(ref, src, { label: f.elements.label.value.trim(), lang: f.elements.lang.value.trim(), ...(file ? { file } : {}), ...(place !== undefined ? { place } : {}) }).then(draw, err => ((said.textContent = err.message ?? String(err)), (said.hidden = false)));
     };
-    const it = await itemOf(ref);
-    return h("div", {}, h("h3", {}, "For ", h("a", { href: watchHref(ref, it?.kind), textContent: `▶ ${it?.title ?? "an item"}` })), list.length ? h("ul", {}, ...(await Promise.all(list.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }), f);
+    const it = itemNow ?? (await itemOf(ref));
+    return h("div", {}, h("h3", {}, "For ", file ? `${file.name} in ` : "", h("a", { href: file ? postHref(ref) : watchHref(ref, it?.kind), textContent: `${file ? "" : "▶ "}${it?.title ?? "an item"}` })), list.length ? h("ul", {}, ...(await Promise.all(list.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }), f);
   }
 
   async function editor(ref) {
@@ -174,7 +185,7 @@ export async function mount(ctx, el) {
     drawn = ctx.sub ?? "";
     const top = h("div", { className: "top" }, h("h2", { textContent: "🔤 Subtitles" }), h("a", { href: "#/subtitles", textContent: "Yours" }));
     root.replaceChildren(top, theme.loading("Reading…"));
-    const body = await (w.space ? inSpace(w.space) : w.for ? forItem(w.for) : w.edit ? editor(w.edit) : mine()).catch(e => h("p", { className: "said", textContent: e.message ?? String(e) }));
+    const body = await (w.space ? inSpace(w.space) : w.for ? forItem(w.for, w.file) : w.edit ? editor(w.edit) : mine()).catch(e => h("p", { className: "said", textContent: e.message ?? String(e) }));
     if (drawn === (ctx.sub ?? "")) root.replaceChildren(top, body);
   }
   await draw();

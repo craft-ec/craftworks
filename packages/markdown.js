@@ -38,17 +38,8 @@ export async function start(ctx) {
     .cw-md .cw-md-media { display: block; max-width: min(560px, 100%); margin: 6px 0; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); }
     .cw-md img.cw-md-media { max-height: 480px; cursor: zoom-in; }
     .cw-md audio.cw-md-media { width: min(560px, 100%); border: 0; background: none; }
-    .cw-md .cw-md-cover { position: relative; padding: 0; cursor: pointer; aspect-ratio: 16 / 9; width: min(560px, 100%); overflow: hidden; color: #fff; background: #111; }
-    .cw-md .cw-md-cover.audio { aspect-ratio: 1; width: min(240px, 100%); }
-    .cw-md .cw-md-album { width: min(240px, 100%); aspect-ratio: 1; object-fit: cover; }
-    .cw-md .cw-md-line { margin: 4px 0 0; white-space: pre-wrap; font-weight: 600; }
-    .cw-md .cw-md-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .cw-md .cw-md-cover .ic { font-size: 2rem; position: absolute; inset: 0; display: grid; place-items: center; opacity: 0.6; }
-    .cw-md .cw-md-cover .play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 56px; height: 40px; border-radius: 12px;
-      background: rgba(0, 0, 0, 0.7); display: grid; place-items: center; font-size: 18px; }
-    .cw-md .cw-md-cover:hover .play { background: #e00; }
-    .cw-md .cw-md-cover .cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 8px; font-size: 12px; text-align: left;
-      background: linear-gradient(transparent, rgba(0, 0, 0, 0.7)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cw-md .cw-md-ph { display: block; aspect-ratio: 16 / 9; width: min(560px, 100%); background: var(--cw-hover); }
+    .cw-md .cw-md-ph.audio { aspect-ratio: 1; width: min(240px, 100%); }
     .cw-md .cw-md-missing { color: var(--cw-muted); font-size: var(--cw-text-sm); }`;
   document.head.append(style);
 
@@ -209,7 +200,7 @@ export async function start(ctx) {
     if (!urls.has(key)) urls.set(key, (async () => URL.createObjectURL(await (await ctx.require("files")).get(ref)))().catch(e => (urls.delete(key), Promise.reject(e))));
     return urls.get(key);
   };
-  function media(key, ref, alt) {
+  function media(key, ref, alt, item = null) {
     const kind = kindOf(ref);
     if (kind === "image") {
       const img = Object.assign(document.createElement("img"), { className: "cw-md-media", alt: alt || ref.name || "", title: ref.name || "" });
@@ -220,48 +211,13 @@ export async function start(ctx) {
       return img;
     }
     if (kind === "video" || kind === "audio") {
-      // A COVER until played (as Videos, as YouTube): its poster (or an icon), ▶ and its length — nothing loads. A
-      // click puts the player in its place and plays (a video streams: `video-player`).
-      const cover = document.createElement("button");
-      cover.type = "button";
-      cover.className = `cw-md-cover cw-md-media${kind === "audio" ? " audio" : ""}`;
-      cover.title = `Play ${ref.name || kind}`;
-      if (ref.preview) cover.append(Object.assign(document.createElement("img"), { src: ref.preview, alt: alt || ref.name || "" }));
-      else cover.append(Object.assign(document.createElement("span"), { className: "ic", textContent: kind === "audio" ? "🎵" : "🎬" }));
-      cover.append(Object.assign(document.createElement("span"), { className: "play", textContent: "▶" }));
-      const len = ref.duration ? `${Math.floor(ref.duration / 60)}:${String(Math.floor(ref.duration % 60)).padStart(2, "0")}` : "";
-      cover.append(Object.assign(document.createElement("span"), { className: "cap", textContent: [ref.name, len].filter(Boolean).join(" · ") }));
-      cover.onclick = async e => {
-        e.stopPropagation();
-        const el = Object.assign(document.createElement(kind), { className: "cw-md-media", controls: true, autoplay: true, playsInline: true });
-        if (ref.preview && kind === "video") el.poster = ref.preview;
-        // AUDIO keeps its cover above the player, and the line playing (its lyrics, its transcript) below.
-        const box = document.createElement("div");
-        const line = Object.assign(document.createElement("p"), { className: "cw-md-line", hidden: true });
-        if (kind === "audio" && ref.preview) box.append(Object.assign(document.createElement("img"), { className: "cw-md-media cw-md-album", src: ref.preview, alt: ref.name || "" }));
-        box.append(el, line);
-        cover.replaceWith(box);
-        try {
-          // Streamed (a manifest adaptively, a plain file by its byte ranges), else read whole: `video-player`.
-          if (!ref.inline) await (await ctx.require("video-player")).play(el, ref);
-          else ((el.src = await urlOf(key, ref)), await el.play().catch(() => {}));
-        } catch (err) {
-          return box.replaceWith(Object.assign(document.createElement("span"), { className: "cw-md-missing", textContent: `${ref.name}: ${err.message ?? err}` }));
-        }
-        // Its SUBTITLES, lyrics or transcript (`subtitle-store`, by the file's video id): tracks of the player.
-        const tracks = await (await ctx.require("subtitle-store")).forFile(ref).catch(() => []);
-        tracks.forEach((t, i) => el.append(Object.assign(document.createElement("track"), { kind: "subtitles", label: t.label || t.lang || "Subtitles", srclang: t.lang || "und", default: i === 0, src: URL.createObjectURL(new Blob([t.text], { type: "text/vtt" })) })));
-        if (kind === "audio" && el.textTracks.length) {
-          const tt = el.textTracks[0];
-          tt.mode = "hidden";
-          tt.oncuechange = () => {
-            const text = [...(tt.activeCues ?? [])].map(c => c.text).join("\n");
-            line.hidden = !text;
-            line.textContent = text;
-          };
-        }
-      };
-      return cover;
+      // `media-view`: the one way a video or an audio shows — a cover until played, then the player with its tracks.
+      const ph = Object.assign(document.createElement("span"), { className: `cw-md-media cw-md-ph${kind === "audio" ? " audio" : ""}` });
+      ctx.require("media-view").then(
+        mv => ph.replaceWith(mv.create({ file: ref, item, cover: true }).el),
+        e => ph.replaceWith(Object.assign(document.createElement("span"), { className: "cw-md-missing", textContent: `${ref.name}: ${e.message ?? e}` })),
+      );
+      return ph;
     }
     return link(key, ref, ref.name);
   }
@@ -279,7 +235,9 @@ export async function start(ctx) {
     return a;
   }
 
-  function render(body, files = []) {
+  // `item`: the item the text is (a post, a comment): its files' subtitles are found with it, and added from its
+  // player ("💬 Subtitles").
+  function render(body, files = [], { item = null } = {}) {
     const el = document.createElement("div");
     el.className = "cw-md";
     el.innerHTML = html(body);
@@ -287,7 +245,7 @@ export async function start(ctx) {
     const missing = key => Object.assign(document.createElement("span"), { className: "cw-md-missing", textContent: `(a file not attached here: ${key})` });
     for (const s of el.querySelectorAll("[data-file]")) {
       const ref = byKey.get(s.dataset.file);
-      s.replaceWith(ref ? media(s.dataset.file, ref, s.dataset.alt) : missing(s.dataset.file));
+      s.replaceWith(ref ? media(s.dataset.file, ref, s.dataset.alt, item) : missing(s.dataset.file));
     }
     for (const a of el.querySelectorAll("[data-file-link]")) {
       const ref = byKey.get(a.dataset.fileLink);

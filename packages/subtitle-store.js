@@ -15,7 +15,9 @@
 //   await subs.update(ref, { lang, label, text })  await subs.remove(ref)
 //   await subs.text(sub)   subs.toSrt(vttText)      // its WebVTT; the same as SRT
 //   await subs.mine()                              // this person's subtitles, everywhere they are (the app's list)
-//   await subs.forFile(fileRef)                     // a media FILE's tracks (inline in a post): [{ label, lang, text }]
+//   await subs.ofFile(itemRef, fileRef)             // a media FILE's tracks (inline in an item), as `of` gives them
+//   await subs.forFile(fileRef, { item })           // the same, for its player: [{ label, lang, text }]
+//   await subs.add(itemRef, text, { file })         // a track made for a FILE in the item
 export async function start(ctx) {
   const [items, files, space] = await Promise.all(["items", "files", "space"].map(n => ctx.require(n)));
   const KIND = "subtitle";
@@ -50,12 +52,6 @@ export async function start(ctx) {
     if (!m) return null;
     return JSON.parse(await (await files.get(m)).text()).vid ?? null;
   }
-  // When a video was MADE (its manifest's `at`; none for one from before).
-  async function madeOf(mediaRef) {
-    const item = await items.get(mediaRef).catch(() => null);
-    const m = item?.files?.find(f => f.type === "application/vnd.craftworks.video+json");
-    return m ? (JSON.parse(await (await files.get(m)).text()).at ?? null) : null;
-  }
   // WHERE a track is kept, and whether it is public there: with the video — as the video is; in a space — as that
   // space's subtitles are; this person's own — public, unless it is about a private item of theirs.
   async function keep(mediaRef, place) {
@@ -71,47 +67,51 @@ export async function start(ctx) {
   // `in` as a full reference (on a board an item names what it is about by id alone).
   const shape = x => ({ ref: x.ref, in: x.board && x.in && !x.in.startsWith("space:") ? `space:${x.board.id}/${x.in}` : x.in, for: x.meta?.for ?? null, lang: x.meta?.lang ?? "", label: x.meta?.label ?? x.body ?? "", by: x.by, at: x.at, edited: x.edited, file: x.files?.[0] ?? null, mayRemove: !!x.mayRemove, board: x.board, place: x.board ?? null });
 
-  // A video's TRACKS: those made with it, and those anywhere this person can READ made for its id.
-  async function of(mediaRef, { outside = null } = {}) {
-    const vid = await videoId(mediaRef);
-    const withIt = (await items.attached(mediaRef, KIND, { outside })).map(shape);
-    // ELSEWHERE: the places a track can be kept and this person reads — their spaces that use Subtitles, their own
-    // profile and those they follow — each read whole (a few chosen places, never every board).
+  // TRACKS for a media FILE of an ITEM — the one lookup (a Videos or Audio item's own video, a video written inline in a
+  // post): those attached to the item made for it (for the item's own main video, those from before ids too), and
+  // those anywhere this person can READ made for its video id — the places a track can be kept: their spaces that use
+  // Subtitles, their profile and those they follow — each read from when the video was made, never whole.
+  const mainOf = item => item?.files?.find(f => f.type === "application/vnd.craftworks.video+json") ?? null;
+  async function tracksFor(itemRef, file = undefined, { outside = null } = {}) {
+    const item = await items.get(itemRef, outside ? { outside } : {}).catch(() => null);
+    const main = mainOf(item);
+    file = file === undefined ? main : file;
+    const idOf = f => f?.id ?? f?.root ?? null;
+    const isMain = !!file && !!main && idOf(file) === idOf(main);
+    const m = await manifestOf(file).catch(() => null);
+    const vid = m?.vid ?? (isMain ? item?.meta?.vid ?? null : null);
+    const withIt = (await items.attached(itemRef, KIND, { outside }).catch(() => [])).map(shape).filter(t => (t.for ? t.for === vid : isMain));
     let elsewhere = [];
-    if (!outside) {
+    if (!outside && vid) {
       const roles = await ctx.require("roles");
       const teams = [];
       for (const s of (await space.mine()).filter(x => x.kind === "server")) if ((await roles.of(s).catch(() => null))?.apps().includes("subtitles")) teams.push(s);
       const me = (await space.account()).id;
-      // Only what was made after the VIDEO was (every track is): the earlier of this item's time and its manifest's.
-      const own = mediaRef.slice(mediaRef.lastIndexOf("/") + 1);
+      const own = itemRef.slice(itemRef.lastIndexOf("/") + 1);
       const itemAt = /^t([0-9a-z]{9})/.test(own) ? parseInt(own.slice(1, 10), 36) : null;
-      const madeAt = await madeOf(mediaRef);
-      const from = itemAt == null ? null : Math.min(itemAt, madeAt ?? itemAt);
+      const from = itemAt == null ? (m?.at ?? null) : Math.min(itemAt, m?.at ?? itemAt);
       const after = from == null ? null : `t${Math.floor(from).toString(36).padStart(9, "0")}`;
-      elsewhere = (await items.inPlaces({ spaces: teams, people: [me, ...(await items.following())] }, KIND, { after }).catch(() => [])).map(shape).filter(t => (vid && t.for === vid) || t.in === mediaRef);
+      elsewhere = (await items.inPlaces({ spaces: teams, people: [me, ...(await items.following())] }, KIND, { after }).catch(() => [])).map(shape).filter(t => t.for === vid || t.in === itemRef);
     }
     const seen = new Set();
     return [...withIt, ...elsewhere].filter(t => !seen.has(t.ref) && seen.add(t.ref)).sort((a, b) => a.at - b.at);
   }
-  // A FILE's tracks (a video or an audio written inline in a post): found by its video id — its manifest's `vid` —
-  // in the places this person reads (as `of` finds tracks made elsewhere), made after the file was; an audio with none
-  // shows the lyrics its tags carried. `[{ label, lang, text }]` (WebVTT).
-  async function forFile(ref) {
-    if (ref?.type !== "application/vnd.craftworks.video+json") return [];
-    const m = JSON.parse(await (await files.get(ref)).text());
+  // An item's own video's tracks (`tracksFor` with its main file).
+  const of = (mediaRef, { outside = null } = {}) => tracksFor(mediaRef, undefined, { outside });
+
+  // A MEDIA FILE inside an item (a video or an audio written inline in a post): its manifest (its video id, when it
+  // was made, its tags), or null for a file that is not one.
+  const manifestOf = async ref => (ref?.type === "application/vnd.craftworks.video+json" ? JSON.parse(await (await files.get(ref)).text()) : null);
+  // A FILE's tracks inside an item (`tracksFor`).
+  const ofFile = (item, ref, { outside = null } = {}) => tracksFor(item, ref, { outside });
+  // For its PLAYER: `[{ label, lang, text }]` (WebVTT); an audio with none shows the lyrics its tags carried.
+  async function forFile(ref, { item = null } = {}) {
+    const m = await manifestOf(ref).catch(() => null);
+    if (!m) return [];
     const out = [];
-    if (m.vid) {
-      const roles = await ctx.require("roles");
-      const teams = [];
-      for (const s of (await space.mine()).filter(x => x.kind === "server")) if ((await roles.of(s).catch(() => null))?.apps().includes("subtitles")) teams.push(s);
-      const me = (await space.account()).id;
-      const after = m.at ? `t${Math.floor(m.at).toString(36).padStart(9, "0")}` : null;
-      const found = (await items.inPlaces({ spaces: teams, people: [me, ...(await items.following())] }, KIND, { after }).catch(() => [])).map(shape).filter(t => t.for === m.vid);
-      for (const t of found) {
-        const text = await (async () => toVtt(await (await files.get(t.file)).text()))().catch(() => null);
-        if (text) out.push({ label: t.label || t.lang, lang: t.lang, text });
-      }
+    for (const t of await ofFile(item, ref).catch(() => [])) {
+      const text = await (async () => toVtt(await (await files.get(t.file)).text()))().catch(() => null);
+      if (text) out.push({ label: t.label || t.lang, lang: t.lang, text });
     }
     if (!out.length && m.tags?.lyrics) out.push({ label: "Lyrics", lang: "", text: `WEBVTT\n\n00:00:00.000 --> ${new Date(Math.max(1, m.duration || 3600) * 1000).toISOString().slice(11, 23)}\n${String(m.tags.lyrics).trim()}\n` });
     return out;
@@ -120,12 +120,14 @@ export async function start(ctx) {
     // Never inline: a long film's cues outgrow a row.
     return files.put(new File([vtt], name, { type: "text/vtt" }), { space: where.sp, public: where.pub, app: "subtitles", inline: false });
   }
-  async function add(mediaRef, source, { lang = "", label = "", place = undefined } = {}) {
+  // `file`: a media file inside the item (inline in a post) — the track is made for IT (its video id), attached to
+  // the item.
+  async function add(mediaRef, source, { lang = "", label = "", place = undefined, file = null } = {}) {
     const text = typeof source === "string" ? source : await source.text();
     const name = typeof source === "string" ? "subtitles.vtt" : source.name.replace(/\.\w+$/, ".vtt");
     lang = (lang || (typeof source === "string" ? "" : (source.name.match(/\.([a-z]{2,3})\.\w+$/i)?.[1] ?? ""))).toLowerCase().slice(0, 8);
     label = (label || (typeof source === "string" ? lang || "Subtitles" : source.name.replace(/\.\w+$/, ""))).slice(0, 60);
-    const vid = await videoId(mediaRef);
+    const vid = file ? (await manifestOf(file))?.vid ?? null : await videoId(mediaRef);
     const where = await keep(mediaRef, place);
     const ref = await store(where, toVtt(text), name);
     return items.attach(mediaRef, KIND, label, { meta: { lang, label, ...(vid ? { for: vid } : {}) }, files: [ref], ...(place !== undefined ? { place } : {}) });
@@ -146,5 +148,5 @@ export async function start(ctx) {
     const me = (await space.account()).id;
     return (await items.list({ by: me }, sort, KIND, options)).map(shape);
   }
-  return { of, forFile, add, update, remove, text, toSrt, toVtt, mine, videoId, KIND };
+  return { of, ofFile, forFile, add, update, remove, text, toSrt, toVtt, mine, videoId, KIND };
 }

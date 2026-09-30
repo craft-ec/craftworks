@@ -171,7 +171,7 @@ export async function mount(ctx, el) {
   // In a LIST: a plain preview and the files' thumbnails (a list never plays anything).
   const bodyOf = (it, full = true) =>
     full
-      ? h("div", { className: "text" }, it.body ? markdown.render(it.body, it.files) : null, attachments.show((it.files ?? []).filter(f => !markdown.inlined(it.body).has(markdown.keyOf(f)))))
+      ? h("div", { className: "text" }, it.body ? markdown.render(it.body, it.files, { item: it.ref }) : null, attachments.show((it.files ?? []).filter(f => !markdown.inlined(it.body).has(markdown.keyOf(f)))))
       : h("div", { className: "text" }, it.body ? h("p", { className: "preview", textContent: markdown.plain(it.body) }) : null, attachments.show(it.files));
   // WHERE an item's files are kept: its board's space (public while the board reads in public), or the profile
   // (public unless the post is only its author's).

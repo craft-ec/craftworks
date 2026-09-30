@@ -61,11 +61,17 @@ export async function start(ctx) {
   }
 
   let running = false;
+  let said = false;
   async function tick() {
     if (running || !(await space.account())) return;
     running = true;
     try {
-      const d = await due();
+      // Its records unreadable here (no grant for them on this site yet, say): said once, and tried next time.
+      const d = await due().catch(e => {
+        if (!said) ctx.log("keep", { what: `not keeping yet: ${e?.message ?? e}` });
+        said = true;
+        return { tables: [], files: [] };
+      });
       if (d.tables[0]) await keepOne(d.tables[0]).catch(e => ctx.log("keep", { what: `${d.tables[0].app}: ${e?.message ?? e}` }));
       else if (d.files[0]) await keepFile(d.files[0]);
     } finally {
