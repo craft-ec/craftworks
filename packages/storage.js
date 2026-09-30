@@ -657,6 +657,11 @@ export async function start(ctx) {
         page,
         // What each writer's feed is here (to see why a table reads as it does).
         feedsNow: () => all.map(f => ({ owner: f.owner.slice(0, 12), absent: !!f.absent, lazy: !!f.lazy, info: f.info ?? null })),
+        // THIS WRITER's own feed read whole (a lazy table: what it copies or checks of its own), the others as paged.
+        ownWhole: async () => {
+          await me.whole?.();
+          remerge();
+        },
         // A LAZY table wanted whole: every feed read whole, merged again.
         whole: async () => {
           t.lazy = false;

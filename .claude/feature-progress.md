@@ -845,5 +845,12 @@ Uses what freenet-prolly already has (rev 17d67d8: `range`/`range_with` + `front
       finds) — whole() now leaves an absent tail absent.
 - [x] R3d CHANGE-ONLY: already so — blocks are content-addressed and cached per open tail, so a new root reuses
       every held block and only changed nodes are fetched; a lazy table's readers re-page what they hold.
+- [x] R3e LISTS BY TIME WINDOW (owner: "top … bound by time: today, week, month"; "refer to how grid implemented
+      this"): Grid's feeds — New (date, a month at a time, auto-older on scroll), Hot (ups+downs+comments), Best
+      (net+comments), Rising (interactions per hour of age), Top (net votes or comments) over Today/This week/This
+      month, COUNTS windowed too, plus a client SORT (time/votes/comments ▲▼). A window = a key range (ids sort by time).
+      Laziness kept: lists default bounded; the subtitle lookup reads only spaces using Subtitles + profiles; public
+      copies sync reads only this writer's own feed whole. 17573: all 4 boards stay lazy after Board + Videos; a vote
+      now tops "Top today".
 - Verified 17573: a 150-message channel opens with the newest 50 (lazy: no whole read), pages back to all 150 in
   order, "Load earlier" in Chat, a new message live; Board and Videos unaffected; 0 errors.

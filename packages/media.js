@@ -24,6 +24,7 @@ export async function mount(ctx, el) {
   const C = APPS[C_ROUTE];
   const VIDEO = kinds.inDomain(C.domain);
   let only = null; // a SUB-TYPE the list is filtered to (null: all)
+  let months = 1; // how far back the list reads (a month at a time: never everything)
   const me = (await space.account()).id;
   el.innerHTML = `
     <style>
@@ -163,10 +164,11 @@ export async function mount(ctx, el) {
           const ref = k.slice(7);
           return items.get(ref, { outside: await outsideOf(ref) }).catch(() => null);
         }))).filter(Boolean)
-      : await items.list(w, "new", VIDEO);
+      : await items.list(w, "new", VIDEO, { window: 30 * months });
     const shown = only ? vs.filter(v => v.kind === only) : vs;
     const none = w.saved ? `Nothing saved: “Save” on a ${C.one} keeps it here.` : w.feed ? `No ${C.ones} yet from you or what you follow.` : w.discover ? `No public ${C.ones} yet.` : w.by === me ? `Nothing here yet: upload a ${C.one}.` : `No ${C.ones} here yet.`;
-    return shown.length ? h("div", { className: `grid${C.audio ? " sq" : ""}` }, ...shown.map(card)) : h("p", { className: "none", textContent: none });
+    const older = w.saved ? null : h("div", { style: "text-align:center" }, h("button", { type: "button", textContent: "Older", onclick: () => ((months += 1), draw()) }));
+    return shown.length ? h("div", {}, h("div", { className: `grid${C.audio ? " sq" : ""}` }, ...shown.map(card)), older) : h("div", {}, h("p", { className: "none", textContent: none }), older);
   }
 
   async function watch(ref) {

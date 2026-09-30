@@ -17,7 +17,8 @@
 //   const items = await ctx.require("items");   (Board names it `posts`: its lens)
 //   await posts.submit({ board, title, body, kind })  // `board`: a space's id, or none (this person's profile): its ref
 //                                                     // (`kind`: "post", or "video")
-//   await posts.list({ board } | { by } | { feed }, sort, kind)   // (`kind`: a kind, or kinds — a domain's)
+//   await items.list({ board } | { by } | { feed }, sort, kind, { window })   // (`kind`: a kind, or kinds — a domain's;
+//                                                     // `window`: "day" | "week" | "month" | days | "all" — what is read)
 //                                                     // a space's board, a profile, or the FEED (the PERSONAL
 //                                                     // view: the boards of every space this person is in, their own
 //                                                     // profile, those they follow and their friends'); sort "hot" | "new" | "top"
@@ -118,7 +119,8 @@ export async function start(ctx) {
   // (A space's PLACE: its board room — the same for every kind.)
   const boardRoom = sp =>
     opened(`space:${sp.id}`, async () => {
-      const [a, b, r] = await Promise.all([content.in(space.board(sp)), content.in(space.board(sp, { pub: true })), roles.of(sp)]);
+      // PAGED (phase 3): what a list shows is read by its TIME WINDOW; a thread opened reads the place whole.
+      const [a, b, r] = await Promise.all([content.in(space.board(sp), { paged: true }), content.in(space.board(sp, { pub: true }), { paged: true }), roles.of(sp)]);
       // PUBLIC is per item, by its own APP's setting now (a video: Videos'; a post: Board's) — what attaches to an item
       // (a comment, a vote, a subtitle) as that item is. Not bound to Board: a space's place holds every kind.
       const readsAnyone = domain => domainReads(r, domain);
@@ -147,6 +149,8 @@ export async function start(ctx) {
       const sync = () =>
         (syncing ??= (async () => {
           await Promise.all([a.settled, b.settled]);
+          // This person's own rows, whole, in both tables (the others' stay paged).
+          await Promise.all([a.ownAll?.(), b.ownAll?.()]);
           const inA = new Map(a.own().map(x => [x.key, x.value]));
           const inB = new Map(b.own().map(x => [x.key, x.value]));
           for (const [k, v] of inB) if (!inA.has(k)) (await a.putOwn(k, v), inA.set(k, v));
@@ -169,6 +173,8 @@ export async function start(ctx) {
         reactions: () => dedupe([...a.reactions(), ...b.reactions()], x => `${x.item}|${x.emoji}|${x.by}`),
         mayRemove: it => a.mayRemove(it),
         mayPost: () => a.mayPost(),
+        since: ms => Promise.all([a.since?.(ms), b.since?.(ms)]),
+        loadAll: () => Promise.all([a.loadAll?.(), b.loadAll?.()]),
         onChange: f => (a.onChange(f), b.onChange(f)),
         settled: Promise.all([a.settled, b.settled]),
         sync,
@@ -223,9 +229,11 @@ export async function start(ctx) {
   const whereOf = ref => ref.slice(0, ref.lastIndexOf("/"));
 
   // VOTES: ref → (did → 1 | -1), from reactions (both at once — a change half-made — counts as neither).
-  function tally(reactions, votes = new Map()) {
+  // VOTES counted — within a WINDOW when one is given (`since`, ms: a list's counts match its window, as Grid's did).
+  function tally(reactions, votes = new Map(), since = 0) {
     for (const x of reactions) {
       if (x.emoji !== UP && x.emoji !== DOWN) continue;
+      if (since && (x.at ?? Infinity) < since) continue;
       const on = votes.get(x.item) ?? new Map();
       on.set(x.by, on.has(x.by) ? 0 : x.emoji === UP ? 1 : -1);
       votes.set(x.item, on);
@@ -234,7 +242,8 @@ export async function start(ctx) {
   }
   const scored = (key, votes, self) => {
     const on = votes.get(key);
-    return { score: on ? [...on.values()].reduce((n, v) => n + v, 0) : 0, mine: on?.get(self) ?? 0 };
+    const vs = on ? [...on.values()] : [];
+    return { score: vs.reduce((n, v) => n + v, 0), ups: vs.filter(v => v > 0).length, downs: vs.filter(v => v < 0).length, mine: on?.get(self) ?? 0 };
   };
   const postOf = c => c.in ?? c.re; // a comment's post (an old one answering its post directly has no `in`)
   const shape = (it, ref, board) => {
@@ -243,27 +252,36 @@ export async function start(ctx) {
   };
 
   // A BOARD's posts: everything is in its one room (reactions keyed by the item's id).
-  async function boardPosts(sp, { outside = false, kinds = ["post"] } = {}) {
+  // WINDOWS a list is bounded by (phase 3: Top of today, of the week, of the month; Hot the week; New the month and
+  // older on asking): what is read is that span of the place, never all of it. `all`: the place read whole.
+  const WINDOW = { day: 86400e3, week: 7 * 86400e3, month: 30 * 86400e3 };
+  const sinceOf = w => (w === "all" || w == null ? null : Date.now() - (typeof w === "number" ? w * 86400e3 : (WINDOW[w] ?? WINDOW.month)));
+  async function boardPosts(sp, { outside = false, kinds = ["post"], window = "all" } = {}) {
     const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
+    const since = sinceOf(window) ?? 0;
+    if (!outside) {
+      if (!since) await r.loadAll?.();
+      else await r.since?.(since);
+    }
     const self = await me();
     const items = r.list();
-    const votes = tally(r.reactions());
+    const votes = tally(r.reactions(), new Map(), since);
     const counts = new Map();
-    for (const it of items) if (it.kind === "comment") counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
+    for (const it of items) if (it.kind === "comment" && it.at >= since) counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
     return items
       .filter(it => kinds.includes(it.kind))
       .map(it => ({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), pub: it.pub, comments: counts.get(it.id) ?? 0, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it) }));
   }
   // PROFILE posts: from their authors' tails; comments and votes from the tails known here (the reader's, whom they
   // follow, and whoever `readers` names).
-  async function profilePosts(authors, readers = [], kinds = ["post"]) {
+  async function profilePosts(authors, readers = [], kinds = ["post"], since = 0) {
     const self = await me();
     const rs = await profiles([...authors, self, ...(await following()), ...readers]);
     const votes = new Map();
     const counts = new Map();
     for (const r of rs) {
-      tally(r.reactions(), votes);
-      for (const it of r.list()) if (it.kind === "comment") counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
+      tally(r.reactions(), votes, since);
+      for (const it of r.list()) if (it.kind === "comment" && it.at >= since) counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
     }
     const out = [];
     for (const r of await profiles(authors))
@@ -275,8 +293,17 @@ export async function start(ctx) {
     return out;
   }
 
-  const hot = p => Math.sign(p.score) * Math.log10(Math.max(Math.abs(p.score), 1)) + p.at / 45000000; // Reddit's
-  const SORTS = { hot: (a, b) => hot(b) - hot(a), new: (a, b) => b.at - a.at, top: (a, b) => b.score - a.score || b.at - a.at };
+  // THE RANKS (Grid's), each over its window's counts: HOT — activity (every vote, up or down, and comments); BEST —
+  // quality (net votes and comments); RISING — interactions per hour of age; TOP — net votes (or, `by: "comments"`,
+  // comments); NEW — newest. Ties go to the newer.
+  const RANK = {
+    hot: p => (p.ups ?? 0) + (p.downs ?? 0) + (p.comments ?? 0),
+    best: p => (p.score ?? 0) + (p.comments ?? 0),
+    rising: p => ((p.ups ?? 0) + (p.downs ?? 0) + (p.comments ?? 0)) / Math.max(1, (Date.now() - p.at) / 3600e3),
+    top: p => p.score ?? 0,
+    comments: p => p.comments ?? 0,
+  };
+  const sorter = (sort, by) => (sort === "new" ? (a, b) => b.at - a.at : (a, b) => RANK[sort === "top" && by === "comments" ? "comments" : sort in RANK ? sort : "hot"](b) - RANK[sort === "top" && by === "comments" ? "comments" : sort in RANK ? sort : "hot"](a) || b.at - a.at);
 
   // DISCOVER: the public spaces listed (their descriptions), each proved by its id (its owner), one per id.
   async function publicSpaces() {
@@ -291,8 +318,10 @@ export async function start(ctx) {
     return [...seen.values()];
   }
 
-  async function list(where = {}, sort = "hot", kind = "post") {
+  // WINDOW, bounded unless asked for "all": New the last 30 days (older on asking), a rank the last week.
+  async function list(where = {}, sort = "hot", kind = "post", { window = sort === "new" ? 30 : "week", by = "votes" } = {}) {
     const kinds = kindsFor(kind);
+    const inWindow = (at, w = window) => sinceOf(w) == null || at >= sinceOf(w);
     let out;
     // A space's PUBLIC board, seen from outside (`where.outside`: its description); DISCOVER: every public space's.
     if (where.outside) out = await boardPosts(where.outside, { outside: true, kinds });
@@ -302,7 +331,7 @@ export async function start(ctx) {
       const people = await (await ctx.require("directory")).listed().catch(() => []);
       const [spacesPosts, profile] = await Promise.all([
         Promise.all((await publicSpaces()).map(d => boardPosts(d, { outside: true, kinds }).catch(() => []))).then(x => x.flat()),
-        profilePosts(people, [], kinds).catch(() => []),
+        profilePosts(people, [], kinds, sinceOf(window) ?? 0).catch(() => []),
       ]);
       out = [...spacesPosts, ...profile];
     }
@@ -314,15 +343,15 @@ export async function start(ctx) {
     else if (where.board) {
       const sp = await boardOf(where.board);
       if (!sp) throw new Error("you are not in that board's space: join it with an invite");
-      out = await boardPosts(sp, { kinds });
+      out = await boardPosts(sp, { kinds, window });
     } else if (where.feed) {
       // The FEED: every space followed or joined — the spaces this person is in, the people they follow (their
       // personal spaces) and the shared spaces they follow (read from outside).
       const [bs, people, fs] = await Promise.all([boards(), following(), followedSpaces()]);
       out = [
-        ...(await Promise.all(bs.map(sp => boardPosts(sp, { kinds }).catch(() => [])))).flat(),
+        ...(await Promise.all(bs.map(sp => boardPosts(sp, { kinds, window }).catch(() => [])))).flat(),
         ...(await Promise.all(fs.map(d => boardPosts(d, { outside: true, kinds }).catch(() => [])))).flat(),
-        ...(await profilePosts([await me(), ...people], [], kinds)),
+        ...(await profilePosts([await me(), ...people], [], kinds, sinceOf(window) ?? 0)),
       ];
     } else {
       // A PERSON's posts (Reddit's profile): their profile's, and theirs on every board this reader can read — the
@@ -332,16 +361,16 @@ export async function start(ctx) {
       const inside = new Set(bs.map(sp => sp.id));
       const onBoards = (
         await Promise.all([
-          ...bs.map(sp => boardPosts(sp, { kinds }).catch(() => [])),
+          ...bs.map(sp => boardPosts(sp, { kinds, window }).catch(() => [])),
           ...pub.filter(d => !inside.has(d.id)).map(d => boardPosts(d, { outside: true, kinds }).catch(() => [])),
         ])
       )
         .flat()
         .filter(p => p.by === by);
       const seen = new Set();
-      out = [...(await profilePosts([by], [], kinds)), ...onBoards].filter(p => !seen.has(p.ref) && seen.add(p.ref));
+      out = [...(await profilePosts([by], [], kinds, sinceOf(window) ?? 0)), ...onBoards].filter(p => !seen.has(p.ref) && seen.add(p.ref));
     }
-    return out.sort(SORTS[sort] ?? SORTS.hot);
+    return out.filter(p => inWindow(p.at)).sort(sorter(sort, by));
   }
 
   async function get(ref, { outside = null } = {}) {
@@ -381,6 +410,8 @@ export async function start(ctx) {
       const sp = outside ?? (await boardOf(ref));
       if (!sp) return [];
       const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
+      // A thread's comments may be from any time: its place read whole.
+      if (!outside) await r.loadAll?.();
       const votes = tally(r.reactions());
       const post = idOf(ref);
       for (const it of r.list())
@@ -514,5 +545,12 @@ export async function start(ctx) {
     return (await profileRoom(await me())).setFiles(idOf(ref), files);
   }
 
-  return { submit, list, get, setFiles, attach, attached, editItem, publicIn, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
+  // Items of a KIND in exactly these places, read whole (few, chosen places: a subtitle's lookup), never every board.
+  async function inPlaces({ spaces = [], people: dids = [] }, kind) {
+    const ks = kindsFor(kind);
+    const [a, b] = await Promise.all([Promise.all(spaces.map(sp => boardPosts(sp, { kinds: ks, window: "all" }).catch(() => []))), profilePosts(dids, [], ks).catch(() => [])]);
+    return [...a.flat(), ...b];
+  }
+
+  return { submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
 }

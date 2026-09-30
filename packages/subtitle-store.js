@@ -68,7 +68,16 @@ export async function start(ctx) {
   async function of(mediaRef, { outside = null } = {}) {
     const vid = await videoId(mediaRef);
     const withIt = (await items.attached(mediaRef, KIND, { outside })).map(shape);
-    const elsewhere = outside ? [] : (await items.list({ feed: true }, "new", KIND).catch(() => [])).map(shape).filter(t => (vid && t.for === vid) || t.in === mediaRef);
+    // ELSEWHERE: the places a track can be kept and this person reads — their spaces that use Subtitles, their own
+    // profile and those they follow — each read whole (a few chosen places, never every board).
+    let elsewhere = [];
+    if (!outside) {
+      const roles = await ctx.require("roles");
+      const teams = [];
+      for (const s of (await space.mine()).filter(x => x.kind === "server")) if ((await roles.of(s).catch(() => null))?.apps().includes("subtitles")) teams.push(s);
+      const me = (await space.account()).id;
+      elsewhere = (await items.inPlaces({ spaces: teams, people: [me, ...(await items.following())] }, KIND).catch(() => [])).map(shape).filter(t => (vid && t.for === vid) || t.in === mediaRef);
+    }
     const seen = new Set();
     return [...withIt, ...elsewhere].filter(t => !seen.has(t.ref) && seen.add(t.ref)).sort((a, b) => a.at - b.at);
   }

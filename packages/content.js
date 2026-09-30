@@ -146,6 +146,26 @@ export async function start(ctx) {
       changed.forEach(f => f());
       return got.length;
     }
+    // A TIME WINDOW read (paged): every item made since `ms` (its key range: ids sort by time), and their reactions.
+    const timeKey = ms => `t${Math.max(0, Math.floor(ms)).toString(36).padStart(9, "0")}`;
+    let since_ = Infinity;
+    async function since(ms) {
+      if (!paged || ms >= since_) return;
+      const p = await t.page({ lo: timeKey(ms), hi: since_ === Infinity ? "" : timeKey(since_), limit: 100000 });
+      for (const row of await withReactions(p.rows)) loaded.set(row.key, row);
+      since_ = ms;
+      if (!oldest || timeKey(ms) < oldest) oldest = timeKey(ms);
+      changed.forEach(f => f());
+    }
+    // EVERYTHING (a thread opened: its comments may be anywhere): the table read whole from now on.
+    async function loadAll() {
+      if (!paged) return;
+      await t.whole?.();
+      paged = false;
+      more = false;
+    }
+    // THIS PERSON's own rows, whole (their copies to keep in step), the rest as paged.
+    const ownAll = async () => (paged ? t.ownWhole?.() : undefined);
     // CHANGED (a new row, a flush moving rows into the tree): what is held read again, from the newest to the oldest held.
     let refreshing = null;
     const refresh = () =>
@@ -166,7 +186,7 @@ export async function start(ctx) {
         // A post or message by someone the app's setting did not allow when it was made: not counted.
         .filter(it => !(governed && app && ACTION[it.kind] && !r.allows(ACTION[it.kind], it.by, app, it.at)));
     };
-    const reactionsOf = all => all.filter(x => x.kind === "reaction" && x.item && x.emoji && x.by).map(({ item, emoji, by }) => ({ item, emoji, by }));
+    const reactionsOf = all => all.filter(x => x.kind === "reaction" && x.item && x.emoji && x.by).map(({ item, emoji, by, at }) => ({ item, emoji, by, at }));
     const list = () => {
       const all = every();
       // Reactions gathered onto the items they react to.
@@ -198,6 +218,9 @@ export async function start(ctx) {
       list,
       // PAGED: the next older page (how many items it brought); whether any are left.
       older,
+      since,
+      loadAll,
+      ownAll,
       hasMore: () => paged && more,
       paged,
       reactions: () => reactionsOf(every()),

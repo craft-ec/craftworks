@@ -2,7 +2,10 @@
 // (`#/s/<space>/board`): its own posts only — its members post, its roles and moderation apply. In the PERSONAL space
 // (`#/board`): your own posts, your profile (public: what your followers read); another person's profile is
 // `#/board/u/<did>`; and the FEED (`#/board/feed`: the personal view gathers — the boards of every space you are in,
-// and the profiles you follow). A POST with its comment tree: `…/board/p/<ref>`; CREATE: `…/board/submit`. Sorted Hot, New or Top.
+// and the profiles you follow). A POST with its comment tree: `…/board/p/<ref>`; CREATE: `…/board/submit`. As Grid's:
+// a FEED — New (by date, a month at a time, older as the end is scrolled to), Hot, Best, Rising or Top (votes or
+// comments) over TODAY, THIS WEEK or THIS MONTH, their counts over the same window — and a SORT reordering what is
+// shown. What is read is that window of the board, never all of it.
 // UI only: posts are `posts`', names `directory`'s, and a name opens the one `person` menu (follow; in a space, its
 // role and removal). The space itself (its members, settings, invites) is its Home's.
 export async function mount(ctx, el) {
@@ -14,6 +17,15 @@ export async function mount(ctx, el) {
   const [posts, directory, person, theme, space, roles, appSettings, attachments] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "app-settings", "attachments"].map(n => ctx.require(n)));
   const me = (await space.account()).id;
   let sort = "hot";
+  // TIME WINDOWS (what is read, never the whole board): Top of today, the week or the month; Hot the week; New the
+  // month, reaching back a month at a time.
+  let topWindow = "week";
+  let newMonths = 1;
+  // As Grid's: the FEED picks the set (New by date; Hot, Best, Rising, Top ranked over a WINDOW, their counts too),
+  // TOP by votes or by comments, and a SORT that only reorders what is shown (by time, votes or comments, ▲▼).
+  let topBy = "votes";
+  let reorder = "ranked";
+  let dirDesc = true;
   // The route: what is shown.
   // Where Board is: the space open (`ctx.space`), or the personal space.
   const discovering = () => ctx.space === "discover";
@@ -68,7 +80,9 @@ export async function mount(ctx, el) {
       .bd .ghost { border: 1px solid var(--cw-accent); border-radius: var(--cw-radius-pill); padding: 6px var(--cw-space-4); background: none; color: var(--cw-accent); font-weight: 600; text-align: center; }
       .bd .banner { display: flex; align-items: center; gap: var(--cw-space-3); padding: var(--cw-space-3); }
       .bd .banner h2 { margin: 0; font-size: 1.4rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .bd .sorts { display: flex; gap: var(--cw-space-1); padding: var(--cw-space-2); }
+      .bd .sorts { display: flex; gap: var(--cw-space-2); padding: var(--cw-space-2); align-items: center; flex-wrap: wrap; }
+      .bd .sorts .lbl { color: var(--cw-muted); font-size: var(--cw-text-sm); }
+      .bd .sorts select { font: inherit; padding: 3px 6px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); }
       .bd .sorts button { border: 0; background: none; color: var(--cw-muted); border-radius: var(--cw-radius-pill); padding: 4px var(--cw-space-3); font-weight: 600; }
       .bd .sorts button:hover { background: var(--cw-hover); }
       .bd .sorts button[aria-pressed="true"] { background: var(--cw-pressed); color: var(--cw-fg); }
@@ -364,21 +378,37 @@ export async function mount(ctx, el) {
     ];
   }
 
+  const pick = (options, value, set) => h("select", { onchange: e => (set(e.target.value), draw()) }, ...options.map(([v, t]) => h("option", { value: v, textContent: t, selected: v === value })));
   const sortBar = () =>
     h(
       "div",
       { className: "panel sorts" },
-      ...[["hot", "🔥 Hot"], ["new", "✨ New"], ["top", "📈 Top"]].map(([k, label]) =>
-        h("button", { type: "button", textContent: label, ariaPressed: String(sort === k), onclick: () => ((sort = k), draw()) }),
-      ),
+      h("span", { className: "lbl", textContent: "feed" }),
+      pick([["new", "✨ New"], ["hot", "🔥 Hot"], ["best", "👍 Best"], ["rising", "📈 Rising"], ["top", "🏆 Top"]], sort, v => ((sort = v), (newMonths = 1))),
+      sort === "new" ? null : pick([["day", "Today"], ["week", "This week"], ["month", "This month"]], topWindow, v => (topWindow = v)),
+      sort === "top" ? pick([["votes", "Top votes"], ["comments", "Top comments"]], topBy, v => (topBy = v)) : null,
+      h("span", { className: "lbl", textContent: "sort" }),
+      pick([["ranked", "Default"], ["time", "Time"], ["votes", "Votes"], ["comments", "Comments"]], reorder, v => (reorder = v)),
+      reorder === "ranked" ? null : h("button", { type: "button", title: "Direction", textContent: dirDesc ? "▼" : "▲", onclick: () => ((dirDesc = !dirDesc), draw()) }),
     );
+  // THE SORT: the shown set reordered (its feed's order when Default).
+  const reordered = list => {
+    if (reorder === "ranked") return list;
+    const key = { time: p => p.at, votes: p => p.score ?? 0, comments: p => p.comments ?? 0 }[reorder];
+    return [...list].sort((a, b) => (dirDesc ? key(b) - key(a) : key(a) - key(b)) || b.at - a.at);
+  };
 
   async function listPage(w) {
     const outside = w.pub ? await descOf(w.pub) : null;
-    const list = await posts.list(w.discover ? { discover: true } : outside ? { outside } : w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, sort);
+    const window = sort === "new" ? 30 * newMonths : topWindow;
+    // NEW reaches back a month at a time — on its own as the end is scrolled to; the words for an empty window.
+    const older = sort === "new" ? h("button", { type: "button", className: "ghost older", textContent: "Older posts", onclick: () => ((newMonths += 1), draw()) }) : null;
+    if (older) new IntersectionObserver((es, io) => es.some(e => e.isIntersecting) && (io.disconnect(), older.click()), { rootMargin: "300px" }).observe(older);
+    const span = sort === "new" ? `in the last ${30 * newMonths} days` : { day: "today", week: "this week", month: "this month" }[topWindow];
+    const list = reordered(await posts.list(w.discover ? { discover: true } : outside ? { outside } : w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, sort, "post", { window, by: topBy }));
     if (w.discover || w.pub) {
       const head = h("div", { className: "panel banner" }, h("h2", { textContent: w.pub ? `b/${outside ? space.shown(outside) : "?"} · 🌐 public` : "🧭 Public boards" }));
-      return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: "No public posts yet." })])];
+      return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: `No public posts ${span}.` })]), older];
     }
     const sp = w.board ? await posts.boardOf(w.board) : null;
     const head = w.board
@@ -386,8 +416,8 @@ export async function mount(ctx, el) {
       : w.by
         ? h("div", { className: "panel banner" }, h("h2", {}, who(w.by)))
         : null;
-    const empty = w.board ? "No posts here yet. Be the first." : w.feed ? "Nothing yet: your spaces' boards, the people you follow and your friends post here." : w.by === me ? "You have not posted yet." : "No posts yet.";
-    return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: empty })])];
+    const empty = w.board ? `No posts ${span}.` : w.feed ? `Nothing ${span}: your spaces' boards, the people you follow and your friends post here.` : w.by === me ? `You have not posted ${span}.` : `No posts ${span}.`;
+    return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: empty })]), older];
   }
 
   // A public space's description (Discover): from the public list.
