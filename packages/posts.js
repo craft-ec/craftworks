@@ -138,6 +138,7 @@ export async function start(ctx) {
         },
         react: async (id, e, on) => (await Promise.all([a.settled, b.settled]), await sync(), await a.react(id, e, on), await sync()),
         edit: async (id, body) => (await sync(), await a.edit(id, body), await sync()),
+        setFiles: async (id, files) => (await sync(), await a.setFiles(id, files), await sync()),
         // Out of both tables (an author's own; a moderator's hide, in each table it is listed in).
         remove: async id => {
           for (const x of rooms) if (x.list().some(it => it.id === id)) await x.remove(id);
@@ -169,6 +170,7 @@ export async function start(ctx) {
         react: (item, e, on) => roomOf(idIn(item)).react(item, e, on),
         remove: id => roomOf(id).remove(id),
         edit: (id, body) => roomOf(id).edit(id, body),
+        setFiles: (id, files) => roomOf(id).setFiles(id, files),
       };
     });
   const profiles = async dids => (await Promise.all([...new Set(dids)].map(d => profileRoom(d).catch(() => null)))).filter(Boolean);
@@ -412,5 +414,15 @@ export async function start(ctx) {
     for (const sp of await boards().catch(() => [])) await (await boardRoom(sp)).sync().catch(e => ctx.log("posts", { what: `${sp.name}: public copies: ${e.message}` }));
   }
 
-  return { submit, list, get, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
+  // A post's FILES replaced by its author (a video whose renditions grew): its place's room.
+  async function setFiles(ref, files) {
+    if (ref.startsWith("space:")) {
+      const sp = await boardOf(ref);
+      if (!sp) throw new Error("you are not in that board's space");
+      return (await boardRoom(sp)).setFiles(idOf(ref), files);
+    }
+    return (await profileRoom(await me())).setFiles(idOf(ref), files);
+  }
+
+  return { submit, list, get, setFiles, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
 }

@@ -6,7 +6,9 @@
 //
 // A video made by `video-studio` is a MANIFEST: its renditions (fragmented MP4s, their fragments indexed by byte range
 // and time) played ADAPTIVELY — the codec family this browser plays smoothly (AV1, else H.264), the rendition switched
-// at fragment boundaries by the measured throughput, a seek going straight to the fragment holding that time.
+// at fragment boundaries by the measured throughput, a seek going straight to the fragment holding that time. The
+// family: the most efficient this browser plays SMOOTHLY (MediaCapabilities) — AV1, HEVC, else H.264 — whose ladder
+// reaches the screen.
 //
 //   const player = await ctx.require("video-player");
 //   await player.play(videoEl, ref, { onNote, onLevel })   // "adaptive" | "stream" | "whole"; videoEl in the document
@@ -178,8 +180,18 @@ export async function start(ctx) {
       for (const r of rs) if (await smooth(r)) ok.push(r);
       return ok;
     };
-    const rs = (await fam("av1")).length ? await fam("av1") : await fam("avc");
-    if (!rs.length) return false;
+    // THE FAMILY: the most efficient this browser plays smoothly (AV1, then HEVC, then H.264) whose ladder reaches what
+    // this screen shows (a family made only up to 1080p in software does not serve a 4K screen while another reaches it).
+    const screenH = Math.min(2160, Math.max(360, (screen?.height || 1080) * (devicePixelRatio || 1)));
+    const families = [];
+    for (const c of ["av1", "hevc", "avc"]) {
+      const f = await fam(c);
+      if (f.length) families.push(f);
+    }
+    if (!families.length) return false;
+    const reach = f => f.at(-1).height;
+    const need = Math.min(screenH, Math.max(...families.map(reach)));
+    const rs = families.find(f => reach(f) >= need) ?? families[0];
     const ms = new MediaSource();
     video.src = URL.createObjectURL(ms);
     await new Promise(r => ms.addEventListener("sourceopen", r, { once: true }));
@@ -218,7 +230,7 @@ export async function start(ctx) {
             if (initOf !== -1 && typeof sb.changeType === "function") sb.changeType(r.mime);
             await appended(await files.range(r.ref, 0, r.index.init));
             initOf = level;
-            onLevel?.(`${r.codec === "av1" ? "AV1" : "H.264"} ${r.height}p`);
+            onLevel?.(`${{ av1: "AV1", hevc: "HEVC", avc: "H.264" }[r.codec] ?? r.codec} ${r.height}p`);
           }
           const i = segAt(r, next);
           const seg = r.index.segments[i];

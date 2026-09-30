@@ -161,9 +161,15 @@ export async function start(ctx) {
         if (on) await t.put(key, JSON.stringify({ kind: "reaction", item: id, emoji, at: Date.now(), by: me }));
         else await t.remove(key);
       },
-      async edit(id, body) {
+      async edit(id, body, { files = null } = {}) {
         const it = mine(id);
-        await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: me, edited: Date.now(), ...(it.re ? { re: it.re } : {}), ...(it.title ? { title: it.title } : {}), ...(it.in ? { in: it.in } : {}), ...(it.files?.length ? { files: it.files } : {}) }));
+        const fs = files ?? it.files ?? [];
+        await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: me, edited: Date.now(), ...(it.re ? { re: it.re } : {}), ...(it.title ? { title: it.title } : {}), ...(it.in ? { in: it.in } : {}), ...(fs.length ? { files: fs } : {}), ...(it.meta && Object.keys(it.meta).length ? { meta: it.meta } : {}) }));
+      },
+      // Its FILES replaced (a video's manifest, once more renditions are made): the author's, the item otherwise as is.
+      async setFiles(id, files) {
+        const it = mine(id);
+        await this.edit(id, it.body, { files });
       },
       // THIS PERSON's ROWS as stored (items, reactions): to copy them into another table of the same place (a board's
       // public table: `posts`), and to put or drop one there by its key — only ever this person's own.

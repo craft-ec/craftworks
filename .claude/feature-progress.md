@@ -765,7 +765,16 @@ come with keepers as a new codec version.
       personal space; a shared space's id with its public description in the edge (`people.about`). The feed (Board's
       and Videos') reads every followed space; Follow beside Join on a public space; Contacts lists followed spaces.
       fx/fy: B (not a member) followed A's public space → its post in B's feed in 5 s.
-- [ ] F4 video: CMAF segments, renditions (AV1+Opus, H.264+AAC), remux (mp4box) or WebCodecs encode, MediaSource ABR,
+- [x] F4 VIDEO PIPELINE (owner 09-30: "full pipeline goes along", "encoding on the user node in the background with
+      progress", "h264+h265 both is not efficient", "4K"): video-studio (Mediabunny 1.61.0 MPL-2.0, WebCodecs) →
+      fragmented-MP4 renditions + manifest (fragment index, poster, scrub strip, subtitles); LEAN ladder = one
+      efficient hardware family (AV1 if hw else HEVC) to the source (4K) + H.264 720/360 net; fast post + background
+      pending (lease `encodes`, progress on the video, per-device capability); original released unless kept;
+      adaptive player (MediaCapabilities family by screen reach, throughput switching, fragment seeks). Measured M4
+      Max: VideoToolbox HW encoders = H.264/HEVC/ProRes/JPEG, NO AV1; Chrome 154: HEVC+AV1 4K decode smooth. 17573:
+      4K 10 s clip → posted 12 s, ladder done 32 s, 24.7 MB total (source 26 MB, released), plays HEVC 2160p.
+      Fixed on the way: a manifest inline in the item row overflowed it (now always coded, `inline: false`).
+- [ ] F4 video (old plan line): CMAF segments, renditions (AV1+Opus, H.264+AAC), remux (mp4box) or WebCodecs encode, MediaSource ABR,
       poster + scrub strip, subtitles.
 - [x] F5a DRIVE (owner 09-30: every uploaded file is in Drive; attach from Drive; choose any space's Drive):
       `drive-store` (a `drive` table per space, the account's included: rows = references + when, folder, from; every

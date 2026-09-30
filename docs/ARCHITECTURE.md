@@ -212,11 +212,20 @@ duration, at }`, the file's reference as `files` makes it). Playing: an MP4 by B
 it on the fly — the range read as the file's chunks (a seek reads only the chunks it lands in); any other container
 (or a browser without MediaSource) loads whole. What follows is where it goes once the basic works.
 
-**Video.** Stored as SEGMENTS (CMAF: fragmented MP4, 2–4 s each), each its own coded object, in RENDITIONS that each name
-their codec: AV1 + Opus first, H.264 + AAC for compatibility (a newer codec — AV2 when browsers decode it — is one more
-rendition). The upload remuxes in the browser when the codec already plays (mp4box), else encodes with WebCodecs
-(hardware) into a small bitrate ladder, with a poster and a scrub strip; playback is MediaSource with adaptive bitrate,
-seeking fetches one segment, subtitles as tracks. Previews: images and video carry a small thumbnail inline.
+**Video — the pipeline (built).** At upload, in the uploader's browser (no server encodes here): Mediabunny (WebCodecs)
+reads any common file and writes each RENDITION as a FRAGMENTED MP4 (CMAF: ~4 s fragments, a key frame every 2 s),
+one file each, its fragments indexed by byte range and time; a MANIFEST names them with a poster, a scrub strip
+(a sprite of frames) and subtitles (WebVTT; SRT converted). A LEAN ladder — every byte is the uploader's upload and the
+network's keeping: ONE EFFICIENT family at full quality up to the source's height (4K included), the one the device
+encodes in HARDWARE, measured (AV1 + Opus where it can; else HEVC + AAC — Macs, iPhones, most GPUs), and H.264 + AAC
+only at 720p and 360p as the safety net; a device with no efficient hardware encoder makes an H.264 ladder alone.
+FAST, THEN IN THE BACKGROUND: the upload keeps the original, makes one H.264 rendition and posts (seconds); the rest
+is PENDING in the manifest — due work, no job list — made by any open page of the uploader's devices, one at a time
+(a lease in the account's table `encodes`, with its progress shown on the video; a rendition a device cannot encode
+waits for one that can), each done rendition a new manifest and the item's file replaced. The original is released
+once the ladder is made, unless the uploader keeps it (a newer codec later). PLAYING: MediaSource; the family the
+browser plays SMOOTHLY (MediaCapabilities: AV1, HEVC, else H.264) whose ladder reaches the screen; the rendition
+switched at fragment boundaries by measured throughput; a seek reads the fragment holding that time.
 
 Checking fragments a keeper mints later (not listed in the index) needs homomorphic hashes over a prime field —
 Pedersen commitments — and comes with keepers as a new codec version the index names. Files are outside every table's

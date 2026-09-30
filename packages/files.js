@@ -158,11 +158,12 @@ export async function start(ctx) {
       () => false,
     );
 
-  async function put(file, { space: sp = null, public: pub = false, app = null, onProgress = () => {} } = {}) {
+  async function put(file, { space: sp = null, public: pub = false, app = null, inline = true, onProgress = () => {} } = {}) {
     const size = file.size;
     const name = file.name ?? "file";
     const type = file.type || "application/octet-stream";
-    if (size <= INLINE_MAX) return { inline: b64(new Uint8Array(await file.arrayBuffer())), size, name, type };
+    // `inline: false`: coded even when small (what must not ride in a row: a video's manifest, which grows).
+    if (inline && size <= INLINE_MAX) return { inline: b64(new Uint8Array(await file.arrayBuffer())), size, name, type };
     // The content's hash, a slice at a time.
     const h = new glue.FileHasher();
     for (let at = 0; at < size; at += SLICE) {

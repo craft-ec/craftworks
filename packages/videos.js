@@ -206,7 +206,18 @@ export async function mount(ctx, el) {
       };
       scrub.onmouseleave = () => (tip.style.display = "none");
     };
-    out.insertBefore(h("div", {}, scrub, level), note);
+    // STILL BEING MADE (the uploader's devices, in the background): what is done, and what now.
+    const making = h("span", { className: "level" });
+    let quiet = 0; // checks in a row with nothing being made (the work may not have started yet)
+    const showMaking = async () => {
+      if (!el.isConnected || !out.isConnected || v.by !== me) return;
+      const pr = await studio.progress(ref);
+      making.textContent = pr ? ` · processing ${pr.done} of ${pr.of}: ${pr.stage}${pr.p ? ` ${Math.round(pr.p * 100)}%` : ""}` : "";
+      quiet = pr ? 0 : quiet + 1;
+      if (quiet < 6) setTimeout(showMaking, 3000);
+    };
+    out.insertBefore(h("div", {}, scrub, level, making), note);
+    setTimeout(showMaking, 500); // once the view is in the page
     queueMicrotask(() => {
       if (f) player.play(video, f, { onNote: t => (note.textContent = t), onLevel: l => (level.textContent = l) }).catch(e => (note.textContent = e.message ?? String(e)));
       scrubStrip().catch(() => {});
@@ -229,6 +240,7 @@ export async function mount(ctx, el) {
       {},
       h("input", { type: "file", name: "file", accept: "video/*", required: true }),
       h("label", { className: "s" }, "Subtitles (.vtt or .srt, optional) ", h("input", { type: "file", name: "subs", accept: ".vtt,.srt,text/vtt", multiple: true })),
+      h("label", { className: "s" }, h("input", { type: "checkbox", name: "keep" }), " Keep the original file too (as large as all the versions together; lets a newer format be made later)"),
       h("input", { name: "title", placeholder: "Title", required: true, maxLength: 300 }),
       h("textarea", { name: "body", rows: 4, placeholder: "Description" }),
       h("label", { className: "s" }, "What it is ", kindSel),
@@ -249,14 +261,16 @@ export async function mount(ctx, el) {
         const pub = inSpace ? (await roles.of(inSpace)).policy("board", "read") === "anyone" : f.elements.audience.value !== "private";
         // MADE READY TO STREAM (renditions, strip, subtitles, a manifest); a browser that cannot encode sends the file as it is.
         const ref = await studio
-          .make(file, { space: inSpace, public: pub, subtitles: [...(f.elements.subs.files ?? [])], onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`) })
+          .make(file, { space: inSpace, public: pub, keepOriginal: f.elements.keep.checked, subtitles: [...(f.elements.subs.files ?? [])], onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`) })
           .catch(async err => {
             ctx.log("videos", { what: `not encoded here (${err.message ?? err}): the file as it is` });
             const m = await player.meta(file);
             const up = await files.put(file, { space: inSpace, public: pub, app: "videos", onProgress: p => (progress.textContent = `Uploading ${Math.round((100 * p.done) / Math.max(1, p.size))}%`) });
             return { ...up, ...(m.poster ? { preview: m.poster } : {}), ...(m.duration ? { duration: m.duration } : {}) };
           });
-        await drive.add(ref, { space: inSpace, from: { app: "videos" } }).catch(() => {});
+        // Drive lists what was uploaded: the original when it is kept, else the video (its manifest) or the file itself.
+        const kept = ref.type === studio.MANIFEST && f.elements.keep.checked ? (await player.manifest(ref).catch(() => null))?.source : ref;
+        if (kept) await drive.add(kept, { space: inSpace, from: { app: "videos" } }).catch(() => {});
         const meta = Object.fromEntries(kinds.of(kindSel.value).fields.map(x => [x, String(f.elements[`meta.${x}`]?.value ?? "").trim()]).filter(([, v]) => v));
         const posted = await posts.submit({ board: inSpace?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, kind: kindSel.value, meta, private: !inSpace && !pub, files: [ref] });
         location.hash = `${base()}/w/${encodeURIComponent(posted)}`;

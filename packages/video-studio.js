@@ -1,16 +1,27 @@
 // VIDEO STUDIO, a capability (ARCHITECTURE §6 Video): a video made ready to stream, in the browser, at upload —
 // Mediabunny (the `mediabunny` package: any common file read, WebCodecs decode and encode) writes each RENDITION as a
 // FRAGMENTED MP4 (CMAF: fragments of ~4 s, a key frame every 2 s), one file each (`files`: coded, sealed, raced), its
-// fragments INDEXED by byte range and time as they are written. Renditions, per codec FAMILY: H.264 + AAC always (every
-// browser), AV1 + Opus where this browser can encode it (smaller, sharper); a ladder of heights up to the source's. A
+// fragments INDEXED by byte range and time as they are written. A LEAN ladder (every byte is the uploader's upload and
+// the network's keeping): ONE EFFICIENT family at full quality up to the source's height, 4K included — the one this
+// device encodes in HARDWARE (measured): AV1 + Opus where it can, else HEVC + AAC (Macs, iPhones, most GPUs) — and
+// H.264 + AAC only at 720p and 360p, the safety net for players that cannot decode that family. A device with no
+// efficient hardware encoder makes an H.264 ladder alone. A
 // POSTER, a SCRUB STRIP (a sprite of frames across the video), SUBTITLES (WebVTT; SRT converted). All of it named by one
 // MANIFEST (JSON, a file of its own): what the Videos item carries.
 //
+// FAST, THEN IN THE BACKGROUND (no server encodes here; the uploader's own devices do): an upload keeps the ORIGINAL,
+// makes ONE rendition (H.264, on the hardware encoder) and posts — watchable in seconds. The rest of the ladder is
+// PENDING in the manifest: due work, no job list. Any open page of the uploader's devices makes them, one at a time,
+// resuming from the original: each done rendition a new manifest, the item's file replaced (viewers get it). One
+// device at a time per video — a LEASE in the account's table `encodes` (with its progress, shown on the video), taken
+// over when it goes quiet. Keeping the original also lets a newer codec (AV2) be added later without a new upload.
+//
 //   const studio = await ctx.require("video-studio");
 //   const ref = await studio.make(file, { space, public, subtitles: [file…], onProgress })   // the manifest's reference
+//   studio.progress(ref) -> { stage, p, done, of } | null          // a video still being made (the uploader's devices)
 //   studio.MANIFEST   // its type: "application/vnd.craftworks.video+json"
 export async function start(ctx) {
-  const files = await ctx.require("files");
+  const [files, storage, space, posts, kinds] = await Promise.all(["files", "storage", "space", "posts", "kinds"].map(n => ctx.require(n)));
   const MANIFEST = "application/vnd.craftworks.video+json";
 
   let loading = null;
@@ -25,10 +36,21 @@ export async function start(ctx) {
     })().catch(e => ((loading = null), Promise.reject(e))));
 
   // THE LADDER: heights (up to the source's), each family's bitrate at that height (bits/s).
-  const HEIGHTS = [1080, 720, 480, 240];
-  const AVC = { 1080: 5_000_000, 720: 2_800_000, 480: 1_400_000, 240: 400_000 };
-  const AV1 = { 1080: 3_000_000, 720: 1_700_000, 480: 850_000, 240: 250_000 };
-  const AV1_MAX = 720; // AV1 is encoded in software here: its ladder stops at 720p to keep an upload in reason
+  // THE LADDER, LEAN (every byte is the uploader's upload and the network's keeping): ONE EFFICIENT family at full
+  // quality — the one this device encodes in HARDWARE: AV1 if it can, else HEVC — and H.264 only as the small safety
+  // net (720p, 360p) for players that cannot decode that family. A device with no efficient hardware encoder makes an
+  // H.264 ladder alone.
+  const EFFICIENT_HEIGHTS = [2160, 1080, 720, 480];
+  const NET_HEIGHTS = [720, 360];
+  const AVC_ONLY_HEIGHTS = [2160, 1080, 720, 480, 360];
+  const AVC = { 2160: 16_000_000, 1440: 9_000_000, 1080: 5_000_000, 720: 2_800_000, 480: 1_400_000, 360: 800_000, 240: 400_000 };
+  const AV1 = { 2160: 9_000_000, 1440: 5_000_000, 1080: 3_000_000, 720: 1_700_000, 480: 850_000, 360: 500_000, 240: 250_000 };
+  // HEVC: close to AV1's size, and encoded in HARDWARE on Macs, iPhones and most GPUs (AV1's encoder is rarer).
+  const HEVC = { 2160: 10_000_000, 1440: 5_500_000, 1080: 3_300_000, 720: 1_900_000, 480: 950_000, 360: 550_000, 240: 280_000 };
+  const LABEL = { avc: "H.264", hevc: "HEVC", av1: "AV1" };
+  // AV1 encoded in SOFTWARE (no AV1 encoder in the hardware — every Mac, most PCs) stops at 1080p to keep it in
+  // reason; with a hardware AV1 encoder (NVIDIA RTX 40, Intel Arc, AMD RX 7000) it goes to the top.
+  const AV1_SOFTWARE_MAX = 1080;
 
   // ONE RENDITION: the source converted to `codec` at `height`, a fragmented MP4 — its bytes, MIME, and fragment index.
   async function rendition(M, file, { codec, height, width, bitrate, audio, onProgress }) {
@@ -47,8 +69,8 @@ export async function start(ctx) {
       input,
       output,
       tracks: "primary",
-      // H.264 on the hardware encoder where there is one; AV1 as this browser has it (often software only).
-      video: { codec, height, bitrate, keyFrameInterval: 2, forceTranscode: true, hardwareAcceleration: codec === "avc" ? "prefer-hardware" : "no-preference" },
+      // H.264 and HEVC on the hardware encoder; AV1 as this browser has it (hardware where there is one).
+      video: { codec, height, bitrate, keyFrameInterval: 2, forceTranscode: true, hardwareAcceleration: codec === "av1" ? "no-preference" : "prefer-hardware" },
       audio: audio ? { codec: audio.codec, bitrate: audio.bitrate, forceTranscode: true } : { discard: true },
       showWarnings: false,
     });
@@ -97,7 +119,7 @@ export async function start(ctx) {
     return `WEBVTT\n\n${text.replace(/\r/g, "").replace(/(\d\d:\d\d:\d\d),(\d\d\d)/g, "$1.$2")}`;
   }
 
-  async function make(file, { space = null, public: pub = false, subtitles = [], onProgress = () => {} } = {}) {
+  async function make(file, { space = null, public: pub = false, subtitles = [], keepOriginal = false, onProgress = () => {} } = {}) {
     const M = await mb();
     const say = (stage, p = 0) => onProgress({ stage, p });
     const input = new M.Input({ source: new M.BlobSource(file), formats: M.ALL_FORMATS });
@@ -106,40 +128,36 @@ export async function start(ctx) {
     const audioTrack = await input.getPrimaryAudioTrack();
     const duration = await input.computeDuration();
     const srcH = track.displayHeight;
-    const heights = HEIGHTS.filter(x => x <= srcH);
-    if (!heights.length) heights.push(Math.max(2, srcH - (srcH % 2)));
     const widthOf = hh => Math.max(2, Math.round((hh * track.displayWidth) / track.displayHeight / 2) * 2);
     // Which families this browser encodes.
     const can = async (codec, hh) => M.canEncodeVideo(codec, { width: widthOf(hh), height: hh }).catch(() => false);
     const aac = await M.canEncodeAudio("aac").catch(() => false);
-    const plan = [];
-    for (const hh of heights) if (await can("avc", hh)) plan.push({ codec: "avc", height: hh, bitrate: AVC[hh] ?? 400_000, audio: audioTrack ? { codec: aac ? "aac" : "opus", bitrate: 128_000 } : null });
-    for (const hh of heights.filter(x => x <= AV1_MAX)) if (await can("av1", hh)) plan.push({ codec: "av1", height: hh, bitrate: AV1[hh] ?? 250_000, audio: audioTrack ? { codec: "opus", bitrate: 96_000 } : null });
-    if (!plan.length) throw new Error("this browser cannot encode video (no WebCodecs encoder for H.264 or AV1)");
+    // Heights up to the source's (the source's own when it is below the ladder).
+    const upTo = hs => {
+      const out = hs.filter(x => x <= srcH);
+      return out.length ? out : [Math.max(2, srcH - (srcH % 2))];
+    };
+    const hw = async (codec, hh) => M.canEncodeVideo(codec, { width: widthOf(hh), height: hh, hardwareAcceleration: "prefer-hardware" }).catch(() => false);
+    const top = upTo(EFFICIENT_HEIGHTS)[0];
+    const efficient = (await hw("av1", top)) ? "av1" : (await hw("hevc", top)) ? "hevc" : null;
+    const audioFor = codec => (audioTrack ? (codec === "av1" ? { codec: "opus", bitrate: 96_000 } : { codec: aac ? "aac" : "opus", bitrate: 128_000 }) : null);
+    const RATES = { avc: AVC, hevc: HEVC, av1: AV1 };
+    const rung = (codec, hh) => ({ codec, height: hh, bitrate: RATES[codec][hh] ?? Math.round((RATES[codec][360] * hh) / 360), audio: audioFor(codec) });
+    const plan = efficient ? [...upTo(NET_HEIGHTS).map(hh => rung("avc", hh)), ...upTo(EFFICIENT_HEIGHTS).map(hh => rung(efficient, hh))] : upTo(AVC_ONLY_HEIGHTS).map(hh => rung("avc", hh));
+    if (!(await can("avc", plan[0].height))) throw new Error("this browser cannot encode H.264 video");
 
     say("poster");
     const posterUrl = await poster(M, track, duration);
     say("scrub strip");
     const sp = await strip(M, track, duration).catch(() => null);
+    // THE ORIGINAL, kept: what the background makes the rest from (and a newer codec later).
+    const source = await files.put(file, { space, public: pub, app: "videos", onProgress: e => say("keeping the original", e.done / Math.max(1, e.size)) });
+    // ONE rendition now: H.264 at up to 720p (the hardware encoder: seconds) — the rest pending.
+    const first = plan.filter(r => r.codec === "avc").sort((a, b) => Math.abs(a.height - 720) - Math.abs(b.height - 720))[0];
     const renditions = [];
-    for (const [i, r] of plan.entries()) {
-      const label = `${r.codec === "av1" ? "AV1" : "H.264"} ${r.height}p (${i + 1} of ${plan.length})`;
-      // A rendition this browser turns out not to make (a configuration its encoder refuses) is left out; H.264 must stay.
-      const out = await rendition(M, file, { ...r, width: widthOf(r.height), onProgress: p => say(`encoding ${label}`, p) }).catch(e => {
-        ctx.log("video", { what: `${label} left out: ${e.message ?? e}` });
-        return null;
-      });
-      if (!out) continue;
-      say(`storing ${label}`);
-      const ref = await files.put(new File([out.bytes], `${file.name}.${r.codec}.${r.height}p.mp4`, { type: "video/mp4" }), {
-        space,
-        public: pub,
-        app: "videos",
-        onProgress: e => say(`storing ${label}`, e.done / Math.max(1, e.size)),
-      });
-      renditions.push({ codec: r.codec, mime: out.mime, width: widthOf(r.height), height: r.height, bitrate: r.bitrate, size: out.bytes.byteLength, ref, index: out.index });
-    }
-    if (!renditions.some(r => r.codec === "avc")) throw new Error("no H.264 rendition could be made here");
+    const made = await makeRendition(M, file, first, { space, pub, name: file.name, say: (st, p) => say(st, p), width: widthOf(first.height) });
+    if (!made) throw new Error("no H.264 rendition could be made here");
+    renditions.push(made);
     const stripRef = sp ? await files.put(new File([sp.blob], `${file.name}.strip.jpg`, { type: "image/jpeg" }), { space, public: pub, app: "videos" }) : null;
     const subs = [];
     for (const s of subtitles) {
@@ -150,17 +168,133 @@ export async function start(ctx) {
     say("manifest");
     const manifest = {
       v: 1,
+      name: file.name,
       duration,
       width: track.displayWidth,
       height: track.displayHeight,
+      source,
       renditions,
+      pending: plan.filter(r => r !== first).map(({ codec, height, bitrate, audio }) => ({ codec, height, bitrate, audio })),
       ...(sp ? { strip: { ref: stripRef, n: sp.n, cols: sp.cols, w: sp.w, h: sp.h, every: sp.every } } : {}),
       subtitles: subs,
+      pub: !!pub,
+      // The ORIGINAL is kept for good only when asked (a newer codec later); else released once the ladder is made.
+      keepOriginal: !!keepOriginal,
     };
-    const ref = await files.put(new File([JSON.stringify(manifest)], `${file.name}.video.json`, { type: MANIFEST }), { space, public: pub, app: "videos" });
+    const ref = await putManifest(manifest, space, pub);
     say("done", 1);
+    // The rest: in the background, once the item is posted (a moment for its row to be there).
+    setTimeout(kick, 3000);
     return { ...ref, ...(posterUrl ? { preview: posterUrl } : {}), duration, width: track.displayWidth, height: track.displayHeight };
   }
 
-  return { make, MANIFEST };
+  const widthFor = (w, h, hh) => Math.max(2, Math.round((hh * w) / h / 2) * 2);
+  // ONE RENDITION made and stored: its manifest entry (null: this browser's encoder refused it).
+  async function makeRendition(M, file, r, { space, pub, name, say, width = null }) {
+    const label = `${LABEL[r.codec]} ${r.height}p`;
+    const out = await rendition(M, file, { ...r, onProgress: p => say(`encoding ${label}`, p) }).catch(e => {
+      ctx.log("video", { what: `${label} left out: ${e.message ?? e}` });
+      return null;
+    });
+    if (!out) return null;
+    say(`storing ${label}`);
+    const ref = await files.put(new File([out.bytes], `${name}.${r.codec}.${r.height}p.mp4`, { type: "video/mp4" }), { space, public: pub, app: "videos", onProgress: e => say(`storing ${label}`, e.done / Math.max(1, e.size)) });
+    return { codec: r.codec, mime: out.mime, width, height: r.height, bitrate: r.bitrate, size: out.bytes.byteLength, ref, index: out.index };
+  }
+  // Never inline: it grows with the video (its fragment index), and the item's row must stay small.
+  const putManifest = (m, space, pub) => files.put(new File([JSON.stringify(m)], `${m.name}.video.json`, { type: MANIFEST }), { space, public: pub, app: "videos", inline: false });
+
+  // CAN THIS DEVICE make it: H.264 as the browser has it (hardware or not), AV1 in hardware at any height, in
+  // software up to 1080p. What it cannot is left PENDING for another of this person's devices that can.
+  async function canHere(M, r, width) {
+    // HEVC only on a hardware encoder (a software one would take far too long).
+    if (r.codec === "hevc") return M.canEncodeVideo("hevc", { width, height: r.height, hardwareAcceleration: "prefer-hardware" }).catch(() => false);
+    if (r.codec === "av1") {
+      const hw = await M.canEncodeVideo("av1", { width, height: r.height, hardwareAcceleration: "prefer-hardware" }).catch(() => false);
+      if (hw) return true;
+      if (r.height > AV1_SOFTWARE_MAX) return false;
+    }
+    return M.canEncodeVideo(r.codec, { width, height: r.height }).catch(() => false);
+  }
+
+  // THE BACKGROUND: this person's videos with renditions pending, made one at a time here.
+  const LEASE_QUIET = 2 * 60 * 1000;
+  const device = (crypto.randomUUID?.() ?? String(Math.random())).slice(0, 12);
+  const leases = () => storage.table("encodes");
+  let working = false;
+  let again = false;
+  async function kick() {
+    if (working) return void (again = true);
+    working = true;
+    try {
+      do {
+        again = false;
+        await work();
+      } while (again);
+    } catch (e) {
+      ctx.log("video", { what: `background: ${e.message ?? e}` });
+    } finally {
+      working = false;
+    }
+  }
+  async function work() {
+    const me = await space.account().catch(() => null);
+    if (!me) return;
+    const t = await leases();
+    await t.settled;
+    const mine = await posts.list({ by: me.id }, "new", kinds.inDomain("video")).catch(() => []);
+    for (const v of mine) {
+      const f = v.files?.find(x => x.type === MANIFEST);
+      if (!f) continue;
+      const m = JSON.parse(await (await files.get(f)).text());
+      if (!m.pending?.length || !m.source) {
+        if (t.rows().some(r => r.key === v.ref && r.value)) await t.remove(v.ref);
+        continue;
+      }
+      // The LEASE: another device making it, and heard from lately — theirs.
+      let held = null;
+      try {
+        held = JSON.parse(t.rows().find(r => r.key === v.ref)?.value ?? "null");
+      } catch {}
+      if (held && !held.waiting && held.device !== device && Date.now() - held.at < LEASE_QUIET) continue;
+      const lease = (stage, p) => t.put(v.ref, JSON.stringify({ device, at: Date.now(), stage, p: Math.round((p || 0) * 100) / 100, done: m.renditions.length, of: m.renditions.length + m.pending.length }));
+      let beat = 0;
+      const say = (stage, p) => Date.now() - beat > 5000 && ((beat = Date.now()), lease(stage, p).catch(() => {}));
+      await lease("reading the original", 0);
+      const M = await mb();
+      const original = new File([await files.get(m.source)], m.name ?? "video", { type: m.source.type });
+      const sp = v.board ? (await space.mine()).find(x => x.id === v.board.id) ?? null : null;
+      // One rendition — the first pending this device CAN make (the rest wait for a device that can) — then the manifest
+      // written again and the item's file replaced.
+      let r = null;
+      for (const x of m.pending) if (await canHere(M, x, widthFor(m.width, m.height, x.height))) (r = r ?? x);
+      if (!r) {
+        await t.put(v.ref, JSON.stringify({ device, at: Date.now(), stage: `waiting for a device that can encode ${m.pending.map(x => `${LABEL[x.codec]} ${x.height}p`).join(", ")}`, p: 0, done: m.renditions.length, of: m.renditions.length + m.pending.length, waiting: true }));
+        continue;
+      }
+      const made = await makeRendition(M, original, r, { space: sp, pub: m.pub, name: m.name ?? "video", say, width: widthFor(m.width, m.height, r.height) });
+      // Made, or refused by this encoder after all: out of the pending either way (a refusal is not tried again here).
+      const next = { ...m, renditions: made ? [...m.renditions, made] : m.renditions, pending: m.pending.filter(x => x !== r) };
+      // All made: the original RELEASED unless it is to be kept (no longer named: Lifecycle stops keeping it).
+      if (!next.pending.length && !next.keepOriginal && next.source) delete next.source;
+      const ref = await putManifest(next, sp, m.pub);
+      await posts.setFiles(v.ref, v.files.map(x => (x === f ? { ...ref, ...(f.preview ? { preview: f.preview } : {}), duration: f.duration, width: f.width, height: f.height } : x)));
+      if (next.pending.length) await lease("next rendition", 0);
+      else await t.remove(v.ref);
+      again = true;
+      return;
+    }
+  }
+  async function progress(ref) {
+    const t = await leases().catch(() => null);
+    try {
+      return JSON.parse(t?.rows().find(r => r.key === ref)?.value ?? "null");
+    } catch {
+      return null;
+    }
+  }
+  // Started with the page (the header asks for it), and whenever this person's posts change.
+  setTimeout(() => (space.account().then(a => a && kick(), () => {}), posts.onChange(() => kick())), 5000);
+
+  return { make, progress, kick, MANIFEST };
 }
