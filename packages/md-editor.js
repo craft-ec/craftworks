@@ -146,7 +146,7 @@ export async function start(ctx) {
   const plainLines = t =>
     t
       .split("\n")
-      .map(l => l.replace(/^(#{1,6}\s|[-*+]\s|>)/, "\\$1").replace(/^(\d+)\.(\s)/, "$1\\.$2"))
+      .map(l => l.replace(/^(#{1,6}\s|[-*+]\s|>(?!!))/, "\\$1").replace(/^(\d+)\.(\s)/, "$1\\.$2"))
       .join("\n");
   function toMd(root) {
     const blocks = [];
