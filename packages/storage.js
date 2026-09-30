@@ -135,6 +135,7 @@ export async function start(ctx) {
 
   const tails = new Map(); // id hex -> Promise<tail> (opened once per page)
   const live = new Map(); // id hex -> tail, for what the node pushes
+  const ownKeys = new Set(); // this node's writer keys in the spaces opened (its own feeds)
   listen(said => {
     const t = (said.kind === "tail" || said.kind === "tail-need" || said.kind === "tail-keys") && live.get(said.id);
     // A LAZY tail (read by pages: phase 3) is only told; its readers page again (the blocks they hold are reused).
@@ -192,6 +193,8 @@ export async function start(ctx) {
         t.lazy = false;
         if (!t.absent) await view();
       },
+      // KEEP it (phase 4, Lifecycle): see `keep` below.
+      keep: () => (queue = queue.catch(() => {}).then(keep)),
     };
     const ready = (async () => {
       // THE TABLE'S KEY: the table is sealed, so reading it needs its key, and the key comes only with the person's
@@ -342,6 +345,46 @@ export async function start(ctx) {
       }
       if (n) ctx.log("sealed", { what: `${app}: rows under an older key, sealed over in ${n} step(s)` });
       if (reseal || core.tail_pending(id) >= Core.flush_at()) await flush();
+    }
+
+    // KEEP (phase 4, Lifecycle): the table's ASSET — every block its current tree reaches, in its groups — each block
+    // ASKED (its health: a group is WHOLE with all its blocks there, DEGRADED with at least its k, DAMAGED below), then
+    // PUT again (re-published where it is there; repaired — made from what is held, parity coded again — where it is
+    // not), then the tail's signed state put again. In the write queue: no flush moves the tree under it.
+    async function keep() {
+      if (t.absent) return null;
+      const t0 = performance.now();
+      if (t.lazy) await t.whole();
+      let a = null;
+      for (let round = 0; round < 64; round++) {
+        a = core.tail_asset(id);
+        if (a.need) await settle({ kind: "tail-need", id: idHex, blocks: a.need }, app);
+        else if (a.keys) await settle({ kind: "tail-keys", id: idHex, epochs: a.keys }, app);
+        else break;
+      }
+      if (!a?.groups) throw new Error(`${app}: its tree did not finish loading`);
+      const out = { name: app, at: Date.now(), groups: a.groups.length, blocks: 0, whole: 0, degraded: 0, damaged: 0, missing: 0, put: 0, unmade: 0 };
+      for (const g of a.groups) {
+        const there = await Promise.all(g.slots.map(([, c]) => blocks.probe(c, `keeping ${app}`)));
+        const present = there.filter(Boolean).length;
+        const parity = g.slots.length - g.k;
+        out.blocks += g.slots.length;
+        out.missing += g.slots.length - present;
+        out[present - g.k >= parity ? "whole" : present >= g.k ? "degraded" : "damaged"] += 1;
+        const puts = [];
+        for (const [b] of g.slots) {
+          const p = core.tail_keep_put(id, b);
+          if (p) puts.push(p);
+          else out.unmade += 1;
+        }
+        await blocks.put(puts, `keeping ${app}`);
+        out.put += puts.length;
+      }
+      const said = await ask(core.tail_keep_state(id), x => (x.kind === "put" && x.key === name) || x.kind === "refused", `keeping ${app}`, 60000);
+      if (said.kind === "refused") throw new Error(`${app}: its state was refused: ${said.said}`);
+      out.ms = Math.round(performance.now() - t0);
+      ctx.log("kept", { what: `${app}: ${out.blocks} block(s) in ${out.groups} group(s) — ${out.whole} whole, ${out.degraded} degraded, ${out.damaged} damaged; ${out.put} put again${out.unmade ? `, ${out.unmade} not made here` : ""}`, ms: out.ms });
+      return out;
     }
 
     // FLUSH: the tree's new blocks PUT first (a tail must never name a root whose blocks are not there), then the step
@@ -590,6 +633,7 @@ export async function start(ctx) {
       const listMine = async () => {
         if (!lists(mine, name)) await versioned(mine, name, JSON.stringify({ at: Date.now() }), own(mine).find(r => r.key === name)?.id);
       };
+      ownKeys.add(scope.self);
       const me = await tail(scope.self, name, { known: lists(mine, name) ? null : false, ...opts, beforeCreate: listMine, lazy });
       take(me);
       // The OTHER writers' feeds, in the background: each merged in as it arrives, never holding the table up. A writer
@@ -840,5 +884,12 @@ export async function start(ctx) {
     return { rows: () => rows, onChange: f => changed.push(f), settled, add };
   }
 
-  return { table, log, publicTail, readOnly, describe, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why) };
+  // THIS NODE's tables opened on this page (the account's, and its own feeds in spaces): what keeping keeps.
+  async function ownTables() {
+    const sp = await space.account();
+    const mine = new Set([sp?.self, sp?.shared, ...ownKeys].filter(Boolean));
+    return [...live.values()].filter(t => mine.has(t.owner) && !t.absent);
+  }
+
+  return { own: ownTables, table, log, publicTail, readOnly, describe, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why) };
 }

@@ -180,6 +180,8 @@ export function mount(ctx, el) {
   setTimeout(() => ctx.require("upkeep").catch(() => {}), 2500);
   // FILE KEYS too: every file on the key its access calls for (a member removed, a board made private), re-keyed here.
   setTimeout(() => ctx.require("file-keys").catch(() => {}), 4000);
+  // Keeping this person's data on the network (phase 4, Lifecycle): due tables, one at a time, in the background.
+  setTimeout(() => ctx.require("keep").catch(() => {}), 5000);
   // VIDEOS still being made (renditions pending): made here in the background, whichever page is open.
   setTimeout(() => ctx.require("video-studio").catch(() => {}), 6000);
 }

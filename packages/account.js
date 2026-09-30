@@ -135,21 +135,34 @@ export async function mount(ctx, el) {
     async storage() {
       // STORAGE: each of the account's tables, and how this page read them.
       const sto = document.createElement("section");
-      sto.innerHTML = `<table class="tables"><thead><tr><th>Table</th><th>Rows</th><th>Sealed</th><th>Where</th></tr></thead>
-        <tbody><tr><td colspan="4">Reading…</td></tr></tbody></table><p class="note blocks"></p>`;
+      sto.innerHTML = `<p class="note">KEPT: this node puts its tables back on the network — every block of each tree, and
+        the table itself — about once a week, one table at a time while a page is open; a missing block is made again
+        from its group. HEALTH: a group is whole (all its blocks there), degraded (enough to rebuild), or damaged.</p>
+        <p><button type="button" class="keep-now">Keep all now</button> <span class="note kept-said"></span></p>
+        <table class="tables"><thead><tr><th>Table</th><th>Rows</th><th>Sealed</th><th>Where</th><th>Kept</th><th>Health</th></tr></thead>
+        <tbody><tr><td colspan="6">Reading…</td></tr></tbody></table><p class="note blocks"></p>`;
       box.append(sto);
-      storage.describe().then(
-        list => {
+      const keep = await ctx.require("keep");
+      const ago = at => {
+        const m = Math.round((Date.now() - at) / 60000);
+        return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+      };
+      const health = k => (!k ? "—" : k.error ? `failed: ${k.error}` : !k.groups ? "no tree yet" : `${k.whole}/${k.groups} whole${k.degraded ? `, ${k.degraded} degraded` : ""}${k.damaged ? `, ${k.damaged} DAMAGED` : ""} · ${k.blocks - k.missing}/${k.blocks} blocks`);
+      const draw = () => Promise.all([storage.describe(), keep.status().catch(() => [])]).then(
+        ([list, kept]) => {
+          const last = new Map();
+          for (const k of kept) if (!last.has(k.name) || last.get(k.name).at < k.at) last.set(k.name, k);
           sto.querySelector("tbody").replaceChildren(
             ...list.map(t => {
               const tr = document.createElement("tr");
               if (t.closed) {
                 // Another app's table: not opened from here.
-                for (const v of [t.name, "—", "—", "another app's"]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
+                for (const v of [t.name, "—", "—", "another app's", "—", "—"]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
                 return tr;
               }
               const where = (t.unopened ? `${t.unopened} feed(s) not readable here — log in with your recovery words; ` : "") + (t.flushed ? (t.pending ? `tree + ${t.pending} in the tail` : "tree") : `tail (${t.pending} row${t.pending === 1 ? "" : "s"})`);
-              for (const v of [t.name, String(t.rows), t.sealed ? (t.writes === "table" ? "table key" : t.writes ?? "yes") : "no key here", where]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
+              const k = last.get(t.name);
+              for (const v of [t.name, String(t.rows), t.sealed ? (t.writes === "table" ? "table key" : t.writes ?? "yes") : "no key here", where, k ? ago(k.at) : "not yet", health(k)]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
               return tr;
             }),
           );
@@ -158,6 +171,17 @@ export async function mount(ctx, el) {
         },
         e => (sto.querySelector("tbody").textContent = `Could not read: ${e?.message ?? e}`),
       );
+      draw();
+      sto.querySelector(".keep-now").onclick = async e => {
+        e.target.disabled = true;
+        const said = sto.querySelector(".kept-said");
+        said.textContent = "Keeping every table…";
+        const out = await keep.now().catch(err => [{ error: err?.message ?? String(err) }]);
+        const bad = out.filter(k => k.error || k.damaged);
+        said.textContent = `${out.length} table(s) kept${bad.length ? `; ${bad.length} need attention` : ""}.`;
+        e.target.disabled = false;
+        draw();
+      };
     },
 
     async apps() {

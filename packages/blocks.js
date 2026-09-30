@@ -10,6 +10,7 @@
 //   const blocks = await ctx.require("blocks");
 //   await blocks.fetch(tailIdHex, [blockContractHex, …], "notes")   // all held, or throws
 //   await blocks.put([[name, frames], …], "notes")                   // all accepted, or throws
+//   await blocks.probe(contractHex, "notes")                          // on the network? (keeping counts them)
 export async function start(ctx) {
   const { core, ask } = await ctx.require("node");
   const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
@@ -93,5 +94,14 @@ export async function start(ctx) {
     if (refused) throw new Error(`a tree block was refused: ${refused.said}`);
   }
 
-  return { fetch, put, stats: () => ({ ...stats }) };
+  // KEEP (phase 4): is the block in contract `c` (hex) on the network? Its GET answered with a state (true) or not
+  // found (false). The state is not kept: a probe only counts.
+  async function probe(c, what) {
+    const [, frames] = core.frames_get(bytes(c));
+    const a = await ask(frames, x => (x.kind === "got" && x.id === c) || x.block === c || (x.kind === "get-failed" && x.id === c), what, 30000).catch(() => ({ kind: "get-failed" }));
+    core.take_got(c);
+    return a.kind !== "get-failed";
+  }
+
+  return { fetch, put, probe, stats: () => ({ ...stats }) };
 }

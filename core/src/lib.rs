@@ -103,6 +103,8 @@ pub struct Core {
     sealed_code: Vec<u8>,
     /// The `piece` contract's code: a file's pieces since burning (a burn hash in each).
     piece_code: Vec<u8>,
+    /// The last ASSET listed per tail (`tail_asset`): its groups, for coding a parity block again.
+    assets: std::collections::HashMap<[u8; 32], Vec<data::AssetGroup>>,
     /// Tree blocks asked of the network: Block contract id -> (the tail that needs it, the block's id).
     wanted: std::collections::HashMap<[u8; 32], ([u8; 32], freenet_prolly::Cid)>,
     /// Repairs under way: the lost block's contract id -> (its tail, its group).
@@ -111,7 +113,7 @@ pub struct Core {
 
 impl Core {
     pub fn new(identity_wasm: &[u8]) -> Core {
-        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1, got: Default::default(), tails: Default::default(), block_code: Vec::new(), sealed_code: Vec::new(), piece_code: Vec::new(), wanted: Default::default(), repairs: Default::default() }
+        Core { r: Reassembler::new(), identity: identity_wasm.to_vec(), next_id: 1, next_stream: 1, got: Default::default(), tails: Default::default(), block_code: Vec::new(), sealed_code: Vec::new(), piece_code: Vec::new(), wanted: Default::default(), repairs: Default::default(), assets: Default::default() }
     }
 
     pub fn identity_key(&self) -> String {
@@ -303,6 +305,51 @@ impl Core {
         }
     }
 
+    /// A table's ASSET (phase 4, Lifecycle): its groups — each `k` members then parity — with every block's id and
+    /// the contract it lives in (hex); or the blocks to GET first (as a read), or the epochs whose keys to get.
+    pub fn tail_asset(&mut self, id: &[u8; 32]) -> Result<AssetOut, String> {
+        match self.tail(id)?.asset()? {
+            data::Step::Need(cids) => Ok(AssetOut::Need(self.want(id, &cids))),
+            data::Step::Keys(e) => Ok(AssetOut::Keys(e)),
+            data::Step::Ready(groups) => {
+                let o = self.tails.get(id).ok_or("that tail is not open")?;
+                let mut out = Vec::new();
+                for g in &groups {
+                    let mut slots = Vec::new();
+                    for c in &g.slots {
+                        let (sealed, params) = o.block_params(c).ok_or("this table's key is not held here")?;
+                        slots.push((hex(c), hex(&wire::block::contract_for(if sealed { &self.sealed_code } else { &self.block_code }, &params))));
+                    }
+                    out.push((g.k, slots));
+                }
+                self.assets.insert(*id, groups);
+                Ok(AssetOut::Ready(out))
+            }
+        }
+    }
+
+    /// Frames that PUT a block of a table's asset AGAIN (`data::Open::stored`: re-publishing it, or repairing it where
+    /// it is missing): `(contract id base58, frames)`; `None`: it cannot be made here.
+    pub fn tail_keep_put(&mut self, id: &[u8; 32], cid: &[u8; 32]) -> Result<Option<(String, Vec<Vec<u8>>)>, String> {
+        let groups = self.assets.get(id).cloned().unwrap_or_default();
+        let o = self.tails.get(id).ok_or("that tail is not open")?;
+        let Some((sealed, state)) = o.stored(cid, &groups) else { return Ok(None) };
+        let c = if sealed {
+            wire::block::block_contract(&self.sealed_code, &data::block_address(&o.table_key.ok_or("this table's key is not held here")?, cid))
+        } else {
+            wire::block::block_contract(&self.block_code, cid)
+        };
+        let name = c.key().id().encode();
+        let s = self.stream();
+        Ok(Some((name, wire::frame_put(c, freenet_stdlib::prelude::WrappedState::new(state), s)?)))
+    }
+
+    /// Frames that PUT the tail's signed state AGAIN (re-publishing it: the network keeps the newest).
+    pub fn tail_keep_state(&mut self, id: &[u8; 32]) -> Result<Vec<Vec<u8>>, String> {
+        let state = self.tail(id)?.state();
+        self.frames_send(id, data::Send::Put(state))
+    }
+
     /// Record tree blocks `cids` as wanted by tail `id`; the contract ids (hex) they live in, to GET: a sealed
     /// tree's Sealed contracts at their addresses, or a tree from before's Block contracts.
     fn want(&mut self, id: &[u8; 32], cids: &[freenet_prolly::Cid]) -> Vec<String> {
@@ -405,6 +452,14 @@ impl Core {
             other => describe(other),
         }
     }
+}
+
+/// A table's asset, from the core: the contracts to GET first (hex), the epochs whose keys to get, or its groups —
+/// `(k, [(block id hex, contract id hex)])`.
+pub enum AssetOut {
+    Need(Vec<String>),
+    Keys(Vec<u64>),
+    Ready(Vec<(usize, Vec<(String, String)>)>),
 }
 
 /// A flush, from the core: the Block contract ids (hex) to GET first, or the block PUTs (by name, with their frames)
@@ -1019,6 +1074,47 @@ mod js {
                 }
             }
             Ok(out)
+        }
+
+        /// A table's ASSET: `{ need: [contract hex] }`, `{ keys: [epoch] }`, or `{ groups: [{ k, slots: [[block hex,
+        /// contract hex]] }] }`.
+        pub fn tail_asset(&mut self, id: &[u8]) -> Result<js_sys::Object, JsValue> {
+            let id = b32(id)?;
+            let out = js_sys::Object::new();
+            match self.0.tail_asset(&id).map_err(err)? {
+                AssetOut::Need(c) => {
+                    js_sys::Reflect::set(&out, &"need".into(), &c.into_iter().map(JsValue::from).collect::<js_sys::Array>().into())?;
+                }
+                AssetOut::Keys(e) => {
+                    js_sys::Reflect::set(&out, &"keys".into(), &e.into_iter().map(|x| JsValue::from(x as f64)).collect::<js_sys::Array>().into())?;
+                }
+                AssetOut::Ready(groups) => {
+                    let a = js_sys::Array::new();
+                    for (k, slots) in groups {
+                        let g = js_sys::Object::new();
+                        js_sys::Reflect::set(&g, &"k".into(), &JsValue::from(k as f64))?;
+                        let sl: js_sys::Array = slots.into_iter().map(|(b, c)| -> JsValue { [JsValue::from(b), JsValue::from(c)].into_iter().collect::<js_sys::Array>().into() }).collect();
+                        js_sys::Reflect::set(&g, &"slots".into(), &sl.into())?;
+                        a.push(&g);
+                    }
+                    js_sys::Reflect::set(&out, &"groups".into(), &a.into())?;
+                }
+            }
+            Ok(out)
+        }
+
+        /// A block of the asset put again: `[name, frames]`, or null when it cannot be made here.
+        pub fn tail_keep_put(&mut self, id: &[u8], block_hex: &str) -> Result<JsValue, JsValue> {
+            let b = bytes32("block", block_hex).map_err(err)?;
+            Ok(match self.0.tail_keep_put(&b32(id)?, &b).map_err(err)? {
+                Some((name, f)) => [JsValue::from(name), JsValue::from(frames(f))].into_iter().collect::<js_sys::Array>().into(),
+                None => JsValue::NULL,
+            })
+        }
+
+        /// The tail's signed state put again.
+        pub fn tail_keep_state(&mut self, id: &[u8]) -> Result<js_sys::Array, JsValue> {
+            Ok(frames(self.0.tail_keep_state(&b32(id)?).map_err(err)?))
         }
 
         /// A contract id's base58 form, as the node names it in acks.

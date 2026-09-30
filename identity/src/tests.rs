@@ -412,6 +412,12 @@ fn one_prompt_for_every_table_an_app_uses_and_later_only_for_a_new_one() {
     // A list that is empty or too long, or a bad name in it, is refused without a prompt.
     assert_eq!(asks(&mut m, OTHER, &[], ALLOW), Answer::Refused(Why::BadTable));
     assert_eq!(asks(&mut m, OTHER, &["ok", "Bad!"], ALLOW), Answer::Refused(Why::BadTable));
+    // Up to MAX_GRANT tables in one grant (an app's `uses`: 17 once the `keep` table joined); one more is refused.
+    let names: Vec<String> = (0..=crate::MAX_GRANT).map(|i| format!("t{i}")).collect();
+    let most: Vec<&str> = names[..crate::MAX_GRANT].iter().map(String::as_str).collect();
+    assert!(matches!(asks(&mut m, OTHER, &most, ALLOW), Answer::Granted { .. }), "{:?}", asks(&mut m, OTHER, &most, ALLOW));
+    let over: Vec<&str> = names.iter().map(String::as_str).collect();
+    assert_eq!(asks(&mut m, OTHER, &over, ALLOW), Answer::Refused(Why::BadTable));
 }
 
 #[test]

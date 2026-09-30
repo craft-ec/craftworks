@@ -249,7 +249,7 @@ pub enum Why {
     NotSaved,
     /// The caller is not a web app the node names (unattested, or another delegate): nothing is answered to it.
     NotAttested,
-    /// A table name is 1 to 32 of a-z, 0-9, `-`, `_`; a grant names 1 to 16 of them.
+    /// A table name is 1 to 32 of a-z, 0-9, `-`, `_`; a grant names 1 to `MAX_GRANT` of them.
     BadTable,
     /// The params are not one of the account's tables (`t/<table>` under its data key).
     NotATable,
@@ -266,6 +266,9 @@ pub enum Why {
     /// A request no longer served (a key file's export).
     Retired,
 }
+
+/// The most tables one grant names (an app's `uses`, asked in one prompt).
+pub const MAX_GRANT: usize = 32;
 
 /// Wrong PINs in a row allowed before PIN unlock is locked on this node.
 pub const MAX_TRIES: u8 = 5;
@@ -1256,7 +1259,7 @@ pub const DENY: &str = "Don't allow";
 /// request kept until the answer.
 fn grant<H: Host>(h: &mut H, page_id: u32, tables: &[String], app: [u8; 32]) -> Result<Answer, Prompt> {
     let Some(a) = session(h, &app) else { return Ok(Answer::Refused(Why::NoSession)) };
-    if tables.is_empty() || tables.len() > 16 || !tables.iter().all(|t| table_ok(t)) {
+    if tables.is_empty() || tables.len() > MAX_GRANT || !tables.iter().all(|t| table_ok(t)) {
         return Ok(Answer::Refused(Why::BadTable));
     }
     let member = a.public();

@@ -877,8 +877,16 @@ Uses what freenet-prolly already has (rev 17d67d8: `range`/`range_with` + `front
       flushes only after a write here (its writes need the grant a read does not show). Test: data
       `a_public_tail_is_readable_by_anyone_and_flushes_in_the_clear`. Two-node: A wrote 40 profile posts → A's `posts`
       flushed:true pending:0 (42 rows in the tree); B (outside, following) read all 40.
-- [ ] L4c KEEP: re-publishing + health per table asset (groups from the current tree; GET each slot → margin; PUT
-      back / repair) — due rows, background, one table at a time; Account → Storage shows health.
+- [x] L4c KEEP: `data::Open::asset` (every group the current tree reaches) + `stored` (a block as put: members from
+      what is held, parity coded again, sealed with the deterministic nonce) — test: a READER makes every block of a
+      300-row table byte-for-byte as the writer put it (+ control: a group not held makes nothing). `storage` tail
+      `keep()`: probe every slot (health per group), put every block again, put the tail's state again. `keep`
+      service: due = no `keep` record newer than 7 d, one table a minute while a page is open; Account → Storage
+      shows Kept + Health and "Keep all now". The identity's grant limit rose 16 → 32 tables (`uses` is 17 with
+      `keep`; 17 was refused whole as BadTable). 17573: 40 tables kept in 25 s, all whole, every block put, 0 unmade;
+      `uploads` FAILS: a tree block gone from the node and too little of its group to rebuild (data lost before
+      keeping existed — shown as failed, never hidden). Missing-block repair is proven by the unit test only (a
+      single node holds everything it was given).
 - [ ] L4d files: pieces re-published with the file rows.
 - [ ] L4e BLINDED TABLE NAMES: params carry `t/<table>` (and `x<space12>-…`) in the clear → keyed hash; the identity's
       grant check must take the name beside the params; every table re-keyed → needs a migration.

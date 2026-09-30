@@ -203,6 +203,13 @@ pub struct Flush {
     pub blocks: Vec<(Cid, Vec<u8>)>,
 }
 
+/// A group of a table's asset: `k` members, then their parity (none for a tree written before parity).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetGroup {
+    pub slots: Vec<Cid>,
+    pub k: usize,
+}
+
 /// What a flush or a read needs before it can go on.
 pub enum Step<T> {
     Ready(T),
@@ -252,6 +259,11 @@ impl Open {
             #[cfg(test)]
             sent: HashMap::new(),
         }
+    }
+
+    /// The tail's signed state as this page holds it (re-published as it is: the network keeps the newest).
+    pub fn state(&self) -> Vec<u8> {
+        self.writer.state()
     }
 
     /// The instance id, as the node writes it (base58).
@@ -431,6 +443,65 @@ impl Open {
         let body = self.writer.body();
         let Some(e) = body.entries.get(ROOT_PARITY) else { return Vec::new() };
         e.value.as_deref().unwrap_or_default().chunks_exact(32).map(|c| c.try_into().expect("32")).collect()
+    }
+
+    /// The table's ASSET (phase 4, Lifecycle: what keeping it keeps): every block its current tree reaches, in the
+    /// groups they are coded in — the root's group of one, then each node's groups (a branch's children, a leaf's
+    /// values), each `k` members then their parity. `Need` the nodes not held yet (the walk descends through them).
+    pub fn asset(&self) -> Result<Step<Vec<AssetGroup>>, String> {
+        let Some(root) = self.writer.body().root else { return Ok(Step::Ready(Vec::new())) };
+        let mut groups = vec![AssetGroup { slots: [vec![root], self.root_parity_ids()].concat(), k: 1 }];
+        let (mut stack, mut seen, mut need) = (vec![root], BTreeSet::new(), Vec::new());
+        while let Some(cid) = stack.pop() {
+            if !seen.insert(cid) {
+                continue;
+            }
+            let Some(bytes) = self.blocks.0.get(&cid) else {
+                need.push(cid);
+                continue;
+            };
+            let node = freenet_prolly::node::Node::parse(bytes).map_err(|e| format!("tree node {} does not parse: {e:?}", hex(&cid)))?;
+            let ids: Vec<Cid> = node.parity().collect();
+            let pn = freenet_prolly::parity::PARITY;
+            for (g, (_, members)) in freenet_prolly::parity::group_members(&node).into_iter().enumerate() {
+                let par = ids.get(pn * g..pn * (g + 1)).unwrap_or(&[]);
+                let k = members.len();
+                groups.push(AssetGroup { slots: [members, par.to_vec()].concat(), k });
+            }
+            if !node.is_leaf() {
+                for i in 0..node.len() {
+                    stack.push(node.child(i).0);
+                }
+            }
+        }
+        if !need.is_empty() {
+            return self.need(need);
+        }
+        Ok(Step::Ready(groups))
+    }
+
+    /// A block of the asset AS STORED — to put again (re-publishing it, or repairing it where it is missing): held
+    /// here, it is its block state (sealed at its address for a sealed tree, with the key writes use: the nonce comes
+    /// from the key and the id, so the bytes are the same as the first put's under that key); a PARITY block is coded
+    /// again from its group's members, all held. `(sealed, state)`; `None`: neither can be made here.
+    pub fn stored(&self, cid: &Cid, groups: &[AssetGroup]) -> Option<(bool, Vec<u8>)> {
+        let state = match self.blocks.0.get(cid) {
+            Some(body) => contract_keys::block::block_state(cid, body)?,
+            None => {
+                let g = groups.iter().find(|g| g.slots[g.k..].contains(cid))?;
+                let members: Option<Vec<Vec<u8>>> = g.slots[..g.k]
+                    .iter()
+                    .map(|m| self.blocks.0.get(m).and_then(|b| contract_keys::block::block_state(m, b)))
+                    .collect();
+                let p = freenet_prolly::parity::encode_group(&members?).ok()?.into_iter().find(|p| freenet_prolly::block_id(freenet_prolly::kind::PARITY, p) == *cid)?;
+                contract_keys::block::block_state(cid, &p)?
+            }
+        };
+        if !self.sealed_tree() {
+            return Some((false, state));
+        }
+        let by = self.writes?;
+        Some((true, seal_block(&self.key_for(by)?, by, cid, &state)))
     }
 
     /// REPAIR: the group a missing tree block can be rebuilt from — the root's group of one, or the group a held
@@ -880,6 +951,69 @@ mod tests {
         let id = *o.blocks.0.keys().next().unwrap();
         let other = [0u8; 32];
         assert!(!r.absorb_block(&other, &net(&o, &id)));
+    }
+
+    /// KEEP (phase 4): a READER — holding only what it fetched, no parity — lists the table's asset (every group its
+    /// tree reaches) and makes every block of it AS STORED: members from what it holds, parity coded again from them.
+    /// Each is byte for byte what the writer put, so re-publishing and repair need nothing the reader does not have.
+    #[test]
+    fn a_reader_lists_the_asset_and_makes_every_block_as_stored() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        let mut o = Open::new(CODE, &member, "chat");
+        o.set_table_key([7; 32]);
+        for i in 0..300 {
+            write(&key, &mut o, &format!("t{i:05}"), &format!("{i}-{}", "x".repeat(900)));
+            if i % 50 == 49 {
+                flush(&key, &mut o);
+            }
+        }
+        let mut r = Open::new(CODE, &member, "chat");
+        r.set_table_key([7; 32]);
+        assert!(r.absorb(&o.writer.state()));
+        let groups = loop {
+            match r.asset().unwrap() {
+                Step::Ready(g) => break g,
+                Step::Keys(k) => panic!("no epochs here: {k:?}"),
+                Step::Need(ids) => {
+                    for id in ids {
+                        assert!(r.absorb_block(&id, &o.sent[&id]));
+                    }
+                }
+            }
+        };
+        assert!(groups.len() > 2, "the root's group and the nodes' groups");
+        assert_eq!(groups[0].k, 1, "the root is a group of one");
+        let root = o.writer.body().root.unwrap();
+        let (mut members, mut parity, mut made) = (0, 0, 0);
+        // A leaf's values are members too: fetched as a read would.
+        for g in &groups {
+            for c in &g.slots[..g.k] {
+                if !r.blocks.0.contains_key(c) {
+                    assert!(r.absorb_block(c, &o.sent[c]), "a value block the writer put");
+                }
+            }
+        }
+        for g in &groups {
+            for (i, c) in g.slots.iter().enumerate() {
+                if i < g.k { members += 1 } else { parity += 1 }
+                let (sealed, st) = r.stored(c, &groups).unwrap_or_else(|| panic!("block {} could not be made", hex(c)));
+                assert!(sealed);
+                if let Some(sent) = o.sent.get(c) {
+                    assert_eq!(&st, sent, "block {} as the writer put it", hex(c));
+                    made += 1;
+                } else {
+                    assert_eq!(*c, root, "only the latest root may be absent from what the helper recorded");
+                }
+            }
+        }
+        assert!(parity > 0 && members > parity, "members {members}, parity {parity}");
+        assert!(made >= members + parity - 1);
+        // Control: a parity block whose group is not all held cannot be made.
+        let g = groups.iter().find(|g| g.k > 1 && g.slots.len() > g.k).unwrap();
+        let mut short = Open::new(CODE, &member, "chat");
+        short.set_table_key([7; 32]);
+        assert!(short.stored(&g.slots[g.k], &groups).is_none());
     }
 
     /// READS: a reader asks the LATEST page and fetches only the blocks on its path — fewer than a whole read; pages
