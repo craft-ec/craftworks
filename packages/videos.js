@@ -300,6 +300,8 @@ export async function mount(ctx, el) {
         const kept = ref.type === studio.MANIFEST && f.elements.keep.checked ? (await player.manifest(ref).catch(() => null))?.source : ref;
         if (kept) await drive.add(kept, { space: inSpace, from: { app: "videos" } }).catch(() => {});
         const meta = Object.fromEntries(kinds.of(kindSel.value).fields.map(x => [x, String(f.elements[`meta.${x}`]?.value ?? "").trim()]).filter(([, v]) => v));
+        // A file sent as it is (not encoded here) carries its video id on the item (a manifest carries its own).
+        if (ref.type !== studio.MANIFEST && ref.key) meta.vid = await studio.videoId(ref.key);
         const posted = await items.submit({ board: inSpace?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, kind: kindSel.value, meta, private: !inSpace && !pub, files: [ref] });
         // Its SUBTITLES: items of their own, about it.
         for (const s of f.elements.subs.files ?? []) await subs.add(posted, s).catch(e => ctx.log("videos", { what: `subtitles ${s.name}: ${e.message}` }));

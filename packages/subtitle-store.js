@@ -1,13 +1,17 @@
-// SUBTITLE STORE, a capability: SUBTITLES as data of their own — `content` of the attaching kind "subtitle" (`kinds`):
-// about a media item (`in`: a video, an audio item), its language and label (`meta`), its cues as a WebVTT file (a
-// film's run to 100 KB: never in the row). Contributed like a comment — where the item is (a space's board), or on a
-// profile in the contributor's own tail, pointed to from the item — so anyone who may comment may add a track or a
-// translation. Any player composes them (Videos; audio next); the Subtitles app is their lens. Portable: WebVTT in,
-// WebVTT or SRT out.
+// SUBTITLE STORE, a capability: SUBTITLES as data of their own, like Drive's files — `content` of the attaching kind
+// "subtitle" (`kinds`): its language and label (`meta`), its cues a WebVTT file (a film's run to 100 KB: never in the
+// row), and what it is FOR — the VIDEO's ID (`meta.for`: fixed at upload from the original's key: public — the content
+// alone, the same video anywhere; private — salted by its space, so only its readers can name it), with the item it
+// was made on (`in`). KEPT where its author chooses: with the video (its place), their own, or a team's space. FOUND by
+// the video's id in the places this person can READ — the video's own, their own, the spaces they are in, the people
+// and spaces they follow (public ones from outside): access control and privacy decide what loads, nothing else.
+// Any player composes them; the Subtitles app is their lens. Portable: WebVTT in, WebVTT or SRT out.
 //
 //   const subs = await ctx.require("subtitle-store");
-//   await subs.of(mediaRef, { outside })          // [{ ref, lang, label, by, at, file, mayRemove }], oldest first
-//   await subs.add(mediaRef, fileOrText, { lang, label })   // its ref (SRT is made WebVTT)
+//   await subs.of(mediaRef, { outside })          // [{ ref, lang, label, by, at, file, place, mayRemove }], oldest first
+//   await subs.add(mediaRef, fileOrText, { lang, label, place })   // its ref (SRT made WebVTT); `place`: a space, null
+//                                                  // (your own), or none: with the video
+//   await subs.videoId(mediaRef)                   // the id tracks are matched by (null: a video from before ids)
 //   await subs.update(ref, { lang, label, text })  await subs.remove(ref)
 //   await subs.text(sub)   subs.toSrt(vttText)      // its WebVTT; the same as SRT
 //   await subs.mine()                              // this person's subtitles, everywhere they are (the app's list)
@@ -36,39 +40,59 @@ export async function start(ctx) {
       .join("\n\n")
       .concat("\n");
 
-  // Where the media item is, and whether it is public: its subtitles are keyed and sealed as it is.
-  async function placeOf(mediaRef) {
+  // THE VIDEO's ID: fixed at upload (its manifest's `vid`, or its item's `meta.vid`); null for a video from before ids.
+  async function videoId(mediaRef) {
     const item = await items.get(mediaRef).catch(() => null);
-    const sp = mediaRef.startsWith("space:") ? (await space.mine()).find(s => s.id === mediaRef.slice(6, mediaRef.indexOf("/"))) ?? null : null;
-    // Public exactly as the item is: in a space by its own app's setting (`items`); a profile item not "only you".
-    const pub = sp ? !!item?.pub : !item?.private;
-    return { sp, pub };
+    if (!item) return null;
+    if (item.meta?.vid) return item.meta.vid;
+    const m = item.files?.find(f => f.type === "application/vnd.craftworks.video+json");
+    if (!m) return null;
+    return JSON.parse(await (await files.get(m)).text()).vid ?? null;
+  }
+  // WHERE a track is kept, and whether it is public there: with the video — as the video is; in a space — as that
+  // space's subtitles are; this person's own — public, unless it is about a private item of theirs.
+  async function keep(mediaRef, place) {
+    if (place === undefined) {
+      const item = await items.get(mediaRef).catch(() => null);
+      const sp = mediaRef.startsWith("space:") ? (await space.mine()).find(s => s.id === mediaRef.slice(6, mediaRef.indexOf("/"))) ?? null : null;
+      return { sp, pub: sp ? !!item?.pub : !item?.private };
+    }
+    if (place) return { sp: place, pub: await items.publicIn(place, KIND) };
+    const item = await items.get(mediaRef).catch(() => null);
+    return { sp: null, pub: !(item?.private && item.by === (await space.account())?.id) };
   }
   // `in` as a full reference (on a board an item names what it is about by id alone).
-  const shape = x => ({ ref: x.ref, in: x.board && x.in && !x.in.startsWith("space:") ? `space:${x.board.id}/${x.in}` : x.in, lang: x.meta?.lang ?? "", label: x.meta?.label ?? x.body ?? "", by: x.by, at: x.at, edited: x.edited, file: x.files?.[0] ?? null, mayRemove: !!x.mayRemove, board: x.board });
+  const shape = x => ({ ref: x.ref, in: x.board && x.in && !x.in.startsWith("space:") ? `space:${x.board.id}/${x.in}` : x.in, for: x.meta?.for ?? null, lang: x.meta?.lang ?? "", label: x.meta?.label ?? x.body ?? "", by: x.by, at: x.at, edited: x.edited, file: x.files?.[0] ?? null, mayRemove: !!x.mayRemove, board: x.board, place: x.board ?? null });
 
+  // A video's TRACKS: those made with it, and those anywhere this person can READ made for its id.
   async function of(mediaRef, { outside = null } = {}) {
-    return (await items.attached(mediaRef, KIND, { outside })).map(shape);
+    const vid = await videoId(mediaRef);
+    const withIt = (await items.attached(mediaRef, KIND, { outside })).map(shape);
+    const elsewhere = outside ? [] : (await items.list({ feed: true }, "new", KIND).catch(() => [])).map(shape).filter(t => (vid && t.for === vid) || t.in === mediaRef);
+    const seen = new Set();
+    return [...withIt, ...elsewhere].filter(t => !seen.has(t.ref) && seen.add(t.ref)).sort((a, b) => a.at - b.at);
   }
-  async function store(mediaRef, vtt, name) {
-    const { sp, pub } = await placeOf(mediaRef);
+  async function store(where, vtt, name) {
     // Never inline: a long film's cues outgrow a row.
-    return files.put(new File([vtt], name, { type: "text/vtt" }), { space: sp, public: pub, app: "subtitles", inline: false });
+    return files.put(new File([vtt], name, { type: "text/vtt" }), { space: where.sp, public: where.pub, app: "subtitles", inline: false });
   }
-  async function add(mediaRef, source, { lang = "", label = "" } = {}) {
+  async function add(mediaRef, source, { lang = "", label = "", place = undefined } = {}) {
     const text = typeof source === "string" ? source : await source.text();
     const name = typeof source === "string" ? "subtitles.vtt" : source.name.replace(/\.\w+$/, ".vtt");
     lang = (lang || (typeof source === "string" ? "" : (source.name.match(/\.([a-z]{2,3})\.\w+$/i)?.[1] ?? ""))).toLowerCase().slice(0, 8);
     label = (label || (typeof source === "string" ? lang || "Subtitles" : source.name.replace(/\.\w+$/, ""))).slice(0, 60);
-    const ref = await store(mediaRef, toVtt(text), name);
-    return items.attach(mediaRef, KIND, label, { meta: { lang, label }, files: [ref] });
+    const vid = await videoId(mediaRef);
+    const where = await keep(mediaRef, place);
+    const ref = await store(where, toVtt(text), name);
+    return items.attach(mediaRef, KIND, label, { meta: { lang, label, ...(vid ? { for: vid } : {}) }, files: [ref], ...(place !== undefined ? { place } : {}) });
   }
   async function update(ref, { lang = null, label = null, text = null } = {}) {
-    const cur = (await items.get(ref).catch(() => null)) ?? (await mine()).find(s => s.ref === ref);
-    const was = cur ? shape(cur) : null;
+    const was = (await mine()).find(s => s.ref === ref);
     if (!was) throw new Error("that subtitle is not yours here");
-    const meta = { lang: lang ?? was.lang, label: label ?? was.label };
-    const files_ = text != null ? [await store(was.in, toVtt(text), `${meta.label || "subtitles"}.vtt`)] : null;
+    const meta = { lang: lang ?? was.lang, label: label ?? was.label, ...(was.for ? { for: was.for } : {}) };
+    const sp = was.place ? (await space.mine()).find(s => s.id === was.place.id) ?? null : null;
+    const where = sp ? { sp, pub: await items.publicIn(sp, KIND) } : await keep(was.in, null);
+    const files_ = text != null ? [await store(where, toVtt(text), `${meta.label || "subtitles"}.vtt`)] : null;
     await items.editItem(ref, meta.label, { meta, ...(files_ ? { files: files_ } : {}) });
   }
   const remove = ref => items.remove(ref);
@@ -77,5 +101,5 @@ export async function start(ctx) {
     const me = (await space.account()).id;
     return (await items.list({ by: me }, "new", KIND)).map(shape);
   }
-  return { of, add, update, remove, text, toSrt, toVtt, mine, KIND };
+  return { of, add, update, remove, text, toSrt, toVtt, mine, videoId, KIND };
 }

@@ -101,30 +101,46 @@ export async function start(ctx) {
     const files = await ctx.require("files");
     return JSON.stringify({ ...it, files: await Promise.all(it.files.map(f => files.current(f).catch(() => f))) });
   }
+  // A DOMAIN's read setting in a space: its own (`text`, `video`, `subtitle` …: content decides, whatever app shows it),
+  // else the app-named setting from before (text: "board", video: "videos", subtitle: "subtitles"), else the space's.
+  const LEGACY = { text: "board", video: "videos", subtitle: "subtitles" };
+  const domainReads = (r, domain) => {
+    const own = r.policiesAt(domain).read;
+    if (own) return own === "anyone";
+    return r.policy(LEGACY[domain] ?? domain, "read") === "anyone";
+  };
+  // Whether an item of `kind` is public in a space now.
+  async function publicIn(sp, kind) {
+    const r = await roles.of(sp);
+    await r.settled;
+    return domainReads(r, kinds.policyDomain(kind));
+  }
   // (A space's PLACE: its board room — the same for every kind.)
   const boardRoom = sp =>
     opened(`space:${sp.id}`, async () => {
       const [a, b, r] = await Promise.all([content.in(space.board(sp)), content.in(space.board(sp, { pub: true })), roles.of(sp)]);
       // PUBLIC is per item, by its own APP's setting now (a video: Videos'; a post: Board's) — what attaches to an item
       // (a comment, a vote, a subtitle) as that item is. Not bound to Board: a space's place holds every kind.
-      const readsAnyone = app => r.policy(app, "read") === "anyone";
+      const readsAnyone = domain => domainReads(r, domain);
       const kindOf = new Map(); // item id → kind (every author's, as listed)
       const learnKinds = () => [...a.list(), ...b.list()].forEach(x => kindOf.set(x.id, x.kind));
-      const rootApp = (kind, about, depth = 0) => {
-        const app = kinds.app(kind);
-        if (app && TOP.has(kind)) return app;
+      // What governs an item: its own kind's domain — or, attached to an item HERE, that item's (a comment, a vote, a
+      // subtitle beside its video); an attaching item about something elsewhere is its own (a team's subtitle).
+      const rootDomain = (kind, about, depth = 0) => {
+        if (TOP.has(kind)) return kinds.policyDomain(kind);
         const k = kindOf.get(about);
-        return k && depth < 8 ? rootApp(k, null, depth + 1) : "board";
+        if (k && depth < 8) return rootDomain(k, null, depth + 1);
+        return kinds.of(kind) ? kinds.policyDomain(kind) : "text";
       };
       const pubOfValue = v => {
         try {
           const x = JSON.parse(v);
-          return readsAnyone(rootApp(x.kind ?? "post", x.in ?? x.item ?? x.re ?? null));
+          return readsAnyone(rootDomain(x.kind ?? "post", x.in ?? x.item ?? x.re ?? null));
         } catch {
           return false;
         }
       };
-      const pubOfItem = it => readsAnyone(rootApp(it.kind, it.in ?? it.re ?? null));
+      const pubOfItem = it => readsAnyone(rootDomain(it.kind, it.in ?? it.re ?? null));
       // THE SYNC: this person's rows — a public copy of each while ITS APP reads in public, none while it does not. Rows
       // only in the public table (written there before the sealed table held everything) move into the sealed one first.
       let syncing = null;
@@ -445,8 +461,14 @@ export async function start(ctx) {
 
   // ATTACHED ITEMS (a subtitle on a video): contributed like a comment — in the item's place (a board), or on a
   // profile in the contributor's own tail with a pointer on the item (a private item: private too) — and listed with it.
-  async function attach(post, kind, body, { meta = {}, files = [] } = {}) {
+  async function attach(post, kind, body, { meta = {}, files = [], place = undefined } = {}) {
     if (!kinds.attaching().includes(kind)) throw new Error(`${kind} does not attach to an item`);
+    // KEPT ELSEWHERE (`place`: a space, or null — this person's own): about `post` by its full reference.
+    if (place !== undefined && !(place && post.startsWith(`space:${place.id}/`))) {
+      if (place) return `space:${place.id}/${await (await boardRoom(place)).post(kind, body, { in: post, meta, files })}`;
+      const mine = await profileRoom(await me());
+      return `${await me()}/${await mine.post(kind, body, { in: post, meta, files })}`;
+    }
     if (post.startsWith("space:")) {
       const sp = await boardOf(post);
       if (!sp) throw new Error("you are not in that board's space");
@@ -492,5 +514,5 @@ export async function start(ctx) {
     return (await profileRoom(await me())).setFiles(idOf(ref), files);
   }
 
-  return { submit, list, get, setFiles, attach, attached, editItem, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
+  return { submit, list, get, setFiles, attach, attached, editItem, publicIn, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
 }

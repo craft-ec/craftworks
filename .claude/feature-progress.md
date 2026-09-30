@@ -778,6 +778,12 @@ come with keepers as a new codec version.
       `subtitle-store` (of/add/update/remove, WebVTT⇄SRT), Videos composes tracks, SUBTITLES app (#/subtitles: yours,
       for/<item>, e/<ref> editor + export). Manifest subtitles migrated on the author's watch. 17573: migrated 2
       (manifest 0 left), edit saved + SRT export correct, paste-add "Español", 0 errors.
+- [x] SUBTITLES BY VIDEO ID, kept anywhere (owner: "like drive … mapped to videos cross spaces by video id"; "read and
+      loading is based on access control and privacy"): manifest `vid` (from the original's key: public global,
+      private space-salted), subtitle `meta.for`, `items.attach(..., { place })`, `subs.of` = with-the-video ∪ the
+      feed's places filtered by id. SETTINGS per content domain (`kinds.policyDomain`, legacy app-named fallback;
+      owner: "posts→Board is just current implementation"). 17573: same id for the space copy; a team-kept and an
+      own-kept track show on both copies. NOT measured: a non-member's view across two accounts (by construction).
 - [ ] F4 video (old plan line): CMAF segments, renditions (AV1+Opus, H.264+AAC), remux (mp4box) or WebCodecs encode, MediaSource ABR,
       poster + scrub strip, subtitles.
 - [x] F5a DRIVE (owner 09-30: every uploaded file is in Drive; attach from Drive; choose any space's Drive):

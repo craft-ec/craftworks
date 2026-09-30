@@ -64,7 +64,7 @@ export async function mount(ctx, el) {
       {},
       h("span", { className: "n", textContent: t.label || t.lang || "Subtitles" }),
       h("span", { className: "s", textContent: t.lang || "—" }),
-      h("span", { className: "s" }, "by ", who(t.by)),
+      h("span", { className: "s" }, "by ", who(t.by), t.place ? ` · in ${t.place.name ?? "a space"}` : ""),
       h("a", { href: watchHref(t.in), textContent: `▶ ${await title(t.in)}` }),
       t.by === me ? h("a", { href: `#/subtitles/e/${encodeURIComponent(t.ref)}`, textContent: "Edit" }) : null,
       h("button", { type: "button", textContent: ".vtt", onclick: async () => download(await subs.text(t), `${t.label || "subtitles"}.vtt`, "text/vtt") }),
@@ -92,6 +92,19 @@ export async function mount(ctx, el) {
 
   async function forItem(ref) {
     const list = await subs.of(ref);
+    // The places a track can be kept: with the video (where this person may add), their own, their spaces with Subtitles.
+    const roles = await ctx.require("roles");
+    const mine = await space.mine();
+    const teams = [];
+    for (const s of mine.filter(x => x.kind === "server")) if ((await roles.of(s).catch(() => null))?.apps().includes("subtitles")) teams.push(s);
+    const withVideo = ref.startsWith("space:") ? mine.some(s => ref.startsWith(`space:${s.id}/`)) : true;
+    const placeSel = h(
+      "select",
+      { name: "place" },
+      ...(withVideo ? [h("option", { value: "with", textContent: "with the video" })] : []),
+      h("option", { value: "own", textContent: "as your own" }),
+      ...teams.filter(s => !ref.startsWith(`space:${s.id}/`)).map(s => h("option", { value: s.id, textContent: `in ${space.shown(s)}` })),
+    );
     const said = h("p", { className: "said", hidden: true });
     const f = h(
       "form",
@@ -99,7 +112,9 @@ export async function mount(ctx, el) {
       h("h3", { textContent: "Add a track" }),
       h("input", { type: "file", name: "file", accept: ".vtt,.srt,text/vtt" }),
       h("textarea", { name: "text", rows: 6, placeholder: "…or paste WebVTT or SRT here", style: "min-height:120px" }),
-      h("div", { className: "row" }, h("input", { name: "label", placeholder: "Label (e.g. English)" }), h("input", { name: "lang", placeholder: "Language (en)", style: "width:9em" }), h("button", { className: "go", textContent: "Add" })),
+      h("div", { className: "row" }, h("input", { name: "label", placeholder: "Label (e.g. English)" }), h("input", { name: "lang", placeholder: "Language (en)", style: "width:9em" })),
+      // WHERE it is kept (like a Drive file): with the video, your own, or a team's space — found by the video's id.
+      h("div", { className: "row" }, h("span", { className: "s", textContent: "Keep it " }), placeSel, h("button", { className: "go", textContent: "Add" })),
       said,
     );
     f.onsubmit = async e => {
@@ -107,7 +122,9 @@ export async function mount(ctx, el) {
       const src = f.elements.file.files[0] ?? (f.elements.text.value.trim() || null);
       if (!src) return;
       said.hidden = true;
-      await subs.add(ref, src, { label: f.elements.label.value.trim(), lang: f.elements.lang.value.trim() }).then(draw, err => ((said.textContent = err.message ?? String(err)), (said.hidden = false)));
+      const v = placeSel.value;
+      const place = v === "with" ? undefined : v === "own" ? null : mine.find(s => s.id === v);
+      await subs.add(ref, src, { label: f.elements.label.value.trim(), lang: f.elements.lang.value.trim(), ...(place !== undefined ? { place } : {}) }).then(draw, err => ((said.textContent = err.message ?? String(err)), (said.hidden = false)));
     };
     return h("div", {}, h("h3", {}, "For ", h("a", { href: watchHref(ref), textContent: `▶ ${await title(ref)}` })), list.length ? h("ul", {}, ...(await Promise.all(list.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }), f);
   }

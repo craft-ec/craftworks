@@ -153,6 +153,9 @@ export async function start(ctx) {
     const sp = await strip(M, track, duration).catch(() => null);
     // THE ORIGINAL, kept: what the background makes the rest from (and a newer codec later).
     const source = await files.put(file, { space, public: pub, app: "videos", onProgress: e => say("keeping the original", e.done / Math.max(1, e.size)) });
+    // THE VIDEO's ID, fixed now (a re-key later does not change it): from the original's key — public: its content
+    // alone (the same video anywhere has one id); otherwise salted by its space (only its readers can name it).
+    const vid = await videoId(source.key);
     // ONE rendition now: H.264 at up to 720p (the hardware encoder: seconds) — the rest pending.
     const first = plan.filter(r => r.codec === "avc").sort((a, b) => Math.abs(a.height - 720) - Math.abs(b.height - 720))[0];
     const renditions = [];
@@ -169,6 +172,7 @@ export async function start(ctx) {
       width: track.displayWidth,
       height: track.displayHeight,
       source,
+      vid,
       renditions,
       pending: plan.filter(r => r !== first).map(({ codec, height, bitrate, audio }) => ({ codec, height, bitrate, audio })),
       ...(sp ? { strip: { ref: stripRef, n: sp.n, cols: sp.cols, w: sp.w, h: sp.h, every: sp.every } } : {}),
@@ -183,6 +187,7 @@ export async function start(ctx) {
     return { ...ref, ...(posterUrl ? { preview: posterUrl } : {}), duration, width: track.displayWidth, height: track.displayHeight };
   }
 
+  const videoId = async key => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array([...new TextEncoder().encode("craftworks video id"), ...key.match(/../g).map(x => parseInt(x, 16))])))].map(x => x.toString(16).padStart(2, "0")).join("");
   const widthFor = (w, h, hh) => Math.max(2, Math.round((hh * w) / h / 2) * 2);
   // ONE RENDITION made and stored: its manifest entry (null: this browser's encoder refused it).
   async function makeRendition(M, file, r, { space, pub, name, say, width = null }) {
@@ -316,5 +321,5 @@ export async function start(ctx) {
     return old;
   }
 
-  return { make, progress, kick, takeLegacySubtitles, MANIFEST };
+  return { make, progress, kick, takeLegacySubtitles, videoId, MANIFEST };
 }

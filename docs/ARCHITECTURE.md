@@ -221,12 +221,19 @@ duration, at }`, the file's reference as `files` makes it). Playing: an MP4 by B
 it on the fly — the range read as the file's chunks (a seek reads only the chunks it lands in); any other container
 (or a browser without MediaSource) loads whole. What follows is where it goes once the basic works.
 
-**Subtitles — data of their own (built; owner 09-30: "its own capability … all data integrated and portable").** A
-subtitle track is `content` of the ATTACHING kind "subtitle" (`kinds`: it attaches to video and audio items): about a
-media item (`in`), its language and label (`meta`), its cues a WebVTT file (never in the row: a film's run to 100 KB).
-Contributed like a comment — in the item's place (a space's board), or on a profile in the contributor's own tail with
-a pointer on the item — so whoever may comment may add a track or a translation. `subtitle-store` owns it; any player
-composes it (Videos; audio next); the SUBTITLES app is its lens (yours, an item's, an editor); WebVTT or SRT in and out.
+**Subtitles — data of their own, like Drive's files (built; owner 09-30).** A subtitle track is `content` of the
+attaching kind "subtitle": its language and label, its cues a WebVTT file (never in the row), and what it is FOR — the
+VIDEO's ID, fixed at upload from the original's key (public: the content alone, so the same video anywhere has one
+id; private: salted by its space, so only its readers can name it). KEPT where its author chooses — with the video,
+their own, or a team's space — and FOUND by the video's id in the places the viewer can READ (the video's own, theirs,
+the spaces they are in, the people and spaces they follow): access control and privacy decide what loads, and nothing
+else is asked. `subtitle-store` owns it; players compose it; the SUBTITLES app is its lens (personal, and in a space:
+a group working on its videos' tracks); WebVTT or SRT in and out.
+
+**Settings are the CONTENT's, not the app's.** In a space, what may be read or written is set per DOMAIN (text,
+video, subtitle …: `kinds.policyDomain`), so any app — one per domain, or one showing every domain (a Handcraft-like
+app) — shows under the same rules; a setting from before under an app's name (board, videos, subtitles) stands for its
+domain until the domain has its own. What attaches to an item in the same place follows that item.
 
 **Video — the pipeline (built).** At upload, in the uploader's browser (no server encodes here): Mediabunny (WebCodecs)
 reads any common file and writes each RENDITION as a FRAGMENTED MP4 (CMAF: ~4 s fragments, a key frame every 2 s),
