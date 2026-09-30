@@ -106,9 +106,10 @@ export async function start(ctx) {
   }
   const remove = ref => items.remove(ref);
   const text = async sub => toVtt(await (await files.get(sub.file)).text());
-  async function mine() {
+  // THIS PERSON's tracks — within a list's window (`items.list` options: a feed bar's), newest first by default.
+  async function mine({ sort = "new", ...options } = { window: "all" }) {
     const me = (await space.account()).id;
-    return (await items.list({ by: me }, "new", KIND)).map(shape);
+    return (await items.list({ by: me }, sort, KIND, options)).map(shape);
   }
   return { of, add, update, remove, text, toSrt, toVtt, mine, videoId, KIND };
 }

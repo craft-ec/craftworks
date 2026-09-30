@@ -24,7 +24,8 @@ export async function mount(ctx, el) {
   const C = APPS[C_ROUTE];
   const VIDEO = kinds.inDomain(C.domain);
   let only = null; // a SUB-TYPE the list is filtered to (null: all)
-  let months = 1; // how far back the list reads (a month at a time: never everything)
+  // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.
+  const bar = (await ctx.require("feed-bar")).create({ start: "new", onChange: () => draw() });
   const me = (await space.account()).id;
   el.innerHTML = `
     <style>
@@ -142,7 +143,8 @@ export async function mount(ctx, el) {
     const title = sp() ? `${C.icon} ${spaceName ?? "Channel"} · channel` : `${C.icon} ${C.name}`;
     // The SUB-TYPES (a filter): all, or one kind of the domain.
     const chips = w.watch || w.up ? null : h("div", { className: "chips" }, ...[null, ...VIDEO].map(k => h("button", { type: "button", className: only === k ? "on" : "", textContent: k ? kinds.of(k).label : "All", onclick: () => ((only = k), draw()) })));
-    return h("div", { className: "top" }, h("h2", { textContent: title }), h("nav", { className: "tabs" }, ...tabs.map(t => h("a", { href: t.href, textContent: t.label, className: t.on ? "on" : "" }))), discovering() ? null : h("a", { className: "up", href: `${base()}/up`, textContent: "⬆ Upload" }), chips);
+    const feedBar = w.watch || w.up || w.saved ? null : h("div", { className: "chips" }, bar.el());
+    return h("div", { className: "top" }, h("h2", { textContent: title }), h("nav", { className: "tabs" }, ...tabs.map(t => h("a", { href: t.href, textContent: t.label, className: t.on ? "on" : "" }))), discovering() ? null : h("a", { className: "up", href: `${base()}/up`, textContent: "⬆ Upload" }), chips, feedBar);
   }
 
   function card(v) {
@@ -164,10 +166,11 @@ export async function mount(ctx, el) {
           const ref = k.slice(7);
           return items.get(ref, { outside: await outsideOf(ref) }).catch(() => null);
         }))).filter(Boolean)
-      : await items.list(w, "new", VIDEO, { window: 30 * months });
+      : bar.reorder(await items.list(w, bar.sort(), VIDEO, bar.options()));
     const shown = only ? vs.filter(v => v.kind === only) : vs;
-    const none = w.saved ? `Nothing saved: “Save” on a ${C.one} keeps it here.` : w.feed ? `No ${C.ones} yet from you or what you follow.` : w.discover ? `No public ${C.ones} yet.` : w.by === me ? `Nothing here yet: upload a ${C.one}.` : `No ${C.ones} here yet.`;
-    const older = w.saved ? null : h("div", { style: "text-align:center" }, h("button", { type: "button", textContent: "Older", onclick: () => ((months += 1), draw()) }));
+    const when = bar.span();
+    const none = w.saved ? `Nothing saved: “Save” on a ${C.one} keeps it here.` : w.feed ? `No ${C.ones} ${when} from you or what you follow.` : w.discover ? `No public ${C.ones} ${when}.` : w.by === me ? `Nothing ${when}: upload a ${C.one}.` : `No ${C.ones} ${when}.`;
+    const older = w.saved ? null : bar.older();
     return shown.length ? h("div", {}, h("div", { className: `grid${C.audio ? " sq" : ""}` }, ...shown.map(card)), older) : h("div", {}, h("p", { className: "none", textContent: none }), older);
   }
 

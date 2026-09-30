@@ -10,6 +10,8 @@ export async function mount(ctx, el) {
     return;
   }
   const [subs, items, directory, theme, space] = await Promise.all(["subtitle-store", "items", "directory", "theme", "space"].map(n => ctx.require(n)));
+  // The FEED BAR (every content app's): which tracks, over which window, in which order.
+  const bar = (await ctx.require("feed-bar")).create({ start: "new", onChange: () => draw() });
   const me = (await space.account()).id;
   el.innerHTML = `
     <style>
@@ -76,8 +78,15 @@ export async function mount(ctx, el) {
     );
 
   async function mine() {
-    const list = await subs.mine();
-    return h("div", {}, h("p", { className: "s", textContent: "Every subtitle track you made, on any video. Add one from a video's page (“Add subtitles”)." }), list.length ? h("ul", {}, ...(await Promise.all(list.map(row)))) : h("p", { className: "none", textContent: "None yet." }));
+    const list = bar.reorder(await subs.mine({ sort: bar.sort(), ...bar.options() }));
+    return h(
+      "div",
+      {},
+      h("p", { className: "s", textContent: "Every subtitle, lyrics or transcript track you made, on any video or audio. Add one from its page." }),
+      bar.el(),
+      list.length ? h("ul", {}, ...(await Promise.all(list.map(row)))) : h("p", { className: "none", textContent: `None ${bar.span()}.` }),
+      bar.older(),
+    );
   }
 
   // A SPACE's subtitle work: its videos, each with its tracks (any member's) and a way to add one.

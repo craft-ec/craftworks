@@ -16,16 +16,8 @@ export async function mount(ctx, el) {
   }
   const [posts, directory, person, theme, space, roles, appSettings, attachments] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "app-settings", "attachments"].map(n => ctx.require(n)));
   const me = (await space.account()).id;
-  let sort = "hot";
-  // TIME WINDOWS (what is read, never the whole board): Top of today, the week or the month; Hot the week; New the
-  // month, reaching back a month at a time.
-  let topWindow = "week";
-  let newMonths = 1;
-  // As Grid's: the FEED picks the set (New by date; Hot, Best, Rising, Top ranked over a WINDOW, their counts too),
-  // TOP by votes or by comments, and a SORT that only reorders what is shown (by time, votes or comments, ▲▼).
-  let topBy = "votes";
-  let reorder = "ranked";
-  let dirDesc = true;
+  // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.
+  const bar = (await ctx.require("feed-bar")).create({ start: "hot", onChange: () => draw() });
   // The route: what is shown.
   // Where Board is: the space open (`ctx.space`), or the personal space.
   const discovering = () => ctx.space === "discover";
@@ -378,34 +370,13 @@ export async function mount(ctx, el) {
     ];
   }
 
-  const pick = (options, value, set) => h("select", { onchange: e => (set(e.target.value), draw()) }, ...options.map(([v, t]) => h("option", { value: v, textContent: t, selected: v === value })));
-  const sortBar = () =>
-    h(
-      "div",
-      { className: "panel sorts" },
-      h("span", { className: "lbl", textContent: "feed" }),
-      pick([["new", "✨ New"], ["hot", "🔥 Hot"], ["best", "👍 Best"], ["rising", "📈 Rising"], ["top", "🏆 Top"]], sort, v => ((sort = v), (newMonths = 1))),
-      sort === "new" ? null : pick([["day", "Today"], ["week", "This week"], ["month", "This month"]], topWindow, v => (topWindow = v)),
-      sort === "top" ? pick([["votes", "Top votes"], ["comments", "Top comments"]], topBy, v => (topBy = v)) : null,
-      h("span", { className: "lbl", textContent: "sort" }),
-      pick([["ranked", "Default"], ["time", "Time"], ["votes", "Votes"], ["comments", "Comments"]], reorder, v => (reorder = v)),
-      reorder === "ranked" ? null : h("button", { type: "button", title: "Direction", textContent: dirDesc ? "▼" : "▲", onclick: () => ((dirDesc = !dirDesc), draw()) }),
-    );
-  // THE SORT: the shown set reordered (its feed's order when Default).
-  const reordered = list => {
-    if (reorder === "ranked") return list;
-    const key = { time: p => p.at, votes: p => p.score ?? 0, comments: p => p.comments ?? 0 }[reorder];
-    return [...list].sort((a, b) => (dirDesc ? key(b) - key(a) : key(a) - key(b)) || b.at - a.at);
-  };
+  const sortBar = () => h("div", { className: "panel sorts" }, bar.el());
 
   async function listPage(w) {
     const outside = w.pub ? await descOf(w.pub) : null;
-    const window = sort === "new" ? 30 * newMonths : topWindow;
-    // NEW reaches back a month at a time — on its own as the end is scrolled to; the words for an empty window.
-    const older = sort === "new" ? h("button", { type: "button", className: "ghost older", textContent: "Older posts", onclick: () => ((newMonths += 1), draw()) }) : null;
-    if (older) new IntersectionObserver((es, io) => es.some(e => e.isIntersecting) && (io.disconnect(), older.click()), { rootMargin: "300px" }).observe(older);
-    const span = sort === "new" ? `in the last ${30 * newMonths} days` : { day: "today", week: "this week", month: "this month" }[topWindow];
-    const list = reordered(await posts.list(w.discover ? { discover: true } : outside ? { outside } : w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, sort, "post", { window, by: topBy }));
+    const older = bar.older("Older posts");
+    const span = bar.span();
+    const list = bar.reorder(await posts.list(w.discover ? { discover: true } : outside ? { outside } : w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, bar.sort(), "post", bar.options()));
     if (w.discover || w.pub) {
       const head = h("div", { className: "panel banner" }, h("h2", { textContent: w.pub ? `b/${outside ? space.shown(outside) : "?"} · 🌐 public` : "🧭 Public boards" }));
       return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: `No public posts ${span}.` })]), older];

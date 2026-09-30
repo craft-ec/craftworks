@@ -349,7 +349,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 71] = [
+    let packages: [(&str, &str, PathBuf); 72] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -413,6 +413,7 @@ async fn main() -> Result<()> {
         ("drive-store", "service", app.join("packages/drive-store.js")),
         ("drive", "module", app.join("packages/drive.js")),
         ("kinds", "service", app.join("packages/kinds.js")),
+        ("feed-bar", "service", app.join("packages/feed-bar.js")),
         ("video-player", "service", app.join("packages/video-player.js")),
         ("video-studio", "service", app.join("packages/video-studio.js")),
         // One page for every media app (Videos, Audio): its route chooses the domain.

@@ -852,5 +852,8 @@ Uses what freenet-prolly already has (rev 17d67d8: `range`/`range_with` + `front
       Laziness kept: lists default bounded; the subtitle lookup reads only spaces using Subtitles + profiles; public
       copies sync reads only this writer's own feed whole. 17573: all 4 boards stay lazy after Board + Videos; a vote
       now tops "Top today".
+- [x] R3f ONE FEED BAR for every content app (owner: "implement the same across all content app. video and audio
+      too"): `feed-bar` component (feed/window/top-by/sort ▲▼, New's auto-older) used by Board, Videos, Audio and
+      Subtitles. 17573: all four show it; Top adds window + top-by; a sort adds direction; 0 errors.
 - Verified 17573: a 150-message channel opens with the newest 50 (lazy: no whole read), pages back to all 150 in
   order, "Load earlier" in Chat, a new message live; Board and Videos unaffected; 0 errors.
