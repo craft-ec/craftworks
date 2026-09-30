@@ -902,3 +902,7 @@ Uses what freenet-prolly already has (rev 17d67d8: `range`/`range_with` + `front
   fewer contracts per file/tree (packing — the 09-27 ruling said packs were not worth it; this is new evidence).
 - [ ] L4e BLINDED TABLE NAMES: params carry `t/<table>` (and `x<space12>-…`) in the clear → keyed hash; the identity's
       grant check must take the name beside the params; every table re-keyed → needs a migration.
+- UPSTREAM (09-30): measured a fresh node (fill example, f2ad0b8): immutable one-module contracts cost ~0.107 MiB
+  marginal RSS each, vs the node's 1 MiB constant; posted on freenet-core#5647 (issuecomment-5907919358). Owner's
+  call: keep small raced pieces (no packing); the count cap is the node's accounting. Until upstream changes it, nodes
+  run with a higher `--hosting-mem-share`.
