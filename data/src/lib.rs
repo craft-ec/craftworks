@@ -184,8 +184,9 @@ pub struct Open {
     locked: HashMap<Cid, Vec<u8>>,
     /// The key this tail is under: its writer's.
     pub writer_key: [u8; 32],
-    /// A PUBLIC tail (a person's card): rows in the clear, readable by anyone who can name it; never sealed, never
-    /// flushed (a few rows).
+    /// A PUBLIC tail (a person's card, a board's public copies): rows in the clear, readable by anyone who can name
+    /// it; never sealed — and its tree in the clear too (Block contracts named by their ids, as trees from before
+    /// sealing), so it grows past what one tail holds.
     pub public: bool,
     /// What this page's flushes put, by block id (the tests' network).
     #[cfg(test)]
@@ -194,6 +195,9 @@ pub struct Open {
 
 /// A flush, ready: the blocks to put FIRST (by id, the state to store: sealed whole), then the step to sign.
 pub struct Flush {
+    /// Whether the blocks are sealed (at their addresses in Sealed contracts) or in the clear (a public tree: Block
+    /// contracts named by their ids).
+    pub sealed: bool,
     pub seq: u64,
     pub hash: [u8; 32],
     pub blocks: Vec<(Cid, Vec<u8>)>,
@@ -451,7 +455,7 @@ impl Open {
 
     /// Whether the tree is one from before sealing whole: the next flush builds it again, sealed.
     pub fn reseal_tree(&self) -> bool {
-        self.writer.current().is_some_and(|t| t.body.root.is_some()) && !self.sealed_tree()
+        !self.public && self.writer.current().is_some_and(|t| t.body.root.is_some()) && !self.sealed_tree()
     }
 
     /// FLUSH: write the tail's rows — opened: the tree holds them in the clear, inside sealed blocks — into the tree
@@ -460,11 +464,13 @@ impl Open {
     /// are not there. `Need` when the old tree's blocks along the edited paths are not held yet; `Keys` when a row is
     /// sealed under an epoch whose key is not held yet.
     pub fn flush(&mut self) -> Result<Step<Flush>, String> {
-        if self.public {
-            return Err("a public tail is never flushed".into());
-        }
-        let by = self.writes.ok_or("this table's key is not held here")?;
-        let tk = self.key_for(by).ok_or("this table's key is not held here")?;
+        // A public tail: its tree in the clear, no key.
+        let seal = if self.public {
+            None
+        } else {
+            let by = self.writes.ok_or("this table's key is not held here")?;
+            Some((by, self.key_for(by).ok_or("this table's key is not held here")?))
+        };
         let reseal = self.reseal_tree();
         if self.pending_rows() == 0 && !reseal {
             return Err("nothing to flush".into());
@@ -513,17 +519,18 @@ impl Open {
         let mut blocks = Vec::new();
         for (cid, body) in staging.0.iter().filter(|(c, _)| reseal || !self.blocks.0.contains_key(*c)) {
             let state = contract_keys::block::block_state(cid, body).ok_or_else(|| format!("block {} is of no known kind", hex(cid)))?;
-            blocks.push((*cid, seal_block(&tk, by, cid, &state)));
+            blocks.push((*cid, match seal {
+                Some((by, tk)) => seal_block(&tk, by, cid, &state),
+                None => state,
+            }));
         }
-        let (seq, hash) = self
-            .prepare(vec![
-                op,
-                Op::Set { key: ROOT_PARITY.to_vec(), value: ids },
-                Op::Set { key: SEALED_TREE.to_vec(), value: vec![1] },
-            ])
-            .ok_or("the tail would refuse the flush")?;
+        let mut ops = vec![op, Op::Set { key: ROOT_PARITY.to_vec(), value: ids }];
+        if seal.is_some() {
+            ops.push(Op::Set { key: SEALED_TREE.to_vec(), value: vec![1] });
+        }
+        let (seq, hash) = self.prepare(ops).ok_or("the tail would refuse the flush")?;
         self.staged = Some(staging);
-        Ok(Step::Ready(Flush { seq, hash, blocks }))
+        Ok(Step::Ready(Flush { sealed: seal.is_some(), seq, hash, blocks }))
     }
 
     /// The signature for the prepared step. Returns what to send: `Put(state)` if the network has no tail yet, else
@@ -1330,9 +1337,9 @@ mod tests {
     }
 
     /// A PUBLIC tail (a person's card): its rows are in the clear in what the network holds, anyone reads them with no
-    /// key, a delete removes one, and it is never flushed.
+    /// key, a delete removes one, and it flushes into a tree in the clear that anyone reads too.
     #[test]
-    fn a_public_tail_is_readable_by_anyone_and_never_flushed() {
+    fn a_public_tail_is_readable_by_anyone_and_flushes_in_the_clear() {
         let key = SigningKey::from_bytes(&[5; 32]);
         let owner = key.verifying_key().to_bytes();
         let mut o = Open::new(CODE, &owner, "card");
@@ -1347,7 +1354,35 @@ mod tests {
         put_row(&key, &mut o, "kp/node", "");
         let Ok(Step::Ready(v)) = o.rows() else { panic!() };
         assert_eq!(keys(&v), ["handle=alice"]);
-        assert!(o.flush().is_err());
+        // FLUSHED into a tree in the clear (it grows past one tail): the blocks hold the rows readable, and a reader
+        // with no key walks tail -> root -> blocks to the same rows.
+        for i in 0..40 {
+            put_row(&key, &mut o, &format!("p{i:02}"), "post");
+        }
+        flush(&key, &mut o);
+        assert_eq!(o.pending_rows(), 0, "the tail is emptied");
+        assert!(!o.sealed_tree(), "the tree is not marked sealed");
+        assert!(o.sent.values().any(|b| contains(b, b"alice")), "its blocks are in the clear");
+        let mut r = Open::new(CODE, &owner, "card");
+        r.public = true;
+        assert!(r.absorb(&o.writer.state()));
+        let mut rounds = 0;
+        let v = loop {
+            match r.rows().unwrap() {
+                Step::Ready(v) => break v,
+                Step::Keys(k) => panic!("a public tree needs no key: {k:?}"),
+                Step::Need(ids) => {
+                    rounds += 1;
+                    assert!(rounds < 10, "the walk ends");
+                    for id in ids {
+                        assert_eq!(r.block_params(&id), Some((false, id)), "a Block contract named by its id");
+                        assert!(r.absorb_block(&id, &o.sent[&id]));
+                    }
+                }
+            }
+        };
+        assert!(rounds >= 1, "control: the reader fetched the tree");
+        assert_eq!(v["rows"].as_array().unwrap().len(), 41, "the card's row and the 40 posts");
         // Control: the same rows in a sealed tail do not show.
         let mut sealed = Open::new(CODE, &owner, "card");
         sealed.set_table_key([7; 32]);

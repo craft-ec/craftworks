@@ -866,3 +866,19 @@ Uses what freenet-prolly already has (rev 17d67d8: `range`/`range_with` + `front
 - [ ] VIEW COUNTS → roadmap row 9 (owner 09-30: "cover later under observability and analytics"). Shape noted in
       ARCHITECTURE row 9: one entry per viewer per item (Grid's tally: deduped), windowed like the feeds, counted
       where the item's access allows; adds Popular to the feed bar. Not built; the feed bar has no Popular until then.
+
+## Phase 4 LIFECYCLE (owner "Proceed" 09-30, after Reads) — ARCHITECTURE row 4
+- [x] L4a FLUSH WHEN QUIET: a tail with rows flushes 1–2 min after its last write (spread so tables quiet together do
+      not flush together), and on open for sealed tails this node writes (rows a closed page left). 17573: a note's row
+      flushed ~60 s after the write; ~30 tables with leftover rows flushed on open.
+- [x] L4b PUBLIC TREES: a public tail (card, profile `posts`, a board's public copies, public acts) could never flush
+      (sealed blocks need a key) — so it stopped taking rows at the tail's 256 KiB. Now it flushes into a tree IN THE
+      CLEAR (Block contracts named by their ids, no SEALED_TREE mark; readers already read such trees). A public tail
+      flushes only after a write here (its writes need the grant a read does not show). Test: data
+      `a_public_tail_is_readable_by_anyone_and_flushes_in_the_clear`. Two-node: A wrote 40 profile posts → A's `posts`
+      flushed:true pending:0 (42 rows in the tree); B (outside, following) read all 40.
+- [ ] L4c KEEP: re-publishing + health per table asset (groups from the current tree; GET each slot → margin; PUT
+      back / repair) — due rows, background, one table at a time; Account → Storage shows health.
+- [ ] L4d files: pieces re-published with the file rows.
+- [ ] L4e BLINDED TABLE NAMES: params carry `t/<table>` (and `x<space12>-…`) in the clear → keyed hash; the identity's
+      grant check must take the name beside the params; every table re-keyed → needs a migration.

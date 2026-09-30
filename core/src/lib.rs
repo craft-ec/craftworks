@@ -357,12 +357,15 @@ impl Core {
             data::Step::Need(cids) => Ok(FlushOut::Need(self.want(id, &cids))),
             data::Step::Keys(epochs) => Ok(FlushOut::Keys(epochs)),
             data::Step::Ready(f) => {
-                let tk = self.tail(id)?.table_key.ok_or("this table's key is not held here")?;
+                let tk = if f.sealed { Some(self.tail(id)?.table_key.ok_or("this table's key is not held here")?) } else { None };
                 let mut puts = Vec::new();
                 for (cid, state) in f.blocks {
                     let s = self.stream();
-                    // Sealed whole, at its address.
-                    let c = wire::block::block_contract(&self.sealed_code, &data::block_address(&tk, &cid));
+                    // Sealed whole, at its address — or (a public tree) in the clear, the Block contract its id names.
+                    let c = match tk {
+                        Some(tk) => wire::block::block_contract(&self.sealed_code, &data::block_address(&tk, &cid)),
+                        None => wire::block::block_contract(&self.block_code, &cid),
+                    };
                     let name = c.key().id().encode();
                     puts.push((name, wire::frame_put(c, freenet_stdlib::prelude::WrappedState::new(state), s)?));
                 }

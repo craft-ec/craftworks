@@ -34,6 +34,7 @@ export async function start(ctx) {
   const feed = await ctx.require("feed-glue");
   await feed.default({ module_or_path: await ctx.require("feed-wasm") });
   const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
+  const QUIET_MS = 60000; // a tail with rows flushes after this long with no write
   const enc = new TextEncoder();
   const dec = new TextDecoder();
   // The account's own CHANNELS: one shared tail each, outside the catalog's feeds (the MLS group's, which `membership`
@@ -224,6 +225,9 @@ export async function start(ctx) {
       // Rows under an older key: sealed over now, a batch per step (in the write queue), where this node signs the tail.
       const sp = await space.account();
       if ((legacy > 0 || reseal) && (owner === sp?.self || owner === sp?.shared)) queue = queue.catch(() => {}).then(sealOld);
+      // Rows a page left in this node's own tail (it closed before its quiet flush): flushed once quiet here. A public
+      // tail only after a write here (its writes need the person's grant, which a read of it does not show).
+      else if (!open && (owner === sp?.self || owner === sp?.shared) && !t.absent && core.tail_pending(id) > 0) whenQuiet();
       return t;
     })();
     tails.set(idHex, ready);
@@ -269,6 +273,16 @@ export async function start(ctx) {
       // FLUSH once the tail is long: its rows into the tree, the tail emptied (in this write's turn of the queue).
       if (core.tail_pending(id) >= Core.flush_at()) await flush().catch(e => ctx.log("flush failed", { what: `${app}: ${e.message}` }));
       t.absent = false;
+      whenQuiet();
+    }
+    // FLUSH WHEN QUIET (phase 4, Lifecycle): rows still in the tail once writing has stopped for a while go into the
+    // tree — erasure-coded, so they outlive this one tail contract. Each write starts the wait again.
+    let quiet = null;
+    function whenQuiet() {
+      clearTimeout(quiet);
+      quiet = setTimeout(() => {
+        if (core.tail_pending(id) > 0) queue = queue.catch(() => {}).then(() => core.tail_pending(id) > 0 && flush()).catch(e => ctx.log("flush failed", { what: `${app}: ${e?.message ?? e}` }));
+      }, QUIET_MS + Math.random() * QUIET_MS); // spread: tables quiet together do not flush together
     }
     // ONE STEP of this tail, the one way a tail moves: the prepared step signed by the identity delegate, sent (the
     // first as a PUT, then one delta each), and confirmed. Refused anywhere — by the identity or by the node — it never
