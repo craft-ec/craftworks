@@ -951,3 +951,12 @@ is in which space links). Design:
       one it uses (`Admitted.kp`), and the page records it before acknowledging. Tested: identity (spent kept, tag =
       page's); a live two-account admission-with-no-page run is still to do.
 - [x] (2) WAKE-UPS measured (fx): 14 in 15.00 min at the 60 s floor + jitter — none refused, at most one skipped.
+
+## 2026-10-03 — no lookups of what is not there (3b8cdcd)
+- Owner's node log: a not-found GET costs 6.5 s to 115 s (60 s per-peer attempt deadline); the page waited 30 s per
+  table, blinded-then-legacy in series (rail 17 s on `spaces`, `reads` 2×30 s).
+- Catalog rows carry `b:1` (blinded); others' feeds open where their catalog says; members make their space catalog
+  (`~here`) on first open; missing catalogs polled 5 s→5 min; epoch history walked once per device; activity scans
+  spaces in parallel. Trace line `asked, not there` names every not-found read.
+- fx second load: page ready 0.4 s; only not-founds left = B's two never-made space catalogs (B down; stop once B
+  opens the new build). Open: spaces still open ~2 s each in series in the background (cause unmeasured).
