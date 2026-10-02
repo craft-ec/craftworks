@@ -80,29 +80,31 @@ export async function start(ctx) {
 
   // WHAT TO WATCH: this person's conversations, and every channel of their servers — looked at again every minute (a
   // conversation joined, a channel added).
+  // Every space AT ONCE: one slow to open never holds the others' counts.
   async function scan() {
-    for (const sp of await space.mine().catch(() => [])) {
-      if (sp.kind === "direct" || sp.kind === "group") watch(sp, "messages", { route: `#/messages/${sp.id}` }).catch(() => {});
-      else if (sp.kind === "server") {
-        // Its BOARD (both tables), when it uses Board.
-        const r = await roles.of(sp).catch(() => null);
-        if (r?.apps().includes("board")) {
-          const extra = { serverId: sp.id, serverName: space.shown(sp), route: `#/s/${sp.id}/board` };
-          watch(space.board(sp), "board", extra).catch(() => {});
-          watch(space.board(sp, { pub: true }), "board", extra).catch(() => {});
-        }
-        const chs = await conversation.channels(sp).catch(() => null);
-        if (!chs) continue;
-        const add = () =>
-          chs.list().forEach(c =>
-            watch(c, "chat", { serverId: sp.id, serverName: sp.name, route: `#/s/${sp.id}/chat/${c.id.split("/").pop()}` }).catch(() => {}),
-          );
-        if (!chs.watched) {
-          chs.watched = true;
-          chs.onChange(add);
-        }
-        add();
+    await Promise.all((await space.mine().catch(() => [])).map(sp => scanOne(sp).catch(() => {})));
+  }
+  async function scanOne(sp) {
+    if (sp.kind === "direct" || sp.kind === "group") watch(sp, "messages", { route: `#/messages/${sp.id}` }).catch(() => {});
+    else if (sp.kind === "server") {
+      // Its BOARD (both tables), when it uses Board.
+      const r = await roles.of(sp).catch(() => null);
+      if (r?.apps().includes("board")) {
+        const extra = { serverId: sp.id, serverName: space.shown(sp), route: `#/s/${sp.id}/board` };
+        watch(space.board(sp), "board", extra).catch(() => {});
+        watch(space.board(sp, { pub: true }), "board", extra).catch(() => {});
       }
+      const chs = await conversation.channels(sp).catch(() => null);
+      if (!chs) return;
+      const add = () =>
+        chs.list().forEach(c =>
+          watch(c, "chat", { serverId: sp.id, serverName: sp.name, route: `#/s/${sp.id}/chat/${c.id.split("/").pop()}` }).catch(() => {}),
+        );
+      if (!chs.watched) {
+        chs.watched = true;
+        chs.onChange(add);
+      }
+      add();
     }
   }
 

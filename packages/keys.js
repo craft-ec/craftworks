@@ -108,7 +108,11 @@ export async function start(ctx) {
     }
     // Every EARLIER epoch this group's log hands on, from `st` back: each secret kept here, so rows sealed before this
     // node joined open too. How many were kept.
+    // Walked once per device: where the identity holds the epoch before this one and the first (a walk that finished
+    // left them all), nothing is read again — each step is a log read and a delegate call.
+    const held = async e => !!(await auth.identity.tableKeyAt(g.channel, e, g.space).catch(() => null))?.tableKey;
     async function history(st) {
+      if (st.epoch > 0 && (await held(st.epoch - 1)) && (await held(0))) return 0;
       let [e, secret, n] = [st.epoch, st.secret, 0];
       while (e > 0) {
         const log = await storage.log(g.channel, glue.epoch_log_public(secret), { sealWith: await g.seal(e), space: g.space });

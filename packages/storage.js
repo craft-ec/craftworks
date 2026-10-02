@@ -161,6 +161,9 @@ export async function start(ctx) {
   // anyone (public tails): at their names. A table still at its NAME (from before) is MOVED by its writer on its next
   // open — one signed step, its tree kept (the same key addresses it) — and read there by the others until then.
   // Never on a guess: only when the node ANSWERED for both is a table new here; silence keeps it where it was.
+  // WHERE IT IS comes from its CATALOG (`listing`): a table listed as moved (`b`) opens at its blinded name, one new
+  // to its catalog is made there — no network lookup for either; only a table listed from before is looked for at
+  // both names (at once), and its catalog then says which (`listing.mark`): asked once, never again.
   const opening = new Map(); // `${owner}|${app}` → Promise<the tail>
   function tail(owner, app, opts = {}) {
     const inSpace = opts.space ?? null;
@@ -173,16 +176,29 @@ export async function start(ctx) {
         (async () => {
           const key = await access.key(app, { space: inSpace?.idBytes ?? inSpace });
           if (!key.key) return tailAt(owner, app, app, opts); // no key here: nothing of it reads either way
-          const blinded = await tailAt(owner, app, glue.blind_name(bytes(key.key), app), opts);
-          if (!blinded.absent || opts.known === false) return blinded;
-          const legacy = await tailAt(owner, app, app, { ...opts, known: null, beforeCreate: null });
-          if (legacy.absent && legacy.answered() && blinded.answered()) return blinded; // new: at its blinded name
+          const label = glue.blind_name(bytes(key.key), app);
+          const listing = opts.listing ?? {};
+          const { listing: _l, ...rest } = opts;
+          // Its catalog says: moved (open there), or new (made there) — nothing looked for.
+          if (listing.blinded || opts.known === false) return tailAt(owner, app, label, rest);
+          // ANOTHER writer's feed its catalog does not mark as moved: where it was — it moves (and marks) its own.
+          if (listing.theirs) return tailAt(owner, app, app, rest);
+          // Listed from before: both names at once.
+          const [blinded, legacy] = await Promise.all([tailAt(owner, app, label, { ...rest, beforeCreate: null }), tailAt(owner, app, app, { ...rest, known: null, beforeCreate: null })]);
+          const noted = () => listing.mark?.().catch(e => ctx.log("storage", { what: `${app}: noting where it is: ${e?.message ?? e}` }));
+          if (!blinded.absent) {
+            legacy.moved = true;
+            noted();
+            return blinded;
+          }
+          if (legacy.absent && legacy.answered() && blinded.answered()) return blinded; // new after all: at its blinded name
           if (legacy.absent) return legacy; // the node silent for one of them: where it was, moved another time
           const sp = await space.account();
           if (!(owner === sp?.self || owner === sp?.shared || ownKeys.has(owner))) return legacy; // another's: read there
           const moved = await blinded.moveFrom(legacy).catch(e => (ctx.log("storage", { what: `${app}: not moved yet — ${e?.message ?? e}` }), false));
           if (!moved) return legacy;
           legacy.moved = true;
+          noted();
           ctx.log("storage", { what: `${app}: moved to its blinded name` });
           return blinded;
         })().catch(e => (opening.delete(k), Promise.reject(e))),
@@ -311,6 +327,9 @@ export async function start(ctx) {
         else for (const f of changed) f();
         return;
       }
+      // Asked and not there: a network search spent (seconds, on a real network) — named, so what is asked for no
+      // reason shows.
+      if (said.kind === "get-failed" && answered) ctx.log("asked, not there", { what: `${app} (${label === app ? "by name" : "blinded"}, ${owner.slice(0, 8)}…)` });
       if (said.kind !== "get-failed") said = await settle(said, app);
       t.absent = said.kind !== "tail";
       if (said.kind === "tail") took(said.tail);
@@ -518,8 +537,8 @@ export async function start(ctx) {
         if (!cat || cat.absent) return;
         const heads = {};
         await Promise.all(
-          own(cat).map(async r => {
-            const t = await tail(node, r.key, { known: true, ...scope.opts(r.key) }).catch(() => null);
+          listedIn(cat).map(async r => {
+            const t = await tail(node, r.key, { known: true, ...scope.opts(r.key), listing: placeIn(cat, r.key) }).catch(() => null);
             if (!t || t.absent) return;
             const seqs = (t.raw() ?? []).map(([, v]) => seqOf(v)).filter(Number.isFinite);
             if (seqs.length) heads[r.key] = Math.max(...seqs);
@@ -533,6 +552,21 @@ export async function start(ctx) {
   // A feed's own current rows, merged alone: `[{ key, value, id }]` (text; its deletes left out).
   const decoded = rows => rows.map(r => ({ key: dec.decode(r.key), value: dec.decode(r.value), id: r.id }));
   const own = t => decoded(Array.from(feed.merge_feeds([[bytes(t.owner), t.raw()]])));
+  // A CATALOG's tables: its rows but `HERE` — the row a member's catalog of a space is made with, the first time it
+  // opens the space, so a catalog that is not there means a member never there (never asked for it in vain).
+  const HERE = "~here";
+  const listedIn = cat => own(cat).filter(r => r.key !== HERE);
+  // Where a writer's feed of table `n` is, as its catalog lists it: moved to its blinded name (`b`), or not (yet).
+  const movedIn = (cat, n) => {
+    const r = own(cat).find(x => x.key === n);
+    try {
+      return !!r && JSON.parse(r.value)?.b === 1;
+    } catch {
+      return false;
+    }
+  };
+  // Another writer's feed opened where its catalog says.
+  const placeIn = (cat, n) => ({ blinded: movedIn(cat, n), theirs: true });
   // A write to a feed, as a VERSION replacing `after` (the id of the version current where it is written).
   const versioned = (t, key, value, after) =>
     t.put(key, () => feed.version(bytes(t.owner), t.tailNext(), after ?? "", value === null ? undefined : enc.encode(value)));
@@ -560,7 +594,7 @@ export async function start(ctx) {
     const d = await directory();
     if (d.rows().some(r => r.key === key)) return;
     if (d.absent && !d.rows().length) await d.put(CATALOG, JSON.stringify({ at: Date.now(), complete: false }));
-    await d.put(key, JSON.stringify({ at: Date.now() }));
+    await d.put(key, JSON.stringify({ at: Date.now(), b: 1 })); // made new: at its blinded name
   }
 
   // A WRITER's CATALOG feed: the tables it has a feed of. Known to exist once the directory lists its node.
@@ -583,7 +617,16 @@ export async function start(ctx) {
     const sp = await space.account();
     const d = await directory();
     const listed = legacyListed(d, name);
-    return tail(sp.shared, name, { known: listed === false ? false : null, beforeCreate: () => listInDirectory(name) });
+    return tail(sp.shared, name, { known: listed === false ? false : null, beforeCreate: () => listInDirectory(name), listing: directoryListing(d, name) });
+  }
+  // A shared table's place, as the directory lists it (moved: `b`), and noting it there.
+  function directoryListing(d, name) {
+    const r = d.rows().find(x => x.key === name);
+    let b = false;
+    try {
+      b = !!r && JSON.parse(r.value)?.b === 1;
+    } catch {}
+    return { blinded: b, mark: async () => (b ? undefined : d.put(name, JSON.stringify({ at: Date.now(), b: 1 }))) };
   }
 
   // A SCOPE: a space seen from this node — who writes in it, where each writer lists its tables, how its tails open.
@@ -651,7 +694,8 @@ export async function start(ctx) {
   }
 
   // A writer's catalog not there yet (a device that has not written here): asked again, soon at first (it may be
-  // writing now), then every 30 s — ONE poll per catalog, however many tables wait on it (each follows its changes).
+  // writing now), then less and less often, to every 5 min — each ask of a missing contract is a whole network search
+  // (6 s to over a minute on the node). ONE poll per catalog, however many tables wait on it (each follows its changes).
   const polled = new Set();
   function absentCatalog(c) {
     if (polled.has(c)) return;
@@ -661,12 +705,13 @@ export async function start(ctx) {
         await c.reread().catch(() => {});
         if (c.absent) again(n + 1);
         else polled.delete(c);
-      }, [5000, 10000, 20000][n] ?? 30000);
+      }, Math.min(5000 * 2 ** n, 300000));
     again();
   }
 
   // A TABLE: the merge of its writers' feeds, and this node's feed to write.
   const tables = new Map(); // scope + name -> Promise<table>
+  const here = new Set(); // the spaces whose catalog this page is making
   function merged(name, sp, { lazy = false } = {}) {
     const scope = scopeOf(sp);
     const at = `${scope.key}/${name}`;
@@ -675,6 +720,12 @@ export async function start(ctx) {
     const ready = (async () => {
       if (sp.kind === "account" && !sp.shared) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
       const [mine, others] = await Promise.all([scope.catalogOf(scope.self), scope.writers()]);
+      // This node's catalog of a space made now if it is not there yet (with `HERE`): the other members then know it is
+      // here, and never ask for a catalog of a member that has not been.
+      if (sp.kind !== "account" && mine.absent && !here.has(scope.key)) {
+        here.add(scope.key);
+        versioned(mine, HERE, JSON.stringify({ at: Date.now() })).catch(e => (here.delete(scope.key), ctx.log("storage", { what: `${sp.name ?? scope.key}: catalog not made yet: ${e?.message ?? e}` })));
+      }
       const lists = (cat, n) => own(cat).some(r => r.key === n);
       const all = [];
       // Another writer's feed that does not open here (sealed under a key this node lacks — a node that has not
@@ -682,8 +733,8 @@ export async function start(ctx) {
       // cannot see is written over. Its own feed must open.
       let unopened = 0;
       const opts = scope.opts(name);
-      const theirs = (owner, known) =>
-        tail(owner, name, { known, ...opts, lazy }).catch(e => {
+      const theirs = (owner, known, cat = null) =>
+        tail(owner, name, { known, ...opts, lazy, listing: { blinded: !!cat && movedIn(cat, name), theirs: !!cat } }).catch(e => {
           unopened += 1;
           ctx.log("feed not read", { what: `${name}: ${owner.slice(0, 12)}…: ${e.message}` });
           return null;
@@ -705,10 +756,12 @@ export async function start(ctx) {
       if (old) take(await theirs(old.owner, old.known));
       // This node's: listed in its catalog BEFORE it is made. The table opens once it is open.
       const listMine = async () => {
-        if (!lists(mine, name)) await versioned(mine, name, JSON.stringify({ at: Date.now() }), own(mine).find(r => r.key === name)?.id);
+        if (!lists(mine, name)) await versioned(mine, name, JSON.stringify({ at: Date.now(), b: 1 }), own(mine).find(r => r.key === name)?.id);
       };
+      // This node's feed noted as at its blinded name (moved, or found there).
+      const markMine = () => (movedIn(mine, name) ? Promise.resolve() : versioned(mine, name, JSON.stringify({ at: Date.now(), b: 1 }), own(mine).find(r => r.key === name)?.id));
       ownKeys.add(scope.self);
-      const me = await tail(scope.self, name, { known: lists(mine, name) ? null : false, ...opts, beforeCreate: listMine, lazy });
+      const me = await tail(scope.self, name, { known: lists(mine, name) ? null : false, ...opts, beforeCreate: listMine, lazy, listing: { blinded: movedIn(mine, name), mark: markMine } });
       take(me);
       // The OTHER writers' feeds, in the background: each merged in as it arrives, never holding the table up. A writer
       // whose catalog is not there yet (a node that has not written here), or does not list this table yet, is asked
@@ -721,7 +774,7 @@ export async function start(ctx) {
         const open = async () => {
           if (opened.has(o) || !lists(c, name)) return;
           opened.add(o);
-          take(await theirs(o, true));
+          take(await theirs(o, true, c));
         };
         c.onChange(() => open().catch(() => {}));
         if (c.absent) {
@@ -745,7 +798,7 @@ export async function start(ctx) {
           } catch {}
           if (typeof cap !== "number") continue;
           departedDone.add(r.key);
-          const f = await theirs(r.key, true);
+          const f = await theirs(r.key, true, await scope.catalogOf(r.key).catch(() => null));
           if (f) take(capped(f, cap));
         }
       };
@@ -850,7 +903,7 @@ export async function start(ctx) {
     const d = await directory();
     const cats = await Promise.all([sp.self, ...(await writers(sp.self))].map(catalogOf));
     const names = new Set(d.rows().map(r => r.key).filter(n => n !== CATALOG && !n.startsWith("node:")));
-    for (const c of cats) for (const r of own(c)) names.add(r.key);
+    for (const c of cats) for (const r of listedIn(c)) names.add(r.key);
     const out = [];
     for (const name of names) {
       if (CHANNELS.has(name)) {
@@ -898,7 +951,7 @@ export async function start(ctx) {
       owners.map(async owner => {
         const cat = await catalogOf(owner).catch(() => null);
         if (!cat || !own(cat).some(r => r.key === name)) return;
-        const t = await tail(owner, name, { known: true, catalogKey: ANY_GRANT.has(name) }).catch(() => null);
+        const t = await tail(owner, name, { known: true, catalogKey: ANY_GRANT.has(name), listing: placeIn(cat, name) }).catch(() => null);
         if (t) out.push({ owner, rows: own(t) });
       }),
     );
@@ -911,7 +964,7 @@ export async function start(ctx) {
     const sp = await space.account();
     const d = await directory();
     const cats = await Promise.all([sp.self, node].map(o => catalogOf(o).catch(() => null)));
-    const names = new Set(cats.filter(Boolean).flatMap(c => own(c).map(r => r.key)));
+    const names = new Set(cats.filter(Boolean).flatMap(c => listedIn(c).map(r => r.key)));
     for (const n of d.rows().map(r => r.key)) if (n !== CATALOG && !n.startsWith("node:")) names.add(n);
     let moved = 0;
     for (const name of names) {
