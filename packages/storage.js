@@ -188,10 +188,7 @@ export async function start(ctx) {
           // Its PLACE (its writer's catalog), and whether this node notes it (its own catalog only).
           const sp = await space.account();
           const ours = owner === sp?.self || owner === sp?.shared || ownKeys.has(owner);
-          // Not in its catalog where the caller cannot rule it out (`known: null`: a directory from before it was
-          // complete): unknown, so read.
-          const listed = cat ? placeOf(cat, app) : opts.known === false ? "unlisted" : "unknown";
-          const place = listed === "unlisted" && opts.known === null ? "unknown" : listed;
+          const place = cat ? placeOf(cat, app) : opts.known === false ? "unlisted" : "unknown";
           const note = p => (cat && ours ? notePlace(cat, app, p).catch(e => ctx.log("storage", { what: `${app}: noting its place: ${e?.message ?? e}` })) : Promise.resolve());
           // Its first write here makes it at its blinded name, listed so first.
           const made = { ...rest, beforeCreate: cat && ours ? () => notePlace(cat, app, "blinded") : rest.beforeCreate };
@@ -582,21 +579,36 @@ export async function start(ctx) {
   // the node answered "not there" under both names); "blinded" (at its blinded name); "unknown" (listed from before).
   // (The directory — the account's catalog of tables from before feeds and of channels — holds plain rows; a node's
   // catalog holds versions: the same place either way.)
-  const placeOf = (cat, n) => {
-    const r = (cat === directoryTail ? cat.rows() : own(cat)).find(x => x.key === n && x.value);
-    if (!r) return "unlisted";
+  // ONE CATALOG MODEL. A catalog is a writer's list of its tables: a node's (versions — COMPLETE: a table it does not
+  // list it has none of), or the account's DIRECTORY and a person's CARD (plain rows — complete once marked so: the
+  // row `CATALOG` → `{ complete: true }`; before, a table it does not list is unknown and read).
+  const plain = cat => cat === directoryTail || cat?.plainCatalog === true;
+  const complete = cat => {
+    if (!plain(cat)) return true;
     try {
-      const v = JSON.parse(r.value);
-      return v?.n === 1 ? "none" : v?.b === 1 ? "blinded" : "unknown";
+      return JSON.parse(cat.rows().find(r => r.key === CATALOG)?.value ?? "{}").complete === true;
     } catch {
-      return "unknown";
+      return false;
     }
   };
-  // NOTE a table's place in this node's catalog — the one writer of it: "blinded" or "none".
+  // A table's PLACE, the one reader of it: "unlisted" (a complete catalog does not list it: none), "unknown" (an
+  // incomplete one does not), "none" (listed, never made), "blinded" (at its blinded name), "listed" (from before its
+  // place was noted — a table found by name: there).
+  const placeOf = (cat, n) => {
+    const r = (plain(cat) ? cat.rows() : own(cat)).find(x => x.key === n && x.value);
+    if (!r) return complete(cat) ? "unlisted" : "unknown";
+    try {
+      const v = JSON.parse(r.value);
+      return v?.n === 1 ? "none" : v?.b === 1 ? "blinded" : "listed";
+    } catch {
+      return "listed";
+    }
+  };
+  // NOTE a table's place in a catalog this account writes, the one writer of it: "blinded", "none" or "listed".
   const notePlace = (cat, n, p) => {
     if (placeOf(cat, n) === p) return Promise.resolve();
-    const v = JSON.stringify({ at: Date.now(), b: 1, ...(p === "none" ? { n: 1 } : {}) });
-    return cat === directoryTail ? cat.put(n, v) : versioned(cat, n, v, own(cat).find(r => r.key === n)?.id);
+    const v = JSON.stringify({ at: Date.now(), ...(p === "listed" ? {} : { b: 1 }), ...(p === "none" ? { n: 1 } : {}) });
+    return plain(cat) ? cat.put(n, v) : versioned(cat, n, v, own(cat).find(r => r.key === n)?.id);
   };
   // A write to a feed, as a VERSION replacing `after` (the id of the version current where it is written).
   const versioned = (t, key, value, after) =>
@@ -617,14 +629,7 @@ export async function start(ctx) {
     })());
   }
   // A table from before feeds: listed (true), not listed in a COMPLETE directory (false), or unknown (null: read).
-  function legacyListed(d, name) {
-    const place = placeOf(d, name);
-    if (place === "none") return false;
-    if (place !== "unlisted") return true;
-    const self = d.rows().find(r => r.key === CATALOG);
-    const complete = !!self && (() => { try { return JSON.parse(self.value).complete === true; } catch { return false; } })();
-    return complete ? false : null;
-  }
+  const legacyListed = (d, name) => (["none", "unlisted"].includes(placeOf(d, name)) ? false : null);
   async function listInDirectory(key) {
     const d = await directory();
     if (d.rows().some(r => r.key === key)) return;
@@ -1016,13 +1021,42 @@ export async function start(ctx) {
 
   // A PUBLIC tail under `owner`'s key (a person's card, under their account's data key): anyone reads it. This
   // account's own is listed in its directory before it is made (so it is never asked for while it does not exist).
+  // A person's PUBLIC TABLES are listed on their CARD — a catalog (plain rows), read and written as every catalog is.
+  // Another person's: one their card does not list is not asked for (a card not yet complete: read). This account's:
+  // listed before its first write; its card made COMPLETE once each public table it may have is noted (`PUBLIC`).
+  const CARD = "card";
+  const PUBLIC = ["mail", "posts", "modlist"];
+  const cardOf = async owner => {
+    const c = await tail(owner, CARD, { public: true });
+    c.plainCatalog = true;
+    return c;
+  };
+  let carding = null;
+  async function completeCard(owner) {
+    const c = await cardOf(owner);
+    if (complete(c)) return;
+    for (const n of PUBLIC) {
+      const t = await tail(owner, n, { public: true, wait: WAIT.answer });
+      if (!t.absent) await notePlace(c, n, "listed");
+      else if (!t.answered()) return; // silence: noted another time
+    }
+    await c.put(CATALOG, JSON.stringify({ at: Date.now(), complete: true }));
+  }
   async function publicTail(name, owner) {
     const sp = await space.account();
     if (sp && owner === sp.shared) {
+      if (name === CARD) {
+        const c = await tail(owner, name, { public: true, known: legacyListed(await directory(), name) === false ? false : null, beforeCreate: () => listInDirectory(name) });
+        c.plainCatalog = true;
+        carding ??= completeCard(owner).catch(e => ctx.log("storage", { what: `listing this account's public tables on its card: ${e?.message ?? e}` }));
+        return c;
+      }
       const listed = legacyListed(await directory(), name);
-      return tail(owner, name, { public: true, known: listed === false ? false : null, beforeCreate: () => listInDirectory(name) });
+      return tail(owner, name, { public: true, known: listed === false ? false : null, beforeCreate: async () => (await listInDirectory(name), await notePlace(await cardOf(owner), name, "listed")) });
     }
-    return tail(owner, name, { public: true });
+    if (name === CARD) return cardOf(owner);
+    const place = placeOf(await cardOf(owner), name);
+    return tail(owner, name, { public: true, ...(place === "unlisted" || place === "none" ? { known: false } : {}) });
   }
 
   // The nodes the directory lists as having feeds (hex keys): where `membership` starts gathering.
