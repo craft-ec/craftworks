@@ -822,7 +822,7 @@ export async function start(ctx) {
           if (f) take(capped(f, cap));
         }
       };
-      const settled = Promise.all([...others.map(o => gather(o).catch(() => {})), gatherDeparted().catch(e => ctx.log("feed not read", { what: `${name}: departed writers: ${e.message}` }))]);
+      const settled = soon(Promise.all([...others.map(o => gather(o).catch(() => {})), gatherDeparted().catch(e => ctx.log("feed not read", { what: `${name}: departed writers: ${e.message}` }))]), name);
       if (scope.departed?.(name)) scope.departedTable().then(d => d.onChange(() => gatherDeparted().catch(() => {})), () => {});
       // A WRITER NEW since the table opened (a member's new device, a new member): gathered when the scope says so.
       const seen = new Set(others);
@@ -1001,6 +1001,21 @@ export async function start(ctx) {
     return moved;
   }
 
+  // SETTLED SOON: a table is ready once every other writer's feed has answered — or after SETTLE_WAIT, whichever is
+  // first. A feed not there (never written) costs the node a whole network search (seconds to over a minute); nobody
+  // waits on that. One that arrives later is merged in as it comes (the table's `onChange`): nothing is dropped.
+  const SETTLE_WAIT = 5000;
+  const soon = (all, name) => {
+    let done = false;
+    all.finally(() => (done = true));
+    return Promise.race([
+      all,
+      new Promise(r => setTimeout(r, SETTLE_WAIT)).then(() => {
+        if (!done) ctx.log("storage", { what: `${name}: shown without the feeds still being asked (merged as they come)` });
+      }),
+    ]);
+  };
+
   // A PUBLIC TABLE READ FROM OUTSIDE (not a member: no catalog, no keys): the merge of these writers' public tails of
   // `name` (each at the address its writer and name give). Read-only; `add(writers)` takes more writers in.
   function readOnly(name, owners = []) {
@@ -1027,7 +1042,7 @@ export async function start(ctx) {
             ),
           ),
       );
-    const settled = add(owners);
+    const settled = soon(add(owners), name);
     return { rows: () => rows, onChange: f => changed.push(f), settled, add };
   }
 
