@@ -219,6 +219,8 @@ export async function mount(ctx, el) {
           navigator.clipboard.writeText(p.ref).then(() => (e.target.textContent = "Copied"), () => {});
         },
       }),
+      // HIDE it, for you only (`moderation`: the one check every read asks — here, in its space, in Discover).
+      p.by !== me ? h("button", { type: "button", textContent: "Hide", onclick: async e => (e.stopPropagation(), await (await ctx.require("moderation")).lists().then(l => l.hide({ by: p.by, id: p.id })).then(() => draw(), errorTo(said))) }) : null,
       // DISCOVER: flag it on your moderation list (what you, and whoever applies your list, no longer see there).
       ...(discovering() && p.by !== me
         ? [

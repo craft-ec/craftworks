@@ -15,7 +15,9 @@
 // kind person | post | space. Each reader applies their own list and the lists of whom they chose (`edge` relation
 // "modlist"): what is on any of them is left out of Discover.
 //   const lists = await moderation.lists()
-//   lists.flagged({ by, ref, space })   // on a list this reader applies (a post: its author, its ref, its space)
+//   lists.flagged({ by, id, ref, space }) // not seen by this reader: hidden by them (a person, a post, a space —
+//                                         // `edge`'s hide/block, private) or on a list they apply; every read asks it
+//   await lists.hide({ by, id } | { person } | { space }, on)   // hidden for this person only (an edge of theirs)
 //   await lists.flag(kind, ref, reason)   await lists.unflag(kind, ref)   lists.mine()  lists.followed()  lists.onChange(fn)
 export async function start(ctx) {
   const [roles, keys, directory, storage, space] = await Promise.all(["roles", "keys", "directory", "storage", "space"].map(n => ctx.require(n)));
@@ -87,7 +89,8 @@ export async function start(ctx) {
             if (t) (tails.set(did, t), t.onChange(fire));
           }
       };
-      await follow();
+      // The lists chosen arrive as they are read (what is hidden by this person's own needs none of them).
+      follow().then(fire, () => {});
       people.onChange(() => follow().then(fire));
       const entries = () => {
         const on = new Set();
@@ -96,10 +99,18 @@ export async function start(ctx) {
         return on;
       };
       return {
-        flagged: ({ by = null, ref = null, space: sid = null } = {}) => {
+        // THE ONE CHECK of what this person does not see, wherever they read (every app's content, Discover): a
+        // POST is its author + its key (`<did>/<key>`: only its author writes it, the same wherever it is read); a
+        // person, a space by its id. YOURS (private, `edge`: hide · block) and the LISTS applied (yours, chosen).
+        flagged: ({ by = null, id = null, ref = null, space: sid = null } = {}) => {
+          const post = by && id ? `${by}/${id}` : null;
+          if (by && (people.is("hide", by) || people.is("block", by))) return true;
+          if ((post && people.is("hide", post)) || (ref && people.is("hide", ref)) || (sid && people.is("hide", sid))) return true;
           const on = entries();
-          return (by && on.has(`person:${by}`)) || (ref && on.has(`post:${ref}`)) || (sid && on.has(`space:${sid}`));
+          return (by && on.has(`person:${by}`)) || (post && on.has(`post:${post}`)) || (ref && on.has(`post:${ref}`)) || (sid && on.has(`space:${sid}`));
         },
+        // HIDE, for this person only (an `edge` from them: a post — its author + key —, a person, a space).
+        hide: ({ by = null, id = null, person = null, space: sid = null }, on = true) => people.set("hide", person ?? sid ?? `${by}/${id}`, on),
         flag: (kind, ref, reason = "") => mineT.put(`${kind}:${ref}`, JSON.stringify({ reason: String(reason).slice(0, 200), at: Date.now() })),
         unflag: (kind, ref) => mineT.remove(`${kind}:${ref}`),
         mine: () => mineT.rows().filter(r => r.value).length,

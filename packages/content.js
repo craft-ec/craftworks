@@ -124,8 +124,9 @@ export async function start(ctx) {
         return null;
       }
     };
-    // What this person does not see: what moderation hid (for everyone), and whom they hid or blocked (for them).
-    const people = await (await ctx.require("edge")).people();
+    // What this person does not see: what moderation hid (for everyone), and what THEY hid (`moderation.lists`: the
+    // one check, the same as Discover's).
+    const lists = await (await ctx.require("moderation")).lists();
     // THE ROWS NOW: the whole table's — or, PAGED, the pages read so far with the table's own newer rows over them.
     const loaded = new Map(); // key → row, from pages
     let oldest = null; // the oldest item key read (the next page goes on below it)
@@ -196,9 +197,9 @@ export async function start(ctx) {
     extra?.onChange(() => changed.forEach(f => f()));
     const every = () => {
       const hidden = m ? m.hidden(container.messages) : new Set();
-      const unseen = people.unseen();
+      const sid = inSpace ? container.scope?.id : null;
       return [...rowsNow().filter(row => !hidden.has(row.key)).map(item), ...(extra?.items() ?? []).filter(it => !hidden.has(it.id) && !r?.banned?.(it.by))]
-        .filter(it => it && !unseen.has(it.by))
+        .filter(it => it && !lists.flagged({ by: it.by, id: it.id, space: sid }))
         // A post or message by someone the setting did not allow when it was made: not counted.
         .filter((it, _, all) => !(governed && app && ACTION[it.kind] && !allowed(ACTION[it.kind], it.by, it, all, it.at)));
     };
@@ -252,7 +253,7 @@ export async function start(ctx) {
     r?.onChange(() => changed.forEach(f => f()));
     // A credential read (a friend's or a follower's): what it lets count, counted.
     R.onChecked(() => changed.forEach(f => f()));
-    people.onChange(() => changed.forEach(f => f()));
+    lists.onChange(() => changed.forEach(f => f()));
     return {
       list,
       // PAGED: the next older page (how many items it brought); whether any are left.

@@ -199,7 +199,8 @@ export async function start(ctx) {
         pick,
       );
       if (m.by === me) tools.append(el("button", { type: "button", textContent: "Edit", onclick: () => ((editing = m.id), draw()) }));
-      // Its author removes it; a moderator hides someone else's (content decides which).
+      // Hidden for you only (`moderation`: the one check); its author removes it; a moderator hides it for everyone.
+      if (m.by !== me) tools.append(el("button", { type: "button", textContent: "Hide", onclick: async () => await (await ctx.require("moderation")).lists().then(l => l.hide({ by: m.by, id: m.id })).catch(fail("Not hidden")) }));
       if (room.mayRemove(m)) tools.append(el("button", { type: "button", className: "danger", textContent: m.by === me ? "Delete" : "Remove", onclick: () => room.remove(m.id).catch(fail("Not removed")) }));
       li.append(tools);
       return li;

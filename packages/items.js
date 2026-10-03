@@ -518,7 +518,7 @@ export async function start(ctx) {
     // DISCOVER is filtered by the moderation lists this person applies (theirs, and whom they chose).
     if (where.outside || where.discover) {
       const lists = await (await ctx.require("moderation")).lists();
-      out = out.filter(p => !lists.flagged({ by: p.by, ref: p.ref, space: p.board?.id }));
+      out = out.filter(p => !lists.flagged({ by: p.by, id: p.id, ref: p.ref, space: p.board?.id }));
     }
     else if (where.board) {
       const sp = await boardOf(where.board);

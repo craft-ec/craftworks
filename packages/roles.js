@@ -375,8 +375,15 @@ export async function start(ctx) {
       const token = people.about(`credin-${w}`, item.by)?.token;
       if (token) return token;
     }
-    throw new Error(`only ${directory.shown(item.by)}'s ${rule} ${action === "vote" ? "vote" : "comment"} here`);
+    throw new Error(`only ${directory.shown(item.by)}'s ${rule} may ${action === "follow" ? "follow them" : `${action} here`}`);
+  }
+  // A PERSON, as what is FOLLOWED: their card's rule (`policy:profile|follow` — anyone · friends · nobody), checked as
+  // a comment on their post is (`mayWrite`, its credential `credToCite`).
+  async function followable(did) {
+    const p = personal(did);
+    await p.ready;
+    return { kind: "profile", by: did, meta: { write: { follow: p.policy("profile", "follow") } } };
   }
 
-  return { of, ofPublic, personal, mayWrite, credToCite, onChecked: f => checked.push(f), can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"] };
+  return { of, ofPublic, personal, mayWrite, credToCite, followable, onChecked: f => checked.push(f), can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"] };
 }

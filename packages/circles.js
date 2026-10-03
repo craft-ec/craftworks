@@ -51,12 +51,16 @@ export async function start(ctx) {
   }
 
   // FOLLOW NOTICES in the inbox: each follower as `follower` (the newest notice of each person counts).
+  // A follower COUNTS by this person's rule (`roles.followable`: anyone · friends · nobody — `mayWrite`, the check a
+  // comment passes, its credential cited): asked every pass, so a rule made narrower drops who no longer meets it.
   async function takeFollows(people) {
     const items = await index.inbox().catch(() => []);
+    const mine = await roles.followable((await space.account()).id);
     const last = new Map();
     for (const it of items) if ((it.kind === "follow" || it.kind === "unfollow") && it.from && (last.get(it.from)?.at ?? 0) <= (it.at ?? 0)) last.set(it.from, it);
     for (const [did, it] of last) {
-      const on = it.kind === "follow";
+      const on = it.kind === "follow" ? roles.mayWrite({ action: "follow", item: mine, writer: did, cred: it.cred ?? null }) : false;
+      if (on === null) continue; // its credential not read yet: the next pass
       if (people.is("follower", did) !== on) await people.set("follower", did, on, it.at ?? Date.now()).catch(() => {});
     }
   }

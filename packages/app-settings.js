@@ -49,7 +49,7 @@ export async function start(ctx) {
     const inherited = from == null ? (r.personal || (["comment", "vote"].includes(action) && r.policy(path, "read") === "anyone") ? "anyone" : "members") : r.policy(from, action);
     const LEVEL = p => (p === "" ? "the space" : p === "chat" ? "Chat" : p === "board" ? "Board" : p === "note" ? "Note" : p);
     // A personal space's: anyone · your followers · your friends · only you (`roles.personal`).
-    const options = r.personal ? ["anyone", "followers", "friends", "author"] : ["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || ["read", "join", "post", "comment", "vote"].includes(action));
+    const options = r.personal ? ["anyone", "followers", "friends", "author"].filter(w => !(action === "follow" && w === "followers")) : ["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || ["read", "join", "post", "comment", "vote"].includes(action));
     const sel = h(
       "select",
       { ariaLabel: `${action} at ${path || "the space"}` },
@@ -189,12 +189,15 @@ export async function start(ctx) {
     const me = (await (await ctx.require("space")).account()).id;
     const r = roles.personal(me);
     await r.ready;
-    const forms = await Promise.all(
-      Object.entries(PERSONAL).map(([key, title]) => {
+    // You, as followed: the same rule and credential as a comment on your post (`roles.followable`).
+    SECTIONS["me:profile"] ??= { title: "You", fields: [{ action: "follow", path: "profile", label: "Who may follow you" }] };
+    const forms = await Promise.all([
+      section(null, "me:profile", r, me),
+      ...Object.entries(PERSONAL).map(([key, title]) => {
         SECTIONS[`me:${key}`] ??= { title, fields: [{ action: "comment", path: key, label: "Who may comment" }, { action: "vote", path: key, label: "Who may vote" }] };
         return section(null, `me:${key}`, r, me);
       }),
-    );
+    ]);
     return h("div", { className: "cw-settings", style: "display:grid;gap:var(--cw-space-3)" }, ...forms);
   }
 

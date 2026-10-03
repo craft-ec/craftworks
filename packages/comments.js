@@ -162,6 +162,7 @@ export async function start(ctx) {
             })
           : null,
         c.by === me && !outside ? h("button", { type: "button", textContent: "Edit", onclick: () => editIn(text, c) }) : null,
+        c.by !== me ? h("button", { type: "button", textContent: "Hide", onclick: async () => await (await ctx.require("moderation")).lists().then(l => l.hide({ by: c.by, id: c.id })).then(refresh, errorTo(said)) }) : null,
         c.mayRemove ? h("button", { type: "button", textContent: c.by === me ? "Delete" : "Remove", onclick: () => items.remove(c.ref).then(refresh, errorTo(said)) }) : null,
       );
       box.append(

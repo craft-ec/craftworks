@@ -129,12 +129,21 @@ export async function start(ctx) {
       // personal space, found by it).
       const set = async (rel, did, on, at = Date.now(), about = null) => {
         if (!RELATIONS.has(rel)) throw new Error(`no relation “${rel}”`);
+        // A FOLLOW of a person by their rule (`roles.followable`): where only their friends may, it cites the
+        // credential they handed (a friend's); where nobody may, it is not made.
+        let cred = null;
+        if (rel === "follow" && on && String(did).startsWith("did:craftec:")) {
+          const roles = await ctx.require("roles");
+          const item = await roles.followable(did);
+          if (item.meta.write.follow === "author") throw new Error(`${(await ctx.require("directory")).shown(did)} is not taking followers`);
+          cred = await roles.credToCite(item, "follow");
+        }
         await (on ? t.put(`${rel}/${did}`, JSON.stringify({ at, ...(about ? { about } : {}) })) : t.remove(`${rel}/${did}`));
         // A FOLLOW of a person tells them (a notice in their inbox): they count the follower (`circles`), unasked.
         if (rel === "follow" && String(did).startsWith("did:craftec:"))
           ctx
             .require("index")
-            .then(async index => index.send(did, { kind: on ? "follow" : "unfollow", from: (await (await ctx.require("space")).account()).id, at }))
+            .then(async index => index.send(did, { kind: on ? "follow" : "unfollow", from: (await (await ctx.require("space")).account()).id, at, ...(cred ? { cred } : {}) }))
             .catch(e => ctx.log("edge", { what: `telling ${String(did).slice(12, 20)}… of the follow: ${e?.message ?? e}` }));
       };
       const about = (rel, id) => {
@@ -144,9 +153,7 @@ export async function start(ctx) {
           return null;
         }
       };
-      // Whose items this person does not see: hidden or blocked.
-      const unseen = () => new Set([...list("hide"), ...list("block")]);
-      return { is, at, list, set, about, unseen, onChange: t.onChange, settled: t.settled };
+      return { is, at, list, set, about, onChange: t.onChange, settled: t.settled };
     }));
   }
 
