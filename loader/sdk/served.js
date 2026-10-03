@@ -328,16 +328,28 @@ export async function raceK(
   let answers = 0;
   let inFlight = 0;
   let next = 0;
-  const window = () => WINDOW_AFTER_ANSWERS[Math.min(answers, WINDOW_AFTER_ANSWERS.length - 1)];
+  // WIDENED BY TIME TOO: a race whose first pieces stay silent (a route whose peers never answer, a node answering
+  // "not found" for a piece it holds) asks one more piece every WIDEN_MS — so every distinct piece is in flight within
+  // seconds, and the first that answers wins. Waiting for an answer before widening let three silent routes hold a
+  // page while six other ways to the same bytes were never tried.
+  const WIDEN_MS = 1000;
+  let extra = 0;
+  const window = () => WINDOW_AFTER_ANSWERS[Math.min(answers, WINDOW_AFTER_ANSWERS.length - 1)] + extra;
+  // One request per distinct source: two pieces at one address are one route (a small package's copies can coincide).
+  const sourceOf = p => JSON.stringify(p.urls ?? [p.url]);
+  const sourcesAsked = new Set();
+  let widen = null;
   try {
     return await new Promise((resolve, reject) => {
       const settle = () => {
         if (verified >= k) {
+          clearInterval(widen);
           stop.abort();
           resolve({ pieces: got, verified, asked, notHeld: [...notHeld].filter(i => !got[i]).sort((a, b) => a - b) });
         } else if (stop.signal.aborted) {
           reject(new Error(`the SDK's pieces: cancelled with ${verified} of ${k} verified`));
         } else if (refused > m) {
+          clearInterval(widen);
           stop.abort();
           reject(new Error(`the SDK's pieces refused: ${refused} of ${k + m} gave bytes that do not hash to their name, so fewer than k = ${k} can verify`));
         } else {
@@ -348,9 +360,11 @@ export async function raceK(
         while (next < k + m && inFlight < window()) {
           const i = next;
           next += 1;
+          const p = pieces[i];
+          if (sourcesAsked.has(sourceOf(p))) continue;
+          sourcesAsked.add(sourceOf(p));
           inFlight += 1;
           asked.push(i);
-          const p = pieces[i];
           served(p.urls ? { urls: p.urls } : { url: p.url }, {
             // The abort reaches the request itself, not only the next round: a piece no longer needed stops now.
             fetch: (u, init) => fetchWith(u, { ...(init ?? {}), signal: stop.signal }),
@@ -382,9 +396,15 @@ export async function raceK(
           });
         }
       };
+      widen = setInterval(() => {
+        if (stop.signal.aborted || next >= k + m) return clearInterval(widen);
+        extra += 1;
+        launch();
+      }, WIDEN_MS);
       launch();
     });
   } finally {
+    clearInterval(widen);
     signal?.removeEventListener?.("abort", cancel);
   }
 }
