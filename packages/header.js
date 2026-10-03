@@ -1,5 +1,6 @@
-// HEADER: a top bar like a Mac's menu bar. On the left: ⌂ (home), the CURRENT APP — a dropdown switching between the
-// apps of the space open on the rail (its Home, and the apps it uses; Personal: the apps with a personal view) — and
+// HEADER: a top bar like a Mac's menu bar. On the left: ⌂ (home), the SPACE you are in — its name opens the spaces panel,
+// every space you can go to (yours, your friends', those you follow) —, the CURRENT APP — a dropdown switching between the apps of that space
+// (its Home, and the apps it uses; Personal: the apps with a personal view) — and
 // that app's MENU — its sub-pages and actions; on the right: the app's ending actions, and Account. It changes with the app: on Home it reads
 // "Home"; in an app, the app's name (from the manifest's apps) and what the app put under its route in `ctx.actions`:
 // `{ label, href }` (a sub-page: a link; `on` when it is the one shown), `{ label, run }` (an action; `end`: at the
@@ -12,9 +13,12 @@ export function mount(ctx, el) {
       .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--cw-line); height: var(--cw-bar); box-sizing: border-box;
         font-size: var(--cw-text-sm); }
       .bar .home { text-decoration: none; font-size: 1.1rem; color: inherit; }
-      /* The rail's ☰: on a phone only (the rail folds away there). */
-      .bar .rail-toggle { display: none; border: 0; background: none; font-size: 1.2rem; cursor: pointer; padding: 2px 6px; color: inherit; }
-      @media (max-width: 600px) { .bar .rail-toggle { display: inline-block; } }
+      .bar .space-name { border: 0; background: none; font: inherit; font-weight: 700; color: inherit; cursor: pointer; padding: 2px var(--cw-space-2);
+        border-radius: var(--cw-radius-sm); max-width: 16em; min-width: 6em; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      /* The app's own actions give way first (they scroll), never the space's name. */
+      .bar .actions { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+      .bar .space-name:hover { background: var(--cw-hover); }
+      .bar .space-name .cw-badge { margin-left: 4px; }
       .bar .name { font-weight: 600; }
       .bar .name .drop > button { border: 0; background: none; font-weight: 700; padding: 2px var(--cw-space-2); }
       .bar .name .drop > button:hover { background: var(--cw-hover); }
@@ -40,8 +44,8 @@ export function mount(ctx, el) {
 
     </style>
     <nav class="bar">
-      <button type="button" class="rail-toggle" title="Spaces" aria-label="Spaces">☰</button>
       <a class="home" href="#/" title="Home">⌂</a>
+      <button type="button" class="space-name" data-spaces title="Spaces: yours, your friends', following" hidden></button>
       <span class="name"></span>
       <span class="actions"></span>
       <span class="end"></span>
@@ -126,16 +130,25 @@ export function mount(ctx, el) {
     box.replaceChildren(dropdown(here, entries, link));
   }
 
-  // ☰: the rail in or out (a phone); a choice made on it, a tap outside it or Escape puts it away.
-  const side = () => document.querySelector("#app > .slot-side");
-  el.querySelector(".rail-toggle").onclick = e => {
-    e.stopPropagation();
-    side()?.classList.toggle("open");
-  };
-  addEventListener("click", e => side()?.classList.contains("open") && !side().contains(e.target) && side().classList.remove("open"), true);
-  addEventListener("keydown", e => e.key === "Escape" && side()?.classList.remove("open"));
-  addEventListener("hashchange", () => side()?.classList.remove("open"));
+  // THE SPACE you are in: its name (logged in); a click opens the spaces panel. What is unread in your other spaces on it.
+  const spaceB = el.querySelector(".space-name");
+  spaceB.onclick = () => ctx.require("spaces-panel").then(p => p.open());
+  let naming = 0;
+  async function spaceName() {
+    const n = ++naming;
+    const session = await ctx.require("auth").then(a => a.check()).catch(() => null);
+    if (n !== naming) return;
+    spaceB.hidden = !session;
+    if (!session) return;
+    const [panel, activity] = await Promise.all([ctx.require("spaces-panel"), ctx.require("activity").catch(() => null)]);
+    const name = await panel.here();
+    const elsewhere = activity ? (await (await ctx.require("space")).mine().catch(() => [])).filter(s => s.kind === "server" && !s.circle && s.id !== ctx.space).reduce((t, s) => t + (activity.of(s.id) ?? 0), 0) : 0;
+    if (n !== naming) return;
+    spaceB.replaceChildren(`${name} ▾`, ...(elsewhere ? [Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(elsewhere) })] : []));
+    if (activity && !spaceB.dataset.watching) (spaceB.dataset.watching = "1"), activity.onChange(() => spaceName());
+  }
   const draw = () => {
+    spaceName();
     switcher();
     const actions = el.querySelector(".actions");
     const all = ctx.actions[ctx.route] ?? [];
@@ -172,7 +185,7 @@ export function mount(ctx, el) {
   draw();
   addEventListener("craftworks:route", draw);
   addEventListener("craftworks:actions", draw);
-  addEventListener("craftworks:auth", () => switcher());
+  addEventListener("craftworks:auth", () => (spaceName(), switcher()));
   // ACTIVITY runs on every page (the header is on every page): new messages notify, whichever app is open. After the
   // page is up, never holding it.
   setTimeout(() => ctx.require("activity").catch(() => {}), 1500);

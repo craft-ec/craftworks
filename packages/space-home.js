@@ -1,6 +1,6 @@
 // SPACE HOME, a page (`#/s/<space id>`): a SHARED space's own page — its APPS (the site's apps with a shared view that
 // this space uses), its MEMBERS, and, for who may, its APPS to add or remove and its SETTINGS (members and roles,
-// invites, the moderation log, leaving: the one `server-settings`). The space is the rail's choice. UI only: which apps
+// invites, the moderation log, leaving: the one `server-settings`). The space is the one chosen in the spaces panel. UI only: which apps
 // a space uses is `roles`' (an `app` act), its people `roles`' and `conversation`'s, names `directory`'s.
 export async function mount(ctx, el) {
   const login = await ctx.require("login");

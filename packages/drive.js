@@ -55,7 +55,7 @@ export async function mount(ctx, el) {
     e.append(...kids.filter(k => k != null && k !== false));
     return e;
   };
-  // Where Drive is: yours, or the space open on the rail; and the folder (`f/<path>`).
+  // Where Drive is: yours, or the space open; and the folder (`f/<path>`).
   const sp = ctx.space && ctx.space !== "discover" ? (await space.mine()).find(s => s.id === ctx.space) ?? null : null;
   const base = () => (sp ? `#/s/${sp.id}/drive` : "#/drive");
   const folder = () => `/${decodeURIComponent((ctx.sub || "").replace(/^f\/?/, ""))}`.replace(/\/+$/, "") || "/";

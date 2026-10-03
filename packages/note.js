@@ -1,6 +1,6 @@
 // NOTES, an app in the manner of Google Keep: a "Take a note…" composer, notes as coloured cards in a masonry grid,
 // pinned notes first, archive, search, and grid or list. A PRIVATE page: nothing shows until someone is logged in.
-// YOUR notes (`#/note`: the personal space's), or a SHARED space's (`#/s/<space>/note`, the space open on the rail,
+// YOUR notes (`#/note`: the personal space's), or a SHARED space's (`#/s/<space>/note`, the space open,
 // when it uses Notes — its table `notes`, written and read by its members).
 //
 // The notes are one table of the ACCOUNT (the `data` service), the same on every node of the account. A note is one

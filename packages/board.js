@@ -1,4 +1,4 @@
-// BOARD, a page: posts, Reddit-style, CONFINED to the space open on the rail. In a SHARED space
+// BOARD, a page: posts, Reddit-style, CONFINED to the place open (the spaces panel). In a SHARED space
 // (`#/s/<space>/board`): its own posts only — its members post, its roles and moderation apply. In the PERSONAL space
 // (`#/board`): your own posts, your profile (public: what your followers read); another person's profile is
 // `#/board/u/<did>`; and the FEED (`#/board/feed`: the personal view gathers — the boards of every space you are in,
@@ -204,7 +204,7 @@ export async function mount(ctx, el) {
 
   function postCard(p, full = false) {
     const said = h("p", { className: "said", hidden: true });
-    // A space's post opens in its space (the rail follows); a profile's in the personal space.
+    // A space's post opens in its space (the header's place follows); a profile's in the personal space.
     // A post opens where it lives: in Discover (read from outside), in its space, or in the personal space.
     const open = () => (location.hash = discovering() ? `#/discover/board/p/${p.ref}` : p.board ? `#/s/${p.board.id}/board/p/${p.ref}` : `#/board/p/${p.ref}`);
     const acts = h(

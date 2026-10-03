@@ -231,7 +231,7 @@ export async function start(ctx) {
         main.append(
           el("p", {
             className: "note",
-            textContent: "Anyone with a code asks to join (the rail's + → Join a space). A member who may invite lets them in — their app when it is open, else their node on its own (it takes a moment).",
+            textContent: "Anyone with a code asks to join (the space's name at the top → Make or join a space). A member who may invite lets them in — their app when it is open, else their node on its own (it takes a moment).",
           }),
         );
         const who = el("input", { placeholder: "name#abc123 or did:craftec:…", style: "min-width: 18em" });

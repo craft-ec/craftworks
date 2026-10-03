@@ -1,6 +1,6 @@
 // UPKEEP, a service (started by the header, so on every page, after the page is up): what keeps this person's spaces
 // current without any one page open — every 30 s (and at once): WELCOMES waiting in the inbox joined (a space someone
-// let this person into appears on the rail), and, in every shared space where this person may invite, whoever ASKED
+// let this person into appears in the spaces panel), and, in every shared space where this person may invite, whoever ASKED
 // to join (an invite code, an open space) let in. The pages that did this only while open (Chat, a space's Home) no
 // longer need to.
 //

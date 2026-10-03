@@ -86,14 +86,14 @@ export async function start() {
     #app > .slot-header { grid-area: head; } #app > .slot-footer { grid-area: foot; } #app > .slot-body { grid-area: body; }
     #app > .slot-side { grid-area: side; min-height: 0; overflow: hidden; display: flex; }
     #app > .slot-side > section { margin: 0; display: flex; min-height: 0; position: relative; min-width: 64px; }
-    /* On a phone the side (the rail) folds away: the page has the whole width; the header's ☰ slides it in over the page. */
+    /* On a phone the side (a layout's side slot, when one has any) folds away: the page has the whole width. */
     @media (max-width: 600px) {
       #app { grid-template: "head" auto "body" minmax(0, 1fr) "foot" auto / minmax(0, 1fr); }
       #app > .slot-side { position: fixed; top: var(--cw-bar); bottom: 0; left: 0; z-index: 40; background: var(--cw-bg); box-shadow: var(--cw-shadow-lg);
         transform: translateX(-110%); transition: transform .18s ease-out; }
       #app > .slot-side.open { transform: none; }
     }
-    /* The rail's placeholder: its bars only (no room for words). */
+    /* A side slot's placeholder: its bars only (no room for words). */
     #app > .slot-side > section > .cw-loading.cw-cover { padding: var(--cw-space-2); font-size: 0; }
     #app > .slot-side > section > .cw-loading.cw-cover i { height: 10px; }
     #app > .slot-side > section[aria-busy="true"]::before { content: ""; position: absolute; top: 0; left: 0; right: 0; z-index: 6; height: 2px;

@@ -1,6 +1,6 @@
 // CIRCLES, a capability: a person's AUDIENCES as SPACES — the one implementation of "seen by just these people": their
 // FRIENDS, their FOLLOWERS. A circle is a space they own (kind `server`, `circle: "friends" | "followers"`, never on
-// the rail): its MLS group seals what is posted there to its members, each welcomed through their inbox, each removed
+// the spaces panel): its MLS group seals what is posted there to its members, each welcomed through their inbox, each removed
 // by a `remove` act (the group moves to a new epoch: a removed friend reads nothing written after). Its place holds
 // the items posted for it (`items.submit({ audience: "friends" })`), read in the members' feeds like any space's.
 // Its owner posts; its members read, comment and vote (the same `roles` policies as any space).

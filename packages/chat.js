@@ -1,6 +1,6 @@
-// CHAT, a page: a SHARED SPACE's chat, Discord-style — the space chosen on the rail (`#/s/<space>/chat[/<channel>]`):
+// CHAT, a page: a SHARED SPACE's chat, Discord-style — the space chosen in the spaces panel (`#/s/<space>/chat[/<channel>]`):
 // its CHANNELS, the channel open (the `room` component), and its MEMBERS. Chat is a shared space's app only (direct and
-// group conversations are Messages, in the personal space); the space itself — made, joined, its settings — is the rail's
+// group conversations are Messages, in the personal space); the space itself — made, joined, its settings — is the spaces panel's
 // and its Home's. UI only: a space is `space`'s, a channel a sub-space inheriting its access, its keys `keys`' (the
 // space's group), its messages `content`'s; its channel list is a table of the space (`channels`: `<id>` → `{ name, at }`).
 export async function mount(ctx, el) {
@@ -199,7 +199,7 @@ export async function mount(ctx, el) {
   ctx.require("upkeep").then(u => u.tick(), () => {});
   // New since read: the channel list says so.
   activity.onChange(() => el.isConnected && drawChannels());
-  // THE SPACE on the rail (`ctx.space`), at a channel (`ctx.sub`: a notification clicked, a link) or its first.
+  // THE SPACE open (`ctx.space`), at a channel (`ctx.sub`: a notification clicked, a link) or its first.
   const at = async () => {
     const s = ctx.space && (await space.mine()).find(x => x.id === ctx.space && x.kind === "server");
     if (!s) {
@@ -208,7 +208,7 @@ export async function mount(ctx, el) {
       chans.replaceChildren();
       people.replaceChildren();
       roomEl.replaceChildren(
-        Object.assign(document.createElement("p"), { className: "empty", textContent: "Chat is a shared space's: pick a space on the left, or make one with +." }),
+        Object.assign(document.createElement("p"), { className: "empty", textContent: "Chat is a shared space's: pick one from the space's name at the top, or make one there." }),
       );
       return;
     }
