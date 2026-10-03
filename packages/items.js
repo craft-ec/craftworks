@@ -92,9 +92,10 @@ export async function start(ctx) {
 
   // ROOMS, opened once per page: a board's, a person's profile tail.
   const rooms = new Map();
+  const openNow = new Map(); // key → the room, once open (what a bounded list shows while a read is still running)
   const opened = (key, make) => {
     if (!rooms.has(key)) {
-      const p = make().then(r => (r.onChange(fire), r));
+      const p = make().then(r => (r.onChange(fire), openNow.set(key, r), r));
       p.catch(() => rooms.delete(key));
       rooms.set(key, p);
     }
@@ -309,7 +310,7 @@ export async function start(ctx) {
     });
   // Each bounded as a board is (`inTime`): a profile whose node is silent is left out, never waited on.
   const profiles = async dids =>
-    (await Promise.all([...new Set(dids)].map(d => inTime(profileRoom(d), `the profile of ${String(d).slice(12, 20)}…`).catch(e => (ctx.log("posts", { what: e.message }), null))))).filter(Boolean);
+    (await Promise.all([...new Set(dids)].map(d => inTime(profileRoom(d), `the profile of ${String(d).slice(12, 20)}…`, `profile ${d}`, () => openNow.get(d) ?? null).catch(() => null)))).filter(Boolean);
   const pointersTo = async ref => (await index.pointers(ref).catch(() => [])).map(p => p.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
   const idOf = ref => ref.slice(ref.lastIndexOf("/") + 1);
   const whereOf = ref => ref.slice(0, ref.lastIndexOf("/"));
@@ -342,13 +343,28 @@ export async function start(ctx) {
   // older on asking): what is read is that span of the place, never all of it. `all`: the place read whole.
   const WINDOW = { day: 86400e3, week: 7 * 86400e3, month: 30 * 86400e3 };
   const sinceOf = w => (w === "all" || w == null ? null : Date.now() - (typeof w === "number" ? w * 86400e3 : (WINDOW[w] ?? WINDOW.month)));
-  // A PLACE that does not answer within WAIT.show (`node`) is left out of a list (and said), never waited on forever: one
-  // stuck place (a space still opening, a board the network lost) must not hold every list that includes it.
+  // A PLACE's read BOUNDED — the one bound of every list: waited on at most WAIT.hint (`node`), then the list shows what
+  // is HELD of it (`held()`: its open room's rows; none yet: left out); a read still running is never waited on again by
+  // the next list; when it ends, the lists are drawn again (`onChange`). One slow or lost part (a writer whose tree the
+  // network lost) never holds a page.
   const { WAIT } = await ctx.require("node");
-  const inTime = (p, what) =>
-    Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`${what}: not ready in ${WAIT.show / 1000} s; listed without it (it shows when the list is drawn again)`)), WAIT.show))]);
+  const running = new Map(); // key → a read past its bound, still running
+  function bounded(key, start, what, held) {
+    if (running.has(key)) return Promise.resolve().then(held);
+    const p = start();
+    return Promise.race([p.then(x => ({ x })), new Promise(r => setTimeout(r, WAIT.hint, null))]).then(w => {
+      if (w) return w.x;
+      ctx.log("posts", { what: `${what}: still arriving — shown with what is here, drawn again when it ends` });
+      running.set(key, p);
+      p.catch(e => ctx.log("posts", { what: `${what}: ${e?.message ?? e}` })).finally(() => (running.delete(key), fire()));
+      return held();
+    });
+  }
+  const inTime = (p, what, key = what, held = () => Promise.reject(new Error(`${what}: not open yet`))) => bounded(key, () => p, what, held);
   async function boardPosts(sp, opts = {}) {
-    return inTime(boardPostsOf(sp, opts), `the board of ${sp.name ?? sp.id?.slice(0, 8)}`).catch(e => (ctx.log("posts", { what: e.message }), Promise.reject(e)));
+    const what = `the board of ${sp.name ?? sp.id?.slice(0, 8)}`;
+    const held = async () => (openNow.has(`space:${sp.id}`) ? boardPostsOf(sp, { ...opts, window: "held", room: openNow.get(`space:${sp.id}`) }) : []);
+    return bounded(`board ${sp.id} ${JSON.stringify(opts)}`, () => boardPostsOf(sp, opts), what, held);
   }
   async function boardPostsOf(sp, { outside = false, kinds = ["post"], window = "all", room = null } = {}) {
     const r = room ?? (await (outside ? outsideRoom(sp) : boardRoom(sp)));

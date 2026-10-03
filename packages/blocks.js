@@ -31,8 +31,14 @@ export async function start(ctx) {
     return inflight.get(b);
   }
 
+  // A block LOST (neither it nor enough of its group came back): not asked again for a while — every read of a tree
+  // that needs it fails at once (its table shown without that writer's part), never another wait on the same loss.
+  const LOST_FOR = 5 * 60 * 1000;
+  const lost = new Map(); // block → when it was found lost
   // One block, raced against its group. Resolves "direct" or "rebuilt"; rejects when neither can happen.
   function race(tail, b, what) {
+    const at = lost.get(b);
+    if (at && Date.now() - at < LOST_FOR) return Promise.reject(new Error(`${what}: block ${b.slice(0, 12)}… is not on the network (found lost ${Math.round((Date.now() - at) / 1000)} s ago: not asked again yet)`));
     let group = [];
     try {
       group = Array.from(core.tail_group(bytes(tail), b));
@@ -53,6 +59,7 @@ export async function start(ctx) {
           resolve("rebuilt");
         } else if (open === 0) {
           done = true;
+          lost.set(b, Date.now());
           reject(new Error(`${what}: block ${b.slice(0, 12)}… is not on the network, and too little of its group is to rebuild it`));
         }
       };
