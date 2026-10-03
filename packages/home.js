@@ -2,6 +2,8 @@
 // - PUBLIC (nobody logged in): a welcome, and Log in / Register, which open auth's dialog.
 // - PRIVATE (logged in): the DESKTOP: the site's apps as icons, the ones this account pinned first. Pins are the
 //   account's (the `edge` capability's pins, shown with the one `pin-button`), so they are the same on every node of the account.
+// - A PERSON's HOME (`#/u/<did>`: someone else's personal space, from the spaces panel): their name, what you can do
+//   with them (the one `person` menu), and their apps that show someone's space (the manifest's `person` view).
 // It asks auth quietly (`check`, never a dialog) which view to show, and switches when someone logs in or out.
 export async function mount(ctx, el) {
   const [auth, login] = await Promise.all([ctx.require("auth"), ctx.require("login")]);
@@ -133,7 +135,43 @@ export async function mount(ctx, el) {
     }, () => {});
   };
 
-  const show = s => (s ? desktop() : publicView());
+  // A PERSON's Home: theirs, seen from outside.
+  const personHome = async did => {
+    const [directory, person, icons] = await Promise.all(["directory", "person", "app-icons"].map(n => ctx.require(n)));
+    el.innerHTML = `
+      <style>
+        .them { display: grid; gap: var(--cw-space-3); justify-items: center; padding: var(--cw-space-5) 0; }
+        .them h2 { margin: 0; font-size: 1.6rem; overflow-wrap: anywhere; text-align: center; }
+        .them .did { margin: 0; color: var(--cw-muted); font-size: var(--cw-text-xs); overflow-wrap: anywhere; text-align: center; }
+        .them .act { font: inherit; border: 1px solid var(--cw-line); background: var(--cw-surface); color: inherit; border-radius: var(--cw-radius-pill);
+          padding: 6px var(--cw-space-4); cursor: pointer; }
+        .them .grid { display: grid; grid-template-columns: repeat(auto-fit, 96px); justify-content: center; gap: var(--cw-space-3); width: 100%; }
+        .them .app { display: grid; justify-items: center; gap: 6px; padding: var(--cw-space-3) 6px; border-radius: var(--cw-radius); text-decoration: none; color: inherit; }
+        .them .app:hover { background: var(--cw-hover); }
+        .them .icon { font-size: 40px; line-height: 1; }
+      </style>
+      <div class="them"><h2></h2><p class="did"></p><button type="button" class="act">Follow, friend, message…</button><div class="grid"></div></div>`;
+    const name = el.querySelector("h2");
+    name.textContent = directory.shown(did);
+    directory.handle(did).then(n => (name.textContent = directory.shown(did, n)), () => {});
+    el.querySelector(".did").textContent = did;
+    el.querySelector(".act").onclick = e => person.open(e.currentTarget, did);
+    icons.grid(el.querySelector(".grid"), ctx.apps.filter(a => (a.views ?? []).includes("person")).map(a => ({ app: a, href: `#${a.route}/u/${did}` })));
+  };
+  const show = async s => {
+    if (!s) return publicView();
+    const who = (await ctx.require("spaces-panel")).personOf();
+    return who && who !== s.did ? personHome(who) : desktop();
+  };
+  // Home again at another address (yours ↔ a person's): drawn for it.
+  let drawnFor = ctx.sub ?? "";
+  const onRoute = () => {
+    if (!el.isConnected) return removeEventListener("craftworks:route", onRoute);
+    if (ctx.route !== "/" || (ctx.sub ?? "") === drawnFor) return;
+    drawnFor = ctx.sub ?? "";
+    auth.check().then(show, () => {});
+  };
+  addEventListener("craftworks:route", onRoute);
   const onAuth = e => (el.isConnected ? show(e.detail) : removeEventListener("craftworks:auth", onAuth));
   addEventListener("craftworks:auth", onAuth);
   await show(await auth.check().catch(() => null));

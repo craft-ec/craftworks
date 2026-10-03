@@ -7,9 +7,24 @@
 //
 //   const panel = await ctx.require("spaces-panel");
 //   panel.open()            // the panel, over the page (open again: closed)
-//   await panel.here()      // the name of the space you are in ("Personal", "Discover", a shared space's)
+//   await panel.here()      // the name of the space you are in ("Personal", "Discover", a shared space's, a person's)
+//   panel.personOf()        // the PERSON whose space is open (`#/u/<did>`, `#/<app>/u/<did>`), else null
+//   await panel.hrefTo({ personal } | { discover } | { space } | { person })  // that space, at the SAME APP when it shows
+//                           // it (the manifest's `views`; a shared space: the apps it uses), else its Home
 export async function start(ctx) {
-  const [space, conversation, directory, edge] = await Promise.all(["space", "conversation", "directory", "edge"].map(n => ctx.require(n)));
+  const [space, conversation, directory, edge, roles] = await Promise.all(["space", "conversation", "directory", "edge", "roles"].map(n => ctx.require(n)));
+  // A PERSON's space: `u/<did>` after the app (or alone: their Home) — someone else's personal space, seen from outside.
+  const personOf = () => (ctx.space ? null : (/^u\/(did:[^/]+)/.exec(ctx.sub ?? "")?.[1] ?? null));
+  // SWITCHING keeps the app: the app open, in the space chosen, where that space shows it; else that space's Home.
+  async function hrefTo({ personal = false, discover = false, space: sp = null, person = null }) {
+    const app = ctx.apps.find(a => a.route === ctx.route);
+    const views = app?.views ?? [];
+    const me = (await space.account().catch(() => null))?.id;
+    if (person && person !== me) return views.includes("person") ? `#${app.route}/u/${person}` : `#/u/${person}`;
+    if (discover) return views.includes("public") ? `#/discover${app.route}` : "#/discover";
+    if (sp) return views.includes("shared") && (await roles.of(sp).then(r => r.apps(), () => [])).includes(app.route.slice(1)) ? `#/s/${sp.id}${app.route}` : `#/s/${sp.id}`;
+    return views.includes("personal") ? `#${app.route}` : "#/";
+  }
   const style = document.createElement("style");
   style.textContent = `
     .cw-panel { position: fixed; top: var(--cw-bar); bottom: 0; left: 0; z-index: 70; width: min(920px, 100vw); box-sizing: border-box;
@@ -115,8 +130,6 @@ export async function start(ctx) {
     return h("li", {}, a);
   };
   const column = (title, items, none) => h("section", {}, h("h3", { textContent: title }), h("ul", {}, ...(items.length ? items : [h("p", { className: "none", textContent: none })])));
-  // A PERSON's space: their posts (what is theirs to show you).
-  const personHref = did => `#/board/u/${did}`;
 
   async function draw() {
     const me = (await space.account().catch(() => null))?.id;
@@ -128,15 +141,19 @@ export async function start(ctx) {
     const follows = people.list("follow");
     const names = await Promise.all([...friends, ...follows.filter(d => d.startsWith("did:"))].map(d => directory.handle(d).then(n => [d, n], () => [d, null])));
     const nameOf = new Map(names);
+    const open = personOf();
+    // Each link at its space's Home first, then at the same app where that space shows it (`hrefTo`: a shared space's
+    // apps take a read).
+    const at = (a, target) => (hrefTo(target).then(href => (a.querySelector("a").href = href), () => {}), a);
     const spaces = [
-      row("#/", initials(directory.shown(me, myName)), `${directory.shown(me, myName)} · Personal`, { on: !ctx.space }),
-      row("#/discover", "🧭", "Discover", { on: ctx.space === "discover", title: "Discover: the public network" }),
+      at(row("#/", initials(directory.shown(me, myName)), `${directory.shown(me, myName)} · Personal`, { on: !ctx.space && !open }), { personal: true }),
+      at(row("#/discover", "🧭", "Discover", { on: ctx.space === "discover", title: "Discover: the public network" }), { discover: true }),
       shared.length ? h("li", { className: "sep" }) : null,
-      ...shared.map(s => row(`#/s/${s.id}`, initials(s.name), space.shown(s), { on: ctx.space === s.id, badge: activity?.of(s.id) ?? 0 })),
+      ...shared.map(s => at(row(`#/s/${s.id}`, initials(s.name), space.shown(s), { on: ctx.space === s.id, badge: activity?.of(s.id) ?? 0 }), { space: s })),
       h("li", { className: "sep" }),
       h("li", {}, h("button", { type: "button", className: "add", onclick: () => (close(), ask()) }, h("span", { className: "ic", textContent: "+" }), h("span", { className: "n", textContent: "Make or join a space" }))),
     ].filter(Boolean);
-    const people_ = list => list.map(d => row(personHref(d), initials(nameOf.get(d) ?? d.slice(12)), directory.shown(d, nameOf.get(d)), { title: d }));
+    const people_ = list => list.map(d => at(row(`#/u/${d}`, initials(nameOf.get(d) ?? d.slice(12)), directory.shown(d, nameOf.get(d)), { title: d, on: open === d }), { person: d }));
     const followed = follows.map(d =>
       d.startsWith("did:") ? people_([d])[0] : row(`#/discover/board/b/${d}`, "🌐", people.about("follow", d)?.name || `a space #${d.slice(0, 6)}`, { title: d }),
     );
@@ -167,14 +184,14 @@ export async function start(ctx) {
   // WHERE you are now, named (the header's button).
   async function here() {
     if (ctx.space === "discover") return "🧭 Discover";
-    // A PERSON's space (their posts: `u/<did>`, from Friends or Following): theirs, named.
-    const who = /^u\/(did:[^/]+)/.exec(ctx.sub ?? "")?.[1];
-    if (!ctx.space && who && who !== (await space.account().catch(() => null))?.id) return directory.shown(who, await directory.handle(who).catch(() => null));
+    // A PERSON's space (from Friends or Following): theirs, named.
+    const who = personOf();
+    if (who && who !== (await space.account().catch(() => null))?.id) return directory.shown(who, await directory.handle(who).catch(() => null));
     if (ctx.space) {
       const sp = (await space.mine().catch(() => [])).find(s => s.id === ctx.space);
       return sp ? space.shown(sp) : "Space";
     }
     return "Personal";
   }
-  return { open, close, here };
+  return { open, close, here, personOf, hrefTo };
 }

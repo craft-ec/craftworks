@@ -92,7 +92,8 @@ export async function mount(ctx, el) {
     const s = ctx.sub || "";
     if (s.startsWith("w/")) return { watch: decodeURIComponent(s.slice(2)) };
     if (s === "up") return { up: true };
-    if (s.startsWith("c/")) return { by: decodeURIComponent(s.slice(2)) };
+    // A person's space (`u/<did>`; `c/` from before: the same).
+    if (s.startsWith("u/") || s.startsWith("c/")) return { by: decodeURIComponent(s.slice(2)) };
     if (discovering()) return { discover: true };
     if (sp()) return { board: sp() };
     return s === "mine" ? { by: me } : s === "saved" ? { saved: true } : { feed: true };
@@ -118,7 +119,7 @@ export async function mount(ctx, el) {
     return hh ? `${hh}:${String(mm).padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
   };
   const who = did => {
-    const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.preventDefault(), e.stopPropagation(), (location.hash = `#/${C.app}/c/${encodeURIComponent(did)}`)) });
+    const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.preventDefault(), e.stopPropagation(), (location.hash = `#/${C.app}/u/${did}`)) });
     return n;
   };
   const fileOf = v => v.files?.find(f => f.type === studio.MANIFEST || /^(video|audio)\//.test(f.type ?? "")) ?? v.files?.[0] ?? null;
