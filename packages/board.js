@@ -131,8 +131,7 @@ export async function mount(ctx, el) {
   };
   let here = null; // the server of the board shown (a name clicked there offers its role and removal)
   const who = did => {
-    const n = h("span", { className: "by", textContent: directory.shown(did), onclick: e => (e.stopPropagation(), person.open(e.currentTarget, did, here ? { space: here } : {})) });
-    directory.name(did).then(t => (n.textContent = t), () => {});
+    const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.stopPropagation(), person.open(e.currentTarget, did, here ? { space: here } : {})) });
     return n;
   };
   const boardLink = b => h("span", { className: "b", textContent: `b/${space.shown(b)}` });

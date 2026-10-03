@@ -1038,16 +1038,17 @@ export async function start(ctx) {
     c.plainCatalog = true;
     return c;
   };
-  let carding = null;
+  // (A MIGRATION — `migrate`, run by `upkeep`.) True once the card is complete.
   async function completeCard(owner) {
     const c = await cardOf(owner);
-    if (complete(c)) return;
+    if (complete(c)) return true;
     for (const n of PUBLIC) {
       const t = await tail(owner, n, { public: true, wait: WAIT.answer });
       if (!t.absent) await notePlace(c, n, "listed");
-      else if (!t.answered()) return; // silence: noted another time
+      else if (!t.answered()) return false; // silence: noted another time
     }
     await c.put(CATALOG, JSON.stringify({ at: Date.now(), complete: true }));
+    return true;
   }
   async function publicTail(name, owner) {
     const sp = await space.account();
@@ -1055,7 +1056,6 @@ export async function start(ctx) {
       if (name === CARD) {
         const c = await tail(owner, name, { public: true, known: legacyListed(await directory(), name) === false ? false : null, beforeCreate: () => listInDirectory(name) });
         c.plainCatalog = true;
-        carding ??= completeCard(owner).catch(e => ctx.log("storage", { what: `listing this account's public tables on its card: ${e?.message ?? e}` }));
         return c;
       }
       const listed = legacyListed(await directory(), name);
@@ -1164,5 +1164,23 @@ export async function start(ctx) {
     return [...live.values()].filter(t => mine.has(t.owner) && !t.absent && !t.moved);
   }
 
-  return { own: ownTables, table, log, publicTail, readOnly, describe, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why) };
+  // UPKEEP'S MARKS — what background work this account has done, so a page after does not do it again (the version
+  // of the MIGRATIONS done, what each board's public copies were synced as): kept on the account's directory, its
+  // `CATALOG` row (`upkeep`: { key: value }). A page has no other store (it runs sandboxed: no localStorage).
+  const directoryMark = async () => {
+    const d = await directory();
+    try {
+      return { d, v: JSON.parse(d.rows().find(r => r.key === CATALOG)?.value ?? "{}") ?? {} };
+    } catch {
+      return { d, v: {} };
+    }
+  };
+  const upkeepMark = async key => (await directoryMark()).v.upkeep?.[key] ?? null;
+  const setUpkeepMark = async (key, value) => {
+    const { d, v } = await directoryMark();
+    if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
+  };
+  const completeOwnCard = async () => completeCard((await space.account()).shared);
+
+  return { own: ownTables, table, log, publicTail, readOnly, describe, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), upkeepMark, setUpkeepMark, completeOwnCard };
 }

@@ -76,7 +76,10 @@ export async function start(ctx) {
   let personing = null;
   const person = { then: f => (personing ??= ctx.require("person")).then(f) };
 
+  // `title`: text, or an element (a person's name: `directory.nameEl`, filled in when their card is read).
   async function show(host, conversation, title) {
+    const titleEl = typeof title === "string" ? null : title;
+    title = titleEl ? titleEl.textContent : title;
     const me = (await space.account()).id;
     const box = el("div", { className: "cw-room" });
     const msgs = el("ol", { className: "msgs" });
@@ -94,7 +97,7 @@ export async function start(ctx) {
     ed.disable(true, `Message ${title}`);
     const line = el("div", { className: "line" }, ed.el);
     form.append(replying, line);
-    box.append(el("h2", { textContent: title }), msgs, said, form);
+    box.append(titleEl ? el("h2", {}, titleEl) : el("h2", { textContent: title }), msgs, said, form);
     host.replaceChildren(box);
     const say = m => ((said.textContent = m ?? ""), (said.hidden = !m));
     // Until every author's feed has been tried, an empty room is not known to be empty: the theme's placeholder.

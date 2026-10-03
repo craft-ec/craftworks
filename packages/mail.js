@@ -63,19 +63,20 @@ export async function mount(ctx, el) {
   const node = (tag, props) => Object.assign(document.createElement(tag), props);
   let open = null;
 
-  const names = async dids => Promise.all(dids.map(d => directory.name(d)));
   async function draw() {
     const mails = await conversation.mail.list(box);
     if (!mails.length) {
       list.replaceChildren(node("p", { className: "empty", textContent: box === "sent" ? "Nothing sent yet." : "No mail yet." }));
       return;
     }
-    const who = await Promise.all(mails.map(m => (box === "sent" ? names(m.to).then(n => `To ${n.join(", ")}`) : directory.name(m.from))));
+    const toNames = dids => dids.flatMap((d, i) => [...(i ? [", "] : []), directory.nameEl(d)]);
     list.replaceChildren(
       ...mails.map((m, i) => {
         const b = node("button", { type: "button" });
         b.setAttribute("aria-current", String(open?.id === m.id));
-        b.append(node("span", { className: "who", textContent: who[i] }), node("span", { className: "sub", textContent: m.subject || "(no subject)" }), node("span", { className: "when", textContent: new Date(m.at).toLocaleString() }));
+        const who = node("span", { className: "who" });
+        who.append(...(box === "sent" ? ["To ", ...toNames(m.to)] : [directory.nameEl(m.from)]));
+        b.append(who, node("span", { className: "sub", textContent: m.subject || "(no subject)" }), node("span", { className: "when", textContent: new Date(m.at).toLocaleString() }));
         b.onclick = () => show(m);
         return b;
       }),
@@ -86,12 +87,11 @@ export async function mount(ctx, el) {
     open = m;
     root.classList.add("reading");
     draw();
-    const [from, to] = await Promise.all([directory.name(m.from), names(m.to)]);
     // Each name: what can be done with that person.
-    const who = (did, name) => node("a", { href: "#", textContent: name, onclick: e => (e.preventDefault(), person.open(e.currentTarget, did)) });
+    const who = did => directory.nameEl(did, "a", { href: "#", onclick: e => (e.preventDefault(), person.open(e.currentTarget, did)) });
     const meta = node("div", { className: "meta" });
-    meta.append("From ", who(m.from, from), " · to ");
-    m.to.forEach((d, i) => meta.append(...(i ? [", "] : []), who(d, to[i])));
+    meta.append("From ", who(m.from), " · to ");
+    m.to.forEach((d, i) => meta.append(...(i ? [", "] : []), who(d)));
     meta.append(` · ${new Date(m.at).toLocaleString()}`);
     read.replaceChildren(
       node("h2", { textContent: m.subject || "(no subject)" }),

@@ -101,8 +101,7 @@ export async function mount(ctx, el) {
       "ul",
       {},
       ...members.map(m => {
-        const li = h("li", { onclick: e => person.open(e.currentTarget, m.did, { space: sp }) }, directory.shown(m.did), m.role !== "member" ? h("i", { textContent: m.role }) : null);
-        directory.name(m.did).then(t => (li.firstChild.textContent = t), () => {});
+        const li = h("li", { onclick: e => person.open(e.currentTarget, m.did, { space: sp }) }, directory.nameEl(m.did), m.role !== "member" ? h("i", { textContent: m.role }) : null);
         return li;
       }),
     );

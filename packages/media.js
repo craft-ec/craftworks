@@ -118,8 +118,7 @@ export async function mount(ctx, el) {
     return hh ? `${hh}:${String(mm).padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
   };
   const who = did => {
-    const n = h("span", { className: "by", textContent: directory.shown(did), onclick: e => (e.preventDefault(), e.stopPropagation(), (location.hash = `#/${C.app}/c/${encodeURIComponent(did)}`)) });
-    directory.name(did).then(t => (n.textContent = t), () => {});
+    const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.preventDefault(), e.stopPropagation(), (location.hash = `#/${C.app}/c/${encodeURIComponent(did)}`)) });
     return n;
   };
   const fileOf = v => v.files?.find(f => f.type === studio.MANIFEST || /^(video|audio)\//.test(f.type ?? "")) ?? v.files?.[0] ?? null;

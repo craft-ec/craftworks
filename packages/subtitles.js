@@ -40,8 +40,7 @@ export async function mount(ctx, el) {
     return e;
   };
   const who = did => {
-    const n = h("span", { textContent: directory.shown(did) });
-    directory.name(did).then(t => (n.textContent = t), () => {});
+    const n = directory.nameEl(did);
     return n;
   };
   const sp = () => (ctx.space && ctx.space !== "discover" ? ctx.space : null);

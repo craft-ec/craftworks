@@ -66,8 +66,7 @@ export async function start(ctx) {
     const mayVote = !outside && (!r || r.allows("vote", me, app));
 
     const who = did => {
-      const n = h("span", { className: "by", textContent: directory.shown(did), onclick: e => (e.stopPropagation(), person.open(e.currentTarget, did, sp ? { space: sp } : {})) });
-      directory.name(did).then(t => (n.textContent = t), () => {});
+      const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.stopPropagation(), person.open(e.currentTarget, did, sp ? { space: sp } : {})) });
       return n;
     };
     // What someone wrote, as Markdown: its media where it was written, its other files below it.

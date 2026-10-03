@@ -176,7 +176,6 @@ export async function start(ctx) {
       const ws = await index.pointers(ACTS).catch(() => []);
       if (!ws.some(p => p?.w === sp.self)) await index.point(ACTS, { w: sp.self }).catch(() => (actListed = false));
     }
-    if (!out) pubActs.settled.then(() => (pubActs.rows().some(x => x.id?.startsWith(sp.self)) ? listActWriter() : null)).catch(() => {});
     const r = {
       space: sp,
       get owner() {
@@ -218,6 +217,12 @@ export async function start(ctx) {
         replay();
       },
       isPublic,
+      // (A MIGRATION — `upkeep`.) This device listed as a writer of the public acts it wrote before their bag.
+      migrate: async () => {
+        if (out) return;
+        await pubActs.settled;
+        if (pubActs.rows().some(x => x.id?.startsWith(sp.self))) await listActWriter();
+      },
       // All writers known here (their devices' keys): whose public tails a reader outside reads.
       writerKeys: () => [...writers.keys()],
       // PUBLISH (the owner): the counted acts so far, and a `member` act for each member, into the public acts.

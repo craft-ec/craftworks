@@ -79,9 +79,8 @@ async function people(ctx, el, { directory, person }) {
   grid.replaceChildren(
     ...(dids.length
       ? dids.map(d => {
-          const name = h("b", { textContent: directory.shown(d) });
+          const name = directory.nameEl(d, "b");
           const about = h("span", { textContent: "public profile" });
-          directory.name(d).then(t => (name.textContent = t), () => {});
           posts.list({ by: d }).then(ps => (about.textContent = `${ps.length} public post${ps.length === 1 ? "" : "s"}`), () => {});
           return h("div", { className: "card", onclick: e => person.open(e.currentTarget, d) }, name, about);
         })

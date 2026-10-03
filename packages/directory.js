@@ -121,10 +121,12 @@ export async function start(ctx) {
   // Kept while known: NOT when there is none yet (a card read before its name was set — a new person's own page — would
   // otherwise show no name until a reload), and dropped when their card changes (the node pushes it).
   const handles = new Map();
+  const knownHandles = new Map(); // did → the handle last read (shown at once on the next draw)
   const watchedCards = new Set();
   function handle(did) {
     if (!handles.has(did)) {
       const p = card(did).then(c => c?.handle ?? null, () => null);
+      p.then(h => h != null && knownHandles.set(did, h));
       handles.set(did, p);
       p.then(h => h == null && handles.get(did) === p && handles.delete(did));
       if (!watchedCards.has(did)) {
@@ -139,6 +141,13 @@ export async function start(ctx) {
   // the id is). Without a handle: `#8r4orC`.
   const shown = (did, handle) => `${handle ?? ""}#${String(did).replace(/^did:craftec:/, "").slice(0, 6)}`;
   const name = async did => shown(did, await handle(did));
+  // A person's NAME ON A PAGE — the one way one is drawn: an element showing what is known now (never waited on),
+  // its text replaced when their card is read.
+  const nameEl = (did, tag = "span", props = {}) => {
+    const e = Object.assign(document.createElement(tag), props, { textContent: shown(did, knownHandles.get(did)) });
+    name(did).then(t => (e.textContent = t), () => {});
+    return e;
+  };
 
   // A person's DATA key, from their key log (once per page): what signs their member's credential in a space.
   const dataKeys = new Map();
@@ -201,5 +210,5 @@ export async function start(ctx) {
     return dids.filter((_, i) => ok[i]);
   }
 
-  return { card, publish, renew, handle, shown, name, publicOf, dataKey, devices, onDevices, listMe, isListed, listed };
+  return { card, publish, renew, handle, shown, name, nameEl, publicOf, dataKey, devices, onDevices, listMe, isListed, listed };
 }

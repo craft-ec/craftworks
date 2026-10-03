@@ -38,12 +38,10 @@ export async function start(ctx) {
     const box = el("div", { className: "cw-people" }, theme.loading("Loading people…"));
     host.replaceChildren(box);
     let open = true;
-    const row = (did, name, ...extra) =>
-      el("li", { title: did }, el("span", { className: "n", textContent: name, onclick: e => person.open(e.currentTarget, did) }), ...extra);
+    const row = (did, ...extra) => el("li", { title: did }, directory.nameEl(did, "span", { className: "n", onclick: e => person.open(e.currentTarget, did) }), ...extra);
     async function draw() {
       const asking = await conversation.friendRequests().catch(() => []);
       const all = [...new Set([...asking, ...SECTIONS.flatMap(([rel]) => people.list(rel))])].filter(d => d.startsWith("did:"));
-      const names = new Map(await Promise.all(all.map(async d => [d, await directory.name(d)])));
       if (!open) return;
       const parts = [];
       if (asking.length)
@@ -51,7 +49,7 @@ export async function start(ctx) {
           el("section", {}, el("h4", { textContent: "Friend requests" }), el("ul", {}, ...asking.map(d => {
             const yes = el("button", { type: "button", className: "yes", textContent: "Accept", onclick: () => conversation.answerFriend(d, true).then(draw) });
             const no = el("button", { type: "button", textContent: "Decline", onclick: () => conversation.answerFriend(d, false).then(draw) });
-            return row(d, names.get(d), yes, no);
+            return row(d, yes, no);
           }))),
         );
       for (const [rel, title, none] of SECTIONS) {
@@ -60,7 +58,7 @@ export async function start(ctx) {
         // A followed SHARED space (not a person): its name, and Unfollow.
         const item = d =>
           d.startsWith("did:")
-            ? row(d, names.get(d))
+            ? row(d)
             : el("li", { title: d }, el("span", { className: "n", textContent: `🌐 ${people.about(rel, d)?.name || "a space"}#${d.slice(0, 6)}` }), el("button", { type: "button", textContent: "Unfollow", onclick: () => people.set(rel, d, false) }));
         parts.push(el("section", {}, el("h4", { textContent: title }), list.length ? el("ul", {}, ...list.map(item)) : el("p", { className: "none", textContent: none })));
       }

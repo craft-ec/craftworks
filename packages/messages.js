@@ -57,14 +57,14 @@ export async function mount(ctx, el) {
 
   async function drawList() {
     const list = await conversation.list();
-    const names = await Promise.all(list.map(sp => (sp.with ? directory.name(sp.with) : sp.name)));
     people.replaceChildren(
       ...list.map((sp, i) => {
-        const b = Object.assign(document.createElement("button"), { type: "button", textContent: `${sp.kind === "group" ? "👥 " : ""}${names[i]}`, title: sp.with ?? "" });
+        const b = Object.assign(document.createElement("button"), { type: "button", title: sp.with ?? "" });
+        b.append(sp.kind === "group" ? `👥 ${sp.name}` : sp.with ? directory.nameEl(sp.with) : sp.name);
         const n = activity.unread(sp.id);
         if (n) b.append(Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(n) }));
         b.setAttribute("aria-current", String(open?.id === sp.id));
-        b.onclick = () => show(sp, names[i]);
+        b.onclick = () => show(sp, sp.with ? directory.nameEl(sp.with) : sp.name);
         return b;
       }),
     );
@@ -77,7 +77,10 @@ export async function mount(ctx, el) {
     box.classList.remove("listing");
     drawList();
     shown?.close();
-    shown = await roomUI.show(roomEl, sp, sp.kind === "group" ? name : `@${name}`);
+    // A person's name (an element, filled in when their card is read) or a group's (text).
+    const title = typeof name === "string" ? (sp.kind === "group" ? name : `@${name}`) : document.createElement("span");
+    if (typeof name !== "string") title.append("@", name);
+    shown = await roomUI.show(roomEl, sp, title);
   }
 
   $(".new").onclick = () => {
@@ -97,7 +100,7 @@ export async function mount(ctx, el) {
         }
         const did = dids[0];
         const sp = await conversation.direct(did);
-        await show(sp, await directory.name(did));
+        await show(sp, directory.nameEl(did));
       } catch (e) {
         say(`Could not start it: ${e?.message ?? e}`);
       }
@@ -112,7 +115,7 @@ export async function mount(ctx, el) {
   const at = async () => {
     if (!ctx.sub) return;
     const sp = (await conversation.list()).find(c => c.id === ctx.sub);
-    if (sp && open?.id !== sp.id) show(sp, sp.with ? await directory.name(sp.with) : sp.name);
+    if (sp && open?.id !== sp.id) show(sp, sp.with ? directory.nameEl(sp.with) : sp.name);
   };
   at();
   addEventListener("craftworks:route", () => el.isConnected && at());

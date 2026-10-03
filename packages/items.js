@@ -611,12 +611,27 @@ export async function start(ctx) {
     await (await profileRoom(self)).remove(idOf(ref));
   }
 
-  // Every board this person is in: their items' public copies as the board reads NOW (`upkeep`, every tick).
+  // Every board this person is in: their items' public copies as the board reads NOW (`upkeep`, every tick) — a board
+  // opened and synced only when what reads in public there CHANGED since this device last synced it (a post, an edit,
+  // a vote sync as they are written). What it was synced as: upkeep's mark (`storage`), never every board each page.
   async function syncPublic() {
-    for (const sp of await boards().catch(() => [])) await (await boardRoom(sp)).sync().catch(e => ctx.log("posts", { what: `${sp.name}: public copies: ${e.message}` }));
-    // This person's public profile items from before Discover's bags: listed there too.
+    const storage = await ctx.require("storage");
+    for (const sp of await boards().catch(() => [])) {
+      const r = await roles.of(sp).catch(() => null);
+      if (!r) continue;
+      const sig = Object.keys(LEGACY).map(d => (domainReads(r, d) ? 1 : 0)).join("");
+      const mark = `public ${sp.id.slice(0, 16)} ${String(sp.self).slice(0, 16)}`;
+      if ((await storage.upkeepMark(mark)) === sig) continue;
+      await (await boardRoom(sp))
+        .sync()
+        .then(() => storage.setUpkeepMark(mark, sig))
+        .catch(e => ctx.log("posts", { what: `${sp.name}: public copies: ${e.message}` }));
+    }
+  }
+  // (A MIGRATION — `upkeep`.) This person's public profile items from before Discover's bags: listed there.
+  async function listOldProfile() {
     const self = await me();
-    for (const it of (await profileRoom(self)).list()) if (TOP.has(it.kind) && !it.private) await listPublic(`${self}/${it.id}`, it, { did: self }).catch(() => {});
+    for (const it of (await profileRoom(self)).list()) if (TOP.has(it.kind) && !it.private) await listPublic(`${self}/${it.id}`, it, { did: self });
   }
 
   // ATTACHED ITEMS (a subtitle on a video): contributed like a comment — in the item's place (a board), or on a
@@ -696,5 +711,5 @@ export async function start(ctx) {
     return [...a.flat(), ...b];
   }
 
-  return { submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
+  return { listOldProfile, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
 }

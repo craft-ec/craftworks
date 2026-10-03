@@ -361,8 +361,7 @@ export async function mount(ctx, el) {
         el("h3", { textContent: "Lists you apply" }),
         who.length
           ? el("ul", {}, ...who.map(did => {
-              const n = el("span", { textContent: directory.shown(did) });
-              directory.name(did).then(t => (n.textContent = t), () => {});
+              const n = directory.nameEl(did);
               return el("li", {}, n, " ", el("button", { type: "button", textContent: "Stop applying", onclick: async () => ((await (await (await ctx.require("edge")).people()).set("modlist", did, false)), draw()) }));
             }))
           : el("p", { className: "note", textContent: "None. Apply someone's list from their name: Use their moderation list." }),
