@@ -279,6 +279,8 @@ export async function mount(ctx, el) {
     kindSel.onchange = drawFields;
     drawFields();
     const inSpace = sp() ? (await space.mine()).find(s => s.id === sp()) : null;
+    // WHO SEES IT: the one picker (`audience`).
+    const who = await (await ctx.require("audience")).picker({ space: inSpace, kind: VIDEO[0] });
     const f = h(
       "form",
       {},
@@ -290,7 +292,7 @@ export async function mount(ctx, el) {
       h("textarea", { name: "body", rows: 4, placeholder: "Description" }),
       h("label", { className: "s" }, "What it is ", kindSel),
       fieldsBox,
-      inSpace ? h("p", { className: "s", textContent: `For ${space.shown(inSpace)}: its members (and everyone, while it reads its ${C.ones} in public).` }) : h("select", { name: "audience" }, h("option", { value: "public", textContent: "🌐 Everyone (on your channel)" }), h("option", { value: "private", textContent: "🔒 Only you" })),
+      who.el,
       h("div", { className: "row" }, h("button", { className: "on", textContent: "Upload" }), progress),
       said,
     );
@@ -315,7 +317,7 @@ export async function mount(ctx, el) {
       btn.disabled = true;
       try {
         progress.textContent = `Reading the ${C.one}…`;
-        const pub = inSpace ? await items.publicIn(inSpace, kindSel.value) : f.elements.audience.value !== "private";
+        const pub = who.isPublic();
         // MADE READY TO STREAM (renditions, strip, subtitles, a manifest); a browser that cannot encode sends the file as it is.
         const ref = await studio
           .make(file, { space: inSpace, public: pub, keepOriginal: f.elements.keep.checked, onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`) })
@@ -334,7 +336,7 @@ export async function mount(ctx, el) {
         const meta = Object.fromEntries(kinds.of(kindSel.value).fields.map(x => [x, String(f.elements[`meta.${x}`]?.value ?? "").trim()]).filter(([, v]) => v));
         // A file sent as it is (not encoded here) carries its video id on the item (a manifest carries its own).
         if (ref.type !== studio.MANIFEST && ref.key) meta.vid = await studio.videoId(ref.key);
-        const posted = await items.submit({ board: inSpace?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, kind: kindSel.value, meta, private: !inSpace && !pub, files: [ref] });
+        const posted = await items.submit({ board: inSpace?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, kind: kindSel.value, meta, audience: who.value(), files: [ref] });
         // Its SUBTITLES: items of their own, about it.
         for (const s of f.elements.subs.files ?? []) await subs.add(posted, s).catch(e => ctx.log(C.app, { what: `timed text ${s.name}: ${e.message}` }));
         // LYRICS the file carries (untimed): one cue over the whole, when none was given.

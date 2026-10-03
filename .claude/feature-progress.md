@@ -970,8 +970,35 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
 - [x] 1b DISCOVER BAG (fx: Discover 47 items <1.5 s from bags; real net via B: 59 s first visit — bags searched once then made — 1.5 s after; public acts' writers bag added, empty until an owner/admin loads, old walk until then): public posts/videos/audio drop a pointer {writer, table, item} in a public per-kind, per-month
       bag; Discover reads the bag and only the tails it names; authors and members backfill missing pointers; drop the crawl.
 - [ ] 2a NOTES AND DRIVE ON `content` (owner: why don't they follow the same path?): a note an item of kind `note`
-      (text, tags, pin), a Drive entry an item of kind `file` (its ref, folder); each device converts its old rows once
-      on load, then reads only items — so authorship, edits, removal, moderation, policy come from one place.
+      (text, tags, pin), a Drive entry an item of kind `file` (its ref, folder); old rows converted ONCE by upkeep's
+      migration (never on a page load), then only items read — so authorship, edits, removal, moderation, policy come
+      from one place. Owner 10-03: the SAME structure as every app — a note or an uploaded file can be private,
+      members-only or PUBLIC (space policy as ceiling), listed in Discover, with comments/votes; Notes/Drive only lenses
+      (note colour/archived, file folder in `meta`). One upload door: `files` + Drive's catalogue (a video/audio post
+      references the same file).
+      DONE first part (47e3f2d): Drive files an upload from another app in its TYPE's folder (/Videos /Audio /Images
+      /Documents /Files: `kinds.ofType`, `kinds.domainName`); uploads made in Drive stay where put; migration v3.
+- [x] ONE AUDIENCE PICKER (owner 10-03; DONE: `audience` component, items `audience`/content `aud`; fx: members-only
+      post in a public space on its board, absent from Discover and its outside view; public control listed in both): the one choice of who sees an item, for every app (Board, Videos, Audio,
+      Notes, Drive) — today two copies (board.js:396, media.js:318). Personal space: Only you / Friends / Followers /
+      Everyone; a shared space: Members / Public (its policy the ceiling: members-only = members post and read, nobody
+      makes it public). Stored by one rule in `items`.
+- [ ] FRIENDS and FOLLOWERS audiences (owner 10-03: "add friend/follow option"): an item sealed to a KEY shared with
+      just those people — one per audience, held like a space's epoch key (handed to each through their inbox; a new
+      key on a removal, so a removed friend/follower reads nothing written after). Friends = the mutual friends
+      (`edge` friend). Followers = the people who follow you. A follow NEVER needs approval: following drops a notice
+      in the followed person's inbox, and their upkeep adds the follower to the followers key by itself (a reader must
+      be known to be sealed to; the inbox notice makes them known). Fully automatic — no setting (owner 10-03).
+- [ ] ONE ACCESS CONTROL, PERSONAL SPACE TOO (owner 10-03: "replicate access control for vote/comment for personal
+      space … same access control across all, not a separate implementation"): the personal space governed by the SAME
+      `roles` model as a shared space — an acts log the account signs; policies per app/domain/item for read, post,
+      comment, vote; `r.allows(action, who, path)` the one check everywhere (comments.js today skips it for a profile:
+      anyone). Only the GROUPS a policy names differ: a shared space's members/roles, the personal space's
+      friends/followers/only you (the same groups the audience picker seals to).
+- [ ] IMAGES APP (owner 10-03): a lens on the image domain (public view like Flickr), as Videos is YouTube's and Audio
+      Spotify's — same `items`/`content` path, its Drive folder /Images. Its kinds (owner 10-03): IMAGE (the general one, as Videos'
+      `video`), with PHOTO and ARTWORK
+      (already `kinds`' image domain, with their fields), chosen on upload as Videos' movie/episode/short are.
 - [ ] 2  PUBLIC PARTICIPATION: policy `anyone` for post/comment/vote per app; an outsider's comment/vote lives in their
       own public tail + a pointer in the post's bag; readers accept it only if the policy at its time allowed it.
       PER-POST AUDIENCE (owner): the author picks public / members for each post, the space+app policy the ceiling

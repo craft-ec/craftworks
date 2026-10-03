@@ -172,12 +172,13 @@ export async function start(ctx) {
       const pubOfValue = v => {
         try {
           const x = JSON.parse(v);
-          return readsAnyone(rootDomain(x.kind ?? "post", x.in ?? x.item ?? x.re ?? null));
+          return x.aud !== "members" && readsAnyone(rootDomain(x.kind ?? "post", x.in ?? x.item ?? x.re ?? null));
         } catch {
           return false;
         }
       };
-      const pubOfItem = it => readsAnyone(rootDomain(it.kind, it.in ?? it.re ?? null));
+      // PUBLIC: what its app reads in public (the space's policy, the ceiling) — unless made for the members only.
+      const pubOfItem = it => it.aud !== "members" && readsAnyone(rootDomain(it.kind, it.in ?? it.re ?? null));
       // THE SYNC: this person's rows — a public copy of each while ITS APP reads in public, none while it does not. Rows
       // only in the public table (written there before the sealed table held everything) move into the sealed one first.
       let syncing = null;
@@ -502,7 +503,9 @@ export async function start(ctx) {
     return (await profilePosts([whereOf(ref)], await pointersTo(ref), [...TOP])).find(p => p.ref === ref) ?? null;
   }
 
-  async function submit({ board = null, place = null, title, body, private: only = false, files = [], kind = "post", meta = {} }) {
+  // `audience` (the `audience` picker's value): yours — "public" or "private"; a space's — "public" or "members".
+  async function submit({ board = null, place = null, title, body, audience = "public", files = [], kind = "post", meta = {} }) {
+    const only = audience === "private";
     title = String(title ?? "").trim();
     body = String(body ?? "").trim();
     board = board ?? place;
@@ -512,7 +515,8 @@ export async function start(ctx) {
     if (board) {
       const sp = await boardOf(board);
       if (!sp) throw new Error("you are not in that board's space");
-      return `space:${sp.id}/${await (await boardRoom(sp)).post(kind, body, { title, files, meta })}`;
+      if (audience === "public" && !(await publicIn(sp, kind))) throw new Error(`${space.shown(sp)} keeps this to its members: it cannot be public`);
+      return `space:${sp.id}/${await (await boardRoom(sp)).post(kind, body, { title, files, meta, aud: audience === "members" ? "members" : null })}`;
     }
     const self = await me();
     // Its files: public exactly when the post is (one picked while "Everyone" was chosen, posted "Only you": re-keyed).

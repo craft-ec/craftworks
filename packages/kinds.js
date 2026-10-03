@@ -30,6 +30,7 @@ export async function start() {
     ["podcast", "audio", "Podcast", ["show", "episode", "host"]],
     ["audiobook", "audio", "Audiobook", ["author", "narrator", "chapter"]],
     // Image
+    ["image", "image", "Image", []],
     ["photo", "image", "Photo", ["location", "taken", "camera"]],
     ["artwork", "image", "Artwork", ["artist", "medium"]],
     // Document

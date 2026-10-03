@@ -379,22 +379,16 @@ export async function mount(ctx, el) {
     const said = h("p", { className: "said", hidden: true });
     // FILES on the post: public where the post is (a public board, a public profile post: keyed by their content, the
     // whole network dedups them), else sealed for the space (or you) — asked as each is picked.
-    const spRoles = sp ? await roles.of(sp) : null;
-    const pick = attachments.picker({ space: sp, from: { app: "board" }, media: true, public: () => (sp ? spRoles.policy("board", "read") === "anyone" : f.elements.audience?.value !== "private") });
+    // WHO SEES IT: the one picker (`audience`) — its files put public exactly when the post is.
+    const who = await (await ctx.require("audience")).picker({ space: sp, kind: "post" });
+    const pick = attachments.picker({ space: sp, from: { app: "board" }, media: true, public: () => who.isPublic() });
     const ed = mdEditor.create({ pick, label: "Text" });
     const f = h(
       "form",
       { className: "panel reply" },
       h("h3", { textContent: "Create a post" }),
-      sp
-        ? h("p", {}, `To b/${space.shown(sp)}: its members read it.`)
-        : // YOUR PROFILE: who sees this post — everyone (public: what your followers read) or only you (private).
-          h(
-            "label",
-            {},
-            "Who sees it",
-            h("select", { className: "field", name: "audience" }, h("option", { value: "public", textContent: "🌐 Everyone (public, your followers read it)" }), h("option", { value: "private", textContent: "🔒 Only you" })),
-          ),
+      sp ? h("p", {}, `To b/${space.shown(sp)}.`) : null,
+      who.el,
       h("label", {}, "Title", h("input", { className: "field", name: "title", maxLength: 300, autocomplete: "off", required: true })),
       h("label", {}, "Text (optional) — Markdown; 🖼 puts an image, a video or an audio where you write it"),
       ed.el,
@@ -407,7 +401,7 @@ export async function mount(ctx, el) {
       if (pick.busy()) return errorTo(said)(new Error("Still sending the files: a moment…"));
       btn.disabled = true;
       try {
-        const ref = await posts.submit({ board: sp?.id ?? null, title: f.elements.title.value, body: ed.value(), private: f.elements.audience?.value === "private", files: pick.files() });
+        const ref = await posts.submit({ board: sp?.id ?? null, title: f.elements.title.value, body: ed.value(), audience: who.value(), files: pick.files() });
         location.hash = `${base()}/p/${ref}`;
       } catch (err) {
         errorTo(said)(err);

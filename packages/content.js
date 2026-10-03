@@ -98,6 +98,9 @@ export async function start(ctx) {
           by: open ? container.did : ((r ? r.author(row) : null) ?? v.by ?? null),
           re: typeof v.re === "string" ? v.re : null,
           title: typeof v.title === "string" ? v.title : null,
+          // WHO SEES IT, chosen when made (`audience`): "members" keeps it to a space's members; none (from before):
+          // as the space's policy reads.
+          aud: typeof v.aud === "string" ? v.aud : null,
           in: typeof v.in === "string" ? v.in : null,
           edited: Number(v.edited) || 0,
           item: typeof v.item === "string" ? v.item : null,
@@ -234,10 +237,10 @@ export async function start(ctx) {
       mayPost: () => !(governed && app) || r.allows("post", me, app),
       may: action => !(governed && app) || r.allows(action, me, app),
       postingRule: () => (governed && app ? r.policy(app, "post") : "members"),
-      async post(kind, body, { re = null, title = null, in: where = null, files = [], meta = null } = {}) {
+      async post(kind, body, { re = null, title = null, in: where = null, files = [], meta = null, aud = null } = {}) {
         if (outside) throw new Error("only the space's members post here");
         const id = newId();
-        await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me, ...(re ? { re } : {}), ...(title ? { title } : {}), ...(where ? { in: where } : {}), ...(files.length ? { files } : {}), ...(meta && Object.keys(meta).length ? { meta } : {}) }));
+        await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me, ...(re ? { re } : {}), ...(title ? { title } : {}), ...(where ? { in: where } : {}), ...(files.length ? { files } : {}), ...(meta && Object.keys(meta).length ? { meta } : {}), ...(aud ? { aud } : {}) }));
         return id;
       },
       // A REACTION: this person's, to one item, one emoji — its own row (the author in its key), put or taken back.
@@ -252,7 +255,7 @@ export async function start(ctx) {
         const it = mine(id);
         const fs = files ?? it.files ?? [];
         it.meta = meta ?? it.meta;
-        await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: me, edited: Date.now(), ...(it.re ? { re: it.re } : {}), ...(it.title ? { title: it.title } : {}), ...(it.in ? { in: it.in } : {}), ...(fs.length ? { files: fs } : {}), ...(it.meta && Object.keys(it.meta).length ? { meta: it.meta } : {}) }));
+        await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: me, edited: Date.now(), ...(it.re ? { re: it.re } : {}), ...(it.title ? { title: it.title } : {}), ...(it.in ? { in: it.in } : {}), ...(fs.length ? { files: fs } : {}), ...(it.meta && Object.keys(it.meta).length ? { meta: it.meta } : {}), ...(it.aud ? { aud: it.aud } : {}) }));
       },
       // Its FILES replaced (a video's manifest, once more renditions are made): the author's, the item otherwise as is.
       async setFiles(id, files) {
