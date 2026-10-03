@@ -158,13 +158,12 @@ export async function start(ctx) {
   // BLINDED NAMES (phase 4, Lifecycle): an account's or a space's table lives at a label only its readers can tell —
   // its name blinded under its own key (`blind_name`), so hosting nodes see neither which table a tail is nor, by a
   // shared prefix, which feeds are one space's. Found by name (catalogs, members, channels, epoch logs) or read by
-  // anyone (public tails): at their names. A table still at its NAME (from before) is MOVED by its writer on its next
-  // open — one signed step, its tree kept (the same key addresses it) — and read there by the others until then.
-  // Never on a guess: only when the node ANSWERED for both is a table new here; silence keeps it where it was.
+  // anyone (public tails): at their names. A table still at its NAME (from before) is MOVED by its writer (`moveOwn`,
+  // upkeep's migration) — one signed step, its tree kept — and is never read by its old name: another's not yet moved
+  // reads empty here until its writer's node moves it (the owner: "drop the old reads; each brings theirs over").
   // WHERE IT IS comes from its writer's CATALOG (`catalog`: the one place a table's place is kept — `placeOf` reads
   // it, `notePlace` writes it, both only here): not listed or never made — not looked for, made at its blinded name by
-  // its first write; at its blinded name — read there; listed from before — both names read at once (nothing it holds
-  // missed), and THIS node's catalog then says which. Never on a guess: "never made" only when the node ANSWERED.
+  // its first write; anything else — read at its blinded name, the one place. "Never made" only when the node ANSWERED.
   const opening = new Map(); // `${owner}|${app}` → Promise<the tail>
   // A table FOUND BY ITS NAME (never blinded): catalogs, members, channels, epoch logs, public tails.
   const byNameTable = (app, opts) => !!(opts.public || opts.sealWith || opts.catalogKey || CHANNELS.has(app) || ANY_GRANT.has(app) || (opts.space?.tables && Object.values(opts.space.tables).includes(app)));
@@ -199,46 +198,17 @@ export async function start(ctx) {
           // Its first write here makes it at its blinded name, listed so first.
           const made = { ...rest, beforeCreate: cat && ours ? () => notePlace(cat, app, "blinded") : rest.beforeCreate };
           if (place === "unlisted" || place === "none") return tailAt(owner, app, label, { ...made, known: false });
-          if (place === "blinded") {
-            const t = await tailAt(owner, app, label, { ...made, wait: ours && cat ? WAIT.answer : WAIT.ask });
-            t.answer().then(() => t.absent && t.answered() && note("none"));
-            return t;
+          // READ WHERE ITS CATALOG SAYS — its blinded name, the ONE place a table is read: never by its old name, nothing
+          // decided on a page's path. Its writer's "never made" noted once the node answers so.
+          const t = await tailAt(owner, app, label, { ...made, wait: ours && cat ? WAIT.answer : WAIT.ask });
+          if (place === "blinded") t.answer().then(() => t.absent && t.answered() && note("none"));
+          // THIS node's table listed from before blinded names, not yet moved: moved by the ONE move (`moveOwn`: upkeep's
+          // migration does every one) — its writes wait for it (no second copy of it written meanwhile).
+          if (place === "listed" && ours && cat) {
+            t.refuse = `“${app}” is moving to its new place: a moment`;
+            t.moving = moveOwn(owner, app, label, cat, rest).finally(() => ((t.refuse = null), t.reread().catch(() => {})));
           }
-          // Listed from before: its blinded name first — there, it is read there and its name never asked. Its NAME is
-          // asked only when the blinded name is not there, or silent past a hint (a table not yet moved: nothing it holds
-          // missed). Each waited on until the node ANSWERS; its place then noted (its writer's), never asked again.
-          const atBlinded = tailAt(owner, app, label, { ...made, wait: WAIT.answer }).then(async b => (await b.answer(), b));
-          const early = await Promise.race([atBlinded, new Promise(r => setTimeout(r, WAIT.hint, null))]);
-          if (early && !early.absent) {
-            note("blinded");
-            return early;
-          }
-          ctx.log("storage", { what: `${app}: where it is not noted: ${early ? "not at its blinded name — its name read" : "its blinded name slow — both names read"}` });
-          const [blinded, legacy] = await Promise.all([atBlinded, tailAt(owner, app, app, { ...rest, known: null, beforeCreate: null, wait: WAIT.answer }).then(async l => (await l.answer(), l))]);
-          ctx.log("storage", { what: `${app}: blinded ${blinded.absent ? "absent" : "there"}${blinded.answered() ? "" : " (no answer)"}, by name ${legacy.absent ? "absent" : "there"}${legacy.answered() ? "" : " (no answer)"}` });
-          if (!blinded.absent) {
-            legacy.moved = true;
-            note("blinded");
-            return blinded;
-          }
-          if (legacy.absent && legacy.answered() && blinded.answered()) {
-            note("none");
-            return blinded;
-          }
-          // Not at its NAME (the node answered so): its only place is its blinded name — read there, noted there (this
-          // node's), never asked by both names again, though the node is silent for the blinded one.
-          if (legacy.absent && legacy.answered()) {
-            note("blinded");
-            return blinded;
-          }
-          if (legacy.absent || !ours) return legacy; // the node silent for its name, or another's: read there
-          ctx.log("storage", { what: `${app}: moving to its blinded name` });
-          const moved = await blinded.moveFrom(legacy).catch(e => (ctx.log("storage", { what: `${app}: not moved yet — ${e?.message ?? e}` }), false));
-          if (!moved) return legacy;
-          legacy.moved = true;
-          note("blinded");
-          ctx.log("storage", { what: `${app}: moved to its blinded name` });
-          return blinded;
+          return t;
         })().catch(e => (opening.delete(k), Promise.reject(e))),
       );
     const p = opening.get(k);
@@ -391,6 +361,7 @@ export async function start(ctx) {
       if (!(await allowed())) throw new Error(`this app may not change your “${app}”: allow it when your node asks`);
       if (refusing) throw new Error(refusing);
       await t.answer();
+      if (t.refuse) throw new Error(t.refuse);
       // Listed BEFORE it is created: a failure between the two leaves a listed tail that is empty, never one nobody
       // can find.
       if (t.absent && beforeCreate) await beforeCreate();
@@ -1242,6 +1213,30 @@ export async function start(ctx) {
   // (A MIGRATION — `upkeep`.) Each of THIS node's tables its catalog lists from before places were noted, its place
   // settled — read where it is, noted, moved to its blinded name (`tail`: the one open of a table) — with no page
   // waiting. True once none is left; one the node was silent for is asked again on a later tick.
+  // THE ONE MOVE of a table of this node's from its old name to its blinded name (one signed step, its tree kept) —
+  // its place then noted, never read by its old name again. Both read until the node ANSWERS (or is silent to the end:
+  // nothing of this node's own answers silence — it is not at its old name; noted at its blinded name).
+  const moving = new Map();
+  function moveOwn(owner, app, label, cat, rest) {
+    const k = `${owner}|${app}`;
+    if (!moving.has(k))
+      moving.set(
+        k,
+        (async () => {
+          const [blinded, legacy] = await Promise.all([tailAt(owner, app, label, { ...rest, wait: WAIT.answer }), tailAt(owner, app, app, { ...rest, known: null, beforeCreate: null, wait: WAIT.answer })]);
+          await Promise.all([blinded.answer(), legacy.answer()]);
+          const note = p => notePlace(cat, app, p);
+          if (!blinded.absent) return (legacy.moved = true), note("blinded");
+          if (legacy.absent) return note(legacy.answered() && blinded.answered() ? "none" : "blinded");
+          const moved = await blinded.moveFrom(legacy).catch(e => (ctx.log("storage", { what: `${app}: not moved yet — ${e?.message ?? e}` }), false));
+          if (!moved) return;
+          legacy.moved = true;
+          await note("blinded");
+          ctx.log("storage", { what: `${app}: moved to its blinded name` });
+        })().finally(() => moving.delete(k)),
+      );
+    return moving.get(k);
+  }
   async function settleOwnPlaces(sp) {
     const scope = scopeOf(sp);
     const cat = await scope.catalogOf(scope.self);
@@ -1251,8 +1246,7 @@ export async function start(ctx) {
     const left = unsettled();
     for (const name of left) {
       ownKeys.add(scope.self);
-      await tail(scope.self, name, { ...scope.opts(name), catalog: cat }).then(t => t?.answer(), () => null);
-      if (placeOf(cat, name) === "listed") opening.delete(`${scope.self}|${name}`); // silent: asked again later
+      await tail(scope.self, name, { ...scope.opts(name), catalog: cat }).then(t => t?.moving, () => null);
     }
     const still = unsettled().length;
     if (left.length) ctx.log("storage", { what: `${sp.name ?? "this account"}: ${left.length - still} of ${left.length} table(s) from before given their place${still ? `; ${still} asked again later` : ""}` });
