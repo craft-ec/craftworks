@@ -38,7 +38,7 @@ export async function start(ctx) {
   // WELCOME a person into a space: they (their DID) added to its group by a key package from their card, and the welcome
   // — what the space is — sealed into their inbox. `name`: what the space is called for them.
   // `code`: the request it answers (an invite code, or "open"), so the asker knows which of theirs is answered.
-  async function welcome(sp, did, name, code = null) {
+  async function welcome(sp, did, name, code = null, repair = null) {
     const me = await space.account();
     if (!me) throw new Error("nobody is logged in");
     if (did === me.id) throw new Error("that is you");
@@ -67,7 +67,7 @@ export async function start(ctx) {
     }
     const welcome = await g.add(kp);
     const { owner, nonce } = sp.governance;
-    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}) });
+    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(repair ? { repair } : {}) });
     ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind}` });
     return card;
   }
@@ -149,6 +149,49 @@ export async function start(ctx) {
 
   const welcomesTried = new Set();
   // WELCOMES in this account's inbox: every conversation not yet joined here, joined (with this node's key package).
+  // A SPACE's OWNER's branch, as its devices announced it in the space's writers list (`keys`: `{ w, epoch, branch }`):
+  // the newest — the branch every member's diff is against.
+  async function ownerBranches(sp) {
+    const r = await (await ctx.require("roles")).of(sp);
+    await r.settled;
+    const devs = await directory.devices(r.owner);
+    return (await index.spacePointers(sp, "writers")).filter(p => p?.branch && devs.includes(p.w)).sort((a, b) => b.epoch - a.epoch);
+  }
+  const ownerBranch = async sp => (await ownerBranches(sp))[0] ?? null;
+  // REPAIR (a fork's heal, for forks from before snapshots): a member whose announced branch is not this node's —
+  // where this node is on the OWNER's — welcomed again onto it (`welcome`: their old entry out, a fresh one in; their
+  // node keeps its branch's keys, nothing they wrote is lost). Once per divergence, by whichever member gets there
+  // first: the repair is recorded in the writers list (`{ repair, for }`), and a member repaired after their last
+  // announcement is waited for. A node off the owner's branch repairs nobody: it is repaired.
+  async function repair(sp) {
+    const me = await space.account();
+    const g = keys.group(sp);
+    const st = await g.ready().catch(() => null);
+    if (!me || !st || st.removed) return [];
+    const own = await ownerBranch(sp).catch(() => null);
+    if (!own || st.epoch < own.epoch || (await g.fingerprint(own.epoch)) !== own.branch) return [];
+    const ptrs = await index.spacePointers(sp, "writers");
+    const done = new Set(ptrs.filter(p => p?.repair).map(p => `${p.repair}|${p.for}`));
+    const r = await (await ctx.require("roles")).of(sp);
+    const out = [];
+    for (const { did } of r.members()) {
+      if (did === me.id) continue;
+      const devs = await directory.devices(did);
+      const ann = ptrs.filter(p => p?.branch && devs.includes(p.w)).sort((a, b) => b.epoch - a.epoch)[0];
+      if (!ann || ann.epoch > st.epoch || done.has(`${did}|${ann.branch}`)) continue;
+      const fp = await g.fingerprint(ann.epoch).catch(() => null);
+      if (!fp || fp === ann.branch) continue;
+      try {
+        await welcome(sp, did, sp.name, null, { epoch: own.epoch, branch: own.branch });
+        await index.spacePoint(sp, "writers", { repair: did, for: ann.branch });
+        ctx.log("conversation", { what: `${sp.name}: ${short(did)} was on another branch of its keys — welcomed back onto the owner's` });
+        out.push(did);
+      } catch (e) {
+        ctx.log("conversation", { what: `${sp.name}: repairing ${short(did)}: ${e.message}` });
+      }
+    }
+    return out;
+  }
   async function accept() {
     const me = await space.account();
     if (!me) return [];
@@ -157,16 +200,25 @@ export async function start(ctx) {
     const out = [];
     for (const it of await index.inbox()) {
       if (it.kind !== "welcome" || p.is("block", it.from) || !it.welcome) continue;
-      // Joined already — unless REMOVED since: a welcome after that (invited back) opens again. Each tried once here.
+      // Joined already — unless REMOVED since (invited back), or this node is on ANOTHER BRANCH of the space's group and
+      // this is its REPAIR: taken only onto the branch the OWNER announced (read here, never the message's word).
       const had = mine.find(s => s.id === it.space);
-      if (had && !(await keys.group(had).ready().catch(() => null))?.removed) continue;
+      let expect = null;
+      if (had && !(await keys.group(had).ready().catch(() => null))?.removed) {
+        if (!it.repair) continue;
+        // The branch it names must be one the owner announced (at any epoch: the repair itself moves the owner on).
+        const own = (await ownerBranches(had).catch(() => [])).find(a => a.epoch === it.repair.epoch && a.branch === it.repair.branch);
+        if (!own) continue;
+        if ((await keys.group(had).fingerprint(own.epoch).catch(() => null)) === own.branch) continue; // on it already
+        expect = { epoch: own.epoch, branch: own.branch };
+      }
       const tried = `${it.space}|${it.welcome.slice(0, 64)}`;
       if (had && welcomesTried.has(tried)) continue;
       welcomesTried.add(tried);
       const v = { kind: it.spaceKind, name: it.name, owner: it.owner ?? it.from, nonce: it.nonce ?? null, ...(it.spaceKind === "direct" ? { with: it.from } : {}), ...(it.circle ? { circle: it.circle } : {}) };
       try {
         const sp = await space.describe(it.space, v);
-        await keys.group(sp).join(it.welcome);
+        await keys.group(sp).join(it.welcome, { expect });
         await space.record(it.space, v);
         // Its request answered: no longer waiting — the space's, and the code the welcome names (a welcome from before
         // welcomes named it: any request by code).
@@ -535,5 +587,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels };
+  return { direct, group, invite, accept, repair, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels };
 }

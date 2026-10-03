@@ -113,8 +113,10 @@ export async function start(ctx) {
     // Walked once per device: where the identity holds the epoch before this one and the first (a walk that finished
     // left them all), nothing is read again — each step is a log read and a delegate call.
     const held = async e => !!(await auth.identity.tableKeyAt(g.channel, e, g.space).catch(() => null))?.tableKey;
-    async function history(st) {
-      if (st.epoch > 0 && (await held(st.epoch - 1)) && (await held(0))) return 0;
+    // `whole`: walked to the start whatever is held — a node that joined another BRANCH (a repair) holds its old
+    // branch's keys for those epochs, not this one's.
+    async function history(st, { whole = false } = {}) {
+      if (!whole && st.epoch > 0 && (await held(st.epoch - 1)) && (await held(0))) return 0;
       let [e, secret, n] = [st.epoch, st.secret, 0];
       while (e > 0) {
         const log = await storage.log(g.channel, glue.epoch_log_public(secret), { sealWith: await g.seal(e), space: g.space });
@@ -135,7 +137,10 @@ export async function start(ctx) {
       const out = [{ epoch: st.epoch, secret: hexOf(st.secret) }];
       let [e, secret] = [st.epoch, st.secret];
       while (e > from) {
-        const log = await storage.log(g.channel, glue.epoch_log_public(secret), { sealWith: await g.seal(e), space: g.space });
+        // A space's log is sealed with its epoch's key of the channel — derived from the secret here (a branch just
+        // joined: the identity holds none of its keys yet).
+        const sealWith = g.space ? glue.epoch_table_key(secret, g.channel) : await g.seal(e);
+        const log = await storage.log(g.channel, glue.epoch_log_public(secret), { sealWith, space: g.space });
         await log.answer?.();
         const prev = parse(log.rows().find(r => r.key === "open")?.value ?? "{}").prev;
         if (!prev) break;
@@ -402,6 +407,30 @@ export async function start(ctx) {
     };
     // The LOST branches' epoch secrets (`<at>~lost`): read with, as alternates (`storage`), never written with.
     // The LOST branches' epoch secrets (`<at>~lost`): read with, as alternates (`storage`), never written with.
+    // A BRANCH's FINGERPRINT at epoch `e`: its log's public key (from that epoch's secret) — the same on every node of
+    // one branch, another on another. This node's, from its own logs (null: an epoch it has not reached).
+    async function fingerprint(e) {
+      const s = m?.status();
+      if (!s || e > s.epoch) return null;
+      const list = e === s.epoch ? [{ epoch: s.epoch, secret: hexOf(s.secret) }] : await logs.branch(s, e);
+      const x = list.find(l => l.epoch === e);
+      return x ? glue.epoch_log_public(bytes(x.secret)) : null;
+    }
+    // ANNOUNCED in the space's writers list (`{ w, epoch, branch }`, once per epoch): which branch this device is on —
+    // what `conversation.repair` diffs against the owner's.
+    // Once: the epoch claimed before anything is awaited (many reads at once announce nothing twice), and nothing
+    // written when the list holds that very entry already (a page opened again).
+    let announced = -1;
+    async function announce() {
+      const s = m?.status();
+      if (!s || s.removed || s.epoch === announced || !sp.self) return;
+      announced = s.epoch;
+      const branch = glue.epoch_log_public(s.secret);
+      const index = await ctx.require("index");
+      // (Only an entry every branch reads counts: one sealed with a later epoch is this branch's alone.)
+      const had = (await index.spacePointers(sp, "writers").catch(() => [])).some(p => p?.w === sp.self && p.epoch === s.epoch && p.branch === branch && p.sealedAt === 0);
+      if (!had) await index.spacePoint(sp, "writers", { w: sp.self, epoch: s.epoch, branch }).catch(e => ((announced = -1), Promise.reject(e)));
+    }
     const keepLostHere = async list => {
       const t = await spacekeys();
       const had = JSON.parse(t.rows().find(r => r.key === `${at}~lost`)?.value ?? "[]");
@@ -520,7 +549,9 @@ export async function start(ctx) {
         })),
       // JOINED from a welcome (someone added this DID): answered by whichever batch of key packages holds its key
       // package; that batch kept without it (a key package works once).
-      join: welcome =>
+      // `expect` ({ epoch, branch }: a REPAIR, `conversation`): taken only if it leads onto that branch — checked before
+      // anything is kept (a member who made a group of their own under this space's id pulls nobody into it).
+      join: (welcome, { expect = null } = {}) =>
         (queue = queue.then(async () => {
           const t = await spacekeys();
           await t.reread?.();
@@ -533,16 +564,24 @@ export async function start(ctx) {
           let last = null;
           for (const row of t.rows().filter(r => r.key.startsWith("packages/"))) {
             const mb = await memberWith(row.value);
+            const before = m;
             try {
               m = mb.join_space(sp.idBytes, bytes(welcome));
             } catch (e) {
               last = e;
               continue;
             }
+            if (expect) {
+              const fp = await fingerprint(expect.epoch).catch(() => null);
+              if (fp !== expect.branch) {
+                m = before;
+                throw new Error("that welcome does not lead onto the space owner's branch: not taken");
+              }
+            }
             await t.put(row.key, hexOf(mb.packages()));
             ctx.log(`${sp.name ?? "space"} keys`, { what: `joined the space's group: epoch ${m.status().epoch}` });
             const kept = await save(false);
-            const n = await logs.history(m.status()).catch(e => (ctx.log(`${sp.name ?? "space"} keys`, { what: `its history: ${e.message}` }), 0));
+            const n = await logs.history(m.status(), { whole: !!expect }).catch(e => (ctx.log(`${sp.name ?? "space"} keys`, { what: `its history: ${e.message}` }), 0));
             if (n) ctx.log(`${sp.name ?? "space"} keys`, { what: `${n} earlier epoch(s) of its history kept` });
             return kept;
           }
@@ -587,6 +626,7 @@ export async function start(ctx) {
           const s = await current(fresh);
           if (!s) return null;
           await logs.ensure(m.status(), false);
+          announce().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `announcing its branch: ${e.message}` }));
           // A change of this node's lost a race: made again, where it still applies — a removal of whoever is still a
           // member, a refresh. (An admission is made again by upkeep itself: whoever asked and is not in yet.)
           if (redo) {
@@ -603,6 +643,7 @@ export async function start(ctx) {
           return s;
         })),
       lost: async () => JSON.parse((await spacekeys()).rows().find(r => r.key === `${at}~lost`)?.value ?? "[]"),
+      fingerprint: e => (queue = queue.catch(() => {}).then(() => fingerprint(e))),
     };
     groups.set(sp.id, g);
     return g;

@@ -63,10 +63,13 @@ export async function start(ctx) {
       return [];
     }
   };
-  async function read(address, what, { show = false } = {}) {
+  // `follow`: the GET subscribes this node to the bag — its copy kept current by the network (a node answers a GET from
+  // its own copy when it holds one, and an unsubscribed copy goes stale: a space's writers list read from it missed
+  // what members announced since).
+  async function read(address, what, { show = false, follow = false } = {}) {
     const id = Core.bag_id(bagCode, address);
     const full = (async () => {
-      const [, frames] = core.frames_get(bytes(id));
+      const [, frames] = follow ? core.frames_follow(bytes(id)) : core.frames_get(bytes(id));
       const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, what, WAIT.answer).catch(() => ({ kind: "silent" }));
       if (said.kind === "got") return held(address, id);
       if (said.kind === "get-failed" && !madeBags.has(id)) madeBags.add(id), drop(address, new Uint8Array(0), `making ${what}`).catch(() => madeBags.delete(id));
@@ -126,9 +129,12 @@ export async function start(ctx) {
   // to whoever knows the space's id, never what is in it.
   const sealedAddress = async (sp, name) => refAddress(`space ${glue.space_table_key(sp.idBytes, `bag-${name}`)}`);
   const aes = async keyHex => crypto.subtle.importKey("raw", bytes(keyHex), "AES-GCM", false, ["encrypt", "decrypt"]);
-  async function spacePoint(sp, name, item) {
+  // Sealed with the space's newest epoch — or, for its WRITERS list, with EPOCH 0: the one key every branch of the
+  // group shares (a member on another branch of a fork must read who writes and which branch each is on — `keys`'
+  // announcements, `conversation.repair`); it names devices and branches only.
+  async function spacePoint(sp, name, item, { epoch = name === "writers" ? 0 : -1 } = {}) {
     const access = await ctx.require("access");
-    const k = await access.keyAt(`bag-${name}`, -1, { space: sp.idBytes });
+    const k = await access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes });
     if (!k.key) throw new Error(`no key of the space here (${k.why})`);
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aes(k.key), enc.encode(JSON.stringify(item))));
@@ -142,14 +148,16 @@ export async function start(ctx) {
     const access = await ctx.require("access");
     const keys = new Map();
     const out = [];
-    for (const p of await read(await sealedAddress(sp, name), `the space's ${name}`)) {
+    for (const p of await read(await sealedAddress(sp, name), `the space's ${name}`, { follow: name === "writers" })) {
       if (p.length < 17) continue;
       const epoch = new DataView(p.buffer, p.byteOffset).getUint32(0);
       if (!keys.has(epoch)) keys.set(epoch, await access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes }).then(k => (k.key ? aes(k.key) : null), () => null));
       const key = await keys.get(epoch);
       if (!key) continue;
       try {
-        out.push(JSON.parse(dec.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: p.subarray(4, 16) }, key, p.subarray(16)))));
+        // `sealedAt`: the epoch it was sealed with (an entry only this branch reads, or one every branch does: 0).
+        const v = JSON.parse(dec.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: p.subarray(4, 16) }, key, p.subarray(16))));
+        out.push(v && typeof v === "object" ? { ...v, sealedAt: epoch } : v);
       } catch {}
     }
     return out;

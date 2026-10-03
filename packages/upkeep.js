@@ -43,6 +43,10 @@ export async function start(ctx) {
         if (r && !r.left && r.role(me.id)) {
           const n = await (await ctx.require("moderation")).of(sp).then(m => m.enforce()).catch(e => (ctx.log("upkeep", { what: `${sp.name}: bans: ${e.message}` }), 0));
           if (n) ctx.log("upkeep", { what: `${sp.name}: ${n} banned device(s) taken out of the group` });
+          // A FORK's heal: members on another branch of the group's keys welcomed back onto the owner's (by any member
+          // on it — nothing new is let in: only who is a member already).
+          const fixed = await conversation.repair(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: repair: ${e.message}` }), []));
+          if (fixed.length) ctx.log("upkeep", { what: `${sp.name}: ${fixed.length} member(s) on another branch welcomed back` });
         }
         if (!r?.can(me.id, "invite")) continue;
         const let_in = await conversation.admit(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: ${e.message}` }), []));
