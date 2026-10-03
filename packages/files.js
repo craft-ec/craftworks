@@ -23,7 +23,7 @@
 //   const ref2 = await files.adopt(ref, space)          // a file from another space: listed in this one (then copied)
 //   await files.publicity(refs, space, pub)             // the items holding them are (not) read by anyone now
 export async function start(ctx) {
-  const { core, glue, ask } = await ctx.require("node");
+  const { core, glue, ask, WAIT } = await ctx.require("node");
   const [storage, space] = await Promise.all(["storage", "space"].map(n => ctx.require(n)));
   core.set_sealed_code(await ctx.require("sealed-wasm"));
   core.set_piece_code(await ctx.require("piece-wasm"));
@@ -262,7 +262,7 @@ export async function start(ctx) {
   // state is `LIVE ‖ burn hash ‖ piece` (its piece given back), or burned (none: as good as missing).
   async function fetchState(idHex, what, burnable = false) {
     const [, frames] = core.frames_get(bytes(idHex));
-    const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex, what, 30000).catch(() => ({ kind: "get-failed" }));
+    const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex, what, WAIT.ask).catch(() => ({ kind: "get-failed" }));
     const st = said.kind === "got" ? core.take_got(idHex) : null;
     if (!st || !burnable) return st;
     return st[0] === 2 && st.length > 33 ? st.subarray(33) : null;

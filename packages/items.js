@@ -50,7 +50,7 @@ export async function start(ctx) {
   };
   const answeredIn = new Map(); // an item's ref → Promise<Set of writer keys pointed in its bag>
   const answerers = ref => {
-    if (!answeredIn.has(ref)) answeredIn.set(ref, index.pointersMade(ref).then(ps => new Set(ps.map(p => p?.w).filter(Boolean)), () => new Set()));
+    if (!answeredIn.has(ref)) answeredIn.set(ref, index.pointers(ref).then(ps => new Set(ps.map(p => p?.w).filter(Boolean)), () => new Set()));
     return answeredIn.get(ref);
   };
   // A PUBLIC item LISTED: in Discover's bag of its domain and month (a top item), its own bag made; an answer to one (a
@@ -151,7 +151,11 @@ export async function start(ctx) {
   const boardRoom = sp =>
     opened(`space:${sp.id}`, async () => {
       // PAGED (phase 3): what a list shows is read by its TIME WINDOW; a thread opened reads the place whole.
-      const [a, b, r] = await Promise.all([content.in(space.board(sp), { paged: true }), content.in(space.board(sp, { pub: true }), { paged: true }), roles.of(sp)]);
+      const t0 = performance.now();
+      const took = (what, p) => p.then(v => ((t[what] = Math.round(performance.now() - t0)), v));
+      const t = {};
+      const [a, b, r] = await Promise.all([took("board", content.in(space.board(sp), { paged: true })), took("public board", content.in(space.board(sp, { pub: true }), { paged: true })), took("roles", roles.of(sp))]);
+      if (performance.now() - t0 > 3000) ctx.log("posts", { what: `${sp.name}: its board opened slowly — ${Object.entries(t).map(([k, v]) => `${k} ${v} ms`).join(", ")}` });
       // PUBLIC is per item, by its own APP's setting now (a video: Videos'; a post: Board's) — what attaches to an item
       // (a comment, a vote, a subtitle) as that item is. Not bound to Board: a space's place holds every kind.
       const readsAnyone = domain => domainReads(r, domain);
@@ -277,23 +281,30 @@ export async function start(ctx) {
       const pub = await content.in({ kind: "public", did, name: TAIL });
       const acc = await space.account();
       if (did !== acc.id) return pub;
-      const priv = await content.in({ kind: "journal", messages: JOURNAL, scope: acc });
-      const isPrivate = id => priv.list().some(x => x.id === id);
-      const roomOf = id => (isPrivate(id) ? priv : pub);
+      // Its PRIVATE posts (`journal`) opened in the background: the public ones never wait on them; what needs them
+      // (a private post, an item of theirs) waits for them.
+      let priv = null;
+      const privReady = content.in({ kind: "journal", messages: JOURNAL, scope: acc }).then(r => (priv = r));
+      const changedHere = [];
+      privReady.then(r => (r.onChange(() => changedHere.forEach(f => f())), changedHere.forEach(f => f())), () => {});
+      const isPrivate = id => !!priv?.list().some(x => x.id === id);
+      const roomOf = async id => (await privReady.catch(() => null), isPrivate(id) ? priv : pub);
       const idIn = ref => String(ref ?? "").slice(String(ref ?? "").lastIndexOf("/") + 1);
       return {
-        list: () => [...pub.list(), ...priv.list().map(x => ({ ...x, private: true }))],
-        reactions: () => [...pub.reactions(), ...priv.reactions()],
+        list: () => [...pub.list(), ...(priv?.list() ?? []).map(x => ({ ...x, private: true }))],
+        reactions: () => [...pub.reactions(), ...(priv?.reactions() ?? [])],
         mayRemove: it => it.by === acc.id,
-        onChange: f => (pub.onChange(f), priv.onChange(f)),
-        settled: Promise.all([pub.settled, priv.settled]),
+        onChange: f => (pub.onChange(f), changedHere.push(f)),
+        settled: pub.settled,
         isPrivate: ref => isPrivate(idIn(ref)),
-        post: (kind, body, opts = {}) => (TOP.has(kind) ? (opts.private ? priv : pub) : roomOf(idIn(opts.in))).post(kind, body, opts),
-        react: (item, e, on) => roomOf(idIn(item)).react(item, e, on),
-        remove: id => roomOf(id).remove(id),
-        edit: (id, body) => roomOf(id).edit(id, body),
-        setFiles: (id, files) => roomOf(id).setFiles(id, files),
-        editFull: (id, body, o) => roomOf(id).edit(id, body, o),
+        // Its private posts read (before deciding whether something about one is private).
+        whenPrivate: () => privReady.catch(() => {}),
+        post: async (kind, body, opts = {}) => (TOP.has(kind) ? (opts.private ? await privReady : pub) : await roomOf(idIn(opts.in))).post(kind, body, opts),
+        react: async (item, e, on) => (await roomOf(idIn(item))).react(item, e, on),
+        remove: async id => (await roomOf(id)).remove(id),
+        edit: async (id, body) => (await roomOf(id)).edit(id, body),
+        setFiles: async (id, files) => (await roomOf(id)).setFiles(id, files),
+        editFull: async (id, body, o) => (await roomOf(id)).edit(id, body, o),
       };
     });
   const profiles = async dids => (await Promise.all([...new Set(dids)].map(d => profileRoom(d).catch(() => null)))).filter(Boolean);
@@ -329,11 +340,11 @@ export async function start(ctx) {
   // older on asking): what is read is that span of the place, never all of it. `all`: the place read whole.
   const WINDOW = { day: 86400e3, week: 7 * 86400e3, month: 30 * 86400e3 };
   const sinceOf = w => (w === "all" || w == null ? null : Date.now() - (typeof w === "number" ? w * 86400e3 : (WINDOW[w] ?? WINDOW.month)));
-  // A PLACE that does not answer within PLACE_WAIT is left out of a list (and said), never waited on forever: one
+  // A PLACE that does not answer within WAIT.show (`node`) is left out of a list (and said), never waited on forever: one
   // stuck place (a space still opening, a board the network lost) must not hold every list that includes it.
-  const PLACE_WAIT = 20000;
+  const { WAIT } = await ctx.require("node");
   const inTime = (p, what) =>
-    Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`${what}: no answer in ${PLACE_WAIT / 1000} s; listed without it`)), PLACE_WAIT))]);
+    Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`${what}: not ready in ${WAIT.show / 1000} s; listed without it (it shows when the list is drawn again)`)), WAIT.show))]);
   async function boardPosts(sp, opts = {}) {
     return inTime(boardPostsOf(sp, opts), `the board of ${sp.name ?? sp.id?.slice(0, 8)}`).catch(e => (ctx.log("posts", { what: e.message }), Promise.reject(e)));
   }
@@ -568,6 +579,7 @@ export async function start(ctx) {
     const mine = await profileRoom(await me());
     await mine.post("comment", body, { re: re ?? post, in: post, files });
     // On a private post: private too, and no pointer anywhere.
+    await mine.whenPrivate?.();
     if (!mine.isPrivate?.(post)) await pointTo(post);
   }
 
@@ -581,6 +593,7 @@ export async function start(ctx) {
     const had = new Set(r.reactions().filter(x => x.item === item && x.by === self).map(x => x.emoji));
     // Only what changes is written (taking back a vote that is not there writes nothing).
     for (const [e, on] of [[UP, v === 1], [DOWN, v === -1]]) if (on !== had.has(e)) await r.react(item, e, on);
+    if (v && !onBoard) await r.whenPrivate?.();
     if (v && !onBoard && !r.isPrivate?.(post)) await pointTo(post);
   }
 
@@ -621,6 +634,7 @@ export async function start(ctx) {
     }
     const mine = await profileRoom(await me());
     const id = await mine.post(kind, body, { in: post, meta, files });
+    await mine.whenPrivate?.();
     if (!mine.isPrivate?.(post)) await pointTo(post);
     return `${await me()}/${id}`;
   }

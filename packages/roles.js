@@ -133,7 +133,7 @@ export async function start(ctx) {
     // listed once): read from outside instead of every member's public acts. Empty (a space from before the bag): every
     // member, as before, until one of its writers opens it with the bag.
     const ACTS = `acts ${sp.id}`;
-    const actWriters = out ? await index.pointersMade(ACTS).then(ps => [...new Set(ps.map(p => p?.w).filter(w => typeof w === "string"))], () => []) : [];
+    const actWriters = out ? await index.pointers(ACTS).then(ps => [...new Set(ps.map(p => p?.w).filter(w => typeof w === "string"))], () => []) : [];
     async function widen() {
       if (!out) return;
       for (;;) {
@@ -173,7 +173,7 @@ export async function start(ctx) {
     async function listActWriter() {
       if (out || actListed || !sp.self) return;
       actListed = true;
-      const ws = await index.pointersMade(ACTS).catch(() => []);
+      const ws = await index.pointers(ACTS).catch(() => []);
       if (!ws.some(p => p?.w === sp.self)) await index.point(ACTS, { w: sp.self }).catch(() => (actListed = false));
     }
     if (!out) pubActs.settled.then(() => (pubActs.rows().some(x => x.id?.startsWith(sp.self)) ? listActWriter() : null)).catch(() => {});

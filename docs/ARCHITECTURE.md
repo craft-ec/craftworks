@@ -152,6 +152,14 @@ uses the tokens, never its own colours or sizes — so a new look, or a second t
   handles are not unique, the id is. One definition (`directory.shown`); no page formats a person itself.
 - **Indexes are one shape** with a visibility — public (directory, tag index, comments) or sealed (inbox) — as edges
   are (public tags, private labels).
+- **Nothing is asked for that a record does not say exists.** A "not there" costs the network a whole search (a minute
+  or more on a real network), so every read follows a record: a table's place in its writer's catalog (never made / at
+  its blinded name), a space's writers in its sealed writers bag, a public space's act writers in its acts bag, a public
+  item in Discover's bag of its domain and month, an answer to one in that item's bag. Where no record says yet, the
+  thing is asked ONCE, the node's answer waited for (`node`'s `WAIT.answer`), and the answer recorded — a bag the node
+  answers is not there is made, empty, by that reader; silence is never recorded. A page never waits on what it can
+  show without (`WAIT.show`): the rest is merged as it comes. One bag read (`index`), one table read (`storage`), one
+  wait policy (`node`).
 - **Durability.** Immutable blocks are erasure-coded (every node's children and the root's group of one) and read by a
   race against their group. Changing contracts (tails, logs) are kept by re-publishing their signed states.
 - **Grants.** A site gets a table's key only with the person's grant (once per site, for all the kinds it uses); the

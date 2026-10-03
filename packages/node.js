@@ -65,6 +65,17 @@ export async function start(ctx) {
   up = Promise.resolve(ws);
   ctx.log("connected", { what: url });
 
+  // THE WAITS — one policy for every read here: `ask`, an answer a page needs now (a block, a piece, a tail it reads);
+  // `answer`, an answer that will be KEPT (a table's place noted, a bag made — "not there" on a real network takes a
+  // minute or more, and silence is never kept); `show`, how long a page waits on what it can show without (another
+  // writer's feed, a place in a list) before showing what it has, the rest merged as it comes; `hint`, a fact that only
+  // spares work (a space's writers bag), never waited on longer.
+  const WAIT = { hint: 1500, show: 5000, ask: 30000, answer: 120000 };
+  // BACKOFF: `task` again and again — 5 s, doubling, to every 5 min — until it says it is done (`true`).
+  const backoff = task => {
+    const again = (n = 0) => setTimeout(async () => ((await task().catch(() => false)) ? null : again(n + 1)), Math.min(5000 * 2 ** n, 300000));
+    again();
+  };
   // Send frames and wait for the first answer `match` accepts. Never silent: a timeout is an error with its reason.
   const ask = (frames, match, what, ms = 15000) =>
     new Promise((resolve, reject) => {
@@ -76,5 +87,5 @@ export async function start(ctx) {
     });
 
   // `drop()`: close the connection as a sleep or a network change does (to see the recovery work).
-  return { core, glue, ask, listen, url, drop: () => ws.close() };
+  return { core, glue, ask, listen, url, drop: () => ws.close(), WAIT, backoff };
 }

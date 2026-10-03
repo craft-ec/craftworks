@@ -18,7 +18,7 @@
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const space = await ctx.require("space");
-  const { core, glue, ask } = await ctx.require("node");
+  const { core, glue, ask, WAIT } = await ctx.require("node");
   const bagCode = await ctx.require("bag-wasm");
   const Core = glue.CraftworksCore;
   const enc = new TextEncoder();
@@ -48,19 +48,22 @@ export async function start(ctx) {
     await drop(Core.inbox_address(didBytes(did)), sealed, "sending to an inbox");
   }
 
-  // THIS account's inbox: every item, opened by the identity (only the account's nodes hold the key).
-  // A bag's items as stored (bytes), or none (a bag nobody made yet).
-  async function payloadsAt(address, what) {
+  // THE ONE BAG READ: a bag's items as stored (bytes). It waits for the node's ANSWER; a bag the node answers is not there
+  // (nobody made it yet: a month nobody posted in, a space from before its bag) is MADE, empty, by this first reader —
+  // so it is searched for once, ever, and every reader after finds it. Silence makes nothing (a guess is never kept).
+  const madeBags = new Set();
+  async function read(address, what) {
     const id = Core.bag_id(bagCode, address);
     const [, frames] = core.frames_get(bytes(id));
-    const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, what, 30000).catch(() => ({ kind: "get-failed" }));
-    if (said.kind !== "got") return [];
-    return Array.from(core.bag_payloads(address, id) ?? []);
+    const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, what, WAIT.answer).catch(() => ({ kind: "silent" }));
+    if (said.kind === "got") return Array.from(core.bag_payloads(address, id) ?? []);
+    if (said.kind === "get-failed" && !madeBags.has(id)) madeBags.add(id), drop(address, new Uint8Array(0), `making ${what}`).catch(() => madeBags.delete(id));
+    return [];
   }
 
   async function inbox() {
     const sp = await space.account();
-    const payloads = await payloadsAt(Core.inbox_address(sp.idBytes), "reading the inbox");
+    const payloads = await read(Core.inbox_address(sp.idBytes), "the inbox");
     if (!payloads.length) return [];
     const r = await auth.identity.inboxOpen(payloads);
     return (r.opened ?? [])
@@ -91,27 +94,14 @@ export async function start(ctx) {
         }
       })
       .filter(Boolean);
-  const requests = async code => parse(await payloadsAt(await codeAddress(code), "reading an invite's requests"));
+  const requests = async code => parse(await read(await codeAddress(code), "an invite's requests"));
 
   // A THING's POINTERS (comments and votes on a post: `posts`): a public bag at an address its ref gives, so anyone who
   // knows the thing finds it. A pointer is plain and unsigned: it says where to look, the reader checks what is there.
   const refAddress = async ref => Core.inbox_address(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(`craftworks pointers ${ref}`))));
   const openPointers = async ref => drop(await refAddress(ref), new Uint8Array(0), "making a pointer bag");
   const point = async (ref, item) => drop(await refAddress(ref), enc.encode(JSON.stringify(item)), "pointing");
-  const pointers = async ref => parse(await payloadsAt(await refAddress(ref), "reading pointers"));
-  // A bag READ, and MADE (empty) when the node answers it is not there: a bag nobody made yet (a month nobody posted
-  // in, a post from before item bags, a space from before its acts bag) is searched for once, by its first reader — every
-  // reader after finds it.
-  const madeBags = new Set();
-  async function pointersMade(ref) {
-    const address = await refAddress(ref);
-    const id = Core.bag_id(bagCode, address);
-    const [, frames] = core.frames_get(bytes(id));
-    const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, `reading ${ref}`, 30000).catch(() => ({ kind: "silent" }));
-    if (said.kind === "got") return parse(Array.from(core.bag_payloads(address, id) ?? []));
-    if (said.kind === "get-failed" && !madeBags.has(ref)) madeBags.add(ref), openPointers(ref).catch(() => madeBags.delete(ref));
-    return [];
-  }
+  const pointers = async ref => parse(await read(await refAddress(ref), `the bag of ${ref}`));
 
   // A SPACE's SEALED bag (`name`): at an address the space's id gives, each item sealed with the space's newest EPOCH
   // key (`epoch ‖ nonce ‖ AES-GCM`) — only members read it; a member removed reads nothing added after. Its size shows
@@ -134,7 +124,7 @@ export async function start(ctx) {
     const access = await ctx.require("access");
     const keys = new Map();
     const out = [];
-    for (const p of await payloadsAt(await sealedAddress(sp, name), `reading the space's ${name}`)) {
+    for (const p of await read(await sealedAddress(sp, name), `the space's ${name}`)) {
       if (p.length < 17) continue;
       const epoch = new DataView(p.buffer, p.byteOffset).getUint32(0);
       if (!keys.has(epoch)) keys.set(epoch, await access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes }).then(k => (k.key ? aes(k.key) : null), () => null));
@@ -154,7 +144,7 @@ export async function start(ctx) {
   const monthOf = at => new Date(at).toISOString().slice(0, 7);
   const discoverBag = (domain, month) => `discover:${domain}:${month}`;
   const discoverPoint = (domain, at, ptr) => point(discoverBag(domain, monthOf(at)), ptr);
-  const discoverPointers = async (domain, months) => (await Promise.all(months.map(m => pointersMade(discoverBag(domain, m))))).flat();
+  const discoverPointers = async (domain, months) => (await Promise.all(months.map(m => pointers(discoverBag(domain, m))))).flat();
   // The months a window covers (newest first): `since` ms to now.
   const monthsSince = since => {
     const out = [];
@@ -172,5 +162,5 @@ export async function start(ctx) {
   const listSpace = desc => point(SPACES, { id: desc.id, name: desc.name, kind: desc.kind, governance: { owner: desc.governance.owner, nonce: desc.governance.nonce } });
   const spaces = () => pointers(SPACES);
 
-  return { send, inbox, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, pointersMade };
+  return { send, inbox, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince };
 }

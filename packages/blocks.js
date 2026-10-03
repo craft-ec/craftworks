@@ -12,7 +12,7 @@
 //   await blocks.put([[name, frames], …], "notes")                   // all accepted, or throws
 //   await blocks.probe(contractHex, "notes")                          // on the network? (keeping counts them)
 export async function start(ctx) {
-  const { core, ask } = await ctx.require("node");
+  const { core, ask, WAIT } = await ctx.require("node");
   const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
 
   // What this page did: blocks read, and how many of them were rebuilt from their group.
@@ -23,7 +23,7 @@ export async function start(ctx) {
   function get(b, what) {
     if (!inflight.has(b)) {
       const [, frames] = core.frames_get(bytes(b));
-      const p = ask(frames, x => x.block === b || (x.kind === "get-failed" && x.id === b), what, 30000)
+      const p = ask(frames, x => x.block === b || (x.kind === "get-failed" && x.id === b), what, WAIT.ask)
         .catch(() => ({ kind: "get-failed", id: b }))
         .finally(() => inflight.delete(b));
       inflight.set(b, p);
@@ -103,7 +103,7 @@ export async function start(ctx) {
   // found (false). The state is not kept: a probe only counts.
   async function probe(c, what) {
     const [, frames] = core.frames_get(bytes(c));
-    const a = await ask(frames, x => (x.kind === "got" && x.id === c) || x.block === c || (x.kind === "get-failed" && x.id === c), what, 30000).catch(() => ({ kind: "get-failed" }));
+    const a = await ask(frames, x => (x.kind === "got" && x.id === c) || x.block === c || (x.kind === "get-failed" && x.id === c), what, WAIT.ask).catch(() => ({ kind: "get-failed" }));
     core.take_got(c);
     return a.kind !== "get-failed";
   }

@@ -21,7 +21,7 @@ export async function start(ctx) {
   const space = await ctx.require("space");
   // Who may read and write a table here: the person's grant for this site, and the table's key that comes with it.
   const access = await ctx.require("access");
-  const { core, glue, ask, listen } = await ctx.require("node");
+  const { core, glue, ask, listen, WAIT, backoff } = await ctx.require("node");
   const tailCode = await ctx.require("tail-wasm");
   // A table's tree lives in Sealed contracts, sealed whole (a tree from before, in Block contracts): the core names
   // them from this code.
@@ -197,13 +197,14 @@ export async function start(ctx) {
           const made = { ...rest, beforeCreate: cat && ours ? () => notePlace(cat, app, "blinded") : rest.beforeCreate };
           if (place === "unlisted" || place === "none") return tailAt(owner, app, label, { ...made, known: false });
           if (place === "blinded") {
-            const t = await tailAt(owner, app, label, made);
+            const t = await tailAt(owner, app, label, { ...made, wait: ours && cat ? WAIT.answer : WAIT.ask });
             if (t.absent && t.answered()) note("none");
             return t;
           }
-          // Listed from before: both names at once.
+          // Listed from before: both names at once — waited on until the node ANSWERS (a "not there" on a real network takes a
+          // minute or more): its place then noted, and never asked again.
           ctx.log("storage", { what: `${app}: where it is not noted: both names read` });
-          const [blinded, legacy] = await Promise.all([tailAt(owner, app, label, made), tailAt(owner, app, app, { ...rest, known: null, beforeCreate: null })]);
+          const [blinded, legacy] = await Promise.all([tailAt(owner, app, label, { ...made, wait: WAIT.answer }), tailAt(owner, app, app, { ...rest, known: null, beforeCreate: null, wait: WAIT.answer })]);
           ctx.log("storage", { what: `${app}: blinded ${blinded.absent ? "absent" : "there"}${blinded.answered() ? "" : " (no answer)"}, by name ${legacy.absent ? "absent" : "there"}${legacy.answered() ? "" : " (no answer)"}` });
           if (!blinded.absent) {
             legacy.moved = true;
@@ -228,7 +229,7 @@ export async function start(ctx) {
     return opts.lazy ? p : p.then(t => (t.lazy ? t.whole().then(() => t) : t));
   }
 
-  function tailAt(owner, app, label, { known = null, catalogKey = false, beforeCreate = null, sealWith = null, space: inSpace = null, public: open = false, lazy = false } = {}) {
+  function tailAt(owner, app, label, { known = null, catalogKey = false, beforeCreate = null, sealWith = null, space: inSpace = null, public: open = false, lazy = false, wait = WAIT.ask } = {}) {
     // The space: an object (a table of a space: its group keeps it current) or its id's bytes (an epoch log).
     const spaceId = inSpace?.idBytes ?? inSpace;
     // Its label: its name, or its blinded name (then its writes are signed by the name, which the identity checks).
@@ -332,7 +333,7 @@ export async function start(ctx) {
       const [, frames] = core.tail_get(id);
       let said;
       try {
-        said = await ask(frames, x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "tail-keys" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, 30000);
+        said = await ask(frames, x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "tail-keys" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, wait);
         answered = true;
       } catch (e) {
         ctx.log("table not found yet", { what: `${app}: ${e.message}; opened empty` });
@@ -733,13 +734,10 @@ export async function start(ctx) {
   function absentCatalog(c) {
     if (polled.has(c)) return;
     polled.add(c);
-    const again = (n = 0) =>
-      setTimeout(async () => {
-        await c.reread().catch(() => {});
-        if (c.absent) again(n + 1);
-        else polled.delete(c);
-      }, Math.min(5000 * 2 ** n, 300000));
-    again();
+    backoff(async () => {
+      await c.reread().catch(() => {});
+      return !c.absent && polled.delete(c);
+    });
   }
 
   // A TABLE: the merge of its writers' feeds, and this node's feed to write.
@@ -782,13 +780,11 @@ export async function start(ctx) {
     if (bagPolls.has(sp.id)) return void bagPolls.get(sp.id).push(fn);
     const fns = [fn];
     bagPolls.set(sp.id, fns);
-    const again = (n = 0) =>
-      setTimeout(async () => {
-        const b = await scope.bag(true).catch(() => null);
-        if (b) for (const f of fns) f(b.set);
-        again(n + 1);
-      }, Math.min(5000 * 2 ** n, 300000));
-    again();
+    backoff(async () => {
+      const b = await scope.bag(true).catch(() => null);
+      if (b) for (const f of fns) f(b.set);
+      return false;
+    });
   }
 
   const tables = new Map(); // scope + name -> Promise<table>
@@ -804,7 +800,7 @@ export async function start(ctx) {
       // listed if it has a catalog and is not yet (a catalog from before the bag).
       // Waited on BRIEFLY: a bag this node holds answers at once; one not answered by then — every member read, as
       // before (nothing missed).
-      const bag = scope.bag ? await Promise.race([scope.bag().catch(() => null), new Promise(r => setTimeout(() => r(null), 1500))]) : null;
+      const bag = scope.bag ? await Promise.race([scope.bag().catch(() => null), new Promise(r => setTimeout(() => r(null), WAIT.hint))]) : null;
       const listed = o => !bag?.complete || bag.set.has(o);
       if (bag && !mine.absent && !bag.set.has(scope.self)) scope.list([scope.self]).catch(() => {});
       const lists = (cat, n) => own(cat).some(r => r.key === n);
@@ -1072,16 +1068,15 @@ export async function start(ctx) {
     return moved;
   }
 
-  // SETTLED SOON: a table is ready once every other writer's feed has answered — or after SETTLE_WAIT, whichever is
+  // SETTLED SOON: a table is ready once every other writer's feed has answered — or after WAIT.show (`node`), whichever is
   // first. A feed not there (never written) costs the node a whole network search (seconds to over a minute); nobody
   // waits on that. One that arrives later is merged in as it comes (the table's `onChange`): nothing is dropped.
-  const SETTLE_WAIT = 5000;
   const soon = (all, name) => {
     let done = false;
     all.finally(() => (done = true));
     return Promise.race([
       all,
-      new Promise(r => setTimeout(r, SETTLE_WAIT)).then(() => {
+      new Promise(r => setTimeout(r, WAIT.show)).then(() => {
         if (!done) ctx.log("storage", { what: `${name}: shown without the feeds still being asked (merged as they come)` });
       }),
     ]);
