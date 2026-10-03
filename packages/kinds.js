@@ -38,6 +38,7 @@ export async function start() {
     ["comic", "document", "Comic", ["writer", "artist", "issue", "publisher"]],
     // File (Drive: what was uploaded, any type — `file`, the general one)
     ["file", "file", "File", []],
+    ["folder", "file", "Folder", []],
     ["asset", "file", "Asset", ["format", "software"]],
     ["game", "file", "Game", ["platform", "genre", "version"]],
     ["software", "file", "Software", ["platform", "version", "license"]],
@@ -50,7 +51,7 @@ export async function start() {
   // COLLABORATIVE kinds: in a space, whoever its `edit` policy allows edits one (a shared note, a shared file's
   // entry), the creator kept; every other kind its author's alone (an app's own enforcement over the policy).
   // UNTITLED kinds: a title is optional.
-  const COLLABORATIVE = new Set(["note", "file"]);
+  const COLLABORATIVE = new Set(["note", "file", "folder"]);
   const UNTITLED = new Set(["note", "file"]);
   // ATTACHING kinds: their own data, about another item (`in`) — contributed like a comment, listed with what they are
   // about, and a lens of their own (the Subtitles app). A subtitle: WebVTT (its file), its language and label.

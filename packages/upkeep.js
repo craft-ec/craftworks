@@ -60,7 +60,7 @@ export async function start(ctx) {
   // MIGRATIONS — the one place records from before a change are brought forward, here, after the page is up (never
   // on a page's path). Each step is safe to run again; the version is recorded once EVERY step of it succeeded (a step
   // the node was silent for: tried again on a later tick), and a page after that runs none.
-  const MIGRATION = 4;
+  const MIGRATION = 5;
   let migratedHere = false;
   async function migrate() {
     if (migratedHere) return;
@@ -89,6 +89,8 @@ export async function start(ctx) {
       step("your notes", (await ctx.require("items")).migrateNotes(null)),
       ...spaces.map(async sp => step(`${sp.name}'s notes`, (await ctx.require("items")).migrateNotes(sp))),
     ]);
+    // v5 after v3 (it reads the catalogues v3 sorted): Drive's catalogues brought over as items of kind `file`.
+    if (done.every(Boolean)) done.push(...(await Promise.all([step("your Drive", (await ctx.require("drive-store")).migrate(null)), ...spaces.map(async sp => step(`${sp.name}'s Drive`, (await ctx.require("drive-store")).migrate(sp)))])));
     if (done.every(Boolean)) {
       await storage.setUpkeepMark("migrated", MIGRATION);
       migratedHere = true;

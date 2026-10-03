@@ -365,10 +365,11 @@ export async function start(ctx) {
   }
   // PROFILE posts: from their authors' tails; comments and votes from the tails known here (the reader's, whom they
   // follow, and whoever `readers` names).
-  async function profilePosts(authors, readers = [], kinds = ["post"], since = 0) {
+  // `withVotes: false`: the authors' profiles alone (a lens that shows no votes or comment counts: Notes, Drive).
+  async function profilePosts(authors, readers = [], kinds = ["post"], since = 0, { withVotes = true } = {}) {
     const self = await me();
     // Every profile opened ONCE (each bounded): the authors' among them — never a second wait on a slow one.
-    const rs = await profiles([...authors, self, ...(await following()), ...readers]);
+    const rs = await profiles(withVotes ? [...authors, self, ...(await following()), ...readers] : authors);
     const authorSet = new Set(authors);
     const votes = new Map();
     const counts = new Map();
@@ -704,13 +705,13 @@ export async function start(ctx) {
 
   // Items of a KIND in exactly these places, read whole (few, chosen places: a subtitle's lookup), never every board.
   // `after` (an item id): only what was made after it (a subtitle is always newer than its video) — a bound, not a window.
-  async function inPlaces({ spaces = [], people: dids = [] }, kind, { after = null } = {}) {
+  async function inPlaces({ spaces = [], people: dids = [] }, kind, { after = null, withVotes = true } = {}) {
     const ks = kindsFor(kind);
     const read = async sp => {
       if (after) await sinceItem(await boardRoom(sp), after);
       return boardPosts(sp, { kinds: ks, window: after ? "held" : "all" });
     };
-    const [a, b] = await Promise.all([Promise.all(spaces.map(sp => read(sp).catch(() => []))), profilePosts(dids, [], ks).catch(() => [])]);
+    const [a, b] = await Promise.all([Promise.all(spaces.map(sp => read(sp).catch(() => []))), profilePosts(dids, [], ks, 0, { withVotes }).catch(() => [])]);
     return [...a.flat(), ...b];
   }
 
@@ -726,7 +727,7 @@ export async function start(ctx) {
     const r = sp ? await roles.of(sp) : null;
     const rows = old.rows().filter(x => x.value && (!r || r.author(x) === self));
     if (!rows.length) return true;
-    const have = new Set((await inPlaces(sp ? { spaces: [sp] } : { people: [self] }, "note")).map(it => it.meta?.from).filter(Boolean));
+    const have = new Set((await inPlaces(sp ? { spaces: [sp] } : { people: [self] }, "note", { withVotes: false })).map(it => it.meta?.from).filter(Boolean));
     const edge = await ctx.require("edge");
     const [pins, labels] = await Promise.all([edge.pins(), edge.labels()]);
     const oldRef = key => (sp ? `notes:${sp.id}/${key}` : `notes:${key}`);

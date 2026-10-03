@@ -969,7 +969,7 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       write / backfilled on load); readers gather only listed writers; one bag poll replaces N catalog polls.
 - [x] 1b DISCOVER BAG (fx: Discover 47 items <1.5 s from bags; real net via B: 59 s first visit — bags searched once then made — 1.5 s after; public acts' writers bag added, empty until an owner/admin loads, old walk until then): public posts/videos/audio drop a pointer {writer, table, item} in a public per-kind, per-month
       bag; Discover reads the bag and only the tails it names; authors and members backfill missing pointers; drop the crawl.
-- [ ] 2a NOTES AND DRIVE ON `content` (owner: why don't they follow the same path?): a note an item of kind `note`
+- [x] 2a NOTES AND DRIVE ON `content` (owner: why don't they follow the same path?): a note an item of kind `note`
       (text, tags, pin), a Drive entry an item of kind `file` (its ref, folder); old rows converted ONCE by upkeep's
       migration (never on a page load), then only items read — so authorship, edits, removal, moderation, policy come
       from one place. Owner 10-03: the SAME structure as every app — a note or an uploaded file can be private,
@@ -982,7 +982,10 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       → space) used by items and content (content checked every board item against "board"; now each its domain's).
       fx: 2 notes brought over (private, journal); new private note → journal; edit kept one card; Board/Discover
       unchanged (49/48, no notes). Found + fixed: a form reset put the picker back on Everyone (a note made public).
-      NEXT: Drive's entries as items of kind `file`.
+      DONE DRIVE: entries are items of kind `file` (an empty folder: `folder`) — drive-store keeps its API over `items`;
+      the Drive page's audience picker; migration v5 brings the old catalogues over (time, folder, source; `fid`).
+      Lists without vote tallies (`withVotes: false`) for Notes/Drive; the Drive selector no longer waits on every
+      space's roles (first load 4 s → 178 ms). fx: 10 entries brought over, uploads listed, Notes intact.
       DONE first part (47e3f2d): Drive files an upload from another app in its TYPE's folder (/Videos /Audio /Images
       /Documents /Files: `kinds.ofType`, `kinds.domainName`); uploads made in Drive stay where put; migration v3.
 - [x] ONE AUDIENCE PICKER (owner 10-03; DONE: `audience` component, items `audience`/content `aud`; fx: members-only

@@ -75,7 +75,10 @@ export async function mount(ctx, el) {
     });
   const fail = e => ((said.textContent = e?.message ?? String(e)), (said.hidden = false));
   const ups = h("div", { className: "ups" });
+  // WHO SEES what is uploaded here: the one picker (`audience`) — yours start Only you, a space's its members.
+  const who = await (await ctx.require("audience")).picker({ space: sp, kind: "file", initial: sp ? "members" : "private" });
 
+  const drivesKnown = drive.drives().catch(() => []);
   async function draw() {
     const at = folder();
     const [rows, folders] = await Promise.all([drive.list(sp), drive.folders(sp)]);
@@ -89,9 +92,13 @@ export async function mount(ctx, el) {
       return p;
     }, "");
     const input = h("input", { type: "file", multiple: true, hidden: true, onchange: () => (upload([...input.files]), (input.value = "")) });
-    // WHICH DRIVE: yours, or any space's you are in (its Drive: uploads here are sealed for its members).
-    const all = await drive.drives();
-    const which = h("select", { ariaLabel: "Drive", onchange: () => (location.hash = which.value ? `#/s/${which.value}/drive` : "#/drive") }, h("option", { value: "", textContent: "Your Drive" }), ...all.map(s => h("option", { value: s.id, textContent: `${space.shown(s)} Drive` })));
+    // WHICH DRIVE: yours, or any space's you are in — the spaces filled in when known (each space's apps read), never
+    // waited on before the Drive shows.
+    const which = h("select", { ariaLabel: "Drive", onchange: () => (location.hash = which.value ? `#/s/${which.value}/drive` : "#/drive") }, h("option", { value: "", textContent: "Your Drive" }), ...(sp ? [h("option", { value: sp.id, textContent: `${space.shown(sp)} Drive` })] : []));
+    drivesKnown.then(all => {
+      for (const s of all) if (s.id !== sp?.id) which.append(h("option", { value: s.id, textContent: `${space.shown(s)} Drive` }));
+      which.value = sp?.id ?? "";
+    });
     which.value = sp?.id ?? "";
     const top = h(
       "div",
@@ -99,6 +106,7 @@ export async function mount(ctx, el) {
       h("h2", { textContent: "🗂️ Drive" }),
       which,
       h("label", { className: "up" }, "📤 Upload", input),
+      who.el,
       h("button", {
         type: "button",
         textContent: "New folder",
@@ -149,14 +157,13 @@ export async function mount(ctx, el) {
     return t;
   }
 
-  // UPLOAD into the folder open: a space's Drive read by anyone, public; otherwise sealed for its members (yours: you).
-  const readsAnyone = async () => (sp ? (await (await ctx.require("roles")).of(sp)).policy("drive", "read") === "anyone" : false);
+  // UPLOAD into the folder open, seen by whom the picker says (public: put in the clear; else sealed).
   async function upload(list) {
     for (const file of list) {
       const line = h("div", { textContent: `${file.name}: starting…` });
       ups.append(line);
       drive
-        .upload(file, { space: sp, public: await readsAnyone(), folder: folder(), from: { app: "drive" }, onProgress: e => (line.textContent = `${file.name}: ${e.phase === "reading" ? "reading" : `${Math.round((100 * e.done) / Math.max(1, e.size))}%`}`) })
+        .upload(file, { space: sp, public: who.isPublic(), folder: folder(), from: { app: "drive" }, onProgress: e => (line.textContent = `${file.name}: ${e.phase === "reading" ? "reading" : `${Math.round((100 * e.done) / Math.max(1, e.size))}%`}`) })
         .then(
           () => (line.remove(), draw()),
           e => (line.textContent = `${file.name}: not uploaded — ${e.message ?? e}`),

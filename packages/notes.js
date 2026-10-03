@@ -144,7 +144,7 @@ export async function mount(ctx, el) {
   const place = sp ? { spaces: [sp] } : { people: [meId] };
   const reload = () =>
     items
-      .inPlaces(place, "note")
+      .inPlaces(place, "note", { withVotes: false })
       .then(x => ((held = x), root.isConnected && render()))
       .catch(e => said(`Could not read the notes: ${e?.message ?? e}`));
 
