@@ -81,7 +81,19 @@ export async function mount(ctx, el) {
       <div class="desk">
         <h3>Pinned</h3><div class="grid pinned"></div>
         <h3>All apps</h3><div class="grid all"></div>
+        <h3>Settings</h3><p class="note">Who may comment and vote on what you post, by default (each post can say otherwise).</p><div class="settings"></div>
       </div>`;
+    // YOUR SPACE's SETTINGS: the same sections as a shared space's (`app-settings`), drawn in the background —
+    // scrolled to when a link names one (`#/settings/<app>`).
+    ctx
+      .require("app-settings")
+      .then(s => s.personalPage())
+      .then(page => {
+        el.querySelector(".settings")?.replaceChildren(page);
+        const at = /^settings\/?(.*)$/.exec(ctx.sub ?? "");
+        if (at) el.querySelector(`#settings-${at[1] || "board"}`)?.scrollIntoView({ block: "start" });
+      })
+      .catch(e => el.querySelector(".settings")?.replaceChildren(Object.assign(document.createElement("p"), { textContent: e?.message ?? String(e) })));
     // The icons show at once; the pins arrive when the account's desktop table has been read (a table the account
     // never wrote takes the network a while to report absent).
     let pins = null;

@@ -277,7 +277,42 @@ export async function start(ctx) {
   // account at the token it cites, naming the writer — `circles` issues them). True, false, or null: not checked yet
   // (a credential being read: `onChecked` fires when it is).
   const CIRCLES_OF = { followers: ["followers", "friends"], friends: ["friends"] };
-  const ruleOf = (item, action, r, at) => item?.meta?.write?.[action] ?? (r ? r.policyIn(K.policyDomain(item.kind), action, at) : "anyone");
+  // A PERSONAL SPACE's policies, read as a space's are (`policiesAt`, `policy`, `policyIn`, `act`): rows of its owner's
+  // CARD (`policy:<path>|<action>` → who: anyone · followers · friends · author) — public, the person's own record, so
+  // every reader applies them; written by its owner on their Home's settings (`app-settings`). Not read: `loaded()` false.
+  const personals = new Map();
+  function personal(did) {
+    if (!personals.has(did)) {
+      let t = null;
+      let loaded = false;
+      const ready = directory
+        .publicOf(did, "card")
+        .then(async x => ((t = x), x && (await x.answer(), x.onChange(() => checked.forEach(f => f())))))
+        .catch(() => {})
+        .finally(() => ((loaded = true), checked.forEach(f => f())));
+      const at = (path, action) => t?.rows().find(x => x.key === `policy:${path}|${action}` && x.value)?.value;
+      personals.set(did, {
+        personal: true,
+        ready,
+        loaded: () => loaded,
+        policiesAt: path => Object.fromEntries(ACTIONS.map(a => [a, at(path, a)]).filter(([, w]) => w)),
+        policy: (path, action) => at(path, action) ?? "anyone",
+        policyIn: (domain, action) => at(domain, action) ?? (LEGACY[domain] && at(LEGACY[domain], action)) ?? "anyone",
+        role: d => (d === did ? "owner" : null),
+        can: d => d === did,
+        config: (_a, _k, dflt = null) => dflt,
+        apps: () => ["board", "videos", "audio"],
+        act: async ({ act, path, action, who }) => {
+          if (act !== "policy") throw new Error("a personal space keeps policies only");
+          await ready;
+          if (!t) throw new Error("your card is not readable here");
+          await (who === "inherit" ? t.remove(`policy:${path}|${action}`) : t.put(`policy:${path}|${action}`, who));
+        },
+      });
+    }
+    return personals.get(did);
+  }
+  const ruleOf = (item, action, r, at) => item?.meta?.write?.[action] ?? (r ?? personal(item.by)).policyIn(K.policyDomain(item.kind), action, at);
   const credChecks = new Map(); // `${author}|${token}` → { v: row | null | undefined }
   const checked = [];
   function credFor(author, token) {
@@ -294,8 +329,11 @@ export async function start(ctx) {
     return credChecks.get(k).v;
   }
   function mayWrite({ action, item, writer, cred = null, r = null, at = Infinity }) {
+    if (writer === item.by) return true;
+    // A personal item's author's policy not read yet: not checked yet (`onChecked` fires once it is).
+    if (!r && !item?.meta?.write?.[action] && item?.by && !personal(item.by).loaded()) return null;
     const rule = ruleOf(item, action, r, at);
-    if (rule === "anyone" || writer === item.by) return true;
+    if (rule === "anyone") return true;
     if (rule === "author" || rule === "nobody") return false;
     if (CIRCLES_OF[rule]) {
       if (!cred || !/^[0-9a-f]{32}$/.test(cred)) return false;
@@ -306,6 +344,7 @@ export async function start(ctx) {
   }
   // The credential a writer cites on an item whose rule is its author's friends or followers (null: none needed / held).
   async function credToCite(item, action, r = null) {
+    if (!r && item?.by) await personal(item.by).ready;
     const rule = ruleOf(item, action, r, Infinity);
     if (!CIRCLES_OF[rule] || item.by === (await space.account())?.id) return null;
     const people = await (await ctx.require("edge")).people();
@@ -316,5 +355,5 @@ export async function start(ctx) {
     throw new Error(`only ${directory.shown(item.by)}'s ${rule} ${action === "vote" ? "vote" : "comment"} here`);
   }
 
-  return { of, ofPublic, mayWrite, credToCite, onChecked: f => checked.push(f), can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"] };
+  return { of, ofPublic, personal, mayWrite, credToCite, onChecked: f => checked.push(f), can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"] };
 }

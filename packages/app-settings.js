@@ -30,7 +30,7 @@ export async function start(ctx) {
     e.append(...kids.filter(k => k != null && k !== false));
     return e;
   };
-  const NAMES = { anyone: "Anyone (public)", members: "Members", admins: "Admins", owner: "The owner", nobody: "Nobody" };
+  const NAMES = { anyone: "Anyone (public)", members: "Members", admins: "Admins", owner: "The owner", nobody: "Nobody", followers: "Your followers", friends: "Your friends", author: "Only you" };
   const parentOf = path => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : path ? "" : null);
 
   // ONE POLICY's choice: Inherit (what the parent says), or a who. Reading by anyone is offered to the owner only.
@@ -44,9 +44,10 @@ export async function start(ctx) {
         from = p;
         break;
       }
-    const inherited = from == null ? "members" : r.policy(from, action);
+    const inherited = from == null ? (r.personal ? "anyone" : "members") : r.policy(from, action);
     const LEVEL = p => (p === "" ? "the space" : p === "chat" ? "Chat" : p === "board" ? "Board" : p === "notes" ? "Notes" : p);
-    const options = ["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || action === "read" || action === "join");
+    // A personal space's: anyone · your followers · your friends · only you (`roles.personal`).
+    const options = r.personal ? ["anyone", "followers", "friends", "author"] : ["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || action === "read" || action === "join");
     const sel = h(
       "select",
       { ariaLabel: `${action} at ${path || "the space"}` },
@@ -137,7 +138,7 @@ export async function start(ctx) {
     });
     const btn = h("button", { type: "submit", className: "main", textContent: "Save" });
     const more = S.extra ? h("div", {}) : null;
-    const form = h("form", { className: "cw-appset", id: `settings-${key || "space"}` }, h("h3", { textContent: S.title }), ...inputs.map(({ f, input }) => h("label", {}, f.label, input)), more, h("div", { className: "row" }, said, btn));
+    const form = h("form", { className: "cw-appset", id: `settings-${(key || "space").replace("me:", "")}` }, h("h3", { textContent: S.title }), ...inputs.map(({ f, input }) => h("label", {}, f.label, input)), more, h("div", { className: "row" }, said, btn));
     form.onsubmit = async e => {
       e.preventDefault();
       btn.disabled = true;
@@ -173,7 +174,23 @@ export async function start(ctx) {
     const keys = ["", ...r.apps().filter(a => SECTIONS[a])];
     return h("div", { className: "cw-settings", style: "display:grid;gap:var(--cw-space-3)" }, ...(await Promise.all(keys.map(k => section(sp, k, r, me)))));
   }
-  const href = (sp, key) => `#/s/${sp.id}/space/settings/${key}`;
+  const href = (sp, key) => (sp ? `#/s/${sp.id}/space/settings/${key}` : `#/settings/${key}`);
+  // YOUR SPACE's SETTINGS (your Home): who may comment and vote on what you post in each app, by default — an item's
+  // own setting over it. The same sections, read and written through `roles.personal`.
+  const PERSONAL = { board: "Board", videos: "Videos", audio: "Audio" };
+  async function personalPage() {
+    const me = (await (await ctx.require("space")).account()).id;
+    const r = roles.personal(me);
+    await r.ready;
+    const forms = await Promise.all(
+      Object.entries(PERSONAL).map(([key, title]) => {
+        SECTIONS[`me:${key}`] ??= { title, fields: [{ action: "comment", path: key, label: "Who may comment" }, { action: "vote", path: key, label: "Who may vote" }] };
+        return section(null, `me:${key}`, r, me);
+      }),
+    );
+    return h("div", { className: "cw-settings", style: "display:grid;gap:var(--cw-space-3)" }, ...forms);
+  }
 
-  return { page, href, who: (r, path, action) => who(r, path, action) };
+
+  return { page, personalPage, href, who: (r, path, action) => who(r, path, action) };
 }
