@@ -41,10 +41,13 @@ export async function start(ctx) {
   // conversation, itself.
   async function tableOf(container, opts = {}) {
     // A space's PUBLIC table read from OUTSIDE (not a member): its writers are the public acts' (`roles.ofPublic`).
+    // `writers` given (DISCOVER's pointers: who wrote and who answered): only those — still only those the space's roles
+    // count as its writers.
     if (container?.outside) {
       const r = await (await ctx.require("roles")).ofPublic(container.scope);
-      const t = storage.readOnly(container.messages, r.writerKeys());
-      r.onChange(() => t.add(r.writerKeys()));
+      const keys = () => (container.writers ? container.writers.filter(k => r.writerKeys().includes(k)) : r.writerKeys());
+      const t = storage.readOnly(container.messages, keys());
+      r.onChange(() => t.add(keys()));
       return t;
     }
     if (container?.kind === "public") {

@@ -67,6 +67,7 @@ export async function start(ctx) {
     // THE ACTS: the sealed ones and the PUBLIC ones (the same act in both — a copy — counts once: by its key). From
     // outside, only the public ones, read from the writers found so far.
     const pubName = space.tableOf(sp, "pub-acts");
+    const index = await ctx.require("index");
     const [first, me, sealedActs, pubActs] = await Promise.all([
       space.owner(sp),
       space.account(),
@@ -128,6 +129,11 @@ export async function start(ctx) {
     // FROM OUTSIDE: the members are the roster; each one's devices are writers, whose public acts are read too — until
     // no new member turns up.
     const known = new Set();
+    // ITS PUBLIC ACTS' WRITERS (`index`: the space's public acts bag — whoever wrote a public act, the owner and admins,
+    // listed once): read from outside instead of every member's public acts. Empty (a space from before the bag): every
+    // member, as before, until one of its writers opens it with the bag.
+    const ACTS = `acts ${sp.id}`;
+    const actWriters = out ? await index.pointersMade(ACTS).then(ps => [...new Set(ps.map(p => p?.w).filter(w => typeof w === "string"))], () => []) : [];
     async function widen() {
       if (!out) return;
       for (;;) {
@@ -136,7 +142,7 @@ export async function start(ctx) {
         fresh.forEach(d => known.add(d));
         const sets = await Promise.all(fresh.map(d => directory.devices(d).catch(() => [])));
         fresh.forEach((d, i) => sets[i].forEach(k => writers.set(k, d)));
-        await pubActs.add(sets.flat());
+        await pubActs.add(actWriters.length ? actWriters : sets.flat());
         replay();
       }
     }
@@ -161,6 +167,16 @@ export async function start(ctx) {
     // Inviting is the space's policy (`invite`); everything else its role's.
     const can = (did, what) => (what === "invite" ? G.passes(gv.effective("", "invite", Infinity), role(did)) : G.can_role(role(did), what));
 
+    // This device listed as a writer of the space's public acts (once a page): after it writes one, and on opening a
+    // space whose public acts it wrote before the bag.
+    let actListed = false;
+    async function listActWriter() {
+      if (out || actListed || !sp.self) return;
+      actListed = true;
+      const ws = await index.pointersMade(ACTS).catch(() => []);
+      if (!ws.some(p => p?.w === sp.self)) await index.point(ACTS, { w: sp.self }).catch(() => (actListed = false));
+    }
+    if (!out) pubActs.settled.then(() => (pubActs.rows().some(x => x.id?.startsWith(sp.self)) ? listActWriter() : null)).catch(() => {});
     const r = {
       space: sp,
       get owner() {
@@ -212,6 +228,7 @@ export async function start(ctx) {
         for (const row of sealedActs.rows()) if (ids.has(row.key) && !have.has(row.key)) await pubActs.put(row.key, row.value);
         const listed = new Set(counted.filter(a => ["member", "added", "admitted"].includes(a.act)).map(a => a.did));
         for (const m of r.members()) if (m.did !== owner && !listed.has(m.did)) await pubActs.put(newId(), JSON.stringify({ act: "member", did: m.did, at: Date.now() }));
+        await listActWriter();
       },
       async act(a) {
         if (!me) throw new Error("nobody is logged in");
@@ -224,6 +241,7 @@ export async function start(ctx) {
         const toPublic = isPublic() || (a.act === "policy" && (a.action === "read" || a.action === "join") && a.who === "anyone");
         // Its time: now — or when it happened (upkeep let someone in while no page ran: the act says when).
         await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify({ at: Date.now(), ...a }));
+        if (toPublic) await listActWriter();
       },
       grant: (did, to) => r.act({ act: "grant", did, role: to }),
       onChange: f => changed.push(f),

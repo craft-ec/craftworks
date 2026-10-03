@@ -99,6 +99,19 @@ export async function start(ctx) {
   const openPointers = async ref => drop(await refAddress(ref), new Uint8Array(0), "making a pointer bag");
   const point = async (ref, item) => drop(await refAddress(ref), enc.encode(JSON.stringify(item)), "pointing");
   const pointers = async ref => parse(await payloadsAt(await refAddress(ref), "reading pointers"));
+  // A bag READ, and MADE (empty) when the node answers it is not there: a bag nobody made yet (a month nobody posted
+  // in, a post from before item bags, a space from before its acts bag) is searched for once, by its first reader — every
+  // reader after finds it.
+  const madeBags = new Set();
+  async function pointersMade(ref) {
+    const address = await refAddress(ref);
+    const id = Core.bag_id(bagCode, address);
+    const [, frames] = core.frames_get(bytes(id));
+    const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, `reading ${ref}`, 30000).catch(() => ({ kind: "silent" }));
+    if (said.kind === "got") return parse(Array.from(core.bag_payloads(address, id) ?? []));
+    if (said.kind === "get-failed" && !madeBags.has(ref)) madeBags.add(ref), openPointers(ref).catch(() => madeBags.delete(ref));
+    return [];
+  }
 
   // A SPACE's SEALED bag (`name`): at an address the space's id gives, each item sealed with the space's newest EPOCH
   // key (`epoch ‖ nonce ‖ AES-GCM`) — only members read it; a member removed reads nothing added after. Its size shows
@@ -134,9 +147,30 @@ export async function start(ctx) {
     return out;
   }
 
+  // DISCOVER's ITEMS (ARCHITECTURE §1: the public index — bags that public posts list themselves in): a public bag per
+  // DOMAIN (text, video, audio) and MONTH (UTC `YYYY-MM`), each pointer naming exactly where its item is (`ref`, `kind`,
+  // `at`, and its writer and table — `w`, `t`, `sp` — on a space's public board, or `did` on a profile). A reader reads
+  // only the months it shows and only the tails named; each pointer is a claim it checks against what is there.
+  const monthOf = at => new Date(at).toISOString().slice(0, 7);
+  const discoverBag = (domain, month) => `discover:${domain}:${month}`;
+  const discoverPoint = (domain, at, ptr) => point(discoverBag(domain, monthOf(at)), ptr);
+  const discoverPointers = async (domain, months) => (await Promise.all(months.map(m => pointersMade(discoverBag(domain, m))))).flat();
+  // The months a window covers (newest first): `since` ms to now.
+  const monthsSince = since => {
+    const out = [];
+    const d = new Date();
+    d.setUTCDate(1);
+    for (let i = 0; i < 24; i++) {
+      out.push(d.toISOString().slice(0, 7));
+      if (d.getTime() <= since) break;
+      d.setUTCMonth(d.getUTCMonth() - 1);
+    }
+    return out;
+  };
+
   const SPACES = "discover:spaces";
   const listSpace = desc => point(SPACES, { id: desc.id, name: desc.name, kind: desc.kind, governance: { owner: desc.governance.owner, nonce: desc.governance.nonce } });
   const spaces = () => pointers(SPACES);
 
-  return { send, inbox, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces, spacePoint, spacePointers };
+  return { send, inbox, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, pointersMade };
 }

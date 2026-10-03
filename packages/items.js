@@ -40,6 +40,36 @@ export async function start(ctx) {
   const TOP = new Set(kinds.all());
   // What a list shows: a kind, or KINDS (a domain's: `kinds.inDomain("video")` — videos, movies, episodes …).
   const kindsFor = k => (Array.isArray(k) ? k : [k]);
+  const domainOf = k => kinds.policyDomain(k);
+  // DISCOVER's bags as this page has read them (`index`): what is listed there already — so a pointer is dropped once.
+  const listedIn = new Map(); // `domain|month` → Promise<Set of refs>
+  const indexed = (domain, at) => {
+    const k = `${domain}|${index.monthOf(at)}`;
+    if (!listedIn.has(k)) listedIn.set(k, index.discoverPointers(domain, [index.monthOf(at)]).then(ps => new Set(ps.map(p => p?.ref))));
+    return listedIn.get(k);
+  };
+  const answeredIn = new Map(); // an item's ref → Promise<Set of writer keys pointed in its bag>
+  const answerers = ref => {
+    if (!answeredIn.has(ref)) answeredIn.set(ref, index.pointersMade(ref).then(ps => new Set(ps.map(p => p?.w).filter(Boolean)), () => new Set()));
+    return answeredIn.get(ref);
+  };
+  // A PUBLIC item LISTED: in Discover's bag of its domain and month (a top item), its own bag made; an answer to one (a
+  // comment, a vote, a subtitle) pointed in that item's bag. Once each: what the bags hold already is not dropped again.
+  async function listPublic(ref, x, where) {
+    if (TOP.has(x.kind)) {
+      const set = await indexed(domainOf(x.kind), x.at);
+      if (set.has(ref)) return;
+      await index.discoverPoint(domainOf(x.kind), x.at, { ref, kind: x.kind, at: x.at, ...where });
+      set.add(ref);
+      await index.openPointers(ref).catch(() => {});
+      return;
+    }
+    if (!where.w) return;
+    const set = await answerers(ref);
+    if (set.has(where.w)) return;
+    await index.point(ref, where);
+    set.add(where.w);
+  }
   const changed = [];
   const fire = () => changed.forEach(f => f());
   const me = async () => (await space.account()).id;
@@ -162,6 +192,20 @@ export async function start(ctx) {
               if (inB.get(k) !== v) await b.putOwn(k, v);
             } else if (inB.has(k)) await b.dropOwn(k);
           }
+          // DISCOVER: each public row listed where readers find it (this device's public board of the space).
+          const where = { w: sp.self, t: space.board(sp, { pub: true }).messages, sp: { id: sp.id, name: sp.name } };
+          for (const [k, v] of inA) {
+            if (!pubOfValue(v)) continue;
+            let x;
+            try {
+              x = JSON.parse(v);
+            } catch {
+              continue;
+            }
+            const about = TOP.has(x.kind) ? k : x.kind === "reaction" ? x.item : (x.in ?? x.re);
+            if (!about || !x.at) continue;
+            await listPublic(`space:${sp.id}/${about}`, x, where).catch(e => ctx.log("posts", { what: `listing ${k} in Discover: ${e?.message ?? e}` }));
+          }
         })().finally(() => (syncing = null)));
       const dedupe = (list, key) => {
         const seen = new Set();
@@ -195,6 +239,34 @@ export async function start(ctx) {
         },
       };
     });
+  // DISCOVER's POINTERS for these kinds since `since` (ms): only the months shown, only the items listed.
+  async function discovered(kinds_, since) {
+    const domains = [...new Set(kinds_.map(domainOf))];
+    const months = index.monthsSince(since);
+    const ps = (await Promise.all(domains.map(d => index.discoverPointers(d, months).catch(() => [])))).flat();
+    const seen = new Set();
+    return ps.filter(p => p?.ref && kinds_.includes(p.kind) && (p.at ?? 0) >= since && !seen.has(p.ref) && seen.add(p.ref));
+  }
+  // A PUBLIC SPACE read as its pointers name it — never every member: the room over exactly the writers of these items
+  // and those who answered them (each item's own bag), and only those the space's roles count.
+  async function pointedRoom(desc, ptrs) {
+    const answered = (await Promise.all(ptrs.map(p => answerers(p.ref)))).flatMap(s => [...s]);
+    const writers = [...new Set([...ptrs.map(p => p.w).filter(Boolean), ...answered])];
+    const b = await content.in({ ...space.board(desc, { outside: true }), writers });
+    return { ...b, list: () => b.list().map(x => ({ ...x, pub: true })), mayRemove: () => false };
+  }
+  // The pointer of ONE item seen from outside: its month from its id's time (`t` ‖ ms base 36), its domain's bags.
+  async function pointerOf(ref) {
+    const m = /\/t([0-9a-z]{9})[0-9a-f]{8}$/.exec(ref);
+    if (!m) return null;
+    const at = parseInt(m[1], 36);
+    for (const d of new Set([...TOP].map(domainOf))) {
+      const p = (await index.discoverPointers(d, [index.monthOf(at)]).catch(() => [])).find(x => x?.ref === ref);
+      if (p) return p;
+    }
+    return null;
+  }
+  // A public space's ROOM from outside: as its pointers name it (`ptrs`), or — none given — every member (`roles`).
   const outsideRoom = desc =>
     opened(`outside:${desc.id}`, () => content.in(space.board(desc, { outside: true })).then(b => ({ ...b, list: () => b.list().map(x => ({ ...x, pub: true })), mayRemove: () => false })));
   // A PROFILE's room: their public tail. YOURS also holds your PRIVATE posts (per post: "only you"), sealed in your
@@ -265,8 +337,8 @@ export async function start(ctx) {
   async function boardPosts(sp, opts = {}) {
     return inTime(boardPostsOf(sp, opts), `the board of ${sp.name ?? sp.id?.slice(0, 8)}`).catch(e => (ctx.log("posts", { what: e.message }), Promise.reject(e)));
   }
-  async function boardPostsOf(sp, { outside = false, kinds = ["post"], window = "all" } = {}) {
-    const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
+  async function boardPostsOf(sp, { outside = false, kinds = ["post"], window = "all", room = null } = {}) {
+    const r = room ?? (await (outside ? outsideRoom(sp) : boardRoom(sp)));
     // `window: "held"`: what is read already (a caller read its own span: one item and what came after it).
     const since = window === "held" ? 0 : (sinceOf(window) ?? 0);
     if (!outside && window !== "held") {
@@ -328,23 +400,44 @@ export async function start(ctx) {
     return [...seen.values()];
   }
 
+  // POSTS AS DISCOVER's BAGS LIST THEM: each public space's (only listed spaces, not flagged) read from its pointed
+  // writers, each person's profile items from their own public tail. `space`: one space's only.
+  async function pointedPosts(kinds_, since, { space: only = null } = {}) {
+    const ps = await discovered(kinds_, since);
+    const spaces = new Map((only ? [only] : await publicSpaces()).map(d => [d.id, d]));
+    const bySpace = new Map();
+    const dids = new Set();
+    for (const p of ps) {
+      if (p.sp?.id && spaces.has(p.sp.id)) (bySpace.get(p.sp.id) ?? bySpace.set(p.sp.id, []).get(p.sp.id)).push(p);
+      else if (!only && typeof p.did === "string" && p.did.startsWith("did:craftec:") && p.ref.startsWith(`${p.did}/`)) dids.add(p.did);
+    }
+    const listedRefs = new Set(ps.map(p => p.ref));
+    const [inSpaces, profile] = await Promise.all([
+      Promise.all(
+        [...bySpace].map(async ([id, ptrs]) =>
+          inTime(
+            (async () => boardPostsOf(spaces.get(id), { outside: true, kinds: kinds_, room: await pointedRoom(spaces.get(id), ptrs) }))(),
+            `the board of ${spaces.get(id).name ?? id.slice(0, 8)}`,
+          ).catch(() => []),
+        ),
+      ).then(x => x.flat()),
+      dids.size ? profilePosts([...dids], [], kinds_, since).catch(() => []) : [],
+    ]);
+    // What a pointer claims is checked: only items there, of what was listed.
+    ctx.log("posts", { what: `Discover: ${ps.length} pointer(s) — ${[...bySpace].map(([id, x]) => `${spaces.get(id).name ?? id.slice(0, 8)}: ${x.length}`).join(", ") || "no space"}; ${dids.size} profile(s); read ${inSpaces.length} space item(s), ${profile.length} profile item(s)` });
+    return [...inSpaces, ...profile].filter(p => listedRefs.has(p.ref));
+  }
+
   // WINDOW, bounded unless asked for "all": New the last 30 days (older on asking), a rank the last week.
   async function list(where = {}, sort = "hot", kind = "post", { window = sort === "new" ? 30 : "week", by = "votes" } = {}) {
     const kinds = kindsFor(kind);
     const inWindow = (at, w = window) => sinceOf(w) == null || at >= sinceOf(w);
     let out;
     // A space's PUBLIC board, seen from outside (`where.outside`: its description); DISCOVER: every public space's.
-    if (where.outside) out = await boardPosts(where.outside, { outside: true, kinds });
-    // DISCOVER: every public space's board, and the profile posts (public by being there) of the people shown in
-    // Discover (each chose to be).
-    else if (where.discover) {
-      const people = await (await ctx.require("directory")).listed().catch(() => []);
-      const [spacesPosts, profile] = await Promise.all([
-        Promise.all((await publicSpaces()).map(d => boardPosts(d, { outside: true, kinds }).catch(() => []))).then(x => x.flat()),
-        profilePosts(people, [], kinds, sinceOf(window) ?? 0).catch(() => []),
-      ]);
-      out = [...spacesPosts, ...profile];
-    }
+    if (where.outside) out = await pointedPosts(kinds, sinceOf(window) ?? 0, { space: where.outside });
+    // DISCOVER: what its bags list (ARCHITECTURE §1) — public spaces' items and people's public profile items, each
+    // read from exactly where its pointer names; nobody who did not post is asked for anything.
+    else if (where.discover) out = await pointedPosts(kinds, sinceOf(window) ?? 0);
     // DISCOVER is filtered by the moderation lists this person applies (theirs, and whom they chose).
     if (where.outside || where.discover) {
       const lists = await (await ctx.require("moderation")).lists();
@@ -360,7 +453,7 @@ export async function start(ctx) {
       const [bs, people, fs] = await Promise.all([boards(), following(), followedSpaces()]);
       out = [
         ...(await Promise.all(bs.map(sp => boardPosts(sp, { kinds, window }).catch(() => [])))).flat(),
-        ...(await Promise.all(fs.map(d => boardPosts(d, { outside: true, kinds }).catch(() => [])))).flat(),
+        ...(await Promise.all(fs.map(d => pointedPosts(kinds, sinceOf(window) ?? 0, { space: d }).catch(() => [])))).flat(),
         ...(await profilePosts([await me(), ...people], [], kinds, sinceOf(window) ?? 0)),
       ];
     } else {
@@ -372,7 +465,7 @@ export async function start(ctx) {
       const onBoards = (
         await Promise.all([
           ...bs.map(sp => boardPosts(sp, { kinds, window }).catch(() => [])),
-          ...pub.filter(d => !inside.has(d.id)).map(d => boardPosts(d, { outside: true, kinds }).catch(() => [])),
+          ...pub.filter(d => !inside.has(d.id)).map(d => pointedPosts(kinds, sinceOf(window) ?? 0, { space: d }).catch(() => [])),
         ])
       )
         .flat()
@@ -389,7 +482,10 @@ export async function start(ctx) {
       if (!sp) return null;
       // ONE item: its place read from its time on (it, its votes and comments) — never the place whole.
       if (!outside) await sinceItem(await boardRoom(sp), idOf(ref));
-      return (await boardPosts(sp, { outside: !!outside, kinds: [...TOP], window: outside ? "all" : "held" })).find(p => p.ref === ref) ?? null;
+      // From outside: read where its pointer names (its writer and who answered it), never every member.
+      const p = outside ? await pointerOf(ref) : null;
+      const room = p ? await pointedRoom(outside, [p]) : null;
+      return (await boardPosts(sp, { outside: !!outside, kinds: [...TOP], window: outside ? "all" : "held", room })).find(x => x.ref === ref) ?? null;
     }
     return (await profilePosts([whereOf(ref)], await pointersTo(ref), [...TOP])).find(p => p.ref === ref) ?? null;
   }
@@ -410,8 +506,8 @@ export async function start(ctx) {
     // Its files: public exactly when the post is (one picked while "Everyone" was chosen, posted "Only you": re-keyed).
     await (await ctx.require("files")).publicity(files, null, !only).catch(e => ctx.log("posts", { what: `its files: ${e.message}` }));
     const ref = `${self}/${await (await profileRoom(self)).post(kind, body, { title, private: only, files, meta })}`;
-    // Its pointer bag, made now (a public post: nobody reading it waits on one that does not exist).
-    if (!only) await index.openPointers(ref).catch(e => ctx.log("posts", { what: `the pointer bag of ${ref}: ${e.message}` }));
+    // Listed in Discover (its own bag made with it: nobody reading it waits on one that does not exist).
+    if (!only) await listPublic(ref, { kind, at: Date.now() }, { did: self }).catch(e => ctx.log("posts", { what: `listing ${ref}: ${e.message}` }));
     return ref;
   }
 
@@ -422,7 +518,8 @@ export async function start(ctx) {
     if (ref.startsWith("space:")) {
       const sp = outside ?? (await boardOf(ref));
       if (!sp) return [];
-      const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
+      const ptr = outside ? await pointerOf(ref) : null;
+      const r = await (outside ? (ptr ? pointedRoom(sp, [ptr]) : outsideRoom(sp)) : boardRoom(sp));
       // A thread's comments are all made AFTER its post: the place read from the post's time on — complete, whatever
       // the list's window, and nothing older (a post from before time ids: the place whole).
       if (!outside) await sinceItem(r, idOf(ref));
@@ -502,6 +599,9 @@ export async function start(ctx) {
   // Every board this person is in: their items' public copies as the board reads NOW (`upkeep`, every tick).
   async function syncPublic() {
     for (const sp of await boards().catch(() => [])) await (await boardRoom(sp)).sync().catch(e => ctx.log("posts", { what: `${sp.name}: public copies: ${e.message}` }));
+    // This person's public profile items from before Discover's bags: listed there too.
+    const self = await me();
+    for (const it of (await profileRoom(self)).list()) if (TOP.has(it.kind) && !it.private) await listPublic(`${self}/${it.id}`, it, { did: self }).catch(() => {});
   }
 
   // ATTACHED ITEMS (a subtitle on a video): contributed like a comment — in the item's place (a board), or on a
@@ -536,7 +636,8 @@ export async function start(ctx) {
     if (ref.startsWith("space:")) {
       const sp = outside ?? (await boardOf(ref));
       if (!sp) return [];
-      const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
+      const ptr = outside ? await pointerOf(ref) : null;
+      const r = await (outside ? (ptr ? pointedRoom(sp, [ptr]) : outsideRoom(sp)) : boardRoom(sp));
       // What attaches to an item is made AFTER it: read from its time on — never bounded by a list's window.
       if (!outside) await sinceItem(r, idOf(ref));
       for (const it of r.list()) if (it.kind === kind && it.in === idOf(ref)) out.push({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), mayRemove: r.mayRemove(it) });

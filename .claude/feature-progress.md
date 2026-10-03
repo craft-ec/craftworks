@@ -967,7 +967,7 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
 (federated data: content in the author's table + a pointer in the target's index, sealed for private use).
 - [x] 1a SPACE WRITERS BAG (fx: 10 spaces' bags complete, page ready 0.46 s, member catalogs no longer searched): a sealed bag per space listing the members who have a catalog there (dropped once, on first
       write / backfilled on load); readers gather only listed writers; one bag poll replaces N catalog polls.
-- [ ] 1b DISCOVER BAG: public posts/videos/audio drop a pointer {writer, table, item} in a public per-kind, per-month
+- [x] 1b DISCOVER BAG (fx: Discover 47 items <1.5 s from bags; real net via B: 59 s first visit — bags searched once then made — 1.5 s after; public acts' writers bag added, empty until an owner/admin loads, old walk until then): public posts/videos/audio drop a pointer {writer, table, item} in a public per-kind, per-month
       bag; Discover reads the bag and only the tails it names; authors and members backfill missing pointers; drop the crawl.
 - [ ] 2a NOTES AND DRIVE ON `content` (owner: why don't they follow the same path?): a note an item of kind `note`
       (text, tags, pin), a Drive entry an item of kind `file` (its ref, folder); each device converts its old rows once
