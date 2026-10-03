@@ -1027,22 +1027,26 @@ export async function start(ctx) {
       rows = decoded(Array.from(feed.merge_feeds(all.filter(t => !t.absent).map(t => [bytes(t.owner), t.raw()]))));
       for (const f of changed) f();
     };
+    // More writers taken in: ready as `settled` is (5 s at most; later ones merged as they come).
     const add = list =>
-      Promise.all(
-        list
-          .filter(o => !seen.has(o) && seen.add(o))
-          .map(o =>
-            tail(o, name, { public: true }).then(
-              t => {
-                all.push(t);
-                t.onChange(remerge);
-                remerge();
-              },
-              () => {},
+      soon(
+        Promise.all(
+          list
+            .filter(o => !seen.has(o) && seen.add(o))
+            .map(o =>
+              tail(o, name, { public: true }).then(
+                t => {
+                  all.push(t);
+                  t.onChange(remerge);
+                  remerge();
+                },
+                () => {},
+              ),
             ),
-          ),
+        ),
+        name,
       );
-    const settled = soon(add(owners), name);
+    const settled = add(owners);
     return { rows: () => rows, onChange: f => changed.push(f), settled, add };
   }
 
