@@ -307,7 +307,9 @@ export async function start(ctx) {
         editFull: async (id, body, o) => (await roomOf(id)).edit(id, body, o),
       };
     });
-  const profiles = async dids => (await Promise.all([...new Set(dids)].map(d => profileRoom(d).catch(() => null)))).filter(Boolean);
+  // Each bounded as a board is (`inTime`): a profile whose node is silent is left out, never waited on.
+  const profiles = async dids =>
+    (await Promise.all([...new Set(dids)].map(d => inTime(profileRoom(d), `the profile of ${String(d).slice(12, 20)}…`).catch(e => (ctx.log("posts", { what: e.message }), null))))).filter(Boolean);
   const pointersTo = async ref => (await index.pointers(ref).catch(() => [])).map(p => p.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
   const idOf = ref => ref.slice(ref.lastIndexOf("/") + 1);
   const whereOf = ref => ref.slice(0, ref.lastIndexOf("/"));

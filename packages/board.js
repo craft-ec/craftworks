@@ -286,7 +286,6 @@ export async function mount(ctx, el) {
       const sp = await posts.boardOf(w.board);
       if (!sp) return [];
       const r = await roles.of(sp);
-      await r.refresh().catch(() => {});
       const n = r.members().length;
       // BOARD'S OWN SETTINGS (its owner and admins): who may post, and its rules (shown here).
       const rules = r.config("board", "rules", "");

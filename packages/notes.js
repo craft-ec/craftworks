@@ -122,7 +122,6 @@ export async function mount(ctx, el) {
       rs = await (await ctx.require("roles")).of(sp);
       // The space's log read first (its apps and settings are acts in it).
       await rs.settled;
-      await rs.refresh().catch(() => {});
       if (!rs.apps().includes("notes")) throw new Error(`${sp.name} does not use Notes: its owner or an admin adds it on the space's Home`);
     }
     [notes, pins, labels, pinUI, labelUI] = await Promise.all([

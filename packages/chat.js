@@ -106,7 +106,6 @@ export async function mount(ctx, el) {
     try {
       await keys.group(s).ready();
       [rs, mod] = await Promise.all([roles.of(s), moderation.of(s)]);
-      await rs.refresh();
       if (server !== s) return;
       menu();
       if (rs.left) {

@@ -62,8 +62,9 @@ export async function mount(ctx, el) {
     if (ctx.space === "discover") return drawDiscover();
     const sp = ctx.space && (await space.mine()).find(s => s.id === ctx.space && s.kind === "server");
     if (!sp) return root.replaceChildren(h("p", { className: "none", textContent: "You are not in this space (left, or not joined yet)." }));
+    // Its roles as known (`roles.of` brought the group current when it opened the space; its acts keep it so): drawn
+    // at once, never after another round of the group's log and every member's card.
     const r = await roles.of(sp);
-    await r.refresh().catch(() => {});
     const on = r.apps();
     const may = r.can(me, "apps");
     const said = h("p", { className: "said", hidden: true });

@@ -198,10 +198,17 @@ export async function start(ctx) {
             if (t.absent && t.answered()) note("none");
             return t;
           }
-          // Listed from before: both names at once — waited on until the node ANSWERS (a "not there" on a real network takes a
-          // minute or more): its place then noted, and never asked again.
-          ctx.log("storage", { what: `${app}: where it is not noted: both names read` });
-          const [blinded, legacy] = await Promise.all([tailAt(owner, app, label, { ...made, wait: WAIT.answer }), tailAt(owner, app, app, { ...rest, known: null, beforeCreate: null, wait: WAIT.answer })]);
+          // Listed from before: its blinded name first — there, it is read there and its name never asked. Its NAME is
+          // asked only when the blinded name is not there, or silent past a hint (a table not yet moved: nothing it holds
+          // missed). Each waited on until the node ANSWERS; its place then noted (its writer's), never asked again.
+          const atBlinded = tailAt(owner, app, label, { ...made, wait: WAIT.answer });
+          const early = await Promise.race([atBlinded, new Promise(r => setTimeout(r, WAIT.hint, null))]);
+          if (early && !early.absent) {
+            note("blinded");
+            return early;
+          }
+          ctx.log("storage", { what: `${app}: where it is not noted: ${early ? "not at its blinded name — its name read" : "its blinded name slow — both names read"}` });
+          const [blinded, legacy] = await Promise.all([atBlinded, tailAt(owner, app, app, { ...rest, known: null, beforeCreate: null, wait: WAIT.answer })]);
           ctx.log("storage", { what: `${app}: blinded ${blinded.absent ? "absent" : "there"}${blinded.answered() ? "" : " (no answer)"}, by name ${legacy.absent ? "absent" : "there"}${legacy.answered() ? "" : " (no answer)"}` });
           if (!blinded.absent) {
             legacy.moved = true;
