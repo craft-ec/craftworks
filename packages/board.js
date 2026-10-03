@@ -288,28 +288,8 @@ export async function mount(ctx, el) {
       const n = r.members().length;
       // BOARD'S OWN SETTINGS (its owner and admins): who may post, and its rules (shown here).
       const rules = r.config("board", "rules", "");
-      const settingsBtn = r.can(me, "apps")
-        ? h("button", {
-            type: "button",
-            className: "ghost",
-            textContent: "Board settings",
-            onclick: () =>
-              appSettings.open(
-                sp,
-                "Board settings",
-                [
-                  // Who may read: the owner's (anyone makes the space's members, roles and moderation public too).
-                  { action: "read", path: "board", label: "Who may read (Anyone: public — its members and moderation too; posts made before stay as they were)" },
-                  { action: "post", path: "board", label: "Who may post" },
-                  { action: "comment", path: "board", label: "Who may comment" },
-                  { action: "vote", path: "board", label: "Who may vote" },
-                  { key: "rules", app: "board", label: "Rules (shown beside the board)" },
-                ],
-                // Made public: its acts published, and the space listed in Discover.
-                { saved: async changed => changed["board|read"] === "anyone" && (await r.publish(), await (await ctx.require("index")).listSpace(sp)) },
-              ),
-          })
-        : null;
+      // Its settings: on the space's Home (`app-settings`: the one place).
+      const settingsBtn = r.can(me, "apps") ? h("a", { className: "ghost", href: appSettings.href(sp, "board"), textContent: "Board settings" }) : null;
       const mayPost = r.allows("post", me, "board");
       return [
         h(

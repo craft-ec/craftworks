@@ -112,35 +112,7 @@ export async function mount(ctx, el) {
         { className: "top" },
         h("h2", { textContent: space.shown(sp) }),
         r.can(me, "invite") ? h("button", { type: "button", className: "btn main", textContent: "Invite", onclick: () => openSettings("invites") }) : null,
-        // PERMISSIONS (owner, admins): the space's policies, which every app inherits unless it says otherwise.
-        r.can(me, "apps")
-          ? h("button", {
-              type: "button",
-              className: "btn",
-              textContent: "Permissions",
-              onclick: async () =>
-                (await ctx.require("app-settings")).open(sp, "Permissions", [
-                  { action: "join", path: "", label: "Who may join (Anyone: whoever asks is let in; Members: by an invite)" },
-                  { action: "invite", path: "", label: "Who may invite (make invite codes, add people, let askers in)" },
-                  { action: "post", path: "", label: "Who may post (every app, unless it says otherwise)" },
-                  { action: "comment", path: "", label: "Who may comment" },
-                  { action: "vote", path: "", label: "Who may vote" },
-                  { action: "edit", path: "", label: "Who may edit (Notes)" },
-                ], {
-                  // Open to anyone: its join requests' bag made, its acts published (who is in, how to join), and the space
-                  // listed in Discover.
-                  saved: async changed => {
-                    if (changed["|join"] === "anyone") {
-                      const index = await ctx.require("index");
-                      await index.openRequests(`open ${sp.id}`);
-                      await r.publish().catch(() => {}); // the owner's: an admin's space goes public from here on
-                      await index.listSpace(sp);
-                    }
-                    await draw();
-                  },
-                }),
-            })
-          : null,
+
         h("button", { type: "button", className: "btn", textContent: "Settings", onclick: () => openSettings("overview") }),
         h("p", { textContent: `${members.length} member${members.length === 1 ? "" : "s"} · you: ${r.role(me) ?? "member"}` }),
       ),
@@ -166,8 +138,13 @@ export async function mount(ctx, el) {
         : null,
       said,
       h("section", {}, h("h3", { textContent: "Members" }), people),
+      // SETTINGS (owner, admins): the one place of every setting of the space and its apps (`app-settings`).
+      may ? h("section", { className: "settings" }, h("h3", { textContent: "Settings" }), await (await ctx.require("app-settings")).page(sp)) : null,
       ].filter(Boolean),
     );
+    // Opened at one app's section (`#/s/<id>/space/settings/<app>`, an app's link): scrolled to it.
+    const at = /^settings\/?(.*)$/.exec(ctx.sub ?? "");
+    if (at) root.querySelector(`#settings-${at[1] || "space"}`)?.scrollIntoView({ block: "start" });
   }
   root.replaceChildren(theme.loading("Opening the space…"));
   await draw();

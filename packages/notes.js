@@ -429,7 +429,7 @@ export async function mount(ctx, el) {
     ctx.actions["/notes"] = [
       // NOTES' OWN SETTINGS in a space (its owner and admins): who may edit.
       ...(rs?.can(meId, "apps")
-        ? [{ label: "Notes settings", run: () => appSettings.open(sp, "Notes settings", [{ action: "edit", path: "notes", label: "Who may add and edit notes" }]) }]
+        ? [{ label: "Notes settings", run: () => (location.hash = appSettings.href(sp, "notes")) }]
         : []),
       { search: v => ((query = v), render()), placeholder: sp ? `Search ${sp.name}'s notes` : "Search your notes", value: query },
       { label: list ? "Grid view" : "List view", run: () => ((list = !list), render(), actions()) },

@@ -1,20 +1,19 @@
-// PERMISSIONS, a component (the one settings dialog of an app in a space, or of the space itself): a list of fields,
-// each either a POLICY — who may do an action at a path (`roles`' access: inherited along the path; "Inherit" drops
-// this path's own policy so its parent's applies) — or a CONTENT setting of the app (a `config` act: Board's rules).
-// For the space's owner and admins; reading in public is the owner's. `extra(host)` draws what else the app keeps
-// there (Chat: its channels, each with its own policy).
+// SETTINGS, a component: the ONE place a space's settings are made — on its Home, a SECTION per app it uses (and one
+// for the space itself), each field either a POLICY — who may do an action at a path (`roles`' access: inherited
+// along the path; "Inherit" drops this path's own policy so its parent's applies) — or a CONTENT setting of the app (a
+// `config` act: Board's rules); an app's own rows beside them (Chat: its channels, each with its own policy). Every
+// app's fields are listed HERE (`SECTIONS`), nowhere else: apps link to their section, none opens a dialog of its own.
+// For the space's owner and admins; reading in public is the owner's.
 //
-//   const permissions = await ctx.require("app-settings");
-//   permissions.open(sp, "Board", [
-//     { action: "post", path: "board", label: "Who may post" },
-//     { key: "rules", app: "board", label: "Rules" }], { extra, saved })   // saved(changed): after a save
-//   permissions.who(r, path, action)   // a <select> for one policy (for an app's own rows: a channel)
+//   const settings = await ctx.require("app-settings");
+//   host.append(await settings.page(sp))          // every section of the space (its Home)
+//   settings.href(sp, "board")                    // the link to one app's section
+//   settings.who(r, path, action)                 // a <select> for one policy
 export async function start(ctx) {
   const roles = await ctx.require("roles");
   const style = document.createElement("style");
   style.textContent = `
-    .cw-appset { border: 0; border-radius: var(--cw-radius); padding: var(--cw-space-4); width: min(480px, calc(100vw - 32px)); box-shadow: var(--cw-shadow-lg);
-      background: var(--cw-surface); color: var(--cw-fg); }
+    .cw-appset { border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-4); background: var(--cw-surface); color: var(--cw-fg); }
     .cw-appset h3 { margin: 0 0 var(--cw-space-3); font-size: 1.05rem; }
     .cw-appset h4 { margin: var(--cw-space-3) 0 var(--cw-space-2); font-size: var(--cw-text-xs); letter-spacing: .08em; text-transform: uppercase; color: var(--cw-muted); }
     .cw-appset label { display: grid; gap: 4px; margin-bottom: var(--cw-space-3); font-size: var(--cw-text-sm); font-weight: 600; }
@@ -70,24 +69,75 @@ export async function start(ctx) {
     return true;
   }
 
-  async function open(sp, title, fields, { extra = null, saved = null } = {}) {
-    const r = await roles.of(sp);
-    const me = (await (await ctx.require("space")).account()).id;
-    const d = h("dialog", { className: "cw-appset" });
+  // EVERY APP's SETTINGS — its fields, what saving one does beyond the act (a space made public: listed).
+  const madePublic = async (r, sp) => (await r.publish().catch(() => {}), await (await ctx.require("index")).listSpace(sp));
+  const SECTIONS = {
+    "": {
+      title: "The space",
+      fields: [
+        { action: "join", path: "", label: "Who may join (Anyone: whoever asks is let in; Members: by an invite)" },
+        { action: "invite", path: "", label: "Who may invite (make invite codes, add people, let askers in)" },
+        { action: "post", path: "", label: "Who may post (every app, unless it says otherwise)" },
+        { action: "comment", path: "", label: "Who may comment" },
+        { action: "vote", path: "", label: "Who may vote" },
+        { action: "edit", path: "", label: "Who may edit (shared notes and files)" },
+      ],
+      saved: async (changed, r, sp) => {
+        if (changed["|join"] !== "anyone") return;
+        await (await ctx.require("index")).openRequests(`open ${sp.id}`);
+        await madePublic(r, sp);
+      },
+    },
+    board: {
+      title: "Board",
+      fields: [
+        { action: "read", path: "board", label: "Who may read (Anyone: public — its members and moderation too; posts made before stay as they were)" },
+        { action: "post", path: "board", label: "Who may post" },
+        { action: "comment", path: "board", label: "Who may comment" },
+        { action: "vote", path: "board", label: "Who may vote" },
+        { key: "rules", app: "board", label: "Rules (shown beside the board)" },
+      ],
+      saved: async (changed, r, sp) => changed["board|read"] === "anyone" && madePublic(r, sp),
+    },
+    videos: { title: "Videos", fields: ["read", "post", "comment", "vote"].map(action => ({ action, path: "videos", label: `Who may ${action}` })), saved: async (c, r, sp) => c["videos|read"] === "anyone" && madePublic(r, sp) },
+    audio: { title: "Audio", fields: ["read", "post", "comment", "vote"].map(action => ({ action, path: "audio", label: `Who may ${action}` })), saved: async (c, r, sp) => c["audio|read"] === "anyone" && madePublic(r, sp) },
+    chat: { title: "Chat", fields: [{ action: "post", path: "chat", label: "Who may post (in every channel that does not say otherwise)" }], extra: chatChannels },
+    notes: { title: "Notes", fields: [{ action: "post", path: "notes", label: "Who may add notes" }, { action: "edit", path: "notes", label: "Who may edit notes" }] },
+    drive: { title: "Drive", fields: [{ action: "read", path: "drive", label: "Who may read" }, { action: "post", path: "drive", label: "Who may upload" }, { action: "edit", path: "drive", label: "Who may move files" }] },
+  };
+  // CHAT's own rows: its channels, each with who may post in it.
+  async function chatChannels(host, r, sp) {
+    const channels = await (await ctx.require("conversation")).channels(sp);
+    await channels.settled;
+    const say = t => (host.querySelector(".said") ?? host).append(h("p", { className: "said", textContent: t }));
+    const draw = () => {
+      const add = h("input", { placeholder: "New channel", ariaLabel: "New channel" });
+      host.replaceChildren(
+        h("h4", { textContent: "Channels" }),
+        ...channels.list().map(c => {
+          const name = h("input", { value: c.name, ariaLabel: "Channel name" });
+          const row = h("div", { className: "row" }, name, h("button", { type: "button", textContent: "Rename", onclick: () => channels.rename(c, name.value.trim()).then(draw, e => say(e.message)) }), h("button", { type: "button", textContent: "Delete", onclick: () => channels.remove(c).then(draw, e => say(e.message)) }));
+          row.append(who(r, `chat/${c.id.split("/").pop()}`, "post"));
+          return row;
+        }),
+        h("div", { className: "row" }, add, h("button", { type: "button", textContent: "Add", onclick: () => add.value.trim() && channels.add(add.value.trim()).then(draw, e => say(e.message)) })),
+      );
+    };
+    draw();
+  }
+
+  // ONE SECTION, inline: its fields, its own rows, Save.
+  async function section(sp, key, r, me) {
+    const S = SECTIONS[key];
     const said = h("p", { className: "said" });
-    const inputs = fields.map(f => {
+    const inputs = S.fields.map(f => {
       if (f.action) return { f, input: who(r, f.path, f.action, { me }) };
       const now = r.config(f.app, f.key, "");
       return { f, input: h("textarea", { value: now ?? "", maxLength: 2000 }), now };
     });
     const btn = h("button", { type: "submit", className: "main", textContent: "Save" });
-    const form = h(
-      "form",
-      {},
-      ...inputs.map(({ f, input }) => h("label", {}, f.label, input)),
-      h("div", { className: "row" }, said, h("button", { type: "button", textContent: "Close", onclick: () => d.close() }), btn),
-    );
-    const more = extra ? h("div", {}) : null;
+    const more = S.extra ? h("div", {}) : null;
+    const form = h("form", { className: "cw-appset", id: `settings-${key || "space"}` }, h("h3", { textContent: S.title }), ...inputs.map(({ f, input }) => h("label", {}, f.label, input)), more, h("div", { className: "row" }, said, btn));
     form.onsubmit = async e => {
       e.preventDefault();
       btn.disabled = true;
@@ -103,9 +153,8 @@ export async function start(ctx) {
             changed[f.key] = input.value;
           }
         }
-        // The app's own rows (a channel's policy): saved the same way.
         for (const sel of more?.querySelectorAll("select[data-path]") ?? []) if (await save(r, sel)) changed[`${sel.dataset.path}|${sel.dataset.action}`] = sel.value || "inherit";
-        if (saved) await saved(changed);
+        await S.saved?.(changed, r, sp);
         said.className = "ok";
         said.textContent = "Saved.";
       } catch (err) {
@@ -114,13 +163,17 @@ export async function start(ctx) {
         btn.disabled = false;
       }
     };
-    d.append(h("h3", { textContent: `${title} · ${sp.name}` }), form, more);
-    if (extra) await extra(more, r);
-    d.addEventListener("click", e => e.target === d && d.close());
-    d.addEventListener("close", () => d.remove());
-    document.body.append(d);
-    d.showModal();
+    if (S.extra) await S.extra(more, r, sp).catch(err => more.append(h("p", { className: "said", textContent: err?.message ?? String(err) })));
+    return form;
   }
+  // THE PAGE: the space's own section, then each app it uses that has settings.
+  async function page(sp) {
+    const r = await roles.of(sp);
+    const me = (await (await ctx.require("space")).account()).id;
+    const keys = ["", ...r.apps().filter(a => SECTIONS[a])];
+    return h("div", { className: "cw-settings", style: "display:grid;gap:var(--cw-space-3)" }, ...(await Promise.all(keys.map(k => section(sp, k, r, me)))));
+  }
+  const href = (sp, key) => `#/s/${sp.id}/space/settings/${key}`;
 
-  return { open, who: (r, path, action) => who(r, path, action) };
+  return { page, href, who: (r, path, action) => who(r, path, action) };
 }
