@@ -1008,6 +1008,9 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       comment, vote; `r.allows(action, who, path)` the one check everywhere (comments.js today skips it for a profile:
       anyone). Only the GROUPS a policy names differ: a shared space's members/roles, the personal space's
       friends/followers/only you (the same groups the audience picker seals to).
+- [ ] ONE IMAGE CAPABILITY (owner 10-03: "image will unify with image capability / app"): an image's making
+      (thumbnail; sizes) moves out of `attachments` into one capability, as `video-studio` is for video/audio — used
+      by the Images app and every editor alike.
 - [ ] IMAGES APP (owner 10-03): a lens on the image domain (public view like Flickr), as Videos is YouTube's and Audio
       Spotify's — same `items`/`content` path, its Drive folder /Images. Its kinds (owner 10-03): IMAGE (the general one, as Videos'
       `video`), with PHOTO and ARTWORK

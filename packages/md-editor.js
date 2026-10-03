@@ -343,7 +343,10 @@ export async function start(ctx) {
     const mediaMenu = h(
       "span",
       { className: "cw-att-menu", hidden: true },
-      h("button", { type: "button", textContent: "From this device", onclick: e => (e.preventDefault(), (mediaMenu.hidden = true), mediaIn.click()) }),
+      // Each kind its own line (the same picker: what it accepts narrowed), so audio is as plain to find as an image.
+      ...[["🖼 Image", "image/*"], ["🎬 Video", "video/*"], ["🎵 Audio", "audio/*"]].map(([textContent, accept]) =>
+        h("button", { type: "button", textContent, onclick: e => (e.preventDefault(), (mediaMenu.hidden = true), (mediaIn.accept = accept), mediaIn.click()) }),
+      ),
       h("button", { type: "button", textContent: "From Drive", onclick: e => (e.preventDefault(), (mediaMenu.hidden = true), pick?.fromDrive?.({ media: true })) }),
     );
     mediaIn.onchange = () => {
@@ -362,7 +365,7 @@ export async function start(ctx) {
     });
     const modeBtn = h("button", { type: "button", className: "mode", onclick: e => (e.preventDefault(), setMode(mode === "rich" ? "markdown" : "rich")) });
     // MEDIA and FILES side by side: 🖼 inline, 📎 attached below (on a chat line: always shown, beside Aa).
-    const mediaGroup = pick ? [h("span", { className: "cw-att-pick" }, btn("🖼", "Image, video or audio (inline): from this device or from Drive", () => (mediaMenu.hidden = !mediaMenu.hidden)), mediaMenu), pick.el] : [];
+    const mediaGroup = pick ? [h("span", { className: "cw-att-pick" }, btn("🖼 Media", "An image, a video or an audio, inline: from this device or from Drive", () => (mediaMenu.hidden = !mediaMenu.hidden)), mediaMenu), pick.el] : [];
     const bar = h(
       "div",
       { className: "bar", hidden: compact },
