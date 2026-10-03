@@ -148,15 +148,17 @@ export async function mount(ctx, el) {
     const down = h("button", { type: "button", className: "down", textContent: "▼", title: "Downvote", ariaPressed: String(it.mine === -1) });
     const cast = v => async e => {
       e.stopPropagation();
-      // From outside (Discover): scores only — members vote; nor where the space's policy says you may not.
-      if (discovering() || (here && !(await roles.of(here)).allows("vote", me, "board"))) return;
+      // Where the one check says this person may (`posts.mayWriteOn`): in a space they are not in, as its public policy
+      // says (anyone may, or nobody outside).
+      const outside = !here && it.board && !(await posts.boardOf(it.board.id)) ? await descOf(it.board.id) : null;
+      if (here ? !(await roles.of(here)).allows("vote", me, "board") : !(await posts.mayWriteOn(it, "vote", { outside }).catch(() => false))) return;
       const next = it.mine === v ? 0 : v;
       it.score += next - it.mine;
       it.mine = next;
       n.textContent = String(it.score);
       up.ariaPressed = String(next === 1);
       down.ariaPressed = String(next === -1);
-      await posts.vote(it.ref, next, post).catch(() => {});
+      await posts.vote(it.ref, next, post, { outside }).catch(() => {});
     };
     up.onclick = cast(1);
     down.onclick = cast(-1);
@@ -263,7 +265,8 @@ export async function mount(ctx, el) {
       "div",
       { className: "panel" },
       h("h3", { textContent: `b/${space.shown(d)}` }),
-      h("p", { textContent: `🌐 A public board: anyone reads it; its ${pr.members().length} member${pr.members().length === 1 ? "" : "s"} post, comment and vote.` }),
+      // Who takes part, as its policy says (`roles`: comments and votes open to anyone where anyone reads, unless set).
+      h("p", { textContent: `🌐 A public board: anyone reads it; its ${pr.members().length} member${pr.members().length === 1 ? "" : "s"} post${["comment", "vote"].every(a => pr.policyIn("text", a) === "anyone") ? "; anyone comments and votes" : ", comment and vote"}.` }),
       mine ? h("a", { className: "go", href: `#/s/${d.id}/board`, textContent: "Open in your space" }) : join ?? h("p", { textContent: "Joining is by invite." }),
     );
   }

@@ -190,6 +190,20 @@ export async function start(ctx) {
       const [head, ...rest] = path.split("/");
       return gv.policy_at(path, action, at) || (WAS[head] && gv.policy_at([WAS[head], ...rest].join("/"), action, at)) || null;
     };
+    // Set at a path or any path above it (a channel, its app, the space).
+    const setAlong = (path, action, at) => {
+      for (let p = path; ; p = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "") {
+        const w = policyAt(p, action, at);
+        if (w || p === "") return w;
+      }
+    };
+    // THE DEFAULT where nothing is set: what anyone may READ, anyone may comment on and vote on (public participation:
+    // outsiders' part kept in their own profiles, `items`); everything else as the core's default (members).
+    const PUBLIC_WRITES = new Set(["comment", "vote"]);
+    const fallback = (read, action, at) => (PUBLIC_WRITES.has(action) && read === "anyone" ? "anyone" : gv.effective("", action, at));
+    const policyOf = (path, action, at) => setAlong(path, action, at) || fallback(action === "read" ? null : policyOf(path, "read", at), action, at);
+    const policyInOf = (domain, action, at) =>
+      policyAt(domain, action, at) || (LEGACY[domain] && policyAt(LEGACY[domain], action, at)) || policyAt("", action, at) || fallback(action === "read" ? null : policyInOf(domain, "read", at), action, at);
     const r = {
       space: sp,
       get owner() {
@@ -205,18 +219,17 @@ export async function start(ctx) {
         const c = gv.config(app, key);
         return (c === undefined ? null : JSON.parse(c)) ?? dflt;
       },
-      policy: (path, action, at = Infinity) => policyAt(path, action, at) || gv.effective(path, action, at),
+      policy: (path, action, at = Infinity) => policyOf(path, action, at),
       // The policies set at exactly this path (not inherited): { action: who }.
       policiesAt: path => Object.fromEntries(ACTIONS.map(x => [x, policyAt(path, x, Infinity)]).filter(([, w]) => w)),
       allows: (action, did, path = "", at = Infinity) => {
-        const who = policyAt(path, action, at) || gv.effective(path, action, at);
+        const who = policyOf(path, action, at);
         return who === "anyone" || G.passes(who, role(did));
       },
       // A DOMAIN's policy for an action (`kinds.policyDomain(kind)`: what an item is decides, not the app showing it).
-      policyIn: (domain, action, at = Infinity) => policyAt(domain, action, at) || (LEGACY[domain] && policyAt(LEGACY[domain], action, at)) || gv.effective("", action, at),
+      policyIn: (domain, action, at = Infinity) => policyInOf(domain, action, at),
       allowsIn: (action, did, domain, at = Infinity) => {
-        const own = policyAt(domain, action, at) || (LEGACY[domain] && policyAt(LEGACY[domain], action, at));
-        const who = own || gv.effective("", action, at);
+        const who = policyInOf(domain, action, at);
         return who === "anyone" || G.passes(who, role(did));
       },
       domains: () => DOMAINS,

@@ -3,7 +3,7 @@
 // one's own (Remove where a moderator may). Written with the one editor (`md-editor`: rich text or Markdown, images,
 // videos and audio inline), shown as Markdown (`markdown`). The comments are `items`' (`thread`, `comment`).
 // WHERE its files are kept: the item's space (public as the item is), or the profile (public unless only its author's).
-// WHO may comment and vote: the space's roles for `app` (a profile's: anyone); from outside (Discover): read only.
+// WHO may comment and vote: the one check (`items.mayWriteOn`) — from outside a space too, where its policy says anyone.
 //
 //   const cm = await ctx.require("comments");
 //   const t = await cm.create({ item, outside, app: "board" })   // item: from items.get
@@ -64,7 +64,8 @@ export async function start(ctx) {
     const r = sp ? await roles.of(sp).catch(() => null) : null;
     // THE ONE CHECK (`roles.mayWrite`, through `items`): the item's own rule, else its space's policy — the same for a
     // personal item (its author's friends or followers, by the credential this person holds).
-    const [mayComment, mayVote] = outside ? [false, false] : await Promise.all(["comment", "vote"].map(a => items.mayWriteOn(item, a).catch(() => false)));
+    // From outside (not in its space): as its public policy says (`items.mayWriteOn`: anyone may, or nobody outside).
+    const [mayComment, mayVote] = await Promise.all(["comment", "vote"].map(a => items.mayWriteOn(item, a, { outside }).catch(() => false)));
 
     const who = did => {
       const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.stopPropagation(), person.open(e.currentTarget, did, sp ? { space: sp } : {})) });
@@ -91,7 +92,7 @@ export async function start(ctx) {
         n.textContent = String(c.score);
         up.ariaPressed = String(next === 1);
         down.ariaPressed = String(next === -1);
-        await items.vote(c.ref, next, ref).catch(() => {});
+        await items.vote(c.ref, next, ref, { outside }).catch(() => {});
       };
       up.onclick = cast(1);
       down.onclick = cast(-1);
@@ -125,7 +126,7 @@ export async function start(ctx) {
         if (ed.busy()) return errorTo(said)(new Error("Still sending the files: a moment…"));
         btn.disabled = true;
         try {
-          await items.comment(ref, re, ed.value(), { files: ed.files() });
+          await items.comment(ref, re, ed.value(), { files: ed.files(), outside });
           ed.clear();
           cancel?.();
           await refresh();
@@ -187,7 +188,7 @@ export async function start(ctx) {
     const el = h(
       "div",
       { className: "cw-cm" },
-      outside ? h("p", { className: "none", textContent: "Only the space's members comment and vote." }) : mayComment ? replyForm(ref, "Comment") : h("p", { className: "none", textContent: ({ friends: `Only ${directory.shown(item.by)}'s friends comment here.`, followers: `Only ${directory.shown(item.by)}'s followers comment here.`, author: "Only its author comments here." })[item.meta?.write?.comment] ?? "Comments are closed to you here." }),
+      mayComment ? replyForm(ref, "Comment") : outside ? h("p", { className: "none", textContent: "Only the space's members comment here." }) : h("p", { className: "none", textContent: ({ friends: `Only ${directory.shown(item.by)}'s friends comment here.`, followers: `Only ${directory.shown(item.by)}'s followers comment here.`, author: "Only its author comments here." })[item.meta?.write?.comment] ?? "Comments are closed to you here." }),
       tree,
     );
     refresh().catch(() => {});

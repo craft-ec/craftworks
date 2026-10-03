@@ -186,7 +186,9 @@ export async function mount(ctx, el) {
     const timed = view.timed;
     const coverBox = C.audio ? view.el : null;
     const speed = C.audio && ["podcast", "audiobook"].includes(v.kind) ? h("select", { title: "Speed", onchange: e => (video.playbackRate = Number(e.target.value)) }, ...[0.75, 1, 1.25, 1.5, 2].map(x => h("option", { value: x, textContent: `${x}×`, selected: x === 1 }))) : null;
-    const like = h("button", { type: "button", className: v.mine === 1 ? "on" : "", disabled: !!outside, title: outside ? "Join to like" : "", textContent: `▲ ${v.score ?? 0}`, onclick: async () => ((like.disabled = true), await items.vote(ref, v.mine === 1 ? 0 : 1).catch(() => {}), draw()) });
+    // A like: where the one check says this person may (from outside: as the space's public policy says).
+    const mayLike = !outside || (await items.mayWriteOn(v, "vote", { outside }).catch(() => false));
+    const like = h("button", { type: "button", className: v.mine === 1 ? "on" : "", disabled: !mayLike, title: mayLike ? "" : "Join to like", textContent: `▲ ${v.score ?? 0}`, onclick: async () => ((like.disabled = true), await items.vote(ref, v.mine === 1 ? 0 : 1, ref, { outside }).catch(() => {}), draw()) });
     const saved = () => pins.has(SAVED(ref));
     const save = h("button", { type: "button", className: saved() ? "on" : "", textContent: saved() ? "Saved ✓" : "Save", onclick: async () => (await pins.set(SAVED(ref), !saved()), (save.className = saved() ? "on" : ""), (save.textContent = saved() ? "Saved ✓" : "Save")) });
     const k = kinds.of(v.kind);

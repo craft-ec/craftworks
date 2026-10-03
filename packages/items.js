@@ -72,6 +72,8 @@ export async function start(ctx) {
   }
   const changed = [];
   const fire = () => changed.forEach(f => f());
+  // A bag answered (a space's outsiders): what reads it, drawn again.
+  index.onChange?.(fire);
   const me = async () => (await space.account()).id;
   // Whose profiles this person reads: whom they follow, and their friends (friends need no follow as well).
   // A follow names a SPACE: a person's DID (their personal space) or a shared space's id.
@@ -360,10 +362,52 @@ export async function start(ctx) {
     const votes = tally(r.reactions(), new Map(), since);
     const counts = new Map();
     for (const it of items) if (it.kind === "comment" && it.at >= since) counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
+    // And outsiders' (public participation).
+    const o = await outsiders(sp, items, { outside });
+    tally(o.reactions, votes, since);
+    for (const c of o.comments) if (c.at >= since) counts.set(c.post, (counts.get(c.post) ?? 0) + 1);
     return items
       .filter(it => kinds.includes(it.kind))
       .map(it => ({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), pub: it.pub, comments: counts.get(it.id) ?? 0, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it), mayEdit: !!r.mayEdit?.(it) }));
   }
+  // OUTSIDERS' PART in a space (public participation): comments and votes by people not in it — kept in their own
+  // profiles (only they write there), each pointed ONCE in the space's bag (`space:<id>`). Counted where the space's
+  // policy lets them (`roles.mayWrite`, the one check: "anyone") and its acts have not banned them. Members' are its room's.
+  // `room`: the room's items as read; returns the outsiders' comments (`post`: the room post's id) and reactions (`item`:
+  // a room item's id, or an outsider's comment's ref).
+  const spaceBag = sp => `space:${sp.id}`;
+  async function outsiders(sp, roomItems, { outside = false } = {}) {
+    const dids = (await index.pointers(spaceBag(sp), { show: true }).catch(() => [])).map(p => p?.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
+    if (!dids.length) return { comments: [], reactions: [] };
+    const [pr, rs] = await Promise.all([outside ? roles.ofPublic(sp) : roles.of(sp), profiles(dids)]);
+    const base = `space:${sp.id}/`;
+    const local = ref => (String(ref ?? "").startsWith(base) ? String(ref).slice(base.length) : ref);
+    const byId = new Map(roomItems.map(it => [it.id, it]));
+    const postIn = id => {
+      const it = byId.get(id);
+      return it?.kind === "comment" ? (byId.get(postOf(it)) ?? null) : (it ?? null);
+    };
+    const may = (action, by, post, cred) => !!post && !pr.banned(by) && roles.mayWrite({ action, item: post, writer: by, cred, r: pr }) === true;
+    const comments = rs
+      .flatMap(r => r.list())
+      .filter(it => it.kind === "comment" && String(it.in ?? "").startsWith(base))
+      .map(it => ({ ...it, ref: `${it.by}/${it.id}`, post: local(it.in) }))
+      .filter(c => may("comment", c.by, postIn(c.post), c.meta?.cred));
+    const theirs = new Map(comments.map(c => [c.ref, c]));
+    const reactions = rs
+      .flatMap(r => r.reactions())
+      .map(x => ({ ...x, item: local(x.item) }))
+      .filter(x => may("vote", x.by, theirs.has(x.item) ? postIn(theirs.get(x.item).post) : postIn(x.item), x.cred));
+    return { comments, reactions };
+  }
+  // This person's part in a space they are not in: pointed in its bag, once per page.
+  async function pointToSpace(sp) {
+    const self = await me();
+    if (pointed.has(spaceBag(sp))) return;
+    await index.point(spaceBag(sp), { from: self });
+    pointed.add(spaceBag(sp));
+  }
+
   // PROFILE posts: from their authors' tails; comments and votes from the tails known here (the reader's, whom they
   // follow, and whoever `readers` names).
   // `withVotes: false`: the authors' profiles alone (a lens that shows no votes or comment counts: Notes, Drive).
@@ -555,11 +599,15 @@ export async function start(ctx) {
       // A thread's comments are all made AFTER its post: the place read from the post's time on — complete, whatever
       // the list's window, and nothing older (a post from before time ids: the place whole).
       if (!outside) await sinceItem(r, idOf(ref));
-      const votes = tally(r.reactions());
+      const o = await outsiders(sp, r.list(), { outside: !!outside });
+      const votes = tally([...r.reactions(), ...o.reactions]);
       const post = idOf(ref);
+      // A reply's parent: a room comment (its id), or an outsider's comment (its ref).
+      const parentOf = re => (re === post || re === ref ? ref : String(re).includes("/") ? re : `space:${sp.id}/${re}`);
       for (const it of r.list())
         if (it.kind === "comment" && postOf(it) === post)
-          all.push({ ...it, ref: `space:${sp.id}/${it.id}`, parent: it.re === post ? ref : `space:${sp.id}/${it.re}`, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it), replies: [] });
+          all.push({ ...it, ref: `space:${sp.id}/${it.id}`, parent: parentOf(it.re), ...scored(it.id, votes, self), mayRemove: r.mayRemove(it), replies: [] });
+      for (const c of o.comments) if (c.post === post) all.push({ ...c, parent: parentOf(c.re), ...scored(c.ref, votes, self), mayRemove: c.by === self, replies: [] });
     } else {
       const rs = await profiles([whereOf(ref), self, ...(await following()), ...(await pointersTo(ref))]);
       // The post's rule (`roles.mayWrite`): who may comment and vote on it — what does not pass, not counted.
@@ -591,11 +639,17 @@ export async function start(ctx) {
     return post ? roles.credToCite(post, action) : null;
   }
   // May this person comment or vote on item `it` (as `list`/`get` give it): the one check.
-  async function mayWriteOn(it, action) {
+  async function mayWriteOn(it, action, { outside = null } = {}) {
     if (!it) return false;
     if (String(it.ref).startsWith("space:")) {
       const sp = await boardOf(it.ref);
-      return sp ? ((await (await boardRoom(sp)).mayAbout?.(it.id, action)) ?? true) : false;
+      if (sp) return (await (await boardRoom(sp)).mayAbout?.(it.id, action)) ?? true;
+      // Not in it: as the space's public policy says (anyone), unless banned there.
+      if (!outside) return false;
+      const pr = await roles.ofPublic(outside);
+      await pr.settled;
+      const self = await me();
+      return !pr.banned(self) && roles.mayWrite({ action, item: it, writer: self, r: pr }) === true;
     }
     return writeCred(it.ref, action).then(() => true, () => false);
   }
@@ -609,17 +663,25 @@ export async function start(ctx) {
     pointed.add(ref);
   }
 
-  async function comment(post, re, body, { files = [] } = {}) {
+  async function comment(post, re, body, { files = [], outside = null } = {}) {
     body = String(body ?? "").trim();
     if (!body && !files.length) throw new Error("a comment needs something in it");
     if (post.startsWith("space:")) {
       const sp = await boardOf(post);
-      if (!sp) throw new Error("you are not in that board's space");
+      if (!sp) {
+        // NOT IN IT (public participation): in this person's own profile, pointed in the space's bag.
+        if (!outside || !(await mayWriteOn(await get(post, { outside }), "comment", { outside }))) throw new Error("only its members comment here");
+        await (await profileRoom(await me())).post("comment", body, { re: re ?? post, in: post, files });
+        await pointToSpace(outside);
+        return;
+      }
       const room = await boardRoom(sp);
       // Its post's rule (the one check): a credential cited where only its author's friends or followers comment.
       const it = room.list().find(x => x.id === idOf(post));
       const cred = it ? await roles.credToCite(it, "comment", await roles.of(sp)) : null;
-      await room.post("comment", body, { re: idOf(re ?? post), in: idOf(post), files, ...(cred ? { meta: { cred } } : {}) });
+      // A reply to a room comment names its id; to an outsider's, its ref.
+      const reId = re && !String(re).startsWith("space:") ? re : idOf(re ?? post);
+      await room.post("comment", body, { re: reId, in: idOf(post), files, ...(cred ? { meta: { cred } } : {}) });
       return;
     }
     const mine = await profileRoom(await me());
@@ -631,12 +693,23 @@ export async function start(ctx) {
     if (!mine.isPrivate?.(post)) await pointTo(post);
   }
 
-  async function vote(ref, v, post = ref) {
-    const onBoard = ref.startsWith("space:");
-    const sp = onBoard ? await boardOf(ref) : null;
-    if (onBoard && !sp) throw new Error("you are not in that board's space");
+  async function vote(ref, v, post = ref, { outside = null } = {}) {
+    // On a space's item — its post, a comment in its room, or an outsider's comment there.
+    const inSpace = String(post).startsWith("space:");
+    const sp = inSpace ? await boardOf(post) : null;
+    if (inSpace && !sp) {
+      // NOT IN IT (public participation): in this person's own profile, pointed in the space's bag.
+      if (!outside || !(await mayWriteOn(await get(post, { outside }), "vote", { outside }))) throw new Error("only its members vote here");
+      const mine = await profileRoom(await me());
+      const self = await me();
+      const had = new Set(mine.reactions().filter(x => x.item === ref && x.by === self).map(x => x.emoji));
+      for (const [e, on] of [[UP, v === 1], [DOWN, v === -1]]) if (on !== had.has(e)) await mine.react(ref, e, on, {});
+      if (v) await pointToSpace(outside);
+      return;
+    }
+    const onBoard = !!sp;
     const r = onBoard ? await boardRoom(sp) : await profileRoom(await me());
-    const item = onBoard ? idOf(ref) : ref;
+    const item = onBoard && ref.startsWith("space:") ? idOf(ref) : ref;
     const self = await me();
     const had = new Set(r.reactions().filter(x => x.item === item && x.by === self).map(x => x.emoji));
     const cred = onBoard ? null : await writeCred(ref, "vote");

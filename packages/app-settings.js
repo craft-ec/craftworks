@@ -44,10 +44,12 @@ export async function start(ctx) {
         from = p;
         break;
       }
-    const inherited = from == null ? (r.personal ? "anyone" : "members") : r.policy(from, action);
+    // The default (nothing set above): anyone, in a personal space; in a shared one, members — but comments and votes
+    // where anyone reads (`roles`' default: public participation).
+    const inherited = from == null ? (r.personal || (["comment", "vote"].includes(action) && r.policy(path, "read") === "anyone") ? "anyone" : "members") : r.policy(from, action);
     const LEVEL = p => (p === "" ? "the space" : p === "chat" ? "Chat" : p === "board" ? "Board" : p === "note" ? "Note" : p);
     // A personal space's: anyone · your followers · your friends · only you (`roles.personal`).
-    const options = r.personal ? ["anyone", "followers", "friends", "author"] : ["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || action === "read" || action === "join");
+    const options = r.personal ? ["anyone", "followers", "friends", "author"] : ["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || ["read", "join", "comment", "vote"].includes(action));
     const sel = h(
       "select",
       { ariaLabel: `${action} at ${path || "the space"}` },
