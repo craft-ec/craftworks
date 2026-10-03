@@ -38,7 +38,10 @@ export async function start(ctx) {
     .cw-att-menu { position: absolute; bottom: 100%; left: 0; z-index: 5; display: grid; background: var(--cw-surface); border: 1px solid var(--cw-line);
       border-radius: var(--cw-radius-sm); box-shadow: var(--cw-shadow-lg); padding: 4px; min-width: 160px; }
     .cw-att-menu[hidden] { display: none; }
-    .cw-att-menu button { font: inherit; text-align: left; border: 0; background: none; color: var(--cw-fg); padding: 6px 10px; cursor: pointer; border-radius: var(--cw-radius-sm); }
+    .cw-att-menu button, .cw-att-menu .cw-att-file { font: inherit; text-align: left; border: 0; background: none; color: var(--cw-fg); padding: 6px 10px; cursor: pointer; border-radius: var(--cw-radius-sm); white-space: nowrap; }
+    .cw-att-menu .cw-att-file:hover { background: var(--cw-hover); }
+    .cw-att-file { position: relative; display: block; }
+    .cw-att-file input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
     .cw-att-menu button:hover { background: var(--cw-hover); }
     .cw-att-drive { border: 0; border-radius: var(--cw-radius); padding: var(--cw-space-4); width: min(520px, calc(100vw - 32px)); box-shadow: var(--cw-shadow-lg);
       background: var(--cw-surface); color: var(--cw-fg); }
@@ -71,15 +74,27 @@ export async function start(ctx) {
   // `publish`: a NEW image, video or audio uploaded here becomes an ITEM of its kind by the one path (`publisher`, the
   // same as its app's upload page) — for whom the item being written is; one taken from Drive is an item already.
   // (A conversation's files — a message, a mail — stay its own: no `publish`.)
+  // A LINE THAT PICKS FILES: a <label> around its own file input — the browser opens its chooser on the click itself
+  // (no script calling `input.click()` on a hidden input, which Safari ignores, in a sandboxed frame above all).
+  // `onFiles(files)` when some are chosen; `after()` once clicked (a menu closing).
+  function fileButton(text, { accept = "", onFiles, after = () => {} } = {}) {
+    const input = h("input", { type: "file", multiple: true, accept, tabIndex: -1 });
+    input.onchange = () => {
+      const fs = [...input.files];
+      input.value = "";
+      if (fs.length) onFiles(fs);
+    };
+    return h("label", { className: "cw-att-file", onclick: () => setTimeout(after) }, text, input);
+  }
+
   function picker({ space = null, public: pub = false, from = null, media = false, publish = false } = {}) {
-    const input = h("input", { type: "file", multiple: true, hidden: true });
     const chips = h("span", { className: "cw-att-pick" });
     // 📎: this device, or Drive.
     const menu = h("span", { className: "cw-att-menu", hidden: true },
-      h("button", { type: "button", textContent: "From this device", onclick: () => ((menu.hidden = true), input.click()) }),
+      fileButton("From this device", { onFiles: fs => fs.forEach(f => add(f)), after: () => (menu.hidden = true) }),
       h("button", { type: "button", textContent: "From Drive", onclick: () => ((menu.hidden = true), fromDrive()) }),
     );
-    const el = h("span", { className: "cw-att-pick" }, h("button", { type: "button", className: "clip", title: "Attach files", ariaLabel: "Attach files", textContent: "📎", onclick: () => (menu.hidden = !menu.hidden) }), menu, chips, input);
+    const el = h("span", { className: "cw-att-pick" }, h("button", { type: "button", className: "clip", title: "Attach files", ariaLabel: "Attach files", textContent: "📎", onclick: () => (menu.hidden = !menu.hidden) }), menu, chips);
     // The menu closes on a click anywhere outside it (and its 📎).
     document.addEventListener("pointerdown", e => {
       if (el.isConnected && !menu.hidden && !el.contains(e.target)) menu.hidden = true;
@@ -89,10 +104,6 @@ export async function start(ctx) {
     const tell = () => changed.forEach(f => f());
     const readied = []; // told each file once it is ready: (ref, the File it came from, or null from Drive)
     const told = (ref, file) => readied.forEach(f => f(ref, file));
-    input.onchange = () => {
-      for (const file of input.files) add(file);
-      input.value = "";
-    };
     // FROM DRIVE: yours, or ANY space's you are in (chosen at the top), each file attached as its reference (ready at
     // once): the item's readers read it — as a file forwarded.
     // `media`: only images, videos and audio (the editor's 🖼). WHO READS IT is said: a file taken from Drive is
@@ -153,10 +164,22 @@ export async function start(ctx) {
         // the same as its app's); anything else as it is.
         const m = kinds.mediaOf(file.type);
         const opts = { space, app: from?.app, public: typeof pub === "function" ? !!pub() : pub, onProgress: e => (pct.textContent = e.stage === "uploading" ? `${Math.round((e.p || 0) * 100)}%` : `${e.stage} ${Math.round((e.p || 0) * 100)}%`) };
-        const audience = opts.public ? "public" : space && space.kind !== "account" ? "members" : "private";
-        const ref = m?.maker && publish
-          ? (await (await ctx.require("publisher")).publish(file, { space: space && space.kind !== "account" ? space : null, audience, app: from?.app, onProgress: opts.onProgress })).ref
-          : m?.maker
+        // PUBLISHED: the one upload form over the editor (`publisher.dialog`: kind, title, fields, who sees it — for whom
+        // the item being written is, to start) — cancelled, nothing is sent and the file leaves the editor.
+        if (m?.maker && publish) {
+          pct.textContent = "publishing…";
+          const done = await (await ctx.require("publisher")).dialog(file, { space: space && space.kind !== "account" ? space : null, initial: opts.public ? "public" : space && space.kind !== "account" ? "members" : "private", app: from?.app });
+          if (!done) {
+            items.splice(items.indexOf(it), 1);
+            it.chip.remove();
+            return;
+          }
+          it.ref = { ...done.ref, name: file.name };
+          pct.textContent = sizeOf(file.size);
+          told(it.ref, file);
+          return;
+        }
+        const ref = m?.maker
           ? await (await ctx.require(m.maker)).make(file, opts)
           : await drive.upload(file, { space, from, public: opts.public, onProgress: e => (pct.textContent = e.phase === "reading" ? "reading…" : `${Math.round((100 * e.done) / e.size)}%`) });
         it.ref = { ...ref, name: file.name };
@@ -245,5 +268,5 @@ export async function start(ctx) {
     );
   }
 
-  return { picker, show, open: (ref, note = document.createElement("span")) => openFull(ref, note), sizeOf, isImage };
+  return { picker, fileButton, show, open: (ref, note = document.createElement("span")) => openFull(ref, note), sizeOf, isImage };
 }

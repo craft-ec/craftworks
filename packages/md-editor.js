@@ -12,7 +12,7 @@
 //   const ed = (await ctx.require("md-editor")).create({ value, placeholder, pick, compact, onSubmit, suggest })
 //   form.append(ed.el)   ed.value()   ed.set(md)   ed.files()   ed.busy()   ed.focus()   ed.clear()   ed.disable(bool)
 export async function start(ctx) {
-  const [markdown, kinds] = await Promise.all([ctx.require("markdown"), ctx.require("kinds")]);
+  const [markdown, kinds, attachments] = await Promise.all([ctx.require("markdown"), ctx.require("kinds"), ctx.require("attachments")]);
   const style = document.createElement("style");
   style.textContent = `
     .cw-mde { display: grid; gap: 4px; position: relative; }
@@ -23,8 +23,8 @@ export async function start(ctx) {
     .cw-mde .bar button:hover, .cw-mde .bar button.on, .cw-mde .aa.on { border-color: var(--cw-accent); color: var(--cw-accent); }
     .cw-mde .bar .sp { flex: 1; }
     .cw-mde .bar .mode { font-weight: 400; }
-    .cw-mde .bar .cw-att-menu button { border: 0; font-weight: 400; min-width: 0; font-size: inherit; width: 100%; text-align: left; padding: 6px 10px; white-space: nowrap; }
-    .cw-mde .bar .cw-att-menu button:hover { background: var(--cw-hover); color: var(--cw-fg); }
+    .cw-mde .bar .cw-att-menu button, .cw-mde .bar .cw-att-menu .cw-att-file { border: 0; font-weight: 400; min-width: 0; font-size: inherit; width: 100%; text-align: left; padding: 6px 10px; white-space: nowrap; }
+    .cw-mde .bar .cw-att-menu button:hover, .cw-mde .bar .cw-att-menu .cw-att-file:hover { background: var(--cw-hover); color: var(--cw-fg); }
     div.cw-mde textarea, div.cw-mde div.rich { font: inherit; width: 100%; box-sizing: border-box; min-height: 110px; resize: none; overflow-y: hidden; padding: var(--cw-space-2);
       border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); background: var(--cw-surface); color: var(--cw-fg); outline: none; }
     div.cw-mde div.rich:focus, div.cw-mde textarea:focus { border-color: var(--cw-accent); }
@@ -40,7 +40,7 @@ export async function start(ctx) {
     .cw-mde .tools-in button { font: inherit; font-size: 13px; min-width: 28px; line-height: 1.4; padding: 2px 6px; cursor: pointer; border: 1px solid var(--cw-line);
       border-radius: var(--cw-radius-sm); background: var(--cw-surface); color: var(--cw-fg); }
     .cw-mde .tools-in .cw-att-menu { bottom: 100%; top: auto; }
-    .cw-mde .tools-in .cw-att-menu button { border: 0; width: 100%; text-align: left; padding: 6px 10px; white-space: nowrap; }
+    .cw-mde .tools-in .cw-att-menu button, .cw-mde .tools-in .cw-att-menu .cw-att-file { border: 0; width: 100%; text-align: left; padding: 6px 10px; white-space: nowrap; }
     .cw-mde .suggest { position: absolute; bottom: 100%; left: 0; z-index: 6; list-style: none; margin: 0; padding: 4px; min-width: 180px;
       background: var(--cw-surface); border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); box-shadow: var(--cw-shadow-lg); }
     .cw-mde .suggest[hidden] { display: none; }
@@ -338,22 +338,20 @@ export async function start(ctx) {
     const btn = (label, title, fn) => h("button", { type: "button", textContent: label, title, onmousedown: e => e.preventDefault(), onclick: e => (e.preventDefault(), fn()) });
 
     // MEDIA: a file picked here goes inline once sent (and one attached with 📎 that is media, too).
-    const mediaIn = h("input", { type: "file", accept: kinds.media().map(m => m.accept).join(","), multiple: true, hidden: true });
     const inlineNext = new Set();
+    // A file picked here goes inline once sent.
+    const pickedInline = fs => {
+      for (const f of fs) inlineNext.add(f);
+      pick?.addFiles?.(fs);
+    };
     const mediaMenu = h(
       "span",
       { className: "cw-att-menu", hidden: true },
       // Each kind its own line (the same picker: what it accepts narrowed), so audio is as plain to find as an image.
-      ...kinds.media().map(m =>
-        h("button", { type: "button", textContent: `${m.icon} ${m.label}`, onclick: e => (e.preventDefault(), (mediaMenu.hidden = true), (mediaIn.accept = m.accept), mediaIn.click()) }),
-      ),
+      // Each kind its own line (`attachments.fileButton`: a label the browser opens the chooser from).
+      ...kinds.media().map(m => attachments.fileButton(`${m.icon} ${m.label}`, { accept: m.accept, onFiles: pickedInline, after: () => (mediaMenu.hidden = true) })),
       h("button", { type: "button", textContent: "From Drive", onclick: e => (e.preventDefault(), (mediaMenu.hidden = true), pick?.fromDrive?.({ media: true })) }),
     );
-    mediaIn.onchange = () => {
-      for (const f of mediaIn.files) inlineNext.add(f);
-      pick?.addFiles?.([...mediaIn.files]);
-      mediaIn.value = "";
-    };
     pick?.onReady?.((ref, file) => {
       if (!ref || !isMedia(ref)) return;
       if (file && !inlineNext.has(file) && !kinds.mediaOf(file.type)) return;
@@ -440,8 +438,8 @@ export async function start(ctx) {
 
     // The compact line: Aa, 🖼 and 📎 beside the text.
     const el = compact
-      ? h("div", { className: "cw-mde compact" }, list, bar, h("div", { className: "line-in" }, h("span", { className: "tools-in" }, aa, ...mediaGroup), ta, rich), mediaIn)
-      : h("div", { className: "cw-mde" }, list, bar, ta, rich, mediaIn);
+      ? h("div", { className: "cw-mde compact" }, list, bar, h("div", { className: "line-in" }, h("span", { className: "tools-in" }, aa, ...mediaGroup), ta, rich))
+      : h("div", { className: "cw-mde" }, list, bar, ta, rich);
     document.addEventListener("pointerdown", e => {
       if (!el.isConnected) return;
       if (!mediaMenu.hidden && !mediaMenu.parentElement.contains(e.target)) mediaMenu.hidden = true;
