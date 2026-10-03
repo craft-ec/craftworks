@@ -184,17 +184,24 @@ export async function start(ctx) {
           // ANOTHER writer's feed its catalog does not mark as moved: where it was — it moves (and marks) its own.
           if (listing.theirs) return tailAt(owner, app, app, rest);
           // Listed from before: both names at once.
+          ctx.log("storage", { what: `${app}: where it is not noted: both names read` });
           const [blinded, legacy] = await Promise.all([tailAt(owner, app, label, { ...rest, beforeCreate: null }), tailAt(owner, app, app, { ...rest, known: null, beforeCreate: null })]);
+          ctx.log("storage", { what: `${app}: blinded ${blinded.absent ? "absent" : "there"}${blinded.answered() ? "" : " (no answer)"}, by name ${legacy.absent ? "absent" : "there"}${legacy.answered() ? "" : " (no answer)"}` });
           const noted = () => listing.mark?.().catch(e => ctx.log("storage", { what: `${app}: noting where it is: ${e?.message ?? e}` }));
           if (!blinded.absent) {
             legacy.moved = true;
             noted();
             return blinded;
           }
-          if (legacy.absent && legacy.answered() && blinded.answered()) return blinded; // new after all: at its blinded name
+          // New after all (the node ANSWERED "not there" for both): at its blinded name — noted, never looked for twice.
+          if (legacy.absent && legacy.answered() && blinded.answered()) {
+            noted();
+            return blinded;
+          }
           if (legacy.absent) return legacy; // the node silent for one of them: where it was, moved another time
           const sp = await space.account();
           if (!(owner === sp?.self || owner === sp?.shared || ownKeys.has(owner))) return legacy; // another's: read there
+          ctx.log("storage", { what: `${app}: moving to its blinded name` });
           const moved = await blinded.moveFrom(legacy).catch(e => (ctx.log("storage", { what: `${app}: not moved yet — ${e?.message ?? e}` }), false));
           if (!moved) return legacy;
           legacy.moved = true;

@@ -61,7 +61,12 @@ export async function start(ctx) {
         if (done) return;
         if (a.kind !== "get-failed") {
           done = true;
-          if (group.length) core.tail_rebuild(b); // forget the race: the block itself is held
+          // Forget the race: the block itself is held. Another read of the same block (two tails sharing a tree: a
+          // table and its moved copy) may have forgotten it already — never a throw here, or this read waits forever.
+          if (group.length)
+            try {
+              core.tail_rebuild(b);
+            } catch {}
           resolve("direct");
         } else settle();
       });
