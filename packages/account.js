@@ -139,7 +139,7 @@ export async function mount(ctx, el) {
         the table itself — about once a week, one table at a time while a page is open; a missing block is made again
         from its group. HEALTH: a group is whole (all its blocks there), degraded (enough to rebuild), or damaged.</p>
         <p><button type="button" class="keep-now">Keep all now</button> <span class="note kept-said"></span></p>
-        <table class="tables"><thead><tr><th>Table</th><th>Rows</th><th>Sealed</th><th>Where</th><th>Kept</th><th>Health</th></tr></thead>
+        <table class="tables"><thead><tr><th>Table</th><th>Rows</th><th>Sealed</th><th>Where</th><th>Kept</th><th>Health</th><th>Address</th></tr></thead>
         <tbody><tr><td colspan="6">Reading…</td></tr></tbody></table><p class="files-kept"></p><p class="note blocks"></p>`;
       box.append(sto);
       const keep = await ctx.require("keep");
@@ -153,6 +153,8 @@ export async function mount(ctx, el) {
         const where = (t.unopened ? `${t.unopened} feed(s) not readable here — log in with your recovery words; ` : "") + (t.flushed ? (t.pending ? `tree + ${t.pending} in the tail` : "tree") : `tail (${t.pending} row${t.pending === 1 ? "" : "s"})`);
         const k = last.get(t.name);
         for (const v of [label, String(t.rows), t.sealed ? (t.writes === "table" ? "table key" : t.writes ?? "yes") : "no key here", where, k ? ago(k.at) : "not yet", health(k)]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
+        // Its network ADDRESS, whole (what another node asks for): selectable, to compare across nodes.
+        tr.append(Object.assign(document.createElement("td"), { textContent: t.address ?? "—", style: "font-family:monospace;font-size:11px;word-break:break-all;user-select:all" }));
         return tr;
       };
       let last = new Map();
@@ -172,14 +174,14 @@ export async function mount(ctx, el) {
               const tr = document.createElement("tr");
               if (t.closed) {
                 // Another app's table: not opened from here.
-                for (const v of [t.name, "—", "—", "another app's", "—", "—"]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
+                for (const v of [t.name, "—", "—", "another app's", "—", "—", "—"]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
                 return tr;
               }
               return row(t, t.name);
             }),
             // EACH SPACE's tables this node writes: its CATALOG first (what every other member reads to find the rest).
             ...spaces.flatMap(s => [
-              Object.assign(document.createElement("tr"), { innerHTML: `<th colspan="6"></th>` }),
+              Object.assign(document.createElement("tr"), { innerHTML: `<th colspan="7"></th>` }),
               ...s.tables.map(t => row(t, t.catalog ? "catalog" : t.name.replace(/^x[0-9a-f]{12}-/, ""))),
             ].map((tr, i) => (i === 0 && (tr.querySelector("th").textContent = `${s.space.name ?? s.space.id.slice(0, 8)} (a space)`), tr))),
           );

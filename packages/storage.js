@@ -1043,11 +1043,14 @@ export async function start(ctx) {
         continue;
       }
       const t = await table(name).catch(() => null);
-      if (t) out.push({ name, sealed: !!t.sealed, ...t.info });
+      if (t) out.push({ name, sealed: !!t.sealed, ...t.info, address: await addressOf(name) });
     }
     return out;
   }
 
+  // A table's NETWORK ADDRESS (its contract id, hex): this node's own feed of it — what others ask for to read it.
+  const hexOf = id => (id ? [...id].map(b => b.toString(16).padStart(2, "0")).join("") : null);
+  const addressOf = async name => hexOf((await ownTables()).find(t => t.app === name)?.id);
   // EACH SPACE's tables this node writes — its catalog there, and every table it lists — read as `describe` reads the
   // account's (the Storage page; opened, so "Keep all now" keeps them too).
   async function describeSpaces() {
@@ -1057,10 +1060,10 @@ export async function start(ctx) {
       const cat = await scope.catalogOf(scope.self).catch(() => null);
       if (!cat) continue;
       await cat.answer?.();
-      const tables = [{ name: sp.tables.catalog, sealed: !!cat.sealed, rows: own(cat).length, flushed: true, pending: 0, catalog: true, absent: !!cat.absent }];
+      const tables = [{ name: sp.tables.catalog, sealed: !!cat.sealed, rows: own(cat).length, flushed: true, pending: 0, catalog: true, absent: !!cat.absent, address: hexOf(cat.id) }];
       for (const r of own(cat).filter(x => x.value && placeOf(cat, x.key) !== "none")) {
         const t = await table(r.key, sp).catch(() => null);
-        if (t) tables.push({ name: r.key, sealed: !!t.sealed, ...t.info });
+        if (t) tables.push({ name: r.key, sealed: !!t.sealed, ...t.info, address: await addressOf(r.key) });
       }
       out.push({ space: { id: sp.id, name: sp.name }, tables });
     }
