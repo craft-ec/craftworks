@@ -161,14 +161,21 @@ export async function start(ctx) {
   // anyone (public tails): at their names. A table still at its NAME (from before) is MOVED by its writer on its next
   // open — one signed step, its tree kept (the same key addresses it) — and read there by the others until then.
   // Never on a guess: only when the node ANSWERED for both is a table new here; silence keeps it where it was.
-  // WHERE IT IS comes from its CATALOG (`listing`): a table listed as moved (`b`) opens at its blinded name, one new
-  // to its catalog is made there — no network lookup for either; only a table listed from before is looked for at
-  // both names (at once), and its catalog then says which (`listing.mark`): asked once, never again.
+  // WHERE IT IS comes from its writer's CATALOG (`catalog`: the one place a table's place is kept — `placeOf` reads
+  // it, `notePlace` writes it, both only here): not listed or never made — not looked for, made at its blinded name by
+  // its first write; at its blinded name — read there; listed from before — both names read at once (nothing it holds
+  // missed), and THIS node's catalog then says which. Never on a guess: "never made" only when the node ANSWERED.
   const opening = new Map(); // `${owner}|${app}` → Promise<the tail>
   function tail(owner, app, opts = {}) {
     const inSpace = opts.space ?? null;
     const byName = opts.public || opts.sealWith || opts.catalogKey || CHANNELS.has(app) || ANY_GRANT.has(app) || (inSpace?.tables && Object.values(inSpace.tables).includes(app));
-    if (byName) return tailAt(owner, app, app, opts);
+    // A table found by its NAME: only whether its catalog lists it (not listed or never made: not looked for).
+    if (byName) {
+      const { catalog: cat = null, ...rest } = opts;
+      const place = cat ? placeOf(cat, app) : null;
+      const made = { ...rest, beforeCreate: cat && ownKeys.has(owner) ? () => notePlace(cat, app, "blinded") : rest.beforeCreate };
+      return tailAt(owner, app, app, place === "unlisted" || place === "none" ? { ...made, known: false } : made);
+    }
     const k = `${owner}|${app}`;
     if (!opening.has(k))
       opening.set(
@@ -177,35 +184,39 @@ export async function start(ctx) {
           const key = await access.key(app, { space: inSpace?.idBytes ?? inSpace });
           if (!key.key) return tailAt(owner, app, app, opts); // no key here: nothing of it reads either way
           const label = glue.blind_name(bytes(key.key), app);
-          const listing = opts.listing ?? {};
-          const { listing: _l, ...rest } = opts;
-          // Its catalog says: moved (open there), or new (made there) — nothing looked for.
-          if (listing.blinded || opts.known === false) return tailAt(owner, app, label, rest);
-          // ANOTHER writer's feed its catalog does not mark as moved: where it was — it moves (and marks) its own.
-          if (listing.theirs) return tailAt(owner, app, app, rest);
+          const { catalog: cat = null, ...rest } = opts;
+          // Its PLACE (its writer's catalog), and whether this node notes it (its own catalog only).
+          const sp = await space.account();
+          const ours = owner === sp?.self || owner === sp?.shared || ownKeys.has(owner);
+          const place = cat ? placeOf(cat, app) : opts.known === false ? "unlisted" : "unknown";
+          const note = p => (cat && ours ? notePlace(cat, app, p).catch(e => ctx.log("storage", { what: `${app}: noting its place: ${e?.message ?? e}` })) : Promise.resolve());
+          // Its first write here makes it at its blinded name, listed so first.
+          const made = { ...rest, beforeCreate: cat && ours ? () => notePlace(cat, app, "blinded") : rest.beforeCreate };
+          if (place === "unlisted" || place === "none") return tailAt(owner, app, label, { ...made, known: false });
+          if (place === "blinded") {
+            const t = await tailAt(owner, app, label, made);
+            if (t.absent && t.answered()) note("none");
+            return t;
+          }
           // Listed from before: both names at once.
           ctx.log("storage", { what: `${app}: where it is not noted: both names read` });
-          const [blinded, legacy] = await Promise.all([tailAt(owner, app, label, { ...rest, beforeCreate: null }), tailAt(owner, app, app, { ...rest, known: null, beforeCreate: null })]);
+          const [blinded, legacy] = await Promise.all([tailAt(owner, app, label, made), tailAt(owner, app, app, { ...rest, known: null, beforeCreate: null })]);
           ctx.log("storage", { what: `${app}: blinded ${blinded.absent ? "absent" : "there"}${blinded.answered() ? "" : " (no answer)"}, by name ${legacy.absent ? "absent" : "there"}${legacy.answered() ? "" : " (no answer)"}` });
-          const noted = () => listing.mark?.().catch(e => ctx.log("storage", { what: `${app}: noting where it is: ${e?.message ?? e}` }));
           if (!blinded.absent) {
             legacy.moved = true;
-            noted();
+            note("blinded");
             return blinded;
           }
-          // New after all (the node ANSWERED "not there" for both): at its blinded name — noted, never looked for twice.
           if (legacy.absent && legacy.answered() && blinded.answered()) {
-            noted();
+            note("none");
             return blinded;
           }
-          if (legacy.absent) return legacy; // the node silent for one of them: where it was, moved another time
-          const sp = await space.account();
-          if (!(owner === sp?.self || owner === sp?.shared || ownKeys.has(owner))) return legacy; // another's: read there
+          if (legacy.absent || !ours) return legacy; // the node silent for one (moved another time), or another's: read there
           ctx.log("storage", { what: `${app}: moving to its blinded name` });
           const moved = await blinded.moveFrom(legacy).catch(e => (ctx.log("storage", { what: `${app}: not moved yet — ${e?.message ?? e}` }), false));
           if (!moved) return legacy;
           legacy.moved = true;
-          noted();
+          note("blinded");
           ctx.log("storage", { what: `${app}: moved to its blinded name` });
           return blinded;
         })().catch(e => (opening.delete(k), Promise.reject(e))),
@@ -545,7 +556,7 @@ export async function start(ctx) {
         const heads = {};
         await Promise.all(
           listedIn(cat).map(async r => {
-            const t = await tail(node, r.key, { known: true, ...scope.opts(r.key), listing: placeIn(cat, r.key) }).catch(() => null);
+            const t = await tail(node, r.key, { ...scope.opts(r.key), catalog: cat }).catch(() => null);
             if (!t || t.absent) return;
             const seqs = (t.raw() ?? []).map(([, v]) => seqOf(v)).filter(Number.isFinite);
             if (seqs.length) heads[r.key] = Math.max(...seqs);
@@ -563,17 +574,21 @@ export async function start(ctx) {
   // opens the space, so a catalog that is not there means a member never there (never asked for it in vain).
   const HERE = "~here";
   const listedIn = cat => own(cat).filter(r => r.key !== HERE);
-  // Where a writer's feed of table `n` is, as its catalog lists it: moved to its blinded name (`b`), or not (yet).
-  const movedIn = (cat, n) => {
+  // A table's PLACE as its writer's catalog lists it — the one reader of it: "unlisted"; "none" (listed, never made:
+  // the node answered "not there" under both names); "blinded" (at its blinded name); "unknown" (listed from before).
+  const placeOf = (cat, n) => {
     const r = own(cat).find(x => x.key === n);
+    if (!r) return "unlisted";
     try {
-      return !!r && JSON.parse(r.value)?.b === 1;
+      const v = JSON.parse(r.value);
+      return v?.n === 1 ? "none" : v?.b === 1 ? "blinded" : "unknown";
     } catch {
-      return false;
+      return "unknown";
     }
   };
-  // Another writer's feed opened where its catalog says.
-  const placeIn = (cat, n) => ({ blinded: movedIn(cat, n), theirs: true });
+  // NOTE a table's place in this node's catalog — the one writer of it: "blinded" or "none".
+  const notePlace = (cat, n, p) =>
+    placeOf(cat, n) === p ? Promise.resolve() : versioned(cat, n, JSON.stringify({ at: Date.now(), b: 1, ...(p === "none" ? { n: 1 } : {}) }), own(cat).find(r => r.key === n)?.id);
   // A write to a feed, as a VERSION replacing `after` (the id of the version current where it is written).
   const versioned = (t, key, value, after) =>
     t.put(key, () => feed.version(bytes(t.owner), t.tailNext(), after ?? "", value === null ? undefined : enc.encode(value)));
@@ -624,18 +639,8 @@ export async function start(ctx) {
     const sp = await space.account();
     const d = await directory();
     const listed = legacyListed(d, name);
-    return tail(sp.shared, name, { known: listed === false ? false : null, beforeCreate: () => listInDirectory(name), listing: directoryListing(d, name) });
+    return tail(sp.shared, name, { known: listed === false ? false : null, beforeCreate: () => listInDirectory(name) });
   }
-  // A shared table's place, as the directory lists it (moved: `b`), and noting it there.
-  function directoryListing(d, name) {
-    const r = d.rows().find(x => x.key === name);
-    let b = false;
-    try {
-      b = !!r && JSON.parse(r.value)?.b === 1;
-    } catch {}
-    return { blinded: b, mark: async () => (b ? undefined : d.put(name, JSON.stringify({ at: Date.now(), b: 1 }))) };
-  }
-
   // A SCOPE: a space seen from this node — who writes in it, where each writer lists its tables, how its tails open.
   // The account: the directory names its nodes, their catalogs are account tables, and its tables from before feeds
   // are the oldest writer. Another space: its GROUP's members write, each listing the space's tables in its own catalog
@@ -741,7 +746,7 @@ export async function start(ctx) {
       let unopened = 0;
       const opts = scope.opts(name);
       const theirs = (owner, known, cat = null) =>
-        tail(owner, name, { known, ...opts, lazy, listing: { blinded: !!cat && movedIn(cat, name), theirs: !!cat } }).catch(e => {
+        tail(owner, name, { ...(cat ? { catalog: cat } : { known }), ...opts, lazy }).catch(e => {
           unopened += 1;
           ctx.log("feed not read", { what: `${name}: ${owner.slice(0, 12)}…: ${e.message}` });
           return null;
@@ -761,14 +766,9 @@ export async function start(ctx) {
       // The table from before feeds: the oldest writer.
       const old = await scope.old(name);
       if (old) take(await theirs(old.owner, old.known));
-      // This node's: listed in its catalog BEFORE it is made. The table opens once it is open.
-      const listMine = async () => {
-        if (!lists(mine, name)) await versioned(mine, name, JSON.stringify({ at: Date.now(), b: 1 }), own(mine).find(r => r.key === name)?.id);
-      };
-      // This node's feed noted as at its blinded name (moved, or found there).
-      const markMine = () => (movedIn(mine, name) ? Promise.resolve() : versioned(mine, name, JSON.stringify({ at: Date.now(), b: 1 }), own(mine).find(r => r.key === name)?.id));
+      // This node's: listed in its catalog BEFORE it is made (`tail`, by its catalog). The table opens once it is open.
       ownKeys.add(scope.self);
-      const me = await tail(scope.self, name, { known: lists(mine, name) ? null : false, ...opts, beforeCreate: listMine, lazy, listing: { blinded: movedIn(mine, name), mark: markMine } });
+      const me = await tail(scope.self, name, { ...opts, lazy, catalog: mine });
       take(me);
       // The OTHER writers' feeds, in the background: each merged in as it arrives, never holding the table up. A writer
       // whose catalog is not there yet (a node that has not written here), or does not list this table yet, is asked
@@ -958,7 +958,7 @@ export async function start(ctx) {
       owners.map(async owner => {
         const cat = await catalogOf(owner).catch(() => null);
         if (!cat || !own(cat).some(r => r.key === name)) return;
-        const t = await tail(owner, name, { known: true, catalogKey: ANY_GRANT.has(name), listing: placeIn(cat, name) }).catch(() => null);
+        const t = await tail(owner, name, { catalogKey: ANY_GRANT.has(name), catalog: cat }).catch(() => null);
         if (t) out.push({ owner, rows: own(t) });
       }),
     );
