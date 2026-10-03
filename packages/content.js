@@ -92,7 +92,7 @@ export async function start(ctx) {
     const byOf = (row, v) => {
       const writer = (r ? r.author(row) : null) ?? v.by ?? null;
       if (!r || !v.editor || v.editor !== writer || !K.collaborative(v.kind) || typeof v.by !== "string") return writer;
-      return r.allowsIn("edit", writer, K.policyDomain(v.kind), Number(v.edited) || Infinity) ? v.by : writer;
+      return R.mayWrite({ action: "edit", item: { kind: v.kind, by: v.by, meta: v.meta }, writer, r, at: Number(v.edited) || Infinity }) === true ? v.by : writer;
     };
     const item = row => {
       try {
@@ -201,18 +201,24 @@ export async function start(ctx) {
         // A post or message by someone the setting did not allow when it was made: not counted.
         .filter((it, _, all) => !(governed && app && ACTION[it.kind] && !allowed(ACTION[it.kind], it.by, it, all, it.at)));
     };
-    // WHICH POLICY: a channel's (its path); a board's items each their DOMAIN's (`roles.allowsIn`: what an item is
-    // decides — a video by Videos' setting, a note by Notes'), a comment or a vote its item's.
-    const domainOf = (it, all) => {
+    // WHICH RULE: a channel's (its path); on a board, THE ONE CHECK (`roles.mayWrite`, the same for a personal item):
+    // posting by the space's policy for what is posted; a comment or a vote by the rule of the item it answers (its
+    // own setting, else the policy for that item's domain), its credential cited where friends or followers may.
+    const rootOf = (it, all) => {
       for (let x = it, depth = 0; x && depth < 8; depth++) {
-        if (K.of(x.kind)) return K.policyDomain(x.kind);
+        if (K.of(x.kind)) return x;
         const up = x.in ?? x.item ?? x.re;
         x = up ? all.find(y => y.id === up) : null;
       }
-      return "text";
+      return null;
     };
-    const allowed = (action, did, it, all, at) => (app === "board" ? r.allowsIn(action, did, domainOf(it, all), at) : r.allows(action, did, app, at));
-    const reactionsOf = all => all.filter(x => x.kind === "reaction" && x.item && x.emoji && x.by).map(({ item, emoji, by, at }) => ({ item, emoji, by, at }));
+    const R = await ctx.require("roles");
+    const allowed = (action, did, it, all, at) => {
+      if (app !== "board") return r.allows(action, did, app, at);
+      const root = action === "post" ? { kind: it.kind, by: null, meta: {} } : rootOf(it, all) ?? { kind: "post", by: null, meta: {} };
+      return R.mayWrite({ action, item: root, writer: did, cred: it.meta?.cred ?? it.cred ?? null, r, at }) === true;
+    };
+    const reactionsOf = all => all.filter(x => x.kind === "reaction" && x.item && x.emoji && x.by).map(({ item, emoji, by, at, meta }) => ({ item, emoji, by, at, ...(meta?.cred ? { cred: meta.cred } : {}) }));
     const list = () => {
       const all = every();
       // Reactions gathered onto the items they react to.
@@ -229,7 +235,7 @@ export async function start(ctx) {
         .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
     };
     // MAY CHANGE IT: its author — or, a COLLABORATIVE kind in a space, whoever its domain's `edit` policy allows.
-    const mayEdit = it => it.by === me || (governed && app === "board" && K.collaborative(it.kind) && r.allowsIn("edit", me, K.policyDomain(it.kind)));
+    const mayEdit = it => it.by === me || (governed && app === "board" && K.collaborative(it.kind) && R.mayWrite({ action: "edit", item: it, writer: me, r }) === true);
     const mine = id => {
       const it = list().find(x => x.id === id);
       if (!it) throw new Error("no such item");
@@ -241,6 +247,8 @@ export async function start(ctx) {
     // PAGED: the newest page read before it is handed out.
     const first = paged ? older(50) : Promise.resolve();
     r?.onChange(() => changed.forEach(f => f()));
+    // A credential read (a friend's or a follower's): what it lets count, counted.
+    R.onChecked(() => changed.forEach(f => f()));
     people.onChange(() => changed.forEach(f => f()));
     return {
       list,
@@ -258,6 +266,13 @@ export async function start(ctx) {
       // May this person post here now (the app's setting; a conversation: always).
       mayPost: (kind = "post") => !(governed && app) || allowed("post", me, { kind }, [], Infinity),
       may: (action, kind = "post") => !(governed && app) || allowed(action, me, { kind }, [], Infinity),
+      // The rule of writing about ITEM `id` (a comment, a vote): may this person, and the credential they cite.
+      mayAbout: async (id, action) => {
+        const it = list().find(x => x.id === id);
+        if (!(governed && app) || !it) return true;
+        const cred = await R.credToCite(it, action, r).catch(() => false);
+        return cred !== false && R.mayWrite({ action, item: it, writer: me, cred, r }) !== false;
+      },
       mayEdit,
       postingRule: () => (governed && app ? r.policy(app, "post") : "members"),
       // `at`: when it was made (a note brought over from before: its own time).
@@ -268,11 +283,12 @@ export async function start(ctx) {
         return id;
       },
       // A REACTION: this person's, to one item, one emoji — its own row (the author in its key), put or taken back.
-      async react(id, emoji, on) {
+      // `cred`: a write credential (`circles`) where only friends or followers may vote.
+      async react(id, emoji, on, { cred = null } = {}) {
         if (outside) throw new Error("only the space's members vote here");
         const code = [...emoji].map(c => c.codePointAt(0).toString(16)).join("-");
         const key = `r-${id}-${code}-${me.slice(12, 24)}`;
-        if (on) await t.put(key, JSON.stringify({ kind: "reaction", item: id, emoji, at: Date.now(), by: me }));
+        if (on) await t.put(key, JSON.stringify({ kind: "reaction", item: id, emoji, at: Date.now(), by: me, ...(cred ? { meta: { cred } } : {}) }));
         else await t.remove(key);
       },
       async edit(id, body, { files = null, meta = null, title = undefined } = {}) {

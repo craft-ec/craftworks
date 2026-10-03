@@ -331,10 +331,11 @@ export async function mount(ctx, el) {
     return c;
   };
 
+  const R = await ctx.require("roles");
   const render = () => {
     root.classList.toggle("list", list);
     // The composer: not in the archive, nor for who may not edit here.
-    composer.hidden = archive || (!!rs && !rs.allowsIn("post", meId, "note"));
+    composer.hidden = archive || (!!rs && R.mayWrite({ action: "post", item: { kind: "note", by: null, meta: {} }, writer: meId, r: rs }) !== true);
     if (label && !labels.list().some(l => l.id === label)) label = null; // deleted meanwhile
     bar();
     const q = query.toLowerCase();

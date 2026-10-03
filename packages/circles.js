@@ -11,6 +11,13 @@
 //   const circles = await ctx.require("circles");
 //   const sp = await circles.of("friends")   // the circle (made the first time it is wanted)
 //   await circles.sync()                     // its members as they should be (upkeep)
+//   (Checked by every reader, cited by every writer: `roles.mayWrite`, `roles.credToCite`.)
+//
+// WRITE CREDENTIALS — who may comment or vote where only friends or followers may, provable to ANY reader without the
+// list ever published: per friend or follower, an UNLISTED public table of the owner's account at a random name
+// (`cred-<token>`), its row `for` naming the holder's DID and circle — a signed table write like any other. The token
+// reaches the holder through their inbox; a comment or vote cites it; a reader reads that table and checks it names
+// the writer. Never listed (card, catalog): not found by anyone not told it. A friend no longer: the table cleared.
 export async function start(ctx) {
   const [space, conversation, roles, edge, index] = await Promise.all(["space", "conversation", "roles", "edge", "index"].map(n => ctx.require(n)));
   const AUDIENCES = { friends: { name: "Friends", relation: "friend" }, followers: { name: "Followers", relation: "follower" } };
@@ -54,12 +61,42 @@ export async function start(ctx) {
     }
   }
 
+  const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+  const credTable = (owner, token) => ctx.require("directory").then(d => d.publicOf(owner, `cred-${token}`, { unlisted: true }));
+  // ISSUED: each of the relation's people holds one; anyone no longer one, theirs cleared.
+  async function issue(people, me, which, want) {
+    const rel = `cred-${which}`;
+    for (const did of want) {
+      if (people.is(rel, did)) continue;
+      const token = hexOf(crypto.getRandomValues(new Uint8Array(16)));
+      await (await credTable(me.id, token)).put("for", JSON.stringify({ did, circle: which, at: Date.now() }));
+      await people.set(rel, did, true, Date.now(), { token });
+      await index.send(did, { kind: "cred", circle: which, token, from: me.id, at: Date.now() }).catch(e => ctx.log("circles", { what: `handing ${did.slice(12, 20)}… their ${which} credential: ${e.message}` }));
+    }
+    for (const did of people.list(rel)) {
+      if (want.has(did)) continue;
+      const token = people.about(rel, did)?.token;
+      if (token) await (await credTable(me.id, token)).remove("for").catch(() => {});
+      await people.set(rel, did, false);
+    }
+  }
+  // HELD: the credentials others handed this person (the newest of each).
+  async function takeCreds(people) {
+    for (const it of await index.inbox().catch(() => [])) {
+      if (it.kind !== "cred" || !it.from || !AUDIENCES[it.circle] || !/^[0-9a-f]{32}$/.test(it.token ?? "")) continue;
+      const rel = `credin-${it.circle}`;
+      if (people.about(rel, it.from)?.token !== it.token && (people.at(rel, it.from) || 0) <= (it.at || 0)) await people.set(rel, it.from, true, it.at || Date.now(), { token: it.token });
+    }
+  }
   // MEMBERS as they should be: each circle that exists — its relation's people in, everyone else out.
   async function sync() {
     const me = await space.account();
     if (!me) return;
     const people = await edge.people();
     await takeFollows(people);
+    await takeCreds(people);
+    // Write credentials: one per friend and per follower, whether or not their circle was made.
+    for (const [which, a] of Object.entries(AUDIENCES)) await issue(people, me, which, new Set(people.list(a.relation).filter(d => d !== me.id && !people.is("block", d))));
     for (const [which, a] of Object.entries(AUDIENCES)) {
       const sp = await mineOf(which);
       if (!sp) continue;

@@ -61,12 +61,12 @@ export async function start(ctx) {
   };
 
   // A person's public tail `name`, under their account's data key: whatever is in it, their account wrote.
-  async function publicOf(did, name) {
+  async function publicOf(did, name, opts = {}) {
     const me = await space.account();
     const id = typeof did === "string" ? did : glue.did_of(did);
-    if (me?.id === id) return storage.publicTail(name, me.shared);
+    if (me?.id === id) return storage.publicTail(name, me.shared, opts);
     const k = await keysOf(did);
-    return k ? storage.publicTail(name, k.data) : null;
+    return k ? storage.publicTail(name, k.data, opts) : null;
   }
 
   async function card(did, { fresh = false } = {}) {

@@ -1004,6 +1004,18 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       (`edge` friend). Followers = the people who follow you. A follow NEVER needs approval: following drops a notice
       in the followed person's inbox, and their upkeep adds the follower to the followers key by itself (a reader must
       be known to be sealed to; the inbox notice makes them known). Fully automatic — no setting (owner 10-03).
+- [x] READ AND WRITE SET APART, as a database's (owner 10-03; DONE: `roles.mayWrite` the one check for both kinds of
+      space, `roles.credToCite`; picker's "Who may comment and vote"; circles issue unlisted `cred-<token>` tables. fx one
+      account: rule set, author comments, counts unchanged. NOT YET TESTED with a second person.): each item's READ audience and its WRITE (comment,
+      vote) audience are separate settings — anyone / followers / friends / members / only its author — in a personal
+      or a shared space. No server checks a write: a write limit is VERIFIED BY EACH READER (as `content` checks
+      authors against policy now). So a writer must be PROVABLY allowed: a space's member by its member credential; a
+      FRIEND or FOLLOWER by a CREDENTIAL that is a signed TABLE WRITE like every other (no new identity operation, no
+      signer change): the owner's node writes, per friend/follower, an UNLISTED public table of the owner's account at
+      a random name (`cred-<token>`) whose row names the holder's DID; the token is handed to the holder (through the
+      circle); a comment/vote cites it; a reader reads that table and checks it names the writer. Never listed (card,
+      catalog): not enumerable. Removed: the owner clears it — later writes stop verifying. (Superseded: sealing restricted comments inside the circle, which hid them from
+      public readers — the owner: "in a database, write members-only, read public".)
 - [ ] ONE ACCESS CONTROL, PERSONAL SPACE TOO (owner 10-03: "replicate access control for vote/comment for personal
       space … same access control across all, not a separate implementation"): the personal space governed by the SAME
       `roles` model as a shared space — an acts log the account signs; policies per app/domain/item for read, post,

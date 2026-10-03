@@ -62,8 +62,9 @@ export async function start(ctx) {
     const sp = !outside && item.board ? await items.boardOf(item.board.id) : null;
     const pub = sp ? !!item.pub : !item.private;
     const r = sp ? await roles.of(sp).catch(() => null) : null;
-    const mayComment = !outside && (!r || r.allows("comment", me, app));
-    const mayVote = !outside && (!r || r.allows("vote", me, app));
+    // THE ONE CHECK (`roles.mayWrite`, through `items`): the item's own rule, else its space's policy — the same for a
+    // personal item (its author's friends or followers, by the credential this person holds).
+    const [mayComment, mayVote] = outside ? [false, false] : await Promise.all(["comment", "vote"].map(a => items.mayWriteOn(item, a).catch(() => false)));
 
     const who = did => {
       const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.stopPropagation(), person.open(e.currentTarget, did, sp ? { space: sp } : {})) });
@@ -186,7 +187,7 @@ export async function start(ctx) {
     const el = h(
       "div",
       { className: "cw-cm" },
-      outside ? h("p", { className: "none", textContent: "Only the space's members comment and vote." }) : mayComment ? replyForm(ref, "Comment") : h("p", { className: "none", textContent: "Comments are closed to you here." }),
+      outside ? h("p", { className: "none", textContent: "Only the space's members comment and vote." }) : mayComment ? replyForm(ref, "Comment") : h("p", { className: "none", textContent: ({ friends: `Only ${directory.shown(item.by)}'s friends comment here.`, followers: `Only ${directory.shown(item.by)}'s followers comment here.`, author: "Only its author comments here." })[item.meta?.write?.comment] ?? "Comments are closed to you here." }),
       tree,
     );
     refresh().catch(() => {});

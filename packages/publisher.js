@@ -13,7 +13,7 @@
 export async function start(ctx) {
   const [kinds, items] = await Promise.all(["kinds", "items"].map(n => ctx.require(n)));
 
-  async function publish(file, { space = null, audience = space ? "members" : "private", kind = null, title = "", body = "", meta = {}, cover = null, subtitles = [], keepOriginal = false, app = null, onProgress = () => {} } = {}) {
+  async function publish(file, { space = null, audience = space ? "members" : "private", write = null, kind = null, title = "", body = "", meta = {}, cover = null, subtitles = [], keepOriginal = false, app = null, onProgress = () => {} } = {}) {
     const spec = kinds.mediaOf(file.type);
     if (!spec) throw new Error(`${file.name}: not a kind that is published (an image, a video, an audio)`);
     kind ??= spec.kind;
@@ -28,7 +28,7 @@ export async function start(ctx) {
     // A video or an audio sent as it is (not encoded here) carries its video id on the item (a manifest has its own).
     if (spec.maker === "video-studio" && ref.type !== maker.MANIFEST && ref.key) m.vid = await maker.videoId(ref.key);
     const name = String(title || tags.title || file.name.replace(/\.[^.]+$/, "")).trim().slice(0, 300);
-    const item = await items.submit({ board: space?.id ?? null, title: name, body, kind, meta: m, audience, files: [ref] });
+    const item = await items.submit({ board: space?.id ?? null, title: name, body, kind, meta: m, audience, write, files: [ref] });
     // Its TIMED TEXT: the subtitles given, else the lyrics the file carries (untimed: one cue over the whole).
     if (spec.maker === "video-studio") {
       const subs = await ctx.require("subtitle-store");
@@ -113,6 +113,7 @@ export async function start(ctx) {
         const done = await publish(x, {
           space,
           audience: who.value(),
+          write: who.write(),
           kind: kindSel.value,
           title: f.elements.title.value,
           body: f.elements.body.value,

@@ -109,7 +109,9 @@ export async function start(ctx) {
 
   let peopleOpen = null;
   // `follower`: someone who follows this person (from their notice: `circles`).
-  const RELATIONS = new Set(["follow", "follower", "friend", "asked", "answered", "hide", "block", "modlist"]);
+  // `cred-friends` / `cred-followers`: a write credential this person issued (its token in `about`); `credin-…`: one
+  // they hold from someone (`circles`).
+  const RELATIONS = new Set(["follow", "follower", "friend", "asked", "answered", "hide", "block", "modlist", "cred-friends", "cred-followers", "credin-friends", "credin-followers"]);
   function people() {
     return (peopleOpen ??= storage.table("people").then(t => {
       const is = (rel, did) => t.rows().some(r => r.key === `${rel}/${did}`);

@@ -1104,8 +1104,11 @@ export async function start(ctx) {
     await c.put(CATALOG, JSON.stringify({ at: Date.now(), complete: true }));
     return true;
   }
-  async function publicTail(name, owner) {
+  // `unlisted`: a public table found only by its NAME (a write credential, `circles`): never noted on the card — no
+  // one who is not told its name can find it — and read by name, whatever the card lists.
+  async function publicTail(name, owner, { unlisted = false } = {}) {
     const sp = await space.account();
+    if (unlisted) return tail(owner, name, { public: true, ...(sp && owner === sp.shared ? { beforeCreate: () => listInDirectory(name) } : {}) });
     if (sp && owner === sp.shared) {
       if (name === CARD) {
         const c = await tail(owner, name, { public: true, known: legacyListed(await directory(), name) === false ? false : null, beforeCreate: () => listInDirectory(name) });

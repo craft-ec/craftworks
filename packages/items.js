@@ -218,6 +218,7 @@ export async function start(ctx) {
         reactions: () => dedupe([...a.reactions(), ...b.reactions()], x => `${x.item}|${x.emoji}|${x.by}`),
         mayRemove: it => a.mayRemove(it),
         mayEdit: it => a.mayEdit(it),
+        mayAbout: (id, action) => a.mayAbout(id, action),
         mayPost: () => a.mayPost(),
         since: ms => Promise.all([a.since?.(ms), b.since?.(ms)]),
         loadAll: () => Promise.all([a.loadAll?.(), b.loadAll?.()]),
@@ -230,7 +231,7 @@ export async function start(ctx) {
           await sync();
           return id;
         },
-        react: async (id, e, on) => (await Promise.all([a.settled, b.settled]), await sync(), await a.react(id, e, on), await sync()),
+        react: async (id, e, on, o) => (await Promise.all([a.settled, b.settled]), await sync(), await a.react(id, e, on, o), await sync()),
         edit: async (id, body) => (await sync(), await a.edit(id, body), await sync()),
         setFiles: async (id, files) => (await sync(), await a.setFiles(id, files), await sync()),
         editFull: async (id, body, o) => (await sync(), await a.edit(id, body, o), await sync()),
@@ -298,7 +299,7 @@ export async function start(ctx) {
         // Its private posts read (before deciding whether something about one is private).
         whenPrivate: () => privReady.catch(() => {}),
         post: async (kind, body, opts = {}) => (TOP.has(kind) ? (opts.private ? await privReady : pub) : await roomOf(idIn(opts.in))).post(kind, body, opts),
-        react: async (item, e, on) => (await roomOf(idIn(item))).react(item, e, on),
+        react: async (item, e, on, o) => (await roomOf(idIn(item))).react(item, e, on, o),
         remove: async id => (await roomOf(id)).remove(id),
         edit: async (id, body) => (await roomOf(id)).edit(id, body),
         setFiles: async (id, files) => (await roomOf(id)).setFiles(id, files),
@@ -373,9 +374,15 @@ export async function start(ctx) {
     const authorSet = new Set(authors);
     const votes = new Map();
     const counts = new Map();
+    // What counts about an item: by its rule (`roles.mayWrite`: the one check, as in a space).
+    const posts = new Map(rs.flatMap(r => r.list().filter(it => TOP.has(it.kind)).map(it => [`${it.by}/${it.id}`, it])));
+    const counts_ = (ref, action, by, cred) => {
+      const p = posts.get(ref);
+      return !p || roles.mayWrite({ action, item: p, writer: by, cred }) === true;
+    };
     for (const r of rs) {
-      tally(r.reactions(), votes, since);
-      for (const it of r.list()) if (it.kind === "comment" && it.at >= since) counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
+      tally(r.reactions().filter(x => counts_(x.item, "vote", x.by, x.cred)), votes, since);
+      for (const it of r.list()) if (it.kind === "comment" && it.at >= since && counts_(postOf(it), "comment", it.by, it.meta?.cred)) counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
     }
     const out = [];
     for (const r of rs)
@@ -505,7 +512,10 @@ export async function start(ctx) {
 
   // `audience` (the `audience` picker's value): yours — "public" or "private"; a space's — "public" or "members".
   // `at`: when it was made (an item brought over from before keeps its own time).
-  async function submit({ board = null, place = null, title, body, audience = "public", files = [], kind = "post", meta = {}, at = Date.now() }) {
+  // `write`: who may comment and vote on it ({ comment, vote }: anyone · followers · friends · members · author) — its
+  // own rule, over its space's policy (`roles.mayWrite`).
+  async function submit({ board = null, place = null, title, body, audience = "public", files = [], kind = "post", meta = {}, at = Date.now(), write = null }) {
+    if (write && Object.values(write).some(w => w && w !== "anyone")) meta = { ...meta, write };
     const only = audience === "private";
     title = String(title ?? "").trim();
     body = String(body ?? "").trim();
@@ -552,11 +562,14 @@ export async function start(ctx) {
           all.push({ ...it, ref: `space:${sp.id}/${it.id}`, parent: it.re === post ? ref : `space:${sp.id}/${it.re}`, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it), replies: [] });
     } else {
       const rs = await profiles([whereOf(ref), self, ...(await following()), ...(await pointersTo(ref))]);
+      // The post's rule (`roles.mayWrite`): who may comment and vote on it — what does not pass, not counted.
+      const post = rs.flatMap(r => r.list()).find(it => `${it.by}/${it.id}` === ref) ?? null;
+      const may = (action, by, cred) => !post || roles.mayWrite({ action, item: post, writer: by, cred }) === true;
       const votes = new Map();
-      for (const r of rs) tally(r.reactions(), votes);
+      for (const r of rs) tally(r.reactions().filter(x => x.item !== ref || may("vote", x.by, x.cred)), votes);
       for (const r of rs)
         for (const it of r.list())
-          if (it.kind === "comment" && postOf(it) === ref) {
+          if (it.kind === "comment" && postOf(it) === ref && may("comment", it.by, it.meta?.cred)) {
             const cref = `${it.by}/${it.id}`;
             all.push({ ...it, ref: cref, parent: it.re, ...scored(cref, votes, self), mayRemove: it.by === self, replies: [] });
           }
@@ -567,6 +580,24 @@ export async function start(ctx) {
     const best = (a, b) => b.score - a.score || a.at - b.at;
     const order = cs => (cs.sort(best), cs.forEach(c => order(c.replies)), cs);
     return order(top);
+  }
+
+  // The CREDENTIAL to cite writing about a profile item (`roles.credToCite`: its rule names its author's friends or
+  // followers) — null where none is needed; refused where this person holds none.
+  async function writeCred(ref, action) {
+    const owner = whereOf(ref);
+    if (!owner || owner === (await me())) return null;
+    const post = (await profileRoom(owner)).list().find(it => `${it.by}/${it.id}` === ref);
+    return post ? roles.credToCite(post, action) : null;
+  }
+  // May this person comment or vote on item `it` (as `list`/`get` give it): the one check.
+  async function mayWriteOn(it, action) {
+    if (!it) return false;
+    if (String(it.ref).startsWith("space:")) {
+      const sp = await boardOf(it.ref);
+      return sp ? ((await (await boardRoom(sp)).mayAbout?.(it.id, action)) ?? true) : false;
+    }
+    return writeCred(it.ref, action).then(() => true, () => false);
   }
 
   // Something of this person's about someone's profile post: a pointer to them in its bag, once per page.
@@ -584,11 +615,17 @@ export async function start(ctx) {
     if (post.startsWith("space:")) {
       const sp = await boardOf(post);
       if (!sp) throw new Error("you are not in that board's space");
-      await (await boardRoom(sp)).post("comment", body, { re: idOf(re ?? post), in: idOf(post), files });
+      const room = await boardRoom(sp);
+      // Its post's rule (the one check): a credential cited where only its author's friends or followers comment.
+      const it = room.list().find(x => x.id === idOf(post));
+      const cred = it ? await roles.credToCite(it, "comment", await roles.of(sp)) : null;
+      await room.post("comment", body, { re: idOf(re ?? post), in: idOf(post), files, ...(cred ? { meta: { cred } } : {}) });
       return;
     }
     const mine = await profileRoom(await me());
-    await mine.post("comment", body, { re: re ?? post, in: post, files });
+    // Its post's rule: the credential this person cites where only its author's friends or followers comment.
+    const cred = await writeCred(post, "comment");
+    await mine.post("comment", body, { re: re ?? post, in: post, files, ...(cred ? { meta: { cred } } : {}) });
     // On a private post: private too, and no pointer anywhere.
     await mine.whenPrivate?.();
     if (!mine.isPrivate?.(post)) await pointTo(post);
@@ -602,8 +639,9 @@ export async function start(ctx) {
     const item = onBoard ? idOf(ref) : ref;
     const self = await me();
     const had = new Set(r.reactions().filter(x => x.item === item && x.by === self).map(x => x.emoji));
+    const cred = onBoard ? null : await writeCred(ref, "vote");
     // Only what changes is written (taking back a vote that is not there writes nothing).
-    for (const [e, on] of [[UP, v === 1], [DOWN, v === -1]]) if (on !== had.has(e)) await r.react(item, e, on);
+    for (const [e, on] of [[UP, v === 1], [DOWN, v === -1]]) if (on !== had.has(e)) await r.react(item, e, on, { cred });
     if (v && !onBoard) await r.whenPrivate?.();
     if (v && !onBoard && !r.isPrivate?.(post)) await pointTo(post);
   }
@@ -765,5 +803,5 @@ export async function start(ctx) {
     return app === "board" ? `${at}/board/p/${ref}` : `${at}/${app}`;
   }
 
-  return { pageOf, listOldProfile, migrateNotes, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
+  return { mayWriteOn, pageOf, listOldProfile, migrateNotes, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
 }

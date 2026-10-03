@@ -39,7 +39,7 @@
 //                            // its writers found from its owner (the id proves them) and the roster, each DID's devices
 //                            // from its card; the same `r` to read by (role, author, config, allows, members, acts)
 export async function start(ctx) {
-  const [space, storage, keys, node, directory] = await Promise.all(["space", "storage", "keys", "node", "directory"].map(n => ctx.require(n)));
+  const [space, storage, keys, node, directory, K] = await Promise.all(["space", "storage", "keys", "node", "directory", "kinds"].map(n => ctx.require(n)));
 
   // THE REPLAY and its rules are the core's (`Governance`, the one implementation: the identity delegate reads a
   // space by it too). What is gathered here: the acts' rows, the group's members, each member's devices.
@@ -269,5 +269,52 @@ export async function start(ctx) {
     return r;
   }
 
-  return { of, ofPublic, can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"] };
+  // MAY WRITE — THE ONE CHECK of who may comment, vote or post on an item, in a shared space and a personal one alike,
+  // made by EVERY READER (no server checks a write: what a reader does not count does not count). Its RULE: the item's
+  // own (`meta.write[action]`), else its space's policy for the item's domain (`policyIn`), else — a personal item —
+  // anyone. The rule's GROUP: anyone · the item's author · a role in the space (members, admins, owner: the space's
+  // credentials) · the author's FRIENDS or FOLLOWERS (the writer's credential: an unlisted table of the author's
+  // account at the token it cites, naming the writer — `circles` issues them). True, false, or null: not checked yet
+  // (a credential being read: `onChecked` fires when it is).
+  const CIRCLES_OF = { followers: ["followers", "friends"], friends: ["friends"] };
+  const ruleOf = (item, action, r, at) => item?.meta?.write?.[action] ?? (r ? r.policyIn(K.policyDomain(item.kind), action, at) : "anyone");
+  const credChecks = new Map(); // `${author}|${token}` → { v: row | null | undefined }
+  const checked = [];
+  function credFor(author, token) {
+    const k = `${author}|${token}`;
+    if (!credChecks.has(k)) {
+      const c = { v: undefined };
+      credChecks.set(k, c);
+      directory
+        .publicOf(author, `cred-${token}`, { unlisted: true })
+        .then(async t => (t ? (await t.answer(), JSON.parse(t.rows().find(x => x.key === "for")?.value ?? "null")) : null))
+        .catch(() => null)
+        .then(v => ((c.v = v), checked.forEach(f => f())));
+    }
+    return credChecks.get(k).v;
+  }
+  function mayWrite({ action, item, writer, cred = null, r = null, at = Infinity }) {
+    const rule = ruleOf(item, action, r, at);
+    if (rule === "anyone" || writer === item.by) return true;
+    if (rule === "author" || rule === "nobody") return false;
+    if (CIRCLES_OF[rule]) {
+      if (!cred || !/^[0-9a-f]{32}$/.test(cred)) return false;
+      const v = credFor(item.by, cred);
+      return v === undefined ? null : !!v && v.did === writer && CIRCLES_OF[rule].includes(v.circle);
+    }
+    return r ? rule === "anyone" || G.passes(rule, r.role(writer)) : false;
+  }
+  // The credential a writer cites on an item whose rule is its author's friends or followers (null: none needed / held).
+  async function credToCite(item, action, r = null) {
+    const rule = ruleOf(item, action, r, Infinity);
+    if (!CIRCLES_OF[rule] || item.by === (await space.account())?.id) return null;
+    const people = await (await ctx.require("edge")).people();
+    for (const w of CIRCLES_OF[rule]) {
+      const token = people.about(`credin-${w}`, item.by)?.token;
+      if (token) return token;
+    }
+    throw new Error(`only ${directory.shown(item.by)}'s ${rule} ${action === "vote" ? "vote" : "comment"} here`);
+  }
+
+  return { of, ofPublic, mayWrite, credToCite, onChecked: f => checked.push(f), can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"] };
 }

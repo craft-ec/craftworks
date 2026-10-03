@@ -401,7 +401,7 @@ export async function mount(ctx, el) {
       if (pick.busy()) return errorTo(said)(new Error("Still sending the files: a moment…"));
       btn.disabled = true;
       try {
-        const ref = await posts.submit({ board: sp?.id ?? null, title: f.elements.title.value, body: ed.value(), audience: who.value(), files: pick.files() });
+        const ref = await posts.submit({ board: sp?.id ?? null, title: f.elements.title.value, body: ed.value(), audience: who.value(), write: who.write(), files: pick.files() });
         location.hash = `${base()}/p/${ref}`;
       } catch (err) {
         errorTo(said)(err);

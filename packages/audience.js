@@ -29,8 +29,21 @@ export async function start(ctx) {
     // Its starting choice is the select's DEFAULT: a form reset (a composer closing) returns to it, never to the first.
     for (const o of sel.options) o.defaultSelected = o.value === initial;
     if (initial && choices.some(([v]) => v === initial)) sel.value = initial;
-    const el = h("label", {}, "Who sees it", sel);
-    return { el, value: () => sel.value, isPublic: () => sel.value === "public" };
+    // WHO MAY COMMENT AND VOTE — its own rule (`roles.mayWrite`, the one check), apart from who sees it, as a
+    // database's read and write: in your space anyone · your followers · your friends · only you; in a space its
+    // members (as its policy allows) · only you.
+    const writes = sp
+      ? [["members", "👥 Who the space allows"], ["author", "🔒 Only you"]]
+      : [["anyone", "🌐 Anyone who sees it"], ["followers", "👣 Your followers"], ["friends", "🤝 Your friends"], ["author", "🔒 Only you"]];
+    const wsel = h("select", { className: "field", name: "write" }, ...writes.map(([value, textContent]) => h("option", { value, textContent })));
+    const el = h("div", { className: "cw-aud", style: "display:grid;gap:6px" }, h("label", {}, "Who sees it", sel), h("label", {}, "Who may comment and vote", wsel));
+    return {
+      el,
+      value: () => sel.value,
+      isPublic: () => sel.value === "public",
+      // The write rule ({ comment, vote }), or null where it is the space's own (nothing to set on the item).
+      write: () => (wsel.value === "anyone" || wsel.value === "members" ? null : { comment: wsel.value, vote: wsel.value }),
+    };
   }
   return { picker };
 }
