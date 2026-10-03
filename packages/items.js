@@ -750,5 +750,15 @@ export async function start(ctx) {
     return true;
   }
 
-  return { listOldProfile, migrateNotes, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
+  // WHERE AN ITEM IS SHOWN — the one link to its page, for every app that links to one: a video or a track where it
+  // plays (Videos, Audio, Images), a post (or anything else) on its board, a note in Notes, a file in Drive.
+  const APP_OF = { video: "videos", audio: "audio", image: "images", note: "notes", file: "drive" };
+  function pageOf(ref, kind) {
+    const at = String(ref).startsWith("space:") ? `#/s/${ref.slice(6, ref.indexOf("/"))}` : "#";
+    const app = APP_OF[kinds.domain(kind)] ?? "board";
+    if (["videos", "audio", "images"].includes(app)) return `${at}/${app}/w/${encodeURIComponent(ref)}`;
+    return app === "board" ? `${at}/board/p/${ref}` : `${at}/${app}`;
+  }
+
+  return { pageOf, listOldProfile, migrateNotes, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
 }

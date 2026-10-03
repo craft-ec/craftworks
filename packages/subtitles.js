@@ -55,12 +55,10 @@ export async function mount(ctx, el) {
     if (s.startsWith("e/")) return { edit: decodeURIComponent(s.slice(2)) };
     return { mine: true };
   };
-  // Where an item plays: the app of its domain (Audio for a song or a podcast, else Videos).
-  const kindsCap0 = await ctx.require("kinds");
-  const appOf = kind => (kindsCap0.domain(kind) === "audio" ? "audio" : "videos");
-  const watchHref = (ref, kind = null) => (ref.startsWith("space:") ? `#/s/${ref.slice(6, ref.indexOf("/"))}/${appOf(kind)}/w/${encodeURIComponent(ref)}` : `#/${appOf(kind)}/w/${encodeURIComponent(ref)}`);
-  // Where a post (or a comment) is read: its board's page.
-  const postHref = ref => (ref.startsWith("space:") ? `#/s/${ref.slice(6, ref.indexOf("/"))}/board/p/${ref}` : `#/board/p/${ref}`);
+  // Where an item is shown: the one link (`items.pageOf`) — a video or a track where it plays, a post on its board.
+  const itemsCap0 = await ctx.require("items");
+  const watchHref = (ref, kind = null) => itemsCap0.pageOf(ref, kind ?? "video");
+  const postHref = ref => itemsCap0.pageOf(ref, "post");
   const download = (text, name, type) => {
     const a = h("a", { href: URL.createObjectURL(new Blob([text], { type })), download: name });
     document.body.append(a);

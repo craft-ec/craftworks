@@ -141,6 +141,14 @@ export async function mount(ctx, el) {
       h("button", { type: "button", className: "more", title: "More", textContent: "⋯", onclick: () => (menu.hidden = !menu.hidden) }),
       menu,
     );
+    // A file of an item made in another app: shown here, changed there (its page).
+    if (r.readOnly) {
+      menu.append(
+        h("button", { type: "button", textContent: "Open", onclick: () => ((menu.hidden = true), attachments.open(r.ref, note)) }),
+        h("a", { href: r.page, textContent: `Open in ${({ video: "Videos", audio: "Audio", image: "Images", text: "Board" })[r.from?.app] ?? "its app"}` }),
+      );
+      return t;
+    }
     menu.append(
       h("button", { type: "button", textContent: "Open", onclick: () => ((menu.hidden = true), attachments.open(r.ref, note)) }),
       h("button", {

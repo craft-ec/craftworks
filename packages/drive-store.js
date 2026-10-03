@@ -40,18 +40,38 @@ export async function start(ctx) {
 
   // THE ENTRIES of a Drive (items of kind `file`; `folder`: an empty folder).
   const entries = async (sp, kind = "file") => items.inPlaces(await place(sp), kind, { withVotes: false });
+  // THE LIST: Drive's own entries (uploaded or saved in Drive: moved, removed, seen as set here) — and, READ-ONLY, the
+  // files of the items made in other apps (a video, a track, an image in a post), each in the folder of what its item
+  // is (/Videos, /Audio, /Images), else of what the file is: a VIEW, never a second entry. Who sees one, its edits and
+  // its removal are its item's, in its app (`page`: its item's page — `items.pageOf`).
+  const MEDIA = new Set(["video", "audio", "image"]);
+  const viewed = async sp =>
+    (await items.inPlaces(await place(sp), [...kinds.all()].filter(k => !["note", "file", "folder"].includes(k)), { withVotes: false }).catch(() => [])).flatMap(it =>
+      (it.files ?? []).map((ref, i) => ({
+        id: `${it.ref}#${i}`,
+        ref,
+        at: it.at,
+        folder: MEDIA.has(kinds.domain(it.kind)) ? `/${kinds.domainName(kinds.domain(it.kind))}` : typeFolder(ref),
+        from: { app: kinds.domain(it.kind) },
+        item: it.ref,
+        page: items.pageOf(it.ref, it.kind),
+        readOnly: true,
+      })),
+    );
   async function list(sp = null) {
-    return (await entries(sp))
+    const own = (await entries(sp))
       .map(it => {
         const ref = it.files?.[0];
         if (!ref) return null;
         return { id: it.ref, ref, at: it.at, folder: clean(it.meta?.folder), from: it.meta?.from ?? null, aud: it.aud ?? (it.private ? "private" : null), mayEdit: it.mayEdit !== false };
       })
-      .filter(Boolean)
-      .sort((a, b) => b.at - a.at);
+      .filter(Boolean);
+    return [...own, ...(await viewed(sp))].sort((a, b) => b.at - a.at);
   }
 
   async function add(ref, { space: sp = null, from = null, folder = null, public: pub = !!ref?.public, at = Date.now() } = {}) {
+    // A file another app made (a video, a post's image): its item lists it (`list`'s views) — not a second entry.
+    if (from?.app && from.app !== "drive" && !from.saved) return null;
     const fid = await fidOf(ref);
     const meta = { folder: clean(folder ?? (from?.app === "drive" ? "/" : typeFolder(ref))), fid, ...(from ? { from } : {}) };
     // Yours always; the space's too when it is one that uses Drive. Listed once (the same file: one entry).
@@ -143,5 +163,16 @@ export async function start(ctx) {
     return true;
   }
 
-  return { upload, add, list, folders, mkdir, move, remove, onChange, drives, usesDrive, sortByApp, migrate };
+  // v6: the entries v5 made for files OTHER apps made (their items list them now): removed — what was uploaded or
+  // saved in Drive kept.
+  async function unduplicate(sp = null) {
+    if (!(await usesDrive(sp))) return true;
+    for (const it of await entries(sp)) {
+      const from = it.meta?.from;
+      if (from?.app && from.app !== "drive" && !from.saved && it.mayEdit !== false) await items.remove(it.ref).catch(() => {});
+    }
+    return true;
+  }
+
+  return { upload, add, list, folders, mkdir, move, remove, onChange, drives, usesDrive, sortByApp, migrate, unduplicate };
 }
