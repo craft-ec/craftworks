@@ -102,7 +102,6 @@ export async function mount(ctx, el) {
       .bd textarea { resize: vertical; min-height: 90px; }
       .bd form.reply { display: grid; gap: var(--cw-space-2); }
       .bd form.reply .row { display: flex; justify-content: flex-end; gap: var(--cw-space-2); }
-      .bd .comments { display: grid; gap: var(--cw-space-2); }
       .bd .c { display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: var(--cw-space-2); }
       .bd .c > .rail { display: flex; justify-content: center; cursor: pointer; }
       .bd .c > .rail::before { content: ""; width: 2px; background: var(--cw-line); border-radius: 1px; }
@@ -253,76 +252,6 @@ export async function mount(ctx, el) {
     );
   }
 
-  // A COMMENT and its replies: a rail to fold it, Reply opening a box under it.
-  function commentTree(c, post, again) {
-    const said = h("p", { className: "said", hidden: true });
-    const box = h("div", { className: "c" });
-    const kids = h("div", { className: "kids" }, ...c.replies.map(r => commentTree(r, post, again)));
-    const fold = () => box.classList.toggle("folded");
-    const count = (x => x(c))(function all(x) {
-      return x.replies.reduce((n, r) => n + 1 + all(r), 0);
-    });
-    const replyAt = h("div", {});
-    const acts = h(
-      "div",
-      { className: "acts" },
-      votes(c, post),
-      h("button", {
-        type: "button",
-        textContent: "Reply",
-        onclick: () => {
-          if (replyAt.firstChild) return replyAt.replaceChildren();
-          replyAt.replaceChildren(replyForm(post, c.ref, "Reply", again, () => replyAt.replaceChildren()));
-          replyAt.querySelector("textarea")?.focus();
-        },
-      }),
-      c.by === me ? h("button", { type: "button", textContent: "Edit", onclick: () => editIn(text, c, again) }) : null,
-      c.mayRemove ? h("button", { type: "button", textContent: c.by === me ? "Delete" : "Remove", onclick: () => posts.remove(c.ref).then(again, errorTo(said)) }) : null,
-    );
-    const text = h("div", {}, bodyOf(c));
-    box.append(
-      h("div", { className: "rail", title: "Fold", onclick: fold }),
-      h(
-        "div",
-        { className: "body" },
-        h("div", { className: "meta" }, who(c.by), h("time", { textContent: ago(c.at), title: new Date(c.at).toLocaleString() }), c.edited ? h("span", { textContent: "(edited)" }) : null, h("button", { type: "button", className: "fold", textContent: count ? `[–] ${count} more` : "[–]", onclick: fold })),
-        text,
-        acts,
-        said,
-        replyAt,
-        kids,
-      ),
-    );
-    return box;
-  }
-  function replyForm(post, re, label, again, cancel = null) {
-    const said = h("p", { className: "said", hidden: true });
-    const ed = editorFor({ sp: threadAt.sp, pub: threadAt.pub, placeholder: re === post ? "What are your thoughts?" : "Write a reply", label });
-    const f = h(
-      "form",
-      { className: "reply" },
-      ed.el,
-      h("div", { className: "row" }, said, cancel ? h("button", { type: "button", className: "ghost", textContent: "Cancel", onclick: cancel }) : null, h("button", { className: "go", textContent: label })),
-    );
-    f.onsubmit = async e => {
-      e.preventDefault();
-      said.hidden = true;
-      const btn = f.querySelector("button.go");
-      if (ed.busy()) return errorTo(said)(new Error("Still sending the files: a moment…"));
-      btn.disabled = true;
-      try {
-        await posts.comment(post, re, ed.value(), { files: ed.files() });
-        ed.clear();
-        await again();
-      } catch (err) {
-        errorTo(said)(err);
-      } finally {
-        btn.disabled = false;
-      }
-    };
-    return f;
-  }
-
   // THE SIDE PANEL: the space's board (its name, members, Create post), or a profile.
   // A PUBLIC space seen from Discover: what it is, and Join when it is open (or you are in: open it).
   async function publicPanel(d) {
@@ -439,28 +368,12 @@ export async function mount(ctx, el) {
     const outside = w.pub ? await descOf(w.pub) : null;
     const p = (shownPost = await posts.get(ref, { outside }));
     if (!p) return [h("p", { className: "none", textContent: "This post is not there (removed, or not found yet)." })];
-    const tree = h("div", { className: "comments" });
-    const again = async () => {
-      const cs = await posts.thread(ref, { outside });
-      tree.replaceChildren(...(cs.length ? cs.map(c => commentTree(c, ref, again)) : [h("p", { className: "none", textContent: "No comments yet." })]));
-    };
-    tree.append(theme.loading("Reading the comments…"));
-    again().catch(() => {});
-    // From outside (Discover): read only — members comment.
-    // Who may comment here: the space's policy (a profile's: open).
+    // Where the post's files go when it is edited: its space (public as the post is), or the profile.
     const sp = !outside && p.board ? await posts.boardOf(p.board.id) : null;
-    // Where the thread's files go: the post's space (public as the post is), or the profile (public unless private).
     threadAt = { sp, pub: sp ? !!p.pub : !p.private };
-    const mayComment = !sp || (await roles.of(sp)).allows("comment", me, "board");
-    return [
-      postCard(p, true),
-      h(
-        "div",
-        { className: "panel" },
-        outside ? h("p", { className: "none", textContent: "Only the space's members comment and vote." }) : mayComment ? replyForm(ref, ref, "Comment", again) : h("p", { className: "none", textContent: "Comments are closed to you here." }),
-        tree,
-      ),
-    ];
+    // Its COMMENTS: the one thread (`comments`), as under a video or an audio.
+    const thread = await (await ctx.require("comments")).create({ item: p, outside, app: "board" });
+    return [postCard(p, true), h("div", { className: "panel" }, thread.el)];
   }
 
   async function submitPage(board) {

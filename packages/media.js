@@ -55,9 +55,6 @@ export async function mount(ctx, el) {
       .vd button.on { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       .vd .about { background: var(--cw-hover); border-radius: var(--cw-radius); padding: var(--cw-space-3); white-space: pre-wrap; }
       .vd .meta { display: flex; gap: var(--cw-space-3); flex-wrap: wrap; font-size: var(--cw-text-sm); color: var(--cw-muted); }
-      .vd .comments { display: grid; gap: var(--cw-space-2); }
-      .vd .c { display: grid; gap: 2px; }
-      .vd .c .rep { margin-left: var(--cw-space-4); display: grid; gap: var(--cw-space-2); }
       .vd form { display: grid; gap: var(--cw-space-2); max-width: 640px; }
       .vd input, .vd textarea, .vd select { font: inherit; padding: 6px 8px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); }
       .vd .said { color: var(--cw-danger); margin: 0; }
@@ -195,19 +192,8 @@ export async function mount(ctx, el) {
     const save = h("button", { type: "button", className: saved() ? "on" : "", textContent: saved() ? "Saved ✓" : "Save", onclick: async () => (await pins.set(SAVED(ref), !saved()), (save.className = saved() ? "on" : ""), (save.textContent = saved() ? "Saved ✓" : "Save")) });
     const k = kinds.of(v.kind);
     const fields = (k?.fields ?? []).filter(x => v.meta?.[x]).map(x => h("span", { textContent: `${kinds.fieldLabel(x)}: ${v.meta[x]}` }));
-    const comments = h("div", { className: "comments" }, theme.loading("Reading the comments…"));
-    const form = h("form", {}, h("textarea", { name: "body", rows: 2, placeholder: "Add a comment…", required: true }), h("div", {}, h("button", { textContent: "Comment" })));
-    form.onsubmit = async e => {
-      e.preventDefault();
-      await items.comment(ref, null, form.elements.body.value).catch(() => {});
-      form.reset();
-      drawComments();
-    };
-    const drawOne = c => h("div", { className: "c" }, h("div", { className: "s" }, who(c.by), ` · ${ago(c.at)}`), h("div", { textContent: c.body }), c.replies?.length ? h("div", { className: "rep" }, ...c.replies.map(drawOne)) : null);
-    const drawComments = async () => {
-      const cs = await items.thread(ref, { outside }).catch(() => []);
-      comments.replaceChildren(...(cs.length ? cs.map(drawOne) : [h("p", { className: "s", textContent: "No comments yet." })]));
-    };
+    // Its COMMENTS: the one thread (`comments`), as under a Board post.
+    const thread = await (await ctx.require("comments")).create({ item: v, outside, app: C.app });
     const out = h(
       "div",
       { className: "watch" },
@@ -221,8 +207,7 @@ export async function mount(ctx, el) {
       view.line,
       timed,
       h("h3", { textContent: `Comments` }),
-      outside ? null : form,
-      comments,
+      thread.el,
     );
     // THE SCRUB BAR: the video's strip of frames, shown where the pointer is; a click seeks.
     const scrub = h("div", { className: "scrub" });
@@ -274,7 +259,6 @@ export async function mount(ctx, el) {
           else await view.play();
         })().catch(e => (note.textContent = e.message ?? String(e)));
       scrubStrip().catch(() => {});
-      drawComments();
     });
     return out;
   }
