@@ -20,7 +20,7 @@ export async function start(ctx) {
   const usesDrive = async sp => !shared(sp) || (await roles.of(sp).then(r => r.apps().includes("drive"), () => false));
   // THE DRIVES this person can pick from: theirs, and every space they are in that uses Drive.
   async function drives() {
-    const all = (await space.mine().catch(() => [])).filter(s => s.kind === "server");
+    const all = (await space.mine().catch(() => [])).filter(s => s.kind === "server" && !s.circle);
     const on = await Promise.all(all.map(usesDrive));
     return all.filter((_, i) => on[i]);
   }

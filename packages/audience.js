@@ -1,5 +1,6 @@
 // AUDIENCE, a component: the ONE choice of who sees an item, for every app that makes one (Board, Videos, Audio,
-// Notes, Drive). In YOUR space: everyone (public) or only you. In a SHARED space: its members, or everyone — public
+// Notes, Drive). In YOUR space: everyone (public), your followers, your friends (each a CIRCLE: `circles`), or only
+// you. In a SHARED space: its members, or everyone — public
 // only while the space lets its app read in public (its policy is the ceiling: members-only = members post and read
 // it, nobody makes it public). What it means for where the item is kept is `items`' (`submit({ audience })`).
 //
@@ -23,7 +24,7 @@ export async function start(ctx) {
       ? (await items.publicIn(sp, kind).catch(() => false))
         ? [["public", "🌐 Everyone (public)"], ["members", `👥 ${space.shown(sp)}'s members`]]
         : [["members", `👥 ${space.shown(sp)}'s members (the space keeps this app to its members)`]]
-      : [["public", "🌐 Everyone (public, your followers read it)"], ["private", "🔒 Only you"]];
+      : [["public", "🌐 Everyone (public)"], ["followers", "👣 Your followers"], ["friends", "🤝 Your friends"], ["private", "🔒 Only you"]];
     const sel = h("select", { className: "field", name: "audience" }, ...choices.map(([value, textContent]) => h("option", { value, textContent })));
     // Its starting choice is the select's DEFAULT: a form reset (a composer closing) returns to it, never to the first.
     for (const o of sel.options) o.defaultSelected = o.value === initial;

@@ -996,7 +996,9 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
 - [x] EDIT BY POLICY (owner 10-03; DONE with Notes — content.mayEdit, kinds.collaborative, creator kept as `by`): who may edit an item is the space's `edit` policy, in the one item model, for
       every app (Notes stay collaborative; Board inherits the same shared model) — and an APP may ENFORCE stricter
       (e.g. Board: author-only). An item keeps its creator (`by`) when another member edits it; the editor is recorded.
-- [ ] FRIENDS and FOLLOWERS audiences (owner 10-03: "add friend/follow option"): an item sealed to a KEY shared with
+- [x] FRIENDS and FOLLOWERS audiences (DONE as CIRCLES — `circles`: a hidden owned space per audience, members synced by
+      upkeep; follow notices; picker Everyone/Followers/Friends/Only you. fx one account: circle made, post in own feed, not
+      in Discover, not on the rail. NOT YET TESTED with a second person (no second test account: 17573 is the owner's).) (owner 10-03: "add friend/follow option"): an item sealed to a KEY shared with
       just those people — one per audience, held like a space's epoch key (handed to each through their inbox; a new
       key on a removal, so a removed friend/follower reads nothing written after). Friends = the mutual friends
       (`edge` friend). Followers = the people who follow you. A follow NEVER needs approval: following drops a notice

@@ -67,7 +67,7 @@ export async function start(ctx) {
     }
     const welcome = await g.add(kp);
     const { owner, nonce } = sp.governance;
-    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, ...(code ? { code } : {}) });
+    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}) });
     ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind}` });
     return card;
   }
@@ -163,7 +163,7 @@ export async function start(ctx) {
       const tried = `${it.space}|${it.welcome.slice(0, 64)}`;
       if (had && welcomesTried.has(tried)) continue;
       welcomesTried.add(tried);
-      const v = { kind: it.spaceKind, name: it.name, owner: it.owner ?? it.from, nonce: it.nonce ?? null, ...(it.spaceKind === "direct" ? { with: it.from } : {}) };
+      const v = { kind: it.spaceKind, name: it.name, owner: it.owner ?? it.from, nonce: it.nonce ?? null, ...(it.spaceKind === "direct" ? { with: it.from } : {}), ...(it.circle ? { circle: it.circle } : {}) };
       try {
         const sp = await space.describe(it.space, v);
         await keys.group(sp).join(it.welcome);

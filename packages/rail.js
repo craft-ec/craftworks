@@ -98,7 +98,8 @@ export async function mount(ctx, el) {
     const me = await auth.check().catch(() => null);
     el.hidden = !me;
     if (!me) return nav.replaceChildren();
-    const shared = (await space.mine().catch(() => [])).filter(s => s.kind === "server");
+    // (A CIRCLE — an audience, `circles` — is never on the rail.)
+    const shared = (await space.mine().catch(() => [])).filter(s => s.kind === "server" && !s.circle);
     const mine = await directory.handle(me.did).catch(() => null);
     const personal = h("a", { href: "#/", title: "Personal", textContent: initials(mine ?? "Me") });
     if (!ctx.space) personal.setAttribute("aria-current", "page");

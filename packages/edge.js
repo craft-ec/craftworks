@@ -108,7 +108,8 @@ export async function start(ctx) {
   }
 
   let peopleOpen = null;
-  const RELATIONS = new Set(["follow", "friend", "asked", "answered", "hide", "block", "modlist"]);
+  // `follower`: someone who follows this person (from their notice: `circles`).
+  const RELATIONS = new Set(["follow", "follower", "friend", "asked", "answered", "hide", "block", "modlist"]);
   function people() {
     return (peopleOpen ??= storage.table("people").then(t => {
       const is = (rel, did) => t.rows().some(r => r.key === `${rel}/${did}`);
@@ -124,9 +125,15 @@ export async function start(ctx) {
       // `at`: when the link holds from (default now; what it answers may be older). `about`: what is needed to read
       // the thing it points at — a followed SHARED space's public description (a person needs none: their DID is their
       // personal space, found by it).
-      const set = (rel, did, on, at = Date.now(), about = null) => {
+      const set = async (rel, did, on, at = Date.now(), about = null) => {
         if (!RELATIONS.has(rel)) throw new Error(`no relation “${rel}”`);
-        return on ? t.put(`${rel}/${did}`, JSON.stringify({ at, ...(about ? { about } : {}) })) : t.remove(`${rel}/${did}`);
+        await (on ? t.put(`${rel}/${did}`, JSON.stringify({ at, ...(about ? { about } : {}) })) : t.remove(`${rel}/${did}`));
+        // A FOLLOW of a person tells them (a notice in their inbox): they count the follower (`circles`), unasked.
+        if (rel === "follow" && String(did).startsWith("did:craftec:"))
+          ctx
+            .require("index")
+            .then(async index => index.send(did, { kind: on ? "follow" : "unfollow", from: (await (await ctx.require("space")).account()).id, at }))
+            .catch(e => ctx.log("edge", { what: `telling ${String(did).slice(12, 20)}… of the follow: ${e?.message ?? e}` }));
       };
       const about = (rel, id) => {
         try {

@@ -513,6 +513,11 @@ export async function start(ctx) {
     if (!TOP.has(kind)) throw new Error(`not something to post: ${kind}`);
     if (!title && kinds.titled(kind)) throw new Error(`a ${kind} needs a title`);
     if (title.length > 300) throw new Error("a title of at most 300 characters");
+    // YOUR FRIENDS or YOUR FOLLOWERS: an item of that CIRCLE's place (`circles`: sealed to its members).
+    if (!board && (audience === "friends" || audience === "followers")) {
+      board = (await (await ctx.require("circles")).of(audience)).id;
+      audience = "members";
+    }
     if (board) {
       const sp = await boardOf(board);
       if (!sp) throw new Error("you are not in that board's space");
