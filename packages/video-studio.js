@@ -123,7 +123,15 @@ export async function start(ctx) {
   // MAKE — the one way a video or an audio is uploaded, from any app (Videos, Audio, an editor's 🖼, a comment, a
   // message): made ready to stream (renditions, strip, cover: a manifest); a browser that cannot encode it, the file
   // AS IT IS (played by its byte ranges), with its poster and length.
+  // Its own TAGS (title, artist, album, year, genre: `probe`) kept on its reference whichever way it came — so the
+  // file shows the same wherever it is (Videos, Audio, inline in a post). Lyrics, being long, stay with the caller.
   async function make(file, opts = {}) {
+    const t = await probe(file).catch(() => null);
+    const tags = t ? Object.fromEntries(["title", "artist", "album", "year", "genre"].map(k => [k, t[k]]).filter(([, v]) => v)) : {};
+    const ref = await made(file, opts);
+    return Object.keys(tags).length ? { ...ref, tags } : ref;
+  }
+  async function made(file, opts) {
     try {
       return await encode(file, opts);
     } catch (err) {

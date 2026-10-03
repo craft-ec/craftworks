@@ -18,6 +18,7 @@ export async function start(ctx) {
     .cw-mv { display: grid; gap: 4px; max-width: 100%; }
     .cw-mv video { width: 100%; max-height: 70vh; background: #000; border-radius: var(--cw-radius-sm); }
     .cw-mv audio { width: min(560px, 100%); }
+    .cw-mv .tags { color: var(--cw-muted); font-size: var(--cw-text-sm); }
     .cw-mv .album { width: min(240px, 100%); aspect-ratio: 1; object-fit: cover; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); }
     .cw-mv .cover { position: relative; padding: 0; cursor: pointer; aspect-ratio: 16 / 9; width: min(560px, 100%); overflow: hidden; color: #fff; background: #111;
       border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); }
@@ -51,6 +52,9 @@ export async function start(ctx) {
     const note = h("span", { className: "note" });
     const line = h("div", { className: "line" });
     const timed = h("div", { className: "timed", hidden: true });
+    // Its own TAGS (`video-studio`: title · artist · album), shown wherever it plays.
+    const t = file?.tags ?? {};
+    const caption = [t.title, t.artist, t.album].filter(Boolean).length ? h("div", { className: "tags", textContent: [t.title, t.artist, t.album].filter(Boolean).join(" · ") }) : null;
     const media = h(kind, { controls: true, playsInline: true, preload: "none" });
     if (kind === "video" && file?.preview) media.poster = file.preview;
     // Where its tracks are added: the Subtitles app, for the item's own video, or THIS file in the item.
@@ -64,7 +68,7 @@ export async function start(ctx) {
       if (started) return;
       started = true;
       if (place) {
-        el.replaceChildren(...[kind === "audio" && file?.preview ? h("img", { className: "album", src: file.preview, alt: file?.name ?? "" }) : null, media, note, line, timed].filter(Boolean));
+        el.replaceChildren(...[kind === "audio" && file?.preview ? h("img", { className: "album", src: file.preview, alt: file?.name ?? "" }) : null, caption, media, note, line, timed].filter(Boolean));
       }
       media.autoplay = cover; // a click on a cover asked for it to play
       try {
@@ -121,8 +125,8 @@ export async function start(ctx) {
       else c.append(h("span", { className: "ic", textContent: kind === "audio" ? "🎵" : "🎬" }));
       c.append(h("span", { className: "play", textContent: "▶" }), h("span", { className: "cap", textContent: [file?.name, file?.duration ? clock(file.duration) : ""].filter(Boolean).join(" · ") }));
       c.onclick = e => (e.stopPropagation(), play());
-      el.append(c);
-    } else if (place) el.append(media, note, line, timed);
+      el.append(...[c, caption].filter(Boolean));
+    } else if (place) el.append(...[caption, media, note, line, timed].filter(Boolean));
     el.addEventListener("click", e => e.stopPropagation());
     return { el, media, line, timed, note, play, prepare };
   }

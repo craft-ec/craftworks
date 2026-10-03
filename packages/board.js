@@ -176,7 +176,7 @@ export async function mount(ctx, el) {
   const placeOf = async it => ({ sp: it.board ? await posts.boardOf(it.board.id) : threadAt.sp, pub: it.board ? !!it.pub : threadAt.sp ? threadAt.pub : !it.private && threadAt.pub !== false });
   // The EDITOR for a post or a comment (`md-editor`, with its files: kept, others added).
   function editorFor({ value = "", files = [], sp = null, pub = false, placeholder = "", label = "" } = {}) {
-    const pick = attachments.picker({ space: sp, from: { app: "board" }, public: () => pub, media: true });
+    const pick = attachments.picker({ space: sp, from: { app: "board" }, public: () => pub, media: true, publish: true });
     pick.preset(files);
     return mdEditor.create({ value, pick, placeholder, label });
   }
@@ -381,7 +381,7 @@ export async function mount(ctx, el) {
     // whole network dedups them), else sealed for the space (or you) — asked as each is picked.
     // WHO SEES IT: the one picker (`audience`) — its files put public exactly when the post is.
     const who = await (await ctx.require("audience")).picker({ space: sp, kind: "post" });
-    const pick = attachments.picker({ space: sp, from: { app: "board" }, media: true, public: () => who.isPublic() });
+    const pick = attachments.picker({ space: sp, from: { app: "board" }, media: true, publish: true, public: () => who.isPublic() });
     const ed = mdEditor.create({ pick, label: "Text" });
     const f = h(
       "form",

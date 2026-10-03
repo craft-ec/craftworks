@@ -26,6 +26,7 @@ export async function start() {
     ["music-video", "video", "Music video", ["artist", "album", "year"]],
     ["short", "video", "Short", []],
     // Audio
+    ["audio", "audio", "Audio", []],
     ["music", "audio", "Music", ["artist", "album", "year", "genre"]],
     ["podcast", "audio", "Podcast", ["show", "episode", "host"]],
     ["audiobook", "audio", "Audiobook", ["author", "narrator", "chapter"]],
@@ -54,14 +55,15 @@ export async function start() {
   const COLLABORATIVE = new Set(["note", "file", "folder"]);
   // THE MEDIA DOMAINS — each declared ONCE: which files are it (`is`: by type; a streaming manifest by its own flag),
   // its name and icon, the capability that MAKES an upload of it (`maker`), the component that SHOWS it inline
-  // (`view`: "image" drawn as an <img>; otherwise a component with `create({ file, item, cover }).el`). The editor's
+  // (`view`: "image" drawn as an <img>; otherwise a component with `create({ file, item, cover }).el`), its general
+  // KIND (what a new upload of it is published as, unless one is chosen: `publisher`). The editor's
   // menu, every upload (`attachments`), the inline renderer (`markdown`) and Drive's folders read it — a new domain
   // (books, comics) is one entry here, its maker and its viewer.
   const MANIFEST = "application/vnd.craftworks.video+json";
   const MEDIA = [
-    { domain: "image", label: "Image", plural: "Images", icon: "🖼", accept: "image/*", is: t => /^image\//.test(t), maker: "image-studio", view: "image" },
-    { domain: "video", label: "Video", plural: "Videos", icon: "🎬", accept: "video/*", is: (t, ref) => /^video\//.test(t) || (t === MANIFEST && !ref?.audio), maker: "video-studio", view: "media-view" },
-    { domain: "audio", label: "Audio", plural: "Audio", icon: "🎵", accept: "audio/*", is: (t, ref) => /^audio\//.test(t) || (t === MANIFEST && !!ref?.audio), maker: "video-studio", view: "media-view" },
+    { domain: "image", label: "Image", plural: "Images", icon: "🖼", accept: "image/*", is: t => /^image\//.test(t), maker: "image-studio", view: "image", kind: "image" },
+    { domain: "video", label: "Video", plural: "Videos", icon: "🎬", accept: "video/*", is: (t, ref) => /^video\//.test(t) || (t === MANIFEST && !ref?.audio), maker: "video-studio", view: "media-view", kind: "video" },
+    { domain: "audio", label: "Audio", plural: "Audio", icon: "🎵", accept: "audio/*", is: (t, ref) => /^audio\//.test(t) || (t === MANIFEST && !!ref?.audio), maker: "video-studio", view: "media-view", kind: "audio" },
   ];
   const mediaOf = x => {
     const ref = typeof x === "string" ? null : x;

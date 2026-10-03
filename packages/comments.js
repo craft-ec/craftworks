@@ -73,7 +73,7 @@ export async function start(ctx) {
     const bodyOf = c =>
       h("div", { className: "text" }, c.body ? markdown.render(c.body, c.files, { item: c.ref }) : null, attachments.show((c.files ?? []).filter(f => !markdown.inlined(c.body).has(markdown.keyOf(f)))));
     const editorFor = ({ value = "", files = [], placeholder = "", label = "" } = {}) => {
-      const pick = attachments.picker({ space: sp, from: { app }, public: () => pub, media: true });
+      const pick = attachments.picker({ space: sp, from: { app }, public: () => pub, media: true, publish: true });
       pick.preset(files);
       return mdEditor.create({ value, pick, placeholder, label });
     };

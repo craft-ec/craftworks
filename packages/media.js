@@ -262,13 +262,6 @@ export async function mount(ctx, el) {
     return out;
   }
 
-  // A cover image made small (320 px wide, JPEG): what rides on the item as its preview.
-  async function coverOf(file) {
-    const bmp = await createImageBitmap(file);
-    const c = Object.assign(document.createElement("canvas"), { width: 320, height: Math.round((320 * bmp.height) / bmp.width) });
-    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-    return c.toDataURL("image/jpeg", 0.75);
-  }
 
   async function upload() {
     const said = h("p", { className: "said", hidden: true });
@@ -317,23 +310,22 @@ export async function mount(ctx, el) {
       btn.disabled = true;
       try {
         progress.textContent = `Reading the ${C.one}…`;
-        const pub = who.isPublic();
-        // MADE READY TO STREAM (renditions, strip, subtitles, a manifest); a browser that cannot encode sends the file as it is.
-        const ref = await studio
-          .make(file, { space: inSpace, public: pub, app: C.app, keepOriginal: f.elements.keep.checked, onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`) });
-        // (Drive shows it through this item: a view, never a second entry.)
-        // A COVER chosen here: over the file's own.
-        const coverFile = f.elements.cover?.files?.[0];
-        if (coverFile) ref.preview = await coverOf(coverFile).catch(() => ref.preview);
+        // PUBLISHED by the one path (`publisher`): made, named, its item of the kind chosen, its timed text — the same as
+        // a video or an audio uploaded in an editor.
         const meta = Object.fromEntries(kinds.of(kindSel.value).fields.map(x => [x, String(f.elements[`meta.${x}`]?.value ?? "").trim()]).filter(([, v]) => v));
-        // A file sent as it is (not encoded here) carries its video id on the item (a manifest carries its own).
-        if (ref.type !== studio.MANIFEST && ref.key) meta.vid = await studio.videoId(ref.key);
-        const posted = await items.submit({ board: inSpace?.id ?? null, title: f.elements.title.value, body: f.elements.body.value, kind: kindSel.value, meta, audience: who.value(), files: [ref] });
-        // Its SUBTITLES: items of their own, about it.
-        for (const s of f.elements.subs.files ?? []) await subs.add(posted, s).catch(e => ctx.log(C.app, { what: `timed text ${s.name}: ${e.message}` }));
-        // LYRICS the file carries (untimed): one cue over the whole, when none was given.
-        if (C.audio && tags?.lyrics && !(f.elements.subs.files ?? []).length)
-          await subs.add(posted, `WEBVTT\n\n00:00:00.000 --> ${new Date(Math.max(1, ref.duration || 3600) * 1000).toISOString().slice(11, 23)}\n${tags.lyrics.trim()}\n`, { label: kinds.attachLabel("subtitle", kindSel.value) }).catch(() => {});
+        const { item: posted } = await (await ctx.require("publisher")).publish(file, {
+          space: inSpace,
+          audience: who.value(),
+          kind: kindSel.value,
+          title: f.elements.title.value,
+          body: f.elements.body.value,
+          meta,
+          cover: f.elements.cover?.files?.[0] ?? null,
+          subtitles: [...(f.elements.subs.files ?? [])],
+          keepOriginal: f.elements.keep.checked,
+          app: C.app,
+          onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`),
+        });
         location.hash = `${base()}/w/${encodeURIComponent(posted)}`;
       } catch (err) {
         said.textContent = err.message ?? String(err);

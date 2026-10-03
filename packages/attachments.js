@@ -68,7 +68,10 @@ export async function start(ctx) {
 
   // `media`: a video or an audio goes through the media pipeline (`video-studio`: streamed, its poster or album cover,
   // its length, its video id — what its subtitles, lyrics and transcripts are found by), as in Videos and Audio.
-  function picker({ space = null, public: pub = false, from = null, media = false } = {}) {
+  // `publish`: a NEW image, video or audio uploaded here becomes an ITEM of its kind by the one path (`publisher`, the
+  // same as its app's upload page) — for whom the item being written is; one taken from Drive is an item already.
+  // (A conversation's files — a message, a mail — stay its own: no `publish`.)
+  function picker({ space = null, public: pub = false, from = null, media = false, publish = false } = {}) {
     const input = h("input", { type: "file", multiple: true, hidden: true });
     const chips = h("span", { className: "cw-att-pick" });
     // 📎: this device, or Drive.
@@ -150,7 +153,10 @@ export async function start(ctx) {
         // the same as its app's); anything else as it is.
         const m = kinds.mediaOf(file.type);
         const opts = { space, app: from?.app, public: typeof pub === "function" ? !!pub() : pub, onProgress: e => (pct.textContent = e.stage === "uploading" ? `${Math.round((e.p || 0) * 100)}%` : `${e.stage} ${Math.round((e.p || 0) * 100)}%`) };
-        const ref = m?.maker
+        const audience = opts.public ? "public" : space && space.kind !== "account" ? "members" : "private";
+        const ref = m?.maker && publish
+          ? (await (await ctx.require("publisher")).publish(file, { space: space && space.kind !== "account" ? space : null, audience, app: from?.app, onProgress: opts.onProgress })).ref
+          : m?.maker
           ? await (await ctx.require(m.maker)).make(file, opts)
           : await drive.upload(file, { space, from, public: opts.public, onProgress: e => (pct.textContent = e.phase === "reading" ? "reading…" : `${Math.round((100 * e.done) / e.size)}%`) });
         it.ref = { ...ref, name: file.name };
