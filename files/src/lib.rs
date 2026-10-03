@@ -30,6 +30,10 @@ const TAG: usize = 16;
 const FORMAT: u8 = 1;
 const KIND_FRAGMENT: u8 = 3;
 const KIND_INDEX: u8 = 4;
+/// An index piece ADDRESSED BY ITS HASH (its nonce carried in it): two indexes of one file (two uploads that stored
+/// different fragments) never share an address — at a shared one the network keeps the first, and the second reads as
+/// forged.
+const KIND_INDEX_H: u8 = 5;
 const MAGIC: &[u8; 4] = b"CWF1";
 /// The codec an index names: RLNC over GF(2⁸), fragments checked by the index's hash list.
 pub const CODEC: u8 = 1;
@@ -61,7 +65,12 @@ impl Plan {
         let per = size.div_ceil(GEN as u64).div_ceil(1024) * 1024;
         let chunk = (per as usize).clamp(MIN_CHUNK, MAX_CHUNK);
         let chunks = size.div_ceil(chunk as u64).max(1);
-        Plan { size, chunk, chunks, gens: chunks.div_ceil(GEN as u64) }
+        Plan {
+            size,
+            chunk,
+            chunks,
+            gens: chunks.div_ceil(GEN as u64),
+        }
     }
     /// Chunks in generation `g` (16, the last maybe fewer).
     pub fn k(&self, g: u64) -> usize {
@@ -100,7 +109,11 @@ impl Piece {
 pub fn content_key(content: &[u8; 32], salt: Option<&[u8; 32]>) -> [u8; 32] {
     match salt {
         None => blake3::derive_key("craftworks files public key", content),
-        Some(s) => blake3::keyed_hash(&blake3::derive_key("craftworks files space key", s), content).into(),
+        Some(s) => blake3::keyed_hash(
+            &blake3::derive_key("craftworks files space key", s),
+            content,
+        )
+        .into(),
     }
 }
 
@@ -109,7 +122,9 @@ fn sub(key: &[u8; 32], what: &str) -> [u8; 32] {
 }
 fn nonce(key: &[u8; 32], what: &[u8]) -> [u8; 24] {
     let mut n = [0u8; 24];
-    n.copy_from_slice(&blake3::keyed_hash(&sub(key, "craftworks files nonce"), what).as_bytes()[..24]);
+    n.copy_from_slice(
+        &blake3::keyed_hash(&sub(key, "craftworks files nonce"), what).as_bytes()[..24],
+    );
     n
 }
 
@@ -126,6 +141,15 @@ pub fn index_address(key: &[u8; 32], level: u8, n: u64) -> [u8; 32] {
 pub fn root_address(key: &[u8; 32]) -> [u8; 32] {
     blake3::keyed_hash(&sub(key, "craftworks files address"), b"root").into()
 }
+/// Where an index piece (the root too) of a HASH-ADDRESSED file lives: by its hash, which its parent (the reference,
+/// for the root) carries.
+pub fn hashed_address(key: &[u8; 32], hash: &[u8; 32]) -> [u8; 32] {
+    blake3::keyed_hash(
+        &sub(key, "craftworks files address"),
+        &[&b"h"[..], hash].concat(),
+    )
+    .into()
+}
 
 fn aead(key: &[u8; 32], what: &str) -> XChaCha20Poly1305 {
     XChaCha20Poly1305::new((&sub(key, what)).into())
@@ -135,7 +159,13 @@ fn aead(key: &[u8; 32], what: &str) -> XChaCha20Poly1305 {
 fn seal_chunk(key: &[u8; 32], plan: &Plan, i: u64, plain: &[u8]) -> Vec<u8> {
     let n = nonce(key, &[&b"c"[..], &i.to_be_bytes()].concat());
     let mut ct = aead(key, "craftworks files chunk key")
-        .encrypt(XNonce::from_slice(&n), Payload { msg: plain, aad: &plan.size.to_be_bytes() })
+        .encrypt(
+            XNonce::from_slice(&n),
+            Payload {
+                msg: plain,
+                aad: &plan.size.to_be_bytes(),
+            },
+        )
         .expect("sealing cannot fail");
     ct.resize(plan.symbol(), 0);
     ct
@@ -144,7 +174,13 @@ fn open_chunk(key: &[u8; 32], plan: &Plan, i: u64, symbol: &[u8]) -> Result<Vec<
     let len = plan.chunk_len(i) + TAG;
     let n = nonce(key, &[&b"c"[..], &i.to_be_bytes()].concat());
     aead(key, "craftworks files chunk key")
-        .decrypt(XNonce::from_slice(&n), Payload { msg: symbol.get(..len).ok_or(Error::Malformed)?, aad: &plan.size.to_be_bytes() })
+        .decrypt(
+            XNonce::from_slice(&n),
+            Payload {
+                msg: symbol.get(..len).ok_or(Error::Malformed)?,
+                aad: &plan.size.to_be_bytes(),
+            },
+        )
         .map_err(|_| Error::Forged)
 }
 
@@ -173,8 +209,15 @@ fn fragment_state(k: usize, coeffs: &[u8], payload: &[u8]) -> Vec<u8> {
     s.extend_from_slice(payload);
     s
 }
-fn parse_fragment<'a>(plan: &Plan, k: usize, state: &'a [u8]) -> Result<(&'a [u8], &'a [u8]), Error> {
-    if state.len() != 3 + k + plan.symbol() || state[..2] != [FORMAT, KIND_FRAGMENT] || state[2] as usize != k {
+fn parse_fragment<'a>(
+    plan: &Plan,
+    k: usize,
+    state: &'a [u8],
+) -> Result<(&'a [u8], &'a [u8]), Error> {
+    if state.len() != 3 + k + plan.symbol()
+        || state[..2] != [FORMAT, KIND_FRAGMENT]
+        || state[2] as usize != k
+    {
         return Err(Error::Malformed);
     }
     Ok((&state[3..3 + k], &state[3 + k..]))
@@ -184,7 +227,9 @@ fn parse_fragment<'a>(plan: &Plan, k: usize, state: &'a [u8]) -> Result<(&'a [u8
 pub fn encode(key: &[u8; 32], plan: &Plan, g: u64, plain: &[u8], extra: usize) -> Vec<(u8, Piece)> {
     let symbols = seal_generation(key, plan, g, plain);
     let k = symbols.len();
-    (0..(k + extra).min(MAX_LISTED) as u8).map(|j| (j, fragment(key, plan, g, j, &symbols))).collect()
+    (0..(k + extra).min(MAX_LISTED) as u8)
+        .map(|j| (j, fragment(key, plan, g, j, &symbols)))
+        .collect()
 }
 /// One more fragment `j` of generation `g` (minted: a slow or refused one replaced), from its chunks' ciphertext.
 pub fn mint(key: &[u8; 32], plan: &Plan, g: u64, plain: &[u8], j: u8) -> Piece {
@@ -193,11 +238,23 @@ pub fn mint(key: &[u8; 32], plan: &Plan, g: u64, plain: &[u8], j: u8) -> Piece {
 fn seal_generation(key: &[u8; 32], plan: &Plan, g: u64, plain: &[u8]) -> Vec<Vec<u8>> {
     let k = plan.k(g);
     let (start, end) = plan.range(g);
-    assert_eq!(plain.len() as u64, end - start, "generation {g} is {} bytes", end - start);
-    (0..k).map(|i| {
-        let from = i * plan.chunk;
-        seal_chunk(key, plan, g * GEN as u64 + i as u64, &plain[from..(from + plan.chunk).min(plain.len())])
-    }).collect()
+    assert_eq!(
+        plain.len() as u64,
+        end - start,
+        "generation {g} is {} bytes",
+        end - start
+    );
+    (0..k)
+        .map(|i| {
+            let from = i * plan.chunk;
+            seal_chunk(
+                key,
+                plan,
+                g * GEN as u64 + i as u64,
+                &plain[from..(from + plan.chunk).min(plain.len())],
+            )
+        })
+        .collect()
 }
 fn fragment(key: &[u8; 32], plan: &Plan, g: u64, j: u8, symbols: &[Vec<u8>]) -> Piece {
     let k = symbols.len();
@@ -206,7 +263,10 @@ fn fragment(key: &[u8; 32], plan: &Plan, g: u64, j: u8, symbols: &[Vec<u8>]) -> 
     for (ci, s) in c.iter().zip(symbols) {
         gf::axpy(&mut payload, s, *ci);
     }
-    Piece { address: fragment_address(key, g, j), state: fragment_state(k, &c, &payload) }
+    Piece {
+        address: fragment_address(key, g, j),
+        state: fragment_state(k, &c, &payload),
+    }
 }
 
 /// What the index lists for one generation: the fragments stored, each `(j, hash of its state)`.
@@ -214,25 +274,80 @@ pub type Listed = Vec<(u8, [u8; 32])>;
 
 fn seal_index(key: &[u8; 32], address: [u8; 32], plain: &[u8]) -> Piece {
     let n = nonce(key, &[&b"i"[..], &address].concat());
-    let ct = aead(key, "craftworks files index key").encrypt(XNonce::from_slice(&n), plain).expect("sealing cannot fail");
+    let ct = aead(key, "craftworks files index key")
+        .encrypt(XNonce::from_slice(&n), plain)
+        .expect("sealing cannot fail");
     let mut state = vec![FORMAT, KIND_INDEX];
     state.extend_from_slice(&ct);
     Piece { address, state }
 }
-fn open_index(key: &[u8; 32], address: &[u8; 32], hash: &[u8; 32], state: &[u8]) -> Result<Vec<u8>, Error> {
+/// A hash-addressed index piece: its nonce from its place and its content (deterministic), carried in it.
+fn seal_index_h(key: &[u8; 32], place: &[u8], plain: &[u8]) -> Piece {
+    let n = nonce(
+        key,
+        &[&b"h"[..], place, blake3::hash(plain).as_bytes()].concat(),
+    );
+    let ct = aead(key, "craftworks files index key")
+        .encrypt(XNonce::from_slice(&n), plain)
+        .expect("sealing cannot fail");
+    let mut state = vec![FORMAT, KIND_INDEX_H];
+    state.extend_from_slice(&n);
+    state.extend_from_slice(&ct);
+    Piece {
+        address: hashed_address(key, blake3::hash(&state).as_bytes()),
+        state,
+    }
+}
+/// An index piece opened, either kind: checked against its hash, then by its kind (at its place: `address`; by its
+/// hash: its nonce carried).
+fn open_index(
+    key: &[u8; 32],
+    address: &[u8; 32],
+    hash: &[u8; 32],
+    state: &[u8],
+) -> Result<Vec<u8>, Error> {
     if blake3::hash(state).as_bytes() != hash {
         return Err(Error::Forged);
+    }
+    if state.get(..2) == Some(&[FORMAT, KIND_INDEX_H][..]) {
+        let n = state.get(2..26).ok_or(Error::Malformed)?;
+        return aead(key, "craftworks files index key")
+            .decrypt(XNonce::from_slice(n), &state[26..])
+            .map_err(|_| Error::Forged);
     }
     if state.get(..2) != Some(&[FORMAT, KIND_INDEX][..]) {
         return Err(Error::Malformed);
     }
     let n = nonce(key, &[&b"i"[..], address].concat());
-    aead(key, "craftworks files index key").decrypt(XNonce::from_slice(&n), &state[2..]).map_err(|_| Error::Forged)
+    aead(key, "craftworks files index key")
+        .decrypt(XNonce::from_slice(&n), &state[2..])
+        .map_err(|_| Error::Forged)
 }
 
 /// THE INDEX TREE for a file whose fragments `stored[g]` are stored: its pieces (leaves, inner levels, the root) and
 /// the root's hash — the reference's. Put it LAST: a file reads once its index is there.
 pub fn index(key: &[u8; 32], plan: &Plan, stored: &[Listed]) -> (Vec<Piece>, [u8; 32]) {
+    index_as(key, plan, stored, false)
+}
+/// The index tree HASH-ADDRESSED (each piece at `hashed_address` of its hash): what a new upload writes.
+pub fn index_hashed(key: &[u8; 32], plan: &Plan, stored: &[Listed]) -> (Vec<Piece>, [u8; 32]) {
+    index_as(key, plan, stored, true)
+}
+fn index_as(
+    key: &[u8; 32],
+    plan: &Plan,
+    stored: &[Listed],
+    hashed: bool,
+) -> (Vec<Piece>, [u8; 32]) {
+    let seal = |level: u8, n: u64, b: &[u8]| {
+        if hashed {
+            seal_index_h(key, &[&[level][..], &n.to_be_bytes()].concat(), b)
+        } else if level == u8::MAX {
+            seal_index(key, root_address(key), b)
+        } else {
+            seal_index(key, index_address(key, level, n), b)
+        }
+    };
     assert_eq!(stored.len() as u64, plan.gens);
     let mut pieces = Vec::new();
     // Leaves: GENS_PER_LEAF generations each, `n ‖ (j ‖ hash)*n` per generation.
@@ -249,7 +364,7 @@ pub fn index(key: &[u8; 32], plan: &Plan, stored: &[Listed]) -> (Vec<Piece>, [u8
                     b.extend_from_slice(h);
                 }
             }
-            let p = seal_index(key, index_address(key, 0, n as u64), &b);
+            let p = seal(0, n as u64, &b);
             let h = p.hash();
             pieces.push(p);
             h
@@ -263,7 +378,7 @@ pub fn index(key: &[u8; 32], plan: &Plan, stored: &[Listed]) -> (Vec<Piece>, [u8
             .chunks(FANOUT)
             .enumerate()
             .map(|(n, hs)| {
-                let p = seal_index(key, index_address(key, depth, n as u64), &hs.concat());
+                let p = seal(depth, n as u64, &hs.concat());
                 let h = p.hash();
                 pieces.push(p);
                 h
@@ -279,7 +394,7 @@ pub fn index(key: &[u8; 32], plan: &Plan, stored: &[Listed]) -> (Vec<Piece>, [u8
     for h in &level {
         root.extend_from_slice(h);
     }
-    let p = seal_index(key, root_address(key), &root);
+    let p = seal(u8::MAX, 0, &root);
     let h = p.hash();
     pieces.push(p);
     (pieces, h)
@@ -305,7 +420,11 @@ impl Root {
         if plan.chunk != chunk {
             return Err(Error::Malformed);
         }
-        Ok(Root { plan, depth: b[17], children: b[18..].chunks(32).map(|c| c.try_into().unwrap()).collect() })
+        Ok(Root {
+            plan,
+            depth: b[17],
+            children: b[18..].chunks(32).map(|c| c.try_into().unwrap()).collect(),
+        })
     }
     /// The leaf that lists generation `g`: its number.
     pub fn leaf_of(g: u64) -> u64 {
@@ -314,12 +433,21 @@ impl Root {
     /// The path from the root to leaf `leaf`: `(level, piece number)` per level below the root, top first; the hash of
     /// each comes from its parent (`Inner::open`), the first from `children`.
     pub fn path(&self, leaf: u64) -> Vec<(u8, u64)> {
-        (0..=self.depth).rev().map(|l| (l, leaf / (FANOUT as u64).pow(l as u32))).collect()
+        (0..=self.depth)
+            .rev()
+            .map(|l| (l, leaf / (FANOUT as u64).pow(l as u32)))
+            .collect()
     }
 }
 
 /// An inner piece of the index (levels above the leaves): the hashes of its children.
-pub fn open_inner(key: &[u8; 32], level: u8, n: u64, hash: &[u8; 32], state: &[u8]) -> Result<Vec<[u8; 32]>, Error> {
+pub fn open_inner(
+    key: &[u8; 32],
+    level: u8,
+    n: u64,
+    hash: &[u8; 32],
+    state: &[u8],
+) -> Result<Vec<[u8; 32]>, Error> {
     let b = open_index(key, &index_address(key, level, n), hash, state)?;
     if b.is_empty() || b.len() % 32 != 0 {
         return Err(Error::Malformed);
@@ -328,7 +456,13 @@ pub fn open_inner(key: &[u8; 32], level: u8, n: u64, hash: &[u8; 32], state: &[u
 }
 
 /// A LEAF of the index: per generation it covers, the fragments stored.
-pub fn open_leaf(key: &[u8; 32], plan: &Plan, n: u64, hash: &[u8; 32], state: &[u8]) -> Result<Vec<Listed>, Error> {
+pub fn open_leaf(
+    key: &[u8; 32],
+    plan: &Plan,
+    n: u64,
+    hash: &[u8; 32],
+    state: &[u8],
+) -> Result<Vec<Listed>, Error> {
     let b = open_index(key, &index_address(key, 0, n), hash, state)?;
     let first = n * GENS_PER_LEAF as u64;
     let count = (plan.gens - first).min(GENS_PER_LEAF as u64) as usize;
@@ -352,10 +486,20 @@ pub fn open_leaf(key: &[u8; 32], plan: &Plan, n: u64, hash: &[u8; 32], state: &[
 }
 
 /// ONE CHUNK read alone (a seek): chunk `i` of the file from its systematic fragment, checked against the index.
-pub fn read_chunk(key: &[u8; 32], plan: &Plan, listed: &Listed, i: u64, state: &[u8]) -> Result<Vec<u8>, Error> {
+pub fn read_chunk(
+    key: &[u8; 32],
+    plan: &Plan,
+    listed: &Listed,
+    i: u64,
+    state: &[u8],
+) -> Result<Vec<u8>, Error> {
     let g = i / GEN as u64;
     let j = (i % GEN as u64) as u8;
-    let hash = listed.iter().find(|(x, _)| *x == j).map(|(_, h)| h).ok_or(Error::Malformed)?;
+    let hash = listed
+        .iter()
+        .find(|(x, _)| *x == j)
+        .map(|(_, h)| h)
+        .ok_or(Error::Malformed)?;
     if blake3::hash(state).as_bytes() != hash {
         return Err(Error::Forged);
     }
@@ -376,7 +520,14 @@ pub struct Decoder {
 
 impl Decoder {
     pub fn new(key: &[u8; 32], plan: &Plan, g: u64, listed: Listed) -> Decoder {
-        Decoder { key: *key, plan: *plan, g, k: plan.k(g), listed, rows: Vec::new() }
+        Decoder {
+            key: *key,
+            plan: *plan,
+            g,
+            k: plan.k(g),
+            listed,
+            rows: Vec::new(),
+        }
     }
     pub fn done(&self) -> bool {
         self.rows.len() == self.k
@@ -386,7 +537,12 @@ impl Decoder {
     }
     /// Fragment `j` arrived: checked (its hash in the index), then eliminated against what is held.
     pub fn add(&mut self, j: u8, state: &[u8]) -> Result<(), Error> {
-        let hash = self.listed.iter().find(|(x, _)| *x == j).map(|(_, h)| *h).ok_or(Error::Malformed)?;
+        let hash = self
+            .listed
+            .iter()
+            .find(|(x, _)| *x == j)
+            .map(|(_, h)| *h)
+            .ok_or(Error::Malformed)?;
         if *blake3::hash(state).as_bytes() != hash {
             return Err(Error::Forged);
         }
@@ -402,7 +558,9 @@ impl Decoder {
                 gf::axpy(&mut p, rp, f);
             }
         }
-        let Some(pivot) = c.iter().position(|x| *x != 0) else { return Err(Error::Redundant) };
+        let Some(pivot) = c.iter().position(|x| *x != 0) else {
+            return Err(Error::Redundant);
+        };
         let inv = gf::inv(c[pivot]);
         gf::scale(&mut c, inv);
         gf::scale(&mut p, inv);
@@ -426,7 +584,12 @@ impl Decoder {
         rows.sort_by_key(|r| r.0);
         let mut out = Vec::new();
         for (i, (_, _, symbol)) in rows.into_iter().enumerate() {
-            out.extend(open_chunk(&self.key, &self.plan, self.g * GEN as u64 + i as u64, symbol)?);
+            out.extend(open_chunk(
+                &self.key,
+                &self.plan,
+                self.g * GEN as u64 + i as u64,
+                symbol,
+            )?);
         }
         Ok(out)
     }

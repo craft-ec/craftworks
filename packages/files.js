@@ -125,7 +125,8 @@ export async function start(ctx) {
     const row = await rowOf(sp, ref.id).catch(() => null);
     if (!row) return ref;
     const { b, ...rest } = ref;
-    return { ...rest, key: row.key, root: row.root, ...(row.b !== undefined ? { b: row.b } : {}) };
+    const { hx, ...was } = rest;
+    return { ...was, key: row.key, root: row.root, ...(row.b !== undefined ? { b: row.b } : {}), ...(row.hx ? { hx: 1 } : {}) };
   }
 
   // ADOPT a file into a space (attached there from another space's Drive, saved to yours): listed at once with the key
@@ -137,7 +138,7 @@ export async function start(ctx) {
     const src = from !== undefined && ref.id ? await rowOf(from, ref.id).catch(() => null) : null;
     const id = ref.id ?? ref.root;
     const had = await rowOf(sp, id).catch(() => null);
-    if (!had) await setRow(sp, { id, key: now.key, root: now.root, ...(now.b !== undefined ? { b: now.b } : {}), ...(src?.h ? { h: src.h } : {}), pub: !!pub, app, n: -2 });
+    if (!had) await setRow(sp, { id, key: now.key, root: now.root, ...(now.b !== undefined ? { b: now.b } : {}), ...(now.hx ? { hx: 1 } : {}), ...(src?.h ? { h: src.h } : {}), pub: !!pub, app, n: -2 });
     return { ...now, id, in: inOf(sp) };
   }
 
@@ -179,8 +180,8 @@ export async function start(ctx) {
     const root = await store(key, size, name, type, (a, b) => file.slice(a, b).arrayBuffer().then(x => new Uint8Array(x)), onProgress, null, burn);
     const id = root;
     // The row keeps the BURN SECRET (`x`): whoever re-keys the file later burns these pieces with it.
-    if (!(await rowOf(sp, id).catch(() => null))) await setRow(sp, { id, key: keyHex, root, b: hex(burn), ...(secret ? { x: hex(secret) } : {}), h: hex(hash), pub: !!pub, app, n: pub ? -1 : st.n });
-    return { id, in: inOf(sp), key: keyHex, root, b: hex(burn), size, name, type };
+    if (!(await rowOf(sp, id).catch(() => null))) await setRow(sp, { id, key: keyHex, root, hx: 1, b: hex(burn), ...(secret ? { x: hex(secret) } : {}), h: hex(hash), pub: !!pub, app, n: pub ? -1 : st.n });
+    return { id, in: inOf(sp), key: keyHex, root, hx: 1, b: hex(burn), size, name, type };
   }
 
   // The KEY a file would have (public: its content alone; otherwise with its space's salt) — without storing it: what
@@ -246,7 +247,9 @@ export async function start(ctx) {
       onProgress({ phase: "sending", done: Math.min(size, (g + 1) * genBytes), size });
     }
     // The INDEX last: once it is there, the file reads.
-    const idx = core.file_index(key, size, JSON.stringify(stored), burn);
+    // HASH-ADDRESSED (`hx`): each index piece at its own hash's address — two uploads of one file that stored other
+    // fragments never meet at one address (the network keeps the first; the second would read as forged).
+    const idx = core.file_index(key, size, JSON.stringify(stored), burn, true);
     const puts = Array.from(idx.puts);
     const ok = await Promise.all(puts.slice(0, -1).map(p => putOne([0, ...p], `${name}: its index`)));
     if (ok.includes(false) || !(await putOne([0, ...puts.at(-1)], `${name}: its root`))) throw new Error(`${name}: its index could not be stored (the upload resumes)`);
@@ -274,9 +277,29 @@ export async function start(ctx) {
         (async () => {
           const key = bytes(ref.key);
           const burnable = ref.b !== undefined;
-          const state = await fetchState(core.file_root_id(key, burnable), `${ref.name}: its root`, burnable);
+          // HASH-ADDRESSED (`hx`): each index piece fetched by its hash (the reference's for the root); else at its place.
+          const by = h => (ref.hx ? h : "");
+          const state = await fetchState(core.file_root_id(key, burnable, by(ref.root)), `${ref.name}: its root`, burnable);
           if (!state) throw new Error(`${ref.name}: not found on the network (yet)`);
           const root = JSON.parse(glue.file_root(key, ref.root, state));
+          // The hash of index piece `n` at `level` (from its parent, read once): what a hash-addressed one is fetched by.
+          const inner = new Map();
+          const indexHash = async (level, n) => {
+            if (level === root.depth) return root.children[n];
+            const at = Math.floor(n / 7000);
+            const k = `${level + 1}/${at}`;
+            if (!inner.has(k))
+              inner.set(
+                k,
+                (async () => {
+                  const h = await indexHash(level + 1, at);
+                  const st = await fetchState(core.file_index_id(key, level + 1, at, burnable, by(h)), `${ref.name}: its index`, burnable);
+                  if (!st) throw new Error(`${ref.name}: part of its index is missing`);
+                  return glue.file_inner(key, level + 1, at, h, st);
+                })().catch(e => (inner.delete(k), Promise.reject(e))),
+              );
+            return (await inner.get(k))[n % 7000];
+          };
           const leaves = new Map();
           // The leaf that lists generation g, down from the root through any inner levels.
           const leafOf = async g => {
@@ -285,21 +308,15 @@ export async function start(ctx) {
               leaves.set(
                 n,
                 (async () => {
-                  let hashes = root.children;
-                  for (let level = root.depth; level > 0; level--) {
-                    const at = Math.floor(n / 7000 ** level);
-                    const st = await fetchState(core.file_index_id(key, level, at, burnable), `${ref.name}: its index`, burnable);
-                    if (!st) throw new Error(`${ref.name}: part of its index is missing`);
-                    hashes = glue.file_inner(key, level, at, hashes[at % 7000], st);
-                  }
-                  const st = await fetchState(core.file_index_id(key, 0, n, burnable), `${ref.name}: its index`, burnable);
+                  const h = await indexHash(0, n);
+                  const st = await fetchState(core.file_index_id(key, 0, n, burnable, by(h)), `${ref.name}: its index`, burnable);
                   if (!st) throw new Error(`${ref.name}: part of its index is missing`);
-                  return JSON.parse(glue.file_leaf(key, root.plan.size, n, hashes[root.depth ? n % 7000 : n], st));
+                  return JSON.parse(glue.file_leaf(key, root.plan.size, n, h, st));
                 })(),
               );
             return (await leaves.get(n))[g % 192];
           };
-          return { key, burnable, depth: root.depth, plan: root.plan, listed: leafOf };
+          return { key, burnable, depth: root.depth, plan: root.plan, listed: leafOf, hx: !!ref.hx, rootHash: ref.root, indexHash, by };
         })().catch(e => (opened.delete(ref.root), Promise.reject(e))),
       );
     return opened.get(ref.root);
@@ -368,7 +385,7 @@ export async function start(ctx) {
   // new key derived from the content's hash, so a step done twice makes the same fragments — the row changed last.
   // A row with no hash is read once to hash it first.
   async function recode(sp, row, { pub }) {
-    const old = { key: row.key, root: row.root, name: row.id, ...(row.b !== undefined ? { b: row.b } : {}) };
+    const old = { key: row.key, root: row.root, name: row.id, ...(row.b !== undefined ? { b: row.b } : {}), ...(row.hx ? { hx: 1 } : {}) };
     const f = await open(old);
     const size = f.plan.size;
     let h = row.h;
@@ -386,7 +403,7 @@ export async function start(ctx) {
     const genBytes = f.plan.chunk * GEN;
     const root = await store(key, size, row.id, "", async a => generation(old, f, Math.floor(a / genBytes)), () => {}, await progressOf(sp, row.id), burn);
     const { x: oldSecret, ...kept } = row;
-    await setRow(sp, { ...kept, key: hex(key), root, b: hex(burn), ...(secret ? { x: hex(secret) } : {}), h, n });
+    await setRow(sp, { ...kept, key: hex(key), root, hx: 1, b: hex(burn), ...(secret ? { x: hex(secret) } : {}), h, n });
     // The OLD pieces BURNED — once no row of the space still names that key — when they were this space's (keyed
     // under its salt `n`; a public or adopted file's are not this space's to burn).
     if (row.b && row.n >= 0 && row.key !== hex(key) && !(await rows(sp)).some(r => r.key === row.key)) await burn_(sp, { ...row, x: oldSecret }, old, f).catch(e => ctx.log("files", { what: `${row.id.slice(0, 8)}…: burning its old pieces: ${e.message ?? e}` }));
@@ -400,11 +417,11 @@ export async function start(ctx) {
     const s = row.x ? null : await saltAt(sp, row.n);
     const secret = row.x ? bytes(row.x) : s ? await secretOf(s, key) : null;
     if (!secret || hex(await sha(secret)) !== row.b) throw new Error("its burn secret is not known here");
-    const puts = [core.file_burn(key, "root", 0, 0, secret)];
+    const puts = [core.file_burn(key, "root", 0, 0, secret, f.by(f.rootHash))];
     const leaves = Math.ceil(f.plan.gens / 192);
-    for (let n = 0; n < leaves; n++) puts.push(core.file_burn(key, "index", 0, n, secret));
-    for (let level = 1; level <= f.depth; level++) for (let n = 0; n < Math.ceil(leaves / 7000 ** level); n++) puts.push(core.file_burn(key, "index", level, n, secret));
-    for (let g = 0; g < f.plan.gens; g++) for (const [j] of await f.listed(g)) puts.push(core.file_burn(key, "fragment", g, j, secret));
+    for (let n = 0; n < leaves; n++) puts.push(core.file_burn(key, "index", 0, n, secret, f.by(await f.indexHash(0, n))));
+    for (let level = 1; level <= f.depth; level++) for (let n = 0; n < Math.ceil(leaves / 7000 ** level); n++) puts.push(core.file_burn(key, "index", level, n, secret, f.by(await f.indexHash(level, n))));
+    for (let g = 0; g < f.plan.gens; g++) for (const [j] of await f.listed(g)) puts.push(core.file_burn(key, "fragment", g, j, secret, ""));
     const ok = await Promise.all(puts.map(p => putOne([0, ...Array.from(p)], `${row.id.slice(0, 8)}…: burning`)));
     ctx.log("files", { what: `${row.id.slice(0, 8)}…: ${ok.filter(Boolean).length} of ${ok.length} old pieces burned` });
     return ok;
@@ -416,20 +433,27 @@ export async function start(ctx) {
   // whole, degraded, damaged, put }`.
   async function keep(sp, row) {
     const t0 = performance.now();
-    const ref = { key: row.key, root: row.root, name: `${row.id.slice(0, 8)}…`, ...(row.b ? { b: row.b } : {}) };
+    const ref = { key: row.key, root: row.root, name: `${row.id.slice(0, 8)}…`, ...(row.b ? { b: row.b } : {}), ...(row.hx ? { hx: 1 } : {}) };
     const f = await open(ref);
     const out = { id: row.id, at: Date.now(), pieces: 0, missing: 0, gens: f.plan.gens, whole: 0, degraded: 0, damaged: 0, put: 0 };
-    const one = async (what, a, b, idHex) => {
+    const one = async (what, a, b, idHex, hash = "") => {
       out.pieces += 1;
       const st = await fetchState(idHex, `keeping ${ref.name}`);
       if (!st || (f.burnable && st[0] !== 2)) return (out.missing += 1), false;
-      if (await putOne([0, ...Array.from(core.file_keep(f.key, what, a, b, f.burnable, st))], `keeping ${ref.name}`)) out.put += 1;
+      if (await putOne([0, ...Array.from(core.file_keep(f.key, what, a, b, f.burnable, st, hash))], `keeping ${ref.name}`)) out.put += 1;
       return true;
     };
-    await one("root", 0, 0, core.file_root_id(f.key, f.burnable));
+    await one("root", 0, 0, core.file_root_id(f.key, f.burnable, f.by(f.rootHash)), f.by(f.rootHash));
     const leaves = Math.ceil(f.plan.gens / 192);
-    for (let n = 0; n < leaves; n++) await one("index", 0, n, core.file_index_id(f.key, 0, n, f.burnable));
-    for (let level = 1; level <= f.depth; level++) for (let n = 0; n < Math.ceil(leaves / 7000 ** level); n++) await one("index", level, n, core.file_index_id(f.key, level, n, f.burnable));
+    for (let n = 0; n < leaves; n++) {
+      const h = f.by(await f.indexHash(0, n));
+      await one("index", 0, n, core.file_index_id(f.key, 0, n, f.burnable, h), h);
+    }
+    for (let level = 1; level <= f.depth; level++)
+      for (let n = 0; n < Math.ceil(leaves / 7000 ** level); n++) {
+        const h = f.by(await f.indexHash(level, n));
+        await one("index", level, n, core.file_index_id(f.key, level, n, f.burnable, h), h);
+      }
     for (let g = 0; g < f.plan.gens; g++) {
       const listed = await f.listed(g);
       const there = (await Promise.all(listed.map(([j]) => one("fragment", g, j, core.file_fragment_id(f.key, g, j, f.burnable))))).filter(Boolean).length;
