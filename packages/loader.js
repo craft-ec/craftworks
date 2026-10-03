@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. The node's code is loaded after the first
 // page is up even where the page needs none: to FOLLOW the app's and the loader's sites (below).
-const VERSION = "27";
+const VERSION = "28";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -364,21 +364,56 @@ export async function run(boot) {
   // the network then sends it each new version. When one lands — the node says the site changed, or its manifest
   // (read again every minute and on focus) differs from the one this page runs — the page loads it by itself.
   async function follow(running) {
+    // IN PLACE: the new manifest's changed packages all COMPONENTS (kind `module`), and what the site asks of the
+    // person unchanged — the changed ones forgotten, the manifest swapped, every slot mounted again. False: reload.
+    const inPlace = bytes => {
+      let next;
+      try {
+        next = JSON.parse(new TextDecoder().decode(bytes));
+      } catch {
+        return false;
+      }
+      const same = k => JSON.stringify(next[k] ?? null) === JSON.stringify(manifest[k] ?? null);
+      if (!["uses", "identity_prior", "theme", "layout"].every(same)) return false;
+      const names = [...new Set([...Object.keys(manifest.packages), ...Object.keys(next.packages)])];
+      const changed = names.filter(n => manifest.packages[n]?.sha256 !== next.packages[n]?.sha256);
+      if (changed.some(n => (next.packages[n] ?? manifest.packages[n]).kind !== "module")) return false;
+      manifest = next;
+      ctx.apps = manifest.apps ?? [];
+      for (const n of changed) loaded.delete(n), entries.delete(n), read.delete(n);
+      for (const slot of Object.keys(filled)) filled[slot] = null;
+      ctx.log("newest", { what: `taken in place (no reload): ${changed.join(", ") || "the manifest"}` });
+      show(route()).catch(fail);
+      return true;
+    };
     const node = await require("node");
     const sites = [stack.appSite(), stack.loaderSite()].filter(Boolean);
     let told = false;
-    // A newer version: LOADED BY ITSELF, at the first moment nothing would be lost — nobody typing, no text waiting
-    // in a box, no dialog open; looked at every 2 s, and taken at once when the page changes or goes out of view.
-    const newer = () => {
+    // A newer version: TAKEN BY ITSELF, at the first moment nothing would be lost — nobody typing, no text waiting in a
+    // box, no dialog open; looked at every 2 s, and taken at once when the page changes or goes out of view.
+    // IN PLACE when only COMPONENTS changed (`inPlace`): the services — the node, the tables read, the keys — kept,
+    // nothing read again. Anything else (a service, data, the loader): the page loaded again.
+    const newer = (next = null) => {
       if (told) return;
       told = true;
-      ctx.log("newest", { what: "a newer version is on this node: loading it when nothing would be lost" });
+      ctx.log("newest", { what: "a newer version is on this node: taking it when nothing would be lost" });
       const editable = el => el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
       const busy = () =>
         !!document.querySelector("dialog[open]") ||
         editable(document.activeElement) ||
         [...document.querySelectorAll("textarea, input[type=text], input:not([type])")].some(x => x.value && !x.closest("header, [role=search]") && x.type !== "search");
+      let done = false;
       const go = () => {
+        if (done) return;
+        done = true;
+        clearInterval(poll);
+        removeEventListener("hashchange", onRoute);
+        document.removeEventListener("visibilitychange", onHidden);
+        if (next && inPlace(next)) {
+          running = next;
+          told = false;
+          return;
+        }
         const n = document.createElement("div");
         n.setAttribute("role", "status");
         n.style.cssText =
@@ -388,17 +423,19 @@ export async function run(boot) {
         document.body.append(n);
         setTimeout(() => location.reload(), 400);
       };
-      const tryNow = () => !busy() && (clearInterval(poll), go());
+      const tryNow = () => !busy() && go();
+      const onRoute = () => go();
+      const onHidden = () => document.visibilityState === "hidden" && go();
       const poll = setInterval(tryNow, 2000);
-      addEventListener("hashchange", () => (clearInterval(poll), go()), { once: true });
-      document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && (clearInterval(poll), location.reload()));
+      addEventListener("hashchange", onRoute);
+      document.addEventListener("visibilitychange", onHidden);
       tryNow();
     };
     const check = async () => {
       const r = await fetch(new URL("manifest.json", location.href), { cache: "no-store" }).catch(() => null);
       if (!r?.ok) return;
       const now = new Uint8Array(await r.arrayBuffer());
-      if (now.length !== running.length || now.some((x, i) => x !== running[i])) newer();
+      if (now.length !== running.length || now.some((x, i) => x !== running[i])) newer(now);
     };
     node.listen(said => {
       if (said.kind !== "changed" || !sites.includes(said.key)) return;
