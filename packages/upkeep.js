@@ -60,7 +60,7 @@ export async function start(ctx) {
   // MIGRATIONS — the one place records from before a change are brought forward, here, after the page is up (never
   // on a page's path). Each step is safe to run again; the version is recorded once EVERY step of it succeeded (a step
   // the node was silent for: tried again on a later tick), and a page after that runs none.
-  const MIGRATION = 2;
+  const MIGRATION = 3;
   let migratedHere = false;
   async function migrate() {
     if (migratedHere) return;
@@ -82,6 +82,9 @@ export async function start(ctx) {
       // both of its names again).
       step("this account's tables' places", storage.settleOwnPlaces(await space.account())),
       ...spaces.map(sp => step(`${sp.name}'s tables' places`, storage.settleOwnPlaces(sp))),
+      // v3: files another app put at a Drive's root, each in its type's folder (/Images, /Videos …).
+      step("your Drive's folders", (await ctx.require("drive-store")).sortByApp(null)),
+      ...spaces.map(async sp => step(`${sp.name}'s Drive folders`, (await ctx.require("drive-store")).sortByApp(sp))),
     ]);
     if (done.every(Boolean)) {
       await storage.setUpkeepMark("migrated", MIGRATION);

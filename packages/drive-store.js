@@ -14,7 +14,7 @@
 //   await drive.onChange(space, fn)
 //   await drive.drives()                                // the spaces whose Drive this person can pick (Drive in use)
 export async function start(ctx) {
-  const [storage, space, files, roles] = await Promise.all(["storage", "space", "files", "roles"].map(n => ctx.require(n)));
+  const [storage, space, files, roles, kinds] = await Promise.all(["storage", "space", "files", "roles", "kinds"].map(n => ctx.require(n)));
   const shared = sp => sp && sp.kind !== "account";
   // A space HAS a Drive only when it uses the Drive app (an `app` act); yours always.
   const usesDrive = async sp => !shared(sp) || (await roles.of(sp).then(r => r.apps().includes("drive"), () => false));
@@ -30,9 +30,13 @@ export async function start(ctx) {
   const idOf = async ref => ref.id ?? ref.root ?? hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ref.inline ?? ""))).slice(0, 32);
   const clean = f => `/${String(f ?? "").split("/").map(x => x.trim()).filter(Boolean).join("/")}`;
 
-  async function add(ref, { space: sp = null, from = null, folder = "/" } = {}) {
+  // WHERE A FILE GOES with no folder named — uploaded through another app (a photo in a post, audio in a message, a
+  // video): the folder of WHAT IT IS (`kinds`: /Videos, /Audio, /Images, /Documents, /Files), whichever app it came
+  // through. Uploaded IN Drive: where it was put (Drive always names its folder).
+  const typeFolder = ref => `/${kinds.domainName(kinds.ofType(ref?.type))}`;
+  async function add(ref, { space: sp = null, from = null, folder = null } = {}) {
     const id = await idOf(ref);
-    const row = { ref, at: Date.now(), folder: clean(folder), ...(from ? { from } : {}) };
+    const row = { ref, at: Date.now(), folder: clean(folder ?? (from?.app === "drive" ? "/" : typeFolder(ref))), ...(from ? { from } : {}) };
     // Yours always; the space's too when it is one.
     const tables = [await tableOf(null), ...(shared(sp) && (await usesDrive(sp)) ? [await tableOf(sp)] : [])];
     for (const t of tables) {
@@ -45,7 +49,7 @@ export async function start(ctx) {
     return id;
   }
 
-  async function upload(file, { space: sp = null, public: pub = false, from = null, folder = "/", onProgress = () => {} } = {}) {
+  async function upload(file, { space: sp = null, public: pub = false, from = null, folder = null, onProgress = () => {} } = {}) {
     const ref = await files.put(file, { space: sp, public: pub, app: from?.app ?? "drive", onProgress });
     await add(ref, { space: sp, from, folder }).catch(e => ctx.log("drive", { what: `listing ${file.name}: ${e.message}` }));
     return ref;
@@ -94,5 +98,18 @@ export async function start(ctx) {
   const remove = async (sp, id) => (await tableOf(sp)).remove(`f/${id}`);
   const onChange = async (sp, f) => (await tableOf(sp)).onChange(f);
 
-  return { upload, add, list, folders, mkdir, move, remove, onChange, drives, usesDrive };
+  // (A MIGRATION — `upkeep`.) Files at the root from another app, from before type folders: each moved to its type's.
+  async function sortByApp(sp = null) {
+    if (!(await usesDrive(sp))) return true;
+    const t = await tableOf(sp);
+    await t.settled;
+    for (const r of t.rows().filter(x => x.key.startsWith("f/") && x.value)) {
+      const v = parse(r);
+      const to = v && v.folder === "/" && v.from?.app !== "drive" ? typeFolder(v.ref) : "/";
+      if (to !== "/") await t.put(r.key, JSON.stringify({ ...JSON.parse(r.value), folder: to }));
+    }
+    return true;
+  }
+
+  return { upload, add, list, folders, mkdir, move, remove, onChange, drives, usesDrive, sortByApp };
 }

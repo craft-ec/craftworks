@@ -57,6 +57,14 @@ export async function start() {
     inDomain: domain => CATALOG.filter(c => c[1] === domain).map(c => c[0]),
     all: () => [...byKind.keys()],
     fieldLabel: f => LABELS[f] ?? f,
+    // A FILE's domain, from its type (MIME): what an upload IS, whichever app it came through.
+    ofType: type => {
+      const t = String(type ?? "").toLowerCase();
+      for (const d of ["video", "audio", "image"]) if (t.startsWith(`${d}/`)) return d;
+      return /^text\/|pdf|epub|msword|officedocument|opendocument|rtf|comicbook/.test(t) ? "document" : "file";
+    },
+    // A domain's NAME as a place (a Drive folder; its app's): Videos, Audio, Images, Documents, Files.
+    domainName: d => ({ video: "Videos", audio: "Audio", image: "Images", document: "Documents" })[d] ?? "Files",
     policyDomain: kind => (onTo.has(kind) ? kind : byKind.get(kind)?.domain ?? "text"),
     // What an attaching kind is CALLED on an item of `target` kind: a subtitle on a song is its Lyrics, on a podcast
     // or an audiobook its Transcript — one capability, named for what it is on.
