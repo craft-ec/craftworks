@@ -680,6 +680,9 @@ export async function start(ctx) {
       // clear, so anyone reads it; still signed in the space (only its members write it).
       opts: name => ({ space: sp, public: /^x[0-9a-f]{12}-pub-/.test(name) }),
       old: async () => null,
+      // Its WRITERS BAG: who has a catalog here (`index`'s sealed bag of the space). Its writers are read from it.
+      bag: fresh => writersBag(sp, fresh),
+      list: (ws, complete) => listWriters(sp, ws, complete),
       // Its WRITERS: every device of every member (the group's members are DIDs; each DID's devices, from its card,
       // checked against its key log) — this device's own siblings too.
       writers: async () => {
@@ -709,7 +712,12 @@ export async function start(ctx) {
           });
         })().catch(() => {});
       },
-      catalogOf: w => tail(w, sp.tables.catalog, { space: sp }),
+      // This device's catalog listed in the space's writers bag BEFORE it is made: nobody asks for it before then.
+      catalogOf: w =>
+        tail(w, sp.tables.catalog, {
+          space: sp,
+          ...(w === sp.self ? { beforeCreate: () => listWriters(sp, [w]).catch(e => ctx.log("storage", { what: `${sp.name ?? sp.id}: listing this device as a writer: ${e?.message ?? e}` })) } : {}),
+        }),
       // DEPARTED writers (removed, banned, left): the space's table `departed` — written by the member who took their
       // nodes out of the group, BEFORE the commit — gives each node's feeds' last sequence then (`heads`), and what
       // they wrote up to there still counts; nothing after (they keep older epochs' keys). The table itself: none.
@@ -735,8 +743,55 @@ export async function start(ctx) {
   }
 
   // A TABLE: the merge of its writers' feeds, and this node's feed to write.
+  // A SPACE's WRITERS BAG (`index`'s sealed bag): the members' devices that have a catalog there, and whether it is
+  // COMPLETE (every catalog from before the bag listed — whoever first opened the space with it listed them all).
+  // Read once per space (again when asked): nobody's catalog is asked for before they have one.
+  const bags = new Map(); // space id → Promise<{ set, complete }>
+  function writersBag(sp, fresh = false) {
+    if (fresh || !bags.has(sp.id))
+      bags.set(
+        sp.id,
+        (async () => {
+          const t0 = performance.now();
+          const items = await (await ctx.require("index")).spacePointers(sp, "writers");
+          const b = { set: new Set(items.map(i => i?.w).filter(w => typeof w === "string")), complete: items.some(i => i?.complete === true) };
+          ctx.log("storage", { what: `${sp.name ?? sp.id.slice(0, 8)}: writers bag — ${b.set.size} writer(s)${b.complete ? ", complete" : ", not complete yet"}`, ms: Math.round(performance.now() - t0) });
+          return b;
+        })().catch(e => (bags.delete(sp.id), Promise.reject(e))),
+      );
+    return bags.get(sp.id);
+  }
+  async function listWriters(sp, ws, complete = false) {
+    const index = await ctx.require("index");
+    const b = await writersBag(sp).catch(() => ({ set: new Set(), complete: false }));
+    for (const w of ws)
+      if (!b.set.has(w)) {
+        await index.spacePoint(sp, "writers", { w });
+        b.set.add(w);
+      }
+    if (complete && !b.complete) {
+      await index.spacePoint(sp, "writers", { complete: true });
+      b.complete = true;
+    }
+  }
+
+  // A complete bag READ AGAIN now and then (5 s, doubling, to every 5 min): each read's set handed to every table of the
+  // space that waits on new writers — one read for the whole space, however many tables.
+  const bagPolls = new Map(); // space id → [fn]
+  function pollBag(sp, scope, fn) {
+    if (bagPolls.has(sp.id)) return void bagPolls.get(sp.id).push(fn);
+    const fns = [fn];
+    bagPolls.set(sp.id, fns);
+    const again = (n = 0) =>
+      setTimeout(async () => {
+        const b = await scope.bag(true).catch(() => null);
+        if (b) for (const f of fns) f(b.set);
+        again(n + 1);
+      }, Math.min(5000 * 2 ** n, 300000));
+    again();
+  }
+
   const tables = new Map(); // scope + name -> Promise<table>
-  const here = new Set(); // the spaces whose catalog this page is making
   function merged(name, sp, { lazy = false } = {}) {
     const scope = scopeOf(sp);
     const at = `${scope.key}/${name}`;
@@ -745,12 +800,13 @@ export async function start(ctx) {
     const ready = (async () => {
       if (sp.kind === "account" && !sp.shared) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
       const [mine, others] = await Promise.all([scope.catalogOf(scope.self), scope.writers()]);
-      // This node's catalog of a space made now if it is not there yet (with `HERE`): the other members then know it is
-      // here, and never ask for a catalog of a member that has not been.
-      if (sp.kind !== "account" && mine.absent && !here.has(scope.key)) {
-        here.add(scope.key);
-        versioned(mine, HERE, JSON.stringify({ at: Date.now() })).catch(e => (here.delete(scope.key), ctx.log("storage", { what: `${sp.name ?? scope.key}: catalog not made yet: ${e?.message ?? e}` })));
-      }
+      // A space: its WRITERS BAG says whose catalogs exist — only those are read once it is complete. This device
+      // listed if it has a catalog and is not yet (a catalog from before the bag).
+      // Waited on BRIEFLY: a bag this node holds answers at once; one not answered by then — every member read, as
+      // before (nothing missed).
+      const bag = scope.bag ? await Promise.race([scope.bag().catch(() => null), new Promise(r => setTimeout(() => r(null), 1500))]) : null;
+      const listed = o => !bag?.complete || bag.set.has(o);
+      if (bag && !mine.absent && !bag.set.has(scope.self)) scope.list([scope.self]).catch(() => {});
       const lists = (cat, n) => own(cat).some(r => r.key === n);
       const all = [];
       // Another writer's feed that does not open here (sealed under a key this node lacks — a node that has not
@@ -798,11 +854,15 @@ export async function start(ctx) {
         };
         c.onChange(() => open().catch(() => {}));
         if (c.absent) {
-          absentCatalog(c);
+          if (!c.answered()) silent += 1;
+          if (!bag?.complete) absentCatalog(c);
           return;
         }
+        found.add(o);
         await open();
       };
+      const found = new Set();
+      let silent = 0;
       // DEPARTED writers' feeds, capped where they stood when they left (a space's).
       const departedDone = new Set();
       const gatherDeparted = async () => {
@@ -818,16 +878,27 @@ export async function start(ctx) {
           } catch {}
           if (typeof cap !== "number") continue;
           departedDone.add(r.key);
-          const f = await theirs(r.key, true, await scope.catalogOf(r.key).catch(() => null));
+          // Its catalog: read, and listed in the writers bag when there (a departed writer from before the bag).
+          const cat = await scope.catalogOf(r.key).catch(() => null);
+          if (cat && !cat.absent && bag && !bag.set.has(r.key)) scope.list([r.key]).catch(() => {});
+          const f = await theirs(r.key, true, cat);
           if (f) take(capped(f, cap));
         }
       };
-      const settled = soon(Promise.all([...others.map(o => gather(o).catch(() => {})), gatherDeparted().catch(e => ctx.log("feed not read", { what: `${name}: departed writers: ${e.message}` }))]), name);
+      const gathering = Promise.all([...others.filter(listed).map(o => gather(o).catch(() => {})), gatherDeparted().catch(e => ctx.log("feed not read", { what: `${name}: departed writers: ${e.message}` }))]);
+      const settled = soon(gathering, name);
+      // The bag from before it was complete: every catalog found listed, and the bag marked COMPLETE — once every
+      // member's catalog was ANSWERED (found, or "not there"); a silent one leaves it for a later open.
+      if (bag && !bag.complete)
+        gathering.then(() => (silent ? null : scope.list([...found, ...(mine.absent ? [] : [scope.self])], true))).catch(e => ctx.log("storage", { what: `${name}: listing the space's writers: ${e?.message ?? e}` }));
+      // A complete bag: new writers appear in it — read again now and then (one read for the whole space).
+      if (bag?.complete) pollBag(sp, scope, set => set.forEach(o => o !== scope.self && others.includes(o) && !seen.has(o) && (seen.add(o), gather(o).catch(() => {}))));
       if (scope.departed?.(name)) scope.departedTable().then(d => d.onChange(() => gatherDeparted().catch(() => {})), () => {});
       // A WRITER NEW since the table opened (a member's new device, a new member): gathered when the scope says so.
-      const seen = new Set(others);
+      const seen = new Set(others.filter(listed));
       scope.watch?.(async () => {
-        for (const o of await scope.writers().catch(() => [])) if (!seen.has(o)) seen.add(o), gather(o).catch(() => {});
+        const b = scope.bag ? await scope.bag(true).catch(() => bag) : null;
+        for (const o of await scope.writers().catch(() => [])) if (!seen.has(o) && (!b?.complete || b.set.has(o))) seen.add(o), gather(o).catch(() => {});
       });
       ctx.log("table open", { what: `${name}: ${rows.length} row(s) from ${all.filter(f => !f.absent).length} feed(s)` });
       // A write in a space: its group brought current first, so what is written is sealed with the newest epoch's key

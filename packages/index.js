@@ -100,9 +100,43 @@ export async function start(ctx) {
   const point = async (ref, item) => drop(await refAddress(ref), enc.encode(JSON.stringify(item)), "pointing");
   const pointers = async ref => parse(await payloadsAt(await refAddress(ref), "reading pointers"));
 
+  // A SPACE's SEALED bag (`name`): at an address the space's id gives, each item sealed with the space's newest EPOCH
+  // key (`epoch ‖ nonce ‖ AES-GCM`) — only members read it; a member removed reads nothing added after. Its size shows
+  // to whoever knows the space's id, never what is in it.
+  const sealedAddress = async (sp, name) => refAddress(`space ${glue.space_table_key(sp.idBytes, `bag-${name}`)}`);
+  const aes = async keyHex => crypto.subtle.importKey("raw", bytes(keyHex), "AES-GCM", false, ["encrypt", "decrypt"]);
+  async function spacePoint(sp, name, item) {
+    const access = await ctx.require("access");
+    const k = await access.keyAt(`bag-${name}`, -1, { space: sp.idBytes });
+    if (!k.key) throw new Error(`no key of the space here (${k.why})`);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aes(k.key), enc.encode(JSON.stringify(item))));
+    const out = new Uint8Array(4 + 12 + ct.length);
+    new DataView(out.buffer).setUint32(0, k.epoch);
+    out.set(iv, 4);
+    out.set(ct, 16);
+    await drop(await sealedAddress(sp, name), out, `the space's ${name}`);
+  }
+  async function spacePointers(sp, name) {
+    const access = await ctx.require("access");
+    const keys = new Map();
+    const out = [];
+    for (const p of await payloadsAt(await sealedAddress(sp, name), `reading the space's ${name}`)) {
+      if (p.length < 17) continue;
+      const epoch = new DataView(p.buffer, p.byteOffset).getUint32(0);
+      if (!keys.has(epoch)) keys.set(epoch, await access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes }).then(k => (k.key ? aes(k.key) : null), () => null));
+      const key = await keys.get(epoch);
+      if (!key) continue;
+      try {
+        out.push(JSON.parse(dec.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: p.subarray(4, 16) }, key, p.subarray(16)))));
+      } catch {}
+    }
+    return out;
+  }
+
   const SPACES = "discover:spaces";
   const listSpace = desc => point(SPACES, { id: desc.id, name: desc.name, kind: desc.kind, governance: { owner: desc.governance.owner, nonce: desc.governance.nonce } });
   const spaces = () => pointers(SPACES);
 
-  return { send, inbox, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces };
+  return { send, inbox, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces, spacePoint, spacePointers };
 }

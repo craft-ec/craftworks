@@ -960,3 +960,25 @@ is in which space links). Design:
   spaces in parallel. Trace line `asked, not there` names every not-found read.
 - fx second load: page ready 0.4 s; only not-founds left = B's two never-made space catalogs (B down; stop once B
   opens the new build). Open: spaces still open ~2 s each in series in the background (cause unmeasured).
+
+## 2026-10-03 — Index-first reads, public participation, settings in one place (owner's request)
+Rule: nothing reads a table its writers' data does not say exists; every write and read complies with policy.
+Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces and posts list themselves in) and §5
+(federated data: content in the author's table + a pointer in the target's index, sealed for private use).
+- [x] 1a SPACE WRITERS BAG (fx: 10 spaces' bags complete, page ready 0.46 s, member catalogs no longer searched): a sealed bag per space listing the members who have a catalog there (dropped once, on first
+      write / backfilled on load); readers gather only listed writers; one bag poll replaces N catalog polls.
+- [ ] 1b DISCOVER BAG: public posts/videos/audio drop a pointer {writer, table, item} in a public per-kind, per-month
+      bag; Discover reads the bag and only the tails it names; authors and members backfill missing pointers; drop the crawl.
+- [ ] 2a NOTES AND DRIVE ON `content` (owner: why don't they follow the same path?): a note an item of kind `note`
+      (text, tags, pin), a Drive entry an item of kind `file` (its ref, folder); each device converts its old rows once
+      on load, then reads only items — so authorship, edits, removal, moderation, policy come from one place.
+- [ ] 2  PUBLIC PARTICIPATION: policy `anyone` for post/comment/vote per app; an outsider's comment/vote lives in their
+      own public tail + a pointer in the post's bag; readers accept it only if the policy at its time allowed it.
+      PER-POST AUDIENCE (owner): the author picks public / members for each post, the space+app policy the ceiling
+      (path `board/p/<id>`); comments and votes follow the post's audience. PER-POST COMMENT/VOTE (owner): the author also
+      sets who may comment and who may vote on that post (anyone / members / admins / owner / nobody), within the space's
+      ceiling and never wider than who reads it — e.g. a public post with members-only or admins-only comments.
+      ONE IMPLEMENTATION (owner: every app inherits it): policies by path in `roles` (item path `<app>/p/<id>`), enforced
+      in `content` (Board, Videos, Audio, Chat, Messages) — Notes and Drive call the same `roles.allows` for their items;
+      Chat keeps per-channel policy (`chat/<channel>`).
+- [ ] 3  SETTINGS IN THE SPACE'S HOME: one Settings page, a section per app; apps' own dialogs removed.
