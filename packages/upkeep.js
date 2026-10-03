@@ -60,7 +60,7 @@ export async function start(ctx) {
   // MIGRATIONS — the one place records from before a change are brought forward, here, after the page is up (never
   // on a page's path). Each step is safe to run again; the version is recorded once EVERY step of it succeeded (a step
   // the node was silent for: tried again on a later tick), and a page after that runs none.
-  const MIGRATION = 1;
+  const MIGRATION = 2;
   let migratedHere = false;
   async function migrate() {
     if (migratedHere) return;
@@ -78,6 +78,10 @@ export async function start(ctx) {
       step("the card", storage.completeOwnCard()),
       step("the profile's items", (await ctx.require("items")).listOldProfile()),
       ...spaces.map(sp => step(`${sp.name}'s public acts`, roles.of(sp).then(r => r.migrate()))),
+      // v2: every table of this node's listed from before places were noted — its place settled (no page asks
+      // both of its names again).
+      step("this account's tables' places", storage.settleOwnPlaces(await space.account())),
+      ...spaces.map(sp => step(`${sp.name}'s tables' places`, storage.settleOwnPlaces(sp))),
     ]);
     if (done.every(Boolean)) {
       await storage.setUpkeepMark("migrated", MIGRATION);

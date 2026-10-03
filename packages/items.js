@@ -371,7 +371,9 @@ export async function start(ctx) {
   // follow, and whoever `readers` names).
   async function profilePosts(authors, readers = [], kinds = ["post"], since = 0) {
     const self = await me();
+    // Every profile opened ONCE (each bounded): the authors' among them — never a second wait on a slow one.
     const rs = await profiles([...authors, self, ...(await following()), ...readers]);
+    const authorSet = new Set(authors);
     const votes = new Map();
     const counts = new Map();
     for (const r of rs) {
@@ -379,9 +381,9 @@ export async function start(ctx) {
       for (const it of r.list()) if (it.kind === "comment" && it.at >= since) counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
     }
     const out = [];
-    for (const r of await profiles(authors))
+    for (const r of rs)
       for (const it of r.list()) {
-        if (!kinds.includes(it.kind)) continue;
+        if (!kinds.includes(it.kind) || !authorSet.has(it.by)) continue;
         const ref = `${it.by}/${it.id}`;
         out.push({ ...shape(it, ref, null), comments: counts.get(ref) ?? 0, ...scored(ref, votes, self), mayRemove: it.by === self });
       }
@@ -463,28 +465,32 @@ export async function start(ctx) {
     } else if (where.feed) {
       // The FEED: every space followed or joined — the spaces this person is in, the people they follow (their
       // personal spaces) and the shared spaces they follow (read from outside).
-      const [bs, people, fs] = await Promise.all([boards(), following(), followedSpaces()]);
-      out = [
-        ...(await Promise.all(bs.map(sp => boardPosts(sp, { kinds, window }).catch(() => [])))).flat(),
-        ...(await Promise.all(fs.map(d => pointedPosts(kinds, sinceOf(window) ?? 0, { space: d }).catch(() => [])))).flat(),
-        ...(await profilePosts([await me(), ...people], [], kinds, sinceOf(window) ?? 0)),
-      ];
+      // All at once, each part bounded on its own (a board, a profile: `inTime`) — never one part after another.
+      const t0 = performance.now();
+      const took = (what, p) => p.then(x => (performance.now() - t0 > WAIT.hint && ctx.log("posts", { what: `the feed: ${what} (slow)`, ms: Math.round(performance.now() - t0) }), x));
+      const [bs, people, fs] = await Promise.all([took("its spaces known", boards()), took("whom it follows known", following()), took("the spaces it follows known", followedSpaces())]);
+      out = (
+        await Promise.all([
+          took("its spaces' boards read", Promise.all(bs.map(sp => boardPosts(sp, { kinds, window }).catch(() => [])))).then(x => x.flat()),
+          took("followed spaces read", Promise.all(fs.map(d => pointedPosts(kinds, sinceOf(window) ?? 0, { space: d }).catch(() => [])))).then(x => x.flat()),
+          took("profiles read", profilePosts([await me(), ...people], [], kinds, sinceOf(window) ?? 0)),
+        ])
+      ).flat();
     } else {
       // A PERSON's posts (Reddit's profile): their profile's, and theirs on every board this reader can read — the
       // public boards (anyone's), and the boards of the spaces this reader is in (their members').
       const by = where.by ?? (await me());
       const [bs, pub] = await Promise.all([boards().catch(() => []), publicSpaces().catch(() => [])]);
       const inside = new Set(bs.map(sp => sp.id));
-      const onBoards = (
-        await Promise.all([
+      const [onBoards, onProfile] = await Promise.all([
+        Promise.all([
           ...bs.map(sp => boardPosts(sp, { kinds, window }).catch(() => [])),
           ...pub.filter(d => !inside.has(d.id)).map(d => pointedPosts(kinds, sinceOf(window) ?? 0, { space: d }).catch(() => [])),
-        ])
-      )
-        .flat()
-        .filter(p => p.by === by);
+        ]).then(x => x.flat().filter(p => p.by === by)),
+        profilePosts([by], [], kinds, sinceOf(window) ?? 0),
+      ]);
       const seen = new Set();
-      out = [...(await profilePosts([by], [], kinds, sinceOf(window) ?? 0)), ...onBoards].filter(p => !seen.has(p.ref) && seen.add(p.ref));
+      out = [...onProfile, ...onBoards].filter(p => !seen.has(p.ref) && seen.add(p.ref));
     }
     return out.filter(p => inWindow(p.at)).sort(sorter(sort, by));
   }

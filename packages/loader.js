@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. The node's code is loaded after the first
 // page is up even where the page needs none: to FOLLOW the app's and the loader's sites (below).
-const VERSION = "26";
+const VERSION = "27";
 
 export async function run(boot) {
   const status = document.getElementById("status");
@@ -134,14 +134,13 @@ export async function run(boot) {
   // its element's contents) or its mount is over. Every component of a slot gets one at once: what is coming, shown.
   // A component's LOADING is INHERITED from the capabilities it uses: each component gets its own view of them
   // (`ctx.require` in the ctx it is mounted with), and every call through that view still running — and every result
-  // that says it is still arriving (a `settled` promise: a table, a room) — is that component's work. Until its first
-  // work is done (or 20 s) the placeholder covers it; later work marks its panel busy (`aria-busy`: the theme's line).
+  // that says it is still arriving (a `settled` promise: a table, a room) — is that component's work, and marks its panel
+  // busy (`aria-busy`: the theme's line). The placeholder covers it only until its MOUNT is over (it drew itself then):
+  // work it starts after — a background tick, a table still arriving, a subscription — never covers what it drew.
   // `ctx.pending(promise)`: anything else a component waits on.
   const CAP = 20000;
   function tracker(el) {
     let n = 0;
-    let first = null;
-    const idle = [];
     const work = p => {
       const w = Promise.race([Promise.resolve(p), new Promise(r => setTimeout(r, CAP))]).catch(() => {});
       n += 1;
@@ -150,19 +149,10 @@ export async function run(boot) {
         n -= 1;
         if (n) return;
         el.removeAttribute("aria-busy");
-        for (const f of idle.splice(0)) f();
       });
       return p;
     };
-    // Settled: mounted, then nothing of its own running (checked a turn later: a call may follow another's result).
-    const settled = mounted =>
-      (first ??= Promise.race([new Promise(r => setTimeout(r, CAP)), mounted.then(
-        () =>
-          new Promise(function check(done) {
-            setTimeout(() => (n ? idle.push(() => check(done)) : done()));
-          }),
-      )]));
-    return { work, settled };
+    return { work };
   }
   // A capability as a component sees it: its functions, each call counted as the component's work. What a call gives
   // back is seen the same way (a table's own calls count too), and a result's `settled` is waited on. Only plain
@@ -225,8 +215,8 @@ export async function run(boot) {
       own.pending = track.work;
       const mounted = Promise.resolve(mod.mount(own, el)).finally(() => working.pop());
       await mounted.catch(() => {});
-      // Not awaited: the next component mounts meanwhile; this one's placeholder goes when it is settled.
-      track.settled(mounted).finally(() => p?.done());
+      // Its placeholder goes once its mount is over; the busy line stays while its own work runs.
+      p?.done();
       await mounted;
       ctx.log("mounted", { what: `${slot}: ${name}`, ms: Math.round(performance.now() - t) });
     }

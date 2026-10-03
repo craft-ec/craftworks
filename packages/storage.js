@@ -166,9 +166,11 @@ export async function start(ctx) {
   // its first write; at its blinded name — read there; listed from before — both names read at once (nothing it holds
   // missed), and THIS node's catalog then says which. Never on a guess: "never made" only when the node ANSWERED.
   const opening = new Map(); // `${owner}|${app}` → Promise<the tail>
+  // A table FOUND BY ITS NAME (never blinded): catalogs, members, channels, epoch logs, public tails.
+  const byNameTable = (app, opts) => !!(opts.public || opts.sealWith || opts.catalogKey || CHANNELS.has(app) || ANY_GRANT.has(app) || (opts.space?.tables && Object.values(opts.space.tables).includes(app)));
   function tail(owner, app, opts = {}) {
     const inSpace = opts.space ?? null;
-    const byName = opts.public || opts.sealWith || opts.catalogKey || CHANNELS.has(app) || ANY_GRANT.has(app) || (inSpace?.tables && Object.values(inSpace.tables).includes(app));
+    const byName = byNameTable(app, opts);
     // A table found by its NAME: only whether its catalog lists it (not listed or never made: not looked for).
     if (byName) {
       const { catalog: cat = null, ...rest } = opts;
@@ -1181,6 +1183,24 @@ export async function start(ctx) {
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
   const completeOwnCard = async () => completeCard((await space.account()).shared);
+  // (A MIGRATION — `upkeep`.) Each of THIS node's tables its catalog lists from before places were noted, its place
+  // settled — read where it is, noted, moved to its blinded name (`tail`: the one open of a table) — with no page
+  // waiting. True once none is left; one the node was silent for is asked again on a later tick.
+  async function settleOwnPlaces(sp) {
+    const scope = scopeOf(sp);
+    const cat = await scope.catalogOf(scope.self);
+    if (cat.absent) return true;
+    const unsettled = () => own(cat).filter(r => r.value && placeOf(cat, r.key) === "listed" && !byNameTable(r.key, scope.opts(r.key))).map(r => r.key);
+    const left = unsettled();
+    for (const name of left) {
+      ownKeys.add(scope.self);
+      await tail(scope.self, name, { ...scope.opts(name), catalog: cat }).catch(() => null);
+      if (placeOf(cat, name) === "listed") opening.delete(`${scope.self}|${name}`); // silent: asked again later
+    }
+    const still = unsettled().length;
+    if (left.length) ctx.log("storage", { what: `${sp.name ?? "this account"}: ${left.length - still} of ${left.length} table(s) from before given their place${still ? `; ${still} asked again later` : ""}` });
+    return still === 0;
+  }
 
-  return { own: ownTables, table, log, publicTail, readOnly, describe, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), upkeepMark, setUpkeepMark, completeOwnCard };
+  return { own: ownTables, table, log, publicTail, readOnly, describe, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), upkeepMark, setUpkeepMark, completeOwnCard, settleOwnPlaces };
 }
