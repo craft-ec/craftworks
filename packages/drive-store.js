@@ -44,7 +44,7 @@ export async function start(ctx) {
   // files of the items made in other apps (a video, a track, an image in a post), each in the folder of what its item
   // is (/Videos, /Audio, /Images), else of what the file is: a VIEW, never a second entry. Who sees one, its edits and
   // its removal are its item's, in its app (`page`: its item's page — `items.pageOf`).
-  const MEDIA = new Set(["video", "audio", "image"]);
+  const MEDIA = new Set(kinds.media().map(m => m.domain));
   const viewed = async sp =>
     (await items.inPlaces(await place(sp), [...kinds.all()].filter(k => !["note", "file", "folder"].includes(k)), { withVotes: false }).catch(() => [])).flatMap(it =>
       (it.files ?? []).map((ref, i) => ({

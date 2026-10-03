@@ -1008,7 +1008,8 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       comment, vote; `r.allows(action, who, path)` the one check everywhere (comments.js today skips it for a profile:
       anyone). Only the GROUPS a policy names differ: a shared space's members/roles, the personal space's
       friends/followers/only you (the same groups the audience picker seals to).
-- [ ] ONE IMAGE CAPABILITY (owner 10-03: "image will unify with image capability / app"): an image's making
+- [x] ONE IMAGE CAPABILITY + MEDIA DOMAINS DECLARED ONCE (DONE: `image-studio`; `kinds.media()`/`mediaOf` — a new domain
+      such as BOOKS/COMICS (owner: "as per handcraft") is one entry: its types, label, icon, maker, viewer) (owner 10-03: "image will unify with image capability / app"): an image's making
       (thumbnail; sizes) moves out of `attachments` into one capability, as `video-studio` is for video/audio — used
       by the Images app and every editor alike.
 - [ ] IMAGES APP (owner 10-03): a lens on the image domain (public view like Flickr), as Videos is YouTube's and Audio

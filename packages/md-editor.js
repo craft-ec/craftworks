@@ -12,7 +12,7 @@
 //   const ed = (await ctx.require("md-editor")).create({ value, placeholder, pick, compact, onSubmit, suggest })
 //   form.append(ed.el)   ed.value()   ed.set(md)   ed.files()   ed.busy()   ed.focus()   ed.clear()   ed.disable(bool)
 export async function start(ctx) {
-  const markdown = await ctx.require("markdown");
+  const [markdown, kinds] = await Promise.all([ctx.require("markdown"), ctx.require("kinds")]);
   const style = document.createElement("style");
   style.textContent = `
     .cw-mde { display: grid; gap: 4px; position: relative; }
@@ -52,8 +52,8 @@ export async function start(ctx) {
     e.append(...kids.filter(k => k != null && k !== false));
     return e;
   };
-  const MEDIA = /^(image|video|audio)\//;
-  const isMedia = ref => MEDIA.test(ref?.type ?? "") || ref?.type === "application/vnd.craftworks.video+json";
+  // What is MEDIA (shown inline): what `kinds` declares a media domain.
+  const isMedia = ref => !!kinds.mediaOf(ref);
   const MODE_KEY = "craftworks:editor-mode";
   const savedMode = () => {
     try {
@@ -187,7 +187,7 @@ export async function start(ctx) {
       chip.dataset.md = md;
       const small = ref?.preview ?? (ref?.inline && /^image\//.test(ref.type) ? `data:${ref.type};base64,${ref.inline}` : null);
       if (small) chip.append(h("img", { src: small, alt: alt || ref?.name || "" }));
-      else chip.append(h("span", { className: "tag", textContent: `${ref ? (markdown.kindOf(ref) === "audio" ? "🎵" : markdown.kindOf(ref) === "video" ? "🎬" : "🖼") : "📄"} ${alt || ref?.name || key}` }));
+      else chip.append(h("span", { className: "tag", textContent: `${ref ? (kinds.mediaOf(ref)?.icon ?? "📄") : "📄"} ${alt || ref?.name || key}` }));
       return chip;
     }
     function toRich(md) {
@@ -338,14 +338,14 @@ export async function start(ctx) {
     const btn = (label, title, fn) => h("button", { type: "button", textContent: label, title, onmousedown: e => e.preventDefault(), onclick: e => (e.preventDefault(), fn()) });
 
     // MEDIA: a file picked here goes inline once sent (and one attached with 📎 that is media, too).
-    const mediaIn = h("input", { type: "file", accept: "image/*,video/*,audio/*", multiple: true, hidden: true });
+    const mediaIn = h("input", { type: "file", accept: kinds.media().map(m => m.accept).join(","), multiple: true, hidden: true });
     const inlineNext = new Set();
     const mediaMenu = h(
       "span",
       { className: "cw-att-menu", hidden: true },
       // Each kind its own line (the same picker: what it accepts narrowed), so audio is as plain to find as an image.
-      ...[["🖼 Image", "image/*"], ["🎬 Video", "video/*"], ["🎵 Audio", "audio/*"]].map(([textContent, accept]) =>
-        h("button", { type: "button", textContent, onclick: e => (e.preventDefault(), (mediaMenu.hidden = true), (mediaIn.accept = accept), mediaIn.click()) }),
+      ...kinds.media().map(m =>
+        h("button", { type: "button", textContent: `${m.icon} ${m.label}`, onclick: e => (e.preventDefault(), (mediaMenu.hidden = true), (mediaIn.accept = m.accept), mediaIn.click()) }),
       ),
       h("button", { type: "button", textContent: "From Drive", onclick: e => (e.preventDefault(), (mediaMenu.hidden = true), pick?.fromDrive?.({ media: true })) }),
     );
@@ -356,7 +356,7 @@ export async function start(ctx) {
     };
     pick?.onReady?.((ref, file) => {
       if (!ref || !isMedia(ref)) return;
-      if (file && !inlineNext.has(file) && !MEDIA.test(file.type)) return;
+      if (file && !inlineNext.has(file) && !kinds.mediaOf(file.type)) return;
       inlineNext.delete(file);
       const alt = String(ref.name ?? "").replace(/[\[\]\n]/g, " ");
       const md = `![${alt}](file:${markdown.keyOf(ref)})`;
@@ -365,7 +365,7 @@ export async function start(ctx) {
     });
     const modeBtn = h("button", { type: "button", className: "mode", onclick: e => (e.preventDefault(), setMode(mode === "rich" ? "markdown" : "rich")) });
     // MEDIA and FILES side by side: 🖼 inline, 📎 attached below (on a chat line: always shown, beside Aa).
-    const mediaGroup = pick ? [h("span", { className: "cw-att-pick" }, btn("🖼 Media", "An image, a video or an audio, inline: from this device or from Drive", () => (mediaMenu.hidden = !mediaMenu.hidden)), mediaMenu), pick.el] : [];
+    const mediaGroup = pick ? [h("span", { className: "cw-att-pick" }, btn("🖼 Media", `${kinds.media().map(m => m.label).join(", ")}, inline: from this device or from Drive`, () => (mediaMenu.hidden = !mediaMenu.hidden)), mediaMenu), pick.el] : [];
     const bar = h(
       "div",
       { className: "bar", hidden: compact },

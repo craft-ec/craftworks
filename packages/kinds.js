@@ -52,6 +52,22 @@ export async function start() {
   // entry), the creator kept; every other kind its author's alone (an app's own enforcement over the policy).
   // UNTITLED kinds: a title is optional.
   const COLLABORATIVE = new Set(["note", "file", "folder"]);
+  // THE MEDIA DOMAINS — each declared ONCE: which files are it (`is`: by type; a streaming manifest by its own flag),
+  // its name and icon, the capability that MAKES an upload of it (`maker`), the component that SHOWS it inline
+  // (`view`: "image" drawn as an <img>; otherwise a component with `create({ file, item, cover }).el`). The editor's
+  // menu, every upload (`attachments`), the inline renderer (`markdown`) and Drive's folders read it — a new domain
+  // (books, comics) is one entry here, its maker and its viewer.
+  const MANIFEST = "application/vnd.craftworks.video+json";
+  const MEDIA = [
+    { domain: "image", label: "Image", plural: "Images", icon: "🖼", accept: "image/*", is: t => /^image\//.test(t), maker: "image-studio", view: "image" },
+    { domain: "video", label: "Video", plural: "Videos", icon: "🎬", accept: "video/*", is: (t, ref) => /^video\//.test(t) || (t === MANIFEST && !ref?.audio), maker: "video-studio", view: "media-view" },
+    { domain: "audio", label: "Audio", plural: "Audio", icon: "🎵", accept: "audio/*", is: (t, ref) => /^audio\//.test(t) || (t === MANIFEST && !!ref?.audio), maker: "video-studio", view: "media-view" },
+  ];
+  const mediaOf = x => {
+    const ref = typeof x === "string" ? null : x;
+    const t = String((typeof x === "string" ? x : x?.type) ?? "").toLowerCase();
+    return MEDIA.find(m => m.is(t, ref)) ?? null;
+  };
   const UNTITLED = new Set(["note", "file"]);
   // ATTACHING kinds: their own data, about another item (`in`) — contributed like a comment, listed with what they are
   // about, and a lens of their own (the Subtitles app). A subtitle: WebVTT (its file), its language and label.
@@ -69,14 +85,13 @@ export async function start() {
     fieldLabel: f => LABELS[f] ?? f,
     collaborative: kind => COLLABORATIVE.has(kind),
     titled: kind => !UNTITLED.has(kind),
+    // The media domains (`MEDIA`), and the one a file (a reference, or a type) is — or null.
+    media: () => MEDIA,
+    mediaOf,
     // A FILE's domain, from its type (MIME): what an upload IS, whichever app it came through.
-    ofType: type => {
-      const t = String(type ?? "").toLowerCase();
-      for (const d of ["video", "audio", "image"]) if (t.startsWith(`${d}/`)) return d;
-      return /^text\/|pdf|epub|msword|officedocument|opendocument|rtf|comicbook/.test(t) ? "document" : "file";
-    },
+    ofType: type => mediaOf(type)?.domain ?? (/^text\/|pdf|epub|msword|officedocument|opendocument|rtf|comicbook/.test(String(type ?? "").toLowerCase()) ? "document" : "file"),
     // A domain's NAME as a place (a Drive folder; its app's): Videos, Audio, Images, Documents, Files.
-    domainName: d => ({ video: "Videos", audio: "Audio", image: "Images", document: "Documents" })[d] ?? "Files",
+    domainName: d => MEDIA.find(m => m.domain === d)?.plural ?? ({ document: "Documents" })[d] ?? "Files",
     policyDomain: kind => (onTo.has(kind) ? kind : byKind.get(kind)?.domain ?? "text"),
     // What an attaching kind is CALLED on an item of `target` kind: a subtitle on a song is its Lyrics, on a podcast
     // or an audiobook its Transcript — one capability, named for what it is on.

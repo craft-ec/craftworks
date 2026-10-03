@@ -8,7 +8,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [drive, space, attachments, theme] = await Promise.all(["drive-store", "space", "attachments", "theme"].map(n => ctx.require(n)));
+  const [drive, space, attachments, theme, kinds] = await Promise.all(["drive-store", "space", "attachments", "theme", "kinds"].map(n => ctx.require(n)));
   el.innerHTML = `
     <style>
       .dv { max-width: 1000px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
@@ -136,7 +136,7 @@ export async function mount(ctx, el) {
     const t = h(
       "div",
       { className: "tile", title: r.ref.name, onclick: e => !e.target.closest(".more, .menu") && attachments.open(r.ref, note) },
-      h("div", { className: "pic" }, src ? h("img", { src, alt: "" }) : /^video\//.test(r.ref.type) ? "🎬" : /^audio\//.test(r.ref.type) ? "🎵" : /^image\//.test(r.ref.type) ? "🖼️" : "📄"),
+      h("div", { className: "pic" }, src ? h("img", { src, alt: "" }) : (kinds.mediaOf(r.ref)?.icon ?? "📄")),
       h("div", { className: "cap" }, h("span", { className: "n", textContent: r.ref.name }), h("span", { className: "s", textContent: `${attachments.sizeOf(r.ref.size)} · ${new Date(r.at).toLocaleDateString()}` }), note),
       h("button", { type: "button", className: "more", title: "More", textContent: "⋯", onclick: () => (menu.hidden = !menu.hidden) }),
       menu,
@@ -145,7 +145,7 @@ export async function mount(ctx, el) {
     if (r.readOnly) {
       menu.append(
         h("button", { type: "button", textContent: "Open", onclick: () => ((menu.hidden = true), attachments.open(r.ref, note)) }),
-        h("a", { href: r.page, textContent: `Open in ${({ video: "Videos", audio: "Audio", image: "Images", text: "Board" })[r.from?.app] ?? "its app"}` }),
+        h("a", { href: r.page, textContent: `Open in ${r.from?.app === "text" ? "Board" : kinds.domainName(r.from?.app)}` }),
       );
       return t;
     }

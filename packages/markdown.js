@@ -14,6 +14,7 @@
 //   markdown.inlined(body)                                // the keys written inline (the rest show as attachments)
 //   markdown.plain(body)                                  // a one-line preview, no markup
 export async function start(ctx) {
+  const K = await ctx.require("kinds");
   const style = document.createElement("style");
   style.textContent = `
     .cw-md { overflow-wrap: anywhere; line-height: 1.5; }
@@ -189,8 +190,8 @@ export async function start(ctx) {
   };
   const keyOf = ref => (ref?.id ? String(ref.id).slice(0, 32) : ref?.root ? String(ref.root).slice(0, 32) : `i${fnv(String(ref?.inline ?? ""))}${(ref?.size ?? 0).toString(36)}`);
   const inlined = body => new Set([...String(body ?? "").matchAll(/\]\(file:([A-Za-z0-9_-]{1,80})\)/g)].map(m => m[1]));
-  const MANIFEST = "application/vnd.craftworks.video+json";
-  const kindOf = ref => (/^image\//.test(ref?.type) ? "image" : ref?.type === MANIFEST ? (ref.audio ? "audio" : "video") : /^video\//.test(ref?.type) ? "video" : /^audio\//.test(ref?.type) ? "audio" : "file");
+  // What a file is (its media domain, `kinds`), or "file".
+  const kindOf = ref => K.mediaOf(ref)?.domain ?? "file";
 
   // The media, loaded when wanted: an image once in view, a video or an audio when played.
   const seen = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver((es, io) => es.forEach(e => e.isIntersecting && (io.unobserve(e.target), e.target._load?.())), { rootMargin: "300px" }) : null;
@@ -202,7 +203,8 @@ export async function start(ctx) {
   };
   function media(key, ref, alt, item = null) {
     const kind = kindOf(ref);
-    if (kind === "image") {
+    const spec = K.mediaOf(ref);
+    if (spec?.view === "image") {
       const img = Object.assign(document.createElement("img"), { className: "cw-md-media", alt: alt || ref.name || "", title: ref.name || "" });
       const small = ref.preview ?? (ref.inline ? `data:${ref.type};base64,${ref.inline}` : null);
       if (small) img.src = small;
@@ -210,10 +212,11 @@ export async function start(ctx) {
       img.onclick = () => img.src && window.open(img.src, "_blank", "noopener");
       return img;
     }
-    if (kind === "video" || kind === "audio") {
-      // `media-view`: the one way a video or an audio shows — a cover until played, then the player with its tracks.
+    if (spec) {
+      // Its domain's VIEWER (`kinds`: `media-view` for a video or an audio — a cover until played, then the player
+      // with its tracks; a book's reader, when there is one).
       const ph = Object.assign(document.createElement("span"), { className: `cw-md-media cw-md-ph${kind === "audio" ? " audio" : ""}` });
-      ctx.require("media-view").then(
+      ctx.require(spec.view).then(
         mv => ph.replaceWith(mv.create({ file: ref, item, cover: true }).el),
         e => ph.replaceWith(Object.assign(document.createElement("span"), { className: "cw-md-missing", textContent: `${ref.name}: ${e.message ?? e}` })),
       );

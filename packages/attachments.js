@@ -1,6 +1,6 @@
 // ATTACHMENTS, a component: FILES on an item (a message, a post, a mail) — picked with 📎: a file from this device
 // (sent at once, with its progress, and listed in Drive: every upload is), or one ALREADY in Drive (yours, or the
-// space's: its reference given, nothing sent again); the item waits for them. And SHOWN: an image as its thumbnail (made here when picked, kept in the
+// space's: its reference given, nothing sent again); the item waits for them. And SHOWN: an image as its thumbnail (made by `image-studio` when picked, kept in the
 // reference: a list never downloads the image), opened full on a click; any other file as its name and size, with
 // Download. The bytes are `files`' (sealed, coded, raced); the reference rides in the item, so who reads the item
 // reads its files — and nobody else.
@@ -11,7 +11,7 @@
 //                                                // public: a boolean, or a function asked when each file is picked
 //   host.append(att.show(item.files))            // nothing for none
 export async function start(ctx) {
-  const [files, drive, spaces] = await Promise.all(["files", "drive-store", "space"].map(n => ctx.require(n)));
+  const [files, drive, spaces, kinds] = await Promise.all(["files", "drive-store", "space", "kinds"].map(n => ctx.require(n)));
   const style = document.createElement("style");
   style.textContent = `
     .cw-att-pick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -64,26 +64,7 @@ export async function start(ctx) {
     return e;
   };
   const sizeOf = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : n < 1073741824 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1073741824).toFixed(2)} GB`);
-  const isImage = r => /^image\//.test(r?.type ?? "");
-
-  // An image's THUMBNAIL (at most 320 px, WebP): kept in the reference, what every list shows.
-  async function thumbnail(file) {
-    try {
-      const bmp = await createImageBitmap(file);
-      const s = Math.min(1, 320 / Math.max(bmp.width, bmp.height));
-      const c = Object.assign(document.createElement("canvas"), { width: Math.max(1, Math.round(bmp.width * s)), height: Math.max(1, Math.round(bmp.height * s)) });
-      c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-      const blob = await new Promise(r => c.toBlob(r, "image/webp", 0.75));
-      if (!blob || blob.size > 48 * 1024) return null;
-      return await new Promise(r => {
-        const fr = new FileReader();
-        fr.onload = () => r(fr.result);
-        fr.readAsDataURL(blob);
-      });
-    } catch {
-      return null;
-    }
-  }
+  const isImage = r => kinds.mediaOf(r)?.domain === "image";
 
   // `media`: a video or an audio goes through the media pipeline (`video-studio`: streamed, its poster or album cover,
   // its length, its video id — what its subtitles, lyrics and transcripts are found by), as in Videos and Audio.
@@ -113,7 +94,6 @@ export async function start(ctx) {
     // once): the item's readers read it — as a file forwarded.
     // `media`: only images, videos and audio (the editor's 🖼). WHO READS IT is said: a file taken from Drive is
     // adopted into this item's space, readable by exactly the item's readers.
-    const MEDIA = /^(image|video|audio)\//;
     async function fromDrive({ media = false } = {}) {
       const all = await drive.drives();
       const choose = h("select", { ariaLabel: "Drive" }, h("option", { value: "", textContent: "Your Drive" }), ...all.map(s => h("option", { value: s.id, textContent: `${spaces.shown(s)} Drive` })));
@@ -123,7 +103,7 @@ export async function start(ctx) {
       const drawList = async () => {
         const sp = all.find(s => s.id === choose.value) ?? null;
         listEl.replaceChildren(h("li", { textContent: "Loading…" }));
-        const rows = (await drive.list(sp).catch(() => [])).filter(r => !media || MEDIA.test(r.ref.type ?? "") || r.ref.type === "application/vnd.craftworks.video+json");
+        const rows = (await drive.list(sp).catch(() => [])).filter(r => !media || !!kinds.mediaOf(r.ref));
         listEl.replaceChildren(
           ...(rows.length
             ? rows.map(r => {
@@ -166,19 +146,14 @@ export async function start(ctx) {
       items.push(it);
       tell();
       (async () => {
-        if (media && /^(video|audio)\//.test(file.type)) {
-          const studio = await ctx.require("video-studio");
-          const ref = await studio.make(file, { space, app: from?.app, public: typeof pub === "function" ? !!pub() : pub, onProgress: e => (pct.textContent = `${e.stage} ${Math.round((e.p || 0) * 100)}%`) });
-          it.ref = { ...ref, name: file.name };
-          pct.textContent = sizeOf(file.size);
-          told(it.ref, file);
-          return;
-        }
-        // A COVER to show before anything plays: an image's thumbnail, a video's poster frame (and its length).
-        const vm = /^video\//.test(file.type) ? await (await ctx.require("video-player")).meta(file).catch(() => null) : null;
-        const preview = isImage(file) ? await thumbnail(file) : vm?.poster ?? null;
-        const ref = await drive.upload(file, { space, from, public: typeof pub === "function" ? !!pub() : pub, onProgress: e => (pct.textContent = e.phase === "reading" ? "reading…" : `${Math.round((100 * e.done) / e.size)}%`) });
-        it.ref = { ...ref, ...(preview ? { preview } : {}), ...(vm?.duration ? { duration: vm.duration } : {}) };
+        // A MEDIA file goes to its domain's MAKER (`kinds`: an image's thumbnail, a video's or an audio's renditions —
+        // the same as its app's); anything else as it is.
+        const m = kinds.mediaOf(file.type);
+        const opts = { space, app: from?.app, public: typeof pub === "function" ? !!pub() : pub, onProgress: e => (pct.textContent = e.stage === "uploading" ? `${Math.round((e.p || 0) * 100)}%` : `${e.stage} ${Math.round((e.p || 0) * 100)}%`) };
+        const ref = m?.maker
+          ? await (await ctx.require(m.maker)).make(file, opts)
+          : await drive.upload(file, { space, from, public: opts.public, onProgress: e => (pct.textContent = e.phase === "reading" ? "reading…" : `${Math.round((100 * e.done) / e.size)}%`) });
+        it.ref = { ...ref, name: file.name };
         pct.textContent = sizeOf(file.size);
         told(it.ref, file);
       })()
@@ -206,20 +181,25 @@ export async function start(ctx) {
     };
   }
 
-  // Open a file full: an image or a video in a dialog, anything else saved.
+  // Open a file full: a MEDIA file in a dialog by its domain's VIEWER (`kinds`: an image drawn, a video or an audio
+  // by `media-view` — the one player, streamed, as in its app); anything else saved.
   async function openFull(ref, note) {
+    const m = kinds.mediaOf(ref);
+    const show = (media, url = null) => {
+      const d = h("dialog", { className: "cw-att-full" }, media, h("p", { textContent: `${ref.name} · ${sizeOf(ref.size)}` }));
+      d.addEventListener("click", e => e.target === d && d.close());
+      d.addEventListener("close", () => (d.remove(), url && URL.revokeObjectURL(url)));
+      document.body.append(d);
+      d.showModal();
+    };
+    if (m && m.view !== "image") return show((await ctx.require(m.view)).create({ file: ref, cover: false }).el);
     note.textContent = "Loading…";
     try {
       const blob = await files.get(ref, { onProgress: e => (note.textContent = `Loading ${Math.round((100 * e.done) / Math.max(1, e.size))}%`) });
       const url = URL.createObjectURL(blob);
       note.textContent = "";
-      if (isImage(ref) || /^video\//.test(ref.type)) {
-        const media = isImage(ref) ? h("img", { src: url, alt: ref.name }) : h("video", { src: url, controls: true, autoplay: true });
-        const d = h("dialog", { className: "cw-att-full" }, media, h("p", { textContent: `${ref.name} · ${sizeOf(ref.size)}` }));
-        d.addEventListener("click", () => d.close());
-        d.addEventListener("close", () => (d.remove(), URL.revokeObjectURL(url)));
-        document.body.append(d);
-        d.showModal();
+      if (m) {
+        show(h("img", { src: url, alt: ref.name }), url);
       } else {
         const a = h("a", { href: url, download: ref.name });
         document.body.append(a);
