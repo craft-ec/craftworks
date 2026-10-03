@@ -197,7 +197,10 @@ export async function start(ctx) {
           const note = p => (cat && ours ? notePlace(cat, app, p).catch(e => ctx.log("storage", { what: `${app}: noting its place: ${e?.message ?? e}` })) : Promise.resolve());
           // Its first write here makes it at its blinded name, listed so first.
           const made = { ...rest, beforeCreate: cat && ours ? () => notePlace(cat, app, "blinded") : rest.beforeCreate };
-          if (place === "unlisted" || place === "none") return tailAt(owner, app, label, { ...made, known: false });
+          // Not looked for: not listed, never made — or ANOTHER writer's still listed from before (not moved: their catalog
+          // says so once they move it, `moveOwn`), never at its blinded name yet — no request, every load alike (owner:
+          // "don't request at all": a writer who never comes back costs nothing).
+          if (place === "unlisted" || place === "none" || (place === "listed" && !ours)) return tailAt(owner, app, label, { ...made, known: false });
           // READ WHERE ITS CATALOG SAYS — its blinded name, the ONE place a table is read: never by its old name, nothing
           // decided on a page's path. Its writer's "never made" noted once the node answers so.
           const t = await tailAt(owner, app, label, { ...made, wait: ours && cat ? WAIT.answer : WAIT.ask });
