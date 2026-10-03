@@ -174,9 +174,12 @@ export async function start(ctx) {
     // A table found by its NAME: only whether its catalog lists it (not listed or never made: not looked for).
     if (byName) {
       const { catalog: cat = null, ...rest } = opts;
-      const place = cat ? placeOf(cat, app) : null;
       const made = { ...rest, beforeCreate: cat && ownKeys.has(owner) ? () => notePlace(cat, app, "blinded") : rest.beforeCreate };
-      return tailAt(owner, app, app, place === "unlisted" || place === "none" ? { ...made, known: false } : made);
+      if (!cat) return tailAt(owner, app, app, made);
+      return cat.answer().then(() => {
+        const place = placeOf(cat, app);
+        return tailAt(owner, app, app, place === "unlisted" || place === "none" ? { ...made, known: false } : made);
+      });
     }
     const k = `${owner}|${app}`;
     if (!opening.has(k))
@@ -190,6 +193,7 @@ export async function start(ctx) {
           // Its PLACE (its writer's catalog), and whether this node notes it (its own catalog only).
           const sp = await space.account();
           const ours = owner === sp?.self || owner === sp?.shared || ownKeys.has(owner);
+          if (cat) await cat.answer();
           const place = cat ? placeOf(cat, app) : opts.known === false ? "unlisted" : "unknown";
           const note = p => (cat && ours ? notePlace(cat, app, p).catch(e => ctx.log("storage", { what: `${app}: noting its place: ${e?.message ?? e}` })) : Promise.resolve());
           // Its first write here makes it at its blinded name, listed so first.
@@ -197,20 +201,20 @@ export async function start(ctx) {
           if (place === "unlisted" || place === "none") return tailAt(owner, app, label, { ...made, known: false });
           if (place === "blinded") {
             const t = await tailAt(owner, app, label, { ...made, wait: ours && cat ? WAIT.answer : WAIT.ask });
-            if (t.absent && t.answered()) note("none");
+            t.answer().then(() => t.absent && t.answered() && note("none"));
             return t;
           }
           // Listed from before: its blinded name first — there, it is read there and its name never asked. Its NAME is
           // asked only when the blinded name is not there, or silent past a hint (a table not yet moved: nothing it holds
           // missed). Each waited on until the node ANSWERS; its place then noted (its writer's), never asked again.
-          const atBlinded = tailAt(owner, app, label, { ...made, wait: WAIT.answer });
+          const atBlinded = tailAt(owner, app, label, { ...made, wait: WAIT.answer }).then(async b => (await b.answer(), b));
           const early = await Promise.race([atBlinded, new Promise(r => setTimeout(r, WAIT.hint, null))]);
           if (early && !early.absent) {
             note("blinded");
             return early;
           }
           ctx.log("storage", { what: `${app}: where it is not noted: ${early ? "not at its blinded name — its name read" : "its blinded name slow — both names read"}` });
-          const [blinded, legacy] = await Promise.all([atBlinded, tailAt(owner, app, app, { ...rest, known: null, beforeCreate: null, wait: WAIT.answer })]);
+          const [blinded, legacy] = await Promise.all([atBlinded, tailAt(owner, app, app, { ...rest, known: null, beforeCreate: null, wait: WAIT.answer }).then(async l => (await l.answer(), l))]);
           ctx.log("storage", { what: `${app}: blinded ${blinded.absent ? "absent" : "there"}${blinded.answered() ? "" : " (no answer)"}, by name ${legacy.absent ? "absent" : "there"}${legacy.answered() ? "" : " (no answer)"}` });
           if (!blinded.absent) {
             legacy.moved = true;
@@ -279,6 +283,8 @@ export async function start(ctx) {
       keep: () => (queue = queue.catch(() => {}).then(keep)),
       // Whether the node ANSWERED the last read (the tail, or "not found"), not silence.
       answered: () => answered,
+      // The first read to its end (the node's answer, or its silence past the read's wait): what a DECISION waits for.
+      answer: () => (answer ?? Promise.resolve()).catch(() => {}),
       // MOVE here (this tail new, at the table's blinded name) the table from where it was (`from`: open, read): its
       // state as this one's first step. True once moved.
       moveFrom: from =>
@@ -290,6 +296,8 @@ export async function start(ctx) {
           return true;
         })),
     };
+    let answered = false; // the last read had the node's answer (the tail, or "not found"), not silence
+    let answer = null; // the first read, to its end: what a decision waits for
     const ready = (async () => {
       // THE TABLE'S KEY: the table is sealed, so reading it needs its key, and the key comes only with the person's
       // grant for this site (asked NOW: the node prompts the first time). No grant: nothing of the table reads here.
@@ -316,8 +324,17 @@ export async function start(ctx) {
       if (known === false) {
         core.tail_absent(id);
         t.absent = true;
+        answer = Promise.resolve();
       } else {
-        await read();
+        // SHOWN within WAIT.hint, DECIDED on the answer — the one rule of every read: what is held is shown after at
+        // most WAIT.hint (no answer yet: shown as not there), and the table changes when the node answers; whatever
+        // decides from it (a write, a place noted, a catalog read) waits for the answer (`t.answer()`).
+        answer = read();
+        const shown = await Promise.race([answer.then(() => true), new Promise(r => setTimeout(r, WAIT.hint, false))]);
+        if (!shown) {
+          t.absent = true;
+          ctx.log("table shown before its answer", { what: `${app}: shown after ${WAIT.hint / 1000} s as held; merged when the node answers` });
+        }
       }
       // Rows under an older key: sealed over now, a batch per step (in the write queue), where this node signs the tail.
       const sp = await space.account();
@@ -334,7 +351,6 @@ export async function start(ctx) {
 
     // Read it and follow it. None on the network: its first write is a PUT. No answer at all: the same as none, so
     // it opens empty; a first write the network then refuses resets it and reads it again.
-    let answered = false; // the last read had the node's answer (the tail, or "not found"), not silence
     async function read() {
       const [, frames] = core.tail_get(id);
       let said;
@@ -368,6 +384,7 @@ export async function start(ctx) {
     async function write(key, value) {
       if (!(await allowed())) throw new Error(`this app may not change your “${app}”: allow it when your node asks`);
       if (refusing) throw new Error(refusing);
+      await t.answer();
       // Listed BEFORE it is created: a failure between the two leaves a listed tail that is empty, never one nobody
       // can find.
       if (t.absent && beforeCreate) await beforeCreate();
@@ -473,6 +490,7 @@ export async function start(ctx) {
     // PUT again (re-published where it is there; repaired — made from what is held, parity coded again — where it is
     // not), then the tail's signed state put again. In the write queue: no flush moves the tree under it.
     async function keep() {
+      await t.answer();
       if (t.absent) return null;
       const t0 = performance.now();
       if (t.lazy) await t.whole();
@@ -546,6 +564,7 @@ export async function start(ctx) {
       return { ...p, rows: p.rows.filter(([, v]) => seqOf(v) <= cap) };
     },
     whole: () => f.whole?.(),
+    answer: () => f.answer?.() ?? Promise.resolve(),
     onChange: fn => f.onChange(fn),
     get absent() {
       return f.absent;
@@ -562,11 +581,13 @@ export async function start(ctx) {
     await Promise.all(
       nodes.map(async node => {
         const cat = await scope.catalogOf(node).catch(() => null);
+        await cat?.answer();
         if (!cat || cat.absent) return;
         const heads = {};
         await Promise.all(
           listedIn(cat).map(async r => {
             const t = await tail(node, r.key, { ...scope.opts(r.key), catalog: cat }).catch(() => null);
+            await t?.answer();
             if (!t || t.absent) return;
             const seqs = (t.raw() ?? []).map(([, v]) => seqOf(v)).filter(Number.isFinite);
             if (seqs.length) heads[r.key] = Math.max(...seqs);
@@ -632,6 +653,7 @@ export async function start(ctx) {
     return (directoryOpen ??= (async () => {
       const sp = await space.account();
       const d = await tail(sp.shared, CATALOG, { known: sp.fresh ? false : null, catalogKey: true });
+      await d.answer();
       if (d.absent && sp.fresh) await d.put(CATALOG, JSON.stringify({ at: Date.now(), complete: true }));
       directoryTail = d;
       return d;
@@ -809,7 +831,7 @@ export async function start(ctx) {
     if (tables.has(at)) return lazy ? tables.get(at) : tables.get(at).then(t => (t.lazy ? t.whole().then(() => t) : t));
     const ready = (async () => {
       if (sp.kind === "account" && !sp.shared) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
-      const [mine, others] = await Promise.all([scope.catalogOf(scope.self), scope.writers()]);
+      const [mine, others] = await Promise.all([scope.catalogOf(scope.self).then(async c => (await c.answer(), c)), scope.writers()]);
       // A space: its WRITERS BAG says whose catalogs exist — only those are read once it is complete. This device
       // listed if it has a catalog and is not yet (a catalog from before the bag).
       // Waited on BRIEFLY: a bag this node holds answers at once; one not answered by then — every member read, as
@@ -857,6 +879,7 @@ export async function start(ctx) {
       const gather = async o => {
         const c = await scope.catalogOf(o).catch(() => null);
         if (!c) return;
+        await c.answer();
         const open = async () => {
           if (opened.has(o) || !lists(c, name)) return;
           opened.add(o);
@@ -890,6 +913,7 @@ export async function start(ctx) {
           departedDone.add(r.key);
           // Its catalog: read, and listed in the writers bag when there (a departed writer from before the bag).
           const cat = await scope.catalogOf(r.key).catch(() => null);
+          await cat?.answer();
           if (cat && !cat.absent && bag && !bag.set.has(r.key)) scope.list([r.key]).catch(() => {});
           const f = await theirs(r.key, true, cat);
           if (f) take(capped(f, cap));
@@ -927,7 +951,18 @@ export async function start(ctx) {
             e => (clearTimeout(slow), ctx.log("page slow", { what: `${name}: ${f.owner.slice(0, 12)}…'s page failed: ${e?.message ?? e}` }), null),
           );
         };
-        const got = await Promise.all(all.filter(f => !f.absent && f.page).map(timed));
+        // The same rule as a read: the writers' pages that answered within WAIT.hint shown; a later one, when it comes,
+        // tells the table's readers to read again (`onChange`) — never waited on.
+        let late = false;
+        const pages = all.filter(f => !f.absent && f.page).map(f => {
+          const p = timed(f);
+          return Promise.race([p, new Promise(r => setTimeout(r, WAIT.hint, undefined))]).then(x => {
+            if (x !== undefined) return x;
+            p.then(got => got && !late && ((late = true), changed.forEach(fn => fn())));
+            return null;
+          });
+        });
+        const got = await Promise.all(pages);
         const ok = got.filter(Boolean);
         const merged_ = decoded(Array.from(feed.merge_feeds(ok.map(({ f, p }) => [bytes(f.owner), p.rows])))).sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0));
         const out = merged_.slice(0, limit);
@@ -1046,6 +1081,7 @@ export async function start(ctx) {
   const PUBLIC = ["mail", "posts", "modlist"];
   const cardOf = async owner => {
     const c = await tail(owner, CARD, { public: true });
+    await c.answer();
     c.plainCatalog = true;
     return c;
   };
@@ -1055,6 +1091,7 @@ export async function start(ctx) {
     if (complete(c)) return true;
     for (const n of PUBLIC) {
       const t = await tail(owner, n, { public: true, wait: WAIT.answer });
+      await t.answer();
       if (!t.absent) await notePlace(c, n, "listed");
       else if (!t.answered()) return false; // silence: noted another time
     }
@@ -1066,6 +1103,7 @@ export async function start(ctx) {
     if (sp && owner === sp.shared) {
       if (name === CARD) {
         const c = await tail(owner, name, { public: true, known: legacyListed(await directory(), name) === false ? false : null, beforeCreate: () => listInDirectory(name) });
+        await c.answer();
         c.plainCatalog = true;
         return c;
       }
@@ -1120,7 +1158,7 @@ export async function start(ctx) {
     return moved;
   }
 
-  // SETTLED SOON: a table is ready once every other writer's feed has answered — or after WAIT.show (`node`), whichever is
+  // SETTLED SOON: a table is ready once every other writer's feed has answered — or after WAIT.hint (`node`), whichever is
   // first. A feed not there (never written) costs the node a whole network search (seconds to over a minute); nobody
   // waits on that. One that arrives later is merged in as it comes (the table's `onChange`): nothing is dropped.
   const soon = (all, name) => {
@@ -1128,7 +1166,7 @@ export async function start(ctx) {
     all.finally(() => (done = true));
     return Promise.race([
       all,
-      new Promise(r => setTimeout(r, WAIT.show)).then(() => {
+      new Promise(r => setTimeout(r, WAIT.hint)).then(() => {
         if (!done) ctx.log("storage", { what: `${name}: shown without the feeds still being asked (merged as they come)` });
       }),
     ]);
@@ -1198,12 +1236,13 @@ export async function start(ctx) {
   async function settleOwnPlaces(sp) {
     const scope = scopeOf(sp);
     const cat = await scope.catalogOf(scope.self);
+    await cat.answer();
     if (cat.absent) return true;
     const unsettled = () => own(cat).filter(r => r.value && placeOf(cat, r.key) === "listed" && !byNameTable(r.key, scope.opts(r.key))).map(r => r.key);
     const left = unsettled();
     for (const name of left) {
       ownKeys.add(scope.self);
-      await tail(scope.self, name, { ...scope.opts(name), catalog: cat }).catch(() => null);
+      await tail(scope.self, name, { ...scope.opts(name), catalog: cat }).then(t => t?.answer(), () => null);
       if (placeOf(cat, name) === "listed") opening.delete(`${scope.self}|${name}`); // silent: asked again later
     }
     const still = unsettled().length;

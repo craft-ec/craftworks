@@ -103,6 +103,7 @@ export async function start(ctx) {
     // (a space's HISTORY: whoever holds this epoch opens every earlier one, walking back — the account has escrow).
     async function ensure(st, made, prev = null) {
       const log = await storage.log(g.channel, glue.epoch_log_public(st.secret), { known: made ? false : null, sealWith: await g.seal(st.epoch), space: g.space });
+      await log.answer?.();
       if (log.absent) await log.put("open", JSON.stringify({ info: hexOf(st.info), ...(prev ? { prev } : {}) }));
       return log;
     }

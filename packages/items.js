@@ -92,10 +92,9 @@ export async function start(ctx) {
 
   // ROOMS, opened once per page: a board's, a person's profile tail.
   const rooms = new Map();
-  const openNow = new Map(); // key → the room, once open (what a bounded list shows while a read is still running)
   const opened = (key, make) => {
     if (!rooms.has(key)) {
-      const p = make().then(r => (r.onChange(fire), openNow.set(key, r), r));
+      const p = make().then(r => (r.onChange(fire), r));
       p.catch(() => rooms.delete(key));
       rooms.set(key, p);
     }
@@ -308,9 +307,9 @@ export async function start(ctx) {
         editFull: async (id, body, o) => (await roomOf(id)).edit(id, body, o),
       };
     });
-  // Each bounded as a board is (`inTime`): a profile whose node is silent is left out, never waited on.
+  // Each read bounded where it is read (`storage`): a silent profile shows as held, never waited on.
   const profiles = async dids =>
-    (await Promise.all([...new Set(dids)].map(d => inTime(profileRoom(d), `the profile of ${String(d).slice(12, 20)}…`, `profile ${d}`, () => openNow.get(d) ?? null).catch(() => null)))).filter(Boolean);
+    (await Promise.all([...new Set(dids)].map(d => profileRoom(d).catch(() => null)))).filter(Boolean);
   const pointersTo = async ref => (await index.pointers(ref).catch(() => [])).map(p => p.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
   const idOf = ref => ref.slice(ref.lastIndexOf("/") + 1);
   const whereOf = ref => ref.slice(0, ref.lastIndexOf("/"));
@@ -343,29 +342,10 @@ export async function start(ctx) {
   // older on asking): what is read is that span of the place, never all of it. `all`: the place read whole.
   const WINDOW = { day: 86400e3, week: 7 * 86400e3, month: 30 * 86400e3 };
   const sinceOf = w => (w === "all" || w == null ? null : Date.now() - (typeof w === "number" ? w * 86400e3 : (WINDOW[w] ?? WINDOW.month)));
-  // A PLACE's read BOUNDED — the one bound of every list: waited on at most WAIT.hint (`node`), then the list shows what
-  // is HELD of it (`held()`: its open room's rows; none yet: left out); a read still running is never waited on again by
-  // the next list; when it ends, the lists are drawn again (`onChange`). One slow or lost part (a writer whose tree the
-  // network lost) never holds a page.
+  // No bound here: every read under a list is bounded where it is read (`storage`: shown within WAIT.hint, merged
+  // when it answers — the lists drawn again on `onChange`).
   const { WAIT } = await ctx.require("node");
-  const running = new Map(); // key → a read past its bound, still running
-  function bounded(key, start, what, held) {
-    if (running.has(key)) return Promise.resolve().then(held);
-    const p = start();
-    return Promise.race([p.then(x => ({ x })), new Promise(r => setTimeout(r, WAIT.hint, null))]).then(w => {
-      if (w) return w.x;
-      ctx.log("posts", { what: `${what}: still arriving — shown with what is here, drawn again when it ends` });
-      running.set(key, p);
-      p.catch(e => ctx.log("posts", { what: `${what}: ${e?.message ?? e}` })).finally(() => (running.delete(key), fire()));
-      return held();
-    });
-  }
-  const inTime = (p, what, key = what, held = () => Promise.reject(new Error(`${what}: not open yet`))) => bounded(key, () => p, what, held);
-  async function boardPosts(sp, opts = {}) {
-    const what = `the board of ${sp.name ?? sp.id?.slice(0, 8)}`;
-    const held = async () => (openNow.has(`space:${sp.id}`) ? boardPostsOf(sp, { ...opts, window: "held", room: openNow.get(`space:${sp.id}`) }) : []);
-    return bounded(`board ${sp.id} ${JSON.stringify(opts)}`, () => boardPostsOf(sp, opts), what, held);
-  }
+  const boardPosts = (sp, opts = {}) => boardPostsOf(sp, opts);
   async function boardPostsOf(sp, { outside = false, kinds = ["post"], window = "all", room = null } = {}) {
     const r = room ?? (await (outside ? outsideRoom(sp) : boardRoom(sp)));
     // `window: "held"`: what is read already (a caller read its own span: one item and what came after it).
@@ -446,10 +426,7 @@ export async function start(ctx) {
     const [inSpaces, profile] = await Promise.all([
       Promise.all(
         [...bySpace].map(async ([id, ptrs]) =>
-          inTime(
-            (async () => boardPostsOf(spaces.get(id), { outside: true, kinds: kinds_, room: await pointedRoom(spaces.get(id), ptrs) }))(),
-            `the board of ${spaces.get(id).name ?? id.slice(0, 8)}`,
-          ).catch(() => []),
+          (async () => boardPostsOf(spaces.get(id), { outside: true, kinds: kinds_, room: await pointedRoom(spaces.get(id), ptrs) }))().catch(() => []),
         ),
       ).then(x => x.flat()),
       dids.size ? profilePosts([...dids], [], kinds_, since).catch(() => []) : [],
@@ -481,7 +458,7 @@ export async function start(ctx) {
     } else if (where.feed) {
       // The FEED: every space followed or joined — the spaces this person is in, the people they follow (their
       // personal spaces) and the shared spaces they follow (read from outside).
-      // All at once, each part bounded on its own (a board, a profile: `inTime`) — never one part after another.
+      // All at once — never one part after another (each read bounded where it is read: `storage`).
       const t0 = performance.now();
       const took = (what, p) => p.then(x => (performance.now() - t0 > WAIT.hint && ctx.log("posts", { what: `the feed: ${what} (slow)`, ms: Math.round(performance.now() - t0) }), x));
       const [bs, people, fs] = await Promise.all([took("its spaces known", boards()), took("whom it follows known", following()), took("the spaces it follows known", followedSpaces())]);

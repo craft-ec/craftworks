@@ -71,6 +71,7 @@ export async function start(ctx) {
 
   async function card(did, { fresh = false } = {}) {
     const t = await publicOf(did, CARD);
+    await t?.answer?.();
     if (fresh) await t?.reread?.().catch(() => {});
     if (!t || t.absent) return null;
     return { did: typeof did === "string" ? did : glue.did_of(did), ...read(t) };
