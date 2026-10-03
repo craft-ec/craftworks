@@ -85,7 +85,7 @@ export async function start(ctx) {
     await Promise.all((await space.mine().catch(() => [])).map(sp => scanOne(sp).catch(() => {})));
   }
   async function scanOne(sp) {
-    if (sp.kind === "direct" || sp.kind === "group") watch(sp, "messages", { route: `#/messages/${sp.id}` }).catch(() => {});
+    if (sp.kind === "direct" || sp.kind === "group") watch(sp, "messages", { route: `#/message/${sp.id}` }).catch(() => {});
     else if (sp.kind === "server") {
       // Its BOARD (both tables), when it uses Board.
       const r = await roles.of(sp).catch(() => null);

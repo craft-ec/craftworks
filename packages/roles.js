@@ -17,7 +17,7 @@
 //   r.acts("hide")           // the acts of a kind that COUNTED, in order (`r.acts()`: all of them — the space's log)
 //   r.owner                  // who owns it now (a `transfer` act hands it on)
 //   r.invites()              // the invite codes in force: [{ code, by, at, expires, uses, admitted }]
-//   r.apps()                 // the APPS the space uses (chat, board, notes): an `app` act ({ app, on }) adds or
+//   r.apps()                 // the APPS the space uses (chat, board, note): an `app` act ({ app, on }) adds or
 //                            // removes one; a new space has none (its Home and settings only)
 //   ACCESS, like row-level security: POLICIES `{ path, action, who }` (a `policy` act, by who may `apps`; `read` by
 //   the owner only), INHERITED along the path — an item (`board/p/<id>`), a container (`chat/<channel>`), an app
@@ -46,10 +46,14 @@ export async function start(ctx) {
   const G = node.glue.Governance;
   const ACTIONS = G.actions();
   // WHICH POLICY GOVERNS a domain (THE ONE resolver, for every app and every action): its domain's own (`kinds`:
-  // text, video, audio, note, file …), else the setting made before domains (the app's name: board, videos …), else the
-  // space's. `DOMAINS`: every domain a policy can name.
-  const LEGACY = { text: "board", video: "videos", audio: "audio", image: "images", subtitle: "subtitles", note: "notes", file: "drive" };
+  // text, video, audio, note, caption, file …), else the setting made before domains (the app's name: board, drive),
+  // else the space's. `DOMAINS`: every domain a policy can name.
+  const LEGACY = { text: "board", video: "video", audio: "audio", image: "image", caption: "caption", note: "note", file: "drive" };
   const DOMAINS = Object.keys(LEGACY);
+  // APPS RENAMED (plural to singular; Subtitles to Caption): what a space stored under the old name — the app in use,
+  // a policy at its path — reads as the new one. The one map; nothing else knows the old names.
+  const WAS = { video: "videos", note: "notes", caption: "subtitles", image: "images" };
+  const NOW = Object.fromEntries(Object.entries(WAS).map(([k, v]) => [v, k]));
   // A member's credential (hex): `CWMB ‖ did ‖ signer ‖ writer ‖ MLS key ‖ signature` (the identity's format; MLS
   // checked the signature when it admitted it).
   const didOf = h => new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16)));
@@ -181,6 +185,11 @@ export async function start(ctx) {
       const ws = await index.pointers(ACTS).catch(() => []);
       if (!ws.some(p => p?.w === sp.self)) await index.point(ACTS, { w: sp.self }).catch(() => (actListed = false));
     }
+    // The policy set at exactly a path — or at its app's old name (`WAS`), set before the rename.
+    const policyAt = (path, action, at) => {
+      const [head, ...rest] = path.split("/");
+      return gv.policy_at(path, action, at) || (WAS[head] && gv.policy_at([WAS[head], ...rest].join("/"), action, at)) || null;
+    };
     const r = {
       space: sp,
       get owner() {
@@ -191,23 +200,22 @@ export async function start(ctx) {
       author,
       acts: kind => (kind ? counted.filter(a => a.act === kind) : [...counted]),
       invites: () => JSON.parse(gv.invites(Date.now())),
-      apps: () => gv.apps(),
+      apps: () => [...new Set(gv.apps().map(a => NOW[a] ?? a))],
       config: (app, key, dflt = null) => {
         const c = gv.config(app, key);
         return (c === undefined ? null : JSON.parse(c)) ?? dflt;
       },
-      policy: (path, action, at = Infinity) => gv.effective(path, action, at),
+      policy: (path, action, at = Infinity) => policyAt(path, action, at) || gv.effective(path, action, at),
       // The policies set at exactly this path (not inherited): { action: who }.
-      policiesAt: path => Object.fromEntries(ACTIONS.map(x => [x, gv.policy_at(path, x, Infinity)]).filter(([, w]) => w)),
+      policiesAt: path => Object.fromEntries(ACTIONS.map(x => [x, policyAt(path, x, Infinity)]).filter(([, w]) => w)),
       allows: (action, did, path = "", at = Infinity) => {
-        const who = gv.effective(path, action, at);
+        const who = policyAt(path, action, at) || gv.effective(path, action, at);
         return who === "anyone" || G.passes(who, role(did));
       },
       // A DOMAIN's policy for an action (`kinds.policyDomain(kind)`: what an item is decides, not the app showing it).
-      policyIn: (domain, action, at = Infinity) =>
-        gv.policy_at(domain, action, at) || (LEGACY[domain] && gv.policy_at(LEGACY[domain], action, at)) || gv.effective("", action, at),
+      policyIn: (domain, action, at = Infinity) => policyAt(domain, action, at) || (LEGACY[domain] && policyAt(LEGACY[domain], action, at)) || gv.effective("", action, at),
       allowsIn: (action, did, domain, at = Infinity) => {
-        const own = gv.policy_at(domain, action, at) || (LEGACY[domain] && gv.policy_at(LEGACY[domain], action, at));
+        const own = policyAt(domain, action, at) || (LEGACY[domain] && policyAt(LEGACY[domain], action, at));
         const who = own || gv.effective("", action, at);
         return who === "anyone" || G.passes(who, role(did));
       },
@@ -260,6 +268,8 @@ export async function start(ctx) {
         const toPublic = isPublic() || (a.act === "policy" && (a.action === "read" || a.action === "join") && a.who === "anyone");
         // Its time: now — or when it happened (upkeep let someone in while no page ran: the act says when).
         await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify({ at: Date.now(), ...a }));
+        // An app removed that the space added under its old name: that one off too.
+        if (a.act === "app" && !a.on && WAS[a.app] && gv.apps().includes(WAS[a.app])) await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify({ at: Date.now(), ...a, app: WAS[a.app] }));
         if (toPublic) await listActWriter();
       },
       grant: (did, to) => r.act({ act: "grant", did, role: to }),
@@ -301,7 +311,7 @@ export async function start(ctx) {
         role: d => (d === did ? "owner" : null),
         can: d => d === did,
         config: (_a, _k, dflt = null) => dflt,
-        apps: () => ["board", "videos", "audio"],
+        apps: () => ["board", "video", "audio"],
         act: async ({ act, path, action, who }) => {
           if (act !== "policy") throw new Error("a personal space keeps policies only");
           await ready;

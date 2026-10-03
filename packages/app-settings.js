@@ -45,7 +45,7 @@ export async function start(ctx) {
         break;
       }
     const inherited = from == null ? (r.personal ? "anyone" : "members") : r.policy(from, action);
-    const LEVEL = p => (p === "" ? "the space" : p === "chat" ? "Chat" : p === "board" ? "Board" : p === "notes" ? "Notes" : p);
+    const LEVEL = p => (p === "" ? "the space" : p === "chat" ? "Chat" : p === "board" ? "Board" : p === "note" ? "Note" : p);
     // A personal space's: anyone · your followers · your friends · only you (`roles.personal`).
     const options = r.personal ? ["anyone", "followers", "friends", "author"] : ["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || action === "read" || action === "join");
     const sel = h(
@@ -100,10 +100,10 @@ export async function start(ctx) {
       ],
       saved: async (changed, r, sp) => changed["board|read"] === "anyone" && madePublic(r, sp),
     },
-    videos: { title: "Videos", fields: ["read", "post", "comment", "vote"].map(action => ({ action, path: "videos", label: `Who may ${action}` })), saved: async (c, r, sp) => c["videos|read"] === "anyone" && madePublic(r, sp) },
+    video: { title: "Video", fields: ["read", "post", "comment", "vote"].map(action => ({ action, path: "video", label: `Who may ${action}` })), saved: async (c, r, sp) => c["video|read"] === "anyone" && madePublic(r, sp) },
     audio: { title: "Audio", fields: ["read", "post", "comment", "vote"].map(action => ({ action, path: "audio", label: `Who may ${action}` })), saved: async (c, r, sp) => c["audio|read"] === "anyone" && madePublic(r, sp) },
     chat: { title: "Chat", fields: [{ action: "post", path: "chat", label: "Who may post (in every channel that does not say otherwise)" }], extra: chatChannels },
-    notes: { title: "Notes", fields: [{ action: "post", path: "notes", label: "Who may add notes" }, { action: "edit", path: "notes", label: "Who may edit notes" }] },
+    note: { title: "Note", fields: [{ action: "post", path: "note", label: "Who may add notes" }, { action: "edit", path: "note", label: "Who may edit notes" }] },
     drive: { title: "Drive", fields: [{ action: "read", path: "drive", label: "Who may read" }, { action: "post", path: "drive", label: "Who may upload" }, { action: "edit", path: "drive", label: "Who may move files" }] },
   };
   // CHAT's own rows: its channels, each with who may post in it.
@@ -177,7 +177,7 @@ export async function start(ctx) {
   const href = (sp, key) => (sp ? `#/s/${sp.id}/space/settings/${key}` : `#/settings/${key}`);
   // YOUR SPACE's SETTINGS (your Home): who may comment and vote on what you post in each app, by default — an item's
   // own setting over it. The same sections, read and written through `roles.personal`.
-  const PERSONAL = { board: "Board", videos: "Videos", audio: "Audio" };
+  const PERSONAL = { board: "Board", video: "Video", audio: "Audio" };
   async function personalPage() {
     const me = (await (await ctx.require("space")).account()).id;
     const r = roles.personal(me);

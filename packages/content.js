@@ -75,7 +75,7 @@ export async function start(ctx) {
     // comment and vote (inherited from the app and the space).
     const app = container.kind === "channel" ? `chat/${container.id.split("/").pop()}` : container.kind === "board" ? "board" : null;
     // Anything that stands on its own (a post, a video, …: `kinds`) is posted; a comment commented; a reaction voted.
-    // (An ATTACHING kind — a subtitle — is contributed like a comment.)
+    // (An ATTACHING kind — a caption — is contributed like a comment.)
     const K = await ctx.require("kinds");
     const ACTION = { message: "post", comment: "comment", reaction: "vote", ...Object.fromEntries(K.all().map(k => [k, "post"])), ...Object.fromEntries(K.attaching().map(k => [k, "comment"])) };
     const [r, m] = outside
@@ -99,7 +99,7 @@ export async function start(ctx) {
         const v = JSON.parse(row.value);
         return {
           id: row.key,
-          kind: v.kind ?? "message",
+          kind: K.canon(v.kind ?? "message"),
           body: String(v.body ?? v.text ?? ""),
           at: Number(v.at) || 0,
           by: open ? container.did : byOf(row, v),

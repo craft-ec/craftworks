@@ -7,7 +7,7 @@
 // H.264 + AAC only at 720p and 360p, the safety net for players that cannot decode that family. A device with no
 // efficient hardware encoder makes an H.264 ladder alone. A
 // POSTER and a SCRUB STRIP (a sprite of frames across the video). All of it named by one MANIFEST (JSON, a file of its
-// own): what the Videos item carries. (Subtitles are data of their own: `subtitle-store`.)
+// own): what the Video item carries. (Captions are data of their own: `caption-store`.)
 //
 // FAST, THEN IN THE BACKGROUND (no server encodes here; the uploader's own devices do): an upload keeps the ORIGINAL,
 // makes ONE rendition (H.264, on the hardware encoder) and posts — watchable in seconds. The rest of the ladder is
@@ -18,7 +18,7 @@
 //
 //   const studio = await ctx.require("video-studio");
 //   const ref = await studio.make(file, { space, public, keepOriginal, onProgress })   // the manifest's reference
-//   (subtitles are `subtitle-store`'s: attached to the item once posted)
+//   (captions are `caption-store`'s: attached to the item once posted)
 //   studio.progress(ref) -> { stage, p, done, of } | null          // a video still being made (the uploader's devices)
 //   studio.MANIFEST   // its type: "application/vnd.craftworks.video+json"
 export async function start(ctx) {
@@ -138,7 +138,7 @@ export async function start(ctx) {
       ctx.log("video-studio", { what: `${file.name}: not encoded here (${err?.message ?? err}): the file as it is` });
       const isVideo = /^video\//.test(file.type);
       const m = isVideo ? await (await ctx.require("video-player")).meta(file).catch(() => ({})) : {};
-      const up = await files.put(file, { space: opts.space ?? null, public: !!opts.public, app: opts.app ?? "videos", onProgress: p => opts.onProgress?.({ stage: "uploading", p: p.done / Math.max(1, p.size) }) });
+      const up = await files.put(file, { space: opts.space ?? null, public: !!opts.public, app: opts.app ?? "video", onProgress: p => opts.onProgress?.({ stage: "uploading", p: p.done / Math.max(1, p.size) }) });
       return { ...up, name: file.name, ...(m.poster ? { preview: m.poster } : {}), ...(m.duration ? { duration: m.duration } : {}) };
     }
   }
@@ -174,7 +174,7 @@ export async function start(ctx) {
     say("scrub strip");
     const sp = await strip(M, track, duration).catch(() => null);
     // THE ORIGINAL, kept: what the background makes the rest from (and a newer codec later).
-    const source = await files.put(file, { space, public: pub, app: "videos", onProgress: e => say("keeping the original", e.done / Math.max(1, e.size)) });
+    const source = await files.put(file, { space, public: pub, app: "video", onProgress: e => say("keeping the original", e.done / Math.max(1, e.size)) });
     // THE VIDEO's ID, fixed now (a re-key later does not change it): from the original's key — public: its content
     // alone (the same video anywhere has one id); otherwise salted by its space (only its readers can name it).
     const vid = await videoId(source.key);
@@ -184,8 +184,8 @@ export async function start(ctx) {
     const made = await makeRendition(M, file, first, { space, pub, name: file.name, say: (st, p) => say(st, p), width: widthOf(first.height) });
     if (!made) throw new Error("no H.264 rendition could be made here");
     renditions.push(made);
-    const stripRef = sp ? await files.put(new File([sp.blob], `${file.name}.strip.jpg`, { type: "image/jpeg" }), { space, public: pub, app: "videos" }) : null;
-    // (Subtitles are data of their own — `subtitle-store` — attached to the item once it is posted.)
+    const stripRef = sp ? await files.put(new File([sp.blob], `${file.name}.strip.jpg`, { type: "image/jpeg" }), { space, public: pub, app: "video" }) : null;
+    // (Captions are data of their own — `caption-store` — attached to the item once it is posted.)
     say("manifest");
     const manifest = {
       v: 1,
@@ -271,11 +271,11 @@ export async function start(ctx) {
     });
     if (!out) return null;
     say(`storing ${label}`);
-    const ref = await files.put(new File([out.bytes], `${name}.${r.codec}.${r.height}p.mp4`, { type: "video/mp4" }), { space, public: pub, app: "videos", onProgress: e => say(`storing ${label}`, e.done / Math.max(1, e.size)) });
+    const ref = await files.put(new File([out.bytes], `${name}.${r.codec}.${r.height}p.mp4`, { type: "video/mp4" }), { space, public: pub, app: "video", onProgress: e => say(`storing ${label}`, e.done / Math.max(1, e.size)) });
     return { codec: r.codec, mime: out.mime, width, height: r.height, bitrate: r.bitrate, size: out.bytes.byteLength, ref, index: out.index };
   }
   // Never inline: it grows with the video (its fragment index), and the item's row must stay small.
-  const putManifest = (m, space, pub) => files.put(new File([JSON.stringify(m)], `${m.name}.video.json`, { type: MANIFEST }), { space, public: pub, app: "videos", inline: false });
+  const putManifest = (m, space, pub) => files.put(new File([JSON.stringify(m)], `${m.name}.video.json`, { type: MANIFEST }), { space, public: pub, app: "video", inline: false });
 
   // CAN THIS DEVICE make it: H.264 as the browser has it (hardware or not), AV1 in hardware at any height, in
   // software up to 1080p. What it cannot is left PENDING for another of this person's devices that can.
@@ -384,7 +384,7 @@ export async function start(ctx) {
     items.setFiles(item.ref, item.files.map(x => (x === old ? { ...ref, ...(old.preview ? { preview: old.preview } : {}), duration: old.duration, width: old.width, height: old.height } : x)));
 
   // SUBTITLES FROM BEFORE (kept in the manifest, before subtitles were data of their own): taken out of it — a new
-  // manifest without them — and handed back ([{ label, lang, ref }]) to become `subtitle-store` items.
+  // manifest without them — and handed back ([{ label, lang, ref }]) to become `caption-store` items.
   async function takeLegacySubtitles(ref) {
     const cur = await latest(ref);
     if (!cur?.manifest.subtitles?.length) return [];

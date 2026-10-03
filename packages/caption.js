@@ -1,7 +1,7 @@
-// SUBTITLES, a page (the Subtitles app): the lens on subtitle data (`subtitle-store`) — YOURS (`#/subtitles`: every
+// CAPTION, a page (the Caption app): the lens on captions — subtitles, lyrics, transcripts (`caption-store`) — YOURS (`#/caption`: every
 // track you made, on any video), a SPACE's (`#/s/<space>/subtitles`: a group working on its videos' subtitles — every
-// track on them, by any member, and each of its videos to add one to), a media item's (`#/subtitles/for/<ref>`: its tracks, by anyone, and one added — a
-// file or pasted text), and one track EDITED (`#/subtitles/e/<ref>`: its label, language and cues as WebVTT; exported
+// track on them, by any member, and each of its videos to add one to), a media item's (`#/caption/for/<ref>`: its tracks, by anyone, and one added — a
+// file or pasted text), and one track EDITED (`#/caption/e/<ref>`: its label, language and cues as WebVTT; exported
 // as WebVTT or SRT: the data is portable). UI only.
 export async function mount(ctx, el) {
   const login = await ctx.require("login");
@@ -9,7 +9,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [subs, items, directory, theme, space] = await Promise.all(["subtitle-store", "items", "directory", "theme", "space"].map(n => ctx.require(n)));
+  const [subs, items, directory, theme, space] = await Promise.all(["caption-store", "items", "directory", "theme", "space"].map(n => ctx.require(n)));
   // The FEED BAR (every content app's): which tracks, over which window, in which order.
   const bar = (await ctx.require("feed-bar")).create({ start: "new", onChange: () => draw() });
   const me = (await space.account()).id;
@@ -75,7 +75,7 @@ export async function mount(ctx, el) {
       h("span", { className: "s", textContent: t.lang || "—" }),
       h("span", { className: "s" }, "by ", who(t.by), t.place ? ` · in ${t.place.name ?? "a space"}` : ""),
       await (async () => { const it = await itemOf(t.in); return h("a", { href: watchHref(t.in, it?.kind), textContent: `▶ ${it?.title ?? "an item"}` }); })(),
-      t.by === me ? h("a", { href: `#/subtitles/e/${encodeURIComponent(t.ref)}`, textContent: "Edit" }) : null,
+      t.by === me ? h("a", { href: `#/caption/e/${encodeURIComponent(t.ref)}`, textContent: "Edit" }) : null,
       h("button", { type: "button", textContent: ".vtt", onclick: async () => download(await subs.text(t), `${t.label || "subtitles"}.vtt`, "text/vtt") }),
       h("button", { type: "button", textContent: ".srt", onclick: async () => download(subs.toSrt(await subs.text(t)), `${t.label || "subtitles"}.srt`, "application/x-subrip") }),
     );
@@ -100,7 +100,7 @@ export async function mount(ctx, el) {
     const blocks = await Promise.all(
       videos.map(async v => {
         const tracks = await subs.of(v.ref);
-        return h("div", {}, h("h3", {}, h("a", { href: watchHref(v.ref, v.kind), textContent: `▶ ${v.title}` }), " ", h("a", { className: "s", href: `#/subtitles/for/${encodeURIComponent(v.ref)}`, textContent: "Add a track" })), tracks.length ? h("ul", {}, ...(await Promise.all(tracks.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }));
+        return h("div", {}, h("h3", {}, h("a", { href: watchHref(v.ref, v.kind), textContent: `▶ ${v.title}` }), " ", h("a", { className: "s", href: `#/caption/for/${encodeURIComponent(v.ref)}`, textContent: "Add a track" })), tracks.length ? h("ul", {}, ...(await Promise.all(tracks.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }));
       }),
     );
     return h("div", {}, h("p", { className: "s", textContent: "This space's videos and their subtitles — any member adds a track or a translation; each edits their own." }), ...blocks);
@@ -117,7 +117,7 @@ export async function mount(ctx, el) {
     const roles = await ctx.require("roles");
     const mine = await space.mine();
     const teams = [];
-    for (const s of mine.filter(x => x.kind === "server")) if ((await roles.of(s).catch(() => null))?.apps().includes("subtitles")) teams.push(s);
+    for (const s of mine.filter(x => x.kind === "server")) if ((await roles.of(s).catch(() => null))?.apps().includes("caption")) teams.push(s);
     const withVideo = ref.startsWith("space:") ? mine.some(s => ref.startsWith(`space:${s.id}/`)) : true;
     const placeSel = h(
       "select",
@@ -170,7 +170,7 @@ export async function mount(ctx, el) {
         h("button", { className: "go", type: "button", textContent: "Save", onclick: async () => ((said.textContent = "Saving…"), await subs.update(ref, { label: label.value.trim(), lang: lang.value.trim(), text: text.value }).then(() => (said.textContent = "Saved."), e => (said.textContent = e.message))) }),
         h("button", { type: "button", textContent: "Export .vtt", onclick: () => download(subs.toVtt(text.value), `${label.value || "subtitles"}.vtt`, "text/vtt") }),
         h("button", { type: "button", textContent: "Export .srt", onclick: () => download(subs.toSrt(text.value), `${label.value || "subtitles"}.srt`, "application/x-subrip") }),
-        h("button", { type: "button", textContent: "Delete", onclick: async () => (await subs.remove(ref), (location.hash = "#/subtitles")) }),
+        h("button", { type: "button", textContent: "Delete", onclick: async () => (await subs.remove(ref), (location.hash = "#/caption")) }),
         said,
       ),
     );
@@ -180,11 +180,11 @@ export async function mount(ctx, el) {
   async function draw() {
     const w = route();
     drawn = ctx.sub ?? "";
-    const top = h("div", { className: "top" }, h("h2", { textContent: "🔤 Subtitles" }), h("a", { href: "#/subtitles", textContent: "Yours" }));
+    const top = h("div", { className: "top" }, h("h2", { textContent: "🔤 Caption" }), h("a", { href: "#/caption", textContent: "Yours" }));
     root.replaceChildren(top, theme.loading("Reading…"));
     const body = await (w.space ? inSpace(w.space) : w.for ? forItem(w.for, w.file) : w.edit ? editor(w.edit) : mine()).catch(e => h("p", { className: "said", textContent: e.message ?? String(e) }));
     if (drawn === (ctx.sub ?? "")) root.replaceChildren(top, body);
   }
   await draw();
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/subtitles" && (ctx.sub ?? "") !== drawn && draw());
+  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/caption" && (ctx.sub ?? "") !== drawn && draw());
 }

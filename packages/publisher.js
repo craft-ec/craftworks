@@ -31,7 +31,7 @@ export async function start(ctx) {
     const item = await items.submit({ board: space?.id ?? null, title: name, body, kind, meta: m, audience, write, files: [ref] });
     // Its TIMED TEXT: the subtitles given, else the lyrics the file carries (untimed: one cue over the whole).
     if (spec.maker === "video-studio") {
-      const subs = await ctx.require("subtitle-store");
+      const subs = await ctx.require("caption-store");
       for (const s of subtitles) await subs.add(item, s).catch(e => ctx.log("publish", { what: `timed text ${s.name}: ${e.message}` }));
       const lyrics = !subtitles.length && spec.domain === "audio" ? (await maker.probe(file).catch(() => null))?.lyrics : null;
       if (lyrics)

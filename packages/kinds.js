@@ -13,8 +13,8 @@
 //   kinds.inDomain("video")  // ["video", "movie", "episode", "music-video", "short"]
 //   kinds.all()              // every kind that stands on its own (a comment answers one; a message is a conversation's)
 //   kinds.attaching()        // kinds that ATTACH to another item (`in`): a subtitle to a video or an audio item
-//   kinds.attachesTo("subtitle")  // the domains it attaches to: ["video", "audio"]
-//   kinds.attachLabel("subtitle", "music")  // "Lyrics" ("Transcript" on a podcast, "Subtitles" on a video)
+//   kinds.attachesTo("caption")   // the domains it attaches to: ["video", "audio"]
+//   kinds.attachLabel("caption", "music")   // "Lyrics" ("Transcript" on a podcast, "Subtitles" on a video)
 //   kinds.policyDomain("movie") // the DOMAIN whose settings govern it in a space ("video"; a post: "text"; a subtitle:
 //                             // "subtitle") — content decides, not the app showing it (one app may show every domain)
 export async function start() {
@@ -72,13 +72,17 @@ export async function start() {
   };
   const UNTITLED = new Set(["note", "file"]);
   // ATTACHING kinds: their own data, about another item (`in`) — contributed like a comment, listed with what they are
-  // about, and a lens of their own (the Subtitles app). A subtitle: WebVTT (its file), its language and label.
-  const ATTACHING = [["subtitle", "text", "Subtitles", ["lang", "label"], ["video", "audio"]]];
+  // about, and a lens of their own (the Caption app). A CAPTION — subtitles, lyrics, a transcript: WebVTT (its file),
+  // its language and label.
+  const ATTACHING = [["caption", "text", "Caption", ["lang", "label"], ["video", "audio"]]];
+  // A kind's name now, for one stored under the name it had ("subtitle": a caption).
+  const RENAMED = { subtitle: "caption" };
   const byKind = new Map(CATALOG.map(([kind, domain, label, fields]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields) })]));
   const onTo = new Map(ATTACHING.map(([kind, domain, label, fields, to]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields), to: Object.freeze(to), attaches: true })]));
   const LABELS = { lang: "Language", label: "Label",  year: "Year", director: "Director", cast: "Cast", genre: "Genre", show: "Show", season: "Season", episode: "Episode", artist: "Artist", album: "Album", host: "Host", author: "Author", narrator: "Narrator", chapter: "Chapter", location: "Location", taken: "Taken", camera: "Camera", medium: "Medium", publisher: "Publisher", isbn: "ISBN", writer: "Writer", issue: "Issue", format: "Format", software: "Software", platform: "Platform", version: "Version", license: "License", schema: "Schema" };
   return {
     of: kind => byKind.get(kind) ?? onTo.get(kind) ?? null,
+    canon: kind => RENAMED[kind] ?? kind,
     attaching: () => [...onTo.keys()],
     attachesTo: kind => [...(onTo.get(kind)?.to ?? [])],
     domain: kind => byKind.get(kind)?.domain ?? null,
@@ -95,9 +99,9 @@ export async function start() {
     // A domain's NAME as a place (a Drive folder; its app's): Videos, Audio, Images, Documents, Files.
     domainName: d => MEDIA.find(m => m.domain === d)?.plural ?? ({ document: "Documents" })[d] ?? "Files",
     policyDomain: kind => (onTo.has(kind) ? kind : byKind.get(kind)?.domain ?? "text"),
-    // What an attaching kind is CALLED on an item of `target` kind: a subtitle on a song is its Lyrics, on a podcast
+    // What an attaching kind is CALLED on an item of `target` kind: a caption on a song is its Lyrics, on a podcast
     // or an audiobook its Transcript — one capability, named for what it is on.
     attachLabel: (kind, target) =>
-      kind !== "subtitle" ? (onTo.get(kind)?.label ?? kind) : ["music", "music-video"].includes(target) ? "Lyrics" : ["podcast", "audiobook"].includes(target) ? "Transcript" : "Subtitles",
+      kind !== "caption" ? (onTo.get(kind)?.label ?? kind) : ["music", "music-video"].includes(target) ? "Lyrics" : ["podcast", "audiobook"].includes(target) ? "Transcript" : "Subtitles",
   };
 }

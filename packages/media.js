@@ -1,10 +1,10 @@
 // MEDIA, a page: ONE page for every MEDIA app — a LENS on a content DOMAIN (`kinds`) chosen by its route: VIDEOS
-// (`#/videos`: video, movie, TV episode, music video, short) and AUDIO (`#/audio`: music, podcast, audiobook), YouTube-
+// (`#/video`: video, movie, TV episode, music video, short) and AUDIO (`#/audio`: music, podcast, audiobook), YouTube-
 // and Spotify-shaped; a composed app shows several the same way. Its SUB-TYPES filter the list. CHANNEL-FIRST: yours
 // (each public, or only you) and those you follow (`…`: the feed; `…/mine`; `…/c/<did>`: someone's); SAVED (the pin
 // edge); DISCOVER. In a SPACE (`#/s/<space>/…`): its members' items, public while its domain reads in public. WATCH/
 // LISTEN: `…/w/<ref>` — streamed by byte range (`video-player`), a like (▲), comments, and its timed text
-// (`subtitle-store`: Subtitles on a video, Lyrics on a song, a Transcript on a podcast — shown in time for audio).
+// (`caption-store`: Subtitles on a video, Lyrics on a song, a Transcript on a podcast — shown in time for audio).
 // UPLOAD: `…/up` (tags and cover from the file). UI only.
 export async function mount(ctx, el) {
   const login = await ctx.require("login");
@@ -13,14 +13,14 @@ export async function mount(ctx, el) {
     return;
   }
   const [items, directory, person, theme, space, roles, drive, player, kinds, edge] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "drive-store", "video-player", "kinds", "edge"].map(n => ctx.require(n)));
-  const [studio, files, subs, mediaView] = await Promise.all(["video-studio", "files", "subtitle-store", "media-view"].map(n => ctx.require(n)));
+  const [studio, files, subs, mediaView] = await Promise.all(["video-studio", "files", "caption-store", "media-view"].map(n => ctx.require(n)));
   const [pins, people] = await Promise.all([edge.pins(), edge.people()]);
   // WHICH APP this page is (its route): its domain, its words.
   const APPS = {
-    "/videos": { app: "videos", domain: "video", icon: "▶️", name: "Videos", one: "video", ones: "videos", accept: "video/*", mine: "Your channel", audio: false },
+    "/video": { app: "video", domain: "video", icon: "▶️", name: "Video", one: "video", ones: "videos", accept: "video/*", mine: "Your channel", audio: false },
     "/audio": { app: "audio", domain: "audio", icon: "🎧", name: "Audio", one: "track", ones: "tracks", accept: "audio/*", mine: "Your library", audio: true },
   };
-  const C_ROUTE = APPS[ctx.route] ? ctx.route : "/videos";
+  const C_ROUTE = APPS[ctx.route] ? ctx.route : "/video";
   const C = APPS[C_ROUTE];
   const VIDEO = kinds.inDomain(C.domain);
   let only = null; // a SUB-TYPE the list is filtered to (null: all)

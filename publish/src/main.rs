@@ -388,7 +388,7 @@ async fn main() -> Result<()> {
         ("edge", "service", app.join("packages/edge.js")),
         ("pin-button", "service", app.join("packages/pin-button.js")),
         ("label-menu", "service", app.join("packages/label-menu.js")),
-        ("notes", "module", app.join("packages/notes.js")),
+        ("note", "module", app.join("packages/note.js")),
         ("content", "service", app.join("packages/content.js")),
         ("directory", "service", app.join("packages/directory.js")),
         ("index", "service", app.join("packages/index.js")),
@@ -400,7 +400,7 @@ async fn main() -> Result<()> {
         ("people-list", "service", app.join("packages/people-list.js")),
         ("activity", "service", app.join("packages/activity.js")),
         ("recovery", "service", app.join("packages/recovery.js")),
-        ("contacts", "module", app.join("packages/contacts.js")),
+        ("contact", "module", app.join("packages/contact.js")),
         ("items", "service", app.join("packages/items.js")),
         ("board", "module", app.join("packages/board.js")),
         ("rail", "module", app.join("packages/rail.js")),
@@ -427,12 +427,12 @@ async fn main() -> Result<()> {
         ("video-studio", "service", app.join("packages/video-studio.js")),
         // One page for every media app (Videos, Audio): its route chooses the domain.
         ("media", "module", app.join("packages/media.js")),
-        ("subtitle-store", "service", app.join("packages/subtitle-store.js")),
-        ("subtitles", "module", app.join("packages/subtitles.js")),
+        ("caption-store", "service", app.join("packages/caption-store.js")),
+        ("caption", "module", app.join("packages/caption.js")),
         ("app-settings", "service", app.join("packages/app-settings.js")),
         ("space-home", "module", app.join("packages/space-home.js")),
         ("chat", "module", app.join("packages/chat.js")),
-        ("messages", "module", app.join("packages/messages.js")),
+        ("message", "module", app.join("packages/message.js")),
         ("mail", "module", app.join("packages/mail.js")),
         ("room", "service", app.join("packages/room.js")),
         ("tail-wasm", "bytes", contracts.join("tail.wasm")),
@@ -521,7 +521,7 @@ async fn main() -> Result<()> {
     let names: Vec<&str> = packages.iter().map(|(n, _, _)| *n).collect();
     let mentions = |src: &str| -> Vec<&str> { names.iter().copied().filter(|n| src.contains(&format!("\"{n}\""))).collect() };
     // The app's PAGES (route → its package): the manifest's `pages`, and where each page's needs start.
-    let pages: [(&str, &str); 13] = [("/subtitles", "subtitles"), ("/videos", "media"), ("/audio", "media"), ("/space", "space-home"), ("/", "home"), ("/account", "account"), ("/notes", "notes"), ("/chat", "chat"), ("/messages", "messages"), ("/mail", "mail"), ("/contacts", "contacts"), ("/board", "board"), ("/drive", "drive")];
+    let pages: [(&str, &str); 13] = [("/caption", "caption"), ("/video", "media"), ("/audio", "media"), ("/space", "space-home"), ("/", "home"), ("/account", "account"), ("/note", "note"), ("/chat", "chat"), ("/message", "message"), ("/mail", "mail"), ("/contact", "contact"), ("/board", "board"), ("/drive", "drive")];
     let mut needs = Vec::new();
     for (route, page) in pages {
         let mut have: Vec<&str> = vec!["theme", "header", "rail", "footer", page];
@@ -539,7 +539,7 @@ async fn main() -> Result<()> {
         needs.push(format!("\"{route}\": [{}]", have.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")));
     }
     let manifest = format!(
-        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"side\": [\"rail\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Notes\", \"views\": [\"personal\", \"shared\"], \"icon\": \"📝\", \"route\": \"/notes\", \"about\": \"Notes, tagged and pinned: yours, or a space's, kept together.\" }}, {{ \"name\": \"Messages\", \"views\": [\"personal\"], \"icon\": \"✉️\", \"route\": \"/messages\", \"counts\": \"messages\", \"about\": \"Private conversations with one person, sealed end to end.\" }}, {{ \"name\": \"Chat\", \"views\": [\"shared\", \"public\"], \"icon\": \"💬\", \"route\": \"/chat\", \"counts\": \"chat\", \"about\": \"A space's channels, Discord-style.\" }}, {{ \"name\": \"Mail\", \"views\": [\"personal\"], \"icon\": \"📮\", \"route\": \"/mail\", \"about\": \"Mail to anyone by their id: signed by your account, sealed to theirs.\" }}, {{ \"name\": \"Contacts\", \"views\": [\"personal\", \"public\"], \"icon\": \"👤\", \"route\": \"/contacts\", \"about\": \"The people you know: friends, following, requests. Find anyone by their id.\" }}, {{ \"name\": \"Board\", \"views\": [\"personal\", \"shared\", \"public\"], \"icon\": \"📋\", \"route\": \"/board\", \"about\": \"Posts, comments and votes, Reddit-style: a space's, or your own profile.\" }}, {{ \"name\": \"Drive\", \"views\": [\"personal\", \"shared\"], \"icon\": \"🗂️\", \"route\": \"/drive\", \"about\": \"Every file you upload or attach, in folders: yours, or a space's.\" }}, {{ \"name\": \"Videos\", \"views\": [\"personal\", \"shared\", \"public\"], \"icon\": \"▶️\", \"route\": \"/videos\", \"about\": \"Your channel and those you follow: videos, movies, episodes, shorts.\" }}, {{ \"name\": \"Audio\", \"views\": [\"personal\", \"shared\", \"public\"], \"icon\": \"🎧\", \"route\": \"/audio\", \"about\": \"Music, podcasts and audiobooks: yours and those you follow, with lyrics and transcripts.\" }}, {{ \"name\": \"Subtitles\", \"views\": [\"personal\", \"shared\"], \"icon\": \"🔤\", \"route\": \"/subtitles\", \"about\": \"Subtitle tracks as data of their own: yours on any video, edited, exported as WebVTT or SRT.\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\", \"mailbox\", \"spacekeys\", \"reads\", \"people\", \"posts\", \"journal\", \"asks\", \"files\", \"uploads\", \"drive\", \"keypacks\", \"encodes\", \"keep\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
+        "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"side\": [\"rail\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"moved\": {{ \"/videos\": \"/video\", \"/notes\": \"/note\", \"/messages\": \"/message\", \"/contacts\": \"/contact\", \"/subtitles\": \"/caption\" }},\n  \"apps\": [ {{ \"name\": \"Note\", \"views\": [\"personal\", \"shared\"], \"icon\": \"📝\", \"route\": \"/note\", \"about\": \"Notes, tagged and pinned: yours, or a space's, kept together.\" }}, {{ \"name\": \"Message\", \"views\": [\"personal\"], \"icon\": \"✉️\", \"route\": \"/message\", \"counts\": \"messages\", \"about\": \"Private conversations with one person, sealed end to end.\" }}, {{ \"name\": \"Chat\", \"views\": [\"shared\", \"public\"], \"icon\": \"💬\", \"route\": \"/chat\", \"counts\": \"chat\", \"about\": \"A space's channels, Discord-style.\" }}, {{ \"name\": \"Mail\", \"views\": [\"personal\"], \"icon\": \"📮\", \"route\": \"/mail\", \"about\": \"Mail to anyone by their id: signed by your account, sealed to theirs.\" }}, {{ \"name\": \"Contact\", \"views\": [\"personal\", \"public\"], \"icon\": \"👤\", \"route\": \"/contact\", \"about\": \"The people you know: friends, following, requests. Find anyone by their id.\" }}, {{ \"name\": \"Board\", \"views\": [\"personal\", \"shared\", \"public\"], \"icon\": \"📋\", \"route\": \"/board\", \"about\": \"Posts, comments and votes, Reddit-style: a space's, or your own profile.\" }}, {{ \"name\": \"Drive\", \"views\": [\"personal\", \"shared\"], \"icon\": \"🗂️\", \"route\": \"/drive\", \"about\": \"Every file you upload or attach, in folders: yours, or a space's.\" }}, {{ \"name\": \"Video\", \"views\": [\"personal\", \"shared\", \"public\"], \"icon\": \"▶️\", \"route\": \"/video\", \"about\": \"Your channel and those you follow: videos, movies, episodes, shorts.\" }}, {{ \"name\": \"Audio\", \"views\": [\"personal\", \"shared\", \"public\"], \"icon\": \"🎧\", \"route\": \"/audio\", \"about\": \"Music, podcasts and audiobooks: yours and those you follow, with lyrics and transcripts.\" }}, {{ \"name\": \"Caption\", \"views\": [\"personal\", \"shared\"], \"icon\": \"🔤\", \"route\": \"/caption\", \"about\": \"Captions as data of their own — subtitles, lyrics, transcripts: yours on any video or audio, edited, exported as WebVTT or SRT.\" }} ],\n  \"uses\": [\"notes\", \"pins\", \"tags\", \"spaces\", \"mailbox\", \"spacekeys\", \"reads\", \"people\", \"posts\", \"journal\", \"asks\", \"files\", \"uploads\", \"drive\", \"keypacks\", \"encodes\", \"keep\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
         pages.iter().map(|(r, p)| format!("\"{r}\": [\"{p}\"]")).collect::<Vec<_>>().join(", "),
         prior.join(", "),
         needs.join(", "),

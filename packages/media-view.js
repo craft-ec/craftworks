@@ -1,8 +1,8 @@
 // MEDIA VIEW, a component: the ONE way a video or an audio is shown — on its Videos or Audio page, and written inline
 // in a post or a comment. A COVER until played (its poster or album cover, ▶, its length: nothing loads before),
 // or playing at once; the player (`video-player`: a manifest adaptively, a plain file by its byte ranges); its
-// SUBTITLES, lyrics or transcript as tracks (`subtitle-store.tracksFor`: the one lookup, by the file's video id — the
-// same tracks wherever the video shows), named with a way to add or edit them (the Subtitles app, for THIS file of
+// SUBTITLES, lyrics or transcript as tracks (`caption-store.tracksFor`: the one lookup, by the file's video id — the
+// same tracks wherever the video shows), named with a way to add or edit them (the Caption app, for THIS file of
 // this item); an audio's first track shown IN TIME beside it (the line playing lit; a click plays from it).
 //
 //   const mv = await ctx.require("media-view");
@@ -11,7 +11,7 @@
 //   v.media                // the <video>/<audio> (once playing)      v.line   v.timed   (placed by the caller, or in v.el)
 //   v.play()               // start (a cover: its click does)      v.prepare()   // its tracks' line now, nothing played
 export async function start(ctx) {
-  const [player, subs, kindsCap] = await Promise.all(["video-player", "subtitle-store", "kinds"].map(n => ctx.require(n)));
+  const [player, subs, kindsCap] = await Promise.all(["video-player", "caption-store", "kinds"].map(n => ctx.require(n)));
   const markdown = await ctx.require("markdown");
   const style = document.createElement("style");
   style.textContent = `
@@ -47,7 +47,7 @@ export async function start(ctx) {
   function create({ file, item = null, kind = null, cover = false, outside = null, label = null, itemKind = null, onNote = null, onLevel = null, place = true } = {}) {
     kind ??= markdown.kindOf(file) === "audio" ? "audio" : "video";
     // What its tracks are called: Subtitles, Lyrics (a song), Transcript (a podcast, an audiobook).
-    const NAME = label ?? kindsCap.attachLabel("subtitle", itemKind ?? (kind === "audio" ? "music" : "video"));
+    const NAME = label ?? kindsCap.attachLabel("caption", itemKind ?? (kind === "audio" ? "music" : "video"));
     const el = h("div", { className: "cw-mv" });
     const note = h("span", { className: "note" });
     const line = h("div", { className: "line" });
@@ -57,9 +57,9 @@ export async function start(ctx) {
     const caption = [t.title, t.artist, t.album].filter(Boolean).length ? h("div", { className: "tags", textContent: [t.title, t.artist, t.album].filter(Boolean).join(" · ") }) : null;
     const media = h(kind, { controls: true, playsInline: true, preload: "none" });
     if (kind === "video" && file?.preview) media.poster = file.preview;
-    // Where its tracks are added: the Subtitles app, for the item's own video, or THIS file in the item.
+    // Where its tracks are added: the Caption app, for the item's own video, or THIS file in the item.
     const hasId = () => file?.type === "application/vnd.craftworks.video+json"; // what tracks are made for (its video id)
-    const subsHref = () => (item ? `#/subtitles/for/${encodeURIComponent(item)}${cover ? `~${markdown.keyOf(file)}` : ""}` : null);
+    const subsHref = () => (item ? `#/caption/for/${encodeURIComponent(item)}${cover ? `~${markdown.keyOf(file)}` : ""}` : null);
     let started = false;
     // Its TRACKS read (a few rows, not the media): shown in its line at once, the player's once it plays.
     let prepared = null;

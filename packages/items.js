@@ -1,6 +1,6 @@
 // ITEMS, a capability: every item that STANDS ON ITS OWN — of any kind in the catalog (`kinds`), siblings: a `post`
 // (text), a `video`, a `movie` … — with what attaches to it (COMMENTS, and attaching kinds: a `subtitle`) and VOTES,
-// in one of two PLACES. Apps are lenses on it by domain (Board: posts; Videos: the video kinds; Subtitles: subtitles).
+// in one of two PLACES. Apps are lenses on it by domain (Board: posts; Video: the video kinds; Caption: captions).
 // (Once Board's alone, hence `board` in its places' names and API: a space's place is its "board room".)
 // - A BOARD: a SPACE's (`space.board(sp)`), one of its apps (added by its owner or admins) beside its messages — a
 //   server's, a group or direct conversation's — the same members, roles, governance and moderation. Its posts
@@ -102,9 +102,9 @@ export async function start(ctx) {
   };
   // The spaces this person is in that have a Board (an app of the space, added by its owner or admins: `roles`).
   const roles = await ctx.require("roles");
-  // A space's board room is its place for every item `posts` keeps — posts, videos, subtitles — so any app on it opens
-  // the place (a space with Videos and no Board still takes videos).
-  const PLACE_APPS = ["board", "videos", "audio", "subtitles", "notes", "drive", "images"];
+  // A space's board room is its place for every item `posts` keeps — posts, videos, captions — so any app on it opens
+  // the place (a space with Video and no Board still takes videos).
+  const PLACE_APPS = ["board", "video", "audio", "caption", "note", "drive", "image"];
   const boards = async () => {
     const all = await space.mine();
     // Its apps once its acts are read (before, a space shows the default apps: a Chat-only space would open a board).
@@ -133,8 +133,8 @@ export async function start(ctx) {
     const files = await ctx.require("files");
     return JSON.stringify({ ...it, files: await Promise.all(it.files.map(f => files.current(f).catch(() => f))) });
   }
-  // A DOMAIN's read setting in a space: its own (`text`, `video`, `subtitle` …: content decides, whatever app shows it),
-  // else the app-named setting from before (text: "board", video: "videos", subtitle: "subtitles"), else the space's.
+  // A DOMAIN's read setting in a space: its own (`text`, `video`, `caption` …: content decides, whatever app shows it),
+  // else the app-named setting from before (text: "board"), else the space's.
   const domainReads = (r, domain) => r.policyIn(domain, "read") === "anyone";
   // Whether an item of `kind` is public in a space now.
   async function publicIn(sp, kind) {
@@ -764,7 +764,7 @@ export async function start(ctx) {
   async function migrateNotes(sp = null) {
     const storage = await ctx.require("storage");
     const self = await me();
-    if (sp && !(await roles.of(sp).then(r => r.apps().includes("notes"), () => false))) return true;
+    if (sp && !(await roles.of(sp).then(r => r.apps().includes("note"), () => false))) return true;
     const old = sp ? await storage.table(space.tableOf(sp, "notes"), sp) : await storage.table("notes");
     await old.settled;
     const r = sp ? await roles.of(sp) : null;
@@ -794,12 +794,12 @@ export async function start(ctx) {
   }
 
   // WHERE AN ITEM IS SHOWN — the one link to its page, for every app that links to one: a video or a track where it
-  // plays (Videos, Audio, Images), a post (or anything else) on its board, a note in Notes, a file in Drive.
-  const APP_OF = { video: "videos", audio: "audio", image: "images", note: "notes", file: "drive" };
+  // plays (Video, Audio, Image), a post (or anything else) on its board, a note in Note, a file in Drive.
+  const APP_OF = { video: "video", audio: "audio", image: "image", note: "note", file: "drive" };
   function pageOf(ref, kind) {
     const at = String(ref).startsWith("space:") ? `#/s/${ref.slice(6, ref.indexOf("/"))}` : "#";
     const app = APP_OF[kinds.domain(kind)] ?? "board";
-    if (["videos", "audio", "images"].includes(app)) return `${at}/${app}/w/${encodeURIComponent(ref)}`;
+    if (["video", "audio", "image"].includes(app)) return `${at}/${app}/w/${encodeURIComponent(ref)}`;
     return app === "board" ? `${at}/board/p/${ref}` : `${at}/${app}`;
   }
 

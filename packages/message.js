@@ -38,7 +38,7 @@ export async function mount(ctx, el) {
         .dm.listing .room { display: none; } }
     </style>
     <div class="dm listing">
-      <aside class="list"><h2>Messages</h2><button class="new" type="button">+ New message</button><div class="people"></div><p class="said" hidden></p></aside>
+      <aside class="list"><h2>Message</h2><button class="new" type="button">+ New message</button><div class="people"></div><p class="said" hidden></p></aside>
       <section class="room"><p class="empty">Pick a conversation, or start one.</p></section>
       <dialog class="ask"><form method="dialog"><label>Who? One person, or several separated by commas for a group — name#abc123 or did:craftec:… <input name="answer" autocomplete="off" required></label>
         <label>Group name (for several) <input name="group" autocomplete="off"></label>
@@ -111,7 +111,7 @@ export async function mount(ctx, el) {
 
   await drawList();
   activity.onChange(() => el.isConnected && drawList());
-  // Opened at a conversation (`#/messages/<id>`: from a person's Message): shown at once.
+  // Opened at a conversation (`#/message/<id>`: from a person's Message): shown at once.
   const at = async () => {
     if (!ctx.sub) return;
     const sp = (await conversation.list()).find(c => c.id === ctx.sub);

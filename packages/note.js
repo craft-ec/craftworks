@@ -1,6 +1,6 @@
 // NOTES, an app in the manner of Google Keep: a "Take a note…" composer, notes as coloured cards in a masonry grid,
 // pinned notes first, archive, search, and grid or list. A PRIVATE page: nothing shows until someone is logged in.
-// YOUR notes (`#/notes`: the personal space's), or a SHARED space's (`#/s/<space>/notes`, the space open on the rail,
+// YOUR notes (`#/note`: the personal space's), or a SHARED space's (`#/s/<space>/note`, the space open on the rail,
 // when it uses Notes — its table `notes`, written and read by its members).
 //
 // The notes are one table of the ACCOUNT (the `data` service), the same on every node of the account. A note is one
@@ -122,7 +122,7 @@ export async function mount(ctx, el) {
       rs = await (await ctx.require("roles")).of(sp);
       // The space's log read first (its apps and settings are acts in it).
       await rs.settled;
-      if (!rs.apps().includes("notes")) throw new Error(`${sp.name} does not use Notes: its owner or an admin adds it on the space's Home`);
+      if (!rs.apps().includes("note")) throw new Error(`${sp.name} does not use Note: its owner or an admin adds it on the space's Home`);
     }
     // NOTES ARE ITEMS (kind `note`, `items`): yours in your space (private, or public), a space's in its place —
     // who sees, edits and comments by the same access control as every app.
@@ -420,16 +420,16 @@ export async function mount(ctx, el) {
   const appSettings = sp ? await ctx.require("app-settings") : null;
   // Who may edit here: the composer says so when this person may not.
   const gate = () => {
-    const ok = !rs || rs.allows("edit", meId, "notes");
+    const ok = !rs || rs.allows("edit", meId, "note");
     composer.hidden = !ok;
   };
   gate();
   rs?.onChange(() => root.isConnected && (gate(), render()));
   const actions = () => {
-    ctx.actions["/notes"] = [
+    ctx.actions["/note"] = [
       // NOTES' OWN SETTINGS in a space (its owner and admins): who may edit.
       ...(rs?.can(meId, "apps")
-        ? [{ label: "Notes settings", run: () => (location.hash = appSettings.href(sp, "notes")) }]
+        ? [{ label: "Note settings", run: () => (location.hash = appSettings.href(sp, "note")) }]
         : []),
       { search: v => ((query = v), render()), placeholder: sp ? `Search ${sp.name}'s notes` : "Search your notes", value: query },
       { label: list ? "Grid view" : "List view", run: () => ((list = !list), render(), actions()) },
@@ -446,7 +446,7 @@ export async function mount(ctx, el) {
   // Another space's notes (or yours): opened afresh.
   const at = ctx.space;
   const moved = () => {
-    if (!root.isConnected || ctx.route !== "/notes") return removeEventListener("craftworks:route", moved);
+    if (!root.isConnected || ctx.route !== "/note") return removeEventListener("craftworks:route", moved);
     if (ctx.space === at) return;
     removeEventListener("craftworks:route", moved);
     el.replaceChildren();

@@ -1,13 +1,13 @@
-// SUBTITLE STORE, a capability: SUBTITLES as data of their own, like Drive's files — `content` of the attaching kind
-// "subtitle" (`kinds`): its language and label (`meta`), its cues a WebVTT file (a film's run to 100 KB: never in the
+// CAPTION STORE, a capability: CAPTIONS — subtitles, lyrics, transcripts — as data of their own, like Drive's files —
+// `content` of the attaching kind "caption" (`kinds`): its language and label (`meta`), its cues a WebVTT file (a film's run to 100 KB: never in the
 // row), and what it is FOR — the VIDEO's ID (`meta.for`: fixed at upload from the original's key: public — the content
 // alone, the same video anywhere; private — salted by its space, so only its readers can name it), with the item it
 // was made on (`in`). KEPT where its author chooses: with the video (its place), their own, or a team's space. FOUND by
 // the video's id in the places this person can READ — the video's own, their own, the spaces they are in, the people
 // and spaces they follow (public ones from outside): access control and privacy decide what loads, nothing else.
-// Any player composes them; the Subtitles app is their lens. Portable: WebVTT in, WebVTT or SRT out.
+// Any player composes them; the Caption app is their lens. Portable: WebVTT in, WebVTT or SRT out.
 //
-//   const subs = await ctx.require("subtitle-store");
+//   const subs = await ctx.require("caption-store");
 //   await subs.of(mediaRef, { outside })          // [{ ref, lang, label, by, at, file, place, mayRemove }], oldest first
 //   await subs.add(mediaRef, fileOrText, { lang, label, place })   // its ref (SRT made WebVTT); `place`: a space, null
 //                                                  // (your own), or none: with the video
@@ -20,7 +20,7 @@
 //   await subs.add(itemRef, text, { file })         // a track made for a FILE in the item
 export async function start(ctx) {
   const [items, files, space] = await Promise.all(["items", "files", "space"].map(n => ctx.require(n)));
-  const KIND = "subtitle";
+  const KIND = "caption";
 
   // WebVTT from what was given: WebVTT kept; SRT made WebVTT (its commas become points, a header added).
   const toVtt = text => {
@@ -85,7 +85,7 @@ export async function start(ctx) {
     if (!outside && vid) {
       const roles = await ctx.require("roles");
       const teams = [];
-      for (const s of (await space.mine()).filter(x => x.kind === "server")) if ((await roles.of(s).catch(() => null))?.apps().includes("subtitles")) teams.push(s);
+      for (const s of (await space.mine()).filter(x => x.kind === "server")) if ((await roles.of(s).catch(() => null))?.apps().includes("caption")) teams.push(s);
       const me = (await space.account()).id;
       const own = itemRef.slice(itemRef.lastIndexOf("/") + 1);
       const itemAt = /^t([0-9a-z]{9})/.test(own) ? parseInt(own.slice(1, 10), 36) : null;
@@ -118,7 +118,7 @@ export async function start(ctx) {
   }
   async function store(where, vtt, name) {
     // Never inline: a long film's cues outgrow a row.
-    return files.put(new File([vtt], name, { type: "text/vtt" }), { space: where.sp, public: where.pub, app: "subtitles", inline: false });
+    return files.put(new File([vtt], name, { type: "text/vtt" }), { space: where.sp, public: where.pub, app: "caption", inline: false });
   }
   // `file`: a media file inside the item (inline in a post) — the track is made for IT (its video id), attached to
   // the item.

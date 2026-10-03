@@ -65,7 +65,7 @@ async function people(ctx, el, { directory, person }) {
       .ppl .card span { color: var(--cw-muted); font-size: var(--cw-text-sm); }
     </style>
     <div class="ppl"><h2>👤 People</h2><p class="note">People who chose to be shown in Discover. Show yourself from your Contacts.</p><div class="grid"></div></div>`;
-  ctx.actions["/contacts"] = [];
+  ctx.actions["/contact"] = [];
   dispatchEvent(new CustomEvent("craftworks:actions"));
   const grid = el.querySelector(".grid");
   grid.replaceChildren(theme.loading("Finding people…"));
