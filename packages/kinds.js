@@ -48,6 +48,8 @@ export async function start() {
     ["post", "text", "Post", []],
     // Note (Notes: a card of text, its own domain — its own policy)
     ["note", "note", "Note", []],
+    // Channel (Chat: a place for messages — its title its name; `meta.cid` names its messages' table)
+    ["channel", "chat", "Channel", []],
   ];
   // COLLABORATIVE kinds: in a space, whoever its `edit` policy allows edits one (a shared note, a shared file's
   // entry), the creator kept; every other kind its author's alone (an app's own enforcement over the policy).

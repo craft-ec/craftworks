@@ -48,7 +48,7 @@ export async function start(ctx) {
   // WHICH POLICY GOVERNS a domain (THE ONE resolver, for every app and every action): its domain's own (`kinds`:
   // text, video, audio, note, caption, file …), else the setting made before domains (the app's name: board, drive),
   // else the space's. `DOMAINS`: every domain a policy can name.
-  const LEGACY = { text: "board", video: "video", audio: "audio", image: "image", caption: "caption", note: "note", file: "drive" };
+  const LEGACY = { text: "board", video: "video", audio: "audio", image: "image", caption: "caption", note: "note", file: "drive", chat: "chat" };
   const DOMAINS = Object.keys(LEGACY);
   // APPS RENAMED (plural to singular; Subtitles to Caption): what a space stored under the old name — the app in use,
   // a policy at its path — reads as the new one. The one map; nothing else knows the old names.

@@ -1040,3 +1040,16 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       in `content` (Board, Videos, Audio, Chat, Messages) — Notes and Drive call the same `roles.allows` for their items;
       Chat keeps per-channel policy (`chat/<channel>`).
 - [ ] 3  SETTINGS IN THE SPACE'S HOME: one Settings page, a section per app; apps' own dialogs removed.
+
+- Test account on fy (17692, site EckhKsQW…): PIN 731731; words juice bulk shy trend need book heavy curtain old network arrange disagree (made 2026-10-03, outsider tests).
+
+## CHAT AS A REGULAR APP (owner 10-03: "items them"; personal space gets its own Chat; Message/Mail/Contact stay global)
+- [ ] 1. CHANNELS ARE ITEMS (kind `channel`, domain `chat`) in shared spaces — `conversation.channels(server)` the one
+      place: lists channel items (title = name, `meta.cid` = its message table's id, so no message moves), add/rename/
+      remove = items submit/edit/remove; made only by who may make channels (as before). A channel's WHO MAY POST = its
+      own rule (`meta.write.post`, via `roles.mayWrite`) else the space's Chat policy (path `chat`). Owner/admin node
+      MIGRATES the old `channels` table (with each `chat/<cid>` policy → `meta.write.post`), then sets the act
+      `config chat.channels = "items"`: readers stop opening the old table once that act is read.
+- [ ] 2. SETTINGS: Chat section's channel rows edit the items (name, who may post) — no `chat/<id>` path policies.
+- [ ] 3. PERSONAL CHAT: channels as items in the personal space; others' messages kept in their own profiles, pointed,
+      read through the outsider source (generalized from a space to a place); your Home's Chat section: who may post.

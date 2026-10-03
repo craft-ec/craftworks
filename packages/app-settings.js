@@ -120,7 +120,12 @@ export async function start(ctx) {
         ...channels.list().map(c => {
           const name = h("input", { value: c.name, ariaLabel: "Channel name" });
           const row = h("div", { className: "row" }, name, h("button", { type: "button", textContent: "Rename", onclick: () => channels.rename(c, name.value.trim()).then(draw, e => say(e.message)) }), h("button", { type: "button", textContent: "Delete", onclick: () => channels.remove(c).then(draw, e => say(e.message)) }));
-          row.append(who(r, `chat/${c.id.split("/").pop()}`, "post"));
+          // WHO MAY POST in it: the channel item's own rule (none: as Chat's), saved as chosen.
+          const own = c.item?.meta?.write?.post ?? "";
+          const sel = h("select", { ariaLabel: `Who may post in ${c.name}` }, h("option", { value: "", textContent: `As Chat (${NAMES[r.policyIn("chat", "post")] ?? r.policyIn("chat", "post")})` }), ...["anyone", "members", "admins", "owner"].map(w => h("option", { value: w, textContent: NAMES[w] })));
+          sel.value = own;
+          sel.onchange = () => channels.setPost(c, sel.value || null).then(draw, e => say(e.message));
+          row.append(sel);
           return row;
         }),
         h("div", { className: "row" }, add, h("button", { type: "button", textContent: "Add", onclick: () => add.value.trim() && channels.add(add.value.trim()).then(draw, e => say(e.message)) })),

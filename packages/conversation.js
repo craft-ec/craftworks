@@ -329,41 +329,72 @@ export async function start(ctx) {
     return out;
   }
 
-  // A SERVER's CHANNELS: its table `channels` (`<id>` → { name, at }), as its roles and moderation have them — a
-  // channel counts if someone who may make channels made it, and is gone once hidden (deleted). Every page that shows
-  // or watches channels asks here.
+  // A SERVER's CHANNELS: ITEMS of kind `channel` in the space (`items`: title its name, `meta.cid` its messages'
+  // table — `space.channel`), counted where someone who may make channels made them; each with its own rule for who
+  // may post (`meta.write.post`, else the space's Chat policy). From before: the space's table `channels`
+  // (`<id>` → { name, at }), read only until the space records its channels MOVED (the act `config chat.channels =
+  // "items"`, written by the owner's or an admin's node once it has brought them over — `migrateChannels`).
+  // Every page that shows or watches channels asks here.
   const channelSets = new Map();
   const channelName = name => {
     name = String(name ?? "").trim().toLowerCase().replace(/\s+/g, "-");
     if (!name) throw new Error("name it first");
     return name;
   };
+  const MOVED = ["chat", "channels"];
   function channels(server) {
     if (!channelSets.has(server.id))
       channelSets.set(
         server.id,
         (async () => {
-          const [storage, roles, moderation] = await Promise.all(["storage", "roles", "moderation"].map(n => ctx.require(n)));
-          const [t, r, m] = await Promise.all([storage.table(space.tableOf(server, "channels"), server), roles.of(server), moderation.of(server)]);
+          const [storage, roles, moderation, items] = await Promise.all(["storage", "roles", "moderation", "items"].map(n => ctx.require(n)));
+          const [r, m] = await Promise.all([roles.of(server), moderation.of(server)]);
+          await r.settled;
+          const moved = () => r.config(...MOVED, null) === "items";
+          // The table from before: opened only while the space has not moved its channels.
+          const legacy = moved() ? null : await storage.table(space.tableOf(server, "channels"), server).catch(() => null);
+          const changed = [];
+          const fire = () => changed.forEach(f => f());
+          let its = [];
+          let reading = null;
+          const read = () =>
+            (reading ??= items
+              .inPlaces({ spaces: [server] }, "channel", { withVotes: false })
+              .then(x => ((its = x), fire()), () => {})
+              .finally(() => (reading = null)));
+          const first = read();
+          items.onChange(() => read());
+          legacy?.onChange(fire);
+          r.onChange(fire);
           const list = () => {
-            const hidden = m.hidden(t.app);
-            return t
-              .rows()
-              .filter(row => !hidden.has(row.key) && r.can(r.author(row), "channels"))
-              .map(row => {
+            const out = new Map();
+            for (const it of its) {
+              if (!r.can(it.by, "channels")) continue;
+              const cid = it.meta?.cid ?? it.id;
+              out.set(cid, space.channel(server, cid, it.title || cid, it));
+            }
+            if (legacy && !moved()) {
+              const hidden = m.hidden(legacy.app);
+              for (const row of legacy.rows()) {
+                if (out.has(row.key) || hidden.has(row.key) || !r.can(r.author(row), "channels")) continue;
                 let v = {};
                 try {
                   v = JSON.parse(row.value);
                 } catch {}
-                return space.channel(server, row.key, v.name ?? row.key);
-              })
-              .sort((a, b) => a.name.localeCompare(b.name));
+                out.set(row.key, space.channel(server, row.key, v.name ?? row.key));
+              }
+            }
+            return [...out.values()].sort((a, b) => a.name.localeCompare(b.name));
           };
-          const changed = [];
-          t.onChange(() => changed.forEach(f => f()));
-          r.onChange(() => changed.forEach(f => f()));
           let done = false;
-          const settled = Promise.resolve(t.settled).finally(() => (done = true));
+          const settled = Promise.all([first, legacy?.settled]).finally(() => (done = true));
+          const me = async () => (await space.account()).id;
+          const mayMake = async () => {
+            if (!r.can(await me(), "channels")) throw new Error("only who may make channels here changes them");
+          };
+          // A channel ITEM: public where the space lets anyone read its chat, else its members'.
+          const make = async (name, cid, meta = {}) =>
+            items.submit({ board: server.id, title: channelName(name), body: "", kind: "channel", meta: { ...meta, cid }, audience: (await items.publicIn(server, "channel").catch(() => false)) ? "public" : "members" });
           return {
             list,
             settled,
@@ -371,9 +402,42 @@ export async function start(ctx) {
               return done;
             },
             onChange: f => changed.push(f),
-            add: name => t.put(newId().slice(0, 8), JSON.stringify({ name: channelName(name), at: Date.now() })),
-            rename: (c, name) => t.put(c.id.split("/").pop(), JSON.stringify({ name: channelName(name), at: Date.now() })),
-            remove: c => m.hide(t.app, c.id.split("/").pop()),
+            add: async name => (await mayMake(), await make(name, newId().slice(0, 8)), read()),
+            // One from before (no item yet): made an item now, its id kept (its messages stay where they are).
+            rename: async (c, name) => (await mayMake(), c.item ? await items.editItem(c.item.ref, "", { title: channelName(name) }) : await make(name, c.id.split("/").pop()), read()),
+            remove: async c => (c.item ? await items.remove(c.item.ref) : await m.hide(legacy.app, c.id.split("/").pop()), read()),
+            // WHO MAY POST in one channel: its item's own rule (null: as the space's Chat policy).
+            setPost: async (c, who) => {
+              await mayMake();
+              const it = c.item ?? (await items.get(await make(c.name, c.id.split("/").pop())));
+              const write = { ...(it.meta?.write ?? {}) };
+              if (who) write.post = who;
+              else delete write.post;
+              await items.editItem(it.ref, "", { meta: { ...(it.meta ?? {}), write } });
+              await read();
+            },
+            // (A MIGRATION — `upkeep`.) The table from before brought over as items — each with its old id, and its
+            // `chat/<id>` policy as its own rule — then the space marked MOVED (readers stop opening the table). Done by
+            // a node that may make channels; true when there is nothing (left) to do here.
+            migrate: async () => {
+              if (moved()) return true;
+              if (!r.can(await me(), "channels")) return true;
+              await settled;
+              const have = new Set(its.map(it => it.meta?.cid ?? it.id));
+              const hidden = legacy ? m.hidden(legacy.app) : new Set();
+              for (const row of legacy?.rows() ?? []) {
+                if (have.has(row.key) || hidden.has(row.key) || !r.can(r.author(row), "channels")) continue;
+                let v = {};
+                try {
+                  v = JSON.parse(row.value);
+                } catch {}
+                const post = r.policiesAt(`chat/${row.key}`).post;
+                await make(v.name ?? row.key, row.key, post ? { write: { post } } : {});
+              }
+              await r.act({ act: "config", app: MOVED[0], key: MOVED[1], value: "items" });
+              await read();
+              return true;
+            },
           };
         })().catch(e => {
           channelSets.delete(server.id);

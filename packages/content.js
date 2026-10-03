@@ -215,6 +215,8 @@ export async function start(ctx) {
     };
     const R = await ctx.require("roles");
     const allowed = (action, did, it, all, at) => {
+      // A CHANNEL with its item: by that item's rule (its own, else the space's Chat policy — `roles.mayWrite`).
+      if (container.kind === "channel" && container.item) return R.mayWrite({ action, item: container.item, writer: did, r, at }) === true;
       if (app !== "board") return r.allows(action, did, app, at);
       const root = action === "post" ? { kind: it.kind, by: null, meta: {} } : rootOf(it, all) ?? { kind: "post", by: null, meta: {} };
       return R.mayWrite({ action, item: root, writer: did, cred: it.meta?.cred ?? it.cred ?? null, r, at }) === true;

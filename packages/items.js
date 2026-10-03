@@ -106,7 +106,7 @@ export async function start(ctx) {
   const roles = await ctx.require("roles");
   // A space's board room is its place for every item `posts` keeps — posts, videos, captions — so any app on it opens
   // the place (a space with Video and no Board still takes videos).
-  const PLACE_APPS = ["board", "video", "audio", "caption", "note", "drive", "image"];
+  const PLACE_APPS = ["board", "video", "audio", "caption", "note", "drive", "image", "chat"];
   const boards = async () => {
     const all = await space.mine();
     // Its apps once its acts are read (before, a space shows the default apps: a Chat-only space would open a board).

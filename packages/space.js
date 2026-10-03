@@ -72,8 +72,9 @@ export async function start(ctx) {
   }
 
   // A CHANNEL of a server: a sub-space inheriting the server's access (its group, members, keys and scope).
-  function channel(server, id, name) {
-    return Object.freeze({ kind: "channel", id: `${server.id}/${id}`, name, parent: server, inherits: true, messages: tableOf(server, `c${id}`), scope: server });
+  // `item`: the channel ITEM (`items`, kind `channel`) — its own rule for who may post in it.
+  function channel(server, id, name, item = null) {
+    return Object.freeze({ kind: "channel", id: `${server.id}/${id}`, name, parent: server, inherits: true, messages: tableOf(server, `c${id}`), scope: server, item });
   }
 
   // A space's BOARD: its posts (Reddit's), beside its messages — a sub-space like a channel: the same group, members,

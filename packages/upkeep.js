@@ -62,7 +62,7 @@ export async function start(ctx) {
   // MIGRATIONS — the one place records from before a change are brought forward, here, after the page is up (never
   // on a page's path). Each step is safe to run again; the version is recorded once EVERY step of it succeeded (a step
   // the node was silent for: tried again on a later tick), and a page after that runs none.
-  const MIGRATION = 6;
+  const MIGRATION = 7;
   let migratedHere = false;
   async function migrate() {
     if (migratedHere) return;
@@ -95,6 +95,9 @@ export async function start(ctx) {
     if (done.every(Boolean)) done.push(...(await Promise.all([step("your Drive", (await ctx.require("drive-store")).migrate(null)), ...spaces.map(async sp => step(`${sp.name}'s Drive`, (await ctx.require("drive-store")).migrate(sp)))])));
     // v6 after v5: the Drive entries for files other apps made (their items list them) removed.
     if (done.every(Boolean)) done.push(...(await Promise.all([step("your Drive's duplicates", (await ctx.require("drive-store")).unduplicate(null)), ...spaces.map(async sp => step(`${sp.name}'s Drive duplicates`, (await ctx.require("drive-store")).unduplicate(sp)))])));
+    // v7: each space's channels from before brought over as items (by a node that may make channels; the space then
+    // marked moved — readers stop opening the old table).
+    if (done.every(Boolean)) done.push(...(await Promise.all(spaces.map(async sp => step(`${sp.name}'s channels`, (await ctx.require("conversation")).channels(sp).then(c => c.migrate()))))));
     if (done.every(Boolean)) {
       await storage.setUpkeepMark("migrated", MIGRATION);
       migratedHere = true;
