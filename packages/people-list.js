@@ -65,6 +65,7 @@ export async function start(ctx) {
       box.replaceChildren(...parts);
     }
     people.onChange(() => open && draw());
+    (await ctx.require("index")).onChange(() => open && draw());
     await draw();
     return { close: () => (open = false) };
   }

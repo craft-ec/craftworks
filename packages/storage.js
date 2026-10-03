@@ -225,7 +225,13 @@ export async function start(ctx) {
             note("none");
             return blinded;
           }
-          if (legacy.absent || !ours) return legacy; // the node silent for one (moved another time), or another's: read there
+          // Not at its NAME (the node answered so): its only place is its blinded name — read there, noted there (this
+          // node's), never asked by both names again, though the node is silent for the blinded one.
+          if (legacy.absent && legacy.answered()) {
+            note("blinded");
+            return blinded;
+          }
+          if (legacy.absent || !ours) return legacy; // the node silent for its name, or another's: read there
           ctx.log("storage", { what: `${app}: moving to its blinded name` });
           const moved = await blinded.moveFrom(legacy).catch(e => (ctx.log("storage", { what: `${app}: not moved yet — ${e?.message ?? e}` }), false));
           if (!moved) return legacy;

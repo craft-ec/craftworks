@@ -106,7 +106,7 @@ export async function start(ctx) {
     await index.send(did, { kind: "friend", from: me.id, at: Date.now() });
   }
   async function friendRequests() {
-    const [p, items] = await Promise.all([people(), index.inbox()]);
+    const [p, items] = await Promise.all([people(), index.inbox({ show: true })]);
     await p.settled;
     const asking = new Set();
     // In the order they were made (an inbox is a set: what arrived first is not what was said first).

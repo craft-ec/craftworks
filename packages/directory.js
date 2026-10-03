@@ -206,7 +206,7 @@ export async function start(ctx) {
     return (await storage.publicTail(CARD, sp.shared)).rows().some(r => r.key === "listed" && r.value === "1");
   };
   async function listed() {
-    const dids = [...new Set((await (await ctx.require("index")).pointers(PEOPLE).catch(() => [])).map(p => p.did).filter(d => typeof d === "string" && d.startsWith("did:craftec:")))];
+    const dids = [...new Set((await (await ctx.require("index")).pointers(PEOPLE, { show: true }).catch(() => [])).map(p => p.did).filter(d => typeof d === "string" && d.startsWith("did:craftec:")))];
     const ok = await Promise.all(dids.map(d => publicOf(d, CARD).then(t => !!t?.rows().some(r => r.key === "listed" && r.value === "1"), () => false)));
     return dids.filter((_, i) => ok[i]);
   }

@@ -983,6 +983,9 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       Notes, Drive) — today two copies (board.js:396, media.js:318). Personal space: Only you / Friends / Followers /
       Everyone; a shared space: Members / Public (its policy the ceiling: members-only = members post and read, nobody
       makes it public). Stored by one rule in `items`.
+- [ ] EDIT BY POLICY (owner 10-03): who may edit an item is the space's `edit` policy, in the one item model, for
+      every app (Notes stay collaborative; Board inherits the same shared model) — and an APP may ENFORCE stricter
+      (e.g. Board: author-only). An item keeps its creator (`by`) when another member edits it; the editor is recorded.
 - [ ] FRIENDS and FOLLOWERS audiences (owner 10-03: "add friend/follow option"): an item sealed to a KEY shared with
       just those people — one per audience, held like a space's epoch key (handed to each through their inbox; a new
       key on a removal, so a removed friend/follower reads nothing written after). Friends = the mutual friends

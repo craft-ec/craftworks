@@ -51,19 +51,37 @@ export async function start(ctx) {
   // THE ONE BAG READ: a bag's items as stored (bytes). It waits for the node's ANSWER; a bag the node answers is not there
   // (nobody made it yet: a month nobody posted in, a space from before its bag) is MADE, empty, by this first reader —
   // so it is searched for once, ever, and every reader after finds it. Silence makes nothing (a guess is never kept).
+  // `show`: THE ONE RULE OF EVERY READ (a table's too, `storage`): what is held is returned after at most WAIT.hint,
+  // and `onChange` fires when the node's answer brings more — for what is only SHOWN (a list on a page). Without it
+  // (what DECIDES: whose catalogs to read, a pointer dropped once): the answer, waited for.
   const madeBags = new Set();
-  async function read(address, what) {
+  const changed = [];
+  const held = (address, id) => {
+    try {
+      return Array.from(core.bag_payloads(address, id) ?? []);
+    } catch {
+      return [];
+    }
+  };
+  async function read(address, what, { show = false } = {}) {
     const id = Core.bag_id(bagCode, address);
-    const [, frames] = core.frames_get(bytes(id));
-    const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, what, WAIT.answer).catch(() => ({ kind: "silent" }));
-    if (said.kind === "got") return Array.from(core.bag_payloads(address, id) ?? []);
-    if (said.kind === "get-failed" && !madeBags.has(id)) madeBags.add(id), drop(address, new Uint8Array(0), `making ${what}`).catch(() => madeBags.delete(id));
-    return [];
+    const full = (async () => {
+      const [, frames] = core.frames_get(bytes(id));
+      const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, what, WAIT.answer).catch(() => ({ kind: "silent" }));
+      if (said.kind === "got") return held(address, id);
+      if (said.kind === "get-failed" && !madeBags.has(id)) madeBags.add(id), drop(address, new Uint8Array(0), `making ${what}`).catch(() => madeBags.delete(id));
+      return [];
+    })();
+    if (!show) return full;
+    const early = await Promise.race([full.then(x => ({ x })), new Promise(r => setTimeout(r, WAIT.hint, null))]);
+    if (early) return early.x;
+    full.then(x => x.length && changed.forEach(f => f()), () => {});
+    return held(address, id);
   }
 
-  async function inbox() {
+  async function inbox({ show = false } = {}) {
     const sp = await space.account();
-    const payloads = await read(Core.inbox_address(sp.idBytes), "the inbox");
+    const payloads = await read(Core.inbox_address(sp.idBytes), "the inbox", { show });
     if (!payloads.length) return [];
     const r = await auth.identity.inboxOpen(payloads);
     return (r.opened ?? [])
@@ -101,7 +119,7 @@ export async function start(ctx) {
   const refAddress = async ref => Core.inbox_address(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(`craftworks pointers ${ref}`))));
   const openPointers = async ref => drop(await refAddress(ref), new Uint8Array(0), "making a pointer bag");
   const point = async (ref, item) => drop(await refAddress(ref), enc.encode(JSON.stringify(item)), "pointing");
-  const pointers = async ref => parse(await read(await refAddress(ref), `the bag of ${ref}`));
+  const pointers = async (ref, { show = false } = {}) => parse(await read(await refAddress(ref), `the bag of ${ref}`, { show }));
 
   // A SPACE's SEALED bag (`name`): at an address the space's id gives, each item sealed with the space's newest EPOCH
   // key (`epoch ‖ nonce ‖ AES-GCM`) — only members read it; a member removed reads nothing added after. Its size shows
@@ -162,5 +180,5 @@ export async function start(ctx) {
   const listSpace = desc => point(SPACES, { id: desc.id, name: desc.name, kind: desc.kind, governance: { owner: desc.governance.owner, nonce: desc.governance.nonce } });
   const spaces = () => pointers(SPACES);
 
-  return { send, inbox, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince };
+  return { onChange: f => changed.push(f), send, inbox, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince };
 }
