@@ -159,8 +159,8 @@ export async function start(ctx) {
   // its name blinded under its own key (`blind_name`), so hosting nodes see neither which table a tail is nor, by a
   // shared prefix, which feeds are one space's. Found by name (catalogs, members, channels, epoch logs) or read by
   // anyone (public tails): at their names. A table still at its NAME (from before) is MOVED by its writer (`moveOwn`,
-  // upkeep's migration) — one signed step, its tree kept — and is never read by its old name: another's not yet moved
-  // reads empty here until its writer's node moves it (the owner: "drop the old reads; each brings theirs over").
+  // upkeep's migration) — one signed step, its tree kept. Read where its writer's catalog says: another's not yet moved,
+  // at its name (one place; never both names asked).
   // WHERE IT IS comes from its writer's CATALOG (`catalog`: the one place a table's place is kept — `placeOf` reads
   // it, `notePlace` writes it, both only here): not listed or never made — not looked for, made at its blinded name by
   // its first write; anything else — read at its blinded name, the one place. "Never made" only when the node ANSWERED.
@@ -197,10 +197,12 @@ export async function start(ctx) {
           const note = p => (cat && ours ? notePlace(cat, app, p).catch(e => ctx.log("storage", { what: `${app}: noting its place: ${e?.message ?? e}` })) : Promise.resolve());
           // Its first write here makes it at its blinded name, listed so first.
           const made = { ...rest, beforeCreate: cat && ours ? () => notePlace(cat, app, "blinded") : rest.beforeCreate };
-          // Not looked for: not listed, never made — or ANOTHER writer's still listed from before (not moved: their catalog
-          // says so once they move it, `moveOwn`), never at its blinded name yet — no request, every load alike (owner:
-          // "don't request at all": a writer who never comes back costs nothing).
-          if (place === "unlisted" || place === "none" || (place === "listed" && !ours)) return tailAt(owner, app, label, { ...made, known: false });
+          // Not looked for: not listed, never made.
+          if (place === "unlisted" || place === "none") return tailAt(owner, app, label, { ...made, known: false });
+          // ANOTHER writer's still LISTED from before (not moved yet — its writer's node moves it, `moveOwn`, and its
+          // catalog then says so): read where its catalog says, its name — the one place, never both. Unread, its rows
+          // (a space's acts, someone's messages) would be missing for everyone until that node moved it, if ever.
+          if (place === "listed" && !ours) return tailAt(owner, app, app, { ...rest, known: null, beforeCreate: null });
           // READ WHERE ITS CATALOG SAYS — its blinded name, the ONE place a table is read: never by its old name, nothing
           // decided on a page's path. Its writer's "never made" noted once the node answers so.
           const t = await tailAt(owner, app, label, { ...made, wait: ours && cat ? WAIT.answer : WAIT.ask });
