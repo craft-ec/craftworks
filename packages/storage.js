@@ -918,7 +918,16 @@ export async function start(ctx) {
       // kept — each feed has at most `limit` keys at or past the page's last, so none is skipped — and where to go on.
       // `{ lo, hi, before, limit }` (keys as text; `before`: continue below that key).
       const page = async ({ lo = "", hi = "", before = "", limit = 50 } = {}) => {
-        const got = await Promise.all(all.filter(f => !f.absent && f.page).map(f => f.page({ lo, hi, after: before, reverse: true, limit }).then(p => ({ f, p }), () => null)));
+        // A writer's page not answered within WAIT.hint is NAMED (which table, whose feed, what range) — what holds a list.
+        const timed = f => {
+          const t0 = performance.now();
+          const slow = setTimeout(() => ctx.log("page slow", { what: `${name}: ${f.owner.slice(0, 12)}…'s page [${lo || "start"}…${hi || "end"}] not answered in ${WAIT.hint / 1000} s` }), WAIT.hint);
+          return f.page({ lo, hi, after: before, reverse: true, limit }).then(
+            p => (clearTimeout(slow), performance.now() - t0 > WAIT.hint && ctx.log("page slow", { what: `${name}: ${f.owner.slice(0, 12)}…'s page answered`, ms: Math.round(performance.now() - t0) }), { f, p }),
+            e => (clearTimeout(slow), ctx.log("page slow", { what: `${name}: ${f.owner.slice(0, 12)}…'s page failed: ${e?.message ?? e}` }), null),
+          );
+        };
+        const got = await Promise.all(all.filter(f => !f.absent && f.page).map(timed));
         const ok = got.filter(Boolean);
         const merged_ = decoded(Array.from(feed.merge_feeds(ok.map(({ f, p }) => [bytes(f.owner), p.rows])))).sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0));
         const out = merged_.slice(0, limit);
