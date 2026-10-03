@@ -18,7 +18,9 @@ export async function start(ctx) {
     if (!spec) throw new Error(`${file.name}: not a kind that is published (an image, a video, an audio)`);
     kind ??= spec.kind;
     const maker = await ctx.require(spec.maker);
-    const ref = await maker.make(file, { space, public: audience === "public", app: app ?? spec.domain, keepOriginal, onProgress });
+    // A space this person is not in (its policy lets anyone post): published public, kept in their profile (`items.submit`).
+    const outside = space && !(await items.boardOf(space.id)) ? space : null;
+    const ref = await maker.make(file, { space: outside ? null : space, public: outside ? true : audience === "public", app: app ?? spec.domain, keepOriginal, onProgress });
     // A COVER chosen: over the file's own.
     if (cover) ref.preview = (await (await ctx.require("image-studio")).thumbnail(cover)) ?? ref.preview;
     // Its own TAGS: the fields its kind has, unless given.
@@ -28,7 +30,7 @@ export async function start(ctx) {
     // A video or an audio sent as it is (not encoded here) carries its video id on the item (a manifest has its own).
     if (spec.maker === "video-studio" && ref.type !== maker.MANIFEST && ref.key) m.vid = await maker.videoId(ref.key);
     const name = String(title || tags.title || file.name.replace(/\.[^.]+$/, "")).trim().slice(0, 300);
-    const item = await items.submit({ board: space?.id ?? null, title: name, body, kind, meta: m, audience, write, files: [ref] });
+    const item = await items.submit({ board: space?.id ?? null, outside, title: name, body, kind, meta: m, audience: outside ? "public" : audience, write, files: [ref] });
     // Its TIMED TEXT: the subtitles given, else the lyrics the file carries (untimed: one cue over the whole).
     if (spec.maker === "video-studio") {
       const subs = await ctx.require("caption-store");

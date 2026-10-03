@@ -59,7 +59,8 @@ export async function start(ctx) {
     return storage.table(container.messages, container.scope, opts);
   }
 
-  async function in_(container, { paged = false } = {}) {
+  // `extra`: more items, already attributed ({ items(), onChange }: a space's outsiders, `items`) — through the same filter.
+  async function in_(container, { paged = false, extra = null } = {}) {
     // PAGED (phase 3, Reads): the table opened LAZY — only the newest page read (`older()` for the next), never the
     // whole history. (A table read from outside or a person's public tail: read whole, as before.)
     paged = paged && !container?.outside && container?.kind !== "public";
@@ -191,12 +192,12 @@ export async function start(ctx) {
       })()
         .catch(() => {})
         .finally(() => (refreshing = null)));
+    // An extra source changed (an outsider wrote): drawn again.
+    extra?.onChange(() => changed.forEach(f => f()));
     const every = () => {
       const hidden = m ? m.hidden(container.messages) : new Set();
       const unseen = people.unseen();
-      return rowsNow()
-        .filter(row => !hidden.has(row.key))
-        .map(item)
+      return [...rowsNow().filter(row => !hidden.has(row.key)).map(item), ...(extra?.items() ?? []).filter(it => !hidden.has(it.id) && !r?.banned?.(it.by))]
         .filter(it => it && !unseen.has(it.by))
         // A post or message by someone the setting did not allow when it was made: not counted.
         .filter((it, _, all) => !(governed && app && ACTION[it.kind] && !allowed(ACTION[it.kind], it.by, it, all, it.at)));

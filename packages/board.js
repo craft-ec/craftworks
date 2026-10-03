@@ -26,6 +26,9 @@ export async function mount(ctx, el) {
     const s = ctx.sub || "";
     // DISCOVER (the public view): every public board, one space's (`b/<id>`), or a public post (`p/<ref>`).
     if (discovering()) {
+      // A public board's composer, for one not in it whose policy lets anyone post.
+      const sub = /^b\/([0-9a-f]{64})\/submit$/.exec(s);
+      if (sub) return { pub: sub[1], board: sub[1], submit: true };
       if (s.startsWith("b/")) return { pub: s.slice(2) };
       if (s.startsWith("p/")) return { post: s.slice(2), pub: s.slice(2).match(/^space:([0-9a-f]{64})\//)?.[1] };
       return { discover: true };
@@ -265,8 +268,9 @@ export async function mount(ctx, el) {
       "div",
       { className: "panel" },
       h("h3", { textContent: `b/${space.shown(d)}` }),
-      // Who takes part, as its policy says (`roles`: comments and votes open to anyone where anyone reads, unless set).
-      h("p", { textContent: `🌐 A public board: anyone reads it; its ${pr.members().length} member${pr.members().length === 1 ? "" : "s"} post${["comment", "vote"].every(a => pr.policyIn("text", a) === "anyone") ? "; anyone comments and votes" : ", comment and vote"}.` }),
+      // Who takes part, as its policy says (`roles`: each of post, comment, vote — anyone, or its members).
+      h("p", { textContent: `🌐 A public board: anyone reads it. ${["post", "comment", "vote"].map(a => `${a[0].toUpperCase()}${a.slice(1)}: ${pr.policyIn("text", a) === "anyone" ? "anyone" : "its members"}`).join(" · ")}.` }),
+      !mine && pr.policyIn("text", "post") === "anyone" ? h("a", { className: "go", href: `#/discover/board/b/${d.id}/submit`, textContent: "Create post" }) : null,
       mine ? h("a", { className: "go", href: `#/s/${d.id}/board`, textContent: "Open in your space" }) : join ?? h("p", { textContent: "Joining is by invite." }),
     );
   }
@@ -359,6 +363,8 @@ export async function mount(ctx, el) {
 
   async function submitPage(board) {
     const sp = board ? await posts.boardOf(board) : null;
+    // A space this person is not in, whose policy lets anyone post: posted from outside (`items.submit`'s `outside`).
+    const outside = board && !sp ? await descOf(board) : null;
     const said = h("p", { className: "said", hidden: true });
     // FILES on the post: public where the post is (a public board, a public profile post: keyed by their content, the
     // whole network dedups them), else sealed for the space (or you) — asked as each is picked.
@@ -370,8 +376,9 @@ export async function mount(ctx, el) {
       "form",
       { className: "panel reply" },
       h("h3", { textContent: "Create a post" }),
-      sp ? h("p", {}, `To b/${space.shown(sp)}.`) : null,
-      who.el,
+      sp || outside ? h("p", {}, `To b/${space.shown(sp ?? outside)}.`) : null,
+      // From outside: public, as the board is (who sees it and who answers it: the space's policy).
+      outside ? null : who.el,
       h("label", {}, "Title", h("input", { className: "field", name: "title", maxLength: 300, autocomplete: "off", required: true })),
       h("label", {}, "Text (optional) — Markdown; 🖼 puts an image, a video or an audio where you write it"),
       ed.el,
@@ -384,7 +391,7 @@ export async function mount(ctx, el) {
       if (pick.busy()) return errorTo(said)(new Error("Still sending the files: a moment…"));
       btn.disabled = true;
       try {
-        const ref = await posts.submit({ board: sp?.id ?? null, title: f.elements.title.value, body: ed.value(), audience: who.value(), write: who.write(), files: pick.files() });
+        const ref = await posts.submit({ board: sp?.id ?? outside?.id ?? null, outside, title: f.elements.title.value, body: ed.value(), audience: outside ? "public" : who.value(), write: who.write(), files: pick.files() });
         location.hash = `${base()}/p/${ref}`;
       } catch (err) {
         errorTo(said)(err);
