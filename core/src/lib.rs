@@ -1602,6 +1602,14 @@ mod js {
             Ok(())
         }
 
+        /// An ALTERNATE key of an epoch for an open table (a group branch that lost the race for that epoch, `keys`'
+        /// heal): read with, never written with — rows opened with it are sealed over to the epoch's own key.
+        pub fn tail_epoch_key_also(&mut self, id: &[u8], epoch: f64, key: &[u8]) -> Result<(), JsValue> {
+            let k = b32(key)?;
+            self.0.tail(&b32(id)?).map_err(err)?.epoch_key_also(epoch as u64, k);
+            Ok(())
+        }
+
         /// SEAL OVER up to `n` of the table's plaintext rows from before sealing, as one step: `{ params, seq,
         /// valueHash }` to sign as for a write, or null when none are left.
         pub fn tail_migrate(&mut self, id: &[u8], n: u32) -> Result<JsValue, JsValue> {
@@ -1858,6 +1866,16 @@ mod js {
             .try_into()
             .map_err(|_| err("a table key is 32 bytes".into()))?;
         Ok(craftworks_identity::blind_name(&k, table))
+    }
+
+    /// A table's key in an EPOCH, from that epoch's secret (`identity::epoch_table_key`, as the identity derives it) —
+    /// for an epoch secret the identity no longer gives (a group branch that lost, kept by `keys`).
+    #[wasm_bindgen]
+    pub fn epoch_table_key(epoch_secret: &[u8], table: &str) -> Result<String, JsValue> {
+        let s: [u8; 32] = epoch_secret
+            .try_into()
+            .map_err(|_| err("an epoch's secret is 32 bytes".into()))?;
+        Ok(hex(&craftworks_identity::epoch_table_key(&s, table)))
     }
 
     /// The address key (hex) of a space's table (`identity::space_table_key`).

@@ -18,13 +18,19 @@ export async function start(ctx) {
   const storage = await ctx.require("storage");
 
   const types = {
-    // TAIL: rows `<prefix><position, 12 digits>` in one of the account's tables. The table has one write sequence, so
-    // appends are totally ordered; a position already written is TAKEN (a write that raced it and lost is refused by
-    // the node and read again by storage, after which the position shows as taken).
+    // TAIL: rows `<prefix><position, 12 digits>~<tag>` in one of the account's tables — EACH WRITER'S ENTRY UNDER ITS
+    // OWN KEY: two writers racing for one position both land (a write refused for racing is written again by
+    // storage, and under one shared key it would overwrite the other's), and the position's entry is the LOWEST of
+    // them — the same one on every node once it has read both. (`<prefix><position>` alone: one written before.)
     async tail({ table, prefix, owner, known = null, sealWith = null, space = null }) {
       const t = await (owner ? storage.log(table, owner, { known, sealWith, space }) : storage.table(table));
       const key = n => `${prefix}${String(n).padStart(12, "0")}`;
-      const at = n => t.rows().find(r => r.key === key(n))?.value;
+      const at = n => {
+        const k = key(n);
+        const all = t.rows().filter(r => r.value && (r.key === k || r.key.startsWith(`${k}~`))).map(r => r.value);
+        return all.length ? all.sort()[0] : undefined;
+      };
+      const tag = () => [...crypto.getRandomValues(new Uint8Array(6))].map(x => x.toString(16).padStart(2, "0")).join("");
       return {
         from(n) {
           const out = [];
@@ -37,12 +43,13 @@ export async function start(ctx) {
         async append(n, entry) {
           if (at(n) !== undefined) return { ok: false, taken: true };
           try {
-            await t.put(key(n), entry);
+            await t.put(`${key(n)}~${tag()}`, entry);
           } catch (e) {
             if (at(n) !== undefined) return { ok: false, taken: true };
             throw e;
           }
-          // Written, but a concurrent writer may have got the same position in first: the table's order says who.
+          // Written; the network read again — a writer racing for the same position shows now: the lowest entry is it.
+          await t.reread?.().catch(() => {});
           return at(n) === entry ? { ok: true } : { ok: false, taken: true };
         },
         onAppend: f => t.onChange(f),

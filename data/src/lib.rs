@@ -174,6 +174,9 @@ pub struct Open {
     pub table_key: Option<[u8; 32]>,
     /// The account's epoch keys for this table this page holds, and the epochs the identity had none for.
     epochs: BTreeMap<u64, [u8; 32]>,
+    /// ALTERNATE keys of an epoch — a group branch that lost the race for that epoch (`keys`' heal): read with, never
+    /// written with; a row opened with one is stale, sealed over under the epoch's own key by `migrate`.
+    alternates: BTreeMap<u64, Vec<[u8; 32]>>,
     no_key: BTreeSet<u64>,
     /// The key new rows and blocks are sealed with.
     pub writes: Option<KeyRef>,
@@ -252,6 +255,7 @@ impl Open {
             staged: None,
             table_key: None,
             epochs: BTreeMap::new(),
+            alternates: BTreeMap::new(),
             no_key: BTreeSet::new(),
             writes: None,
             stale: BTreeMap::new(),
@@ -310,6 +314,28 @@ impl Open {
         match by {
             KeyRef::Table => self.table_key,
             KeyRef::Epoch(e) => self.epochs.get(&e).copied(),
+        }
+    }
+
+    /// Every key that may open what is sealed under `by`: its own, then (an epoch) the alternates of that epoch.
+    fn keys_for(&self, by: KeyRef) -> Vec<[u8; 32]> {
+        let mut ks: Vec<[u8; 32]> = self.key_for(by).into_iter().collect();
+        if let KeyRef::Epoch(e) = by {
+            ks.extend(self.alternates.get(&e).into_iter().flatten().copied());
+        }
+        ks
+    }
+
+    /// An ALTERNATE key of an epoch (see `alternates`): blocks waiting for a key are tried again.
+    pub fn epoch_key_also(&mut self, epoch: u64, key: [u8; 32]) {
+        let list = self.alternates.entry(epoch).or_default();
+        if self.epochs.get(&epoch) != Some(&key) && !list.contains(&key) {
+            list.push(key);
+        }
+        let waiting: Vec<Cid> = self.locked.keys().copied().collect();
+        for cid in waiting {
+            let raw = self.locked.remove(&cid).expect("listed");
+            self.absorb_block(&cid, &raw);
         }
     }
 
@@ -401,11 +427,12 @@ impl Open {
             return self.take_block(want, state);
         }
         let Some((by, _)) = KeyRef::of(state) else { return false };
-        let Some(tk) = self.key_for(by) else {
+        let keys = self.keys_for(by);
+        if keys.is_empty() {
             self.locked.insert(*want, state.to_vec());
             return true;
-        };
-        match open_block(&tk, want, state) {
+        }
+        match keys.iter().find_map(|tk| open_block(tk, want, state)) {
             Some(plain) => self.take_block(want, &plain),
             None => false,
         }
@@ -673,16 +700,26 @@ impl Open {
     /// One stored row opened: `Some((row key, value))` (a delete's value `None`), `None` if its key is not held. A
     /// plaintext row is as it is.
     fn open_row(&self, k: &[u8], v: Option<&[u8]>) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
+        self.open_row_by(k, v).map(|(pk, pv, _)| (pk, pv))
+    }
+
+    /// As `open_row`, and whether an ALTERNATE key opened it (the row is then stale: sealed over by `migrate`).
+    fn open_row_by(&self, k: &[u8], v: Option<&[u8]>) -> Option<(Vec<u8>, Option<Vec<u8>>, bool)> {
         let Some((by, _)) = KeyRef::of(k) else {
-            return (!KeyRef::sealed(k)).then(|| (k.to_vec(), v.map(<[u8]>::to_vec)));
+            return (!KeyRef::sealed(k)).then(|| (k.to_vec(), v.map(<[u8]>::to_vec), false));
         };
-        let tk = self.key_for(by)?;
-        let pk = open_key(&tk, k)?;
-        let pv = match v {
-            Some(v) => Some(open_value(&tk, k, v)?),
-            None => None,
-        };
-        Some((pk, pv))
+        for (i, tk) in self.keys_for(by).iter().enumerate() {
+            let Some(pk) = open_key(tk, k) else { continue };
+            let pv = match v {
+                Some(v) => match open_value(tk, k, v) {
+                    Some(x) => Some(x),
+                    None => continue,
+                },
+                None => None,
+            };
+            return Some((pk, pv, i > 0));
+        }
+        None
     }
 
     /// The tail's rows in the clear, in the order they were written (at one step, deletions first: a row sealed over
@@ -771,8 +808,8 @@ impl Open {
                 continue;
             }
             let older = self.writes.is_some_and(|w| KeyRef::of(k).map(|(by, _)| by) < Some(w));
-            match self.open_row(k, None) {
-                Some((pk, _)) if older => under.entry(pk).or_default().push(k.clone()),
+            match self.open_row_by(k, None) {
+                Some((pk, _, alt)) if older || alt => under.entry(pk).or_default().push(k.clone()),
                 Some(_) => {}
                 None => unreadable += 1,
             }
@@ -1417,6 +1454,63 @@ mod tests {
         assert_eq!(read_with(&o, &member, table, &[(1, e1), (2, e2)]).unwrap().0, ["new=after the removal", "old=before the removal"]);
         // Control: the table's own key alone opens nothing sealed with an epoch.
         assert!(read_with(&o, &member, table, &[]).is_err());
+    }
+
+    /// A GROUP FORK healed: the same epoch number on two branches, two keys. What the losing branch wrote is unreadable
+    /// with the winner's key alone (the control) and opens with its own key held as an ALTERNATE of that epoch; the
+    /// writer, moved onto the winner's key, seals its rows over to it — and then they open with the winner's key alone.
+    #[test]
+    fn a_losing_branchs_rows_open_with_its_key_as_an_alternate_and_are_sealed_over_to_the_winners() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        let (table, lost, won) = ([7; 32], [44; 32], [55; 32]);
+        let mut o = Open::new(CODE, &member, "notes");
+        o.set_table_key(table);
+        o.epoch_key(2, Some(lost), true);
+        put_row(&key, &mut o, "a", "on the losing branch");
+        flush(&key, &mut o);
+        put_row(&key, &mut o, "b", "still in the tail");
+        // The control: with the winner's key alone, the losing branch's tree block is refused ("not what was asked").
+        let mut c = Open::new(CODE, &member, "notes");
+        c.set_table_key(table);
+        assert!(c.absorb(&o.writer.state()));
+        c.epoch_key(2, Some(won), false);
+        let Ok(Step::Need(ids)) = c.rows() else { panic!("the tree is needed first") };
+        assert!(ids.iter().all(|id| !c.absorb_block(id, &o.sent[id])), "no block of the losing branch opens with the winner's key");
+        // With the losing key as an alternate of epoch 2: all of it.
+        let mut r = Open::new(CODE, &member, "notes");
+        r.set_table_key(table);
+        assert!(r.absorb(&o.writer.state()));
+        r.epoch_key(2, Some(won), false);
+        r.epoch_key_also(2, lost);
+        let mut rows = None;
+        for _ in 0..20 {
+            match r.rows().unwrap() {
+                Step::Ready(v) => {
+                    rows = Some(keys(&v));
+                    break;
+                }
+                Step::Need(ids) => {
+                    for id in ids {
+                        assert!(r.absorb_block(&id, &o.sent[&id]));
+                    }
+                }
+                Step::Keys(k) => panic!("keys asked: {k:?}"),
+            }
+        }
+        assert_eq!(rows.unwrap(), ["a=on the losing branch", "b=still in the tail"]);
+        // The writer healed: writes with the winner's key, the losing one kept as an alternate — its tail row is stale
+        // and sealed over; after a flush, the winner's key alone opens everything.
+        o.epoch_key(2, Some(won), true);
+        o.epoch_key_also(2, lost);
+        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        assert!(v["legacy"].as_u64().unwrap() >= 1, "the losing branch's tail row is stale");
+        while let Some((seq, h)) = o.migrate(10) {
+            o.commit(sign(&key, &o, seq, h)).unwrap();
+            o.rows().unwrap();
+        }
+        flush(&key, &mut o);
+        assert_eq!(read_with(&o, &member, table, &[(2, won)]).unwrap().0, ["a=on the losing branch", "b=still in the tail"]);
     }
 
     /// Rows are sealed over UPWARD only: under the table's key, then an epoch arrives — sealed over to it; a page that

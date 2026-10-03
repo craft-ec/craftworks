@@ -1053,3 +1053,21 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
 - [ ] 2. SETTINGS: Chat section's channel rows edit the items (name, who may post) — no `chat/<id>` path policies.
 - [ ] 3. PERSONAL CHAT: channels as items in the personal space; others' messages kept in their own profiles, pointed,
       read through the outsider source (generalized from a space to a place); your Home's Chat section: who may post.
+
+## SPACE GROUP FORKS (owner 10-03: "detect and heal"; no single committer — owners are often offline)
+Cause (measured on 7509): two nodes committed from the same epoch at once (auto-admission on every owner/admin page
+and delegate since 09-29/30); each node's append saw only its own write (local view) and moved on → two "epoch N"
+with different secrets; each epoch's log is addressed by its secret, so the branches never meet. Readers on one branch
+cannot open blocks sealed on the other ("block … is not what was asked"), the catalog then counts as absent → the
+writer's whole part hidden (Ivvor ↔ onlyabrak in Craftworks and Ivvor's Space).
+- [x] ordering: each entry under its own key (`c/<n>~<tag>`), position's entry = lowest; fresh reread after append.
+- [ ] HEAL only what this node committed itself (own `change`, adopted upkeep commit) — never a commit received from
+      another (a removed member's late entry for an old epoch must not roll anyone back): snapshot before own commit,
+      lost if the log's entry for that epoch is another → restore, apply the winner, REDO the intent (unless satisfied;
+      a removal never undone).
+- [ ] NO DATA LOSS: the losing branch's epoch secrets kept (spacekeys `<at>~lost`); data crate: per-epoch ALTERNATE
+      keys (read only; rows opened with one are stale → resealed under the winner's key by `migrate`).
+- [ ] Stale sealing after heal: `sealNewest` switches on a different key, not only a higher epoch.
+- [ ] EXISTING forks (no snapshot from before them): the space's owner re-adds members found on another branch
+      (remove + add + welcome); their node records its branch keys before joining.
+- Test account on fx (17691), made 2026-10-03 for the fork test after the identity rebuild logged the old fx account out (its PIN unknown): PIN 818818; words lobster patrol future pumpkin monkey senior solve trend airport unit notice eye.

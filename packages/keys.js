@@ -96,7 +96,8 @@ export async function start(ctx) {
     async function commitAt(e, secret, commit) {
       if (g.before && (await g.before()).from(e)[0]) return { ok: false, taken: true };
       const st = g.mls().status();
-      return (await open(e, secret)).append(e, JSON.stringify({ commit: hexOf(commit), info: hexOf(st.info), ...(st.escrow ? { next: hexOf(st.escrow) } : {}) }));
+      const entry = JSON.stringify({ commit: hexOf(commit), info: hexOf(st.info), ...(st.escrow ? { next: hexOf(st.escrow) } : {}) });
+      return { ...(await (await open(e, secret)).append(e, entry)), entry };
     }
     // This epoch's LOG exists: made now by the node that made the epoch (`made`: known new, nothing to ask), else found —
     // or, for an epoch from before epoch logs, made the first time it is looked for. `prev`: the epoch before's secret
@@ -128,7 +129,43 @@ export async function start(ctx) {
     }
     // Apply every commit newer than this node's epoch, in order, keeping every epoch passed (rows sealed then must open
     // here too). `reload(st)` first, before the first (the account: its key log as it is NOW).
+    // The secrets of THIS node's branch from epoch `from` up to `st` (its own epoch logs: each one's `open` row names
+    // the epoch before's secret) — kept before leaving the branch, so nothing sealed on it becomes unreadable.
+    async function branch(st, from) {
+      const out = [{ epoch: st.epoch, secret: hexOf(st.secret) }];
+      let [e, secret] = [st.epoch, st.secret];
+      while (e > from) {
+        const log = await storage.log(g.channel, glue.epoch_log_public(secret), { sealWith: await g.seal(e), space: g.space });
+        await log.answer?.();
+        const prev = parse(log.rows().find(r => r.key === "open")?.value ?? "{}").prev;
+        if (!prev) break;
+        e -= 1;
+        secret = bytes(prev);
+        out.push({ epoch: e, secret: prev });
+      }
+      return out.filter(x => x.epoch >= from);
+    }
+    // A FORK HEALED. Two nodes committing from one epoch at once each see only their own write at first (the log is
+    // read where each writes); the log keeps the entries (`ordering`: each under its own key, the LOWEST is the
+    // position's). Only what THIS node committed is ever reconsidered — its own changes, kept with the group BEFORE
+    // them (`g.snaps`) — never a commit it received: a member who held an old epoch's key and writes into its log
+    // later rolls nobody back. Lost (the log's entry is another): the branch's secrets kept (`g.keepLost`: what was
+    // sealed on it stays readable, sealed over to the winner's), the group as it was before, the winner applied
+    // next, and the change made again where it still applies (`g.redo`). True when it went back.
+    async function heal() {
+      if (!g.snaps) return false;
+      for (const s of await g.snaps()) {
+        const won = await commitFrom(s.epoch, bytes(s.secret), true).catch(() => null);
+        if (!won || won === s.entry) continue;
+        ctx.log(g.label, { what: `epoch ${s.epoch}: this node's commit lost the race for it — the winner's applied, the change made again where it still applies` });
+        await g.keepLost(await branch(g.mls().status(), s.epoch + 1).catch(() => [{ epoch: g.mls().status().epoch, secret: hexOf(g.mls().status().secret) }]));
+        await g.restore(s);
+        return true;
+      }
+      return false;
+    }
     async function catchUp(reload, fresh = false) {
+      const healed = fresh ? await heal() : false;
       const m = g.mls();
       if (m.status().removed) return 0; // removed: nothing after that applies
       let n = 0;
@@ -147,9 +184,10 @@ export async function start(ctx) {
         await auth.identity.epochKeep(now.epoch, now.secret, g.space);
       }
       if (n) ctx.log(g.label, { what: `${n} commit(s) applied: epoch ${m.status().epoch}` });
-      return n;
+      // Gone back (a lost commit undone) counts as a change: the group as it is now is saved.
+      return n || (healed ? 1 : 0);
     }
-    return { commitFrom, commitAt, ensure, catchUp, history };
+    return { commitFrom, commitAt, ensure, catchUp, history, heal, branch };
   }
 
   // THE ACCOUNT's group.
@@ -351,12 +389,48 @@ export async function start(ctx) {
     let queue = Promise.resolve();
     const ch = sp.tables.channel;
     const at = `s/${sp.id}`;
+    // SNAPSHOTS: the group BEFORE each commit applied here, by epoch — `<at>@<epoch>` in the account's `spacekeys`, the
+    // last few kept (a commit that lost the race for its epoch is undone from one: `logs.heal`).
+    const KEEP = 6;
+    const snapKey = e => `${at}@${String(e).padStart(12, "0")}`;
+    // A change of this node's to make again after a heal (`{ kind: "remove", creds } | { kind: "refresh" }`).
+    let redo = null;
+    const keepSnap = async (from, entry, intent = null) => {
+      const t = await spacekeys();
+      await t.put(snapKey(from.epoch), JSON.stringify({ epoch: from.epoch, secret: hexOf(from.secret), state: hexOf(from.state), entry, ...(intent ? { intent } : {}) }));
+      for (const k of t.rows().filter(r => r.key.startsWith(`${at}@`) && r.value).map(r => r.key).sort().slice(0, -KEEP)) await t.remove(k);
+    };
+    // The LOST branches' epoch secrets (`<at>~lost`): read with, as alternates (`storage`), never written with.
+    // The LOST branches' epoch secrets (`<at>~lost`): read with, as alternates (`storage`), never written with.
+    const keepLostHere = async list => {
+      const t = await spacekeys();
+      const had = JSON.parse(t.rows().find(r => r.key === `${at}~lost`)?.value ?? "[]");
+      const all = [...had, ...list.filter(l => !had.some(h => h.secret === l.secret))];
+      await t.put(`${at}~lost`, JSON.stringify(all));
+      ctx.log(`${sp.name ?? "space"} keys`, { what: `${list.length} epoch key(s) of a lost branch kept (what was written there stays readable)` });
+    };
     const logs = logsOf({
       mls: () => m,
       space: sp.idBytes,
       channel: ch,
       seal: async e => (await auth.identity.tableKeyAt(ch, e, sp.idBytes)).tableKey,
       label: `${sp.name ?? "space"} keys`,
+      keepLost: list => keepLostHere(list),
+      snaps: async () =>
+        (await spacekeys())
+          .rows()
+          .filter(r => r.key.startsWith(`${at}@`) && r.value)
+          .map(r => JSON.parse(r.value))
+          .sort((a, b) => a.epoch - b.epoch),
+      // Back to the group before epoch `s.epoch`'s commit; every snapshot after it dropped (that branch lost). Its
+      // change, made again once the group is current (`redo`).
+      restore: async s => {
+        if (s.intent) redo = s.intent;
+        m = mlsGlue.Mls.load_space(sp.idBytes, bytes(s.state));
+        const t = await spacekeys();
+        for (const r of t.rows().filter(r => r.key.startsWith(`${at}@`) && r.value)) if (JSON.parse(r.value).epoch >= s.epoch) await t.remove(r.key);
+        status(m.status());
+      },
     });
     const status = s => (st = { epoch: s.epoch, me: s.me, members: s.members, removed: s.removed });
     // SAVE: this epoch's secret on this device, the state for the account's devices, the epoch's log.
@@ -402,11 +476,12 @@ export async function start(ctx) {
     }
     // A change of the group (add, remove): its commit in the log of the epoch it moves from, then saved. Lost to
     // another change first: this device takes the newer group and says so.
-    async function change(make) {
+    async function change(make, intent = null) {
       if (!m) throw new Error("this account is not in the space's group");
       const from = m.status();
       const [commit, out] = make();
       const r = await logs.commitAt(from.epoch, from.secret, commit);
+      if (r.ok) await keepSnap(from, r.entry, intent);
       if (!r.ok) {
         m = null;
         await load();
@@ -428,7 +503,10 @@ export async function start(ctx) {
       // REMOVE members (their indexes in the group): one commit each, a new epoch each, which they cannot read.
       remove: indexes =>
         (queue = queue.then(async () => {
-          for (const i of [...indexes].sort((a, b) => b - a)) await change(() => [m.remove(i), null]);
+          for (const i of [...indexes].sort((a, b) => b - a)) {
+            const cred = m.status().members.find(x => x.index === i)?.cred ?? null;
+            await change(() => [m.remove(i), null], cred ? { kind: "remove", creds: [cred] } : null);
+          }
           ctx.log(`${sp.name ?? "space"} keys`, { what: `${indexes.length} member(s) removed: epoch ${m.status().epoch}` });
           return st;
         })),
@@ -436,7 +514,7 @@ export async function start(ctx) {
       // after this commit).
       refresh: () =>
         (queue = queue.then(async () => {
-          await change(() => [m.update(), null]);
+          await change(() => [m.update(), null], { kind: "refresh" });
           ctx.log(`${sp.name ?? "space"} keys`, { what: `this account's keys refreshed: epoch ${m.status().epoch}` });
           return st;
         })),
@@ -446,6 +524,12 @@ export async function start(ctx) {
         (queue = queue.then(async () => {
           const t = await spacekeys();
           await t.reread?.();
+          // Already in the group on ANOTHER branch (a fork, healed by being added again): its epoch secrets kept
+          // first — what this node wrote there stays readable — then the welcome's branch joined.
+          if (m && !m.status().removed) {
+            const was = m.status();
+            await keepLostHere(await logs.branch(was, Math.max(0, was.epoch - 8)).catch(() => [{ epoch: was.epoch, secret: hexOf(was.secret) }]));
+          }
           let last = null;
           for (const row of t.rows().filter(r => r.key.startsWith("packages/"))) {
             const mb = await memberWith(row.value);
@@ -483,6 +567,13 @@ export async function start(ctx) {
       adopt: (epoch, stateHex) =>
         (queue = queue.catch(() => {}).then(async () => {
           if (m && m.status().epoch >= epoch) return false;
+          // The group as it was here, kept with the commit upkeep wrote from it (its epoch log's): undone like any lost
+          // commit if the log's winner turns out another (`logs.heal`).
+          if (m) {
+            const was = m.status();
+            const entry = await logs.commitFrom(was.epoch, was.secret, true).catch(() => null);
+            if (entry) await keepSnap(was, entry);
+          }
           await (await spacekeys()).put(at, JSON.stringify({ epoch, state: stateHex }));
           await load();
           ctx.log(`${sp.name ?? "space"} keys`, { what: `the group upkeep moved (someone let in): epoch ${epoch}` });
@@ -496,8 +587,22 @@ export async function start(ctx) {
           const s = await current(fresh);
           if (!s) return null;
           await logs.ensure(m.status(), false);
+          // A change of this node's lost a race: made again, where it still applies — a removal of whoever is still a
+          // member, a refresh. (An admission is made again by upkeep itself: whoever asked and is not in yet.)
+          if (redo) {
+            const r = redo;
+            redo = null;
+            queueMicrotask(() => {
+              if (r.kind === "refresh") g.refresh().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `refresh again: ${e.message}` }));
+              else if (r.kind === "remove") {
+                const idx = (m?.status().members ?? []).filter(x => r.creds.includes(x.cred)).map(x => x.index);
+                if (idx.length) g.remove(idx).catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `remove again: ${e.message}` }));
+              }
+            });
+          }
           return s;
         })),
+      lost: async () => JSON.parse((await spacekeys()).rows().find(r => r.key === `${at}~lost`)?.value ?? "[]"),
     };
     groups.set(sp.id, g);
     return g;

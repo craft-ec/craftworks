@@ -81,6 +81,13 @@ export async function start(ctx) {
   // arrives (`craftworks:keys`: the identity kept an epoch — this node caught up, or joined, or another device of the
   // account moved the group), they are given it and read again: a device added while this page is open is read.
   const unkeyed = new Map();
+  // A space table's ALTERNATE keys: each epoch secret of a group branch this node left (`keys.group(sp).lost()`),
+  // as this table's key in that epoch.
+  async function alternates(id, app, sp) {
+    const lost = await (await ctx.require("keys")).group(sp).lost();
+    for (const l of lost) core.tail_epoch_key_also(id, l.epoch, bytes(glue.epoch_table_key(bytes(l.secret), app)));
+    return lost.length;
+  }
   async function epochKeys(idHex, epochs, app) {
     const spaceId = live.get(idHex)?.spaceId ?? null;
     for (const e of epochs) {
@@ -105,10 +112,14 @@ export async function start(ctx) {
         const w = t.sealing;
         if (!w) continue;
         const e = await access.keyAt(w.app, -1, { catalog: w.catalog, space: w.space }).catch(() => ({}));
-        if (!e.key || e.epoch <= w.epoch) continue;
+        // A newer epoch — or the SAME epoch with another key (a fork healed: the winner's key for that epoch).
+        if (!e.key || e.epoch < w.epoch || (e.epoch === w.epoch && e.key === w.key)) continue;
         core.tail_epoch_key(bytes(idHex), e.epoch, bytes(e.key), true);
+        const healed = e.epoch === w.epoch;
+        if (healed && w.sp) await alternates(bytes(idHex), w.app, w.sp).catch(() => {});
         w.epoch = e.epoch;
-        ctx.log("table sealing", { what: `${w.app}: writes now with epoch ${e.epoch}` });
+        w.key = e.key;
+        ctx.log("table sealing", { what: `${w.app}: writes now with epoch ${e.epoch}${healed ? " (its winning key: a fork healed)" : ""}` });
       }
     })().finally(() => (resealing = null)));
   addEventListener("craftworks:keys", () => sealNewest());
@@ -300,7 +311,10 @@ export async function start(ctx) {
         if (e.key) core.tail_epoch_key(id, e.epoch, bytes(e.key), true);
         else ctx.log("table sealed", { what: `${app}: no epoch here (${e.why}): written with the table's key` });
         // Kept: when a newer epoch arrives (the group moved: a node removed, one added), writes move onto it.
-        t.sealing = { app, catalog: catalogKey, space: spaceId, epoch: e.key ? e.epoch : -1 };
+        t.sealing = { app, catalog: catalogKey, space: spaceId, sp: inSpace?.id ? inSpace : null, epoch: e.key ? e.epoch : -1, key: e.key ?? null };
+        // A space's LOST BRANCH (`keys`' heal: this node's commits another beat): its epochs' keys read with, as
+        // alternates — what was written there stays readable, and is sealed over to the winner's.
+        if (inSpace?.id) await alternates(id, app, inSpace).catch(() => {});
       }
       if (known === false) {
         core.tail_absent(id);
