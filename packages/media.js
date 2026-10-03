@@ -263,77 +263,10 @@ export async function mount(ctx, el) {
   }
 
 
+  // UPLOAD: the one upload form (`publisher.form`: the same as over an editor) — the item opened once published.
   async function upload() {
-    const said = h("p", { className: "said", hidden: true });
-    const progress = h("span", { className: "s" });
-    const kindSel = h("select", { name: "kind" }, ...VIDEO.map(k => h("option", { value: k, textContent: kinds.of(k).label })));
-    const fieldsBox = h("div", { style: "display:grid;gap:6px" });
-    const drawFields = () => fieldsBox.replaceChildren(...kinds.of(kindSel.value).fields.map(x => h("input", { name: `meta.${x}`, placeholder: kinds.fieldLabel(x) })));
-    kindSel.onchange = drawFields;
-    drawFields();
     const inSpace = sp() ? (await space.mine()).find(s => s.id === sp()) : null;
-    // WHO SEES IT: the one picker (`audience`).
-    const who = await (await ctx.require("audience")).picker({ space: inSpace, kind: VIDEO[0] });
-    const f = h(
-      "form",
-      {},
-      h("input", { type: "file", name: "file", accept: C.accept, required: true, onchange: e => prefill(e.target.files[0]) }),
-      C.audio ? h("label", { className: "s" }, "Cover (an image, optional: else the file's own) ", h("input", { type: "file", name: "cover", accept: "image/*" })) : null,
-      h("label", { className: "s" }, `${C.audio ? "Lyrics or transcript" : "Subtitles"} (.vtt or .srt, optional) `, h("input", { type: "file", name: "subs", accept: ".vtt,.srt,text/vtt", multiple: true })),
-      h("label", { className: "s" }, h("input", { type: "checkbox", name: "keep" }), " Keep the original file too (as large as all the versions together; lets a newer format be made later)"),
-      h("input", { name: "title", placeholder: "Title", required: true, maxLength: 300 }),
-      h("textarea", { name: "body", rows: 4, placeholder: "Description" }),
-      h("label", { className: "s" }, "What it is ", kindSel),
-      fieldsBox,
-      who.el,
-      h("div", { className: "row" }, h("button", { className: "on", textContent: "Upload" }), progress),
-      said,
-    );
-    // The file's own TAGS fill the form (title; artist, album, year, genre where its kind has them).
-    let tags = null;
-    const prefill = async file => {
-      if (!file) return;
-      tags = await studio.probe(file).catch(() => null);
-      if (!tags) return;
-      if (tags.title && !f.elements.title.value) f.elements.title.value = tags.title;
-      for (const [x, val] of Object.entries({ artist: tags.artist, album: tags.album, year: tags.year, genre: tags.genre })) {
-        const input = f.elements[`meta.${x}`];
-        if (val && input && !input.value) input.value = val;
-      }
-    };
-    f.onsubmit = async e => {
-      e.preventDefault();
-      said.hidden = true;
-      const file = f.elements.file.files[0];
-      if (!file) return;
-      const btn = f.querySelector("button");
-      btn.disabled = true;
-      try {
-        progress.textContent = `Reading the ${C.one}…`;
-        // PUBLISHED by the one path (`publisher`): made, named, its item of the kind chosen, its timed text — the same as
-        // a video or an audio uploaded in an editor.
-        const meta = Object.fromEntries(kinds.of(kindSel.value).fields.map(x => [x, String(f.elements[`meta.${x}`]?.value ?? "").trim()]).filter(([, v]) => v));
-        const { item: posted } = await (await ctx.require("publisher")).publish(file, {
-          space: inSpace,
-          audience: who.value(),
-          kind: kindSel.value,
-          title: f.elements.title.value,
-          body: f.elements.body.value,
-          meta,
-          cover: f.elements.cover?.files?.[0] ?? null,
-          subtitles: [...(f.elements.subs.files ?? [])],
-          keepOriginal: f.elements.keep.checked,
-          app: C.app,
-          onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`),
-        });
-        location.hash = `${base()}/w/${encodeURIComponent(posted)}`;
-      } catch (err) {
-        said.textContent = err.message ?? String(err);
-        said.hidden = false;
-        btn.disabled = false;
-        progress.textContent = "";
-      }
-    };
+    const f = await (await ctx.require("publisher")).form({ domain: C.audio ? "audio" : "video", space: inSpace, app: C.app, onPublished: ({ item }) => (location.hash = `${base()}/w/${encodeURIComponent(item)}`) });
     return h("div", {}, h("h3", { textContent: `Upload a ${C.one}` }), f);
   }
 
