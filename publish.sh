@@ -3,7 +3,7 @@
 # real-network run: the ONE shared lock (one session on B at a time), ONE SSH tunnel on this machine's loopback killed
 # by PID, nothing on B but the client API's requests.
 #
-#   ./publish.sh      build, then publish the packages the live manifest does not name yet, and the two sites
+#   ./publish.sh      build, then publish every package (again: a node may have evicted one) and the two sites
 set -euo pipefail
 root="$(cd "$(dirname "$0")" && pwd)"
 HOST=${REALNET_HOST:-root@46.224.172.252}
@@ -29,12 +29,8 @@ ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -L
 tunnel=$!
 for _ in $(seq 1 30); do lsof -nP -iTCP:"$T" -sTCP:LISTEN >/dev/null 2>&1 && break; sleep 1; done
 echo "tunnel pid $tunnel: 127.0.0.1:$T -> B 127.0.0.1:$BR"
-# The live manifest (a plain read, through the same tunnel): the packages it names are not sent again.
-if [ -s .published-site ]; then
-  current=$(mktemp)
-  if curl -s -m 60 -o "$current" -w '%{http_code}' "http://127.0.0.1:$T/v1/contract/web/$(cat .published-site)/manifest.json" | grep -q '^200$'; then
-    export PUBLISHED_MANIFEST="$current"
-  fi
-fi
+# EVERY package is sent, each time: a node that evicted one (B keeps a limited number of contracts) has it again, and
+# a package already there is the same immutable state (nothing changes). Skipping what the live manifest names left
+# pages waiting forever on a package B had dropped.
 out=$("$tool" "ws://127.0.0.1:$T/v1/contract/command?encodingProtocol=native" "$root" | tee /dev/stderr)
 sed -n 's/^SITE //p' <<<"$out" > .published-site
