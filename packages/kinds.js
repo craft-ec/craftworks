@@ -36,14 +36,22 @@ export async function start() {
     // Document
     ["book", "document", "Book", ["author", "publisher", "year", "isbn"]],
     ["comic", "document", "Comic", ["writer", "artist", "issue", "publisher"]],
-    // File
+    // File (Drive: what was uploaded, any type — `file`, the general one)
+    ["file", "file", "File", []],
     ["asset", "file", "Asset", ["format", "software"]],
     ["game", "file", "Game", ["platform", "genre", "version"]],
     ["software", "file", "Software", ["platform", "version", "license"]],
     ["dataset", "file", "Dataset", ["format", "schema"]],
     // Text
     ["post", "text", "Post", []],
+    // Note (Notes: a card of text, its own domain — its own policy)
+    ["note", "note", "Note", []],
   ];
+  // COLLABORATIVE kinds: in a space, whoever its `edit` policy allows edits one (a shared note, a shared file's
+  // entry), the creator kept; every other kind its author's alone (an app's own enforcement over the policy).
+  // UNTITLED kinds: a title is optional.
+  const COLLABORATIVE = new Set(["note", "file"]);
+  const UNTITLED = new Set(["note", "file"]);
   // ATTACHING kinds: their own data, about another item (`in`) — contributed like a comment, listed with what they are
   // about, and a lens of their own (the Subtitles app). A subtitle: WebVTT (its file), its language and label.
   const ATTACHING = [["subtitle", "text", "Subtitles", ["lang", "label"], ["video", "audio"]]];
@@ -58,6 +66,8 @@ export async function start() {
     inDomain: domain => CATALOG.filter(c => c[1] === domain).map(c => c[0]),
     all: () => [...byKind.keys()],
     fieldLabel: f => LABELS[f] ?? f,
+    collaborative: kind => COLLABORATIVE.has(kind),
+    titled: kind => !UNTITLED.has(kind),
     // A FILE's domain, from its type (MIME): what an upload IS, whichever app it came through.
     ofType: type => {
       const t = String(type ?? "").toLowerCase();

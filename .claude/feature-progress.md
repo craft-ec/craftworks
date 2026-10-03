@@ -976,6 +976,13 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       members-only or PUBLIC (space policy as ceiling), listed in Discover, with comments/votes; Notes/Drive only lenses
       (note colour/archived, file folder in `meta`). One upload door: `files` + Drive's catalogue (a video/audio post
       references the same file).
+      DONE NOTES: notes are items of kind `note` (own domain, own policy); the page reads/writes `items`; audience picker
+      in the composer (yours start Only you, a space's Members); migration v4 brings old notes over (time, colour,
+      archive, pins, labels; `meta.from`). ONE POLICY RESOLVER in roles (policyIn/allowsIn: domain → setting from before
+      → space) used by items and content (content checked every board item against "board"; now each its domain's).
+      fx: 2 notes brought over (private, journal); new private note → journal; edit kept one card; Board/Discover
+      unchanged (49/48, no notes). Found + fixed: a form reset put the picker back on Everyone (a note made public).
+      NEXT: Drive's entries as items of kind `file`.
       DONE first part (47e3f2d): Drive files an upload from another app in its TYPE's folder (/Videos /Audio /Images
       /Documents /Files: `kinds.ofType`, `kinds.domainName`); uploads made in Drive stay where put; migration v3.
 - [x] ONE AUDIENCE PICKER (owner 10-03; DONE: `audience` component, items `audience`/content `aud`; fx: members-only
@@ -983,7 +990,7 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       Notes, Drive) — today two copies (board.js:396, media.js:318). Personal space: Only you / Friends / Followers /
       Everyone; a shared space: Members / Public (its policy the ceiling: members-only = members post and read, nobody
       makes it public). Stored by one rule in `items`.
-- [ ] EDIT BY POLICY (owner 10-03): who may edit an item is the space's `edit` policy, in the one item model, for
+- [x] EDIT BY POLICY (owner 10-03; DONE with Notes — content.mayEdit, kinds.collaborative, creator kept as `by`): who may edit an item is the space's `edit` policy, in the one item model, for
       every app (Notes stay collaborative; Board inherits the same shared model) — and an APP may ENFORCE stricter
       (e.g. Board: author-only). An item keeps its creator (`by`) when another member edits it; the editor is recorded.
 - [ ] FRIENDS and FOLLOWERS audiences (owner 10-03: "add friend/follow option"): an item sealed to a KEY shared with

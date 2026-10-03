@@ -35,7 +35,7 @@ export async function start(ctx) {
   // An item's ID SORTS BY TIME (phase 3, Reads): `t` ‖ its time (ms, base 36, 9 places) ‖ 8 random hex — so a table read
   // backwards from its end gives the newest first ("latest N", then older pages). `t` sorts after the random hex ids from
   // before and the reactions' `r-` keys: a scan of `t…` is the items made since.
-  const newId = () => `t${Date.now().toString(36).padStart(9, "0")}${[...crypto.getRandomValues(new Uint8Array(4))].map(x => x.toString(16).padStart(2, "0")).join("")}`;
+  const newId = (at = Date.now()) => `t${Math.floor(at).toString(36).padStart(9, "0")}${[...crypto.getRandomValues(new Uint8Array(4))].map(x => x.toString(16).padStart(2, "0")).join("")}`;
 
   // Any conversation names its `messages` table and the `scope` (space) it lives in: a channel, its server; a direct
   // conversation, itself.
@@ -87,6 +87,13 @@ export async function start(ctx) {
       : inSpace
         ? await Promise.all([ctx.require("roles").then(x => x.of(container.scope)), governed ? ctx.require("moderation").then(x => x.of(container.scope)) : null])
         : [null, null];
+    // WHO MADE IT: its row's writer — or, a COLLABORATIVE item (a note) another member changed, its creator as the
+    // version says, while that member may edit there (the space's `edit` policy then).
+    const byOf = (row, v) => {
+      const writer = (r ? r.author(row) : null) ?? v.by ?? null;
+      if (!r || !v.editor || v.editor !== writer || !K.collaborative(v.kind) || typeof v.by !== "string") return writer;
+      return r.allowsIn("edit", writer, K.policyDomain(v.kind), Number(v.edited) || Infinity) ? v.by : writer;
+    };
     const item = row => {
       try {
         const v = JSON.parse(row.value);
@@ -95,7 +102,9 @@ export async function start(ctx) {
           kind: v.kind ?? "message",
           body: String(v.body ?? v.text ?? ""),
           at: Number(v.at) || 0,
-          by: open ? container.did : ((r ? r.author(row) : null) ?? v.by ?? null),
+          by: open ? container.did : byOf(row, v),
+          // Who last changed it, when not its creator (a collaborative item: `kinds.collaborative`).
+          editor: !open && v.editor && r ? r.author(row) : null,
           re: typeof v.re === "string" ? v.re : null,
           title: typeof v.title === "string" ? v.title : null,
           // WHO SEES IT, chosen when made (`audience`): "members" keeps it to a space's members; none (from before):
@@ -189,9 +198,20 @@ export async function start(ctx) {
         .filter(row => !hidden.has(row.key))
         .map(item)
         .filter(it => it && !unseen.has(it.by))
-        // A post or message by someone the app's setting did not allow when it was made: not counted.
-        .filter(it => !(governed && app && ACTION[it.kind] && !r.allows(ACTION[it.kind], it.by, app, it.at)));
+        // A post or message by someone the setting did not allow when it was made: not counted.
+        .filter((it, _, all) => !(governed && app && ACTION[it.kind] && !allowed(ACTION[it.kind], it.by, it, all, it.at)));
     };
+    // WHICH POLICY: a channel's (its path); a board's items each their DOMAIN's (`roles.allowsIn`: what an item is
+    // decides — a video by Videos' setting, a note by Notes'), a comment or a vote its item's.
+    const domainOf = (it, all) => {
+      for (let x = it, depth = 0; x && depth < 8; depth++) {
+        if (K.of(x.kind)) return K.policyDomain(x.kind);
+        const up = x.in ?? x.item ?? x.re;
+        x = up ? all.find(y => y.id === up) : null;
+      }
+      return "text";
+    };
+    const allowed = (action, did, it, all, at) => (app === "board" ? r.allowsIn(action, did, domainOf(it, all), at) : r.allows(action, did, app, at));
     const reactionsOf = all => all.filter(x => x.kind === "reaction" && x.item && x.emoji && x.by).map(({ item, emoji, by, at }) => ({ item, emoji, by, at }));
     const list = () => {
       const all = every();
@@ -208,10 +228,12 @@ export async function start(ctx) {
         .map(x => ({ ...x, reactions: reactions.get(x.id) ?? {} }))
         .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
     };
+    // MAY CHANGE IT: its author — or, a COLLABORATIVE kind in a space, whoever its domain's `edit` policy allows.
+    const mayEdit = it => it.by === me || (governed && app === "board" && K.collaborative(it.kind) && r.allowsIn("edit", me, K.policyDomain(it.kind)));
     const mine = id => {
       const it = list().find(x => x.id === id);
       if (!it) throw new Error("no such item");
-      if (it.by !== me) throw new Error("only its author changes an item");
+      if (!mayEdit(it)) throw new Error(K.collaborative(it.kind) ? "this space's setting does not let you edit it" : "only its author changes an item");
       return it;
     };
     const changed = [];
@@ -234,13 +256,15 @@ export async function start(ctx) {
       onChange: f => changed.push(f),
       mayRemove: it => it.by === me || (governed && !!r?.can(me, "moderate")),
       // May this person post here now (the app's setting; a conversation: always).
-      mayPost: () => !(governed && app) || r.allows("post", me, app),
-      may: action => !(governed && app) || r.allows(action, me, app),
+      mayPost: (kind = "post") => !(governed && app) || allowed("post", me, { kind }, [], Infinity),
+      may: (action, kind = "post") => !(governed && app) || allowed(action, me, { kind }, [], Infinity),
+      mayEdit,
       postingRule: () => (governed && app ? r.policy(app, "post") : "members"),
-      async post(kind, body, { re = null, title = null, in: where = null, files = [], meta = null, aud = null } = {}) {
+      // `at`: when it was made (a note brought over from before: its own time).
+      async post(kind, body, { re = null, title = null, in: where = null, files = [], meta = null, aud = null, at = Date.now() } = {}) {
         if (outside) throw new Error("only the space's members post here");
-        const id = newId();
-        await t.put(id, JSON.stringify({ kind, body, at: Date.now(), by: me, ...(re ? { re } : {}), ...(title ? { title } : {}), ...(where ? { in: where } : {}), ...(files.length ? { files } : {}), ...(meta && Object.keys(meta).length ? { meta } : {}), ...(aud ? { aud } : {}) }));
+        const id = newId(at);
+        await t.put(id, JSON.stringify({ kind, body, at, by: me, ...(re ? { re } : {}), ...(title ? { title } : {}), ...(where ? { in: where } : {}), ...(files.length ? { files } : {}), ...(meta && Object.keys(meta).length ? { meta } : {}), ...(aud ? { aud } : {}) }));
         return id;
       },
       // A REACTION: this person's, to one item, one emoji — its own row (the author in its key), put or taken back.
@@ -251,11 +275,13 @@ export async function start(ctx) {
         if (on) await t.put(key, JSON.stringify({ kind: "reaction", item: id, emoji, at: Date.now(), by: me }));
         else await t.remove(key);
       },
-      async edit(id, body, { files = null, meta = null } = {}) {
+      async edit(id, body, { files = null, meta = null, title = undefined } = {}) {
         const it = mine(id);
         const fs = files ?? it.files ?? [];
         it.meta = meta ?? it.meta;
-        await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: me, edited: Date.now(), ...(it.re ? { re: it.re } : {}), ...(it.title ? { title: it.title } : {}), ...(it.in ? { in: it.in } : {}), ...(fs.length ? { files: fs } : {}), ...(it.meta && Object.keys(it.meta).length ? { meta: it.meta } : {}), ...(it.aud ? { aud: it.aud } : {}) }));
+        if (title !== undefined) it.title = title;
+        // Its creator kept (`by`); another member's change named (`editor`).
+        await t.put(id, JSON.stringify({ kind: it.kind, body, at: it.at, by: it.by ?? me, ...(it.by && it.by !== me ? { editor: me } : {}), edited: Date.now(), ...(it.re ? { re: it.re } : {}), ...(it.title ? { title: it.title } : {}), ...(it.in ? { in: it.in } : {}), ...(fs.length ? { files: fs } : {}), ...(it.meta && Object.keys(it.meta).length ? { meta: it.meta } : {}), ...(it.aud ? { aud: it.aud } : {}) }));
       },
       // Its FILES replaced (a video's manifest, once more renditions are made): the author's, the item otherwise as is.
       async setFiles(id, files) {

@@ -4,7 +4,8 @@
 // it, nobody makes it public). What it means for where the item is kept is `items`' (`submit({ audience })`).
 //
 //   const audience = await ctx.require("audience");
-//   const a = await audience.picker({ space, kind })   // space: null = yours; kind: what is made ("post", "movie" …)
+//   const a = await audience.picker({ space, kind, initial })   // space: null = yours; kind: what is made ("post",
+//                                                               // "movie", "note" …); initial: the choice it starts on
 //   form.append(a.el)
 //   a.value()      // "public" | "private" (yours) | "members" (a space's)
 //   a.isPublic()   // read by everyone (its files are put public)
@@ -16,7 +17,7 @@ export async function start(ctx) {
     return e;
   };
 
-  async function picker({ space: sp = null, kind = "post" } = {}) {
+  async function picker({ space: sp = null, kind = "post", initial = null } = {}) {
     // The choices here: yours, or what the space's policy allows for this kind.
     const choices = sp
       ? (await items.publicIn(sp, kind).catch(() => false))
@@ -24,6 +25,9 @@ export async function start(ctx) {
         : [["members", `👥 ${space.shown(sp)}'s members (the space keeps this app to its members)`]]
       : [["public", "🌐 Everyone (public, your followers read it)"], ["private", "🔒 Only you"]];
     const sel = h("select", { className: "field", name: "audience" }, ...choices.map(([value, textContent]) => h("option", { value, textContent })));
+    // Its starting choice is the select's DEFAULT: a form reset (a composer closing) returns to it, never to the first.
+    for (const o of sel.options) o.defaultSelected = o.value === initial;
+    if (initial && choices.some(([v]) => v === initial)) sel.value = initial;
     const el = h("label", {}, "Who sees it", sel);
     return { el, value: () => sel.value, isPublic: () => sel.value === "public" };
   }

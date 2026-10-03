@@ -104,7 +104,7 @@ export async function start(ctx) {
   const roles = await ctx.require("roles");
   // A space's board room is its place for every item `posts` keeps — posts, videos, subtitles — so any app on it opens
   // the place (a space with Videos and no Board still takes videos).
-  const PLACE_APPS = ["board", "videos", "audio", "subtitles"];
+  const PLACE_APPS = ["board", "videos", "audio", "subtitles", "notes", "drive", "images"];
   const boards = async () => {
     const all = await space.mine();
     // Its apps once its acts are read (before, a space shows the default apps: a Chat-only space would open a board).
@@ -135,12 +135,7 @@ export async function start(ctx) {
   }
   // A DOMAIN's read setting in a space: its own (`text`, `video`, `subtitle` …: content decides, whatever app shows it),
   // else the app-named setting from before (text: "board", video: "videos", subtitle: "subtitles"), else the space's.
-  const LEGACY = { text: "board", video: "videos", audio: "audio", subtitle: "subtitles" };
-  const domainReads = (r, domain) => {
-    const own = r.policiesAt(domain).read;
-    if (own) return own === "anyone";
-    return r.policy(LEGACY[domain] ?? domain, "read") === "anyone";
-  };
+  const domainReads = (r, domain) => r.policyIn(domain, "read") === "anyone";
   // Whether an item of `kind` is public in a space now.
   async function publicIn(sp, kind) {
     const r = await roles.of(sp);
@@ -222,6 +217,7 @@ export async function start(ctx) {
         // A vote in both tables is one vote.
         reactions: () => dedupe([...a.reactions(), ...b.reactions()], x => `${x.item}|${x.emoji}|${x.by}`),
         mayRemove: it => a.mayRemove(it),
+        mayEdit: it => a.mayEdit(it),
         mayPost: () => a.mayPost(),
         since: ms => Promise.all([a.since?.(ms), b.since?.(ms)]),
         loadAll: () => Promise.all([a.loadAll?.(), b.loadAll?.()]),
@@ -295,6 +291,7 @@ export async function start(ctx) {
         list: () => [...pub.list(), ...(priv?.list() ?? []).map(x => ({ ...x, private: true }))],
         reactions: () => [...pub.reactions(), ...(priv?.reactions() ?? [])],
         mayRemove: it => it.by === acc.id,
+        mayEdit: it => it.by === acc.id,
         onChange: f => (pub.onChange(f), changedHere.push(f)),
         settled: pub.settled,
         isPrivate: ref => isPrivate(idIn(ref)),
@@ -334,8 +331,10 @@ export async function start(ctx) {
   };
   const postOf = c => c.in ?? c.re; // a comment's post (an old one answering its post directly has no `in`)
   const shape = (it, ref, board) => {
-    const [first, ...rest] = it.body.split("\n"); // a post from before titles: its first line is its title
-    return { ref, id: it.id, kind: it.kind, in: it.in ?? null, by: it.by, title: it.title ?? first.slice(0, 300), body: it.title ? it.body : rest.join("\n").trim(), board, at: it.at, edited: it.edited, private: !!it.private, files: it.files ?? [], meta: it.meta ?? {} };
+    // A post from before titles: its first line is its title (a kind whose title is optional — a note — never).
+    const old = !it.title && kinds.titled(it.kind);
+    const [first, ...rest] = it.body.split("\n");
+    return { ref, id: it.id, kind: it.kind, in: it.in ?? null, by: it.by, editor: it.editor ?? null, aud: it.aud ?? null, title: old ? first.slice(0, 300) : (it.title ?? ""), body: old ? rest.join("\n").trim() : it.body, board, at: it.at, edited: it.edited, private: !!it.private, files: it.files ?? [], meta: it.meta ?? {} };
   };
 
   // A BOARD's posts: everything is in its one room (reactions keyed by the item's id).
@@ -362,7 +361,7 @@ export async function start(ctx) {
     for (const it of items) if (it.kind === "comment" && it.at >= since) counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
     return items
       .filter(it => kinds.includes(it.kind))
-      .map(it => ({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), pub: it.pub, comments: counts.get(it.id) ?? 0, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it) }));
+      .map(it => ({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), pub: it.pub, comments: counts.get(it.id) ?? 0, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it), mayEdit: !!r.mayEdit?.(it) }));
   }
   // PROFILE posts: from their authors' tails; comments and votes from the tails known here (the reader's, whom they
   // follow, and whoever `readers` names).
@@ -382,7 +381,7 @@ export async function start(ctx) {
       for (const it of r.list()) {
         if (!kinds.includes(it.kind) || !authorSet.has(it.by)) continue;
         const ref = `${it.by}/${it.id}`;
-        out.push({ ...shape(it, ref, null), comments: counts.get(ref) ?? 0, ...scored(ref, votes, self), mayRemove: it.by === self });
+        out.push({ ...shape(it, ref, null), comments: counts.get(ref) ?? 0, ...scored(ref, votes, self), mayRemove: it.by === self, mayEdit: it.by === self });
       }
     return out;
   }
@@ -504,26 +503,27 @@ export async function start(ctx) {
   }
 
   // `audience` (the `audience` picker's value): yours — "public" or "private"; a space's — "public" or "members".
-  async function submit({ board = null, place = null, title, body, audience = "public", files = [], kind = "post", meta = {} }) {
+  // `at`: when it was made (an item brought over from before keeps its own time).
+  async function submit({ board = null, place = null, title, body, audience = "public", files = [], kind = "post", meta = {}, at = Date.now() }) {
     const only = audience === "private";
     title = String(title ?? "").trim();
     body = String(body ?? "").trim();
     board = board ?? place;
     if (!TOP.has(kind)) throw new Error(`not something to post: ${kind}`);
-    if (!title) throw new Error(`a ${kind} needs a title`);
+    if (!title && kinds.titled(kind)) throw new Error(`a ${kind} needs a title`);
     if (title.length > 300) throw new Error("a title of at most 300 characters");
     if (board) {
       const sp = await boardOf(board);
       if (!sp) throw new Error("you are not in that board's space");
       if (audience === "public" && !(await publicIn(sp, kind))) throw new Error(`${space.shown(sp)} keeps this to its members: it cannot be public`);
-      return `space:${sp.id}/${await (await boardRoom(sp)).post(kind, body, { title, files, meta, aud: audience === "members" ? "members" : null })}`;
+      return `space:${sp.id}/${await (await boardRoom(sp)).post(kind, body, { title, files, meta, at, aud: audience === "members" ? "members" : null })}`;
     }
     const self = await me();
     // Its files: public exactly when the post is (one picked while "Everyone" was chosen, posted "Only you": re-keyed).
     await (await ctx.require("files")).publicity(files, null, !only).catch(e => ctx.log("posts", { what: `its files: ${e.message}` }));
-    const ref = `${self}/${await (await profileRoom(self)).post(kind, body, { title, private: only, files, meta })}`;
+    const ref = `${self}/${await (await profileRoom(self)).post(kind, body, { title, private: only, files, meta, at })}`;
     // Listed in Discover (its own bag made with it: nobody reading it waits on one that does not exist).
-    if (!only) await listPublic(ref, { kind, at: Date.now() }, { did: self }).catch(e => ctx.log("posts", { what: `listing ${ref}: ${e.message}` }));
+    if (!only) await listPublic(ref, { kind, at }, { did: self }).catch(e => ctx.log("posts", { what: `listing ${ref}: ${e.message}` }));
     return ref;
   }
 
@@ -622,7 +622,7 @@ export async function start(ctx) {
     for (const sp of await boards().catch(() => [])) {
       const r = await roles.of(sp).catch(() => null);
       if (!r) continue;
-      const sig = Object.keys(LEGACY).map(d => (domainReads(r, d) ? 1 : 0)).join("");
+      const sig = r.domains().map(d => (domainReads(r, d) ? 1 : 0)).join("");
       const mark = `public ${sp.id.slice(0, 16)} ${String(sp.self).slice(0, 16)}`;
       if ((await storage.upkeepMark(mark)) === sig) continue;
       await (await boardRoom(sp))
@@ -683,13 +683,13 @@ export async function start(ctx) {
     return out.filter(x => !seen.has(x.ref) && seen.add(x.ref)).sort((a, b) => a.at - b.at);
   }
   // An item of this person's EDITED (a subtitle's text or label): its body, files and meta.
-  async function editItem(ref, body, { files = null, meta = null } = {}) {
+  async function editItem(ref, body, { files = null, meta = null, title = undefined } = {}) {
     if (ref.startsWith("space:")) {
       const sp = await boardOf(ref);
       if (!sp) throw new Error("you are not in that board's space");
-      return (await boardRoom(sp)).editFull(idOf(ref), body, { files, meta });
+      return (await boardRoom(sp)).editFull(idOf(ref), body, { files, meta, title });
     }
-    return (await profileRoom(await me())).editFull(idOf(ref), body, { files, meta });
+    return (await profileRoom(await me())).editFull(idOf(ref), body, { files, meta, title });
   }
 
   // A post's FILES replaced by its author (a video whose renditions grew): its place's room.
@@ -714,5 +714,40 @@ export async function start(ctx) {
     return [...a.flat(), ...b];
   }
 
-  return { listOldProfile, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
+  // (A MIGRATION — `upkeep`.) NOTES from before items (the table `notes`: yours, or a space's) brought over as items of
+  // kind `note` — yours private, a space's for its members; each keeping its time, colour, archive, pins and labels.
+  // Only this person's own (only an author writes their items); one brought over before is not again (`meta.from`).
+  async function migrateNotes(sp = null) {
+    const storage = await ctx.require("storage");
+    const self = await me();
+    if (sp && !(await roles.of(sp).then(r => r.apps().includes("notes"), () => false))) return true;
+    const old = sp ? await storage.table(space.tableOf(sp, "notes"), sp) : await storage.table("notes");
+    await old.settled;
+    const r = sp ? await roles.of(sp) : null;
+    const rows = old.rows().filter(x => x.value && (!r || r.author(x) === self));
+    if (!rows.length) return true;
+    const have = new Set((await inPlaces(sp ? { spaces: [sp] } : { people: [self] }, "note")).map(it => it.meta?.from).filter(Boolean));
+    const edge = await ctx.require("edge");
+    const [pins, labels] = await Promise.all([edge.pins(), edge.labels()]);
+    const oldRef = key => (sp ? `notes:${sp.id}/${key}` : `notes:${key}`);
+    let n = 0;
+    for (const row of rows) {
+      if (have.has(row.key)) continue;
+      let v = { title: "", body: row.value, color: "", archived: false };
+      try {
+        const j = JSON.parse(row.value);
+        if (j && typeof j === "object") v = { ...v, ...j };
+      } catch {}
+      const at = parseInt(String(row.key).split("-")[0], 36) || Number(v.edited) || Date.now();
+      const ref = await submit({ board: sp?.id ?? null, title: v.title ?? "", body: v.body ?? "", kind: "note", audience: sp ? "members" : "private", meta: { color: v.color || "", archived: !!v.archived, from: row.key }, at });
+      if (pins.has(oldRef(row.key)) || v.pinned) await pins.set(`notes:${ref}`, true).then(() => pins.set(oldRef(row.key), false));
+      for (const l of labels.of(oldRef(row.key))) await labels.set(`notes:${ref}`, l.id, true);
+      await labels.clear(oldRef(row.key));
+      n += 1;
+    }
+    if (n) ctx.log("posts", { what: `${sp?.name ?? "your"} notes: ${n} brought over as items` });
+    return true;
+  }
+
+  return { listOldProfile, migrateNotes, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
 }

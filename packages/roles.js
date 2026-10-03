@@ -45,6 +45,11 @@ export async function start(ctx) {
   // space by it too). What is gathered here: the acts' rows, the group's members, each member's devices.
   const G = node.glue.Governance;
   const ACTIONS = G.actions();
+  // WHICH POLICY GOVERNS a domain (THE ONE resolver, for every app and every action): its domain's own (`kinds`:
+  // text, video, audio, note, file …), else the setting made before domains (the app's name: board, videos …), else the
+  // space's. `DOMAINS`: every domain a policy can name.
+  const LEGACY = { text: "board", video: "videos", audio: "audio", image: "images", subtitle: "subtitles", note: "notes", file: "drive" };
+  const DOMAINS = Object.keys(LEGACY);
   // A member's credential (hex): `CWMB ‖ did ‖ signer ‖ writer ‖ MLS key ‖ signature` (the identity's format; MLS
   // checked the signature when it admitted it).
   const didOf = h => new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16)));
@@ -198,6 +203,15 @@ export async function start(ctx) {
         const who = gv.effective(path, action, at);
         return who === "anyone" || G.passes(who, role(did));
       },
+      // A DOMAIN's policy for an action (`kinds.policyDomain(kind)`: what an item is decides, not the app showing it).
+      policyIn: (domain, action, at = Infinity) =>
+        gv.policy_at(domain, action, at) || (LEGACY[domain] && gv.policy_at(LEGACY[domain], action, at)) || gv.effective("", action, at),
+      allowsIn: (action, did, domain, at = Infinity) => {
+        const own = gv.policy_at(domain, action, at) || (LEGACY[domain] && gv.policy_at(LEGACY[domain], action, at));
+        const who = own || gv.effective("", action, at);
+        return who === "anyone" || G.passes(who, role(did));
+      },
+      domains: () => DOMAINS,
       banned: did => bans.has(did),
       bannedList: () => [...bans],
       // Out by the acts — removed, banned, left — and not added back: their nodes leave the group (`moderation`).

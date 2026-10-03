@@ -83,6 +83,7 @@ export async function mount(ctx, el) {
         <input class="title" name="title" placeholder="Title" hidden>
         <textarea class="body" name="body" rows="1" placeholder="Take a note…"></textarea>
         <div class="row" hidden><button type="button" class="palette" title="Background">🎨</button>
+          <span class="audience-slot"></span>
           <button type="button" class="end close">Close</button></div>
       </form>
       <p class="said"></p>
@@ -109,10 +110,9 @@ export async function mount(ctx, el) {
     </div>`;
   const root = el.querySelector(".keep");
   const said = t => (root.querySelector(".said").textContent = t);
-  let notes, edge, pins, labels, pinUI, labelUI, sp = null, rs = null;
+  let items, who, edge, pins, labels, pinUI, labelUI, sp = null, rs = null;
   const meId = (await (await ctx.require("space")).account()).id;
   try {
-    const storage = await ctx.require("storage");
     edge = await ctx.require("edge");
     // A space's notes: its own table, in its scope.
     if (ctx.space) {
@@ -124,8 +124,10 @@ export async function mount(ctx, el) {
       await rs.settled;
       if (!rs.apps().includes("notes")) throw new Error(`${sp.name} does not use Notes: its owner or an admin adds it on the space's Home`);
     }
-    [notes, pins, labels, pinUI, labelUI] = await Promise.all([
-      sp ? storage.table((await ctx.require("space")).tableOf(sp, "notes"), sp) : storage.table("notes"),
+    // NOTES ARE ITEMS (kind `note`, `items`): yours in your space (private, or public), a space's in its place —
+    // who sees, edits and comments by the same access control as every app.
+    [items, pins, labels, pinUI, labelUI] = await Promise.all([
+      ctx.require("items"),
       edge.pins(),
       edge.labels(),
       ctx.require("pin-button"),
@@ -134,31 +136,51 @@ export async function mount(ctx, el) {
   } catch (e) {
     return said(`Could not open ${ctx.space ? "the notes" : "your notes"}: ${e?.message ?? e}`);
   }
+  // WHO SEES a new note: the one picker — yours start "Only you", a space's its members.
+  who = await (await ctx.require("audience")).picker({ space: sp, kind: "note", initial: sp ? "members" : "private" });
+  root.querySelector(".audience-slot").append(who.el);
+  // The notes held (items), read again as they change.
+  let held = [];
+  const place = sp ? { spaces: [sp] } : { people: [meId] };
+  const reload = () =>
+    items
+      .inPlaces(place, "note")
+      .then(x => ((held = x), root.isConnected && render()))
+      .catch(e => said(`Could not read the notes: ${e?.message ?? e}`));
 
-  // A row as a note: JSON, or (the first notes) plain text as the body. `pinned` comes from the account's pins.
-  // A pin or a label is this person's, on a note: a space's notes are named with the space.
-  const ref = key => (sp ? `notes:${sp.id}/${key}` : `notes:${key}`);
-  const note = r => {
-    let n = { title: "", body: r.value, color: "", archived: false, edited: 0 };
-    try {
-      const j = JSON.parse(r.value);
-      if (j && typeof j === "object") n = { title: "", body: "", color: "", archived: false, edited: 0, ...j };
-    } catch {}
-    return { ...n, key: r.key, pinned: pins.has(ref(r.key)) };
-  };
-  const save = (key, n) => {
+  // A note: an item (its key its ref). `pinned` comes from the account's pins; a pin or a label names it `notes:<ref>`.
+  const ref = key => `notes:${key}`;
+  const note = it => ({
+    key: it.ref,
+    title: it.title ?? "",
+    body: it.body ?? "",
+    color: it.meta?.color ?? "",
+    archived: !!it.meta?.archived,
+    edited: it.edited || it.at || 0,
+    mayEdit: it.mayEdit !== false,
+    meta: it.meta ?? {},
+    pinned: pins.has(ref(it.ref)),
+  });
+  // SAVE: a change to a note held (its editors: `items.editItem`), or a new one made (`items.submit`): its ref.
+  const save = async (key, n) => {
     const { title, body, color, archived } = n;
-    return notes.put(key, JSON.stringify({ title, body, color, archived, edited: Date.now() })).catch(e => said(`Could not save: ${e?.message ?? e}`));
+    try {
+      const was = key && held.find(x => x.ref === key);
+      if (was) await items.editItem(key, body, { title, meta: { ...(was.meta ?? {}), color, archived } });
+      else key = await items.submit({ board: sp?.id ?? null, title, body, kind: "note", meta: { color, archived }, audience: n.audience ?? who.value() });
+      reload();
+      return key;
+    } catch (e) {
+      said(`Could not save: ${e?.message ?? e}`);
+      return null;
+    }
   };
-  // Notes saved with the old `pinned` field: into the pins (the edge capability's one-time adoption).
-  if (!sp) edge.adoptPinnedField(notes, "notes:").catch(e => said(`Could not move a pin: ${e?.message ?? e}`));
   const remove = key =>
-    notes
+    items
       .remove(key)
       .then(() => labels.clear(ref(key)))
+      .then(reload)
       .catch(e => said(`Could not delete: ${e?.message ?? e}`));
-  const newKey = () =>
-    `${Date.now().toString(36).padStart(10, "0")}-${[...crypto.getRandomValues(new Uint8Array(4))].map(b => b.toString(16).padStart(2, "0")).join("")}`;
 
   // The view: Notes or Archive, grid or list, a search.
   let archive = false;
@@ -207,6 +229,7 @@ export async function mount(ctx, el) {
   const shut = async () => {
     const title = cTitle.value.trim();
     const body = cBody.value.trim();
+    const audience = who.value(); // read before the form resets
     composer.reset();
     cTitle.hidden = true;
     cRow.hidden = true;
@@ -216,9 +239,8 @@ export async function mount(ctx, el) {
     tint(composer, "");
     if (!(title || body)) return;
     // Made while one label is shown: it has that label, as in Keep.
-    const key = newKey();
-    await save(key, { title, body, color, archived: false });
-    if (label) await labels.set(ref(key), label, true).catch(e => said(`Could not label: ${e?.message ?? e}`));
+    const key = await save(null, { title, body, color, archived: false, audience });
+    if (key && label) await labels.set(ref(key), label, true).catch(e => said(`Could not label: ${e?.message ?? e}`));
   };
   cBody.addEventListener("focus", open);
   composer.querySelector(".close").onclick = shut;
@@ -245,7 +267,8 @@ export async function mount(ctx, el) {
   const finish = async () => {
     if (!editing) return;
     const n = { ...editing, title: eTitle.value.trim(), body: eBody.value.trim() };
-    const before = note(notes.rows().find(r => r.key === n.key) ?? { key: n.key, value: "" });
+    const was = held.find(x => x.ref === n.key);
+    const before = was ? note(was) : { title: "", body: "", color: "", archived: false };
     editing = null;
     editor.close();
     const changed = ["title", "body", "color", "archived"].some(k => n[k] !== before[k]);
@@ -311,15 +334,12 @@ export async function mount(ctx, el) {
   const render = () => {
     root.classList.toggle("list", list);
     // The composer: not in the archive, nor for who may not edit here.
-    composer.hidden = archive || (!!rs && !rs.allows("edit", meId, "notes"));
+    composer.hidden = archive || (!!rs && !rs.allowsIn("post", meId, "note"));
     if (label && !labels.list().some(l => l.id === label)) label = null; // deleted meanwhile
     bar();
     const q = query.toLowerCase();
-    const inLabel = label ? new Set(labels.refs(label, sp ? `notes:${sp.id}/` : "notes:")) : null;
-    const all = notes
-      .rows()
-      // A space's note written by someone its Notes setting did not let edit then: not counted.
-      .filter(r => !rs || rs.allows("edit", rs.author(r), "notes", Number(note(r).edited) || Infinity))
+    const inLabel = label ? new Set(labels.refs(label, "notes:")) : null;
+    const all = held
       .map(note)
       .filter(n => n.archived === archive)
       .filter(n => !inLabel || inLabel.has(ref(n.key)))
@@ -417,7 +437,8 @@ export async function mount(ctx, el) {
     dispatchEvent(new CustomEvent("craftworks:actions"));
   };
   actions();
-  notes.onChange(() => root.isConnected && render());
+  items.onChange(() => root.isConnected && reload());
+  reload();
   pins.onChange(() => root.isConnected && render());
   labels.onChange(() => root.isConnected && render());
   render();
