@@ -42,16 +42,15 @@ export async function mount(ctx, el) {
   };
   // The top bar: its sub-pages — the posts, and Create post.
   const setActions = async w => {
-    if (discovering()) {
-      ctx.actions["/board"] = [{ label: "All public boards", href: base(), on: !!w.discover }];
-      return dispatchEvent(new CustomEvent("craftworks:actions"));
-    }
     // The same tabs on every page of a board (an open post, a profile, the Feed): a space's Posts, or — personal —
-    // Feed and Your posts; and Create post. Each lit only on its own page.
+    // Feed, Your posts and DISCOVER (the public network: every public board); and Create post. Each lit only on its
+    // own page.
+    const inSpace = ctx.space && !discovering();
     ctx.actions["/board"] = [
-      ...(ctx.space ? [] : [{ label: "Feed", href: "#/board/feed", on: !!w.feed }]),
-      { label: ctx.space ? "Posts" : "Your posts", href: base(), on: !w.post && !w.submit && !w.feed && (!!ctx.space || w.by === me) },
-      { label: "Create post", href: `${base()}/submit`, on: !!w.submit },
+      ...(inSpace ? [] : [{ label: "Feed", href: "#/board/feed", on: !!w.feed }]),
+      { label: inSpace ? "Posts" : "Your posts", href: inSpace ? base() : "#/board", on: !discovering() && !w.post && !w.submit && !w.feed && (!!inSpace || w.by === me) },
+      ...(inSpace ? [] : [{ label: "Discover", href: "#/discover/board", on: discovering() }]),
+      ...(discovering() ? [] : [{ label: "Create post", href: `${base()}/submit`, on: !!w.submit }]),
     ];
     dispatchEvent(new CustomEvent("craftworks:actions"));
   };

@@ -9,6 +9,12 @@ export async function mount(ctx, el) {
     return;
   }
   const [conversation, person, list, directory] = await Promise.all(["conversation", "person", "people-list", "directory"].map(n => ctx.require(n)));
+  // Your people, and DISCOVER (anyone listed): two tabs of one Contact.
+  ctx.actions["/contact"] = [
+    { label: "Your people", href: "#/contact", on: ctx.space !== "discover" },
+    { label: "Discover", href: "#/discover/contact", on: ctx.space === "discover" },
+  ];
+  dispatchEvent(new CustomEvent("craftworks:actions"));
   if (ctx.space === "discover") return people(ctx, el, { directory, person });
   el.innerHTML = `
     <style>
@@ -65,8 +71,6 @@ async function people(ctx, el, { directory, person }) {
       .ppl .card span { color: var(--cw-muted); font-size: var(--cw-text-sm); }
     </style>
     <div class="ppl"><h2>👤 People</h2><p class="note">People who chose to be shown in Discover. Show yourself from your Contacts.</p><div class="grid"></div></div>`;
-  ctx.actions["/contact"] = [];
-  dispatchEvent(new CustomEvent("craftworks:actions"));
   const grid = el.querySelector(".grid");
   grid.replaceChildren(theme.loading("Finding people…"));
   const lists = await moderation.lists().catch(() => null);

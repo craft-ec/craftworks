@@ -126,16 +126,15 @@ export async function mount(ctx, el) {
 
   let spaceName = null;
   function top(w) {
-    const tabs = discovering()
-      ? [{ label: "Discover", href: base(), on: !w.watch }]
-      : sp()
-        ? [{ label: C.name, href: base(), on: !w.watch && !w.up }]
-        : [
-            { label: "Following", href: `#/${C.app}`, on: !!w.feed },
-            { label: C.mine, href: `#/${C.app}/mine`, on: w.by === me },
-            { label: "Saved", href: `#/${C.app}/saved`, on: !!w.saved },
-            { label: "Discover", href: `#/discover/${C.app}`, on: false },
-          ];
+    // Yours: Following, yours, Saved and DISCOVER (the public network) — one row of tabs, Discover among them.
+    const tabs = sp()
+      ? [{ label: C.name, href: base(), on: !w.watch && !w.up }]
+      : [
+          { label: "Following", href: `#/${C.app}`, on: !!w.feed },
+          { label: C.mine, href: `#/${C.app}/mine`, on: w.by === me },
+          { label: "Saved", href: `#/${C.app}/saved`, on: !!w.saved },
+          { label: "Discover", href: `#/discover/${C.app}`, on: discovering() && !w.watch },
+        ];
     // In a space, it is a CHANNEL (the space named in this app's own words).
     const title = sp() ? `${C.icon} ${spaceName ?? "Channel"} · channel` : `${C.icon} ${C.name}`;
     // The SUB-TYPES (a filter): all, or one kind of the domain.

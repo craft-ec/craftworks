@@ -1,6 +1,6 @@
 // SPACES PANEL, a component: every space you can go to, and the one you are in — opened from the header's name of the
 // space open, a whole side panel of three columns (each a kind of space: yours and the shared ones you are in, your
-// friends' personal spaces, the spaces you follow). SPACES: Personal (yours: the default), Discover (the public network), the SHARED spaces you are in (what is
+// friends' personal spaces, the spaces you follow). (Discover is no place of its own: each app's tab in yours.) SPACES: Personal (yours: the default), the SHARED spaces you are in (what is
 // unread in each), and Make or join one (a name, or an invite code). FRIENDS: each opens their space. FOLLOWING: the
 // people you follow (their space) and the public spaces you follow (read from outside). A choice, a click outside or
 // Escape closes it. UI only: spaces are `space`'s, joining `conversation`'s, people `edge`'s, counts `activity`'s.
@@ -9,19 +9,18 @@
 //   panel.open()            // the panel, over the page (open again: closed)
 //   await panel.here()      // the name of the space you are in ("Personal", "Discover", a shared space's, a person's)
 //   panel.personOf()        // the PERSON whose space is open (`#/u/<did>`, `#/<app>/u/<did>`), else null
-//   await panel.hrefTo({ personal } | { discover } | { space } | { person })  // that space, at the SAME APP when it shows
+//   await panel.hrefTo({ personal } | { space } | { person })  // that space, at the SAME APP when it shows
 //                           // it (the manifest's `views`; a shared space: the apps it uses), else its Home
 export async function start(ctx) {
   const [space, conversation, directory, edge, roles] = await Promise.all(["space", "conversation", "directory", "edge", "roles"].map(n => ctx.require(n)));
   // A PERSON's space: `u/<did>` after the app (or alone: their Home) — someone else's personal space, seen from outside.
   const personOf = () => (ctx.space ? null : (/^u\/(did:[^/]+)/.exec(ctx.sub ?? "")?.[1] ?? null));
   // SWITCHING keeps the app: the app open, in the space chosen, where that space shows it; else that space's Home.
-  async function hrefTo({ personal = false, discover = false, space: sp = null, person = null }) {
+  async function hrefTo({ personal = false, space: sp = null, person = null }) {
     const app = ctx.apps.find(a => a.route === ctx.route);
     const views = app?.views ?? [];
     const me = (await space.account().catch(() => null))?.id;
     if (person && person !== me) return views.includes("person") ? `#${app.route}/u/${person}` : `#/u/${person}`;
-    if (discover) return views.includes("public") ? `#/discover${app.route}` : "#/discover";
     if (sp) return views.includes("shared") && (await roles.of(sp).then(r => r.apps(), () => [])).includes(app.route.slice(1)) ? `#/s/${sp.id}${app.route}` : `#/s/${sp.id}`;
     return views.includes("personal") ? `#${app.route}` : "#/";
   }
@@ -146,8 +145,7 @@ export async function start(ctx) {
     // apps take a read).
     const at = (a, target) => (hrefTo(target).then(href => (a.querySelector("a").href = href), () => {}), a);
     const spaces = [
-      at(row("#/", initials(directory.shown(me, myName)), `${directory.shown(me, myName)} · Personal`, { on: !ctx.space && !open }), { personal: true }),
-      at(row("#/discover", "🧭", "Discover", { on: ctx.space === "discover", title: "Discover: the public network" }), { discover: true }),
+      at(row("#/", initials(directory.shown(me, myName)), `${directory.shown(me, myName)} · Personal`, { on: (!ctx.space || ctx.space === "discover") && !open }), { personal: true }),
       shared.length ? h("li", { className: "sep" }) : null,
       ...shared.map(s => at(row(`#/s/${s.id}`, initials(s.name), space.shown(s), { on: ctx.space === s.id, badge: activity?.of(s.id) ?? 0 }), { space: s })),
       h("li", { className: "sep" }),
@@ -183,11 +181,10 @@ export async function start(ctx) {
 
   // WHERE you are now, named (the header's button).
   async function here() {
-    if (ctx.space === "discover") return "🧭 Discover";
     // A PERSON's space (from Friends or Following): theirs, named.
     const who = personOf();
     if (who && who !== (await space.account().catch(() => null))?.id) return directory.shown(who, await directory.handle(who).catch(() => null));
-    if (ctx.space) {
+    if (ctx.space && ctx.space !== "discover") {
       const sp = (await space.mine().catch(() => [])).find(s => s.id === ctx.space);
       return sp ? space.shown(sp) : "Space";
     }

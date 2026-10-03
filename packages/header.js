@@ -102,12 +102,8 @@ export function mount(ctx, el) {
     if (n !== drawing) return;
     if (!session) return box.replaceChildren(here);
     let entries, who;
-    if (ctx.space === "discover")
-      entries = [
-        { label: "Discover · Home", href: "#/discover", on: ctx.route === "/space" },
-        ...ctx.apps.filter(a => (a.views ?? []).includes("public")).map(a => ({ label: `${a.icon ?? ""} ${a.name}`, href: `#/discover${a.route}`, on: a.route === ctx.route })),
-      ];
-    else if (ctx.space) {
+    // (DISCOVER is your personal space's: each app's Discover tab — the personal apps here, as at home.)
+    if (ctx.space && ctx.space !== "discover") {
       const space = await ctx.require("space");
       const sp = (await space.mine()).find(s => s.id === ctx.space);
       const r = sp ? await (await ctx.require("roles")).of(sp) : null;

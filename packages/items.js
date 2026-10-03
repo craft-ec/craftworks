@@ -539,20 +539,10 @@ export async function start(ctx) {
         ])
       ).flat();
     } else {
-      // A PERSON's posts (Reddit's profile): their profile's, and theirs on every board this reader can read — the
-      // public boards (anyone's), and the boards of the spaces this reader is in (their members').
+      // A PERSON's SPACE: what is in their personal space (their profile, and — yours — your private items). What they
+      // posted in a shared space is that space's, read there: never every board on the network searched for them.
       const by = where.by ?? (await me());
-      const [bs, pub] = await Promise.all([boards().catch(() => []), publicSpaces().catch(() => [])]);
-      const inside = new Set(bs.map(sp => sp.id));
-      const [onBoards, onProfile] = await Promise.all([
-        Promise.all([
-          ...bs.map(sp => boardPosts(sp, { kinds, window }).catch(() => [])),
-          ...pub.filter(d => !inside.has(d.id)).map(d => pointedPosts(kinds, sinceOf(window) ?? 0, { space: d }).catch(() => [])),
-        ]).then(x => x.flat().filter(p => p.by === by)),
-        profilePosts([by], [], kinds, sinceOf(window) ?? 0),
-      ]);
-      const seen = new Set();
-      out = [...onProfile, ...onBoards].filter(p => !seen.has(p.ref) && seen.add(p.ref));
+      out = await profilePosts([by], [], kinds, sinceOf(window) ?? 0);
     }
     return out.filter(p => inWindow(p.at)).sort(sorter(sort, by));
   }

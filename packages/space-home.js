@@ -44,22 +44,9 @@ export async function mount(ctx, el) {
   const keyOf = a => a.route.slice(1);
   const sharedApps = ctx.apps.filter(a => (a.views ?? []).includes("shared"));
 
-  // DISCOVER's Home: like every Home, its apps — those with a public view (what each shows of the public network is
-  // its own: Board's public spaces and posts). What you see there is filtered by your moderation lists (Account).
-  async function drawDiscover() {
-    const pub = ctx.apps.filter(a => (a.views ?? []).includes("public"));
-    root.replaceChildren(
-      h("div", { className: "top" }, h("h2", { textContent: "🧭 Discover" }), h("p", { textContent: "The public network: what public spaces publish. Nobody owns it; your moderation lists (Account → Moderation) filter what you see." })),
-      (() => {
-        const grid = h("div", {});
-        icons.grid(grid, pub.map(a => ({ app: a, href: `#/discover${a.route}` })));
-        return h("section", {}, grid);
-      })(),
-    );
-  }
-
   async function draw() {
-    if (ctx.space === "discover") return drawDiscover();
+    // (#/discover alone: Discover is each app's tab in your personal space — your Home.)
+    if (ctx.space === "discover") return location.replace("#/");
     const sp = ctx.space && (await space.mine()).find(s => s.id === ctx.space && s.kind === "server");
     if (!sp) return root.replaceChildren(h("p", { className: "none", textContent: "You are not in this space (left, or not joined yet)." }));
     // Its roles as known (`roles.of` brought the group current when it opened the space; its acts keep it so): drawn
