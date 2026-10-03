@@ -147,17 +147,25 @@ export async function mount(ctx, el) {
         const m = Math.round((Date.now() - at) / 60000);
         return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
       };
-      const health = k => (!k ? "—" : k.error ? `failed: ${k.error}` : !k.groups ? "no tree yet" : `${k.whole}/${k.groups} whole${k.degraded ? `, ${k.degraded} degraded` : ""}${k.damaged ? `, ${k.damaged} DAMAGED` : ""} · ${k.blocks - k.missing}/${k.blocks} blocks`);
-      const draw = () => Promise.all([storage.describe(), keep.status().catch(() => [])]).then(
-        ([list, kept]) => {
-          const last = new Map();
+      const health = k => (!k ? "—" : k.lost ? `LOST: not on the network, no copy here (${k.error})` : k.error ? `failed: ${k.error}` : !k.groups ? "no tree yet" : `${k.whole}/${k.groups} whole${k.degraded ? `, ${k.degraded} degraded` : ""}${k.damaged ? `, ${k.damaged} DAMAGED` : ""} · ${k.blocks - k.missing}/${k.blocks} blocks`);
+      const row = (t, label) => {
+        const tr = document.createElement("tr");
+        const where = (t.unopened ? `${t.unopened} feed(s) not readable here — log in with your recovery words; ` : "") + (t.flushed ? (t.pending ? `tree + ${t.pending} in the tail` : "tree") : `tail (${t.pending} row${t.pending === 1 ? "" : "s"})`);
+        const k = last.get(t.name);
+        for (const v of [label, String(t.rows), t.sealed ? (t.writes === "table" ? "table key" : t.writes ?? "yes") : "no key here", where, k ? ago(k.at) : "not yet", health(k)]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
+        return tr;
+      };
+      let last = new Map();
+      const draw = () => Promise.all([storage.describe(), keep.status().catch(() => []), storage.describeSpaces().catch(() => [])]).then(
+        ([list, kept, spaces]) => {
+          last = new Map();
           for (const k of kept) if (k.name && (!last.has(k.name) || last.get(k.name).at < k.at)) last.set(k.name, k);
           // FILES: how the coded files stand (each kept on its own; a damaged one named).
           const fk = kept.filter(k => k.file);
           const sum = (f, k) => fk.reduce((n, x) => n + (x[k] ?? 0), 0);
           const bad = fk.filter(x => x.error || x.damaged);
           sto.querySelector(".files-kept").textContent = fk.length
-            ? `Files: ${fk.length} kept — ${sum(fk, "whole")}/${sum(fk, "gens")} generation(s) whole, ${sum(fk, "degraded")} degraded, ${sum(fk, "damaged")} damaged; ${sum(fk, "pieces") - sum(fk, "missing")}/${sum(fk, "pieces")} pieces there.${bad.length ? ` Needing attention: ${bad.map(x => `${x.file.slice(0, 8)}…${x.error ? ` (${x.error})` : ""}`).join(", ")}.` : ""}`
+            ? `Files: ${fk.length} kept — ${sum(fk, "whole")}/${sum(fk, "gens")} generation(s) whole, ${sum(fk, "degraded")} degraded, ${sum(fk, "damaged")} damaged; ${sum(fk, "pieces") - sum(fk, "missing")}/${sum(fk, "pieces")} pieces there.${fk.some(x => x.lost) ? ` LOST (no copy anywhere, not asked again): ${fk.filter(x => x.lost).map(x => `${x.file.slice(0, 8)}…`).join(", ")}.` : ""}${bad.some(x => !x.lost) ? ` Being tried again: ${bad.filter(x => !x.lost).map(x => `${x.file.slice(0, 8)}… (${x.error ?? "damaged"})`).join(", ")}.` : ""}`
             : "Files: none kept yet.";
           sto.querySelector("tbody").replaceChildren(
             ...list.map(t => {
@@ -167,11 +175,13 @@ export async function mount(ctx, el) {
                 for (const v of [t.name, "—", "—", "another app's", "—", "—"]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
                 return tr;
               }
-              const where = (t.unopened ? `${t.unopened} feed(s) not readable here — log in with your recovery words; ` : "") + (t.flushed ? (t.pending ? `tree + ${t.pending} in the tail` : "tree") : `tail (${t.pending} row${t.pending === 1 ? "" : "s"})`);
-              const k = last.get(t.name);
-              for (const v of [t.name, String(t.rows), t.sealed ? (t.writes === "table" ? "table key" : t.writes ?? "yes") : "no key here", where, k ? ago(k.at) : "not yet", health(k)]) tr.append(Object.assign(document.createElement("td"), { textContent: v }));
-              return tr;
+              return row(t, t.name);
             }),
+            // EACH SPACE's tables this node writes: its CATALOG first (what every other member reads to find the rest).
+            ...spaces.flatMap(s => [
+              Object.assign(document.createElement("tr"), { innerHTML: `<th colspan="6"></th>` }),
+              ...s.tables.map(t => row(t, t.catalog ? "catalog" : t.name.replace(/^x[0-9a-f]{12}-/, ""))),
+            ].map((tr, i) => (i === 0 && (tr.querySelector("th").textContent = `${s.space.name ?? s.space.id.slice(0, 8)} (a space)`), tr))),
           );
           const b = blocks.stats();
           sto.querySelector(".blocks").textContent = `This page read ${b.read} tree block${b.read === 1 ? "" : "s"}; ${b.rebuilt} came from their recovery group first (rebuilt and checked).`;
@@ -183,9 +193,10 @@ export async function mount(ctx, el) {
         e.target.disabled = true;
         const said = sto.querySelector(".kept-said");
         said.textContent = "Keeping every table…";
-        const out = await keep.now().catch(err => [{ error: err?.message ?? String(err) }]);
+        const out = await keep.now({ onProgress: p => (said.textContent = `Keeping ${p.done + 1} of ${p.of}: ${p.name}…`) }).catch(err => [{ error: err?.message ?? String(err) }]);
         const bad = out.filter(k => k.error || k.damaged);
-        said.textContent = `${out.length} table(s) kept${bad.length ? `; ${bad.length} need attention` : ""}.`;
+        // What needs attention, named (a table not kept in time, one damaged).
+        said.textContent = `${out.length - bad.length} of ${out.length} kept${bad.length ? `; not kept: ${bad.map(k => k.name ?? (k.file ? `file ${k.file.slice(0, 8)}…` : "?")).join(", ")}` : ""}.`;
         e.target.disabled = false;
         draw();
       };

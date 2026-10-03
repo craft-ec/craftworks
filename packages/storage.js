@@ -1048,6 +1048,25 @@ export async function start(ctx) {
     return out;
   }
 
+  // EACH SPACE's tables this node writes — its catalog there, and every table it lists — read as `describe` reads the
+  // account's (the Storage page; opened, so "Keep all now" keeps them too).
+  async function describeSpaces() {
+    const out = [];
+    for (const sp of (await space.mine()).filter(s => s.kind === "server")) {
+      const scope = scopeOf(sp);
+      const cat = await scope.catalogOf(scope.self).catch(() => null);
+      if (!cat) continue;
+      await cat.answer?.();
+      const tables = [{ name: sp.tables.catalog, sealed: !!cat.sealed, rows: own(cat).length, flushed: true, pending: 0, catalog: true, absent: !!cat.absent }];
+      for (const r of own(cat).filter(x => x.value && placeOf(cat, x.key) !== "none")) {
+        const t = await table(r.key, sp).catch(() => null);
+        if (t) tables.push({ name: r.key, sealed: !!t.sealed, ...t.info });
+      }
+      out.push({ space: { id: sp.id, name: sp.name }, tables });
+    }
+    return out;
+  }
+
   // A LOG: one shared tail under `owner`'s key (an epoch's, for the account's MLS commits). Read if it is there; made
   // by its first write if not.
   function log(name, owner, { known = null, sealWith = null, space = null } = {}) {
@@ -1258,5 +1277,5 @@ export async function start(ctx) {
     return still === 0;
   }
 
-  return { own: ownTables, table, log, publicTail, readOnly, describe, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), upkeepMark, setUpkeepMark, completeOwnCard, settleOwnPlaces };
+  return { own: ownTables, table, log, publicTail, readOnly, describe, describeSpaces, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), upkeepMark, setUpkeepMark, completeOwnCard, settleOwnPlaces };
 }
