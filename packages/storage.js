@@ -188,7 +188,10 @@ export async function start(ctx) {
           // Its PLACE (its writer's catalog), and whether this node notes it (its own catalog only).
           const sp = await space.account();
           const ours = owner === sp?.self || owner === sp?.shared || ownKeys.has(owner);
-          const place = cat ? placeOf(cat, app) : opts.known === false ? "unlisted" : "unknown";
+          // Not in its catalog where the caller cannot rule it out (`known: null`: a directory from before it was
+          // complete): unknown, so read.
+          const listed = cat ? placeOf(cat, app) : opts.known === false ? "unlisted" : "unknown";
+          const place = listed === "unlisted" && opts.known === null ? "unknown" : listed;
           const note = p => (cat && ours ? notePlace(cat, app, p).catch(e => ctx.log("storage", { what: `${app}: noting its place: ${e?.message ?? e}` })) : Promise.resolve());
           // Its first write here makes it at its blinded name, listed so first.
           const made = { ...rest, beforeCreate: cat && ours ? () => notePlace(cat, app, "blinded") : rest.beforeCreate };
@@ -576,8 +579,10 @@ export async function start(ctx) {
   const listedIn = cat => own(cat).filter(r => r.key !== HERE);
   // A table's PLACE as its writer's catalog lists it — the one reader of it: "unlisted"; "none" (listed, never made:
   // the node answered "not there" under both names); "blinded" (at its blinded name); "unknown" (listed from before).
+  // (The directory — the account's catalog of tables from before feeds and of channels — holds plain rows; a node's
+  // catalog holds versions: the same place either way.)
   const placeOf = (cat, n) => {
-    const r = own(cat).find(x => x.key === n);
+    const r = (cat === directoryTail ? cat.rows() : own(cat)).find(x => x.key === n && x.value);
     if (!r) return "unlisted";
     try {
       const v = JSON.parse(r.value);
@@ -587,8 +592,11 @@ export async function start(ctx) {
     }
   };
   // NOTE a table's place in this node's catalog — the one writer of it: "blinded" or "none".
-  const notePlace = (cat, n, p) =>
-    placeOf(cat, n) === p ? Promise.resolve() : versioned(cat, n, JSON.stringify({ at: Date.now(), b: 1, ...(p === "none" ? { n: 1 } : {}) }), own(cat).find(r => r.key === n)?.id);
+  const notePlace = (cat, n, p) => {
+    if (placeOf(cat, n) === p) return Promise.resolve();
+    const v = JSON.stringify({ at: Date.now(), b: 1, ...(p === "none" ? { n: 1 } : {}) });
+    return cat === directoryTail ? cat.put(n, v) : versioned(cat, n, v, own(cat).find(r => r.key === n)?.id);
+  };
   // A write to a feed, as a VERSION replacing `after` (the id of the version current where it is written).
   const versioned = (t, key, value, after) =>
     t.put(key, () => feed.version(bytes(t.owner), t.tailNext(), after ?? "", value === null ? undefined : enc.encode(value)));
@@ -597,17 +605,21 @@ export async function start(ctx) {
   // it was made COMPLETE, with the account), and `node:<key>` for every node that has feeds. A new account's is made at
   // once; an account from before the catalog has none, so its old tables are read as before.
   let directoryOpen = null;
+  let directoryTail = null; // the directory, once open: a catalog of plain rows (a node's catalog: versions)
   function directory() {
     return (directoryOpen ??= (async () => {
       const sp = await space.account();
       const d = await tail(sp.shared, CATALOG, { known: sp.fresh ? false : null, catalogKey: true });
       if (d.absent && sp.fresh) await d.put(CATALOG, JSON.stringify({ at: Date.now(), complete: true }));
+      directoryTail = d;
       return d;
     })());
   }
   // A table from before feeds: listed (true), not listed in a COMPLETE directory (false), or unknown (null: read).
   function legacyListed(d, name) {
-    if (d.rows().some(r => r.key === name)) return true;
+    const place = placeOf(d, name);
+    if (place === "none") return false;
+    if (place !== "unlisted") return true;
     const self = d.rows().find(r => r.key === CATALOG);
     const complete = !!self && (() => { try { return JSON.parse(self.value).complete === true; } catch { return false; } })();
     return complete ? false : null;
@@ -652,8 +664,9 @@ export async function start(ctx) {
         self: sp.self,
         opts: name => ({ catalogKey: ANY_GRANT.has(name) }),
         old: async name => {
-          const o = legacyListed(await directory(), name);
-          return o === false ? null : { owner: sp.shared, known: o };
+          const d = await directory();
+          const o = legacyListed(d, name);
+          return o === false ? null : { owner: sp.shared, known: o, catalog: d };
         },
         writers: () => writers(sp.self),
         // New nodes of the account: listed in its directory.
@@ -746,7 +759,7 @@ export async function start(ctx) {
       let unopened = 0;
       const opts = scope.opts(name);
       const theirs = (owner, known, cat = null) =>
-        tail(owner, name, { ...(cat ? { catalog: cat } : { known }), ...opts, lazy }).catch(e => {
+        tail(owner, name, { known, ...(cat ? { catalog: cat } : {}), ...opts, lazy }).catch(e => {
           unopened += 1;
           ctx.log("feed not read", { what: `${name}: ${owner.slice(0, 12)}…: ${e.message}` });
           return null;
@@ -765,7 +778,7 @@ export async function start(ctx) {
       };
       // The table from before feeds: the oldest writer.
       const old = await scope.old(name);
-      if (old) take(await theirs(old.owner, old.known));
+      if (old) take(await theirs(old.owner, old.known, old.catalog));
       // This node's: listed in its catalog BEFORE it is made (`tail`, by its catalog). The table opens once it is open.
       ownKeys.add(scope.self);
       const me = await tail(scope.self, name, { ...opts, lazy, catalog: mine });
