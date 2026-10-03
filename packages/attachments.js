@@ -168,7 +168,7 @@ export async function start(ctx) {
       (async () => {
         if (media && /^(video|audio)\//.test(file.type)) {
           const studio = await ctx.require("video-studio");
-          const ref = await studio.make(file, { space, public: typeof pub === "function" ? !!pub() : pub, onProgress: e => (pct.textContent = `${e.stage} ${Math.round((e.p || 0) * 100)}%`) });
+          const ref = await studio.make(file, { space, app: from?.app, public: typeof pub === "function" ? !!pub() : pub, onProgress: e => (pct.textContent = `${e.stage} ${Math.round((e.p || 0) * 100)}%`) });
           it.ref = { ...ref, name: file.name };
           pct.textContent = sizeOf(file.size);
           told(it.ref, file);

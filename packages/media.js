@@ -320,16 +320,8 @@ export async function mount(ctx, el) {
         const pub = who.isPublic();
         // MADE READY TO STREAM (renditions, strip, subtitles, a manifest); a browser that cannot encode sends the file as it is.
         const ref = await studio
-          .make(file, { space: inSpace, public: pub, keepOriginal: f.elements.keep.checked, onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`) })
-          .catch(async err => {
-            ctx.log(C.app, { what: `not encoded here (${err.message ?? err}): the file as it is` });
-            const m = C.audio ? {} : await player.meta(file);
-            const up = await files.put(file, { space: inSpace, public: pub, app: C.app, onProgress: p => (progress.textContent = `Uploading ${Math.round((100 * p.done) / Math.max(1, p.size))}%`) });
-            return { ...up, ...(m.poster ? { preview: m.poster } : {}), ...(m.duration ? { duration: m.duration } : {}) };
-          });
-        // Drive lists what was uploaded: the original when it is kept, else the video (its manifest) or the file itself.
-        const kept = ref.type === studio.MANIFEST && f.elements.keep.checked ? (await player.manifest(ref).catch(() => null))?.source : ref;
-        if (kept) await drive.add(kept, { space: inSpace, from: { app: C.app } }).catch(() => {});
+          .make(file, { space: inSpace, public: pub, app: C.app, keepOriginal: f.elements.keep.checked, onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`) });
+        // (Drive shows it through this item: a view, never a second entry.)
         // A COVER chosen here: over the file's own.
         const coverFile = f.elements.cover?.files?.[0];
         if (coverFile) ref.preview = await coverOf(coverFile).catch(() => ref.preview);

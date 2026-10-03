@@ -120,7 +120,21 @@ export async function start(ctx) {
     return `WEBVTT\n\n${text.replace(/\r/g, "").replace(/(\d\d:\d\d:\d\d),(\d\d\d)/g, "$1.$2")}`;
   }
 
-  async function make(file, { space = null, public: pub = false, keepOriginal = false, onProgress = () => {} } = {}) {
+  // MAKE — the one way a video or an audio is uploaded, from any app (Videos, Audio, an editor's 🖼, a comment, a
+  // message): made ready to stream (renditions, strip, cover: a manifest); a browser that cannot encode it, the file
+  // AS IT IS (played by its byte ranges), with its poster and length.
+  async function make(file, opts = {}) {
+    try {
+      return await encode(file, opts);
+    } catch (err) {
+      ctx.log("video-studio", { what: `${file.name}: not encoded here (${err?.message ?? err}): the file as it is` });
+      const isVideo = /^video\//.test(file.type);
+      const m = isVideo ? await (await ctx.require("video-player")).meta(file).catch(() => ({})) : {};
+      const up = await files.put(file, { space: opts.space ?? null, public: !!opts.public, app: opts.app ?? "videos", onProgress: p => opts.onProgress?.({ stage: "uploading", p: p.done / Math.max(1, p.size) }) });
+      return { ...up, name: file.name, ...(m.poster ? { preview: m.poster } : {}), ...(m.duration ? { duration: m.duration } : {}) };
+    }
+  }
+  async function encode(file, { space = null, public: pub = false, keepOriginal = false, onProgress = () => {} } = {}) {
     const M = await mb();
     const say = (stage, p = 0) => onProgress({ stage, p });
     const input = new M.Input({ source: new M.BlobSource(file), formats: M.ALL_FORMATS });
