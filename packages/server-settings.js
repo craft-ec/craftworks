@@ -46,8 +46,8 @@ export async function start(ctx) {
     .cw-set dd { margin: 0; }
     .cw-set ol.log { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: var(--cw-text-sm); }
     .cw-set ol.log time { color: var(--cw-muted); margin-right: var(--cw-space-2); font-size: var(--cw-text-xs); }
-    .cw-set.page { display: grid; grid-template-columns: 200px 1fr; width: auto; height: auto; min-height: 520px; max-width: 1000px; margin: 0 auto;
-      border: 1px solid var(--cw-line); background: var(--cw-surface); }
+    .cw-set.page { display: grid; grid-template-columns: 200px 1fr; width: auto; height: 100%; min-height: 0; background: var(--cw-surface); }
+    .cw-set.page > nav { overflow-y: auto; min-height: 0; }
     @media (max-width: 640px) { .cw-set.page { grid-template-columns: 1fr; } }
     @media (max-width: 640px) { .cw-set[open] { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .cw-set nav { display: flex; overflow-x: auto; } }`;
   document.head.append(style);

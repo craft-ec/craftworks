@@ -69,6 +69,10 @@ export async function start(ctx) {
     return k ? storage.publicTail(name, k.data, opts) : null;
   }
 
+  // A WRITE CREDENTIAL's public table (`circles` writes it, `roles` checks it): named by its token alone — 32 hex,
+  // a table's whole name (a name is at most 32 bytes: `cred-<token>` never fit).
+  const credTable = (owner, token) => publicOf(owner, String(token), { unlisted: true });
+
   async function card(did, { fresh = false } = {}) {
     const t = await publicOf(did, CARD);
     await t?.answer?.();
@@ -222,5 +226,5 @@ export async function start(ctx) {
     return dids.filter((_, i) => ok[i]);
   }
 
-  return { card, publish, renew, handle, shown, name, nameEl, publicOf, dataKey, devices, onDevices, listMe, isListed, listed };
+  return { credTable, card, publish, renew, handle, shown, name, nameEl, publicOf, dataKey, devices, onDevices, listMe, isListed, listed };
 }

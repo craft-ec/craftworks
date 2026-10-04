@@ -11,7 +11,7 @@ export async function start(ctx) {
   const [items, kinds, cards, actions, markdown, attachments, mdEditor] = await Promise.all(["items", "kinds", "cards", "actions", "markdown", "attachments", "md-editor"].map(n => ctx.require(n)));
   const style = document.createElement("style");
   style.textContent = `
-    .cw-page { display: grid; gap: var(--cw-space-3); max-width: 1000px; }
+    .cw-page { display: grid; gap: var(--cw-space-3); }
     .cw-page h1 { font-size: 1.25rem; margin: 0; overflow-wrap: anywhere; }
     .cw-page .line { display: flex; gap: var(--cw-space-3); align-items: center; flex-wrap: wrap; }
     .cw-page .s { color: var(--cw-muted); font-size: var(--cw-text-sm); }

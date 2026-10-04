@@ -17,7 +17,7 @@ export async function mount(ctx, el) {
   const me = (await space.account()).id;
   el.innerHTML = `
     <style>
-      .sh { max-width: 880px; margin: 0 auto; display: grid; gap: var(--cw-space-4); }
+      .sh { display: grid; gap: var(--cw-space-4); }
       .sh button { font: inherit; cursor: pointer; }
       .sh .top { display: flex; align-items: center; gap: var(--cw-space-3); flex-wrap: wrap; }
       .sh .top h2 { margin: 0; font-size: 1.5rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

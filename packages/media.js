@@ -28,7 +28,7 @@ export async function mount(ctx, el) {
   const me = (await space.account()).id;
   el.innerHTML = `
     <style>
-      .vd { max-width: 1200px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
+      .vd { display: grid; gap: var(--cw-space-3); }
       .vd .top { display: flex; align-items: center; gap: var(--cw-space-2); flex-wrap: wrap; }
       .vd .top h2 { margin: 0; font-size: 1.3rem; }
       .vd .up { background: var(--cw-accent); color: var(--cw-accent-fg); border-radius: var(--cw-radius-sm); padding: 6px 12px; text-decoration: none; }

@@ -333,7 +333,7 @@ export async function start(ctx) {
       const c = { v: undefined };
       credChecks.set(k, c);
       directory
-        .publicOf(author, `cred-${token}`, { unlisted: true })
+        .credTable(author, token)
         .then(async t => (t ? (await t.answer(), JSON.parse(t.rows().find(x => x.key === "for")?.value ?? "null")) : null))
         .catch(() => null)
         .then(v => ((c.v = v), checked.forEach(f => f())));

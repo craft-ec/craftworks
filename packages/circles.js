@@ -15,7 +15,7 @@
 //
 // WRITE CREDENTIALS — who may comment or vote where only friends or followers may, provable to ANY reader without the
 // list ever published: per friend or follower, an UNLISTED public table of the owner's account at a random name
-// (`cred-<token>`), its row `for` naming the holder's DID and circle — a signed table write like any other. The token
+// (`directory.credTable`: named by the token), its row `for` naming the holder's DID and circle — a signed table write like any other. The token
 // reaches the holder through their inbox; a comment or vote cites it; a reader reads that table and checks it names
 // the writer. Never listed (card, catalog): not found by anyone not told it. A friend no longer: the table cleared.
 export async function start(ctx) {
@@ -61,7 +61,7 @@ export async function start(ctx) {
   }
 
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
-  const credTable = (owner, token) => ctx.require("directory").then(d => d.publicOf(owner, `cred-${token}`, { unlisted: true }));
+  const credTable = (owner, token) => ctx.require("directory").then(d => d.credTable(owner, token));
   // ISSUED: each of the relation's people holds one; anyone no longer one, theirs cleared.
   async function issue(people, me, which, want) {
     const rel = `cred-${which}`;

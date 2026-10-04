@@ -16,7 +16,7 @@ export async function mount(ctx, el) {
   if (at.space) return spacePeople(ctx, el, at.space);
   el.innerHTML = `
     <style>
-      .ct { max-width: 640px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
+      .ct { display: grid; gap: var(--cw-space-3); }
       .ct form { display: flex; gap: var(--cw-space-2); padding: 0 var(--cw-space-3); }
       .ct form input { flex: 1; min-width: 0; padding: 8px var(--cw-space-3); border-radius: var(--cw-radius); }
       .ct form button { font: inherit; border: 0; border-radius: var(--cw-radius); padding: 0 var(--cw-space-4); background: var(--cw-accent); color: var(--cw-accent-fg); cursor: pointer; }
@@ -61,7 +61,7 @@ async function spacePeople(ctx, el, sp) {
   const [r, me] = await Promise.all([roles.of(sp), space.account()]);
   el.innerHTML = `
     <style>
-      .ct { max-width: 760px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
+      .ct { display: grid; gap: var(--cw-space-3); }
       .ct .top { display: flex; gap: var(--cw-space-3); align-items: center; flex-wrap: wrap; }
       .ct .top h2 { margin: 0; font-size: 1.3rem; }
       .ct .top button { font: inherit; border: 0; border-radius: var(--cw-radius); padding: 6px var(--cw-space-4); background: var(--cw-accent); color: var(--cw-accent-fg); cursor: pointer; }
@@ -83,7 +83,7 @@ async function people(ctx, el, { directory, person }) {
   const [moderation, posts, theme] = await Promise.all(["moderation", "items", "theme"].map(n => ctx.require(n)));
   el.innerHTML = `
     <style>
-      .ppl { max-width: 880px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
+      .ppl { display: grid; gap: var(--cw-space-3); }
       .ppl h2 { margin: 0; font-size: 1.4rem; }
       .ppl .note { margin: 0; color: var(--cw-muted); font-size: var(--cw-text-sm); }
       .ppl .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--cw-space-3); }
