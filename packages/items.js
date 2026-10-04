@@ -582,7 +582,7 @@ export async function start(ctx) {
     }
     // A SPACE's AUDIENCE narrower than its members (a role's holders, the admins, the owner): an item of that
     // audience's GROUP (`conversation.audience`: sealed to them alone), whatever its kind.
-    if (board && (String(audience).startsWith("role:") || audience === "admins" || audience === "owner")) {
+    if (board && (String(audience).startsWith("role:") || String(audience).startsWith("list:") || audience === "admins" || audience === "owner")) {
       const parent = await boardOf(board);
       if (!parent) throw new Error("you are not in that board's space");
       board = (await (await ctx.require("conversation")).audience(parent, audience)).id;

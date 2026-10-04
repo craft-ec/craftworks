@@ -145,7 +145,12 @@ export async function mount(ctx, el) {
 
   const list = () => chs?.list() ?? [];
   // A rule's `who` in words (a role by its name).
-  const whoName = w => (w?.startsWith("role:") ? `the ${rs?.roles?.().find(x => `role:${x.id}` === w)?.name ?? "role"}'s holders` : { admins: "the admins", owner: "the owner" }[w] ?? w);
+  const whoName = w =>
+    w?.startsWith("role:")
+      ? `the ${rs?.roles?.().find(x => `role:${x.id}` === w)?.name ?? "role"}'s holders`
+      : w?.startsWith("list:")
+        ? (rs?.lists?.()[w.slice(5)]?.people ?? []).map(d => directory.shown(d)).join(", ") || "chosen people"
+        : ({ admins: "the admins", owner: "the owner" }[w] ?? w);
 
   function drawChannels() {
     if (!chs) return;

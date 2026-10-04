@@ -135,7 +135,7 @@ export async function start(ctx) {
           sel.onchange = () => channels.setPost(c, sel.value || null).then(draw, e => say(e.message));
           // WHO MAY READ it: its space's members, or fewer (a role, the admins, the owner) — then it is sealed to them
           // alone (its own group, kept in step).
-          const readSel = h("select", { ariaLabel: `Who may read ${c.name}` }, h("option", { value: "", textContent: "Read: the space's members" }), ...["admins", "owner", ...(r.roles?.() ?? []).map(ro => `role:${ro.id}`)].map(w => h("option", { value: w, textContent: `Read: ${w.startsWith("role:") ? `Role: ${(r.roles?.() ?? []).find(ro => `role:${ro.id}` === w)?.name}` : NAMES[w]}` })));
+          const readSel = h("select", { ariaLabel: `Who may read ${c.name}` }, h("option", { value: "", textContent: "Read: the space's members" }), ...["admins", "owner", ...(r.roles?.() ?? []).map(ro => `role:${ro.id}`), ...Object.keys(r.lists?.() ?? {}).map(id => `list:${id}`)].map(w => h("option", { value: w, textContent: `Read: ${w.startsWith("role:") ? `Role: ${(r.roles?.() ?? []).find(ro => `role:${ro.id}` === w)?.name}` : w.startsWith("list:") ? `${(r.lists?.()[w.slice(5)]?.people ?? []).length} chosen people` : NAMES[w]}` })));
           readSel.value = c.item?.meta?.read ?? "";
           readSel.onchange = () => channels.setRead(c, readSel.value || null).then(draw, e => say(e.message));
           row.append(sel, readSel);

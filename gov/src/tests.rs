@@ -286,3 +286,25 @@ fn an_app_is_any_route_name_and_nothing_else() {
     }
     assert!(!g.apps.contains_key("Not An App!"), "a malformed name is refused");
 }
+
+/// A LIST of named people: a member makes it; `list:<id>` passes its people and its maker, nobody else — not even an
+/// admin (the control: a role audience passes admins); and only its maker changes it.
+#[test]
+fn a_list_passes_its_people_and_maker_only() {
+    let mk = |people: &[&str]| json!({"act":"list","list":"l1","people":people});
+    let g = gov(&[
+        act("1", "no", 1, json!({"act":"added","did":A})),
+        act("2", "no", 2, json!({"act":"added","did":M})),
+        act("3", "no", 3, json!({"act":"added","did":X})),
+        act("4", "no", 4, json!({"act":"grant","did":A,"role":"admin"})),
+        act("5", "nm", 5, mk(&[X])),
+        // Another member changing M's list: refused.
+        act("6", "na", 6, mk(&[A])),
+    ]);
+    let role = |d: &str| g.role(d, true);
+    assert!(g.passes_did("list:l1", X, role(X).as_deref()), "listed");
+    assert!(g.passes_did("list:l1", M, role(M).as_deref()), "its maker");
+    assert!(!g.passes_did("list:l1", A, role(A).as_deref()), "an admin not listed does not pass a list");
+    assert!(g.passes_did("admins", A, role(A).as_deref()), "control: the admin passes an admins audience");
+    assert_eq!(g.lists["l1"].0, M, "the list is still its maker's");
+}

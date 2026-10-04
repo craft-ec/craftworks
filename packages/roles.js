@@ -213,6 +213,14 @@ export async function start(ctx) {
       acts: kind => (kind ? counted.filter(a => a.act === kind) : [...counted]),
       invites: () => JSON.parse(gv.invites(Date.now())),
       apps: () => gv.apps(),
+      // LISTS of named people (`{ id: { by, people } }`): audiences by name (`list:<id>`), any member's to make.
+      lists: () => {
+        try {
+          return JSON.parse(gv.lists());
+        } catch {
+          return {};
+        }
+      },
       config: (app, key, dflt = null) => {
         const c = gv.config(app, key);
         return (c === undefined ? null : JSON.parse(c)) ?? dflt;
@@ -267,7 +275,9 @@ export async function start(ctx) {
         const need = { role: "roles", assign: "roles", grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", policy: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite", member: "invite" }[a.act];
         // Leaving is any member's own act (the owner hands the space on first).
         const leaving = a.act === "leave" && role(me.id) && role(me.id) !== "owner";
-        if (!leaving && (!need || !can(me.id, need))) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
+        // A list of named people: any member's own (only its maker changes it — the acts' check).
+        const listing = a.act === "list" && !!role(me.id);
+        if (!leaving && !listing && (!need || !can(me.id, need))) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
         // A public space's acts are public (readers outside must know them); a private one's sealed.
         const toPublic = isPublic() || (a.act === "policy" && (a.action === "read" || a.action === "join") && a.who === "anyone");
         // Its time: now — or when it happened (upkeep let someone in while no page ran: the act says when).

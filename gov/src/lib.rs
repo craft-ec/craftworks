@@ -42,7 +42,11 @@ pub fn role_of(who: &str) -> Option<&str> {
 }
 /// A valid `who`: one of the built-in ones, or a composed role.
 pub fn valid_who(who: &str) -> bool {
-    WHO.contains(&who) || role_of(who).is_some()
+    WHO.contains(&who) || role_of(who).is_some() || list_of(who).is_some()
+}
+/// A LIST of named people (`list:<id>`): an audience by name, not by role — any member makes one.
+pub fn list_of(who: &str) -> Option<&str> {
+    who.strip_prefix("list:").filter(|id| !id.is_empty() && id.len() <= 40)
 }
 
 /// A COMPOSED role: its name and what it may.
@@ -116,6 +120,8 @@ pub struct Gov {
     /// Composed roles (id → role), and who holds which (DID → role ids).
     pub defined: BTreeMap<String, Role>,
     pub held: HashMap<String, BTreeSet<String>>,
+    /// Lists of named people (id → (who made it, its people)): `list:<id>` passes them and its maker.
+    pub lists: BTreeMap<String, (String, BTreeSet<String>)>,
     /// The acts that counted, in order: each with `id` and `by` set.
     pub counted: Vec<Value>,
     /// Node → DID learned from `remove` acts (their nodes' rows stay theirs).
@@ -200,6 +206,9 @@ impl Gov {
     /// Does a person pass a policy's `who`: a built-in one by their base role; a composed role by holding it (the owner
     /// and admins always).
     pub fn passes_did(&self, who: &str, did: &str, role: Option<&str>) -> bool {
+        if let Some(id) = list_of(who) {
+            return role.is_some() && self.lists.get(id).is_some_and(|(by, people)| by == did || people.contains(did));
+        }
         match role_of(who) {
             Some(id) => rank(role) >= 2 || (role.is_some() && self.held.get(did).is_some_and(|hs| hs.contains(id))),
             None => passes(who, role),
@@ -321,6 +330,14 @@ impl Gov {
                                     ps.iter().all(|p| p.as_str().is_some_and(|p| PERMS.contains(&p) && g.may(&by, r, p)))
                                 }))
                 }
+                // A LIST of named people: any member makes one (1 to 50 DIDs); only its maker changes it.
+                "list" => {
+                    r.is_some()
+                        && some_s(&a, "list").is_some_and(|x| js_len(x) <= 40 && g.lists.get(x).is_none_or(|(b, _)| *b == by))
+                        && a.get("people").and_then(Value::as_array).is_some_and(|ps| {
+                            (1..=50).contains(&ps.len()) && ps.iter().all(|p| p.as_str().is_some_and(|d| d.starts_with("did:") && js_len(d) <= 80))
+                        })
+                }
                 // A role GIVEN or taken back: by one who may (`roles`) and holds all it carries; never the owner's.
                 "assign" => {
                     let rid = some_s(&a, "role");
@@ -394,6 +411,10 @@ impl Gov {
                         let perms = a["perms"].as_array().unwrap().iter().filter_map(Value::as_str).map(str::to_string).collect();
                         g.defined.insert(id, Role { name: s(&a, "name").unwrap().to_string(), perms });
                     }
+                }
+                "list" => {
+                    let people = a["people"].as_array().unwrap().iter().filter_map(Value::as_str).map(str::to_string).collect();
+                    g.lists.insert(s(&a, "list").unwrap().to_string(), (by.clone(), people));
                 }
                 "assign" => {
                     let (d, rid) = (did.unwrap().to_string(), s(&a, "role").unwrap().to_string());

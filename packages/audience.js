@@ -22,10 +22,17 @@ export async function start(ctx) {
     // The choices here: yours, or what the space's policy allows for this kind.
     // A space's: everyone (where it may), its members — or fewer: a role's holders, the admins, the owner (sealed to
     // them alone: its audience's group).
+    const r = sp ? await (await ctx.require("roles")).of(sp).catch(() => null) : null;
+    const me = (await space.account())?.id;
+    const directory = await ctx.require("directory");
+    const listName = l => l.people.map(d => directory.shown(d)).join(", ");
+    // A space's: its roles, admins — and NAMED PEOPLE: this person's lists, or a new one chosen from its members.
     const fewer = sp
       ? [
-          ...((await (await ctx.require("roles")).of(sp).then(r => r.roles(), () => [])).map(ro => [`role:${ro.id}`, `🔐 ${ro.name} only`])),
+          ...(r?.roles() ?? []).map(ro => [`role:${ro.id}`, `🔐 ${ro.name} only`]),
           ["admins", "🔐 Admins only"],
+          ...Object.entries(r?.lists?.() ?? {}).filter(([, l]) => l.by === me).map(([id, l]) => [`list:${id}`, `🔐 ${listName(l).slice(0, 60)}`]),
+          ["list:new", "🔐 Chosen people…"],
         ]
       : [];
     const choices = sp
@@ -37,6 +44,18 @@ export async function start(ctx) {
         ]
       : [["public", "🌐 Everyone (public)"], ["followers", "👣 Your followers"], ["friends", "🤝 Your friends"], ["private", "🔒 Only you"]];
     const sel = h("select", { className: "field", name: "audience" }, ...choices.map(([value, textContent]) => h("option", { value, textContent })));
+    // CHOSEN PEOPLE: the space's members ticked; a list made of them (`list` act) and chosen.
+    let was = initial ?? sel.value;
+    sel.onchange = async () => {
+      if (sel.value !== "list:new") return void (was = sel.value);
+      const picked = await choosePeople(sp, r, me);
+      if (!picked?.length) return void (sel.value = was);
+      const id = [...crypto.getRandomValues(new Uint8Array(6))].map(x => x.toString(16).padStart(2, "0")).join("");
+      await r.act({ act: "list", list: id, people: picked });
+      const o = h("option", { value: `list:${id}`, textContent: `🔐 ${picked.map(d => directory.shown(d)).join(", ").slice(0, 60)}` });
+      sel.querySelector('option[value="list:new"]').before(o);
+      sel.value = was = `list:${id}`;
+    };
     // Its starting choice is the select's DEFAULT: a form reset (a composer closing) returns to it, never to the first.
     for (const o of sel.options) o.defaultSelected = o.value === initial;
     if (initial && choices.some(([v]) => v === initial)) sel.value = initial;
@@ -55,6 +74,24 @@ export async function start(ctx) {
       // The write rule ({ comment, vote }), or null where it is the space's own (nothing to set on the item).
       write: () => (wsel.value === "anyone" || wsel.value === "members" ? null : { comment: wsel.value, vote: wsel.value }),
     };
+  }
+  // PICK PEOPLE among a space's members (not this person): a small dialog, ticks; the DIDs chosen, or null.
+  function choosePeople(sp, r, me) {
+    return new Promise(resolve => {
+      const d = h("dialog", { className: "cw-pick" });
+      const list = h("div", { style: "display:grid;gap:4px;max-height:50vh;overflow:auto" });
+      const directory = ctx.require("directory");
+      directory.then(dir => list.append(...r.members().filter(m => m.did !== me).map(m => h("label", { style: "display:flex;gap:8px;align-items:center" }, h("input", { type: "checkbox", value: m.did }), dir.nameEl(m.did)))));
+      const ok = h("button", { type: "button", textContent: "Share with these" });
+      const no = h("button", { type: "button", textContent: "Cancel" });
+      let out = null;
+      ok.onclick = () => ((out = [...list.querySelectorAll("input:checked")].map(i => i.value)), d.close());
+      no.onclick = () => d.close();
+      d.append(h("h3", { textContent: `Who in ${space.shown(sp)}` }), list, h("div", { style: "display:flex;gap:8px;justify-content:flex-end;margin-top:8px" }, no, ok));
+      d.onclose = () => (d.remove(), resolve(out?.length ? out : null));
+      document.body.append(d);
+      d.showModal();
+    });
   }
   return { picker };
 }

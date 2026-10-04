@@ -2346,6 +2346,13 @@ mod js {
             )
             .to_string()
         }
+        /// The LISTS of named people (JSON `{ id: { by, people } }`): audiences by name.
+        pub fn lists(&self) -> String {
+            serde_json::Value::Object(
+                self.0.lists.iter().map(|(id, (by, people))| (id.clone(), serde_json::json!({ "by": by, "people": people }))).collect(),
+            )
+            .to_string()
+        }
         /// The apps the space uses: every one its acts turned on (and not off since), by name.
         pub fn apps(&self) -> Vec<String> {
             let mut on: Vec<String> = self.0.apps.iter().filter(|(_, v)| **v).map(|(k, _)| k.clone()).collect();
