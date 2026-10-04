@@ -675,7 +675,9 @@ impl Core {
                     return json!({ "kind": "got", "id": hex(&id), "block": hex(&id) });
                 }
                 self.got.insert(id, state);
-                json!({ "kind": "got", "id": hex(&id) })
+                // Named as a block answer too: a block whose race was already won (rebuilt from its group first) still
+                // releases the request that waits on it.
+                json!({ "kind": "got", "id": hex(&id), "block": hex(&id) })
             }
             Incoming::HeadChanged {
                 key,

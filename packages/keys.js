@@ -53,6 +53,7 @@ export async function start(ctx) {
   // Keep the state and the epoch's secret (the delegate); make this epoch's log (its first row: the group info), so
   // every node reading it finds it; a new group's first epoch is pointed to from the channel.
   async function keep(channel, { made = false } = {}) {
+    readyShared = null; // the group moved here: the next read checks it again
     const st = mls.status();
     const r = await auth.identity.mlsSave(st.state, st.epoch, st.secret);
     if (!r.mlsSaved) throw new Error(`the identity would not keep the account's keys: ${r.refused ?? JSON.stringify(r)}`);
@@ -268,8 +269,13 @@ export async function start(ctx) {
     })));
 
   // Loaded (after a PIN login) and brought current.
-  async function ready() {
-    return (busy = busy.then(async () => {
+  // READY, SHARED as a space's group's is: one check, every read waiting on it, until the group moves (its current
+  // epoch's log changes, or this page changes it: `keep`).
+  let readyShared = null;
+  let readyLog = null;
+  function ready() {
+    if (readyShared) return readyShared;
+    const p = (busy = busy.then(async () => {
       const s = await auth.check();
       if (!s) return null;
       if (!status) {
@@ -283,11 +289,15 @@ export async function start(ctx) {
       if (applied) await keep(channel);
       else {
         const st = mls.status();
-        await ensureLog(st, false);
+        const log = await ensureLog(st, false);
+        if (log && readyLog !== log) (readyLog = log), log.onChange?.(() => readyLog === log && (readyShared = null));
         status ??= (({ epoch, me, members, removed }) => ({ epoch, me, members, removed }))(st);
       }
       return status;
     }));
+    readyShared = p;
+    p.catch(() => readyShared === p && (readyShared = null));
+    return p;
   }
 
   // REMOVED: the group says this node is out of the account. It FORGETS its member at once — key, PIN, grants, the
@@ -456,7 +466,14 @@ export async function start(ctx) {
         status(m.status());
       },
     });
-    const status = s => (st = { epoch: s.epoch, me: s.me, members: s.members, removed: s.removed });
+    // The shared check (`ready`), and the epoch log it follows; any change of the group's state ends the shared one.
+    let shared = null;
+    let followed = null;
+    const status = s => {
+      const changed = !st || st.epoch !== s.epoch || st.removed !== s.removed || st.members?.length !== s.members?.length;
+      if (changed) shared = null;
+      return (st = { epoch: s.epoch, me: s.me, members: s.members, removed: s.removed });
+    };
     // SAVE: this epoch's secret on this device, the state for the account's devices, the epoch's log.
     async function save(made, prev = null) {
       const s = m.status();
@@ -620,12 +637,17 @@ export async function start(ctx) {
         })),
       // Loaded and brought current; null where this account is not in the space's group. `fresh`: its log read again
       // from the network first (before a write: sealed with the newest epoch, never one a removed member holds).
-      ready: ({ fresh = false } = {}) =>
-        (queue = queue.catch(() => {}).then(async () => {
+      // READY, SHARED: a read takes the group as it stands — one check per space, every table of it waiting on the
+      // same — until the group changes (its state saved again, or its current epoch's log moving: someone committed).
+      // A write asks `fresh` (read again from the network: sealed with the newest epoch).
+      ready: ({ fresh = false } = {}) => {
+        if (!fresh && shared) return shared;
+        const p = (queue = queue.catch(() => {}).then(async () => {
           if (!m && !(await load())) return null;
           const s = await current(fresh);
           if (!s) return null;
-          await logs.ensure(m.status(), false);
+          const log = await logs.ensure(m.status(), false);
+          if (log && followed !== log) (followed = log), log.onChange?.(() => followed === log && (shared = null));
           announce().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `announcing its branch: ${e.message}` }));
           // A change of this node's lost a race: made again, where it still applies — a removal of whoever is still a
           // member, a refresh. (An admission is made again by upkeep itself: whoever asked and is not in yet.)
@@ -641,7 +663,12 @@ export async function start(ctx) {
             });
           }
           return s;
-        })),
+        }));
+        shared = p;
+        // Finished: current (every change of the group runs in this same queue) — what reads share from now on.
+        p.then(() => shared === null && (shared = p), () => shared === p && (shared = null));
+        return p;
+      },
       lost: async () => JSON.parse((await spacekeys()).rows().find(r => r.key === `${at}~lost`)?.value ?? "[]"),
       fingerprint: e => (queue = queue.catch(() => {}).then(() => fingerprint(e))),
     };

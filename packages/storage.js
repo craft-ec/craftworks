@@ -173,6 +173,7 @@ export async function start(ctx) {
   // it, `notePlace` writes it, both only here): not listed or never made — not looked for, made at its blinded name by
   // its first write; anything else — read at its blinded name, the one place. "Never made" only when the node ANSWERED.
   const opening = new Map(); // `${owner}|${app}` → Promise<the tail>
+  const opensLog = [];
   // A table FOUND BY ITS NAME (never blinded): catalogs, members, channels, epoch logs, public tails.
   const byNameTable = (app, opts) => !!(opts.public || opts.sealWith || opts.catalogKey || CHANNELS.has(app) || ANY_GRANT.has(app) || (opts.space?.tables && Object.values(opts.space.tables).includes(app)));
   function tail(owner, app, opts = {}) {
@@ -267,6 +268,10 @@ export async function start(ctx) {
     };
     let answered = false; // the last read had the node's answer (the tail, or "not found"), not silence
     let answer = null; // the first read, to its end: what a decision waits for
+    // Each open's PHASES (ms from its start): what a page's measure reads (`opens()`).
+    const ph = { app, t0: performance.now() };
+    const mark = k => (ph[k] = Math.round(performance.now() - ph.t0));
+    opensLog.push(ph);
     const ready = (async () => {
       // THE TABLE'S KEY: the table is sealed, so reading it needs its key, and the key comes only with the person's
       // grant for this site (asked NOW: the node prompts the first time). No grant: nothing of the table reads here.
@@ -274,6 +279,7 @@ export async function start(ctx) {
       // A PUBLIC tail (a person's card): in the clear, no key.
       if (open) core.tail_public(id);
       const k = open ? {} : sealWith ? { key: sealWith } : await access.key(app, { catalog: catalogKey, space: spaceId });
+      mark("key");
       t.sealed = !!k.key;
       if (k.key) core.tail_seal(id, bytes(k.key));
       else if (!open) ctx.log("table sealed", { what: `${app}: no key here (${k.why}): nothing of it reads` });
@@ -284,7 +290,9 @@ export async function start(ctx) {
         const keys = await ctx.require("keys");
         if (inSpace?.id) await keys.group(inSpace).ready().catch(() => null);
         else if (!catalogKey) await keys.ready().catch(() => null);
+        mark("group");
         const e = await access.keyAt(app, -1, { catalog: catalogKey, space: spaceId });
+        mark("epoch");
         if (e.key) core.tail_epoch_key(id, e.epoch, bytes(e.key), true);
         else ctx.log("table sealed", { what: `${app}: no epoch here (${e.why}): written with the table's key` });
         // Kept: when a newer epoch arrives (the group moved: a node removed, one added), writes move onto it.
@@ -292,6 +300,7 @@ export async function start(ctx) {
         // A space's LOST BRANCH (`keys`' heal: this node's commits another beat): its epochs' keys read with, as
         // alternates — what was written there stays readable, and is sealed over to the winner's.
         if (inSpace?.id) await alternates(id, app, inSpace).catch(() => {});
+        mark("alternates");
       }
       if (known === false) {
         core.tail_absent(id);
@@ -301,7 +310,7 @@ export async function start(ctx) {
         // SHOWN within WAIT.hint, DECIDED on the answer — the one rule of every read: what is held is shown after at
         // most WAIT.hint (no answer yet: shown as not there), and the table changes when the node answers; whatever
         // decides from it (a write, a place noted, a catalog read) waits for the answer (`t.answer()`).
-        answer = read();
+        answer = read().finally(() => mark("read"));
         const shown = await Promise.race([answer.then(() => true), new Promise(r => setTimeout(r, WAIT.hint, false))]);
         if (!shown) {
           t.absent = true;
@@ -1178,5 +1187,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { own: ownTables, table, log, publicTail, readOnly, describe, describeSpaces, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), upkeepMark, setUpkeepMark };
+  return { own: ownTables, table, log, publicTail, readOnly, describe, describeSpaces, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }

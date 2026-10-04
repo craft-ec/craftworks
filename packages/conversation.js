@@ -424,8 +424,8 @@ export async function start(ctx) {
         server.id,
         (async () => {
           const [roles, items] = await Promise.all(["roles", "items"].map(n => ctx.require(n)));
+          // Its acts and its channel items read AT ONCE: who may make channels is checked as the list is drawn.
           const r = await roles.of(server);
-          await r.settled;
           const changed = [];
           const fire = () => changed.forEach(f => f());
           let its = [];
@@ -448,7 +448,7 @@ export async function start(ctx) {
             return [...out.values()].sort((a, b) => a.name.localeCompare(b.name));
           };
           let done = false;
-          const settled = first.finally(() => (done = true));
+          const settled = Promise.all([first, r.settled]).finally(() => (done = true));
           const me = async () => (await space.account()).id;
           const mayMake = async () => {
             if (!r.can(await me(), "channels")) throw new Error("only who may make channels here changes them");

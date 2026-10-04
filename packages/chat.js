@@ -107,7 +107,9 @@ export async function mount(ctx, el) {
     people.replaceChildren(theme.loading("Loading members…", 2));
     roomEl.replaceChildren(theme.loading(`Opening ${s.name}…`));
     try {
-      await keys.group(s).ready();
+      // At once: its roles, moderation and channels (each opens what it reads; the keys come with the tables).
+      const chsP = conversation.channels(s);
+      chsP.catch(() => {});
       [rs, mod] = await Promise.all([roles.of(s), moderation.of(s)]);
       if (server !== s) return;
       menu();
@@ -123,7 +125,7 @@ export async function mount(ctx, el) {
         drawChannels();
         drawMembers(s);
       });
-      const c = (chs = await conversation.channels(s));
+      const c = (chs = await chsP);
       c.onChange(() => server === s && drawChannels());
       c.settled.finally(() => {
         if (server !== s) return;
