@@ -99,6 +99,12 @@ export async function start(ctx) {
       get(b, what).then(a => {
         open--;
         if (done) return;
+        // REFUSED: the node sent bytes that are not this block (the core says why) — a miss, never a win: its group
+        // may still rebuild it.
+        if (a.kind === "tail-unreadable") {
+          ctx.log("block refused", { what: `${what}: block ${b} (node: ${base58(b)}) — ${a.said}` });
+          return settle();
+        }
         if (a.kind !== "get-failed") {
           done = true;
           rec.end = "direct";
@@ -114,7 +120,7 @@ export async function start(ctx) {
       for (const g of group)
         get(g, what).then(a => {
           open--;
-          if (a?.kind !== "get-failed") answered += 1;
+          if (a?.kind !== "get-failed" && a?.kind !== "tail-unreadable") answered += 1;
           settle();
         });
     });

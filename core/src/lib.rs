@@ -681,7 +681,7 @@ impl Core {
                     for (tail, cid) in wanters {
                         if let Some(o) = self.tails.get_mut(&tail) {
                             if !o.absorb_block(&cid, &state) {
-                                let mut v = json!({ "kind": "tail-unreadable", "id": hex(&tail), "said": format!("block {} is not what was asked", hex(&cid)) });
+                                let mut v = json!({ "kind": "tail-unreadable", "id": hex(&tail), "said": format!("block {} is not what was asked: sealed tree {}, its header {:?}, this table writes with {:?}, {} bytes", hex(&cid), o.sealed_tree(), data::KeyRef::of(&state).map(|(k, _)| k), o.writes, state.len()) });
                                 v["block"] = json!(hex(&id));
                                 return v;
                             }
