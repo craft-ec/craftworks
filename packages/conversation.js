@@ -640,16 +640,45 @@ export async function start(ctx) {
     await keepReaders(sp).catch(e => ctx.log("audiences", { what: `${space.shown(sp)}: ${e.message}` }));
     return g;
   }
+  // AN AUDIENCE KEPT IN STEP — by its maker, and by the space's admins in it too: its maker makes them the group's admins
+  // (so they may add and remove), and an admin acts on a change still due TEN MINUTES after their page first saw it
+  // (the maker online does it within a tick; two pages committing the same change at once would fork the group).
+  const dueSince = new Map(); // `${group}|${did}|in|out` → when first seen due here
+  const GRACE = 10 * 60 * 1000;
   async function keepReaders(sp) {
     const me = (await space.account())?.id;
     const [groups, roles] = await Promise.all(["groups", "roles"].map(n => ctx.require(n)));
     const r = await roles.of(sp);
     await r.settled;
     const prefix = `audience:${sp.id}/`;
+    const adminsOf = d => ["owner", "admin"].includes(r.role(d));
     for (const g of await space.mine()) {
-      if (!g.group?.startsWith(prefix) || g.governance?.owner !== me) continue;
+      if (!g.group?.startsWith(prefix)) continue;
       const who = g.group.slice(prefix.length);
-      await groups.keep(g, new Set(r.members().map(x => x.did).filter(d => !r.banned(d) && r.passes(who, d))));
+      const want = new Set(r.members().map(x => x.did).filter(d => !r.banned(d) && r.passes(who, d)));
+      const gr = await roles.of(g).catch(() => null);
+      if (!gr) continue;
+      await gr.settled;
+      const maker = g.governance?.owner === me;
+      if (maker) {
+        await groups.keep(g, want);
+        // The space's admins in it (as it stands now): the group's admins too — they keep it when its maker is away.
+        await gr.refresh?.();
+        for (const m of gr.members())
+          if (m.did !== me && adminsOf(m.did) && gr.role(m.did) === "member")
+            await gr.grant(m.did, "admin").catch(e => ctx.log("audiences", { what: `${g.name ?? "an audience"}: making ${short(m.did)} its admin: ${e.message}` }));
+        continue;
+      }
+      if (gr.role(me) !== "admin" || !gr.can(me, "invite") || !gr.can(me, "remove")) continue;
+      // Not its maker: only what is still due after the grace (the maker had their chance).
+      const have = new Set(gr.members().map(m => m.did));
+      const due = [...want].filter(d => !have.has(d)).map(d => `${g.id}|${d}|in`).concat([...have].filter(d => !want.has(d) && d !== g.governance?.owner && d !== me).map(d => `${g.id}|${d}|out`));
+      const now = Date.now();
+      for (const k of due) if (!dueSince.has(k)) dueSince.set(k, now);
+      for (const k of [...dueSince.keys()]) if (k.startsWith(`${g.id}|`) && !due.includes(k)) dueSince.delete(k);
+      if (!due.some(k => now - dueSince.get(k) >= GRACE)) continue;
+      ctx.log("audiences", { what: `${space.shown(sp)}: its maker away — keeping ${g.name ?? "an audience"} in step` });
+      await groups.keep(g, want);
     }
   }
   function channels(server) {
