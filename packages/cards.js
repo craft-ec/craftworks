@@ -3,9 +3,11 @@
 // ACTIONS are given (`actions`: elements beside it), never part of the look; its link is the one page (`items.pageOf`).
 //
 //   const cards = await ctx.require("cards");
-//   cards.card(item, { href, actions, by, corner, below, open })   // its card, by its kind's domain — `actions`: its
-//         // tools; `corner`: one element in its corner (a pin); `below`: under it (labels); `by`: false hides who made
-//         // it; `open`: what a click does where it is not a link (`href` null: a note edited in place)
+//   cards.card(item, { href, actions, by, corner, below, open, lead, body })   // its card, by its kind (else its
+//         // domain) — `actions`: its tools; `corner`: one element in its corner (a pin); `below`: under it (labels);
+//         // `by`: false hides who made it; `open`: what a click does where it is not a link (`href` null: a note edited
+//         // in place); `lead`: beside it, first (a post's votes); `body`: its content whole (its own page), instead of
+//         // the list's preview
 //   cards.embed(ref)          // ANY item embedded in text (`![title](item:REF)`: a post, a note, a file, a video…) —
 //                             // read with its own access; a video or an audio plays where it is, the rest is its card
 //   cards.ago(at)   cards.clock(seconds)      // "3 hours ago", "1:02:03" — one wording everywhere
@@ -58,7 +60,33 @@ export async function start(ctx) {
       border-radius: var(--cw-radius-sm); box-shadow: var(--cw-shadow-lg); padding: 4px; }
     .cw-file .menu button, .cw-file .menu a { border: 0; background: none; text-align: left; padding: 6px 10px; font: inherit; color: inherit; text-decoration: none; cursor: pointer; }
     .cw-file .menu button:hover, .cw-file .menu a:hover { background: var(--cw-hover); }`;
+  style.textContent += `
+    .cw-post { display: grid; grid-template-columns: 40px minmax(0, 1fr); background: var(--cw-surface); border: 1px solid var(--cw-line);
+      border-radius: var(--cw-radius); overflow: hidden; color: inherit; text-decoration: none; }
+    .cw-post.nolead { grid-template-columns: minmax(0, 1fr); }
+    .cw-post.link:hover { border-color: var(--cw-muted); cursor: pointer; }
+    .cw-post > .cw-votes { background: var(--cw-bg); padding: var(--cw-space-2) 0; justify-content: flex-start; }
+    .cw-post .in { padding: var(--cw-space-2) var(--cw-space-3); display: grid; gap: 4px; min-width: 0; }
+    .cw-post .meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; color: var(--cw-muted); font-size: var(--cw-text-xs); }
+    .cw-post .meta .b { color: var(--cw-fg); font-weight: 700; }
+    .cw-post .meta .by:hover { text-decoration: underline; cursor: pointer; }
+    .cw-post h3 { margin: 0; font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
+    .cw-post .text { overflow-wrap: anywhere; line-height: 1.5; margin: 0; font-size: var(--cw-text-sm); }
+    .cw-post.link .text { color: var(--cw-muted); }
+    .cw-post.link .text .preview { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 0; }
+    .cw-track { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--cw-line); }
+    .cw-track .n { font-weight: 600; }
+    .cw-track .acts { display: flex; gap: 6px; margin-left: auto; }`;
   document.head.append(style);
+  // Read LATER (they use cards themselves: `attachments` shows a file as its card): taken as they arrive.
+  const later = {};
+  for (const n of ["markdown", "attachments", "space"]) ctx.require(n).then(m => (later[n] = m), () => {});
+  const when = (n, f) => {
+    if (later[n]) return f(later[n]);
+    const ph = document.createElement("span");
+    ctx.require(n).then(m => ph.replaceWith(f(m) ?? ""), () => ph.remove());
+    return ph;
+  };
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
     e.append(...kids.filter(k => k != null && k !== false));
@@ -138,11 +166,59 @@ export async function start(ctx) {
     );
   }
 
-  const LOOKS = { video: media, audio: media, note, file, image: file, document: file };
-  function card(it, { href = items.pageOf(it.ref, it.kind), actions = [], by = true, corner = null, below = null, open = null } = {}) {
-    const look = LOOKS[kinds.domain(it.kind)];
+  // A POST (any text item: a post, a link, a question…): where it is, who and when, its title; in a list its text cut
+  // short and its files' thumbnails (a list never plays anything) — on its own page (`body`) its content whole.
+  function text(it, { href, actions, by, open, lead, body }) {
+    const list = !body;
+    const where = it.board ? h("span", { className: "b", textContent: `b/${it.board.name ?? it.board.id?.slice(0, 8)}` }) : h("span", { textContent: "profile" });
+    if (it.board) when("space", s => void (where.textContent = `b/${s.shown(it.board)}`));
+    const c = h(
+      list && href ? "a" : "article",
+      { className: `cw-post${list ? " link" : ""}${lead ? "" : " nolead"}`, ...(list && href ? { href } : {}) },
+      lead,
+      h(
+        "div",
+        { className: "in" },
+        h(
+          "div",
+          { className: "meta" },
+          where,
+          it.pub ? h("span", { textContent: "· 🌐 public" }) : null,
+          it.private ? h("span", { textContent: "· 🔒 only you" }) : null,
+          by ? h("span", { textContent: "· Posted by" }) : null,
+          by ? author(it.by, "board") : null,
+          h("time", { textContent: ago(it.at), title: new Date(it.at).toLocaleString() }),
+          it.edited ? h("span", { textContent: "(edited)" }) : null,
+        ),
+        it.title ? h("h3", { textContent: it.title }) : null,
+        body ?? h("div", { className: "text" }, it.body ? when("markdown", m => h("p", { className: "preview", textContent: m.plain(it.body) })) : null, it.files?.length ? when("attachments", a => a.show(it.files)) : null),
+        actions.length ? h("div", { className: "acts", onclick: e => e.stopPropagation() }, ...actions) : null,
+      ),
+    );
+    if (list && open && !href) c.onclick = e => !e.target.closest("button, a, .by, .cw-votes") && open();
+    return c;
+  }
+
+  // A CAPTION track (subtitles, lyrics, a transcript): its label and language, who made it and where it is kept, the
+  // item it is for (`about`: its link, given), its tools.
+  function caption(it, { actions, by, below }) {
+    return h(
+      "div",
+      { className: "cw-track" },
+      h("span", { className: "n", textContent: it.label || it.lang || "Subtitles" }),
+      h("span", { className: "s", textContent: it.lang || "—" }),
+      by ? h("span", { className: "s" }, "by ", author(it.by, "caption"), it.place ? ` · in ${it.place.name ?? "a space"}` : "") : null,
+      below,
+      actions.length ? h("span", { className: "acts" }, ...actions) : null,
+    );
+  }
+
+  // Each kind's look: its own (a caption), else its domain's.
+  const LOOKS = { video: media, audio: media, note, file, image: file, document: file, text, caption };
+  function card(it, { href = items.pageOf(it.ref, it.kind), actions = [], by = true, corner = null, below = null, open = null, lead = null, body = null } = {}) {
+    const look = LOOKS[it.kind] ?? LOOKS[kinds.domain(it.kind)];
     if (!look) throw new Error(`no look for ${it.kind} yet`);
-    return look(it, { href, actions, by, corner, below, open });
+    return look(it, { href, actions, by, corner, below, open, lead, body });
   }
   // AN ITEM EMBEDDED — in a post, a comment, a message, a note, a mail: by its reference, read as its reader may (what
   // they may not read is said, never shown); its kind's look: a video or an audio its player, the rest its card.

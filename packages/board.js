@@ -14,7 +14,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [posts, directory, person, theme, space, roles, appSettings, attachments, markdown, mdEditor] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "app-settings", "attachments", "markdown", "md-editor"].map(n => ctx.require(n)));
+  const [posts, directory, person, theme, space, roles, appSettings, attachments, markdown, mdEditor, cards] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "app-settings", "attachments", "markdown", "md-editor", "cards"].map(n => ctx.require(n)));
   const me = (await space.account()).id;
   // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.
   const bar = (await ctx.require("feed-bar")).create({ start: "hot", onChange: () => draw() });
@@ -83,16 +83,9 @@ export async function mount(ctx, el) {
       .bd .sorts button { border: 0; background: none; color: var(--cw-muted); border-radius: var(--cw-radius-pill); padding: 4px var(--cw-space-3); font-weight: 600; }
       .bd .sorts button:hover { background: var(--cw-hover); }
       .bd .sorts button[aria-pressed="true"] { background: var(--cw-pressed); color: var(--cw-fg); }
-      .bd .post { display: grid; grid-template-columns: 40px minmax(0, 1fr); background: var(--cw-surface); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); overflow: hidden; }
-      .bd .post.link:hover { border-color: var(--cw-muted); cursor: pointer; }
-      .bd .post > .cw-votes { background: var(--cw-bg); padding: var(--cw-space-2) 0; justify-content: flex-start; }
-      .bd .post .in { padding: var(--cw-space-2) var(--cw-space-3); display: grid; gap: 4px; min-width: 0; }
       .bd .meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; color: var(--cw-muted); font-size: var(--cw-text-xs); }
       .bd .meta .b { color: var(--cw-fg); font-weight: 700; }
       .bd .meta .b:hover, .bd .meta .by:hover { text-decoration: underline; cursor: pointer; }
-      .bd .post h3 { margin: 0; font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
-      .bd .post .text { overflow-wrap: anywhere; line-height: 1.5; margin: 0; font-size: var(--cw-text-sm); }
-      .bd .post.link .text { color: var(--cw-muted); }
       .bd .acts .votes { display: flex; align-items: center; gap: 2px; }
       .bd textarea, .bd .field { font: inherit; padding: var(--cw-space-2); border-radius: var(--cw-radius-sm); width: 100%; box-sizing: border-box; }
       .bd textarea { resize: vertical; min-height: 90px; }
@@ -104,7 +97,6 @@ export async function mount(ctx, el) {
       .bd .c > .rail:hover::before { background: var(--cw-accent); }
       .bd .c > .body { display: grid; gap: 4px; min-width: 0; }
       .bd .c .text { overflow-wrap: anywhere; line-height: 1.5; margin: 0; }
-      .bd .post.link .text .preview { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 0; }
       .bd .c .kids { display: grid; gap: var(--cw-space-2); margin-top: var(--cw-space-1); }
       .bd .c.folded .text, .bd .c.folded .acts, .bd .c.folded .kids, .bd .c.folded form { display: none; }
       .bd .c .fold { border: 0; background: none; color: var(--cw-muted); font-size: var(--cw-text-xs); padding: 0; }
@@ -130,7 +122,6 @@ export async function mount(ctx, el) {
     const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.stopPropagation(), person.open(e.currentTarget, did, here ? { space: here } : {})) });
     return n;
   };
-  const boardLink = b => h("span", { className: "b", textContent: `b/${space.shown(b)}` });
   const errorTo = said => e => ((said.textContent = e?.message ?? String(e)), (said.hidden = false));
 
   // AN ITEM's ACTIONS (`actions`: the same in every app — vote, comments, share, save, hide, flag, edit, remove — by
@@ -172,28 +163,13 @@ export async function mount(ctx, el) {
     ed.focus();
   }
 
+  // A POST: its look is the kind's (`cards`), in a list and on its own page; its votes and its tools given.
   function postCard(p, full = false) {
-    const said = h("p", { className: "said", hidden: true });
-    // A space's post opens in its space (the header's place follows); a profile's in the personal space.
     // A post opens where it lives: in Discover (read from outside), in its space, or in the personal space.
-    // Its page in its place (`items.pageOf`: a space's, a person's) — in Discover, read from outside.
     const open = () => (location.hash = discovering() ? `#/discover/board/p/${p.ref}` : posts.pageOf(p.ref, p.kind ?? "post"));
-    const body = h("div", {}, bodyOf(p, full));
+    const body = full ? h("div", {}, bodyOf(p, true)) : null;
     const acts = actionsCap.bar(p, { outside: outsideFor(p), open, discover: discovering(), edit: full ? () => editIn(body, p, () => draw()) : null, removed: () => (full ? (location.hash = base()) : draw()), changed: () => draw() });
-    return h(
-      "article",
-      { className: `post${full ? "" : " link"}`, onclick: full ? null : open },
-      actionsCap.votes(p, { outside: outsideFor(p) }),
-      h(
-        "div",
-        { className: "in" },
-        h("div", { className: "meta" }, p.board ? boardLink(p.board) : h("span", { textContent: "profile" }), p.pub ? h("span", { textContent: "· 🌐 public" }) : null, p.private ? h("span", { textContent: "· 🔒 only you" }) : null, h("span", { textContent: "·" }), h("span", { textContent: "Posted by" }), who(p.by), h("time", { textContent: ago(p.at), title: new Date(p.at).toLocaleString() }), p.edited ? h("span", { textContent: "(edited)" }) : null),
-        h("h3", { textContent: p.title }),
-        body,
-        acts,
-        said,
-      ),
-    );
+    return cards.card(p, { href: null, open, lead: actionsCap.votes(p, { outside: outsideFor(p) }), actions: [acts], body });
   }
 
   // THE SIDE PANEL: the space's board (its name, members, Create post), or a profile.

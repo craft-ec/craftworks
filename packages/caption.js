@@ -9,7 +9,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [subs, items, directory, theme, space] = await Promise.all(["caption-store", "items", "directory", "theme", "space"].map(n => ctx.require(n)));
+  const [subs, items, directory, theme, space, cards] = await Promise.all(["caption-store", "items", "directory", "theme", "space", "cards"].map(n => ctx.require(n)));
   // The FEED BAR (every content app's): which tracks, over which window, in which order.
   const bar = (await ctx.require("feed-bar")).create({ start: "new", onChange: () => draw() });
   const me = (await space.account()).id;
@@ -38,10 +38,6 @@ export async function mount(ctx, el) {
     const e = Object.assign(document.createElement(tag), props);
     e.append(...kids.filter(k => k != null && k !== false));
     return e;
-  };
-  const who = did => {
-    const n = directory.nameEl(did);
-    return n;
   };
   // WHERE (`where`: yours, a space's, a person's — their tracks —, Discover — public videos and audio, each with
   // its tracks), read at each draw.
@@ -75,18 +71,25 @@ export async function mount(ctx, el) {
   };
   const itemOf = async ref => await items.get(ref).catch(() => null);
   const title = async ref => (await itemOf(ref))?.title ?? "an item";
-  const row = async t =>
-    h(
+  // A TRACK: its look is the kind's (`cards`); the item it is for, and its tools, given.
+  const row = async t => {
+    const it = await itemOf(t.in);
+    return h(
       "li",
       {},
-      h("span", { className: "n", textContent: t.label || t.lang || "Subtitles" }),
-      h("span", { className: "s", textContent: t.lang || "—" }),
-      h("span", { className: "s" }, "by ", who(t.by), t.place ? ` · in ${t.place.name ?? "a space"}` : ""),
-      await (async () => { const it = await itemOf(t.in); return h("a", { href: watchHref(t.in, it?.kind), textContent: `▶ ${it?.title ?? "an item"}` }); })(),
-      t.by === me ? h("a", { href: `#/caption/e/${encodeURIComponent(t.ref)}`, textContent: "Edit" }) : actionsCap.save(t),
-      h("button", { type: "button", textContent: ".vtt", onclick: async () => download(await subs.text(t), `${t.label || "subtitles"}.vtt`, "text/vtt") }),
-      h("button", { type: "button", textContent: ".srt", onclick: async () => download(subs.toSrt(await subs.text(t)), `${t.label || "subtitles"}.srt`, "application/x-subrip") }),
+      cards.card(
+        { ...t, kind: "caption" },
+        {
+          below: h("a", { href: watchHref(t.in, it?.kind), textContent: `▶ ${it?.title ?? "an item"}` }),
+          actions: [
+            t.by === me ? h("a", { href: `#/caption/e/${encodeURIComponent(t.ref)}`, textContent: "Edit" }) : actionsCap.save(t),
+            h("button", { type: "button", textContent: ".vtt", onclick: async () => download(await subs.text(t), `${t.label || "subtitles"}.vtt`, "text/vtt") }),
+            h("button", { type: "button", textContent: ".srt", onclick: async () => download(subs.toSrt(await subs.text(t)), `${t.label || "subtitles"}.srt`, "application/x-subrip") }),
+          ],
+        },
+      ),
     );
+  };
 
   async function mine(by = null, saved = false) {
     // SAVED: `where`'s (the tracks you saved).
