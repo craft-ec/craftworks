@@ -565,44 +565,50 @@ export async function start(ctx) {
     // Open: listed in Discover, its acts published (who is in, how to join).
     if (how === "open") (await r.publish().catch(() => {}), await index.listSpace(sp));
   }
+  // LET IN: one asker welcomed and recorded `admitted` (by the code they asked with, or "open") — the one way in, for
+  // the automatic admit below and for a member's own Let in (`requestsOf`).
+  async function letIn(sp, did, code) {
+    const r = await (await ctx.require("roles")).of(sp);
+    await welcome(sp, did, sp.name, code);
+    await r.act({ act: "admitted", code, did });
+  }
+  // WHO ASKED TO JOIN this space, and who was let in: `{ waiting: [{ did, at, code }], admitted: [{ did, at, by, code }] }`
+  // — waiting: a request under its open door or a code in force, from someone not in it (nor banned), newer than their
+  // last admission (one let in but never in asks again). For its Settings (who may invite sees and lets them in).
+  async function requestsOf(sp) {
+    const r = await (await ctx.require("roles")).of(sp);
+    await r.refresh();
+    const inside = new Set(r.members().map(m => m.did));
+    const admittedAt = new Map();
+    for (const a of r.acts("admitted")) if (a.did && (a.at ?? 0) > (admittedAt.get(a.did) ?? 0)) admittedAt.set(a.did, a.at ?? 0);
+    const asks = [];
+    if (r.policy("", "join") === "anyone") for (const q of await index.requests(openCode(sp.id)).catch(() => [])) asks.push({ ...q, code: "open" });
+    for (const inv of r.invites()) for (const q of await index.requests(inv.code).catch(() => [])) asks.push({ ...q, code: inv.code });
+    const newest = new Map();
+    for (const q of asks) {
+      if (q.kind !== "join" || !q.did || r.banned(q.did)) continue;
+      if (inside.has(q.did) && !(admittedAt.has(q.did) && (q.at ?? 0) > admittedAt.get(q.did))) continue;
+      if (!newest.has(q.did) || (q.at ?? 0) > newest.get(q.did).at) newest.set(q.did, { did: q.did, at: q.at ?? 0, code: q.code });
+    }
+    return {
+      waiting: [...newest.values()].sort((x, y) => y.at - x.at),
+      admitted: r.acts("admitted").map(a => ({ did: a.did, at: a.at ?? 0, by: a.by ?? null, code: a.code ?? null })).sort((x, y) => y.at - x.at).slice(0, 20),
+    };
+  }
   async function admit(sp) {
     const me = await space.account();
     const r = await (await ctx.require("roles")).of(sp);
     await r.refresh();
     if (!me || !r.can(me.id, "invite")) return [];
-    const inside = new Set(r.members().map(m => m.did));
-    // ASKED AGAIN after being let in (their welcome never opened — its key package lost): welcomed again.
-    const admittedAt = new Map();
-    for (const a of r.acts("admitted")) if (a.did && (a.at ?? 0) > (admittedAt.get(a.did) ?? 0)) admittedAt.set(a.did, a.at ?? 0);
-    const waiting = q => !inside.has(q.did) || (admittedAt.has(q.did) && (q.at ?? 0) > admittedAt.get(q.did));
     const out = [];
-    if (r.policy("", "join") === "anyone")
-      for (const q of await index.requests(openCode(sp.id))) {
-        if (q.kind !== "join" || !q.did || !waiting(q) || r.banned(q.did)) continue;
-        try {
-          await welcome(sp, q.did, sp.name, "open");
-          await r.act({ act: "admitted", code: "open", did: q.did });
-          inside.add(q.did);
-          admittedAt.set(q.did, Date.now());
-          out.push(q.did);
-          ctx.log("conversation", { what: `${directory.shown(q.did)} joined ${sp.name} (open)` });
-        } catch (e) {
-          ctx.log("conversation", { what: `could not admit ${short(q.did)}: ${e.message}` });
-        }
-      }
-    for (const inv of r.invites()) {
-      for (const q of await index.requests(inv.code)) {
-        if (q.kind !== "join" || !q.did || !waiting(q) || r.banned(q.did) || !r.invites().some(i => i.code === inv.code)) continue;
-        try {
-          await welcome(sp, q.did, sp.name, inv.code);
-          await r.act({ act: "admitted", code: inv.code, did: q.did });
-          inside.add(q.did);
-          admittedAt.set(q.did, Date.now());
-          out.push(q.did);
-          ctx.log("conversation", { what: `${directory.shown(q.did)} admitted to ${sp.name} by a code` });
-        } catch (e) {
-          ctx.log("conversation", { what: `could not admit ${short(q.did)}: ${e.message}` });
-        }
+    // Each WAITING asker (`requestsOf`): its open door only while the space lets anyone in; a code while in force.
+    for (const q of (await requestsOf(sp)).waiting) {
+      try {
+        await letIn(sp, q.did, q.code);
+        out.push(q.did);
+        ctx.log("conversation", { what: `${directory.shown(q.did)} ${q.code === "open" ? `joined ${sp.name} (open)` : `admitted to ${sp.name} by a code`}` });
+      } catch (e) {
+        ctx.log("conversation", { what: `could not admit ${short(q.did)}: ${e.message}` });
       }
     }
     return out;
@@ -953,5 +959,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, repair, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
+  return { direct, group, invite, accept, repair, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
 }

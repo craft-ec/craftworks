@@ -265,6 +265,25 @@ export async function start(ctx) {
             textContent: "Anyone with a code asks to join (the space's name at the top → Make or join a space). A member who may invite lets them in — their app when it is open, else their node on its own (it takes a moment).",
           }),
         );
+        // WHO IS WAITING (asked under the open door or a code, not let in yet) — each let in here, or by any page or node
+        // of a member who may invite on its own — and WHO WAS LET IN lately (when, by whom, how).
+        const asking = el("div", {}, el("p", { className: "note", textContent: "Reading who asked…" }));
+        main.append(el("h4", { textContent: "Waiting to join" }), asking);
+        conversation.requestsOf(server).then(
+          ({ waiting, admitted }) => {
+            const how = c => (c === "open" ? "the open door" : c ? `code ${c}` : "an invite");
+            asking.replaceChildren(
+              waiting.length
+                ? el("ul", { className: "asks" }, ...waiting.map(q => el("li", {}, directory.nameEl(q.did), ` · ${when(q.at)} · by ${how(q.code)} `, act("Let in", () => conversation.letIn(server, q.did, q.code), "main"))))
+                : el("p", { className: "note", textContent: "Nobody is waiting." }),
+              el("h4", { textContent: "Let in lately" }),
+              admitted.length
+                ? el("ul", { className: "asks" }, ...admitted.map(a => el("li", {}, directory.nameEl(a.did), ` · ${when(a.at)} · ${how(a.code)}`, a.by ? el("span", {}, " · by ", directory.nameEl(a.by)) : "")))
+                : el("p", { className: "note", textContent: "Nobody yet." }),
+            );
+          },
+          e => asking.replaceChildren(el("p", { className: "note", textContent: `Could not read who asked: ${e?.message ?? e}` })),
+        );
         const who = el("input", { placeholder: "name#abc123 or did:craftec:…", style: "min-width: 18em" });
         main.append(
           el("div", { className: "row" }, who, act("Invite this person", async () => {
