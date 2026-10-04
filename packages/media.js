@@ -1,6 +1,7 @@
 // MEDIA, a page: ONE page for every MEDIA app — a LENS on a content DOMAIN (`kinds`) chosen by its route: VIDEOS
 // (`#/video`: video, movie, TV episode, music video, short), AUDIO (`#/audio`: music, podcast, audiobook) and IMAGES
-// (`#/image`: image, photo, artwork — a wall of pictures), YouTube-, Spotify- and Flickr-shaped; a composed app shows several the same way. Its SUB-TYPES filter the list. CHANNEL-FIRST: yours
+// (`#/image`: image, photo, artwork — a wall of pictures) and BOOKS (`#/book`: book, comic — a shelf of covers, read in
+// the reader), YouTube-, Spotify- and Flickr-shaped; a composed app shows several the same way. Its SUB-TYPES filter the list. CHANNEL-FIRST: yours
 // (each public, or only you) and those you follow (`…`: the feed; `…/mine`; `…/c/<did>`: someone's); SAVED (the pin
 // edge); DISCOVER. In a SPACE (`#/s/<space>/…`): its members' items, public while its domain reads in public. WATCH/
 // LISTEN: `…/p/<ref>` (its page: `item-page`) — streamed by byte range (`video-player`), a like (▲), comments, and its timed text
@@ -18,6 +19,7 @@ export async function mount(ctx, el) {
   const APPS = {
     "/video": { app: "video", domain: "video", icon: "▶️", name: "Video", one: "video", ones: "videos", accept: "video/*", mine: "Your channel", audio: false },
     "/audio": { app: "audio", domain: "audio", icon: "🎧", name: "Audio", one: "track", ones: "tracks", accept: "audio/*", mine: "Your library", audio: true },
+    "/book": { app: "book", domain: "book", icon: "📚", name: "Books", one: "book", ones: "books", accept: ".pdf,.epub,.cbz", mine: "Your shelf", shelf: true },
     "/image": { app: "image", domain: "image", icon: "🖼", name: "Images", one: "image", ones: "images", accept: "image/*", mine: "Your photostream", picture: true },
   };
   const C_ROUTE = APPS[ctx.route] ? ctx.route : "/video";
@@ -48,6 +50,7 @@ export async function mount(ctx, el) {
       .vd .chips { flex-basis: 100%; display: flex; gap: 6px; flex-wrap: wrap; }
       .vd .chips button { padding: 3px 12px; font-size: var(--cw-text-sm); }
       .vd .grid.sq { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+      .vd .grid.shelf { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
       .vd .wall { columns: 240px; column-gap: var(--cw-space-2); }
       .vd .wall > * { break-inside: avoid; margin-bottom: var(--cw-space-2); }
       .vd .subs { display: grid; gap: 6px; border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-3); }
@@ -117,7 +120,7 @@ export async function mount(ctx, el) {
     const when = bar.span();
     const none = w.saved ? `Nothing saved: “Save” on a ${C.one} keeps it here.` : w.feed ? `No ${C.ones} ${when} from you or what you follow.` : w.discover ? `No public ${C.ones} ${when}.` : w.by === me ? `Nothing ${when}: upload a ${C.one}.` : `No ${C.ones} ${when}.`;
     const older = w.saved ? null : bar.older("Older", shown.length);
-    return shown.length ? h("div", {}, h("div", { className: C.picture ? "wall" : `grid${C.audio ? " sq" : ""}` }, ...shown.map(card)), older) : h("div", {}, h("p", { className: "none", textContent: none }), older);
+    return shown.length ? h("div", {}, h("div", { className: C.picture ? "wall" : `grid${C.audio ? " sq" : C.shelf ? " shelf" : ""}` }, ...shown.map(card)), older) : h("div", {}, h("p", { className: "none", textContent: none }), older);
   }
 
   // ITS PAGE: the one item page (`item-page`) — its player, likes, comments — framed here.

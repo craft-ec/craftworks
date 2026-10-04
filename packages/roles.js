@@ -52,7 +52,7 @@ export async function start(ctx) {
   const ACTIONS = G.actions();
   // WHICH POLICY GOVERNS a domain (THE ONE resolver, for every app and every action): its domain's own (`kinds`:
   // text, video, audio, note, caption, file …), else the space's. `DOMAINS`: every domain a policy can name.
-  const DOMAINS = ["text", "video", "audio", "image", "caption", "note", "file", "chat"];
+  const DOMAINS = ["text", "video", "audio", "image", "book", "caption", "note", "file", "chat"];
   // A member's credential (hex): `CWMB ‖ did ‖ signer ‖ writer ‖ MLS key ‖ signature` (the identity's format; MLS
   // checked the signature when it admitted it).
   const didOf = h => new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16)));
@@ -323,7 +323,7 @@ export async function start(ctx) {
         role: d => (d === did ? "owner" : null),
         can: d => d === did,
         config: (_a, _k, dflt = null) => dflt,
-        apps: () => ["board", "video", "audio", "image"],
+        apps: () => ["board", "video", "audio", "image", "book"],
         act: async ({ act, path, action, who }) => {
           if (act !== "policy") throw new Error("a personal space keeps policies only");
           await ready;

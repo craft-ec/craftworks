@@ -36,9 +36,9 @@ export async function start() {
     ["image", "image", "Image", []],
     ["photo", "image", "Photo", ["location", "taken", "camera"]],
     ["artwork", "image", "Artwork", ["artist", "medium"]],
-    // Document
-    ["book", "document", "Book", ["author", "publisher", "year", "isbn"]],
-    ["comic", "document", "Comic", ["writer", "artist", "issue", "publisher"]],
+    // Book (Books: read in the reader — a PDF, an EPUB, a CBZ)
+    ["book", "book", "Book", ["author", "publisher", "year", "isbn"]],
+    ["comic", "book", "Comic", ["writer", "artist", "issue", "publisher"]],
     // File (Drive: what was uploaded, any type — `file`, the general one)
     ["file", "file", "File", []],
     ["folder", "file", "Folder", []],
@@ -68,6 +68,9 @@ export async function start() {
     { domain: "image", label: "Image", plural: "Images", icon: "🖼", accept: "image/*", is: t => /^image\//.test(t), maker: "image-studio", view: "image", kind: "image" },
     { domain: "video", label: "Video", plural: "Videos", icon: "🎬", accept: "video/*", is: (t, ref) => /^video\//.test(t) || (t === MANIFEST && !ref?.audio), maker: "video-studio", view: "media-view", kind: "video" },
     { domain: "audio", label: "Audio", plural: "Audio", icon: "🎵", accept: "audio/*", is: (t, ref) => /^audio\//.test(t) || (t === MANIFEST && !!ref?.audio), maker: "video-studio", view: "media-view", kind: "audio" },
+    // A BOOK: an EPUB or a comic (CBZ) always; a PDF only when made one (`book` on its reference: Books' upload) — a
+    // PDF attached anywhere else stays a document.
+    { domain: "book", label: "Book", plural: "Books", icon: "📚", accept: ".pdf,.epub,.cbz,application/pdf,application/epub+zip,application/vnd.comicbook+zip", is: (t, ref) => /epub|comicbook|x-cbz/.test(t) || (t === "application/pdf" && !!ref?.book), maker: "book-studio", view: "book-view", kind: "book" },
   ];
   const mediaOf = x => {
     const ref = typeof x === "string" ? null : x;
@@ -82,14 +85,15 @@ export async function start() {
   const byKind = new Map(CATALOG.map(([kind, domain, label, fields]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields) })]));
   const onTo = new Map(ATTACHING.map(([kind, domain, label, fields, to]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields), to: Object.freeze(to), attaches: true })]));
   const LABELS = { lang: "Language", label: "Label",  year: "Year", director: "Director", cast: "Cast", genre: "Genre", show: "Show", season: "Season", episode: "Episode", artist: "Artist", album: "Album", host: "Host", author: "Author", narrator: "Narrator", chapter: "Chapter", location: "Location", taken: "Taken", camera: "Camera", medium: "Medium", publisher: "Publisher", isbn: "ISBN", writer: "Writer", issue: "Issue", format: "Format", software: "Software", platform: "Platform", version: "Version", license: "License", schema: "Schema" };
-  // A PAGE's PARTS by domain (`item-page`): its look whole — the PLAYER (video, audio), the PICTURE (an image) or its
-  // card's look — and what
+  // A PAGE's PARTS by domain (`item-page`): its look whole — the PLAYER (video, audio), the PICTURE (an image), the
+  // READER (a book) or its card's look — and what
   // shows around it. Composed here, never an app's own page.
   const PARTS = {
     video: { look: "player", votes: true, comments: true, about: true },
     audio: { look: "player", votes: true, comments: true, about: true },
     text: { look: "card", votes: true, comments: true, about: false },
     image: { look: "picture", votes: true, comments: true, about: true },
+    book: { look: "reader", votes: true, comments: true, about: true },
     note: { look: "card", votes: false, comments: true, about: false },
     file: { look: "card", votes: false, comments: true, about: true },
     document: { look: "card", votes: false, comments: true, about: true },

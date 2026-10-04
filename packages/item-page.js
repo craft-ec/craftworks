@@ -64,7 +64,7 @@ export async function start(ctx) {
     let host = null; // where its text is, to edit in place
     const bar = actions.bar(it, { outside, comments: false, discover, removed, changed: redraw, edit: parts.look === "card" && parts.votes ? () => editIn(host, it, redraw) : null });
     // ITS LOOK, WHOLE.
-    if (parts.look === "player" || parts.look === "picture") {
+    if (parts.look === "player" || parts.look === "picture" || parts.look === "reader") {
       const m = (await ctx.require("media-look")).full(it, { outside });
       const k = kinds.of(it.kind);
       const fields = (k?.fields ?? []).filter(x => it.meta?.[x]).map(x => h("span", { textContent: `${kinds.fieldLabel(x)}: ${it.meta[x]}` }));

@@ -13,9 +13,10 @@
 export async function start(ctx) {
   const [kinds, items] = await Promise.all(["kinds", "items"].map(n => ctx.require(n)));
 
-  async function publish(file, { space = null, audience = space ? "members" : "private", write = null, kind = null, title = "", body = "", meta = {}, cover = null, subtitles = [], keepOriginal = false, app = null, onProgress = () => {} } = {}) {
-    const spec = kinds.mediaOf(file.type);
-    if (!spec) throw new Error(`${file.name}: not a kind that is published (an image, a video, an audio)`);
+  async function publish(file, { domain = null, space = null, audience = space ? "members" : "private", write = null, kind = null, title = "", body = "", meta = {}, cover = null, subtitles = [], keepOriginal = false, app = null, onProgress = () => {} } = {}) {
+    // Its DOMAIN: named (an app's upload: a PDF made a book), else what its type is.
+    const spec = domain ? kinds.media().find(m => m.domain === domain) : kinds.mediaOf(file.type);
+    if (!spec) throw new Error(`${file.name}: not a kind that is published (an image, a video, an audio, a book)`);
     kind ??= spec.kind;
     const maker = await ctx.require(spec.maker);
     // A space this person is not in (its policy lets anyone post): published public, kept in their profile (`items.submit`).
@@ -80,7 +81,7 @@ export async function start(ctx) {
       "form",
       { className: "cw-pub" },
       file ? h("p", { className: "s", textContent: `${spec.icon} ${file.name}` }) : h("input", { type: "file", name: "file", accept: spec.accept, required: true, onchange: e => prefill(e.target.files[0]) }),
-      spec.domain === "audio" ? h("label", { className: "s" }, "Cover (an image, optional: else the file's own) ", h("input", { type: "file", name: "cover", accept: "image/*" })) : null,
+      spec.domain === "audio" || spec.domain === "book" ? h("label", { className: "s" }, "Cover (an image, optional: else the file's own) ", h("input", { type: "file", name: "cover", accept: "image/*" })) : null,
       av ? h("label", { className: "s" }, `${spec.domain === "audio" ? "Lyrics or transcript" : "Subtitles"} (.vtt or .srt, optional) `, h("input", { type: "file", name: "subs", accept: ".vtt,.srt,text/vtt", multiple: true })) : null,
       av ? h("label", { className: "s" }, h("input", { type: "checkbox", name: "keep" }), " Keep the original file too (as large as all the versions together; lets a newer format be made later)") : null,
       h("input", { name: "title", placeholder: "Title", required: true, maxLength: 300 }),
@@ -94,9 +95,13 @@ export async function start(ctx) {
     // The file's own TAGS fill the form (title; artist, album, year, genre where its kind has them).
     const prefill = async x => {
       if (!x) return;
-      const t = av ? await (await ctx.require("video-studio")).probe(x).catch(() => null) : null;
+      const t = av
+        ? await (await ctx.require("video-studio")).probe(x).catch(() => null)
+        : spec.domain === "book"
+          ? await (await ctx.require("book-studio")).open(x).then(async b => (await b.meta().finally(() => b.close())), () => null)
+          : null;
       if (!f.elements.title.value) f.elements.title.value = t?.title || x.name.replace(/\.[^.]+$/, "");
-      for (const [k, val] of Object.entries({ artist: t?.artist, album: t?.album, year: t?.year, genre: t?.genre })) {
+      for (const [k, val] of Object.entries({ artist: t?.artist, album: t?.album, year: t?.year, genre: t?.genre, author: t?.author })) {
         const input = f.elements[`meta.${k}`];
         if (val && input && !input.value) input.value = val;
       }
@@ -113,6 +118,7 @@ export async function start(ctx) {
         progress.textContent = "Reading…";
         const meta = Object.fromEntries(kinds.of(kindSel.value).fields.map(k => [k, String(f.elements[`meta.${k}`]?.value ?? "").trim()]).filter(([, v]) => v));
         const done = await publish(x, {
+          domain: spec.domain,
           space,
           audience: who.value(),
           write: who.write(),

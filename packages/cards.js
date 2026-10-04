@@ -17,6 +17,9 @@ export async function start(ctx) {
   const style = document.createElement("style");
   style.textContent = `
     .cw-card { text-decoration: none; color: inherit; display: grid; gap: 6px; min-width: 0; }
+    .cw-book .cover { position: relative; aspect-ratio: 2 / 3; border-radius: var(--cw-radius-sm); overflow: hidden; background: var(--cw-hover); display: grid; place-items: center; font-size: 2.5rem; box-shadow: 0 1px 4px rgba(0, 0, 0, .25); }
+    .cw-book .cover img { width: 100%; height: 100%; object-fit: cover; }
+    .cw-book .cover .kind { position: absolute; left: 6px; top: 6px; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: rgba(0, 0, 0, .7); color: #fff; }
     .cw-pic { position: relative; display: block; border-radius: var(--cw-radius-sm); overflow: hidden; background: var(--cw-hover); color: #fff; text-decoration: none; }
     .cw-pic img { display: block; width: 100%; height: auto; }
     .cw-pic .none { aspect-ratio: 4 / 3; display: grid; place-items: center; font-size: 2.5rem; }
@@ -235,8 +238,22 @@ export async function start(ctx) {
     );
   }
 
+  // A BOOK on a shelf: its cover (its preview), its title, its author (or a comic's writer), who and when.
+  function book(it, { href, actions, by }) {
+    const f = it.files?.find(x => kinds.mediaOf(x)?.domain === "book") ?? it.files?.[0] ?? null;
+    return h(
+      "a",
+      { className: "cw-card cw-book", href },
+      h("div", { className: "cover" }, f?.preview ? h("img", { src: f.preview, alt: "" }) : it.kind === "comic" ? "💬" : "📚", it.kind !== "book" ? h("span", { className: "kind", textContent: kinds.of(it.kind)?.label ?? it.kind }) : null),
+      h("div", { className: "t", textContent: it.title }),
+      it.meta?.author || it.meta?.writer ? h("div", { className: "s", textContent: it.meta.author ?? it.meta.writer }) : null,
+      h("div", { className: "s" }, by ? author(it.by, "book") : null, `${by ? " · " : ""}${ago(it.at)}${f?.pages ? ` · ${f.pages} pages` : ""}${it.private ? " · only you" : ""}`),
+      actions.length ? h("div", { className: "acts", onclick: e => e.preventDefault() }, ...actions) : null,
+    );
+  }
+
   // Each kind's look: its own (a caption), else its domain's.
-  const LOOKS = { video: media, audio: media, note, file, image: file, document: file, text, caption };
+  const LOOKS = { video: media, audio: media, book, note, file, image: file, document: file, text, caption };
   function card(it, { href = items.pageOf(it.ref, it.kind), actions = [], by = true, corner = null, below = null, open = null, lead = null, body = null } = {}) {
     const look = LOOKS[it.kind] ?? LOOKS[kinds.domain(it.kind)];
     if (!look) throw new Error(`no look for ${it.kind} yet`);

@@ -113,6 +113,7 @@ export async function start(ctx) {
     video: { title: "Video", fields: ["read", "post", "comment", "vote"].map(action => ({ action, path: "video", label: `Who may ${action}` })), saved: async (c, r, sp) => c["video|read"] === "anyone" && madePublic(r, sp) },
     audio: { title: "Audio", fields: ["read", "post", "comment", "vote"].map(action => ({ action, path: "audio", label: `Who may ${action}` })), saved: async (c, r, sp) => c["audio|read"] === "anyone" && madePublic(r, sp) },
     image: { title: "Images", fields: ["read", "post", "comment", "vote"].map(action => ({ action, path: "image", label: `Who may ${action}` })), saved: async (c, r, sp) => c["image|read"] === "anyone" && madePublic(r, sp) },
+    book: { title: "Books", fields: ["read", "post", "comment", "vote"].map(action => ({ action, path: "book", label: `Who may ${action}` })), saved: async (c, r, sp) => c["book|read"] === "anyone" && madePublic(r, sp) },
     chat: { title: "Chat", fields: [{ action: "post", path: "chat", label: "Who may post (in every channel that does not say otherwise)" }], extra: chatChannels },
     note: { title: "Note", fields: [{ action: "post", path: "note", label: "Who may add notes" }, { action: "edit", path: "note", label: "Who may edit notes" }] },
     drive: { title: "Drive", fields: [{ action: "read", path: "drive", label: "Who may read" }, { action: "post", path: "drive", label: "Who may upload" }, { action: "edit", path: "drive", label: "Who may move files" }] },
@@ -200,7 +201,7 @@ export async function start(ctx) {
   // YOUR SPACE's SETTINGS (your Home): who may comment and vote on what you post in each app, by default — an item's
   // own setting over it. The same sections, read and written through `roles.personal`.
   // Each by its DOMAIN (what governs its items: `kinds.policyDomain`), titled as the app showing it.
-  const PERSONAL = { text: "Board", video: "Video", audio: "Audio", image: "Images" };
+  const PERSONAL = { text: "Board", video: "Video", audio: "Audio", image: "Images", book: "Books" };
   async function personalPage() {
     const me = (await (await ctx.require("space")).account()).id;
     const r = roles.personal(me);

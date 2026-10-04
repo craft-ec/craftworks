@@ -1,4 +1,4 @@
-// MEDIA LOOK, a component: a video's, an audio's or an image's look WHOLE — on its own page (`item-page`), the same wherever it
+// MEDIA LOOK, a component: a video's, an audio's, an image's or a book's look WHOLE — on its own page (`item-page`), the same wherever it
 // opens. The player (`media-view`: its tracks by its video id), a video's scrub strip of frames, an audio's cover
 // (and a speed for a podcast or an audiobook), its lyrics or transcript line, its timed text; while its uploader's
 // devices still make it, what is done.
@@ -59,8 +59,21 @@ export async function start(ctx) {
     return { el, start, media: null };
   }
 
+  // A BOOK whole: its reader (`book-view`), open at once.
+  function reader(v) {
+    const f = v.files?.find(x => kinds.mediaOf(x)?.domain === "book") ?? v.files?.[0] ?? null;
+    const el = h("div", { className: "cw-media" });
+    const start = async () => {
+      if (!f) return;
+      const bv = await ctx.require("book-view");
+      el.replaceChildren(bv.create({ file: f, item: v.ref, cover: false, kind: v.kind }).el);
+    };
+    return { el, start, media: null };
+  }
+
   function full(v, { outside = null } = {}) {
     if (kinds.domain(v.kind) === "image") return picture(v, { outside });
+    if (kinds.domain(v.kind) === "book") return reader(v);
     const audio = kinds.domain(v.kind) === "audio";
     const f = fileOf(v);
     const level = h("span", { className: "level" });
