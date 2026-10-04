@@ -32,7 +32,8 @@ fn main() {
         for t in &times {
             invites.push(json!(g.live_invites(*t).iter().map(|i| json!([i.code, i.by, i.admitted])).collect::<Vec<_>>()));
         }
-        let apps: Vec<&str> = craftworks_gov::APPS.iter().copied().filter(|a| g.apps.get(*a) == Some(&true)).collect();
+        let mut apps: Vec<&str> = g.apps.iter().filter(|(_, v)| **v).map(|(k, _)| k.as_str()).collect();
+        apps.sort();
         let configs: Vec<Option<Value>> = ["board/rules", "board/read", "chat/post", "space/join"].iter().map(|k| g.configs.get(*k).cloned()).collect();
         let roles: Vec<Value> = dids.iter().map(|d| json!([g.role(d, false), g.role(d, true)])).collect();
         let counted: Vec<Value> = g.counted.iter().map(|a| a["id"].clone()).collect();

@@ -272,3 +272,17 @@ fn a_deleted_role_and_a_removed_member_hold_nothing() {
     assert!(!g.held.get(X).is_some_and(|h| h.contains("mods")));
 }
 
+
+/// APPS are named by their route — whatever the manifest lists, never a list here: every current app is taken, and
+/// a name that is no app's (the control) is not.
+#[test]
+fn an_app_is_any_route_name_and_nothing_else() {
+    let names = ["chat", "board", "note", "mail", "contact", "drive", "video", "audio", "caption"];
+    let mut rows: Vec<Row> = names.iter().enumerate().map(|(i, n)| act(&format!("a{i}"), "no", i as u64 + 1, json!({"act":"app","app":n,"on":true}))).collect();
+    rows.push(act("bad", "no", 99, json!({"act":"app","app":"Not An App!","on":true})));
+    let g = gov(&rows);
+    for n in names {
+        assert_eq!(g.apps.get(n), Some(&true), "{n} added");
+    }
+    assert!(!g.apps.contains_key("Not An App!"), "a malformed name is refused");
+}

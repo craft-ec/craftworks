@@ -16,7 +16,11 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-pub const APPS: [&str; 7] = ["chat", "board", "notes", "drive", "videos", "audio", "subtitles"];
+/// An APP's name as an act names it: the app's route (`chat`, `note`, `mail`…) — the apps themselves are the manifest's,
+/// never a second list here (one went stale when apps were renamed, and acts adding them were refused).
+pub fn app_name(x: &str) -> bool {
+    (1..=24).contains(&x.len()) && x.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
+}
 pub const ACTIONS: [&str; 7] = ["read", "post", "comment", "vote", "edit", "join", "invite"];
 pub const WHO: [&str; 6] = ["anyone", "members", "admins", "owner", "nobody", "inherit"];
 /// What a composed role may carry (granting the admin role stays the owner's alone).
@@ -294,10 +298,10 @@ impl Gov {
                     let by_code = inv_exists && g.invites[code.unwrap()].live(at_or(&a, now));
                     invite_ok && did.is_some() && !banned_did && (by_code || (code == Some("open") && g.policy_at("", "join", f64::INFINITY) == Some("anyone")))
                 }
-                "app" => g.may(&by, r, "apps") && s(&a, "app").is_some_and(|x| APPS.contains(&x)),
+                "app" => g.may(&by, r, "apps") && s(&a, "app").is_some_and(app_name),
                 "config" => {
                     g.may(&by, r, "apps")
-                        && s(&a, "app").is_some_and(|x| APPS.contains(&x) || x == "space")
+                        && s(&a, "app").is_some_and(app_name)
                         && s(&a, "key").is_some_and(|k| js_len(k) <= 32 && (k != "read" || r == Some("owner")))
                 }
                 "policy" => {

@@ -2341,12 +2341,11 @@ mod js {
             )
             .to_string()
         }
+        /// The apps the space uses: every one its acts turned on (and not off since), by name.
         pub fn apps(&self) -> Vec<String> {
-            craftworks_gov::APPS
-                .iter()
-                .filter(|a| self.0.apps.get(**a) == Some(&true))
-                .map(|a| a.to_string())
-                .collect()
+            let mut on: Vec<String> = self.0.apps.iter().filter(|(_, v)| **v).map(|(k, _)| k.clone()).collect();
+            on.sort();
+            on
         }
         /// An app's content setting (JSON), or none.
         pub fn config(&self, app: &str, key: &str) -> Option<String> {
