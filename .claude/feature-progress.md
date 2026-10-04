@@ -1026,7 +1026,10 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       such as BOOKS/COMICS (owner: "as per handcraft") is one entry: its types, label, icon, maker, viewer) (owner 10-03: "image will unify with image capability / app"): an image's making
       (thumbnail; sizes) moves out of `attachments` into one capability, as `video-studio` is for video/audio — used
       by the Images app and every editor alike.
-- [ ] IMAGES APP (owner 10-03): a lens on the image domain (public view like Flickr), as Videos is YouTube's and Audio
+- [x] IMAGES APP (owner 10-03; DONE 222be95: `#/image` on the one media page — a wall (photostream, Following, Saved,
+      Discover, a space's), the picture whole on its page (preview first, then the file; click: actual size), kinds
+      chosen on upload with their fields, filed in Drive /Images, its rules in Settings. fx: A uploaded a Photo, B opened
+      it from Discover at 800 px with comments): a lens on the image domain (public view like Flickr), as Videos is YouTube's and Audio
       Spotify's — same `items`/`content` path, its Drive folder /Images. Its kinds (owner 10-03): IMAGE (the general one, as Videos'
       `video`), with PHOTO and ARTWORK
       (already `kinds`' image domain, with their fields), chosen on upload as Videos' movie/episode/short are.
@@ -1110,7 +1113,7 @@ Done (commits on main):
 - Board's rules are the text domain's (d5b1304) — spaces saved public before must be re-saved once.
 - Writers bag fresh reads shared; tail.whole once (measured: tree blocks never fetched twice).
 - Named-people lists; audiences kept by admins while the maker is away.
-Open, in order: Images app; Books app (same shape); one access control for the personal space; group-fork
+Open, in order: Books app (same shape); one access control for the personal space; group-fork
 leftovers (heal own commits only, keep losing-branch keys, owner re-adds members on another branch).
 Test nodes 17691/17692: fresh accounts, PIN 246810 (older test accounts' PINs above are void).
 Waiting on Ivvor: reload + PIN so their page answers onlyabrak's history ask for Ivvor's New Space (apps hidden).
