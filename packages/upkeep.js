@@ -36,7 +36,12 @@ export async function start(ctx) {
       }
       const joined = await conversation.accept().catch(e => (ctx.log("upkeep", { what: `the inbox: ${e.message}` }), []));
       if (joined.length) ctx.log("upkeep", { what: `joined ${joined.length} space(s) from the inbox` });
-      for (const sp of (await space.mine()).filter(s => s.kind === "server")) {
+      // One space at a time, each once the node is idle (BACKGROUND: a page's reads first).
+      const node = await ctx.require("node");
+      const servers = (await space.mine()).filter(s => s.kind === "server");
+      // The space open first.
+      for (const sp of [...servers.filter(s => s.id === ctx.space), ...servers.filter(s => s.id !== ctx.space)]) {
+        await node.idle();
         const r = await roles.of(sp).catch(() => null);
         // The acts hold in the group: whoever is banned, removed or has left and is still in it, out — by ANY member
         // (the acts already decided it; the group's one order refuses a second commit of the same removal).

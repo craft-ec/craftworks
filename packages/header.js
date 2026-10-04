@@ -190,15 +190,15 @@ export function mount(ctx, el) {
   addEventListener("craftworks:route", draw);
   addEventListener("craftworks:actions", draw);
   addEventListener("craftworks:auth", () => (spaceName(), switcher()));
-  // ACTIVITY runs on every page (the header is on every page): new messages notify, whichever app is open. After the
-  // page is up, never holding it.
-  setTimeout(() => ctx.require("activity").catch(() => {}), 1500);
-  // UPKEEP on every page too: welcomes joined, askers let in (whichever page is open).
-  setTimeout(() => ctx.require("upkeep").catch(() => {}), 2500);
-  // FILE KEYS too: every file on the key its access calls for (a member removed, a board made private), re-keyed here.
-  setTimeout(() => ctx.require("file-keys").catch(() => {}), 4000);
-  // Keeping this person's data on the network (phase 4, Lifecycle): due tables, one at a time, in the background.
-  setTimeout(() => ctx.require("keep").catch(() => {}), 5000);
-  // VIDEOS still being made (renditions pending): made here in the background, whichever page is open.
-  setTimeout(() => ctx.require("video-studio").catch(() => {}), 6000);
+  // THE BACKGROUND — on every page, AFTER it: started one at a time, each once the node is idle (the page's own reads
+  // answered), never on a clock that lands among them. ACTIVITY (what is new: notified, whichever app is open);
+  // UPKEEP (welcomes joined, askers let in); FILE KEYS (every file on the key its access calls for); KEEP (this person's
+  // data kept on the network); VIDEO STUDIO (renditions still to make).
+  (async () => {
+    const node = await ctx.require("node");
+    for (const name of ["activity", "upkeep", "file-keys", "keep", "video-studio"]) {
+      await node.idle();
+      await ctx.require(name).catch(() => {});
+    }
+  })().catch(() => {});
 }

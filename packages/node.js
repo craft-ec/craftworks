@@ -77,15 +77,45 @@ export async function start(ctx) {
     again();
   };
   // Send frames and wait for the first answer `match` accepts. Never silent: a timeout is an error with its reason.
-  const ask = (frames, match, what, ms = 15000) =>
+  // `signal` (an AbortSignal): no longer wanted — taken off the list at once (a race won by another: its losers).
+  const ask = (frames, match, what, ms = 15000, signal = null) =>
     new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error(`${what}: no answer from the node in ${ms / 1000} s${lost ? " (reconnecting to it)" : ""}`)), ms);
-      waiters.push({ match, resolve: v => (clearTimeout(t), resolve(v)) });
+      const w = { match, what, at: performance.now(), resolve: v => (clearTimeout(t), resolve(v)) };
+      // Timed out: no longer waited for — taken off the list (left on it, it would match a late answer meant for
+      // another, and count as in flight for ever: `idle` would never come).
+      const t = setTimeout(() => {
+        const i = waiters.indexOf(w);
+        if (i >= 0) waiters.splice(i, 1);
+        reject(new Error(`${what}: no answer from the node in ${ms / 1000} s${lost ? " (reconnecting to it)" : ""}`));
+      }, ms);
+      waiters.push(w);
+      signal?.addEventListener("abort", () => {
+        clearTimeout(t);
+        const i = waiters.indexOf(w);
+        if (i >= 0) waiters.splice(i, 1);
+        reject(new Error(`${what}: no longer wanted`));
+      });
       up.then(s => {
         for (const f of frames) s.send(f);
       });
     });
 
+  // IDLE: nothing asked of the node for WAIT.hint (the one wait policy's) — what BACKGROUND work waits for before each
+  // step (unread counts, upkeep, keeping), so a page's own reads never queue behind it.
+  const idle = (quiet = WAIT.hint) =>
+    new Promise(resolve => {
+      let since = waiters.length ? 0 : performance.now();
+      const check = () => {
+        if (waiters.length) since = 0;
+        else if (!since) since = performance.now();
+        else if (performance.now() - since >= quiet) return resolve();
+        setTimeout(check, 100);
+      };
+      check();
+    });
+
   // `drop()`: close the connection as a sleep or a network change does (to see the recovery work).
-  return { core, glue, ask, listen, url, drop: () => ws.close(), WAIT, backoff };
+  // WHAT IS IN FLIGHT now — each request's label and how long it has waited (ms): to see what a page waits on.
+  const inFlight = () => waiters.map(w => ({ what: w.what, ms: Math.round(performance.now() - w.at) })).sort((a, b) => b.ms - a.ms);
+  return { core, glue, ask, listen, url, drop: () => ws.close(), WAIT, backoff, idle, busy: () => waiters.length, inFlight };
 }

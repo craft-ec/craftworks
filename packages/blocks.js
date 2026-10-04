@@ -27,25 +27,41 @@ export async function start(ctx) {
   // What this page did: blocks read, and how many of them were rebuilt from their group.
   const stats = { read: 0, rebuilt: 0 };
 
-  // One GET per block in flight: its answer is the table's next view (tagged with the block), or `get-failed`.
-  const inflight = new Map();
+  // ONE GET PER BLOCK, ever, on this page: a request stays until the node answers it (the block — then HELD by the
+  // core for every table — or "not there"), and every race that wants that block joins it. A race already won
+  // simply stops listening; its siblings' requests are never sent again. A block the node answered "not there" is
+  // not asked again for a while (`absent`): nothing is looked up twice that is known not to be there.
+  const LOST_FOR = 5 * 60 * 1000;
+  const inflight = new Map(); // block → { p, what, at }
+  const absent = new Map(); // block → when the node said it is not there
   function get(b, what) {
+    const no = absent.get(b);
+    if (no && Date.now() - no < LOST_FOR) return Promise.resolve({ kind: "get-failed", id: b });
     if (!inflight.has(b)) {
       const [, frames] = core.frames_get(bytes(b));
+      sends.set(b, (sends.get(b) ?? 0) + 1);
       const p = ask(frames, x => x.block === b || (x.kind === "get-failed" && x.id === b), what, WAIT.ask)
-        .catch(() => ({ kind: "get-failed", id: b }))
+        .catch(() => ({ kind: "get-failed", id: b, waited: true }))
+        .then(a => (a.kind === "get-failed" && !a.waited && absent.set(b, Date.now()), a))
         .finally(() => inflight.delete(b));
-      inflight.set(b, p);
+      inflight.set(b, { p, what, at: performance.now() });
     }
-    return inflight.get(b);
+    return inflight.get(b).p;
   }
 
   // A block LOST (neither it nor enough of its group came back): not asked again for a while — every read of a tree
   // that needs it fails at once (its table shown without that writer's part), never another wait on the same loss.
-  const LOST_FOR = 5 * 60 * 1000;
   const lost = new Map(); // block → when it was found lost
   // One block, raced against its group. Resolves "direct" or "rebuilt"; rejects when neither can happen.
+  // ONE RACE per table and block at a time: a walk that wants a block already raced for joins that race (a table's
+  // update walks its tree again while the first walk still waits — never a second race for the same block).
+  const racing = new Map(); // `${tail}/${b}` → Promise
   function race(tail, b, what) {
+    const k = `${tail}/${b}`;
+    if (!racing.has(k)) racing.set(k, raceOnce(tail, b, what).finally(() => racing.delete(k)));
+    return racing.get(k);
+  }
+  function raceOnce(tail, b, what) {
     const at = lost.get(b);
     if (at && Date.now() - at < LOST_FOR) return Promise.reject(new Error(`${what}: block ${b.slice(0, 12)}… is not on the network (found lost ${Math.round((Date.now() - at) / 1000)} s ago: not asked again yet)`));
     let group = [];
@@ -54,6 +70,9 @@ export async function start(ctx) {
     } catch {
       // No group names it: asked alone.
     }
+    // (Every race recorded: how it ended — or that it has not: a page's measure.)
+    const rec = { b: b.slice(0, 8), what, group: group.length, at: Math.round(performance.now()), end: null };
+    races.push(rec);
     return new Promise((resolve, reject) => {
       let open = 1 + group.length;
       let answered = 0; // of its group: how many came
@@ -66,10 +85,12 @@ export async function start(ctx) {
         } catch {}
         if (held) {
           done = true;
+          rec.end = "rebuilt";
           resolve("rebuilt");
         } else if (open === 0) {
           done = true;
           lost.set(b, Date.now());
+          rec.end = "lost";
           // In FULL — the node's address (base58) too — and its group: what can be followed in the node's log.
           ctx.log("block lost", { what: `${what}: block ${b} (node: ${base58(b)}) — its group of ${group.length}: ${answered} answered; asked ${group.map(g => base58(g)).join(", ") || "(none: asked alone)"}` });
           reject(new Error(`${what}: block ${b.slice(0, 12)}… is not on the network, and too little of its group is to rebuild it`));
@@ -80,6 +101,7 @@ export async function start(ctx) {
         if (done) return;
         if (a.kind !== "get-failed") {
           done = true;
+          rec.end = "direct";
           // Forget the race: the block itself is held. Another read of the same block (two tails sharing a tree: a
           // table and its moved copy) may have forgotten it already — never a throw here, or this read waits forever.
           if (group.length)
@@ -98,8 +120,15 @@ export async function start(ctx) {
     });
   }
 
+  // EVERY FETCH RECORDED (a page's measure): which table, which blocks, and who asked (the call chain) — so a tree
+  // fetched more than once per version is named where it is asked.
+  const calls = [];
+  const races = [];
+  const sends = new Map(); // block → GETs actually sent to the node
   async function fetch(tail, ids, what) {
     const t0 = performance.now();
+    const chain = (new Error().stack ?? "").split("\n").slice(2, 9).map(l => l.trim().replace(/^at /, "").replace(/\(?blob:[^)]*\)?/g, "").replace(/\s+/g, " ").trim()).filter(Boolean).join(" < ");
+    calls.push({ what, tail: String(tail).slice(0, 12), ids: ids.map(b => b.slice(0, 8)).join(","), at: Math.round(t0), chain });
     const how = await Promise.all(ids.map(b => race(tail, b, `reading ${what}'s tree`)));
     const rebuilt = how.filter(h => h === "rebuilt").length;
     stats.read += ids.length;
@@ -128,5 +157,5 @@ export async function start(ctx) {
     return a.kind !== "get-failed";
   }
 
-  return { fetch, put, probe, stats: () => ({ ...stats }) };
+  return { fetch, put, probe, stats: () => ({ ...stats }) , calls: () => calls.slice(), sends: () => new Map(sends), races: () => races.map(r => ({ ...r, open: performance.now() - r.at })), pending: () => [...inflight.entries()].map(([b, g]) => ({ b: b.slice(0, 12), what: g.what, ms: Math.round(performance.now() - g.at) }))};
 }

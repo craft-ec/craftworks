@@ -125,8 +125,12 @@ pub struct Core {
     piece_code: Vec<u8>,
     /// The last ASSET listed per tail (`tail_asset`): its groups, for coding a parity block again.
     assets: std::collections::HashMap<[u8; 32], Vec<data::AssetGroup>>,
-    /// Tree blocks asked of the network: Block contract id -> (the tail that needs it, the block's id).
-    wanted: std::collections::HashMap<[u8; 32], ([u8; 32], freenet_prolly::Cid)>,
+    /// Tree blocks asked of the network: Block contract id -> EVERY tail that needs it (with the block's id) — one
+    /// answer serves them all.
+    wanted: std::collections::HashMap<[u8; 32], Vec<([u8; 32], freenet_prolly::Cid)>>,
+    /// READ ONCE: every tree block the node sent, by its contract — content-addressed, so any table (any version of
+    /// it) that needs it again takes it from here, never asking the network twice.
+    held: std::collections::HashMap<[u8; 32], Vec<u8>>,
     /// Repairs under way: the lost block's contract id -> (its tail, its group).
     repairs: std::collections::HashMap<[u8; 32], ([u8; 32], engine::repair::Group)>,
 }
@@ -144,6 +148,7 @@ impl Core {
             sealed_code: Vec::new(),
             piece_code: Vec::new(),
             wanted: Default::default(),
+            held: Default::default(),
             repairs: Default::default(),
             assets: Default::default(),
         }
@@ -401,20 +406,17 @@ impl Core {
         after: Option<Vec<u8>>,
         limit: usize,
     ) -> Value {
-        let Some(o) = self.tails.get_mut(id) else {
-            return json!({ "kind": "error", "said": "that tail is not open" });
-        };
-        match o.page(lo, hi, reverse, after, limit) {
-            Ok(data::Step::Ready(p)) => json!({
+        match self.read(id, |o| {
+            o.page(lo.clone(), hi.clone(), reverse, after.clone(), limit)
+        }) {
+            Ok(Err(blocks)) => json!({ "kind": "tail-need", "id": hex(id), "blocks": blocks }),
+            Ok(Ok(data::Step::Need(_))) => unreachable!(),
+            Ok(Ok(data::Step::Ready(p))) => json!({
                 "kind": "tail-page", "id": hex(id),
                 "rows": p.rows.iter().map(|(k, v)| [hex(k), hex(v)]).collect::<Vec<_>>(),
                 "next": p.next.as_deref().map(hex),
             }),
-            Ok(data::Step::Need(cids)) => match self.want(id, &cids) {
-                Ok(blocks) => json!({ "kind": "tail-need", "id": hex(id), "blocks": blocks }),
-                Err(e) => json!({ "kind": "tail-unreadable", "id": hex(id), "said": e }),
-            },
-            Ok(data::Step::Keys(epochs)) => {
+            Ok(Ok(data::Step::Keys(epochs))) => {
                 json!({ "kind": "tail-keys", "id": hex(id), "epochs": epochs })
             }
             Err(e) => json!({ "kind": "tail-unreadable", "id": hex(id), "said": e }),
@@ -422,16 +424,16 @@ impl Core {
     }
 
     pub fn tail_view(&mut self, id: &[u8; 32]) -> Value {
-        let Some(o) = self.tails.get_mut(id) else {
+        if !self.tails.contains_key(id) {
             return json!({ "kind": "error", "said": "that tail is not open" });
-        };
-        match o.rows() {
-            Ok(data::Step::Ready(rows)) => json!({ "kind": "tail", "id": hex(id), "tail": rows }),
-            Ok(data::Step::Need(cids)) => match self.want(id, &cids) {
-                Ok(blocks) => json!({ "kind": "tail-need", "id": hex(id), "blocks": blocks }),
-                Err(e) => json!({ "kind": "tail-unreadable", "id": hex(id), "said": e }),
-            },
-            Ok(data::Step::Keys(epochs)) => {
+        }
+        match self.read(id, |o| o.rows()) {
+            Ok(Ok(data::Step::Ready(rows))) => {
+                json!({ "kind": "tail", "id": hex(id), "tail": rows })
+            }
+            Ok(Err(blocks)) => json!({ "kind": "tail-need", "id": hex(id), "blocks": blocks }),
+            Ok(Ok(data::Step::Need(_))) => unreachable!(),
+            Ok(Ok(data::Step::Keys(epochs))) => {
                 json!({ "kind": "tail-keys", "id": hex(id), "epochs": epochs })
             }
             Err(e) => json!({ "kind": "tail-unreadable", "id": hex(id), "said": e }),
@@ -441,10 +443,11 @@ impl Core {
     /// A table's ASSET (phase 4, Lifecycle): its groups — each `k` members then parity — with every block's id and
     /// the contract it lives in (hex); or the blocks to GET first (as a read), or the epochs whose keys to get.
     pub fn tail_asset(&mut self, id: &[u8; 32]) -> Result<AssetOut, String> {
-        match self.tail(id)?.asset()? {
-            data::Step::Need(cids) => Ok(AssetOut::Need(self.want(id, &cids)?)),
-            data::Step::Keys(e) => Ok(AssetOut::Keys(e)),
-            data::Step::Ready(groups) => {
+        match self.read(id, |o| o.asset())? {
+            Err(fetch) => Ok(AssetOut::Need(fetch)),
+            Ok(data::Step::Need(_)) => unreachable!(),
+            Ok(data::Step::Keys(e)) => Ok(AssetOut::Keys(e)),
+            Ok(data::Step::Ready(groups)) => {
                 let o = self.tails.get(id).ok_or("that tail is not open")?;
                 let mut out = Vec::new();
                 for g in &groups {
@@ -523,21 +526,52 @@ impl Core {
         if at.is_empty() || at.len() < cids.len() {
             return Err("its tree is sealed with a key this page does not hold".into());
         }
-        Ok(at
-            .into_iter()
-            .map(|(cid, (sealed, params))| {
-                let c = wire::block::contract_for(
-                    if sealed {
-                        &self.sealed_code
-                    } else {
-                        &self.block_code
-                    },
-                    &params,
-                );
-                self.wanted.insert(c, (*id, cid));
-                hex(&c)
-            })
-            .collect())
+        let mut fetch = Vec::new();
+        for (cid, (sealed, params)) in at {
+            let c = wire::block::contract_for(
+                if sealed {
+                    &self.sealed_code
+                } else {
+                    &self.block_code
+                },
+                &params,
+            );
+            // Held already (another table's read, an older version's): taken from here, not asked again.
+            if let Some(state) = self.held.get(&c) {
+                if let Some(o) = self.tails.get_mut(id) {
+                    if o.absorb_block(&cid, state) {
+                        continue;
+                    }
+                }
+            }
+            let w = self.wanted.entry(c).or_default();
+            if !w.contains(&(*id, cid)) {
+                w.push((*id, cid));
+            }
+            fetch.push(hex(&c));
+        }
+        Ok(fetch)
+    }
+
+    /// A read step resolved against what is HELD: `Need` blocks already held are taken in and the read runs again —
+    /// only blocks no one holds come back to fetch.
+    fn read<T>(
+        &mut self,
+        id: &[u8; 32],
+        mut step: impl FnMut(&mut data::Open) -> Result<data::Step<T>, String>,
+    ) -> Result<Result<data::Step<T>, Vec<String>>, String> {
+        loop {
+            let o = self.tails.get_mut(id).ok_or("that tail is not open")?;
+            match step(o)? {
+                data::Step::Need(cids) => {
+                    let fetch = self.want(id, &cids)?;
+                    if !fetch.is_empty() {
+                        return Ok(Err(fetch));
+                    }
+                }
+                other => return Ok(Ok(other)),
+            }
+        }
     }
 
     /// A tree block's GROUP, found in what the table holds: its other blocks to GET at the same time as the block
@@ -552,6 +586,7 @@ impl Core {
         let cid = self
             .wanted
             .get(lost_contract)
+            .and_then(|w| w.iter().find(|(t, _)| t == id).or(w.first()))
             .map(|(_, c)| *c)
             .or_else(|| self.repairs.get(lost_contract).map(|(_, g)| g.missing))
             .ok_or("that block was not asked for")?;
@@ -589,9 +624,12 @@ impl Core {
     /// FLUSH an open table: `Ready` with the frames that PUT its new tree blocks (send and see them all accepted
     /// FIRST) and the step to sign; or `Need` with Block contract ids to GET first.
     pub fn tail_flush(&mut self, id: &[u8; 32]) -> Result<FlushOut, String> {
-        let step = self.tail(id)?.flush()?;
+        let step = match self.read(id, |o| o.flush())? {
+            Err(fetch) => return Ok(FlushOut::Need(fetch)),
+            Ok(s) => s,
+        };
         match step {
-            data::Step::Need(cids) => Ok(FlushOut::Need(self.want(id, &cids)?)),
+            data::Step::Need(_) => unreachable!(),
             data::Step::Keys(epochs) => Ok(FlushOut::Keys(epochs)),
             data::Step::Ready(f) => {
                 let tk = if f.sealed {
@@ -635,16 +673,30 @@ impl Core {
                 if let Some(v) = self.tail_state(id, &state) {
                     return v;
                 }
-                // A tree block a table asked for: into that table, and its next view.
-                if let Some((tail, cid)) = self.wanted.remove(&id) {
-                    if let Some(o) = self.tails.get_mut(&tail) {
-                        if !o.absorb_block(&cid, &state) {
-                            return json!({ "kind": "tail-unreadable", "id": hex(&tail), "said": format!("block {} is not what was asked", hex(&cid)) });
+                // A tree block: HELD (any table that needs it again takes it from here), into EVERY table that asked
+                // for it, and the answer always names its block — whoever waits on it is answered.
+                if let Some(wanters) = self.wanted.remove(&id) {
+                    self.held.insert(id, state.clone());
+                    let mut first = None;
+                    for (tail, cid) in wanters {
+                        if let Some(o) = self.tails.get_mut(&tail) {
+                            if !o.absorb_block(&cid, &state) {
+                                let mut v = json!({ "kind": "tail-unreadable", "id": hex(&tail), "said": format!("block {} is not what was asked", hex(&cid)) });
+                                v["block"] = json!(hex(&id));
+                                return v;
+                            }
                         }
+                        first.get_or_insert(tail);
                     }
-                    let mut v = self.tail_view(&tail);
-                    v["block"] = json!(hex(&id)); // which fetch this answers
-                    return v;
+                    if let Some(tail) = first {
+                        let mut v = self.tail_view(&tail);
+                        v["block"] = json!(hex(&id)); // which fetch this answers
+                        return v;
+                    }
+                }
+                if self.held.contains_key(&id) {
+                    // A block already held (a second answer): still named, so its waiter is answered.
+                    return json!({ "kind": "got", "id": hex(&id), "block": hex(&id) });
                 }
                 self.got.insert(id, state);
                 json!({ "kind": "got", "id": hex(&id) })
@@ -1604,9 +1656,17 @@ mod js {
 
         /// An ALTERNATE key of an epoch for an open table (a group branch that lost the race for that epoch, `keys`'
         /// heal): read with, never written with — rows opened with it are sealed over to the epoch's own key.
-        pub fn tail_epoch_key_also(&mut self, id: &[u8], epoch: f64, key: &[u8]) -> Result<(), JsValue> {
+        pub fn tail_epoch_key_also(
+            &mut self,
+            id: &[u8],
+            epoch: f64,
+            key: &[u8],
+        ) -> Result<(), JsValue> {
             let k = b32(key)?;
-            self.0.tail(&b32(id)?).map_err(err)?.epoch_key_also(epoch as u64, k);
+            self.0
+                .tail(&b32(id)?)
+                .map_err(err)?
+                .epoch_key_also(epoch as u64, k);
             Ok(())
         }
 
@@ -1626,12 +1686,16 @@ mod js {
             let sig: [u8; 64] = unhex(sig_hex)
                 .and_then(|b| b.try_into().ok())
                 .ok_or_else(|| err("not a signature".into()))?;
-            let send = self
-                .0
-                .tail(&id)
-                .map_err(err)?
+            // READ ONCE: a commit replaces the table's held blocks with what its write staged (taken BEFORE any block
+            // that arrived since) — the blocks read meanwhile kept, never dropped to be fetched again.
+            let open = self.0.tail(&id).map_err(err)?;
+            let held = open.blocks.0.clone();
+            let send = open
                 .commit(sig)
                 .ok_or_else(|| err("the signature does not cover that write".into()))?;
+            for (cid, body) in held {
+                open.blocks.0.entry(cid).or_insert(body);
+            }
             let kind = if matches!(send, data::Send::Put(_)) {
                 "put"
             } else {
@@ -2410,14 +2474,26 @@ mod js {
         }
         /// The composed roles (JSON `[{ id, name, perms }]`), and who holds which (JSON `{ did: [id] }`).
         pub fn roles_defined(&self) -> String {
-            serde_json::Value::Array(self.0.defined.iter().map(|(id, r)| serde_json::json!({ "id": id, "name": r.name, "perms": r.perms })).collect()).to_string()
+            serde_json::Value::Array(
+                self.0
+                    .defined
+                    .iter()
+                    .map(
+                        |(id, r)| serde_json::json!({ "id": id, "name": r.name, "perms": r.perms }),
+                    )
+                    .collect(),
+            )
+            .to_string()
         }
         pub fn roles_held(&self) -> String {
             serde_json::to_string(&self.0.held).expect("strings")
         }
         /// What a composed role may carry.
         pub fn perms() -> Vec<String> {
-            craftworks_gov::PERMS.iter().map(|p| p.to_string()).collect()
+            craftworks_gov::PERMS
+                .iter()
+                .map(|p| p.to_string())
+                .collect()
         }
         pub fn can_role(role: Option<String>, what: &str) -> bool {
             craftworks_gov::can_role(role.as_deref(), what)

@@ -80,9 +80,16 @@ export async function start(ctx) {
 
   // WHAT TO WATCH: this person's conversations, and every channel of their servers — looked at again every minute (a
   // conversation joined, a channel added).
-  // Every space AT ONCE: one slow to open never holds the others' counts.
+  // One space AT A TIME, each once the node is idle — BACKGROUND work: a page's own reads never wait behind it (a slow
+  // space holds the next one's count only, never the page).
   async function scan() {
-    await Promise.all((await space.mine().catch(() => [])).map(sp => scanOne(sp).catch(() => {})));
+    const node = await ctx.require("node");
+    // The space open first (moved to another: it goes to the front of the next pass).
+    const all = await space.mine().catch(() => []);
+    for (const sp of [...all.filter(s => s.id === ctx.space), ...all.filter(s => s.id !== ctx.space)]) {
+      await node.idle();
+      await scanOne(sp).catch(() => {});
+    }
   }
   async function scanOne(sp) {
     if (sp.kind === "direct" || sp.kind === "group") watch(sp, "chat", { route: `#/chat/${sp.id}` }).catch(() => {});
