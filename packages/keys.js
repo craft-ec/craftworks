@@ -588,7 +588,7 @@ export async function start(ctx) {
               mb = await memberWith(row.value);
               m = mb.join_space(sp.idBytes, bytes(welcome));
             } catch (e) {
-              failed.push({ batch: row.key.slice("packages/".length, "packages/".length + 8), why: String(e?.message ?? e) });
+              failed.push({ batch: row.key.slice("packages/".length, "packages/".length + 8), size: String(row.value ?? "").length, why: String(e?.message ?? e) });
               continue;
             }
             if (expect) {
@@ -609,7 +609,7 @@ export async function start(ctx) {
           throw new Error(
             real.length
               ? `the batch holding its key package refused it — ${real.map(f => `${f.batch}: ${f.why}`).join("; ")}`
-              : `no key package of this account answers that welcome (${failed.length} batch(es) tried): ${failed[0]?.why ?? "none held"}`,
+              : `no key package of this account answers that welcome (${failed.length} batch(es) tried: ${failed.map(f => `${f.batch}·${f.size}`).join(" ")}): ${failed[0]?.why ?? "none held"}`,
           );
         })),
       // MADE by this DID, its first member.
@@ -774,7 +774,7 @@ export async function start(ctx) {
       } catch {}
       for (const kp of kps) {
         const h = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(kp)))].slice(0, 16).map(x => x.toString(16).padStart(2, "0")).join("");
-        if (h === tag) return true;
+        if (h === tag) return r.key.slice("offers/".length, "offers/".length + 8);
       }
     }
     return false;

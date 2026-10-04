@@ -295,7 +295,7 @@ export async function start(ctx) {
             .then(() => once.put(k, String(Date.now())), err => ctx.log("conversation", { what: `asking ${short(it.from)} to welcome again: ${err.message}` }));
         }
         ctx.log("conversation", {
-          what: `a welcome from ${short(it.from)} did not open here: ${e.message}${it.kp ? ` — made ${it.made ? new Date(it.made).toISOString().slice(0, 16) : "(when unknown)"} for key package ${it.kp.slice(0, 8)}, ${held ? "one this account offered" : "NOT one this account offered"}` : " — from before welcomes named their key package"}`,
+          what: `a welcome from ${short(it.from)} did not open here: ${e.message}${it.kp ? ` — made ${it.made ? new Date(it.made).toISOString().slice(0, 16) : "(when unknown)"} for key package ${it.kp.slice(0, 8)}, ${held ? `one this account offered (batch ${held})` : "NOT one this account offered"}` : " — from before welcomes named their key package"}`,
         });
       }
     }
