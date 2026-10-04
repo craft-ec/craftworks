@@ -8,8 +8,8 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [space, roles, conversation, settings, theme, icons] = await Promise.all(
-    ["space", "roles", "conversation", "server-settings", "theme", "app-icons"].map(n => ctx.require(n)),
+  const [space, roles, conversation, theme, icons] = await Promise.all(
+    ["space", "roles", "conversation", "theme", "app-icons"].map(n => ctx.require(n)),
   );
   // What is new in each app (Chat's unread in this space): its pill, kept current.
   let activity = null;
@@ -56,8 +56,8 @@ export async function mount(ctx, el) {
     const may = r.can(me, "apps");
     const said = h("p", { className: "said", hidden: true });
     const members = r.members();
-    // Its settings: the space's own (members and roles, invites, the log, leaving); each app's are in the app.
-    const openSettings = tab => settings.open(sp, { tab, left: () => (location.hash = "#/") });
+    // Its SETTINGS: the Settings app (`settings`), at a tab.
+    const openSettings = tab => (location.hash = `#/s/${sp.id}/settings${tab && tab !== "overview" ? `/${tab}` : ""}`);
     // Its apps, as every Home shows them (`app-icons`): a pill with what is new (Chat: its unread), and — for who may —
     // the apps it does not use yet, dimmed, with Add.
     const add = k => async () => {
@@ -117,13 +117,8 @@ export async function mount(ctx, el) {
           )
         : null,
       said,
-      // SETTINGS (owner, admins): the one place of every setting of the space and its apps (`app-settings`).
-      may ? h("section", { className: "settings" }, h("h3", { textContent: "Settings" }), await (await ctx.require("app-settings")).page(sp)) : null,
       ].filter(Boolean),
     );
-    // Opened at one app's section (`#/s/<id>/space/settings/<app>`, an app's link): scrolled to it.
-    const at = /^settings\/?(.*)$/.exec(ctx.sub ?? "");
-    if (at) root.querySelector(`#settings-${at[1] || "space"}`)?.scrollIntoView({ block: "start" });
   }
   root.replaceChildren(theme.loading("Opening the space…"));
   await draw();

@@ -4,7 +4,8 @@
 // server's channels are the caller's (`channels`: { list, add, rename, remove }).
 //
 //   const settings = await ctx.require("server-settings");
-//   settings.open(server, { tab: "members", channels })
+//   settings.open(server, { tab: "members", channels })   // a dialog
+//   settings.render(host, server, { tab, left })          // the same, as a PAGE (the Settings app's)
 export async function start(ctx) {
   const [roles, moderation, conversation, directory, theme] = await Promise.all(["roles", "moderation", "conversation", "directory", "theme"].map(n => ctx.require(n)));
   const style = document.createElement("style");
@@ -45,6 +46,9 @@ export async function start(ctx) {
     .cw-set dd { margin: 0; }
     .cw-set ol.log { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: var(--cw-text-sm); }
     .cw-set ol.log time { color: var(--cw-muted); margin-right: var(--cw-space-2); font-size: var(--cw-text-xs); }
+    .cw-set.page { display: grid; grid-template-columns: 200px 1fr; width: auto; height: auto; min-height: 520px; max-width: 1000px; margin: 0 auto;
+      border: 1px solid var(--cw-line); background: var(--cw-surface); }
+    @media (max-width: 640px) { .cw-set.page { grid-template-columns: 1fr; } }
     @media (max-width: 640px) { .cw-set[open] { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .cw-set nav { display: flex; overflow-x: auto; } }`;
   document.head.append(style);
   const el = (tag, props = {}, ...kids) => {
@@ -63,16 +67,20 @@ export async function start(ctx) {
     ["roles", "Roles"],
     ["invites", "Invites"],
     ["log", "Moderation log"],
+    ["apps", "Apps & rules"],
   ];
 
-  async function open(server, { tab = "overview", focus = null, channels, left = () => {} } = {}) {
+  const render = (host, server, opts = {}) => open(server, { ...opts, host });
+  async function open(server, { tab = "overview", focus = null, channels, left = () => {}, host = null } = {}) {
     const [r, mod, me] = await Promise.all([roles.of(server), moderation.of(server), ctx.require("space").then(s => s.account())]);
     await r.refresh();
-    const d = el("dialog", { className: "cw-set" });
+    // A DIALOG, or (`host`) a PAGE: the same tabs.
+    const d = host ? el("div", { className: "cw-set page" }) : el("dialog", { className: "cw-set" });
+    const close = () => (host ? null : d.close());
     const nav = el("nav", {}, el("h2", { textContent: server.name }));
     const main = el("main");
     d.append(nav, main);
-    document.body.append(d);
+    (host ?? document.body).append(d);
     let current = tab;
     const said = el("p", { className: "said" });
     const say = m => (said.textContent = m ? String(m) : "");
@@ -140,7 +148,7 @@ export async function start(ctx) {
             el("p", { className: "note", textContent: "Takes the server out of your list, on every device of your account." }),
             el("div", { className: "row" }, act("Leave server", async () => {
               await (await ctx.require("space")).leave(server);
-              d.close();
+              close();
               left(server);
             }, "danger", `leave ${server.name}`)),
           );
@@ -311,6 +319,13 @@ export async function start(ctx) {
           ),
         );
       },
+      // APPS & RULES: the space's and each app's settings (`app-settings`: the one place of them) — who may do what.
+      apps() {
+        main.append(el("h3", { textContent: "Apps & rules" }));
+        const slot = el("div");
+        main.append(slot);
+        ctx.require("app-settings").then(a => a.page(server)).then(p => (slot.replaceWith(p), focus && p.querySelector(`#settings-${focus}`)?.scrollIntoView({ block: "start" })), err => say(err?.message ?? err));
+      },
       log() {
         main.append(el("h3", { textContent: "Moderation log" }), el("p", { className: "note", textContent: "Every act that counted, newest first. Acts nobody was allowed to make are never shown: they do not count." }));
         const say = a => {
@@ -357,19 +372,20 @@ export async function start(ctx) {
           b.setAttribute("aria-current", String(k === current));
           return b;
         }),
-        el("button", { type: "button", className: "close", textContent: "Close", onclick: () => d.close() }),
+        host ? null : el("button", { type: "button", className: "close", textContent: "Close", onclick: () => d.close() }),
       );
       main.replaceChildren(said);
       pages[current]();
     }
-    r.onChange(() => d.open && draw());
+    r.onChange(() => (host ? d.isConnected : d.open) && draw());
+    draw();
+    if (host) return { close };
     d.onclose = () => d.remove();
     // A click outside (on the backdrop: the dialog itself, not its panes) closes it, as Esc does.
     d.addEventListener("click", e => e.target === d && d.close());
-    draw();
     d.showModal();
-    return { close: () => d.close() };
+    return { close };
   }
 
-  return { open };
+  return { open, render };
 }

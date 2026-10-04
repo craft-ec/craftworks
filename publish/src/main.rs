@@ -349,13 +349,14 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 87] = [
+    let packages: [(&str, &str, PathBuf); 88] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
         ("footer", "module", app.join("packages/footer.js")),
         ("home", "module", app.join("packages/home.js")),
         ("account", "module", app.join("packages/account.js")),
+        ("settings", "module", app.join("packages/settings.js")),
         ("node", "service", app.join("packages/node.js")),
         ("identity", "service", app.join("packages/identity.js")),
         ("auth", "service", app.join("packages/auth.js")),
@@ -527,7 +528,7 @@ async fn main() -> Result<()> {
     let names: Vec<&str> = packages.iter().map(|(n, _, _)| *n).collect();
     let mentions = |src: &str| -> Vec<&str> { names.iter().copied().filter(|n| src.contains(&format!("\"{n}\""))).collect() };
     // The app's PAGES (route → its package): the manifest's `pages`, and where each page's needs start.
-    let pages: [(&str, &str); 12] = [("/caption", "caption"), ("/video", "media"), ("/audio", "media"), ("/space", "space-home"), ("/", "home"), ("/account", "account"), ("/note", "note"), ("/chat", "chat"), ("/mail", "mail"), ("/contact", "contact"), ("/board", "board"), ("/drive", "drive")];
+    let pages: [(&str, &str); 12] = [("/caption", "caption"), ("/video", "media"), ("/audio", "media"), ("/space", "space-home"), ("/", "home"), ("/settings", "settings"), ("/note", "note"), ("/chat", "chat"), ("/mail", "mail"), ("/contact", "contact"), ("/board", "board"), ("/drive", "drive")];
     let mut needs = Vec::new();
     for (route, page) in pages {
         let mut have: Vec<&str> = vec!["theme", "header", "footer", page];

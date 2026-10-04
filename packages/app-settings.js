@@ -192,7 +192,8 @@ export async function start(ctx) {
     const keys = ["", ...r.apps().filter(a => SECTIONS[a])];
     return h("div", { className: "cw-settings", style: "display:grid;gap:var(--cw-space-3)" }, ...(await Promise.all(keys.map(k => section(sp, k, r, me)))));
   }
-  const href = (sp, key) => (sp ? `#/s/${sp.id}/space/settings/${key}` : `#/settings/${key}`);
+  // A space's: its Settings, "Apps & rules", at that app's section; yours: on your Home (its own settings).
+  const href = (sp, key) => (sp ? `#/s/${sp.id}/settings/apps/${key}` : "#/");
   // YOUR SPACE's SETTINGS (your Home): who may comment and vote on what you post in each app, by default — an item's
   // own setting over it. The same sections, read and written through `roles.personal`.
   const PERSONAL = { board: "Board", video: "Video", audio: "Audio" };

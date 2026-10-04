@@ -57,7 +57,7 @@ export async function mount(ctx, el) {
 // A SPACE's Contact: its people and their roles — the one list (`members-list`), with its tools for who may — and,
 // for who may invite, Invite.
 async function spacePeople(ctx, el, sp) {
-  const [ml, roles, settings, space] = await Promise.all(["members-list", "roles", "server-settings", "space"].map(n => ctx.require(n)));
+  const [ml, roles, space] = await Promise.all(["members-list", "roles", "space"].map(n => ctx.require(n)));
   const [r, me] = await Promise.all([roles.of(sp), space.account()]);
   el.innerHTML = `
     <style>
@@ -74,7 +74,7 @@ async function spacePeople(ctx, el, sp) {
   count();
   r.onChange(() => root.isConnected && count());
   if (r.can(me.id, "invite"))
-    root.querySelector(".top").append(Object.assign(document.createElement("button"), { type: "button", textContent: "Invite", onclick: () => settings.open(sp, { tab: "invites" }) }));
+    root.querySelector(".top").append(Object.assign(document.createElement("button"), { type: "button", textContent: "Invite", onclick: () => (location.hash = `#/s/${sp.id}/settings/invites`) }));
   root.append(await ml.show(sp, { manage: true }));
 }
 

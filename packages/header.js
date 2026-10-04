@@ -49,7 +49,7 @@ export function mount(ctx, el) {
       <span class="name"></span>
       <span class="actions"></span>
       <span class="end"></span>
-      <a class="account" href="#/account">Account</a>
+      <a class="account" href="#/settings">Settings</a>
     </nav>`;
   // A DROPDOWN: a button, and its list of links and actions (closed by a choice, a click outside or Escape).
   const dropdown = (label, entries, item) => {
@@ -96,7 +96,7 @@ export function mount(ctx, el) {
     const n = ++drawing;
     const box = el.querySelector(".name");
     const app = ctx.apps.find(a => a.route === ctx.route);
-    const here = ctx.route === "/" || ctx.route === "/space" ? "Home" : ctx.route === "/account" ? "Account" : (app?.name ?? "");
+    const here = ctx.route === "/" || ctx.route === "/space" ? "Home" : ctx.route === "/settings" ? "Settings" : (app?.name ?? "");
     // Asked quietly (never a login dialog: the header is on every page).
     const session = await ctx.require("auth").then(a => a.check()).catch(() => null);
     if (n !== drawing) return;
@@ -184,7 +184,10 @@ export function mount(ctx, el) {
         return b;
       }),
     );
-    el.querySelector(".account").style.fontWeight = ctx.route === "/account" ? "bold" : "normal";
+    // SETTINGS of the place open: a space's, or (the personal space) this account's.
+    const set = el.querySelector(".account");
+    set.href = ctx.space && ctx.space !== "discover" ? `#/s/${ctx.space}/settings` : "#/settings";
+    set.style.fontWeight = ctx.route === "/settings" ? "bold" : "normal";
   };
   draw();
   addEventListener("craftworks:route", draw);

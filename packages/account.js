@@ -1,5 +1,6 @@
 // ACCOUNT, a PRIVATE page: it shows nothing until someone is logged in. It asks `login`, which shows its dialog if
-// nobody is; closing the dialog goes home. Its SUB-PAGES are in the top bar (`#/account/<sub>`), one shown at a time:
+// nobody is; closing the dialog goes home. It is the personal space's SETTINGS (`settings`: `#/settings/<sub>`). Its
+// SUB-PAGES are in the top bar, one shown at a time:
 // Card, Nodes, Security (how the keys stand), Storage, Apps, Recovery (the words, and a passphrase carrying them),
 // Moderation; Log out is the bar's action.
 export async function mount(ctx, el) {
@@ -434,8 +435,8 @@ export async function mount(ctx, el) {
   const titles = { card: "Card", nodes: "Nodes", security: "Security", storage: "Storage", apps: "Apps", recovery: "Recovery", moderation: "Moderation" };
   const sub = sections[ctx.sub] ? ctx.sub : "card";
   // The top bar: the sub-pages, and Log out.
-  ctx.actions["/account"] = [
-    ...Object.entries(titles).map(([k, label]) => ({ label, href: k === "card" ? "#/account" : `#/account/${k}`, on: k === sub })),
+  ctx.actions[ctx.route] = [
+    ...Object.entries(titles).map(([k, label]) => ({ label, href: k === "card" ? "#/settings" : `#/settings/${k}`, on: k === sub })),
     { label: "Log out", run: () => auth.logout(), end: true },
   ];
   dispatchEvent(new CustomEvent("craftworks:actions"));
