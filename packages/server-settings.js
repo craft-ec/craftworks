@@ -12,6 +12,11 @@ export async function start(ctx) {
     .cw-set { border: 0; border-radius: var(--cw-radius); padding: 0; width: min(760px, calc(100vw - 32px)); height: min(620px, calc(100vh - 64px));
       box-shadow: var(--cw-shadow-lg); background: var(--cw-surface); color: var(--cw-fg); }
     .cw-set[open] { display: grid; grid-template-columns: 180px 1fr; }
+    .cw-set .chip { display: inline-flex; align-items: center; gap: 4px; margin: 2px 6px 2px 0; font-size: var(--cw-text-sm); white-space: nowrap; }
+    .cw-set span.chip { border: 1px solid var(--cw-line); border-radius: var(--cw-radius-pill); padding: 1px 8px; }
+    .cw-set .role-form { display: grid; gap: var(--cw-space-2); padding: var(--cw-space-3); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); margin-bottom: var(--cw-space-3); }
+    .cw-set .role-form .perms { display: flex; flex-wrap: wrap; }
+    .cw-set .role-form .row { display: flex; gap: var(--cw-space-2); }
     .cw-set nav { background: var(--cw-bg); border-right: 1px solid var(--cw-line); padding: var(--cw-space-3) var(--cw-space-2); display: grid; align-content: start; gap: 2px; }
     .cw-set nav h2 { font-size: var(--cw-text-xs); letter-spacing: .08em; color: var(--cw-muted); margin: var(--cw-space-2) var(--cw-space-2) var(--cw-space-2); text-transform: uppercase;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -49,9 +54,13 @@ export async function start(ctx) {
   };
   const when = t => (t ? new Date(t).toLocaleString() : "never");
 
+  // What a composed role may carry, in words.
+  const PERM_NAMES = { post: "Post", invite: "Invite people", channels: "Make and change channels", moderate: "Moderate (hide anything)", remove: "Remove and ban people", apps: "Manage apps and rules", roles: "Manage roles" };
+  const newRoleId = () => [...crypto.getRandomValues(new Uint8Array(6))].map(b => b.toString(16).padStart(2, "0")).join("");
   const TABS = [
     ["overview", "Overview"],
     ["members", "Members & roles"],
+    ["roles", "Roles"],
     ["invites", "Invites"],
     ["log", "Moderation log"],
   ];
@@ -161,26 +170,11 @@ export async function start(ctx) {
       members() {
         main.append(
           el("h3", { textContent: "Members & roles" }),
-          el("p", { className: "note", textContent: mine() === "owner" ? "Set each person's role. Removing someone takes them out: they read nothing new, and cannot rejoin by a code." : "Only the owner sets roles. Admins remove members." }),
+          el("p", { className: "note", textContent: `${may("roles") ? "Tick each person's roles (Admin: the owner's to give; the rest are made on Roles)." : "Each person's roles."} Removing someone takes them out: they read nothing new, and cannot rejoin by a code.` }),
         );
         const rows = r.members().map(m => {
           const tr = el("tr", { className: `${m.did === me.id ? "me" : ""} ${m.did === focus ? "focus" : ""}` });
           const role = m.role;
-          let roleCell;
-          if (mine() === "owner" && m.did !== me.id && role !== "owner") {
-            const sel = el("select", {}, ...["member", "admin"].map(v => el("option", { value: v, textContent: v, selected: v === role })));
-            sel.onchange = async () => {
-              say("");
-              try {
-                await r.grant(m.did, sel.value);
-                await r.refresh();
-                draw();
-              } catch (err) {
-                say(`Role: ${err?.message ?? err}`);
-              }
-            };
-            roleCell = sel;
-          } else roleCell = document.createTextNode(role);
           const actions = el("td");
           if (m.did !== me.id && may("remove") && RANK[mine()] > RANK[role])
             actions.append(
@@ -191,10 +185,92 @@ export async function start(ctx) {
                 `remove ${nameOf(m.did)}`,
               ),
             );
-          tr.append(el("td", { textContent: `${nameOf(m.did)}${m.did === me.id ? " (you)" : ""}`, title: m.did }), el("td", {}, roleCell), actions);
+          // THEIR ROLES, one list: Owner (a label: handed on, never ticked), Admin (built in: only the owner gives it),
+          // then the roles composed here — each given or taken back by who may (`roles`), one they hold every
+          // permission of; the owner holds them all already.
+          const held = new Set(r.held(m.did));
+          const rolesCell = el("td", {});
+          if (role === "owner") rolesCell.append(el("span", { className: "chip", textContent: "Owner" }));
+          else if (mine() === "owner" && m.did !== me.id) {
+            const box = el("input", { type: "checkbox", checked: role === "admin" });
+            box.onchange = async () => {
+              say("");
+              try {
+                await r.grant(m.did, box.checked ? "admin" : "member");
+                await r.refresh();
+                draw();
+              } catch (err) {
+                say(`Role: ${err?.message ?? err}`);
+              }
+            };
+            rolesCell.append(el("label", { className: "chip" }, box, " Admin"));
+          } else if (role === "admin") rolesCell.append(el("span", { className: "chip", textContent: "Admin" }));
+          if (role !== "owner") for (const ro of r.roles()) {
+            const mayGive = may("roles") && role !== "owner" && ro.perms.every(p => r.can(me.id, p));
+            if (!mayGive) {
+              if (held.has(ro.id)) rolesCell.append(el("span", { className: "chip", textContent: ro.name }));
+              continue;
+            }
+            const box = el("input", { type: "checkbox", checked: held.has(ro.id) });
+            box.onchange = async () => {
+              say("");
+              try {
+                await r.act({ act: "assign", did: m.did, role: ro.id, on: box.checked });
+                await r.refresh();
+                draw();
+              } catch (err) {
+                say(`Role: ${err?.message ?? err}`);
+              }
+            };
+            rolesCell.append(el("label", { className: "chip" }, box, ` ${ro.name}`));
+          }
+          tr.append(el("td", { textContent: `${nameOf(m.did)}${m.did === me.id ? " (you)" : ""}`, title: m.did }), rolesCell, actions);
           return tr;
         });
-        main.append(el("table", {}, el("thead", {}, el("tr", {}, el("th", { textContent: "Person" }), el("th", { textContent: "Role" }), el("th"))), el("tbody", {}, ...rows)));
+        main.append(el("table", {}, el("thead", {}, el("tr", {}, el("th", { textContent: "Person" }), el("th", { textContent: "Roles" }), el("th"))), el("tbody", {}, ...rows)));
+      },
+      // ROLES: composed by who may (`roles`: the owner and admins), each a name and what it may — never more than its
+      // maker may. Any app's rule can name one (who may read, post, comment… there).
+      roles() {
+        const mayCompose = may("roles");
+        main.append(
+          el("h3", { textContent: "Roles" }),
+          el("p", { className: "note", textContent: mayCompose ? "Make roles and say what each may. Give them to members on Members & roles; any app's rules (who may read, post, comment…) can name them." : "The roles of this space. The owner and admins make them." }),
+        );
+        const form = (ro = null) => {
+          const name = el("input", { value: ro?.name ?? "", placeholder: "Role name (e.g. Moderators)", maxLength: 40, disabled: !mayCompose });
+          const boxes = roles.perms.map(p => {
+            const box = el("input", { type: "checkbox", checked: !!ro?.perms.includes(p), disabled: !mayCompose || !r.can(me.id, p) });
+            return [p, box, el("label", { className: "chip" }, box, ` ${PERM_NAMES[p] ?? p}`)];
+          });
+          const save = el("button", { type: "button", textContent: ro ? "Save" : "Make role", disabled: !mayCompose });
+          save.onclick = async () => {
+            say("");
+            if (!name.value.trim()) return say("Give the role a name.");
+            try {
+              await r.act({ act: "role", role: ro?.id ?? newRoleId(), name: name.value.trim(), perms: boxes.filter(([, b]) => b.checked).map(([p]) => p) });
+              await r.refresh();
+              draw();
+            } catch (err) {
+              say(`Role: ${err?.message ?? err}`);
+            }
+          };
+          const del = ro && mayCompose
+            ? el("button", { type: "button", className: "danger", textContent: "Delete", onclick: async () => {
+                if (!confirm(`Delete the role “${ro.name}”? Whoever holds it loses what it gave.`)) return;
+                try {
+                  await r.act({ act: "role", role: ro.id, on: false });
+                  await r.refresh();
+                  draw();
+                } catch (err) {
+                  say(`Role: ${err?.message ?? err}`);
+                }
+              } })
+            : null;
+          return el("div", { className: "role-form" }, name, el("div", { className: "perms" }, ...boxes.map(([, , l]) => l)), el("div", { className: "row" }, save, ...(del ? [del] : [])));
+        };
+        for (const ro of r.roles()) main.append(form(ro));
+        if (mayCompose) main.append(el("h4", { textContent: "New role" }), form());
       },
       channels() {
         main.append(el("h3", { textContent: "Channels" }));
@@ -296,6 +372,10 @@ export async function start(ctx) {
           switch (a.act) {
             case "grant":
               return `${who} made ${whom} ${a.role}`;
+            case "role":
+              return a.on === false ? `${who} deleted a role` : `${who} set the role “${a.name}”: ${(a.perms ?? []).map(p => PERM_NAMES[p] ?? p).join(", ") || "nothing"}`;
+            case "assign":
+              return `${who} ${a.on === false ? "took" : "gave"} ${r.roles().find(x => x.id === a.role)?.name ?? "a role"} ${a.on === false ? "from" : "to"} ${whom}`;
             case "remove":
               return `${who} removed ${whom}`;
             case "hide":

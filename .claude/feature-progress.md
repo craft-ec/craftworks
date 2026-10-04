@@ -1086,3 +1086,10 @@ capability — shared capability component that can be used across apps". An APP
 Then: Settings app in every space (Account moved in; space Home's settings moved in; header Account link gone).
 Step 1 done: Board, Video/Audio, Note, Drive, Caption, Contact on `where` (Chat with its rework). Uncommitted on fx/17692 only: personal
 Chat circle tabs (to be replaced: channels with an audience, person Chat via `where`).
+
+## Roles composed per space; channels and conversations as one (owner 2026-10-04)
+- [x] Roles composed by admins (gov `role`/`assign` acts; permissions ⊆ the maker's; rules name `role:<id>`; one Roles
+      column with Admin built in; every app's rule dropdown offers them).
+- [ ] A channel's/item's READ by role or named people: its own sealed group kept in step (circles' mechanism).
+- [ ] Conversations (direct, group) = channels with their own members in your personal Chat; Message merged into Chat;
+      drop the uncommitted Friends/Followers channel work.

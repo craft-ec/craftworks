@@ -2398,6 +2398,27 @@ mod js {
         pub fn passes(who: &str, role: Option<String>) -> bool {
             craftworks_gov::passes(who, role.as_deref())
         }
+        /// What a person may: their base role's and every composed role's they hold.
+        pub fn may(&self, did: &str, in_group: bool, what: &str) -> bool {
+            let r = self.0.role(did, in_group);
+            self.0.may(did, r.as_deref(), what)
+        }
+        /// Does a person pass a policy's `who` (a composed role: by holding it; the owner and admins always).
+        pub fn passes_did(&self, who: &str, did: &str, in_group: bool) -> bool {
+            let r = self.0.role(did, in_group);
+            self.0.passes_did(who, did, r.as_deref())
+        }
+        /// The composed roles (JSON `[{ id, name, perms }]`), and who holds which (JSON `{ did: [id] }`).
+        pub fn roles_defined(&self) -> String {
+            serde_json::Value::Array(self.0.defined.iter().map(|(id, r)| serde_json::json!({ "id": id, "name": r.name, "perms": r.perms })).collect()).to_string()
+        }
+        pub fn roles_held(&self) -> String {
+            serde_json::to_string(&self.0.held).expect("strings")
+        }
+        /// What a composed role may carry.
+        pub fn perms() -> Vec<String> {
+            craftworks_gov::PERMS.iter().map(|p| p.to_string()).collect()
+        }
         pub fn can_role(role: Option<String>, what: &str) -> bool {
             craftworks_gov::can_role(role.as_deref(), what)
         }

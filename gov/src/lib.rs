@@ -7,6 +7,11 @@
 //! ACCESS is POLICIES `{ path, action, who }`, INHERITED along the path (`board/p/<id>` → `board` → the space "") —
 //! the most specific wins, else the default (members) — and TIME-AWARE: judged as they were when something was made.
 //! Pure: no clock (a caller passes `now`), no network.
+//!
+//! ROLES are COMPOSED by whoever may (`roles`: the owner and admins, built in): a `role` act names one (`role`: its id) and its
+//! PERMISSIONS (never more than its maker holds), an `assign` act gives it to a member or takes it back (only by one who
+//! holds every permission it carries). A member may what their base role (owner, admin, member) may, and what every
+//! role they hold may. Any policy may name a role (`role:<id>`): its holders pass it — and the owner and admins.
 
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -14,16 +19,33 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub const APPS: [&str; 7] = ["chat", "board", "notes", "drive", "videos", "audio", "subtitles"];
 pub const ACTIONS: [&str; 7] = ["read", "post", "comment", "vote", "edit", "join", "invite"];
 pub const WHO: [&str; 6] = ["anyone", "members", "admins", "owner", "nobody", "inherit"];
+/// What a composed role may carry (granting the admin role stays the owner's alone).
+pub const PERMS: [&str; 7] = ["post", "invite", "channels", "moderate", "remove", "apps", "roles"];
 
-/// What a role may do (inviting is the space's `invite` policy, not a role's: see [`Gov::may_invite`]).
+/// What a BASE role may do (inviting is the space's `invite` policy, not a role's: see [`Gov::may_invite`]).
 pub fn can_role(role: Option<&str>, what: &str) -> bool {
     let set: &[&str] = match role {
-        Some("owner") => &["post", "invite", "channels", "moderate", "remove", "grant", "apps"],
-        Some("admin") => &["post", "invite", "channels", "moderate", "remove", "apps"],
+        Some("owner") => &["post", "invite", "channels", "moderate", "remove", "grant", "apps", "roles"],
+        Some("admin") => &["post", "invite", "channels", "moderate", "remove", "apps", "roles"],
         Some("member") => &["post", "invite"],
         _ => &[],
     };
     set.contains(&what)
+}
+/// A policy's `who` naming a composed role: its id.
+pub fn role_of(who: &str) -> Option<&str> {
+    who.strip_prefix("role:").filter(|id| !id.is_empty() && id.len() <= 40)
+}
+/// A valid `who`: one of the built-in ones, or a composed role.
+pub fn valid_who(who: &str) -> bool {
+    WHO.contains(&who) || role_of(who).is_some()
+}
+
+/// A COMPOSED role: its name and what it may.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Role {
+    pub name: String,
+    pub perms: BTreeSet<String>,
 }
 pub fn rank(role: Option<&str>) -> u8 {
     match role {
@@ -87,6 +109,9 @@ pub struct Gov {
     /// Out of the space by the acts — removed, banned or left — and not added back since: their nodes are taken out of
     /// the group by whoever may remove (a leaver cannot commit their own removal).
     pub gone: BTreeSet<String>,
+    /// Composed roles (id → role), and who holds which (DID → role ids).
+    pub defined: BTreeMap<String, Role>,
+    pub held: HashMap<String, BTreeSet<String>>,
     /// The acts that counted, in order: each with `id` and `by` set.
     pub counted: Vec<Value>,
     /// Node → DID learned from `remove` acts (their nodes' rows stay theirs).
@@ -178,6 +203,22 @@ impl Gov {
         self.policy_at("", "join", f64::INFINITY) == Some("anyone")
             || self.paths_with("read").iter().any(|p| self.policy_at(p, "read", f64::INFINITY) == Some("anyone"))
     }
+    /// What a person may (their base role's, and every composed role they hold): `role` their base role as known.
+    pub fn may(&self, did: &str, role: Option<&str>, what: &str) -> bool {
+        role.is_some() && (can_role(role, what) || self.held.get(did).is_some_and(|hs| hs.iter().any(|h| self.defined.get(h).is_some_and(|r| r.perms.contains(what)))))
+    }
+    /// Does a person pass a policy's `who`: a built-in one by their base role; a composed role by holding it (the owner
+    /// and admins always).
+    pub fn passes_did(&self, who: &str, did: &str, role: Option<&str>) -> bool {
+        match role_of(who) {
+            Some(id) => rank(role) >= 2 || (role.is_some() && self.held.get(did).is_some_and(|hs| hs.contains(id))),
+            None => passes(who, role),
+        }
+    }
+    /// Standing, for removing: the base role's — a member holding a composed `remove` above plain members.
+    fn standing(&self, did: &str, role: Option<&str>) -> u8 {
+        rank(role) * 2 + u8::from(rank(role) == 1 && self.may(did, role, "remove"))
+    }
     /// A person's role: by the acts (`None` inside: removed), else a member if the group has them.
     pub fn role(&self, did: &str, in_group: bool) -> Option<String> {
         match self.roles.get(did) {
@@ -252,33 +293,50 @@ impl Gov {
             let ok = match act {
                 "grant" => r == Some("owner") && did.is_some() && did != g.owner.as_deref() && matches!(s(&a, "role"), Some("admin" | "member")),
                 "remove" | "ban" => {
-                    did.is_some_and(|d| d != by && rank(r) > rank(role_at(&g, &removed, d).as_deref().or(Some("member")))) && can_role(r, "remove")
+                    did.is_some_and(|d| d != by && g.standing(&by, r) > g.standing(d, role_at(&g, &removed, d).as_deref().or(Some("member")))) && g.may(&by, r, "remove")
                 }
-                "unban" => can_role(r, "remove") && banned_did,
+                "unban" => g.may(&by, r, "remove") && banned_did,
                 // LEAVING: a member's own act (the owner hands the space on first).
                 "leave" => r.is_some() && r != Some("owner") && did.is_none_or(|d| d == by),
                 "added" | "member" => invite_ok && did.is_some() && !banned_did,
-                "hide" => can_role(r, "moderate"),
+                "hide" => g.may(&by, r, "moderate"),
                 "transfer" => r == Some("owner") && did.is_some_and(|d| d != by && !removed.contains(d)),
                 "invite" => invite_ok && code.is_some() && !inv_exists,
-                "revoke-invite" => inv_exists && (g.invites[code.unwrap()].by == by || can_role(r, "moderate")),
+                "revoke-invite" => inv_exists && (g.invites[code.unwrap()].by == by || g.may(&by, r, "moderate")),
                 "admitted" => {
                     // In force when admitted (an act with no time: now).
                     let by_code = inv_exists && g.invites[code.unwrap()].live(at_or(&a, now));
                     invite_ok && did.is_some() && !banned_did && (by_code || (code == Some("open") && g.policy_at("", "join", f64::INFINITY) == Some("anyone")))
                 }
-                "app" => can_role(r, "apps") && s(&a, "app").is_some_and(|x| APPS.contains(&x)),
+                "app" => g.may(&by, r, "apps") && s(&a, "app").is_some_and(|x| APPS.contains(&x)),
                 "config" => {
-                    can_role(r, "apps")
+                    g.may(&by, r, "apps")
                         && s(&a, "app").is_some_and(|x| APPS.contains(&x) || x == "space")
                         && s(&a, "key").is_some_and(|k| js_len(k) <= 32 && (k != "read" || r == Some("owner")))
                 }
                 "policy" => {
-                    can_role(r, "apps")
+                    g.may(&by, r, "apps")
                         && s(&a, "path").is_some_and(|p| js_len(p) <= 120)
                         && s(&a, "action").is_some_and(|x| ACTIONS.contains(&x))
-                        && s(&a, "who").is_some_and(|x| WHO.contains(&x))
+                        && s(&a, "who").is_some_and(valid_who)
                         && (s(&a, "action") != Some("read") || r == Some("owner"))
+                }
+                // A ROLE made, changed or deleted: by one who may (`roles`), carrying only what they may themselves.
+                "role" => {
+                    g.may(&by, r, "roles")
+                        && some_s(&a, "role").is_some_and(|x| js_len(x) <= 40)
+                        && (!truthy(a.get("on")) && a.get("on").is_some()
+                            || some_s(&a, "name").is_some_and(|x| js_len(x) <= 40)
+                                && a.get("perms").and_then(Value::as_array).is_some_and(|ps| {
+                                    ps.iter().all(|p| p.as_str().is_some_and(|p| PERMS.contains(&p) && g.may(&by, r, p)))
+                                }))
+                }
+                // A role GIVEN or taken back: by one who may (`roles`) and holds all it carries; never the owner's.
+                "assign" => {
+                    let rid = some_s(&a, "role");
+                    g.may(&by, r, "roles")
+                        && did.is_some_and(|d| Some(d) != g.owner.as_deref() && !removed.contains(d))
+                        && rid.and_then(|x| g.defined.get(x)).is_some_and(|role| role.perms.iter().all(|p| g.may(&by, r, p)))
                 }
                 _ => false,
             };
@@ -294,6 +352,7 @@ impl Gov {
                     let d = did.unwrap().to_string();
                     removed.insert(d.clone());
                     g.roles.remove(&d);
+                    g.held.remove(&d);
                     if act == "ban" {
                         g.bans.insert(d);
                     }
@@ -304,6 +363,7 @@ impl Gov {
                 "leave" => {
                     removed.insert(by.clone());
                     g.roles.remove(&by);
+                    g.held.remove(&by);
                 }
                 "transfer" => {
                     if let Some(o) = g.owner.clone() {
@@ -336,6 +396,27 @@ impl Gov {
                     let who = s(&a, "who").filter(|w| *w != "inherit").map(str::to_string);
                     g.set_policy(s(&a, "path").unwrap(), s(&a, "action").unwrap(), who, at0);
                 }
+                "role" => {
+                    let id = s(&a, "role").unwrap().to_string();
+                    if a.get("on").is_some() && !truthy(a.get("on")) {
+                        g.defined.remove(&id);
+                        for hs in g.held.values_mut() {
+                            hs.remove(&id);
+                        }
+                    } else {
+                        let perms = a["perms"].as_array().unwrap().iter().filter_map(Value::as_str).map(str::to_string).collect();
+                        g.defined.insert(id, Role { name: s(&a, "name").unwrap().to_string(), perms });
+                    }
+                }
+                "assign" => {
+                    let (d, rid) = (did.unwrap().to_string(), s(&a, "role").unwrap().to_string());
+                    let hs = g.held.entry(d).or_default();
+                    if a.get("on").is_some() && !truthy(a.get("on")) {
+                        hs.remove(&rid);
+                    } else {
+                        hs.insert(rid);
+                    }
+                }
                 _ => {}
             }
             if act == "admitted" {
@@ -355,6 +436,7 @@ impl Gov {
         for d in &removed {
             g.roles.insert(d.clone(), None);
             g.roster.remove(d);
+            g.held.remove(d);
         }
         g.gone = removed;
         g

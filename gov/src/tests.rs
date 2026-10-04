@@ -193,3 +193,96 @@ fn a_leave_and_a_ban_name_their_nodes_so_their_rows_stay_theirs() {
     assert!(g.learned.is_empty() && g.gone.is_empty());
     assert_eq!(learned.get("nx2").map(String::as_str), Some(X));
 }
+
+// COMPOSED ROLES.
+fn mods(perms: Value) -> Row {
+    act("r1", "na", 10, json!({"act":"role","role":"mods","name":"Moderators","perms":perms}))
+}
+fn admin_a() -> Row {
+    act("g", "no", 1, json!({"act":"grant","did":A,"role":"admin"}))
+}
+
+#[test]
+fn an_admin_composes_a_role_and_its_holder_may_what_it_carries() {
+    let g = gov(&[
+        admin_a(),
+        mods(json!(["moderate"])),
+        act("as", "na", 11, json!({"act":"assign","did":M,"role":"mods"})),
+        act("h1", "nm", 12, json!({"act":"hide","table":"t","item":"1"})),
+        act("h2", "nx", 13, json!({"act":"hide","table":"t","item":"2"})),
+    ]);
+    assert_eq!(g.defined["mods"].name, "Moderators");
+    assert!(g.may(M, Some("member"), "moderate"));
+    assert!(!g.may(X, Some("member"), "moderate"));
+    let hides: Vec<&str> = g.counted.iter().filter(|a| a["act"] == "hide").map(|a| a["item"].as_str().unwrap()).collect();
+    assert_eq!(hides, ["1"]);
+}
+
+#[test]
+fn a_member_composes_nothing_and_nobody_carries_more_than_they_hold() {
+    let g = gov(&[
+        act("r0", "nm", 5, json!({"act":"role","role":"x","name":"X","perms":["post"]})),
+        admin_a(),
+        // A role with "roles" and "moderate" only, given to M: M may not make or give one carrying "remove".
+        act("r1", "na", 10, json!({"act":"role","role":"helpers","name":"Helpers","perms":["roles","moderate"]})),
+        act("r2", "na", 11, json!({"act":"role","role":"bouncers","name":"Bouncers","perms":["remove"]})),
+        act("a1", "na", 12, json!({"act":"assign","did":M,"role":"helpers"})),
+        act("r3", "nm", 13, json!({"act":"role","role":"mine","name":"Mine","perms":["remove"]})),
+        act("a2", "nm", 14, json!({"act":"assign","did":X,"role":"bouncers"})),
+        act("r4", "nm", 15, json!({"act":"role","role":"ok","name":"Ok","perms":["moderate"]})),
+        act("a3", "nm", 16, json!({"act":"assign","did":X,"role":"ok"})),
+        // Nobody gives the owner a role.
+        act("a4", "na", 17, json!({"act":"assign","did":O,"role":"helpers"})),
+    ]);
+    assert!(!g.defined.contains_key("x"));
+    assert!(!g.defined.contains_key("mine"));
+    assert!(g.defined.contains_key("ok"));
+    assert!(!g.may(X, Some("member"), "remove"));
+    assert!(g.may(X, Some("member"), "moderate"));
+    assert!(g.held.get(O).is_none());
+}
+
+#[test]
+fn a_policy_names_a_role_its_holders_and_admins_pass() {
+    let g = gov(&[
+        admin_a(),
+        mods(json!(["moderate"])),
+        act("as", "na", 11, json!({"act":"assign","did":M,"role":"mods"})),
+        act("p", "na", 12, json!({"act":"policy","path":"chat/team","action":"post","who":"role:mods"})),
+    ]);
+    assert_eq!(g.effective("chat/team", "post", f64::INFINITY), "role:mods");
+    assert!(g.passes_did("role:mods", M, Some("member")));
+    assert!(g.passes_did("role:mods", A, Some("admin")));
+    assert!(!g.passes_did("role:mods", X, Some("member")));
+    assert!(!g.passes_did("role:mods", M, None));
+}
+
+#[test]
+fn a_composed_remove_stands_above_members_and_below_admins() {
+    let g = gov(&[
+        admin_a(),
+        act("r", "na", 10, json!({"act":"role","role":"b","name":"Bouncers","perms":["remove"]})),
+        act("as", "na", 11, json!({"act":"assign","did":M,"role":"b"})),
+        act("x1", "nm", 12, json!({"act":"remove","did":A})),
+        act("x2", "nm", 13, json!({"act":"remove","did":X})),
+    ]);
+    assert_eq!(g.role(A, true).as_deref(), Some("admin"));
+    assert_eq!(g.role(X, true), None);
+}
+
+#[test]
+fn a_deleted_role_and_a_removed_member_hold_nothing() {
+    let g = gov(&[
+        admin_a(),
+        mods(json!(["moderate"])),
+        act("a1", "na", 11, json!({"act":"assign","did":M,"role":"mods"})),
+        act("a2", "na", 12, json!({"act":"assign","did":X,"role":"mods"})),
+        act("rm", "na", 13, json!({"act":"remove","did":X})),
+        act("back", "na", 14, json!({"act":"added","did":X})),
+        act("d", "na", 15, json!({"act":"role","role":"mods","on":false})),
+    ]);
+    assert!(!g.defined.contains_key("mods"));
+    assert!(!g.may(M, Some("member"), "moderate"));
+    assert!(!g.held.get(X).is_some_and(|h| h.contains("mods")));
+}
+

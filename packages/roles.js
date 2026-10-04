@@ -10,7 +10,12 @@
 //
 //   const r = await roles.of(sp)
 //   r.role(did)              // "owner" | "admin" | "member" | null (not a member, or removed)
-//   r.can(did, "moderate")   // may that person do it: post | invite | channels | moderate | remove | grant
+//   r.can(did, "moderate")   // may that person do it: post | invite | channels | moderate | remove | apps | roles |
+//                            // grant — by their base role and every COMPOSED role they hold
+//   r.roles()                // the roles composed here: [{ id, name, perms }] (a `role` act: { role, name, perms };
+//                            // { role, on: false } deletes it) — by who may `roles`, carrying only what they may
+//   r.held(did)              // the composed roles a person holds (an `assign` act: { did, role, on })
+//   r.passes(who, did)       // does that person pass a rule's who ("role:<id>": its holders, the owner and admins)
 //   r.author(row)            // the DID that wrote a row (from its version id), or null for a node not known here
 //   r.members()              // [{ did, role }], this space's people as its group has them now
 //   r.left                   // this node was removed from the space
@@ -173,8 +178,11 @@ export async function start(ctx) {
       if (!did || (left && did === me?.id)) return null;
       return gv.role(did, group.some(m => m.did === did)) ?? null;
     };
-    // Inviting is the space's policy (`invite`); everything else its role's.
-    const can = (did, what) => (what === "invite" ? G.passes(gv.effective("", "invite", Infinity), role(did)) : G.can_role(role(did), what));
+    // What a person may: inviting is the space's policy (`invite`); everything else their roles' — their base role
+    // and every role composed in the space they hold (`gov`).
+    const inGroup = did => group.some(m => m.did === did) && !(left && did === me?.id);
+    const passes = (who, did) => who === "anyone" || (!!role(did) && gv.passes_did(who, did, inGroup(did)));
+    const can = (did, what) => (!role(did) ? false : what === "invite" ? passes(gv.effective("", "invite", Infinity), did) : gv.may(did, inGroup(did), what));
 
     // This device listed as a writer of the space's public acts (once a page): after it writes one, and on opening a
     // space whose public acts it wrote before the bag.
@@ -222,16 +230,15 @@ export async function start(ctx) {
       policy: (path, action, at = Infinity) => policyOf(path, action, at),
       // The policies set at exactly this path (not inherited): { action: who }.
       policiesAt: path => Object.fromEntries(ACTIONS.map(x => [x, policyAt(path, x, Infinity)]).filter(([, w]) => w)),
-      allows: (action, did, path = "", at = Infinity) => {
-        const who = policyOf(path, action, at);
-        return who === "anyone" || G.passes(who, role(did));
-      },
+      allows: (action, did, path = "", at = Infinity) => passes(policyOf(path, action, at), did),
+      // Does a person pass a rule's `who` (a composed role: by holding it).
+      passes,
+      // THE ROLES composed in this space ([{ id, name, perms }]) and whose they are.
+      roles: () => JSON.parse(gv.roles_defined()),
+      held: did => JSON.parse(gv.roles_held())[did] ?? [],
       // A DOMAIN's policy for an action (`kinds.policyDomain(kind)`: what an item is decides, not the app showing it).
       policyIn: (domain, action, at = Infinity) => policyInOf(domain, action, at),
-      allowsIn: (action, did, domain, at = Infinity) => {
-        const who = policyInOf(domain, action, at);
-        return who === "anyone" || G.passes(who, role(did));
-      },
+      allowsIn: (action, did, domain, at = Infinity) => passes(policyInOf(domain, action, at), did),
       domains: () => DOMAINS,
       banned: did => bans.has(did),
       bannedList: () => [...bans],
@@ -273,7 +280,7 @@ export async function start(ctx) {
       async act(a) {
         if (!me) throw new Error("nobody is logged in");
         if (out) throw new Error("not a member of this space");
-        const need = { grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", policy: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite", member: "invite" }[a.act];
+        const need = { role: "roles", assign: "roles", grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", policy: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite", member: "invite" }[a.act];
         // Leaving is any member's own act (the owner hands the space on first).
         const leaving = a.act === "leave" && role(me.id) && role(me.id) !== "owner";
         if (!leaving && (!need || !can(me.id, need))) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
@@ -363,7 +370,7 @@ export async function start(ctx) {
       const v = credFor(item.by, cred);
       return v === undefined ? null : !!v && v.did === writer && CIRCLES_OF[rule].includes(v.circle);
     }
-    return r ? rule === "anyone" || G.passes(rule, r.role(writer)) : false;
+    return r ? rule === "anyone" || (r.passes ? r.passes(rule, writer) : G.passes(rule, r.role(writer))) : false;
   }
   // The credential a writer cites on an item whose rule is its author's friends or followers (null: none needed / held).
   async function credToCite(item, action, r = null) {
@@ -385,5 +392,6 @@ export async function start(ctx) {
     return { kind: "profile", by: did, meta: { write: { follow: p.policy("profile", "follow") } } };
   }
 
-  return { of, ofPublic, personal, mayWrite, credToCite, followable, onChecked: f => checked.push(f), can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"] };
+  // `perms`: what a composed role may carry.
+  return { of, ofPublic, personal, mayWrite, credToCite, followable, onChecked: f => checked.push(f), can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"], perms: G.perms() };
 }

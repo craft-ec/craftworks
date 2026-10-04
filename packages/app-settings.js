@@ -49,13 +49,19 @@ export async function start(ctx) {
     const inherited = from == null ? (r.personal || (["comment", "vote"].includes(action) && r.policy(path, "read") === "anyone") ? "anyone" : "members") : r.policy(from, action);
     const LEVEL = p => (p === "" ? "the space" : p === "chat" ? "Chat" : p === "board" ? "Board" : p === "note" ? "Note" : p);
     // A personal space's: anyone · your followers · your friends · only you (`roles.personal`).
-    const options = r.personal ? ["anyone", "followers", "friends", "author"].filter(w => !(action === "follow" && w === "followers")) : ["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || ["read", "join", "post", "comment", "vote"].includes(action));
+    // A shared space's: anyone (where it may) · members · admins · owner · nobody — and every ROLE composed there (its
+    // holders, the owner and admins: `roles`), for anything but joining.
+    const composed = r.personal || action === "join" ? [] : (r.roles?.() ?? []);
+    const options = r.personal
+      ? ["anyone", "followers", "friends", "author"].filter(w => !(action === "follow" && w === "followers"))
+      : [...["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || ["read", "join", "post", "comment", "vote"].includes(action)), ...composed.map(ro => `role:${ro.id}`)];
+    const named = w => NAMES[w] ?? (w?.startsWith("role:") ? `Role: ${(r.roles?.() ?? []).find(ro => `role:${ro.id}` === w)?.name ?? "deleted role"}` : w);
     const sel = h(
       "select",
       { ariaLabel: `${action} at ${path || "the space"}` },
       // Inherit, from where; or the built-in default (the space itself has nothing above it — a tenant, later, will).
-      h("option", { value: "", textContent: from == null ? `Default (${NAMES[inherited] ?? inherited})` : `Inherit from ${LEVEL(from)} (${NAMES[inherited] ?? inherited})` }),
-      ...options.map(w => h("option", { value: w, textContent: NAMES[w] })),
+      h("option", { value: "", textContent: from == null ? `Default (${named(inherited)})` : `Inherit from ${LEVEL(from)} (${named(inherited)})` }),
+      ...options.map(w => h("option", { value: w, textContent: named(w) })),
     );
     sel.value = own;
     sel.dataset.was = own;
