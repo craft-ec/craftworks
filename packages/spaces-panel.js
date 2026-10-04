@@ -26,9 +26,10 @@ export async function start(ctx) {
   }
   const style = document.createElement("style");
   style.textContent = `
-    .cw-panel { position: fixed; top: var(--cw-bar); bottom: 0; left: 0; z-index: 70; width: min(920px, 100vw); box-sizing: border-box;
+    .cw-panel { position: fixed; top: var(--cw-bar); bottom: 0; left: 0; z-index: 70; width: min(1180px, 100vw); box-sizing: border-box;
       background: var(--cw-bg); border-right: 1px solid var(--cw-line); box-shadow: var(--cw-shadow-lg); display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; }
+      grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; }
+    @media (max-width: 760px) { .cw-panel { grid-template-columns: 1fr 1fr; grid-auto-rows: minmax(0, 1fr); } }
     .cw-panel[hidden] { display: none; }
     .cw-panel section { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--cw-line); }
     .cw-panel section:last-child { border-right: 0; }
@@ -155,10 +156,22 @@ export async function start(ctx) {
     const followed = follows.map(d =>
       d.startsWith("did:") ? people_([d])[0] : row(`#/s/${d}`, "🌐", people.about("follow", d)?.name || `a space #${d.slice(0, 6)}`, { title: d }),
     );
+    // DISCOVER: every public space this person is not in (Discover's list) — each its CARD (`person.openSpace`:
+    // about, members, apps, Join · Requested · Open). Read after the rest: the panel never waits on it.
+    const discover = h("ul", {}, h("p", { className: "none", textContent: "Looking…" }));
     panel.replaceChildren(
       column("YOUR SPACES", spaces, ""),
       column("FRIENDS", people_(friends), "No friends yet — add one from anyone's name."),
       column("FOLLOWING", followed, "You follow nobody yet."),
+      h("section", {}, h("h3", { textContent: "DISCOVER SPACES" }), discover),
+    );
+    const inMine = new Set(mine.map(s => s.id));
+    const [listed, person] = await Promise.all([ctx.require("items").then(i => i.publicSpaces()).catch(() => []), ctx.require("person")]);
+    const others = listed.filter(d => !inMine.has(d.id));
+    discover.replaceChildren(
+      ...(others.length
+        ? others.map(d => h("li", {}, h("button", { type: "button", className: "row", title: d.id, onclick: e => person.openSpace(e.currentTarget, d) }, h("span", { className: "ic", textContent: initials(d.name) }), h("span", { className: "n", textContent: space.shown(d) }))))
+        : [h("p", { className: "none", textContent: "No public space listed yet." })]),
     );
   }
 
