@@ -48,8 +48,9 @@ export async function start(ctx) {
     const box = h("div", { className: "cw-join" });
     const draw = async () => {
       if ((await space.mine()).some(s => s.id === d.id)) return box.replaceChildren(h("a", { href: open, textContent: "Open" }));
-      if (!joinable) return box.replaceChildren(followButton(d));
+      // Asked already: said so, whatever the space lets in now.
       const asked = await conversation.asked(d.id).catch(() => null);
+      if (!asked && !joinable) return box.replaceChildren(followButton(d));
       if (asked) return box.replaceChildren(h("button", { type: "button", disabled: true, textContent: "Requested ✓", title: `Asked ${ago(asked.at)}` }), h("p", { textContent: `Asked ${ago(asked.at)}. ${WAITING}` }));
       const said = h("p", { className: "err", hidden: true });
       const b = h("button", {

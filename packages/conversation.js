@@ -508,6 +508,29 @@ export async function start(ctx) {
     }
     return n;
   }
+  // THE REQUESTS WAITING, each with where it stands: `[{ key, id, name, code, at, status, desc }]` — status `asked`
+  // (nobody let them in yet), `let-in` (admitted: the welcome is being opened), `code` (asked by a code: the space not
+  // known until its welcome). The spaces panel lists them.
+  async function waiting() {
+    const t = await asks();
+    await t.settled;
+    const mine = new Set((await space.mine()).map(s => s.id));
+    const me = await space.account();
+    const rows = t.rows().filter(x => x.value && !mine.has(x.key)).map(parseAsk).filter(Boolean);
+    if (!rows.length) return [];
+    const listed = await (await ctx.require("items")).publicSpaces().catch(() => []);
+    const roles = await ctx.require("roles");
+    return Promise.all(
+      rows.map(async a => {
+        if (a.key.startsWith("code:")) return { key: a.key, code: a.key.slice(5), name: a.name ?? null, at: a.at, status: "code" };
+        const desc = listed.find(s => s.id === a.key) ?? null;
+        const pr = desc ? await roles.ofPublic(desc).catch(() => null) : null;
+        await pr?.settled;
+        const letIn = !!pr?.acts("admitted").some(x => x.did === me?.id);
+        return { key: a.key, id: a.key, name: a.name ?? desc?.name ?? null, at: a.at, status: letIn ? "let-in" : "asked", desc };
+      }),
+    );
+  }
   // REQUESTS this account made and is still waiting on (its table `asks`: every device shows them): by space id, or
   // `code:<code>` (the space is not known until the welcome). Gone once in.
   const asks = async () => (await ctx.require("storage")).table("asks");
@@ -930,5 +953,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, repair, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
+  return { direct, group, invite, accept, repair, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
 }

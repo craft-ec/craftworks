@@ -44,6 +44,10 @@ export async function start(ctx) {
       border: 1px solid var(--cw-line); font-weight: 700; font-size: .75rem; }
     .cw-panel .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cw-panel .add { color: var(--cw-accent); }
+    .cw-panel li.requested { display: grid; gap: 2px; }
+    .cw-panel li.requested .sub { font-size: var(--cw-text-xs); letter-spacing: .08em; color: var(--cw-muted); padding: var(--cw-space-2) var(--cw-space-2) 0; }
+    .cw-panel li.requested .n { display: grid; min-width: 0; }
+    .cw-panel li.requested .st { color: var(--cw-muted); font-size: var(--cw-text-xs); }
     .cw-panel .none { color: var(--cw-muted); font-size: var(--cw-text-sm); padding: var(--cw-space-2) var(--cw-space-3); margin: 0; }
     .cw-panel .sep { height: 1px; background: var(--cw-line); margin: var(--cw-space-1) var(--cw-space-2); }
     @media (max-width: 700px) { .cw-panel { grid-template-columns: minmax(0, 1fr); overflow-y: auto; } .cw-panel section { border-right: 0; border-bottom: 1px solid var(--cw-line); } .cw-panel ul { overflow: visible; } }
@@ -152,6 +156,9 @@ export async function start(ctx) {
       h("li", { className: "sep" }),
       h("li", {}, h("button", { type: "button", className: "add", onclick: () => (close(), ask()) }, h("span", { className: "ic", textContent: "+" }), h("span", { className: "n", textContent: "Make or join a space" }))),
     ].filter(Boolean);
+    // REQUESTED: spaces asked to join, each with where it stands — read after the rest (the panel never waits on it).
+    const requested = h("li", { className: "requested", hidden: true });
+    spaces.splice(spaces.length - 2, 0, requested);
     const people_ = list => list.map(d => at(row(`#/u/${d}`, initials(nameOf.get(d) ?? d.slice(12)), directory.shown(d, nameOf.get(d)), { title: d, on: open === d }), { person: d }));
     const followed = follows.map(d =>
       d.startsWith("did:") ? people_([d])[0] : row(`#/s/${d}`, "🌐", people.about("follow", d)?.name || `a space #${d.slice(0, 6)}`, { title: d }),
@@ -165,6 +172,23 @@ export async function start(ctx) {
       column("FOLLOWING", followed, "You follow nobody yet."),
       h("section", {}, h("h3", { textContent: "DISCOVER SPACES" }), discover),
     );
+    conversation.waiting().then(async ws => {
+      if (!ws.length) return;
+      const person = await ctx.require("person");
+      const STATUS = { asked: "asked · waiting for a member who may invite", "let-in": "let in · opening the welcome", code: "asked by a code · waiting" };
+      requested.hidden = false;
+      requested.replaceChildren(
+        h("div", { className: "sub", textContent: "REQUESTED" }),
+        ...ws.map(w =>
+          h(
+            "button",
+            { type: "button", className: "row", title: w.id ?? w.code, onclick: e => w.desc && person.openSpace(e.currentTarget, w.desc) },
+            h("span", { className: "ic", textContent: w.name ? initials(w.name) : "…" }),
+            h("span", { className: "n" }, h("span", { textContent: w.name ?? (w.code ? `code ${w.code}` : `a space #${String(w.id).slice(0, 6)}`) }), h("small", { className: "st", textContent: STATUS[w.status] })),
+          ),
+        ),
+      );
+    }, () => {});
     const inMine = new Set(mine.map(s => s.id));
     const [listed, person] = await Promise.all([ctx.require("items").then(i => i.publicSpaces()).catch(() => []), ctx.require("person")]);
     const others = listed.filter(d => !inMine.has(d.id));
