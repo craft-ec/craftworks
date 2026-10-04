@@ -1033,6 +1033,14 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       Spotify's — same `items`/`content` path, its Drive folder /Images. Its kinds (owner 10-03): IMAGE (the general one, as Videos'
       `video`), with PHOTO and ARTWORK
       (already `kinds`' image domain, with their fields), chosen on upload as Videos' movie/episode/short are.
+- [x] BOOKS APP (owner 10-04 "Also for Book kinds app"; DONE 3c30610): `#/book` on the one media page — a shelf of covers;
+      book + comic now their own domain `book` (its rules in Settings, Drive /Books). Formats: PDF (PDF.js 6.4.299 vendored,
+      its worker on the page: a module worker from bytes does not start in the app's no-origin frame), EPUB and CBZ (own
+      `zip` reader, DecompressionStream). `book-studio` makes (cover from page 1 / cover image, title+author prefilled)
+      and opens; `book-view` reads: page or spread, right-to-left for manga, EPUB chapters in a fully sandboxed frame
+      (pictures as data: URLs, styles inline), A−/A+, full screen, place kept per book on the device. A PDF is a book
+      only when made one in Books (a PDF attached elsewhere stays a document). fx: A uploaded PDF/CBZ/EPUB, B read all
+      three from Discover (PDF fits the screen; spread 1–2/3–4/5; EPUB ch 2 at 120%).
 - [ ] 2  PUBLIC PARTICIPATION: policy `anyone` for post/comment/vote per app; an outsider's comment/vote lives in their
       own public tail + a pointer in the post's bag; readers accept it only if the policy at its time allowed it.
       PER-POST AUDIENCE (owner): the author picks public / members for each post, the space+app policy the ceiling
@@ -1113,7 +1121,7 @@ Done (commits on main):
 - Board's rules are the text domain's (d5b1304) — spaces saved public before must be re-saved once.
 - Writers bag fresh reads shared; tail.whole once (measured: tree blocks never fetched twice).
 - Named-people lists; audiences kept by admins while the maker is away.
-Open, in order: Books app (same shape); one access control for the personal space; group-fork
+Open, in order: one access control for the personal space; group-fork
 leftovers (heal own commits only, keep losing-branch keys, owner re-adds members on another branch).
 Test nodes 17691/17692: fresh accounts, PIN 246810 (older test accounts' PINs above are void).
 Waiting on Ivvor: reload + PIN so their page answers onlyabrak's history ask for Ivvor's New Space (apps hidden).
