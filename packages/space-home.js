@@ -75,15 +75,17 @@ export async function mount(ctx, el) {
         said.hidden = false;
       }
     };
+    // An app ALWAYS there (Settings): never added or removed.
+    const uses = a => a.always || on.includes(keyOf(a));
     const appGrid = h("div", {});
     icons.grid(
       appGrid,
       sharedApps
-        .filter(a => on.includes(keyOf(a)) || may)
-        .map(a => (on.includes(keyOf(a)) ? { app: a, href: `#/s/${sp.id}${a.route}`, count: activity && ["chat", "board"].includes(keyOf(a)) ? activity.of(sp.id, keyOf(a)) : 0 } : { app: a, add: add(keyOf(a)) })),
+        .filter(a => uses(a) || may)
+        .map(a => (uses(a) ? { app: a, href: `#/s/${sp.id}${a.route}`, count: activity && ["chat", "board"].includes(keyOf(a)) ? activity.of(sp.id, keyOf(a)) : 0 } : { app: a, add: add(keyOf(a)) })),
       "No apps yet: its owner or an admin adds them.",
     );
-    const removable = may ? sharedApps.filter(a => on.includes(keyOf(a))) : [];
+    const removable = may ? sharedApps.filter(a => !a.always && on.includes(keyOf(a))) : [];
     root.replaceChildren(
       ...[
       h(
@@ -92,7 +94,6 @@ export async function mount(ctx, el) {
         h("h2", { textContent: space.shown(sp) }),
         r.can(me, "invite") ? h("button", { type: "button", className: "btn main", textContent: "Invite", onclick: () => openSettings("invites") }) : null,
 
-        h("button", { type: "button", className: "btn", textContent: "Settings", onclick: () => openSettings("overview") }),
         // Its PEOPLE: the space's Contact (`members-list`: the one list, its roles).
         h("p", {}, h("a", { href: `#/s/${sp.id}/contact`, textContent: `${members.length} member${members.length === 1 ? "" : "s"}` }), ` · you: ${r.role(me) ?? "member"}`),
       ),

@@ -49,7 +49,6 @@ export function mount(ctx, el) {
       <span class="name"></span>
       <span class="actions"></span>
       <span class="end"></span>
-      <a class="account" href="#/settings">Settings</a>
     </nav>`;
   // A DROPDOWN: a button, and its list of links and actions (closed by a choice, a click outside or Escape).
   const dropdown = (label, entries, item) => {
@@ -184,10 +183,6 @@ export function mount(ctx, el) {
         return b;
       }),
     );
-    // SETTINGS of the place open: a space's, or (the personal space) this account's.
-    const set = el.querySelector(".account");
-    set.href = ctx.space && ctx.space !== "discover" ? `#/s/${ctx.space}/settings` : "#/settings";
-    set.style.fontWeight = ctx.route === "/settings" ? "bold" : "normal";
   };
   draw();
   addEventListener("craftworks:route", draw);

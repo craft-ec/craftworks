@@ -16,6 +16,11 @@ export async function mount(ctx, el) {
 
   // Each sub-page: made only when it is the one shown.
   const sections = {
+    // PERMISSIONS: who may comment and vote on what you post, by default (each post can say otherwise), and who may
+    // follow you — the personal space's rules (`app-settings`, as a shared space's are).
+    async permissions() {
+      box.append(await (await ctx.require("app-settings")).personalPage());
+    },
     // CARD: who you are (your id, this node's key) and your public card.
     async card() {
       const line = (label, value) => {
@@ -432,8 +437,9 @@ export async function mount(ctx, el) {
     lists.onChange(draw);
     box.append(sec);
   };
-  const titles = { card: "Card", nodes: "Nodes", security: "Security", storage: "Storage", apps: "Apps", recovery: "Recovery", moderation: "Moderation" };
-  const sub = sections[ctx.sub] ? ctx.sub : "card";
+  const titles = { card: "Card", permissions: "Permissions", nodes: "Nodes", security: "Security", storage: "Storage", apps: "Apps", recovery: "Recovery", moderation: "Moderation" };
+  const [subName, focus] = String(ctx.sub ?? "").split("/");
+  const sub = sections[subName] ? subName : "card";
   // The top bar: the sub-pages, and Log out.
   ctx.actions[ctx.route] = [
     ...Object.entries(titles).map(([k, label]) => ({ label, href: k === "card" ? "#/settings" : `#/settings/${k}`, on: k === sub })),
@@ -443,4 +449,5 @@ export async function mount(ctx, el) {
   box.innerHTML = `<h2>${titles[sub]}</h2>`;
   el.append(box);
   await sections[sub]();
+  if (focus) box.querySelector(`#settings-${focus}`)?.scrollIntoView({ block: "start" });
 }
