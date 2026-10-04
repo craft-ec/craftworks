@@ -881,12 +881,15 @@ export async function start(ctx) {
   // WHERE AN ITEM IS SHOWN — the one link to its page, for every app that links to one: a video or a track where it
   // plays (Video, Audio, Image), a post (or anything else) on its board, a note in Note, a file in Drive.
   const APP_OF = { video: "video", audio: "audio", image: "image", note: "note", file: "drive" };
+  const appOf = kind => APP_OF[kinds.domain(kind)] ?? "board";
+  // In its PLACE (`where`'s addresses): a space's in the space, a person's in their space (`u/<did>`: yours too).
   function pageOf(ref, kind) {
-    const at = String(ref).startsWith("space:") ? `#/s/${ref.slice(6, ref.indexOf("/"))}` : "#";
-    const app = APP_OF[kinds.domain(kind)] ?? "board";
-    if (["video", "audio", "image"].includes(app)) return `${at}/${app}/w/${encodeURIComponent(ref)}`;
-    return app === "board" ? `${at}/board/p/${ref}` : `${at}/${app}`;
+    const app = appOf(kind);
+    const sp = String(ref).startsWith("space:") ? ref.slice(6, ref.indexOf("/")) : null;
+    const base = sp ? `#/s/${sp}/${app}` : `#/${app}/u/${String(ref).slice(0, String(ref).lastIndexOf("/"))}`;
+    if (["video", "audio", "image"].includes(app)) return `${base}/w/${encodeURIComponent(ref)}`;
+    return app === "board" ? `${base}/p/${ref}` : base;
   }
 
-  return { mayWriteOn, pageOf, listOldProfile, migrateNotes, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
+  return { mayWriteOn, pageOf, appOf, listOldProfile, migrateNotes, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
 }

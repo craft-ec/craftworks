@@ -35,21 +35,9 @@ export async function mount(ctx, el) {
       .keep .section { font-size: var(--cw-text-xs); letter-spacing: .08em; color: var(--cw-muted); margin: 18px 0 var(--cw-space-2); }
       .keep .cards { columns: 240px; column-gap: 12px; }
       .keep.list .cards { columns: 1; max-width: 600px; margin: 0 auto; }
-      .keep .card { break-inside: avoid; margin: 0 0 var(--cw-space-3); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-surface);
-        padding: 12px 14px 6px; cursor: default; position: relative; }
-      .keep .card[style*="background"] { color: var(--cw-on-pastel); border-color: transparent; }
-      .keep .card .t { font-weight: 600; margin-bottom: 6px; overflow-wrap: anywhere; }
-      .keep .card .by { margin-top: 6px; color: var(--cw-muted); font-size: var(--cw-text-xs); }
-      .keep .card .b { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18em; overflow: hidden; }
-      .keep .card .tools { display: flex; gap: 2px; opacity: 0; transition: opacity .15s; margin-top: 6px; }
-      .keep .card:hover .tools, .keep .card:focus-visible .tools, .keep .card:has(:focus-visible) .tools { opacity: 1; }
       .keep .tools button, .keep .row button, .keep .pin { border: 0; background: none; cursor: pointer; font-size: 15px;
         padding: var(--cw-space-1) 6px; border-radius: 50%; color: inherit; }
       .keep .tools button:hover, .keep .row button:hover { background: var(--cw-hover); }
-      /* The pin's look is the pin-button component's; here only where a card's sits, and that it shows on hover. */
-      .keep .card .cw-pin { position: absolute; top: 6px; right: 6px; }
-      .keep .card .cw-pin[aria-pressed="false"] { opacity: 0; }
-      .keep .card:hover .cw-pin[aria-pressed="false"] { opacity: .45; }
       .keep .swatches { display: flex; flex-wrap: wrap; gap: var(--cw-space-1); padding: 6px; border: 1px solid var(--cw-line);
         border-radius: var(--cw-radius); background: var(--cw-surface); position: absolute; z-index: 5; width: max-content; max-width: 90vw;
         box-shadow: var(--cw-shadow-lg); }
@@ -60,7 +48,6 @@ export async function mount(ctx, el) {
         box-shadow: var(--cw-shadow-lg); display: grid; gap: var(--cw-space-2); }
       .keep dialog.editor[style*="background"] { color: var(--cw-on-pastel); }
       .keep dialog.editor:not([open]) { display: none; }
-      .keep .card .cw-chips { margin-top: var(--cw-space-2); }
       .keep .labelbar { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 0 auto 12px; max-width: 800px; }
       .keep .labelbar:has(> :only-child) { display: none; }
       .keep .labelbar button { font-size: var(--cw-text-sm); border: 1px solid var(--cw-line); background: none;
@@ -113,7 +100,6 @@ export async function mount(ctx, el) {
   const said = t => (root.querySelector(".said").textContent = t);
   let items, who, edge, pins, labels, pinUI, labelUI, sp = null, rs = null, at = null;
   const meId = (await (await ctx.require("space")).account()).id;
-  const directory = await ctx.require("directory");
   try {
     edge = await ctx.require("edge");
     // WHERE (`where`: yours, a space's, a person's, Discover) — a space's notes by its policies.
@@ -159,6 +145,7 @@ export async function mount(ctx, el) {
     edited: it.edited || it.at || 0,
     mayEdit: !others && it.mayEdit !== false,
     by: it.by,
+    item: it,
     meta: it.meta ?? {},
     pinned: pins.has(ref(it.ref)),
   });
@@ -302,25 +289,12 @@ export async function mount(ctx, el) {
     await remove(key);
   };
 
-  // A CARD.
+  // A CARD: the note's look (`cards`: the same wherever a note shows), with Note's tools — someone else's (Discover,
+  // their space) its author named and read only (your pin and labels on it are yours).
+  const cards = await ctx.require("cards");
   const card = n => {
-    const c = document.createElement("div");
-    c.className = "card";
-    c.tabIndex = 0;
-    tint(c, n.color);
-    if (n.title) c.append(Object.assign(document.createElement("div"), { className: "t", textContent: n.title }));
-    if (n.body) c.append(Object.assign(document.createElement("div"), { className: "b", textContent: n.body }));
-    c.append(labelUI.chips(ref(n.key), { onPick: show }));
-    const pinButton = pinUI.button(ref(n.key));
-    const tools = document.createElement("div");
-    tools.className = "tools";
-    const tool = (icon, title, run) => {
-      const b = Object.assign(document.createElement("button"), { type: "button", textContent: icon, title });
-      b.onclick = e => (e.stopPropagation(), run(e));
-      tools.append(b);
-    };
-    // Someone else's (Discover, their space): its author named; read only — your pin and labels on it are yours.
-    if (others) c.append(Object.assign(document.createElement("div"), { className: "by", textContent: directory.shown(n.by) }));
+    const tools = [];
+    const tool = (icon, title, run) => tools.push(Object.assign(document.createElement("button"), { type: "button", textContent: icon, title, onclick: e => (e.stopPropagation(), run(e)) }));
     if (n.mayEdit) tool("🎨", "Background", e => palette(e.currentTarget, color => save(n.key, { ...n, color })));
     tool("🏷️", "Labels", e => labelUI.menu(e.currentTarget, ref(n.key)));
     if (n.mayEdit) {
@@ -330,12 +304,10 @@ export async function mount(ctx, el) {
       });
       tool("🗑️", "Delete", () => remove(n.key));
     }
-    c.append(pinButton, tools);
-    if (n.mayEdit) {
-      c.onclick = () => edit(n);
-      c.onkeydown = e => e.key === "Enter" && edit(n);
-    }
-    return c;
+    return cards.card(
+      { ...n.item, meta: { ...(n.item.meta ?? {}), color: n.color } },
+      { href: null, actions: tools, by: others, corner: pinUI.button(ref(n.key)), below: labelUI.chips(ref(n.key), { onPick: show }), open: n.mayEdit ? () => edit(n) : null },
+    );
   };
 
   const R = await ctx.require("roles");

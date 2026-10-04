@@ -207,7 +207,8 @@ export async function mount(ctx, el) {
     const said = h("p", { className: "said", hidden: true });
     // A space's post opens in its space (the header's place follows); a profile's in the personal space.
     // A post opens where it lives: in Discover (read from outside), in its space, or in the personal space.
-    const open = () => (location.hash = discovering() ? `#/discover/board/p/${p.ref}` : p.board ? `#/s/${p.board.id}/board/p/${p.ref}` : `#/board/p/${p.ref}`);
+    // Its page in its place (`items.pageOf`: a space's, a person's) — in Discover, read from outside.
+    const open = () => (location.hash = discovering() ? `#/discover/board/p/${p.ref}` : posts.pageOf(p.ref, p.kind ?? "post"));
     const acts = h(
       "div",
       { className: "acts" },

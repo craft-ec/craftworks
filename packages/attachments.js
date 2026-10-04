@@ -23,17 +23,7 @@ export async function start(ctx) {
     .cw-att-chip .p { color: var(--cw-muted); }
     .cw-att-chip.err { border-color: var(--cw-danger); color: var(--cw-danger); }
     .cw-att-chip button { border: 0; background: none; cursor: pointer; color: var(--cw-muted); padding: 0 2px; }
-    .cw-att { display: flex; flex-wrap: wrap; gap: var(--cw-space-2); margin-top: 6px; }
-    .cw-att img { max-width: min(320px, 100%); max-height: 240px; border-radius: var(--cw-radius-sm); cursor: zoom-in; display: block;
-      border: 1px solid var(--cw-line); background: var(--cw-surface); }
-    .cw-att .file { display: inline-flex; align-items: center; gap: var(--cw-space-2); border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm);
-      padding: 6px var(--cw-space-2); font-size: var(--cw-text-sm); background: var(--cw-surface); max-width: 100%; }
-    .cw-att .file .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
-    .cw-att .file .s { color: var(--cw-muted); font-size: var(--cw-text-xs); }
-    .cw-att button.save { font: inherit; font-size: var(--cw-text-xs); border: 0; background: none; color: var(--cw-muted); cursor: pointer; padding: 2px 0; }
-    .cw-att button.save:hover { color: var(--cw-fg); text-decoration: underline; }
-    .cw-att .file button { font: inherit; border: 1px solid var(--cw-line); background: none; color: var(--cw-fg); border-radius: var(--cw-radius-sm);
-      padding: 2px 8px; cursor: pointer; }
+    .cw-att { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 180px)); gap: var(--cw-space-2); margin-top: 6px; }
     .cw-att-pick { position: relative; }
     .cw-att-menu { position: absolute; bottom: 100%; left: 0; z-index: 5; display: grid; background: var(--cw-surface); border: 1px solid var(--cw-line);
       border-radius: var(--cw-radius-sm); box-shadow: var(--cw-shadow-lg); padding: 4px; min-width: 160px; }
@@ -252,6 +242,9 @@ export async function start(ctx) {
       onclick: e => files.adopt(r, null, { app: "drive" }).then(ref => drive.add(ref, { from: { saved: true } })).then(() => ((e.target.textContent = "In Drive ✓"), (e.target.disabled = true)), err => (note.textContent = err.message)),
     });
 
+  // THE FILES of an item (what its text does not show inline): each the file look (`cards`: the same as in Drive, as
+  // anywhere a file shows) — opened on a click, saved to your Drive from its menu.
+  const cards = await ctx.require("cards");
   function show(refs) {
     const list = (Array.isArray(refs) ? refs : []).filter(r => r && typeof r === "object" && r.name && (r.inline || (r.key && r.root)));
     if (!list.length) return null;
@@ -260,10 +253,8 @@ export async function start(ctx) {
       { className: "cw-att" },
       ...list.map(r => {
         const note = h("span", { className: "s" });
-        const src = r.preview ?? (isImage(r) && r.inline ? `data:${r.type};base64,${r.inline}` : null);
-        if (src)
-          return h("figure", { style: "margin:0" }, h("img", { src, alt: r.name, title: `${r.name} · ${sizeOf(r.size)}`, onclick: () => openFull(r, note) }), h("div", {}, saveButton(r, note), note));
-        return h("span", { className: "file" }, h("span", { textContent: /^video\//.test(r.type) ? "🎬" : /^audio\//.test(r.type) ? "🎵" : "📄" }), h("span", { className: "n", textContent: r.name, title: r.name }), h("span", { className: "s", textContent: sizeOf(r.size) }), h("button", { type: "button", textContent: /^video\//.test(r.type) ? "Play" : "Download", onclick: () => openFull(r, note) }), saveButton(r, note), note);
+        const open = () => openFull(r, note);
+        return cards.card({ kind: "file", files: [r], title: r.name }, { href: null, by: false, open, below: note, actions: [h("button", { type: "button", textContent: "Open", onclick: open }), saveButton(r, note)] });
       }),
     );
   }

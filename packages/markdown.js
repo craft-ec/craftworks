@@ -13,6 +13,8 @@
 //   markdown.keyOf(ref)                                   // a file's key in `file:KEY`
 //   markdown.inlined(body)                                // the keys written inline (the rest show as attachments)
 //   markdown.plain(body)                                  // a one-line preview, no markup
+//   markdown.fileView(ref, { item, alt })                 // a file at full size: an image, or its domain's viewer
+// ITEMS INLINE: `![title](item:REF)` embeds any item (a post, a note, a file, a video) — `cards.embed`.
 export async function start(ctx) {
   const K = await ctx.require("kinds");
   const style = document.createElement("style");
@@ -58,6 +60,8 @@ export async function start(ctx) {
   const IMG_RE = new RegExp("!\\[([^\\]]*)\\]\\(" + URL_RE + "\\)", "g");
   const LINK_RE = new RegExp("\\[([^\\]]+)\\]\\(" + URL_RE + "\\)", "g");
   const FILE = /^file:([A-Za-z0-9_-]{1,80})$/;
+  // AN ITEM embedded by its reference (`item:REF`: a post, a note, a file, a video — any kind; `cards.embed`).
+  const ITEM = /^item:([A-Za-z0-9:_~.\/-]{3,200})$/;
 
   // A backslash keeps the next mark as it is (`\*` shows a star).
   const ESC = String.fromCharCode(1);
@@ -66,7 +70,7 @@ export async function start(ctx) {
     const kept = [];
     s = s.replace(/\\([\\`*_{}\[\]()#+\-.!|~^]|&gt;|&lt;)/g, (_, c) => (kept.push(c), ESC + (kept.length - 1) + ESC));
     s = s.replace(/`([^`]+)`/g, (_, c) => (codes.push(c), NUL + (codes.length - 1) + NUL));
-    s = s.replace(IMG_RE, (_, a, u) => (FILE.test(u) ? `<span data-file="${FILE.exec(u)[1]}" data-alt="${a}"></span>` : `<img src="${href(u)}" alt="${a}" class="cw-md-media">`));
+    s = s.replace(IMG_RE, (_, a, u) => (FILE.test(u) ? `<span data-file="${FILE.exec(u)[1]}" data-alt="${a}"></span>` : ITEM.test(u) ? `<span data-item="${ITEM.exec(u)[1]}"></span>` : `<img src="${href(u)}" alt="${a}" class="cw-md-media">`));
     s = s.replace(LINK_RE, (_, t, u) => (FILE.test(u) ? `<a data-file-link="${FILE.exec(u)[1]}" href="#">${t}</a>` : `<a href="${href(u)}" target="_blank" rel="noopener">${t}</a>`));
     s = s.replace(/(^|[\s(])((?:https?:\/\/)[^\s<)]+)/g, (_, pre, u) => `${pre}<a href="${href(u)}" target="_blank" rel="noopener">${u}</a>`);
     s = s
@@ -250,6 +254,9 @@ export async function start(ctx) {
       const ref = byKey.get(s.dataset.file);
       s.replaceWith(ref ? media(s.dataset.file, ref, s.dataset.alt, item) : missing(s.dataset.file));
     }
+    // Items embedded: each its kind's look (`cards`), read with its own access.
+    const embeds = [...el.querySelectorAll("[data-item]")];
+    if (embeds.length) ctx.require("cards").then(c => embeds.forEach(s => s.replaceWith(c.embed(s.dataset.item))), () => {});
     for (const a of el.querySelectorAll("[data-file-link]")) {
       const ref = byKey.get(a.dataset.fileLink);
       a.replaceWith(ref ? link(a.dataset.fileLink, ref, a.textContent) : missing(a.dataset.fileLink));
@@ -276,5 +283,5 @@ export async function start(ctx) {
       .replace(/\s+/g, " ")
       .trim();
 
-  return { render, html, keyOf, inlined, kindOf, plain };
+  return { render, html, keyOf, inlined, kindOf, plain, fileView: (ref, { item = null, alt = "" } = {}) => media(keyOf(ref), ref, alt, item) };
 }

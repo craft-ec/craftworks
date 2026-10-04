@@ -34,11 +34,6 @@ export async function mount(ctx, el) {
       .vd .top h2 { margin: 0; font-size: 1.3rem; }
       .vd .up { background: var(--cw-accent); color: var(--cw-accent-fg); border-radius: var(--cw-radius-sm); padding: 6px 12px; text-decoration: none; }
       .vd .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--cw-space-4) var(--cw-space-3); }
-      .vd .card { text-decoration: none; color: inherit; display: grid; gap: 6px; }
-      .vd .thumb { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: var(--cw-radius); overflow: hidden; display: grid; place-items: center; font-size: 2rem; }
-      .vd .thumb img { width: 100%; height: 100%; object-fit: cover; }
-      .vd .dur { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.8); color: #fff; font-size: var(--cw-text-xs); padding: 1px 5px; border-radius: 4px; }
-      .vd .kind { position: absolute; left: 6px; top: 6px; background: rgba(0,0,0,.7); color: #fff; font-size: var(--cw-text-xs); padding: 1px 6px; border-radius: 4px; }
       .vd .t { font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
       .vd .s { color: var(--cw-muted); font-size: var(--cw-text-sm); }
       .vd .by { cursor: pointer; }
@@ -64,7 +59,6 @@ export async function mount(ctx, el) {
       .vd .chips { flex-basis: 100%; display: flex; gap: 6px; flex-wrap: wrap; }
       .vd .chips button { padding: 3px 12px; font-size: var(--cw-text-sm); }
       .vd .grid.sq { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
-      .vd .thumb.sq { aspect-ratio: 1; }
       .vd .cover { width: min(320px, 70vw); aspect-ratio: 1; border-radius: var(--cw-radius); overflow: hidden; background: var(--cw-hover); display: grid; place-items: center; font-size: 4rem; }
       .vd .cover img { width: 100%; height: 100%; object-fit: cover; }
       .vd .watch audio { width: 100%; }
@@ -105,18 +99,8 @@ export async function mount(ctx, el) {
     return (await items.publicSpaces().catch(() => [])).find(d => d.id === id) ?? people.about("follow", id);
   };
   const SAVED = ref => `${C.app}:${ref}`;
-  const ago = at => {
-    const s = Math.max(0, (Date.now() - at) / 1000);
-    if (s < 60) return "just now";
-    for (const [n, u] of [[31536000, "year"], [2592000, "month"], [86400, "day"], [3600, "hour"], [60, "minute"]]) if (s >= n) return `${Math.floor(s / n)} ${u}${Math.floor(s / n) > 1 ? "s" : ""} ago`;
-  };
-  const clock = d => {
-    d = Math.round(d || 0);
-    const hh = Math.floor(d / 3600);
-    const mm = Math.floor((d % 3600) / 60);
-    const ss = String(d % 60).padStart(2, "0");
-    return hh ? `${hh}:${String(mm).padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
-  };
+  // One wording of time everywhere (`cards`).
+  const { ago, clock } = await ctx.require("cards");
   const who = did => {
     const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.preventDefault(), e.stopPropagation(), (location.hash = `#/${C.app}/u/${did}`)) });
     return n;
@@ -137,17 +121,9 @@ export async function mount(ctx, el) {
     return h("div", { className: "top" }, h("h2", { textContent: title }), chips, feedBar);
   }
 
-  function card(v) {
-    const f = fileOf(v);
-    return h(
-      "a",
-      { className: "card", href: `${base()}/w/${encodeURIComponent(v.ref)}` },
-      h("div", { className: `thumb${C.audio ? " sq" : ""}` }, f?.preview ? h("img", { src: f.preview, alt: "" }) : C.audio ? "🎵" : "🎬", f?.duration ? h("span", { className: "dur", textContent: clock(f.duration) }) : null, v.kind !== VIDEO[0] ? h("span", { className: "kind", textContent: kinds.of(v.kind)?.label ?? v.kind }) : null),
-      C.audio && (v.meta?.artist || v.meta?.show || v.meta?.author) ? h("div", { className: "s", textContent: v.meta.artist ?? v.meta.show ?? v.meta.author }) : null,
-      h("div", { className: "t", textContent: v.title }),
-      h("div", { className: "s" }, who(v.by), ` · ${ago(v.at)}${v.private ? " · only you" : ""}`),
-    );
-  }
+  // A video's or a track's CARD: its kind's look (`cards`), opened here (in Discover: from outside).
+  const cards = await ctx.require("cards");
+  const card = v => cards.card(v, { href: `${base()}/w/${encodeURIComponent(v.ref)}` });
 
   async function list(w) {
     // SAVED: the videos this person pinned (the pin edge), newest saved first.

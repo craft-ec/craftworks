@@ -22,21 +22,8 @@ export async function mount(ctx, el) {
         border-radius: var(--cw-radius-sm); padding: 6px var(--cw-space-3); }
       .dv label.up { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       .dv .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--cw-space-3); }
-      .dv .tile { border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-surface); overflow: hidden; display: grid;
-        grid-template-rows: 120px auto; cursor: pointer; position: relative; }
-      .dv .tile:hover { border-color: var(--cw-muted); }
-      .dv .tile .pic { display: grid; place-items: center; background: var(--cw-hover); font-size: 2.4rem; overflow: hidden; }
-      .dv .tile .pic img { width: 100%; height: 100%; object-fit: cover; }
-      .dv .tile .cap { padding: 6px 8px; display: grid; gap: 2px; min-width: 0; }
-      .dv .tile .n { font-size: var(--cw-text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .dv .tile .s { font-size: var(--cw-text-xs); color: var(--cw-muted); }
-      .dv .tile .more { position: absolute; top: 4px; right: 4px; padding: 0 6px; border-radius: 50%; opacity: 0; background: var(--cw-surface); }
-      .dv .tile:hover .more, .dv .tile .more:focus-visible { opacity: 1; }
-      .dv .menu { position: absolute; top: 28px; right: 4px; z-index: 5; display: grid; background: var(--cw-surface); border: 1px solid var(--cw-line);
-        border-radius: var(--cw-radius-sm); box-shadow: var(--cw-shadow-lg); padding: 4px; }
-      .dv .menu button { border: 0; text-align: left; padding: 6px 10px; }
-      .dv .menu button:hover { background: var(--cw-hover); }
       .dv .folder .pic { font-size: 2.8rem; }
+      .dv .folder { text-decoration: none; }
       .dv .ups { display: grid; gap: 4px; font-size: var(--cw-text-sm); color: var(--cw-muted); }
       .dv .none { color: var(--cw-muted); text-align: center; padding: var(--cw-space-5); }
       .dv .said { color: var(--cw-danger); font-size: var(--cw-text-sm); margin: 0; }
@@ -117,7 +104,7 @@ export async function mount(ctx, el) {
       }),
     );
     const tiles = [
-      ...subs.map(f => h("a", { className: "tile folder", href: hrefOf(f), style: "text-decoration:none;color:inherit" }, h("div", { className: "pic", textContent: "📁" }), h("div", { className: "cap" }, h("span", { className: "n", textContent: f.slice(f.lastIndexOf("/") + 1) }), h("span", { className: "s", textContent: "Folder" })))),
+      ...subs.map(f => h("a", { className: "cw-card cw-file folder", href: hrefOf(f) }, h("div", { className: "pic", textContent: "📁" }), h("div", { className: "cap" }, h("span", { className: "n", textContent: f.slice(f.lastIndexOf("/") + 1) }), h("span", { className: "s", textContent: "Folder" })))),
       ...here.map(tile),
     ];
     root.replaceChildren(
@@ -129,40 +116,28 @@ export async function mount(ctx, el) {
     );
   }
 
+  // A FILE's tile: the file look (`cards`: the same wherever a file shows), with Drive's actions — a file of an item
+  // made in another app shown here and changed there (its page); someone else's (Discover, their space) read only.
+  const cards = await ctx.require("cards");
   function tile(r) {
-    const src = r.ref.preview ?? (attachments.isImage(r.ref) && r.ref.inline ? `data:${r.ref.type};base64,${r.ref.inline}` : null);
     const note = h("span", { className: "s" });
-    const menu = h("div", { className: "menu", hidden: true });
-    const t = h(
-      "div",
-      { className: "tile", title: r.ref.name, onclick: e => !e.target.closest(".more, .menu") && attachments.open(r.ref, note) },
-      h("div", { className: "pic" }, src ? h("img", { src, alt: "" }) : (kinds.mediaOf(r.ref)?.icon ?? "📄")),
-      h("div", { className: "cap" }, h("span", { className: "n", textContent: r.ref.name }), h("span", { className: "s", textContent: `${r.others ? `${directory.shown(r.by)} · ` : ""}${attachments.sizeOf(r.ref.size)} · ${new Date(r.at).toLocaleDateString()}` }), note),
-      h("button", { type: "button", className: "more", title: "More", textContent: "⋯", onclick: () => (menu.hidden = !menu.hidden) }),
-      menu,
-    );
-    // A file of an item made in another app: shown here, changed there (its page).
+    const openIt = () => attachments.open(r.ref, note);
+    const actions = [h("button", { type: "button", textContent: "Open", onclick: openIt })];
     if (r.readOnly) {
-      menu.append(
-        h("button", { type: "button", textContent: "Open", onclick: () => ((menu.hidden = true), attachments.open(r.ref, note)) }),
-        ...(r.page ? [h("a", { href: r.page, textContent: `Open in ${r.from?.app === "text" ? "Board" : kinds.domainName(r.from?.app)}` })] : []),
+      if (r.page) actions.push(h("a", { href: r.page, textContent: `Open in ${r.from?.app === "text" ? "Board" : kinds.domainName(r.from?.app)}` }));
+    } else
+      actions.push(
+        h("button", {
+          type: "button",
+          textContent: "Move…",
+          onclick: async () => {
+            const to = await ask("Move to folder (e.g. /Photos)", r.folder);
+            if (to != null) await drive.move(sp, r.id, to).then(draw, fail);
+          },
+        }),
+        h("button", { type: "button", textContent: "Remove from Drive", onclick: () => drive.remove(sp, r.id).then(draw, fail) }),
       );
-      return t;
-    }
-    menu.append(
-      h("button", { type: "button", textContent: "Open", onclick: () => ((menu.hidden = true), attachments.open(r.ref, note)) }),
-      h("button", {
-        type: "button",
-        textContent: "Move…",
-        onclick: async () => {
-          menu.hidden = true;
-          const to = await ask("Move to folder (e.g. /Photos)", r.folder);
-          if (to != null) await drive.move(sp, r.id, to).then(draw, fail);
-        },
-      }),
-      h("button", { type: "button", textContent: "Remove from Drive", onclick: () => ((menu.hidden = true), drive.remove(sp, r.id).then(draw, fail)) }),
-    );
-    return t;
+    return cards.card({ kind: "file", files: [r.ref], title: r.ref.name, at: r.at, by: r.by }, { href: null, actions, by: !!r.others, open: openIt, below: note });
   }
 
   // UPLOAD into the folder open, seen by whom the picker says (public: put in the clear; else sealed).
