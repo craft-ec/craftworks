@@ -578,14 +578,17 @@ export async function start(ctx) {
             const was = m.status();
             await keepLostHere(await logs.branch(was, Math.max(0, was.epoch - 8)).catch(() => [{ epoch: was.epoch, secret: hexOf(was.secret) }]));
           }
-          let last = null;
+          // Each batch's own failure: one that does not hold its key package says NotFound; the one that HOLDS it says
+          // why it did not open (what to report — never hidden behind the others' NotFound).
+          const failed = [];
           for (const row of t.rows().filter(r => r.key.startsWith("packages/"))) {
-            const mb = await memberWith(row.value);
             const before = m;
+            let mb = null;
             try {
+              mb = await memberWith(row.value);
               m = mb.join_space(sp.idBytes, bytes(welcome));
             } catch (e) {
-              last = e;
+              failed.push({ batch: row.key.slice("packages/".length, "packages/".length + 8), why: String(e?.message ?? e) });
               continue;
             }
             if (expect) {
@@ -602,7 +605,12 @@ export async function start(ctx) {
             if (n) ctx.log(`${sp.name ?? "space"} keys`, { what: `${n} earlier epoch(s) of its history kept` });
             return kept;
           }
-          throw new Error(`no key package of this account answers that welcome${last ? `: ${last.message ?? last}` : ""}`);
+          const real = failed.filter(f => !/KeyPackageNotFound/.test(f.why));
+          throw new Error(
+            real.length
+              ? `the batch holding its key package refused it — ${real.map(f => `${f.batch}: ${f.why}`).join("; ")}`
+              : `no key package of this account answers that welcome (${failed.length} batch(es) tried): ${failed[0]?.why ?? "none held"}`,
+          );
         })),
       // MADE by this DID, its first member.
       create: () =>
