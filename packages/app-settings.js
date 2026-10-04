@@ -97,16 +97,17 @@ export async function start(ctx) {
         await madePublic(r, sp);
       },
     },
+    // Board shows the TEXT domain (posts): its rules are the domain's (`kinds.policyDomain`), as every app's are.
     board: {
       title: "Board",
       fields: [
-        { action: "read", path: "board", label: "Who may read (Anyone: public — its members and moderation too; posts made before stay as they were)" },
-        { action: "post", path: "board", label: "Who may post" },
-        { action: "comment", path: "board", label: "Who may comment" },
-        { action: "vote", path: "board", label: "Who may vote" },
+        { action: "read", path: "text", label: "Who may read (Anyone: public — its members and moderation too; posts made before stay as they were)" },
+        { action: "post", path: "text", label: "Who may post" },
+        { action: "comment", path: "text", label: "Who may comment" },
+        { action: "vote", path: "text", label: "Who may vote" },
         { key: "rules", app: "board", label: "Rules (shown beside the board)" },
       ],
-      saved: async (changed, r, sp) => changed["board|read"] === "anyone" && madePublic(r, sp),
+      saved: async (changed, r, sp) => changed["text|read"] === "anyone" && madePublic(r, sp),
     },
     video: { title: "Video", fields: ["read", "post", "comment", "vote"].map(action => ({ action, path: "video", label: `Who may ${action}` })), saved: async (c, r, sp) => c["video|read"] === "anyone" && madePublic(r, sp) },
     audio: { title: "Audio", fields: ["read", "post", "comment", "vote"].map(action => ({ action, path: "audio", label: `Who may ${action}` })), saved: async (c, r, sp) => c["audio|read"] === "anyone" && madePublic(r, sp) },
@@ -196,7 +197,8 @@ export async function start(ctx) {
   const href = (sp, key) => (sp ? `#/s/${sp.id}/settings/apps/${key}` : "#/");
   // YOUR SPACE's SETTINGS (your Home): who may comment and vote on what you post in each app, by default — an item's
   // own setting over it. The same sections, read and written through `roles.personal`.
-  const PERSONAL = { board: "Board", video: "Video", audio: "Audio" };
+  // Each by its DOMAIN (what governs its items: `kinds.policyDomain`), titled as the app showing it.
+  const PERSONAL = { text: "Board", video: "Video", audio: "Audio" };
   async function personalPage() {
     const me = (await (await ctx.require("space")).account()).id;
     const r = roles.personal(me);

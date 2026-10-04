@@ -172,6 +172,13 @@ export async function start(ctx) {
       tree,
     );
     refresh().catch(() => {});
+    // Read again as what it is read from ARRIVES (each profile's read is bounded: shown within a wait, the rest merged
+    // later) — a comment read late shows then. Never under a reply or an edit being written (drawn once it is done).
+    let again = null;
+    items.onChange(() => {
+      if (!el.isConnected || again) return;
+      again = setTimeout(() => ((again = null), tree.querySelector("form") ? null : refresh().catch(() => {})), 300);
+    });
     return { el, refresh };
   }
   return { create };
