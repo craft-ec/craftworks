@@ -173,6 +173,14 @@ export async function mount(ctx, el) {
 
   // The server's members: the accounts in its group, with their roles. A click: what can be done with that person.
   async function drawMembers(s) {
+    // A SERVER: the one list of its people (`members-list`), narrowed to who may read the channel open (a channel
+    // kept to a role, the admins, the owner: its readers only).
+    if (s.kind === "server") {
+      const who = channel?.item?.meta?.read ?? null;
+      const list = await (await ctx.require("members-list")).show(s, { who });
+      if (server === s) people.replaceChildren(list);
+      return;
+    }
     // (A direct conversation: you and them, whatever its group has listed yet.)
     const listed = await conversation.members(s);
     const dids = s.kind === "direct" ? [...new Set([account.id, s.with, ...listed].filter(Boolean))] : listed;
@@ -196,6 +204,8 @@ export async function mount(ctx, el) {
 
   async function openChannel(c) {
     channel = c;
+    // Its readers in the side panel (a channel kept to a role shows that role's people).
+    if (server) drawMembers(server).catch(() => {});
     // A RESTRICTED channel (who may read: a role, admins…): its messages are its GROUP's (`groups`) — open to its
     // readers, locked to everyone else here.
     const g = c.item?.meta?.group;

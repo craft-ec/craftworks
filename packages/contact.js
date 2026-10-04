@@ -13,6 +13,7 @@ export async function mount(ctx, el) {
   const at = await (await ctx.require("where")).of({ kind: "contact", app: "contact", yours: "Your people", saves: false });
   at.tabs();
   if (at.discover) return people(ctx, el, { directory, person });
+  if (at.space) return spacePeople(ctx, el, at.space);
   el.innerHTML = `
     <style>
       .ct { max-width: 640px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
@@ -51,6 +52,30 @@ export async function mount(ctx, el) {
       said.hidden = false;
     });
   await list.show(el.querySelector(".list"));
+}
+
+// A SPACE's Contact: its people and their roles — the one list (`members-list`), with its tools for who may — and,
+// for who may invite, Invite.
+async function spacePeople(ctx, el, sp) {
+  const [ml, roles, settings, space] = await Promise.all(["members-list", "roles", "server-settings", "space"].map(n => ctx.require(n)));
+  const [r, me] = await Promise.all([roles.of(sp), space.account()]);
+  el.innerHTML = `
+    <style>
+      .ct { max-width: 760px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
+      .ct .top { display: flex; gap: var(--cw-space-3); align-items: center; flex-wrap: wrap; }
+      .ct .top h2 { margin: 0; font-size: 1.3rem; }
+      .ct .top button { font: inherit; border: 0; border-radius: var(--cw-radius); padding: 6px var(--cw-space-4); background: var(--cw-accent); color: var(--cw-accent-fg); cursor: pointer; }
+      .ct .s { color: var(--cw-muted); font-size: var(--cw-text-sm); }
+    </style>
+    <div class="ct"><div class="top"><h2></h2><span class="s"></span></div></div>`;
+  const root = el.querySelector(".ct");
+  root.querySelector("h2").textContent = `${space.shown(sp)} · people`;
+  const count = () => (root.querySelector(".top .s").textContent = `${r.members().length} member${r.members().length === 1 ? "" : "s"} · you: ${r.role(me.id) ?? "member"}`);
+  count();
+  r.onChange(() => root.isConnected && count());
+  if (r.can(me.id, "invite"))
+    root.querySelector(".top").append(Object.assign(document.createElement("button"), { type: "button", textContent: "Invite", onclick: () => settings.open(sp, { tab: "invites" }) }));
+  root.append(await ml.show(sp, { manage: true }));
 }
 
 // DISCOVER → Contacts: the people who chose to be shown (and not flagged by a moderation list you apply).

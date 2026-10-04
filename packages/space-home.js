@@ -8,8 +8,8 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [space, roles, conversation, directory, person, settings, theme, icons] = await Promise.all(
-    ["space", "roles", "conversation", "directory", "person", "server-settings", "theme", "app-icons"].map(n => ctx.require(n)),
+  const [space, roles, conversation, settings, theme, icons] = await Promise.all(
+    ["space", "roles", "conversation", "server-settings", "theme", "app-icons"].map(n => ctx.require(n)),
   );
   // What is new in each app (Chat's unread in this space): its pill, kept current.
   let activity = null;
@@ -84,14 +84,6 @@ export async function mount(ctx, el) {
       "No apps yet: its owner or an admin adds them.",
     );
     const removable = may ? sharedApps.filter(a => on.includes(keyOf(a))) : [];
-    const people = h(
-      "ul",
-      {},
-      ...members.map(m => {
-        const li = h("li", { onclick: e => person.open(e.currentTarget, m.did, { space: sp }) }, directory.nameEl(m.did), m.role !== "member" ? h("i", { textContent: m.role }) : null);
-        return li;
-      }),
-    );
     root.replaceChildren(
       ...[
       h(
@@ -101,7 +93,8 @@ export async function mount(ctx, el) {
         r.can(me, "invite") ? h("button", { type: "button", className: "btn main", textContent: "Invite", onclick: () => openSettings("invites") }) : null,
 
         h("button", { type: "button", className: "btn", textContent: "Settings", onclick: () => openSettings("overview") }),
-        h("p", { textContent: `${members.length} member${members.length === 1 ? "" : "s"} · you: ${r.role(me) ?? "member"}` }),
+        // Its PEOPLE: the space's Contact (`members-list`: the one list, its roles).
+        h("p", {}, h("a", { href: `#/s/${sp.id}/contact`, textContent: `${members.length} member${members.length === 1 ? "" : "s"}` }), ` · you: ${r.role(me) ?? "member"}`),
       ),
       h(
         "section",
@@ -124,7 +117,6 @@ export async function mount(ctx, el) {
           )
         : null,
       said,
-      h("section", {}, h("h3", { textContent: "Members" }), people),
       // SETTINGS (owner, admins): the one place of every setting of the space and its apps (`app-settings`).
       may ? h("section", { className: "settings" }, h("h3", { textContent: "Settings" }), await (await ctx.require("app-settings")).page(sp)) : null,
       ].filter(Boolean),

@@ -103,7 +103,6 @@ export async function start(ctx) {
     };
     const mine = () => r.role(me.id);
     const may = what => r.can(me.id, what);
-    const RANK = { owner: 3, admin: 2, member: 1 };
     const names = new Map();
     const nameOf = did => {
       if (!names.has(did)) {
@@ -167,67 +166,15 @@ export async function start(ctx) {
           );
         }
       },
+      // MEMBERS & ROLES: the one list of a space's people (`members-list`), with its tools.
       members() {
         main.append(
           el("h3", { textContent: "Members & roles" }),
           el("p", { className: "note", textContent: `${may("roles") ? "Tick each person's roles (Admin: the owner's to give; the rest are made on Roles)." : "Each person's roles."} Removing someone takes them out: they read nothing new, and cannot rejoin by a code.` }),
         );
-        const rows = r.members().map(m => {
-          const tr = el("tr", { className: `${m.did === me.id ? "me" : ""} ${m.did === focus ? "focus" : ""}` });
-          const role = m.role;
-          const actions = el("td");
-          if (m.did !== me.id && may("remove") && RANK[mine()] > RANK[role])
-            actions.append(
-              act(
-                "Remove",
-                () => mod.remove(m.did),
-                "danger",
-                `remove ${nameOf(m.did)}`,
-              ),
-            );
-          // THEIR ROLES, one list: Owner (a label: handed on, never ticked), Admin (built in: only the owner gives it),
-          // then the roles composed here — each given or taken back by who may (`roles`), one they hold every
-          // permission of; the owner holds them all already.
-          const held = new Set(r.held(m.did));
-          const rolesCell = el("td", {});
-          if (role === "owner") rolesCell.append(el("span", { className: "chip", textContent: "Owner" }));
-          else if (mine() === "owner" && m.did !== me.id) {
-            const box = el("input", { type: "checkbox", checked: role === "admin" });
-            box.onchange = async () => {
-              say("");
-              try {
-                await r.grant(m.did, box.checked ? "admin" : "member");
-                await r.refresh();
-                draw();
-              } catch (err) {
-                say(`Role: ${err?.message ?? err}`);
-              }
-            };
-            rolesCell.append(el("label", { className: "chip" }, box, " Admin"));
-          } else if (role === "admin") rolesCell.append(el("span", { className: "chip", textContent: "Admin" }));
-          if (role !== "owner") for (const ro of r.roles()) {
-            const mayGive = may("roles") && role !== "owner" && ro.perms.every(p => r.can(me.id, p));
-            if (!mayGive) {
-              if (held.has(ro.id)) rolesCell.append(el("span", { className: "chip", textContent: ro.name }));
-              continue;
-            }
-            const box = el("input", { type: "checkbox", checked: held.has(ro.id) });
-            box.onchange = async () => {
-              say("");
-              try {
-                await r.act({ act: "assign", did: m.did, role: ro.id, on: box.checked });
-                await r.refresh();
-                draw();
-              } catch (err) {
-                say(`Role: ${err?.message ?? err}`);
-              }
-            };
-            rolesCell.append(el("label", { className: "chip" }, box, ` ${ro.name}`));
-          }
-          tr.append(el("td", { textContent: `${nameOf(m.did)}${m.did === me.id ? " (you)" : ""}`, title: m.did }), rolesCell, actions);
-          return tr;
-        });
-        main.append(el("table", {}, el("thead", {}, el("tr", {}, el("th", { textContent: "Person" }), el("th", { textContent: "Roles" }), el("th"))), el("tbody", {}, ...rows)));
+        const slot = el("div");
+        main.append(slot);
+        ctx.require("members-list").then(ml => ml.show(server, { manage: true })).then(list => slot.replaceWith(list), err => say(err?.message ?? err));
       },
       // ROLES: composed by who may (`roles`: the owner and admins), each a name and what it may — never more than its
       // maker may. Any app's rule can name one (who may read, post, comment… there).
