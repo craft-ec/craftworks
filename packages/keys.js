@@ -856,5 +856,11 @@ export async function start(ctx) {
     }
     return false;
   }
-  return { ready, remove, escrowed, group, keyPackages, answers, holdsTag, onChange: f => watchers.push(f) };
+  // Whether a WELCOME is made for this key package (its reference among those the welcome names): `{ ok, aimed, asked }`.
+  const welcomeFor = async (welcome, kp) => {
+    const aimed = welcomeRefs(bytes(welcome));
+    const asked = await refOf(kp);
+    return { ok: aimed.includes(asked), aimed: aimed.map(a => a.slice(0, 8)), asked: asked.slice(0, 8) };
+  };
+  return { ready, remove, escrowed, group, keyPackages, answers, holdsTag, welcomeFor, onChange: f => watchers.push(f) };
 }

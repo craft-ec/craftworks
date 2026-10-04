@@ -78,6 +78,13 @@ export async function start(ctx) {
       ctx.log("conversation", { what: `${directory.shown(did, card.handle)}: an earlier entry in the group taken out before welcoming again` });
     }
     const welcome = await g.add(kp);
+    // MADE FOR THAT PACKAGE, or not sent: a welcome named another key package of theirs (an old one, used already) —
+    // it could never open, and it spent a fresh one; said, with both, never sent.
+    const made = await keys.welcomeFor(welcome, kp);
+    if (!made.ok) {
+      ctx.log("conversation", { what: `a welcome for ${directory.shown(did, card.handle)} was made for key package ${made.aimed.join(", ")}, not the one asked (${made.asked}): not sent` });
+      throw new Error(`the group made a welcome for another key package of theirs (${made.aimed.join(", ")}), not ${made.asked}`);
+    }
     const { owner, nonce } = sp.governance;
     // `kp`: the TAG of the key package it is made for (what the person's page names when it does not open).
     await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, kp: tags[card.keyPackages.indexOf(kp)], made: Date.now(), ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(sp.group ? { group: sp.group } : {}), ...(repair ? { repair } : {}) });
