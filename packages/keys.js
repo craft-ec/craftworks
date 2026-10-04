@@ -426,19 +426,17 @@ export async function start(ctx) {
   // WHY a welcome does not open, measured: which batch OFFERED the package it names (by its offers row), and whether that
   // batch holds that package's secret — and how many of what it offered it holds at all.
   async function explain(t, welcome) {
-    const aimed = new Set(welcomeRefs(bytes(welcome)));
+    const aimed = welcomeRefs(bytes(welcome));
+    const heldAll = new Set(t.rows().filter(x => x.key.startsWith("packages/") && x.value).flatMap(x => batchRefs(bytes(x.value))));
+    const offeredBy = new Map(); // ref → batch id
     for (const r of t.rows().filter(x => x.key.startsWith("offers/") && x.value)) {
       let kps = [];
       try {
         kps = JSON.parse(r.value);
       } catch {}
-      const refs = await Promise.all(kps.map(refOf));
-      if (!refs.some(x => aimed.has(x))) continue;
-      const id = r.key.slice("offers/".length);
-      const held = new Set(batchRefs(bytes(t.rows().find(x => x.key === `packages/${id}`)?.value ?? "00000000")));
-      return `offered by batch ${id.slice(0, 8)}, which holds ${refs.filter(x => held.has(x)).length} of the ${refs.length} it offered${refs.some(x => aimed.has(x) && held.has(x)) ? " (this one among them)" : " (NOT this one)"}`;
+      for (const ref of await Promise.all(kps.map(refOf))) offeredBy.set(ref, r.key.slice("offers/".length, "offers/".length + 8));
     }
-    return "named by no offers row here: a package this account never offered";
+    return `names ${aimed.length} package(s): ${aimed.map(a => `${a.slice(0, 8)} ${offeredBy.has(a) ? `offered by ${offeredBy.get(a)}` : "never offered here"}, ${heldAll.has(a) ? "HELD" : "not held"}`).join("; ")}`;
   }
   const memberWith = async packages => {
     const k = await keysOfMember();
