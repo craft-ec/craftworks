@@ -29,11 +29,8 @@ export async function start(ctx) {
       // to it fails — a fresh set put there otherwise (whoever invites next picks one of them).
       if (!renewed) {
         renewed = true;
-        const card = await (await ctx.require("directory")).publish().catch(e => ((renewed = false), ctx.log("upkeep", { what: `the card: ${e.message}` }), null));
-        if (card?.renewed) {
-          const n = await conversation.askAgain().catch(e => (ctx.log("upkeep", { what: `asking again: ${e.message}` }), 0));
-          if (n) ctx.log("upkeep", { what: `${n} request(s) made again (a welcome to the old key packages never opens)` });
-        }
+        await (await ctx.require("directory")).publish().catch(e => ((renewed = false), ctx.log("upkeep", { what: `the card: ${e.message}` })));
+        await conversation.askStuck().catch(e => ctx.log("upkeep", { what: `requests let in, never in: ${e.message}` }));
       }
       const joined = await conversation.accept().catch(e => (ctx.log("upkeep", { what: `the inbox: ${e.message}` }), []));
       if (joined.length) ctx.log("upkeep", { what: `joined ${joined.length} space(s) from the inbox` });

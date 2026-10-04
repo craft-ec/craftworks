@@ -94,15 +94,18 @@ export async function start(ctx) {
     }
     // Its key packages ones this account answers (a card listing others — lost with their table, or a write of new
     // ones that never landed — makes every welcome to it fail): a fresh set otherwise.
-    let renewed = false;
     if (!(await (await ctx.require("keys")).answers(read(t).keyPackages))) {
       await putKeyPackages(t);
-      renewed = true;
       ctx.log("card", { what: "its key packages answered nothing here: a fresh set put on it" });
+      // A welcome made from the old ones never opens: every request still waiting made again (whoever admits welcomes
+      // again a request newer than the admission).
+      ctx
+        .require("conversation")
+        .then(c => c.askAgain())
+        .then(n => ctx.log("card", { what: `${n} request(s) made again` }), e => ctx.log("card", { what: `asking again: ${e.message}` }));
     }
     await putNodes(t);
-    // `renewed`: a welcome made from the card before cannot open (whoever this person asked, asked again: `upkeep`).
-    return { did: sp.id, ...read(t), renewed };
+    return { did: sp.id, ...read(t) };
   }
 
   // The account's DEVICES on the card: the credentials its key group holds now (rewritten when they change: a device
