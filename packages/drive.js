@@ -56,9 +56,16 @@ export async function mount(ctx, el) {
     return e;
   };
   // Where Drive is: yours, or the space open; and the folder (`f/<path>`).
-  const sp = ctx.space && ctx.space !== "discover" ? (await space.mine()).find(s => s.id === ctx.space) ?? null : null;
-  const base = () => (sp ? `#/s/${sp.id}/drive` : "#/drive");
-  const folder = () => `/${decodeURIComponent((ctx.sub || "").replace(/^f\/?/, ""))}`.replace(/\/+$/, "") || "/";
+  // WHERE (`where`: yours, a space's, a person's, Discover — the last two read only).
+  const where = await ctx.require("where");
+  const at = await where.of({ kind: "file", app: "drive", yours: "Your Drive" });
+  const sp = at.space;
+  const them = at.person;
+  const others = at.others;
+  const discover = at.discover;
+  const opts = { discover, person: them };
+  const base = () => at.base;
+  const folder = () => `/${decodeURIComponent(at.sub.replace(/^f\/?/, ""))}`.replace(/\/+$/, "") || "/";
   const hrefOf = f => (f === "/" ? base() : `${base()}/f/${f.slice(1).split("/").map(encodeURIComponent).join("/")}`);
   const said = h("p", { className: "said", hidden: true });
   // ASK for a name or a path, in the app (not the browser's prompt): the text, or null.
@@ -78,36 +85,29 @@ export async function mount(ctx, el) {
   // WHO SEES what is uploaded here: the one picker (`audience`) — yours start Only you, a space's its members.
   const who = await (await ctx.require("audience")).picker({ space: sp, kind: "file", initial: sp ? "members" : "private" });
 
-  const drivesKnown = drive.drives().catch(() => []);
+  // THE TABS (`where`'s, in every app's order): Your Drive · Discover (which space's Drive: the header's).
+  at.tabs();
+  const directory = await ctx.require("directory");
   async function draw() {
     const at = folder();
-    const [rows, folders] = await Promise.all([drive.list(sp), drive.folders(sp)]);
+    const [rows, folders] = await Promise.all([drive.list(sp, opts), drive.folders(sp, opts)]);
     const here = rows.filter(r => r.folder === at);
     const subs = folders.filter(f => f !== at && f.startsWith(at === "/" ? "/" : `${at}/`) && !f.slice(at === "/" ? 1 : at.length + 1).includes("/"));
     // The path, each step a link.
-    const crumbs = h("nav", { className: "crumbs", ariaLabel: "Folder" }, h("a", { href: hrefOf("/"), textContent: sp ? `${space.shown(sp)} Drive` : "Your Drive" }));
+    const crumbs = h("nav", { className: "crumbs", ariaLabel: "Folder" }, h("a", { href: hrefOf("/"), textContent: sp ? `${space.shown(sp)} Drive` : discover ? "Public files" : them ? `${directory.shown(them)}'s Drive` : "Your Drive" }));
     at.split("/").filter(Boolean).reduce((path, part) => {
       const p = `${path}/${part}`;
       crumbs.append(" / ", h("a", { href: hrefOf(p), textContent: part }));
       return p;
     }, "");
     const input = h("input", { type: "file", multiple: true, hidden: true, onchange: () => (upload([...input.files]), (input.value = "")) });
-    // WHICH DRIVE: yours, or any space's you are in — the spaces filled in when known (each space's apps read), never
-    // waited on before the Drive shows.
-    const which = h("select", { ariaLabel: "Drive", onchange: () => (location.hash = which.value ? `#/s/${which.value}/drive` : "#/drive") }, h("option", { value: "", textContent: "Your Drive" }), ...(sp ? [h("option", { value: sp.id, textContent: `${space.shown(sp)} Drive` })] : []));
-    drivesKnown.then(all => {
-      for (const s of all) if (s.id !== sp?.id) which.append(h("option", { value: s.id, textContent: `${space.shown(s)} Drive` }));
-      which.value = sp?.id ?? "";
-    });
-    which.value = sp?.id ?? "";
     const top = h(
       "div",
       { className: "top" },
       h("h2", { textContent: "🗂️ Drive" }),
-      which,
-      h("label", { className: "up" }, "📤 Upload", input),
-      who.el,
-      h("button", {
+      others ? null : h("label", { className: "up" }, "📤 Upload", input),
+      others ? null : who.el,
+      others ? null : h("button", {
         type: "button",
         textContent: "New folder",
         onclick: async () => {
@@ -137,7 +137,7 @@ export async function mount(ctx, el) {
       "div",
       { className: "tile", title: r.ref.name, onclick: e => !e.target.closest(".more, .menu") && attachments.open(r.ref, note) },
       h("div", { className: "pic" }, src ? h("img", { src, alt: "" }) : (kinds.mediaOf(r.ref)?.icon ?? "📄")),
-      h("div", { className: "cap" }, h("span", { className: "n", textContent: r.ref.name }), h("span", { className: "s", textContent: `${attachments.sizeOf(r.ref.size)} · ${new Date(r.at).toLocaleDateString()}` }), note),
+      h("div", { className: "cap" }, h("span", { className: "n", textContent: r.ref.name }), h("span", { className: "s", textContent: `${r.others ? `${directory.shown(r.by)} · ` : ""}${attachments.sizeOf(r.ref.size)} · ${new Date(r.at).toLocaleDateString()}` }), note),
       h("button", { type: "button", className: "more", title: "More", textContent: "⋯", onclick: () => (menu.hidden = !menu.hidden) }),
       menu,
     );
@@ -145,7 +145,7 @@ export async function mount(ctx, el) {
     if (r.readOnly) {
       menu.append(
         h("button", { type: "button", textContent: "Open", onclick: () => ((menu.hidden = true), attachments.open(r.ref, note)) }),
-        h("a", { href: r.page, textContent: `Open in ${r.from?.app === "text" ? "Board" : kinds.domainName(r.from?.app)}` }),
+        ...(r.page ? [h("a", { href: r.page, textContent: `Open in ${r.from?.app === "text" ? "Board" : kinds.domainName(r.from?.app)}` })] : []),
       );
       return t;
     }
@@ -171,7 +171,7 @@ export async function mount(ctx, el) {
       const line = h("div", { textContent: `${file.name}: starting…` });
       ups.append(line);
       drive
-        .upload(file, { space: sp, public: who.isPublic(), folder: folder(), from: { app: "drive" }, onProgress: e => (line.textContent = `${file.name}: ${e.phase === "reading" ? "reading" : `${Math.round((100 * e.done) / Math.max(1, e.size))}%`}`) })
+        .upload(file, { space: sp, public: who.isPublic(), write: who.write(), folder: folder(), from: { app: "drive" }, onProgress: e => (line.textContent = `${file.name}: ${e.phase === "reading" ? "reading" : `${Math.round((100 * e.done) / Math.max(1, e.size))}%`}`) })
         .then(
           () => (line.remove(), draw()),
           e => (line.textContent = `${file.name}: not uploaded — ${e.message ?? e}`),
@@ -182,9 +182,20 @@ export async function mount(ctx, el) {
   root.replaceChildren(theme.loading("Opening Drive…"));
   await draw();
   drive.onChange(sp, () => el.isConnected && draw());
-  let drawnFor = `${ctx.space ?? ""}|${ctx.sub ?? ""}`;
-  addEventListener("craftworks:route", () => {
-    const k = `${ctx.space ?? ""}|${ctx.sub ?? ""}`;
-    if (el.isConnected && ctx.route === "/drive" && k !== drawnFor) (drawnFor = k), draw();
-  });
+  // Another folder: drawn again. Another DRIVE (a space's, a person's, Discover): opened afresh — what it is, read once
+  // above, is its own.
+  let drawnFor = where.key();
+  const whose = where.placeKey;
+  const opened = whose();
+  const moved = () => {
+    if (!el.isConnected || ctx.route !== "/drive") return removeEventListener("craftworks:route", moved);
+    const k = where.key();
+    if (k === drawnFor) return;
+    drawnFor = k;
+    if (whose() === opened) return draw();
+    removeEventListener("craftworks:route", moved);
+    el.replaceChildren();
+    mount(ctx, el);
+  };
+  addEventListener("craftworks:route", moved);
 }

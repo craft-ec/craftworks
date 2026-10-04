@@ -43,10 +43,16 @@ export async function mount(ctx, el) {
     const n = directory.nameEl(did);
     return n;
   };
-  const sp = () => (ctx.space && ctx.space !== "discover" ? ctx.space : null);
+  // WHERE (`where`: yours, a space's, a person's — their tracks —, Discover — public videos and audio, each with
+  // its tracks), read at each draw.
+  const where = await ctx.require("where");
+  let at = await where.of({ kind: "caption", app: "caption", yours: "Your captions" });
+  const sp = () => at.space?.id ?? null;
   const route = () => {
-    const s = ctx.sub || "";
+    const s = at.sub;
     if (sp() && !s) return { space: sp() };
+    if (at.who === "discover" && !s) return { discover: true };
+    if (at.who === "person") return { person: at.person };
     // `for/<item>~<file key>`: a media file inside an item (inline in a post).
     if (s.startsWith("for/")) {
       const [item, key] = s.slice(4).split("~");
@@ -80,30 +86,32 @@ export async function mount(ctx, el) {
       h("button", { type: "button", textContent: ".srt", onclick: async () => download(subs.toSrt(await subs.text(t)), `${t.label || "subtitles"}.srt`, "application/x-subrip") }),
     );
 
-  async function mine() {
-    const list = bar.reorder(await subs.mine({ sort: bar.sort(), ...bar.options() }));
+  async function mine(by = null) {
+    const list = bar.reorder(await subs.mine({ sort: bar.sort(), ...bar.options(), ...(by ? { by } : {}) }));
     return h(
       "div",
       {},
-      h("p", { className: "s", textContent: "Every subtitle, lyrics or transcript track you made, on any video or audio. Add one from its page." }),
+      h("p", { className: "s", textContent: by ? "Their subtitle, lyrics and transcript tracks, in their space." : "Every subtitle, lyrics or transcript track you made, on any video or audio. Add one from its page." }),
       bar.el(),
       list.length ? h("ul", {}, ...(await Promise.all(list.map(row)))) : h("p", { className: "none", textContent: `None ${bar.span()}.` }),
       bar.older("Older", list.length),
     );
   }
 
-  // A SPACE's subtitle work: its videos, each with its tracks (any member's) and a way to add one.
+  // A SPACE's subtitle work — or DISCOVER's (the public network's): its videos and audio, each with its tracks (any
+  // reader's) and a way to add one.
   async function inSpace(id) {
     const kindsCap = await ctx.require("kinds");
-    const videos = await items.list({ board: id }, "new", [...kindsCap.inDomain("video"), ...kindsCap.inDomain("audio")]);
-    if (!videos.length) return h("p", { className: "none", textContent: "No videos or audio in this space yet: subtitles, lyrics and transcripts go with them." });
+    const media = [...kindsCap.inDomain("video"), ...kindsCap.inDomain("audio")];
+    const videos = await items.list(id ? { board: id } : { discover: true }, "new", media, id ? {} : bar.options());
+    if (!videos.length) return h("p", { className: "none", textContent: id ? "No videos or audio in this space yet: subtitles, lyrics and transcripts go with them." : "No public videos or audio yet." });
     const blocks = await Promise.all(
       videos.map(async v => {
         const tracks = await subs.of(v.ref);
         return h("div", {}, h("h3", {}, h("a", { href: watchHref(v.ref, v.kind), textContent: `▶ ${v.title}` }), " ", h("a", { className: "s", href: `#/caption/for/${encodeURIComponent(v.ref)}`, textContent: "Add a track" })), tracks.length ? h("ul", {}, ...(await Promise.all(tracks.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }));
       }),
     );
-    return h("div", {}, h("p", { className: "s", textContent: "This space's videos and their subtitles — any member adds a track or a translation; each edits their own." }), ...blocks);
+    return h("div", {}, h("p", { className: "s", textContent: id ? "This space's videos and their subtitles — any member adds a track or a translation; each edits their own." : "Public videos and audio, and their subtitles, lyrics and transcripts — anyone adds a track or a translation." }), ...(id ? [] : [bar.el()]), ...blocks);
   }
 
   async function forItem(ref, fileKey = null) {
@@ -178,13 +186,16 @@ export async function mount(ctx, el) {
 
   let drawn = "";
   async function draw() {
+    at = await where.of({ kind: "caption", app: "caption", yours: "Your captions" });
     const w = route();
-    drawn = ctx.sub ?? "";
-    const top = h("div", { className: "top" }, h("h2", { textContent: "🔤 Caption" }), h("a", { href: "#/caption", textContent: "Yours" }));
+    drawn = where.key();
+    const top = h("div", { className: "top" }, h("h2", { textContent: w.person ? `🔤 ${directory.shown(w.person)}'s captions` : "🔤 Caption" }));
+    // THE TABS (`where`'s, in every app's order): Your captions · Discover.
+    at.tabs([], { yoursOn: !!w.mine });
     root.replaceChildren(top, theme.loading("Reading…"));
-    const body = await (w.space ? inSpace(w.space) : w.for ? forItem(w.for, w.file) : w.edit ? editor(w.edit) : mine()).catch(e => h("p", { className: "said", textContent: e.message ?? String(e) }));
-    if (drawn === (ctx.sub ?? "")) root.replaceChildren(top, body);
+    const body = await (w.space ? inSpace(w.space) : w.discover ? inSpace(null) : w.for ? forItem(w.for, w.file) : w.edit ? editor(w.edit) : w.person ? mine(w.person) : mine()).catch(e => h("p", { className: "said", textContent: e.message ?? String(e) }));
+    if (drawn === where.key()) root.replaceChildren(top, body);
   }
   await draw();
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/caption" && (ctx.sub ?? "") !== drawn && draw());
+  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/caption" && where.key() !== drawn && draw());
 }

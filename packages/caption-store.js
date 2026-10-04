@@ -10,6 +10,7 @@
 //   const subs = await ctx.require("caption-store");
 //   await subs.of(mediaRef, { outside })          // [{ ref, lang, label, by, at, file, place, mayRemove }], oldest first
 //   await subs.add(mediaRef, fileOrText, { lang, label, place })   // its ref (SRT made WebVTT); `place`: a space, null
+//   await subs.mine({ sort, by, window })        // a person's tracks (`by`: theirs; none: yours) — their space's
 //                                                  // (your own), or none: with the video
 //   await subs.videoId(mediaRef)                   // the id tracks are matched by (null: a video from before ids)
 //   await subs.update(ref, { lang, label, text })  await subs.remove(ref)
@@ -144,8 +145,8 @@ export async function start(ctx) {
   const remove = ref => items.remove(ref);
   const text = async sub => toVtt(await (await files.get(sub.file)).text());
   // THIS PERSON's tracks — within a list's window (`items.list` options: a feed bar's), newest first by default.
-  async function mine({ sort = "new", ...options } = { window: "all" }) {
-    const me = (await space.account()).id;
+  async function mine({ sort = "new", by = null, ...options } = { window: "all" }) {
+    const me = by ?? (await space.account()).id;
     return (await items.list({ by: me }, sort, KIND, options)).map(shape);
   }
   return { of, ofFile, tracksFor, forFile, add, update, remove, text, toSrt, toVtt, mine, videoId, KIND };

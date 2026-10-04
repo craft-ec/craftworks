@@ -9,13 +9,10 @@ export async function mount(ctx, el) {
     return;
   }
   const [conversation, person, list, directory] = await Promise.all(["conversation", "person", "people-list", "directory"].map(n => ctx.require(n)));
-  // Your people, and DISCOVER (anyone listed): two tabs of one Contact.
-  ctx.actions["/contact"] = [
-    { label: "Your people", href: "#/contact", on: ctx.space !== "discover" },
-    { label: "Discover", href: "#/discover/contact", on: ctx.space === "discover" },
-  ];
-  dispatchEvent(new CustomEvent("craftworks:actions"));
-  if (ctx.space === "discover") return people(ctx, el, { directory, person });
+  // WHERE (`where`): your people, or DISCOVER (anyone listed) — the tabs every app has.
+  const at = await (await ctx.require("where")).of({ kind: "contact", app: "contact", yours: "Your people" });
+  at.tabs();
+  if (at.discover) return people(ctx, el, { directory, person });
   el.innerHTML = `
     <style>
       .ct { max-width: 640px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }

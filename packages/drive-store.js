@@ -58,7 +58,13 @@ export async function start(ctx) {
         readOnly: true,
       })),
     );
-  async function list(sp = null) {
+  async function list(sp = null, { person = null, discover = false } = {}) {
+    // SOMEONE ELSE's files — a person's (their space: what you may read) or DISCOVER's (anyone's public ones): read
+    // only, by the same reads as every app's (`items`); Discover's in one folder (each person's folders are theirs).
+    if (discover || person) {
+      const its = discover ? await items.list({ discover: true }, "new", "file") : await items.inPlaces({ people: [person] }, "file", { withVotes: false });
+      return its.filter(it => it.files?.[0]).map(it => ({ id: it.ref, ref: it.files[0], at: it.at, folder: discover ? "/" : clean(it.meta?.folder), by: it.by, readOnly: true, others: true }));
+    }
     const own = (await entries(sp))
       .map(it => {
         const ref = it.files?.[0];
@@ -69,7 +75,7 @@ export async function start(ctx) {
     return [...own, ...(await viewed(sp))].sort((a, b) => b.at - a.at);
   }
 
-  async function add(ref, { space: sp = null, from = null, folder = null, public: pub = !!ref?.public, at = Date.now() } = {}) {
+  async function add(ref, { space: sp = null, from = null, folder = null, public: pub = !!ref?.public, at = Date.now(), write = null } = {}) {
     // A file another app made (a video, a post's image): its item lists it (`list`'s views) — not a second entry.
     if (from?.app && from.app !== "drive" && !from.saved) return null;
     const fid = await fidOf(ref);
@@ -83,21 +89,21 @@ export async function start(ctx) {
         id ??= had.ref;
         continue;
       }
-      const made = await items.submit({ board: w?.id ?? null, title: ref.name ?? "", body: "", kind: "file", files: [ref], meta, audience: audienceOf(w, pub), at });
+      const made = await items.submit({ board: w?.id ?? null, title: ref.name ?? "", body: "", kind: "file", files: [ref], meta, audience: audienceOf(w, pub), at, write });
       id ??= made;
     }
     return id;
   }
 
-  async function upload(file, { space: sp = null, public: pub = false, from = null, folder = null, onProgress = () => {} } = {}) {
+  async function upload(file, { space: sp = null, public: pub = false, from = null, folder = null, write = null, onProgress = () => {} } = {}) {
     const ref = await files.put(file, { space: sp, public: pub, app: from?.app ?? "drive", onProgress });
-    await add(ref, { space: sp, from, folder, public: pub }).catch(e => ctx.log("drive", { what: `listing ${file.name}: ${e.message}` }));
+    await add(ref, { space: sp, from, folder, public: pub, write }).catch(e => ctx.log("drive", { what: `listing ${file.name}: ${e.message}` }));
     return ref;
   }
 
-  async function folders(sp = null) {
+  async function folders(sp = null, opts = {}) {
     const all = new Set(["/"]);
-    for (const r of await list(sp)) all.add(r.folder);
+    for (const r of await list(sp, opts)) all.add(r.folder);
     for (const f of await entries(sp, "folder")) all.add(clean(f.meta?.folder));
     // Every parent of a folder is a folder.
     for (const f of [...all]) for (let p = f; p !== "/"; p = p.slice(0, p.lastIndexOf("/")) || "/") all.add(p);

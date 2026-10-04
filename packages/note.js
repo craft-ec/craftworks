@@ -39,6 +39,7 @@ export async function mount(ctx, el) {
         padding: 12px 14px 6px; cursor: default; position: relative; }
       .keep .card[style*="background"] { color: var(--cw-on-pastel); border-color: transparent; }
       .keep .card .t { font-weight: 600; margin-bottom: 6px; overflow-wrap: anywhere; }
+      .keep .card .by { margin-top: 6px; color: var(--cw-muted); font-size: var(--cw-text-xs); }
       .keep .card .b { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18em; overflow: hidden; }
       .keep .card .tools { display: flex; gap: 2px; opacity: 0; transition: opacity .15s; margin-top: 6px; }
       .keep .card:hover .tools, .keep .card:focus-visible .tools, .keep .card:has(:focus-visible) .tools { opacity: 1; }
@@ -110,19 +111,18 @@ export async function mount(ctx, el) {
     </div>`;
   const root = el.querySelector(".keep");
   const said = t => (root.querySelector(".said").textContent = t);
-  let items, who, edge, pins, labels, pinUI, labelUI, sp = null, rs = null;
+  let items, who, edge, pins, labels, pinUI, labelUI, sp = null, rs = null, at = null;
   const meId = (await (await ctx.require("space")).account()).id;
+  const directory = await ctx.require("directory");
   try {
     edge = await ctx.require("edge");
-    // A space's notes: its own table, in its scope.
-    if (ctx.space) {
-      const space = await ctx.require("space");
-      sp = (await space.mine()).find(s => s.id === ctx.space) ?? null;
-      if (!sp) throw new Error("you are not in that space");
+    // WHERE (`where`: yours, a space's, a person's, Discover) — a space's notes by its policies.
+    at = await (await ctx.require("where")).of({ kind: "note", app: "note", yours: "Your notes" });
+    sp = at.space;
+    if (sp) {
       rs = await (await ctx.require("roles")).of(sp);
-      // The space's log read first (its apps and settings are acts in it).
+      // The space's log read first (its settings are acts in it; whether it uses Note: `where`'s).
       await rs.settled;
-      if (!rs.apps().includes("note")) throw new Error(`${sp.name} does not use Note: its owner or an admin adds it on the space's Home`);
     }
     // NOTES ARE ITEMS (kind `note`, `items`): yours in your space (private, or public), a space's in its place —
     // who sees, edits and comments by the same access control as every app.
@@ -134,17 +134,17 @@ export async function mount(ctx, el) {
       ctx.require("label-menu"),
     ]);
   } catch (e) {
-    return said(`Could not open ${ctx.space ? "the notes" : "your notes"}: ${e?.message ?? e}`);
+    return said(`Could not open the notes: ${e?.message ?? e}`);
   }
   // WHO SEES a new note: the one picker — yours start "Only you", a space's its members.
   who = await (await ctx.require("audience")).picker({ space: sp, kind: "note", initial: sp ? "members" : "private" });
   root.querySelector(".audience-slot").append(who.el);
-  // The notes held (items), read again as they change.
+  // Someone else's (a person's, Discover's): read only, as every app shows what is not yours (`where`).
+  const others = at.others;
   let held = [];
-  const place = sp ? { spaces: [sp] } : { people: [meId] };
   const reload = () =>
-    items
-      .inPlaces(place, "note", { withVotes: false })
+    at
+      .read({ whole: true })
       .then(x => ((held = x), root.isConnected && render()))
       .catch(e => said(`Could not read the notes: ${e?.message ?? e}`));
 
@@ -157,7 +157,8 @@ export async function mount(ctx, el) {
     color: it.meta?.color ?? "",
     archived: !!it.meta?.archived,
     edited: it.edited || it.at || 0,
-    mayEdit: it.mayEdit !== false,
+    mayEdit: !others && it.mayEdit !== false,
+    by: it.by,
     meta: it.meta ?? {},
     pinned: pins.has(ref(it.ref)),
   });
@@ -167,7 +168,7 @@ export async function mount(ctx, el) {
     try {
       const was = key && held.find(x => x.ref === key);
       if (was) await items.editItem(key, body, { title, meta: { ...(was.meta ?? {}), color, archived } });
-      else key = await items.submit({ board: sp?.id ?? null, title, body, kind: "note", meta: { color, archived }, audience: n.audience ?? who.value() });
+      else key = await items.submit({ board: sp?.id ?? null, title, body, kind: "note", meta: { color, archived }, audience: n.audience ?? who.value(), write: who.write() });
       reload();
       return key;
     } catch (e) {
@@ -318,16 +319,22 @@ export async function mount(ctx, el) {
       b.onclick = e => (e.stopPropagation(), run(e));
       tools.append(b);
     };
-    tool("🎨", "Background", e => palette(e.currentTarget, color => save(n.key, { ...n, color })));
+    // Someone else's (Discover, their space): its author named; read only — your pin and labels on it are yours.
+    if (others) c.append(Object.assign(document.createElement("div"), { className: "by", textContent: directory.shown(n.by) }));
+    if (n.mayEdit) tool("🎨", "Background", e => palette(e.currentTarget, color => save(n.key, { ...n, color })));
     tool("🏷️", "Labels", e => labelUI.menu(e.currentTarget, ref(n.key)));
-    tool(n.archived ? "📤" : "🗃️", n.archived ? "Unarchive" : "Archive", () => {
-      save(n.key, { ...n, archived: !n.archived });
-      if (!n.archived && n.pinned) pins.set(ref(n.key), false).catch(e => said(`Could not unpin: ${e?.message ?? e}`)); // an archived note is not pinned, as in Keep
-    });
-    tool("🗑️", "Delete", () => remove(n.key));
+    if (n.mayEdit) {
+      tool(n.archived ? "📤" : "🗃️", n.archived ? "Unarchive" : "Archive", () => {
+        save(n.key, { ...n, archived: !n.archived });
+        if (!n.archived && n.pinned) pins.set(ref(n.key), false).catch(e => said(`Could not unpin: ${e?.message ?? e}`)); // an archived note is not pinned, as in Keep
+      });
+      tool("🗑️", "Delete", () => remove(n.key));
+    }
     c.append(pinButton, tools);
-    c.onclick = () => edit(n);
-    c.onkeydown = e => e.key === "Enter" && edit(n);
+    if (n.mayEdit) {
+      c.onclick = () => edit(n);
+      c.onkeydown = e => e.key === "Enter" && edit(n);
+    }
     return c;
   };
 
@@ -335,7 +342,7 @@ export async function mount(ctx, el) {
   const render = () => {
     root.classList.toggle("list", list);
     // The composer: not in the archive, nor for who may not edit here.
-    composer.hidden = archive || (!!rs && R.mayWrite({ action: "post", item: { kind: "note", by: null, meta: {} }, writer: meId, r: rs }) !== true);
+    composer.hidden = others || archive || (!!rs && R.mayWrite({ action: "post", item: { kind: "note", by: null, meta: {} }, writer: meId, r: rs }) !== true);
     if (label && !labels.list().some(l => l.id === label)) label = null; // deleted meanwhile
     bar();
     const q = query.toLowerCase();
@@ -347,11 +354,11 @@ export async function mount(ctx, el) {
       .filter(n => !q || `${n.title}\n${n.body}\n${labels.of(ref(n.key)).map(l => l.name).join("\n")}`.toLowerCase().includes(q))
       .sort((a, b) => (b.edited || 0) - (a.edited || 0) || (a.key < b.key ? 1 : -1));
     const pinned = all.filter(n => n.pinned && !archive);
-    const others = all.filter(n => !n.pinned || archive);
+    const rest = all.filter(n => !n.pinned || archive);
     root.querySelector(".pinned-section").hidden = !pinned.length;
-    root.querySelector(".others-label").hidden = !pinned.length || !others.length;
+    root.querySelector(".others-label").hidden = !pinned.length || !rest.length;
     root.querySelector(".pinned").replaceChildren(...pinned.map(card));
-    root.querySelector(".others").replaceChildren(...others.map(card));
+    root.querySelector(".others").replaceChildren(...rest.map(card));
     const empty = root.querySelector(".empty");
     empty.hidden = all.length > 0;
     empty.textContent = q
@@ -420,22 +427,22 @@ export async function mount(ctx, el) {
   const appSettings = sp ? await ctx.require("app-settings") : null;
   // Who may edit here: the composer says so when this person may not.
   const gate = () => {
-    const ok = !rs || rs.allows("edit", meId, "note");
+    const ok = !others && (!rs || rs.allows("edit", meId, "note"));
     composer.hidden = !ok;
   };
   gate();
   rs?.onChange(() => root.isConnected && (gate(), render()));
+  // THE TABS (`where`'s, in every app's order): Your notes · the app's own · Discover.
   const actions = () => {
-    ctx.actions["/note"] = [
+    at.tabs([
       // NOTES' OWN SETTINGS in a space (its owner and admins): who may edit.
       ...(rs?.can(meId, "apps")
         ? [{ label: "Note settings", run: () => (location.hash = appSettings.href(sp, "note")) }]
         : []),
-      { search: v => ((query = v), render()), placeholder: sp ? `Search ${sp.name}'s notes` : "Search your notes", value: query },
+      { search: v => ((query = v), render()), placeholder: sp ? `Search ${sp.name}'s notes` : others ? "Search these notes" : "Search your notes", value: query },
       { label: list ? "Grid view" : "List view", run: () => ((list = !list), render(), actions()) },
-      { label: "Archive", on: archive, run: () => ((archive = !archive), render(), actions()) },
-    ];
-    dispatchEvent(new CustomEvent("craftworks:actions"));
+      ...(others ? [] : [{ label: "Archive", on: archive, run: () => ((archive = !archive), render(), actions()) }]),
+    ], { yoursOn: !archive });
   };
   actions();
   items.onChange(() => root.isConnected && reload());
@@ -444,10 +451,10 @@ export async function mount(ctx, el) {
   labels.onChange(() => root.isConnected && render());
   render();
   // Another space's notes (or yours): opened afresh.
-  const at = ctx.space;
-  const moved = () => {
+  const wherever = (await ctx.require("where")).key();
+  const moved = async () => {
     if (!root.isConnected || ctx.route !== "/note") return removeEventListener("craftworks:route", moved);
-    if (ctx.space === at) return;
+    if ((await ctx.require("where")).key() === wherever) return;
     removeEventListener("craftworks:route", moved);
     el.replaceChildren();
     mount(ctx, el);

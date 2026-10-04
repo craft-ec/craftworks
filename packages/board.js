@@ -18,12 +18,14 @@ export async function mount(ctx, el) {
   const me = (await space.account()).id;
   // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.
   const bar = (await ctx.require("feed-bar")).create({ start: "hot", onChange: () => draw() });
+  // WHERE Board is (`where`: the one reading of an address — yours, a space's, a person's, Discover), read at each draw.
+  const whereCap = await ctx.require("where");
+  let at = await whereCap.of({ kind: "post", app: "board", yours: "Your posts" });
+  const discovering = () => at.who === "discover";
+  const base = () => at.base;
   // The route: what is shown.
-  // Where Board is: the space open (`ctx.space`), or the personal space.
-  const discovering = () => ctx.space === "discover";
-  const base = () => (discovering() ? "#/discover/board" : ctx.space ? `#/s/${ctx.space}/board` : "#/board");
-  const where = () => {
-    const s = ctx.sub || "";
+  const route = () => {
+    const s = at.sub;
     // DISCOVER (the public view): every public board, one space's (`b/<id>`), or a public post (`p/<ref>`).
     if (discovering()) {
       // A public board's composer, for one not in it whose policy lets anyone post.
@@ -33,26 +35,26 @@ export async function mount(ctx, el) {
       if (s.startsWith("p/")) return { post: s.slice(2), pub: s.slice(2).match(/^space:([0-9a-f]{64})\//)?.[1] };
       return { discover: true };
     }
-    const at = ctx.space ? { board: ctx.space } : {};
-    if (s.startsWith("p/")) return { ...at, post: s.slice(2) };
-    if (s === "submit") return { ...at, submit: true };
-    if (!ctx.space && s === "feed") return { feed: true };
-    if (!ctx.space && s.startsWith("u/")) return { by: s.slice(2) };
-    return ctx.space ? at : { by: me };
+    const inSpace = at.space ? { board: at.space.id } : {};
+    if (s.startsWith("p/")) return { ...inSpace, post: s.slice(2) };
+    if (s === "submit" && !at.others) return { ...inSpace, submit: true };
+    if (at.who === "mine" && s === "feed") return { feed: true };
+    if (at.who === "person") return { by: at.person };
+    return at.space ? inSpace : { by: me };
   };
   // The top bar: its sub-pages — the posts, and Create post.
   const setActions = async w => {
-    // The same tabs on every page of a board (an open post, a profile, the Feed): a space's Posts, or — personal —
-    // Feed, Your posts and DISCOVER (the public network: every public board); and Create post. Each lit only on its
-    // own page.
-    const inSpace = ctx.space && !discovering();
-    ctx.actions["/board"] = [
-      ...(inSpace ? [] : [{ label: "Feed", href: "#/board/feed", on: !!w.feed }]),
-      { label: inSpace ? "Posts" : "Your posts", href: inSpace ? base() : "#/board", on: !discovering() && !w.post && !w.submit && !w.feed && (!!inSpace || w.by === me) },
-      ...(inSpace ? [] : [{ label: "Discover", href: "#/discover/board", on: discovering() }]),
-      ...(discovering() ? [] : [{ label: "Create post", href: `${base()}/submit`, on: !!w.submit }]),
-    ];
-    dispatchEvent(new CustomEvent("craftworks:actions"));
+    // THE TABS (`where`'s, in every app's order): Your posts · Feed · Create post · Discover — a space's: Posts and
+    // Create post; a person's: none. Each lit only on its own page.
+    const page = !w.post && !w.submit && !w.feed;
+    at.tabs(
+      [
+        ...(at.who === "space" ? [{ label: "Posts", href: base(), on: page }] : []),
+        ...(at.who === "mine" || at.who === "discover" ? [{ label: "Feed", href: "#/board/feed", on: !!w.feed }] : []),
+        ...(at.others ? [] : [{ label: "Create post", href: `${base()}/submit`, on: !!w.submit }]),
+      ],
+      { yoursOn: page && w.by === me },
+    );
   };
   el.innerHTML = `
     <style>
@@ -350,7 +352,7 @@ export async function mount(ctx, el) {
   let shownPost = null;
   let threadAt = { sp: null, pub: true }; // the thread shown: where its comments' files are kept
   async function postPage(ref) {
-    const w = where();
+    const w = route();
     const outside = w.pub ? await descOf(w.pub) : null;
     const p = (shownPost = await posts.get(ref, { outside }));
     if (!p) return [h("p", { className: "none", textContent: "This post is not there (removed, or not found yet)." })];
@@ -406,10 +408,11 @@ export async function mount(ctx, el) {
   // What is drawn (its route): the loader's route event right after mounting names the same page — drawing it again
   // would replace the page under someone typing (and a comment sent from the old page would land where nobody looks).
   let drawnFor = null;
-  const routeKey = () => `${ctx.space ?? ""}|${ctx.sub ?? ""}`;
+  const routeKey = whereCap.key;
   async function draw() {
     drawnFor = routeKey();
-    const w = where();
+    at = await whereCap.of({ kind: "post", app: "board", yours: "Your posts" });
+    const w = route();
     // On screen: this space's board (both tables) is read as it arrives (`activity`).
     const onBoard = w.board ? await posts.boardOf(w.board) : null;
     ctx.require("activity").then(a => a.showing(onBoard ? [space.board(onBoard), space.board(onBoard, { pub: true })] : null), () => {});
@@ -423,7 +426,7 @@ export async function mount(ctx, el) {
   }
   let drawing = null;
   const redraw = () => {
-    if (!el.isConnected || drawing || where().submit || where().post) return;
+    if (!el.isConnected || drawing || route().submit || route().post) return;
     drawing = draw().finally(() => (drawing = null));
   };
   main.replaceChildren(theme.loading("Reading the posts…"));

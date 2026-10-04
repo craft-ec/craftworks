@@ -32,9 +32,6 @@ export async function mount(ctx, el) {
       .vd { max-width: 1200px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
       .vd .top { display: flex; align-items: center; gap: var(--cw-space-2); flex-wrap: wrap; }
       .vd .top h2 { margin: 0; font-size: 1.3rem; }
-      .vd .tabs { display: flex; gap: var(--cw-space-2); flex: 1; }
-      .vd .tabs a { color: var(--cw-muted); text-decoration: none; padding: 4px 10px; border-radius: 999px; }
-      .vd .tabs a.on { color: var(--cw-fg); background: var(--cw-hover); }
       .vd .up { background: var(--cw-accent); color: var(--cw-accent-fg); border-radius: var(--cw-radius-sm); padding: 6px 12px; text-decoration: none; }
       .vd .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--cw-space-4) var(--cw-space-3); }
       .vd .card { text-decoration: none; color: inherit; display: grid; gap: 6px; }
@@ -85,17 +82,19 @@ export async function mount(ctx, el) {
     e.append(...kids.filter(k => k != null && k !== false));
     return e;
   };
-  const discovering = () => ctx.space === "discover";
-  const sp = () => (ctx.space && !discovering() ? ctx.space : null);
-  const base = () => (discovering() ? `#/discover/${C.app}` : sp() ? `#/s/${sp()}/${C.app}` : `#/${C.app}`);
+  // WHERE it is (`where`: the one reading of an address — yours, a space's, a person's, Discover), read at each draw.
+  const where = await ctx.require("where");
+  let at = await where.of({ kinds: VIDEO, app: C.app, yours: "Following" });
+  const base = () => at.base;
   const route = () => {
-    const s = ctx.sub || "";
+    const s = at.sub;
     if (s.startsWith("w/")) return { watch: decodeURIComponent(s.slice(2)) };
     if (s === "up") return { up: true };
-    // A person's space (`u/<did>`; `c/` from before: the same).
-    if (s.startsWith("u/") || s.startsWith("c/")) return { by: decodeURIComponent(s.slice(2)) };
-    if (discovering()) return { discover: true };
-    if (sp()) return { board: sp() };
+    // `c/<did>` from before: that person's space.
+    if (s.startsWith("c/")) return { by: decodeURIComponent(s.slice(2)) };
+    if (at.who === "person") return { by: at.person };
+    if (at.who === "discover") return { discover: true };
+    if (at.who === "space") return { board: at.space.id };
     return s === "mine" ? { by: me } : s === "saved" ? { saved: true } : { feed: true };
   };
   // A public space's video seen from OUTSIDE (Discover, a followed space): its public description.
@@ -124,23 +123,18 @@ export async function mount(ctx, el) {
   };
   const fileOf = v => v.files?.find(f => f.type === studio.MANIFEST || /^(video|audio)\//.test(f.type ?? "")) ?? v.files?.[0] ?? null;
 
-  let spaceName = null;
   function top(w) {
-    // Yours: Following, yours, Saved and DISCOVER (the public network) — one row of tabs, Discover among them.
-    const tabs = sp()
-      ? [{ label: C.name, href: base(), on: !w.watch && !w.up }]
-      : [
-          { label: "Following", href: `#/${C.app}`, on: !!w.feed },
-          { label: C.mine, href: `#/${C.app}/mine`, on: w.by === me },
-          { label: "Saved", href: `#/${C.app}/saved`, on: !!w.saved },
-          { label: "Discover", href: `#/discover/${C.app}`, on: discovering() && !w.watch },
-        ];
+    // THE TABS (`where`'s, in every app's order): Following · yours · Saved · Discover; Upload where you may.
+    at.tabs([
+      ...(at.who === "mine" || at.who === "discover" ? [{ label: C.mine, href: `#/${C.app}/mine`, on: w.by === me }, { label: "Saved", href: `#/${C.app}/saved`, on: !!w.saved }] : []),
+      ...(at.others ? [] : [{ label: "⬆ Upload", href: `${base()}/up`, on: !!w.up }]),
+    ], { yoursOn: !!w.feed });
     // In a space, it is a CHANNEL (the space named in this app's own words).
-    const title = sp() ? `${C.icon} ${spaceName ?? "Channel"} · channel` : `${C.icon} ${C.name}`;
+    const title = at.space ? `${C.icon} ${space.shown(at.space)} · channel` : `${C.icon} ${C.name}`;
     // The SUB-TYPES (a filter): all, or one kind of the domain.
     const chips = w.watch || w.up ? null : h("div", { className: "chips" }, ...[null, ...VIDEO].map(k => h("button", { type: "button", className: only === k ? "on" : "", textContent: k ? kinds.of(k).label : "All", onclick: () => ((only = k), draw()) })));
     const feedBar = w.watch || w.up || w.saved ? null : h("div", { className: "chips" }, bar.el());
-    return h("div", { className: "top" }, h("h2", { textContent: title }), h("nav", { className: "tabs" }, ...tabs.map(t => h("a", { href: t.href, textContent: t.label, className: t.on ? "on" : "" }))), discovering() ? null : h("a", { className: "up", href: `${base()}/up`, textContent: "⬆ Upload" }), chips, feedBar);
+    return h("div", { className: "top" }, h("h2", { textContent: title }), chips, feedBar);
   }
 
   function card(v) {
@@ -267,21 +261,20 @@ export async function mount(ctx, el) {
 
   // UPLOAD: the one upload form (`publisher.form`: the same as over an editor) — the item opened once published.
   async function upload() {
-    const inSpace = sp() ? (await space.mine()).find(s => s.id === sp()) : null;
-    const f = await (await ctx.require("publisher")).form({ domain: C.audio ? "audio" : "video", space: inSpace, app: C.app, onPublished: ({ item }) => (location.hash = `${base()}/w/${encodeURIComponent(item)}`) });
+    const f = await (await ctx.require("publisher")).form({ domain: C.audio ? "audio" : "video", space: at.space, app: C.app, onPublished: ({ item }) => (location.hash = `${base()}/w/${encodeURIComponent(item)}`) });
     return h("div", {}, h("h3", { textContent: `Upload a ${C.one}` }), f);
   }
 
   let drawn = "";
   async function draw() {
+    at = await where.of({ kinds: VIDEO, app: C.app, yours: "Following" });
     const w = route();
-    spaceName = sp() ? space.shown((await space.mine()).find(x => x.id === sp()) ?? { id: sp(), name: "" }) : null;
-    drawn = `${ctx.space ?? ""}|${ctx.sub ?? ""}`;
+    drawn = where.key();
     root.replaceChildren(top(w), theme.loading(w.watch ? `Opening the ${C.one}…` : `Reading the ${C.ones}…`));
     const body = await (w.watch ? watch(w.watch) : w.up ? upload() : list(w)).catch(e => h("p", { className: "said", textContent: e.message ?? String(e) }));
-    if (drawn === `${ctx.space ?? ""}|${ctx.sub ?? ""}`) root.replaceChildren(top(w), ...(w.by && w.by !== me && !w.watch ? [h("div", { className: "row" }, h("h3", {}, who(w.by)), h("button", { type: "button", textContent: "Follow…", onclick: e => person.open(e.currentTarget, w.by) }))] : []), body);
+    if (drawn === where.key()) root.replaceChildren(top(w), ...(w.by && w.by !== me && !w.watch ? [h("div", { className: "row" }, h("h3", {}, who(w.by)), h("button", { type: "button", textContent: "Follow…", onclick: e => person.open(e.currentTarget, w.by) }))] : []), body);
   }
   await draw();
   items.onChange(() => el.isConnected && !route().watch && !route().up && draw());
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === C_ROUTE && `${ctx.space ?? ""}|${ctx.sub ?? ""}` !== drawn && draw());
+  addEventListener("craftworks:route", () => el.isConnected && ctx.route === C_ROUTE && where.key() !== drawn && draw());
 }

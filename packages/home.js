@@ -160,7 +160,7 @@ export async function mount(ctx, el) {
   };
   const show = async s => {
     if (!s) return publicView();
-    const who = (await ctx.require("spaces-panel")).personOf();
+    const who = (await ctx.require("where")).personOf();
     return who && who !== s.did ? personHome(who) : desktop();
   };
   // Home again at another address (yours ↔ a person's): drawn for it.

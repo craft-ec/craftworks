@@ -12,9 +12,9 @@
 //   await panel.hrefTo({ personal } | { space } | { person })  // that space, at the SAME APP when it shows
 //                           // it (the manifest's `views`; a shared space: the apps it uses), else its Home
 export async function start(ctx) {
-  const [space, conversation, directory, edge, roles] = await Promise.all(["space", "conversation", "directory", "edge", "roles"].map(n => ctx.require(n)));
-  // A PERSON's space: `u/<did>` after the app (or alone: their Home) — someone else's personal space, seen from outside.
-  const personOf = () => (ctx.space ? null : (/^u\/(did:[^/]+)/.exec(ctx.sub ?? "")?.[1] ?? null));
+  const [space, conversation, directory, edge, roles, where] = await Promise.all(["space", "conversation", "directory", "edge", "roles", "where"].map(n => ctx.require(n)));
+  // A PERSON's space (whose it is: `where`'s, the one reading of an address).
+  const personOf = where.personOf;
   // SWITCHING keeps the app: the app open, in the space chosen, where that space shows it; else that space's Home.
   async function hrefTo({ personal = false, space: sp = null, person = null }) {
     const app = ctx.apps.find(a => a.route === ctx.route);
