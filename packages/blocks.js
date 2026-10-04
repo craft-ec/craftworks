@@ -11,6 +11,15 @@
 //   await blocks.fetch(tailIdHex, [blockContractHex, …], "notes")   // all held, or throws
 //   await blocks.put([[name, frames], …], "notes")                   // all accepted, or throws
 //   await blocks.probe(contractHex, "notes")                          // on the network? (keeping counts them)
+// A contract's address as the NODE's log writes it (base58 of its 32 bytes): a failure here found there, one to one.
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const base58 = hex => {
+  let n = BigInt(`0x${hex}`);
+  let out = "";
+  while (n > 0n) (out = B58[Number(n % 58n)] + out), (n /= 58n);
+  for (let i = 0; i < hex.length && hex.slice(i, i + 2) === "00"; i += 2) out = `1${out}`;
+  return out;
+};
 export async function start(ctx) {
   const { core, ask, WAIT } = await ctx.require("node");
   const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
@@ -47,6 +56,7 @@ export async function start(ctx) {
     }
     return new Promise((resolve, reject) => {
       let open = 1 + group.length;
+      let answered = 0; // of its group: how many came
       let done = false;
       const settle = () => {
         if (done) return;
@@ -60,6 +70,8 @@ export async function start(ctx) {
         } else if (open === 0) {
           done = true;
           lost.set(b, Date.now());
+          // In FULL — the node's address (base58) too — and its group: what can be followed in the node's log.
+          ctx.log("block lost", { what: `${what}: block ${b} (node: ${base58(b)}) — its group of ${group.length}: ${answered} answered; asked ${group.map(g => base58(g)).join(", ") || "(none: asked alone)"}` });
           reject(new Error(`${what}: block ${b.slice(0, 12)}… is not on the network, and too little of its group is to rebuild it`));
         }
       };
@@ -78,8 +90,9 @@ export async function start(ctx) {
         } else settle();
       });
       for (const g of group)
-        get(g, what).then(() => {
+        get(g, what).then(a => {
           open--;
+          if (a?.kind !== "get-failed") answered += 1;
           settle();
         });
     });
