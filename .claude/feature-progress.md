@@ -1090,6 +1090,8 @@ Chat circle tabs (to be replaced: channels with an audience, person Chat via `wh
 ## Roles composed per space; channels and conversations as one (owner 2026-10-04)
 - [x] Roles composed by admins (gov `role`/`assign` acts; permissions ⊆ the maker's; rules name `role:<id>`; one Roles
       column with Admin built in; every app's rule dropdown offers them).
-- [ ] A channel's/item's READ by role or named people: its own sealed group kept in step (circles' mechanism).
+- [x] READ by a role (admins, owner): one GROUP per space and audience (`groups`, circles on it too), any kind —
+      posts, videos, files, a channel; kept in step by upkeep; a member removed reads nothing new and sees it no more.
+      LEFT: named people as an audience; Drive uploads to a role audience; a group's maker offline → nobody else keeps it.
 - [x] Conversations (direct, group) = your personal Chat's channels; Message merged into Chat (old links forward);
       Friends/Followers channel work dropped. Fixed with it: a paged room missed a late feed's earlier items.

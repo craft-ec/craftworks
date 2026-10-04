@@ -47,6 +47,8 @@ export async function start(ctx) {
           // on it — nothing new is let in: only who is a member already).
           const fixed = await conversation.repair(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: repair: ${e.message}` }), []));
           if (fixed.length) ctx.log("upkeep", { what: `${sp.name}: ${fixed.length} member(s) on another branch welcomed back` });
+          // RESTRICTED channels' readers (their groups this person made): in step with who holds the role now.
+          if (r.apps().includes("chat")) await conversation.keepReaders(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: readers: ${e.message}` }));
         }
         if (!r?.can(me.id, "invite")) continue;
         const let_in = await conversation.admit(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: ${e.message}` }), []));

@@ -67,7 +67,7 @@ export async function start(ctx) {
     }
     const welcome = await g.add(kp);
     const { owner, nonce } = sp.governance;
-    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(repair ? { repair } : {}) });
+    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(sp.group ? { group: sp.group } : {}), ...(repair ? { repair } : {}) });
     ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind}` });
     return card;
   }
@@ -215,7 +215,7 @@ export async function start(ctx) {
       const tried = `${it.space}|${it.welcome.slice(0, 64)}`;
       if (had && welcomesTried.has(tried)) continue;
       welcomesTried.add(tried);
-      const v = { kind: it.spaceKind, name: it.name, owner: it.owner ?? it.from, nonce: it.nonce ?? null, ...(it.spaceKind === "direct" ? { with: it.from } : {}), ...(it.circle ? { circle: it.circle } : {}) };
+      const v = { kind: it.spaceKind, name: it.name, owner: it.owner ?? it.from, nonce: it.nonce ?? null, ...(it.spaceKind === "direct" ? { with: it.from } : {}), ...(it.circle ? { circle: it.circle } : {}), ...(typeof it.group === "string" ? { group: it.group.slice(0, 200) } : {}) };
       try {
         const sp = await space.describe(it.space, v);
         await keys.group(sp).join(it.welcome, { expect });
@@ -394,6 +394,35 @@ export async function start(ctx) {
     return name;
   };
   const MOVED = ["chat", "channels"];
+  // A space's AUDIENCES narrower than its members (a role's holders, the admins, the owner): each a GROUP of its own
+  // (`groups`, keyed `audience:<space>/<who>`) holding what only they read — any kind, a channel too. Its members as
+  // they should be — the space's members who pass its `who` — kept by whoever made it (theirs to add to and remove from).
+  const audienceKey = (sp, who) => `audience:${sp.id}/${who}`;
+  async function audience(sp, who) {
+    const groups = await ctx.require("groups");
+    const r = await (await ctx.require("roles")).of(sp);
+    const g = await groups.of(audienceKey(sp, who), {
+      name: `${space.shown(sp)} · ${who.startsWith("role:") ? (r.roles().find(x => `role:${x.id}` === who)?.name ?? "a role") : who}`,
+      // Its apps: the space's (whatever kind is kept for this audience).
+      setup: async (_, gr) => {
+        for (const app of r.apps()) await gr.act({ act: "app", app, on: true });
+      },
+    });
+    await keepReaders(sp).catch(e => ctx.log("audiences", { what: `${space.shown(sp)}: ${e.message}` }));
+    return g;
+  }
+  async function keepReaders(sp) {
+    const me = (await space.account())?.id;
+    const [groups, roles] = await Promise.all(["groups", "roles"].map(n => ctx.require(n)));
+    const r = await roles.of(sp);
+    await r.settled;
+    const prefix = `audience:${sp.id}/`;
+    for (const g of await space.mine()) {
+      if (!g.group?.startsWith(prefix) || g.governance?.owner !== me) continue;
+      const who = g.group.slice(prefix.length);
+      await groups.keep(g, new Set(r.members().map(x => x.did).filter(d => !r.banned(d) && r.passes(who, d))));
+    }
+  }
   function channels(server) {
     if (!channelSets.has(server.id))
       channelSets.set(
@@ -459,6 +488,25 @@ export async function start(ctx) {
             rename: async (c, name) => (await mayMake(), c.item ? await items.editItem(c.item.ref, "", { title: channelName(name) }) : await make(name, c.id.split("/").pop()), read()),
             remove: async c => (c.item ? await items.remove(c.item.ref) : await m.hide(legacy.app, c.id.split("/").pop()), read()),
             // WHO MAY POST in one channel: its item's own rule (null: as the space's Chat policy).
+            // WHO MAY READ it (`who`: none/"members" — its space's members; a role, "admins", "owner"): narrower
+            // than the space, its messages go to a GROUP of its own (`groups`) whose members are its readers — kept
+            // in step by its maker (`keepReaders`, every upkeep pass).
+            setRead: async (c, who) => {
+              await mayMake();
+              const it = c.item ?? (await items.get(await make(c.name, c.id.split("/").pop())));
+              const narrow = who && who !== "members" && who !== "anyone";
+              const meta = { ...(it.meta ?? {}) };
+              if (narrow) {
+                // Its messages: in its AUDIENCE's group (one per space and audience, whatever kind it keeps).
+                const g = await audience(server, who);
+                Object.assign(meta, { read: who, group: g.id });
+                await items.editItem(it.ref, "", { meta });
+              } else {
+                delete meta.read;
+                await items.editItem(it.ref, "", { meta });
+              }
+              await read();
+            },
             setPost: async (c, who) => {
               await mayMake();
               const it = c.item ?? (await items.get(await make(c.name, c.id.split("/").pop())));
@@ -587,5 +635,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, repair, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels };
+  return { direct, group, invite, accept, repair, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
 }

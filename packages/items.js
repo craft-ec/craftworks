@@ -523,7 +523,8 @@ export async function start(ctx) {
     else if (where.board) {
       const sp = await boardOf(where.board);
       if (!sp) throw new Error("you are not in that board's space: join it with an invite");
-      out = await boardPosts(sp, { kinds, window });
+      // Its AUDIENCES' groups this person is in (what only a role reads): read with it.
+      out = (await Promise.all([sp, ...(await audienceGroups(sp))].map(g => boardPosts(g, { kinds, window }).catch(() => [])))).flat();
     } else if (where.feed) {
       // The FEED: every space followed or joined — the spaces this person is in, the people they follow (their
       // personal spaces) and the shared spaces they follow (read from outside).
@@ -577,6 +578,15 @@ export async function start(ctx) {
     // YOUR FRIENDS or YOUR FOLLOWERS: an item of that CIRCLE's place (`circles`: sealed to its members).
     if (!board && (audience === "friends" || audience === "followers")) {
       board = (await (await ctx.require("circles")).of(audience)).id;
+      audience = "members";
+    }
+    // A SPACE's AUDIENCE narrower than its members (a role's holders, the admins, the owner): an item of that
+    // audience's GROUP (`conversation.audience`: sealed to them alone), whatever its kind.
+    if (board && (String(audience).startsWith("role:") || audience === "admins" || audience === "owner")) {
+      const parent = await boardOf(board);
+      if (!parent) throw new Error("you are not in that board's space");
+      board = (await (await ctx.require("conversation")).audience(parent, audience)).id;
+      meta = { ...meta, space: parent.id, aud: audience };
       audience = "members";
     }
     if (board) {
@@ -833,7 +843,16 @@ export async function start(ctx) {
 
   // Items of a KIND in exactly these places, read whole (few, chosen places: a subtitle's lookup), never every board.
   // `after` (an item id): only what was made after it (a subtitle is always newer than its video) — a bound, not a window.
+  // A space's AUDIENCE groups this person is in (`conversation.audience`: what only a role, the admins, the owner read).
+  // (One this person was taken out of — no longer of that audience — shown no more: what was there before stays sealed
+  // to its key, never presented.)
+  const audienceGroups = async sp => {
+    const gs = (await space.mine()).filter(g => g.group?.startsWith(`audience:${sp.id}/`));
+    const out = await Promise.all(gs.map(g => roles.of(g).then(async r => (await r.settled, r.left ? null : g), () => null)));
+    return out.filter(Boolean);
+  };
   async function inPlaces({ spaces = [], people: dids = [] }, kind, { after = null, withVotes = true } = {}) {
+    spaces = [...spaces, ...(await Promise.all(spaces.map(audienceGroups))).flat()];
     const ks = kindsFor(kind);
     const read = async sp => {
       if (after) await sinceItem(await boardRoom(sp), after);

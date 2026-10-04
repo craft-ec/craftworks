@@ -145,7 +145,8 @@ export function mount(ctx, el) {
     if (!session) return;
     const [panel, activity] = await Promise.all([ctx.require("spaces-panel"), ctx.require("activity").catch(() => null)]);
     const name = await panel.here();
-    const elsewhere = activity ? (await (await ctx.require("space")).mine().catch(() => [])).filter(s => s.kind === "server" && !s.circle && s.id !== ctx.space).reduce((t, s) => t + (activity.of(s.id) ?? 0), 0) : 0;
+    const spaceCap = await ctx.require("space");
+    const elsewhere = activity ? (await spaceCap.mine().catch(() => [])).filter(s => s.kind === "server" && !spaceCap.isGroup(s) && s.id !== ctx.space).reduce((t, s) => t + (activity.of(s.id) ?? 0), 0) : 0;
     if (n !== naming) return;
     spaceB.replaceChildren(`${name} ▾`, ...(elsewhere ? [Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(elsewhere) })] : []));
     if (activity && !spaceB.dataset.watching) (spaceB.dataset.watching = "1"), activity.onChange(() => spaceName());

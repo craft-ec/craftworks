@@ -142,6 +142,8 @@ export async function mount(ctx, el) {
   }
 
   const list = () => chs?.list() ?? [];
+  // A rule's `who` in words (a role by its name).
+  const whoName = w => (w?.startsWith("role:") ? `the ${rs?.roles?.().find(x => `role:${x.id}` === w)?.name ?? "role"}'s holders` : { admins: "the admins", owner: "the owner" }[w] ?? w);
 
   function drawChannels() {
     if (!chs) return;
@@ -150,7 +152,7 @@ export async function mount(ctx, el) {
     chans.replaceChildren(
       ...list().map(c => {
         const row = Object.assign(document.createElement("div"), { className: "ch" });
-        const b = Object.assign(document.createElement("button"), { type: "button", textContent: `# ${c.name}` });
+        const b = Object.assign(document.createElement("button"), { type: "button", textContent: `${c.item?.meta?.group ? "🔒" : "#"} ${c.name}` });
         b.setAttribute("aria-current", String(channel?.id === c.id));
         b.onclick = () => openChannel(c);
         const n = activity.unread(c.id);
@@ -192,6 +194,24 @@ export async function mount(ctx, el) {
 
   async function openChannel(c) {
     channel = c;
+    // A RESTRICTED channel (who may read: a role, admins…): its messages are its GROUP's (`groups`) — open to its
+    // readers, locked to everyone else here.
+    const g = c.item?.meta?.group;
+    if (g) {
+      // (Its group left — no longer of its readers —: locked, as for anyone else.)
+      const gsp0 = (await space.mine()).find(s => s.id === g);
+      const gsp = gsp0 && !(await roles.of(gsp0).then(async r => (await r.settled, r.left), () => true)) ? gsp0 : null;
+      const to = `#/s/${server.id}/chat/${c.id.split("/").pop()}`;
+      if (location.hash !== to) history.replaceState(null, "", to);
+      drawChannels();
+      shown?.close();
+      if (!gsp) {
+        shown = null;
+        return roomEl.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: `🔒 #${c.name} is read by ${whoName(c.item.meta.read)} only.` }));
+      }
+      shown = await roomUI.show(roomEl, space.channel(gsp, c.id.split("/").pop(), c.name), `🔒 #${c.name}`);
+      return;
+    }
     // The address follows the channel open (a reload, a link: the same channel).
     const to = `#/s/${server.id}/chat/${c.id.split("/").pop()}`;
     if (location.hash !== to) history.replaceState(null, "", to);

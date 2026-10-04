@@ -20,10 +20,21 @@ export async function start(ctx) {
 
   async function picker({ space: sp = null, kind = "post", initial = null } = {}) {
     // The choices here: yours, or what the space's policy allows for this kind.
+    // A space's: everyone (where it may), its members — or fewer: a role's holders, the admins, the owner (sealed to
+    // them alone: its audience's group).
+    const fewer = sp
+      ? [
+          ...((await (await ctx.require("roles")).of(sp).then(r => r.roles(), () => [])).map(ro => [`role:${ro.id}`, `🔐 ${ro.name} only`])),
+          ["admins", "🔐 Admins only"],
+        ]
+      : [];
     const choices = sp
-      ? (await items.publicIn(sp, kind).catch(() => false))
-        ? [["public", "🌐 Everyone (public)"], ["members", `👥 ${space.shown(sp)}'s members`]]
-        : [["members", `👥 ${space.shown(sp)}'s members (the space keeps this app to its members)`]]
+      ? [
+          ...((await items.publicIn(sp, kind).catch(() => false))
+            ? [["public", "🌐 Everyone (public)"], ["members", `👥 ${space.shown(sp)}'s members`]]
+            : [["members", `👥 ${space.shown(sp)}'s members (the space keeps this app to its members)`]]),
+          ...fewer,
+        ]
       : [["public", "🌐 Everyone (public)"], ["followers", "👣 Your followers"], ["friends", "🤝 Your friends"], ["private", "🔒 Only you"]];
     const sel = h("select", { className: "field", name: "audience" }, ...choices.map(([value, textContent]) => h("option", { value, textContent })));
     // Its starting choice is the select's DEFAULT: a form reset (a composer closing) returns to it, never to the first.

@@ -131,7 +131,12 @@ export async function start(ctx) {
           const sel = h("select", { ariaLabel: `Who may post in ${c.name}` }, h("option", { value: "", textContent: `As Chat (${NAMES[r.policyIn("chat", "post")] ?? r.policyIn("chat", "post")})` }), ...["anyone", "members", "admins", "owner"].map(w => h("option", { value: w, textContent: NAMES[w] })));
           sel.value = own;
           sel.onchange = () => channels.setPost(c, sel.value || null).then(draw, e => say(e.message));
-          row.append(sel);
+          // WHO MAY READ it: its space's members, or fewer (a role, the admins, the owner) — then it is sealed to them
+          // alone (its own group, kept in step).
+          const readSel = h("select", { ariaLabel: `Who may read ${c.name}` }, h("option", { value: "", textContent: "Read: the space's members" }), ...["admins", "owner", ...(r.roles?.() ?? []).map(ro => `role:${ro.id}`)].map(w => h("option", { value: w, textContent: `Read: ${w.startsWith("role:") ? `Role: ${(r.roles?.() ?? []).find(ro => `role:${ro.id}` === w)?.name}` : NAMES[w]}` })));
+          readSel.value = c.item?.meta?.read ?? "";
+          readSel.onchange = () => channels.setRead(c, readSel.value || null).then(draw, e => say(e.message));
+          row.append(sel, readSel);
           return row;
         }),
         h("div", { className: "row" }, add, h("button", { type: "button", textContent: "Add", onclick: () => add.value.trim() && channels.add(add.value.trim()).then(draw, e => say(e.message)) })),

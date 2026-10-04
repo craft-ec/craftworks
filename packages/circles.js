@@ -19,35 +19,30 @@
 // reaches the holder through their inbox; a comment or vote cites it; a reader reads that table and checks it names
 // the writer. Never listed (card, catalog): not found by anyone not told it. A friend no longer: the table cleared.
 export async function start(ctx) {
-  const [space, conversation, roles, edge, index] = await Promise.all(["space", "conversation", "roles", "edge", "index"].map(n => ctx.require(n)));
+  const [space, roles, edge, index] = await Promise.all(["space", "roles", "edge", "index"].map(n => ctx.require(n)));
   const AUDIENCES = { friends: { name: "Friends", relation: "friend" }, followers: { name: "Followers", relation: "follower" } };
   const mineOf = async which => {
     const me = (await space.account())?.id;
     return (await space.mine()).find(s => s.circle === which && s.governance?.owner === me) ?? null;
   };
 
-  const making = new Map();
+  // A CIRCLE is a GROUP (`groups`: the one "seen by just these people"), keyed by its audience.
+  const groups = await ctx.require("groups");
   async function of(which) {
     if (!AUDIENCES[which]) throw new Error(`no such audience: ${which}`);
     const had = await mineOf(which);
     if (had) return had;
-    if (!making.has(which))
-      making.set(
-        which,
-        (async () => {
-          const me = await space.account();
-          const handle = await (await ctx.require("directory")).name(me.id).catch(() => "");
-          const sp = await space.create("server", `${AUDIENCES[which].name} of ${handle || "me"}`, { circle: which });
-          const r = await roles.of(sp);
-          // Its place (a board): its owner posts; its members read, comment and vote.
-          await r.act({ act: "app", app: "board", on: true });
-          await r.act({ act: "policy", path: "", action: "post", who: "admins" });
-          ctx.log("circles", { what: `your ${which} circle made` });
-          await sync().catch(() => {});
-          return sp;
-        })().finally(() => making.delete(which)),
-      );
-    return making.get(which);
+    const handle = await (await ctx.require("directory")).name((await space.account()).id).catch(() => "");
+    const sp = await groups.of(`circle:${which}`, {
+      name: `${AUDIENCES[which].name} of ${handle || "me"}`,
+      // Its place (a board): its owner posts; its members read, comment and vote.
+      setup: async (_, r) => {
+        await r.act({ act: "app", app: "board", on: true });
+        await r.act({ act: "policy", path: "", action: "post", who: "admins" });
+      },
+    });
+    await sync().catch(() => {});
+    return sp;
   }
 
   // FOLLOW NOTICES in the inbox: each follower as `follower` (the newest notice of each person counts).
@@ -104,12 +99,7 @@ export async function start(ctx) {
     for (const [which, a] of Object.entries(AUDIENCES)) {
       const sp = await mineOf(which);
       if (!sp) continue;
-      const want = new Set(people.list(a.relation).filter(d => d !== me.id && !people.is("block", d)));
-      const r = await roles.of(sp);
-      const have = new Set(r.members().map(m => m.did).filter(d => d !== me.id));
-      for (const did of want) if (!have.has(did)) await conversation.invite(sp, did).catch(e => ctx.log("circles", { what: `${which}: ${did.slice(12, 20)}… not added yet: ${e.message}` }));
-      const mod = await (await ctx.require("moderation")).of(sp);
-      for (const did of have) if (!want.has(did)) await mod.remove(did).catch(e => ctx.log("circles", { what: `${which}: ${did.slice(12, 20)}… not removed yet: ${e.message}` }));
+      await groups.keep(sp, new Set(people.list(a.relation).filter(d => d !== me.id && !people.is("block", d))));
     }
   }
   return { of, sync };

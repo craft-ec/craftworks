@@ -135,7 +135,7 @@ export async function start(ctx) {
     if (!me) return panel.replaceChildren();
     const [mine, people, myName] = await Promise.all([space.mine().catch(() => []), edge.people(), directory.handle(me).catch(() => null)]);
     // (A CIRCLE — an audience, `circles` — is no place of its own: never listed.)
-    const shared = mine.filter(s => s.kind === "server" && !s.circle);
+    const shared = mine.filter(s => s.kind === "server" && !space.isGroup(s));
     const friends = people.list("friend").filter(d => d.startsWith("did:"));
     const follows = people.list("follow");
     const names = await Promise.all([...friends, ...follows.filter(d => d.startsWith("did:"))].map(d => directory.handle(d).then(n => [d, n], () => [d, null])));

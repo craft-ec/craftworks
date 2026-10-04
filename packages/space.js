@@ -63,7 +63,7 @@ export async function start(ctx) {
 
   // A space from its row in the account's `spaces`.
   function made(id, v, acc, self = acc.self) {
-    const sp = { kind: v.kind, id, idBytes: bytes(id), name: v.name, with: v.with ?? null, circle: v.circle ?? null, governance: Object.freeze({ kind: "owner", owner: v.owner, nonce: v.nonce ?? null }), self };
+    const sp = { kind: v.kind, id, idBytes: bytes(id), name: v.name, with: v.with ?? null, circle: v.circle ?? null, group: v.group ?? null, governance: Object.freeze({ kind: "owner", owner: v.owner, nonce: v.nonce ?? null }), self };
     sp.tables = Object.freeze({ catalog: tableOf(sp, "tables"), members: tableOf(sp, "members"), channel: tableOf(sp, "log") });
     // A space that is itself a conversation (a direct one): its messages, in its own scope.
     sp.messages = tableOf(sp, "messages");
@@ -154,5 +154,7 @@ export async function start(ctx) {
   // is), as people are (`pat#8r4orC`).
   const shown = sp => `${String(sp?.name ?? "").trim() || "space"}#${String(sp?.id ?? "").slice(0, 6)}`;
 
-  return { account, tables, mine, create, record, describe, tableOf, channel, board, owner, leave, shown };
+  // A GROUP (a person's circle, a channel's readers — `groups`): a space of its own, never listed as one.
+  const isGroup = sp => !!(sp?.circle || sp?.group);
+  return { isGroup, account, tables, mine, create, record, describe, tableOf, channel, board, owner, leave, shown };
 }
