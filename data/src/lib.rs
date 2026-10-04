@@ -353,6 +353,12 @@ impl Open {
         Some((by, v.get(hl..hl + 32)?.try_into().ok()?))
     }
 
+    /// A tree that names no key (written before the fresh start of 2026-10-04): read as no tree at all — the tail's own
+    /// rows are the table — and built again, in the current form, by the next flush. Nothing written since lacks it.
+    fn tree_from_before(&self) -> bool {
+        self.sealed_tree() && self.tree_key_ref().is_none() && self.writer.current().is_some_and(|t| t.body.root.is_some())
+    }
+
     /// THE key the tree's blocks are sealed with and their addresses come from: found by its id among the keys held
     /// for it (its epoch's own, or an alternate). `None`: not held here.
     pub fn address_key(&self) -> Option<[u8; 32]> {
@@ -759,7 +765,7 @@ impl Open {
     /// tree row). `Need` names the tree blocks to fetch first, `Keys` the epochs whose keys to get first.
     fn collect(&mut self) -> Result<Step<Rows>, String> {
         // The key the tree is sealed with, first: without it no block of it can even be named.
-        if self.sealed_tree() && self.writer.body().root.is_some() && self.address_key().is_none() {
+        if self.sealed_tree() && self.writer.body().root.is_some() && self.address_key().is_none() && !self.tree_from_before() {
             return match self.tree_key_ref() {
                 Some((KeyRef::Epoch(e), _)) if !self.epochs.contains_key(&e) && !self.no_key.contains(&e) => Ok(Step::Keys(vec![e])),
                 _ => Err("its tree is sealed with a key this page does not hold".into()),
@@ -772,7 +778,8 @@ impl Open {
         }
         let mut all: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
         let mut unreadable = 0usize;
-        if let Some(root) = &body.root {
+        let root = if self.tree_from_before() { None } else { body.root };
+        if let Some(root) = &root {
             let mut tree = BTreeMap::new();
             let mut r = Range { max_entries: 4096, max_bytes: 4 << 20, ..Range::default() };
             loop {
@@ -839,7 +846,8 @@ impl Open {
         }
         let mut rows: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
         let mut next = None;
-        if let Some(root) = body.root {
+        let root = if self.tree_from_before() { None } else { body.root };
+        if let Some(root) = root {
             if self.sealed_tree() && self.address_key().is_none() {
                 return match self.tree_key_ref() {
                     Some((KeyRef::Epoch(e), _)) if !self.epochs.contains_key(&e) && !self.no_key.contains(&e) => Ok(Step::Keys(vec![e])),
@@ -1496,6 +1504,37 @@ mod tests {
         assert_eq!(read_with(&o, &member, table, &[(2, won)]).unwrap().0, ["a=on the losing branch", "b=still in the tail"]);
     }
 
+    /// A TREE FROM BEFORE the fresh start (it names no key): read as no tree — the tail's rows are the table — and
+    /// built again in the current form by the next flush. The control: a current tree whose key is not held is still
+    /// refused, never read as empty.
+    #[test]
+    fn a_tree_from_before_reads_as_none_and_is_built_again() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        let mut o = Open::new(CODE, &member, "notes");
+        o.set_table_key([7; 32]);
+        o.epoch_key(1, Some([11; 32]), true);
+        put_row(&key, &mut o, "old", "in the tree");
+        flush(&key, &mut o);
+        // Its key named no more: as a tree written before the fresh start.
+        let (seq, h) = o.prepare(vec![Op::Delete { key: SEALED_TREE.to_vec() }]).unwrap();
+        o.commit(sign(&key, &o, seq, h)).unwrap();
+        put_row(&key, &mut o, "new", "in the tail");
+        let Ok(Step::Ready(v)) = o.rows() else { panic!("a tree from before reads as none") };
+        assert_eq!(keys(&v), ["new=in the tail"]);
+        assert!(o.rekey(), "built again by the next flush");
+        flush(&key, &mut o);
+        assert!(o.tree_key_ref().is_some() && !o.rekey());
+        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        assert_eq!(keys(&v), ["new=in the tail"]);
+        // The control: a current tree, its key not held here — refused.
+        let mut r = Open::new(CODE, &member, "notes");
+        r.set_table_key([7; 32]);
+        assert!(r.absorb(&o.writer.state()));
+        r.epoch_key(1, Some([99; 32]), false);
+        assert!(r.rows().is_err(), "a current tree under a key not held is never read as empty");
+    }
+
     /// Rows are sealed over UPWARD only: under the table's key, then an epoch arrives — sealed over to it; a page that
     /// writes with the table's key (no group here) never seals an epoch's rows down to it.
     #[test]
@@ -1554,8 +1593,8 @@ mod tests {
         put(&ka, &mut a, "n", Some("from a"), None);
         let m = merged(&mut a, &mut b);
         let seen = m[&b"n".to_vec()].id;
-        assert_eq!(seen, Some((wa, 1)));
-        put(&kb, &mut b, "n", Some("b edits it"), seen);
+        assert_eq!(seen, (wa, 1));
+        put(&kb, &mut b, "n", Some("b edits it"), Some(seen));
         let m = merged(&mut a, &mut b);
         assert_eq!(String::from_utf8_lossy(&m[&b"n".to_vec()].value), "b edits it");
         // A flushes its feed into its tree: the versions go with it.

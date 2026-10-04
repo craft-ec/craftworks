@@ -336,7 +336,7 @@ export async function start(ctx) {
       const [, frames] = core.tail_get(id);
       let said;
       try {
-        said = await ask(frames, x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "tail-keys" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, wait);
+        said = await ask(frames, x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "tail-keys" || x.kind === "tail-unreadable" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, wait);
         answered = true;
       } catch (e) {
         ctx.log("table not found yet", { what: `${app}: ${e.message}; opened empty` });
@@ -355,6 +355,13 @@ export async function start(ctx) {
       // Asked and not there: a network search spent (seconds, on a real network) — named, so what is asked for no
       // reason shows.
       if (said.kind === "get-failed" && answered) ctx.log("asked, not there", { what: `${app} (${label === app ? "by name" : "blinded"}, ${owner.slice(0, 8)}…)` });
+      // UNREADABLE (the node answered; this page cannot open it): said at once — never waited on until the read's end.
+      if (said.kind === "tail-unreadable") {
+        t.absent = false;
+        t.unreadable = said.said;
+        ctx.log("table unreadable", { what: `${app}: ${said.said}` });
+        return;
+      }
       if (said.kind !== "get-failed") said = await settle(said, app);
       t.absent = said.kind !== "tail";
       if (said.kind === "tail") took(said.tail);
