@@ -44,19 +44,22 @@ export async function mount(ctx, el) {
       .dc .chans .ch > button:first-child { flex: 1; min-width: 0; }
       .dc .empty { color: var(--cw-muted); text-align: center; margin: auto; padding: var(--cw-space-5); }
       .dc .said { color: var(--cw-danger); font-size: var(--cw-text-sm); padding: var(--cw-space-2) var(--cw-space-4); margin: 0; }
-      .dc dialog.ask { border: 0; border-radius: var(--cw-radius); padding: var(--cw-space-4); width: min(360px, calc(100vw - 32px));
+      .dc dialog.ask, .dc dialog.start { border: 0; border-radius: var(--cw-radius); padding: var(--cw-space-4); width: min(360px, calc(100vw - 32px));
         box-shadow: var(--cw-shadow-lg); }
-      .dc dialog.ask form { display: grid; gap: var(--cw-space-3); }
-      .dc dialog.ask .row { display: flex; gap: var(--cw-space-2); justify-content: flex-end; }
-      .dc dialog.ask button { border: 1px solid var(--cw-line); background: none; color: inherit; border-radius: var(--cw-radius-sm);
+      .dc dialog.ask form, .dc dialog.start form { display: grid; gap: var(--cw-space-3); }
+      .dc dialog.ask .row, .dc dialog.start .row { display: flex; gap: var(--cw-space-2); justify-content: flex-end; }
+      .dc dialog.ask button, .dc dialog.start button { border: 1px solid var(--cw-line); background: none; color: inherit; border-radius: var(--cw-radius-sm);
         padding: var(--cw-space-1) var(--cw-space-3); }
-      .dc dialog.ask button[value="ok"] { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
+      .dc dialog.ask button[value="ok"], .dc dialog.start button[value="ok"] { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       @media (max-width: 800px) { .dc { grid-template-columns: 180px 1fr; } .dc .people { display: none; } }
     </style>
     <div class="dc">
       <aside class="side"><h2>—</h2><div class="chans"></div><p class="said" hidden></p></aside>
       <section class="room"></section>
       <aside class="people"><h3>MEMBERS</h3><ul></ul></aside>
+      <dialog class="start"><form method="dialog"><label>Who? One person, or several separated by commas for a group — name#abc123 or did:craftec:… <input name="who" autocomplete="off" required></label>
+        <label>Group name (for several) <input name="group" autocomplete="off"></label>
+        <div class="row"><button value="cancel" formnovalidate>Cancel</button><button value="ok">Start</button></div></form></dialog>
       <dialog class="ask"><form method="dialog"><label><span></span><input name="answer" autocomplete="off" required></label>
         <div class="row"><button value="cancel" formnovalidate>Cancel</button><button value="ok">Create</button></div></form></dialog>
     </div>`;
@@ -166,14 +169,16 @@ export async function mount(ctx, el) {
 
   // The server's members: the accounts in its group, with their roles. A click: what can be done with that person.
   async function drawMembers(s) {
-    const dids = await conversation.members(s);
-    if (server !== s || !rs) return;
+    // (A direct conversation: you and them, whatever its group has listed yet.)
+    const listed = await conversation.members(s);
+    const dids = s.kind === "direct" ? [...new Set([account.id, s.with, ...listed].filter(Boolean))] : listed;
+    if (server !== s) return;
     if (!dids.length) return people.replaceChildren();
     const draw = names =>
       people.replaceChildren(
         ...dids.map((d, i) => {
           const li = Object.assign(document.createElement("li"), { title: d, className: "who", onclick: e => person.open(e.currentTarget, d, { space: s }) });
-          const role = rs.role(d);
+          const role = rs?.role(d) ?? "member";
           li.append(
             Object.assign(document.createElement("span"), { className: "n", textContent: `${directory.shown(d, names[i])}${d === account.id ? " (you)" : ""}` }),
             Object.assign(document.createElement("span"), { className: "r", textContent: role === "member" ? "" : role }),
@@ -198,20 +203,85 @@ export async function mount(ctx, el) {
   // Welcomes and askers are `upkeep`'s (every page, every 30 s): asked once now, for whoever is waiting on this one.
   ctx.require("upkeep").then(u => u.tick(), () => {});
   // New since read: the channel list says so.
-  activity.onChange(() => el.isConnected && drawChannels());
+  activity.onChange(() => el.isConnected && (!ctx.space && personalDraw ? personalDraw() : drawChannels()));
+  // YOUR CHAT (your personal space): your CONVERSATIONS — direct and group, each its own sealed space with its own
+  // members — as the channels of your space; one opened in the same room as any channel (`#/chat/<conversation>`).
+  // Conversations begun with you while you were away: joined when it opens.
+  let accepted = null;
+  async function personal() {
+    // (Run again on every route event: the conversation open stays open — only another one replaces it.)
+    server = shownConv;
+    rs = null;
+    channel = null;
+    sideName.textContent = "Your conversations";
+    const draw = async () => {
+      const list = await conversation.list();
+      const name = sp => (sp.kind === "group" ? `👥 ${sp.name}` : sp.with ? directory.nameEl(sp.with) : sp.name);
+      chans.replaceChildren(
+        ...list.map(sp => {
+          const b = Object.assign(document.createElement("button"), { type: "button", title: sp.with ?? "" });
+          b.append(name(sp));
+          const n = activity.unread(sp.id);
+          if (n) b.append(Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(n) }));
+          b.setAttribute("aria-current", String(shownConv?.id === sp.id));
+          b.onclick = () => (location.hash = `#/chat/${sp.id}`);
+          return b;
+        }),
+        ...(accepted ? [] : [theme.loading("Checking your inbox…", 1)]),
+        Object.assign(document.createElement("button"), { type: "button", className: "new", textContent: "+ New conversation", onclick: start }),
+      );
+      return list;
+    };
+    const list = await draw();
+    accepted ??= conversation.accept().catch(e => ctx.log("conversation", { what: e?.message ?? String(e) })).then(() => el.isConnected && !ctx.space && draw().then(openAt));
+    const openAt = async (l = list) => {
+      const sp = (ctx.sub && (await conversation.list()).find(c => c.id === ctx.sub)) || null;
+      if (!sp) return shownConv ? null : roomEl.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: l.length ? "Pick a conversation, or start one." : "No conversations yet: start one." }));
+      if (shownConv?.id === sp.id) return;
+      shownConv = sp;
+      server = sp;
+      draw();
+      drawMembers(sp);
+      shown?.close();
+      const title = sp.kind === "group" ? sp.name : document.createElement("span");
+      if (typeof title !== "string") title.append("@", directory.nameEl(sp.with));
+      shown = await roomUI.show(roomEl, sp, title);
+    };
+    personalDraw = draw;
+    await openAt();
+  }
+  let shownConv = null, personalDraw = null;
+  // A NEW conversation: one person (direct) or several (a group), each welcomed.
+  function start() {
+    const d = $(".start");
+    d.querySelector('input[name="who"]').value = "";
+    d.querySelector('input[name="group"]').value = "";
+    d.onclose = async () => {
+      const who = d.returnValue === "ok" ? d.querySelector('input[name="who"]').value.trim() : "";
+      if (!who) return;
+      say("");
+      try {
+        const dids = await Promise.all(who.split(",").map(x => x.trim()).filter(Boolean).map(x => conversation.person(x)));
+        const sp = dids.length > 1 ? await conversation.group(dids, d.querySelector('input[name="group"]').value) : await conversation.direct(dids[0]);
+        location.hash = `#/chat/${sp.id}`;
+      } catch (e) {
+        say(`Could not start it: ${e?.message ?? e}`);
+      }
+    };
+    d.showModal();
+    d.querySelector("input").focus();
+  }
+  $(".start").addEventListener("click", e => e.target === e.currentTarget && e.currentTarget.close("cancel"));
+
   // THE SPACE open (`ctx.space`), at a channel (`ctx.sub`: a notification clicked, a link) or its first.
   const at = async () => {
-    const s = ctx.space && (await space.mine()).find(x => x.id === ctx.space && x.kind === "server");
-    if (!s) {
-      server = null;
-      sideName.textContent = "—";
-      chans.replaceChildren();
-      people.replaceChildren();
-      roomEl.replaceChildren(
-        Object.assign(document.createElement("p"), { className: "empty", textContent: "Chat is a shared space's: pick one from the space's name at the top, or make one there." }),
-      );
-      return;
+    if (!ctx.space || ctx.space === "discover") {
+      if (ctx.space === "discover") return;
+      return personal();
     }
+    shownConv = null;
+    const s = ctx.space && (await space.mine()).find(x => x.id === ctx.space && x.kind === "server");
+    if (!s) return;
     const cid = ctx.sub || null;
     if (server?.id !== s.id) return openServer(s, cid);
     const c = cid && list().find(x => x.id.endsWith(`/${cid}`));

@@ -5,7 +5,7 @@
 //
 //   const activity = await ctx.require("activity");
 //   activity.unread(id)          // unread items in a container (a conversation, a channel)
-//   activity.total("messages")   // across direct and group conversations; "chat": across servers' channels
+//   activity.total("chat")       // across conversations (direct, group) and servers' channels: Chat's
 //   activity.of(serverId, kind?) // across one space's channels and board (kind "chat" | "board": only those)
 //   activity.showing(container)  // on screen now: a container, or several (a board's two tables); null: nothing
 // A space's BOARD is watched too (its members' and its public table): a new post or comment by someone else counts,
@@ -85,7 +85,7 @@ export async function start(ctx) {
     await Promise.all((await space.mine().catch(() => [])).map(sp => scanOne(sp).catch(() => {})));
   }
   async function scanOne(sp) {
-    if (sp.kind === "direct" || sp.kind === "group") watch(sp, "messages", { route: `#/message/${sp.id}` }).catch(() => {});
+    if (sp.kind === "direct" || sp.kind === "group") watch(sp, "chat", { route: `#/chat/${sp.id}` }).catch(() => {});
     else if (sp.kind === "server") {
       // Its BOARD (both tables), when it uses Board.
       const r = await roles.of(sp).catch(() => null);

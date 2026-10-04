@@ -95,7 +95,7 @@ export async function start(ctx) {
                 async () => {
                   const c = await conversation.direct(did);
                   close();
-                  location.hash = `#/message/${c.id}`;
+                  location.hash = `#/chat/${c.id}`;
                 },
                 "main",
               ),

@@ -1091,5 +1091,5 @@ Chat circle tabs (to be replaced: channels with an audience, person Chat via `wh
 - [x] Roles composed by admins (gov `role`/`assign` acts; permissions ⊆ the maker's; rules name `role:<id>`; one Roles
       column with Admin built in; every app's rule dropdown offers them).
 - [ ] A channel's/item's READ by role or named people: its own sealed group kept in step (circles' mechanism).
-- [ ] Conversations (direct, group) = channels with their own members in your personal Chat; Message merged into Chat;
-      drop the uncommitted Friends/Followers channel work.
+- [x] Conversations (direct, group) = your personal Chat's channels; Message merged into Chat (old links forward);
+      Friends/Followers channel work dropped. Fixed with it: a paged room missed a late feed's earlier items.

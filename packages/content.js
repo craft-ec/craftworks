@@ -247,9 +247,19 @@ export async function start(ctx) {
       return it;
     };
     const changed = [];
-    t.onChange(() => (paged ? refresh().then(() => changed.forEach(f => f())) : changed.forEach(f => f())));
+    // PAGED, while LESS THAN A PAGE is held: the newest page read again on every change — a feed that fills in late
+    // (another member's, learned as the group is read, or its pages still coming) may hold items older than the oldest
+    // held, which a refresh (what is newer than that) would never bring. Once a page is held, older is "earlier".
+    const FIRST = 50;
+    const repage = async () => {
+      oldest = null;
+      more = true;
+      timesDone = false;
+      await older(FIRST);
+    };
+    t.onChange(() => (paged ? (loaded.size < FIRST ? repage() : refresh()).then(() => changed.forEach(f => f())) : changed.forEach(f => f())));
     // PAGED: the newest page read before it is handed out.
-    const first = paged ? older(50) : Promise.resolve();
+    const first = paged ? older(FIRST) : Promise.resolve();
     r?.onChange(() => changed.forEach(f => f()));
     // A credential read (a friend's or a follower's): what it lets count, counted.
     R.onChecked(() => changed.forEach(f => f()));
