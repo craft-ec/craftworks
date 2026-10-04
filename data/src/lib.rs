@@ -33,22 +33,21 @@ pub const FLUSH_AT: usize = 32;
 /// reader missing the root still finds them. Hidden from the rows; never written into the tree.
 pub const ROOT_PARITY: &[u8] = b"\0root-parity";
 
-/// The tail's own row saying its tree is SEALED (ARCHITECTURE: sealing covers whole tree nodes): every tree block in
-/// a Sealed contract at its address ([`block_address`]), sealed whole ([`seal_block`]), with the rows IN THE CLEAR
-/// inside — so keys stay ordered (range reads work) and nothing of the tree's shape shows. A tree without it is from
-/// before (Block contracts, rows sealed one by one): read as it is, and built again, sealed, by the next flush.
+/// The tail's own row naming the key its tree is SEALED with (ARCHITECTURE: sealing covers whole tree nodes): every
+/// tree block of a private table in a Sealed contract at its address ([`block_address`]), sealed whole
+/// ([`seal_block`]), with the rows IN THE CLEAR inside — so keys stay ordered (range reads work) and nothing of the
+/// tree's shape shows. (A PUBLIC table's tree is in the clear: Block contracts named by their ids.)
 ///
 /// Its value names THE ONE KEY the whole tree is sealed with: that key's header ([`KeyRef::header`]) and its id
 /// ([`key_id`]). Every block's address comes from that key ([`Open::address_key`]), so the same block sealed under
 /// another key lives at ANOTHER address: a Sealed contract keeps the first state it is given, and a tree sealed over
 /// to a new key (an epoch moved, a fork healed onto the winner's) must never land where the old one is. A flush whose
-/// key is not the tree's builds the tree again, whole, under its own. (`[1]`: a tree from before, under the table's
-/// own key.)
+/// key is not the tree's builds the tree again, whole, under its own.
 pub const SEALED_TREE: &[u8] = b"\0sealed-tree";
 
 /// A sealed row's key and value, and a sealed tree block, start with WHICH KEY sealed them: `[1, 0]` the table's own
-/// key (derived from the account's data key), or `[2, epoch]` the account's key of that MLS epoch. A row starting
-/// with neither is plaintext, written before tables were sealed: read, then sealed over ([`Open::migrate`]).
+/// key (derived from the account's data key), or `[2, epoch]` the account's key of that MLS epoch. (A PUBLIC table's
+/// rows are in the clear.)
 pub const SEALED: u8 = 1;
 pub const SEALED_EPOCH: u8 = 2;
 
@@ -78,10 +77,6 @@ impl KeyRef {
             SEALED_EPOCH => Some((KeyRef::Epoch(u64::from_be_bytes(raw.get(1..9)?.try_into().ok()?)), 9)),
             _ => None,
         }
-    }
-
-    fn sealed(raw: &[u8]) -> bool {
-        matches!(raw.first(), Some(&SEALED) | Some(&SEALED_EPOCH))
     }
 }
 
@@ -199,8 +194,6 @@ pub struct Open {
     locked: HashMap<Cid, Vec<u8>>,
     /// The key this tail is under: its writer's.
     pub writer_key: [u8; 32],
-    /// The next commit goes out as a WHOLE state (`adopt`).
-    whole: bool,
     /// A PUBLIC tail (a person's card, a board's public copies): rows in the clear, readable by anyone who can name
     /// it; never sealed — and its tree in the clear too (Block contracts named by their ids, as trees from before
     /// sealing), so it grows past what one tail holds.
@@ -275,7 +268,6 @@ impl Open {
             stale: BTreeMap::new(),
             locked: HashMap::new(),
             writer_key: *key,
-            whole: false,
             public: false,
             #[cfg(test)]
             sent: HashMap::new(),
@@ -353,8 +345,8 @@ impl Open {
         }
     }
 
-    /// The key the tree names as the one it is sealed with (see [`SEALED_TREE`]) — `(which, its id)`; `None`: a tree
-    /// from before, under the table's own key.
+    /// The key the tree names as the one it is sealed with (see [`SEALED_TREE`]) — `(which, its id)`; `None`: no tree
+    /// yet (or a public one).
     fn tree_key_ref(&self) -> Option<(KeyRef, [u8; 32])> {
         let v = self.writer.current()?.body.entries.get(SEALED_TREE)?.value.clone()?;
         let (by, hl) = KeyRef::of(&v)?;
@@ -364,19 +356,17 @@ impl Open {
     /// THE key the tree's blocks are sealed with and their addresses come from: found by its id among the keys held
     /// for it (its epoch's own, or an alternate). `None`: not held here.
     pub fn address_key(&self) -> Option<[u8; 32]> {
-        match self.tree_key_ref() {
-            Some((by, id)) => self.keys_for(by).into_iter().find(|k| key_id(k) == id),
-            None => self.table_key,
-        }
+        let (by, id) = self.tree_key_ref()?;
+        self.keys_for(by).into_iter().find(|k| key_id(k) == id)
     }
 
-    /// Whether the tail's tree is sealed whole (see [`SEALED_TREE`]).
+    /// Whether the tail's tree is sealed whole (see [`SEALED_TREE`]): every private table's is.
     pub fn sealed_tree(&self) -> bool {
-        self.writer.current().is_some_and(|t| t.body.entries.get(SEALED_TREE).is_some_and(|e| e.value.is_some()))
+        !self.public
     }
 
-    /// Where the tree block `cid` lives: `(sealed, params)` — a Sealed contract at its address, or (a tree from
-    /// before) the Block contract its id names.
+    /// Where the tree block `cid` lives: `(sealed, params)` — a Sealed contract at its address, or (a public tree) the
+    /// Block contract its id names.
     pub fn block_params(&self, cid: &Cid) -> Option<(bool, [u8; 32])> {
         if self.sealed_tree() {
             Some((true, block_address(&self.address_key()?, cid)))
@@ -425,7 +415,7 @@ impl Open {
         self.prepare(ops)
     }
 
-    /// SEAL OVER up to `n` rows under an older key (or plaintext): each written under the key writes use and its old
+    /// SEAL OVER up to `n` rows under an older key (or an alternate's): each written under the key writes use and its old
     /// copies deleted, in ONE step. `None` when there are none (or no key).
     pub fn migrate(&mut self, n: usize) -> Option<(u64, [u8; 32])> {
         let by = self.writes?;
@@ -561,8 +551,9 @@ impl Open {
         if !self.sealed_tree() {
             return Some((false, state));
         }
-        let by = self.writes?;
-        Some((true, seal_block(&self.key_for(by)?, by, cid, &state)))
+        // Under the TREE's key — the one its address comes from — never another.
+        let (by, _) = self.tree_key_ref()?;
+        Some((true, seal_block(&self.address_key()?, by, cid, &state)))
     }
 
     /// REPAIR: the group a missing tree block can be rebuilt from — the root's group of one, or the group a held
@@ -585,14 +576,17 @@ impl Open {
         Ok(())
     }
 
-    /// Whether the tree is one from before sealing whole: the next flush builds it again, sealed.
-    pub fn reseal_tree(&self) -> bool {
-        !self.public && self.writer.current().is_some_and(|t| t.body.root.is_some()) && !self.sealed_tree()
+    /// Whether the tree is sealed under another key than writes' (an epoch moved, a fork healed onto the winner's):
+    /// the next flush builds it again whole under writes' key, so readers who hold only that one read it.
+    pub fn rekey(&self) -> bool {
+        let has_tree = self.writer.current().is_some_and(|t| t.body.root.is_some());
+        let tk = self.writes.and_then(|by| self.key_for(by));
+        self.sealed_tree() && has_tree && tk.is_some() && self.address_key() != tk
     }
 
     /// FLUSH: write the tail's rows — opened: the tree holds them in the clear, inside sealed blocks — into the tree
     /// (the SDK's `flush_into`, the tree library's own `apply`), and prepare the step that names the new root. A tree
-    /// from before is built again whole, sealed. The blocks go out FIRST: a tail must never name a root whose blocks
+    /// under another key than writes' is built again whole under it. The blocks go out FIRST: a tail must never name a root whose blocks
     /// are not there. `Need` when the old tree's blocks along the edited paths are not held yet; `Keys` when a row is
     /// sealed under an epoch whose key is not held yet.
     pub fn flush(&mut self) -> Result<Step<Flush>, String> {
@@ -604,11 +598,7 @@ impl Open {
             Some((by, self.key_for(by).ok_or("this table's key is not held here")?))
         };
         // Under another key than the tree's (an epoch moved, a fork healed): the tree built again, whole, under this one.
-        let rekey = match seal {
-            Some((_, tk)) if self.sealed_tree() => self.address_key() != Some(tk) || self.tree_key_ref().is_none(),
-            _ => false,
-        };
-        let reseal = self.reseal_tree() || rekey;
+        let reseal = self.rekey();
         if self.pending_rows() == 0 && !reseal {
             return Err("nothing to flush".into());
         }
@@ -671,25 +661,6 @@ impl Open {
         Ok(Step::Ready(Flush { sealed: seal.is_some(), address_key: seal.map(|(_, tk)| tk), seq, hash, blocks }))
     }
 
-    /// The signature for the prepared step. Returns what to send: `Put(state)` if the network has no tail yet, else
-    /// `Update(delta)`.
-    /// MOVE (blinded table names, phase 4): this tail — new, empty — takes `from`'s state (a legacy tail of the same
-    /// table: the same table key, so its tree blocks and sealed rows are this one's too) as its first step, at `from`'s
-    /// sequence (its rows carry sequences up to there), sent as a WHOLE state. The step to sign; `None` if this tail is
-    /// not empty or `from` holds nothing.
-    pub fn adopt(&mut self, from: &Open) -> Option<(u64, [u8; 32])> {
-        if self.writer.seq() != 0 || from.writer.seq() == 0 {
-            return None;
-        }
-        let body = from.writer.body();
-        let seq = from.writer.seq();
-        let out = (seq, body.hash());
-        self.blocks = from.blocks.clone();
-        self.whole = true;
-        self.pending = Some(Unsigned { seq, ops: Vec::new(), body, message: Vec::new() });
-        Some(out)
-    }
-
     /// SKIP AHEAD: the identity signed this tail through `last`, and the network — asked, and answering — holds less
     /// (those steps never landed, or were lost). The pending step moves to `last + 1`, to go out as a WHOLE state: a
     /// delta must be the exact next step, but a whole state at a higher step replaces a lower one. The step to sign;
@@ -707,11 +678,13 @@ impl Open {
         Some(out)
     }
 
+    /// The signature for the prepared step. Returns what to send: `Put(state)` if the network has no tail yet, else
+    /// `Update(delta)`.
     pub fn commit(&mut self, sig: [u8; 64]) -> Option<Send> {
         let u = self.pending.take()?;
         let signed = Signed { terminal: false, seq: u.seq, value_hash: u.body.hash(), bitmap: 0, sigs: vec![sig] };
-        // A step past the next (`skip_to`), or a moved state (`adopt`): the whole state, checked as any reader checks it.
-        if u.seq > self.writer.seq() + 1 || std::mem::take(&mut self.whole) {
+        // A step past the next (`skip_to`): the whole state, checked as any reader checks it.
+        if u.seq > self.writer.seq() + 1 {
             let p = craftec_register_contract::wire::Params::parse(&self.params)?;
             let state = tail::Tail { signed, body: u.body }.encode(&p.authority);
             let w = Writer::resume(&self.params, &state).filter(|w| w.seq() == u.seq)?;
@@ -735,16 +708,17 @@ impl Open {
     }
 
     /// One stored row opened: `Some((row key, value))` (a delete's value `None`), `None` if its key is not held. A
-    /// plaintext row is as it is.
+    /// public table's row is as it is.
     fn open_row(&self, k: &[u8], v: Option<&[u8]>) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
         self.open_row_by(k, v).map(|(pk, pv, _)| (pk, pv))
     }
 
     /// As `open_row`, and whether an ALTERNATE key opened it (the row is then stale: sealed over by `migrate`).
     fn open_row_by(&self, k: &[u8], v: Option<&[u8]>) -> Option<(Vec<u8>, Option<Vec<u8>>, bool)> {
-        let Some((by, _)) = KeyRef::of(k) else {
-            return (!KeyRef::sealed(k)).then(|| (k.to_vec(), v.map(<[u8]>::to_vec), false));
-        };
+        if self.public {
+            return Some((k.to_vec(), v.map(<[u8]>::to_vec), false));
+        }
+        let (by, _) = KeyRef::of(k)?;
         for (i, tk) in self.keys_for(by).iter().enumerate() {
             let Some(pk) = open_key(tk, k) else { continue };
             let pv = match v {
@@ -785,7 +759,7 @@ impl Open {
     /// tree row). `Need` names the tree blocks to fetch first, `Keys` the epochs whose keys to get first.
     fn collect(&mut self) -> Result<Step<Rows>, String> {
         // The key the tree is sealed with, first: without it no block of it can even be named.
-        if self.sealed_tree() && self.address_key().is_none() {
+        if self.sealed_tree() && self.writer.body().root.is_some() && self.address_key().is_none() {
             return match self.tree_key_ref() {
                 Some((KeyRef::Epoch(e), _)) if !self.epochs.contains_key(&e) && !self.no_key.contains(&e) => Ok(Step::Keys(vec![e])),
                 _ => Err("its tree is sealed with a key this page does not hold".into()),
@@ -824,20 +798,8 @@ impl Open {
                     _ => break,
                 }
             }
-            if self.sealed_tree() {
-                // Sealed whole: its rows are in the clear.
-                all = tree;
-            } else {
-                // A tree from before: rows sealed one by one (or plaintext), opened as the tail's are.
-                for (k, v) in tree {
-                    match self.open_row(&k, Some(&v)) {
-                        Some((pk, Some(pv))) => {
-                            all.insert(pk, pv);
-                        }
-                        _ => unreadable += 1,
-                    }
-                }
-            }
+            // Sealed whole (or public): its rows are in the clear.
+            all = tree;
         }
         // The tail over the tree, in the order it was written; and each row's copies under keys older than writes'.
         let mut under: BTreeMap<Vec<u8>, Vec<Vec<u8>>> = BTreeMap::new();
@@ -866,7 +828,7 @@ impl Open {
     /// `limit` from the tree, newest-key first when `reverse`, continuing past `after` — the TREE's walked only along
     /// the page's path (its other blocks never fetched), the TAIL's over them in the span the page covers (a pending
     /// delete hides a tree row). With it, the key to continue from (`None`: the range is done). `Need`/`Keys` as for
-    /// `rows`. A tree from before whole sealing (rows sealed one by one: keys not in order) is read whole and cut.
+    /// `rows`.
     pub fn page(&mut self, lo: Option<Vec<u8>>, hi: Option<Vec<u8>>, reverse: bool, after: Option<Vec<u8>>, limit: usize) -> Result<Step<Page>, String> {
         use std::ops::Bound;
         let inside = |k: &[u8], lo: &Option<Vec<u8>>, hi: &Option<Vec<u8>>| lo.as_deref().is_none_or(|l| k >= l) && hi.as_deref().is_none_or(|h| k < h);
@@ -878,18 +840,11 @@ impl Open {
         let mut rows: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
         let mut next = None;
         if let Some(root) = body.root {
-            if !self.sealed_tree() {
-                return Ok(match self.collect()? {
-                    Step::Ready(r) => {
-                        let mut all: Vec<_> = r.rows.into_iter().filter(|(k, _)| inside(k, &lo, &hi) && after.as_deref().is_none_or(|a| if reverse { k.as_slice() < a } else { k.as_slice() > a })).collect();
-                        if reverse {
-                            all.reverse();
-                        }
-                        Step::Ready(Page { rows: all, next: None })
-                    }
-                    Step::Need(x) => Step::Need(x),
-                    Step::Keys(k) => Step::Keys(k),
-                });
+            if self.sealed_tree() && self.address_key().is_none() {
+                return match self.tree_key_ref() {
+                    Some((KeyRef::Epoch(e), _)) if !self.epochs.contains_key(&e) && !self.no_key.contains(&e) => Ok(Step::Keys(vec![e])),
+                    _ => Err("its tree is sealed with a key this page does not hold".into()),
+                };
             }
             let r = Range {
                 lo: lo.clone().map_or(Bound::Unbounded, Bound::Included),
@@ -976,7 +931,7 @@ impl Open {
         Ok(Step::Ready(json!({
             "id": self.id(), "seq": self.writer.seq(), "rows": rows, "root": body.root.map(|r| hex(&r)),
             "pending": self.pending_rows(), "legacy": self.stale.len(), "unreadable": r.unreadable,
-            "resealTree": self.reseal_tree(), "sealedTree": self.sealed_tree(), "writes": writes,
+            "sealedTree": self.sealed_tree(), "rekey": self.rekey(), "writes": writes,
         })))
     }
 }
@@ -1006,7 +961,9 @@ mod tests {
     fn first_write_puts_the_state_then_deltas_and_another_writer_resumes() {
         let key = SigningKey::from_bytes(&[5; 32]);
         let member = key.verifying_key().to_bytes();
+        // (A public table: its rows as written, so the register's steps are what this checks.)
         let mut o = Open::new(CODE, &member, "notes");
+        o.public = true;
         let (seq, h) = o.prepare(vec![Op::Set { key: b"a".to_vec(), value: b"1".to_vec() }]).unwrap();
         let Some(Send::Put(state)) = o.commit(sign(&key, &o, seq, h)) else { panic!("first write is a put") };
         let (seq, h) = o.prepare(vec![Op::Set { key: b"b".to_vec(), value: b"2".to_vec() }]).unwrap();
@@ -1015,6 +972,7 @@ mod tests {
         assert_eq!(v["rows"].as_array().unwrap().len(), 2);
         // Another page of the same member reads the first state from the network.
         let mut other = Open::new(CODE, &member, "notes");
+        other.public = true;
         assert!(other.absorb(&state));
         assert_eq!(other.writer.seq(), 1);
         // An older state never moves a writer back.
@@ -1023,8 +981,7 @@ mod tests {
     }
 
     fn write(key: &SigningKey, o: &mut Open, k: &str, v: &str) {
-        let op = if v.is_empty() { Op::Delete { key: k.into() } } else { Op::Set { key: k.into(), value: v.into() } };
-        let (seq, h) = o.prepare(vec![op]).unwrap();
+        let (seq, h) = o.prepare_row(k.as_bytes(), v.as_bytes()).unwrap();
         o.commit(sign(key, o, seq, h)).unwrap();
     }
 
@@ -1411,37 +1368,6 @@ mod tests {
         assert_eq!(keys(&v), ["trip=booked"]);
     }
 
-    #[test]
-    fn rows_from_before_sealing_are_read_then_sealed_over_without_doubles() {
-        let key = SigningKey::from_bytes(&[5; 32]);
-        let member = key.verifying_key().to_bytes();
-        let mut o = Open::new(CODE, &member, "notes");
-        for (k, v) in [("a", "plain-one"), ("b", "plain-two"), ("c", "plain-three")] {
-            write(&key, &mut o, k, v); // plaintext, as before sealing
-        }
-        o.set_table_key([7; 32]);
-        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
-        assert_eq!((keys(&v), v["legacy"].as_u64()), (vec!["a=plain-one".into(), "b=plain-two".into(), "c=plain-three".into()], Some(3)));
-        // A write to an old row seals it and drops its plaintext in the same step: no double.
-        put_row(&key, &mut o, "b", "two");
-        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
-        assert_eq!((keys(&v), v["legacy"].as_u64()), (vec!["a=plain-one".into(), "b=two".into(), "c=plain-three".into()], Some(2)));
-        // The rest, two at a time.
-        while let Some((seq, h)) = o.migrate(2) {
-            o.commit(sign(&key, &o, seq, h)).unwrap();
-            o.rows().unwrap();
-        }
-        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
-        assert_eq!((keys(&v), v["legacy"].as_u64()), (vec!["a=plain-one".into(), "b=two".into(), "c=plain-three".into()], Some(0)));
-        // No plaintext VALUE is left anywhere in the stored state (the old keys remain only as deletions until the
-        // next flush applies them to the tree).
-        let state = o.writer.state();
-        for secret in ["plain-one", "plain-two", "plain-three"] {
-            assert!(!contains(&state, secret.as_bytes()), "{secret} is still stored");
-        }
-        assert!(o.writer.body().entries.iter().all(|(k, e)| k.first() == Some(&SEALED) || e.value.is_none()), "only sealed rows carry values");
-    }
-
     /// Read `o`'s state as another page holding `table` and the keys of `epochs` (and none for any other): the rows,
     /// how many it could not read, and whether the tree would not read at all.
     fn read_with(o: &Open, member: &[u8; 32], table: [u8; 32], epochs: &[(u64, [u8; 32])]) -> Result<(Vec<String>, u64), String> {
@@ -1601,30 +1527,6 @@ mod tests {
         assert!(low.migrate(10).is_none());
     }
 
-    /// A TREE FROM BEFORE sealing whole (no marker: rows in the clear or sealed one by one, blocks not sealed) is read
-    /// as it is, and the next flush builds it again whole and sealed, putting every block of the new tree.
-    #[test]
-    fn a_tree_from_before_is_built_again_sealed() {
-        let key = SigningKey::from_bytes(&[5; 32]);
-        let member = key.verifying_key().to_bytes();
-        let mut o = Open::new(CODE, &member, "notes");
-        o.set_table_key([7; 32]);
-        for (k, v) in [("a", "1"), ("b", "2"), ("c", "3")] {
-            put_row(&key, &mut o, k, v);
-        }
-        flush(&key, &mut o);
-        // Made a tree from before: the marker gone.
-        let (seq, h) = o.prepare(vec![Op::Delete { key: SEALED_TREE.to_vec() }]).unwrap();
-        o.commit(sign(&key, &o, seq, h)).unwrap();
-        assert!(o.reseal_tree() && !o.sealed_tree());
-        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
-        assert_eq!((keys(&v), v["resealTree"].as_bool()), (vec!["a=1".into(), "b=2".into(), "c=3".into()], Some(true)));
-        o.sent.clear();
-        flush(&key, &mut o);
-        assert!(o.sealed_tree() && !o.reseal_tree());
-        assert_eq!(read_with(&o, &member, [7; 32], &[]), Ok((vec!["a=1".into(), "b=2".into(), "c=3".into()], 0)), "every block was put again");
-    }
-
     /// FEEDS: two nodes each write their own feed of one table (versions shaped by the `feed` package, stored and
     /// sealed here); merged, a version replaces the one it names, a delete is a version, and it all survives a flush
     /// into the (sealed) tree.
@@ -1682,6 +1584,7 @@ mod tests {
         put_row(&key, &mut o, "kp/node", "abcdef");
         assert!(contains(&o.writer.state(), b"alice"), "in the clear, by design");
         let mut r = Open::new(CODE, &owner, "card");
+        r.public = true;
         r.absorb(&o.writer.state());
         let Ok(Step::Ready(v)) = r.rows() else { panic!() };
         assert_eq!(keys(&v), ["handle=alice", "kp/node=abcdef"], "no key needed to read");
@@ -1759,45 +1662,6 @@ mod tests {
         let (s2, _) = d.prepare_row(b"handle", b"alice").unwrap();
         assert_eq!(s2, 2);
         assert!(d.skip_to(1).is_none());
-    }
-
-    /// MOVE: a table under a new label (its blinded name) takes the old tail's state in ONE signed step, sent whole;
-    /// a reader of the NEW label, with the table's key, reads every row — the tree's (the same blocks: addressed by the
-    /// table key) and the tail's pending ones. Control: a tail that is not empty takes nothing.
-    #[test]
-    fn a_table_moves_to_a_new_label_in_one_step() {
-        let key = SigningKey::from_bytes(&[5; 32]);
-        let member = key.verifying_key().to_bytes();
-        let mut old = Open::new(CODE, &member, "notes");
-        old.set_table_key([7; 32]);
-        for i in 0..60 {
-            write(&key, &mut old, &format!("n{i:03}"), &format!("note {i}"));
-            if i == 39 {
-                flush(&key, &mut old);
-            }
-        }
-        let mut new = Open::new(CODE, &member, "~0123456789abcdef0123456789abcdef");
-        new.set_table_key([7; 32]);
-        assert_ne!(new.id_bytes(), old.id_bytes(), "another contract");
-        let (seq, h) = new.adopt(&old).expect("adopted");
-        assert_eq!(seq, old.writer.seq());
-        let Some(Send::Put(state)) = new.commit(sign(&key, &new, seq, h)) else { panic!("a whole state") };
-        assert!(new.adopt(&old).is_none(), "control: not empty any more");
-        let mut r = Open::new(CODE, &member, "~0123456789abcdef0123456789abcdef");
-        r.set_table_key([7; 32]);
-        assert!(r.absorb(&state));
-        let v = loop {
-            match r.rows().unwrap() {
-                Step::Ready(v) => break v,
-                Step::Keys(k) => panic!("{k:?}"),
-                Step::Need(ids) => {
-                    for id in ids {
-                        assert!(r.absorb_block(&id, &old.sent[&id]));
-                    }
-                }
-            }
-        };
-        assert_eq!(v["rows"].as_array().unwrap().len(), 60, "the tree's 40 and the tail's 20");
     }
 
     #[test]

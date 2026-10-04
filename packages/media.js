@@ -84,8 +84,6 @@ export async function mount(ctx, el) {
     const s = at.sub;
     if (s.startsWith("w/")) return { watch: decodeURIComponent(s.slice(2)) };
     if (s === "up") return { up: true };
-    // `c/<did>` from before: that person's space.
-    if (s.startsWith("c/")) return { by: decodeURIComponent(s.slice(2)) };
     if (at.who === "person") return { by: at.person };
     if (at.who === "discover") return { discover: true };
     if (at.who === "space") return { board: at.space.id };
@@ -215,14 +213,8 @@ export async function mount(ctx, el) {
     out.insertBefore(h("div", {}, C.audio ? null : scrub, level, making), note);
     setTimeout(showMaking, 500); // once the view is in the page
     queueMicrotask(() => {
-      // The author's subtitles from before (in the manifest) moved over once, then it plays with its tracks.
       if (f)
         (async () => {
-          if (v.by === me && f.type === studio.MANIFEST)
-            for (const old of await studio.takeLegacySubtitles(ref).catch(() => [])) {
-              const text = await (await files.get(old.ref)).text();
-              await subs.add(ref, text, { lang: old.lang, label: old.label }).catch(() => {});
-            }
           if (C.audio) await view.prepare();
           else await view.play();
         })().catch(e => (note.textContent = e.message ?? String(e)));

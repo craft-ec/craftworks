@@ -51,14 +51,8 @@ export async function start(ctx) {
   const G = node.glue.Governance;
   const ACTIONS = G.actions();
   // WHICH POLICY GOVERNS a domain (THE ONE resolver, for every app and every action): its domain's own (`kinds`:
-  // text, video, audio, note, caption, file …), else the setting made before domains (the app's name: board, drive),
-  // else the space's. `DOMAINS`: every domain a policy can name.
-  const LEGACY = { text: "board", video: "video", audio: "audio", image: "image", caption: "caption", note: "note", file: "drive", chat: "chat" };
-  const DOMAINS = Object.keys(LEGACY);
-  // APPS RENAMED (plural to singular; Subtitles to Caption): what a space stored under the old name — the app in use,
-  // a policy at its path — reads as the new one. The one map; nothing else knows the old names.
-  const WAS = { video: "videos", note: "notes", caption: "subtitles", image: "images" };
-  const NOW = Object.fromEntries(Object.entries(WAS).map(([k, v]) => [v, k]));
+  // text, video, audio, note, caption, file …), else the space's. `DOMAINS`: every domain a policy can name.
+  const DOMAINS = ["text", "video", "audio", "image", "caption", "note", "file", "chat"];
   // A member's credential (hex): `CWMB ‖ did ‖ signer ‖ writer ‖ MLS key ‖ signature` (the identity's format; MLS
   // checked the signature when it admitted it).
   const didOf = h => new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16)));
@@ -144,8 +138,7 @@ export async function start(ctx) {
     // no new member turns up.
     const known = new Set();
     // ITS PUBLIC ACTS' WRITERS (`index`: the space's public acts bag — whoever wrote a public act, the owner and admins,
-    // listed once): read from outside instead of every member's public acts. Empty (a space from before the bag): every
-    // member, as before, until one of its writers opens it with the bag.
+    // listed once): read from outside instead of every member's public acts.
     const ACTS = `acts ${sp.id}`;
     const actWriters = out ? await index.pointers(ACTS).then(ps => [...new Set(ps.map(p => p?.w).filter(w => typeof w === "string"))], () => []) : [];
     async function widen() {
@@ -156,7 +149,7 @@ export async function start(ctx) {
         fresh.forEach(d => known.add(d));
         const sets = await Promise.all(fresh.map(d => directory.devices(d).catch(() => [])));
         fresh.forEach((d, i) => sets[i].forEach(k => writers.set(k, d)));
-        await pubActs.add(actWriters.length ? actWriters : sets.flat());
+        await pubActs.add(actWriters);
         replay();
       }
     }
@@ -193,11 +186,8 @@ export async function start(ctx) {
       const ws = await index.pointers(ACTS).catch(() => []);
       if (!ws.some(p => p?.w === sp.self)) await index.point(ACTS, { w: sp.self }).catch(() => (actListed = false));
     }
-    // The policy set at exactly a path — or at its app's old name (`WAS`), set before the rename.
-    const policyAt = (path, action, at) => {
-      const [head, ...rest] = path.split("/");
-      return gv.policy_at(path, action, at) || (WAS[head] && gv.policy_at([WAS[head], ...rest].join("/"), action, at)) || null;
-    };
+    // The policy set at exactly a path.
+    const policyAt = (path, action, at) => gv.policy_at(path, action, at) || null;
     // Set at a path or any path above it (a channel, its app, the space).
     const setAlong = (path, action, at) => {
       for (let p = path; ; p = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "") {
@@ -211,7 +201,7 @@ export async function start(ctx) {
     const fallback = (read, action, at) => (PUBLIC_WRITES.has(action) && read === "anyone" ? "anyone" : gv.effective("", action, at));
     const policyOf = (path, action, at) => setAlong(path, action, at) || fallback(action === "read" ? null : policyOf(path, "read", at), action, at);
     const policyInOf = (domain, action, at) =>
-      policyAt(domain, action, at) || (LEGACY[domain] && policyAt(LEGACY[domain], action, at)) || policyAt("", action, at) || fallback(action === "read" ? null : policyInOf(domain, "read", at), action, at);
+      policyAt(domain, action, at) || policyAt("", action, at) || fallback(action === "read" ? null : policyInOf(domain, "read", at), action, at);
     const r = {
       space: sp,
       get owner() {
@@ -222,7 +212,7 @@ export async function start(ctx) {
       author,
       acts: kind => (kind ? counted.filter(a => a.act === kind) : [...counted]),
       invites: () => JSON.parse(gv.invites(Date.now())),
-      apps: () => [...new Set(gv.apps().map(a => NOW[a] ?? a))],
+      apps: () => gv.apps(),
       config: (app, key, dflt = null) => {
         const c = gv.config(app, key);
         return (c === undefined ? null : JSON.parse(c)) ?? dflt;
@@ -259,12 +249,6 @@ export async function start(ctx) {
         replay();
       },
       isPublic,
-      // (A MIGRATION — `upkeep`.) This device listed as a writer of the public acts it wrote before their bag.
-      migrate: async () => {
-        if (out) return;
-        await pubActs.settled;
-        if (pubActs.rows().some(x => x.id?.startsWith(sp.self))) await listActWriter();
-      },
       // All writers known here (their devices' keys): whose public tails a reader outside reads.
       writerKeys: () => [...writers.keys()],
       // PUBLISH (the owner): the counted acts so far, and a `member` act for each member, into the public acts.
@@ -288,8 +272,6 @@ export async function start(ctx) {
         const toPublic = isPublic() || (a.act === "policy" && (a.action === "read" || a.action === "join") && a.who === "anyone");
         // Its time: now — or when it happened (upkeep let someone in while no page ran: the act says when).
         await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify({ at: Date.now(), ...a }));
-        // An app removed that the space added under its old name: that one off too.
-        if (a.act === "app" && !a.on && WAS[a.app] && gv.apps().includes(WAS[a.app])) await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify({ at: Date.now(), ...a, app: WAS[a.app] }));
         if (toPublic) await listActWriter();
       },
       grant: (did, to) => r.act({ act: "grant", did, role: to }),
@@ -327,7 +309,7 @@ export async function start(ctx) {
         loaded: () => loaded,
         policiesAt: path => Object.fromEntries(ACTIONS.map(a => [a, at(path, a)]).filter(([, w]) => w)),
         policy: (path, action) => at(path, action) ?? "anyone",
-        policyIn: (domain, action) => at(domain, action) ?? (LEGACY[domain] && at(LEGACY[domain], action)) ?? "anyone",
+        policyIn: (domain, action) => at(domain, action) ?? "anyone",
         role: d => (d === did ? "owner" : null),
         can: d => d === did,
         config: (_a, _k, dflt = null) => dflt,

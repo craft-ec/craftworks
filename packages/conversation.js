@@ -220,10 +220,9 @@ export async function start(ctx) {
         const sp = await space.describe(it.space, v);
         await keys.group(sp).join(it.welcome, { expect });
         await space.record(it.space, v);
-        // Its request answered: no longer waiting — the space's, and the code the welcome names (a welcome from before
-        // welcomes named it: any request by code).
+        // Its request answered: no longer waiting — the space's, and the code the welcome names.
         const t = await asks().catch(() => null);
-        const answered = x => x.key === it.space || (it.code ? x.key === `code:${it.code}` : x.key.startsWith("code:"));
+        const answered = x => x.key === it.space || (it.code && x.key === `code:${it.code}`);
         if (t) for (const r of t.rows().filter(x => x.value && answered(x))) await t.remove(r.key).catch(() => {});
         out.push(sp);
         ctx.log("conversation", { what: `joined a ${it.spaceKind} conversation with ${short(it.from)}` });
@@ -383,17 +382,13 @@ export async function start(ctx) {
 
   // A SERVER's CHANNELS: ITEMS of kind `channel` in the space (`items`: title its name, `meta.cid` its messages'
   // table — `space.channel`), counted where someone who may make channels made them; each with its own rule for who
-  // may post (`meta.write.post`, else the space's Chat policy). From before: the space's table `channels`
-  // (`<id>` → { name, at }), read only until the space records its channels MOVED (the act `config chat.channels =
-  // "items"`, written by the owner's or an admin's node once it has brought them over — `migrateChannels`).
-  // Every page that shows or watches channels asks here.
+  // may post (`meta.write.post`, else the space's Chat policy). Every page that shows or watches channels asks here.
   const channelSets = new Map();
   const channelName = name => {
     name = String(name ?? "").trim().toLowerCase().replace(/\s+/g, "-");
     if (!name) throw new Error("name it first");
     return name;
   };
-  const MOVED = ["chat", "channels"];
   // A space's AUDIENCES narrower than its members (a role's holders, the admins, the owner): each a GROUP of its own
   // (`groups`, keyed `audience:<space>/<who>`) holding what only they read — any kind, a channel too. Its members as
   // they should be — the space's members who pass its `who` — kept by whoever made it (theirs to add to and remove from).
@@ -428,12 +423,9 @@ export async function start(ctx) {
       channelSets.set(
         server.id,
         (async () => {
-          const [storage, roles, moderation, items] = await Promise.all(["storage", "roles", "moderation", "items"].map(n => ctx.require(n)));
-          const [r, m] = await Promise.all([roles.of(server), moderation.of(server)]);
+          const [roles, items] = await Promise.all(["roles", "items"].map(n => ctx.require(n)));
+          const r = await roles.of(server);
           await r.settled;
-          const moved = () => r.config(...MOVED, null) === "items";
-          // The table from before: opened only while the space has not moved its channels.
-          const legacy = moved() ? null : await storage.table(space.tableOf(server, "channels"), server).catch(() => null);
           const changed = [];
           const fire = () => changed.forEach(f => f());
           let its = [];
@@ -445,7 +437,6 @@ export async function start(ctx) {
               .finally(() => (reading = null)));
           const first = read();
           items.onChange(() => read());
-          legacy?.onChange(fire);
           r.onChange(fire);
           const list = () => {
             const out = new Map();
@@ -454,21 +445,10 @@ export async function start(ctx) {
               const cid = it.meta?.cid ?? it.id;
               out.set(cid, space.channel(server, cid, it.title || cid, it));
             }
-            if (legacy && !moved()) {
-              const hidden = m.hidden(legacy.app);
-              for (const row of legacy.rows()) {
-                if (out.has(row.key) || hidden.has(row.key) || !r.can(r.author(row), "channels")) continue;
-                let v = {};
-                try {
-                  v = JSON.parse(row.value);
-                } catch {}
-                out.set(row.key, space.channel(server, row.key, v.name ?? row.key));
-              }
-            }
             return [...out.values()].sort((a, b) => a.name.localeCompare(b.name));
           };
           let done = false;
-          const settled = Promise.all([first, legacy?.settled]).finally(() => (done = true));
+          const settled = first.finally(() => (done = true));
           const me = async () => (await space.account()).id;
           const mayMake = async () => {
             if (!r.can(await me(), "channels")) throw new Error("only who may make channels here changes them");
@@ -484,16 +464,15 @@ export async function start(ctx) {
             },
             onChange: f => changed.push(f),
             add: async name => (await mayMake(), await make(name, newId().slice(0, 8)), read()),
-            // One from before (no item yet): made an item now, its id kept (its messages stay where they are).
-            rename: async (c, name) => (await mayMake(), c.item ? await items.editItem(c.item.ref, "", { title: channelName(name) }) : await make(name, c.id.split("/").pop()), read()),
-            remove: async c => (c.item ? await items.remove(c.item.ref) : await m.hide(legacy.app, c.id.split("/").pop()), read()),
+            rename: async (c, name) => (await mayMake(), await items.editItem(c.item.ref, "", { title: channelName(name) }), read()),
+            remove: async c => (await items.remove(c.item.ref), read()),
             // WHO MAY POST in one channel: its item's own rule (null: as the space's Chat policy).
             // WHO MAY READ it (`who`: none/"members" — its space's members; a role, "admins", "owner"): narrower
             // than the space, its messages go to a GROUP of its own (`groups`) whose members are its readers — kept
             // in step by its maker (`keepReaders`, every upkeep pass).
             setRead: async (c, who) => {
               await mayMake();
-              const it = c.item ?? (await items.get(await make(c.name, c.id.split("/").pop())));
+              const it = c.item;
               const narrow = who && who !== "members" && who !== "anyone";
               const meta = { ...(it.meta ?? {}) };
               if (narrow) {
@@ -509,34 +488,12 @@ export async function start(ctx) {
             },
             setPost: async (c, who) => {
               await mayMake();
-              const it = c.item ?? (await items.get(await make(c.name, c.id.split("/").pop())));
+              const it = c.item;
               const write = { ...(it.meta?.write ?? {}) };
               if (who) write.post = who;
               else delete write.post;
               await items.editItem(it.ref, "", { meta: { ...(it.meta ?? {}), write } });
               await read();
-            },
-            // (A MIGRATION — `upkeep`.) The table from before brought over as items — each with its old id, and its
-            // `chat/<id>` policy as its own rule — then the space marked MOVED (readers stop opening the table). Done by
-            // a node that may make channels; true when there is nothing (left) to do here.
-            migrate: async () => {
-              if (moved()) return true;
-              if (!r.can(await me(), "channels")) return true;
-              await settled;
-              const have = new Set(its.map(it => it.meta?.cid ?? it.id));
-              const hidden = legacy ? m.hidden(legacy.app) : new Set();
-              for (const row of legacy?.rows() ?? []) {
-                if (have.has(row.key) || hidden.has(row.key) || !r.can(r.author(row), "channels")) continue;
-                let v = {};
-                try {
-                  v = JSON.parse(row.value);
-                } catch {}
-                const post = r.policiesAt(`chat/${row.key}`).post;
-                await make(v.name ?? row.key, row.key, post ? { write: { post } } : {});
-              }
-              await r.act({ act: "config", app: MOVED[0], key: MOVED[1], value: "items" });
-              await read();
-              return true;
             },
           };
         })().catch(e => {

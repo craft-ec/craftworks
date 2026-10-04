@@ -383,16 +383,5 @@ export async function start(ctx) {
   const replaceManifest = (item, old, ref) =>
     items.setFiles(item.ref, item.files.map(x => (x === old ? { ...ref, ...(old.preview ? { preview: old.preview } : {}), duration: old.duration, width: old.width, height: old.height } : x)));
 
-  // SUBTITLES FROM BEFORE (kept in the manifest, before subtitles were data of their own): taken out of it — a new
-  // manifest without them — and handed back ([{ label, lang, ref }]) to become `caption-store` items.
-  async function takeLegacySubtitles(ref) {
-    const cur = await latest(ref);
-    if (!cur?.manifest.subtitles?.length) return [];
-    const sp = cur.item.board ? (await space.mine()).find(x => x.id === cur.item.board.id) ?? null : null;
-    const { subtitles: old, ...rest } = cur.manifest;
-    await replaceManifest(cur.item, cur.file, await putManifest(rest, sp, cur.manifest.pub));
-    return old;
-  }
-
-  return { make, probe, progress, kick, takeLegacySubtitles, videoId, MANIFEST };
+  return { make, probe, progress, kick, videoId, MANIFEST };
 }

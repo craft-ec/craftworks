@@ -33,7 +33,7 @@ fn upload(file: &[u8], salt: Option<&[u8; 32]>) -> Up {
         .iter()
         .map(|f| f.iter().map(|(j, p)| (*j, p.hash())).collect())
         .collect();
-    let (index, root) = index(&key, &plan, &stored);
+    let (index, root) = index_hashed(&key, &plan, &stored);
     Up {
         plan,
         key,
@@ -52,7 +52,7 @@ fn download(u: &Up, pick: impl Fn(u64, usize) -> Vec<usize>) -> Result<Vec<u8>, 
             .state
             .clone()
     };
-    let root = Root::open(&u.key, &u.root, &at(root_address(&u.key)))?;
+    let root = Root::open(&u.key, &u.root, &at(hashed_address(&u.key, &u.root)))?;
     assert_eq!(root.depth, 0);
     let mut out = Vec::new();
     for g in 0..root.plan.gens {
@@ -62,7 +62,7 @@ fn download(u: &Up, pick: impl Fn(u64, usize) -> Vec<usize>) -> Result<Vec<u8>, 
             &root.plan,
             leaf,
             &root.children[leaf as usize],
-            &at(index_address(&u.key, 0, leaf)),
+            &at(hashed_address(&u.key, &root.children[leaf as usize])),
         )?;
         let l = listed[(g % GENS_PER_LEAF as u64) as usize].clone();
         let mut d = Decoder::new(&u.key, &root.plan, g, l);
@@ -247,7 +247,7 @@ fn a_huge_file_s_index_grows_an_inner_level() {
     let stored: Vec<Listed> = (0..gens)
         .map(|g| vec![(0u8, *blake3::hash(&g.to_be_bytes()).as_bytes())])
         .collect();
-    let (pieces, root_hash) = index(&key, &plan, &stored);
+    let (pieces, root_hash) = index_hashed(&key, &plan, &stored);
     let at = |a: [u8; 32]| {
         pieces
             .iter()
@@ -256,20 +256,15 @@ fn a_huge_file_s_index_grows_an_inner_level() {
             .state
             .clone()
     };
-    let root = Root::open(&key, &root_hash, &at(root_address(&key))).unwrap();
+    let root = Root::open(&key, &root_hash, &at(hashed_address(&key, &root_hash))).unwrap();
     assert_eq!(root.depth, 1);
     // The last generation, through the inner level down to its leaf.
     let g = gens - 1;
     let leaf = Root::leaf_of(g);
     let path = root.path(leaf);
     assert_eq!(path, vec![(1, leaf / FANOUT as u64), (0, leaf)]);
-    let inner = open_inner(
-        &key,
-        1,
-        path[0].1,
-        &root.children[path[0].1 as usize],
-        &at(index_address(&key, 1, path[0].1)),
-    )
+    let inner_hash = root.children[path[0].1 as usize];
+    let inner = open_inner(&key, &inner_hash, &at(hashed_address(&key, &inner_hash)))
     .unwrap();
     let leaf_hash = inner[(leaf % FANOUT as u64) as usize];
     let listed = open_leaf(
@@ -277,7 +272,7 @@ fn a_huge_file_s_index_grows_an_inner_level() {
         &plan,
         leaf,
         &leaf_hash,
-        &at(index_address(&key, 0, leaf)),
+        &at(hashed_address(&key, &leaf_hash)),
     )
     .unwrap();
     assert_eq!(
@@ -316,16 +311,6 @@ fn two_uploads_of_one_file_that_stored_different_fragments_never_share_an_index_
         .map(|f| f.iter().map(|(j, p)| (*j, p.hash())).collect())
         .collect();
     stored[0].pop();
-    // At its place (the old way): the same root address with other bytes — the network keeps the first, and the
-    // second upload's reference reads as forged.
-    let (legacy, legacy_root) = index(&u.key, &u.plan, &stored);
-    let legacy_at = legacy.last().unwrap();
-    assert_eq!(legacy_at.address, root_address(&u.key));
-    assert_ne!(legacy_root, u.root);
-    assert_eq!(
-        Root::open(&u.key, &legacy_root, &u.index.last().unwrap().state).unwrap_err(),
-        Error::Forged
-    );
     // By hash: each upload's pieces at their own addresses, and each opens from its own reference.
     let (a, a_root) = index_hashed(
         &u.key,

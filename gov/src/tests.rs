@@ -126,20 +126,6 @@ fn inviting_follows_the_invite_policy_as_it_was_then() {
 }
 
 #[test]
-fn legacy_settings_read_as_policies_their_defaults_as_inherit() {
-    let g = gov(&[
-        act("1", "no", 1, json!({"act":"config","app":"board","key":"read","value":"public"})),
-        act("2", "no", 2, json!({"act":"config","app":"chat","key":"post","value":"everyone"})),
-    ]);
-    assert_eq!(g.effective("board", "read", f64::INFINITY), "anyone");
-    assert_eq!(g.policy_at("chat", "post", f64::INFINITY), None);
-    assert_eq!(g.configs["board/read"], json!("public"));
-    // Reading in public is the owner's.
-    let g = gov(&[act("1", "no", 1, json!({"act":"grant","did":A,"role":"admin"})), act("2", "na", 2, json!({"act":"config","app":"board","key":"read","value":"public"}))]);
-    assert!(!g.configs.contains_key("board/read"));
-}
-
-#[test]
 fn rows_of_an_unknown_node_and_of_the_removed_do_not_count_and_removals_name_their_nodes() {
     let g = gov(&[
         act("1", "nz", 1, json!({"act":"app","app":"chat","on":true})),

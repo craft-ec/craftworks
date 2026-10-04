@@ -29,7 +29,6 @@ const TAG: usize = 16;
 /// A stored state: `FORMAT ‖ kind ‖ …`; the `sealed` contract checks only the length.
 const FORMAT: u8 = 1;
 const KIND_FRAGMENT: u8 = 3;
-const KIND_INDEX: u8 = 4;
 /// An index piece ADDRESSED BY ITS HASH (its nonce carried in it): two indexes of one file (two uploads that stored
 /// different fragments) never share an address — at a shared one the network keeps the first, and the second reads as
 /// forged.
@@ -133,16 +132,8 @@ pub fn fragment_address(key: &[u8; 32], g: u64, j: u8) -> [u8; 32] {
     let place = [&b"f"[..], &g.to_be_bytes(), &[j]].concat();
     blake3::keyed_hash(&sub(key, "craftworks files address"), &place).into()
 }
-/// Where index piece `n` of `level` lives (level 0: leaves; the root at its own address).
-pub fn index_address(key: &[u8; 32], level: u8, n: u64) -> [u8; 32] {
-    let place = [&b"i"[..], &[level], &n.to_be_bytes()].concat();
-    blake3::keyed_hash(&sub(key, "craftworks files address"), &place).into()
-}
-pub fn root_address(key: &[u8; 32]) -> [u8; 32] {
-    blake3::keyed_hash(&sub(key, "craftworks files address"), b"root").into()
-}
-/// Where an index piece (the root too) of a HASH-ADDRESSED file lives: by its hash, which its parent (the reference,
-/// for the root) carries.
+/// Where an index piece (the root too) lives: by its hash, which its parent (the reference, for the root) carries —
+/// two uploads of one file that stored other fragments never meet at one address.
 pub fn hashed_address(key: &[u8; 32], hash: &[u8; 32]) -> [u8; 32] {
     blake3::keyed_hash(
         &sub(key, "craftworks files address"),
@@ -272,16 +263,7 @@ fn fragment(key: &[u8; 32], plan: &Plan, g: u64, j: u8, symbols: &[Vec<u8>]) -> 
 /// What the index lists for one generation: the fragments stored, each `(j, hash of its state)`.
 pub type Listed = Vec<(u8, [u8; 32])>;
 
-fn seal_index(key: &[u8; 32], address: [u8; 32], plain: &[u8]) -> Piece {
-    let n = nonce(key, &[&b"i"[..], &address].concat());
-    let ct = aead(key, "craftworks files index key")
-        .encrypt(XNonce::from_slice(&n), plain)
-        .expect("sealing cannot fail");
-    let mut state = vec![FORMAT, KIND_INDEX];
-    state.extend_from_slice(&ct);
-    Piece { address, state }
-}
-/// A hash-addressed index piece: its nonce from its place and its content (deterministic), carried in it.
+/// An index piece: its nonce from its place and its content (deterministic), carried in it.
 fn seal_index_h(key: &[u8; 32], place: &[u8], plain: &[u8]) -> Piece {
     let n = nonce(
         key,
@@ -298,56 +280,25 @@ fn seal_index_h(key: &[u8; 32], place: &[u8], plain: &[u8]) -> Piece {
         state,
     }
 }
-/// An index piece opened, either kind: checked against its hash, then by its kind (at its place: `address`; by its
-/// hash: its nonce carried).
-fn open_index(
-    key: &[u8; 32],
-    address: &[u8; 32],
-    hash: &[u8; 32],
-    state: &[u8],
-) -> Result<Vec<u8>, Error> {
+/// An index piece opened: checked against its hash, then opened with the nonce it carries.
+fn open_index(key: &[u8; 32], hash: &[u8; 32], state: &[u8]) -> Result<Vec<u8>, Error> {
     if blake3::hash(state).as_bytes() != hash {
         return Err(Error::Forged);
     }
-    if state.get(..2) == Some(&[FORMAT, KIND_INDEX_H][..]) {
-        let n = state.get(2..26).ok_or(Error::Malformed)?;
-        return aead(key, "craftworks files index key")
-            .decrypt(XNonce::from_slice(n), &state[26..])
-            .map_err(|_| Error::Forged);
-    }
-    if state.get(..2) != Some(&[FORMAT, KIND_INDEX][..]) {
+    if state.get(..2) != Some(&[FORMAT, KIND_INDEX_H][..]) {
         return Err(Error::Malformed);
     }
-    let n = nonce(key, &[&b"i"[..], address].concat());
+    let n = state.get(2..26).ok_or(Error::Malformed)?;
     aead(key, "craftworks files index key")
-        .decrypt(XNonce::from_slice(&n), &state[2..])
+        .decrypt(XNonce::from_slice(n), &state[26..])
         .map_err(|_| Error::Forged)
 }
 
 /// THE INDEX TREE for a file whose fragments `stored[g]` are stored: its pieces (leaves, inner levels, the root) and
-/// the root's hash — the reference's. Put it LAST: a file reads once its index is there.
-pub fn index(key: &[u8; 32], plan: &Plan, stored: &[Listed]) -> (Vec<Piece>, [u8; 32]) {
-    index_as(key, plan, stored, false)
-}
-/// The index tree HASH-ADDRESSED (each piece at `hashed_address` of its hash): what a new upload writes.
+/// the root's hash — the reference's. Each piece at `hashed_address` of its hash. Put it LAST: a file reads once its
+/// index is there.
 pub fn index_hashed(key: &[u8; 32], plan: &Plan, stored: &[Listed]) -> (Vec<Piece>, [u8; 32]) {
-    index_as(key, plan, stored, true)
-}
-fn index_as(
-    key: &[u8; 32],
-    plan: &Plan,
-    stored: &[Listed],
-    hashed: bool,
-) -> (Vec<Piece>, [u8; 32]) {
-    let seal = |level: u8, n: u64, b: &[u8]| {
-        if hashed {
-            seal_index_h(key, &[&[level][..], &n.to_be_bytes()].concat(), b)
-        } else if level == u8::MAX {
-            seal_index(key, root_address(key), b)
-        } else {
-            seal_index(key, index_address(key, level, n), b)
-        }
-    };
+    let seal = |level: u8, n: u64, b: &[u8]| seal_index_h(key, &[&[level][..], &n.to_be_bytes()].concat(), b);
     assert_eq!(stored.len() as u64, plan.gens);
     let mut pieces = Vec::new();
     // Leaves: GENS_PER_LEAF generations each, `n ‖ (j ‖ hash)*n` per generation.
@@ -410,7 +361,7 @@ pub struct Root {
 
 impl Root {
     pub fn open(key: &[u8; 32], root_hash: &[u8; 32], state: &[u8]) -> Result<Root, Error> {
-        let b = open_index(key, &root_address(key), root_hash, state)?;
+        let b = open_index(key, root_hash, state)?;
         if b.len() < 18 || &b[..4] != MAGIC || b[4] != CODEC || (b.len() - 18) % 32 != 0 {
             return Err(Error::Malformed);
         }
@@ -441,14 +392,8 @@ impl Root {
 }
 
 /// An inner piece of the index (levels above the leaves): the hashes of its children.
-pub fn open_inner(
-    key: &[u8; 32],
-    level: u8,
-    n: u64,
-    hash: &[u8; 32],
-    state: &[u8],
-) -> Result<Vec<[u8; 32]>, Error> {
-    let b = open_index(key, &index_address(key, level, n), hash, state)?;
+pub fn open_inner(key: &[u8; 32], hash: &[u8; 32], state: &[u8]) -> Result<Vec<[u8; 32]>, Error> {
+    let b = open_index(key, hash, state)?;
     if b.is_empty() || b.len() % 32 != 0 {
         return Err(Error::Malformed);
     }
@@ -463,7 +408,7 @@ pub fn open_leaf(
     hash: &[u8; 32],
     state: &[u8],
 ) -> Result<Vec<Listed>, Error> {
-    let b = open_index(key, &index_address(key, 0, n), hash, state)?;
+    let b = open_index(key, hash, state)?;
     let first = n * GENS_PER_LEAF as u64;
     let count = (plan.gens - first).min(GENS_PER_LEAF as u64) as usize;
     let mut out = Vec::with_capacity(count);

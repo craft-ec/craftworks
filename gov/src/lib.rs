@@ -162,20 +162,6 @@ fn parent(path: &str) -> Vec<String> {
     (0..=parts.len()).rev().map(|i| parts[..i].join("/")).collect()
 }
 
-/// The settings from before policies (`config` acts), as policies — their defaults as INHERIT, never an override.
-fn old_policy(app: &str, key: &str, value: &Value) -> Option<(&'static str, &'static str, Option<String>)> {
-    let v = value.as_str();
-    let when = |want: &str, who: &str| if v == Some(want) { Some(who.to_string()) } else { None };
-    Some(match (app, key) {
-        ("chat", "post") => ("chat", "post", when("admins", "admins")),
-        ("board", "post") => ("board", "post", when("admins", "admins")),
-        ("board", "read") => ("board", "read", when("public", "anyone")),
-        ("notes", "edit") => ("notes", "edit", when("admins", "admins")),
-        ("space", "join") => ("", "join", when("open", "anyone")),
-        _ => return None,
-    })
-}
-
 impl Gov {
     /// A policy set at exactly this path, as it was at `at` (`None`: none, or inherit).
     pub fn policy_at(&self, path: &str, action: &str, at: f64) -> Option<&str> {
@@ -387,9 +373,6 @@ impl Gov {
                 "config" => {
                     let (app, key) = (s(&a, "app").unwrap(), s(&a, "key").unwrap());
                     let value = a.get("value").cloned().unwrap_or(Value::Null);
-                    if let Some((path, action, who)) = old_policy(app, key, &value) {
-                        g.set_policy(path, action, who, at0);
-                    }
                     g.configs.insert(format!("{app}/{key}"), value);
                 }
                 "policy" => {

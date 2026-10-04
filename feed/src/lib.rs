@@ -6,9 +6,6 @@
 //! too, so it wins over what it replaced in every other feed). Versions of one row form chains through `after`; the
 //! current one is a HEAD — a version nothing replaces — and of several heads (two writers, at the same time) every
 //! reader picks the same: the longer chain, then the higher id. No clock is involved.
-//!
-//! A row from before feeds (the account's shared tail: no envelope) is the oldest version there is: any version from a
-//! feed replaces it.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -39,7 +36,7 @@ pub struct Version {
     pub value: Option<Vec<u8>>,
 }
 
-/// A stored value read back: `None` if it is not an envelope (a row from before feeds).
+/// A stored value read back: `None` if it is not a version's envelope.
 pub fn open(b: &[u8]) -> Option<Version> {
     let rest = b.strip_prefix(&MAGIC)?;
     let (w, rest) = rest.split_first_chunk::<32>()?;
@@ -63,40 +60,30 @@ pub fn open(b: &[u8]) -> Option<Version> {
     Some(Version { id: (*w, u64::from_be_bytes(*s)), after, value })
 }
 
-/// One row of the merged table: its value and the id of the version that holds it (`None`: a row from before feeds).
+/// One row of the merged table: its value and the id of the version that holds it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
     pub value: Vec<u8>,
-    pub id: Option<Id>,
+    pub id: Id,
 }
 
 /// MERGE the rows of several feeds, each `(its writer's key, its rows: key -> stored value)`. A version whose id names
-/// another writer than the feed it is in is not taken (a writer speaks only for itself). Rows whose current version is
-/// a delete are absent.
+/// another writer than the feed it is in is not taken (a writer speaks only for itself), nor is a value that is not a
+/// version. Rows whose current version is a delete are absent.
 pub fn merge(feeds: &[([u8; 32], &BTreeMap<Vec<u8>, Vec<u8>>)]) -> BTreeMap<Vec<u8>, Row> {
     let mut versions: BTreeMap<&[u8], Vec<Version>> = BTreeMap::new();
-    let mut old: BTreeMap<&[u8], &[u8]> = BTreeMap::new();
     for (writer, rows) in feeds {
         for (k, v) in rows.iter() {
-            match open(v) {
-                Some(ver) if ver.id.0 == *writer => versions.entry(k).or_default().push(ver),
-                Some(_) => {}
-                None => {
-                    old.insert(k, v);
-                }
+            if let Some(ver) = open(v).filter(|ver| ver.id.0 == *writer) {
+                versions.entry(k).or_default().push(ver);
             }
         }
     }
     let mut out = BTreeMap::new();
-    for (k, v) in &old {
-        if !versions.contains_key(k) {
-            out.insert(k.to_vec(), Row { value: v.to_vec(), id: None });
-        }
-    }
     for (k, vs) in versions {
         if let Some(head) = current(&vs) {
             if let Some(value) = &head.value {
-                out.insert(k.to_vec(), Row { value: value.clone(), id: Some(head.id) });
+                out.insert(k.to_vec(), Row { value: value.clone(), id: head.id });
             }
         }
     }
@@ -172,7 +159,7 @@ mod tests {
         let b = feed(&[("n", envelope((B, 1), Some((A, 1)), Some(b"two")))]);
         let m = merge(&[(A, &a), (B, &b)]);
         assert_eq!(values(&m), ["n=two"]);
-        assert_eq!(m[&b"n".to_vec()].id, Some((B, 1)));
+        assert_eq!(m[&b"n".to_vec()].id, (B, 1));
         // A deletes after seeing two: gone everywhere.
         let a2 = feed(&[("n", envelope((A, 2), Some((B, 1)), None))]);
         assert!(merge(&[(A, &a2), (B, &b)]).is_empty());
@@ -196,13 +183,13 @@ mod tests {
     }
 
     #[test]
-    fn a_row_from_before_feeds_is_the_oldest_version_and_a_writer_speaks_only_for_itself() {
-        let old = feed(&[("n", b"legacy".to_vec()), ("k", b"kept".to_vec())]);
-        let a = feed(&[("n", envelope((A, 1), None, Some(b"new")))]);
-        assert_eq!(values(&merge(&[([0; 32], &old), (A, &a)])), ["k=kept", "n=new"]);
-        // A version claiming B's id, in A's feed: not taken.
-        let forged = feed(&[("k", envelope((B, 9), None, None))]);
-        assert_eq!(values(&merge(&[([0; 32], &old), (A, &forged)])), ["k=kept", "n=legacy"]);
+    fn a_writer_speaks_only_for_itself_and_a_value_that_is_no_version_is_not_taken() {
+        let a = feed(&[("n", envelope((A, 1), None, Some(b"new"))), ("p", b"plain".to_vec())]);
+        assert_eq!(values(&merge(&[(A, &a)])), ["n=new"]);
+        // A version claiming B's id, in A's feed: not taken (the control: B's own is).
+        let forged = feed(&[("k", envelope((B, 9), None, Some(b"forged")))]);
+        assert!(merge(&[(A, &forged)]).is_empty());
+        assert_eq!(values(&merge(&[(B, &forged)])), ["k=forged"]);
     }
 
     #[test]
@@ -248,7 +235,7 @@ mod js {
     }
 
     /// MERGE: `feeds` = `[[writer, [[key, value], …]], …]` (bytes, as each feed stores them). Returns the table's rows
-    /// `[{ key, value, id }]` (bytes; `id` null for a row from before feeds).
+    /// `[{ key, value, id }]` (bytes).
     #[wasm_bindgen]
     pub fn merge_feeds(feeds: js_sys::Array) -> Result<js_sys::Array, JsValue> {
         let mut owned = Vec::new();
@@ -270,7 +257,7 @@ mod js {
             let o = js_sys::Object::new();
             js_sys::Reflect::set(&o, &"key".into(), &js_sys::Uint8Array::from(&k[..]).into())?;
             js_sys::Reflect::set(&o, &"value".into(), &js_sys::Uint8Array::from(&row.value[..]).into())?;
-            js_sys::Reflect::set(&o, &"id".into(), &row.id.map(id_hex).map(JsValue::from).unwrap_or(JsValue::NULL))?;
+            js_sys::Reflect::set(&o, &"id".into(), &JsValue::from(id_hex(row.id)))?;
             out.push(&o);
         }
         Ok(out)

@@ -100,16 +100,16 @@ export async function start(ctx) {
         const v = JSON.parse(row.value);
         return {
           id: row.key,
-          kind: K.canon(v.kind ?? "message"),
-          body: String(v.body ?? v.text ?? ""),
+          kind: v.kind,
+          body: String(v.body ?? ""),
           at: Number(v.at) || 0,
           by: open ? container.did : byOf(row, v),
           // Who last changed it, when not its creator (a collaborative item: `kinds.collaborative`).
           editor: !open && v.editor && r ? r.author(row) : null,
           re: typeof v.re === "string" ? v.re : null,
           title: typeof v.title === "string" ? v.title : null,
-          // WHO SEES IT, chosen when made (`audience`): "members" keeps it to a space's members; none (from before):
-          // as the space's policy reads.
+          // WHO SEES IT, chosen when made (`audience`): "members" keeps it to a space's members; none: as the space's
+          // policy reads.
           aud: typeof v.aud === "string" ? v.aud : null,
           in: typeof v.in === "string" ? v.in : null,
           edited: Number(v.edited) || 0,
@@ -130,8 +130,7 @@ export async function start(ctx) {
     // THE ROWS NOW: the whole table's — or, PAGED, the pages read so far with the table's own newer rows over them.
     const loaded = new Map(); // key → row, from pages
     let oldest = null; // the oldest item key read (the next page goes on below it)
-    let more = true; // pages left (items with time ids, then the ones from before them)
-    let timesDone = false;
+    let more = true; // pages left
     const rowsNow = () => {
       if (!paged) return t.rows();
       const all = new Map(loaded);
@@ -144,21 +143,13 @@ export async function start(ctx) {
       const rs = await Promise.all(items.map(r => t.page({ lo: `r-${r.key}-`, hi: `r-${r.key}.`, limit: 500 }).then(p => p.rows, () => [])));
       return [...rows, ...rs.flat()];
     };
-    // THE NEXT PAGE, older than what is held: items with time ids newest first; then, once, those from before them.
+    // THE NEXT PAGE, older than what is held: items (time ids) newest first.
     async function older(n = 50) {
       if (!paged || !more) return 0;
-      let got = [];
-      if (!timesDone) {
-        const p = await t.page({ lo: "t", before: oldest ?? "", limit: n });
-        got = p.rows;
-        if (got.length) oldest = got.at(-1).key;
-        if (!p.next) timesDone = true;
-      }
-      if (timesDone && !got.length) {
-        // Items from before time ids (and their reactions): read once, whole.
-        got = (await t.page({ hi: "t", limit: 100000 })).rows;
-        more = false;
-      }
+      const p = await t.page({ lo: "t", before: oldest ?? "", limit: n });
+      const got = p.rows;
+      if (got.length) oldest = got.at(-1).key;
+      if (!p.next) more = false;
       for (const row of await withReactions(got)) loaded.set(row.key, row);
       changed.forEach(f => f());
       return got.length;
@@ -254,7 +245,6 @@ export async function start(ctx) {
     const repage = async () => {
       oldest = null;
       more = true;
-      timesDone = false;
       await older(FIRST);
     };
     t.onChange(() => (paged ? (loaded.size < FIRST ? repage() : refresh()).then(() => changed.forEach(f => f())) : changed.forEach(f => f())));

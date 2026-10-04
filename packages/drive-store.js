@@ -14,7 +14,7 @@
 //   await drive.onChange(space, fn)
 //   await drive.drives()                                // the spaces whose Drive this person can pick (Drive in use)
 export async function start(ctx) {
-  const [storage, space, files, roles, kinds, items] = await Promise.all(["storage", "space", "files", "roles", "kinds", "items"].map(n => ctx.require(n)));
+  const [space, files, roles, kinds, items] = await Promise.all(["space", "files", "roles", "kinds", "items"].map(n => ctx.require(n)));
   const shared = sp => sp && sp.kind !== "account";
   // A space HAS a Drive only when it uses the Drive app (an `app` act); yours always.
   const usesDrive = async sp => !shared(sp) || (await roles.of(sp).then(r => r.apps().includes("drive"), () => false));
@@ -118,67 +118,5 @@ export async function start(ctx) {
   const remove = async (sp, id) => items.remove(id);
   const onChange = async (sp, f) => items.onChange(f);
 
-  // (MIGRATIONS — `upkeep`.) v3: files another app put at an old catalogue's root, into their type's folder (read by
-  // v5 then). v5: an old catalogue (the table `drive`) brought over as items — this person's own entries (only an
-  // author writes their items), each with its time, folder and source; one brought over before is not again (`fid`).
-  const oldTable = sp => (shared(sp) ? storage.table(space.tableOf(sp, "drive"), sp) : storage.table("drive"));
-  const parse = r => {
-    try {
-      const v = JSON.parse(r.value);
-      return v?.ref ? { fid: r.key.slice(2), ...v, folder: clean(v.folder) } : null;
-    } catch {
-      return null;
-    }
-  };
-  async function sortByApp(sp = null) {
-    if (!(await usesDrive(sp))) return true;
-    const t = await oldTable(sp);
-    await t.settled;
-    for (const r of t.rows().filter(x => x.key.startsWith("f/") && x.value)) {
-      const v = parse(r);
-      const to = v && v.folder === "/" && v.from?.app !== "drive" ? typeFolder(v.ref) : "/";
-      if (to !== "/") await t.put(r.key, JSON.stringify({ ...JSON.parse(r.value), folder: to }));
-    }
-    return true;
-  }
-  async function migrate(sp = null) {
-    if (!(await usesDrive(sp))) return true;
-    const t = await oldTable(sp);
-    await t.settled;
-    const self = await me();
-    const r = shared(sp) ? await roles.of(sp) : null;
-    const old = t.rows().filter(x => x.value && (!r || r.author(x) === self));
-    if (!old.length) return true;
-    const have = new Set((await entries(sp)).map(it => it.meta?.fid).filter(Boolean));
-    const madeDirs = new Set((await entries(sp, "folder")).map(it => clean(it.meta?.folder)));
-    let n = 0;
-    for (const row of old) {
-      if (row.key.startsWith("d/")) {
-        const path = clean(row.key.slice(2));
-        if (!madeDirs.has(path)) await mkdir(sp, path), madeDirs.add(path), (n += 1);
-        continue;
-      }
-      const v = parse(row);
-      if (!v || have.has(v.fid)) continue;
-      const meta = { folder: v.folder, fid: v.fid, ...(v.from ? { from: v.from } : {}) };
-      await items.submit({ board: shared(sp) ? sp.id : null, title: v.ref.name ?? "", body: "", kind: "file", files: [v.ref], meta, audience: audienceOf(sp, !!v.ref.public), at: Number(v.at) || Date.now() });
-      have.add(v.fid);
-      n += 1;
-    }
-    if (n) ctx.log("drive", { what: `${sp?.name ?? "your"} Drive: ${n} entr${n === 1 ? "y" : "ies"} brought over as items` });
-    return true;
-  }
-
-  // v6: the entries v5 made for files OTHER apps made (their items list them now): removed — what was uploaded or
-  // saved in Drive kept.
-  async function unduplicate(sp = null) {
-    if (!(await usesDrive(sp))) return true;
-    for (const it of await entries(sp)) {
-      const from = it.meta?.from;
-      if (from?.app && from.app !== "drive" && !from.saved && it.mayEdit !== false) await items.remove(it.ref).catch(() => {});
-    }
-    return true;
-  }
-
-  return { upload, add, list, folders, mkdir, move, remove, onChange, drives, usesDrive, sortByApp, migrate, unduplicate };
+  return { upload, add, list, folders, mkdir, move, remove, onChange, drives, usesDrive };
 }

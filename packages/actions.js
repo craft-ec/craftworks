@@ -65,15 +65,11 @@ export async function start(ctx) {
     return h("div", { className: `cw-votes${row ? " row" : ""}` }, up, n, down);
   }
 
-  // SAVED: any item, one key (`saved:<ref>`); a video's or a track's saved before (`video:`, `videos:`, `audio:`) too.
+  // SAVED: any item, one key (`saved:<ref>`).
   const SAVED = ref => `saved:${ref}`;
-  const OLD = ["video:", "videos:", "audio:"];
-  const isSaved = ref => pins.has(SAVED(ref)) || OLD.some(p => pins.has(`${p}${ref}`));
-  const saved = () => [...pins.refs("saved:").map(k => k.slice(6)), ...OLD.flatMap(p => pins.refs(p).map(k => k.slice(p.length)))];
-  async function setSaved(ref, on) {
-    await pins.set(SAVED(ref), on);
-    if (!on) for (const p of OLD) if (pins.has(`${p}${ref}`)) await pins.set(`${p}${ref}`, false);
-  }
+  const isSaved = ref => pins.has(SAVED(ref));
+  const saved = () => pins.refs("saved:").map(k => k.slice(6));
+  const setSaved = (ref, on) => pins.set(SAVED(ref), on);
 
   // SAVE alone (a card's: a note, a file, a track).
   function save(it) {

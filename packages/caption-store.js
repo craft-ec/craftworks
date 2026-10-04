@@ -12,7 +12,7 @@
 //   await subs.add(mediaRef, fileOrText, { lang, label, place })   // its ref (SRT made WebVTT); `place`: a space, null
 //   await subs.mine({ sort, by, window })        // a person's tracks (`by`: theirs; none: yours) — their space's
 //                                                  // (your own), or none: with the video
-//   await subs.videoId(mediaRef)                   // the id tracks are matched by (null: a video from before ids)
+//   await subs.videoId(mediaRef)                   // the id tracks are matched by
 //   await subs.update(ref, { lang, label, text })  await subs.remove(ref)
 //   await subs.text(sub)   subs.toSrt(vttText)      // its WebVTT; the same as SRT
 //   await subs.mine()                              // this person's subtitles, everywhere they are (the app's list)
@@ -44,7 +44,7 @@ export async function start(ctx) {
       .join("\n\n")
       .concat("\n");
 
-  // THE VIDEO's ID: fixed at upload (its manifest's `vid`, or its item's `meta.vid`); null for a video from before ids.
+  // THE VIDEO's ID: fixed at upload (its manifest's `vid`, or its item's `meta.vid`).
   async function videoId(mediaRef) {
     const item = await items.get(mediaRef).catch(() => null);
     if (!item) return null;
@@ -69,7 +69,7 @@ export async function start(ctx) {
   const shape = x => ({ ref: x.ref, in: x.board && x.in && !x.in.startsWith("space:") ? `space:${x.board.id}/${x.in}` : x.in, for: x.meta?.for ?? null, lang: x.meta?.lang ?? "", label: x.meta?.label ?? x.body ?? "", by: x.by, at: x.at, edited: x.edited, file: x.files?.[0] ?? null, mayRemove: !!x.mayRemove, board: x.board, place: x.board ?? null });
 
   // TRACKS for a media FILE of an ITEM — the one lookup (a Videos or Audio item's own video, a video written inline in a
-  // post): those attached to the item made for it (for the item's own main video, those from before ids too), and
+  // post): those attached to the item made for it, and
   // those anywhere this person can READ made for its video id — the places a track can be kept: their spaces that use
   // Subtitles, their profile and those they follow — each read from when the video was made, never whole.
   const mainOf = item => item?.files?.find(f => f.type === "application/vnd.craftworks.video+json") ?? null;
@@ -81,7 +81,7 @@ export async function start(ctx) {
     const isMain = !!file && !!main && idOf(file) === idOf(main);
     const m = await manifestOf(file).catch(() => null);
     const vid = m?.vid ?? (isMain ? item?.meta?.vid ?? null : null);
-    const withIt = (await items.attached(itemRef, KIND, { outside }).catch(() => [])).map(shape).filter(t => (t.for ? t.for === vid : isMain));
+    const withIt = (await items.attached(itemRef, KIND, { outside }).catch(() => [])).map(shape).filter(t => !!vid && t.for === vid);
     let elsewhere = [];
     if (!outside && vid) {
       const roles = await ctx.require("roles");

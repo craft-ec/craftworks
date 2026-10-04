@@ -11,7 +11,7 @@
 //   keys of its key log, `{ kind: "key-log" }`).
 // - `self`: the writer key its feeds are written under here — this device's (a DID is a space's member; each of its
 //   devices writes its own feed on its behalf, and the DID's card says which devices are its: `directory.devices`);
-//   `shared`: the space's shared key (your account: its data key — the tables from before feeds, and the channel).
+//   `shared`: the space's shared key (your account: its data key — its directory and its channel).
 // - `tables`: the names of its own tables — `catalog` (each writer's tables), `members` (credentials and removals,
 //   gossiped), `channel` (its group's pointer and commits). Named once, by the identity (its rules name them too).
 //

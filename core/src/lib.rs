@@ -25,7 +25,6 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::Locked => json!({ "locked": true }),
         Answer::LoggedOut => json!({ "loggedOut": true }),
         Answer::Signed { sig } => json!({ "signed": hex(sig) }),
-        Answer::Exported { seed } => json!({ "exported": hex(seed) }),
         Answer::Handed { seed, did, data } => {
             json!({ "handed": { "seed": hex(seed), "did": hex(did), "data": data.map(|d| hex(&d)) } })
         }
@@ -259,19 +258,16 @@ impl Core {
         self.got.remove(id)
     }
 
-    /// A FILE PIECE to put, as `(id hex, frames)`: with a BURN HASH, the `piece` contract at its address (its state
-    /// `LIVE ‖ burn hash ‖ piece`); without, the `sealed` contract (a file from before burning).
+    /// A FILE PIECE to put, as `(id hex, frames)`: the `piece` contract at its address, its state
+    /// `LIVE ‖ burn hash ‖ piece`.
     pub fn frames_piece(
         &mut self,
         p: &craftworks_files::Piece,
-        burn: Option<&[u8; 32]>,
+        burn: &[u8; 32],
     ) -> Result<(String, Vec<Vec<u8>>), String> {
         let s = self.stream();
-        let (code, state) = match burn {
-            Some(h) => (&self.piece_code, [&[2u8][..], h, &p.state].concat()),
-            None => (&self.sealed_code, p.state.clone()),
-        };
-        let c = wire::block::block_contract(code, &p.address);
+        let state = [&[2u8][..], burn, &p.state].concat();
+        let c = wire::block::block_contract(&self.piece_code, &p.address);
         let name = c.key().id().encode();
         Ok((
             name,
@@ -297,23 +293,15 @@ impl Core {
         ))
     }
 
-    /// KEEP a file piece: the state it is stored as (a GET's answer, whole) put again at `address` — the `piece`
-    /// contract (`burnable`) or the `sealed` one. `(id hex, frames)`.
+    /// KEEP a file piece: the state it is stored as (a GET's answer, whole) put again at `address`, its `piece`
+    /// contract. `(id hex, frames)`.
     pub fn frames_keep_piece(
         &mut self,
         address: &[u8; 32],
-        burnable: bool,
         state: &[u8],
     ) -> Result<(String, Vec<Vec<u8>>), String> {
         let s = self.stream();
-        let c = wire::block::block_contract(
-            if burnable {
-                &self.piece_code
-            } else {
-                &self.sealed_code
-            },
-            address,
-        );
+        let c = wire::block::block_contract(&self.piece_code, address);
         let name = c.key().id().encode();
         Ok((
             name,
@@ -325,17 +313,9 @@ impl Core {
         ))
     }
 
-    /// The contract id (bytes) where a file piece at `address` is fetched: the `piece` contract's (`burnable`), else
-    /// the `sealed` one's.
-    pub fn piece_id(&self, address: &[u8; 32], burnable: bool) -> [u8; 32] {
-        wire::block::contract_for(
-            if burnable {
-                &self.piece_code
-            } else {
-                &self.sealed_code
-            },
-            address,
-        )
+    /// The contract id (bytes) where a file piece at `address` is fetched: its `piece` contract's.
+    pub fn piece_id(&self, address: &[u8; 32]) -> [u8; 32] {
+        wire::block::contract_for(&self.piece_code, address)
     }
 
     pub fn set_piece_code(&mut self, code: &[u8]) {
@@ -1557,26 +1537,6 @@ mod js {
             prepared(&o.params, seq, hash)
         }
 
-        /// MOVE (`data::Open::adopt`): the open tail `id` (new, empty) takes the open tail `from`'s state as its first
-        /// step (a table moving to its blinded name): the step to sign, or null.
-        pub fn tail_adopt(&mut self, id: &[u8], from: &[u8]) -> Result<JsValue, JsValue> {
-            let (id, from) = (b32(id)?, b32(from)?);
-            let f = self
-                .0
-                .tails
-                .remove(&from)
-                .ok_or_else(|| err("that tail is not open".into()))?;
-            let out = self
-                .0
-                .tail(&id)
-                .map(|o| o.adopt(&f).map(|(seq, hash)| (o.params.clone(), seq, hash)));
-            self.0.tails.insert(from, f);
-            match out.map_err(err)? {
-                Some((params, seq, hash)) => Ok(prepared(&params, seq, hash)?.into()),
-                None => Ok(JsValue::NULL),
-            }
-        }
-
         /// SKIP AHEAD (`data::Open::skip_to`): the prepared step moved past `last` (the identity signed through it; the
         /// network, which answered, holds less): the step to sign, or null.
         pub fn tail_skip(&mut self, id: &[u8], last: f64) -> Result<JsValue, JsValue> {
@@ -1988,24 +1948,15 @@ mod js {
         err(format!("{e:?}"))
     }
     /// `[j, id hex, frames]` per piece.
-    /// A burn hash from JS: 32 bytes (the `piece` contract), or none (empty: the `sealed` one, a file from before).
-    fn burn_of(b: &[u8]) -> Result<Option<[u8; 32]>, JsValue> {
-        if b.is_empty() {
-            Ok(None)
-        } else {
-            b32(b).map(Some)
-        }
-    }
-
     fn pieces_js(
         core: &mut CraftworksCore,
         pieces: Vec<(u8, craftworks_files::Piece)>,
-        burn: Option<[u8; 32]>,
+        burn: [u8; 32],
     ) -> Result<js_sys::Array, JsValue> {
         let out = js_sys::Array::new();
         for (j, p) in pieces {
             let h = hex(&p.hash());
-            let (id, f) = core.0.frames_piece(&p, burn.as_ref()).map_err(err)?;
+            let (id, f) = core.0.frames_piece(&p, &burn).map_err(err)?;
             out.push(
                 &[
                     JsValue::from(j),
@@ -2098,7 +2049,7 @@ mod js {
             let plan = craftworks_files::Plan::of(size as u64);
             let pieces =
                 craftworks_files::encode(&b32(key)?, &plan, g as u64, plain, extra as usize);
-            pieces_js(self, pieces, burn_of(burn)?)
+            pieces_js(self, pieces, b32(burn)?)
         }
         /// One more fragment `j` (a slow or refused one replaced): `[j, id hex, frames, hash hex]`.
         pub fn file_mint(
@@ -2112,19 +2063,18 @@ mod js {
         ) -> Result<js_sys::Array, JsValue> {
             let plan = craftworks_files::Plan::of(size as u64);
             let p = craftworks_files::mint(&b32(key)?, &plan, g as u64, plain, j);
-            Ok(pieces_js(self, vec![(j, p)], burn_of(burn)?)?.get(0).into())
+            Ok(pieces_js(self, vec![(j, p)], b32(burn)?)?.get(0).into())
         }
         /// The INDEX for the fragments stored (JSON `[[[j, hash hex]]]` per generation): `{ root, puts: [[id, frames]] }`,
-        /// the root's put LAST. `hashed`: each index piece addressed by its hash (what a new upload writes).
+        /// the root's put LAST; each index piece addressed by its hash.
         pub fn file_index(
             &mut self,
             key: &[u8],
             size: f64,
             stored: &str,
             burn: &[u8],
-            hashed: bool,
         ) -> Result<js_sys::Object, JsValue> {
-            let burn = burn_of(burn)?;
+            let burn = b32(burn)?;
             let plan = craftworks_files::Plan::of(size as u64);
             let v: Vec<serde_json::Value> =
                 serde_json::from_str(stored).map_err(|e| err(e.to_string()))?;
@@ -2132,14 +2082,10 @@ mod js {
                 .iter()
                 .map(|g| listed_of(&g.to_string()))
                 .collect::<Result<_, _>>()?;
-            let (pieces, root) = if hashed {
-                craftworks_files::index_hashed(&b32(key)?, &plan, &stored)
-            } else {
-                craftworks_files::index(&b32(key)?, &plan, &stored)
-            };
+            let (pieces, root) = craftworks_files::index_hashed(&b32(key)?, &plan, &stored);
             let puts = js_sys::Array::new();
             for p in pieces {
-                let (id, f) = self.0.frames_piece(&p, burn.as_ref()).map_err(err)?;
+                let (id, f) = self.0.frames_piece(&p, &burn).map_err(err)?;
                 puts.push(
                     &[JsValue::from(id), JsValue::from(frames(f))]
                         .into_iter()
@@ -2151,44 +2097,16 @@ mod js {
             js_sys::Reflect::set(&o, &"puts".into(), &puts)?;
             Ok(o)
         }
-        /// Where a file's pieces are fetched (contract ids, hex): its root, an index piece, a fragment. `burnable`: a
-        /// file with a burn hash (the `piece` contract). `hash` (hex): a hash-addressed file's index piece, by its hash
-        /// (its parent's, the reference's for the root); empty: at its place.
-        pub fn file_root_id(
-            &self,
-            key: &[u8],
-            burnable: bool,
-            hash: &str,
-        ) -> Result<String, JsValue> {
-            Ok(hex(&self.0.piece_id(
-                &index_at(&b32(key)?, "root", 0, 0, hash)?,
-                burnable,
-            )))
+        /// Where a file's pieces are fetched (contract ids, hex): its root, an index piece (by `hash`, hex: its
+        /// parent's, the reference's for the root), a fragment.
+        pub fn file_root_id(&self, key: &[u8], hash: &str) -> Result<String, JsValue> {
+            Ok(hex(&self.0.piece_id(&index_at(&b32(key)?, hash)?)))
         }
-        pub fn file_index_id(
-            &self,
-            key: &[u8],
-            level: u8,
-            n: f64,
-            burnable: bool,
-            hash: &str,
-        ) -> Result<String, JsValue> {
-            Ok(hex(&self.0.piece_id(
-                &index_at(&b32(key)?, "index", level as u64, n as u64, hash)?,
-                burnable,
-            )))
+        pub fn file_index_id(&self, key: &[u8], hash: &str) -> Result<String, JsValue> {
+            Ok(hex(&self.0.piece_id(&index_at(&b32(key)?, hash)?)))
         }
-        pub fn file_fragment_id(
-            &self,
-            key: &[u8],
-            g: f64,
-            j: u8,
-            burnable: bool,
-        ) -> Result<String, JsValue> {
-            Ok(hex(&self.0.piece_id(
-                &craftworks_files::fragment_address(&b32(key)?, g as u64, j),
-                burnable,
-            )))
+        pub fn file_fragment_id(&self, key: &[u8], g: f64, j: u8) -> Result<String, JsValue> {
+            Ok(hex(&self.0.piece_id(&craftworks_files::fragment_address(&b32(key)?, g as u64, j))))
         }
         /// KEEP a file's piece (`what` and `a`, `b` as `file_burn`): the state a GET gave, put again. `[id, frames]`.
         pub fn file_keep(
@@ -2197,18 +2115,17 @@ mod js {
             what: &str,
             a: f64,
             b: f64,
-            burnable: bool,
             state: &[u8],
             hash: &str,
         ) -> Result<js_sys::Array, JsValue> {
             let key = b32(key)?;
             let address = match what {
                 "fragment" => craftworks_files::fragment_address(&key, a as u64, b as u8),
-                _ => index_at(&key, what, a as u64, b as u64, hash)?,
+                _ => index_at(&key, hash)?,
             };
             let (id, f) = self
                 .0
-                .frames_keep_piece(&address, burnable, state)
+                .frames_keep_piece(&address, state)
                 .map_err(err)?;
             Ok([JsValue::from(id), JsValue::from(frames(f))]
                 .into_iter()
@@ -2228,7 +2145,7 @@ mod js {
             let key = b32(key)?;
             let address = match what {
                 "fragment" => craftworks_files::fragment_address(&key, a as u64, b as u8),
-                _ => index_at(&key, what, a as u64, b as u64, hash)?,
+                _ => index_at(&key, hash)?,
             };
             let (id, f) = self.0.frames_burn(&address, &b32(secret)?).map_err(err)?;
             Ok([JsValue::from(id), JsValue::from(frames(f))]
@@ -2237,26 +2154,9 @@ mod js {
         }
     }
 
-    /// Where a file's index piece is (`what`: "root", or "index" at `level`, `n`): by `hash` (hex) for a hash-addressed
-    /// file, else at its place.
-    fn index_at(
-        key: &[u8; 32],
-        what: &str,
-        level: u64,
-        n: u64,
-        hash: &str,
-    ) -> Result<[u8; 32], JsValue> {
-        if !hash.is_empty() {
-            return Ok(craftworks_files::hashed_address(
-                key,
-                &bytes32("index piece", hash).map_err(err)?,
-            ));
-        }
-        match what {
-            "root" => Ok(craftworks_files::root_address(key)),
-            "index" => Ok(craftworks_files::index_address(key, level as u8, n)),
-            _ => Err(err(format!("no such piece: {what}"))),
-        }
+    /// Where a file's index piece (the root, or one below it) is: by its `hash` (hex).
+    fn index_at(key: &[u8; 32], hash: &str) -> Result<[u8; 32], JsValue> {
+        Ok(craftworks_files::hashed_address(key, &bytes32("index piece", hash).map_err(err)?))
     }
 
     /// A file's plan: `{ size, chunk, chunks, gens }`.
@@ -2289,16 +2189,10 @@ mod js {
     }
     /// An inner index piece opened: its children's hashes.
     #[wasm_bindgen]
-    pub fn file_inner(
-        key: &[u8],
-        level: u8,
-        n: f64,
-        hash: &str,
-        state: &[u8],
-    ) -> Result<Vec<String>, JsValue> {
+    pub fn file_inner(key: &[u8], hash: &str, state: &[u8]) -> Result<Vec<String>, JsValue> {
         let h = bytes32("inner", hash).map_err(err)?;
         Ok(
-            craftworks_files::open_inner(&b32(key)?, level, n as u64, &h, state)
+            craftworks_files::open_inner(&b32(key)?, &h, state)
                 .map_err(file_err)?
                 .iter()
                 .map(|c| hex(c))

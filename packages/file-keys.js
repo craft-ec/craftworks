@@ -40,7 +40,7 @@ export async function start(ctx) {
     for (const row of await files.rows(sp)) {
       const pub = !!row.pub && readsAnyone(row);
       const n = row.n ?? -2;
-      if (n === -2 || !row.h) out.push({ row, pub }); // adopted, or from before hashes
+      if (n === -2) out.push({ row, pub }); // adopted
       else if (n === -1 ? !pub : n < st.n) out.push({ row, pub: false }); // public no longer; an older salt
     }
     return out;

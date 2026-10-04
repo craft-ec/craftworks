@@ -77,14 +77,11 @@ export async function start() {
   // about, and a lens of their own (the Caption app). A CAPTION — subtitles, lyrics, a transcript: WebVTT (its file),
   // its language and label.
   const ATTACHING = [["caption", "text", "Caption", ["lang", "label"], ["video", "audio"]]];
-  // A kind's name now, for one stored under the name it had ("subtitle": a caption).
-  const RENAMED = { subtitle: "caption" };
   const byKind = new Map(CATALOG.map(([kind, domain, label, fields]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields) })]));
   const onTo = new Map(ATTACHING.map(([kind, domain, label, fields, to]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields), to: Object.freeze(to), attaches: true })]));
   const LABELS = { lang: "Language", label: "Label",  year: "Year", director: "Director", cast: "Cast", genre: "Genre", show: "Show", season: "Season", episode: "Episode", artist: "Artist", album: "Album", host: "Host", author: "Author", narrator: "Narrator", chapter: "Chapter", location: "Location", taken: "Taken", camera: "Camera", medium: "Medium", publisher: "Publisher", isbn: "ISBN", writer: "Writer", issue: "Issue", format: "Format", software: "Software", platform: "Platform", version: "Version", license: "License", schema: "Schema" };
   return {
     of: kind => byKind.get(kind) ?? onTo.get(kind) ?? null,
-    canon: kind => RENAMED[kind] ?? kind,
     attaching: () => [...onTo.keys()],
     attachesTo: kind => [...(onTo.get(kind)?.to ?? [])],
     domain: kind => byKind.get(kind)?.domain ?? null,

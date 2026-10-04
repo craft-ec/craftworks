@@ -136,7 +136,7 @@ export async function start(ctx) {
     return JSON.stringify({ ...it, files: await Promise.all(it.files.map(f => files.current(f).catch(() => f))) });
   }
   // A DOMAIN's read setting in a space: its own (`text`, `video`, `caption` …: content decides, whatever app shows it),
-  // else the app-named setting from before (text: "board"), else the space's.
+  // else the space's.
   const domainReads = (r, domain) => r.policyIn(domain, "read") === "anyone";
   // Whether an item of `kind` is public in a space now.
   async function publicIn(sp, kind) {
@@ -169,15 +169,14 @@ export async function start(ctx) {
       const pubOfValue = v => {
         try {
           const x = JSON.parse(v);
-          return x.aud !== "members" && readsAnyone(rootDomain(x.kind ?? "post", x.in ?? x.item ?? x.re ?? null));
+          return x.aud !== "members" && readsAnyone(rootDomain(x.kind ?? "post", x.in ?? x.item ?? null));
         } catch {
           return false;
         }
       };
       // PUBLIC: what its app reads in public (the space's policy, the ceiling) — unless made for the members only.
-      const pubOfItem = it => it.aud !== "members" && readsAnyone(rootDomain(it.kind, it.in ?? it.re ?? null));
-      // THE SYNC: this person's rows — a public copy of each while ITS APP reads in public, none while it does not. Rows
-      // only in the public table (written there before the sealed table held everything) move into the sealed one first.
+      const pubOfItem = it => it.aud !== "members" && readsAnyone(rootDomain(it.kind, it.in ?? null));
+      // THE SYNC: this person's rows — a public copy of each while ITS APP reads in public, none while it does not.
       let syncing = null;
       const sync = () =>
         (syncing ??= (async () => {
@@ -186,7 +185,6 @@ export async function start(ctx) {
           await Promise.all([a.ownAll?.(), b.ownAll?.()]);
           const inA = new Map(a.own().map(x => [x.key, x.value]));
           const inB = new Map(b.own().map(x => [x.key, x.value]));
-          for (const [k, v] of inB) if (!inA.has(k)) (await a.putOwn(k, v), inA.set(k, v));
           learnKinds();
           for (const [k, v0] of inA) {
             if (pubOfValue(v0)) {
@@ -204,7 +202,7 @@ export async function start(ctx) {
             } catch {
               continue;
             }
-            const about = TOP.has(x.kind) ? k : x.kind === "reaction" ? x.item : (x.in ?? x.re);
+            const about = TOP.has(x.kind) ? k : x.kind === "reaction" ? x.item : x.in;
             if (!about || !x.at) continue;
             await listPublic(`space:${sp.id}/${about}`, x, where).catch(e => ctx.log("posts", { what: `listing ${k} in Discover: ${e?.message ?? e}` }));
           }
@@ -332,12 +330,9 @@ export async function start(ctx) {
     const vs = on ? [...on.values()] : [];
     return { score: vs.reduce((n, v) => n + v, 0), ups: vs.filter(v => v > 0).length, downs: vs.filter(v => v < 0).length, mine: on?.get(self) ?? 0 };
   };
-  const postOf = c => c.in ?? c.re; // a comment's post (an old one answering its post directly has no `in`)
+  const postOf = c => c.in; // a comment's post
   const shape = (it, ref, board) => {
-    // A post from before titles: its first line is its title (a kind whose title is optional — a note — never).
-    const old = !it.title && kinds.titled(it.kind);
-    const [first, ...rest] = it.body.split("\n");
-    return { ref, id: it.id, kind: it.kind, in: it.in ?? null, by: it.by, editor: it.editor ?? null, aud: it.aud ?? null, title: old ? first.slice(0, 300) : (it.title ?? ""), body: old ? rest.join("\n").trim() : it.body, board, at: it.at, edited: it.edited, private: !!it.private, files: it.files ?? [], meta: it.meta ?? {} };
+    return { ref, id: it.id, kind: it.kind, in: it.in ?? null, by: it.by, editor: it.editor ?? null, aud: it.aud ?? null, title: it.title ?? "", body: it.body, board, at: it.at, edited: it.edited, private: !!it.private, files: it.files ?? [], meta: it.meta ?? {} };
   };
 
   // A BOARD's posts: everything is in its one room (reactions keyed by the item's id).
@@ -625,7 +620,7 @@ export async function start(ctx) {
       const ptr = outside ? await pointerOf(ref) : null;
       const r = await (outside ? (ptr ? pointedRoom(sp, [ptr]) : outsideRoom(sp)) : boardRoom(sp));
       // A thread's comments are all made AFTER its post: the place read from the post's time on — complete, whatever
-      // the list's window, and nothing older (a post from before time ids: the place whole).
+      // the list's window, and nothing older.
       if (!outside) await sinceItem(r, idOf(ref));
       const votes = tally(r.reactions());
       const post = idOf(ref);
@@ -770,12 +765,6 @@ export async function start(ctx) {
         .catch(e => ctx.log("posts", { what: `${sp.name}: public copies: ${e.message}` }));
     }
   }
-  // (A MIGRATION — `upkeep`.) This person's public profile items from before Discover's bags: listed there.
-  async function listOldProfile() {
-    const self = await me();
-    for (const it of (await profileRoom(self)).list()) if (TOP.has(it.kind) && !it.private) await listPublic(`${self}/${it.id}`, it, { did: self });
-  }
-
   // ATTACHED ITEMS (a subtitle on a video): contributed like a comment — in the item's place (a board), or on a
   // profile in the contributor's own tail with a pointer on the item (a private item: private too) — and listed with it.
   async function attach(post, kind, body, { meta = {}, files = [], place = undefined } = {}) {
@@ -797,11 +786,11 @@ export async function start(ctx) {
     if (!mine.isPrivate?.(post)) await pointTo(post);
     return `${await me()}/${id}`;
   }
-  // A place read from an item's time on (its id: `t` ‖ time in ms, base 36): everything made after it; an item from
-  // before time ids — its place whole.
+  // A place read from an item's time on (its id: `t` ‖ time in ms, base 36): everything made after it.
   async function sinceItem(r, id) {
     const m = /^t([0-9a-z]{9})/.exec(id);
-    return m ? r.since?.(parseInt(m[1], 36)) : r.loadAll?.();
+    if (!m) throw new Error(`not an item id: ${id}`);
+    return r.since?.(parseInt(m[1], 36));
   }
   async function attached(ref, kind, { outside = null } = {}) {
     const self = await me();
@@ -862,41 +851,6 @@ export async function start(ctx) {
     return [...a.flat(), ...b];
   }
 
-  // (A MIGRATION — `upkeep`.) NOTES from before items (the table `notes`: yours, or a space's) brought over as items of
-  // kind `note` — yours private, a space's for its members; each keeping its time, colour, archive, pins and labels.
-  // Only this person's own (only an author writes their items); one brought over before is not again (`meta.from`).
-  async function migrateNotes(sp = null) {
-    const storage = await ctx.require("storage");
-    const self = await me();
-    if (sp && !(await roles.of(sp).then(r => r.apps().includes("note"), () => false))) return true;
-    const old = sp ? await storage.table(space.tableOf(sp, "notes"), sp) : await storage.table("notes");
-    await old.settled;
-    const r = sp ? await roles.of(sp) : null;
-    const rows = old.rows().filter(x => x.value && (!r || r.author(x) === self));
-    if (!rows.length) return true;
-    const have = new Set((await inPlaces(sp ? { spaces: [sp] } : { people: [self] }, "note", { withVotes: false })).map(it => it.meta?.from).filter(Boolean));
-    const edge = await ctx.require("edge");
-    const [pins, labels] = await Promise.all([edge.pins(), edge.labels()]);
-    const oldRef = key => (sp ? `notes:${sp.id}/${key}` : `notes:${key}`);
-    let n = 0;
-    for (const row of rows) {
-      if (have.has(row.key)) continue;
-      let v = { title: "", body: row.value, color: "", archived: false };
-      try {
-        const j = JSON.parse(row.value);
-        if (j && typeof j === "object") v = { ...v, ...j };
-      } catch {}
-      const at = parseInt(String(row.key).split("-")[0], 36) || Number(v.edited) || Date.now();
-      const ref = await submit({ board: sp?.id ?? null, title: v.title ?? "", body: v.body ?? "", kind: "note", audience: sp ? "members" : "private", meta: { color: v.color || "", archived: !!v.archived, from: row.key }, at });
-      if (pins.has(oldRef(row.key)) || v.pinned) await pins.set(`notes:${ref}`, true).then(() => pins.set(oldRef(row.key), false));
-      for (const l of labels.of(oldRef(row.key))) await labels.set(`notes:${ref}`, l.id, true);
-      await labels.clear(oldRef(row.key));
-      n += 1;
-    }
-    if (n) ctx.log("posts", { what: `${sp?.name ?? "your"} notes: ${n} brought over as items` });
-    return true;
-  }
-
   // WHERE AN ITEM IS SHOWN — the one link to its page, for every app that links to one: a video or a track where it
   // plays (Video, Audio, Image), a post (or anything else) on its board, a note in Note, a file in Drive.
   const APP_OF = { video: "video", audio: "audio", image: "image", note: "note", file: "drive" };
@@ -910,5 +864,5 @@ export async function start(ctx) {
     return app === "board" ? `${base}/p/${ref}` : base;
   }
 
-  return { mayWriteOn, pageOf, appOf, listOldProfile, migrateNotes, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
+  return { mayWriteOn, pageOf, appOf, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
 }

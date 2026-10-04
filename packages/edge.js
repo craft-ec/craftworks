@@ -6,7 +6,6 @@
 //   const pins = await edge.pins();      pins.has(ref)  pins.refs(prefix)  await pins.set(ref, on)  pins.onChange(fn)
 //   const labels = await edge.labels();  labels.list()  labels.of(ref)  labels.refs(id, prefix)  labels.onChange(fn)
 //     await labels.create(name)  labels.rename(id, name)  labels.remove(id)  labels.set(ref, id, on)  labels.clear(ref)
-//   await edge.adoptPinnedField(table, prefix)   // rows saved with an old `pinned: true` field → pins, field dropped
 //   const people = await edge.people(); people.is("follow", did)  people.list("friend")  await people.set("hide", did, on)
 //     people.onChange(fn) — me → a PERSON (or, for `follow`, any SPACE: a person's DID is their personal space's id; a
 //     shared space's id follows it, `people.about("follow", id)` its public description): follow · friend · asked (a friend request sent) · answered (their request,
@@ -89,24 +88,6 @@ export async function start(ctx) {
     }));
   }
 
-  // Rows saved with an old `pinned: true` field (notes, before pins were their own table): into the pins, and saved
-  // again without the field. Once per row; harmless when there are none.
-  async function adoptPinnedField(table, prefix) {
-    const p = await pins();
-    for (const r of table.rows()) {
-      let j;
-      try {
-        j = JSON.parse(r.value);
-      } catch {
-        continue;
-      }
-      if (j?.pinned !== true) continue;
-      const { pinned, ...rest } = j;
-      await (p.has(`${prefix}${r.key}`) ? Promise.resolve() : p.set(`${prefix}${r.key}`, true));
-      await table.put(r.key, JSON.stringify(rest));
-    }
-  }
-
   let peopleOpen = null;
   // `follower`: someone who follows this person (from their notice: `circles`).
   // `cred-friends` / `cred-followers`: a write credential this person issued (its token in `about`); `credin-…`: one
@@ -157,5 +138,5 @@ export async function start(ctx) {
     }));
   }
 
-  return { pins, labels, people, adoptPinnedField };
+  return { pins, labels, people };
 }

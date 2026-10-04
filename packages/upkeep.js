@@ -65,54 +65,8 @@ export async function start(ctx) {
       // Boards: what this person wrote is public exactly while its board reads in public (a board made public shows
       // what was written before; one made private takes it back).
       await (await ctx.require("items")).syncPublic().catch(e => ctx.log("upkeep", { what: `boards: ${e.message}` }));
-      await migrate().catch(e => ctx.log("upkeep", { what: `migrating: ${e.message}` }));
     } finally {
       running = false;
-    }
-  }
-  // MIGRATIONS — the one place records from before a change are brought forward, here, after the page is up (never
-  // on a page's path). Each step is safe to run again; the version is recorded once EVERY step of it succeeded (a step
-  // the node was silent for: tried again on a later tick), and a page after that runs none.
-  const MIGRATION = 7;
-  let migratedHere = false;
-  async function migrate() {
-    if (migratedHere) return;
-    const storage = await ctx.require("storage");
-    if (((await storage.upkeepMark("migrated")) ?? 0) >= MIGRATION) return void (migratedHere = true);
-    const step = (what, p) =>
-      p.then(
-        ok => ok !== false || (ctx.log("upkeep", { what: `migrating ${what}: not done yet (the node silent): tried again` }), false),
-        e => (ctx.log("upkeep", { what: `migrating ${what}: ${e?.message ?? e}` }), false),
-      );
-    const spaces = (await space.mine()).filter(s => s.kind === "server");
-    const done = await Promise.all([
-      // v1: the card lists this account's public tables; its old profile items in Discover's bags; this device
-      // listed as a writer of the public acts it wrote before their bag.
-      step("the card", storage.completeOwnCard()),
-      step("the profile's items", (await ctx.require("items")).listOldProfile()),
-      ...spaces.map(sp => step(`${sp.name}'s public acts`, roles.of(sp).then(r => r.migrate()))),
-      // v2: every table of this node's listed from before places were noted — its place settled (no page asks
-      // both of its names again).
-      step("this account's tables' places", storage.settleOwnPlaces(await space.account())),
-      ...spaces.map(sp => step(`${sp.name}'s tables' places`, storage.settleOwnPlaces(sp))),
-      // v3: files another app put at a Drive's root, each in its type's folder (/Images, /Videos …).
-      step("your Drive's folders", (await ctx.require("drive-store")).sortByApp(null)),
-      ...spaces.map(async sp => step(`${sp.name}'s Drive folders`, (await ctx.require("drive-store")).sortByApp(sp))),
-      // v4: notes from before items, brought over as items of kind `note` (yours private, a space's for its members).
-      step("your notes", (await ctx.require("items")).migrateNotes(null)),
-      ...spaces.map(async sp => step(`${sp.name}'s notes`, (await ctx.require("items")).migrateNotes(sp))),
-    ]);
-    // v5 after v3 (it reads the catalogues v3 sorted): Drive's catalogues brought over as items of kind `file`.
-    if (done.every(Boolean)) done.push(...(await Promise.all([step("your Drive", (await ctx.require("drive-store")).migrate(null)), ...spaces.map(async sp => step(`${sp.name}'s Drive`, (await ctx.require("drive-store")).migrate(sp)))])));
-    // v6 after v5: the Drive entries for files other apps made (their items list them) removed.
-    if (done.every(Boolean)) done.push(...(await Promise.all([step("your Drive's duplicates", (await ctx.require("drive-store")).unduplicate(null)), ...spaces.map(async sp => step(`${sp.name}'s Drive duplicates`, (await ctx.require("drive-store")).unduplicate(sp)))])));
-    // v7: each space's channels from before brought over as items (by a node that may make channels; the space then
-    // marked moved — readers stop opening the old table).
-    if (done.every(Boolean)) done.push(...(await Promise.all(spaces.map(async sp => step(`${sp.name}'s channels`, (await ctx.require("conversation")).channels(sp).then(c => c.migrate()))))));
-    if (done.every(Boolean)) {
-      await storage.setUpkeepMark("migrated", MIGRATION);
-      migratedHere = true;
-      ctx.log("upkeep", { what: `records brought forward (version ${MIGRATION}); not run again` });
     }
   }
   // WHAT THE DELEGATE DID with no page open: each group it moved, loaded; each person it let in, an `admitted` act (by

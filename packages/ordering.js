@@ -21,13 +21,13 @@ export async function start(ctx) {
     // TAIL: rows `<prefix><position, 12 digits>~<tag>` in one of the account's tables — EACH WRITER'S ENTRY UNDER ITS
     // OWN KEY: two writers racing for one position both land (a write refused for racing is written again by
     // storage, and under one shared key it would overwrite the other's), and the position's entry is the LOWEST of
-    // them — the same one on every node once it has read both. (`<prefix><position>` alone: one written before.)
+    // them — the same one on every node once it has read both.
     async tail({ table, prefix, owner, known = null, sealWith = null, space = null }) {
       const t = await (owner ? storage.log(table, owner, { known, sealWith, space }) : storage.table(table));
       const key = n => `${prefix}${String(n).padStart(12, "0")}`;
       const at = n => {
         const k = key(n);
-        const all = t.rows().filter(r => r.value && (r.key === k || r.key.startsWith(`${k}~`))).map(r => r.value);
+        const all = t.rows().filter(r => r.value && r.key.startsWith(`${k}~`)).map(r => r.value);
         return all.length ? all.sort()[0] : undefined;
       };
       const tag = () => [...crypto.getRandomValues(new Uint8Array(6))].map(x => x.toString(16).padStart(2, "0")).join("");

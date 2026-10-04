@@ -90,8 +90,8 @@ export async function start(ctx) {
   //
   // WHICH account: new words (`fresh`, just made) hold their own inception's. Typed words hold either their own
   // inception's (an account's original words) or the one their whoami names (words rotated in): both are asked AT
-  // ONCE and the first that answers wins, so the one that does not exist never holds the login up. Neither: an
-  // account from before the key log, whose inception is put now (its tables and nodes stay where they were).
+  // ONCE and the first that answers wins, so the one that does not exist never holds the login up. Neither (its key
+  // log lost): its inception is put now (its tables and nodes stay where they were).
   let joining = null;
   const joined = [];
   async function join(entropy, pin, { fresh = false } = {}) {

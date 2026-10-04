@@ -139,7 +139,7 @@ fn the_gate_answers_only_a_web_app_the_node_names() {
     // No origin (the node cannot say who asks), or another delegate: refused before anything is read or done.
     let out = serve_bytes(&mut m, &encode_request(9, &Request::Who), None);
     assert_eq!(decode_answer(&now(out)), Some((9, Answer::Refused(Why::NotAttested))));
-    let out = serve_bytes(&mut m, &encode_request(10, &Request::Export), None);
+    let out = serve_bytes(&mut m, &encode_request(10, &Request::Grants), None);
     assert_eq!(decode_answer(&now(out)), Some((10, Answer::Refused(Why::NotAttested))));
     // The same request from the app the node names is served.
     let out = serve_bytes(&mut m, &encode_request(11, &Request::Who), Some(APP));
@@ -207,9 +207,8 @@ fn five_wrong_pins_lock_the_node_until_the_account_s_words_reopen_it() {
     assert_eq!(provision(&mut m, fresh, ALICE_DID, "555555", APP), opened(fresh, ALICE_DID));
     assert_eq!(unlock(&mut m, BOB_PIN, APP), bob(), "the lock is cleared for everyone");
     assert_eq!(unlock(&mut m, "555555", APP), opened(fresh, ALICE_DID));
-    // A handover's own key again still sets a member's PIN anew; the key file's export is gone.
+    // A handover's own key again still sets a member's PIN anew.
     assert_eq!(provision(&mut m, ALICE, ALICE_DID, "777777", OTHER), alice());
-    assert_eq!(serve(&mut m, Request::Export, APP), Answer::Refused(Why::Retired));
     assert_eq!(provision(&mut m, ALICE, BOB_DID, "666666", APP), Answer::Refused(Why::OtherDid));
 }
 
@@ -373,17 +372,6 @@ fn nothing_is_signed_unless_the_guard_was_saved() {
     m.refuse = false;
     assert!(matches!(sign(&mut m, APP, &p, 1, [2; 32]), Answer::Signed { .. }));
 }
-
-#[test]
-fn no_app_takes_a_member_s_key_out() {
-    // The key file was dropped: no app, the home included, gets a member's seed.
-    let mut m = provisioned(APP);
-    for app in [APP, OTHER] {
-        assert_eq!(unlock(&mut m, ALICE_PIN, app), alice());
-        assert_eq!(serve(&mut m, Request::Export, app), Answer::Refused(Why::Retired));
-    }
-}
-
 #[test]
 fn every_node_of_an_account_signs_its_data_with_the_one_data_key() {
     let mut m = provisioned(APP);

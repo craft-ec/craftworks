@@ -18,7 +18,7 @@
 //!   again, from a handover, sets its PIN anew too.)
 //! - **Sessions:** an unlock opens a session for that APP on this node, naming one member, kept here until the app
 //!   logs out (a reload, another tab or another browser on the node is still logged in). One app's session is never
-//!   another's. Who and Sign go through it. (No key file: `Export` is retired, kept only for the requests' wire order.)
+//!   another's. Who and Sign go through it. (No key file: a member's key never leaves.)
 //! - **No recovery words here.** The words are the account's owner: a node that kept them would lose the account to
 //!   anyone who copied its disk, and an owner cannot be rotated away. Shown once at registration, typed when needed.
 //! - **The account's data key:** each member keeps its account's DATA key (derived from the words, the same on every
@@ -80,9 +80,6 @@ pub enum Request {
     /// `table`: the table's NAME, for a tail whose label is blinded (`blind_name`): checked against the label, and the
     /// grant is the name's.
     Sign { params: Vec<u8>, seq: u64, value_hash: [u8; HASH_LEN], space: Option<[u8; 32]>, table: Option<String> },
-    /// RETIRED (the key file was dropped, 2026-09-30): refused. Kept so every later request keeps its wire number (an
-    /// earlier build is still asked the handover questions).
-    Export,
     /// For the next version of this delegate: the member this PIN opens, to its home app. Counted as an unlock try.
     Handover { pin: String },
     /// Leave to write these tables of the session member's account: ONE prompt for all the ones not yet held (an app
@@ -95,8 +92,7 @@ pub enum Request {
     Revoke { app: [u8; 32], table: String },
     /// The KEY that seals table `table` of the session member's account (generation `gen`): given only to a site the
     /// person allowed that table (its home app always), because with it a site READS the table. Derived here from the
-    /// account's data key, which never leaves. (Last in the list: the variants before keep their encoding, so earlier
-    /// builds still read a Handover.)
+    /// account's data key, which never leaves.
     TableKey { table: String, gen: u8 },
     /// KEEP this member's MLS state of a SPACE's group (`None`: the account's; run by the page) and the secret of its
     /// current epoch. The home site only: whoever holds the state can act in the group.
@@ -200,7 +196,6 @@ pub enum Answer {
     LoggedOut,
     /// The 64-byte ed25519 signature.
     Signed { sig: Vec<u8> },
-    Exported { seed: [u8; 32] },
     /// A member, handed to the next version of this delegate.
     Handed { seed: [u8; 32], did: [u8; 32], data: Option<[u8; 32]> },
     Granted { tables: Vec<String> },
@@ -275,8 +270,6 @@ pub enum Why {
     Unreadable,
     /// No MLS epoch secret is held here (for that epoch, or at all yet).
     NoEpoch,
-    /// A request no longer served (a key file's export).
-    Retired,
 }
 
 /// The most tables one grant names (an app's `uses`, asked in one prompt).
@@ -930,7 +923,6 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             Some(a) => a.unlocked(),
             None => Refused(Why::NoSession),
         },
-        Request::Export => Refused(Why::Retired),
         Request::Handover { pin } => match try_pin(h, &pin) {
             Err(answer) => answer,
             // The right PIN from another app is not a handover: that app never held this member.
