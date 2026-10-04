@@ -64,16 +64,18 @@ export async function start(ctx) {
     let host = null; // where its text is, to edit in place
     const bar = actions.bar(it, { outside, comments: false, discover, removed, changed: redraw, edit: parts.look === "card" && parts.votes ? () => editIn(host, it, redraw) : null });
     // ITS LOOK, WHOLE.
-    if (parts.look === "player") {
+    if (parts.look === "player" || parts.look === "picture") {
       const m = (await ctx.require("media-look")).full(it, { outside });
       const k = kinds.of(it.kind);
       const fields = (k?.fields ?? []).filter(x => it.meta?.[x]).map(x => h("span", { textContent: `${kinds.fieldLabel(x)}: ${it.meta[x]}` }));
       page.append(
-        m.el,
-        h("h1", { textContent: it.title }),
-        h("div", { className: "line" }, h("span", { className: "s" }, cards.author(it.by, items.appOf(it.kind)), ` · ${cards.ago(it.at)}${k ? ` · ${k.label}` : ""}${it.private ? " · only you" : ""}`), votes, bar),
-        fields.length ? h("div", { className: "fields" }, ...fields) : null,
-        parts.about && it.body ? h("div", { className: "about" }, written(it)) : null,
+        ...[
+          m.el,
+          h("h1", { textContent: it.title }),
+          h("div", { className: "line" }, h("span", { className: "s" }, cards.author(it.by, items.appOf(it.kind)), ` · ${cards.ago(it.at)}${k ? ` · ${k.label}` : ""}${it.private ? " · only you" : ""}`), votes, bar),
+          fields.length ? h("div", { className: "fields" }, ...fields) : null,
+          parts.about && it.body ? h("div", { className: "about" }, written(it)) : null,
+        ].filter(Boolean),
       );
       queueMicrotask(() => m.start());
     } else {

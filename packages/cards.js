@@ -17,6 +17,14 @@ export async function start(ctx) {
   const style = document.createElement("style");
   style.textContent = `
     .cw-card { text-decoration: none; color: inherit; display: grid; gap: 6px; min-width: 0; }
+    .cw-pic { position: relative; display: block; border-radius: var(--cw-radius-sm); overflow: hidden; background: var(--cw-hover); color: #fff; text-decoration: none; }
+    .cw-pic img { display: block; width: 100%; height: auto; }
+    .cw-pic .none { aspect-ratio: 4 / 3; display: grid; place-items: center; font-size: 2.5rem; }
+    .cw-pic .over { position: absolute; inset: auto 0 0 0; padding: 24px 10px 8px; background: linear-gradient(transparent, rgba(0, 0, 0, .7)); opacity: 0; transition: opacity .15s; }
+    .cw-pic:hover .over, .cw-pic:focus .over { opacity: 1; }
+    .cw-pic .over .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cw-pic .over .s { font-size: var(--cw-text-sm); opacity: .85; }
+    .cw-pic .over .by { cursor: pointer; }
     .cw-card .thumb { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: var(--cw-radius); overflow: hidden;
       display: grid; place-items: center; font-size: 2rem; }
     .cw-card .thumb.sq { aspect-ratio: 1; }
@@ -215,6 +223,18 @@ export async function start(ctx) {
     );
   }
 
+  // A PICTURE on a wall (Images): the picture itself (its preview), its title and who over it on hover.
+  function picture(it, { href = items.pageOf(it.ref, it.kind), by = true } = {}) {
+    const ref = it.files?.find(x => kinds.mediaOf(x)?.domain === "image") ?? it.files?.[0] ?? {};
+    const src = ref.preview ?? (ref.inline ? `data:${ref.type};base64,${ref.inline}` : null);
+    return h(
+      "a",
+      { className: "cw-pic", href },
+      src ? h("img", { src, alt: it.title ?? "", loading: "lazy" }) : h("div", { className: "none", textContent: "🖼" }),
+      h("div", { className: "over" }, h("div", { className: "t", textContent: it.title }), h("div", { className: "s" }, by ? author(it.by, "image") : null, `${by ? " · " : ""}${ago(it.at)}${it.kind !== "image" ? ` · ${kinds.of(it.kind)?.label ?? it.kind}` : ""}${it.private ? " · only you" : ""}`)),
+    );
+  }
+
   // Each kind's look: its own (a caption), else its domain's.
   const LOOKS = { video: media, audio: media, note, file, image: file, document: file, text, caption };
   function card(it, { href = items.pageOf(it.ref, it.kind), actions = [], by = true, corner = null, below = null, open = null, lead = null, body = null } = {}) {
@@ -248,5 +268,5 @@ export async function start(ctx) {
   }
   const MEDIA = new Set(["video", "audio"]);
 
-  return { card, embed, ago, clock, author, sizeOf };
+  return { card, picture, embed, ago, clock, author, sizeOf };
 }

@@ -323,7 +323,7 @@ export async function start(ctx) {
         role: d => (d === did ? "owner" : null),
         can: d => d === did,
         config: (_a, _k, dflt = null) => dflt,
-        apps: () => ["board", "video", "audio"],
+        apps: () => ["board", "video", "audio", "image"],
         act: async ({ act, path, action, who }) => {
           if (act !== "policy") throw new Error("a personal space keeps policies only");
           await ready;

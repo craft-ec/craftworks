@@ -858,7 +858,7 @@ export async function start(ctx) {
 
   // WHERE AN ITEM IS SHOWN — the one link to its page, for every app that links to one: a video or a track where it
   // plays (Video, Audio, Image), a post (or anything else) on its board, a note in Note, a file in Drive.
-  const APP_OF = { video: "video", audio: "audio", image: "drive", note: "note", file: "drive", document: "drive" };
+  const APP_OF = { video: "video", audio: "audio", image: "image", note: "note", file: "drive", document: "drive" };
   const appOf = kind => APP_OF[kinds.domain(kind)] ?? "board";
   // In its PLACE (`where`'s addresses): a space's in the space, a person's in their space (`u/<did>`: yours too).
   function pageOf(ref, kind) {

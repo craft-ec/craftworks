@@ -1,4 +1,4 @@
-// MEDIA LOOK, a component: a video's or an audio's look WHOLE — on its own page (`item-page`), the same wherever it
+// MEDIA LOOK, a component: a video's, an audio's or an image's look WHOLE — on its own page (`item-page`), the same wherever it
 // opens. The player (`media-view`: its tracks by its video id), a video's scrub strip of frames, an audio's cover
 // (and a speed for a podcast or an audiobook), its lyrics or transcript line, its timed text; while its uploader's
 // devices still make it, what is done.
@@ -25,6 +25,10 @@ export async function start(ctx) {
     .cw-media .timed { max-height: 320px; overflow: auto; border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-3); }
     .cw-media .timed p { margin: 4px 0; cursor: pointer; color: var(--cw-muted); }
     .cw-media .timed p.on { color: var(--cw-fg); font-weight: 600; }
+    .cw-media.pic .frame { display: grid; place-items: center; background: #111; border-radius: var(--cw-radius); overflow: auto; max-height: 80vh; cursor: zoom-in; }
+    .cw-media.pic .frame img { max-width: 100%; max-height: 80vh; object-fit: contain; }
+    .cw-media.pic.actual .frame { cursor: zoom-out; place-items: start; }
+    .cw-media.pic.actual .frame img { max-width: none; max-height: none; }
     .cw-media select { font: inherit; padding: 4px 8px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); }`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
@@ -34,7 +38,29 @@ export async function start(ctx) {
   };
   const fileOf = v => v.files?.find(f => f.type === studio.MANIFEST || /^(video|audio)\//.test(f.type ?? "")) ?? v.files?.[0] ?? null;
 
+  // AN IMAGE whole: its preview at once, the picture itself when read; a click shows it at its own size.
+  function picture(v, { outside = null } = {}) {
+    const f = v.files?.find(x => kinds.mediaOf(x)?.domain === "image") ?? v.files?.[0] ?? null;
+    const img = h("img", { alt: v.title ?? "", src: f?.preview ?? "" });
+    const note = h("span", { className: "level" });
+    const el = h("div", { className: "cw-media pic" }, h("div", { className: "frame" }, img), note);
+    el.querySelector(".frame").onclick = () => el.classList.toggle("actual");
+    const start = async () => {
+      if (!f) return;
+      note.textContent = "Loading the picture…";
+      try {
+        const blob = await files.get(f, { onProgress: e => (note.textContent = `Loading ${Math.round((100 * e.done) / Math.max(1, e.size))}%`) });
+        img.src = URL.createObjectURL(blob);
+        note.textContent = "";
+      } catch (e) {
+        note.textContent = e.message ?? String(e);
+      }
+    };
+    return { el, start, media: null };
+  }
+
   function full(v, { outside = null } = {}) {
+    if (kinds.domain(v.kind) === "image") return picture(v, { outside });
     const audio = kinds.domain(v.kind) === "audio";
     const f = fileOf(v);
     const level = h("span", { className: "level" });
