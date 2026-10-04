@@ -431,6 +431,16 @@ export async function start(ctx) {
       const had = (await index.spacePointers(sp, "writers").catch(() => [])).some(p => p?.w === sp.self && p.epoch === s.epoch && p.branch === branch && p.sealedAt === 0);
       if (!had) await index.spacePoint(sp, "writers", { w: sp.self, epoch: s.epoch, branch }).catch(e => ((announced = -1), Promise.reject(e)));
     }
+    // EVERY SWITCH of the group keeps the branch it leaves: its epoch secrets that the group now on does not share
+    // (the epochs where the two differ) — kept as lost, read with as alternates. Nothing is ever sealed under a key
+    // no device keeps.
+    const keepLeft = async wasList => {
+      if (!wasList.length || !m) return;
+      const from = Math.min(...wasList.map(l => l.epoch));
+      const now = await logs.branch(m.status(), from).catch(() => [{ epoch: m.status().epoch, secret: hexOf(m.status().secret) }]);
+      const left = wasList.filter(l => !now.some(n => n.epoch === l.epoch && n.secret === l.secret) && now.some(n => n.epoch === l.epoch));
+      if (left.length) await keepLostHere(left);
+    };
     const keepLostHere = async list => {
       const t = await spacekeys();
       const had = JSON.parse(t.rows().find(r => r.key === `${at}~lost`)?.value ?? "[]");
@@ -479,9 +489,14 @@ export async function start(ctx) {
       const r = JSON.parse(v);
       if (m && m.status().epoch >= r.epoch) return false;
       const first = !m;
+      // The branch this device is on, before it is replaced: a newer state saved by another device of the account
+      // (or by upkeep) may be ANOTHER branch — what was sealed on this one must stay readable.
+      const was = m ? m.status() : null;
+      const wasList = was ? await logs.branch(was, Math.max(0, was.epoch - 8)).catch(() => [{ epoch: was.epoch, secret: hexOf(was.secret) }]) : [];
       m = mlsGlue.Mls.load_space(sp.idBytes, bytes(r.state));
       const s = m.status();
       await auth.identity.epochKeep(s.epoch, s.secret, sp.idBytes);
+      await keepLeft(wasList);
       if (first) {
         const n = await logs.history(s).catch(() => 0);
         if (n) ctx.log(`${sp.name ?? "space"} keys`, { what: `${n} earlier epoch(s) kept on this device` });

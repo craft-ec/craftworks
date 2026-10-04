@@ -492,7 +492,7 @@ impl Core {
             wire::block::block_contract(
                 &self.sealed_code,
                 &data::block_address(
-                    &o.table_key.ok_or("this table's key is not held here")?,
+                    &o.address_key().ok_or("this table's key is not held here")?,
                     cid,
                 ),
             )
@@ -633,11 +633,7 @@ impl Core {
             data::Step::Keys(epochs) => Ok(FlushOut::Keys(epochs)),
             data::Step::Ready(f) => {
                 let tk = if f.sealed {
-                    Some(
-                        self.tail(id)?
-                            .table_key
-                            .ok_or("this table's key is not held here")?,
-                    )
+                    Some(f.address_key.ok_or("this table's key is not held here")?)
                 } else {
                     None
                 };

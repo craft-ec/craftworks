@@ -37,6 +37,13 @@ pub const ROOT_PARITY: &[u8] = b"\0root-parity";
 /// a Sealed contract at its address ([`block_address`]), sealed whole ([`seal_block`]), with the rows IN THE CLEAR
 /// inside — so keys stay ordered (range reads work) and nothing of the tree's shape shows. A tree without it is from
 /// before (Block contracts, rows sealed one by one): read as it is, and built again, sealed, by the next flush.
+///
+/// Its value names THE ONE KEY the whole tree is sealed with: that key's header ([`KeyRef::header`]) and its id
+/// ([`key_id`]). Every block's address comes from that key ([`Open::address_key`]), so the same block sealed under
+/// another key lives at ANOTHER address: a Sealed contract keeps the first state it is given, and a tree sealed over
+/// to a new key (an epoch moved, a fork healed onto the winner's) must never land where the old one is. A flush whose
+/// key is not the tree's builds the tree again, whole, under its own. (`[1]`: a tree from before, under the table's
+/// own key.)
 pub const SEALED_TREE: &[u8] = b"\0sealed-tree";
 
 /// A sealed row's key and value, and a sealed tree block, start with WHICH KEY sealed them: `[1, 0]` the table's own
@@ -154,6 +161,11 @@ pub fn block_address(tk: &[u8; 32], cid: &Cid) -> [u8; 32] {
     *blake3::keyed_hash(&subkey(tk, "craftworks 2026-09-28 block address"), cid).as_bytes()
 }
 
+/// A key's id, as a tree names the key it is sealed with ([`SEALED_TREE`]): says which key, gives nothing of it.
+pub fn key_id(k: &[u8; 32]) -> [u8; 32] {
+    subkey(k, "craftworks 2026-10-04 tree key id")
+}
+
 pub struct Open {
     pub params: Vec<u8>,
     /// The Tail contract's code (the node needs it for the first PUT) and its hash (what names the instance).
@@ -203,6 +215,8 @@ pub struct Flush {
     /// Whether the blocks are sealed (at their addresses in Sealed contracts) or in the clear (a public tree: Block
     /// contracts named by their ids).
     pub sealed: bool,
+    /// The key the new tree is sealed with: its blocks' addresses come from it ([`block_address`]).
+    pub address_key: Option<[u8; 32]>,
     pub seq: u64,
     pub hash: [u8; 32],
     pub blocks: Vec<(Cid, Vec<u8>)>,
@@ -339,6 +353,23 @@ impl Open {
         }
     }
 
+    /// The key the tree names as the one it is sealed with (see [`SEALED_TREE`]) — `(which, its id)`; `None`: a tree
+    /// from before, under the table's own key.
+    fn tree_key_ref(&self) -> Option<(KeyRef, [u8; 32])> {
+        let v = self.writer.current()?.body.entries.get(SEALED_TREE)?.value.clone()?;
+        let (by, hl) = KeyRef::of(&v)?;
+        Some((by, v.get(hl..hl + 32)?.try_into().ok()?))
+    }
+
+    /// THE key the tree's blocks are sealed with and their addresses come from: found by its id among the keys held
+    /// for it (its epoch's own, or an alternate). `None`: not held here.
+    pub fn address_key(&self) -> Option<[u8; 32]> {
+        match self.tree_key_ref() {
+            Some((by, id)) => self.keys_for(by).into_iter().find(|k| key_id(k) == id),
+            None => self.table_key,
+        }
+    }
+
     /// Whether the tail's tree is sealed whole (see [`SEALED_TREE`]).
     pub fn sealed_tree(&self) -> bool {
         self.writer.current().is_some_and(|t| t.body.entries.get(SEALED_TREE).is_some_and(|e| e.value.is_some()))
@@ -348,7 +379,7 @@ impl Open {
     /// before) the Block contract its id names.
     pub fn block_params(&self, cid: &Cid) -> Option<(bool, [u8; 32])> {
         if self.sealed_tree() {
-            Some((true, block_address(&self.table_key?, cid)))
+            Some((true, block_address(&self.address_key()?, cid)))
         } else {
             Some((false, *cid))
         }
@@ -572,7 +603,12 @@ impl Open {
             let by = self.writes.ok_or("this table's key is not held here")?;
             Some((by, self.key_for(by).ok_or("this table's key is not held here")?))
         };
-        let reseal = self.reseal_tree();
+        // Under another key than the tree's (an epoch moved, a fork healed): the tree built again, whole, under this one.
+        let rekey = match seal {
+            Some((_, tk)) if self.sealed_tree() => self.address_key() != Some(tk) || self.tree_key_ref().is_none(),
+            _ => false,
+        };
+        let reseal = self.reseal_tree() || rekey;
         if self.pending_rows() == 0 && !reseal {
             return Err("nothing to flush".into());
         }
@@ -627,11 +663,12 @@ impl Open {
         }
         let mut ops = vec![op, Op::Set { key: ROOT_PARITY.to_vec(), value: ids }];
         if seal.is_some() {
-            ops.push(Op::Set { key: SEALED_TREE.to_vec(), value: vec![1] });
+            let (by, tk) = seal.expect("sealed");
+            ops.push(Op::Set { key: SEALED_TREE.to_vec(), value: [by.header(), key_id(&tk).to_vec()].concat() });
         }
         let (seq, hash) = self.prepare(ops).ok_or("the tail would refuse the flush")?;
         self.staged = Some(staging);
-        Ok(Step::Ready(Flush { sealed: seal.is_some(), seq, hash, blocks }))
+        Ok(Step::Ready(Flush { sealed: seal.is_some(), address_key: seal.map(|(_, tk)| tk), seq, hash, blocks }))
     }
 
     /// The signature for the prepared step. Returns what to send: `Put(state)` if the network has no tail yet, else
@@ -747,6 +784,13 @@ impl Open {
     /// Every row in the clear: the TREE's (at the tail's root) with the TAIL's over them (a pending delete hides a
     /// tree row). `Need` names the tree blocks to fetch first, `Keys` the epochs whose keys to get first.
     fn collect(&mut self) -> Result<Step<Rows>, String> {
+        // The key the tree is sealed with, first: without it no block of it can even be named.
+        if self.sealed_tree() && self.address_key().is_none() {
+            return match self.tree_key_ref() {
+                Some((KeyRef::Epoch(e), _)) if !self.epochs.contains_key(&e) && !self.no_key.contains(&e) => Ok(Step::Keys(vec![e])),
+                _ => Err("its tree is sealed with a key this page does not hold".into()),
+            };
+        }
         let body = self.writer.body();
         let (tail_rows, keys) = self.tail_rows(&body);
         if !keys.is_empty() {
@@ -1470,13 +1514,16 @@ mod tests {
         put_row(&key, &mut o, "a", "on the losing branch");
         flush(&key, &mut o);
         put_row(&key, &mut o, "b", "still in the tail");
-        // The control: with the winner's key alone, the losing branch's tree block is refused ("not what was asked").
+        // The control: with the winner's key alone, the losing branch's tree cannot even be named — its addresses come
+        // from the losing key — so nothing of it is asked for, and the read says so.
         let mut c = Open::new(CODE, &member, "notes");
         c.set_table_key(table);
         assert!(c.absorb(&o.writer.state()));
         c.epoch_key(2, Some(won), false);
-        let Ok(Step::Need(ids)) = c.rows() else { panic!("the tree is needed first") };
-        assert!(ids.iter().all(|id| !c.absorb_block(id, &o.sent[id])), "no block of the losing branch opens with the winner's key");
+        assert!(c.rows().is_err(), "a tree under a key not held is refused, never fetched");
+        let root = o.writer.body().root.expect("a tree");
+        let lost_at = c.block_params(&root);
+        assert!(lost_at.is_none(), "no address for a tree whose key is not held");
         // With the losing key as an alternate of epoch 2: all of it.
         let mut r = Open::new(CODE, &member, "notes");
         r.set_table_key(table);
@@ -1509,7 +1556,17 @@ mod tests {
             o.commit(sign(&key, &o, seq, h)).unwrap();
             o.rows().unwrap();
         }
+        // Where each block of the losing tree lives, as the tail names it.
+        let before: HashMap<Cid, [u8; 32]> = o.blocks.0.keys().filter_map(|c| Some((*c, o.block_params(c)?.1))).collect();
         flush(&key, &mut o);
+        // Sealed over WHOLE under the winner's key, at the winner's addresses: a block whose bytes did not change is
+        // never put where its losing copy is (a Sealed contract keeps the first state it is given).
+        assert_eq!(o.address_key(), Some(won));
+        let same: Vec<Cid> = o.blocks.0.keys().filter(|c| before.contains_key(*c)).copied().collect();
+        assert!(!same.is_empty(), "blocks whose contents survive the heal (else this proves nothing)");
+        for c in &same {
+            assert_ne!(o.block_params(c).unwrap().1, before[c], "an unchanged block moved to the winner's address");
+        }
         assert_eq!(read_with(&o, &member, table, &[(2, won)]).unwrap().0, ["a=on the losing branch", "b=still in the tail"]);
     }
 
