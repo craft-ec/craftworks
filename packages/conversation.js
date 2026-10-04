@@ -58,7 +58,13 @@ export async function start(ctx) {
     const tags = await Promise.all(card.keyPackages.map(tagOf));
     const spent = new Set(used.rows().filter(r => r.value).map(r => r.key));
     const unused = card.keyPackages.filter((_, i) => !spent.has(tags[i]));
-    if (!unused.length) throw new Error("their card has no key package left unused (it renews when they are next online): try again then");
+    if (!unused.length) {
+      // Told so, once per card (its packages as they are): their page puts a fresh set on it and asks again.
+      const k = `renew-asked:${did}|${tags.join("").slice(0, 32)}`;
+      if (!used.rows().some(r => r.key === k && r.value))
+        await index.send(did, { kind: "renew-keys", from: me.id, at: Date.now() }).then(() => used.put(k, String(Date.now())), () => {});
+      throw new Error("their card has no key package left unused (asked to renew it; it renews when they are next online): try again then");
+    }
     const kp = unused[Math.floor(Math.random() * unused.length)];
     await used.put(tags[card.keyPackages.indexOf(kp)], String(Date.now()));
     // WELCOMED AGAIN (a welcome that never opened — its key package lost — or a member who lost the space): whatever
@@ -199,6 +205,7 @@ export async function start(ctx) {
     }
     return out;
   }
+  let renewedForWelcomes = false;
   async function accept() {
     const me = await space.account();
     if (!me) return [];
@@ -209,6 +216,7 @@ export async function start(ctx) {
     const once = await (await ctx.require("storage")).table("keypacks");
     await once.settled;
     const done = k => once.rows().some(r => r.key === k && r.value);
+    let unanswerable = 0; // welcomes made for a key package this account does not hold
     for (const it of await index.inbox()) {
       // WELCOME AGAIN, asked by someone a welcome from this account never opened for (made from their card's key
       // packages before they renewed them): welcomed again from their card now — into a space this account has, where
@@ -232,6 +240,20 @@ export async function start(ctx) {
         } catch (e) {
           ctx.log("conversation", { what: `welcoming ${short(it.from)} again: ${e.message}` });
         }
+        continue;
+      }
+      // RENEW, asked by someone whose welcomes to this account found every key package on its card used: a fresh set,
+      // and every request still waiting made again (once per ask).
+      if (it.kind === "renew-keys" && it.from && !p.is("block", it.from)) {
+        const k = `renewed-for:${it.from}|${it.at}`;
+        if (done(k)) continue;
+        await directory
+          .renew()
+          .then(() => askAgain())
+          .then(
+            async n => (await once.put(k, String(Date.now())), ctx.log("conversation", { what: `${short(it.from)} found this card's key packages all used: a fresh set put on it${n ? `, ${n} request(s) made again` : ""}` })),
+            e => ctx.log("conversation", { what: `renewing the card's key packages: ${e?.message ?? e}` }),
+          );
         continue;
       }
       if (it.kind !== "welcome" || p.is("block", it.from) || !it.welcome) continue;
@@ -267,6 +289,7 @@ export async function start(ctx) {
         // welcome again from the card as it is now.
         const k = `asked-again:${it.space}|${(it.kp ?? it.welcome).slice(0, 32)}`;
         if (!held && !done(k) && !had) {
+          unanswerable += 1; // seen failing for the first time (an old one already counted)
           await index
             .send(it.from, { kind: "welcome-again", space: it.space, from: me.id, kp: it.kp ?? it.welcome.slice(0, 32), at: Date.now() })
             .then(() => once.put(k, String(Date.now())), err => ctx.log("conversation", { what: `asking ${short(it.from)} to welcome again: ${err.message}` }));
@@ -278,6 +301,19 @@ export async function start(ctx) {
     }
     // Its key package is used up: a new one on the card.
     if (out.length) await directory.renew().catch(e => ctx.log("conversation", { what: `renewing the key package: ${e.message}` }));
+    // WELCOMES THIS ACCOUNT CANNOT OPEN: each spent one of the card's key packages (the welcomer marks it used), none
+    // opened — the card's may be all spent, or not this account's. A fresh set put on it (once a page), and every request
+    // still waiting made again: the next welcome is made from these.
+    else if (unanswerable && !renewedForWelcomes) {
+      renewedForWelcomes = true;
+      await directory
+        .renew()
+        .then(() => askAgain())
+        .then(
+          n => ctx.log("conversation", { what: `${unanswerable} welcome(s) made for key packages not held here: a fresh set put on the card${n ? `, ${n} request(s) made again` : ""}` }),
+          e => ((renewedForWelcomes = false), ctx.log("conversation", { what: `renewing the card's key packages: ${e?.message ?? e}` })),
+        );
+    }
     return out;
   }
 
