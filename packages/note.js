@@ -69,7 +69,7 @@ export async function mount(ctx, el) {
       <div class="labelbar"></div>
       <form class="composer">
         <input class="title" name="title" placeholder="Title" hidden>
-        <textarea class="body" name="body" rows="1" placeholder="Take a note…"></textarea>
+        <div class="body"></div>
         <div class="row" hidden><button type="button" class="palette" title="Background">🎨</button>
           <span class="audience-slot"></span>
           <button type="button" class="end close">Close</button></div>
@@ -80,7 +80,7 @@ export async function mount(ctx, el) {
       <p class="empty" hidden></p>
       <dialog class="editor">
         <input class="title" name="title" placeholder="Title">
-        <textarea class="body" name="body" rows="6" placeholder="Note"></textarea>
+        <div class="body"></div>
         <div class="label-slot"></div>
         <div class="row"><span class="pin-slot"></span>
           <button type="button" class="palette" title="Background">🎨</button>
@@ -151,11 +151,11 @@ export async function mount(ctx, el) {
   });
   // SAVE: a change to a note held (its editors: `items.editItem`), or a new one made (`items.submit`): its ref.
   const save = async (key, n) => {
-    const { title, body, color, archived } = n;
+    const { title, body, color, archived, files } = n;
     try {
       const was = key && held.find(x => x.ref === key);
-      if (was) await items.editItem(key, body, { title, meta: { ...(was.meta ?? {}), color, archived } });
-      else key = await items.submit({ board: sp?.id ?? null, title, body, kind: "note", meta: { color, archived }, audience: n.audience ?? who.value(), write: who.write() });
+      if (was) await items.editItem(key, body, { title, meta: { ...(was.meta ?? {}), color, archived }, ...(files ? { files } : {}) });
+      else key = await items.submit({ board: sp?.id ?? null, title, body, kind: "note", meta: { color, archived }, files: files ?? [], audience: n.audience ?? who.value(), write: who.write() });
       reload();
       return key;
     } catch (e) {
@@ -205,32 +205,48 @@ export async function mount(ctx, el) {
   };
   const tint = (node, color) => (node.style.background = color || "");
 
+  // THE ONE EDITOR (`md-editor`): a note is written as everything is — formatting, media inline, any item inserted,
+  // files attached (kept where the note is: its space's, or yours; public when the note is).
+  const [mdEditor, attachments] = await Promise.all(["md-editor", "attachments"].map(n => ctx.require(n)));
+  const editorOf = (placeholder, files = []) => {
+    const pick = attachments.picker({ space: sp, from: { app: "note" }, public: () => who.value() === "public", media: true });
+    pick.preset?.(files);
+    return mdEditor.create({ pick, placeholder, label: "Note" });
+  };
   // THE COMPOSER: a line until clicked, then title and body; a note is made when it closes with something in it.
   const composer = root.querySelector(".composer");
-  const [cTitle, cBody, cRow] = [".title", ".body", ".row"].map(q => composer.querySelector(q));
+  const [cTitle, cHost, cRow] = [".title", ".body", ".row"].map(q => composer.querySelector(q));
+  let cEd = editorOf("Take a note…");
+  cHost.replaceChildren(cEd.el);
+  const cBar = () => cEd.el.querySelector(".bar");
+  cBar() && (cBar().hidden = true);
   let composing = { color: "" };
   const open = () => {
     cTitle.hidden = false;
     cRow.hidden = false;
-    cBody.rows = 3;
+    cBar() && (cBar().hidden = false);
   };
   const shut = async () => {
+    if (cEd.busy()) return said("Still sending the files: a moment…");
     const title = cTitle.value.trim();
-    const body = cBody.value.trim();
+    const body = cEd.value().trim();
+    const files = cEd.files();
     const audience = who.value(); // read before the form resets
     composer.reset();
     cTitle.hidden = true;
     cRow.hidden = true;
-    cBody.rows = 1;
+    cEd = editorOf("Take a note…");
+    cHost.replaceChildren(cEd.el);
+    cBar() && (cBar().hidden = true);
     const color = composing.color;
     composing = { color: "" };
     tint(composer, "");
-    if (!(title || body)) return;
+    if (!(title || body || files.length)) return;
     // Made while one label is shown: it has that label, as in Keep.
-    const key = await save(null, { title, body, color, archived: false, audience });
+    const key = await save(null, { title, body, color, archived: false, audience, files });
     if (key && label) await labels.set(ref(key), label, true).catch(e => said(`Could not label: ${e?.message ?? e}`));
   };
-  cBody.addEventListener("focus", open);
+  cHost.addEventListener("focusin", open);
   composer.querySelector(".close").onclick = shut;
   composer.querySelector(".palette").onclick = e => palette(e.currentTarget, c => ((composing.color = c), tint(composer, c)));
   addEventListener("click", e => {
@@ -240,12 +256,15 @@ export async function mount(ctx, el) {
 
   // THE EDITOR: a note opened from its card; saved when it closes, if anything changed.
   const editor = root.querySelector("dialog.editor");
-  const [eTitle, eBody] = [".title", ".body"].map(q => editor.querySelector(q));
+  const [eTitle, eHost] = [".title", ".body"].map(q => editor.querySelector(q));
   let editing = null;
+  let eEd = null;
   const edit = n => {
     editing = { ...n };
     eTitle.value = n.title;
-    eBody.value = n.body;
+    eEd = editorOf("Note", n.item?.files ?? []);
+    eEd.set(n.body);
+    eHost.replaceChildren(eEd.el);
     tint(editor, n.color);
     editor.querySelector(".pin-slot").replaceChildren(pinUI.button(ref(n.key)));
     editor.querySelector(".label-slot").replaceChildren(labelUI.chips(ref(n.key), { onPick: show }));
@@ -254,12 +273,15 @@ export async function mount(ctx, el) {
   };
   const finish = async () => {
     if (!editing) return;
-    const n = { ...editing, title: eTitle.value.trim(), body: eBody.value.trim() };
+    if (eEd?.busy()) return said("Still sending the files: a moment…");
+    const files = eEd?.files() ?? [];
+    const n = { ...editing, title: eTitle.value.trim(), body: eEd?.value().trim() ?? editing.body, files };
     const was = held.find(x => x.ref === n.key);
     const before = was ? note(was) : { title: "", body: "", color: "", archived: false };
     editing = null;
     editor.close();
-    const changed = ["title", "body", "color", "archived"].some(k => n[k] !== before[k]);
+    const sameFiles = JSON.stringify(files) === JSON.stringify(was?.files ?? []);
+    const changed = !sameFiles || ["title", "body", "color", "archived"].some(k => n[k] !== before[k]);
     if (changed) await save(n.key, n);
   };
   editor.querySelector(".done").onclick = finish;
@@ -273,7 +295,7 @@ export async function mount(ctx, el) {
   });
   // Pin and colour take effect at once, as in Keep: the card behind the open note moves or changes while it is open.
   // Title and body are saved when it closes.
-  const live = () => save(editing.key, { ...editing, title: eTitle.value.trim(), body: eBody.value.trim() });
+  const live = () => save(editing.key, { ...editing, title: eTitle.value.trim(), body: eEd?.value().trim() ?? editing.body });
   editor.querySelector(".palette").onclick = e =>
     palette(e.currentTarget, c => {
       editing.color = c;

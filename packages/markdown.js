@@ -70,7 +70,7 @@ export async function start(ctx) {
     const kept = [];
     s = s.replace(/\\([\\`*_{}\[\]()#+\-.!|~^]|&gt;|&lt;)/g, (_, c) => (kept.push(c), ESC + (kept.length - 1) + ESC));
     s = s.replace(/`([^`]+)`/g, (_, c) => (codes.push(c), NUL + (codes.length - 1) + NUL));
-    s = s.replace(IMG_RE, (_, a, u) => (FILE.test(u) ? `<span data-file="${FILE.exec(u)[1]}" data-alt="${a}"></span>` : ITEM.test(u) ? `<span data-item="${ITEM.exec(u)[1]}"></span>` : `<img src="${href(u)}" alt="${a}" class="cw-md-media">`));
+    s = s.replace(IMG_RE, (_, a, u) => (FILE.test(u) ? `<span data-file="${FILE.exec(u)[1]}" data-alt="${a}"></span>` : ITEM.test(u) ? `<span data-item="${ITEM.exec(u)[1]}" data-alt="${a}"></span>` : `<img src="${href(u)}" alt="${a}" class="cw-md-media">`));
     s = s.replace(LINK_RE, (_, t, u) => (FILE.test(u) ? `<a data-file-link="${FILE.exec(u)[1]}" href="#">${t}</a>` : `<a href="${href(u)}" target="_blank" rel="noopener">${t}</a>`));
     s = s.replace(/(^|[\s(])((?:https?:\/\/)[^\s<)]+)/g, (_, pre, u) => `${pre}<a href="${href(u)}" target="_blank" rel="noopener">${u}</a>`);
     s = s

@@ -7,7 +7,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [conversation, directory, theme, person, attachments] = await Promise.all(["conversation", "directory", "theme", "person", "attachments"].map(n => ctx.require(n)));
+  const [conversation, directory, theme, person, attachments, markdown, mdEditor] = await Promise.all(["conversation", "directory", "theme", "person", "attachments", "markdown", "md-editor"].map(n => ctx.require(n)));
   const box = ctx.sub === "sent" ? "sent" : "in";
   ctx.actions["/mail"] = [
     { label: "Inbox", href: "#/mail", on: box === "in" },
@@ -31,7 +31,7 @@ export async function mount(ctx, el) {
       .ml .read { overflow-y: auto; padding: var(--cw-space-4) var(--cw-space-5); min-width: 0; }
       .ml .read h2 { margin: 0 0 var(--cw-space-2); font-size: 1.2rem; }
       .ml .read .meta { color: var(--cw-muted); font-size: var(--cw-text-sm); margin-bottom: var(--cw-space-4); }
-      .ml .read .body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+      .ml .read .body { overflow-wrap: anywhere; line-height: 1.5; }
       .ml .read .reply { margin-top: var(--cw-space-4); border: 1px solid var(--cw-line); background: none; color: var(--cw-accent);
         border-radius: var(--cw-radius-sm); padding: var(--cw-space-1) var(--cw-space-3); }
       .ml .empty { color: var(--cw-muted); text-align: center; padding: var(--cw-space-5); }
@@ -54,7 +54,7 @@ export async function mount(ctx, el) {
       <dialog class="compose"><form method="dialog">
         <label>To — name#abc123 or ids (did:craftec:…), separated by commas <input name="to" autocomplete="off" required></label>
         <label>Subject <input name="subject" autocomplete="off"></label>
-        <label>Message <textarea name="body"></textarea></label>
+        <div class="message"></div>
         <div class="row"><p class="said" hidden></p><button value="cancel" formnovalidate>Cancel</button><button value="ok">Send</button></div>
       </form></dialog>
     </div>`;
@@ -96,9 +96,12 @@ export async function mount(ctx, el) {
     read.replaceChildren(
       node("h2", { textContent: m.subject || "(no subject)" }),
       meta,
-      node("div", { className: "body", textContent: m.body }),
-      attachments.show(m.files) ?? "",
+      // WHAT WAS WRITTEN, as every item's text reads (`markdown`): its media and embedded items where they were written,
+      // its other files below.
+      node("div", { className: "body" }),
+      attachments.show((m.files ?? []).filter(f => !markdown.inlined(m.body).has(markdown.keyOf(f)))) ?? "",
     );
+    read.querySelector(".body").append(markdown.render(m.body ?? "", m.files ?? []));
     if (box === "in") read.append(node("button", { type: "button", className: "reply", textContent: "Reply", onclick: () => compose(m) }));
   }
 
@@ -113,18 +116,19 @@ export async function mount(ctx, el) {
       f.elements.subject.value = /^re:/i.test(re.subject) ? re.subject : `Re: ${re.subject}`;
     }
     dlg.onclose = null;
-    // FILES: sent as picked (sealed; the mail's recipients read them).
-    const pick = attachments.picker({ from: { app: "mail" } });
-    f.querySelector(".cw-att-pick")?.remove();
-    f.querySelector(".row").before(pick.el);
+    // THE ONE EDITOR (`md-editor`): its media inline, any item inserted, files attached — sent as picked (sealed; the
+    // mail's recipients read them).
+    const pick = attachments.picker({ from: { app: "mail" }, media: true });
+    const ed = mdEditor.create({ pick, placeholder: "Message", label: "Message" });
+    f.querySelector(".message").replaceChildren(ed.el);
     f.onsubmit = async e => {
       if (e.submitter?.value !== "ok") return;
       e.preventDefault();
       said.hidden = true;
       try {
-        if (pick.busy()) throw new Error("still sending the files: a moment");
+        if (ed.busy()) throw new Error("still sending the files: a moment");
         const to = await Promise.all(f.elements.to.value.split(",").map(x => x.trim()).filter(Boolean).map(x => conversation.person(x)));
-        await conversation.mail.send(to, f.elements.subject.value.trim(), f.elements.body.value, re?.id ?? null, pick.files());
+        await conversation.mail.send(to, f.elements.subject.value.trim(), ed.value(), re?.id ?? null, ed.files());
         dlg.close();
         if (box === "sent") draw();
         else location.hash = "#/mail/sent";
@@ -134,7 +138,8 @@ export async function mount(ctx, el) {
       }
     };
     dlg.showModal();
-    f.elements[re ? "body" : "to"].focus();
+    if (re) ed.focus();
+    else f.elements.to.focus();
   }
 
   list.replaceChildren(theme.loading(box === "sent" ? "Loading sent mail…" : "Loading your mail…"));

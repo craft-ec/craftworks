@@ -190,8 +190,15 @@ export async function start(ctx) {
       else chip.append(h("span", { className: "tag", textContent: `${ref ? (kinds.mediaOf(ref)?.icon ?? "📄") : "📄"} ${alt || ref?.name || key}` }));
       return chip;
     }
+    // AN ITEM embedded (`![title](item:REF)`: any kind): a chip naming it, kept as its Markdown.
+    function itemChip(ref, title) {
+      const chip = h("span", { className: "media", contentEditable: "false" }, h("span", { className: "tag", textContent: `🔗 ${title || "an item"}` }));
+      chip.dataset.md = `![${String(title ?? "").replace(/[\[\]\n]/g, " ")}](item:${ref})`;
+      return chip;
+    }
     function toRich(md) {
       rich.innerHTML = markdown.html(md);
+      for (const s of rich.querySelectorAll("[data-item]")) s.replaceWith(itemChip(s.dataset.item, s.dataset.alt));
       for (const s of rich.querySelectorAll("[data-file]")) s.replaceWith(mediaChip(`![${s.dataset.alt ?? ""}](file:${s.dataset.file})`, s.dataset.file, s.dataset.alt));
       for (const a of rich.querySelectorAll("[data-file-link]")) {
         const c = h("span", { className: "media", contentEditable: "false", textContent: `📄 ${a.textContent}` });
@@ -361,6 +368,46 @@ export async function start(ctx) {
       if (mode === "rich") insertRich(mediaChip(md, markdown.keyOf(ref), alt));
       else insertText(md);
     });
+    // INSERT ANY ITEM (a post, a note, a file, a video…): one of this person's or one they SAVED — the newest, or
+    // found by its title — or any by its reference (what Share copies). It shows where it is written (`cards.embed`), read as its reader may.
+    const find = h("input", { type: "search", placeholder: "Find yours by title, or paste a reference", style: "width:18em;margin:4px 8px" });
+    const found = h("div", {});
+    const insertMenu = h("span", { className: "cw-att-menu", hidden: true }, find, found);
+    let mine = null;
+    const putItem = (ref, title) => {
+      insertMenu.hidden = true;
+      find.value = "";
+      if (mode === "rich") insertRich(itemChip(ref, title));
+      else insertText(`![${String(title ?? "").replace(/[\[\]\n]/g, " ")}](item:${ref})`);
+    };
+    // Only the NEWEST lookup draws (the list loading on opening must not draw over what was typed since).
+    let asked = 0;
+    const listFound = async () => {
+      const n = ++asked;
+      const items = await ctx.require("items");
+      mine ??= (async () => {
+        const [own, saved] = await Promise.all([
+          items.list({ by: (await (await ctx.require("space")).account()).id }, "new", kinds.all(), { window: "all" }).catch(() => []),
+          ctx.require("actions").then(a => Promise.all(a.saved().slice(0, 50).map(r => items.get(r).catch(() => null)))).catch(() => []),
+        ]);
+        const seen = new Set();
+        return [...saved.filter(Boolean), ...own].filter(it => !seen.has(it.ref) && seen.add(it.ref));
+      })();
+      const q = find.value.trim();
+      // A REFERENCE: the item read first (as this person may), so it is named — or said not to be readable.
+      if (/^(space:|did:)\S+\/\S+$/.test(q)) {
+        const it = await items.get(q).catch(() => null);
+        if (n !== asked) return;
+        return found.replaceChildren(it ? btn(`🔗 ${kinds.of(it.kind)?.label ?? it.kind}: ${it.title || (it.body ?? "").slice(0, 40) || "untitled"}`, "Insert it", () => putItem(it.ref, it.title)) : h("span", { className: "s", textContent: "That item is not there, or not yours to read." }));
+      }
+      const all = await mine;
+      if (n !== asked) return;
+      const list = all.filter(it => !q || (it.title ?? "").toLowerCase().includes(q.toLowerCase())).slice(0, 8);
+      found.replaceChildren(...(list.length ? list.map(it => btn(`${kinds.of(it.kind)?.label ?? it.kind}: ${it.title || (it.body ?? "").slice(0, 40) || "untitled"}`, "Insert it", () => putItem(it.ref, it.title))) : [h("span", { className: "s", textContent: q ? "None found." : "Nothing of yours yet." })]));
+    };
+    find.oninput = () => listFound();
+    find.onkeydown = e => e.key === "Escape" && (insertMenu.hidden = true);
+    const insertGroup = h("span", { className: "cw-att-pick" }, btn("＋ Insert", "Insert any item: yours, or by its reference", () => ((insertMenu.hidden = !insertMenu.hidden), insertMenu.hidden || (listFound(), find.focus()))), insertMenu);
     const modeBtn = h("button", { type: "button", className: "mode", onclick: e => (e.preventDefault(), setMode(mode === "rich" ? "markdown" : "rich")) });
     // MEDIA and FILES side by side: 🖼 inline, 📎 attached below (on a chat line: always shown, beside Aa).
     const mediaGroup = pick ? [h("span", { className: "cw-att-pick" }, btn("🖼 Media", `${kinds.media().map(m => m.label).join(", ")}, inline: from this device or from Drive`, () => (mediaMenu.hidden = !mediaMenu.hidden)), mediaMenu), pick.el] : [];
@@ -369,6 +416,7 @@ export async function start(ctx) {
       { className: "bar", hidden: compact },
       ...tools.map(([l, t, f]) => btn(l, t, f)),
       ...(compact ? [] : mediaGroup),
+      ...(compact ? [] : [insertGroup]),
       h("span", { className: "sp" }),
       modeBtn,
     );

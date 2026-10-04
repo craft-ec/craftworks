@@ -34,7 +34,8 @@ export async function start(ctx) {
       background: var(--cw-surface); padding: 12px 14px 6px; cursor: default; position: relative; display: block; gap: 0; }
     .cw-note[style*="background"] { color: var(--cw-on-pastel); border-color: transparent; }
     .cw-note .t { margin-bottom: 6px; }
-    .cw-note .b { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18em; overflow: hidden; }
+    .cw-note .b { overflow-wrap: anywhere; max-height: 18em; overflow: hidden; }
+    .cw-note .b .cw-md > :first-child { margin-top: 0; }
     .cw-note .s { margin-top: 6px; font-size: var(--cw-text-xs); }
     .cw-note .acts { gap: 2px; opacity: 0; transition: opacity .15s; margin-top: 6px; }
     .cw-note:hover .acts, .cw-note:focus-visible .acts, .cw-note:has(:focus-visible) .acts { opacity: 1; }
@@ -136,7 +137,7 @@ export async function start(ctx) {
       href ? "a" : "div",
       { className: "cw-card cw-note", ...(href ? { href } : { tabIndex: 0 }) },
       it.title ? h("div", { className: "t", textContent: it.title }) : null,
-      it.body ? h("div", { className: "b", textContent: it.body }) : null,
+      it.body ? h("div", { className: "b" }, when("markdown", m => m.render(it.body, it.files ?? [], { item: it.ref ?? null }))) : null,
       below ? h("div", { className: "below" }, below) : null,
       by ? h("div", { className: "s" }, author(it.by, "note")) : null,
       corner ? h("div", { className: "corner" }, corner) : null,
