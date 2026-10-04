@@ -88,8 +88,12 @@ export async function start(ctx) {
       throw new Error(`the group made a welcome for another key package of theirs (${made.aimed.join(", ")}), not ${made.asked}`);
     }
     const { owner, nonce } = sp.governance;
+    // ITS HISTORY: the space's earlier epochs' secrets held here — the joiner reads everything before it at once, never
+    // walking a log per epoch (one log missing cut a late joiner off from all before it).
+    const at = (await g.ready().catch(() => null))?.epoch ?? 0;
+    const history = sp.idBytes && at > 0 ? await (await ctx.require("auth")).identity.epochSecrets(sp.idBytes, at).catch(() => []) : [];
     // `kp`: the TAG of the key package it is made for (what the person's page names when it does not open).
-    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, kp: tags[card.keyPackages.indexOf(kp)], made: Date.now(), ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(sp.group ? { group: sp.group } : {}), ...(repair ? { repair } : {}) });
+    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, kp: tags[card.keyPackages.indexOf(kp)], made: Date.now(), ...(history.length ? { history } : {}), ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(sp.group ? { group: sp.group } : {}), ...(repair ? { repair } : {}) });
     ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind} (welcome ${await fingerprint(welcome)}, aimed at ${made.aimed.join(", ")}, tag ${tags[card.keyPackages.indexOf(kp)].slice(0, 8)})` });
     return card;
   }
@@ -214,6 +218,31 @@ export async function start(ctx) {
     }
     return out;
   }
+  // A space's HISTORY handed over (a welcome's, or an answer to a history ask): each earlier epoch's secret kept.
+  async function keepHistory(sp, history) {
+    if (!Array.isArray(history) || !history.length) return 0;
+    const identity = (await ctx.require("auth")).identity;
+    let n = 0;
+    for (const [e, s] of history) if (typeof e === "number" && typeof s === "string") await identity.epochKeep(e, bytesOf(s), sp.idBytes).then(() => (n += 1), () => {});
+    if (n) {
+      ctx.log("conversation", { what: `${sp.name ?? "a space"}: ${n} earlier epoch(s) of its history handed over` });
+      dispatchEvent(new CustomEvent("craftworks:keys"));
+    }
+    return n;
+  }
+  // A HISTORY GAP here (`keys`: its walk stopped): asked of the space's owner and admins, once a page.
+  const askedHistory = new Set();
+  addEventListener("craftworks:history-gap", async ({ detail }) => {
+    if (askedHistory.has(detail.space)) return;
+    askedHistory.add(detail.space);
+    const me = await space.account();
+    const sp = (await space.mine()).find(s => s.id === detail.space);
+    if (!me || !sp) return;
+    const r = await (await ctx.require("roles")).of(sp).catch(() => null);
+    const to = new Set([sp.governance?.owner, ...((r?.members() ?? []).filter(m => m.role === "admin" || m.role === "owner").map(m => m.did))].filter(d => d && d !== me.id));
+    for (const did of to) await index.send(did, { kind: "history-ask", space: sp.id, from: me.id, below: detail.below + 1, at: Date.now() }).catch(() => {});
+    ctx.log("conversation", { what: `${sp.name}: its history asked of ${to.size} admin(s)` });
+  });
   let renewedForWelcomes = false;
   async function accept() {
     const me = await space.account();
@@ -265,6 +294,28 @@ export async function start(ctx) {
           );
         continue;
       }
+      // A HISTORY ASK (a member's walk stopped): their space's earlier secrets held here, sealed to them — once each.
+      if (it.kind === "history-ask" && it.from && !p.is("block", it.from)) {
+        const k = `history:${it.space}|${it.from}|${it.below}`;
+        const sp = mine.find(s => s.id === it.space);
+        if (!sp || done(k)) continue;
+        const r = await (await ctx.require("roles")).of(sp).catch(() => null);
+        if (!r?.members().some(m => m.did === it.from)) continue;
+        const epochs = await (await ctx.require("auth")).identity.epochSecrets(sp.idBytes, Math.max(0, Number(it.below) || 0)).catch(() => []);
+        if (epochs.length) await index.send(it.from, { kind: "history", space: sp.id, from: me.id, epochs, at: Date.now() }).catch(() => {});
+        await once.put(k, String(Date.now()));
+        ctx.log("conversation", { what: `${sp.name}: ${epochs.length} earlier epoch(s) of its history handed to ${short(it.from)}` });
+        continue;
+      }
+      // A HISTORY handed over (an answer to this page's ask): kept, once each.
+      if (it.kind === "history" && it.from && Array.isArray(it.epochs)) {
+        const k = `history-kept:${it.space}|${it.from}|${it.at}`;
+        const sp = mine.find(s => s.id === it.space);
+        if (!sp || done(k)) continue;
+        await keepHistory(sp, it.epochs);
+        await once.put(k, String(Date.now()));
+        continue;
+      }
       if (it.kind !== "welcome" || p.is("block", it.from) || !it.welcome) continue;
       // Joined already — unless REMOVED since (invited back), or this node is on ANOTHER BRANCH of the space's group and
       // this is its REPAIR: taken only onto the branch the OWNER announced (read here, never the message's word).
@@ -285,6 +336,7 @@ export async function start(ctx) {
       try {
         const sp = await space.describe(it.space, v);
         await keys.group(sp).join(it.welcome, { expect });
+        await keepHistory(sp, it.history);
         await space.record(it.space, v);
         // Its request answered: no longer waiting — the space's, and the code the welcome names.
         const t = await asks().catch(() => null);

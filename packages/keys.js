@@ -111,7 +111,11 @@ export async function start(ctx) {
         await log.answer?.();
         const prev = parse(log.rows().find(r => r.key === "open")?.value ?? "{}").prev;
         if (!prev) {
-          if (e > 0) ctx.log(`${g.name ?? "space"} keys`, { what: `its history stops at epoch ${e}: that epoch's log names no epoch before it` });
+          if (e > 0) {
+            ctx.log(`${g.name ?? "space"} keys`, { what: `its history stops at epoch ${e}: that epoch's log names no epoch before it — asking its admins for the rest` });
+            // A member who holds it hands it over (`conversation`: a history ask to the space's admins).
+            if (g.space) dispatchEvent(new CustomEvent("craftworks:history-gap", { detail: { space: hexOf(g.space), below: e } }));
+          }
           break;
         }
         e -= 1;

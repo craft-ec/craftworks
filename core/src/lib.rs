@@ -71,6 +71,7 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::Opened { items } => {
             json!({ "opened": items.iter().map(|i| i.as_ref().map(|b| hex(b))).collect::<Vec<_>>() })
         }
+        Answer::EpochSecrets { epochs } => json!({ "epochs": epochs.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>() }),
         Answer::HandedKeys { mls, epochs } => json!({ "handedKeys": {
             "mls": mls.as_ref().map(|s| hex(s)),
             "epochs": epochs.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>(),
@@ -920,6 +921,10 @@ mod js {
             })
         }
         /// Keep an earlier epoch's secret of a space's group (recovered from escrow, or walked).
+        /// The secrets of a space's epochs below `below` this member holds (for a member let in later).
+        pub fn frames_epoch_secrets(&mut self, space: &[u8], below: f64) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::EpochSecrets { space: b32(space)?, below: below as u64 })
+        }
         pub fn frames_epoch_keep(
             &mut self,
             epoch: f64,

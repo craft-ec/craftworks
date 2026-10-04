@@ -139,6 +139,9 @@ pub enum Request {
     UpkeepMandate { me: String, spaces: Vec<Mandate>, spent: Vec<[u8; 16]> },
     /// The admissions the page has written as acts (and the groups it has loaded): forgotten here.
     UpkeepAck { admitted: Vec<([u8; 32], String)> },
+    /// The secrets this member holds of a space's EARLIER epochs (below `below`): handed to a member let in later (a
+    /// welcome, or their ask), so they read the space's whole history without walking its logs. The home site only.
+    EpochSecrets { space: [u8; 32], below: u64 },
 }
 
 /// A space as upkeep may admit into it: the page's knowledge when it handed it over.
@@ -228,6 +231,7 @@ pub enum Answer {
         stale: Vec<[u8; 32]>,
         said: Option<String>,
     },
+    EpochSecrets { epochs: Vec<(u64, [u8; 32])> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1122,6 +1126,15 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 return Refused(Why::NotSaved);
             }
             upkeep_status(h, Some(&m))
+        }
+        Request::EpochSecrets { space, below } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            let m = a.public();
+            let space = Some(space);
+            EpochSecrets { epochs: (0..below.min(100_000)).filter_map(|e| secret_in(h, &m, &space, e).map(|s| (e, s))).collect() }
         }
         Request::UpkeepAck { admitted } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };

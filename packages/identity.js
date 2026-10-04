@@ -135,6 +135,8 @@ export async function start(ctx) {
     // `space`: a space's id (bytes) — its own group — or none: the account's.
     mlsSave: (state, epoch, secret, space = NONE) => call(core.frames_mls_save(state, epoch, secret, space), "keeping the group's keys").then(keysChanged),
     mlsLoad: (space = NONE) => call(core.frames_mls_load(space), "reading the group's keys"),
+    // The space's EARLIER epochs' secrets held here (below `below`): `[[epoch, secretHex]…]` — for a member let in later.
+    epochSecrets: (space, below) => call(core.frames_epoch_secrets(space, below), "the space's earlier keys").then(r => r?.epochs ?? []),
     epochKeep: (epoch, secret, space = NONE) => call(core.frames_epoch_keep(epoch, secret, space), "keeping an earlier epoch's key").then(keysChanged),
     // A table's key in an MLS epoch (-1: the newest this node holds).
     tableKeyAt: (table, epoch = -1, space = NONE) => call(core.frames_table_key_at(table, epoch, space), `the key of “${table}”`),
