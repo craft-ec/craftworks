@@ -3,7 +3,7 @@
 // and Spotify-shaped; a composed app shows several the same way. Its SUB-TYPES filter the list. CHANNEL-FIRST: yours
 // (each public, or only you) and those you follow (`…`: the feed; `…/mine`; `…/c/<did>`: someone's); SAVED (the pin
 // edge); DISCOVER. In a SPACE (`#/s/<space>/…`): its members' items, public while its domain reads in public. WATCH/
-// LISTEN: `…/w/<ref>` — streamed by byte range (`video-player`), a like (▲), comments, and its timed text
+// LISTEN: `…/p/<ref>` (its page: `item-page`) — streamed by byte range (`video-player`), a like (▲), comments, and its timed text
 // (`caption-store`: Subtitles on a video, Lyrics on a song, a Transcript on a podcast — shown in time for audio).
 // UPLOAD: `…/up` (tags and cover from the file). UI only.
 export async function mount(ctx, el) {
@@ -12,8 +12,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [items, directory, person, theme, space, roles, drive, player, kinds, edge] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "drive-store", "video-player", "kinds", "edge"].map(n => ctx.require(n)));
-  const [studio, files, subs, mediaView] = await Promise.all(["video-studio", "files", "caption-store", "media-view"].map(n => ctx.require(n)));
+  const [items, directory, person, theme, space, roles, drive, kinds, edge] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "drive-store", "kinds", "edge"].map(n => ctx.require(n)));
   const people = await edge.people();
   // WHICH APP this page is (its route): its domain, its words.
   const APPS = {
@@ -39,32 +38,15 @@ export async function mount(ctx, el) {
       .vd .by { cursor: pointer; }
       .vd .by:hover { color: var(--cw-fg); }
       .vd .none { color: var(--cw-muted); text-align: center; padding: var(--cw-space-5); }
-      .vd .watch { display: grid; gap: var(--cw-space-3); max-width: 1000px; }
-      .vd .watch video { width: 100%; max-height: 70vh; background: #000; border-radius: var(--cw-radius); }
-      .vd .watch h1 { font-size: 1.25rem; margin: 0; }
       .vd .row { display: flex; gap: var(--cw-space-3); align-items: center; flex-wrap: wrap; }
       .vd button { font: inherit; cursor: pointer; border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); border-radius: 999px; padding: 5px 14px; }
       .vd button.on { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
-      .vd .about { background: var(--cw-hover); border-radius: var(--cw-radius); padding: var(--cw-space-3); white-space: pre-wrap; }
-      .vd .meta { display: flex; gap: var(--cw-space-3); flex-wrap: wrap; font-size: var(--cw-text-sm); color: var(--cw-muted); }
       .vd form { display: grid; gap: var(--cw-space-2); max-width: 640px; }
       .vd input, .vd textarea, .vd select { font: inherit; padding: 6px 8px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); }
       .vd .said { color: var(--cw-danger); margin: 0; }
-      .vd .scrub { position: relative; height: 10px; background: var(--cw-hover); border-radius: 5px; cursor: pointer; }
-      .vd .scrub .done { position: absolute; inset: 0 auto 0 0; background: var(--cw-accent); border-radius: 5px; pointer-events: none; }
-      .vd .scrub .tip { position: absolute; bottom: 16px; transform: translateX(-50%); border: 2px solid #fff; border-radius: 6px; box-shadow: var(--cw-shadow-lg);
-        background-repeat: no-repeat; pointer-events: none; display: none; }
-      .vd .scrub .tip span { position: absolute; bottom: 2px; left: 0; right: 0; text-align: center; color: #fff; font-size: 11px; text-shadow: 0 0 3px #000; }
-      .vd .level { font-size: var(--cw-text-xs); color: var(--cw-muted); }
       .vd .chips { flex-basis: 100%; display: flex; gap: 6px; flex-wrap: wrap; }
       .vd .chips button { padding: 3px 12px; font-size: var(--cw-text-sm); }
       .vd .grid.sq { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
-      .vd .cover { width: min(320px, 70vw); aspect-ratio: 1; border-radius: var(--cw-radius); overflow: hidden; background: var(--cw-hover); display: grid; place-items: center; font-size: 4rem; }
-      .vd .cover img { width: 100%; height: 100%; object-fit: cover; }
-      .vd .watch audio { width: 100%; }
-      .vd .timed { max-height: 320px; overflow: auto; border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-3); }
-      .vd .timed p { margin: 4px 0; cursor: pointer; color: var(--cw-muted); }
-      .vd .timed p.on { color: var(--cw-fg); font-weight: 600; }
       .vd .subs { display: grid; gap: 6px; border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-3); }
       .vd .subs .row input[name=label] { width: 12em; }
       .vd .subs .row input[name=lang] { width: 4em; }
@@ -82,7 +64,7 @@ export async function mount(ctx, el) {
   const base = () => at.base;
   const route = () => {
     const s = at.sub;
-    if (s.startsWith("w/")) return { watch: decodeURIComponent(s.slice(2)) };
+    if (s.startsWith("p/")) return { watch: decodeURIComponent(s.slice(2)) };
     if (s === "up") return { up: true };
     if (at.who === "person") return { by: at.person };
     if (at.who === "discover") return { discover: true };
@@ -97,12 +79,10 @@ export async function mount(ctx, el) {
     return (await items.publicSpaces().catch(() => [])).find(d => d.id === id) ?? people.about("follow", id);
   };
   // One wording of time everywhere (`cards`).
-  const { ago, clock } = await ctx.require("cards");
   const who = did => {
     const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.preventDefault(), e.stopPropagation(), (location.hash = `#/${C.app}/u/${did}`)) });
     return n;
   };
-  const fileOf = v => v.files?.find(f => f.type === studio.MANIFEST || /^(video|audio)\//.test(f.type ?? "")) ?? v.files?.[0] ?? null;
 
   function top(w) {
     // THE TABS (`where`'s, in every app's order): Following · yours · Saved · Discover; Upload where you may.
@@ -120,8 +100,7 @@ export async function mount(ctx, el) {
 
   // A video's or a track's CARD: its kind's look (`cards`), opened here (in Discover: from outside).
   const cards = await ctx.require("cards");
-  const actionsCap = await ctx.require("actions");
-  const card = v => cards.card(v, { href: `${base()}/w/${encodeURIComponent(v.ref)}` });
+  const card = v => cards.card(v, { href: `${base()}/p/${v.ref}` });
 
   async function list(w) {
     // SAVED: what this person saved (`actions`: any kind, one key) — of this app's kinds.
@@ -136,97 +115,13 @@ export async function mount(ctx, el) {
     return shown.length ? h("div", {}, h("div", { className: `grid${C.audio ? " sq" : ""}` }, ...shown.map(card)), older) : h("div", {}, h("p", { className: "none", textContent: none }), older);
   }
 
+  // ITS PAGE: the one item page (`item-page`) — its player, likes, comments — framed here.
   async function watch(ref) {
-    const outside = await outsideOf(ref);
-    const v = await items.get(ref, { outside });
-    if (!v) return h("p", { className: "none", textContent: `This ${C.one} is not here (removed, or not shared with you).` });
-    const f = fileOf(v);
-    const level = h("span", { className: "level" });
-    // THE PLAYER (`media-view`: the one way a video or an audio shows — its tracks by its video id, the same as
-    // wherever else it shows); audio: its cover above it, and (a podcast, an audiobook) a speed.
-    // An AUDIO starts as its album cover with ▶ (nothing read before it is played, as a video's pieces are only read
-    // as it plays); its lyrics or transcript line shows at once.
-    const view = mediaView.create({ file: f, item: ref, kind: C.audio ? "audio" : "video", outside, itemKind: v.kind, onLevel: l => (level.textContent = l), cover: C.audio, place: C.audio });
-    const video = view.media;
-    const note = view.note;
-    const timed = view.timed;
-    const coverBox = C.audio ? view.el : null;
-    const speed = C.audio && ["podcast", "audiobook"].includes(v.kind) ? h("select", { title: "Speed", onchange: e => (video.playbackRate = Number(e.target.value)) }, ...[0.75, 1, 1.25, 1.5, 2].map(x => h("option", { value: x, textContent: `${x}×`, selected: x === 1 }))) : null;
-    // A like: where the one check says this person may (from outside: as the space's public policy says).
-    // Its ACTIONS (`actions`: every item's — vote, share, save, hide, edit, remove; its comments are below it).
-    const like = actionsCap.votes(v, { outside, row: true });
-    const save = actionsCap.bar(v, { outside, comments: false, discover: at.who === "discover", removed: () => (location.hash = base()), changed: () => (location.hash = base()) });
-    const k = kinds.of(v.kind);
-    const fields = (k?.fields ?? []).filter(x => v.meta?.[x]).map(x => h("span", { textContent: `${kinds.fieldLabel(x)}: ${v.meta[x]}` }));
-    // Its COMMENTS: the one thread (`comments`), as under a Board post.
-    const thread = await (await ctx.require("comments")).create({ item: v, outside, app: C.app });
-    const out = h(
-      "div",
-      { className: "watch" },
-      coverBox,
-      C.audio ? null : video,
-      note,
-      h("h1", { textContent: v.title }),
-      h("div", { className: "row" }, h("span", { className: "s" }, who(v.by), ` · ${ago(v.at)}${k && v.kind !== VIDEO[0] ? ` · ${k.label}` : ""}${v.private ? " · only you" : ""}`), like, save, speed),
-      fields.length ? h("div", { className: "meta" }, ...fields) : null,
-      v.body ? h("div", { className: "about", textContent: v.body }) : null,
-      view.line,
-      timed,
-      h("h3", { textContent: `Comments` }),
-      thread.el,
-    );
-    // THE SCRUB BAR: the video's strip of frames, shown where the pointer is; a click seeks.
-    const scrub = h("div", { className: "scrub" });
-    const doneBar = h("div", { className: "done" });
-    const tip = h("div", { className: "tip" }, h("span"));
-    scrub.append(doneBar, tip);
-    video.addEventListener("timeupdate", () => video.duration && (doneBar.style.width = `${(100 * video.currentTime) / video.duration}%`));
-    const tAt = e => Math.max(0, Math.min(1, (e.clientX - scrub.getBoundingClientRect().left) / scrub.clientWidth)) * (video.duration || f?.duration || 0);
-    scrub.onclick = e => (video.currentTime = tAt(e));
-    const scrubStrip = async () => {
-      if (f?.type !== studio.MANIFEST) return;
-      const m = await player.manifest(f);
-      if (!m.strip) return;
-      const url = URL.createObjectURL(await files.get(m.strip.ref));
-      const st = m.strip;
-      Object.assign(tip.style, { width: `${st.w}px`, height: `${st.h}px`, backgroundImage: `url(${url})` });
-      scrub.onmousemove = e => {
-        const t = tAt(e);
-        const i = Math.min(st.n - 1, Math.floor(t / st.every));
-        tip.style.display = "block";
-        tip.style.left = `${e.clientX - scrub.getBoundingClientRect().left}px`;
-        tip.style.backgroundPosition = `-${(i % st.cols) * st.w}px -${Math.floor(i / st.cols) * st.h}px`;
-        tip.firstChild.textContent = clock(t);
-      };
-      scrub.onmouseleave = () => (tip.style.display = "none");
-    };
-    // STILL BEING MADE (the uploader's devices, in the background): what is done, and what now.
-    const making = h("span", { className: "level" });
-    let quiet = 0; // checks in a row with nothing being made (the work may not have started yet)
-    const showMaking = async () => {
-      if (!el.isConnected || !out.isConnected || v.by !== me) return;
-      const pr = await studio.progress(ref);
-      making.textContent = pr ? ` · processing ${pr.done} of ${pr.of}: ${pr.stage}${pr.p ? ` ${Math.round(pr.p * 100)}%` : ""}` : "";
-      quiet = pr ? 0 : quiet + 1;
-      if (quiet < 6) setTimeout(showMaking, 3000);
-    };
-    out.insertBefore(h("div", {}, C.audio ? null : scrub, level, making), note);
-    setTimeout(showMaking, 500); // once the view is in the page
-    queueMicrotask(() => {
-      if (f)
-        (async () => {
-          if (C.audio) await view.prepare();
-          else await view.play();
-        })().catch(e => (note.textContent = e.message ?? String(e)));
-      scrubStrip().catch(() => {});
-    });
-    return out;
+    return (await ctx.require("item-page")).show(ref, { outside: await outsideOf(ref), app: C.app, back: base(), discover: at.who === "discover" });
   }
 
-
-  // UPLOAD: the one upload form (`publisher.form`: the same as over an editor) — the item opened once published.
   async function upload() {
-    const f = await (await ctx.require("publisher")).form({ domain: C.audio ? "audio" : "video", space: at.space, app: C.app, onPublished: ({ item }) => (location.hash = `${base()}/w/${encodeURIComponent(item)}`) });
+    const f = await (await ctx.require("publisher")).form({ domain: C.audio ? "audio" : "video", space: at.space, app: C.app, onPublished: ({ item }) => (location.hash = `${base()}/p/${item}`) });
     return h("div", {}, h("h3", { textContent: `Upload a ${C.one}` }), f);
   }
 

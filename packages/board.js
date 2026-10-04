@@ -14,7 +14,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [posts, directory, person, theme, space, roles, appSettings, attachments, markdown, mdEditor, cards] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "app-settings", "attachments", "markdown", "md-editor", "cards"].map(n => ctx.require(n)));
+  const [posts, directory, person, theme, space, roles, appSettings, attachments, mdEditor, cards] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "app-settings", "attachments", "md-editor", "cards"].map(n => ctx.require(n)));
   const me = (await space.account()).id;
   // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.
   const bar = (await ctx.require("feed-bar")).create({ start: "hot", onChange: () => draw() });
@@ -129,47 +129,12 @@ export async function mount(ctx, el) {
   const actionsCap = await ctx.require("actions");
   const outsideFor = it => () => (!here && it.board && !discovering() ? posts.boardOf(it.board.id).then(sp => (sp ? null : descOf(it.board.id))) : discovering() && it.board ? descOf(it.board.id) : null);
 
-  // A POST: in a list (a link to its page, the text cut short) or on its own page.
-  // WHAT SOMEONE WROTE, as Markdown (`markdown`): its images, videos and audio where they were written; the item's
-  // other files below it, as attachments.
-  // In a LIST: a plain preview and the files' thumbnails (a list never plays anything).
-  const bodyOf = (it, full = true) =>
-    full
-      ? h("div", { className: "text" }, it.body ? markdown.render(it.body, it.files, { item: it.ref }) : null, attachments.show((it.files ?? []).filter(f => !markdown.inlined(it.body).has(markdown.keyOf(f)))))
-      : h("div", { className: "text" }, it.body ? h("p", { className: "preview", textContent: markdown.plain(it.body) }) : null, attachments.show(it.files));
-  // WHERE an item's files are kept: its board's space (public while the board reads in public), or the profile
-  // (public unless the post is only its author's).
-  const placeOf = async it => ({ sp: it.board ? await posts.boardOf(it.board.id) : threadAt.sp, pub: it.board ? !!it.pub : threadAt.sp ? threadAt.pub : !it.private && threadAt.pub !== false });
-  // The EDITOR for a post or a comment (`md-editor`, with its files: kept, others added).
-  function editorFor({ value = "", files = [], sp = null, pub = false, placeholder = "", label = "" } = {}) {
-    const pick = attachments.picker({ space: sp, from: { app: "board" }, public: () => pub, media: true, publish: true });
-    pick.preset(files);
-    return mdEditor.create({ value, pick, placeholder, label });
-  }
-  // EDIT one's own post or comment in place: its text and files; saved as a new version (shown "(edited)").
-  async function editIn(host, it, done) {
-    const at = await placeOf(it);
-    const ed = editorFor({ value: it.body ?? "", files: it.files ?? [], ...at, label: "Edit" });
-    const said = h("p", { className: "said", hidden: true });
-    const save = h("button", { type: "button", className: "go", textContent: "Save" });
-    save.onclick = async e => {
-      e.stopPropagation();
-      if (ed.busy()) return errorTo(said)(new Error("Still sending the files: a moment…"));
-      save.disabled = true;
-      await posts.editItem(it.ref, ed.value().trim(), { files: ed.files() }).then(done, errorTo(said));
-      save.disabled = false;
-    };
-    host.replaceChildren(h("div", { className: "reply", onclick: e => e.stopPropagation() }, ed.el, h("div", { className: "row" }, said, h("button", { type: "button", className: "ghost", textContent: "Cancel", onclick: e => (e.stopPropagation(), done()) }), save)));
-    ed.focus();
-  }
-
-  // A POST: its look is the kind's (`cards`), in a list and on its own page; its votes and its tools given.
-  function postCard(p, full = false) {
+  // A POST in a list: its look is the kind's (`cards`); its votes and its tools given. Its own page: `item-page`.
+  function postCard(p) {
     // A post opens where it lives: in Discover (read from outside), in its space, or in the personal space.
     const open = () => (location.hash = discovering() ? `#/discover/board/p/${p.ref}` : posts.pageOf(p.ref, p.kind ?? "post"));
-    const body = full ? h("div", {}, bodyOf(p, true)) : null;
-    const acts = actionsCap.bar(p, { outside: outsideFor(p), open, discover: discovering(), edit: full ? () => editIn(body, p, () => draw()) : null, removed: () => (full ? (location.hash = base()) : draw()), changed: () => draw() });
-    return cards.card(p, { href: null, open, lead: actionsCap.votes(p, { outside: outsideFor(p) }), actions: [acts], body });
+    const acts = actionsCap.bar(p, { outside: outsideFor(p), open, discover: discovering(), removed: () => draw(), changed: () => draw() });
+    return cards.card(p, { href: null, open, lead: actionsCap.votes(p, { outside: outsideFor(p) }), actions: [acts] });
   }
 
   // THE SIDE PANEL: the space's board (its name, members, Create post), or a profile.
@@ -264,18 +229,13 @@ export async function mount(ctx, el) {
   // A public space's description (Discover): from the public list.
   const descOf = async id => (await posts.publicSpaces()).find(d => d.id === id) ?? null;
   let shownPost = null;
-  let threadAt = { sp: null, pub: true }; // the thread shown: where its comments' files are kept
   async function postPage(ref) {
     const w = route();
     const outside = w.pub ? await descOf(w.pub) : null;
     const p = (shownPost = await posts.get(ref, { outside }));
     if (!p) return [h("p", { className: "none", textContent: "This post is not there (removed, or not found yet)." })];
-    // Where the post's files go when it is edited: its space (public as the post is), or the profile.
-    const sp = !outside && p.board ? await posts.boardOf(p.board.id) : null;
-    threadAt = { sp, pub: sp ? !!p.pub : !p.private };
-    // Its COMMENTS: the one thread (`comments`), as under a video or an audio.
-    const thread = await (await ctx.require("comments")).create({ item: p, outside, app: "board" });
-    return [postCard(p, true), h("div", { className: "panel" }, thread.el)];
+    // ITS PAGE: the one item page (`item-page`) — the post whole, its votes, its comments — framed here.
+    return [await (await ctx.require("item-page")).show(ref, { item: p, outside, app: "board", back: base(), discover: discovering() })];
   }
 
   async function submitPage(board) {

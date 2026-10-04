@@ -122,6 +122,21 @@ export async function mount(ctx, el) {
   } catch (e) {
     return said(`Could not open the notes: ${e?.message ?? e}`);
   }
+  // A NOTE's PAGE (`…/note/p/<ref>`): the one item page — the note, its comments — framed here.
+  if (at.sub.startsWith("p/")) {
+    const page = await (await ctx.require("item-page")).show(decodeURIComponent(at.sub.slice(2)), { app: "note", back: at.base, discover: at.who === "discover" });
+    root.replaceChildren(Object.assign(document.createElement("a"), { href: at.base, textContent: "← Notes" }), page);
+    const here = (await ctx.require("where")).key();
+    const away = async () => {
+      if (!root.isConnected || ctx.route !== "/note") return removeEventListener("craftworks:route", away);
+      if ((await ctx.require("where")).key() === here) return;
+      removeEventListener("craftworks:route", away);
+      el.replaceChildren();
+      mount(ctx, el);
+    };
+    addEventListener("craftworks:route", away);
+    return;
+  }
   // WHO SEES a new note: the one picker — yours start "Only you", a space's its members.
   who = await (await ctx.require("audience")).picker({ space: sp, kind: "note", initial: sp ? "members" : "private" });
   root.querySelector(".audience-slot").append(who.el);

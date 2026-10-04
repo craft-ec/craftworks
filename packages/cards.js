@@ -223,17 +223,26 @@ export async function start(ctx) {
   }
   // AN ITEM EMBEDDED — in a post, a comment, a message, a note, a mail: by its reference, read as its reader may (what
   // they may not read is said, never shown); its kind's look: a video or an audio its player, the rest its card.
+  // Not there YET (its place still arriving on a page just opened): drawn when it arrives — as every list is, on
+  // `items`' changes — until then said not to be available.
   function embed(ref) {
     const ph = h("div", { className: "cw-embed" }, h("span", { className: "s", textContent: "…" }));
-    items
-      .get(ref)
-      .then(async it => {
-        if (!it) return ph.replaceChildren(h("span", { className: "s", textContent: "(not available to you)" }));
-        const main = MEDIA.has(kinds.domain(it.kind)) ? (it.files?.find(x => x.type === MANIFEST || /^(video|audio)\//.test(x.type ?? "")) ?? null) : null;
-        if (main) return ph.replaceChildren((await ctx.require("markdown")).fileView(main, { item: it.ref, alt: it.title }), card(it, { by: true }));
-        ph.replaceChildren(card(it, { by: true }));
-      })
-      .catch(() => ph.replaceChildren(h("span", { className: "s", textContent: "(not available to you)" })));
+    let shown = false;
+    const none = () => !shown && ph.replaceChildren(h("span", { className: "s", textContent: "(not available to you)" }));
+    const draw = () =>
+      items
+        .get(ref)
+        .then(async it => {
+          if (shown) return;
+          if (!it) return none();
+          shown = true;
+          const main = MEDIA.has(kinds.domain(it.kind)) ? (it.files?.find(x => x.type === MANIFEST || /^(video|audio)\//.test(x.type ?? "")) ?? null) : null;
+          if (main) return ph.replaceChildren((await ctx.require("markdown")).fileView(main, { item: it.ref, alt: it.title }), card(it, { by: true }));
+          ph.replaceChildren(card(it, { by: true }));
+        })
+        .catch(none);
+    draw();
+    items.onChange(() => !shown && draw());
     return ph;
   }
   const MEDIA = new Set(["video", "audio"]);

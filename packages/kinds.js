@@ -15,6 +15,8 @@
 //   kinds.attaching()        // kinds that ATTACH to another item (`in`): a subtitle to a video or an audio item
 //   kinds.attachesTo("caption")   // the domains it attaches to: ["video", "audio"]
 //   kinds.attachLabel("caption", "music")   // "Lyrics" ("Transcript" on a podcast, "Subtitles" on a video)
+//   kinds.parts("movie")     // its PAGE's parts (`item-page`): { look: "player"|"card", votes, comments, about } — what
+//                            // shows around the item, declared once per domain, never per app
 //   kinds.policyDomain("movie") // the DOMAIN whose settings govern it in a space ("video"; a post: "text"; a subtitle:
 //                             // "subtitle") — content decides, not the app showing it (one app may show every domain)
 export async function start() {
@@ -80,7 +82,19 @@ export async function start() {
   const byKind = new Map(CATALOG.map(([kind, domain, label, fields]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields) })]));
   const onTo = new Map(ATTACHING.map(([kind, domain, label, fields, to]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields), to: Object.freeze(to), attaches: true })]));
   const LABELS = { lang: "Language", label: "Label",  year: "Year", director: "Director", cast: "Cast", genre: "Genre", show: "Show", season: "Season", episode: "Episode", artist: "Artist", album: "Album", host: "Host", author: "Author", narrator: "Narrator", chapter: "Chapter", location: "Location", taken: "Taken", camera: "Camera", medium: "Medium", publisher: "Publisher", isbn: "ISBN", writer: "Writer", issue: "Issue", format: "Format", software: "Software", platform: "Platform", version: "Version", license: "License", schema: "Schema" };
+  // A PAGE's PARTS by domain (`item-page`): its look whole — the PLAYER (video, audio) or its card's look — and what
+  // shows around it. Composed here, never an app's own page.
+  const PARTS = {
+    video: { look: "player", votes: true, comments: true, about: true },
+    audio: { look: "player", votes: true, comments: true, about: true },
+    text: { look: "card", votes: true, comments: true, about: false },
+    image: { look: "card", votes: true, comments: true, about: true },
+    note: { look: "card", votes: false, comments: true, about: false },
+    file: { look: "card", votes: false, comments: true, about: true },
+    document: { look: "card", votes: false, comments: true, about: true },
+  };
   return {
+    parts: kind => PARTS[byKind.get(kind)?.domain] ?? { look: "card", votes: false, comments: false, about: false },
     of: kind => byKind.get(kind) ?? onTo.get(kind) ?? null,
     attaching: () => [...onTo.keys()],
     attachesTo: kind => [...(onTo.get(kind)?.to ?? [])],

@@ -76,6 +76,11 @@ export async function mount(ctx, el) {
   place.tabs();
   const directory = await ctx.require("directory");
   async function draw() {
+    // A FILE's PAGE (`…/drive/p/<ref>`): the one item page — its preview, its comments — framed here.
+    if (place.sub.startsWith("p/")) {
+      const page = await (await ctx.require("item-page")).show(decodeURIComponent(place.sub.slice(2)), { app: "drive", back: base(), discover });
+      return root.replaceChildren(h("nav", { className: "crumbs" }, h("a", { href: base(), textContent: "← Drive" })), page);
+    }
     const at = folder();
     // SAVED: `where`'s (the files you saved, of anyone's) — one folder.
     const savedRows = () => place.read().then(list => list.filter(it => it.files?.[0]).map(it => ({ id: it.ref, ref: it.files[0], at: it.at, folder: "/", by: it.by, readOnly: true, others: true })));

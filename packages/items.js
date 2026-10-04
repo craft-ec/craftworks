@@ -545,7 +545,10 @@ export async function start(ctx) {
 
   async function get(ref, { outside = null } = {}) {
     if (ref.startsWith("space:")) {
-      const sp = outside ?? (await boardOf(ref));
+      // ONE item of a space: read where this person is a member (whatever apps the space shows — its acts may not be
+      // read yet on a page just opened), or from outside.
+      const sid = ref.slice(6, ref.indexOf("/"));
+      const sp = outside ?? (await space.mine()).find(s => s.id === sid) ?? null;
       if (!sp) return null;
       // ONE item: its place read from its time on (it, its votes and comments) — never the place whole.
       if (!outside) await sinceItem(await boardRoom(sp), idOf(ref));
@@ -554,6 +557,8 @@ export async function start(ctx) {
       const room = p ? await pointedRoom(outside, [p]) : null;
       return (await boardPosts(sp, { outside: !!outside, kinds: [...TOP], window: outside ? "all" : "held", room })).find(x => x.ref === ref) ?? null;
     }
+    // One of THIS person's own: their private items read first (a private note, a post "only you" is among them).
+    if (whereOf(ref) === (await me())) await (await profileRoom(whereOf(ref))).whenPrivate?.();
     return (await profilePosts([whereOf(ref)], await pointersTo(ref), [...TOP])).find(p => p.ref === ref) ?? null;
   }
 
@@ -853,15 +858,15 @@ export async function start(ctx) {
 
   // WHERE AN ITEM IS SHOWN — the one link to its page, for every app that links to one: a video or a track where it
   // plays (Video, Audio, Image), a post (or anything else) on its board, a note in Note, a file in Drive.
-  const APP_OF = { video: "video", audio: "audio", image: "image", note: "note", file: "drive" };
+  const APP_OF = { video: "video", audio: "audio", image: "drive", note: "note", file: "drive", document: "drive" };
   const appOf = kind => APP_OF[kinds.domain(kind)] ?? "board";
   // In its PLACE (`where`'s addresses): a space's in the space, a person's in their space (`u/<did>`: yours too).
   function pageOf(ref, kind) {
     const app = appOf(kind);
     const sp = String(ref).startsWith("space:") ? ref.slice(6, ref.indexOf("/")) : null;
     const base = sp ? `#/s/${sp}/${app}` : `#/${app}/u/${String(ref).slice(0, String(ref).lastIndexOf("/"))}`;
-    if (["video", "audio", "image"].includes(app)) return `${base}/w/${encodeURIComponent(ref)}`;
-    return app === "board" ? `${base}/p/${ref}` : base;
+    // THE ONE PAGE (`item-page`), framed by its app: `…/<app>/p/<ref>`.
+    return `${base}/p/${ref}`;
   }
 
   return { mayWriteOn, pageOf, appOf, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
