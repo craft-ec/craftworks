@@ -106,8 +106,14 @@ export async function start(ctx) {
       let [e, secret, n] = [st.epoch, st.secret, 0];
       while (e > 0) {
         const log = await storage.log(g.channel, glue.epoch_log_public(secret), { sealWith: await g.seal(e), space: g.space });
+        // Its ANSWER, not what is shown before it (a log shown empty while the node is still asked ends the walk there:
+        // a member who joined late never reached epoch 0 — the writers bag's — and read none of the space).
+        await log.answer?.();
         const prev = parse(log.rows().find(r => r.key === "open")?.value ?? "{}").prev;
-        if (!prev) break;
+        if (!prev) {
+          if (e > 0) ctx.log(`${g.name ?? "space"} keys`, { what: `its history stops at epoch ${e}: that epoch's log names no epoch before it` });
+          break;
+        }
         e -= 1;
         secret = bytes(prev);
         await auth.identity.epochKeep(e, secret, g.space);
