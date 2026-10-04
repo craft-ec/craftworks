@@ -418,6 +418,7 @@ export async function start(ctx) {
   // LET IN, NEVER IN: an open space whose public acts admit this person while they are still not in it — the welcome
   // never opened here (made from a key package lost since): asked again, once per admission (counted, never timed:
   // the admitter's clock is not this one's).
+  const askedThisPage = new Set();
   async function askStuck() {
     const me = await space.account();
     if (!me) return 0;
@@ -439,10 +440,13 @@ export async function start(ctx) {
       const pr = await roles.ofPublic(desc).catch(() => null);
       await pr?.settled;
       const admissions = (pr?.acts("admitted") ?? []).filter(x => x.did === me.id).length;
-      if (admissions <= (a.seen ?? 0)) {
-        said(admissions ? `let in ${admissions} time(s), asked again after that already — its welcome not here yet` : "not let in yet");
+      // Asked again once a PAGE while let in and still not in (each load one request: whoever admits answers it once),
+      // and whenever it has let this person in again since.
+      if (!admissions || (admissions <= (a.seen ?? 0) && askedThisPage.has(a.key))) {
+        said(admissions ? `let in ${admissions} time(s), asked again this page already — its welcome not here yet` : "not let in yet");
         continue;
       }
+      askedThisPage.add(a.key);
       await index.request(openCode(a.key), { kind: "join", did: me.id, at: Date.now() });
       await noteAsk(a.key, { name: a.name ?? null, seen: admissions });
       ctx.log("conversation", { what: `${a.name ?? a.key.slice(0, 8)}: let in, but its welcome never opened here — asked again` });
