@@ -46,7 +46,9 @@ export async function start(ctx) {
     const me = await space.account();
     if (!me) throw new Error("nobody is logged in");
     if (did === me.id) throw new Error("that is you");
-    const card = await directory.card(did);
+    // Their card AS IT IS NOW (read again, never a copy this page read before): key packages work once and are
+    // replaced — one from an older read is spent, or lost with what held its secret, and the welcome never opens.
+    const card = await directory.card(did, { fresh: true });
     if (!card?.inbox || !card.keyPackage) throw new Error("that person has no card yet");
     // A key package works ONCE: never one this account used already (a card read before its person renewed it still
     // lists the one used last time) — kept in the account's table `keypacks`.
@@ -224,7 +226,6 @@ export async function start(ctx) {
           }
           if (!belongs) continue;
           const name = sp.kind === "direct" ? ((await directory.card(me.id))?.handle ?? short(me.id)) : sp.name;
-          await directory.card(it.from, { fresh: true }); // their card as it is now, never one read before
           await welcome(sp, it.from, name);
           await once.put(k, String(Date.now()));
           ctx.log("conversation", { what: `${short(it.from)} could not open a welcome into ${sp.name ?? "a conversation"}: welcomed again` });

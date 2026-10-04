@@ -14,7 +14,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [posts, directory, person, theme, space, roles, appSettings, attachments, mdEditor, cards] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "app-settings", "attachments", "md-editor", "cards"].map(n => ctx.require(n)));
+  const [posts, directory, person, theme, space, roles, attachments, mdEditor, cards] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "attachments", "md-editor", "cards"].map(n => ctx.require(n)));
   const me = (await space.account()).id;
   // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.
   const bar = (await ctx.require("feed-bar")).create({ start: "hot", onChange: () => draw() });
@@ -57,10 +57,14 @@ export async function mount(ctx, el) {
       { yoursOn: page && w.by === me },
     );
   };
+  el.classList.add("cw-fill");
   el.innerHTML = `
     <style>
-      .bd { max-width: 1080px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--cw-space-4); align-items: start; }
-      @media (max-width: 900px) { .bd { grid-template-columns: minmax(0, 1fr); } .bd .side { order: -1; } }
+      /* The whole area (.cw-fill, as Chat and Mail): its posts and its side, each a pane scrolling itself. */
+      .bd { display: grid; grid-template-columns: minmax(0, 1fr) 300px; height: 100%; min-height: 0; }
+      .bd > .main { overflow-y: auto; min-height: 0; padding: var(--cw-space-3) var(--cw-gutter); align-content: start; }
+      .bd > .side { overflow-y: auto; min-height: 0; padding: var(--cw-space-3) var(--cw-gutter); border-left: 1px solid var(--cw-line); background: var(--cw-bg); align-content: start; }
+      @media (max-width: 900px) { .bd { display: block; overflow-y: auto; } .bd > .side { border-left: 0; } .bd > .main, .bd > .side { overflow: visible; } }
       .bd button { font: inherit; cursor: pointer; }
       .bd a { color: inherit; text-decoration: none; }
       .bd .main { display: grid; gap: var(--cw-space-2); min-width: 0; }
@@ -177,7 +181,6 @@ export async function mount(ctx, el) {
       // BOARD'S OWN SETTINGS (its owner and admins): who may post, and its rules (shown here).
       const rules = r.config("board", "rules", "");
       // Its settings: on the space's Home (`app-settings`: the one place).
-      const settingsBtn = r.can(me, "apps") ? h("a", { className: "ghost", href: appSettings.href(sp, "board"), textContent: "Board settings" }) : null;
       const mayPost = r.allows("post", me, "board");
       return [
         h(
@@ -187,7 +190,6 @@ export async function mount(ctx, el) {
           h("p", { textContent: `${n} member${n === 1 ? "" : "s"} · you: ${r.role(me) ?? "member"}` }),
           r.policyIn("text", "read") === "anyone" ? h("p", { textContent: "🌐 Public: anyone reads its posts." }) : null,
           mayPost ? create : h("p", { textContent: "Only admins post here; comment and vote on any post." }),
-          settingsBtn,
         ),
         rules ? h("div", { className: "panel" }, h("h3", { textContent: "Rules" }), h("p", { className: "text", style: "white-space: pre-wrap", textContent: rules })) : null,
       ].filter(Boolean);

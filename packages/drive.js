@@ -11,12 +11,16 @@ export async function mount(ctx, el) {
   const [drive, space, attachments, theme, kinds] = await Promise.all(["drive-store", "space", "attachments", "theme", "kinds"].map(n => ctx.require(n)));
   el.innerHTML = `
     <style>
-      .dv { max-width: 1000px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
+      .dv { display: grid; gap: var(--cw-space-3); }
       .dv .top { display: flex; align-items: center; gap: var(--cw-space-2); flex-wrap: wrap; }
       .dv .top h2 { margin: 0; font-size: 1.3rem; flex: 1; min-width: 0; }
       .dv .crumbs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; color: var(--cw-muted); font-size: var(--cw-text-sm); }
       .dv .crumbs a { color: var(--cw-fg); text-decoration: none; }
       .dv .crumbs a:hover { text-decoration: underline; }
+      .dv-who { border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-bg); color: var(--cw-fg); min-width: min(420px, 92vw); }
+      .dv-who form { display: grid; gap: var(--cw-space-3); }
+      .dv-who h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+      .dv-who .row { display: flex; gap: var(--cw-space-2); justify-content: flex-end; }
       .dv select { font: inherit; padding: 5px 8px; border-radius: var(--cw-radius-sm); max-width: 260px; }
       .dv button, .dv label.up { font: inherit; cursor: pointer; border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg);
         border-radius: var(--cw-radius-sm); padding: 6px var(--cw-space-3); }
@@ -69,8 +73,24 @@ export async function mount(ctx, el) {
     });
   const fail = e => ((said.textContent = e?.message ?? String(e)), (said.hidden = false));
   const ups = h("div", { className: "ups" });
-  // WHO SEES what is uploaded here: the one picker (`audience`) — yours start Only you, a space's its members.
-  const who = await (await ctx.require("audience")).picker({ space: sp, kind: "file", initial: sp ? "members" : "private" });
+  // WHO SEES IT: asked per upload — what is chosen is each file's own (an item's audience), never the page's. The one
+  // picker (`audience`): yours start Only you, a space's its members.
+  const audience = await ctx.require("audience");
+  function askWho(list) {
+    return new Promise(async resolve => {
+      const who = await audience.picker({ space: sp, kind: "file", initial: sp ? "members" : "private" });
+      const d = h("dialog", { className: "dv-who" });
+      const go = h("button", { type: "submit", className: "go", textContent: "Upload" });
+      const no = h("button", { type: "button", textContent: "Cancel", onclick: () => d.close() });
+      const f = h("form", { method: "dialog" }, h("h3", { textContent: list.length === 1 ? list[0].name : `${list.length} files` }), who.el, h("div", { className: "row" }, no, go));
+      let chosen = null;
+      f.onsubmit = e => ((e.preventDefault()), (chosen = { public: who.isPublic(), write: who.write() }), d.close());
+      d.append(f);
+      d.onclose = () => (d.remove(), resolve(chosen));
+      document.body.append(d);
+      d.showModal();
+    });
+  }
 
   // THE TABS (`where`'s, in every app's order): Your Drive · Discover (which space's Drive: the header's).
   place.tabs();
@@ -100,7 +120,6 @@ export async function mount(ctx, el) {
       { className: "top" },
       h("h2", { textContent: "🗂️ Drive" }),
       others ? null : h("label", { className: "up" }, "📤 Upload", input),
-      others ? null : who.el,
       others ? null : h("button", {
         type: "button",
         textContent: "New folder",
@@ -151,11 +170,14 @@ export async function mount(ctx, el) {
 
   // UPLOAD into the folder open, seen by whom the picker says (public: put in the clear; else sealed).
   async function upload(list) {
+    if (!list.length) return;
+    const who = await askWho(list);
+    if (!who) return;
     for (const file of list) {
       const line = h("div", { textContent: `${file.name}: starting…` });
       ups.append(line);
       drive
-        .upload(file, { space: sp, public: who.isPublic(), write: who.write(), folder: folder(), from: { app: "drive" }, onProgress: e => (line.textContent = `${file.name}: ${e.phase === "reading" ? "reading" : `${Math.round((100 * e.done) / Math.max(1, e.size))}%`}`) })
+        .upload(file, { space: sp, public: who.public, write: who.write, folder: folder(), from: { app: "drive" }, onProgress: e => (line.textContent = `${file.name}: ${e.phase === "reading" ? "reading" : `${Math.round((100 * e.done) / Math.max(1, e.size))}%`}`) })
         .then(
           () => (line.remove(), draw()),
           e => (line.textContent = `${file.name}: not uploaded — ${e.message ?? e}`),

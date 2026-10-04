@@ -9,8 +9,8 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [space, keys, directory, roomUI, conversation, theme, roles, moderation, person, activity, appSettings] = await Promise.all(
-    ["space", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "person", "activity", "app-settings"].map(n => ctx.require(n)),
+  const [space, keys, directory, roomUI, conversation, theme, roles, moderation, person, activity] = await Promise.all(
+    ["space", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "person", "activity"].map(n => ctx.require(n)),
   );
   const account = await space.account();
   // DISCOVER (Chat's public view): the directory of open spaces with Chat — to join (chat itself stays its members').
@@ -320,8 +320,8 @@ export async function mount(ctx, el) {
     if (c && channel?.id !== c.id) openChannel(c);
   };
   const menu = () => {
-    // Its settings (who may post, its channels): on the space's Home (`app-settings`: the one place).
-    ctx.actions["/chat"] = server && rs?.can(account.id, "apps") ? [{ label: "Chat settings", run: () => (location.hash = appSettings.href(server, "chat")) }] : [];
+    // (Its settings — who may post, its channels — are the Settings app's.)
+    ctx.actions["/chat"] = [];
     dispatchEvent(new CustomEvent("craftworks:actions"));
   };
   menu();

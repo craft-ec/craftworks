@@ -436,7 +436,6 @@ export async function mount(ctx, el) {
   labels.onChange(() => lEditor.open && lines());
 
   // THE TOP BAR while Notes is open: search, grid or list, and Notes or Archive.
-  const appSettings = sp ? await ctx.require("app-settings") : null;
   // Who may edit here: the composer says so when this person may not.
   const gate = () => {
     const ok = !others && (!rs || rs.allows("edit", meId, "note"));
@@ -447,10 +446,6 @@ export async function mount(ctx, el) {
   // THE TABS (`where`'s, in every app's order): Your notes · the app's own · Discover.
   const actions = () => {
     at.tabs([
-      // NOTES' OWN SETTINGS in a space (its owner and admins): who may edit.
-      ...(rs?.can(meId, "apps")
-        ? [{ label: "Note settings", run: () => (location.hash = appSettings.href(sp, "note")) }]
-        : []),
       { search: v => ((query = v), render()), placeholder: sp ? `Search ${sp.name}'s notes` : others ? "Search these notes" : "Search your notes", value: query },
       { label: list ? "Grid view" : "List view", run: () => ((list = !list), render(), actions()) },
       ...(others ? [] : [{ label: "Archive", on: archive, run: () => ((archive = !archive), render(), actions()) }]),
