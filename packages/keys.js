@@ -415,6 +415,31 @@ export async function start(ctx) {
     at = outer;
     return out;
   }
+  // A key package's REFERENCE (RFC 9420 RefHash "MLS 1.0 KeyPackage Reference" over the KeyPackage: the message after
+  // its version and wire format; this suite's hash is SHA-256) — what a welcome names it by.
+  const vlen = n => (n < 64 ? [n] : n < 16384 ? [0x40 | (n >> 8), n & 255] : [0x80 | (n >>> 24), (n >> 16) & 255, (n >> 8) & 255, n & 255]);
+  async function refOf(kpHex) {
+    const kp = bytes(kpHex).subarray(4);
+    const label = new TextEncoder().encode("MLS 1.0 KeyPackage Reference");
+    return hexb(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array([...vlen(label.length), ...label, ...vlen(kp.length), ...kp]))));
+  }
+  // WHY a welcome does not open, measured: which batch OFFERED the package it names (by its offers row), and whether that
+  // batch holds that package's secret — and how many of what it offered it holds at all.
+  async function explain(t, welcome) {
+    const aimed = new Set(welcomeRefs(bytes(welcome)));
+    for (const r of t.rows().filter(x => x.key.startsWith("offers/") && x.value)) {
+      let kps = [];
+      try {
+        kps = JSON.parse(r.value);
+      } catch {}
+      const refs = await Promise.all(kps.map(refOf));
+      if (!refs.some(x => aimed.has(x))) continue;
+      const id = r.key.slice("offers/".length);
+      const held = new Set(batchRefs(bytes(t.rows().find(x => x.key === `packages/${id}`)?.value ?? "00000000")));
+      return `offered by batch ${id.slice(0, 8)}, which holds ${refs.filter(x => held.has(x)).length} of the ${refs.length} it offered${refs.some(x => aimed.has(x) && held.has(x)) ? " (this one among them)" : " (NOT this one)"}`;
+    }
+    return "named by no offers row here: a package this account never offered";
+  }
   const memberWith = async packages => {
     const k = await keysOfMember();
     return new mlsGlue.SpaceMember(bytes(k.seed), bytes(k.credential), packages ? bytes(packages) : new Uint8Array(0));
@@ -663,7 +688,7 @@ export async function start(ctx) {
           throw new Error(
             real.length
               ? `the batch holding its key package refused it — ${real.map(f => `${f.batch}: ${f.why}`).join("; ")}`
-              : `no key package of this account answers that welcome (${failed.length} batch(es) tried: ${failed.map(f => `${f.batch}·${f.size}`).join(" ")}): ${failed[0]?.why ?? "none held"}`,
+              : `no key package of this account answers that welcome (${failed.length} batch(es) tried; ${await explain(t, welcome).catch(e => `unexplained: ${e.message}`)}): ${failed[0]?.why ?? "none held"}`,
           );
         })),
       // MADE by this DID, its first member.
