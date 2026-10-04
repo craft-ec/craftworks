@@ -1039,7 +1039,7 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       ONE IMPLEMENTATION (owner: every app inherits it): policies by path in `roles` (item path `<app>/p/<id>`), enforced
       in `content` (Board, Videos, Audio, Chat, Messages) — Notes and Drive call the same `roles.allows` for their items;
       Chat keeps per-channel policy (`chat/<channel>`).
-- [ ] 3  SETTINGS IN THE SPACE'S HOME: one Settings page, a section per app; apps' own dialogs removed.
+- [x] 3  SETTINGS: a Settings app in every space (575130b, a4e8c5a); apps' own settings links removed (d0e6aa5).
 
 - Test account on fy (17692, site EckhKsQW…): PIN 731731; words juice bulk shy trend need book heavy curtain old network arrange disagree (made 2026-10-03, outsider tests).
 
@@ -1092,6 +1092,25 @@ Chat circle tabs (to be replaced: channels with an audience, person Chat via `wh
       column with Admin built in; every app's rule dropdown offers them).
 - [x] READ by a role (admins, owner): one GROUP per space and audience (`groups`, circles on it too), any kind —
       posts, videos, files, a channel; kept in step by upkeep; a member removed reads nothing new and sees it no more.
-      LEFT: named people as an audience; Drive uploads to a role audience; a group's maker offline → nobody else keeps it.
+      DONE 10-05: named people as an audience (`list` act, ff0678d); a group's maker offline → the space's admins in it
+      keep it after 10 min (b4658b1). LEFT: Drive uploads to a role audience.
 - [x] Conversations (direct, group) = your personal Chat's channels; Message merged into Chat (old links forward);
       Friends/Followers channel work dropped. Fixed with it: a paged room missed a late feed's earlier items.
+
+## 2026-10-04/05 session (handover)
+Done (commits on main):
+- Restored IDs (same words as before the fresh start): card key packages checked against held batches, renewed
+  (ef40e4a, 69bc477, 6c68b36); a welcome reads the card fresh (d0e6aa5); welcome-again / renew-keys asks; join
+  queue no longer poisoned by one failed op (d53b204) — THE cause of "welcomes never open" for old IDs.
+- Late joiners: history walk awaits each log (49bd1bf); welcomes carry earlier epoch secrets, gaps asked of admins
+  (a38358f; identity 8ff955b6 — members hand over on PIN).
+- Settings app (575130b, a4e8c5a); headers one order, create on the right (6f…); full-width layout; Drive asks
+  who sees each upload; cards: a name opens a person/space card, Open → their home; outsider space Home; About;
+  spaces panel: Discover spaces + Requested with status; Invites tab: waiting / let in lately / Let in.
+- Board's rules are the text domain's (d5b1304) — spaces saved public before must be re-saved once.
+- Writers bag fresh reads shared; tail.whole once (measured: tree blocks never fetched twice).
+- Named-people lists; audiences kept by admins while the maker is away.
+Open, in order: Images app; Books app (same shape); one access control for the personal space; group-fork
+leftovers (heal own commits only, keep losing-branch keys, owner re-adds members on another branch).
+Test nodes 17691/17692: fresh accounts, PIN 246810 (older test accounts' PINs above are void).
+Waiting on Ivvor: reload + PIN so their page answers onlyabrak's history ask for Ivvor's New Space (apps hidden).
