@@ -13,6 +13,7 @@ export async function start(ctx) {
   const [items, directory, person, theme, space, roles, attachments, markdown, mdEditor] = await Promise.all(
     ["items", "directory", "person", "theme", "space", "roles", "attachments", "markdown", "md-editor"].map(n => ctx.require(n)),
   );
+  const actionsCap = await ctx.require("actions");
   const style = document.createElement("style");
   style.textContent = `
     .cw-cm { display: grid; gap: var(--cw-space-2); }
@@ -27,10 +28,6 @@ export async function start(ctx) {
     .cw-cm .acts { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; }
     .cw-cm .acts button { border: 0; background: none; color: var(--cw-muted); font-size: var(--cw-text-xs); font-weight: 600; padding: 4px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
     .cw-cm .acts button:hover { background: var(--cw-hover); color: var(--cw-fg); }
-    .cw-cm .votes { display: flex; align-items: center; gap: 2px; }
-    .cw-cm .votes button.up[aria-pressed="true"] { color: #ff4500; }
-    .cw-cm .votes button.down[aria-pressed="true"] { color: #7193ff; }
-    .cw-cm .votes .n { font-weight: 700; font-size: var(--cw-text-xs); }
     .cw-cm .c { display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: var(--cw-space-2); }
     .cw-cm .c > .rail { display: flex; justify-content: center; cursor: pointer; }
     .cw-cm .c > .rail::before { content: ""; width: 2px; background: var(--cw-line); border-radius: 1px; }
@@ -79,25 +76,6 @@ export async function start(ctx) {
       pick.preset(files);
       return mdEditor.create({ value, pick, placeholder, label });
     };
-
-    function votes(c) {
-      const n = h("span", { className: "n", textContent: String(c.score ?? 0) });
-      const up = h("button", { type: "button", className: "up", textContent: "▲", title: "Upvote", ariaPressed: String(c.mine === 1), disabled: !mayVote });
-      const down = h("button", { type: "button", className: "down", textContent: "▼", title: "Downvote", ariaPressed: String(c.mine === -1), disabled: !mayVote });
-      const cast = v => async e => {
-        e.stopPropagation();
-        const next = c.mine === v ? 0 : v;
-        c.score = (c.score ?? 0) + next - (c.mine ?? 0);
-        c.mine = next;
-        n.textContent = String(c.score);
-        up.ariaPressed = String(next === 1);
-        down.ariaPressed = String(next === -1);
-        await items.vote(c.ref, next, ref, { outside }).catch(() => {});
-      };
-      up.onclick = cast(1);
-      down.onclick = cast(-1);
-      return h("div", { className: "votes" }, up, n, down);
-    }
 
     // EDIT one's own comment in place: saved as a new version (shown "(edited)").
     function editIn(host, c) {
@@ -150,20 +128,21 @@ export async function start(ctx) {
       })(c);
       const replyAt = h("div", {});
       const text = h("div", {}, bodyOf(c));
+      // Its actions (`actions`: the same as every item's — vote, share, save, hide, edit, remove), Reply first.
       const acts = h(
         "div",
         { className: "acts" },
-        votes(c),
-        mayComment
-          ? h("button", {
-              type: "button",
-              textContent: "Reply",
-              onclick: () => (replyAt.firstChild ? replyAt.replaceChildren() : replyAt.replaceChildren(replyForm(c.ref, "Reply", () => replyAt.replaceChildren()))),
-            })
-          : null,
-        c.by === me && !outside ? h("button", { type: "button", textContent: "Edit", onclick: () => editIn(text, c) }) : null,
-        c.by !== me ? h("button", { type: "button", textContent: "Hide", onclick: async () => await (await ctx.require("moderation")).lists().then(l => l.hide({ by: c.by, id: c.id })).then(refresh, errorTo(said)) }) : null,
-        c.mayRemove ? h("button", { type: "button", textContent: c.by === me ? "Delete" : "Remove", onclick: () => items.remove(c.ref).then(refresh, errorTo(said)) }) : null,
+        actionsCap.votes(c, { outside, row: true, post: ref, may: mayVote }),
+        actionsCap.bar(c, {
+          outside,
+          comments: false,
+          edit: outside ? null : () => editIn(text, c),
+          removed: refresh,
+          changed: refresh,
+          extra: mayComment
+            ? [h("button", { type: "button", textContent: "Reply", onclick: () => (replyAt.firstChild ? replyAt.replaceChildren() : replyAt.replaceChildren(replyForm(c.ref, "Reply", () => replyAt.replaceChildren()))) })]
+            : [],
+        }),
       );
       box.append(
         h("div", { className: "rail", title: "Fold", onclick: fold }),

@@ -292,9 +292,12 @@ export async function mount(ctx, el) {
   // A CARD: the note's look (`cards`: the same wherever a note shows), with Note's tools — someone else's (Discover,
   // their space) its author named and read only (your pin and labels on it are yours).
   const cards = await ctx.require("cards");
+  const actionsCap = await ctx.require("actions");
   const card = n => {
     const tools = [];
     const tool = (icon, title, run) => tools.push(Object.assign(document.createElement("button"), { type: "button", textContent: icon, title, onclick: e => (e.stopPropagation(), run(e)) }));
+    // Someone else's: Save (`actions`: kept in your Saved, as anything is).
+    if (!n.mayEdit) tools.push(actionsCap.save(n.item));
     if (n.mayEdit) tool("🎨", "Background", e => palette(e.currentTarget, color => save(n.key, { ...n, color })));
     tool("🏷️", "Labels", e => labelUI.menu(e.currentTarget, ref(n.key)));
     if (n.mayEdit) {

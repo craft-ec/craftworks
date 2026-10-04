@@ -14,7 +14,7 @@ export async function mount(ctx, el) {
   }
   const [items, directory, person, theme, space, roles, drive, player, kinds, edge] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "drive-store", "video-player", "kinds", "edge"].map(n => ctx.require(n)));
   const [studio, files, subs, mediaView] = await Promise.all(["video-studio", "files", "caption-store", "media-view"].map(n => ctx.require(n)));
-  const [pins, people] = await Promise.all([edge.pins(), edge.people()]);
+  const people = await edge.people();
   // WHICH APP this page is (its route): its domain, its words.
   const APPS = {
     "/video": { app: "video", domain: "video", icon: "▶️", name: "Video", one: "video", ones: "videos", accept: "video/*", mine: "Your channel", audio: false },
@@ -98,7 +98,6 @@ export async function mount(ctx, el) {
     if ((await space.mine()).some(x => x.id === id)) return null;
     return (await items.publicSpaces().catch(() => [])).find(d => d.id === id) ?? people.about("follow", id);
   };
-  const SAVED = ref => `${C.app}:${ref}`;
   // One wording of time everywhere (`cards`).
   const { ago, clock } = await ctx.require("cards");
   const who = did => {
@@ -110,9 +109,9 @@ export async function mount(ctx, el) {
   function top(w) {
     // THE TABS (`where`'s, in every app's order): Following · yours · Saved · Discover; Upload where you may.
     at.tabs([
-      ...(at.who === "mine" || at.who === "discover" ? [{ label: C.mine, href: `#/${C.app}/mine`, on: w.by === me }, { label: "Saved", href: `#/${C.app}/saved`, on: !!w.saved }] : []),
+      ...(at.who === "mine" || at.who === "discover" ? [{ label: C.mine, href: `#/${C.app}/mine`, on: w.by === me }] : []),
       ...(at.others ? [] : [{ label: "⬆ Upload", href: `${base()}/up`, on: !!w.up }]),
-    ], { yoursOn: !!w.feed });
+    ], { yoursOn: !!w.feed && !w.saved });
     // In a space, it is a CHANNEL (the space named in this app's own words).
     const title = at.space ? `${C.icon} ${space.shown(at.space)} · channel` : `${C.icon} ${C.name}`;
     // The SUB-TYPES (a filter): all, or one kind of the domain.
@@ -123,15 +122,14 @@ export async function mount(ctx, el) {
 
   // A video's or a track's CARD: its kind's look (`cards`), opened here (in Discover: from outside).
   const cards = await ctx.require("cards");
+  const actionsCap = await ctx.require("actions");
   const card = v => cards.card(v, { href: `${base()}/w/${encodeURIComponent(v.ref)}` });
 
   async function list(w) {
-    // SAVED: the videos this person pinned (the pin edge), newest saved first.
+    // SAVED: what this person saved (`actions`: any kind, one key) — of this app's kinds.
+    // SAVED: `where`'s (what you saved, of this app's kinds).
     const vs = w.saved
-      ? (await Promise.all(pins.refs("videos:").map(async k => {
-          const ref = k.slice(7);
-          return items.get(ref, { outside: await outsideOf(ref) }).catch(() => null);
-        }))).filter(Boolean)
+      ? await at.read()
       : bar.reorder(await items.list(w, bar.sort(), VIDEO, bar.options()));
     const shown = only ? vs.filter(v => v.kind === only) : vs;
     const when = bar.span();
@@ -157,10 +155,9 @@ export async function mount(ctx, el) {
     const coverBox = C.audio ? view.el : null;
     const speed = C.audio && ["podcast", "audiobook"].includes(v.kind) ? h("select", { title: "Speed", onchange: e => (video.playbackRate = Number(e.target.value)) }, ...[0.75, 1, 1.25, 1.5, 2].map(x => h("option", { value: x, textContent: `${x}×`, selected: x === 1 }))) : null;
     // A like: where the one check says this person may (from outside: as the space's public policy says).
-    const mayLike = !outside || (await items.mayWriteOn(v, "vote", { outside }).catch(() => false));
-    const like = h("button", { type: "button", className: v.mine === 1 ? "on" : "", disabled: !mayLike, title: mayLike ? "" : "Join to like", textContent: `▲ ${v.score ?? 0}`, onclick: async () => ((like.disabled = true), await items.vote(ref, v.mine === 1 ? 0 : 1, ref, { outside }).catch(() => {}), draw()) });
-    const saved = () => pins.has(SAVED(ref));
-    const save = h("button", { type: "button", className: saved() ? "on" : "", textContent: saved() ? "Saved ✓" : "Save", onclick: async () => (await pins.set(SAVED(ref), !saved()), (save.className = saved() ? "on" : ""), (save.textContent = saved() ? "Saved ✓" : "Save")) });
+    // Its ACTIONS (`actions`: every item's — vote, share, save, hide, edit, remove; its comments are below it).
+    const like = actionsCap.votes(v, { outside, row: true });
+    const save = actionsCap.bar(v, { outside, comments: false, discover: at.who === "discover", removed: () => (location.hash = base()), changed: () => (location.hash = base()) });
     const k = kinds.of(v.kind);
     const fields = (k?.fields ?? []).filter(x => v.meta?.[x]).map(x => h("span", { textContent: `${kinds.fieldLabel(x)}: ${v.meta[x]}` }));
     // Its COMMENTS: the one thread (`comments`), as under a Board post.

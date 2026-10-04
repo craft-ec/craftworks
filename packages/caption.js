@@ -46,6 +46,7 @@ export async function mount(ctx, el) {
   // WHERE (`where`: yours, a space's, a person's — their tracks —, Discover — public videos and audio, each with
   // its tracks), read at each draw.
   const where = await ctx.require("where");
+  const actionsCap = await ctx.require("actions");
   let at = await where.of({ kind: "caption", app: "caption", yours: "Your captions" });
   const sp = () => at.space?.id ?? null;
   const route = () => {
@@ -53,6 +54,7 @@ export async function mount(ctx, el) {
     if (sp() && !s) return { space: sp() };
     if (at.who === "discover" && !s) return { discover: true };
     if (at.who === "person") return { person: at.person };
+    if (at.saved) return { saved: true };
     // `for/<item>~<file key>`: a media file inside an item (inline in a post).
     if (s.startsWith("for/")) {
       const [item, key] = s.slice(4).split("~");
@@ -81,13 +83,14 @@ export async function mount(ctx, el) {
       h("span", { className: "s", textContent: t.lang || "—" }),
       h("span", { className: "s" }, "by ", who(t.by), t.place ? ` · in ${t.place.name ?? "a space"}` : ""),
       await (async () => { const it = await itemOf(t.in); return h("a", { href: watchHref(t.in, it?.kind), textContent: `▶ ${it?.title ?? "an item"}` }); })(),
-      t.by === me ? h("a", { href: `#/caption/e/${encodeURIComponent(t.ref)}`, textContent: "Edit" }) : null,
+      t.by === me ? h("a", { href: `#/caption/e/${encodeURIComponent(t.ref)}`, textContent: "Edit" }) : actionsCap.save(t),
       h("button", { type: "button", textContent: ".vtt", onclick: async () => download(await subs.text(t), `${t.label || "subtitles"}.vtt`, "text/vtt") }),
       h("button", { type: "button", textContent: ".srt", onclick: async () => download(subs.toSrt(await subs.text(t)), `${t.label || "subtitles"}.srt`, "application/x-subrip") }),
     );
 
-  async function mine(by = null) {
-    const list = bar.reorder(await subs.mine({ sort: bar.sort(), ...bar.options(), ...(by ? { by } : {}) }));
+  async function mine(by = null, saved = false) {
+    // SAVED: `where`'s (the tracks you saved).
+    const list = saved ? (await at.read()).map(subs.shape) : bar.reorder(await subs.mine({ sort: bar.sort(), ...bar.options(), ...(by ? { by } : {}) }));
     return h(
       "div",
       {},
@@ -191,9 +194,9 @@ export async function mount(ctx, el) {
     drawn = where.key();
     const top = h("div", { className: "top" }, h("h2", { textContent: w.person ? `🔤 ${directory.shown(w.person)}'s captions` : "🔤 Caption" }));
     // THE TABS (`where`'s, in every app's order): Your captions · Discover.
-    at.tabs([], { yoursOn: !!w.mine });
+    at.tabs([], { yoursOn: !!w.mine && !w.saved });
     root.replaceChildren(top, theme.loading("Reading…"));
-    const body = await (w.space ? inSpace(w.space) : w.discover ? inSpace(null) : w.for ? forItem(w.for, w.file) : w.edit ? editor(w.edit) : w.person ? mine(w.person) : mine()).catch(e => h("p", { className: "said", textContent: e.message ?? String(e) }));
+    const body = await (w.space ? inSpace(w.space) : w.discover ? inSpace(null) : w.for ? forItem(w.for, w.file) : w.edit ? editor(w.edit) : w.person ? mine(w.person) : w.saved ? mine(null, true) : mine()).catch(e => h("p", { className: "said", textContent: e.message ?? String(e) }));
     if (drawn === where.key()) root.replaceChildren(top, body);
   }
   await draw();

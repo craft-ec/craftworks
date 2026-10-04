@@ -10,7 +10,7 @@ export async function mount(ctx, el) {
   }
   const [conversation, person, list, directory] = await Promise.all(["conversation", "person", "people-list", "directory"].map(n => ctx.require(n)));
   // WHERE (`where`): your people, or DISCOVER (anyone listed) — the tabs every app has.
-  const at = await (await ctx.require("where")).of({ kind: "contact", app: "contact", yours: "Your people" });
+  const at = await (await ctx.require("where")).of({ kind: "contact", app: "contact", yours: "Your people", saves: false });
   at.tabs();
   if (at.discover) return people(ctx, el, { directory, person });
   el.innerHTML = `

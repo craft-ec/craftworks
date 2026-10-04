@@ -10,6 +10,7 @@
 //   const where = await ctx.require("where");
 //   const at = await where.of({ kind: "note", app: "note", yours: "Your notes" })
 //   at.who            // "mine" | "space" | "person" | "discover"
+//   at.saved          // your SAVED of this app (`#/<app>/saved`: what you saved, any place) — every app has it
 //   at.others         // someone else's (a person's, Discover's): read only
 //   at.space  at.person  at.me
 //   at.sub            // the rest of the address, after the place (`f/Photos`, `p/<ref>`)
@@ -24,7 +25,19 @@ export async function start(ctx) {
   const [space, items, roles] = await Promise.all(["space", "items", "roles"].map(n => ctx.require(n)));
   const personOf = () => (ctx.space ? null : (/^u\/(did:[^/]+)/.exec(ctx.sub ?? "")?.[1] ?? null));
 
-  async function of({ kind, kinds = [kind], app = ctx.route.replace(/^\//, ""), yours = "Yours" } = {}) {
+  // A SAVED item, read where it is (a space's this person is not in: from outside, by its public description).
+  async function getSaved(ref) {
+    if (String(ref).startsWith("space:")) {
+      const id = ref.slice(6, ref.indexOf("/"));
+      if (!(await space.mine()).some(x => x.id === id)) {
+        const d = (await items.publicSpaces().catch(() => [])).find(x => x.id === id);
+        return d ? items.get(ref, { outside: d }).catch(() => null) : null;
+      }
+    }
+    return items.get(ref).catch(() => null);
+  }
+
+  async function of({ kind, kinds = [kind], app = ctx.route.replace(/^\//, ""), yours = "Yours", saves = true } = {}) {
     const me = (await space.account()).id;
     const discover = ctx.space === "discover";
     const sp = ctx.space && !discover ? ((await space.mine()).find(s => s.id === ctx.space) ?? null) : null;
@@ -44,8 +57,14 @@ export async function start(ctx) {
     const who = discover ? "discover" : sp ? "space" : person ? "person" : "mine";
     const base = discover ? `#/discover/${app}` : sp ? `#/s/${sp.id}/${app}` : person ? `#/${app}/u/${person}` : `#/${app}`;
     const sub = (p ? (ctx.sub ?? "").replace(/^u\/did:[^/]+\/?/, "") : (ctx.sub ?? "")).replace(/^\/+/, "");
-    // THE READ: the place's items — a list's window, or (whole) every one.
+    const saved = saves && who === "mine" && /^saved(\/|$)/.test(sub);
+    // THE READ: the place's items — a list's window, or (whole) every one; your Saved: what you saved of its kinds.
     const read = ({ kinds: ks = kinds, sort = "new", window = "all", whole = false, ...options } = {}) => {
+      if (saved)
+        return ctx
+          .require("actions")
+          .then(a => Promise.all(a.saved().map(getSaved)))
+          .then(list => list.filter(it => it && ks.includes(it.kind)));
       if (discover) return items.list({ discover: true }, sort, ks, { window, ...options });
       if (whole) return items.inPlaces(sp ? { spaces: [sp] } : { people: [person ?? me] }, ks, { withVotes: false });
       return items.list(sp ? { board: sp.id } : { by: person ?? me }, sort, ks, { window, ...options });
@@ -56,13 +75,14 @@ export async function start(ctx) {
     const tabs = (extra = [], { yoursOn = true } = {}) => {
       const home = who === "mine" || who === "discover";
       ctx.actions[ctx.route] = [
-        ...(home && (pub || extra.length) ? [{ label: yours, href: `#/${app}`, on: who === "mine" && yoursOn }] : []),
+        ...(home ? [{ label: yours, href: `#/${app}`, on: who === "mine" && !saved && yoursOn }] : []),
         ...extra,
+        ...(home && saves ? [{ label: "Saved", href: `#/${app}/saved`, on: saved }] : []),
         ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover" }] : []),
       ];
       dispatchEvent(new CustomEvent("craftworks:actions"));
     };
-    return { who, others: who === "person" || who === "discover", discover, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
+    return { who, saved, others: who === "person" || who === "discover" || saved, discover, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
   }
   return { of, personOf, key: () => `${ctx.space ?? ""}|${ctx.sub ?? ""}`, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
 }

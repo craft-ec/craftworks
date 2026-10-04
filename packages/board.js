@@ -39,6 +39,7 @@ export async function mount(ctx, el) {
     if (s.startsWith("p/")) return { ...inSpace, post: s.slice(2) };
     if (s === "submit" && !at.others) return { ...inSpace, submit: true };
     if (at.who === "mine" && s === "feed") return { feed: true };
+    if (at.saved) return { saved: true };
     if (at.who === "person") return { by: at.person };
     return at.space ? inSpace : { by: me };
   };
@@ -46,7 +47,7 @@ export async function mount(ctx, el) {
   const setActions = async w => {
     // THE TABS (`where`'s, in every app's order): Your posts · Feed · Create post · Discover — a space's: Posts and
     // Create post; a person's: none. Each lit only on its own page.
-    const page = !w.post && !w.submit && !w.feed;
+    const page = !w.post && !w.submit && !w.feed && !w.saved;
     at.tabs(
       [
         ...(at.who === "space" ? [{ label: "Posts", href: base(), on: page }] : []),
@@ -84,13 +85,7 @@ export async function mount(ctx, el) {
       .bd .sorts button[aria-pressed="true"] { background: var(--cw-pressed); color: var(--cw-fg); }
       .bd .post { display: grid; grid-template-columns: 40px minmax(0, 1fr); background: var(--cw-surface); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); overflow: hidden; }
       .bd .post.link:hover { border-color: var(--cw-muted); cursor: pointer; }
-      .bd .post > .votes { background: var(--cw-bg); padding: var(--cw-space-2) 0; }
-      .bd .votes { display: grid; justify-items: center; align-content: start; gap: 0; }
-      .bd .votes button { border: 0; background: none; color: var(--cw-muted); padding: 0 4px; line-height: 1.3; border-radius: var(--cw-radius-sm); }
-      .bd .votes button:hover { background: var(--cw-hover); }
-      .bd .votes button.up[aria-pressed="true"] { color: #ff4500; }
-      .bd .votes button.down[aria-pressed="true"] { color: #7193ff; }
-      .bd .votes .n { font-weight: 700; font-size: var(--cw-text-xs); }
+      .bd .post > .cw-votes { background: var(--cw-bg); padding: var(--cw-space-2) 0; justify-content: flex-start; }
       .bd .post .in { padding: var(--cw-space-2) var(--cw-space-3); display: grid; gap: 4px; min-width: 0; }
       .bd .meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; color: var(--cw-muted); font-size: var(--cw-text-xs); }
       .bd .meta .b { color: var(--cw-fg); font-weight: 700; }
@@ -98,9 +93,6 @@ export async function mount(ctx, el) {
       .bd .post h3 { margin: 0; font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
       .bd .post .text { overflow-wrap: anywhere; line-height: 1.5; margin: 0; font-size: var(--cw-text-sm); }
       .bd .post.link .text { color: var(--cw-muted); }
-      .bd .acts { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; }
-      .bd .acts button { border: 0; background: none; color: var(--cw-muted); font-size: var(--cw-text-xs); font-weight: 600; padding: 4px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
-      .bd .acts button:hover { background: var(--cw-hover); color: var(--cw-fg); }
       .bd .acts .votes { display: flex; align-items: center; gap: 2px; }
       .bd textarea, .bd .field { font: inherit; padding: var(--cw-space-2); border-radius: var(--cw-radius-sm); width: 100%; box-sizing: border-box; }
       .bd textarea { resize: vertical; min-height: 90px; }
@@ -141,33 +133,10 @@ export async function mount(ctx, el) {
   const boardLink = b => h("span", { className: "b", textContent: `b/${space.shown(b)}` });
   const errorTo = said => e => ((said.textContent = e?.message ?? String(e)), (said.hidden = false));
 
-  const flag = async (kind, ref) => {
-    await (await (await ctx.require("moderation")).lists()).flag(kind, ref);
-    await draw();
-  };
-  // VOTES on a post or a comment: ▲ score ▼, changed here at once, then written.
-  function votes(it, post) {
-    const n = h("span", { className: "n", textContent: String(it.score) });
-    const up = h("button", { type: "button", className: "up", textContent: "▲", title: "Upvote", ariaPressed: String(it.mine === 1) });
-    const down = h("button", { type: "button", className: "down", textContent: "▼", title: "Downvote", ariaPressed: String(it.mine === -1) });
-    const cast = v => async e => {
-      e.stopPropagation();
-      // Where the one check says this person may (`posts.mayWriteOn`): in a space they are not in, as its public policy
-      // says (anyone may, or nobody outside).
-      const outside = !here && it.board && !(await posts.boardOf(it.board.id)) ? await descOf(it.board.id) : null;
-      if (here ? !(await roles.of(here)).allows("vote", me, "board") : !(await posts.mayWriteOn(it, "vote", { outside }).catch(() => false))) return;
-      const next = it.mine === v ? 0 : v;
-      it.score += next - it.mine;
-      it.mine = next;
-      n.textContent = String(it.score);
-      up.ariaPressed = String(next === 1);
-      down.ariaPressed = String(next === -1);
-      await posts.vote(it.ref, next, post, { outside }).catch(() => {});
-    };
-    up.onclick = cast(1);
-    down.onclick = cast(-1);
-    return h("div", { className: "votes" }, up, n, down);
-  }
+  // AN ITEM's ACTIONS (`actions`: the same in every app — vote, comments, share, save, hide, flag, edit, remove — by
+  // the one check). From OUTSIDE (a space's post this person is not in): its public description.
+  const actionsCap = await ctx.require("actions");
+  const outsideFor = it => () => (!here && it.board && !discovering() ? posts.boardOf(it.board.id).then(sp => (sp ? null : descOf(it.board.id))) : discovering() && it.board ? descOf(it.board.id) : null);
 
   // A POST: in a list (a link to its page, the text cut short) or on its own page.
   // WHAT SOMEONE WROTE, as Markdown (`markdown`): its images, videos and audio where they were written; the item's
@@ -209,45 +178,12 @@ export async function mount(ctx, el) {
     // A post opens where it lives: in Discover (read from outside), in its space, or in the personal space.
     // Its page in its place (`items.pageOf`: a space's, a person's) — in Discover, read from outside.
     const open = () => (location.hash = discovering() ? `#/discover/board/p/${p.ref}` : posts.pageOf(p.ref, p.kind ?? "post"));
-    const acts = h(
-      "div",
-      { className: "acts" },
-      h("button", { type: "button", textContent: `💬 ${p.comments} Comment${p.comments === 1 ? "" : "s"}`, onclick: e => (e.stopPropagation(), open()) }),
-      h("button", {
-        type: "button",
-        textContent: "Share",
-        onclick: e => {
-          e.stopPropagation();
-          navigator.clipboard.writeText(p.ref).then(() => (e.target.textContent = "Copied"), () => {});
-        },
-      }),
-      // HIDE it, for you only (`moderation`: the one check every read asks — here, in its space, in Discover).
-      p.by !== me ? h("button", { type: "button", textContent: "Hide", onclick: async e => (e.stopPropagation(), await (await ctx.require("moderation")).lists().then(l => l.hide({ by: p.by, id: p.id })).then(() => draw(), errorTo(said))) }) : null,
-      // DISCOVER: flag it on your moderation list (what you, and whoever applies your list, no longer see there).
-      ...(discovering() && p.by !== me
-        ? [
-            h("button", { type: "button", textContent: "Flag post", onclick: e => (e.stopPropagation(), flag("post", p.ref)) }),
-            h("button", { type: "button", textContent: "Flag author", onclick: e => (e.stopPropagation(), flag("person", p.by)) }),
-          ]
-        : []),
-      full && p.by === me && !discovering() ? h("button", { type: "button", textContent: "Edit", onclick: e => (e.stopPropagation(), editIn(body, p, () => draw())) }) : null,
-      p.mayRemove
-        ? h("button", {
-            type: "button",
-            textContent: p.by === me ? "Delete" : "Remove",
-            onclick: async e => {
-              e.stopPropagation();
-              if (e.target.dataset.armed !== "1") return ((e.target.dataset.armed = "1"), (e.target.textContent = `Confirm: ${p.by === me ? "delete" : "remove"}`));
-              await posts.remove(p.ref).then(() => (full ? (location.hash = base()) : draw()), errorTo(said));
-            },
-          })
-        : null,
-    );
     const body = h("div", {}, bodyOf(p, full));
+    const acts = actionsCap.bar(p, { outside: outsideFor(p), open, discover: discovering(), edit: full ? () => editIn(body, p, () => draw()) : null, removed: () => (full ? (location.hash = base()) : draw()), changed: () => draw() });
     return h(
       "article",
       { className: `post${full ? "" : " link"}`, onclick: full ? null : open },
-      votes(p, p.ref),
+      actionsCap.votes(p, { outside: outsideFor(p) }),
       h(
         "div",
         { className: "in" },
@@ -332,7 +268,8 @@ export async function mount(ctx, el) {
   async function listPage(w) {
     const outside = w.pub ? await descOf(w.pub) : null;
     const span = bar.span();
-    const list = bar.reorder(await posts.list(w.discover ? { discover: true } : outside ? { outside } : w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, bar.sort(), "post", bar.options()));
+    // SAVED: `where`'s (what you saved, of Board's kinds).
+    const list = w.saved ? await at.read() : bar.reorder(await posts.list(w.discover ? { discover: true } : outside ? { outside } : w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, bar.sort(), "post", bar.options()));
     const older = bar.older("Older posts", list.length);
     if (w.discover || w.pub) {
       const head = h("div", { className: "panel banner" }, h("h2", { textContent: w.pub ? `b/${outside ? space.shown(outside) : "?"} · 🌐 public` : "🧭 Public boards" }));

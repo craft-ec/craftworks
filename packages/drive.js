@@ -45,14 +45,14 @@ export async function mount(ctx, el) {
   // Where Drive is: yours, or the space open; and the folder (`f/<path>`).
   // WHERE (`where`: yours, a space's, a person's, Discover — the last two read only).
   const where = await ctx.require("where");
-  const at = await where.of({ kind: "file", app: "drive", yours: "Your Drive" });
-  const sp = at.space;
-  const them = at.person;
-  const others = at.others;
-  const discover = at.discover;
+  const place = await where.of({ kind: "file", app: "drive", yours: "Your Drive" });
+  const sp = place.space;
+  const them = place.person;
+  const others = place.others;
+  const discover = place.discover;
   const opts = { discover, person: them };
-  const base = () => at.base;
-  const folder = () => `/${decodeURIComponent(at.sub.replace(/^f\/?/, ""))}`.replace(/\/+$/, "") || "/";
+  const base = () => place.base;
+  const folder = () => (place.saved ? "/" : `/${decodeURIComponent(place.sub.replace(/^f\/?/, ""))}`.replace(/\/+$/, "") || "/");
   const hrefOf = f => (f === "/" ? base() : `${base()}/f/${f.slice(1).split("/").map(encodeURIComponent).join("/")}`);
   const said = h("p", { className: "said", hidden: true });
   // ASK for a name or a path, in the app (not the browser's prompt): the text, or null.
@@ -73,15 +73,17 @@ export async function mount(ctx, el) {
   const who = await (await ctx.require("audience")).picker({ space: sp, kind: "file", initial: sp ? "members" : "private" });
 
   // THE TABS (`where`'s, in every app's order): Your Drive · Discover (which space's Drive: the header's).
-  at.tabs();
+  place.tabs();
   const directory = await ctx.require("directory");
   async function draw() {
     const at = folder();
-    const [rows, folders] = await Promise.all([drive.list(sp, opts), drive.folders(sp, opts)]);
+    // SAVED: `where`'s (the files you saved, of anyone's) — one folder.
+    const savedRows = () => place.read().then(list => list.filter(it => it.files?.[0]).map(it => ({ id: it.ref, ref: it.files[0], at: it.at, folder: "/", by: it.by, readOnly: true, others: true })));
+    const [rows, folders] = place.saved ? [await savedRows(), ["/"]] : await Promise.all([drive.list(sp, opts), drive.folders(sp, opts)]);
     const here = rows.filter(r => r.folder === at);
     const subs = folders.filter(f => f !== at && f.startsWith(at === "/" ? "/" : `${at}/`) && !f.slice(at === "/" ? 1 : at.length + 1).includes("/"));
     // The path, each step a link.
-    const crumbs = h("nav", { className: "crumbs", ariaLabel: "Folder" }, h("a", { href: hrefOf("/"), textContent: sp ? `${space.shown(sp)} Drive` : discover ? "Public files" : them ? `${directory.shown(them)}'s Drive` : "Your Drive" }));
+    const crumbs = h("nav", { className: "crumbs", ariaLabel: "Folder" }, h("a", { href: hrefOf("/"), textContent: sp ? `${space.shown(sp)} Drive` : discover ? "Public files" : place.saved ? "Saved" : them ? `${directory.shown(them)}'s Drive` : "Your Drive" }));
     at.split("/").filter(Boolean).reduce((path, part) => {
       const p = `${path}/${part}`;
       crumbs.append(" / ", h("a", { href: hrefOf(p), textContent: part }));
@@ -119,10 +121,12 @@ export async function mount(ctx, el) {
   // A FILE's tile: the file look (`cards`: the same wherever a file shows), with Drive's actions — a file of an item
   // made in another app shown here and changed there (its page); someone else's (Discover, their space) read only.
   const cards = await ctx.require("cards");
+  const actionsCap = await ctx.require("actions");
   function tile(r) {
     const note = h("span", { className: "s" });
     const openIt = () => attachments.open(r.ref, note);
-    const actions = [h("button", { type: "button", textContent: "Open", onclick: openIt })];
+    // Save (`actions`): any file listed by its item (not a view of another app's item: that one is saved there).
+    const actions = [h("button", { type: "button", textContent: "Open", onclick: openIt }), ...(String(r.id).includes("#") ? [] : [actionsCap.save({ ref: r.id })])];
     if (r.readOnly) {
       if (r.page) actions.push(h("a", { href: r.page, textContent: `Open in ${r.from?.app === "text" ? "Board" : kinds.domainName(r.from?.app)}` }));
     } else
