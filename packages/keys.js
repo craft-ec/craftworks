@@ -371,6 +371,50 @@ export async function start(ctx) {
     await t.settled;
     return t;
   };
+  // READ, never changed here (the MLS code is the identity's: one byte of it forks every account): the references a
+  // batch of key packages holds (its encoding: u32 count, then each id and data as u32 length ‖ bytes) and those a
+  // WELCOME is made for (RFC 9420: version, wire format 3, cipher suite, then secrets<V> of { new_member<V>,
+  // kem_output<V>, ciphertext<V> } — V a variable-length size).
+  const hexb = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+  function batchRefs(b) {
+    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    let at = 0;
+    const n = dv.getUint32(at, true);
+    at += 4;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const kl = dv.getUint32(at, true);
+      out.push(hexb(b.subarray(at + 4, at + 4 + kl)));
+      at += 4 + kl;
+      at += 4 + dv.getUint32(at, true);
+    }
+    return out;
+  }
+  function welcomeRefs(b) {
+    let at = 6; // version, wire format, cipher suite
+    const v = () => {
+      const f = b[at] >> 6;
+      const len = f === 0 ? b[at] & 0x3f : f === 1 ? ((b[at] & 0x3f) << 8) | b[at + 1] : ((b[at] & 0x3f) << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | b[at + 3];
+      at += f === 0 ? 1 : f === 1 ? 2 : 4;
+      const s = b.subarray(at, at + len);
+      at += len;
+      return s;
+    };
+    const secrets = v();
+    const outer = at;
+    at = 0;
+    const bb = b;
+    b = secrets;
+    const out = [];
+    while (at < secrets.length) {
+      out.push(hexb(v()));
+      v();
+      v();
+    }
+    b = bb;
+    at = outer;
+    return out;
+  }
   const memberWith = async packages => {
     const k = await keysOfMember();
     return new mlsGlue.SpaceMember(bytes(k.seed), bytes(k.credential), packages ? bytes(packages) : new Uint8Array(0));
@@ -588,7 +632,14 @@ export async function start(ctx) {
               mb = await memberWith(row.value);
               m = mb.join_space(sp.idBytes, bytes(welcome));
             } catch (e) {
-              failed.push({ batch: row.key.slice("packages/".length, "packages/".length + 8), size: String(row.value ?? "").length, why: String(e?.message ?? e) });
+              // Whether this batch HOLDS a package the welcome is made for (then NotFound means: not found in the GROUP's
+              // tree — its entry there is not the one this package made — never "not held").
+              let holds = false;
+              try {
+                const aimed = new Set(welcomeRefs(bytes(welcome)));
+                holds = batchRefs(bytes(row.value)).some(r => aimed.has(r));
+              } catch {}
+              failed.push({ batch: row.key.slice("packages/".length, "packages/".length + 8), size: String(row.value ?? "").length, holds, why: String(e?.message ?? e) });
               continue;
             }
             if (expect) {
@@ -605,6 +656,9 @@ export async function start(ctx) {
             if (n) ctx.log(`${sp.name ?? "space"} keys`, { what: `${n} earlier epoch(s) of its history kept` });
             return kept;
           }
+          const holding = failed.filter(f => f.holds);
+          if (holding.length)
+            throw new Error(`the welcome's key package IS held here (batch ${holding.map(f => f.batch).join(", ")}) but the group it describes has no entry matching it: ${holding[0].why}`);
           const real = failed.filter(f => !/KeyPackageNotFound/.test(f.why));
           throw new Error(
             real.length
