@@ -92,8 +92,11 @@ export async function mount(ctx, el) {
     });
   }
 
-  // THE TABS (`where`'s, in every app's order): Your Drive · Discover (which space's Drive: the header's).
-  place.tabs();
+  // THE TABS (`where`'s, in every app's order): Your Drive · Saved · Discover · ＋ Upload (into the folder open; from
+  // Saved or Discover: your Drive first).
+  const input = h("input", { type: "file", multiple: true, hidden: true, onchange: () => (upload([...input.files]), (input.value = "")) });
+  el.append(input);
+  place.tabs([], { create: { label: "Upload", run: () => (place.others ? (location.hash = "#/drive") : input.click()) } });
   const directory = await ctx.require("directory");
   async function draw() {
     // A FILE's PAGE (`…/drive/p/<ref>`): the one item page — its preview, its comments — framed here.
@@ -114,12 +117,10 @@ export async function mount(ctx, el) {
       crumbs.append(" / ", h("a", { href: hrefOf(p), textContent: part }));
       return p;
     }, "");
-    const input = h("input", { type: "file", multiple: true, hidden: true, onchange: () => (upload([...input.files]), (input.value = "")) });
     const top = h(
       "div",
       { className: "top" },
       h("h2", { textContent: "🗂️ Drive" }),
-      others ? null : h("label", { className: "up" }, "📤 Upload", input),
       others ? null : h("button", {
         type: "button",
         textContent: "New folder",

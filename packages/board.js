@@ -52,9 +52,8 @@ export async function mount(ctx, el) {
       [
         ...(at.who === "space" ? [{ label: "Posts", href: base(), on: page }] : []),
         ...(at.who === "mine" || at.who === "discover" ? [{ label: "Feed", href: "#/board/feed", on: !!w.feed }] : []),
-        ...(at.others ? [] : [{ label: "Create post", href: `${base()}/submit`, on: !!w.submit }]),
       ],
-      { yoursOn: page && w.by === me },
+      { yoursOn: page && w.by === me, create: { label: "Post", href: at.space ? `${base()}/submit` : "#/board/submit", on: !!w.submit } },
     );
   };
   el.classList.add("cw-fill");

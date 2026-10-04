@@ -28,7 +28,7 @@ export async function mount(ctx, el) {
   ctx.actions["/mail"] = [
     { label: "Inbox", href: base, on: box === "in" },
     { label: "Sent", href: `${base}/sent`, on: box === "sent" },
-    { label: "Compose", run: () => compose() },
+    { label: "＋ Compose", run: () => compose(), end: true },
   ];
   dispatchEvent(new CustomEvent("craftworks:actions"));
   // WHO a mail is from or to: a person (their name, their menu), or a space (its name).

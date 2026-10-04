@@ -86,10 +86,12 @@ export async function mount(ctx, el) {
 
   function top(w) {
     // THE TABS (`where`'s, in every app's order): Following · yours · Saved · Discover; Upload where you may.
-    at.tabs([
-      ...(at.who === "mine" || at.who === "discover" ? [{ label: C.mine, href: `#/${C.app}/mine`, on: w.by === me }] : []),
-      ...(at.others ? [] : [{ label: "⬆ Upload", href: `${base()}/up`, on: !!w.up }]),
-    ], { yoursOn: !!w.feed && !w.saved });
+    at.tabs([], {
+      yoursOn: !!w.feed && !w.saved,
+      // Yours first, as every app's: your channel, then the feed of those you follow.
+      before: [{ label: C.mine, href: `#/${C.app}/mine`, on: w.by === me }],
+      create: { label: "Upload", href: at.space ? `${base()}/up` : `#/${C.app}/up`, on: !!w.up },
+    });
     // In a space, it is a CHANNEL (the space named in this app's own words).
     const title = at.space ? `${C.icon} ${space.shown(at.space)} · channel` : `${C.icon} ${C.name}`;
     // The SUB-TYPES (a filter): all, or one kind of the domain.

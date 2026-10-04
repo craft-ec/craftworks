@@ -16,8 +16,9 @@
 //   at.sub            // the rest of the address, after the place (`f/Photos`, `p/<ref>`)
 //   at.href(sub)      // a link that stays in this place
 //   await at.read({ kinds, sort, window, whole })   // its items (whole: every one, not a list's window)
-//   at.tabs(extra, { yoursOn })   // the header's tabs — in your space: the app's own page ("Your …"), the app's
-//                                 // extras, Discover; elsewhere the extras alone
+//   at.tabs(extra, { yoursOn, before, create })   // the header's tabs, in every app's ONE order: `before` (views
+//                                 // ahead of yours), Yours, the extras, Saved, Discover — then `create` ("＋ …"),
+//                                 // always last and shown wherever the tabs are (Saved, Discover too): it makes yours
 //   where.personOf()  // the person whose space is open, else null
 //   where.key()       // the address as a key (an app redraws when it changes)
 //   where.placeKey()  // the PLACE as a key (yours, a space, a person, Discover): another place, the app opened afresh
@@ -74,13 +75,15 @@ export async function start(ctx) {
     // THE TABS, in the same order in every app: in your space, the app's own page ("Your …"), then the app's extras,
     // then Discover (an app with a public side); elsewhere the extras alone.
     const pub = (app_?.views ?? []).includes("public");
-    const tabs = (extra = [], { yoursOn = true } = {}) => {
+    const tabs = (extra = [], { yoursOn = true, before = [], create = null } = {}) => {
       const home = who === "mine" || who === "discover";
       ctx.actions[ctx.route] = [
+        ...(home ? before : []),
         ...(home ? [{ label: yours, href: `#/${app}`, on: who === "mine" && !saved && yoursOn }] : []),
         ...extra,
         ...(home && saves ? [{ label: "Saved", href: `#/${app}/saved`, on: saved }] : []),
         ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover" }] : []),
+        ...(create && who !== "person" ? [{ ...create, label: `＋ ${create.label}`, end: true }] : []),
       ];
       dispatchEvent(new CustomEvent("craftworks:actions"));
     };

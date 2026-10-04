@@ -30,7 +30,10 @@ export function mount(ctx, el) {
       .bar .actions a:hover { background: var(--cw-hover); }
       .bar .end { display: flex; gap: 10px; margin-left: auto; }
       .bar .end button { border: 0; background: none; padding: 2px var(--cw-space-1); cursor: pointer; border-radius: var(--cw-radius-sm); }
-      .bar .end button:hover { background: var(--cw-hover); }
+      .bar .end button:hover, .bar .end a:hover { background: var(--cw-hover); }
+      .bar .end { align-items: center; }
+      .bar .end a { color: inherit; text-decoration: none; padding: 2px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
+      .bar .end a[aria-current="page"] { background: var(--cw-pressed); }
       .bar .actions .search { padding: var(--cw-space-1) 10px; border-radius: var(--cw-radius-pill); width: 16em; }
       .bar .drop { position: relative; }
       .bar .drop > button { border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); padding: 2px var(--cw-space-2); font-weight: 600;
@@ -157,7 +160,8 @@ export function mount(ctx, el) {
     const all = ctx.actions[ctx.route] ?? [];
     const item = link;
     el.querySelector(".end").replaceChildren(
-      ...all.filter(a => a.end).map(a => Object.assign(document.createElement("button"), { type: "button", textContent: a.label, onclick: () => a.run() })),
+      // At the END (right): a link (a create page) or a button (Log out, Compose).
+      ...all.filter(a => a.end).map(a => item(a) ?? Object.assign(document.createElement("button"), { type: "button", textContent: a.label, onclick: () => a.run() })),
     );
     actions.replaceChildren(
       ...all.filter(a => !a.end).map(a => {
