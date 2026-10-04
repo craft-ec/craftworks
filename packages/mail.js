@@ -1,6 +1,8 @@
 // MAIL, a page: mail to anyone by their id — the Inbox (what others sent: opened from their own tails, kept here), Sent,
 // and Compose; a mail open beside the list, with Reply. UI only: a mail is `conversation.mail`'s, names `directory`'s,
-// people typed as `name#abc123` or their id resolved by `conversation.person`. The top bar: Inbox · Sent · Compose.
+// people typed as `name#abc123` or their id resolved by `conversation.person` (a space: `space:<id>`). The top bar:
+// Inbox · Sent · Compose. IN A SPACE: the space's own mail (`conversation.mail.of`) — its address `space:<id>`, its
+// owner and admins writing and reading as the space; its owner turns it on.
 export async function mount(ctx, el) {
   const login = await ctx.require("login");
   if (!(await login.session())) {
@@ -9,12 +11,29 @@ export async function mount(ctx, el) {
   }
   const [conversation, directory, theme, person, attachments, markdown, mdEditor] = await Promise.all(["conversation", "directory", "theme", "person", "attachments", "markdown", "md-editor"].map(n => ctx.require(n)));
   const box = ctx.sub === "sent" ? "sent" : "in";
+  // WHOSE MAIL: this person's, or (in a space) the space's.
+  const sp = ctx.space ? ((await (await ctx.require("space")).mine()).find(s => s.id === ctx.space) ?? null) : null;
+  const src = sp ? await conversation.mail.of(sp) : conversation.mail;
+  const base = sp ? `#/s/${sp.id}/mail` : "#/mail";
+  if (sp) {
+    const say = t => (el.replaceChildren(Object.assign(document.createElement("p"), { className: "none", textContent: t, style: "padding:var(--cw-space-5);text-align:center;color:var(--cw-muted)" })), el.firstChild);
+    if (!src.may()) return void say(`${sp.name}'s mail is its owner's and admins' to use.`);
+    if (!(await src.enabled())) {
+      const p = say(`${sp.name} has no mail address yet.`);
+      if ((await (await ctx.require("roles")).of(sp)).role((await (await ctx.require("space")).account()).id) === "owner")
+        p.append(" ", Object.assign(document.createElement("button"), { type: "button", textContent: "Turn on its mail", onclick: async e => ((e.target.disabled = true), await src.enable().then(() => mount(ctx, (el.replaceChildren(), el)), err => ((e.target.disabled = false), p.append(` ${err.message}`)))) }));
+      return;
+    }
+  }
   ctx.actions["/mail"] = [
-    { label: "Inbox", href: "#/mail", on: box === "in" },
-    { label: "Sent", href: "#/mail/sent", on: box === "sent" },
+    { label: "Inbox", href: base, on: box === "in" },
+    { label: "Sent", href: `${base}/sent`, on: box === "sent" },
     { label: "Compose", run: () => compose() },
   ];
   dispatchEvent(new CustomEvent("craftworks:actions"));
+  // WHO a mail is from or to: a person (their name, their menu), or a space (its name).
+  const spaceName = (m, ref) => (m.space?.id && ref === `space:${m.space.id}` ? m.space.name : sp && ref === `space:${sp.id}` ? sp.name : "a space");
+  const nameOf = (m, ref, props) => (String(ref).startsWith("space:") ? Object.assign(document.createElement("span"), { textContent: `🏠 ${spaceName(m, ref)}` }) : directory.nameEl(ref, ...(props ? ["a", props(ref)] : [])));
   el.classList.add("cw-fill");
   el.innerHTML = `
     <style>
@@ -64,18 +83,18 @@ export async function mount(ctx, el) {
   let open = null;
 
   async function draw() {
-    const mails = await conversation.mail.list(box);
+    const mails = await src.list(box);
     if (!mails.length) {
       list.replaceChildren(node("p", { className: "empty", textContent: box === "sent" ? "Nothing sent yet." : "No mail yet." }));
       return;
     }
-    const toNames = dids => dids.flatMap((d, i) => [...(i ? [", "] : []), directory.nameEl(d)]);
+    const toNames = m => m.to.flatMap((d, i) => [...(i ? [", "] : []), nameOf(m, d)]);
     list.replaceChildren(
       ...mails.map((m, i) => {
         const b = node("button", { type: "button" });
         b.setAttribute("aria-current", String(open?.id === m.id));
         const who = node("span", { className: "who" });
-        who.append(...(box === "sent" ? ["To ", ...toNames(m.to)] : [directory.nameEl(m.from)]));
+        who.append(...(box === "sent" ? ["To ", ...toNames(m)] : [nameOf(m, m.from)]));
         b.append(who, node("span", { className: "sub", textContent: m.subject || "(no subject)" }), node("span", { className: "when", textContent: new Date(m.at).toLocaleString() }));
         b.onclick = () => show(m);
         return b;
@@ -88,7 +107,7 @@ export async function mount(ctx, el) {
     root.classList.add("reading");
     draw();
     // Each name: what can be done with that person.
-    const who = did => directory.nameEl(did, "a", { href: "#", onclick: e => (e.preventDefault(), person.open(e.currentTarget, did)) });
+    const who = ref => nameOf(m, ref, did => ({ href: "#", onclick: e => (e.preventDefault(), person.open(e.currentTarget, did)) }));
     const meta = node("div", { className: "meta" });
     meta.append("From ", who(m.from), " · to ");
     m.to.forEach((d, i) => meta.append(...(i ? [", "] : []), who(d)));
@@ -127,11 +146,11 @@ export async function mount(ctx, el) {
       said.hidden = true;
       try {
         if (ed.busy()) throw new Error("still sending the files: a moment");
-        const to = await Promise.all(f.elements.to.value.split(",").map(x => x.trim()).filter(Boolean).map(x => conversation.person(x)));
-        await conversation.mail.send(to, f.elements.subject.value.trim(), ed.value(), re?.id ?? null, ed.files());
+        const to = await Promise.all(f.elements.to.value.split(",").map(x => x.trim()).filter(Boolean).map(x => (x.startsWith("space:") ? x : conversation.person(x))));
+        await src.send(to, f.elements.subject.value.trim(), ed.value(), re?.id ?? null, ed.files());
         dlg.close();
         if (box === "sent") draw();
-        else location.hash = "#/mail/sent";
+        else location.hash = `${base}/sent`;
       } catch (err) {
         said.textContent = `Not sent: ${err?.message ?? err}`;
         said.hidden = false;
@@ -144,11 +163,11 @@ export async function mount(ctx, el) {
 
   list.replaceChildren(theme.loading(box === "sent" ? "Loading sent mail…" : "Loading your mail…"));
   await draw();
-  conversation.mail.onChange(() => el.isConnected && draw());
+  src.onChange(() => el.isConnected && draw());
   if (box === "in") {
     // New mail pointed to in the inbox: opened and kept (the list redraws as it arrives).
     list.append(theme.loading("Checking your inbox…", 1));
-    conversation.mail
+    src
       .fetch()
       .catch(e => ctx.log("mail", { what: e?.message ?? String(e) }))
       .finally(() => el.isConnected && draw());

@@ -7,6 +7,9 @@
 //   const index = await ctx.require("index");
 //   await index.send(did, { kind: "welcome", … })   // sealed to their inbox key, dropped in their inbox
 //   await index.inbox()                             // this account's items, opened: [{ … }]
+//   await index.sendTo(address, boxPublic, item)    // ANY inbox (a space's: `Core.inbox_address(space id)`), sealed to a
+//                                                   // key given (the space's mail key)
+//   await index.inboxWith(address, seed)            // ANY inbox, opened with a key this page holds (a space's mail key)
 //   await index.request(code, { … })                // an item (plain) in the bag an INVITE CODE names
 //   await index.requests(code)                      // the items in it: only who holds the code finds the bag
 //   await index.openPointers(ref)                    // a THING's public bag, made (by its author, when it is made)
@@ -46,6 +49,25 @@ export async function start(ctx) {
     if (!card?.inbox) throw new Error("that person has no card with an inbox yet");
     const sealed = Core.seal_to(bytes(card.inbox), enc.encode(JSON.stringify(item)), crypto.getRandomValues(new Uint8Array(32)));
     await drop(Core.inbox_address(didBytes(did)), sealed, "sending to an inbox");
+  }
+
+  // ANY INBOX: an item sealed to a key given (a space's mail key, from its owner's record); and one read, opened with a
+  // key held here. A person's own inbox is `send` / `inbox` (their key is their identity's).
+  async function sendTo(address, boxPublic, item) {
+    const sealed = Core.seal_to(boxPublic, enc.encode(JSON.stringify(item)), crypto.getRandomValues(new Uint8Array(32)));
+    await drop(address, sealed, "sending to an inbox");
+  }
+  async function inboxWith(address, seed, { show = false } = {}) {
+    const payloads = await read(address, "an inbox", { show });
+    return payloads
+      .map(p => {
+        try {
+          return JSON.parse(dec.decode(Core.open_with(seed, p)));
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
   }
 
   // THE ONE BAG READ: a bag's items as stored (bytes). It waits for the node's ANSWER; a bag the node answers is not there
@@ -188,5 +210,5 @@ export async function start(ctx) {
   const listSpace = desc => point(SPACES, { id: desc.id, name: desc.name, kind: desc.kind, governance: { owner: desc.governance.owner, nonce: desc.governance.nonce } });
   const spaces = () => pointers(SPACES);
 
-  return { onChange: f => changed.push(f), send, inbox, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince };
+  return { onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince };
 }

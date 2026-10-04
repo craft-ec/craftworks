@@ -1862,6 +1862,28 @@ mod js {
             Ok(js_sys::Uint8Array::from(&k.verifying_key().to_bytes()[..]))
         }
 
+        /// A KEY a page holds itself (a space's mail key: its secret kept where only who may use it read it), the
+        /// counterparts of the identity's: the public key to SEAL to (`seal_to`), opening what was sealed to it, and
+        /// signing / checking with it (ed25519).
+        pub fn box_public(seed: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            let s = x25519_dalek::StaticSecret::from(b32(seed)?);
+            Ok(js_sys::Uint8Array::from(&x25519_dalek::PublicKey::from(&s).to_bytes()[..]))
+        }
+        pub fn open_with(seed: &[u8], blob: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            craftworks_identity::open_with(&b32(seed)?, blob)
+                .map(|v| js_sys::Uint8Array::from(&v[..]))
+                .ok_or_else(|| err("it does not open with that key".into()))
+        }
+        pub fn sign_with(seed: &[u8], message: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            use ed25519_dalek::Signer;
+            let k = ed25519_dalek::SigningKey::from_bytes(&b32(seed)?);
+            Ok(js_sys::Uint8Array::from(&k.sign(message).to_bytes()[..]))
+        }
+        pub fn verify_with(public: &[u8], message: &[u8], sig: &[u8]) -> bool {
+            let (Ok(p), Ok(s)) = (<[u8; 32]>::try_from(public), <[u8; 64]>::try_from(sig)) else { return false };
+            ed25519_dalek::VerifyingKey::from_bytes(&p).is_ok_and(|k| k.verify_strict(message, &ed25519_dalek::Signature::from_bytes(&s)).is_ok())
+        }
+
         /// What a frame from the node says, as JSON text.
         pub fn take(&mut self, bytes: &[u8]) -> String {
             self.0.take(bytes).to_string()

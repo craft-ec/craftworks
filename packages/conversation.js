@@ -31,6 +31,10 @@
 //   await conversation.mail.fetch()  // mails pointed to in the inbox, opened and kept
 //   await conversation.mail.list("in" | "sent")   // [{ id, from, to, subject, body, at, re }], newest first
 //   await conversation.mail.prune()  // this account's sealed copies older than 30 days dropped (after each send)
+//   const sm = await conversation.mail.of(space)   // A SPACE's MAIL: its own address (`space:<id>`), its admins' to use
+//     sm.may()  await sm.enabled()  await sm.enable()  (its owner)  await sm.send(to, subject, body, re, files)
+//     await sm.fetch()  await sm.list("in" | "sent")  sm.onChange(fn)
+//   (`to` may name a space: `space:<id>` — of a space this person knows, or one whose mail they had.)
 export async function start(ctx) {
   const [space, keys, directory, index, content] = await Promise.all(["space", "keys", "directory", "index", "content"].map(n => ctx.require(n)));
   const short = did => `${did.replace(/^did:craftec:/, "").slice(0, 8)}…`;
@@ -513,7 +517,163 @@ export async function start(ctx) {
   const { glue } = await ctx.require("node");
   // Kept mail is private: the account's table `mailbox` (not `mail`: that name is the public tail's).
   const kept = async () => (await ctx.require("storage")).table("mailbox");
+  // A SPACE's MAIL KEY: made once by its OWNER — its secret kept in the space's ADMINS' group (`audience`: only the
+  // owner and admins read it), its public halves published in the owner's own public tail `spacemail` (`<space id>` →
+  // { box, sign }): trusted as the owner's because the space's id proves its owner (`space.owner`). Mail TO the space is
+  // sealed to `box` and pointed to in the space's own inbox; mail FROM it is signed with the key — from the space, not
+  // from whichever admin sent it.
+  const SPACEMAIL = "spacemail";
+  const canon = m => [m.id, m.from, m.via ?? "", JSON.stringify(m.to), m.subject, m.body, String(m.at), m.re ?? "", JSON.stringify(m.files ?? [])].join("\n");
+  // A space as mail knows it: its description ({ id, name, governance }) — this person's, a public one, or one a mail named.
+  const knownSpaces = new Map();
+  async function spaceDesc(id) {
+    if (knownSpaces.has(id)) return knownSpaces.get(id);
+    const mine = (await space.mine()).find(s => s.id === id);
+    const pub = mine ? null : ((await (await ctx.require("items")).publicSpaces().catch(() => [])).find(d => d.id === id) ?? null);
+    const d = mine ?? pub;
+    if (d) knownSpaces.set(id, d);
+    return d ?? null;
+  }
+  // Its key's public halves, from its owner's record (the id proving the owner); null: no space mail (yet).
+  async function spaceKey(desc) {
+    const owner = desc && (await space.owner(desc));
+    if (!owner) return null;
+    const t = await directory.publicOf(owner, SPACEMAIL);
+    const v = t?.rows().find(r => r.key === desc.id)?.value;
+    try {
+      return v ? JSON.parse(v) : null;
+    } catch {
+      return null;
+    }
+  }
+  const spaceMails = new Map();
+  async function spaceMailOf(sp) {
+    if (spaceMails.has(sp.id)) return spaceMails.get(sp.id);
+    const [roles, storage] = await Promise.all(["roles", "storage"].map(n => ctx.require(n)));
+    const r = await roles.of(sp);
+    const me = await space.account();
+    const may = () => ["owner", "admin"].includes(r.role(me.id));
+    // Its admins' group (made by whoever first needs it: the owner, turning space mail on): the key, and kept mail.
+    let gp = null;
+    const group = () => (gp ??= audience(sp, "admins"));
+    const table = async name => {
+      const g = await group();
+      return storage.table(space.tableOf(g, name), g);
+    };
+    const seed = async () => {
+      const t = await table("mailkey");
+      await t.settled;
+      const v = t.rows().find(x => x.key === "seed" && x.value)?.value;
+      return v ? bytesOf(v) : null;
+    };
+    const kept = () => table("mailbox");
+    const sm = {
+      may,
+      enabled: async () => !!(await spaceKey(sp)),
+      // ON (its owner): the key made, kept for the admins, its public halves published under the owner's name.
+      async enable() {
+        if (r.role(me.id) !== "owner") throw new Error("only the space's owner turns its mail on");
+        let s = await seed();
+        if (!s) {
+          s = crypto.getRandomValues(new Uint8Array(32));
+          await (await table("mailkey")).put("seed", hexOf(s));
+        }
+        const rec = { box: hexOf(glue.CraftworksCore.box_public(s)), sign: hexOf(glue.CraftworksCore.public_of(s)) };
+        await (await directory.publicOf(me.id, SPACEMAIL)).put(sp.id, JSON.stringify(rec));
+        return rec;
+      },
+      // AS THE SPACE (an admin): signed with its key; sealed to each recipient (a person, or another space).
+      async send(to, subject, body, re = null, files = []) {
+        if (!may()) throw new Error("only its owner and admins write as the space");
+        const s = await seed();
+        if (!s) throw new Error("this space's mail is not on: its owner turns it on");
+        to = [...new Set(to)];
+        if (!to.length) throw new Error("to nobody");
+        const m = { id: `${Date.now().toString(36)}.${newId()}`, from: `space:${sp.id}`, via: me.id, space: { id: sp.id, name: sp.name, governance: sp.governance }, to, subject: String(subject ?? ""), body: String(body ?? ""), at: Date.now(), re, ...(files.length ? { files } : {}) };
+        m.sig = hexOf(glue.CraftworksCore.sign_with(s, new TextEncoder().encode(canon(m))));
+        await deliver(m, me);
+        await (await kept()).put(`sent/${m.id}`, JSON.stringify(m));
+        return m;
+      },
+      // ITS INBOX: every mail pointed to there, read from its sender's tail, opened with the space's key, kept.
+      async fetch() {
+        if (!may()) return 0;
+        const s = await seed();
+        if (!s) return 0;
+        const t = await kept();
+        const have = new Set(t.rows().map(x => x.key));
+        let n = 0;
+        for (const it of await index.inboxWith(glue.CraftworksCore.inbox_address(sp.idBytes), s)) {
+          if (it.kind !== "mail" || !it.from || !it.key || have.has(`in/${it.key}`)) continue;
+          try {
+            const sealed = (await directory.publicOf(it.from, MAIL))?.rows().find(x => x.key === it.key)?.value;
+            if (!sealed) continue;
+            const m = JSON.parse(new TextDecoder().decode(glue.CraftworksCore.open_with(s, bytesOf(sealed))));
+            if (!(await genuine(m, it.from)) || !m.to?.includes(`space:${sp.id}`)) continue;
+            await t.put(`in/${it.key}`, JSON.stringify(m));
+            n += 1;
+          } catch (e) {
+            ctx.log("mail", { what: `${sp.name}: a mail from ${short(it.from)} did not open: ${e.message}` });
+          }
+        }
+        return n;
+      },
+      list: async (which = "in") => listOf(await kept(), which),
+      onChange: async f => (await kept()).onChange(f),
+    };
+    spaceMails.set(sp.id, sm);
+    return sm;
+  }
+  // WHO SENT IT: whose tail it was in — and, from a space, its key's signature (whoever of its admins sent it).
+  async function genuine(m, tailOwner) {
+    if (!String(m.from ?? "").startsWith("space:")) return m.from === tailOwner;
+    if (m.via !== tailOwner || m.space?.id !== m.from.slice(6)) return false;
+    const key = await spaceKey(m.space);
+    if (!key?.sign || !m.sig) return false;
+    if (!glue.CraftworksCore.verify_with(bytesOf(key.sign), new TextEncoder().encode(canon(m)), bytesOf(m.sig))) return false;
+    knownSpaces.set(m.space.id, m.space);
+    return true;
+  }
+  // DELIVERED: a sealed copy per recipient in the sender's own tail `mail`, a pointer in the recipient's inbox — a
+  // person's (their card's key), or a space's (its key, from its owner's record).
+  async function deliver(m, me) {
+    const box = await directory.publicOf(me.id, MAIL);
+    const text = new TextEncoder().encode(JSON.stringify(m));
+    const where = await Promise.all(
+      m.to.map(async d => {
+        if (d.startsWith("space:")) {
+          const desc = await spaceDesc(d.slice(6));
+          const key = await spaceKey(desc);
+          if (!key?.box) throw new Error(`${desc?.name ?? "that space"} has no mail`);
+          return { d, pub: bytesOf(key.box), drop: item => index.sendTo(glue.CraftworksCore.inbox_address(bytesOf(d.slice(6))), bytesOf(key.box), item) };
+        }
+        const card = await directory.card(d);
+        if (!card?.inbox) throw new Error(`no inbox yet for ${directory.shown(d)}`);
+        return { d, pub: bytesOf(card.inbox), drop: item => index.send(d, item) };
+      }),
+    );
+    for (const w of where) {
+      const key = `${m.id}/${w.d.replace(/^(did:craftec:|space:)/, "").slice(0, 16)}`;
+      await box.put(key, hexOf(glue.CraftworksCore.seal_to(w.pub, text, crypto.getRandomValues(new Uint8Array(32)))));
+      await w.drop({ kind: "mail", from: me.id, key });
+    }
+  }
+  const listOf = (t, which) =>
+    t
+      .rows()
+      .filter(r => r.key.startsWith(`${which}/`))
+      .map(r => {
+        try {
+          return JSON.parse(r.value);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.at - a.at);
+
   const mail = {
+    of: spaceMailOf,
     // `files`: references (`files`), sealed in the mail with the rest: its recipients read them.
     async send(to, subject, body, re = null, files = []) {
       const me = await space.account();
@@ -521,16 +681,7 @@ export async function start(ctx) {
       to = [...new Set(to)];
       if (!to.length) throw new Error("to nobody");
       const m = { id: `${Date.now().toString(36)}.${newId()}`, from: me.id, to, subject: String(subject ?? ""), body: String(body ?? ""), at: Date.now(), re, ...(files.length ? { files } : {}) };
-      const box = await directory.publicOf(me.id, MAIL);
-      const cards = await Promise.all(to.map(d => directory.card(d)));
-      const missing = to.filter((d, i) => !cards[i]?.inbox);
-      if (missing.length) throw new Error(`no inbox yet for ${missing.map(d => directory.shown(d)).join(", ")}`);
-      const text = new TextEncoder().encode(JSON.stringify(m));
-      for (const [i, d] of to.entries()) {
-        const key = `${m.id}/${d.replace(/^did:craftec:/, "").slice(0, 16)}`;
-        await box.put(key, hexOf(glue.CraftworksCore.seal_to(bytesOf(cards[i].inbox), text, crypto.getRandomValues(new Uint8Array(32)))));
-        await index.send(d, { kind: "mail", from: me.id, key });
-      }
+      await deliver(m, me);
       await (await kept()).put(`sent/${m.id}`, JSON.stringify(m));
       mail.prune().catch(e => ctx.log("mail", { what: `pruning: ${e.message}` }));
       return m;
@@ -564,8 +715,8 @@ export async function start(ctx) {
           if (!sealed) continue;
           const r = await (await ctx.require("auth")).identity.inboxOpen([bytesOf(sealed)]);
           const m = JSON.parse(new TextDecoder().decode(bytesOf(r.opened?.[0] ?? "")));
-          // Who sent it is whose tail it was in — never what it says.
-          if (m.from !== it.from || !m.to?.includes(me.id)) continue;
+          // Who sent it is whose tail it was in (from a space: its key's signature) — never what it says.
+          if (!(await genuine(m, it.from)) || !m.to?.includes(me.id)) continue;
           await t.put(`in/${it.key}`, JSON.stringify(m));
           n += 1;
         } catch (e) {
@@ -574,21 +725,7 @@ export async function start(ctx) {
       }
       return n;
     },
-    async list(which = "in") {
-      const t = await kept();
-      return t
-        .rows()
-        .filter(r => r.key.startsWith(`${which}/`))
-        .map(r => {
-          try {
-            return JSON.parse(r.value);
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean)
-        .sort((a, b) => b.at - a.at);
-    },
+    list: async (which = "in") => listOf(await kept(), which),
     onChange: async f => (await kept()).onChange(f),
   };
 
