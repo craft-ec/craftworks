@@ -607,7 +607,7 @@ export async function start(ctx) {
     const g = {
       // ADD a person (a DID) by a key package from their card: the WELCOME (hex) for them.
       add: keyPackage =>
-        (queue = queue.then(() =>
+        (queue = queue.catch(() => {}).then(() =>
           change(() => {
             const [commit, welcome] = m.add(bytes(keyPackage));
             return [commit, hexOf(welcome)];
@@ -615,7 +615,7 @@ export async function start(ctx) {
         )),
       // REMOVE members (their indexes in the group): one commit each, a new epoch each, which they cannot read.
       remove: indexes =>
-        (queue = queue.then(async () => {
+        (queue = queue.catch(() => {}).then(async () => {
           for (const i of [...indexes].sort((a, b) => b - a)) {
             const cred = m.status().members.find(x => x.index === i)?.cred ?? null;
             await change(() => [m.remove(i), null], cred ? { kind: "remove", creds: [cred] } : null);
@@ -626,7 +626,7 @@ export async function start(ctx) {
       // REFRESH this DID's own keys in the space (a device of the account was removed: what it held follows nothing
       // after this commit).
       refresh: () =>
-        (queue = queue.then(async () => {
+        (queue = queue.catch(() => {}).then(async () => {
           await change(() => [m.update(), null], { kind: "refresh" });
           ctx.log(`${sp.name ?? "space"} keys`, { what: `this account's keys refreshed: epoch ${m.status().epoch}` });
           return st;
@@ -636,7 +636,7 @@ export async function start(ctx) {
       // `expect` ({ epoch, branch }: a REPAIR, `conversation`): taken only if it leads onto that branch — checked before
       // anything is kept (a member who made a group of their own under this space's id pulls nobody into it).
       join: (welcome, { expect = null } = {}) =>
-        (queue = queue.then(async () => {
+        (queue = queue.catch(() => {}).then(async () => {
           const t = await spacekeys();
           await t.reread?.();
           // Already in the group on ANOTHER branch (a fork, healed by being added again): its epoch secrets kept
@@ -691,7 +691,7 @@ export async function start(ctx) {
         })),
       // MADE by this DID, its first member.
       create: () =>
-        (queue = queue.then(async () => {
+        (queue = queue.catch(() => {}).then(async () => {
           m = (await memberWith(null)).create_space(sp.idBytes);
           ctx.log(`${sp.name ?? "space"} keys`, { what: "made the space's group: epoch 0" });
           return save(true);
