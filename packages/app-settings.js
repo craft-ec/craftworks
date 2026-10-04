@@ -84,6 +84,7 @@ export async function start(ctx) {
     "": {
       title: "The space",
       fields: [
+        { key: "about", app: "space", label: "About (what this space is: on its card and its Home, also from outside)" },
         { action: "join", path: "", label: "Who may join (Anyone: whoever asks is let in; Members: by an invite)" },
         { action: "invite", path: "", label: "Who may invite (make invite codes, add people, let askers in)" },
         { action: "post", path: "", label: "Who may post (every app, unless it says otherwise)" },

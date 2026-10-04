@@ -72,6 +72,8 @@ export async function mount(ctx, el) {
       .bd .side h3 { margin: 0; font-size: 1rem; }
       .bd .side p { margin: 0; color: var(--cw-muted); font-size: var(--cw-text-sm); }
       .bd .side ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+      .bd .side li button.link { display: block; width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 4px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
+      .bd .side li button.link:hover { background: var(--cw-hover); }
       .bd .side li a { display: block; padding: 4px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
       .bd .side li a:hover { background: var(--cw-hover); }
       .bd .side form { display: flex; gap: var(--cw-space-2); }
@@ -167,7 +169,7 @@ export async function mount(ctx, el) {
       const d = w.pub ? spaces.find(x => x.id === w.pub) : null;
       return [
         d ? await publicPanel(d) : null,
-        h("div", { className: "panel" }, h("h3", { textContent: "Public spaces" }), spaces.length ? h("ul", {}, ...spaces.map(x => h("li", {}, h("a", { href: `#/discover/board/b/${x.id}`, textContent: `b/${space.shown(x)}` })))) : h("p", { textContent: "None listed yet." })),
+        h("div", { className: "panel" }, h("h3", { textContent: "Public spaces" }), spaces.length ? h("ul", {}, ...spaces.map(x => h("li", {}, h("button", { type: "button", className: "link", textContent: space.shown(x), onclick: e => person.openSpace(e.currentTarget, x) })))) : h("p", { textContent: "None listed yet." })),
       ].filter(Boolean);
     }
     const create = h("a", { className: "go", href: `${base()}/submit`, textContent: "Create post" });

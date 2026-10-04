@@ -80,7 +80,7 @@ export async function mount(ctx, el) {
   };
   // One wording of time everywhere (`cards`).
   const who = did => {
-    const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.preventDefault(), e.stopPropagation(), (location.hash = `#/${C.app}/u/${did}`)) });
+    const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.preventDefault(), e.stopPropagation(), person.open(e.currentTarget, did)) });
     return n;
   };
 

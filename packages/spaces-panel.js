@@ -153,7 +153,7 @@ export async function start(ctx) {
     ].filter(Boolean);
     const people_ = list => list.map(d => at(row(`#/u/${d}`, initials(nameOf.get(d) ?? d.slice(12)), directory.shown(d, nameOf.get(d)), { title: d, on: open === d }), { person: d }));
     const followed = follows.map(d =>
-      d.startsWith("did:") ? people_([d])[0] : row(`#/discover/board/b/${d}`, "🌐", people.about("follow", d)?.name || `a space #${d.slice(0, 6)}`, { title: d }),
+      d.startsWith("did:") ? people_([d])[0] : row(`#/s/${d}`, "🌐", people.about("follow", d)?.name || `a space #${d.slice(0, 6)}`, { title: d }),
     );
     panel.replaceChildren(
       column("YOUR SPACES", spaces, ""),
@@ -186,7 +186,10 @@ export async function start(ctx) {
     if (who && who !== (await space.account().catch(() => null))?.id) return directory.shown(who, await directory.handle(who).catch(() => null));
     if (ctx.space && ctx.space !== "discover") {
       const sp = (await space.mine().catch(() => [])).find(s => s.id === ctx.space);
-      return sp ? space.shown(sp) : "Space";
+      if (sp) return space.shown(sp);
+      // Not in it (seen from outside): its name as Discover lists it.
+      const d = (await (await ctx.require("items")).publicSpaces().catch(() => [])).find(s => s.id === ctx.space);
+      return d ? space.shown(d) : "Space";
     }
     return "Personal";
   }

@@ -44,11 +44,34 @@ export async function mount(ctx, el) {
   const keyOf = a => a.route.slice(1);
   const sharedApps = ctx.apps.filter(a => (a.views ?? []).includes("shared"));
 
+  // FROM OUTSIDE (a space this person is not in, listed in Discover): what it says it is, its members, its apps — each
+  // public one opened from outside where its app reads a space from outside (Board), else after joining — and Join.
+  async function outside() {
+    const desc = (await (await ctx.require("items")).publicSpaces().catch(() => [])).find(d => d.id === ctx.space);
+    if (!desc) return root.replaceChildren(h("p", { className: "none", textContent: "This space is not listed (private, or not found yet): join it with an invite code." }));
+    const pr = await roles.ofPublic(desc);
+    await pr.settled;
+    const on = pr.apps();
+    const about = pr.config?.("space", "about", "") ?? "";
+    const n = pr.members().length;
+    const join = await (await ctx.require("join-button")).control(desc, { open: `#/s/${desc.id}`, joinable: pr.policy("", "join") === "anyone" });
+    const appGrid = h("div", {});
+    icons.grid(
+      appGrid,
+      sharedApps.filter(a => !a.always && on.includes(keyOf(a))).map(a => ({ app: a, href: keyOf(a) === "board" ? `#/discover/board/b/${desc.id}` : null, note: keyOf(a) === "board" ? null : "members" })),
+      "No apps yet.",
+    );
+    root.replaceChildren(
+      h("div", { className: "top" }, h("h2", { textContent: space.shown(desc) }), about ? h("p", { className: "about", textContent: String(about) }) : null, h("p", { textContent: `${n} member${n === 1 ? "" : "s"} · you are not in it` }), join),
+      h("section", {}, h("h3", { textContent: "Apps" }), appGrid, h("p", { className: "none", textContent: "Board reads from outside; the others open once you are in." })),
+    );
+  }
+
   async function draw() {
     // (#/discover alone: Discover is each app's tab in your personal space — your Home.)
     if (ctx.space === "discover") return location.replace("#/");
     const sp = ctx.space && (await space.mine()).find(s => s.id === ctx.space && s.kind === "server");
-    if (!sp) return root.replaceChildren(h("p", { className: "none", textContent: "You are not in this space (left, or not joined yet)." }));
+    if (!sp) return outside();
     // Its roles as known (`roles.of` brought the group current when it opened the space; its acts keep it so): drawn
     // at once, never after another round of the group's log and every member's card.
     const r = await roles.of(sp);
@@ -92,6 +115,7 @@ export async function mount(ctx, el) {
         "div",
         { className: "top" },
         h("h2", { textContent: space.shown(sp) }),
+        r.config("space", "about", "") ? h("p", { className: "about", textContent: String(r.config("space", "about", "")) }) : null,
         r.can(me, "invite") ? h("button", { type: "button", className: "btn main", textContent: "Invite", onclick: () => openSettings("invites") }) : null,
 
         // Its PEOPLE: the space's Contact (`members-list`: the one list, its roles).

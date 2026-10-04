@@ -3,7 +3,8 @@
 // personal Home, a space's Home and Discover's. UI only: counts are the caller's (`activity`), pins `pin-button`'s.
 //
 //   const icons = await ctx.require("app-icons");
-//   icons.grid(host, [{ app, href, count, pin, add }])   // pin: an element beside the link; add: fn (dimmed, "+ Add")
+//   icons.grid(host, [{ app, href, count, pin, add, note }])   // pin: beside the link; add: fn (dimmed, "+ Add");
+//                                                              // no href: dimmed, `note` saying why
 export async function start() {
   const style = document.createElement("style");
   style.textContent = `
@@ -28,11 +29,14 @@ export async function start() {
   };
   // A tile: the app's link (or, not used yet, the dimmed app and its Add) and, beside it — never inside: the loader
   // takes every click on a `#` link — its pin.
-  function tile({ app, href, count = 0, pin = null, add = null }) {
+  function tile({ app, href, count = 0, pin = null, add = null, note = null }) {
     const face = [el("span", { className: "icon", textContent: app.icon ?? "▫️" }), el("span", { className: "name", textContent: app.name })];
+    // No link (`note`: why — "members", from outside): the app shown, dimmed, not opened.
     const body = add
       ? el("div", { className: "app off" }, ...face, el("button", { type: "button", textContent: "+ Add", onclick: add }))
-      : el("a", { className: "app", href }, ...face, count ? el("span", { className: "cw-badge new", textContent: String(count) }) : null);
+      : !href
+        ? el("div", { className: "app off", title: note ?? "" }, ...face, note ? el("small", { textContent: note }) : null)
+        : el("a", { className: "app", href }, ...face, count ? el("span", { className: "cw-badge new", textContent: String(count) }) : null);
     return el("div", { className: "tile" }, body, pin);
   }
   function grid(host, items, empty = null) {

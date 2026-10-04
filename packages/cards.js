@@ -105,9 +105,10 @@ export async function start(ctx) {
     const ss = String(d % 60).padStart(2, "0");
     return hh ? `${hh}:${String(mm).padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
   };
-  // The author: their name, opening their space at the same app (`where`: a person's space).
+  // The author: their name, opening their CARD (`person`: and Open, their home).
   const author = (did, app) =>
-    directory.nameEl(did, "span", { className: "by", onclick: e => (e.preventDefault(), e.stopPropagation(), (location.hash = app ? `#/${app}/u/${did}` : `#/u/${did}`)) });
+    // Their name: their CARD (what can be done with them, and Open: their home).
+    directory.nameEl(did, "span", { className: "by", onclick: e => (e.preventDefault(), e.stopPropagation(), ctx.require("person").then(p => p.open(e.target, did))) });
 
   // VIDEO and AUDIO: a thumbnail (its preview, its length, its kind when not the plain one), its title, who and when.
   function media(it, { href, actions, by }) {

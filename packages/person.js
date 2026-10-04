@@ -6,6 +6,7 @@
 //
 //   const person = await ctx.require("person");
 //   person.open(anchor, did, { space })   // a menu by `anchor` (the name clicked); `space`: the one it was clicked in
+//   person.openSpace(anchor, desc)        // a SPACE's card (its name clicked): about, members, apps, Join · Open
 export async function start(ctx) {
   const [edge, conversation, directory, roles, moderation, space] = await Promise.all(["edge", "conversation", "directory", "roles", "moderation", "space"].map(n => ctx.require(n)));
   const style = document.createElement("style");
@@ -80,10 +81,11 @@ export async function start(ctx) {
 
     function draw() {
       const self = did === me.id;
-      const posts = act("Posts", () => {
+      // OPEN: their HOME (their personal space: its apps), never one app of it.
+      const posts = act("Open", () => {
         close();
-        location.hash = `#/board/u/${did}`;
-      });
+        location.hash = self ? "#/" : `#/u/${did}`;
+      }, "main");
       const personal = self
         ? [el("p", { className: "id", textContent: "This is you." }), el("div", { className: "grid" }, posts)]
         : [
@@ -97,7 +99,6 @@ export async function start(ctx) {
                   close();
                   location.hash = `#/chat/${c.id}`;
                 },
-                "main",
               ),
               people.is("friend", did)
                 ? act("Friends ✓", () => conversation.unfriend(did), "on", "unfriend")
@@ -142,5 +143,34 @@ export async function start(ctx) {
     draw();
   }
 
-  return { open, close };
+  // A SPACE's CARD (the same card, for a space): its name, what it says it is (its `about`), its members and apps, and
+  // Join · Requested · Open (`join-button`) — Open: its HOME (its apps), never one app of it.
+  async function openSpace(anchor, desc) {
+    close();
+    const box = el("div", { className: "cw-person", role: "dialog" });
+    openBox = box;
+    const at = anchor.getBoundingClientRect();
+    box.style.left = `${Math.max(8, Math.min(at.left, innerWidth - 296))}px`;
+    box.style.top = `${Math.min(at.bottom + 6, innerHeight - 320)}px`;
+    document.body.append(box);
+    box.replaceChildren(el("h3", { textContent: space.shown(desc) }), el("p", { className: "id", textContent: "Reading it…" }));
+    const mine = (await space.mine()).some(s => s.id === desc.id);
+    const pr = mine ? await roles.of((await space.mine()).find(s => s.id === desc.id)) : await roles.ofPublic(desc);
+    await pr.settled;
+    const about = pr.config?.("space", "about", "") ?? "";
+    const apps = ctx.apps.filter(a => (a.views ?? []).includes("shared") && !a.always && pr.apps().includes(a.route.slice(1)));
+    const n = pr.members().length;
+    const join = await (await ctx.require("join-button")).control(desc, { open: `#/s/${desc.id}`, joinable: pr.policy("", "join") === "anyone" });
+    if (openBox !== box) return;
+    box.replaceChildren(
+      el("h3", { textContent: space.shown(desc) }),
+      about ? el("p", { textContent: String(about).slice(0, 400) }) : el("p", { className: "id", textContent: "A space." }),
+      el("p", { className: "id", textContent: `${n} member${n === 1 ? "" : "s"} · ${apps.map(a => `${a.icon ?? ""} ${a.name}`).join("  ") || "no apps yet"}` }),
+      el("div", { className: "grid" }, act0("Open", () => (close(), (location.hash = `#/s/${desc.id}`)), "main")),
+      join,
+    );
+  }
+  const act0 = (label, run, cls = "") => el("button", { type: "button", className: cls, textContent: label, onclick: run });
+
+  return { open, openSpace, close };
 }
