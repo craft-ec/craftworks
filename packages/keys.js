@@ -754,5 +754,22 @@ export async function start(ctx) {
     }));
     return (kps ?? []).some(k => offered.has(k));
   }
-  return { ready, remove, escrowed, group, keyPackages, answers, onChange: f => watchers.push(f) };
+  // Whether a key package this account offered (by its TAG: sha-256, 16 bytes, hex — as `keypacks` names them) is held.
+  async function holdsTag(tag) {
+    const t = await spacekeys();
+    await t.settled;
+    const held = new Set(t.rows().filter(r => r.key.startsWith("packages/") && r.value).map(r => r.key.slice("packages/".length)));
+    for (const r of t.rows().filter(r => r.key.startsWith("offers/") && r.value && held.has(r.key.slice("offers/".length)))) {
+      let kps = [];
+      try {
+        kps = JSON.parse(r.value);
+      } catch {}
+      for (const kp of kps) {
+        const h = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(kp)))].slice(0, 16).map(x => x.toString(16).padStart(2, "0")).join("");
+        if (h === tag) return true;
+      }
+    }
+    return false;
+  }
+  return { ready, remove, escrowed, group, keyPackages, answers, holdsTag, onChange: f => watchers.push(f) };
 }

@@ -71,7 +71,8 @@ export async function start(ctx) {
     }
     const welcome = await g.add(kp);
     const { owner, nonce } = sp.governance;
-    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(sp.group ? { group: sp.group } : {}), ...(repair ? { repair } : {}) });
+    // `kp`: the TAG of the key package it is made for (what the person's page names when it does not open).
+    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, kp: tags[card.keyPackages.indexOf(kp)], made: Date.now(), ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(sp.group ? { group: sp.group } : {}), ...(repair ? { repair } : {}) });
     ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind}` });
     return card;
   }
@@ -231,7 +232,10 @@ export async function start(ctx) {
         out.push(sp);
         ctx.log("conversation", { what: `joined a ${it.spaceKind} conversation with ${short(it.from)}` });
       } catch (e) {
-        ctx.log("conversation", { what: `a welcome from ${short(it.from)} did not open here: ${e.message}` });
+        const held = it.kp ? await keys.holdsTag(it.kp).catch(() => null) : null;
+        ctx.log("conversation", {
+          what: `a welcome from ${short(it.from)} did not open here: ${e.message}${it.kp ? ` — made ${it.made ? new Date(it.made).toISOString().slice(0, 16) : "(when unknown)"} for key package ${it.kp.slice(0, 8)}, ${held ? "one this account offered" : "NOT one this account offered"}` : " — from before welcomes named their key package"}`,
+        });
       }
     }
     // Its key package is used up: a new one on the card.
@@ -346,11 +350,18 @@ export async function start(ctx) {
     let n = 0;
     for (const a of waiting) {
       const desc = listed.find(s => s.id === a.key);
-      if (!desc) continue;
+      const said = what => ctx.log("conversation", { what: `waiting on ${a.name ?? a.key.slice(0, 8)}: ${what}` });
+      if (!desc) {
+        said("not listed in Discover (its public acts unread)");
+        continue;
+      }
       const pr = await roles.ofPublic(desc).catch(() => null);
       await pr?.settled;
       const admissions = (pr?.acts("admitted") ?? []).filter(x => x.did === me.id).length;
-      if (admissions <= (a.seen ?? 0)) continue;
+      if (admissions <= (a.seen ?? 0)) {
+        said(admissions ? `let in ${admissions} time(s), asked again after that already — its welcome not here yet` : "not let in yet");
+        continue;
+      }
       await index.request(openCode(a.key), { kind: "join", did: me.id, at: Date.now() });
       await noteAsk(a.key, { name: a.name ?? null, seen: admissions });
       ctx.log("conversation", { what: `${a.name ?? a.key.slice(0, 8)}: let in, but its welcome never opened here — asked again` });
