@@ -114,7 +114,7 @@ export function mount(ctx, el) {
       }
       entries = [
         { label: `${sp ? space.shown(sp) : "Space"} · Home`, href: `#/s/${ctx.space}`, on: ctx.route === "/space" },
-        ...ctx.apps.filter(a => (a.views ?? []).includes("shared") && on.includes(a.route.slice(1))).map(a => ({ label: `${a.icon ?? ""} ${a.name}`, href: `#/s/${ctx.space}${a.route}`, on: a.route === ctx.route })),
+        ...ctx.apps.filter(a => (a.views ?? []).includes("shared") && (a.always || on.includes(a.route.slice(1)))).map(a => ({ label: `${a.icon ?? ""} ${a.name}`, href: `#/s/${ctx.space}${a.route}`, on: a.route === ctx.route })),
       ];
     } else if ((who = await ctx.require("where").then(w => w.personOf())) && who !== (await ctx.require("space").then(s => s.account()))?.id) {
       // A PERSON's space: their Home and the apps that show someone's space (the manifest's `person` view) — staying theirs.

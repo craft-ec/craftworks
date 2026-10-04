@@ -203,7 +203,36 @@ export async function start(ctx) {
     const mine = await space.mine();
     const p = await people();
     const out = [];
+    // Kept once (`keypacks`, the account's): each welcome asked for again, each such ask answered.
+    const once = await (await ctx.require("storage")).table("keypacks");
+    await once.settled;
+    const done = k => once.rows().some(r => r.key === k && r.value);
     for (const it of await index.inbox()) {
+      // WELCOME AGAIN, asked by someone a welcome from this account never opened for (made from their card's key
+      // packages before they renewed them): welcomed again from their card now — into a space this account has, where
+      // they belong (the other of a direct conversation; a member of a group or a space this account may invite to).
+      if (it.kind === "welcome-again" && it.from && !p.is("block", it.from)) {
+        const k = `again:${it.space}|${it.from}|${String(it.kp ?? "").slice(0, 32)}`;
+        const sp = mine.find(s => s.id === it.space);
+        if (!sp || done(k)) continue;
+        try {
+          let belongs = sp.kind === "direct" ? sp.with === it.from : false;
+          if (sp.kind !== "direct") {
+            const r = await (await ctx.require("roles")).of(sp);
+            await r.settled;
+            belongs = r.members().some(m => m.did === it.from) && (sp.kind === "group" || r.can(me.id, "invite"));
+          }
+          if (!belongs) continue;
+          const name = sp.kind === "direct" ? ((await directory.card(me.id))?.handle ?? short(me.id)) : sp.name;
+          await directory.card(it.from, { fresh: true }); // their card as it is now, never one read before
+          await welcome(sp, it.from, name);
+          await once.put(k, String(Date.now()));
+          ctx.log("conversation", { what: `${short(it.from)} could not open a welcome into ${sp.name ?? "a conversation"}: welcomed again` });
+        } catch (e) {
+          ctx.log("conversation", { what: `welcoming ${short(it.from)} again: ${e.message}` });
+        }
+        continue;
+      }
       if (it.kind !== "welcome" || p.is("block", it.from) || !it.welcome) continue;
       // Joined already — unless REMOVED since (invited back), or this node is on ANOTHER BRANCH of the space's group and
       // this is its REPAIR: taken only onto the branch the OWNER announced (read here, never the message's word).
@@ -233,6 +262,14 @@ export async function start(ctx) {
         ctx.log("conversation", { what: `joined a ${it.spaceKind} conversation with ${short(it.from)}` });
       } catch (e) {
         const held = it.kp ? await keys.holdsTag(it.kp).catch(() => null) : null;
+        // Made for a key package this account does not hold (its card from before): its sender asked — once — to
+        // welcome again from the card as it is now.
+        const k = `asked-again:${it.space}|${(it.kp ?? it.welcome).slice(0, 32)}`;
+        if (!held && !done(k) && !had) {
+          await index
+            .send(it.from, { kind: "welcome-again", space: it.space, from: me.id, kp: it.kp ?? it.welcome.slice(0, 32), at: Date.now() })
+            .then(() => once.put(k, String(Date.now())), err => ctx.log("conversation", { what: `asking ${short(it.from)} to welcome again: ${err.message}` }));
+        }
         ctx.log("conversation", {
           what: `a welcome from ${short(it.from)} did not open here: ${e.message}${it.kp ? ` — made ${it.made ? new Date(it.made).toISOString().slice(0, 16) : "(when unknown)"} for key package ${it.kp.slice(0, 8)}, ${held ? "one this account offered" : "NOT one this account offered"}` : " — from before welcomes named their key package"}`,
         });
