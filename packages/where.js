@@ -42,15 +42,17 @@ export async function start(ctx) {
     const discover = ctx.space === "discover";
     const sp = ctx.space && !discover ? ((await space.mine()).find(s => s.id === ctx.space) ?? null) : null;
     if (ctx.space && !discover && !sp) throw new Error("you are not in that space (left, or not joined yet)");
-    // An app the space does NOT use: its Home instead (where its apps are added) — asked beside the app's own reads,
-    // never before them.
+    // An app the space TURNED OFF: its Home instead (where its apps are added) — only on that certainty, an `app` act
+    // turning it off that counted. Never because it looks unused while the acts are still arriving (a member's acts
+    // merge in after "settled": the app would be sent away from a space that uses it).
     const app_ = ctx.apps.find(a => a.route === `/${app}`);
     if (sp)
       roles
         .of(sp)
         .then(async r => (await r.settled, r))
         .then(r => {
-          if (!r.apps().includes(app) && ctx.space === sp.id && ctx.route === `/${app}`) location.replace(`#/s/${sp.id}`);
+          const last = r.acts("app").filter(a => a.app === app).at(-1);
+          if (last && !last.on && !r.apps().includes(app) && ctx.space === sp.id && ctx.route === `/${app}`) location.replace(`#/s/${sp.id}`);
         }, () => {});
     const p = personOf();
     const person = p && p !== me ? p : null;

@@ -854,11 +854,15 @@ export async function start(ctx) {
         rows = decoded(Array.from(feed.merge_feeds(all.map(f => [bytes(f.owner), f.raw()]))));
         for (const f of changed) f();
       };
+      // Wanted WHOLE (a lazy table, then everything asked of it): a feed that arrives after (another writer's, found
+      // late) read whole too — opened as the table first was (lazy), its rows would never join what is read.
+      let wantWhole = false;
       const take = f => {
         if (!f || all.includes(f)) return;
         all.push(f);
         f.onChange(remerge);
         remerge();
+        if (wantWhole && f.lazy) f.whole?.().then(remerge, () => {});
       };
       // The table from before feeds: the oldest writer.
       const old = await scope.old(name);
@@ -991,6 +995,7 @@ export async function start(ctx) {
         // A LAZY table wanted whole: every feed read whole, merged again.
         whole: async () => {
           t.lazy = false;
+          wantWhole = true;
           await Promise.all(all.map(f => f.whole?.()));
           remerge();
         },
