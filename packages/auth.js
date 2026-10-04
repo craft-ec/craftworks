@@ -90,14 +90,14 @@ export async function start(ctx) {
   //
   // WHICH account: new words (`fresh`, just made) hold their own inception's. Typed words hold either their own
   // inception's (an account's original words) or the one their whoami names (words rotated in): both are asked AT
-  // ONCE and the first that answers wins, so the one that does not exist never holds the login up. Neither (its key
-  // log lost): its inception is put now (its tables and nodes stay where they were).
+  // ONCE and the first that answers wins, so the one that does not exist never holds the login up. Neither: refused
+  // (no account has them — a typo never makes an empty account).
   let joining = null;
   const joined = [];
-  async function join(entropy, pin, { fresh = false } = {}) {
+  async function join(entropy, pin, { fresh = false, own = false } = {}) {
     if (!joining || joining.entropyHex !== hex(entropy)) {
       const member = crypto.getRandomValues(new Uint8Array(32));
-      const a = await id.accountOf(entropy, { fresh });
+      const a = await id.accountOf(entropy, { fresh, own });
       joining = { entropyHex: hex(entropy), entropy, did: a.didBytes, data: a.data, member };
     }
     const r = await id.provision(joining.member, joining.did, pin, joining.data);

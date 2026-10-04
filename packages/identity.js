@@ -50,23 +50,31 @@ export async function start(ctx) {
     return core.idlog_info((await codes())[0], did);
   }
 
-  // WHICH ACCOUNT words hold. New words (`fresh`) hold their own inception's. Typed words hold either their own
-  // inception's (an account's original words) or the one their whoami names (words rotated in): both are asked AT
-  // ONCE and the first that answers wins, so the one that does not exist never holds the way in up. The log is put
-  // (again: re-publishing a signed log keeps it on the network). `{ did, didBytes, data }` — data: the data key's seed.
-  async function accountOf(entropy, { fresh = false } = {}) {
+  // WHICH ACCOUNT words hold: either their own inception's (an account's original words) or the one their whoami names
+  // (words rotated in) — both asked AT ONCE, the first that answers wins, so the one that does not exist never holds
+  // the way in up. `null`: no account has these words.
+  async function heldBy(entropy) {
+    const [, registerCode] = await codes();
+    const plan = core.words_plan(registerCode, entropy);
+    const own = readKeyLog(plan.inceptionDid).then(ok => (ok ? plan.inceptionDid : Promise.reject()));
+    const named = get(plan.whoamiId, "asking which account these words hold").then(async ok => {
+      const d = ok && core.whoami_did(registerCode, entropy);
+      if (!d || !(await readKeyLog(d))) throw new Error("none");
+      return d;
+    });
+    return Promise.any([own, named]).catch(() => null);
+  }
+  // The ACCOUNT words open: new words (`fresh`: a registration) their own inception's, made now — words the person
+  // BROUGHT (`own`) refused if some account has them already (words drawn here are 128 random bits: never asked);
+  // typed words the account that holds them — refused if none does (a typo never makes an empty account). The log is put (again: re-publishing a signed log keeps it on the network). `{ did, didBytes,
+  // data }` — data: the data key's seed.
+  async function accountOf(entropy, { fresh = false, own = false } = {}) {
     const [idlogCode, registerCode] = await codes();
     const plan = core.words_plan(registerCode, entropy);
-    let did = plan.inceptionDid;
-    if (!fresh) {
-      const own = readKeyLog(plan.inceptionDid).then(ok => (ok ? plan.inceptionDid : Promise.reject()));
-      const named = get(plan.whoamiId, "asking which account these words hold").then(async ok => {
-        const d = ok && core.whoami_did(registerCode, entropy);
-        if (!d || !(await readKeyLog(d))) throw new Error("none");
-        return d;
-      });
-      did = await Promise.any([own, named]).catch(() => plan.inceptionDid);
-    }
+    const held = fresh && !own ? null : await heldBy(entropy);
+    if (fresh && held) throw new Error("these words already open an account: log in with them instead");
+    if (!fresh && !held) throw new Error("no account has these recovery words: check them, or register to make a new account with them");
+    const did = fresh ? plan.inceptionDid : held;
     const a = core.join_account(idlogCode, entropy, did);
     await put(a.log, "the account's key log");
     ctx.log("account", { what: a.did });
@@ -103,6 +111,9 @@ export async function start(ctx) {
     readKeyLog,
     keyLogInfo,
     changeWords,
+    // Whether these are the account's CURRENT words; whether any account has these words.
+    wordsOpen: async (did, entropy) => (await readKeyLog(did)) && core.words_open((await codes())[0], did, entropy),
+    wordsTaken: async entropy => !!(await heldBy(entropy)),
     // `fn({ old, fresh })`, called while the words change, both in hand; an error stops the change.
     onWordsChanged: f => wordsChanged.push(f),
     // A new member on this node: its key minted here and the account's data key, handed to the delegate once, never

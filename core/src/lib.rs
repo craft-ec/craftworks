@@ -1305,6 +1305,14 @@ mod js {
             Ok(o)
         }
 
+        /// Whether `entropy` is the account `did`'s CURRENT words (its key log read first): what a change of words checks
+        /// before it goes on.
+        pub fn words_open(&mut self, idlog_code: &[u8], did: &[u8], entropy: &[u8]) -> Result<bool, JsValue> {
+            let did = b32(did)?;
+            let log = self.log_of(idlog_code, &did, entropy)?;
+            Ok(account::open_log(entropy, &log).is_some())
+        }
+
         /// CHANGE THE RECOVERY WORDS from `old` to `new` (both entered on this page): the log with its two rotations and
         /// the new words' `whoami`, to PUT. (The account's nodes stay its MLS group's members: every owner key the log
         /// ever had signs for them.)

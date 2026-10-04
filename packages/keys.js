@@ -247,11 +247,12 @@ export async function start(ctx) {
       const channel = await storage.table(CHANNEL);
       const reseal = hex => hexOf(mlsGlue.Mls.reseal_escrow(old, fresh, bytes(hex)));
       const rows = channel.rows().filter(x => x.key.startsWith("e/"));
+      // The walk starts from the first escrow AS IT WAS (sealed for the old words) — read before it is sealed again.
+      let e = 0;
+      const first = rows.find(x => x.key === escrowKey(e))?.value;
       for (const row of rows) await channel.put(row.key, reseal(row.value));
       // And every epoch log's escrowed next secret, walking with the old words.
       let n = rows.length;
-      let e = 0;
-      const first = channel.rows().find(x => x.key === escrowKey(e))?.value;
       let secret = first ? mlsGlue.Mls.open_escrow(old, bytes(first)) : null;
       while (secret) {
         const entry = await commitFrom(e, secret);

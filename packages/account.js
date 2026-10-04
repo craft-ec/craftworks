@@ -256,6 +256,9 @@ export async function mount(ctx, el) {
         <form class="new" hidden>
           <p><strong>Your new recovery words.</strong> Write them down and keep them offline. They are shown only now.</p>
           <ol class="shown"></ol>
+          <p><button type="button" class="own">Use my own words instead</button></p>
+          <label class="ownwords" hidden>Your own 12 or 24 words (a valid word list: its last word is a checksum)
+            <textarea name="own" rows="2" autocomplete="off" spellcheck="false"></textarea></label>
           <label><input type="checkbox" name="kept" required> I have written them down</label>
           <button>Change to these words</button> <button type="button" class="cancel">Cancel</button>
         </form>
@@ -275,6 +278,9 @@ export async function mount(ctx, el) {
           oldF.hidden = newF.hidden = true;
           change.hidden = false;
           newF.querySelector(".shown").replaceChildren();
+          newF.querySelector(".ownwords").hidden = true;
+          newF.querySelector(".own").hidden = false;
+          newF.own.required = false;
         };
         for (const c of rec.querySelectorAll(".cancel")) c.onclick = reset;
         change.onclick = () => {
@@ -282,7 +288,8 @@ export async function mount(ctx, el) {
           oldF.hidden = false;
           said.textContent = "";
         };
-        oldF.onsubmit = e => {
+        // THE CURRENT WORDS CHECKED before anything goes on: words that do not open this account stop here.
+        oldF.onsubmit = async e => {
           e.preventDefault();
           try {
             old = glue.entropy_of(oldF.words.value);
@@ -290,6 +297,15 @@ export async function mount(ctx, el) {
             said.textContent = String(err);
             return;
           }
+          said.textContent = "Checking your words…";
+          const ok = await auth.identity.wordsOpen(s.didBytes, old).catch(() => false);
+          if (!ok) {
+            old.fill(0);
+            old = null;
+            said.textContent = "These are not this account's current recovery words.";
+            return;
+          }
+          said.textContent = "";
           fresh = crypto.getRandomValues(new Uint8Array(16));
           newF.querySelector(".shown").replaceChildren(
             ...glue.words_of(fresh).split(" ").map(w => Object.assign(document.createElement("li"), { textContent: w })),
@@ -297,11 +313,42 @@ export async function mount(ctx, el) {
           oldF.hidden = true;
           newF.hidden = false;
         };
+        // YOUR OWN new words instead of the ones made here: any valid word list (checked), not the current words, and
+        // not another account's.
+        newF.querySelector(".own").onclick = () => {
+          newF.querySelector(".ownwords").hidden = false;
+          newF.querySelector(".shown").replaceChildren();
+          newF.querySelector(".own").hidden = true;
+          newF.own.required = true;
+        };
         newF.onsubmit = async e => {
           e.preventDefault();
+          if (!newF.querySelector(".ownwords").hidden) {
+            let mine;
+            try {
+              mine = glue.entropy_of(newF.own.value);
+            } catch (err) {
+              said.textContent = String(err);
+              return;
+            }
+            if (mine.every((b, i) => b === old[i]) && mine.length === old.length) {
+              said.textContent = "Those are your current words: choose others.";
+              return;
+            }
+            said.textContent = "Checking those words are free…";
+            if (await auth.identity.wordsTaken(mine)) {
+              said.textContent = "Those words already open an account: choose others.";
+              return;
+            }
+            fresh?.fill(0);
+            fresh = mine;
+          }
           said.textContent = "Changing your recovery words…";
           try {
             await auth.identity.changeWords(s.didBytes, old, fresh);
+            // DONE only when the network's key log says so: the new words open the account, the old ones do not.
+            const [now, before] = [await auth.identity.wordsOpen(s.didBytes, fresh), await auth.identity.wordsOpen(s.didBytes, old)];
+            if (!now || before) throw new Error("the account's key log did not take the change: try again");
             said.textContent = "Done. Your new words open your account; the old ones no longer do.";
           } catch (err) {
             said.textContent = `Could not change them: ${err?.message ?? err}`;

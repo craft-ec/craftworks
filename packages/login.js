@@ -77,6 +77,9 @@ export async function start(ctx) {
               <strong>Register with this node</strong>
               <label>Create a PIN (6 or more) <input name="pin" type="password" minlength="6" autocomplete="off" required></label>
               <label>Confirm the PIN <input name="again" type="password" minlength="6" autocomplete="off" required></label>
+              <label><input type="checkbox" name="bring"> I bring my own recovery words</label>
+              <label class="mine" hidden>Your 12 or 24 words (a valid word list: its last word is a checksum)
+                <textarea name="mine" rows="3" autocomplete="off" spellcheck="false"></textarea></label>
               <button>Next</button>
               <p class="said"></p>
             </form>
@@ -174,8 +177,22 @@ export async function start(ctx) {
       const register = q("form.register");
       const once = q("form.words-once");
       let fresh = null;
+      let own = false;
+      register.bring.onchange = () => {
+        register.querySelector(".mine").hidden = !register.bring.checked;
+        register.mine.required = register.bring.checked;
+      };
       on(register, async () => {
         if (register.pin.value !== register.again.value) return { error: "The two PINs differ." };
+        // YOUR OWN WORDS: a valid word list, checked free (no account has them) when the account is made.
+        if (register.bring.checked) {
+          try {
+            fresh = glue.CraftworksCore.entropy_of(register.mine.value);
+            own = true;
+          } catch (e) {
+            return { error: String(e) };
+          }
+        } else if (own) (fresh = null), (own = false);
         // New words, made once per dialog (a retry with another PIN is the same new account): 16 bytes, 12 words.
         fresh ??= crypto.getRandomValues(new Uint8Array(16));
         const list = once.querySelector(".shown");
@@ -186,7 +203,7 @@ export async function start(ctx) {
         return null;
       });
       on(once, async () => {
-        const r = await auth.join(fresh, register.pin.value, { fresh: true });
+        const r = await auth.join(fresh, register.pin.value, { fresh: true, own });
         if (r.unlocked) once.querySelector(".shown").replaceChildren();
         if (r.refused === "PinTaken") {
           once.hidden = true;
