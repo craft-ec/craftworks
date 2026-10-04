@@ -42,6 +42,8 @@ export async function start(ctx) {
   // WELCOME a person into a space: they (their DID) added to its group by a key package from their card, and the welcome
   // — what the space is — sealed into their inbox. `name`: what the space is called for them.
   // `code`: the request it answers (an invite code, or "open"), so the asker knows which of theirs is answered.
+  // A welcome's FINGERPRINT (sha-256 of its bytes, 8 hex): the same welcome named alike where it is sent and received.
+  const fingerprint = async hex => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(hex))))].slice(0, 4).map(x => x.toString(16).padStart(2, "0")).join("");
   async function welcome(sp, did, name, code = null, repair = null) {
     const me = await space.account();
     if (!me) throw new Error("nobody is logged in");
@@ -88,7 +90,7 @@ export async function start(ctx) {
     const { owner, nonce } = sp.governance;
     // `kp`: the TAG of the key package it is made for (what the person's page names when it does not open).
     await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, kp: tags[card.keyPackages.indexOf(kp)], made: Date.now(), ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(sp.group ? { group: sp.group } : {}), ...(repair ? { repair } : {}) });
-    ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind}` });
+    ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind} (welcome ${await fingerprint(welcome)}, aimed at ${made.aimed.join(", ")}, tag ${tags[card.keyPackages.indexOf(kp)].slice(0, 8)})` });
     return card;
   }
 
@@ -302,7 +304,7 @@ export async function start(ctx) {
             .then(() => once.put(k, String(Date.now())), err => ctx.log("conversation", { what: `asking ${short(it.from)} to welcome again: ${err.message}` }));
         }
         ctx.log("conversation", {
-          what: `a welcome from ${short(it.from)} did not open here: ${e.message}${it.kp ? ` — made ${it.made ? new Date(it.made).toISOString().slice(0, 16) : "(when unknown)"} for key package ${it.kp.slice(0, 8)}, ${held ? `one this account offered (batch ${held})` : "NOT one this account offered"}` : " — from before welcomes named their key package"}`,
+          what: `a welcome from ${short(it.from)} (welcome ${await fingerprint(it.welcome)}) did not open here: ${e.message}${it.kp ? ` — made ${it.made ? new Date(it.made).toISOString().slice(0, 16) : "(when unknown)"} for key package ${it.kp.slice(0, 8)}, ${held ? `one this account offered (batch ${held})` : "NOT one this account offered"}` : " — from before welcomes named their key package"}`,
         });
       }
     }
