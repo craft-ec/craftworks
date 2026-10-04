@@ -255,9 +255,11 @@ export async function start(ctx) {
       poke: () => changed.forEach(f => f()),
       // Wanted WHOLE after a lazy open: read whole — unless it is not there yet (a view would mark it made, and its
       // first write would then skip listing it in the catalog: a table nobody finds after a reload).
-      whole: async () => {
+      // ONCE: every caller after the first shares that read (several wanted it whole at once: each read the tree again).
+      whole: () => {
+        if (!t.lazy && wholeRead) return wholeRead;
         t.lazy = false;
-        if (!t.absent) await view();
+        return (wholeRead = t.absent ? Promise.resolve() : view().catch(e => ((wholeRead = null), Promise.reject(e))));
       },
       // KEEP it (phase 4, Lifecycle): see `keep` below.
       keep: () => (queue = queue.catch(() => {}).then(keep)),
@@ -267,6 +269,7 @@ export async function start(ctx) {
       answer: () => (answer ?? Promise.resolve()).catch(() => {}),
     };
     let answered = false; // the last read had the node's answer (the tail, or "not found"), not silence
+    let wholeRead = null; // the read that made it whole (shared by every later `whole()`)
     let answer = null; // the first read, to its end: what a decision waits for
     // Each open's PHASES (ms from its start): what a page's measure reads (`opens()`).
     const ph = { app, t0: performance.now() };
@@ -748,7 +751,12 @@ export async function start(ctx) {
   // its catalog is made (`catalogOf`), so it is the whole list: nobody's catalog is asked for before they have one.
   // Read once per space (again when asked).
   const bags = new Map(); // space id → Promise<{ set }>
+  // A FRESH read shared: one in flight, or one done in the last few seconds, answers every table that asks (each open
+  // table asked on every key or device change: a dozen identical reads at once).
+  const freshAt = new Map(); // space id → when its last fresh read began
   function writersBag(sp, fresh = false) {
+    if (fresh && bags.has(sp.id) && performance.now() - (freshAt.get(sp.id) ?? -1e9) < 4000) return bags.get(sp.id);
+    if (fresh) freshAt.set(sp.id, performance.now());
     if (fresh || !bags.has(sp.id))
       bags.set(
         sp.id,
