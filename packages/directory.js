@@ -92,9 +92,17 @@ export async function start(ctx) {
       await (await ctx.require("index")).makeInbox();
       await t.put("inbox", k.inboxKey);
     }
-    if (!read(t).keyPackage) await putKeyPackages(t);
+    // Its key packages ones this account answers (a card listing others — lost with their table, or a write of new
+    // ones that never landed — makes every welcome to it fail): a fresh set otherwise.
+    let renewed = false;
+    if (!(await (await ctx.require("keys")).answers(read(t).keyPackages))) {
+      await putKeyPackages(t);
+      renewed = true;
+      ctx.log("card", { what: "its key packages answered nothing here: a fresh set put on it" });
+    }
     await putNodes(t);
-    return { did: sp.id, ...read(t) };
+    // `renewed`: a welcome made from the card before cannot open (whoever this person asked, asked again: `upkeep`).
+    return { did: sp.id, ...read(t), renewed };
   }
 
   // The account's DEVICES on the card: the credentials its key group holds now (rewritten when they change: a device

@@ -710,8 +710,12 @@ export async function start(ctx) {
   async function keyPackages(n = 4) {
     const mb = await memberWith(null);
     const kps = Array.from({ length: n }, () => hexOf(mb.key_package()));
-    // Its id starts with when it was made (base 36): what retires the batches before it.
-    await (await spacekeys()).put(`packages/${Date.now().toString(36)}-${newId()}`, hexOf(mb.packages()));
+    // Its id starts with when it was made (base 36): what retires the batches before it. What it OFFERS (the key
+    // packages a card may list) beside it, under the same id: whether a card's packages are answerable here.
+    const id = `${Date.now().toString(36)}-${newId()}`;
+    const t = await spacekeys();
+    await t.put(`packages/${id}`, hexOf(mb.packages()));
+    await t.put(`offers/${id}`, JSON.stringify(kps));
     prunePackages().catch(e => ctx.log("account keys", { what: `pruning key packages: ${e.message}` }));
     return kps;
   }
@@ -729,12 +733,26 @@ export async function start(ctx) {
       const retired = batches[i + 1].at;
       if (retired && Date.now() - retired > WEEK) {
         await t.remove(batches[i].key);
+        await t.remove(batches[i].key.replace(/^packages\//, "offers/"));
         ctx.log("account keys", { what: `a spent batch of key packages dropped (${batches[i].key})` });
       }
     }
   }
 
-  // Whether this account holds ANY batch of key packages (none: the ones its card offers answer nothing).
-  const holdsPackages = async () => (await spacekeys()).rows().some(r => r.key.startsWith("packages/") && r.value);
-  return { ready, remove, escrowed, group, keyPackages, holdsPackages, onChange: f => watchers.push(f) };
+  // Whether a welcome to one of these key packages (a card's) opens here: one of them offered by a batch this
+  // account holds. None: every welcome made from that card fails.
+  async function answers(kps) {
+    const t = await spacekeys();
+    await t.settled;
+    const held = new Set(t.rows().filter(r => r.key.startsWith("packages/") && r.value).map(r => r.key.slice("packages/".length)));
+    const offered = new Set(t.rows().filter(r => r.key.startsWith("offers/") && r.value && held.has(r.key.slice("offers/".length))).flatMap(r => {
+      try {
+        return JSON.parse(r.value);
+      } catch {
+        return [];
+      }
+    }));
+    return (kps ?? []).some(k => offered.has(k));
+  }
+  return { ready, remove, escrowed, group, keyPackages, answers, onChange: f => watchers.push(f) };
 }

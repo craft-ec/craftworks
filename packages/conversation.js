@@ -313,6 +313,23 @@ export async function start(ctx) {
     await index.request(openCode(desc.id), { kind: "join", did: me.id, at: Date.now() });
     await noteAsk(desc.id, { name: desc.name ?? null });
   }
+  // ASK AGAIN for every request still waiting (the card's key packages renewed: a welcome made from the old ones
+  // never opens): the request made anew, so whoever admits sees one newer than the admission and welcomes again.
+  async function askAgain() {
+    const me = await space.account();
+    if (!me) return 0;
+    const t = await asks();
+    await t.settled;
+    const mine = new Set((await space.mine()).map(s => s.id));
+    let n = 0;
+    for (const r of t.rows().filter(x => x.value && !mine.has(x.key))) {
+      const a = parseAsk(r);
+      if (!a) continue;
+      await index.request(r.key.startsWith("code:") ? r.key.slice(5) : openCode(r.key), { kind: "join", did: me.id, at: Date.now() }).then(() => (n += 1), e => ctx.log("conversation", { what: `asking again: ${e.message}` }));
+      await noteAsk(r.key, { ...a, key: undefined });
+    }
+    return n;
+  }
   // REQUESTS this account made and is still waiting on (its table `asks`: every device shows them): by space id, or
   // `code:<code>` (the space is not known until the welcome). Gone once in.
   const asks = async () => (await ctx.require("storage")).table("asks");
@@ -353,14 +370,19 @@ export async function start(ctx) {
     await r.refresh();
     if (!me || !r.can(me.id, "invite")) return [];
     const inside = new Set(r.members().map(m => m.did));
+    // ASKED AGAIN after being let in (their welcome never opened — its key package lost): welcomed again.
+    const admittedAt = new Map();
+    for (const a of r.acts("admitted")) if (a.did && (a.at ?? 0) > (admittedAt.get(a.did) ?? 0)) admittedAt.set(a.did, a.at ?? 0);
+    const waiting = q => !inside.has(q.did) || (admittedAt.has(q.did) && (q.at ?? 0) > admittedAt.get(q.did));
     const out = [];
     if (r.policy("", "join") === "anyone")
       for (const q of await index.requests(openCode(sp.id))) {
-        if (q.kind !== "join" || !q.did || inside.has(q.did) || r.banned(q.did)) continue;
+        if (q.kind !== "join" || !q.did || !waiting(q) || r.banned(q.did)) continue;
         try {
           await welcome(sp, q.did, sp.name, "open");
           await r.act({ act: "admitted", code: "open", did: q.did });
           inside.add(q.did);
+          admittedAt.set(q.did, Date.now());
           out.push(q.did);
           ctx.log("conversation", { what: `${directory.shown(q.did)} joined ${sp.name} (open)` });
         } catch (e) {
@@ -369,11 +391,12 @@ export async function start(ctx) {
       }
     for (const inv of r.invites()) {
       for (const q of await index.requests(inv.code)) {
-        if (q.kind !== "join" || !q.did || inside.has(q.did) || r.banned(q.did) || !r.invites().some(i => i.code === inv.code)) continue;
+        if (q.kind !== "join" || !q.did || !waiting(q) || r.banned(q.did) || !r.invites().some(i => i.code === inv.code)) continue;
         try {
           await welcome(sp, q.did, sp.name, inv.code);
           await r.act({ act: "admitted", code: inv.code, did: q.did });
           inside.add(q.did);
+          admittedAt.set(q.did, Date.now());
           out.push(q.did);
           ctx.log("conversation", { what: `${directory.shown(q.did)} admitted to ${sp.name} by a code` });
         } catch (e) {
@@ -729,5 +752,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, repair, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
+  return { direct, group, invite, accept, repair, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
 }
