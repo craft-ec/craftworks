@@ -1078,14 +1078,16 @@ with different secrets; each epoch's log is addressed by its secret, so the bran
 cannot open blocks sealed on the other ("block … is not what was asked"), the catalog then counts as absent → the
 writer's whole part hidden (Ivvor ↔ onlyabrak in Craftworks and Ivvor's Space).
 - [x] ordering: each entry under its own key (`c/<n>~<tag>`), position's entry = lowest; fresh reread after append.
-- [ ] HEAL only what this node committed itself (own `change`, adopted upkeep commit) — never a commit received from
+- [x] (a5db5a4) HEAL only what this node committed itself (own `change`, adopted upkeep commit) — never a commit received from
       another (a removed member's late entry for an old epoch must not roll anyone back): snapshot before own commit,
       lost if the log's entry for that epoch is another → restore, apply the winner, REDO the intent (unless satisfied;
       a removal never undone).
-- [ ] NO DATA LOSS: the losing branch's epoch secrets kept (spacekeys `<at>~lost`); data crate: per-epoch ALTERNATE
+- [x] (a5db5a4; every group switch too: a262c33) NO DATA LOSS: the losing branch's epoch secrets kept (spacekeys `<at>~lost`); data crate: per-epoch ALTERNATE
       keys (read only; rows opened with one are stale → resealed under the winner's key by `migrate`).
-- [ ] Stale sealing after heal: `sealNewest` switches on a different key, not only a higher epoch.
-- [ ] EXISTING forks (no snapshot from before them): the space's owner re-adds members found on another branch
+- [x] (a5db5a4: `storage.sealNewest`) Stale sealing after heal: `sealNewest` switches on a different key, not only a higher epoch.
+- [x] (d95ad33: branch announced per epoch in the writers list; a member on the owner's branch re-adds one on another,
+      once per divergence; the welcome taken only onto the owner's branch. LIVE 10-05: onlyabrak opens Ivvor's space whole)
+      EXISTING forks (no snapshot from before them): the space's owner re-adds members found on another branch
       (remove + add + welcome); their node records its branch keys before joining.
 - Test account on fx (17691), made 2026-10-03 for the fork test after the identity rebuild logged the old fx account out (its PIN unknown): PIN 818818; words lobster patrol future pumpkin monkey senior solve trend airport unit notice eye.
 
@@ -1127,7 +1129,7 @@ Done (commits on main):
 - Board's rules are the text domain's (d5b1304) — spaces saved public before must be re-saved once.
 - Writers bag fresh reads shared; tail.whole once (measured: tree blocks never fetched twice).
 - Named-people lists; audiences kept by admins while the maker is away.
-Open, in order: group-fork
-leftovers (heal own commits only, keep losing-branch keys, owner re-adds members on another branch).
+Open: Mail spaces in "To" (owner: later); Drive uploads to a role audience; F5b R4 (the delegate works due re-key rows
+on wake-up). Group-fork rows were done 10-03/04 (a5db5a4, d95ad33, a262c33), ticked 10-05.
 Test nodes 17691/17692: fresh accounts, PIN 246810 (older test accounts' PINs above are void).
 Late-joiner history CONFIRMED live 10-05: after Ivvor reloaded + PIN, onlyabrak sees Ivvor's New Space whole (apps shown).
