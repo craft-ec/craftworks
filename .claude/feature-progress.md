@@ -1131,7 +1131,11 @@ Done (commits on main):
 - Board's rules are the text domain's (d5b1304) — spaces saved public before must be re-saved once.
 - Writers bag fresh reads shared; tail.whole once (measured: tree blocks never fetched twice).
 - Named-people lists; audiences kept by admins while the maker is away.
-Open: Mail spaces in "To" (owner: later); F5b R4 (the delegate works due re-key rows
+Mail spaces in "To" DONE 10-05 (5 pages): To is chips picked by name from `conversation.mail.addresses()` (people
+followed/friends + spaces whose mail is on — yours and public listed), typed name#abc/ids still taken; `#/mail/to/<ref>`
+opens the composer to them; ✉ Mail on a person's card and on a space's card (when its mail is on). fx: A turned on
+History test's mail; B picked "🏠 History test" (its other spaces, mail off, not offered), sent; A read it in the space's inbox.
+Open: F5b R4 (the delegate works due re-key rows
 on wake-up). Group-fork rows were done 10-03/04 (a5db5a4, d95ad33, a262c33), ticked 10-05.
 Test nodes 17691/17692: fresh accounts, PIN 246810 (older test accounts' PINs above are void).
 Late-joiner history CONFIRMED live 10-05: after Ivvor reloaded + PIN, onlyabrak sees Ivvor's New Space whole (apps shown).
