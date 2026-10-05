@@ -271,10 +271,10 @@ fn upkeep_writes_its_own_feed_listing_it_first_when_new_and_flushes_when_due() {
     // FIRST WRITE: listed first (the bag, its catalog), then the feed made.
     let (mut r, _) = read_files(&net, writers.clone(), &epochs);
     let rows = vec![(b"k/x".to_vec(), Some(b"mine over theirs".to_vec())), (b"k/y".to_vec(), Some(b"new".to_vec()))];
-    let Next::More(listing) = write::rows(&mut h, &member, &codes(), &mut r, "files", &rows, [1; 12], false).unwrap() else { panic!("listed first") };
+    let Next::More(listing) = write::rows(&mut h, &member, &codes(), &mut r, "files", &rows, [1; 12], false, true).unwrap() else { panic!("listed first") };
     assert!(listing.io.iter().any(|io| matches!(io, Io::Put { code: upkeep::Code::Bag, .. })), "in the writers bag before its catalog");
     apply(&mut net, &r, &listing, &me, "files");
-    let Next::Done(sent) = write::rows(&mut h, &member, &codes(), &mut r, "files", &rows, [2; 12], false).unwrap() else { panic!("then the rows") };
+    let Next::Done(sent) = write::rows(&mut h, &member, &codes(), &mut r, "files", &rows, [2; 12], false, true).unwrap() else { panic!("then the rows") };
     assert!(matches!(sent.io[0], Io::Put { code: upkeep::Code::Tail, .. }), "the feed made with a PUT");
     apply(&mut net, &r, &sent, &me, "files");
     let (_, got) = read_files(&net, writers.clone(), &epochs);
@@ -292,7 +292,7 @@ fn upkeep_writes_its_own_feed_listing_it_first_when_new_and_flushes_when_due() {
         let mut blocks_put = false;
         for _ in 0..6 {
             nonce += 1;
-            match write::rows(&mut h, &member, &codes(), &mut r, "files", half, [nonce; 12], blocks_put).unwrap() {
+            match write::rows(&mut h, &member, &codes(), &mut r, "files", half, [nonce; 12], blocks_put, true).unwrap() {
                 Next::More(s) => {
                     flushed |= s.io.iter().any(|io| matches!(io, Io::Put { code: upkeep::Code::Sealed, .. }));
                     if s.blocks {
@@ -314,10 +314,10 @@ fn upkeep_writes_its_own_feed_listing_it_first_when_new_and_flushes_when_due() {
 
     // A STEP SIGNED AND LOST (its write never landed): the next write goes past it as a whole state, not wedged.
     let (mut r, _) = read_files(&net, writers.clone(), &epochs);
-    let lost = write::rows(&mut h, &member, &codes(), &mut r, "files", &[(b"k/lost".to_vec(), Some(b"never landed".to_vec()))], [40; 12], false).unwrap();
+    let lost = write::rows(&mut h, &member, &codes(), &mut r, "files", &[(b"k/lost".to_vec(), Some(b"never landed".to_vec()))], [40; 12], false, true).unwrap();
     assert!(matches!(lost, Next::Done(_)), "signed (and then lost: not applied to the network)");
     let (mut r, _) = read_files(&net, writers.clone(), &epochs);
-    let Next::Done(past) = write::rows(&mut h, &member, &codes(), &mut r, "files", &[(b"k/after".to_vec(), Some(b"written past it".to_vec()))], [41; 12], false).unwrap() else {
+    let Next::Done(past) = write::rows(&mut h, &member, &codes(), &mut r, "files", &[(b"k/after".to_vec(), Some(b"written past it".to_vec()))], [41; 12], false, true).unwrap() else {
         panic!("written")
     };
     assert!(matches!(past.io[0], Io::Put { code: upkeep::Code::Tail, .. }), "past the lost step: the whole state");
@@ -590,9 +590,24 @@ impl Host2 {
     }
 }
 
-#[test]
-fn with_no_page_open_a_removal_rotates_the_salt_and_the_spaces_files_re_key() {
+/// What a round with no page open left: upkeep's secrets, the network, what it said, and the file it found (its content,
+/// hash, old key and root).
+struct AfterRound {
+    h: Secrets,
+    net: Net,
+    said: Vec<String>,
+    content: Vec<u8>,
+    hsh: [u8; 32],
+    old_key: [u8; 32],
+    root0: [u8; 32],
+    me: [u8; 32],
+    ep: Vec<(u64, [u8; 32])>,
+}
+/// A member removed from a space with one file, then a re-key round woken with no page open — on a network where a
+/// contract the delegate makes does (`creates`) or does not reach it.
+fn round_after_a_removal(creates: bool) -> AfterRound {
     use craftworks_identity::{Host, Mandate};
+    upkeep::CREATES.with(|c| c.set(creates));
     // The member on this node: a real account (its DID, data seed), its MLS member, a space it owns.
     let entropy = [0x61; 16];
     let ev = craftworks_account::inception(&entropy).unwrap();
@@ -678,24 +693,51 @@ fn with_no_page_open_a_removal_rotates_the_salt_and_the_spaces_files_re_key() {
     }
     // What upkeep last said (for a failure's message).
     let said: Vec<String> = h.0.iter().filter(|(k, _)| k.windows(4).any(|w| w == b"said")).map(|(_, v)| String::from_utf8_lossy(v).into_owned()).collect();
+    AfterRound { h, net: n.net, said, content, hsh, old_key, root0, me: me_key.verifying_key().to_bytes(), ep: ep.to_vec() }
+}
 
+/// Read back as any member would: the space's `files`.
+fn files_after(a: &AfterRound) -> BTreeMap<Vec<u8>, craftworks_feed::Row> {
+    let ep_map: BTreeMap<u64, [u8; 32]> = a.ep.iter().copied().collect();
+    let (mut r, first) = Reading::new(&codes(), SPACE, ep_map, vec![a.me], &["files"]);
+    run(&mut r, first, &a.net);
+    r.rows("files")
+}
+
+#[test]
+fn with_no_page_open_a_removal_rotates_the_salt_and_the_spaces_files_re_key() {
+    let mut a = round_after_a_removal(true);
+    let said = &a.said;
     // Read back as any member would: a NEW SALT (made after the removal), the file's row under it, readable whole.
-    let ep_map: BTreeMap<u64, [u8; 32]> = ep.into_iter().collect();
-    let (mut r, first) = Reading::new(&codes(), SPACE, ep_map, vec![me_key.verifying_key().to_bytes()], &["files"]);
-    run(&mut r, first, &n.net);
-    let files_rows = r.rows("files");
+    let files_rows = files_after(&a);
     let st = rekey::salt(&files_rows).expect("a salt");
     assert_eq!((st.n, st.removals), (1, 1), "a new salt after the one removal: {said:?}");
     let row: serde_json::Value = serde_json::from_slice(&files_rows[b"k/file1".as_slice()].value).unwrap();
-    let new_key = files::content_key(&hsh, Some(&st.s));
+    let new_key = files::content_key(&a.hsh, Some(&st.s));
     assert_eq!(row["key"].as_str(), Some(table::hex(&new_key).as_str()), "re-keyed under the new salt: {said:?}");
     assert_eq!(row["n"].as_i64(), Some(1));
     let root: [u8; 32] = (0..32).map(|i| u8::from_str_radix(&row["root"].as_str().unwrap()[2 * i..2 * i + 2], 16).unwrap()).collect::<Vec<_>>().try_into().unwrap();
-    assert_eq!(read_file(&n.net, &new_key, &root).as_deref(), Some(content.as_slice()), "the file reads under its new key");
+    assert_eq!(read_file(&a.net, &new_key, &root).as_deref(), Some(a.content.as_slice()), "the file reads under its new key");
     // The OLD reference reads nothing: its pieces burned.
-    assert!(read_file(&n.net, &old_key, &root0).is_none(), "the old pieces burned: {said:?}");
+    assert!(read_file(&a.net, &a.old_key, &a.root0).is_none(), "the old pieces burned: {said:?}");
     // A late answer to one of its burns is the re-key round's — never taken by an admission round.
-    let burn_id = upkeep::id_of(&piece_hash(), &files::hashed_address(&old_key, &root0));
-    assert!(crate::rekey_round::wants(&h, &burn_id), "its own put, remembered");
-    assert!(upkeep::replied(&mut h, upkeep::Reply::Put { id: burn_id, ok: true }, now).is_empty());
+    let burn_id = upkeep::id_of(&piece_hash(), &files::hashed_address(&a.old_key, &a.root0));
+    assert!(crate::rekey_round::wants(&a.h, &burn_id), "its own put, remembered");
+    assert!(upkeep::replied(&mut a.h, upkeep::Reply::Put { id: burn_id, ok: true }, 1_800_000_000_000).is_empty());
+}
+
+#[test]
+fn where_a_delegates_new_contracts_stay_on_its_node_the_salt_rotates_and_the_file_is_left_to_a_page() {
+    // freenet ≤ 0.2.141 (`upkeep::NEW_CONTRACTS_REACH_THE_NETWORK`): the salt is a row of a feed already there — written;
+    // the file's new pieces would be new contracts — left to a page, its row and old pieces as they were.
+    assert!(!upkeep::NEW_CONTRACTS_REACH_THE_NETWORK);
+    let a = round_after_a_removal(upkeep::NEW_CONTRACTS_REACH_THE_NETWORK);
+    let said = &a.said;
+    let files_rows = files_after(&a);
+    let st = rekey::salt(&files_rows).expect("a salt");
+    assert_eq!((st.n, st.removals), (1, 1), "the new salt written (an existing feed): {said:?}");
+    let row: serde_json::Value = serde_json::from_slice(&files_rows[b"k/file1".as_slice()].value).unwrap();
+    assert_eq!(row["key"].as_str(), Some(table::hex(&a.old_key).as_str()), "the row untouched: {said:?}");
+    assert_eq!(read_file(&a.net, &a.old_key, &a.root0).as_deref(), Some(a.content.as_slice()), "the file still reads: nothing burned");
+    assert!(said.iter().any(|l| l.contains("left to a page")), "it says so: {said:?}");
 }

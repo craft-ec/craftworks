@@ -259,9 +259,10 @@ export async function start(ctx) {
     const [, frames] = core.frames_get(bytes(idHex));
     const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex, what, WAIT.ask).catch(() => ({ kind: "get-failed" }));
     const st = said.kind === "got" ? core.take_got(idHex) : null;
-    if (!st || raw) return st;
-    return st[0] === 2 && st.length > 33 ? st.subarray(33) : null;
+    return !st || raw ? st : livePiece(st);
   }
+  // A piece's state `LIVE ‖ burn hash ‖ piece`: the piece (burned, or another shape: none).
+  const livePiece = st => (st[0] === 2 && st.length > 33 ? st.subarray(33) : null);
 
   // A file OPENED for reading: its root, and each generation's listed fragments (leaves read once).
   const opened = new Map();
@@ -273,9 +274,12 @@ export async function start(ctx) {
           const key = bytes(ref.key);
           // Each index piece fetched by its hash (the reference's for the root).
           const rootId = core.file_root_id(key, ref.root);
-          const state = await fetchState(rootId, `${ref.name}: its root`);
+          // As stored: a live piece's body, or — when not — which: not on the node at all, or there but not live.
+          const raw = await fetchState(rootId, `${ref.name}: its root`, { raw: true });
+          const state = raw && livePiece(raw);
           if (!state) {
-            ctx.log("files", { what: `${ref.name}: its root ${rootId.slice(0, 12)}… not there (key ${ref.key.slice(0, 8)}…, root ${ref.root.slice(0, 8)}…)` });
+            const how = raw ? `there but not live (first byte ${raw[0]}, ${raw.length} B)` : "not on the node";
+            ctx.log("files", { what: `${ref.name}: its root ${rootId.slice(0, 12)}… ${how} (key ${ref.key.slice(0, 8)}…, root ${ref.root.slice(0, 8)}…)` });
             throw new Error(`${ref.name}: not found on the network (yet)`);
           }
           const root = JSON.parse(glue.file_root(key, ref.root, state));

@@ -79,8 +79,11 @@ fn block_puts(f: &data::Flush) -> Result<Vec<Io>, String> {
 
 /// WRITE `rows` (key, value; `None`: deleted) into this member's feed of table `name` (short), as read by `r`. `nonce`:
 /// fresh bytes for a writers-bag item (upkeep's randomness). `blocks_put`: a flush's blocks were put and confirmed (the
-/// last call's `Sent::blocks`): its step now.
-pub fn rows<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, r: &mut Reading, name: &str, rows: &[(Vec<u8>, Option<Vec<u8>>)], nonce: [u8; 12], blocks_put: bool) -> Result<Next, String> {
+/// last call's `Sent::blocks`): its step now. `create`: whether a contract made here reaches the network
+/// (`upkeep::creates`) — when not, a write that needs one (a new feed, a flush's blocks) is refused before anything is
+/// signed.
+#[allow(clippy::too_many_arguments)]
+pub fn rows<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, r: &mut Reading, name: &str, rows: &[(Vec<u8>, Option<Vec<u8>>)], nonce: [u8; 12], blocks_put: bool, create: bool) -> Result<Next, String> {
     let me = identity::upkeep_space_writer(h, member).ok_or("this node does not hold the member's data key")?;
     // Its OWN feed must read here (as a page's must): a write over rows it cannot see could undo them.
     if r.own_unreadable(&me, name) {
@@ -94,6 +97,9 @@ pub fn rows<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, r: &mut Reading, n
 
     // NOT THERE YET: listed first.
     if !matches!(feed, Some((Some(_), _))) {
+        if !create {
+            return Err(format!("its feed of {name} is not there yet: a page makes it (a contract made here stays on this node)"));
+        }
         let cat = r.own(&me, "tables");
         let mut cat_o = feed_open(c, r, &me, "tables", &cat_name, cat.clone());
         let listed = matches!(cat_o.opened(), Ok(data::Step::Ready(ref rs)) if craftworks_feed::merge(&[(me, rs)]).contains_key(t.as_bytes()));
@@ -121,6 +127,9 @@ pub fn rows<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, r: &mut Reading, n
     // DUE A FLUSH first: its blocks PUT and confirmed, then (the next call: the same flush, made again) the step
     // naming its root.
     if o.pending_rows() + rows.len() > data::FLUSH_AT {
+        if !create {
+            return Err(format!("its feed of {name} is due a flush: a page does it (its tree blocks would stay on this node)"));
+        }
         if let Ok(data::Step::Ready(f)) = o.flush() {
             if !blocks_put {
                 let io = block_puts(&f)?;

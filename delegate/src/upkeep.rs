@@ -125,6 +125,24 @@ fn codes<H: Host>(h: &H) -> Option<Codes> {
     Some(Codes { bag_hash: contract_keys::code_hash(&bag), tail, idlog_hash })
 }
 
+/// Whether a contract this delegate CREATES reaches the network. Not on freenet ≤ 0.2.141 (measured 10-05 on a test
+/// node: a delegate's `PutContractRequest` is stored on its own node, then broadcast only to peers already interested in
+/// it — a new contract has none (`BROADCAST_NO_TARGETS`, giving up), and a GET from anywhere, its own node's pages too,
+/// answers NotFound; freenet #5542). So upkeep writes only to contracts already there: anything that makes one — a
+/// file's new pieces, a new feed or catalog, a flush's tree blocks — is left to a page.
+pub const NEW_CONTRACTS_REACH_THE_NETWORK: bool = false;
+#[cfg(test)]
+thread_local! {
+    /// A test's network that does take them (the paths that create, exercised).
+    pub static CREATES: std::cell::Cell<bool> = const { std::cell::Cell::new(NEW_CONTRACTS_REACH_THE_NETWORK) };
+}
+pub fn creates() -> bool {
+    #[cfg(test)]
+    return CREATES.with(|c| c.get());
+    #[cfg(not(test))]
+    NEW_CONTRACTS_REACH_THE_NETWORK
+}
+
 /// The id of the contract `code` names with `params`.
 pub fn id_of(code_hash: &[u8; 32], params: &[u8]) -> [u8; 32] {
     contract_keys::instance(code_hash, params)

@@ -440,6 +440,10 @@ fn next_due<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> 
                     let End::Same { row } = rec.same_row() else { continue };
                     return write_row(h, c, r, &due, &row, None, now_ms);
                 }
+                if !crate::upkeep::creates() {
+                    identity::upkeep_say(h, &r.member, &format!("{}…: left to a page — its new pieces would stay on this node", due.short()));
+                    continue;
+                }
                 r.step = Step::Recoding { rec, due };
                 keep(h, Some(&r));
                 return io;
@@ -465,7 +469,7 @@ fn write_row<H: Host>(h: &mut H, c: &Held, r: Round, due: &Task, row: &str, burn
 /// `blocks_put`: a flush's blocks were confirmed (its step now).
 fn write_step<H: Host>(h: &mut H, c: &Held, mut r: Round, rows: Vec<(Vec<u8>, Option<Vec<u8>>)>, after: After, blocks_put: bool) -> Vec<Io> {
     let nonce: [u8; 12] = identity::upkeep_random(h).map(|b| b[..12].try_into().expect("12")).unwrap_or([0; 12]);
-    match write::rows(h, &r.member, &c.codes(), &mut r.reading, "files", &rows, nonce, blocks_put) {
+    match write::rows(h, &r.member, &c.codes(), &mut r.reading, "files", &rows, nonce, blocks_put, crate::upkeep::creates()) {
         Ok(Next::Done(sent)) => {
             r.step = Step::Writing { rows: Vec::new(), waiting: sent.confirm, refused: false, blocks: false, after };
             keep(h, Some(&r));
