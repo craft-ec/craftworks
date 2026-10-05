@@ -584,9 +584,13 @@ export async function start(ctx) {
     const asks = [];
     if (r.policy("", "join") === "anyone") for (const q of await index.requests(openCode(sp.id)).catch(() => [])) asks.push({ ...q, code: "open" });
     for (const inv of r.invites()) for (const q of await index.requests(inv.code).catch(() => [])) asks.push({ ...q, code: inv.code });
+    // OUT BY THE ACTS: a REMOVED member never comes back by a request (Settings says so); one who LEFT only by a request
+    // made after they left (an old one still sits in the bag).
+    const removedSet = new Set(r.acts().filter(a => a.act === "remove" && a.did).map(a => a.did));
+    const leftAt = new Map(r.acts().filter(a => a.act === "leave").map(a => [a.did ?? a.by, a.at ?? 0]));
     const newest = new Map();
     for (const q of asks) {
-      if (q.kind !== "join" || !q.did || r.banned(q.did)) continue;
+      if (q.kind !== "join" || !q.did || r.banned(q.did) || removedSet.has(q.did) || (q.at ?? 0) <= (leftAt.get(q.did) ?? -1)) continue;
       if (inside.has(q.did) && !(admittedAt.has(q.did) && (q.at ?? 0) > admittedAt.get(q.did))) continue;
       if (!newest.has(q.did) || (q.at ?? 0) > newest.get(q.did).at) newest.set(q.did, { did: q.did, at: q.at ?? 0, code: q.code });
     }

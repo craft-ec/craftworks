@@ -328,7 +328,13 @@ pub fn upkeep_status<H: Host>(h: &H, m: Option<&[u8; KEY_LEN]>) -> Answer {
             .and_then(|m| upkeep_mandate(h, m).map(|(_, ms)| ms.into_iter().filter(|x| upkeep_moved(h, m, &x.space)).map(|x| (x.space, x.epoch, x.state)).collect()))
             .unwrap_or_default(),
         stale: mine(&|m| h.get_secret(&of(UPKEEP_STALE, m))).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default(),
-        said: mine(&|m| h.get_secret(&of(UPKEEP_SAID, m))).and_then(|b| String::from_utf8(b).ok()),
+        // Its lines, and why the last wake-up began no re-key round (`identity_upkeep/rekey/why`).
+        said: {
+            let lines = mine(&|m| h.get_secret(&of(UPKEEP_SAID, m))).and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
+            let why = h.get_secret(b"identity_upkeep/rekey/why").and_then(|b| String::from_utf8(b).ok()).map(|w| format!("re-key: {w}"));
+            let all: Vec<String> = lines.lines().map(str::to_string).chain(why).filter(|l| !l.is_empty()).collect();
+            (!all.is_empty()).then(|| all.join("\n"))
+        },
     }
 }
 

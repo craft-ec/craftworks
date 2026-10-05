@@ -175,11 +175,26 @@ fn next_space<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut re
     begin(h, c, member, me, space, rest)
 }
 
+/// Why the last wake-up began no round (a page shows it: `identity::upkeep_status`).
+pub const WHY: &[u8] = b"identity_upkeep/rekey/why";
+fn why<H: Host>(h: &mut H, w: u64, what: &str) {
+    h.set_secret(WHY, format!("wake-up {w}: {what}").as_bytes());
+}
+
 /// A WAKE-UP: a round begun (none running, the time come, a member whose page is away), or a stuck one dropped.
 pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
     let w = wakeups(h);
+    let io = woke_(h);
+    if !io.is_empty() {
+        why(h, w, "a round begun");
+    }
+    io
+}
+fn woke_<H: Host>(h: &mut H) -> Vec<Io> {
+    let w = wakeups(h);
     if let Some(r) = load(h) {
         if w.saturating_sub(r.moved) < STUCK {
+            why(h, w, "a round is running");
             return Vec::new();
         }
         identity::upkeep_say(h, &r.member, "a re-key round did not finish: dropped");
@@ -188,22 +203,32 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
     let last = h.get_secret(LAST).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes).unwrap_or(0);
     let next_at = h.get_secret(NEXT_AT).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes).unwrap_or(u64::MAX);
     if last != 0 && w.saturating_sub(last) < EVERY && w < next_at {
+        why(h, w, &format!("the last round was at wake-up {last}; the next at {}", (last + EVERY).min(next_at)));
         return Vec::new();
     }
     h.set_secret(NEXT_AT, &u64::MAX.to_le_bytes());
-    let Some(c) = Held::of(h) else { return Vec::new() };
+    let Some(c) = Held::of(h) else {
+        why(h, w, "the contracts it needs were not handed over yet (a page hands them)");
+        return Vec::new();
+    };
     // Members take turns: the one after the member served last first.
     let mut members = identity::upkeep_members(h);
     if let Some(i) = h.get_secret(LAST_MEMBER).and_then(|l| members.iter().position(|m| m.as_slice() == l.as_slice())) {
         members.rotate_left(i + 1);
     }
+    let mut seen_why = Vec::new();
     for member in members {
         if identity::upkeep_since_tick(h, &member) < crate::upkeep::PAGE_AWAY {
+            seen_why.push("a page is open");
             continue;
         }
-        let Some((me, spaces)) = identity::upkeep_mandate(h, &member) else { continue };
+        let Some((me, spaces)) = identity::upkeep_mandate(h, &member) else {
+            seen_why.push("no mandate");
+            continue;
+        };
         let mut all: Vec<[u8; 32]> = spaces.iter().filter(|m| m.kind == "server").map(|m| m.space).collect();
         if all.is_empty() {
+            seen_why.push("no spaces");
             continue;
         }
         h.set_secret(LAST, &w.to_le_bytes());
@@ -212,6 +237,7 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
         let io = begin(h, &c, member, me, first, all);
         return issue(h, &c, io);
     }
+    why(h, w, &if seen_why.is_empty() { "no member here".to_string() } else { seen_why.join(", ") });
     Vec::new()
 }
 
