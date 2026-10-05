@@ -77,6 +77,21 @@ export async function start() {
     dialog { background: var(--cw-surface); color: var(--cw-fg); }
     dialog::backdrop { background: var(--cw-scrim); }
     [hidden] { display: none !important; }
+    /* THE SHARED PARTS — every app's, so a page looks the same wherever it is (an app adds only what is its own):
+       one heading scale, one page width, one button family, one box. */
+    :root { --cw-page: 860px; }
+    h1 { font-size: 1.45rem; line-height: 1.3; font-weight: 700; margin: 0 0 var(--cw-space-2); }
+    h2 { font-size: 1.2rem; line-height: 1.3; font-weight: 700; margin: 0 0 var(--cw-space-2); }
+    h3 { font-size: 1rem; line-height: 1.35; font-weight: 600; margin: 0 0 var(--cw-space-1); }
+    .cw-page-w { max-width: var(--cw-page); margin-inline: auto; width: 100%; }
+    .cw-box { background: var(--cw-surface); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-3); }
+    .cw-btn { border: 1px solid var(--cw-line); background: none; color: var(--cw-fg); border-radius: var(--cw-radius-sm); padding: var(--cw-space-1) 10px;
+      font-size: var(--cw-text-sm); font-weight: 600; cursor: pointer; }
+    .cw-btn:hover { background: var(--cw-hover); }
+    .cw-btn.primary, button.go { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
+    .cw-btn.danger { color: var(--cw-danger); }
+    .cw-btn.chip { border-radius: var(--cw-radius-pill); padding: 2px 10px; font-size: var(--cw-text-xs); }
+    .cw-btn:disabled { opacity: .5; cursor: default; }
     /* THE SHELL, like an app on a phone: the window and the canvas never scroll. The header on top and the footer at
        the bottom stay; between them, each component of the page is a PANEL that scrolls itself. The whole window, edge
        to edge. A page with panes of its own (each scrolling) marks its component .cw-fill: it gets the canvas bare. */

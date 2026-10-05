@@ -53,7 +53,7 @@ export async function start(ctx) {
       save.disabled = false;
     };
     // ITS HISTORY where it is edited (`history`): an earlier version restored instead of saving this.
-    const hist = (await ctx.require("history")).button(it.ref, { current: it, restored: () => done() });
+    const hist = it.edited ? (await ctx.require("history")).button(it.ref, { current: it, restored: () => done() }) : null;
     host.replaceChildren(h("div", { className: "editing" }, ed.el, tg.el, h("div", { className: "row" }, said, hist, h("button", { type: "button", textContent: "Cancel", onclick: () => done() }), save)));
     ed.focus();
   }
@@ -79,11 +79,10 @@ export async function start(ctx) {
     const page = h("div", { className: "cw-page" });
     const redraw = async () => page.replaceWith(await show(ref, { outside, app, back, discover }));
     const removed = () => (location.hash = back ?? items.pageOf(ref, it.kind).replace(/\/(p|w)\/.*$/, ""));
-    const votes = parts.votes ? actions.votes(it, { outside, row: true }) : null;
     let host = null; // where its text is, to edit in place
     // THE SAME ROW as in a list (Grid's): 💬 its count — here it goes down to the comments.
     let threadAt = null;
-    const bar = actions.bar(it, { outside, comments: parts.comments, open: () => threadAt?.scrollIntoView({ behavior: "smooth", block: "start" }), discover, removed, changed: redraw, edit: parts.look === "card" && parts.votes ? () => editIn(host, it, redraw) : null });
+    const bar = actions.bar(it, { outside, vote: parts.votes, comments: parts.comments, open: () => threadAt?.scrollIntoView({ behavior: "smooth", block: "start" }), discover, removed, changed: redraw, edit: parts.look === "card" && parts.votes ? () => editIn(host, it, redraw) : null });
     // ITS LOOK, WHOLE.
     if (parts.look === "player" || parts.look === "picture" || parts.look === "reader") {
       const m = (await ctx.require("media-look")).full(it, { outside });
@@ -93,7 +92,7 @@ export async function start(ctx) {
         ...[
           m.el,
           h("h1", { textContent: it.title }),
-          h("div", { className: "line" }, h("span", { className: "s" }, cards.author(it.by, items.appOf(it.kind)), ` · ${cards.ago(it.at)}${k ? ` · ${k.label}` : ""}${cards.counted(it)}${it.private ? " · only you" : ""}`), votes, bar),
+          h("div", { className: "line" }, h("span", { className: "s" }, cards.author(it.by, items.appOf(it.kind)), ` · ${cards.ago(it.at)}${k ? ` · ${k.label}` : ""}${cards.counted(it)}${it.private ? " · only you" : ""}`), bar),
           fields.length ? h("div", { className: "fields" }, ...fields) : null,
           cards.marks(it),
           parts.about && it.body ? h("div", { className: "about" }, written(it)) : null,
@@ -102,7 +101,7 @@ export async function start(ctx) {
       queueMicrotask(() => m.start());
     } else {
       host = h("div", {}, written(it));
-      page.append(cards.card(it, { href: null, body: host, lead: votes, actions: [bar], by: true }));
+      page.append(cards.card(it, { href: null, body: host, actions: [bar], by: true }));
     }
     // ITS COMMENTS: the one thread.
     if (parts.comments) {

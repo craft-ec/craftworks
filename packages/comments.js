@@ -134,9 +134,9 @@ export async function start(ctx) {
       const acts = h(
         "div",
         { className: "acts" },
-        actionsCap.votes(c, { outside, row: true, post: ref, may: mayVote }),
         actionsCap.bar(c, {
           outside,
+          vote: { post: ref, may: mayVote },
           comments: false,
           edit: () => editIn(text, c),
           removed: refresh,

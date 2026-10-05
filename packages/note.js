@@ -294,7 +294,7 @@ export async function mount(ctx, el) {
     // HISTORY: its earlier versions (`history`), restored over what is open — the note closed without saving it.
     const hSlot = editor.querySelector(".history-slot");
     hSlot.replaceChildren();
-    if (n.item)
+    if (n.item?.edited)
       ctx.require("history").then(
         hi => editing?.key === n.key && hSlot.replaceChildren(hi.button(n.key, () => ({ current: n.item, restored: () => ((editing = null), editor.close(), reload()) }))),
         () => {},
@@ -359,20 +359,18 @@ export async function mount(ctx, el) {
   const card = n => {
     const tools = [];
     const tool = (icon, title, run) => tools.push(Object.assign(document.createElement("button"), { type: "button", textContent: icon, title, onclick: e => (e.stopPropagation(), run(e)) }));
-    // Someone else's: Save (`actions`: kept in your Saved, as anything is).
-    if (!n.mayEdit) tools.push(actionsCap.save(n.item));
+    // THE action row every item has (`actions`: the same as everywhere) — Note's own first: its colour
+    // and Archive, for whoever may edit it. Save, Label, Share, History, Delete… are the row's, as everywhere.
     if (n.mayEdit) tool("🎨", "Background", e => palette(e.currentTarget, color => save(n.key, { ...n, color })));
-    tool("🏷️", "Labels", e => labelUI.menu(e.currentTarget, ref(n.key)));
-    if (n.mayEdit) {
+    if (n.mayEdit)
       tool(n.archived ? "📤" : "🗃️", n.archived ? "Unarchive" : "Archive", () => {
         save(n.key, { ...n, archived: !n.archived });
         if (!n.archived && n.pinned) pins.set(ref(n.key), false).catch(e => said(`Could not unpin: ${e?.message ?? e}`)); // an archived note is not pinned, as in Keep
       });
-      tool("🗑️", "Delete", () => remove(n.key));
-    }
+    const row = actionsCap.bar({ ...n.item, mayRemove: n.mayEdit || n.item.mayRemove }, { extra: tools, edit: n.mayEdit ? () => edit(n) : null, open: () => edit(n), comments: false, changed: () => reload(), removed: () => reload() });
     return cards.card(
       { ...n.item, meta: { ...(n.item.meta ?? {}), color: n.color } },
-      { href: null, actions: tools, by: others, corner: pinUI.button(ref(n.key)), below: labelUI.chips(ref(n.key), { onPick: show }), open: n.mayEdit ? () => edit(n) : null },
+      { href: null, actions: [row], by: others, corner: pinUI.button(ref(n.key)), below: labelUI.chips(ref(n.key), { onPick: show }), open: n.mayEdit ? () => edit(n) : null },
     );
   };
 

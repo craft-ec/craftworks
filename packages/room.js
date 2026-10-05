@@ -42,7 +42,7 @@ export async function start(ctx) {
     .cw-room .msg.system { color: var(--cw-muted); font-size: var(--cw-text-sm); }
     .cw-room .msg .tools { position: absolute; top: -10px; right: 4px; display: none; gap: 2px; background: var(--cw-surface);
       border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); padding: 2px; box-shadow: var(--cw-shadow); }
-    .cw-room .msg:hover .tools, .cw-room .msg .tools.open { display: flex; }
+    .cw-room .msg .tools.open { display: flex; }
     .cw-room .msg .tools button { border: 0; background: none; cursor: pointer; font-size: var(--cw-text-xs); padding: 2px 6px; border-radius: var(--cw-radius-sm); color: var(--cw-fg); }
     .cw-room .msg .tools button:hover { background: var(--cw-hover); }
     .cw-room .msg .tools button.danger { color: var(--cw-danger); }
@@ -177,6 +177,8 @@ export async function start(ctx) {
         );
       if (m.kind === "system") return li;
       const tools = el("div", { className: "tools" });
+      // A TAP on the message (not on a link or a button in it) opens its tools — a touch screen has no hover.
+      li.addEventListener("click", e => !e.target.closest("button, a, input, textarea, video, audio, .who") && tools.classList.toggle("open"));
       const pick = el("div", { className: "pick", hidden: true }, ...EMOJI.map(emoji => el("button", { type: "button", textContent: emoji, onclick: () => room.react(m.id, emoji, !(m.reactions?.[emoji] ?? []).includes(me)).catch(fail("Not reacted")) })));
       tools.append(
         el("button", { type: "button", textContent: "Reply", onclick: () => ((replyTo = m), drawReplying(), ed.focus()) }),

@@ -20,13 +20,13 @@ export async function start(ctx) {
     .cw-book .cover { position: relative; aspect-ratio: 2 / 3; border-radius: var(--cw-radius-sm); overflow: hidden; background: var(--cw-hover); display: grid; place-items: center; font-size: 2.5rem; box-shadow: 0 1px 4px rgba(0, 0, 0, .25); }
     .cw-book .cover img { width: 100%; height: 100%; object-fit: cover; }
     .cw-book .cover .kind { position: absolute; left: 6px; top: 6px; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: rgba(0, 0, 0, .7); color: #fff; }
-    .cw-pic { position: relative; display: block; border-radius: var(--cw-radius-sm); overflow: hidden; background: var(--cw-hover); color: #fff; text-decoration: none; }
+    .cw-pic { position: relative; display: block; border-radius: var(--cw-radius-sm); overflow: hidden; background: var(--cw-surface); color: var(--cw-fg); text-decoration: none; border: 1px solid var(--cw-line); }
     .cw-pic img { display: block; width: 100%; height: auto; }
     .cw-pic .none { aspect-ratio: 4 / 3; display: grid; place-items: center; font-size: 2.5rem; }
-    .cw-pic .over { position: absolute; inset: auto 0 0 0; padding: 24px 10px 8px; background: linear-gradient(transparent, rgba(0, 0, 0, .7)); opacity: 0; transition: opacity .15s; }
-    .cw-pic:hover .over, .cw-pic:focus .over { opacity: 1; }
+    /* Its title and who and when UNDER the picture (never over it: nothing hides until hover), then its row. */
+    .cw-pic .over { padding: 6px 8px 2px; }
     .cw-pic .over .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .cw-pic .over .s { font-size: var(--cw-text-sm); opacity: .85; }
+    .cw-pic .over .s { font-size: var(--cw-text-sm); color: var(--cw-muted); }
     .cw-pic .over .by { cursor: pointer; }
     .cw-card .thumb { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: var(--cw-radius); overflow: hidden;
       display: grid; place-items: center; font-size: 2rem; }
@@ -48,13 +48,11 @@ export async function start(ctx) {
     .cw-note .b { overflow-wrap: anywhere; max-height: 18em; overflow: hidden; }
     .cw-note .b .cw-md > :first-child { margin-top: 0; }
     .cw-note .s { margin-top: 6px; font-size: var(--cw-text-xs); }
-    .cw-note .acts { gap: 2px; opacity: 0; transition: opacity .15s; margin-top: 6px; }
-    .cw-note:hover .acts, .cw-note:focus-visible .acts, .cw-note:has(:focus-visible) .acts { opacity: 1; }
+    .cw-note .acts { gap: 2px; margin-top: 6px; }
     .cw-note .acts button { border: 0; background: none; cursor: pointer; font-size: 15px; padding: var(--cw-space-1) 6px; border-radius: 50%; color: inherit; }
     .cw-note .acts button:hover { background: var(--cw-hover); }
     .cw-note .corner { position: absolute; top: 6px; right: 6px; }
-    .cw-note .corner .cw-pin[aria-pressed="false"] { opacity: 0; }
-    .cw-note:hover .corner .cw-pin[aria-pressed="false"] { opacity: .45; }
+    .cw-note .corner .cw-pin[aria-pressed="false"] { opacity: .45; }
     .cw-note .below { margin-top: var(--cw-space-2); }
     .cw-marks { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
     .cw-marks:not(:has(.nsfw, .tag, .cw-chip)) { display: none; }
@@ -70,9 +68,8 @@ export async function start(ctx) {
     .cw-file .cap { padding: 6px 8px; display: grid; gap: 2px; min-width: 0; }
     .cw-file .n { font-size: var(--cw-text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cw-file .s { font-size: var(--cw-text-xs); }
-    .cw-file .more { position: absolute; top: 4px; right: 4px; padding: 0 6px; border-radius: 50%; opacity: 0; background: var(--cw-surface);
+    .cw-file .more { position: absolute; top: 4px; right: 4px; padding: 0 6px; border-radius: 50%; background: var(--cw-surface);
       border: 1px solid var(--cw-line); cursor: pointer; font: inherit; color: inherit; }
-    .cw-file:hover .more, .cw-file .more:focus-visible { opacity: 1; }
     .cw-file .menu { position: absolute; top: 28px; right: 4px; z-index: 5; display: grid; background: var(--cw-surface); border: 1px solid var(--cw-line);
       border-radius: var(--cw-radius-sm); box-shadow: var(--cw-shadow-lg); padding: 4px; }
     .cw-file .menu button, .cw-file .menu a { border: 0; background: none; text-align: left; padding: 6px 10px; font: inherit; color: inherit; text-decoration: none; cursor: pointer; }
@@ -84,13 +81,27 @@ export async function start(ctx) {
     .cw-post .in { padding: var(--cw-space-2) var(--cw-space-1); display: grid; gap: 4px; min-width: 0; }
     .cw-post h1 { margin: 0; font-size: 1.45rem; line-height: 1.3; font-weight: 700; overflow-wrap: anywhere; }
     .cw-post .acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 2px; }
-    .cw-post .acts .cw-votes { display: inline-flex; flex-direction: row; gap: 4px; align-items: center; }
     .cw-post .meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; color: var(--cw-muted); font-size: var(--cw-text-xs); }
     .cw-post .meta .b { color: var(--cw-fg); font-weight: 700; }
     .cw-post .meta .by:hover { text-decoration: underline; cursor: pointer; }
     .cw-post h3 { margin: 0; font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
     .cw-post .text { overflow-wrap: anywhere; line-height: 1.5; margin: 0; font-size: var(--cw-text-sm); }
     .cw-post.link .text { color: var(--cw-muted); }
+    .cw-tile-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; color: var(--cw-fg); background: var(--cw-surface); padding: 2px 4px; }
+    /* NOTHING HIDES UNTIL HOVER (a touch screen has none): what is there is shown. */
+    .cw-stack { position: relative; margin: 6px 0; --stack-h: 340px; }
+    @media (max-width: 480px) { .cw-stack { --stack-h: 240px; } }
+    .cw-stack .vp { height: var(--stack-h); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); overflow: hidden; background: var(--cw-bg);
+      display: flex; align-items: center; justify-content: center; }
+    .cw-stack .vp > * { width: 100%; height: 100%; max-width: none !important; max-height: none !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; }
+    .cw-stack .vp img { object-fit: cover; }
+    .cw-stack .vp video { object-fit: contain; background: #000; }
+    .cw-stack .nav { position: absolute; top: calc(var(--stack-h) / 2); transform: translateY(-50%); background: rgba(0,0,0,.45); color: #fff; border: 0;
+      border-radius: 50%; width: 34px; height: 34px; font-size: 22px; line-height: 1; cursor: pointer; z-index: 3; }
+    .cw-stack .nav.prev { left: 8px; } .cw-stack .nav.next { right: 8px; }
+    .cw-stack .dots { display: flex; gap: 6px; justify-content: center; margin-top: 6px; }
+    .cw-stack .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cw-line); cursor: pointer; }
+    .cw-stack .dot.on { background: var(--cw-accent); }
     .cw-post.link .text .preview { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; margin: 0; }
     .cw-track { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--cw-line); }
     .cw-track .n { font-weight: 600; }
@@ -187,6 +198,39 @@ export async function start(ctx) {
     );
   }
 
+  // A CAROUSEL (Grid's media stack): a post's photos and videos, one at a time at one height — ‹ › and its dots, a
+  // swipe on a phone; one alone as it is; none: nothing. At most 8.
+  const VISUAL = new Set(["image", "video"]);
+  function carousel(slides) {
+    slides = slides.filter(Boolean).slice(0, 8);
+    if (!slides.length) return null;
+    const vp = h("div", { className: "vp" });
+    const wrap = h("div", { className: `cw-stack${slides.length > 1 ? " multi" : ""}`, onclick: e => e.stopPropagation() }, vp);
+    if (slides.length === 1) return vp.append(slides[0]), wrap;
+    let at = 0;
+    const dots = slides.map((_, i) => h("span", { className: "dot", onclick: e => (e.stopPropagation(), show(i)) }));
+    const show = i => {
+      at = (i + slides.length) % slides.length;
+      vp.replaceChildren(slides[at]);
+      dots.forEach((d, j) => d.classList.toggle("on", j === at));
+    };
+    wrap.append(
+      h("button", { type: "button", className: "nav prev", textContent: "‹", title: "Previous", onclick: e => (e.stopPropagation(), show(at - 1)) }),
+      h("button", { type: "button", className: "nav next", textContent: "›", title: "Next", onclick: e => (e.stopPropagation(), show(at + 1)) }),
+      h("div", { className: "dots" }, ...dots),
+    );
+    let x0 = null;
+    vp.addEventListener("touchstart", e => (x0 = e.touches[0].clientX), { passive: true });
+    vp.addEventListener("touchend", e => {
+      if (x0 == null) return;
+      const dx = e.changedTouches[0].clientX - x0;
+      if (Math.abs(dx) > 40) show(at + (dx < 0 ? 1 : -1));
+      x0 = null;
+    });
+    show(0);
+    return wrap;
+  }
+
   // A POST (any text item: a post, a link, a question…): where it is, who and when, its title; in a list its text cut
   // short and its files' thumbnails (a list never plays anything) — on its own page (`body`) its content whole.
   function text(it, { href, actions, by, open, lead, body }) {
@@ -214,7 +258,15 @@ export async function start(ctx) {
           it.edited ? h("span", { textContent: "(edited)" }) : null,
           counted(it) ? h("span", { textContent: counted(it).slice(1) }) : null,
         ),
-        body ?? h("div", { className: "text" }, it.body ? when("markdown", m => h("p", { className: "preview", textContent: m.plain(it.body) })) : null, it.files?.length ? when("attachments", a => a.show(it.files)) : null),
+        // In a list (Grid's): its photos and videos first, as ONE carousel; then its text cut short; then any other file.
+        body ??
+          h(
+            "div",
+            { className: "text" },
+            it.files?.length ? when("markdown", m => carousel(it.files.filter(f => VISUAL.has(m.kindOf(f))).map(f => m.fileView(f, { item: it.ref, alt: it.title })))) : null,
+            it.body ? when("markdown", m => h("p", { className: "preview", textContent: m.plain(it.body) })) : null,
+            it.files?.length ? when("markdown", m => when("attachments", a => (it.files.some(f => !VISUAL.has(m.kindOf(f))) ? a.show(it.files.filter(f => !VISUAL.has(m.kindOf(f)))) : null))) : null,
+          ),
         lead || actions.length ? h("div", { className: "acts", onclick: e => e.stopPropagation() }, lead, ...actions) : null,
       ),
     );
@@ -237,7 +289,7 @@ export async function start(ctx) {
   }
 
   // A PICTURE on a wall (Images): the picture itself (its preview), its title and who over it on hover.
-  function picture(it, { href = items.pageOf(it.ref, it.kind), by = true } = {}) {
+  function picture(it, { href = items.pageOf(it.ref, it.kind), by = true, actions = [] } = {}) {
     const ref = it.files?.find(x => kinds.mediaOf(x)?.domain === "image") ?? it.files?.[0] ?? {};
     const src = ref.preview ?? (ref.inline ? `data:${ref.type};base64,${ref.inline}` : null);
     return h(
@@ -245,6 +297,7 @@ export async function start(ctx) {
       { className: "cw-pic", href },
       src ? h("img", { src, alt: it.title ?? "", loading: "lazy" }) : h("div", { className: "none", textContent: "🖼" }),
       h("div", { className: "over" }, h("div", { className: "t", textContent: it.title }), h("div", { className: "s" }, by ? author(it.by, "image") : null, `${by ? " · " : ""}${ago(it.at)}${it.kind !== "image" ? ` · ${kinds.of(it.kind)?.label ?? it.kind}` : ""}${counted(it)}${it.private ? " · only you" : ""}`), marks(it)),
+      actions.length ? h("div", { className: "acts", onclick: e => (e.preventDefault(), e.stopPropagation()) }, ...actions) : null,
     );
   }
 
