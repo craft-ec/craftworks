@@ -65,6 +65,7 @@ struct Round {
     /// The space's name (for what upkeep says).
     name: String,
     owner: String,
+    /// The group's members (DIDs): who takes turns. Their DEVICES write the space (`reading.writer_dids`).
     roster: Vec<([u8; 32], String)>,
     reading: Reading,
     step: Step,
@@ -122,6 +123,7 @@ pub struct Held {
     sealed: [u8; 32],
     block: [u8; 32],
     piece: [u8; 32],
+    idlog: [u8; 32],
 }
 impl Held {
     pub fn of<H: Host>(h: &H) -> Option<Held> {
@@ -131,10 +133,11 @@ impl Held {
             sealed: contract_keys::code_hash(&h.get_secret(identity::UPKEEP_SEALED)?),
             block: h.get_secret(identity::UPKEEP_BLOCK)?.try_into().ok()?,
             piece: contract_keys::code_hash(&h.get_secret(identity::UPKEEP_PIECE)?),
+            idlog: h.get_secret(identity::UPKEEP_IDLOG)?.try_into().ok()?,
         })
     }
     fn codes(&self) -> Codes<'_> {
-        Codes { tail: &self.tail, bag_hash: self.bag, sealed_hash: self.sealed, block_hash: self.block }
+        Codes { tail: &self.tail, bag_hash: self.bag, sealed_hash: self.sealed, block_hash: self.block, idlog_hash: self.idlog }
     }
 }
 
@@ -164,7 +167,9 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, space: [u8;
         identity::upkeep_say(h, &member, &format!("{}: its group does not load here: not re-keyed", m.name));
         return next_space(h, c, member, me, rest);
     };
-    let (reading, io) = Reading::new(&c.codes(), space, epochs, roster.iter().map(|(w, _)| *w).collect(), &["files", "acts", "pub-acts"]);
+    // Its WRITERS: each member's devices (a page writes a space under its member key, one per device).
+    let dids: Vec<[u8; 32]> = roster.iter().filter_map(|(_, d)| craftworks_account::did_bytes(d)).collect();
+    let (reading, io) = Reading::of_members(&c.codes(), space, epochs, &dids, &["files", "acts", "pub-acts"]);
     let r = Round { member, me, rest, space, name: m.name.clone(), owner: m.owner.clone(), roster, reading, step: Step::Reading, queue: Vec::new(), moved: wakeups(h), salt: None };
     keep(h, Some(&r));
     io
@@ -368,7 +373,8 @@ fn old_key_of(d: &Task) -> [u8; 32] {
 
 /// THE PLAN: a new salt first; else the rows due whose turn it is now, one by one.
 fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
-    let g = rekey::governance(&r.reading, &r.roster, &r.owner, now_ms);
+    // Whose acts are whose: each device read → its member's DID.
+    let g = rekey::governance(&r.reading, &r.reading.writer_dids, &r.owner, now_ms);
     let members: Vec<String> = r.roster.iter().map(|(_, d)| d.clone()).collect();
     let p = rekey::plan(&r.reading, &g, &members, &r.me, now_ms);
     let st = rekey::salt(&r.reading.rows("files"));

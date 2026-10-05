@@ -12,10 +12,11 @@ const TAIL: &[u8] = b"the tail contract's code";
 const BAG: &[u8] = b"the bag contract's code";
 const SEALED: &[u8] = b"the sealed contract's code";
 const BLOCK: &[u8] = b"the block contract's code";
+const IDLOG: &[u8] = b"the key log contract's code";
 const SPACE: [u8; 32] = [0x5A; 32];
 
 fn codes() -> Codes<'static> {
-    Codes { tail: TAIL, bag_hash: contract_keys::code_hash(BAG), sealed_hash: contract_keys::code_hash(SEALED), block_hash: contract_keys::code_hash(BLOCK) }
+    Codes { tail: TAIL, bag_hash: contract_keys::code_hash(BAG), sealed_hash: contract_keys::code_hash(SEALED), block_hash: contract_keys::code_hash(BLOCK), idlog_hash: contract_keys::code_hash(IDLOG) }
 }
 
 /// The network: contract id → state.
@@ -252,7 +253,8 @@ fn read_files(net: &Net, writers: Vec<[u8; 32]>, epochs: &BTreeMap<u64, [u8; 32]
 #[test]
 fn upkeep_writes_its_own_feed_listing_it_first_when_new_and_flushes_when_due() {
     let (mut h, member) = node();
-    let me_key = identity::space_writer(&DATA);
+    // A page writes a space under its member key (one per device): upkeep the same.
+    let me_key = SigningKey::from_bytes(&SEED);
     let me = me_key.verifying_key().to_bytes();
     assert_eq!(identity::upkeep_space_writer(&h, &member), Some(me));
     let epochs: BTreeMap<u64, [u8; 32]> = [(0, [0x10; 32]), (1, [0x11; 32])].into_iter().collect();
@@ -621,7 +623,8 @@ fn with_no_page_open_a_removal_rotates_the_salt_and_the_spaces_files_re_key() {
     h.set_secret(identity::UPKEEP_BLOCK, &contract_keys::code_hash(BLOCK));
 
     // The space as the network holds it: written by this member's own feeds (its space writer).
-    let me_key = identity::space_writer(&data_seed);
+    // A page writes a space under its member (device) key: upkeep the same.
+    let me_key = SigningKey::from_bytes(&SEED);
     let ep = [(epoch, s0)];
     let mut n = Host2::default();
     let cat = table::table_name(&SPACE, "tables");
@@ -648,6 +651,19 @@ fn with_no_page_open_a_removal_rotates_the_salt_and_the_spaces_files_re_key() {
     a.put(&mut n.net, "a2", &serde_json::json!({ "at": 20, "act": "remove", "did": "did:craftec:gone" }).to_string(), None);
     n.seed_tail(&a.o);
     writers_bag(&mut n.net, &s0, &[me_key.verifying_key().to_bytes()]);
+    // The member's KEY LOG and CARD: its `nodes` name this device (its credential signed by the account's owner key)
+    // — how upkeep finds a member's devices, the space's writers.
+    let log = craftworks_idlog_contract::Log { events: vec![ev.clone()] };
+    n.net.0.insert(upkeep::id_of(&contract_keys::code_hash(IDLOG), &did), log.encode());
+    h.set_secret(identity::UPKEEP_IDLOG, &contract_keys::code_hash(IDLOG));
+    let cred = identity::credential(&did, &member, &mls_pub, &craftworks_account::owner_seed(&entropy).unwrap());
+    let data_key = SigningKey::from_bytes(&data_seed);
+    let mut card = data::Open::new(TAIL, &data_key.verifying_key().to_bytes(), "card");
+    card.public = true;
+    let (seq, hh) = card.prepare(vec![tail::Op::Set { key: b"nodes".to_vec(), value: serde_json::to_vec(&vec![table::hex(&cred)]).unwrap() }]).unwrap();
+    let pp = craftec_register_contract::wire::Params::parse(&card.params).unwrap();
+    card.commit(data_key.sign(&pp.signed_message(false, seq, &hh)).to_bytes()).unwrap();
+    n.net.0.insert(card.id_bytes(), card.state());
 
     // THE ROUND: woken, every answer routed through upkeep (side by side with admissions).
     let now = 1_800_000_000_000;

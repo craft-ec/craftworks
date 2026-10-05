@@ -29,6 +29,8 @@ pub struct Codes<'a> {
     pub bag_hash: [u8; 32],
     pub sealed_hash: [u8; 32],
     pub block_hash: [u8; 32],
+    /// The key log's code hash: a member's DEVICES are read from their card, checked against their key log.
+    pub idlog_hash: [u8; 32],
 }
 
 /// What a tail is read for.
@@ -77,6 +79,10 @@ pub struct Reading {
     departed_asked: bool,
     /// Something did not read (named, for the round's log).
     pub notes: Vec<String>,
+    /// MEMBERS whose devices are still being read: `(did, their key log's state once got, the contract waited on)`.
+    resolving: Vec<([u8; 32], Option<Vec<u8>>, [u8; 32])>,
+    /// Each writer's DID (a device of a member, or a roster writer given): whose acts are whose.
+    pub writer_dids: Vec<([u8; 32], String)>,
 }
 
 pub fn hex(b: &[u8]) -> String {
@@ -140,18 +146,89 @@ impl Reading {
             bag_read: false,
             departed_asked: false,
             notes: Vec::new(),
+            resolving: Vec::new(),
+            writer_dids: Vec::new(),
         };
         (r, vec![Io::Get { id: bag, subscribe: false }])
     }
 
+    /// A read of `tables` whose WRITERS are the DEVICES of the group's `members` (DIDs) — a page writes a space under
+    /// its member key, one per device: each member's key log, then their card's `nodes`, checked against the log (as
+    /// `directory.devices`). Then the writers bag, as `new`.
+    pub fn of_members(c: &Codes, space: [u8; 32], epochs: BTreeMap<u64, [u8; 32]>, members: &[[u8; 32]], tables: &[&str]) -> (Reading, Vec<Io>) {
+        let (mut r, _) = Reading::new(c, space, epochs, Vec::new(), tables);
+        let mut io = Vec::new();
+        for did in members {
+            let id = crate::upkeep::id_of(&c.idlog_hash, did);
+            r.resolving.push((*did, None, id));
+            io.push(Io::Get { id, subscribe: false });
+        }
+        if members.is_empty() {
+            io.push(Io::Get { id: r.bag.expect("set"), subscribe: false });
+        }
+        (r, io)
+    }
+
+    /// A member's key log or card answered: their devices, once both are in; the bag once every member's are.
+    fn resolved(&mut self, c: &Codes, at: usize, state: Option<Vec<u8>>) -> Vec<Io> {
+        let (did, log, _) = self.resolving[at].clone();
+        match log {
+            None => {
+                // Their KEY LOG: its head names their data key — their card's address.
+                let Some(st) = state.filter(|st| craftworks_idlog_contract::read(&did, st).is_some()) else {
+                    self.notes.push(format!("{}: no key log", craftworks_account::did(&did)));
+                    self.resolving.remove(at);
+                    return self.members_done(c);
+                };
+                let data = craftworks_idlog_contract::read(&did, &st).expect("checked").head().data;
+                let card = data::Open::new(c.tail, &data, "card").id_bytes();
+                self.resolving[at] = (did, Some(st), card);
+                vec![Io::Get { id: card, subscribe: false }]
+            }
+            Some(log_state) => {
+                // Their CARD: its `nodes`, each credential checked against the key log.
+                let log = craftworks_idlog_contract::read(&did, &log_state).expect("checked when got");
+                let mut o = data::Open::new(c.tail, &log.head().data, "card");
+                o.public = true;
+                let creds: Vec<Vec<u8>> = state
+                    .filter(|st| o.absorb(st))
+                    .and_then(|_| match o.opened() {
+                        Ok(data::Step::Ready(rows)) => rows.get(b"nodes".as_slice()).cloned(),
+                        _ => None,
+                    })
+                    .and_then(|v| serde_json::from_slice::<Vec<String>>(&v).ok())
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|h| (0..h.len() / 2).map(|i| u8::from_str_radix(h.get(2 * i..2 * i + 2)?, 16).ok()).collect())
+                    .collect();
+                let name = craftworks_account::did(&did);
+                for node in craftworks_account::members(&did, &log, &creds, &[]) {
+                    if !self.writers.contains(&node) {
+                        self.writers.push(node);
+                        self.writer_dids.push((node, name.clone()));
+                    }
+                }
+                self.resolving.remove(at);
+                self.members_done(c)
+            }
+        }
+    }
+    fn members_done(&mut self, _c: &Codes) -> Vec<Io> {
+        if self.resolving.is_empty() {
+            vec![Io::Get { id: self.bag.expect("set"), subscribe: false }]
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Done: every tail asked read to its end.
     pub fn done(&self) -> bool {
-        self.bag_read && self.waiting.is_empty() && self.jobs.iter().all(|j| j.rows.is_some())
+        self.resolving.is_empty() && self.bag_read && self.waiting.is_empty() && self.jobs.iter().all(|j| j.rows.is_some())
     }
 
     /// Whether this read waits on contract `id`.
     pub fn wants(&self, id: &[u8; 32]) -> bool {
-        self.bag == Some(*id) && !self.bag_read || self.waiting.iter().any(|(w, _, _)| w == id)
+        self.bag == Some(*id) && !self.bag_read || self.waiting.iter().any(|(w, _, _)| w == id) || self.resolving.iter().any(|(_, _, w)| w == id)
     }
 
     /// A tail opened as its job says: its keys, its state, its blocks.
@@ -298,6 +375,9 @@ impl Reading {
 
     /// An ANSWER: the bag (its writers' catalogs asked), a tail (read on), or a block (read on).
     pub fn got(&mut self, c: &Codes, id: [u8; 32], state: Option<Vec<u8>>) -> Vec<Io> {
+        if let Some(at) = self.resolving.iter().position(|(_, _, w)| *w == id) {
+            return self.resolved(c, at, state);
+        }
         if self.bag == Some(id) && !self.bag_read {
             self.bag_read = true;
             let mut listed = BTreeSet::new();

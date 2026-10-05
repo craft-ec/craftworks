@@ -1339,20 +1339,20 @@ fn guarded<H: Host>(h: &mut H, params_hash: &[u8], seq: u64, value_hash: &[u8]) 
     Ok(())
 }
 
-/// UPKEEP's KEY in a space: the member's space writer (from its data seed, held here) — the public half, whose feeds
-/// are the member's in every space. `None`: this node does not hold the member's data seed.
+/// UPKEEP's KEY in a space: the member's own (a page writes a space's feeds under it: `space.self`) — `None`: no such
+/// member held here.
 pub fn upkeep_space_writer<H: Host>(h: &H, member: &[u8; KEY_LEN]) -> Option<[u8; 32]> {
-    Some(space_writer(&member_(h, member)?.data?).verifying_key().to_bytes())
+    Some(member_(h, member)?.public())
 }
 fn member_<H: Host>(h: &H, public: &[u8]) -> Option<Member> {
     member(h, public)
 }
 
-/// UPKEEP SIGNS a step of one of the member's SPACE feeds with no page open: the member's space writer, through the
+/// UPKEEP SIGNS a step of one of the member's SPACE feeds with no page open: the member's own key, through the
 /// same fork guard as a page's signing (neither ever signs a step the other signed differently).
 pub fn upkeep_sign_space<H: Host>(h: &mut H, member: &[u8; KEY_LEN], params: &[u8], seq: u64, value_hash: &[u8; 32]) -> Result<[u8; 64], String> {
-    let data = member_(h, member).and_then(|a| a.data).ok_or("this node does not hold the member's data key")?;
-    let key = space_writer(&data);
+    // The member's own key: what a page signs a space's feed with (`Request::Sign`: `own`).
+    let key = member_(h, member).ok_or("no such member held here")?.key();
     let p = Params::parse(params).ok_or("not a tail's params")?;
     if !matches!(&p.authority, Authority::One(v) if *v == key.verifying_key()) {
         return Err("not one of the member's space feeds".into());
