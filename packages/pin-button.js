@@ -15,7 +15,8 @@ export async function start(ctx) {
     .cw-pin { border: 0; background: none; cursor: pointer; line-height: 1; padding: var(--cw-space-1); border-radius: 50%; }
     .cw-pin[aria-pressed="false"] { filter: grayscale(1); opacity: .45; }
     .cw-pin[aria-pressed="true"] { opacity: 1; }
-    .cw-pin:hover { background: var(--cw-hover); }`;
+    .cw-pin:hover { background: var(--cw-hover); }
+    .cw-pin.small { font-size: 14px; }`;
   document.head.append(style);
 
   // Every live button follows the table: a pin changed anywhere (this page, another tab, another node) shows at once.

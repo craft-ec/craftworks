@@ -94,9 +94,11 @@ export async function start() {
     text: { look: "card", votes: true, comments: true, about: false },
     image: { look: "picture", votes: true, comments: true, about: true },
     book: { look: "reader", votes: true, comments: true, about: true },
-    note: { look: "card", votes: false, comments: true, about: false },
-    file: { look: "card", votes: false, comments: true, about: true },
-    document: { look: "card", votes: false, comments: true, about: true },
+    // EVERY KIND THE SAME CAPABILITIES (owner 10-06): votes and comments on all — how an app composes or views them
+    // is its theme's.
+    note: { look: "card", votes: true, comments: true, about: false },
+    file: { look: "card", votes: true, comments: true, about: true },
+    document: { look: "card", votes: true, comments: true, about: true },
   };
   return {
     parts: kind => PARTS[byKind.get(kind)?.domain] ?? { look: "card", votes: false, comments: false, about: false },

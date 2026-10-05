@@ -21,7 +21,7 @@ export async function start(ctx) {
     .cw-icons .icon { font-size: 40px; line-height: 1; }
     .cw-icons .name { font-size: var(--cw-text-sm); }
     .cw-icons .app .new { position: absolute; top: 2px; left: calc(50% + 10px); margin: 0; }
-    .cw-icons .cw-pin { position: absolute; top: 2px; right: 2px; font-size: 14px; }
+    .cw-icons .cw-pin { position: absolute; top: 2px; right: 2px; }
     .cw-icons .off .icon, .cw-icons .off .name { opacity: .45; }
     .cw-icons .off button { font: inherit; font-size: var(--cw-text-xs); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-accent);
       border-radius: var(--cw-radius-pill); padding: 1px 8px; cursor: pointer; }
@@ -90,7 +90,7 @@ export async function start(ctx) {
     const redraw = () => {
       if (!host.isConnected) return;
       const on = new Set(pins?.refs("app:") ?? []);
-      const tiles = items().map(t => ({ ...t, pin: pins && pinUI && t.href ? pinUI.button(pinKey(t.app)) : null }));
+      const tiles = items().map(t => ({ ...t, pin: pins && pinUI && t.href ? pinUI.button(pinKey(t.app), { className: "small" }) : null }));
       grid(pinned, tiles.filter(t => on.has(pinKey(t.app))), "Pin an app with 📌 to keep it here.");
       drawer(all, tiles, { empty });
     };

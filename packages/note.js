@@ -367,7 +367,7 @@ export async function mount(ctx, el) {
         save(n.key, { ...n, archived: !n.archived });
         if (!n.archived && n.pinned) pins.set(ref(n.key), false).catch(e => said(`Could not unpin: ${e?.message ?? e}`)); // an archived note is not pinned, as in Keep
       });
-    const row = actionsCap.bar({ ...n.item, mayRemove: n.mayEdit || n.item.mayRemove }, { extra: tools, edit: n.mayEdit ? () => edit(n) : null, open: () => edit(n), comments: false, changed: () => reload(), removed: () => reload() });
+    const row = actionsCap.bar({ ...n.item, mayRemove: n.mayEdit || n.item.mayRemove }, { extra: tools, vote: true, edit: n.mayEdit ? () => edit(n) : null, open: () => edit(n), comments: false, changed: () => reload(), removed: () => reload() });
     return cards.card(
       { ...n.item, meta: { ...(n.item.meta ?? {}), color: n.color } },
       { href: null, actions: [row], by: others, corner: pinUI.button(ref(n.key)), below: labelUI.chips(ref(n.key), { onPick: show }), open: n.mayEdit ? () => edit(n) : null },

@@ -20,13 +20,11 @@ export async function start(ctx) {
     .cw-mde { display: grid; gap: 4px; position: relative; }
     .cw-mde .bar { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
     .cw-mde .bar[hidden] { display: none; }
-    .cw-mde .bar button, .cw-mde .aa { font: inherit; font-size: 13px; font-weight: 700; min-width: 28px; line-height: 1.4; padding: 2px 7px; cursor: pointer;
+    .cw-mde .bar button:not(.cw-att-menu *), .cw-mde .aa { font: inherit; font-size: 13px; font-weight: 700; min-width: 28px; line-height: 1.4; padding: 2px 7px; cursor: pointer;
       border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); background: var(--cw-surface); color: var(--cw-fg); }
-    .cw-mde .bar button:hover, .cw-mde .bar button.on, .cw-mde .aa.on { border-color: var(--cw-accent); color: var(--cw-accent); }
+    .cw-mde .bar button:not(.cw-att-menu *):hover, .cw-mde .bar button.on:not(.cw-att-menu *), .cw-mde .aa.on { border-color: var(--cw-accent); color: var(--cw-accent); }
     .cw-mde .bar .sp { flex: 1; }
     .cw-mde .bar .mode { font-weight: 400; }
-    .cw-mde .bar .cw-att-menu button, .cw-mde .bar .cw-att-menu .cw-att-file { border: 0; font-weight: 400; min-width: 0; font-size: inherit; width: 100%; text-align: left; padding: 6px 10px; white-space: nowrap; }
-    .cw-mde .bar .cw-att-menu button:hover, .cw-mde .bar .cw-att-menu .cw-att-file:hover { background: var(--cw-hover); color: var(--cw-fg); }
     div.cw-mde textarea, div.cw-mde div.rich { font: inherit; width: 100%; box-sizing: border-box; min-height: 110px; resize: none; overflow-y: hidden; padding: var(--cw-space-2);
       border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); background: var(--cw-surface); color: var(--cw-fg); outline: none; }
     div.cw-mde div.rich:focus, div.cw-mde textarea:focus { border-color: var(--cw-accent); }
@@ -39,10 +37,9 @@ export async function start(ctx) {
     .cw-mde .none { color: var(--cw-muted); }
     .cw-mde .line-in { display: grid; grid-template-columns: auto 1fr; gap: 4px; align-items: start; }
     .cw-mde .tools-in { display: flex; gap: 3px; align-items: center; padding-top: 5px; }
-    .cw-mde .tools-in button { font: inherit; font-size: 13px; min-width: 28px; line-height: 1.4; padding: 2px 6px; cursor: pointer; border: 1px solid var(--cw-line);
+    .cw-mde .tools-in button:not(.cw-att-menu *) { font: inherit; font-size: 13px; min-width: 28px; line-height: 1.4; padding: 2px 6px; cursor: pointer; border: 1px solid var(--cw-line);
       border-radius: var(--cw-radius-sm); background: var(--cw-surface); color: var(--cw-fg); }
     .cw-mde .tools-in .cw-att-menu { bottom: 100%; top: auto; }
-    .cw-mde .tools-in .cw-att-menu button, .cw-mde .tools-in .cw-att-menu .cw-att-file { border: 0; width: 100%; text-align: left; padding: 6px 10px; white-space: nowrap; }
     .cw-mde .suggest { position: absolute; bottom: 100%; left: 0; z-index: 6; list-style: none; margin: 0; padding: 4px; min-width: 180px;
       background: var(--cw-surface); border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); box-shadow: var(--cw-shadow-lg); }
     .cw-mde .suggest[hidden] { display: none; }

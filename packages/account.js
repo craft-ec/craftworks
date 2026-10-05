@@ -457,7 +457,18 @@ export async function mount(ctx, el) {
     const label = document.createElement("label");
     label.append(box_, " Show adult content (items tagged NSFW) in lists and feeds", said);
     const note = Object.assign(document.createElement("p"), { className: "note", textContent: "Off: NSFW items are left out of every list, and opening one asks first. Your own are always shown. Kept with your account, on every device." });
-    sec.append(label, note);
+    // DIAGNOSTICS (debugging only): each space's members' keys and what their pages cannot read, on Members & roles.
+    const dbg = Object.assign(document.createElement("input"), { type: "checkbox", checked: !!prefs.get("diagnostics") });
+    const dsaid = Object.assign(document.createElement("span"), { className: "note" });
+    dbg.onchange = async () => {
+      dbg.disabled = true;
+      await prefs.set("diagnostics", dbg.checked).then(() => (dsaid.textContent = dbg.checked ? " Shown." : " Hidden."), e => (dsaid.textContent = ` Not saved: ${e.message ?? e}`));
+      dbg.disabled = false;
+    };
+    const dlabel = document.createElement("label");
+    dlabel.append(dbg, " Show diagnostics (for debugging)", dsaid);
+    const dnote = Object.assign(document.createElement("p"), { className: "note", textContent: "On: a space's Members & roles shows each member's keys and anything their page could not read there." });
+    sec.append(label, note, dlabel, dnote);
     box.append(sec);
   };
   const titles = { card: "Card", permissions: "Permissions", nodes: "Nodes", security: "Security", storage: "Storage", apps: "Apps", content: "Content", recovery: "Recovery", moderation: "Moderation" };

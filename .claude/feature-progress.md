@@ -1261,3 +1261,18 @@ old key's addresses.
 - [ ] Untested: chat mention opens AT the message; 🔔 with real unread; History live.
 - [ ] F5b R4 delegate re-keys: BUILT (R4a–d); R4e BLOCKED BY THE NODE (freenet #5542: a delegate's PUT of a new contract stays local). Nothing to build until the node fixes it; flip `upkeep::NEW_CONTRACTS_REACH_THE_NETWORK` then.
 - [ ] Your node log: contracts HQk7zGRQ…/J4bh5TcQ… reject updates every few minutes — not identified.
+
+## Owner decisions 2026-10-06
+- Notes votable: YES. Every kind the same capabilities (votes, comments…): DONE in kinds PARTS (uncommitted with this batch).
+- Drive files become items, the same row as every item: YES — how an app composes/views is its theme's. TODO (after style work).
+- Key/read chips: DEBUG ONLY — behind Settings → Content "Show diagnostics" (pref `diagnostics`).
+- Analytics/rewards: PAID DEMAND — users pay a monthly subscription; distributed among content owners and bandwidth providers. Design doc TODO.
+- Live checks: History seen; restore, notifications, mentions not checked by owner — owner flags issues separately.
+
+## Sequence (owner: in order)
+- [ ] 2 Style: move the 6 outside overrides into their components; build check (no cross-package styling, no duplicate class names)
+- [ ] 3 Cascade layers (base, apps, components, templates); drop the `body` prefix
+- [ ] 4 Strip each app's own buttons/headings/widths → theme parts; screenshot each app at phone width
+- [ ] 5 Remaining live checks
+- [ ] 6 Identify node-log contracts HQk7…/J4bh…
+- [ ] Drive files as items; rewards design doc

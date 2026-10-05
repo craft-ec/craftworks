@@ -56,8 +56,13 @@ export async function start(ctx) {
     };
     // EACH MEMBER's KEYS (`conversation.keyStatus`: what their devices announced) — seen by any member, so nobody has
     // to ask another for a log: on the owner's keys, behind, or on another branch, and who caught them up.
+    // DIAGNOSTICS only (debugging: `edge.prefs` "diagnostics", Settings → Content).
     let keyState = null;
-    ctx.require("conversation").then(c => c.keyStatus(sp)).then(k => ((keyState = k), box.isConnected && draw()), () => {});
+    ctx
+      .require("edge")
+      .then(e => e.prefs())
+      .then(p => (p.get("diagnostics") ? ctx.require("conversation").then(c => c.keyStatus(sp)) : null))
+      .then(k => k && ((keyState = k), box.isConnected && draw()), () => {});
     const keyChip = did => {
       const k = keyState?.members.get(did);
       if (!k) return null;

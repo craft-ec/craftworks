@@ -75,7 +75,7 @@ export async function mount(ctx, el) {
           border-radius: var(--cw-radius); text-decoration: none; color: inherit; }
         .desk .app:hover { background: var(--cw-hover); }
         .desk .icon { font-size: 40px; line-height: 1; }
-        .desk .cw-pin { position: absolute; top: 2px; right: 2px; font-size: 14px; }
+        .desk .cw-pin { position: absolute; top: 2px; right: 2px; }
         .desk .app { position: relative; }
         .desk .app .new { position: absolute; top: 2px; left: calc(50% + 10px); margin: 0; }
         .desk .empty { grid-column: 1 / -1; color: var(--cw-muted); font-size: var(--cw-text-sm); text-align: center; }

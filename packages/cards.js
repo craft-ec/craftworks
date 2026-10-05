@@ -46,13 +46,11 @@ export async function start(ctx) {
     .cw-note[style*="background"] { color: var(--cw-on-pastel); border-color: transparent; }
     .cw-note .t { margin-bottom: 6px; }
     .cw-note .b { overflow-wrap: anywhere; max-height: 18em; overflow: hidden; }
-    .cw-note .b .cw-md > :first-child { margin-top: 0; }
     .cw-note .s { margin-top: 6px; font-size: var(--cw-text-xs); }
     .cw-note .acts { gap: 2px; margin-top: 6px; }
     .cw-note .acts button { border: 0; background: none; cursor: pointer; font-size: 15px; padding: var(--cw-space-1) 6px; border-radius: 50%; color: inherit; }
     .cw-note .acts button:hover { background: var(--cw-hover); }
     .cw-note .corner { position: absolute; top: 6px; right: 6px; }
-    .cw-note .corner .cw-pin[aria-pressed="false"] { opacity: .45; }
     .cw-note .below { margin-top: var(--cw-space-2); }
     .cw-marks { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
     .cw-marks:not(:has(.nsfw, .tag, .cw-chip)) { display: none; }
@@ -87,7 +85,6 @@ export async function start(ctx) {
     .cw-post h3 { margin: 0; font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
     .cw-post .text { overflow-wrap: anywhere; line-height: 1.5; margin: 0; font-size: var(--cw-text-sm); }
     .cw-post.link .text { color: var(--cw-muted); }
-    .cw-tile-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; color: var(--cw-fg); background: var(--cw-surface); padding: 2px 4px; }
     /* NOTHING HIDES UNTIL HOVER (a touch screen has none): what is there is shown. */
     .cw-stack { position: relative; margin: 6px 0; --stack-h: 340px; }
     @media (max-width: 480px) { .cw-stack { --stack-h: 240px; } }

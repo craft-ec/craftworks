@@ -35,7 +35,6 @@ export async function start(ctx) {
     .cw-room .msg time, .cw-room .msg .edited { color: var(--cw-muted); font-size: var(--cw-text-xs); }
     .cw-room .msg .edited { margin-left: var(--cw-space-1); }
     .cw-room .msg .text { overflow-wrap: anywhere; }
-    .cw-room .msg .text .cw-md p:last-child { margin-bottom: 0; }
     .cw-room .msg .editing .hint { color: var(--cw-muted); font-size: var(--cw-text-xs); }
     .cw-room .msg .quote { color: var(--cw-muted); font-size: var(--cw-text-sm); border-left: 2px solid var(--cw-line); padding-left: var(--cw-space-2);
       margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

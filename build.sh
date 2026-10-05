@@ -3,6 +3,8 @@
 # - the core (wasm + its JS glue); everything else in packages/ is published as it is written;
 # - the identity delegate, stripped and GATED (a delegate importing a host function the node lacks never instantiates).
 set -euo pipefail
+# ONE LOOK PER COMPONENT: a shared class styled only by the package that makes it (tools/style-check.mjs).
+node "$(cd "$(dirname "$0")" && pwd)/tools/style-check.mjs"
 root="$(cd "$(dirname "$0")" && pwd)"
 cd "$root"
 target="${CARGO_TARGET_DIR:-$root/target}"
