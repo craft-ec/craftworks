@@ -260,7 +260,8 @@ export async function start(ctx) {
       // packages before they renewed them): welcomed again from their card now — into a space this account has, where
       // they belong (the other of a direct conversation; a member of a group or a space this account may invite to).
       if (it.kind === "welcome-again" && it.from && !p.is("block", it.from)) {
-        const k = `again:${it.space}|${it.from}|${String(it.kp ?? "").slice(0, 32)}`;
+        // Each ASK its own (asked again later — the card renewed since — answered again).
+        const k = `again:${it.space}|${it.from}|${String(it.kp ?? "").slice(0, 32)}|${it.at ?? ""}`;
         const sp = mine.find(s => s.id === it.space);
         if (!sp || done(k)) continue;
         try {
@@ -353,12 +354,17 @@ export async function start(ctx) {
         // Made for a key package this account does not hold (its card from before): its sender asked — once — to
         // welcome again from the card as it is now (renewed below). A REPAIR's too (this account on another branch of
         // a space it has): asked again AS a repair — else it stays on that branch for good.
-        const k = `asked-again:${it.space}|${(it.kp ?? it.welcome).slice(0, 32)}`;
-        if (!held && !done(k) && (!had || it.repair)) {
-          unanswerable += 1; // seen failing for the first time (an old one already counted)
+        // Asked again at most once an HOUR while it keeps failing (an answer made from a card that still listed a
+        // dead package fails too — never asked only once for good).
+        const k = `asked-again:${it.space}|${(it.kp ?? it.welcome).slice(0, 32)}|${Math.floor(Date.now() / 3600e3)}`;
+        if (!held && !done(k)) {
+          unanswerable += 1;
           await index
-            .send(it.from, { kind: "welcome-again", space: it.space, from: me.id, kp: it.kp ?? it.welcome.slice(0, 32), ...(it.repair ? { repair: true } : {}), at: Date.now() })
-            .then(() => once.put(k, String(Date.now())), err => ctx.log("conversation", { what: `asking ${short(it.from)} to welcome again: ${err.message}` }));
+            .send(it.from, { kind: "welcome-again", space: it.space, from: me.id, kp: it.kp ?? it.welcome.slice(0, 32), ...(it.repair || had ? { repair: !!it.repair } : {}), at: Date.now() })
+            .then(
+              () => (once.put(k, String(Date.now())), ctx.log("conversation", { what: `asked ${short(it.from)} to welcome again into ${it.name ?? "a space"} (a welcome made for a key package not held here)` })),
+              err => ctx.log("conversation", { what: `asking ${short(it.from)} to welcome again: ${err.message}` }),
+            );
         }
         ctx.log("conversation", {
           what: `a welcome from ${short(it.from)} (welcome ${await fingerprint(it.welcome)}) did not open here: ${e.message}${it.kp ? ` — made ${it.made ? new Date(it.made).toISOString().slice(0, 16) : "(when unknown)"} for key package ${it.kp.slice(0, 8)}, ${held ? `one this account offered (batch ${held})` : "NOT one this account offered"}` : " — from before welcomes named their key package"}`,
