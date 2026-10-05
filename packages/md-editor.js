@@ -3,9 +3,10 @@
 // - RICH: what is written shows as it will read — the toolbar formats the selection (heading, bold, italic, strike,
 //   superscript, hidden, code, link, quote, lists, a task list, a table, a divider), media shows as itself.
 // - MARKDOWN: the text as it is kept (rich text shows it as it reads). Switching carries the text across (the person's choice is kept).
-// MEDIA INLINE: 🖼 — an image, a video or an audio, from this device or Drive (the attachments picker's: sent with its
-// progress; from Drive, taken into the item's space) — shows where the cursor was, kept as `![name](file:KEY)`; 📎
-// attaches any file below. The item keeps the files (`files()`): who reads it reads them.
+// ＋ INSERT, the one menu: UPLOAD an image, a video, an audio or a book — from this device or Drive (the attachments
+// picker's: sent with its progress; from Drive, taken into the item's space) — shown where the cursor was, kept as
+// `![name](file:KEY)`; a NEW post or note (the one composer); or any item FOUND (yours, saved, or by its reference),
+// kept as `![title](item:REF)`. 📎 attaches any file below. The item keeps the files (`files()`): who reads it reads them.
 // COMPACT (a chat line): the toolbar behind "Aa", Enter sends (`onSubmit`), Shift+Enter a new line. `suggest`:
 // after "@", names to pick (mentions).
 //
@@ -351,14 +352,16 @@ export async function start(ctx) {
       for (const f of fs) inlineNext.add(f);
       pick?.addFiles?.(fs);
     };
-    const mediaMenu = h(
-      "span",
-      { className: "cw-att-menu", hidden: true },
-      // Each kind its own line (the same picker: what it accepts narrowed), so audio is as plain to find as an image.
-      // Each kind its own line (`attachments.fileButton`: a label the browser opens the chooser from).
-      ...kinds.media().map(m => attachments.fileButton(`${m.icon} ${m.label}`, { accept: m.accept, onFiles: pickedInline, after: () => (mediaMenu.hidden = true) })),
-      h("button", { type: "button", textContent: "From Drive", onclick: e => (e.preventDefault(), (mediaMenu.hidden = true), pick?.fromDrive?.({ media: true })) }),
-    );
+    // UPLOAD (Insert's first part): an image, a video, an audio or a book from this device — each kind its own line
+    // (`attachments.fileButton`: a label the browser opens the chooser from), published as its kind and placed where
+    // the caret is — or one from Drive.
+    const uploads = pick
+      ? [
+          h("div", { className: "s", style: "margin:4px 8px 0", textContent: "Upload — placed here" }),
+          ...kinds.media().map(m => attachments.fileButton(`${m.icon} ${m.label}`, { accept: m.accept, onFiles: pickedInline, after: () => (insertMenu.hidden = true) })),
+          h("button", { type: "button", textContent: "🗂️ From Drive", onclick: e => (e.preventDefault(), (insertMenu.hidden = true), pick?.fromDrive?.({ media: true })) }),
+        ]
+      : [];
     pick?.onReady?.((ref, file) => {
       if (!ref || !isMedia(ref)) return;
       if (file && !inlineNext.has(file) && !kinds.mediaOf(file.type)) return;
@@ -381,14 +384,15 @@ export async function start(ctx) {
       // Untitled (a note): named by its kind.
       if (done?.item) putItem(done.item, done.title || (kinds.media().find(m => m.domain === domain)?.label ?? kinds.of(kinds.inDomain(domain)[0])?.label));
     };
+    // NEW (what is written, not uploaded: a post, a note) — an upload is Upload's.
     const newRow = h(
       "div",
       { style: "display:flex;flex-wrap:wrap;gap:4px;margin:4px 8px" },
       h("span", { className: "s", textContent: "New:" }),
       ...kinds.written().map(d => btn(kinds.of(kinds.inDomain(d)[0]).label, `A new ${kinds.of(kinds.inDomain(d)[0]).label.toLowerCase()}, put here`, () => makeNew(d))),
-      ...kinds.media().map(m => btn(`${m.icon} ${m.label}`, `A new ${m.label.toLowerCase()}, put here`, () => makeNew(m.domain))),
     );
-    const insertMenu = h("span", { className: "cw-att-menu", hidden: true }, newRow, find, found);
+    // INSERT, the one menu: Upload · New · Find (yours, saved, or by reference).
+    const insertMenu = h("span", { className: "cw-att-menu", hidden: true }, ...uploads, newRow, find, found);
     let mine = null;
     const putItem = (ref, title) => {
       insertMenu.hidden = true;
@@ -423,10 +427,10 @@ export async function start(ctx) {
     };
     find.oninput = () => listFound();
     find.onkeydown = e => e.key === "Escape" && (insertMenu.hidden = true);
-    const insertGroup = h("span", { className: "cw-att-pick" }, btn("＋ Insert", "Insert any item: yours, or by its reference", () => (mode === "rich" && keep(), (insertMenu.hidden = !insertMenu.hidden), insertMenu.hidden || (listFound(), find.focus()))), insertMenu);
+    const insertGroup = h("span", { className: "cw-att-pick" }, btn("＋ Insert", "Insert: upload an image, a video, an audio or a book; a new post or note; or any item — yours, or by its reference", () => (mode === "rich" && keep(), (insertMenu.hidden = !insertMenu.hidden), insertMenu.hidden || (listFound(), find.focus()))), insertMenu);
     const modeBtn = h("button", { type: "button", className: "mode", onclick: e => (e.preventDefault(), setMode(mode === "rich" ? "markdown" : "rich")) });
-    // MEDIA and FILES side by side: 🖼 inline, 📎 attached below (on a chat line: always shown, beside Aa).
-    const mediaGroup = pick ? [h("span", { className: "cw-att-pick" }, btn("🖼 Media", `${kinds.media().map(m => m.label).join(", ")}, inline: from this device or from Drive`, () => (mediaMenu.hidden = !mediaMenu.hidden)), mediaMenu), pick.el] : [];
+    // FILES attached below (📎: any file, listed under what is written — not placed in it; on a chat line beside Aa).
+    const mediaGroup = pick ? [pick.el] : [];
     const bar = h(
       "div",
       { className: "bar", hidden: compact },
@@ -500,13 +504,16 @@ export async function start(ctx) {
     });
     document.execCommand("defaultParagraphSeparator", false, "p");
 
-    // The compact line: Aa, 🖼 and 📎 beside the text.
+    // The compact line (a chat line): Aa, 🖼, 📎 and ＋ (Insert: any item — a note, a post, a file, a video… — or a new
+    // one) beside the text: the same tools as every editor.
+    if (compact) insertGroup.firstChild.textContent = "＋";
     const el = compact
-      ? h("div", { className: "cw-mde compact" }, list, bar, h("div", { className: "line-in" }, h("span", { className: "tools-in" }, aa, ...mediaGroup), ta, rich))
+      ? h("div", { className: "cw-mde compact" }, list, bar, h("div", { className: "line-in" }, h("span", { className: "tools-in" }, aa, ...mediaGroup, insertGroup), ta, rich))
       : h("div", { className: "cw-mde" }, list, bar, ta, rich);
     document.addEventListener("pointerdown", e => {
       if (!el.isConnected) return;
-      if (!mediaMenu.hidden && !mediaMenu.parentElement.contains(e.target)) mediaMenu.hidden = true;
+      // Insert's menu closes on a click anywhere outside it (and its button).
+      if (!insertMenu.hidden && !insertMenu.parentElement.contains(e.target)) insertMenu.hidden = true;
     });
     setMode(mode);
     if (mode === "rich") toRich(value);
