@@ -857,7 +857,17 @@ export async function start(ctx) {
     }));
     // EVERY one: a card listing one this account does not hold makes a welcomer that picks it fail (seen: a repair
     // welcome made for a package "never offered here", stuck for good).
-    return (kps ?? []).length > 0 && kps.every(k => offered.has(k));
+    if (!((kps ?? []).length > 0 && kps.every(k => offered.has(k)))) return false;
+    // …and each one's SECRET held, not only its batch's row (seen: welcomes named "offered by <batch>, not held" — the
+    // batch row there, the package's secret not in it — so every welcome made from the card failed, for good).
+    const heldRefs = new Set(t.rows().filter(r => r.key.startsWith("packages/") && r.value).flatMap(r => {
+      try {
+        return batchRefs(bytes(r.value));
+      } catch {
+        return [];
+      }
+    }));
+    return (await Promise.all(kps.map(refOf))).every(ref => heldRefs.has(ref));
   }
   // Whether a key package this account offered (by its TAG: sha-256, 16 bytes, hex — as `keypacks` names them) is held.
   async function holdsTag(tag) {
@@ -871,7 +881,14 @@ export async function start(ctx) {
       } catch {}
       for (const kp of kps) {
         const h = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(kp)))].slice(0, 16).map(x => x.toString(16).padStart(2, "0")).join("");
-        if (h === tag) return r.key.slice("offers/".length, "offers/".length + 8);
+        if (h !== tag) continue;
+        // Its SECRET in its batch, not only the batch's row (one not there: not held — its welcomer is asked again).
+        const pk = t.rows().find(x => x.key === `packages/${r.key.slice("offers/".length)}` && x.value);
+        let refs = [];
+        try {
+          refs = pk ? batchRefs(bytes(pk.value)) : [];
+        } catch {}
+        return refs.includes(await refOf(kp)) ? r.key.slice("offers/".length, "offers/".length + 8) : false;
       }
     }
     return false;
