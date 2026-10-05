@@ -31,13 +31,20 @@ export async function start(ctx) {
   const stamp = it => it?.edited || it?.at || 0;
 
   // The versions shown in a dialog over `anchor`'s page (inside an open dialog when asked from one: outside it is inert).
-  async function open(anchor, ref, { current = null, restored = () => {} } = {}) {
+  // `mayRestore`: this person may edit it (its author, or where its space lets them) — else its history to read only.
+  async function open(anchor, ref, { current = null, restored = () => {}, mayRestore = true } = {}) {
     const said = h("p", { className: "said" });
     const list = h("div", { className: "list" }, theme.loading("Reading its history…"));
     const close = h("button", { type: "button", className: "end", textContent: "Close" });
     const d = h("dialog", { className: "cw-history" }, h("h3", { textContent: "History" }), list, h("div", {}, said, close));
     close.onclick = () => d.close();
     d.addEventListener("close", () => d.remove());
+    // A click outside it (on its backdrop: the dialog itself, outside its box) closes it, as Close does.
+    d.addEventListener("click", e => {
+      if (e.target !== d) return;
+      const r = d.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close();
+    });
     (anchor.closest("dialog") ?? document.body).append(d);
     d.showModal();
     let vs = [];
@@ -69,7 +76,7 @@ export async function start(ctx) {
             }
           };
           const by = v.edited ? `Edited by ${await name(v.editor ?? v.by)} · ${when(v.edited)}` : `Made by ${await name(v.by)} · ${when(v.at)}`;
-          return h("div", { className: "v" }, h("div", { className: "who" }, h("span", { textContent: by }), restore), v.title ? h("div", { className: "t", textContent: v.title }) : null, h("div", { className: "b", textContent: v.body }));
+          return h("div", { className: "v" }, h("div", { className: "who" }, h("span", { textContent: by }), mayRestore ? restore : null), v.title ? h("div", { className: "t", textContent: v.title }) : null, h("div", { className: "b", textContent: v.body }));
         }),
       )),
     );

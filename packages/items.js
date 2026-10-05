@@ -460,8 +460,16 @@ export async function start(ctx) {
   async function profilePosts(authors, readers = [], kinds = ["post"], since = 0, { withVotes = true } = {}) {
     const self = await me();
     // Every profile opened ONCE (each bounded): the authors' among them — never a second wait on a slow one.
-    const rs = await profiles(withVotes ? [...authors, self, ...(await following()), ...readers] : authors);
+    let rs = await profiles(withVotes ? [...authors, self, ...(await following()), ...readers] : authors);
     const authorSet = new Set(authors);
+    // EVERYONE WHO ANSWERED the posts listed (their comments, votes and replies live in their own profiles, pointed in
+    // each post's bag — as its thread reads them): opened too, so a count is the thread's, not only the followed's.
+    if (withVotes) {
+      const listed = rs.flatMap(r => r.list().filter(it => kinds.includes(it.kind) && authorSet.has(it.by) && !it.meta?.space && it.at >= since).map(it => `${it.by}/${it.id}`));
+      const held = new Set([...authors, self, ...(await following()), ...readers]);
+      const more = [...new Set((await Promise.all(listed.map(ref => pointersTo(ref)))).flat())].filter(d => !held.has(d));
+      if (more.length) rs = [...rs, ...(await profiles(more))];
+    }
     const votes = new Map();
     const counts = new Map();
     // What counts about an item: by its rule (`roles.mayWrite`: the one check, as in a space) — as it was when written.
@@ -923,8 +931,11 @@ export async function start(ctx) {
   async function editItem(ref, body, { files = null, meta = null, title = undefined } = {}) {
     if (ref.startsWith("space:")) {
       const sp = await boardOf(ref);
-      if (!sp) throw new Error("you are not in that board's space");
-      return (await boardRoom(sp)).editFull(idOf(ref), body, { files, meta, title });
+      if (sp) return (await boardRoom(sp)).editFull(idOf(ref), body, { files, meta, title });
+      // NOT IN IT (public participation): what this person wrote there lives in their own profile (`~<did>~<id>`).
+      const m = /^~(did:craftec:[^~]+)~(.+)$/.exec(idOf(ref));
+      if (!m || m[1] !== (await me())) throw new Error("you are not in that board's space");
+      return (await profileRoom(m[1])).editFull(m[2], body, { files, meta, title });
     }
     return (await profileRoom(await me())).editFull(idOf(ref), body, { files, meta, title });
   }
@@ -934,7 +945,10 @@ export async function start(ctx) {
   async function history(ref) {
     if (ref.startsWith("space:")) {
       const sp = await boardOf(ref);
-      return sp ? (await boardRoom(sp)).history(idOf(ref)) : [];
+      if (sp) return (await boardRoom(sp)).history(idOf(ref));
+      // Not in it: what someone wrote there from outside lives in their own profile (`~<did>~<id>`).
+      const m = /^~(did:craftec:[^~]+)~(.+)$/.exec(idOf(ref));
+      return m ? ((await profileRoom(m[1])).history?.(m[2]) ?? []) : [];
     }
     const room = await profileRoom(whereOf(ref));
     return room.history ? room.history(idOf(ref)) : [];

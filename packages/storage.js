@@ -274,7 +274,11 @@ export async function start(ctx) {
         // Within the retention, whenever it is read (the log is pruned only by the next flush: a table not written
         // again keeps older entries, never shown).
         const since = Date.now() - HISTORY.days * 86400e3;
-        for (const [at, root] of core.tail_root_log(id)) {
+        // The CURRENT tree too: a row changed since the last flush (in the tail) had its tree's value before that
+        // change — an earlier version as much as a logged root's (its `at`: now — replaced by what the tail holds).
+        const now = core.tail_root(id);
+        const roots = [...core.tail_root_log(id), ...(now ? [[Date.now(), now]] : [])];
+        for (const [at, root] of roots) {
           if (at < since) continue;
           try {
             for (let round = 0; round < 24; round++) {

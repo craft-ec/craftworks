@@ -238,9 +238,10 @@ export async function start(ctx) {
           // ⋯ HIDE and FLAG, the same six everywhere (`moderation.lists`): hide (private, everywhere) or flag (public:
           // your list — Discover, for you and whoever applies it) the post, its author, or its space.
           !mine ? more(it, { changed, fail }) : null,
-          mine && edit && !discover ? btn("Edit", edit) : null,
-          // HISTORY: its earlier versions, once it was changed (`history`; Restore where this person may edit it).
-          (it.edited || mine) && !outside && !discover ? btn("🕘 History", e => history.open(e.currentTarget, it.ref, { current: it, restored: () => changed?.() })) : null,
+          // EDIT one's own, wherever it is shown (Discover, a space this person is not in: their own copy is edited).
+          mine && edit ? btn("Edit", edit) : null,
+          // HISTORY of any item (`history`): who changed it and when — Restore only for whoever may edit it.
+          btn("🕘 History", e => history.open(e.currentTarget, it.ref, { current: it, mayRestore: mine || !!it.mayEdit, restored: () => changed?.() })),
           it.mayRemove
             ? btn(mine ? "Delete" : "Remove", async e => {
                 if (e.target.dataset.armed !== "1") return ((e.target.dataset.armed = "1"), (e.target.textContent = `Confirm: ${mine ? "delete" : "remove"}`));

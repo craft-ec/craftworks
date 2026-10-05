@@ -138,7 +138,7 @@ export async function start(ctx) {
         actionsCap.bar(c, {
           outside,
           comments: false,
-          edit: outside ? null : () => editIn(text, c),
+          edit: () => editIn(text, c),
           removed: refresh,
           changed: refresh,
           extra: mayComment
@@ -163,10 +163,16 @@ export async function start(ctx) {
     }
 
     const tree = h("div", { className: "tree" }, theme.loading("Reading the comments…"));
+    // HOW MANY: every comment drawn, replies included (`onCount`: the page's heading shows it).
+    const counted = [];
+    let lastCount = null;
     async function refresh() {
       const cs = await items.thread(ref, { outside }).catch(() => []);
       tree.replaceChildren(...(cs.length ? cs.map(commentTree) : [h("p", { className: "none", textContent: "No comments yet." })]));
+      lastCount = all_(cs).length;
+      counted.forEach(f => f(lastCount));
     }
+    const all_ = xs => (xs ?? []).flatMap(c => [c, ...all_(c.replies)]);
     const el = h(
       "div",
       { className: "cw-cm" },
@@ -181,7 +187,7 @@ export async function start(ctx) {
       if (!el.isConnected || again) return;
       again = setTimeout(() => ((again = null), tree.querySelector("form") ? null : refresh().catch(() => {})), 300);
     });
-    return { el, refresh };
+    return { el, refresh, onCount: f => (counted.push(f), lastCount !== null && f(lastCount)) };
   }
   return { create };
 }

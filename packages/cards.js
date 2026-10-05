@@ -78,19 +78,20 @@ export async function start(ctx) {
     .cw-file .menu button, .cw-file .menu a { border: 0; background: none; text-align: left; padding: 6px 10px; font: inherit; color: inherit; text-decoration: none; cursor: pointer; }
     .cw-file .menu button:hover, .cw-file .menu a:hover { background: var(--cw-hover); }`;
   style.textContent += `
-    .cw-post { display: grid; grid-template-columns: 40px minmax(0, 1fr); background: var(--cw-surface); border: 1px solid var(--cw-line);
-      border-radius: var(--cw-radius); overflow: hidden; color: inherit; text-decoration: none; }
-    .cw-post.nolead { grid-template-columns: minmax(0, 1fr); }
-    .cw-post.link:hover { border-color: var(--cw-muted); cursor: pointer; }
-    .cw-post > .cw-votes { background: var(--cw-bg); padding: var(--cw-space-2) 0; justify-content: flex-start; }
-    .cw-post .in { padding: var(--cw-space-2) var(--cw-space-3); display: grid; gap: 4px; min-width: 0; }
+    .cw-post { display: block; color: inherit; text-decoration: none; min-width: 0; }
+    .cw-post.link { border-bottom: 1px solid var(--cw-line); }
+    .cw-post.link:hover { background: var(--cw-hover); cursor: pointer; }
+    .cw-post .in { padding: var(--cw-space-2) var(--cw-space-1); display: grid; gap: 4px; min-width: 0; }
+    .cw-post h1 { margin: 0; font-size: 1.45rem; line-height: 1.3; font-weight: 700; overflow-wrap: anywhere; }
+    .cw-post .acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 2px; }
+    .cw-post .acts .cw-votes { display: inline-flex; flex-direction: row; gap: 4px; align-items: center; }
     .cw-post .meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; color: var(--cw-muted); font-size: var(--cw-text-xs); }
     .cw-post .meta .b { color: var(--cw-fg); font-weight: 700; }
     .cw-post .meta .by:hover { text-decoration: underline; cursor: pointer; }
     .cw-post h3 { margin: 0; font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
     .cw-post .text { overflow-wrap: anywhere; line-height: 1.5; margin: 0; font-size: var(--cw-text-sm); }
     .cw-post.link .text { color: var(--cw-muted); }
-    .cw-post.link .text .preview { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 0; }
+    .cw-post.link .text .preview { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; margin: 0; }
     .cw-track { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--cw-line); }
     .cw-track .n { font-weight: 600; }
     .cw-track .acts { display: flex; gap: 6px; margin-left: auto; }`;
@@ -192,13 +193,15 @@ export async function start(ctx) {
     const list = !body;
     const where = it.board ? h("span", { className: "b", textContent: `b/${it.board.name ?? it.board.id?.slice(0, 8)}` }) : h("span", { textContent: "profile" });
     if (it.board) when("space", s => void (where.textContent = `b/${s.shown(it.board)}`));
+    // AS GRID'S: the title first, where and who and when under it, the text (cut short in a list; whole on its page),
+    // then ONE row of what can be done — its votes (`lead`) first — the same in a list and on its page.
     const c = h(
       list && href ? "a" : "article",
-      { className: `cw-post${list ? " link" : ""}${lead ? "" : " nolead"}`, ...(list && href ? { href } : {}) },
-      lead,
+      { className: `cw-post${list ? " link" : " full"}`, ...(list && href ? { href } : {}) },
       h(
         "div",
         { className: "in" },
+        it.title ? h(list ? "h3" : "h1", { textContent: it.title }) : null,
         h(
           "div",
           { className: "meta" },
@@ -211,9 +214,8 @@ export async function start(ctx) {
           it.edited ? h("span", { textContent: "(edited)" }) : null,
           counted(it) ? h("span", { textContent: counted(it).slice(1) }) : null,
         ),
-        it.title ? h("h3", { textContent: it.title }) : null,
         body ?? h("div", { className: "text" }, it.body ? when("markdown", m => h("p", { className: "preview", textContent: m.plain(it.body) })) : null, it.files?.length ? when("attachments", a => a.show(it.files)) : null),
-        actions.length ? h("div", { className: "acts", onclick: e => e.stopPropagation() }, ...actions) : null,
+        lead || actions.length ? h("div", { className: "acts", onclick: e => e.stopPropagation() }, lead, ...actions) : null,
       ),
     );
     if (list && open && !href) c.onclick = e => !e.target.closest("button, a, .by, .cw-votes") && open();

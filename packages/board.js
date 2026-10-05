@@ -123,7 +123,7 @@ export async function mount(ctx, el) {
     // A post opens where it lives: in Discover (read from outside), in its space, or in the personal space.
     const open = () => (location.hash = discovering() ? `#/discover/board/p/${p.ref}` : posts.pageOf(p.ref, p.kind ?? "post"));
     const acts = actionsCap.bar(p, { outside: outsideFor(p), open, discover: discovering(), removed: () => draw(), changed: () => draw() });
-    return cards.card(p, { href: null, open, lead: actionsCap.votes(p, { outside: outsideFor(p) }), actions: [acts] });
+    return cards.card(p, { href: null, open, lead: actionsCap.votes(p, { outside: outsideFor(p), row: true }), actions: [acts] });
   }
 
   // THE SIDE PANEL: the space's board (its name, members, Create post), or a profile.

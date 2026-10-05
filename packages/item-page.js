@@ -79,9 +79,11 @@ export async function start(ctx) {
     const page = h("div", { className: "cw-page" });
     const redraw = async () => page.replaceWith(await show(ref, { outside, app, back, discover }));
     const removed = () => (location.hash = back ?? items.pageOf(ref, it.kind).replace(/\/(p|w)\/.*$/, ""));
-    const votes = parts.votes ? actions.votes(it, { outside, row: parts.look === "player" }) : null;
+    const votes = parts.votes ? actions.votes(it, { outside, row: true }) : null;
     let host = null; // where its text is, to edit in place
-    const bar = actions.bar(it, { outside, comments: false, discover, removed, changed: redraw, edit: parts.look === "card" && parts.votes ? () => editIn(host, it, redraw) : null });
+    // THE SAME ROW as in a list (Grid's): 💬 its count — here it goes down to the comments.
+    let threadAt = null;
+    const bar = actions.bar(it, { outside, comments: parts.comments, open: () => threadAt?.scrollIntoView({ behavior: "smooth", block: "start" }), discover, removed, changed: redraw, edit: parts.look === "card" && parts.votes ? () => editIn(host, it, redraw) : null });
     // ITS LOOK, WHOLE.
     if (parts.look === "player" || parts.look === "picture" || parts.look === "reader") {
       const m = (await ctx.require("media-look")).full(it, { outside });
@@ -105,7 +107,18 @@ export async function start(ctx) {
     // ITS COMMENTS: the one thread.
     if (parts.comments) {
       const thread = await (await ctx.require("comments")).create({ item: it, outside, app: app ?? items.appOf(it.kind) });
-      page.append(h("div", { className: "thread" }, h("h3", { textContent: "Comments" }), thread.el));
+      // Its COUNT, from the very comments drawn (replies included) — the same rule as a list's count.
+      const head = h("h3", { textContent: "Comments" });
+      const label = n => `💬 ${n} Comment${n === 1 ? "" : "s"}`;
+      thread.onCount?.(n => {
+        head.textContent = n ? label(n) : "Comments";
+        // The row's count is the thread's: the very comments drawn.
+        it.comments = n;
+        const b = [...bar.querySelectorAll("button")].find(x => x.textContent.startsWith("💬"));
+        if (b) b.textContent = label(n);
+      });
+      threadAt = h("div", { className: "thread" }, head, thread.el);
+      page.append(threadAt);
     }
     return page;
   }
