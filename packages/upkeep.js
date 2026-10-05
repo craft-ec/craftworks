@@ -117,13 +117,15 @@ export async function start(ctx) {
   async function handOver() {
     const me = await space.account();
     if (!me) return;
-    const [{ glue }, bagCode, tailCode, idlogCode] = await Promise.all([ctx.require("node"), ctx.require("bag-wasm"), ctx.require("tail-wasm"), ctx.require("idlog-wasm")]);
+    const [{ glue }, bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode] = await Promise.all(["node", "bag-wasm", "tail-wasm", "idlog-wasm", "sealed-wasm", "piece-wasm", "block-wasm"].map(n => ctx.require(n)));
     const Core = glue.CraftworksCore;
     const id = Core.bag_id(bagCode, Core.inbox_address(me.idBytes));
     const bytes = new Uint8Array(id.match(/../g).map(x => parseInt(x, 16)));
     const r = await auth.identity.upkeepWatch(bytes).catch(e => ({ refused: e.message }));
-    // The contracts it writes (their code) and reads: handed over when they are not the ones it holds.
-    if (r.upkeep && r.upkeep.codes !== Core.upkeep_codes_hash(bagCode, tailCode, idlogCode)) await auth.identity.upkeepCodes(bagCode, tailCode, idlogCode).catch(() => {});
+    // The contracts it writes (their code) and reads: handed over when they are not the ones it holds — the Sealed,
+    // Piece and Block contracts too (it re-keys a space's files with no page open).
+    if (r.upkeep && r.upkeep.codes !== Core.upkeep_codes_hash(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode))
+      await auth.identity.upkeepCodes(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode).catch(() => {});
     ctx.log("upkeep", { what: r.upkeep ? `the delegate watches the inbox (${r.upkeep.wakeups} wake-up(s) so far)` : `the delegate: ${r.refused ?? JSON.stringify(r)}` });
   }
   handOver().catch(() => {});

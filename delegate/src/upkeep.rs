@@ -183,6 +183,13 @@ pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
 
 /// An ANSWER from the network: the round moved on. What to send next.
 pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
+    // An answer the RE-KEY round waits on is its own (both rounds run side by side).
+    let id = match &reply {
+        Reply::Got { id, .. } | Reply::Put { id, .. } | Reply::Updated { id, .. } => *id,
+    };
+    if crate::rekey_round::wants(h, &id) {
+        return crate::rekey_round::replied(h, reply, now_ms);
+    }
     let Some(mut r) = round(h) else { return Vec::new() };
     let Some(c) = codes(h) else { return Vec::new() };
     let member = r.member;

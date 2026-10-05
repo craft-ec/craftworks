@@ -3,6 +3,7 @@
 
 pub mod recode;
 pub mod rekey;
+pub mod rekey_round;
 pub mod table;
 pub mod write;
 pub mod upkeep;
@@ -154,6 +155,9 @@ mod entry {
                     };
                     let now = clock_now(&c);
                     let io = crate::upkeep::woke(&mut c, now);
+                    out.extend(send(&c, io));
+                    // RE-KEYS (a space's files after a removal), side by side with admissions.
+                    let io = crate::rekey_round::woke(&mut c);
                     out.extend(send(&c, io));
                     Ok(out)
                 }

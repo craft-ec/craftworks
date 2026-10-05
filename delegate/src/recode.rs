@@ -80,6 +80,8 @@ pub struct Recode {
     pub stored: Vec<Vec<(u8, [u8; 32])>>,
     pub root: Option<[u8; 32]>,
     phase: Phase,
+    /// Every contract a GET or PUT of it still waits on (its answers are its, not another round's).
+    pending: Vec<[u8; 32]>,
 }
 
 /// What the re-key ended in.
@@ -129,9 +131,36 @@ impl Recode {
             stored: Vec::new(),
             root: None,
             phase: Phase::Root,
+            pending: Vec::new(),
         };
         let id = crate::upkeep::id_of(piece_hash, &files::hashed_address(&old_key, &old_root));
-        Ok((r, vec![Io::Get { id, subscribe: false }]))
+        let mut r = r;
+        let io = vec![Io::Get { id, subscribe: false }];
+        r.track(piece_hash, &io);
+        Ok((r, io))
+    }
+
+    fn track(&mut self, piece_hash: &[u8; 32], io: &[Io]) {
+        for x in io {
+            match x {
+                Io::Get { id, .. } => self.pending.push(*id),
+                Io::Put { params, .. } => {
+                    if let Ok(a) = <[u8; 32]>::try_from(params.as_slice()) {
+                        self.pending.push(crate::upkeep::id_of(piece_hash, &a));
+                    }
+                }
+                Io::Update { id, .. } => self.pending.push(*id),
+            }
+        }
+    }
+    /// Whether it waits on contract `id`.
+    pub fn wants(&self, id: &[u8; 32]) -> bool {
+        self.pending.contains(id)
+    }
+    fn answered(&mut self, id: &[u8; 32]) {
+        if let Some(i) = self.pending.iter().position(|p| p == id) {
+            self.pending.remove(i);
+        }
     }
 
     /// The same key and burn hash it has: nothing to move (its row's fields brought up to date only).
@@ -236,6 +265,12 @@ impl Recode {
 
     /// An ANSWER to a GET. What to send next (or the end).
     pub fn got<H: Host>(&mut self, h: &mut H, piece_hash: &[u8; 32], id: [u8; 32], state: Option<Vec<u8>>) -> Result<Vec<Io>, String> {
+        self.answered(&id);
+        let io = self.got_(h, piece_hash, id, state)?;
+        self.track(piece_hash, &io);
+        Ok(io)
+    }
+    fn got_<H: Host>(&mut self, h: &mut H, piece_hash: &[u8; 32], id: [u8; 32], state: Option<Vec<u8>>) -> Result<Vec<Io>, String> {
         // A piece's state: `LIVE ‖ burn hash ‖ piece` (burned or missing: none).
         let piece = state.filter(|st| st.first() == Some(&2) && st.len() > 33).map(|st| st[33..].to_vec());
         match self.phase.clone() {
@@ -279,6 +314,12 @@ impl Recode {
 
     /// An ANSWER to a PUT. What to send next.
     pub fn put<H: Host>(&mut self, h: &mut H, piece_hash: &[u8; 32], id: [u8; 32], ok: bool) -> Result<Vec<Io>, String> {
+        self.answered(&id);
+        let io = self.put_(h, piece_hash, id, ok)?;
+        self.track(piece_hash, &io);
+        Ok(io)
+    }
+    fn put_<H: Host>(&mut self, h: &mut H, piece_hash: &[u8; 32], id: [u8; 32], ok: bool) -> Result<Vec<Io>, String> {
         match self.phase.clone() {
             Phase::Putting { g, mut out, ok: mut stored } => {
                 let Some(at) = out.iter().position(|(w, _, _)| *w == id) else { return Ok(Vec::new()) };

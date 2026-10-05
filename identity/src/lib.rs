@@ -131,7 +131,9 @@ pub enum Request {
     UpkeepStatus,
     /// The contracts upkeep writes (their CODE: a PUT needs it) — the bag (inboxes, invite requests) and the tail
     /// (epoch logs) — and the key log's code HASH (it only reads those). Home only; once per build.
-    UpkeepCodes { bag: Vec<u8>, tail: Vec<u8>, idlog: [u8; 32] },
+    /// The contracts upkeep writes and reads: the Bag's and Tail's code, the key log's hash — and for RE-KEYS (no page
+    /// open) the Sealed and Piece codes and the Block code's hash.
+    UpkeepCodes { bag: Vec<u8>, tail: Vec<u8>, idlog: [u8; 32], sealed: Vec<u8>, piece: Vec<u8>, block: [u8; 32] },
     /// The MANDATE (what a page that may invite knows now): per space, how people get in and who is in, and its MLS
     /// group. Upkeep admits askers by it while no page runs. A space's mandate older than the group upkeep itself moved
     /// is not taken (answered in `stale`): the page loads upkeep's newer group first. Home only.
@@ -340,6 +342,8 @@ pub const UPKEEP_IDLOG: &[u8] = b"identity_upkeep/idlog";
 /// The Sealed contract's code (a table's tree blocks) and the Piece contract's (a file's pieces): upkeep RE-KEYS.
 pub const UPKEEP_SEALED: &[u8] = b"identity_upkeep/sealed";
 pub const UPKEEP_PIECE: &[u8] = b"identity_upkeep/piece";
+/// The Block contract's code HASH (a public table's tree blocks, read).
+pub const UPKEEP_BLOCK: &[u8] = b"identity_upkeep/block";
 pub const UPKEEP_CODES_HASH: &[u8] = b"identity_upkeep/codes";
 pub const UPKEEP_MANDATE: &[u8] = b"identity_upkeep/mandate/";
 pub const UPKEEP_ADMITTED: &[u8] = b"identity_upkeep/admitted/";
@@ -358,9 +362,10 @@ fn of(prefix: &[u8], m: &[u8; KEY_LEN]) -> Vec<u8> {
     [prefix, &m[..]].concat()
 }
 
-pub fn upkeep_codes_hash(bag: &[u8], tail: &[u8], idlog: &[u8; 32]) -> [u8; 32] {
+pub fn upkeep_codes_hash(bag: &[u8], tail: &[u8], idlog: &[u8; 32], sealed: &[u8], piece: &[u8], block: &[u8; 32]) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key("craftworks identity upkeep codes");
     h.update(blake3::hash(bag).as_bytes()).update(blake3::hash(tail).as_bytes()).update(idlog);
+    h.update(blake3::hash(sealed).as_bytes()).update(blake3::hash(piece).as_bytes()).update(block);
     *h.finalize().as_bytes()
 }
 /// The members with a mandate here.
@@ -1091,15 +1096,21 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             upkeep_set_clock(h, now);
             upkeep_status(h, Some(&a.public()))
         }
-        Request::UpkeepCodes { bag, tail, idlog } => {
+        Request::UpkeepCodes { bag, tail, idlog, sealed, piece, block } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {
                 return Refused(Why::NotHome);
             }
-            if !(h.set_secret(UPKEEP_BAG, &bag) && h.set_secret(UPKEEP_TAIL, &tail) && h.set_secret(UPKEEP_IDLOG, &idlog)) {
+            let saved = h.set_secret(UPKEEP_BAG, &bag)
+                && h.set_secret(UPKEEP_TAIL, &tail)
+                && h.set_secret(UPKEEP_IDLOG, &idlog)
+                && h.set_secret(UPKEEP_SEALED, &sealed)
+                && h.set_secret(UPKEEP_PIECE, &piece)
+                && h.set_secret(UPKEEP_BLOCK, &block);
+            if !saved {
                 return Refused(Why::NotSaved);
             }
-            h.set_secret(UPKEEP_CODES_HASH, &upkeep_codes_hash(&bag, &tail, &idlog));
+            h.set_secret(UPKEEP_CODES_HASH, &upkeep_codes_hash(&bag, &tail, &idlog, &sealed, &piece, &block));
             upkeep_status(h, Some(&a.public()))
         }
         Request::UpkeepMandate { me, spaces, spent } => {

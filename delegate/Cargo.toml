@@ -47,3 +47,5 @@ getrandom = { version = "0.2", features = ["custom"] }
 
 [dev-dependencies]
 tail = { workspace = true }
+# The Tail contract's own merge (a delta applied as a host does): the round test's network.
+craftec-tail-contract = { git = "https://github.com/craft-ec/freenet-contracts", rev = "689ca61", default-features = false }

@@ -968,19 +968,28 @@ mod js {
             bag: &[u8],
             tail: &[u8],
             idlog: &[u8],
+            sealed: &[u8],
+            piece: &[u8],
+            block: &[u8],
         ) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::UpkeepCodes {
                 bag: bag.to_vec(),
                 tail: tail.to_vec(),
                 idlog: *blake3::hash(idlog).as_bytes(),
+                sealed: sealed.to_vec(),
+                piece: piece.to_vec(),
+                block: *blake3::hash(block).as_bytes(),
             })
         }
         /// The codes' hash upkeep would hold for these (to hand them over only when they changed).
-        pub fn upkeep_codes_hash(bag: &[u8], tail: &[u8], idlog: &[u8]) -> String {
+        pub fn upkeep_codes_hash(bag: &[u8], tail: &[u8], idlog: &[u8], sealed: &[u8], piece: &[u8], block: &[u8]) -> String {
             hex(&craftworks_identity::upkeep_codes_hash(
                 bag,
                 tail,
                 blake3::hash(idlog).as_bytes(),
+                sealed,
+                piece,
+                blake3::hash(block).as_bytes(),
             ))
         }
         /// The MANDATE: `me` (the account's DID) and, per space, JSON `{ space, name, kind, owner, nonce, channel, open,

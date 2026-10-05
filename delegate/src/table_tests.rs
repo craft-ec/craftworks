@@ -499,3 +499,149 @@ fn a_row_with_no_content_hash_is_left_to_a_page() {
     let row = serde_json::json!({ "key": table::hex(&[1; 32]), "root": table::hex(&[2; 32]), "n": -2 }).to_string();
     assert!(Recode::start(&piece_hash(), "f", &row, &Target { salt: Some(([3; 32], 1)) }).is_err());
 }
+
+// ---- R4e: the whole re-key round, with no page open ----
+
+/// The network a round runs against: every contract's state, tails taking deltas as hosts do.
+#[derive(Default)]
+struct Host2 {
+    net: Net,
+    params: HashMap<[u8; 32], Vec<u8>>,
+}
+impl Host2 {
+    fn seed_tail(&mut self, o: &data::Open) {
+        self.params.insert(o.id_bytes(), o.params.clone());
+        self.net.0.insert(o.id_bytes(), o.state());
+    }
+    /// One ask answered: GETs from the state held, PUTs and UPDATEs taken (a tail's delta applied by its contract).
+    fn answer(&mut self, io: &Io) -> upkeep::Reply {
+        use craftec_register_contract::wire::Params;
+        match io {
+            Io::Get { id, .. } => upkeep::Reply::Got { id: *id, state: self.net.0.get(id).cloned() },
+            Io::Put { code, params, state } => {
+                let code_bytes: &[u8] = match code {
+                    upkeep::Code::Tail => TAIL,
+                    upkeep::Code::Bag => BAG,
+                    upkeep::Code::Sealed => SEALED,
+                    upkeep::Code::Piece => PIECE,
+                };
+                let id = upkeep::id_of(&contract_keys::code_hash(code_bytes), params);
+                if *code == upkeep::Code::Tail {
+                    self.params.insert(id, params.clone());
+                }
+                // A bag merges what it holds with what is put (its items, ground): kept both.
+                let st = if *code == upkeep::Code::Bag {
+                    let mut items = self.net.0.get(&id).and_then(|s| craftworks_bag_contract::read(params, s)).unwrap_or_default();
+                    items.extend(craftworks_bag_contract::read(params, state).unwrap_or_default());
+                    craftworks_bag_contract::encode(params, &items)
+                } else {
+                    state.clone()
+                };
+                self.net.0.insert(id, st);
+                upkeep::Reply::Put { id, ok: true }
+            }
+            Io::Update { id, delta } => {
+                let p = Params::parse(&self.params[id]).unwrap();
+                let held = self.net.0.get(id).and_then(|s| craftec_tail_contract::read(&self.params[id], s)).and_then(|(_, t)| t);
+                let next = craftec_tail_contract::absorb(held.clone(), delta, &p);
+                let ok = next.as_ref().map(|t| t.signed.seq) != held.as_ref().map(|t| t.signed.seq);
+                if let Some(t) = next {
+                    self.net.0.insert(*id, t.encode(&p.authority));
+                }
+                upkeep::Reply::Updated { id: *id, ok }
+            }
+        }
+    }
+}
+
+#[test]
+fn with_no_page_open_a_removal_rotates_the_salt_and_the_spaces_files_re_key() {
+    use craftworks_identity::{Host, Mandate};
+    // The member on this node: a real account (its DID, data seed), its MLS member, a space it owns.
+    let entropy = [0x61; 16];
+    let ev = craftworks_account::inception(&entropy).unwrap();
+    let did = ev.id();
+    let data_seed = craftworks_account::data_seed(&entropy).unwrap();
+    let me_did = craftworks_account::did(&did);
+    let mut h = Secrets::default();
+    identity::serve(&mut h, Request::Provision { seed: SEED, did, pin: "246810".into(), data: data_seed.to_vec() }, [9; 32]);
+    let member = SigningKey::from_bytes(&SEED).verifying_key().to_bytes();
+    let mls_seed = identity::space_member_seed(&data_seed);
+    let mls_pub = SigningKey::from_bytes(&mls_seed).verifying_key().to_bytes();
+    let sm = craftworks_mls::SpaceMember::new(&mls_seed, identity::space_member_credential(&did, &data_seed, &mls_pub), &[]).unwrap();
+    let mut g = sm.create_space(SPACE).unwrap();
+    let s0 = g.epoch_secret().unwrap();
+    let epoch = g.epoch();
+    assert!(identity::keep_epoch(&mut h, &member, Some(SPACE), epoch, &s0));
+    let m = Mandate {
+        space: SPACE, name: "Makers".into(), kind: "server".into(), owner: me_did.clone(), nonce: None, channel: "ch".into(),
+        open: false, codes: vec![], bans: vec![], members: vec![me_did.clone()], epoch, state: g.save().unwrap(),
+    };
+    identity::upkeep_set_mandate(&mut h, &member, &me_did, &[m]);
+    identity::upkeep_set_tick(&mut h, &member);
+    h.set_secret(identity::UPKEEP_WAKEUPS, &30u64.to_le_bytes()); // the page last ticked long ago
+    identity::upkeep_stir(&mut h, &[7; 32]);
+    for (k, v) in [(identity::UPKEEP_TAIL, TAIL), (identity::UPKEEP_BAG, BAG), (identity::UPKEEP_SEALED, SEALED), (identity::UPKEEP_PIECE, PIECE)] {
+        h.set_secret(k, v);
+    }
+    h.set_secret(identity::UPKEEP_BLOCK, &contract_keys::code_hash(BLOCK));
+
+    // The space as the network holds it: written by this member's own feeds (its space writer).
+    let me_key = identity::space_writer(&data_seed);
+    let ep = [(epoch, s0)];
+    let mut n = Host2::default();
+    let cat = table::table_name(&SPACE, "tables");
+    let mut c = Feed::new(&me_key, &cat, &cat, &ep);
+    for t in ["files", "acts"] {
+        c.put(&mut n.net, &table::table_name(&SPACE, t), r#"{"b":1}"#, None);
+    }
+    n.seed_tail(&c.o);
+    // A file stored under salt 0, its row keeping the burn secret.
+    let content: Vec<u8> = (0..300_000u32).map(|i| (i.wrapping_mul(2654435761) >> 11) as u8).collect();
+    let hsh = *blake3::hash(&content).as_bytes();
+    let salt0 = [0x70; 32];
+    let old_key = files::content_key(&hsh, Some(&salt0));
+    let secret0 = recode::burn_secret(&salt0, &old_key);
+    let root0 = store_file(&mut n.net, &old_key, &content, &sha256(&secret0));
+    let mut f = Feed::new(&me_key, &table::table_name(&SPACE, "files"), &blinded("files"), &ep);
+    f.put(&mut n.net, "salt", &serde_json::json!({ "s": table::hex(&salt0), "n": 0, "removals": 0 }).to_string(), None);
+    f.put(&mut n.net, "k/file1", &serde_json::json!({ "key": table::hex(&old_key), "root": table::hex(&root0), "b": table::hex(&sha256(&secret0)),
+        "x": table::hex(&secret0), "h": table::hex(&hsh), "n": 0, "pub": false, "app": "drive", "at": 1 }).to_string(), None);
+    n.seed_tail(&f.o);
+    // The acts: someone let in, then REMOVED (the group no longer holds them: only the owner is in it).
+    let mut a = Feed::new(&me_key, &table::table_name(&SPACE, "acts"), &blinded("acts"), &ep);
+    a.put(&mut n.net, "a1", &serde_json::json!({ "at": 10, "act": "added", "did": "did:craftec:gone" }).to_string(), None);
+    a.put(&mut n.net, "a2", &serde_json::json!({ "at": 20, "act": "remove", "did": "did:craftec:gone" }).to_string(), None);
+    n.seed_tail(&a.o);
+    writers_bag(&mut n.net, &s0, &[me_key.verifying_key().to_bytes()]);
+
+    // THE ROUND: woken, every answer routed through upkeep (side by side with admissions).
+    let now = 1_800_000_000_000;
+    let mut todo = crate::rekey_round::woke(&mut h);
+    assert!(!todo.is_empty(), "a round begins: the page is away");
+    let mut steps = 0;
+    while let Some(io) = (!todo.is_empty()).then(|| todo.remove(0)) {
+        steps += 1;
+        assert!(steps < 5000, "the round ends");
+        let reply = n.answer(&io);
+        todo.extend(upkeep::replied(&mut h, reply, now));
+    }
+    // What upkeep last said (for a failure's message).
+    let said: Vec<String> = h.0.iter().filter(|(k, _)| k.windows(4).any(|w| w == b"said")).map(|(_, v)| String::from_utf8_lossy(v).into_owned()).collect();
+
+    // Read back as any member would: a NEW SALT (made after the removal), the file's row under it, readable whole.
+    let ep_map: BTreeMap<u64, [u8; 32]> = ep.into_iter().collect();
+    let (mut r, first) = Reading::new(&codes(), SPACE, ep_map, vec![me_key.verifying_key().to_bytes()], &["files"]);
+    run(&mut r, first, &n.net);
+    let files_rows = r.rows("files");
+    let st = rekey::salt(&files_rows).expect("a salt");
+    assert_eq!((st.n, st.removals), (1, 1), "a new salt after the one removal: {said:?}");
+    let row: serde_json::Value = serde_json::from_slice(&files_rows[b"k/file1".as_slice()].value).unwrap();
+    let new_key = files::content_key(&hsh, Some(&st.s));
+    assert_eq!(row["key"].as_str(), Some(table::hex(&new_key).as_str()), "re-keyed under the new salt: {said:?}");
+    assert_eq!(row["n"].as_i64(), Some(1));
+    let root: [u8; 32] = (0..32).map(|i| u8::from_str_radix(&row["root"].as_str().unwrap()[2 * i..2 * i + 2], 16).unwrap()).collect::<Vec<_>>().try_into().unwrap();
+    assert_eq!(read_file(&n.net, &new_key, &root).as_deref(), Some(content.as_slice()), "the file reads under its new key");
+    // The OLD reference reads nothing: its pieces burned.
+    assert!(read_file(&n.net, &old_key, &root0).is_none(), "the old pieces burned: {said:?}");
+}

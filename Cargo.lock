@@ -460,6 +460,7 @@ dependencies = [
  "blake3",
  "contract-keys",
  "craftec-register-contract",
+ "craftec-tail-contract",
  "craftworks-account",
  "craftworks-bag-contract",
  "craftworks-data",
