@@ -21,7 +21,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub fn app_name(x: &str) -> bool {
     (1..=24).contains(&x.len()) && x.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
 }
-pub const ACTIONS: [&str; 7] = ["read", "post", "comment", "vote", "edit", "join", "invite"];
+/// The actions a policy names. The last four are SIGNALS' own (`packages/signals.js`: react, save, share, tag) — each,
+/// where nothing is set, as its parent (the page's `roles`: save and share as `read`, react and tag as `vote`).
+pub const ACTIONS: [&str; 11] = ["read", "post", "comment", "vote", "edit", "join", "invite", "react", "save", "share", "tag"];
 pub const WHO: [&str; 9] = ["anyone", "members", "admins", "owner", "nobody", "inherit", "followers", "friends", "author"];
 /// A PERSONAL space's groups (its owner's followers, friends, or the item's author alone): checked by credential
 /// (`roles.mayWrite`), never by a space role — no role passes one.

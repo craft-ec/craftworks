@@ -332,3 +332,13 @@ fn no_space_role_passes_a_personal_group() {
     }
     assert!(passes("members", Some("member")), "control: a member passes members");
 }
+
+#[test]
+fn a_signals_own_action_takes_a_policy_and_an_unknown_one_does_not() {
+    let g = gov(&[
+        act("1", "no", 1, json!({"act":"policy","path":"text","action":"save","who":"admins"})),
+        act("2", "no", 2, json!({"act":"policy","path":"text","action":"teleport","who":"admins"})),
+    ]);
+    assert_eq!(g.policy_at("text", "save", 1e15), Some("admins"), "a signal's action (save) is a policy action");
+    assert_eq!(g.policy_at("text", "teleport", 1e15), None, "control: an action no one declared is dropped");
+}

@@ -419,11 +419,16 @@ export async function mount(ctx, el) {
       const who = lists.followed();
       const entries = lists.entries();
       sec.replaceChildren(
-        el("p", { className: "note", textContent: "Discover (the public network) has no owner: what you see there is filtered by your own list and the lists you choose to apply." }),
-        el("h3", { textContent: `Your list (${entries.length})` }),
+        el("p", { className: "note", textContent: "Hide is yours alone and applies everywhere. Flags go on your public list, which filters Discover for you and for anyone who applies it." }),
+        el("h3", { textContent: `Flagged — your public list (${entries.length})` }),
         entries.length
           ? el("ul", {}, ...entries.map(x => el("li", {}, `${x.kind}: ${x.ref.slice(0, 48)}${x.ref.length > 48 ? "…" : ""} `, el("button", { type: "button", textContent: "Remove", onclick: () => lists.unflag(x.kind, x.ref).then(draw) }))))
-          : el("p", { className: "note", textContent: "Nothing flagged. Flag a post or its author in Discover." }),
+          : el("p", { className: "note", textContent: "Nothing flagged. Flag a post, its author or its space from ⋯ on any item." }),
+        // HIDDEN BY YOU (private): each post, person or space hidden, shown again from here.
+        el("h3", { textContent: `Hidden by you (${lists.hiddenList().length})` }),
+        lists.hiddenList().length
+          ? el("ul", {}, ...lists.hiddenList().map(x => el("li", {}, `${x.kind}: `, x.kind === "person" ? directory.nameEl(x.ref) : `${x.ref.slice(0, 48)}${x.ref.length > 48 ? "…" : ""}`, " ", el("button", { type: "button", textContent: "Show again", onclick: () => lists.setHidden(x.kind === "person" ? { person: x.ref } : x.kind === "space" ? { space: x.ref } : { by: x.ref.slice(0, x.ref.lastIndexOf("/")), id: x.ref.slice(x.ref.lastIndexOf("/") + 1) }, false).then(draw) }))))
+          : el("p", { className: "note", textContent: "Nothing hidden. Hide a post, its author or its space from ⋯ on any item." }),
         el("h3", { textContent: "Lists you apply" }),
         who.length
           ? el("ul", {}, ...who.map(did => {

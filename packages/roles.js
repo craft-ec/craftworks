@@ -44,7 +44,7 @@
 //                            // its writers found from its owner (the id proves them) and the roster, each DID's devices
 //                            // from its card; the same `r` to read by (role, author, config, allows, members, acts)
 export async function start(ctx) {
-  const [space, storage, keys, node, directory, K] = await Promise.all(["space", "storage", "keys", "node", "directory", "kinds"].map(n => ctx.require(n)));
+  const [space, storage, keys, node, directory, K, S] = await Promise.all(["space", "storage", "keys", "node", "directory", "kinds", "signals"].map(n => ctx.require(n)));
 
   // THE REPLAY and its rules are the core's (`Governance`, the one implementation: the identity delegate reads a
   // space by it too). What is gathered here: the acts' rows, the group's members, each member's devices.
@@ -199,9 +199,13 @@ export async function start(ctx) {
     // outsiders' part kept in their own profiles, `items`); everything else as the core's default (members).
     const PUBLIC_WRITES = new Set(["comment", "vote"]);
     const fallback = (read, action, at) => (PUBLIC_WRITES.has(action) && read === "anyone" ? "anyone" : gv.effective("", action, at));
-    const policyOf = (path, action, at) => setAlong(path, action, at) || fallback(action === "read" ? null : policyOf(path, "read", at), action, at);
+    // A SIGNAL's own action with nothing set: its parent's (`signals`: save, share → read; react, tag → vote).
+    const policyOf = (path, action, at) =>
+      setAlong(path, action, at) || (S.parentOf(action) ? policyOf(path, S.parentOf(action), at) : fallback(action === "read" ? null : policyOf(path, "read", at), action, at));
     const policyInOf = (domain, action, at) =>
-      policyAt(domain, action, at) || policyAt("", action, at) || fallback(action === "read" ? null : policyInOf(domain, "read", at), action, at);
+      policyAt(domain, action, at) ||
+      policyAt("", action, at) ||
+      (S.parentOf(action) ? policyInOf(domain, S.parentOf(action), at) : fallback(action === "read" ? null : policyInOf(domain, "read", at), action, at));
     const r = {
       space: sp,
       get owner() {
@@ -358,7 +362,9 @@ export async function start(ctx) {
     }
     return personals.get(did);
   }
-  const ruleOf = (item, action, r, at) => item?.meta?.write?.[action] ?? (r ?? personal(item.by)).policyIn(K.policyDomain(item.kind), action, at);
+  // An item's own rule for the action — a signal's own, else (none set on it) its parent's own — else its place's.
+  const ruleOf = (item, action, r, at) =>
+    item?.meta?.write?.[action] ?? (S.parentOf(action) && S.parentOf(action) !== "read" ? item?.meta?.write?.[S.parentOf(action)] : undefined) ?? (r ?? personal(item.by)).policyIn(K.policyDomain(item.kind), action, at);
   const credChecks = new Map(); // `${author}|${token}` → { v: row | null | undefined }
   const checked = [];
   function credFor(author, token) {

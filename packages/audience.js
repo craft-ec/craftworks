@@ -65,14 +65,24 @@ export async function start(ctx) {
     const writes = sp
       ? [["members", "👥 Who the space allows"], ["author", "🔒 Only you"]]
       : [["anyone", "🌐 Anyone who sees it"], ["followers", "👣 Your followers"], ["friends", "🤝 Your friends"], ["author", "🔒 Only you"]];
+    // ONE choice for every interaction (comment, vote, and each signal's own: react, save, share, tag — `signals`);
+    // CUSTOMIZE sets one apart ("" : as the one choice).
+    const S = await ctx.require("signals");
+    const ACTS = [["comment", "Who may comment"], ["vote", "Who may vote"], ...S.policyActions().map(a => [a.action, a.label])];
     const wsel = h("select", { className: "field", name: "write" }, ...writes.map(([value, textContent]) => h("option", { value, textContent })));
-    const el = h("div", { className: "cw-aud", style: "display:grid;gap:6px" }, h("label", {}, "Who sees it", sel), h("label", {}, "Who may comment and vote", wsel));
+    const each = Object.fromEntries(ACTS.map(([a]) => [a, h("select", { className: "field", name: `write.${a}` }, h("option", { value: "", textContent: "As above" }), ...writes.map(([value, textContent]) => h("option", { value, textContent })))]));
+    const custom = h("details", {}, h("summary", { textContent: "Customize each (comment, vote, react, save, share, tag)" }), ...ACTS.map(([a, label]) => h("label", {}, label, each[a])));
+    const el = h("div", { className: "cw-aud", style: "display:grid;gap:6px" }, h("label", {}, "Who sees it", sel), h("label", {}, "Who may interact", wsel), custom);
     return {
       el,
       value: () => sel.value,
       isPublic: () => sel.value === "public",
-      // The write rule ({ comment, vote }), or null where it is the space's own (nothing to set on the item).
-      write: () => (wsel.value === "anyone" || wsel.value === "members" ? null : { comment: wsel.value, vote: wsel.value }),
+      // The write rule ({ comment, vote, react, … }): each action's own choice, else the one choice — only what differs
+      // from the space's own (nothing to set on the item: null).
+      write: () => {
+        const w = Object.fromEntries(ACTS.map(([a]) => [a, each[a].value || wsel.value]).filter(([, v]) => v !== "anyone" && v !== "members"));
+        return Object.keys(w).length ? w : null;
+      },
     };
   }
   // PICK PEOPLE among a space's members (not this person): a small dialog, ticks; the DIDs chosen, or null.

@@ -79,7 +79,13 @@ export async function start(ctx) {
     };
     const toggle = (rel, on, off) => act(people.is(rel, did) ? off : on, () => people.set(rel, did, !people.is(rel, did)), people.is(rel, did) ? "on" : "");
 
-    function draw() {
+    // FLAG, as everywhere (`moderation.lists`: your public list).
+    const flagToggle = async (kind, ref, label) => {
+      const lists = await moderation.lists();
+      const on = lists.isFlagged(kind, ref);
+      return act(on ? "Flagged · unflag" : label, () => lists.setFlagged(kind, ref, !on), on ? "on" : "");
+    };
+    async function draw() {
       const self = did === me.id;
       // OPEN: their HOME (their personal space: its apps), never one app of it.
       const posts = act("Open", () => {
@@ -113,7 +119,9 @@ export async function start(ctx) {
             el(
               "div",
               { className: "grid" },
-              toggle("hide", "Hide their messages", "Hidden · show again"),
+              // HIDE (private, everywhere) and FLAG (public: your list, Discover) — as on an item and a space.
+              toggle("hide", "Hide everything they post", "Hidden · show again"),
+              await flagToggle("person", did, "Flag author"),
               people.is("block", did) ? act("Blocked · unblock", () => people.set("block", did, false), "on") : act("Block", () => people.set("block", did, true), "danger", "block them"),
             ),
           ];
@@ -164,6 +172,15 @@ export async function start(ctx) {
     const join = await (await ctx.require("join-button")).control(desc, { open: `#/s/${desc.id}`, joinable: pr.policy("", "join") === "anyone" });
     // Its MAIL, where its owner turned it on: written to from here, member or not.
     const mailable = await conversation.mail.accepts(desc.id).catch(() => false);
+    // HIDE (private, everywhere) and FLAG (public: your list, Discover) the whole space — as a post and an author.
+    const lists = await moderation.lists();
+    const hideFlag = () =>
+      el(
+        "div",
+        { className: "grid" },
+        act0(lists.isHidden({ space: desc.id }) ? "Hidden · show again" : "Hide space", async e => (await lists.setHidden({ space: desc.id }, !lists.isHidden({ space: desc.id })), e.target.closest(".grid").replaceWith(hideFlag()))),
+        act0(lists.isFlagged("space", desc.id) ? "Flagged · unflag" : "Flag space", async e => (await lists.setFlagged("space", desc.id, !lists.isFlagged("space", desc.id)), e.target.closest(".grid").replaceWith(hideFlag()))),
+      );
     if (openBox !== box) return;
     box.replaceChildren(
       el("h3", { textContent: space.shown(desc) }),
@@ -171,6 +188,7 @@ export async function start(ctx) {
       el("p", { className: "id", textContent: `${n} member${n === 1 ? "" : "s"} · ${apps.map(a => `${a.icon ?? ""} ${a.name}`).join("  ") || "no apps yet"}` }),
       el("div", { className: "grid" }, act0("Open", () => (close(), (location.hash = `#/s/${desc.id}`)), "main"), mailable ? act0("✉ Mail", () => (close(), (location.hash = `#/mail/to/${encodeURIComponent(`space:${desc.id}`)}`))) : null),
       join,
+      mine ? null : hideFlag(),
     );
   }
   const act0 = (label, run, cls = "") => el("button", { type: "button", className: cls, textContent: label, onclick: run });

@@ -113,6 +113,16 @@ export async function start(ctx) {
         hide: ({ by = null, id = null, person = null, space: sid = null }, on = true) => people.set("hide", person ?? sid ?? `${by}/${id}`, on),
         flag: (kind, ref, reason = "") => mineT.put(`${kind}:${ref}`, JSON.stringify({ reason: String(reason).slice(0, 200), at: Date.now() })),
         unflag: (kind, ref) => mineT.remove(`${kind}:${ref}`),
+        // THE SIX, one way everywhere (the item bar, a person's card, a space's card): HIDE (private, everywhere) and
+        // FLAG (public: your list, Discover) — each of a POST (`{ by, id }`), an AUTHOR (`{ person }`) or a SPACE
+        // (`{ space }`). `isHidden` / `isFlagged` say which are on; `setHidden` / `setFlagged` turn one on or off.
+        isHidden: ({ by = null, id = null, person = null, space: sid = null }) => people.is("hide", person ?? sid ?? `${by}/${id}`),
+        setHidden: ({ by = null, id = null, person = null, space: sid = null }, on) => people.set("hide", person ?? sid ?? `${by}/${id}`, on),
+        // What this person HID (private): [{ kind: "post"|"person"|"space", ref }] — to show again.
+        hiddenList: () =>
+          people.list("hide").map(k => ({ kind: k.startsWith("did:") && !k.includes("/") ? "person" : /^[0-9a-f]{64}$/.test(k) ? "space" : "post", ref: k })),
+        isFlagged: (kind, ref) => mineT.rows().some(r => r.key === `${kind}:${ref}` && r.value),
+        setFlagged: (kind, ref, on) => (on ? mineT.put(`${kind}:${ref}`, JSON.stringify({ reason: "", at: Date.now() })) : mineT.remove(`${kind}:${ref}`)),
         mine: () => mineT.rows().filter(r => r.value).length,
         // This person's own entries: [{ kind, ref }].
         entries: () =>

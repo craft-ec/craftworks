@@ -1,7 +1,8 @@
 // ACTIONS, a capability: what a person can DO with an item — the same in every app, on every kind: vote (▲ score ▼),
 // react (an emoji, counted — as Chat's), its comments (how many; opening its page), share (its reference: pasted
-// anywhere, it embeds), save (yours, any kind; counted), label (your private tags, any kind: `label-menu`), hide (yours:
-// `moderation`), flag (your public list, in Discover), edit, remove. Every interaction is a SIGNAL (`signals`). Each shown only where this person
+// anywhere, it embeds), save (yours, any kind; counted), label (your private tags, any kind: `label-menu`), and ⋯ —
+// HIDE (yours, private, everywhere) or FLAG (your public list: Discover) the post, its author or its space, the same
+// six as on a person's card and a space's (`moderation.lists`) — edit, remove. Every interaction is a SIGNAL (`signals`). Each shown only where this person
 // may, by THE ONE CHECK (`items.mayWriteOn`: a space's member, from outside by its public policy, a personal item's own
 // rule with its credential) — never an app's own.
 //
@@ -39,7 +40,9 @@ export async function start(ctx) {
     .cw-reacts .pick { position: absolute; bottom: 100%; left: 0; z-index: 20; display: flex; gap: 2px; background: var(--cw-surface); border: 1px solid var(--cw-line);
       border-radius: var(--cw-radius-pill); padding: 2px 6px; box-shadow: var(--cw-shadow-lg); }
     .cw-reacts .pick[hidden] { display: none; }
-    .cw-reacts .pick button { border: 0; background: none; cursor: pointer; font-size: 1.1rem; padding: 2px 4px; }`;
+    .cw-reacts .pick button { border: 0; background: none; cursor: pointer; font-size: 1.1rem; padding: 2px 4px; }
+    .cw-reacts .more-menu { flex-direction: column; border-radius: var(--cw-radius); padding: 4px; right: 0; left: auto; }
+    .cw-reacts .more-menu button { font-size: var(--cw-text-sm); text-align: left; white-space: nowrap; padding: 4px 10px; }`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
@@ -97,7 +100,35 @@ export async function start(ctx) {
         pick,
       );
     draw();
+    // Not yours to react on (its rule, `signals`' react action — inherited from vote where unset): no React.
+    outsideOf(outside)
+      .then(o => items.mayWriteOn(it, "react", { outside: o }))
+      .then(ok => !ok && el.querySelector('[title="React"]')?.remove(), () => {});
     return el;
+  }
+
+  // THE ⋯ MENU: Hide post · Hide author · Hide space | Flag post · Flag author · Flag space — each on or off, as on a
+  // person's card and a space's.
+  function more(it, { changed, fail }) {
+    const menu = h("span", { className: "pick more-menu", hidden: true });
+    const wrap = h("span", { className: "cw-reacts" }, h("button", { type: "button", className: "chip", title: "Hide or flag", textContent: "⋯", onclick: e => (e.preventDefault(), e.stopPropagation(), (menu.hidden = !menu.hidden), menu.hidden || draw()) }), menu);
+    const post = { by: it.by, id: it.id ?? String(it.ref).split("/").pop() };
+    const sid = it.board?.id ?? null;
+    const draw = async () => {
+      const l = await (await ctx.require("moderation")).lists();
+      const opt = (label, on, run) => h("button", { type: "button", textContent: on ? `✓ ${label}` : label, onclick: e => (e.preventDefault(), e.stopPropagation(), Promise.resolve(run(!on)).then(() => ((menu.hidden = true), changed?.()), fail)) });
+      menu.replaceChildren(
+        ...[
+          opt("Hide post", l.isHidden(post), on => l.setHidden(post, on)),
+          opt("Hide author", l.isHidden({ person: it.by }), on => l.setHidden({ person: it.by }, on)),
+          sid ? opt("Hide space", l.isHidden({ space: sid }), on => l.setHidden({ space: sid }, on)) : null,
+          opt("Flag post", l.isFlagged("post", it.ref), on => l.setFlagged("post", it.ref, on)),
+          opt("Flag author", l.isFlagged("person", it.by), on => l.setFlagged("person", it.by, on)),
+          sid ? opt("Flag space", l.isFlagged("space", sid), on => l.setFlagged("space", sid, on)) : null,
+        ].filter(Boolean),
+      );
+    };
+    return wrap;
   }
 
   // SAVED: any item, one key (`saved:<ref>`).
@@ -170,11 +201,9 @@ export async function start(ctx) {
           save,
           // LABEL: this person's private tags on it (any kind, as Notes' — `label-menu`).
           btn("🏷 Label", e => labelUI.menu(e.currentTarget, labelUI.key(it.ref), { title: "Label" })),
-          // HIDE: for you only (`moderation`: the one check every read asks).
-          !mine ? btn("Hide", () => ctx.require("moderation").then(m => m.lists()).then(l => l.hide({ by: it.by, id: it.id ?? String(it.ref).split("/").pop() })).then(() => changed?.(), fail)) : null,
-          // FLAG (Discover): on your public moderation list — for you and whoever applies it.
-          discover && !mine ? btn("Flag post", () => ctx.require("moderation").then(m => m.lists()).then(l => l.flag("post", it.ref)).then(() => changed?.(), fail)) : null,
-          discover && !mine ? btn("Flag author", () => ctx.require("moderation").then(m => m.lists()).then(l => l.flag("person", it.by)).then(() => changed?.(), fail)) : null,
+          // ⋯ HIDE and FLAG, the same six everywhere (`moderation.lists`): hide (private, everywhere) or flag (public:
+          // your list — Discover, for you and whoever applies it) the post, its author, or its space.
+          !mine ? more(it, { changed, fail }) : null,
           mine && edit && !discover ? btn("Edit", edit) : null,
           it.mayRemove
             ? btn(mine ? "Delete" : "Remove", async e => {

@@ -1211,3 +1211,14 @@ for individual sorting, tags for global categorization, a setting to view NSFW o
       A sees B's view (· 1 view, 👁 1) after a reload. S7: B's walk gathered keys from 3 builds. B's remaining "no key
       for epoch N" is CORRECT (A removed B from those spaces in the re-key tests); B's spaces list still names spaces it
       was removed from — open, separate.
+- [x] S9 (10-05) HIDE and FLAG, the same six everywhere: hide (private, everywhere) / flag (public list, Discover) a
+      post, an author or a space — ⋯ on every item (`actions.more`), a person's card (Hide everything they post · Flag
+      author · Block), a space's card (Hide space · Flag space). One API: `moderation.lists` isHidden/setHidden,
+      isFlagged/setFlagged, hiddenList. Settings → Moderation lists both (Hidden by you · Flagged) with undo.
+      Live fx: Hide author → their 5 Discover posts gone; Settings → Moderation → Show again → back.
+- [x] S10 (10-05) PERMISSIONS PER SIGNAL: react, save, share, tag are policy actions of their own (gov ACTIONS 7 → 11,
+      test + mutant; identity 5dea06e6, PIN once), each unset = its parent (save, share → read; react, tag → vote) at
+      item, domain and space level (`roles`). Every settings section (space, each app, Everything you post) lists them
+      from the catalog with "Default (as who may …)"; the composer's "Who may interact" + Customize each. React hidden
+      where not allowed. Live: Card test Board "Who may react: Admins" → B (outside) has no React on its posts,
+      React still on profile posts.
