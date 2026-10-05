@@ -30,6 +30,8 @@ const ISSUED: &[u8] = b"identity_upkeep/rekey/issued";
 const ISSUED_MAX: usize = 4096;
 /// When this member first saw a row due (`<space hex>/<id>` → ms): its takeover counts from there at the least.
 const SEEN: &[u8] = b"identity_upkeep/rekey/seen";
+/// The wake-up the next round is due at, sooner than `EVERY` when a row's turn comes sooner.
+const NEXT_AT: &[u8] = b"identity_upkeep/rekey/next";
 /// Wake-ups between rounds (one a minute: every ten minutes).
 pub const EVERY: u64 = 10;
 /// A round that has not moved for this many wake-ups is dropped (the next starts over from a read).
@@ -60,6 +62,8 @@ struct Round {
     /// The spaces still to visit after this one.
     rest: Vec<[u8; 32]>,
     space: [u8; 32],
+    /// The space's name (for what upkeep says).
+    name: String,
     owner: String,
     roster: Vec<([u8; 32], String)>,
     reading: Reading,
@@ -158,7 +162,7 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, space: [u8;
     let Some(m) = spaces.iter().find(|m| m.space == space).cloned() else { return next_space(h, c, member, me, rest) };
     let Some((roster, epochs)) = space_of(h, &member, &m) else { return next_space(h, c, member, me, rest) };
     let (reading, io) = Reading::new(&c.codes(), space, epochs, roster.iter().map(|(w, _)| *w).collect(), &["files", "acts", "pub-acts"]);
-    let r = Round { member, me, rest, space, owner: m.owner.clone(), roster, reading, step: Step::Reading, queue: Vec::new(), moved: wakeups(h), salt: None };
+    let r = Round { member, me, rest, space, name: m.name.clone(), owner: m.owner.clone(), roster, reading, step: Step::Reading, queue: Vec::new(), moved: wakeups(h), salt: None };
     keep(h, Some(&r));
     io
 }
@@ -182,9 +186,11 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
         keep(h, None);
     }
     let last = h.get_secret(LAST).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes).unwrap_or(0);
-    if last != 0 && w.saturating_sub(last) < EVERY {
+    let next_at = h.get_secret(NEXT_AT).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes).unwrap_or(u64::MAX);
+    if last != 0 && w.saturating_sub(last) < EVERY && w < next_at {
         return Vec::new();
     }
+    h.set_secret(NEXT_AT, &u64::MAX.to_le_bytes());
     let Some(c) = Held::of(h) else { return Vec::new() };
     // Members take turns: the one after the member served last first.
     let mut members = identity::upkeep_members(h);
@@ -347,14 +353,31 @@ fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
     // Each row's turn from when it last moved — and from when this member first saw it due.
     let mut first = seen(h);
     let mut queue = Vec::new();
+    let mut soonest: Option<u64> = None;
     for d in &p.due {
         let k = format!("{}/{}", table::hex(&r.space), d.row.id);
         let at = *first.entry(k).or_insert(now_ms);
-        if d.wait_from(at, now_ms) == 0 {
-            queue.push(Task::of(d));
+        match d.wait_from(at, now_ms) {
+            0 => queue.push(Task::of(d)),
+            wait => soonest = Some(soonest.map_or(wait, |s| s.min(wait))),
         }
     }
     h.set_secret(SEEN, &bincode::serialize(&first).expect("seen encodes"));
+    // What it found, SAID (a round that does nothing is otherwise silent): and a row not its turn yet brings the next
+    // round forward to that turn.
+    if !p.due.is_empty() {
+        let name = r.name.clone();
+        identity::upkeep_say(
+            h,
+            &r.member,
+            &format!("{name}: {} file(s) due, {} at my turn now{}", p.due.len(), queue.len(), soonest.map(|s| format!(", the next in {} s", s / 1000)).unwrap_or_default()),
+        );
+        if let Some(s) = soonest {
+            let at = wakeups(h) + s.div_ceil(60_000) + 1;
+            let was = h.get_secret(NEXT_AT).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes).unwrap_or(u64::MAX);
+            h.set_secret(NEXT_AT, &at.min(was).to_le_bytes());
+        }
+    }
     r.queue = queue;
     next_due(h, c, r, now_ms)
 }

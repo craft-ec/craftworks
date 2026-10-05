@@ -397,6 +397,13 @@ fn a_removal_rotates_the_salt_once_the_group_moved_and_its_rows_come_due() {
     ids.sort();
     assert_eq!(ids, ["adopted", "public", "under0"]);
     assert!(p.due.iter().all(|d| d.wait == 0), "the only member: its turn for every row");
+    // A group held from before the removal still lists them: they take no turn (else a removed member ranked first
+    // holds rows up for the takeover time). Control: counted as a member, some row is theirs first.
+    let held = [owner_did.clone(), gone_did.clone()];
+    let p2 = rekey::plan(&r, &g, &held, &owner_did, 100);
+    assert!(p2.due.iter().all(|d| d.rank == 0), "the removed take no turn");
+    let control: Vec<usize> = ["adopted", "public", "under0", "a", "b", "c", "d"].iter().map(|id| rekey::rank(id, &held, &owner_did)).collect();
+    assert!(control.contains(&1), "control: with them counted, the owner is second for some row: {control:?}");
     // The rotation's rows: the old salt kept, the new one, and `salt` naming it.
     let was = rekey::salt(&r.rows("files")).unwrap();
     let rows = rekey::rotation(&r.rows("files"), &was, [0x66; 32], 1);

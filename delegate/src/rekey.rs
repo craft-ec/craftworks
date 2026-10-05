@@ -153,6 +153,9 @@ pub fn plan(r: &Reading, g: &craftworks_gov::Gov, members: &[String], me: &str, 
         (!members.iter().any(|m| gone.contains(&m.as_str()))).then_some(removals.len())
     });
     let n_now = st.as_ref().map(|s| s.n).unwrap_or(0) + i64::from(rotate.is_some());
+    // WHO TAKES TURNS: the members, less anyone the acts put out (removed, banned, left) — a group this member holds
+    // from before the removal still lists them, and a removed member ranked first would hold every row up.
+    let ranked: Vec<String> = members.iter().filter(|m| !g.gone.contains(*m) && !g.bans.contains(*m)).cloned().collect();
     let reads_anyone = |app: &str| g.effective(app, "read", f64::INFINITY) == "anyone";
     let mut due = Vec::new();
     for row in key_rows(&files) {
@@ -163,7 +166,7 @@ pub fn plan(r: &Reading, g: &craftworks_gov::Gov, members: &[String], me: &str, 
             continue;
         }
         let public = if n == -2 { public } else { false };
-        let k = rank(&row.id, members, me) as u64;
+        let k = rank(&row.id, &ranked, me) as u64;
         let progress = files
             .get(format!("p/{}", row.id).as_bytes())
             .and_then(|p| serde_json::from_slice::<Value>(&p.value).ok())
