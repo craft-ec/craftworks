@@ -1124,4 +1124,4 @@ Done (commits on main):
 Open, in order: one access control for the personal space; group-fork
 leftovers (heal own commits only, keep losing-branch keys, owner re-adds members on another branch).
 Test nodes 17691/17692: fresh accounts, PIN 246810 (older test accounts' PINs above are void).
-Waiting on Ivvor: reload + PIN so their page answers onlyabrak's history ask for Ivvor's New Space (apps hidden).
+Late-joiner history CONFIRMED live 10-05: after Ivvor reloaded + PIN, onlyabrak sees Ivvor's New Space whole (apps shown).
