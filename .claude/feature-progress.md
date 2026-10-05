@@ -1259,4 +1259,5 @@ old key's addresses.
 - [x] Publisher confirms pieces served (re-put if not); loader never replays a failed cached piece (d2fe15c). Test nodes run with their own HOME (shared webapp_cache clobbering).
 - [x] Mentions one way (person:DID links → card; inbox notices checked against the item), shared links open from any address/custom domain, header search + 🔔 + @ (9a663d8).
 - [ ] Untested: chat mention opens AT the message; 🔔 with real unread; History live.
+- [ ] F5b R4 delegate re-keys: BUILT (R4a–d); R4e BLOCKED BY THE NODE (freenet #5542: a delegate's PUT of a new contract stays local). Nothing to build until the node fixes it; flip `upkeep::NEW_CONTRACTS_REACH_THE_NETWORK` then.
 - [ ] Your node log: contracts HQk7zGRQ…/J4bh5TcQ… reject updates every few minutes — not identified.
