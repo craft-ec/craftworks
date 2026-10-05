@@ -63,7 +63,10 @@ export function mount(ctx, el) {
         m => item(m) ?? Object.assign(document.createElement("button"), { type: "button", textContent: m.label, onclick: () => m.run() }),
       ),
     );
+    // What is new in its entries (their `count`s): a badge on the closed menu too.
+    const total = entries.reduce((t, m) => t + (m.count || 0), 0);
     const b = Object.assign(document.createElement("button"), { type: "button", textContent: `${label} ▾` });
+    if (total) b.append(Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(total) }));
     b.setAttribute("aria-haspopup", "menu");
     const wrap = Object.assign(document.createElement("span"), { className: "drop" });
     const close = () => {
@@ -86,6 +89,8 @@ export function mount(ctx, el) {
   const link = a => {
     if (!a.href) return null;
     const l = Object.assign(document.createElement("a"), { href: a.href, textContent: a.label });
+    // What is new in it (`activity`): its badge, as on its Home tile.
+    if (a.count) l.append(" ", Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(a.count) }));
     if (a.on) l.setAttribute("aria-current", "page");
     return l;
   };
@@ -104,6 +109,9 @@ export function mount(ctx, el) {
     if (n !== drawing) return;
     if (!session) return box.replaceChildren(here);
     let entries, who;
+    // WHAT IS NEW per app (`activity`: the same counts as each Home's tiles) — redrawn as they change.
+    const activity = await ctx.require("activity").catch(() => null);
+    if (activity && !watched.has("activity")) (watched.add("activity"), activity.onChange(() => switcher()));
     // (DISCOVER is your personal space's: each app's Discover tab — the personal apps here, as at home.)
     if (ctx.space && ctx.space !== "discover") {
       const space = await ctx.require("space");
@@ -117,7 +125,7 @@ export function mount(ctx, el) {
       }
       entries = [
         { label: `${await (await ctx.require("spaces-panel")).here()} · Home`, href: `#/s/${ctx.space}`, on: ctx.route === "/space" },
-        ...ctx.apps.filter(a => (a.views ?? []).includes("shared") && (a.always || on.includes(a.route.slice(1)))).map(a => ({ label: `${a.icon ?? ""} ${a.name}`, href: `#/s/${ctx.space}${a.route}`, on: a.route === ctx.route })),
+        ...ctx.apps.filter(a => (a.views ?? []).includes("shared") && (a.always || on.includes(a.route.slice(1)))).map(a => ({ label: `${a.icon ?? ""} ${a.name}`, href: `#/s/${ctx.space}${a.route}`, on: a.route === ctx.route, count: activity && ["chat", "board"].includes(a.route.slice(1)) ? activity.of(ctx.space, a.route.slice(1)) : 0 })),
       ];
     } else if ((who = await ctx.require("where").then(w => w.personOf())) && who !== (await ctx.require("space").then(s => s.account()))?.id) {
       // A PERSON's space: their Home and the apps that show someone's space (the manifest's `person` view) — staying theirs.
@@ -129,7 +137,7 @@ export function mount(ctx, el) {
     } else
       entries = [
         { label: "Home", href: "#/", on: ctx.route === "/" },
-        ...ctx.apps.filter(a => (a.views ?? []).includes("personal")).map(a => ({ label: `${a.icon ?? ""} ${a.name}`, href: a.route, on: a.route === ctx.route })),
+        ...ctx.apps.filter(a => (a.views ?? []).includes("personal")).map(a => ({ label: `${a.icon ?? ""} ${a.name}`, href: a.route, on: a.route === ctx.route, count: a.counts && activity ? activity.total(a.counts) : 0 })),
       ].map(e => ({ ...e, href: e.href.startsWith("#") ? e.href : `#${e.href}` }));
     if (n !== drawing) return;
     box.replaceChildren(dropdown(here, entries, link));
