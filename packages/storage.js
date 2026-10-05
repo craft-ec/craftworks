@@ -282,6 +282,9 @@ export async function start(ctx) {
       },
       // KEEP it (phase 4, Lifecycle): see `keep` below.
       keep: () => (queue = queue.catch(() => {}).then(keep)),
+      // WRITTEN OUT NOW (what is waiting in the tail, into the tree): before an EDIT, so the version it replaces is
+      // in a tree — and its root logged — and every edit leaves the one before in its history.
+      flushNow: () => (queue = queue.catch(() => {}).then(() => core.tail_pending(id) > 0 && flush())),
       // ITS HISTORY of one row: its value at each root the table had (`[{ at, root, value }]`, oldest first; `at`: when
       // that tree was replaced, `value`: bytes, or null — no such row then, or sealed with a key not held here). The old
       // trees' blocks on the row's path fetched as any read's.
@@ -1035,10 +1038,18 @@ export async function start(ctx) {
         // `[{ at, key, value, id }]` (text; `at`: when that tree was replaced), deletions left out.
         history: async key => {
           const k = enc.encode(key);
+          // Each writer's feed BOUNDED (its old trees' blocks fetched from the network): one slow or missing never
+          // holds the others — what came in time is shown, the rest named.
+          const LIMIT = 20000;
           const per = await Promise.all(
             all.filter(f => !f.absent && f.history).map(async f => {
               const out = [];
-              for (const h of await f.history(k).catch(() => [])) {
+              let timer;
+              const hs = await Promise.race([
+                f.history(k).catch(() => []),
+                new Promise(r => (timer = setTimeout(() => (ctx.log("history", { what: `${name}: ${f.owner.slice(0, 12)}…'s history not read in ${LIMIT / 1000} s` }), r([])), LIMIT))),
+              ]).finally(() => clearTimeout(timer));
+              for (const h of hs) {
                 if (!h.value) continue;
                 for (const r of decoded(Array.from(feed.merge_feeds([[bytes(f.owner), [[k, h.value]]]])))) if (r.value) out.push({ at: h.at, ...r });
               }
@@ -1049,6 +1060,8 @@ export async function start(ctx) {
         },
         onChange: f => changed.push(f),
         put: (key, value) => write(key, value),
+        // This writer's own feed written out now (`flushNow`): before an edit.
+        flushOwn: () => me.flushNow?.(),
         remove: key => write(key, null),
         get sealed() {
           return me.sealed;

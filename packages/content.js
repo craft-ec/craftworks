@@ -304,6 +304,8 @@ export async function start(ctx) {
       },
       async edit(id, body, { files = null, meta = null, title = undefined } = {}) {
         const it = mine(id);
+        // The version it replaces written out first (`storage.flushOwn`): kept in its history, however soon the edit.
+        await (t.flushOwn ?? t.flushNow)?.().catch(e => ctx.log("history", { what: `before an edit: ${e?.message ?? e}` }));
         const fs = files ?? it.files ?? [];
         it.meta = meta ?? it.meta;
         if (title !== undefined) it.title = title;
