@@ -77,6 +77,15 @@ export async function start(ctx) {
     return h("label", { className: "cw-att-file", onclick: () => setTimeout(after) }, text, input);
   }
 
+  // A MENU opened beside its button: on the side with more room (above or below), never past the screen — as tall as
+  // that side allows, scrolling within. Every attach and insert menu opens through it.
+  function fitMenu(menu, anchor = menu.parentElement) {
+    const r = anchor.getBoundingClientRect();
+    const above = r.top - 8;
+    const below = innerHeight - r.bottom - 8;
+    const up = above > below;
+    Object.assign(menu.style, { top: up ? "auto" : "100%", bottom: up ? "100%" : "auto", maxHeight: `${Math.max(120, up ? above : below)}px`, overflowY: "auto", boxSizing: "border-box" });
+  }
   function picker({ space = null, public: pub = false, from = null, media = false, publish = false } = {}) {
     const chips = h("span", { className: "cw-att-pick" });
     // 📎: this device, or Drive.
@@ -84,7 +93,7 @@ export async function start(ctx) {
       fileButton("From this device", { onFiles: fs => fs.forEach(f => add(f)), after: () => (menu.hidden = true) }),
       h("button", { type: "button", textContent: "From Drive", onclick: () => ((menu.hidden = true), fromDrive()) }),
     );
-    const el = h("span", { className: "cw-att-pick" }, h("button", { type: "button", className: "clip", title: "Attach files", ariaLabel: "Attach files", textContent: "📎", onclick: () => (menu.hidden = !menu.hidden) }), menu, chips);
+    const el = h("span", { className: "cw-att-pick" }, h("button", { type: "button", className: "clip", title: "Attach files", ariaLabel: "Attach files", textContent: "📎", onclick: () => ((menu.hidden = !menu.hidden), menu.hidden || fitMenu(menu)) }), menu, chips);
     // The menu closes on a click anywhere outside it (and its 📎).
     document.addEventListener("pointerdown", e => {
       if (el.isConnected && !menu.hidden && !el.contains(e.target)) menu.hidden = true;
@@ -261,5 +270,5 @@ export async function start(ctx) {
     );
   }
 
-  return { picker, fileButton, show, open: (ref, note = document.createElement("span")) => openFull(ref, note), sizeOf, isImage };
+  return { picker, fileButton, fitMenu, show, open: (ref, note = document.createElement("span")) => openFull(ref, note), sizeOf, isImage };
 }

@@ -427,7 +427,7 @@ export async function start(ctx) {
     };
     find.oninput = () => listFound();
     find.onkeydown = e => e.key === "Escape" && (insertMenu.hidden = true);
-    const insertGroup = h("span", { className: "cw-att-pick" }, btn("＋ Insert", "Insert: upload an image, a video, an audio or a book; a new post or note; or any item — yours, or by its reference", () => (mode === "rich" && keep(), (insertMenu.hidden = !insertMenu.hidden), insertMenu.hidden || (listFound(), find.focus()))), insertMenu);
+    const insertGroup = h("span", { className: "cw-att-pick" }, btn("＋ Insert", "Insert: upload an image, a video, an audio or a book; a new post or note; or any item — yours, or by its reference", () => (mode === "rich" && keep(), (insertMenu.hidden = !insertMenu.hidden), insertMenu.hidden || (attachments.fitMenu(insertMenu), listFound(), find.focus()))), insertMenu);
     const modeBtn = h("button", { type: "button", className: "mode", onclick: e => (e.preventDefault(), setMode(mode === "rich" ? "markdown" : "rich")) });
     // FILES attached below (📎: any file, listed under what is written — not placed in it; on a chat line beside Aa).
     const mediaGroup = pick ? [pick.el] : [];
