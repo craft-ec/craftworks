@@ -31,6 +31,7 @@ export async function start(ctx) {
   const GEN = 16;
   const EXTRA = 8;
   const MAX_LISTED = 32;
+  const GENS_IN_FLIGHT = 6;
   const SLICE = 4 * 1024 * 1024;
   const hex = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
@@ -222,9 +223,30 @@ export async function start(ctx) {
     } catch {}
     const stored = prev?.key === undefined || prev.key === keyHex ? (prev?.stored ?? []) : [];
     const genBytes = (plan.chunk * GEN);
-    for (let g = 0; g < plan.gens; g++) {
+    // SEVERAL GENERATIONS IN FLIGHT: one generation waits on its slowest put (a round trip through the network, up to
+    // the put's deadline), so one at a time ran at that latency, not the link (measured 2026-10-06: 56 KB/s of a
+    // 1.36 MB/s link). Each finished generation is recorded at once, so a resume still skips exactly the stored ones.
+    let sentBytes = stored.reduce((n, s, g) => n + (s?.length >= Math.min(GEN, plan.chunks - g * GEN) + EXTRA ? Math.min(genBytes, size - g * genBytes) : 0), 0);
+    let recording = Promise.resolve();
+    const record = () => (recording = recording.then(() => prog.write(JSON.stringify({ key: keyHex, name, size, type, stored, at: Date.now() })).catch(() => {})));
+    let nextGen = 0;
+    let failed = null;
+    const worker = async () => {
+      while (!failed && nextGen < plan.gens) {
+        const g = nextGen++;
+        try {
+          await generation(g);
+        } catch (e) {
+          failed ??= e;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(GENS_IN_FLIGHT, plan.gens) }, worker));
+    await recording;
+    if (failed) throw failed;
+    async function generation(g) {
       const k = Math.min(GEN, plan.chunks - g * GEN);
-      if ((stored[g]?.length ?? 0) >= k + EXTRA) continue;
+      if ((stored[g]?.length ?? 0) >= k + EXTRA) return;
       const plain = await slice(g * genBytes, Math.min(size, (g + 1) * genBytes));
       const have = new Set((stored[g] ?? []).map(x => x[0]));
       const ok = [...(stored[g] ?? [])];
@@ -238,8 +260,9 @@ export async function start(ctx) {
       }
       if (ok.length < k) throw new Error(`${name}: generation ${g} could not be stored (${ok.length} of the ${k} it needs)`);
       stored[g] = ok.sort((a, b) => a[0] - b[0]);
-      await prog.write(JSON.stringify({ key: keyHex, name, size, type, stored, at: Date.now() })).catch(() => {});
-      onProgress({ phase: "sending", done: Math.min(size, (g + 1) * genBytes), size });
+      record();
+      sentBytes += plain.length;
+      onProgress({ phase: "sending", done: Math.min(size, sentBytes), size });
     }
     // The INDEX last: once it is there, the file reads.
     // HASH-ADDRESSED: each index piece at its own hash's address — two uploads of one file that stored other

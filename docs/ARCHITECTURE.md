@@ -179,7 +179,7 @@ ride INLINE in the item (tables already keep values that size with parity).
 **Addresses and the index.** Every fragment lives in a `sealed` contract at an ADDRESS only the key gives (a keyed hash
 of the key, the generation and the fragment's number): nobody without the key can name a file's pieces or count them.
 The INDEX — codec, size, chunk size, and per generation the fragments stored and their hashes — is a TREE of sealed
-pieces (a root listing index pieces), so a file has NO size limit; the upload streams a generation at a time, and the
+pieces (a root listing index pieces), so a file has NO size limit; the upload streams six generations at a time (one waits on its slowest put), and the
 index goes up LAST, listing exactly the fragments stored — a file is readable only once complete, and an upload
 RESUMES (same key, same fragments, same addresses: only the missing are sent). The REFERENCE is `{ key, root hash,
 size, name, type, preview }`: every index piece and fragment is checked against it the moment it arrives.
