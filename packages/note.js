@@ -91,6 +91,7 @@ export async function mount(ctx, el) {
           <button type="button" class="palette" title="Background">🎨</button>
           <button type="button" class="label-e" title="Labels">🏷️</button>
           <button type="button" class="archive-e" title="Archive">🗃️</button>
+          <span class="history-slot"></span>
           <button type="button" class="delete-e" title="Delete">🗑️</button>
           <button type="button" class="end done">Close</button></div>
       </dialog>
@@ -290,6 +291,14 @@ export async function mount(ctx, el) {
     editor.querySelector(".pin-slot").replaceChildren(pinUI.button(ref(n.key)));
     editor.querySelector(".label-slot").replaceChildren(labelUI.chips(ref(n.key), { onPick: show }));
     editor.querySelector(".archive-e").title = n.archived ? "Unarchive" : "Archive";
+    // HISTORY: its earlier versions (`history`), restored over what is open — the note closed without saving it.
+    const hSlot = editor.querySelector(".history-slot");
+    hSlot.replaceChildren();
+    if (n.item?.edited)
+      ctx.require("history").then(
+        hi => editing?.key === n.key && hSlot.replaceChildren(hi.button(n.key, () => ({ current: n.item, restored: () => ((editing = null), editor.close(), reload()) }))),
+        () => {},
+      );
     // WHO: who made it and who changed it last, and when (a shared note's editors are its space's members).
     const it = n.item ?? {};
     const who = editor.querySelector(".who");

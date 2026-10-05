@@ -14,7 +14,7 @@
 //   actions.save(item)      // Save alone (☆/★: a card's tool)
 //   actions.saved()         // the refs this person saved, newest first (any kind) — every app's Saved (`where`)
 export async function start(ctx) {
-  const [items, edge, space, signals, labelUI] = await Promise.all(["items", "edge", "space", "signals", "label-menu"].map(n => ctx.require(n)));
+  const [items, edge, space, signals, labelUI, history] = await Promise.all(["items", "edge", "space", "signals", "label-menu", "history"].map(n => ctx.require(n)));
   const pins = await edge.pins();
   const me = async () => (await space.account()).id;
   const style = document.createElement("style");
@@ -236,6 +236,8 @@ export async function start(ctx) {
           // your list — Discover, for you and whoever applies it) the post, its author, or its space.
           !mine ? more(it, { changed, fail }) : null,
           mine && edit && !discover ? btn("Edit", edit) : null,
+          // HISTORY: its earlier versions, once it was changed (`history`; Restore where this person may edit it).
+          it.edited && !outside && !discover ? btn("🕘 History", e => history.open(e.currentTarget, it.ref, { current: it, restored: () => changed?.() })) : null,
           it.mayRemove
             ? btn(mine ? "Delete" : "Remove", async e => {
                 if (e.target.dataset.armed !== "1") return ((e.target.dataset.armed = "1"), (e.target.textContent = `Confirm: ${mine ? "delete" : "remove"}`));

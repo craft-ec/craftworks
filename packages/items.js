@@ -240,6 +240,7 @@ export async function start(ctx) {
         edit: async (id, body) => (await sync(), await a.edit(id, body), await sync()),
         setFiles: async (id, files) => (await sync(), await a.setFiles(id, files), await sync()),
         editFull: async (id, body, o) => (await sync(), await a.edit(id, body, o), await sync()),
+        history: id => a.history(id),
         // Out of both tables (an author's own; a moderator's hide, in each table it is listed in).
         remove: async id => {
           for (const x of rooms) if (x.list().some(it => it.id === id)) await x.remove(id);
@@ -309,6 +310,7 @@ export async function start(ctx) {
         edit: async (id, body) => (await roomOf(id)).edit(id, body),
         setFiles: async (id, files) => (await roomOf(id)).setFiles(id, files),
         editFull: async (id, body, o) => (await roomOf(id)).edit(id, body, o),
+        history: async id => (await roomOf(id)).history(id),
       };
     });
   // Each read bounded where it is read (`storage`): a silent profile shows as held, never waited on.
@@ -927,6 +929,17 @@ export async function start(ctx) {
     return (await profileRoom(await me())).editFull(idOf(ref), body, { files, meta, title });
   }
 
+  // ITS HISTORY: the versions an item had (`content`'s `history`: newest first, each with `until` — when it was
+  // replaced); from outside, none (the public copy keeps no history of its own here).
+  async function history(ref) {
+    if (ref.startsWith("space:")) {
+      const sp = await boardOf(ref);
+      return sp ? (await boardRoom(sp)).history(idOf(ref)) : [];
+    }
+    const room = await profileRoom(whereOf(ref));
+    return room.history ? room.history(idOf(ref)) : [];
+  }
+
   // A post's FILES replaced by its author (a video whose renditions grew): its place's room.
   async function setFiles(ref, files) {
     if (ref.startsWith("space:")) {
@@ -971,5 +984,5 @@ export async function start(ctx) {
     return `${base}/p/${ref}`;
   }
 
-  return { mayWriteOn, pageOf, appOf, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, publicSpace, outsideOf, syncPublic, signal, view, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
+  return { mayWriteOn, pageOf, appOf, submit, list, get, setFiles, attach, attached, editItem, history, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, publicSpace, outsideOf, syncPublic, signal, view, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
 }

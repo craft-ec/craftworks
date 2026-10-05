@@ -14,6 +14,8 @@
 //   const notes = await (await ctx.require("storage")).table("notes");
 //   notes.rows()                [{ key, value, id }]
 //   await notes.put(key, value)   await notes.remove(key)   notes.onChange(fn)
+// HISTORY's retention (baseline; a plan raises it later): the roots a table had are kept this long, at most this many.
+const HISTORY = { days: 7, roots: 200 };
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   // What a space is: its keys and its own tables' names (the account, here).
@@ -263,6 +265,28 @@ export async function start(ctx) {
       },
       // KEEP it (phase 4, Lifecycle): see `keep` below.
       keep: () => (queue = queue.catch(() => {}).then(keep)),
+      // ITS HISTORY of one row: its value at each root the table had (`[{ at, root, value }]`, oldest first; `at`: when
+      // that tree was replaced, `value`: bytes, or null — no such row then, or sealed with a key not held here). The old
+      // trees' blocks on the row's path fetched as any read's.
+      history: async key => {
+        const k = typeof key === "string" ? enc.encode(key) : key;
+        const out = [];
+        for (const [at, root] of core.tail_root_log(id)) {
+          try {
+            for (let round = 0; round < 24; round++) {
+              const r = core.tail_value_at(id, root, k);
+              if (!r.fetch) {
+                out.push({ at, root, value: r.value });
+                break;
+              }
+              await blocks.fetch(idHex, r.fetch, app);
+            }
+          } catch (e) {
+            ctx.log("history", { what: `${app}: a version not read: ${e.message}` });
+          }
+        }
+        return out;
+      },
       // Whether the node ANSWERED the last read (the tail, or "not found"), not silence.
       answered: () => answered,
       // The first read to its end (the node's answer, or its silence past the read's wait): what a DECISION waits for.
@@ -486,16 +510,23 @@ export async function start(ctx) {
       if (t.absent) return null;
       const t0 = performance.now();
       if (t.lazy) await t.whole();
-      let a = null;
-      for (let round = 0; round < 64; round++) {
-        a = core.tail_asset(id);
-        if (a.need) await settle({ kind: "tail-need", id: idHex, blocks: a.need }, app);
-        else if (a.keys) await settle({ kind: "tail-keys", id: idHex, epochs: a.keys }, app);
-        else break;
-      }
-      if (!a?.groups) throw new Error(`${app}: its tree did not finish loading`);
-      const out = { name: app, at: Date.now(), groups: a.groups.length, blocks: 0, whole: 0, degraded: 0, damaged: 0, missing: 0, put: 0, unmade: 0 };
-      for (const g of a.groups) {
+      // Its groups: the current tree's, or (`history`) those only its logged roots reach.
+      const assetOf = async history => {
+        let a = null;
+        for (let round = 0; round < 64; round++) {
+          a = core.tail_asset(id, history);
+          if (a.need) await settle({ kind: "tail-need", id: idHex, blocks: a.need }, app);
+          else if (a.keys) await settle({ kind: "tail-keys", id: idHex, epochs: a.keys }, app);
+          else break;
+        }
+        if (!a?.groups) throw new Error(`${app}: its ${history ? "history" : "tree"} did not finish loading`);
+        return a.groups;
+      };
+      const current = await assetOf(false);
+      // ITS HISTORY kept too (every version it can read back) — never holding up the current tree's keeping.
+      const older = await assetOf(true).catch(e => (ctx.log("history", { what: `${app}: its history not kept: ${e.message}` }), []));
+      const out = { name: app, at: Date.now(), groups: current.length + older.length, history: older.length, blocks: 0, whole: 0, degraded: 0, damaged: 0, missing: 0, put: 0, unmade: 0 };
+      for (const g of [...current, ...older]) {
         const there = await Promise.all(g.slots.map(([, c]) => blocks.probe(c, `keeping ${app}`)));
         const present = there.filter(Boolean).length;
         const parity = g.slots.length - g.k;
@@ -523,6 +554,9 @@ export async function start(ctx) {
     async function flush() {
       const t0 = performance.now();
       for (let round = 0; round < 16; round++) {
+        // ITS HISTORY: the root this flush replaces, and the log as it is BEFORE it (a flush drops the log).
+        const was = core.tail_root(id);
+        const prior = core.tail_root_log(id);
         const f = core.tail_flush(id);
         if (f.need || f.keys) {
           await settle(f.need ? { kind: "tail-need", id: idHex, blocks: f.need } : { kind: "tail-keys", id: idHex, epochs: f.keys }, app);
@@ -537,6 +571,12 @@ export async function start(ctx) {
         }
         await step(f, "flushing");
         ctx.log("flushed", { what: `${app}: ${f.puts.length} tree block(s) put, the tail emptied (seq ${f.seq})`, ms: Math.round(performance.now() - t0) });
+        // …then the replaced root LOGGED (its history: kept for the retention — every row as it was then reads back).
+        if (was) {
+          const now = Date.now();
+          const l = core.tail_log_root(id, prior, was, now, now - HISTORY.days * 86400e3, HISTORY.roots);
+          if (l) await step(l, "keeping its history").catch(e => ctx.log("history", { what: `${app}: its history not logged: ${e.message}` }));
+        }
         return;
       }
       throw new Error("the tree did not finish loading");
@@ -964,6 +1004,22 @@ export async function start(ctx) {
         // rows before its removal).
         settled,
         rows: () => rows,
+        // ITS HISTORY of one row, across every writer's feed: each version it had at each root a feed logged —
+        // `[{ at, key, value, id }]` (text; `at`: when that tree was replaced), deletions left out.
+        history: async key => {
+          const k = enc.encode(key);
+          const per = await Promise.all(
+            all.filter(f => !f.absent && f.history).map(async f => {
+              const out = [];
+              for (const h of await f.history(k).catch(() => [])) {
+                if (!h.value) continue;
+                for (const r of decoded(Array.from(feed.merge_feeds([[bytes(f.owner), [[k, h.value]]]])))) if (r.value) out.push({ at: h.at, ...r });
+              }
+              return out;
+            }),
+          );
+          return per.flat();
+        },
         onChange: f => changed.push(f),
         put: (key, value) => write(key, value),
         remove: key => write(key, null),

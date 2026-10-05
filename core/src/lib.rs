@@ -427,8 +427,10 @@ impl Core {
 
     /// A table's ASSET (phase 4, Lifecycle): its groups — each `k` members then parity — with every block's id and
     /// the contract it lives in (hex); or the blocks to GET first (as a read), or the epochs whose keys to get.
-    pub fn tail_asset(&mut self, id: &[u8; 32]) -> Result<AssetOut, String> {
-        match self.read(id, |o| o.asset())? {
+    /// `history`: instead, the blocks only its LOGGED roots reach (its history, `data::Open::history_asset`) — asked
+    /// after the current asset, and added to what `tail_keep_put` makes from.
+    pub fn tail_asset(&mut self, id: &[u8; 32], history: bool) -> Result<AssetOut, String> {
+        match self.read(id, |o| if history { o.history_asset() } else { o.asset() })? {
             Err(fetch) => Ok(AssetOut::Need(fetch)),
             Ok(data::Step::Need(_)) => unreachable!(),
             Ok(data::Step::Keys(e)) => Ok(AssetOut::Keys(e)),
@@ -455,7 +457,11 @@ impl Core {
                     }
                     out.push((g.k, slots));
                 }
-                self.assets.insert(*id, groups);
+                if history {
+                    self.assets.entry(*id).or_default().extend(groups);
+                } else {
+                    self.assets.insert(*id, groups);
+                }
                 Ok(AssetOut::Ready(out))
             }
         }
@@ -1889,11 +1895,11 @@ mod js {
         }
 
         /// A table's ASSET: `{ need: [contract hex] }`, `{ keys: [epoch] }`, or `{ groups: [{ k, slots: [[block hex,
-        /// contract hex]] }] }`.
-        pub fn tail_asset(&mut self, id: &[u8]) -> Result<js_sys::Object, JsValue> {
+        /// contract hex]] }] }`. `history`: the blocks only its logged roots reach.
+        pub fn tail_asset(&mut self, id: &[u8], history: bool) -> Result<js_sys::Object, JsValue> {
             let id = b32(id)?;
             let out = js_sys::Object::new();
-            match self.0.tail_asset(&id).map_err(err)? {
+            match self.0.tail_asset(&id, history).map_err(err)? {
                 AssetOut::Need(c) => {
                     js_sys::Reflect::set(
                         &out,

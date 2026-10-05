@@ -29,6 +29,8 @@
 // A PUBLIC container `{ kind: "public", did, name }` is one person's public tail `name` (`directory.publicOf`): only
 // their account writes it, so every item in it is THEIRS, whatever it claims; anyone reads it. Their reactions there
 // may name items anywhere (`posts` keeps votes and comments on others' posts in the voter's own tail).
+// HISTORY's baseline: the versions of an item shown (a plan raises it later; `storage` keeps its roots 7 days).
+const HISTORY = 20;
 export async function start(ctx) {
   const storage = await ctx.require("storage");
   const space = await ctx.require("space");
@@ -321,6 +323,21 @@ export async function start(ctx) {
         return t.put(key, value);
       },
       dropOwn: key => t.remove(key),
+      // ITS HISTORY: the versions item `id` had (`storage`'s logged roots, every writer's feed) — each as an item, with
+      // `until` (when the tree holding it was replaced), one per version, newest first, at most `HISTORY` (the plan's).
+      async history(id) {
+        const seen = new Set();
+        return (await (t.history?.(id) ?? []))
+          .sort((a, b) => b.at - a.at)
+          .filter(row => !seen.has(row.id) && seen.add(row.id))
+          .map(row => {
+            const it = item(row);
+            return it && { ...it, version: row.id, until: row.at };
+          })
+          .filter(Boolean)
+          .sort((a, b) => (b.edited || b.at) - (a.edited || a.at))
+          .slice(0, HISTORY);
+      },
       async remove(id) {
         const it = list().find(x => x.id === id);
         if (!it) throw new Error("no such item");

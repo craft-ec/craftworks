@@ -1780,6 +1780,49 @@ impl Open {
         }
     }
 
+    /// Its HISTORY's asset: the blocks its LOGGED roots reach that its current tree does not — each old root a group
+    /// of one, each node's groups as [`Open::asset`] — so keeping the table keeps every version it can read back.
+    /// `Need` the current tree's nodes first, then the old trees' not held yet.
+    pub fn history_asset(&self) -> Result<Step<Vec<AssetGroup>>, String> {
+        let current = match self.asset()? {
+            Step::Ready(g) => g,
+            other => return Ok(other),
+        };
+        let mut seen: BTreeSet<Cid> = current.iter().flat_map(|g| g.slots.iter().copied()).collect();
+        let (mut groups, mut need) = (Vec::new(), Vec::new());
+        for (_, root) in self.root_log() {
+            if !seen.insert(root) {
+                continue;
+            }
+            groups.push(AssetGroup { slots: vec![root], k: 1 });
+            let mut stack = vec![root];
+            while let Some(cid) = stack.pop() {
+                let Some(bytes) = self.blocks.0.get(&cid) else {
+                    need.push(cid);
+                    continue;
+                };
+                let node = freenet_prolly::node::Node::parse(bytes).map_err(|e| format!("tree node {} does not parse: {e:?}", hex(&cid)))?;
+                let ids: Vec<Cid> = node.parity().collect();
+                let pn = freenet_prolly::parity::PARITY;
+                for (g, (_, members)) in freenet_prolly::parity::group_members(&node).into_iter().enumerate() {
+                    let new: Vec<Cid> = members.iter().copied().filter(|m| !seen.contains(m)).collect();
+                    if new.is_empty() {
+                        continue;
+                    }
+                    let par = ids.get(pn * g..pn * (g + 1)).unwrap_or(&[]);
+                    seen.extend(new.iter().copied());
+                    groups.push(AssetGroup { slots: [members.clone(), par.to_vec()].concat(), k: members.len() });
+                    if !node.is_leaf() {
+                        stack.extend(new);
+                    }
+                }
+            }
+        }
+        if !need.is_empty() {
+            return self.need(need);
+        }
+        Ok(Step::Ready(groups))
+    }
 }
 
 /// The tail's own row LOGGING the roots this table's tree had — its HISTORY (a flush replaces the root; the old one,
@@ -1850,5 +1893,13 @@ mod history_tests {
         assert_eq!(at(logged, "a").as_deref(), Some(b"v1".as_slice()), "as it was then");
         assert_eq!(at(r2, "a").as_deref(), Some(b"v2".as_slice()), "as it is now");
         assert_eq!(at(logged, "zz"), None, "control: a row that never was");
+        // ITS HISTORY's asset: the old root and what only it reaches — none of the current tree's blocks.
+        let Ok(Step::Ready(now)) = o.asset() else { panic!("the writer holds its tree") };
+        let current: BTreeSet<Cid> = now.iter().flat_map(|g| g.slots.clone()).collect();
+        let Ok(Step::Ready(old)) = o.history_asset() else { panic!("the writer holds its old tree") };
+        let older: BTreeSet<Cid> = old.iter().flat_map(|g| g.slots[..g.k].to_vec()).collect();
+        assert!(older.contains(&r1), "the logged root is kept");
+        assert!(older.is_disjoint(&current), "nothing the current tree already keeps");
+        assert!(!current.contains(&r1), "control: the current tree does not reach the old root");
     }
 }
