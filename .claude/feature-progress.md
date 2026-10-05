@@ -1130,12 +1130,21 @@ Owner: "we should use just one implementation and every app should get the same 
 capability — shared capability component that can be used across apps". An APP = its kinds + layout + its own extras.
 - [x] 1. `where` (packages/where.js): whose place (mine/space/person/discover), THE read, links, standard tabs
       (landing · app extras · Discover). Every app on it; no app reads ctx.space / `u/` itself (grep).
-- [~] 2. `cards` (9929f16: video/audio, note, file looks; embed any item `item:REF`; attachments; pageOf carries place. LEFT: Board's post look + Caption's row — with step 3's actions): each KIND's look (domain: text, video, audio, note, file, caption) — card (lists) + full (item page,
+- [x] 2. `cards` (9929f16: video/audio, note, file looks; embed any item `item:REF`; attachments; pageOf carries place. Board's posts and Caption's rows on `cards.card` — checked 10-05): each KIND's look (domain: text, video, audio, note, file, caption) — card (lists) + full (item page,
       media-view for media). Mixed lists (Discover, a person's space, Drive) render each item by its kind.
 - [x] 3. One ACTIONS component (actions.js; Board, comments, Video on it; Save on every kind; Saved tab standard via `where`; Video's broken Saved fixed): vote/like, comment, share, save, hide, remove, edit — ONE may-check (items.mayWriteOn;
       Board's roles.allows copy goes).
-- [ ] 4. (owner 10-04: every kind made AND embedded from the editor — Insert: new item of any kind via the one composer, or an existing one by picker/ref) One COMPOSER (publisher.form for every kind; Board's own goes) and one ITEM PAGE (board post page + media watch).
-- [ ] 5. Apps reduced; copies deleted (grep: discovering(), descOf/outsideOf, votes(), own composers).
+- [x] 4. (10-05) One COMPOSER: `publisher.form` makes written items too (`kinds.written()`: text, note — title, the one
+      editor, who sees it; from outside a public board: public) beside the media ones; Board's own composer deleted (its
+      Create post is the form). Insert → NEW: Post · Note · Image · Video · Audio · Book in any editor (`publisher.dialog`,
+      the editor's space and audience), embedded where the caret was. One ITEM PAGE was already shared (Board, media).
+      Live fx: a post with a note made from Insert (embedded after its text); a comment with an image made from Insert.
+      Note app keeps its in-place note editor (editing, not a second composer); Drive's upload and Chat's channel are their
+      apps' own acts (a file into a folder, a channel).
+- [x] 5. (10-05) Copies deleted: a space's public description and "read from outside" have one owner
+      (`items.publicSpace`, `items.outsideOf`) — Board's descOf/outsideFor, Media's outsideOf, where's saved read,
+      conversation, spaces-panel, space-home. `discovering()` is `where`'s; votes() is `actions`' only. Server settings'
+      nav "null" (a hosted page has no Close) fixed.
 Then: Settings app in every space (Account moved in; space Home's settings moved in; header Account link gone).
 Step 1 done: Board, Video/Audio, Note, Drive, Caption, Contact on `where` (Chat with its rework). Uncommitted on fx/17692 only: personal
 Chat circle tabs (to be replaced: channels with an audience, person Chat via `where`).

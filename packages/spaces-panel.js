@@ -225,7 +225,7 @@ export async function start(ctx) {
       const sp = (await space.mine().catch(() => [])).find(s => s.id === ctx.space);
       if (sp) return space.shown(sp);
       // Not in it (seen from outside): its name as Discover lists it.
-      const d = (await (await ctx.require("items")).publicSpaces().catch(() => [])).find(s => s.id === ctx.space);
+      const d = await (await ctx.require("items")).publicSpace(ctx.space);
       return d ? space.shown(d) : "Space";
     }
     return "Personal";

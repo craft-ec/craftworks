@@ -1,5 +1,6 @@
-// PUBLISHER, a capability: the ONE way a new FILE becomes an ITEM of its kind — from its app's upload page (Videos,
-// Audio, Images) or uploaded inline in an editor (a post, a comment): the same path either way. Its MAKER (`kinds`:
+// PUBLISHER, a capability: the ONE way a new ITEM is made — a written one (a post, a note: title, text, files) or a
+// FILE become an item of its kind — from its app's page (Board's Create post; Videos', Audio's, Images' upload),
+// uploaded inline in an editor (a post, a comment), or made new from any editor's Insert: the same path every way. Its MAKER (`kinds`:
 // a video's or an audio's renditions, an image's thumbnail) makes it; its own TAGS name it (title; artist, album, year,
 // genre where its kind has those fields); a COVER chosen replaces its own; an item of its kind is made with whom it is
 // for (`audience`: so policy, Discover and feeds treat it as they treat its kind); its SUBTITLES and the LYRICS it
@@ -8,8 +9,10 @@
 //   const publisher = await ctx.require("publisher");
 //   const { item, ref } = await publisher.publish(file, { space, audience, kind, title, body, meta, cover, subtitles,
 //                                                         keepOriginal, app, onProgress })
-//   host.append(await publisher.form({ domain, space, app, onPublished }))   // the upload form (its app's page)
-//   const done = await publisher.dialog(file, { space, initial, app })      // the same form over an editor (or null)
+//   host.append(await publisher.form({ domain, space, app, onPublished }))   // THE form (its app's page): `domain` a
+//                                                                           // media one (a file) or a written one
+//                                                                           // (`kinds.written()`: text, note)
+//   const done = await publisher.dialog(file, { domain, space, initial, app })  // the same form over an editor (or null)
 export async function start(ctx) {
   const [kinds, items] = await Promise.all(["kinds", "items"].map(n => ctx.require(n)));
 
@@ -65,7 +68,50 @@ export async function start(ctx) {
     dialog.cw-pub-dlg { max-width: min(560px, 92vw); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-bg); color: var(--cw-fg); }`;
   document.head.append(style);
 
+  // A WRITTEN item (a post, a note): its kind (the domain's), a title (optional where its kind is untitled), its text
+  // in the one editor (media inline, files, other items embedded), whom it is for. In a space this person is not in
+  // (its policy lets anyone post): public, from outside, as `publish`.
+  async function written({ domain, space, initial, app, onPublished, onCancel }) {
+    const [audience, attachments, mdEditor, spaces] = await Promise.all(["audience", "attachments", "md-editor", "space"].map(n => ctx.require(n)));
+    const outside = space && !(await items.boardOf(space.id)) ? space : null;
+    const ks = kinds.inDomain(domain);
+    const kindSel = h("select", { name: "kind" }, ...ks.map(k => h("option", { value: k, textContent: kinds.of(k).label })));
+    const who = await audience.picker({ space: outside ? null : space, kind: ks[0], initial });
+    const pick = attachments.picker({ space: outside ? null : space, from: { app }, media: true, publish: true, public: () => !!outside || who.isPublic() });
+    const ed = mdEditor.create({ pick, label: "Text" });
+    const said = h("p", { className: "said", hidden: true });
+    const title = h("input", { name: "title", placeholder: kinds.titled(ks[0]) ? "Title" : "Title (optional)", required: kinds.titled(ks[0]), maxLength: 300, autocomplete: "off" });
+    const f = h(
+      "form",
+      { className: "cw-pub" },
+      space ? h("p", { className: "s", textContent: `In ${spaces.shown(space)}${outside ? " (public: you are not a member)" : ""}.` }) : null,
+      ks.length > 1 ? h("label", { className: "s" }, "What it is ", kindSel) : null,
+      title,
+      ed.el,
+      outside ? null : who.el,
+      h("div", { className: "row" }, h("button", { className: "go", textContent: domain === "text" ? "Post" : "Save" }), onCancel ? h("button", { type: "button", className: "ghost", textContent: "Cancel", onclick: () => onCancel() }) : null),
+      said,
+    );
+    f.onsubmit = async e => {
+      e.preventDefault();
+      said.hidden = true;
+      if (ed.busy()) return ((said.textContent = "Still sending the files: a moment…"), (said.hidden = false));
+      const btn = f.querySelector("button.go");
+      btn.disabled = true;
+      try {
+        const item = await items.submit({ board: space?.id ?? null, outside, title: title.value.trim(), body: ed.value(), kind: kindSel.value, files: ed.files(), audience: outside ? "public" : who.value(), write: outside ? null : who.write() });
+        onPublished({ item, title: title.value.trim() });
+      } catch (err) {
+        said.textContent = err.message ?? String(err);
+        said.hidden = false;
+        btn.disabled = false;
+      }
+    };
+    return f;
+  }
+
   async function form({ domain, file = null, space = null, initial = null, app = null, onPublished = () => {}, onCancel = null } = {}) {
+    if (!file && kinds.written().includes(domain)) return written({ domain, space, initial, app: app ?? domain, onPublished, onCancel });
     const spec = kinds.media().find(m => m.domain === (domain ?? kinds.mediaOf(file?.type)?.domain));
     if (!spec) throw new Error("not a kind that is published");
     const av = spec.maker === "video-studio";
@@ -132,7 +178,7 @@ export async function start(ctx) {
           app,
           onProgress: p => (progress.textContent = `${p.stage[0].toUpperCase()}${p.stage.slice(1)}${p.p ? ` ${Math.round(100 * p.p)}%` : "…"}`),
         });
-        onPublished(done);
+        onPublished({ ...done, title: f.elements.title.value.trim() });
       } catch (err) {
         said.textContent = err.message ?? String(err);
         said.hidden = false;
@@ -142,14 +188,16 @@ export async function start(ctx) {
     };
     return f;
   }
-  // THE FORM OVER AN EDITOR: published ({ item, ref }) or cancelled (null).
-  function dialog(file, { space = null, initial = null, app = null } = {}) {
+  // THE FORM OVER AN EDITOR: published ({ item, ref, title }) or cancelled (null). No file: a NEW item of `domain`
+  // (Insert's New: written, or a file picked in the form).
+  function dialog(file, { domain = null, space = null, initial = null, app = null } = {}) {
     return new Promise(async resolve => {
       const d = h("dialog", { className: "cw-pub-dlg" });
       const end = v => (d.close(), d.remove(), resolve(v));
       d.addEventListener("cancel", e => (e.preventDefault(), end(null)));
+      const named = file ? `Publish ${file.name}` : `New ${(kinds.media().find(m => m.domain === domain)?.label ?? kinds.of(kinds.inDomain(domain)[0])?.label ?? domain).toLowerCase()}`;
       try {
-        d.append(h("h3", { textContent: `Publish ${file.name}` }), await form({ file, space, initial, app, onPublished: end, onCancel: () => end(null) }));
+        d.append(h("h3", { textContent: named }), await form({ file, domain, space, initial, app, onPublished: end, onCancel: () => end(null) }));
       } catch (e) {
         return resolve(Promise.reject(e));
       }

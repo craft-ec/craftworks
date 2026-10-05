@@ -13,8 +13,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [items, directory, person, theme, space, roles, drive, kinds, edge] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "drive-store", "kinds", "edge"].map(n => ctx.require(n)));
-  const people = await edge.people();
+  const [items, directory, person, theme, space, kinds] = await Promise.all(["items", "directory", "person", "theme", "space", "kinds"].map(n => ctx.require(n)));
   // WHICH APP this page is (its route): its domain, its words.
   const APPS = {
     "/video": { app: "video", domain: "video", icon: "▶️", name: "Video", one: "video", ones: "videos", accept: "video/*", mine: "Your channel", audio: false },
@@ -77,13 +76,8 @@ export async function mount(ctx, el) {
     if (at.who === "space") return { board: at.space.id };
     return s === "mine" ? { by: me } : s === "saved" ? { saved: true } : { feed: true };
   };
-  // A public space's video seen from OUTSIDE (Discover, a followed space): its public description.
-  const outsideOf = async ref => {
-    if (!ref.startsWith("space:")) return null;
-    const id = ref.slice(6, ref.indexOf("/"));
-    if ((await space.mine()).some(x => x.id === id)) return null;
-    return (await items.publicSpaces().catch(() => [])).find(d => d.id === id) ?? people.about("follow", id);
-  };
+  // A public space's video seen from OUTSIDE (Discover, a followed space): `items.outsideOf`.
+  const outsideOf = items.outsideOf;
   // One wording of time everywhere (`cards`).
   const who = did => {
     const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.preventDefault(), e.stopPropagation(), person.open(e.currentTarget, did)) });

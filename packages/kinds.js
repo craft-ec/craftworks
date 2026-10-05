@@ -111,6 +111,8 @@ export async function start() {
     titled: kind => !UNTITLED.has(kind),
     // The media domains (`MEDIA`), and the one a file (a reference, or a type) is — or null.
     media: () => MEDIA,
+    // The WRITTEN domains: an item made of text (and its files) in the one composer (`publisher.form`).
+    written: () => ["text", "note"],
     mediaOf,
     // A FILE's domain, from its type (MIME): what an upload IS, whichever app it came through.
     ofType: type => mediaOf(type)?.domain ?? (/^text\/|pdf|epub|msword|officedocument|opendocument|rtf|comicbook/.test(String(type ?? "").toLowerCase()) ? "document" : "file"),

@@ -195,6 +195,8 @@ export async function start(ctx) {
       // told when each file is ready.
       addFiles: list => list.forEach(add),
       fromDrive,
+      // Where what is attached goes: the space, and whether it is public now (a new item made from the editor goes there).
+      where: () => ({ space, public: typeof pub === "function" ? !!pub() : pub }),
       preset: refs => (refs ?? []).forEach(r => ready(r, { quiet: true })),
       onReady: f => readied.push(f),
     };

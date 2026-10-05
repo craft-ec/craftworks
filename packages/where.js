@@ -28,14 +28,9 @@ export async function start(ctx) {
 
   // A SAVED item, read where it is (a space's this person is not in: from outside, by its public description).
   async function getSaved(ref) {
-    if (String(ref).startsWith("space:")) {
-      const id = ref.slice(6, ref.indexOf("/"));
-      if (!(await space.mine()).some(x => x.id === id)) {
-        const d = (await items.publicSpaces().catch(() => [])).find(x => x.id === id);
-        return d ? items.get(ref, { outside: d }).catch(() => null) : null;
-      }
-    }
-    return items.get(ref).catch(() => null);
+    const outside = await items.outsideOf(ref).catch(() => null);
+    if (String(ref).startsWith("space:") && !outside && !(await items.boardOf(ref.slice(6, ref.indexOf("/"))))) return null;
+    return items.get(ref, { outside }).catch(() => null);
   }
 
   async function of({ kind, kinds = [kind], app = ctx.route.replace(/^\//, ""), yours = "Yours", saves = true } = {}) {

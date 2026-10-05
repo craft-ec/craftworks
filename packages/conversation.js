@@ -792,7 +792,7 @@ export async function start(ctx) {
   async function spaceDesc(id) {
     if (knownSpaces.has(id)) return knownSpaces.get(id);
     const mine = (await space.mine()).find(s => s.id === id);
-    const pub = mine ? null : ((await (await ctx.require("items")).publicSpaces().catch(() => [])).find(d => d.id === id) ?? null);
+    const pub = mine ? null : await (await ctx.require("items")).publicSpace(id);
     const d = mine ?? pub;
     if (d) knownSpaces.set(id, d);
     return d ?? null;

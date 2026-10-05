@@ -462,6 +462,17 @@ export async function start(ctx) {
   };
   const sorter = (sort, by) => (sort === "new" ? (a, b) => b.at - a.at : (a, b) => RANK[sort === "top" && by === "comments" ? "comments" : sort in RANK ? sort : "hot"](b) - RANK[sort === "top" && by === "comments" ? "comments" : sort in RANK ? sort : "hot"](a) || b.at - a.at);
 
+  // ONE public space's description (as Discover lists it), or null.
+  const publicSpace = async id => (await publicSpaces().catch(() => [])).find(d => d.id === id) ?? null;
+  // An item SEEN FROM OUTSIDE: its space's public description when this person is not in it (listed, else followed),
+  // null when they are (or it is a person's) — what `get`, `list`, votes and comments are given as `outside`.
+  async function outsideOf(ref) {
+    ref = String(ref?.ref ?? ref);
+    if (!ref.startsWith("space:")) return null;
+    const id = ref.slice(6, ref.indexOf("/"));
+    if (await boardOf(id)) return null;
+    return (await publicSpace(id)) ?? (await edge.people()).about("follow", id);
+  }
   // DISCOVER: the public spaces listed (their descriptions), each proved by its id (its owner), one per id.
   async function publicSpaces() {
     const seen = new Map();
@@ -877,5 +888,5 @@ export async function start(ctx) {
     return `${base}/p/${ref}`;
   }
 
-  return { mayWriteOn, pageOf, appOf, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, syncPublic, onChange: f => changed.push(f) };
+  return { mayWriteOn, pageOf, appOf, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, publicSpace, outsideOf, syncPublic, onChange: f => changed.push(f) };
 }

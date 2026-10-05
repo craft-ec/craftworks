@@ -372,7 +372,23 @@ export async function start(ctx) {
     // found by its title — or any by its reference (what Share copies). It shows where it is written (`cards.embed`), read as its reader may.
     const find = h("input", { type: "search", placeholder: "Find yours by title, or paste a reference", style: "width:18em;margin:4px 8px" });
     const found = h("div", {});
-    const insertMenu = h("span", { className: "cw-att-menu", hidden: true }, find, found);
+    // NEW: an item of any kind made in the one composer (`publisher.dialog`) where this text goes, then put here.
+    const makeNew = async domain => {
+      insertMenu.hidden = true;
+      const w = pick?.where?.() ?? { space: null, public: false };
+      const sp = w.space && w.space.kind !== "account" ? w.space : null;
+      const done = await (await ctx.require("publisher")).dialog(null, { domain, space: sp, initial: w.public ? "public" : sp ? "members" : "private" }).catch(e => (ctx.log("insert", { what: e.message }), null));
+      // Untitled (a note): named by its kind.
+      if (done?.item) putItem(done.item, done.title || (kinds.media().find(m => m.domain === domain)?.label ?? kinds.of(kinds.inDomain(domain)[0])?.label));
+    };
+    const newRow = h(
+      "div",
+      { style: "display:flex;flex-wrap:wrap;gap:4px;margin:4px 8px" },
+      h("span", { className: "s", textContent: "New:" }),
+      ...kinds.written().map(d => btn(kinds.of(kinds.inDomain(d)[0]).label, `A new ${kinds.of(kinds.inDomain(d)[0]).label.toLowerCase()}, put here`, () => makeNew(d))),
+      ...kinds.media().map(m => btn(`${m.icon} ${m.label}`, `A new ${m.label.toLowerCase()}, put here`, () => makeNew(m.domain))),
+    );
+    const insertMenu = h("span", { className: "cw-att-menu", hidden: true }, newRow, find, found);
     let mine = null;
     const putItem = (ref, title) => {
       insertMenu.hidden = true;
@@ -407,7 +423,7 @@ export async function start(ctx) {
     };
     find.oninput = () => listFound();
     find.onkeydown = e => e.key === "Escape" && (insertMenu.hidden = true);
-    const insertGroup = h("span", { className: "cw-att-pick" }, btn("＋ Insert", "Insert any item: yours, or by its reference", () => ((insertMenu.hidden = !insertMenu.hidden), insertMenu.hidden || (listFound(), find.focus()))), insertMenu);
+    const insertGroup = h("span", { className: "cw-att-pick" }, btn("＋ Insert", "Insert any item: yours, or by its reference", () => (mode === "rich" && keep(), (insertMenu.hidden = !insertMenu.hidden), insertMenu.hidden || (listFound(), find.focus()))), insertMenu);
     const modeBtn = h("button", { type: "button", className: "mode", onclick: e => (e.preventDefault(), setMode(mode === "rich" ? "markdown" : "rich")) });
     // MEDIA and FILES side by side: 🖼 inline, 📎 attached below (on a chat line: always shown, beside Aa).
     const mediaGroup = pick ? [h("span", { className: "cw-att-pick" }, btn("🖼 Media", `${kinds.media().map(m => m.label).join(", ")}, inline: from this device or from Drive`, () => (mediaMenu.hidden = !mediaMenu.hidden)), mediaMenu), pick.el] : [];

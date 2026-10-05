@@ -14,7 +14,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [posts, directory, person, theme, space, roles, attachments, mdEditor, cards] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "attachments", "md-editor", "cards"].map(n => ctx.require(n)));
+  const [posts, directory, person, theme, space, roles, cards] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "cards"].map(n => ctx.require(n)));
   const me = (await space.account()).id;
   // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.
   const bar = (await ctx.require("feed-bar")).create({ start: "hot", onChange: () => draw() });
@@ -92,22 +92,7 @@ export async function mount(ctx, el) {
       .bd .meta .b { color: var(--cw-fg); font-weight: 700; }
       .bd .meta .b:hover, .bd .meta .by:hover { text-decoration: underline; cursor: pointer; }
       .bd .acts .votes { display: flex; align-items: center; gap: 2px; }
-      .bd textarea, .bd .field { font: inherit; padding: var(--cw-space-2); border-radius: var(--cw-radius-sm); width: 100%; box-sizing: border-box; }
-      .bd textarea { resize: vertical; min-height: 90px; }
-      .bd form.reply { display: grid; gap: var(--cw-space-2); }
-      .bd form.reply .row { display: flex; justify-content: flex-end; gap: var(--cw-space-2); }
-      .bd .c { display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: var(--cw-space-2); }
-      .bd .c > .rail { display: flex; justify-content: center; cursor: pointer; }
-      .bd .c > .rail::before { content: ""; width: 2px; background: var(--cw-line); border-radius: 1px; }
-      .bd .c > .rail:hover::before { background: var(--cw-accent); }
-      .bd .c > .body { display: grid; gap: 4px; min-width: 0; }
-      .bd .c .text { overflow-wrap: anywhere; line-height: 1.5; margin: 0; }
-      .bd .c .kids { display: grid; gap: var(--cw-space-2); margin-top: var(--cw-space-1); }
-      .bd .c.folded .text, .bd .c.folded .acts, .bd .c.folded .kids, .bd .c.folded form { display: none; }
-      .bd .c .fold { border: 0; background: none; color: var(--cw-muted); font-size: var(--cw-text-xs); padding: 0; }
       .bd .none { color: var(--cw-muted); text-align: center; padding: var(--cw-space-5); margin: 0; }
-      .bd .said { color: var(--cw-danger); font-size: var(--cw-text-sm); margin: 0; }
-      .bd label { display: grid; gap: 4px; font-size: var(--cw-text-sm); font-weight: 600; }
     </style>
     <div class="bd"><div class="main"></div><aside class="side"></aside></div>`;
   const main = el.querySelector(".main");
@@ -127,12 +112,11 @@ export async function mount(ctx, el) {
     const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.stopPropagation(), person.open(e.currentTarget, did, here ? { space: here } : {})) });
     return n;
   };
-  const errorTo = said => e => ((said.textContent = e?.message ?? String(e)), (said.hidden = false));
 
   // AN ITEM's ACTIONS (`actions`: the same in every app — vote, comments, share, save, hide, flag, edit, remove — by
   // the one check). From OUTSIDE (a space's post this person is not in): its public description.
   const actionsCap = await ctx.require("actions");
-  const outsideFor = it => () => (!here && it.board && !discovering() ? posts.boardOf(it.board.id).then(sp => (sp ? null : descOf(it.board.id))) : discovering() && it.board ? descOf(it.board.id) : null);
+  const outsideFor = it => () => posts.outsideOf(it.ref);
 
   // A POST in a list: its look is the kind's (`cards`); its votes and its tools given. Its own page: `item-page`.
   function postCard(p) {
@@ -229,8 +213,8 @@ export async function mount(ctx, el) {
     return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: empty })]), older];
   }
 
-  // A public space's description (Discover): from the public list.
-  const descOf = async id => (await posts.publicSpaces()).find(d => d.id === id) ?? null;
+  // A public space's description (Discover): `items.publicSpace`.
+  const descOf = posts.publicSpace;
   let shownPost = null;
   async function postPage(ref) {
     const w = route();
@@ -241,45 +225,11 @@ export async function mount(ctx, el) {
     return [await (await ctx.require("item-page")).show(ref, { item: p, outside, app: "board", back: base(), discover: discovering() })];
   }
 
+  // CREATE: the one composer (`publisher.form`, the text domain's) — in this space, or from outside a public board.
   async function submitPage(board) {
-    const sp = board ? await posts.boardOf(board) : null;
-    // A space this person is not in, whose policy lets anyone post: posted from outside (`items.submit`'s `outside`).
-    const outside = board && !sp ? await descOf(board) : null;
-    const said = h("p", { className: "said", hidden: true });
-    // FILES on the post: public where the post is (a public board, a public profile post: keyed by their content, the
-    // whole network dedups them), else sealed for the space (or you) — asked as each is picked.
-    // WHO SEES IT: the one picker (`audience`) — its files put public exactly when the post is.
-    const who = await (await ctx.require("audience")).picker({ space: sp, kind: "post" });
-    const pick = attachments.picker({ space: sp, from: { app: "board" }, media: true, publish: true, public: () => who.isPublic() });
-    const ed = mdEditor.create({ pick, label: "Text" });
-    const f = h(
-      "form",
-      { className: "panel reply" },
-      h("h3", { textContent: "Create a post" }),
-      sp || outside ? h("p", {}, `To b/${space.shown(sp ?? outside)}.`) : null,
-      // From outside: public, as the board is (who sees it and who answers it: the space's policy).
-      outside ? null : who.el,
-      h("label", {}, "Title", h("input", { className: "field", name: "title", maxLength: 300, autocomplete: "off", required: true })),
-      h("label", {}, "Text (optional) — Markdown; 🖼 puts an image, a video or an audio where you write it"),
-      ed.el,
-      h("div", { className: "row" }, said, h("button", { className: "go", textContent: "Post" })),
-    );
-    f.onsubmit = async e => {
-      e.preventDefault();
-      said.hidden = true;
-      const btn = f.querySelector("button.go");
-      if (pick.busy()) return errorTo(said)(new Error("Still sending the files: a moment…"));
-      btn.disabled = true;
-      try {
-        const ref = await posts.submit({ board: sp?.id ?? outside?.id ?? null, outside, title: f.elements.title.value, body: ed.value(), audience: outside ? "public" : who.value(), write: who.write(), files: pick.files() });
-        location.hash = `${base()}/p/${ref}`;
-      } catch (err) {
-        errorTo(said)(err);
-      } finally {
-        btn.disabled = false;
-      }
-    };
-    return [f];
+    const sp = board ? (await posts.boardOf(board)) ?? (await descOf(board)) : null;
+    const f = await (await ctx.require("publisher")).form({ domain: "text", space: sp, app: "board", onPublished: ({ item }) => (location.hash = `${base()}/p/${item}`) });
+    return [h("div", { className: "panel" }, h("h3", { textContent: "Create a post" }), f)];
   }
 
   // What is drawn (its route): the loader's route event right after mounting names the same page — drawing it again

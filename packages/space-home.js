@@ -47,7 +47,7 @@ export async function mount(ctx, el) {
   // FROM OUTSIDE (a space this person is not in, listed in Discover): what it says it is, its members, its apps — each
   // public one opened from outside where its app reads a space from outside (Board), else after joining — and Join.
   async function outside() {
-    const desc = (await (await ctx.require("items")).publicSpaces().catch(() => [])).find(d => d.id === ctx.space);
+    const desc = await (await ctx.require("items")).publicSpace(ctx.space);
     if (!desc) return root.replaceChildren(h("p", { className: "none", textContent: "This space is not listed (private, or not found yet): join it with an invite code." }));
     const pr = await roles.ofPublic(desc);
     await pr.settled;
