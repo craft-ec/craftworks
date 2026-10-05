@@ -326,7 +326,8 @@ fn replied_<H: Host>(h: &mut H, c: &Held, reply: Reply, now_ms: u64) -> Vec<Io> 
                 Ok(io) => match rec.end() {
                     Some(End::Done { row, old }) => {
                         let burn = rec.burnable().map(|x| (old_key_of(&due), old, table::hex(&x)));
-                        identity::upkeep_say(h, &r.member, &format!("{}…: re-keyed with no page open", due.short()));
+                        let root_id = rec.root.map(|root| table::hex(&crate::upkeep::id_of(&c.piece, &craftworks_files::hashed_address(&rec.new_key, &root)))).unwrap_or_default();
+                        identity::upkeep_say(h, &r.member, &format!("{}…: re-keyed with no page open (key {}…, root contract {}…)", due.short(), &table::hex(&rec.new_key)[..8], &root_id[..root_id.len().min(12)]));
                         write_row(h, &c, r, &due, &row, burn, now_ms)
                     }
                     _ => {

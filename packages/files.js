@@ -272,8 +272,12 @@ export async function start(ctx) {
         (async () => {
           const key = bytes(ref.key);
           // Each index piece fetched by its hash (the reference's for the root).
-          const state = await fetchState(core.file_root_id(key, ref.root), `${ref.name}: its root`);
-          if (!state) throw new Error(`${ref.name}: not found on the network (yet)`);
+          const rootId = core.file_root_id(key, ref.root);
+          const state = await fetchState(rootId, `${ref.name}: its root`);
+          if (!state) {
+            ctx.log("files", { what: `${ref.name}: its root ${rootId.slice(0, 12)}… not there (key ${ref.key.slice(0, 8)}…, root ${ref.root.slice(0, 8)}…)` });
+            throw new Error(`${ref.name}: not found on the network (yet)`);
+          }
           const root = JSON.parse(glue.file_root(key, ref.root, state));
           // The hash of index piece `n` at `level` (from its parent, read once): what a hash-addressed one is fetched by.
           const inner = new Map();

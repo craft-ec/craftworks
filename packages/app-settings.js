@@ -116,7 +116,8 @@ export async function start(ctx) {
     book: { title: "Book", fields: ["read", "post", "comment", "vote"].map(action => ({ action, path: "book", label: `Who may ${action}` })), saved: async (c, r, sp) => c["book|read"] === "anyone" && madePublic(r, sp) },
     chat: { title: "Chat", fields: [{ action: "post", path: "chat", label: "Who may post (in every channel that does not say otherwise)" }], extra: chatChannels },
     note: { title: "Note", fields: [{ action: "post", path: "note", label: "Who may add notes" }, { action: "edit", path: "note", label: "Who may edit notes" }] },
-    drive: { title: "Drive", fields: [{ action: "read", path: "drive", label: "Who may read" }, { action: "post", path: "drive", label: "Who may upload" }, { action: "edit", path: "drive", label: "Who may move files" }] },
+    // Drive shows the FILE domain: its rules are the domain's (`kinds.policyDomain`), as Board's are the text domain's.
+    drive: { title: "Drive", fields: [{ action: "read", path: "file", label: "Who may read" }, { action: "post", path: "file", label: "Who may upload" }, { action: "edit", path: "file", label: "Who may move files" }] },
   };
   // CHAT's own rows: its channels, each with who may post in it.
   async function chatChannels(host, r, sp) {

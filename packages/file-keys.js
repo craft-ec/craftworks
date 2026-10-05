@@ -35,7 +35,8 @@ export async function start(ctx) {
   // WHICH ROWS ARE DUE in a space, and what each is due to become (public or salted).
   async function due(sp, r) {
     const st = await files.salt(sp);
-    const readsAnyone = row => !shared(sp) || r?.policy(row.app ?? "drive", "read") === "anyone";
+    // Whether a row's content reads in public: its DOMAIN's rule (a Drive upload's is the file domain's).
+    const readsAnyone = row => !shared(sp) || r?.policy(!row.app || row.app === "drive" ? "file" : row.app, "read") === "anyone";
     const out = [];
     for (const row of await files.rows(sp)) {
       const pub = !!row.pub && readsAnyone(row);

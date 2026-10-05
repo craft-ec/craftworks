@@ -156,7 +156,8 @@ pub fn plan(r: &Reading, g: &craftworks_gov::Gov, members: &[String], me: &str, 
     // WHO TAKES TURNS: the members, less anyone the acts put out (removed, banned, left) — a group this member holds
     // from before the removal still lists them, and a removed member ranked first would hold every row up.
     let ranked: Vec<String> = members.iter().filter(|m| !g.gone.contains(*m) && !g.bans.contains(*m)).cloned().collect();
-    let reads_anyone = |app: &str| g.effective(app, "read", f64::INFINITY) == "anyone";
+    // Its content's DOMAIN's rule (a Drive upload's is the file domain's), as the page's `file-keys`.
+    let reads_anyone = |app: &str| g.effective(if app == "drive" { "file" } else { app }, "read", f64::INFINITY) == "anyone";
     let mut due = Vec::new();
     for row in key_rows(&files) {
         let public = row.public() && reads_anyone(row.app());
