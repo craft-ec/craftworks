@@ -52,7 +52,7 @@ export async function start(ctx) {
   // the member the PIN opens there is moved here, so an update never costs anyone their login.
   async function unlock(pin) {
     const r = await unlock_(pin);
-    if (r.unlocked) retireEarlier(pin);
+    if (r.unlocked) retireEarlier(pin, r.movedFrom ?? null);
     return r;
   }
   // The EARLIER builds' upkeep for this member, retired (an empty mandate each): every build stays on the node and
@@ -60,12 +60,22 @@ export async function start(ctx) {
   // under its own. Newest first, up to the first that does not hold this PIN: a member is in every build from the one
   // that made it (a handover keeps the PIN), and each wrong PIN counts against a build's tries — at most one here. A
   // build that answers nothing (still loading, or one that never runs) counted no try: passed over. In the background.
-  async function retireEarlier(pin) {
+  // On the way, every earlier build holding the member hands the EPOCH KEYS this build lacks (`epochsOnly`): the member
+  // may have been moved from an older one (a newer build slow to answer), and a key only a newer build got — a space's
+  // later epoch — would otherwise be lost (seen: "no key here for epoch 17").
+  async function retireEarlier(pin, movedFrom) {
     for (const prior of ctx.identityPrior) {
       const r = await id.retireFrom(prior, pin).catch(e => ({ said: e.message }));
-      ctx.log("earlier build", { what: `${prior.slice(0, 12)}…: ${r.retired ? "its upkeep retired" : r.silent ? "no answer (passed over)" : `stopped here (${r.said})`}` });
+      let keys = "";
+      if (r.retired && prior !== movedFrom) {
+        const k = await id.moveKeysFrom(prior, pin, { epochsOnly: true }).catch(e => ({ said: e.message }));
+        keys = k.said ? `; its keys not read (${k.said})` : `; its keys gathered (${k.moved} account epoch(s), ${k.spaces} space(s))`;
+      }
+      ctx.log("earlier build", { what: `${prior.slice(0, 12)}…: ${r.retired ? `its upkeep retired${keys}` : r.silent ? "no answer (passed over)" : `stopped here (${r.said})`}` });
       if (!r.retired && !r.silent) return;
     }
+    // Keys gathered: what reads with them is read again.
+    dispatchEvent(new CustomEvent("craftworks:keys"));
   }
   async function unlock_(pin) {
     const r = await id.unlock(pin);
@@ -90,6 +100,7 @@ export async function start(ctx) {
       const bytes = x => (x ? hexBytes(x) : new Uint8Array(0));
       const p = await id.provision(bytes(h.handed.seed), bytes(h.handed.did), pin, bytes(h.handed.data));
       ctx.log("member moved", { what: `from the earlier build ${prior.slice(0, 12)}…: ${p.unlocked ? "logged in" : JSON.stringify(p)}` });
+      p.movedFrom = prior;
       // Its keys too (the account's group, the epochs it could read), before anything reads a table.
       if (p.unlocked) {
         const k = await id.moveKeysFrom(prior, pin).catch(e => ({ moved: 0, said: e.message }));

@@ -161,13 +161,15 @@ export async function start(ctx) {
     // A member's KEYS from an earlier build, kept here: its account group (state, every epoch's secret), then each of
     // its SPACES' groups — so an update keeps its place in every group. A build from before either answers nothing it
     // can read: that part is simply not moved.
-    moveKeysFrom: async (prior, pin) => {
+    // `{ epochsOnly }`: an OLDER build's keys GATHERED (the member came from another): only the epoch secrets this
+    // build lacks — never its group state, which may be older than the one held here (a group rolled back).
+    moveKeysFrom: async (prior, pin, { epochsOnly = false } = {}) => {
       const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
       // One group into this build: every epoch's secret, then its state with the newest one.
       const keepGroup = async (mls, epochs, space) => {
         for (const [e, secret] of epochs) await call(core.frames_epoch_keep(e, bytes(secret), space), "keeping an epoch's key");
         const newest = epochs[epochs.length - 1];
-        if (mls && newest) await call(core.frames_mls_save(bytes(mls), newest[0], bytes(newest[1]), space), "keeping a group's keys");
+        if (mls && newest && !epochsOnly) await call(core.frames_mls_save(bytes(mls), newest[0], bytes(newest[1]), space), "keeping a group's keys");
       };
       const k = (await askPrior(prior, core.frames_handover_keys_from(prior, pin), "the member's keys"))?.handedKeys;
       if (k) await keepGroup(k.mls, k.epochs, NONE);
