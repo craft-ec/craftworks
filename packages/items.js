@@ -194,6 +194,9 @@ export async function start(ctx) {
               if (inB.get(k) !== v) await b.putOwn(k, v);
             } else if (inB.has(k)) await b.dropOwn(k);
           }
+          // TAKEN BACK (a vote, a save, a reaction undone; a row deleted): its public copy goes too — the public table
+          // mirrors this person's rows, never keeps one they no longer have (a save undone still counted, seen).
+          for (const k of inB.keys()) if (!inA.has(k)) await b.dropOwn(k);
           // DISCOVER: each public row listed where readers find it (this device's public board of the space).
           const where = { w: sp.self, t: space.board(sp, { pub: true }).messages, sp: { id: sp.id, name: sp.name } };
           for (const [k, v] of inA) {
