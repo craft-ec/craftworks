@@ -1,6 +1,7 @@
 //! THE IDENTITY DELEGATE the node runs: the identity's rules (`craftworks_identity::serve_bytes`) over the real delegate
 //! context, and UPKEEP when the node wakes it. The entry is behind `freenet-main-delegate` (OFF natively).
 
+pub mod recode;
 pub mod rekey;
 pub mod table;
 pub mod write;
@@ -79,6 +80,7 @@ mod entry {
                         Code::Bag => identity::UPKEEP_BAG,
                         Code::Tail => identity::UPKEEP_TAIL,
                         Code::Sealed => identity::UPKEEP_SEALED,
+                        Code::Piece => identity::UPKEEP_PIECE,
                     };
                     let Some(code) = identity::Host::get_secret(c, key) else { continue };
                     let contract = ContractContainer::from(ContractWasmAPIVersion::V1(WrappedContract::new(

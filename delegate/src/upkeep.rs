@@ -33,6 +33,8 @@ pub enum Code {
     Tail,
     /// A tree block of a sealed table (a flush from upkeep).
     Sealed,
+    /// A file's piece (a re-key from upkeep): its `piece` contract.
+    Piece,
 }
 
 /// What the network answered.

@@ -464,6 +464,7 @@ dependencies = [
  "craftworks-bag-contract",
  "craftworks-data",
  "craftworks-feed",
+ "craftworks-files",
  "craftworks-gov",
  "craftworks-identity",
  "craftworks-idlog-contract",

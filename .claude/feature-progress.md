@@ -825,7 +825,9 @@ come with keepers as a new codec version.
           move; control without a removal. KNOWN GAP: the page checks each credential's signer against the DID's key log,
           upkeep trusts the MLS roster) R4c DUE + ROTATE in Rust: `acts`/`pub-acts` replayed by `gov` → removals; the group without them; salt
           rotated (upkeep randomness); due rows as `file-keys.js`; the same rank/takeover hash as pages.
-    - [ ] R4d RECODE: a generation per step (GET fragments → decode → encode under the new key → PUT pieces), index and
+    - [x] (10-05: `delegate/src/recode.rs`; test: a 5 MiB file, 3 fragments lost, re-keyed salt 0→1, read whole under
+          the new key, old pieces burned with the row's secret — old reference reads nothing; an old-key mutant caught.
+          Left to a page: rows with no content hash, indexes deeper than one level) R4d RECODE: a generation per step (GET fragments → decode → encode under the new key → PUT pieces), index and
           root, row changed, old pieces burned; progress `p/<id>` shared with pages; a budget per wake-up.
     - [ ] R4e WIRING + LIVE: wake-ups run re-key rounds after admissions; identity rebuilt (one PIN re-entry); fx/fy: A
           removes B with A's page closed → A's delegate re-keys; B's old reference not found.

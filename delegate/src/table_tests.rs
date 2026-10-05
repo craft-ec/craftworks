@@ -378,3 +378,124 @@ fn a_removal_rotates_the_salt_once_the_group_moved_and_its_rows_come_due() {
     let v: serde_json::Value = serde_json::from_slice(rows[2].1.as_ref().unwrap()).unwrap();
     assert_eq!((v["n"].as_i64(), v["removals"].as_u64()), (Some(1), Some(1)));
 }
+
+// ---- R4d: a file re-keyed ----
+
+use super::recode::{self, End, Recode, Target};
+use craftworks_files as files;
+
+const PIECE: &[u8] = b"the piece contract's code";
+fn piece_hash() -> [u8; 32] {
+    contract_keys::code_hash(PIECE)
+}
+fn sha256(b: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(b).into()
+}
+/// A file stored under `key` with `burn`: its pieces on the network; its root's hash.
+fn store_file(net: &mut Net, key: &[u8; 32], content: &[u8], burn: &[u8; 32]) -> [u8; 32] {
+    let plan = files::Plan::of(content.len() as u64);
+    let mut stored = Vec::new();
+    for g in 0..plan.gens {
+        let (a, b) = plan.range(g);
+        let mut listed = Vec::new();
+        for (j, p) in files::encode(key, &plan, g, &content[a as usize..b as usize], files::EXTRA) {
+            listed.push((j, p.hash()));
+            net.0.insert(upkeep::id_of(&piece_hash(), &p.address), [&[2u8][..], burn, &p.state].concat());
+        }
+        stored.push(listed);
+    }
+    let (pieces, root) = files::index_hashed(key, &plan, &stored);
+    for p in pieces {
+        net.0.insert(upkeep::id_of(&piece_hash(), &p.address), [&[2u8][..], burn, &p.state].concat());
+    }
+    root
+}
+/// A piece as a reader takes it: live only.
+fn live_piece(net: &Net, address: &[u8; 32]) -> Option<Vec<u8>> {
+    let st = net.0.get(&upkeep::id_of(&piece_hash(), address))?;
+    (st.first() == Some(&2) && st.len() > 33).then(|| st[33..].to_vec())
+}
+/// The file read back whole by a reader holding `key` and `root`.
+fn read_file(net: &Net, key: &[u8; 32], root: &[u8; 32]) -> Option<Vec<u8>> {
+    let r = files::Root::open(key, root, &live_piece(net, &files::hashed_address(key, root))?).ok()?;
+    let plan = r.plan;
+    let mut out = Vec::new();
+    for (n, leaf) in r.children.iter().enumerate() {
+        let gens = files::open_leaf(key, &plan, n as u64, leaf, &live_piece(net, &files::hashed_address(key, leaf))?).ok()?;
+        for (i, listed) in gens.into_iter().enumerate() {
+            let g = (n * files::GENS_PER_LEAF + i) as u64;
+            let mut d = files::Decoder::new(key, &plan, g, listed.clone());
+            for (j, _) in &listed {
+                if let Some(st) = live_piece(net, &files::fragment_address(key, g, *j)) {
+                    let _ = d.add(*j, &st);
+                }
+            }
+            out.extend(d.plain().ok()?);
+        }
+    }
+    Some(out)
+}
+
+#[test]
+fn a_file_is_re_keyed_under_the_new_salt_read_whole_and_its_old_pieces_burned() {
+    let content: Vec<u8> = (0..5 * 1024 * 1024 + 777u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+    let h = *blake3::hash(&content).as_bytes();
+    let (s0, s1) = ([0x50; 32], [0x51; 32]);
+    let old_key = files::content_key(&h, Some(&s0));
+    let secret0 = recode::burn_secret(&s0, &old_key);
+    let burn0 = sha256(&secret0);
+    let mut net = Net::default();
+    let root0 = store_file(&mut net, &old_key, &content, &burn0);
+    // Some fragments lost (fewer than its spare ones): it still reads.
+    for j in [0u8, 3, 7] {
+        net.0.remove(&upkeep::id_of(&piece_hash(), &files::fragment_address(&old_key, 0, j)));
+    }
+    let row = serde_json::json!({ "key": table::hex(&old_key), "root": table::hex(&root0), "b": table::hex(&burn0),
+        "x": table::hex(&secret0), "h": table::hex(&h), "n": 0, "pub": false, "app": "drive" }).to_string();
+
+    let mut hs = Secrets::default();
+    let (mut r, mut todo) = Recode::start(&piece_hash(), "f1", &row, &Target { salt: Some((s1, 1)) }).unwrap();
+    assert!(!r.same());
+    let mut gets = 0;
+    while let Some(io) = (!todo.is_empty()).then(|| todo.remove(0)) {
+        match io {
+            Io::Get { id, .. } => {
+                gets += 1;
+                todo.extend(r.got(&mut hs, &piece_hash(), id, net.0.get(&id).cloned()).unwrap());
+            }
+            Io::Put { code: upkeep::Code::Piece, params, state } => {
+                let id = upkeep::id_of(&piece_hash(), &params);
+                net.0.insert(id, state);
+                todo.extend(r.put(&mut hs, &piece_hash(), id, true).unwrap());
+            }
+            other => panic!("a re-key only GETs and PUTs pieces: {other:?}"),
+        }
+    }
+    let Some(End::Done { row: new_row, old }) = r.end() else { panic!("re-keyed") };
+    let v: serde_json::Value = serde_json::from_str(&new_row).unwrap();
+    let new_key = files::content_key(&h, Some(&s1));
+    assert_eq!(v["key"].as_str(), Some(table::hex(&new_key).as_str()));
+    assert_eq!(v["n"].as_i64(), Some(1));
+    let new_root: [u8; 32] = (0..32).map(|i| u8::from_str_radix(&v["root"].as_str().unwrap()[2 * i..2 * i + 2], 16).unwrap()).collect::<Vec<_>>().try_into().unwrap();
+    assert_eq!(read_file(&net, &new_key, &new_root).as_deref(), Some(content.as_slice()), "read whole under the new key ({gets} GETs)");
+    assert_ne!(v["x"], serde_json::Value::String(table::hex(&secret0)), "a new burn secret");
+    // Its fragments' secrets cleaned out of the node.
+    assert!(hs.0.iter().all(|(k, v)| !k.starts_with(b"identity_upkeep/rekey/frag/") || v.is_empty()));
+
+    // The OLD pieces BURNED with the secret its row kept: then the old reference reads nothing.
+    let secret = r.burnable().expect("its old pieces were this space's");
+    assert_eq!(secret, secret0);
+    assert!(read_file(&net, &old_key, &root0).is_some(), "control: the old reference reads before the burn");
+    for address in old {
+        net.0.insert(upkeep::id_of(&piece_hash(), &address), recode::burned(&secret));
+    }
+    assert!(read_file(&net, &old_key, &root0).is_none(), "the old reference reads nothing once burned");
+    assert_eq!(read_file(&net, &new_key, &new_root).as_deref(), Some(content.as_slice()), "the new one still reads");
+}
+
+#[test]
+fn a_row_with_no_content_hash_is_left_to_a_page() {
+    let row = serde_json::json!({ "key": table::hex(&[1; 32]), "root": table::hex(&[2; 32]), "n": -2 }).to_string();
+    assert!(Recode::start(&piece_hash(), "f", &row, &Target { salt: Some(([3; 32], 1)) }).is_err());
+}
