@@ -1240,15 +1240,23 @@ for individual sorting, tags for global categorization, a setting to view NSFW o
 ## HISTORY in the storage layer (owner 10-05: "records on prolly tree… history"; baseline 7 days and 20 versions;
 ## premium a higher ceiling later; personal and shared spaces the same; every kind)
 Today a tail row is replaced in place and a flush replaces the root: old versions sit in unreferenced blocks, unkept.
-- [ ] H1 data crate (new fns only — the identity delegate links this crate; its hash must stay 5dea06e6): `root()`,
+- [x] H1 data crate (new fns only — the identity delegate links this crate; its hash must stay 5dea06e6): `root()`,
       `value_at(root, key)` (prolly::read::get through the same Step/Need loop), `pending_rows_without(key)`,
       `asset_at(root)` for keep.
-- [ ] H2 ROOT LOG: after each flush, the replaced root (+ when) appended to a reserved row of the table, pruned to
+- [x] H2 ROOT LOG: after each flush, the replaced root (+ when) appended to a reserved row of the table, pruned to
       7 days; flush-when-quiet ignores that row (no flush loop). A version = the state after a quiet period (edits
       within one are one version) — honest grain without a flush per keystroke.
-- [ ] H3 KEEP also keeps the blocks every logged root reaches, until it ages out.
-- [ ] H4 items.history(ref): each member's feed walked root by root → [{ at, by (the feed's writer), value }],
+- [x] H3 KEEP also keeps the blocks every logged root reaches, until it ages out.
+- [x] H4 items.history(ref): each member's feed walked root by root → [{ at, by (the feed's writer), value }],
       consecutive duplicates folded, newest 20; History view (item page, note) with Restore.
 - [ ] H5 Retention a space setting (≤ the plan's ceiling: baseline 7 d / 20 v); premium ceiling with payments.
 Known limit: a table RESEALED (an epoch moved after a removal) starts its history again — older trees sit under the
 old key's addresses.
+
+## 2026-10-05 session
+- [x] History H1–H4 live (2ca407d): flush logs replaced root (7 d), keep keeps logged roots' blocks, items.history, 🕘 History + Restore. H5 (retention as a space setting) open. Not yet tested live.
+- [x] Key catch-up on load: a member behind the owner's branch asks every member; any member on the branch answers (5e8eccb, 8198d25). Awaiting TinyIvvor's test.
+- [x] Publisher confirms pieces served (re-put if not); loader never replays a failed cached piece (d2fe15c). Test nodes run with their own HOME (shared webapp_cache clobbering).
+- [x] Mentions one way (person:DID links → card; inbox notices checked against the item), shared links open from any address/custom domain, header search + 🔔 + @ (9a663d8).
+- [ ] Untested: chat mention opens AT the message; 🔔 with real unread; History live.
+- [ ] Your node log: contracts HQk7zGRQ…/J4bh5TcQ… reject updates every few minutes — not identified.
