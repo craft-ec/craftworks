@@ -186,8 +186,9 @@ export async function start(ctx) {
   }
   const ownerBranch = async sp => (await ownerBranches(sp))[0] ?? null;
   // BEHIND: this node's keys of a space not on the owner's branch at the owner's epoch (a welcome that opened onto an
-  // older branch; a restored account's) — it reads nothing new there. On EVERY LOAD it asks the owner and the admins
-  // to welcome it again onto the owner's branch (`welcome-again`, a repair: each ask answered), until it is on it.
+  // older branch; a restored account's) — it reads nothing new there. On EVERY LOAD it asks the owner, the admins and
+  // the other members to welcome it again onto the owner's branch (`welcome-again`, a repair: each ask answered by any
+  // member on that branch — nobody new is let in), until it is on it.
   const caughtUpAsked = new Set();
   async function catchUp(sp) {
     if (caughtUpAsked.has(sp.id)) return false;
@@ -200,7 +201,10 @@ export async function start(ctx) {
     if (st.epoch >= own.epoch && (await g.fingerprint(own.epoch).catch(() => null)) === own.branch) return false;
     caughtUpAsked.add(sp.id);
     const r = await (await ctx.require("roles")).of(sp).catch(() => null);
-    const to = [...new Set([r?.owner ?? sp.governance?.owner, ...(r?.members() ?? []).filter(m => ["owner", "admin"].includes(m.role)).map(m => m.did)].filter(d => d && d !== me.id))];
+    // Its people as the public acts list them too (this node may read none of the space's own acts yet).
+    const pub = await (await ctx.require("roles")).ofPublic(sp).then(async p => (await p.settled, p.members()), () => []);
+    const byRole = [...(r?.members() ?? []), ...pub].sort((a, b) => ["owner", "admin"].includes(b.role) - ["owner", "admin"].includes(a.role));
+    const to = [...new Set([r?.owner ?? sp.governance?.owner, ...byRole.map(m => m.did)].filter(d => d && d !== me.id))].slice(0, 12);
     for (const did of to) await index.send(did, { kind: "welcome-again", space: sp.id, from: me.id, repair: true, at: Date.now() }).catch(e => ctx.log("conversation", { what: `${sp.name}: asking ${short(did)} for its keys: ${e.message}` }));
     ctx.log("conversation", { what: `${sp.name}: this node's keys are behind the owner's (epoch ${st.epoch}, theirs ${own.epoch}) — asked ${to.length} to welcome it onto theirs` });
     return true;
@@ -290,7 +294,8 @@ export async function start(ctx) {
           if (sp.kind !== "direct") {
             const r = await (await ctx.require("roles")).of(sp);
             await r.settled;
-            belongs = r.members().some(m => m.did === it.from) && (sp.kind === "group" || r.can(me.id, "invite"));
+            // A REPAIR lets nobody new in: any member answers it (from the owner's branch, checked below).
+            belongs = r.members().some(m => m.did === it.from) && (sp.kind === "group" || it.repair || r.can(me.id, "invite"));
           }
           if (!belongs) continue;
           const name = sp.kind === "direct" ? ((await directory.card(me.id))?.handle ?? short(me.id)) : sp.name;
@@ -298,6 +303,8 @@ export async function start(ctx) {
           // the space's record says was repaired already.
           const own = it.repair ? await ownerBranch(sp).catch(() => null) : null;
           if (it.repair && !own) continue;
+          // Only from ON the owner's branch: a welcome from another branch would leave them as behind as before.
+          if (own && (await keys.group(sp).fingerprint(own.epoch).catch(() => null)) !== own.branch) continue;
           await welcome(sp, it.from, name, null, own ? { epoch: own.epoch, branch: own.branch } : undefined);
           await once.put(k, String(Date.now()));
           ctx.log("conversation", { what: `${short(it.from)} could not open a ${own ? "repair " : ""}welcome into ${sp.name ?? "a conversation"}: welcomed again` });
