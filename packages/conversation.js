@@ -538,6 +538,7 @@ export async function start(ctx) {
     await directory.publish().catch(() => {});
     await index.request(openCode(desc.id), { kind: "join", did: me.id, at: Date.now() });
     await noteAsk(desc.id, { name: desc.name ?? null });
+    ctx.log("conversation", { what: `asked to join ${desc.name ?? desc.id.slice(0, 8)} (its open door)` });
   }
   // ASK AGAIN for every request still waiting (the card's key packages renewed: a welcome made from the old ones
   // never opens): the request made anew, so whoever admits sees one newer than the admission and welcomes again.
@@ -634,10 +635,16 @@ export async function start(ctx) {
   // The request for this space, while not in it: `{ at, name }`, or null.
   async function asked(id) {
     if ((await space.mine()).some(s => s.id === id)) return null;
-    const t = await asks();
-    await t.settled;
-    const r = t.rows().find(x => x.key === id && x.value);
-    return r ? parseAsk(r) : null;
+    const t = await asks().catch(() => null);
+    await t?.settled;
+    const r = t?.rows().find(x => x.key === id && x.value);
+    if (r) return parseAsk(r);
+    // THE REQUEST ITSELF (its open door's bag, on the network): the one fact — the account's record of it is a copy
+    // that can be missing (not saved yet: a page closed while "Asking…"; a write that failed).
+    const me = await space.account();
+    const mine = me ? (await index.requests(openCode(id)).catch(() => [])).filter(q => q?.kind === "join" && q.did === me.id) : [];
+    const at = Math.max(0, ...mine.map(q => q.at ?? 0));
+    return at ? { key: id, at } : null;
   }
   // Requests by CODE still waiting (none joined since they were made): `[{ code, at }]`.
   async function askedCodes() {
