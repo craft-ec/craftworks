@@ -48,6 +48,8 @@ export async function start(ctx) {
         // BEHIND on its keys (a welcome onto an older branch): the owner and admins asked to welcome this node onto
         // theirs, once each load — before anything that needs the acts this node cannot read yet.
         await conversation.catchUp(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: catching up: ${e.message}` }));
+        // What this page cannot read here, reported into the space (seen by any member on Members & roles).
+        await conversation.reportReads(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: reporting reads: ${e.message}` }));
         const r = await roles.of(sp).catch(() => null);
         // The acts hold in the group: whoever is banned, removed or has left and is still in it, out — by ANY member
         // (the acts already decided it; the group's one order refuses a second commit of the same removal).

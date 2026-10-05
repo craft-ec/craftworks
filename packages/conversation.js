@@ -201,9 +201,25 @@ export async function start(ctx) {
       const repaired = ptrs.filter(p => p?.repair === m.did);
       const by = repaired.length ? await Promise.all(repaired.map(async p => (await directory.name(Object.keys(await whoseDevice(p.w, r)).at(0) ?? "").catch(() => null)) ?? short(p.w ?? ""))) : [];
       const state = !a ? "not announced" : !own ? "unknown" : a.epoch === own.epoch && a.branch === own.branch ? "current" : a.epoch < own.epoch ? "behind" : a.epoch === own.epoch ? "another branch" : "ahead";
-      out.set(m.did, { state, epoch: a?.epoch ?? null, branch: a?.branch ?? null, devices: anns.length, repairedBy: by });
+      // What their page REPORTED it cannot read here (`reportReads`): the newest report of each of their devices.
+      const reports = devs.map(w => ptrs.filter(p => p?.reads && p.w === w).sort((x, y) => (y.reads.at ?? 0) - (x.reads.at ?? 0))[0]).filter(Boolean);
+      const unread = [...new Set(reports.flatMap(p => (Array.isArray(p.reads.unread) ? p.reads.unread : []).map(String)))].slice(0, 6);
+      out.set(m.did, { state, epoch: a?.epoch ?? null, branch: a?.branch ?? null, devices: anns.length, repairedBy: by, unread, reported: Math.max(0, ...reports.map(p => p.reads.at ?? 0)) || null });
     }
     return { owner: own ? { epoch: own.epoch, branch: own.branch } : null, members: out };
+  }
+  // WHAT THIS PAGE CANNOT READ in a space (`storage.problemsIn`), reported into its writers list — only when it
+  // changes (the last report kept in the account's upkeep marks): any member then sees it (`keyStatus`).
+  async function reportReads(sp) {
+    const storage = await ctx.require("storage");
+    const unread = storage.problemsIn(sp.id).slice(0, 5);
+    const key = `reads:${sp.id}`;
+    const was = await storage.upkeepMark(key).catch(() => null);
+    const now = JSON.stringify(unread);
+    if (was === now || (was === null && !unread.length)) return false;
+    await index.spacePoint(sp, "writers", { w: sp.self, reads: { unread, at: Date.now() } });
+    await storage.setUpkeepMark(key, now).catch(() => {});
+    return true;
   }
   // The member a device writes for (`{ did: true }`), among this space's members.
   async function whoseDevice(w, r) {
@@ -259,7 +275,7 @@ export async function start(ctx) {
       if (!fp || fp === ann.branch) continue;
       try {
         await welcome(sp, did, sp.name, null, { epoch: own.epoch, branch: own.branch });
-        await index.spacePoint(sp, "writers", { repair: did, for: ann.branch });
+        await index.spacePoint(sp, "writers", { w: sp.self, repair: did, for: ann.branch });
         ctx.log("conversation", { what: `${sp.name}: ${short(did)} was on another branch of its keys — welcomed back onto the owner's` });
         out.push(did);
       } catch (e) {
@@ -331,6 +347,8 @@ export async function start(ctx) {
           // Only from ON the owner's branch: a welcome from another branch would leave them as behind as before.
           if (own && (await keys.group(sp).fingerprint(own.epoch).catch(() => null)) !== own.branch) continue;
           await welcome(sp, it.from, name, null, own ? { epoch: own.epoch, branch: own.branch } : undefined);
+          // A catch-up recorded in the space (who welcomed whom: `keyStatus`'s "caught up by").
+          if (own) await index.spacePoint(sp, "writers", { w: sp.self, repair: it.from, for: own.branch }).catch(() => {});
           await once.put(k, String(Date.now()));
           ctx.log("conversation", { what: `${short(it.from)} could not open a ${own ? "repair " : ""}welcome into ${sp.name ?? "a conversation"}: welcomed again` });
         } catch (e) {
@@ -1076,5 +1094,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, repair, catchUp, keyStatus, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
+  return { direct, group, invite, accept, repair, catchUp, keyStatus, reportReads, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
 }

@@ -89,16 +89,30 @@ export async function start(ctx) {
     for (const l of lost) core.tail_epoch_key_also(id, l.epoch, bytes(glue.epoch_table_key(bytes(l.secret), app)));
     return lost.length;
   }
+  // WHAT DOES NOT READ here, per space (`problemsIn`): a table with no key for an epoch, a sealed one that does not
+  // open, another member's feed that fails — what this page reports into the space (`conversation.reportReads`), so any
+  // member sees it on Members & roles without asking for a log. Cleared when it reads after all.
+  const problems = new Map(); // space id (hex) → Map(what → when)
+  const spaceKey = x => (!x ? null : typeof x === "string" ? x : [...x].map(b => b.toString(16).padStart(2, "0")).join(""));
+  const problem = (sp, what) => {
+    const k = spaceKey(sp);
+    if (!k) return;
+    const m = problems.get(k) ?? new Map();
+    m.set(String(what).slice(0, 160), Date.now());
+    problems.set(k, m);
+  };
+  const solved = (sp, prefix) => problems.get(spaceKey(sp))?.forEach((_, w, m) => w.startsWith(prefix) && m.delete(w));
   async function epochKeys(idHex, epochs, app) {
     const spaceId = live.get(idHex)?.spaceId ?? null;
     for (const e of epochs) {
       const k = await access.keyAt(app, e, { catalog: app === CATALOG, space: spaceId });
       core.tail_epoch_key(bytes(idHex), e, k.key ? bytes(k.key) : new Uint8Array(0), false);
       const u = unkeyed.get(idHex) ?? { app, epochs: new Set() };
-      if (k.key) u.epochs.delete(e);
+      if (k.key) (u.epochs.delete(e), solved(spaceId, `${app}: no key for epoch ${e}`));
       else {
         u.epochs.add(e);
         ctx.log("table sealed", { what: `${app}: no key here for epoch ${e} (${k.why})` });
+        problem(spaceId, `${app}: no key for epoch ${e} (${k.why})`);
       }
       if (u.epochs.size) unkeyed.set(idHex, u);
       else unkeyed.delete(idHex);
@@ -317,7 +331,7 @@ export async function start(ctx) {
       mark("key");
       t.sealed = !!k.key;
       if (k.key) core.tail_seal(id, bytes(k.key));
-      else if (!open) ctx.log("table sealed", { what: `${app}: no key here (${k.why}): nothing of it reads` });
+      else if (!open) (ctx.log("table sealed", { what: `${app}: no key here (${k.why}): nothing of it reads` }), problem(spaceId, `${app}: no key (${k.why})`));
       // WRITES are sealed with the account's newest EPOCH (a node removed from the account then reads nothing written
       // after): the group brought current first. Not a channel (a node reads the MLS channel before it has any epoch),
       // and the catalog not after the group (the group's channel is found through it). No group here: the table's key.
@@ -395,6 +409,7 @@ export async function start(ctx) {
         t.absent = false;
         t.unreadable = said.said;
         ctx.log("table unreadable", { what: `${app}: ${said.said}` });
+        problem(spaceId, `${app}: unreadable (${said.said})`);
         return;
       }
       if (said.kind !== "get-failed") said = await settle(said, app);
@@ -865,6 +880,7 @@ export async function start(ctx) {
         tail(owner, name, { known, ...(cat ? { catalog: cat } : {}), ...opts, lazy }).catch(e => {
           unopened += 1;
           ctx.log("feed not read", { what: `${name}: ${owner.slice(0, 12)}…: ${e.message}` });
+          problem(sp.id, `${name}: ${owner.slice(0, 8)}…'s feed not read (${e.message})`);
           return null;
         });
       let rows = [];
@@ -1266,5 +1282,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { own: ownTables, table, log, publicTail, readOnly, describe, describeSpaces, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], own: ownTables, table, log, publicTail, readOnly, describe, describeSpaces, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }
