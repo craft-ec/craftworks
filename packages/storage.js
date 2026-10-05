@@ -271,7 +271,11 @@ export async function start(ctx) {
       history: async key => {
         const k = typeof key === "string" ? enc.encode(key) : key;
         const out = [];
+        // Within the retention, whenever it is read (the log is pruned only by the next flush: a table not written
+        // again keeps older entries, never shown).
+        const since = Date.now() - HISTORY.days * 86400e3;
         for (const [at, root] of core.tail_root_log(id)) {
+          if (at < since) continue;
           try {
             for (let round = 0; round < 24; round++) {
               const r = core.tail_value_at(id, root, k);

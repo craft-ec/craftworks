@@ -52,7 +52,9 @@ export async function start(ctx) {
       await items.editItem(it.ref, ed.value().trim(), { files: ed.files(), meta: { ...(it.meta ?? {}), tags } }).then(done, e => ((said.textContent = e.message ?? String(e)), (said.hidden = false)));
       save.disabled = false;
     };
-    host.replaceChildren(h("div", { className: "editing" }, ed.el, tg.el, h("div", { className: "row" }, said, h("button", { type: "button", textContent: "Cancel", onclick: () => done() }), save)));
+    // ITS HISTORY where it is edited (`history`): an earlier version restored instead of saving this.
+    const hist = (await ctx.require("history")).button(it.ref, { current: it, restored: () => done() });
+    host.replaceChildren(h("div", { className: "editing" }, ed.el, tg.el, h("div", { className: "row" }, said, hist, h("button", { type: "button", textContent: "Cancel", onclick: () => done() }), save)));
     ed.focus();
   }
 

@@ -15,6 +15,8 @@
 //   actions.saved()         // the refs this person saved, newest first (any kind) — every app's Saved (`where`)
 export async function start(ctx) {
   const [items, edge, space, signals, labelUI, history] = await Promise.all(["items", "edge", "space", "signals", "label-menu", "history"].map(n => ctx.require(n)));
+  // A menu placed in the window by its button (`attachments.fitMenu`: never clipped by the card it is in).
+  const fit = (menu, anchor) => ctx.require("attachments").then(a => a.fitMenu(menu, anchor), () => {});
   const pins = await edge.pins();
   const me = async () => (await space.account()).id;
   const style = document.createElement("style");
@@ -96,7 +98,7 @@ export async function start(ctx) {
     const draw = () =>
       el.replaceChildren(
         ...Object.entries(counts()).map(([emoji, n]) => h("button", { type: "button", className: `chip${mine().has(emoji) ? " mine" : ""}`, textContent: `${emoji} ${short(n)}`, onclick: e => (e.preventDefault(), toggle(emoji)) })),
-        h("button", { type: "button", className: "chip", title: "React", textContent: "☺︎+", onclick: e => (e.preventDefault(), (pick.hidden = !pick.hidden)) }),
+        h("button", { type: "button", className: "chip", title: "React", textContent: "☺︎+", onclick: e => (e.preventDefault(), (pick.hidden = !pick.hidden), pick.hidden || fit(pick, e.currentTarget)) }),
         pick,
       );
     draw();
@@ -140,7 +142,7 @@ export async function start(ctx) {
   // person's card and a space's.
   function more(it, { changed, fail }) {
     const menu = h("span", { className: "pick more-menu", hidden: true });
-    const wrap = h("span", { className: "cw-reacts" }, h("button", { type: "button", className: "chip", title: "Hide or flag", textContent: "⋯", onclick: e => (e.preventDefault(), e.stopPropagation(), (menu.hidden = !menu.hidden), menu.hidden || draw()) }), menu);
+    const wrap = h("span", { className: "cw-reacts" }, h("button", { type: "button", className: "chip", title: "Hide or flag", textContent: "⋯", onclick: e => (e.preventDefault(), e.stopPropagation(), (menu.hidden = !menu.hidden), menu.hidden || draw().then(() => fit(menu, e.currentTarget))) }), menu);
     const post = { by: it.by, id: it.id ?? String(it.ref).split("/").pop() };
     const sid = it.board?.id ?? null;
     const draw = async () => {
@@ -238,7 +240,7 @@ export async function start(ctx) {
           !mine ? more(it, { changed, fail }) : null,
           mine && edit && !discover ? btn("Edit", edit) : null,
           // HISTORY: its earlier versions, once it was changed (`history`; Restore where this person may edit it).
-          it.edited && !outside && !discover ? btn("🕘 History", e => history.open(e.currentTarget, it.ref, { current: it, restored: () => changed?.() })) : null,
+          (it.edited || mine) && !outside && !discover ? btn("🕘 History", e => history.open(e.currentTarget, it.ref, { current: it, restored: () => changed?.() })) : null,
           it.mayRemove
             ? btn(mine ? "Delete" : "Remove", async e => {
                 if (e.target.dataset.armed !== "1") return ((e.target.dataset.armed = "1"), (e.target.textContent = `Confirm: ${mine ? "delete" : "remove"}`));

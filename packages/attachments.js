@@ -79,13 +79,23 @@ export async function start(ctx) {
 
   // A MENU opened beside its button: on the side with more room (above or below), never past the screen — as tall as
   // that side allows, scrolling within. Every attach and insert menu opens through it.
+  // A MENU placed in the WINDOW by its anchor (fixed: never clipped by a card or a list that hides what spills out),
+  // above or below it — wherever there is more room under the top bar — and within the window's width.
   function fitMenu(menu, anchor = menu.parentElement) {
     const r = anchor.getBoundingClientRect();
-    const above = r.top - 8;
+    const top = Math.max(0, document.querySelector(".bar")?.getBoundingClientRect().bottom ?? 0);
+    const above = r.top - top - 8;
     const below = innerHeight - r.bottom - 8;
     const up = above > below;
-    Object.assign(menu.style, { top: up ? "auto" : "100%", bottom: up ? "100%" : "auto", maxHeight: `${Math.max(120, up ? above : below)}px`, overflowY: "auto", boxSizing: "border-box" });
+    Object.assign(menu.style, { position: "fixed", top: up ? "auto" : `${r.bottom + 4}px`, bottom: up ? `${innerHeight - r.top + 4}px` : "auto", maxHeight: `${Math.max(120, up ? above : below)}px`, overflowY: "auto", boxSizing: "border-box", zIndex: "80" });
+    // Within the window's width: its left by the anchor, moved in when it would spill out.
+    menu.style.left = "0px";
+    menu.style.right = "auto";
+    const w = menu.offsetWidth;
+    menu.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
   }
+  // A placed menu follows nothing: closed when the page scrolls under it.
+  addEventListener("scroll", e => document.querySelectorAll(".cw-att-menu, .cw-reacts .pick").forEach(m => m.style.position === "fixed" && !m.hidden && !m.contains(e.target) && (m.hidden = true)), true);
   function picker({ space = null, public: pub = false, from = null, media = false, publish = false } = {}) {
     const chips = h("span", { className: "cw-att-pick" });
     // 📎: this device, or Drive.

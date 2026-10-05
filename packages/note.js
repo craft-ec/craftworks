@@ -294,7 +294,7 @@ export async function mount(ctx, el) {
     // HISTORY: its earlier versions (`history`), restored over what is open — the note closed without saving it.
     const hSlot = editor.querySelector(".history-slot");
     hSlot.replaceChildren();
-    if (n.item?.edited)
+    if (n.item)
       ctx.require("history").then(
         hi => editing?.key === n.key && hSlot.replaceChildren(hi.button(n.key, () => ({ current: n.item, restored: () => ((editing = null), editor.close(), reload()) }))),
         () => {},

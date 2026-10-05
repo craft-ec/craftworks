@@ -150,6 +150,15 @@ export function mount(ctx, el) {
       if (ref) {
         const page = /#\/\S*\/p\//.test(q) ? q.slice(q.indexOf("#")) : null;
         groups.push(["Open", [h("button", { type: "button", textContent: "🔗 Open this item", onclick: async () => go(page ?? items.pageOf(ref, (await items.get(ref).catch(() => null))?.kind ?? "post")) })]]);
+      } else if (/^did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64}$/.test(q)) {
+        // A PERSON's id: their card, and their space.
+        const shownAs = (await ctx.require("directory")).nameEl(q);
+        groups.push(["Person", [h("button", { type: "button", onclick: e => person.open(e.currentTarget, q) }, "👤 ", shownAs, " — their card"), h("a", { href: `#/u/${q}`, textContent: "🏠 Their space", onclick: e => (e.preventDefault(), go(`#/u/${q}`)) })]]);
+      } else if (/^(space:)?[0-9a-f]{64}$/.test(q)) {
+        // A SPACE's id: opened (yours, or a public one).
+        const id = q.replace(/^space:/, "");
+        const known = [...(await space.mine().catch(() => [])), ...(await items.publicSpaces().catch(() => []))].find(s => s.id === id);
+        groups.push(["Space", [h("a", { href: `#/s/${id}`, textContent: `🏠 ${known?.name ?? "This space"}`, onclick: e => (e.preventDefault(), go(`#/s/${id}`)) })]]);
       } else if (/^#[^\s#]+$/.test(q)) {
         groups.push(["Tag", [h("a", { href: `#/tag/${encodeURIComponent(q.slice(1).toLowerCase())}`, textContent: `# ${q.slice(1).toLowerCase()}`, onclick: e => (e.preventDefault(), go(`#/tag/${encodeURIComponent(q.slice(1).toLowerCase())}`)) })]]);
       } else {
