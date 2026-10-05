@@ -182,13 +182,17 @@ impl Core {
         prior: &str,
         req: &Request,
     ) -> Result<(u32, Vec<Vec<u8>>), String> {
+        // Handing a member over, or RETIRING its upkeep there (its PIN, then an empty mandate: a build the member
+        // left still wakes every minute, and would act on the mandate it last held).
         if !matches!(
             req,
             Request::Handover { .. }
                 | Request::HandoverKeys { .. }
                 | Request::HandoverSpaces { .. }
-        ) {
-            return Err("an earlier build is asked only to hand a member over".into());
+                | Request::Unlock { .. }
+        ) && !matches!(req, Request::UpkeepMandate { spaces, spent, .. } if spaces.is_empty() && spent.is_empty())
+        {
+            return Err("an earlier build is asked only to hand a member over or to retire its upkeep".into());
         }
         let b32 = |s: &str| -> Result<[u8; 32], String> {
             bs58::decode(s)
@@ -849,6 +853,31 @@ mod js {
             let (id, f) = self
                 .0
                 .frames_prior(prior, &Request::HandoverSpaces { pin })
+                .map_err(err)?;
+            Ok([JsValue::from(id), JsValue::from(frames(f))]
+                .into_iter()
+                .collect())
+        }
+        /// `[id, frames]` of an Unlock asked of an earlier build (before retiring its upkeep there).
+        pub fn frames_unlock_from(
+            &mut self,
+            prior: &str,
+            pin: String,
+        ) -> Result<js_sys::Array, JsValue> {
+            let (id, f) = self
+                .0
+                .frames_prior(prior, &Request::Unlock { pin })
+                .map_err(err)?;
+            Ok([JsValue::from(id), JsValue::from(frames(f))]
+                .into_iter()
+                .collect())
+        }
+        /// `[id, frames]` of an EMPTY mandate handed to an earlier build (its session's member): its upkeep does nothing
+        /// more for them.
+        pub fn frames_retire_upkeep_from(&mut self, prior: &str) -> Result<js_sys::Array, JsValue> {
+            let (id, f) = self
+                .0
+                .frames_prior(prior, &Request::UpkeepMandate { me: String::new(), spaces: Vec::new(), spent: Vec::new() })
                 .map_err(err)?;
             Ok([JsValue::from(id), JsValue::from(frames(f))]
                 .into_iter()

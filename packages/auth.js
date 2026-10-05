@@ -51,6 +51,23 @@ export async function start(ctx) {
   // secrets stay with its build): on a PIN this build does not know, the earlier builds are asked, newest first, and
   // the member the PIN opens there is moved here, so an update never costs anyone their login.
   async function unlock(pin) {
+    const r = await unlock_(pin);
+    if (r.unlocked) retireEarlier(pin);
+    return r;
+  }
+  // The EARLIER builds' upkeep for this member, retired (an empty mandate each): every build stays on the node and
+  // wakes every minute, and one the member left would act on its last mandate — admitting by stale rules, re-keying
+  // under its own. Newest first, up to the first that does not hold this PIN: a member is in every build from the one
+  // that made it (a handover keeps the PIN), and each wrong PIN counts against a build's tries — at most one here. A
+  // build that answers nothing (still loading, or one that never runs) counted no try: passed over. In the background.
+  async function retireEarlier(pin) {
+    for (const prior of ctx.identityPrior) {
+      const r = await id.retireFrom(prior, pin).catch(e => ({ said: e.message }));
+      ctx.log("earlier build", { what: `${prior.slice(0, 12)}…: ${r.retired ? "its upkeep retired" : r.silent ? "no answer (passed over)" : `stopped here (${r.said})`}` });
+      if (!r.retired && !r.silent) return;
+    }
+  }
+  async function unlock_(pin) {
     const r = await id.unlock(pin);
     if (!r.wrongPin) return r;
     let silent = false;

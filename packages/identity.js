@@ -175,6 +175,15 @@ export async function start(ctx) {
       for (const x of sp) await keepGroup(x.mls, x.epochs, bytes(x.space));
       return { moved: k?.epochs.length ?? 0, group: !!k?.mls, spaces: sp.length };
     },
+    // RETIRE an earlier build's upkeep for this member: its PIN there, then an empty mandate — a build the member left
+    // still wakes every minute and would act on the last mandate it held. `{ retired }`, or why not (`silent`: it
+    // answered nothing, so no try was counted there).
+    retireFrom: async (prior, pin) => {
+      const u = await askPrior(prior, core.frames_unlock_from(prior, pin), "a session");
+      if (!u?.unlocked) return { silent: !!u?.silent || !u, said: u?.silent || !u ? "no answer" : u?.wrongPin ? "not a member there" : JSON.stringify(u) };
+      const m = await askPrior(prior, core.frames_retire_upkeep_from(prior), "retiring its upkeep");
+      return m?.upkeep ? { retired: true } : { said: m?.silent ? "no answer" : JSON.stringify(m) };
+    },
     handoverFrom: async (prior, pin) => (await askPrior(prior, core.frames_handover_from(prior, pin), "the member")) ?? { missing: true },
   };
 }

@@ -811,7 +811,7 @@ come with keepers as a new codec version.
   - [ ] R4 the delegate works due rows on wake-up (no page open). Owner 10-05: "Build it fully" (told: ~1,850 lines of
         page logic to port, one identity change). PHASES (each: build, test, commit):
     - [x] (10-05, tests 2/2 + a cap mutant caught) R4a SPACE TABLE READER in the delegate (`delegate/src/table.rs`, a pure step machine like upkeep): writers =
-          the group roster's credential WRITER keys (a DID writes a space under `space_writer`, the same on every device);
+          each member's DEVICE keys (key log → card `nodes` → credentials; a page writes a space under its member key);
           the writers bag (sealed with epoch 0's `bag-writers` key, AES-GCM) narrows whose catalogs are asked; each
           writer's catalog `x<id12>-tables` → table listed (blinded: `blind_name(space_table_key)`) → its feed tail →
           tree blocks (Sealed) → epoch keys (`identity::epoch_secret`) → `feed` merge → rows; `departed` caps. Tested
@@ -829,8 +829,20 @@ come with keepers as a new codec version.
           the new key, old pieces burned with the row's secret — old reference reads nothing; an old-key mutant caught.
           Left to a page: rows with no content hash, indexes deeper than one level) R4d RECODE: a generation per step (GET fragments → decode → encode under the new key → PUT pieces), index and
           root, row changed, old pieces burned; progress `p/<id>` shared with pages; a budget per wake-up.
-    - [ ] R4e WIRING + LIVE: wake-ups run re-key rounds after admissions; identity rebuilt (one PIN re-entry); fx/fy: A
-          removes B with A's page closed → A's delegate re-keys; B's old reference not found.
+    - [~] R4e WIRING + LIVE: wake-ups run re-key rounds after admissions (live: rounds read every space, say what is due).
+          BLOCKED BY THE NODE (measured 10-05 on fx, node log): a delegate's PutContractRequest of a NEW contract is stored
+          on its own node and broadcast only to interested peers — none for a new piece (BROADCAST_NO_TARGETS, giving
+          up); every client GET (its own node's page too: no local interest) answers NotFound. Same on 0.2.140/141;
+          freenet #5542 open. So the re-keyed rows pointed at pieces nobody could read (big-file3/4 on fx lost that way).
+          NOW: `upkeep::NEW_CONTRACTS_REACH_THE_NETWORK = false` — upkeep writes only to contracts already there (the
+          salt rotation into an existing feed); a file's new pieces, a new feed, a flush's blocks: left to a page, said
+          ("left to a page — its new pieces would stay on this node"). Test + gate mutant. Live: big-file5 left to a page.
+          Turn the const on when a delegate PUT reaches the network.
+    - [x] (10-05) EARLIER BUILDS' UPKEEP RETIRED: every identity build stays registered and wakes every minute; a build
+          the member left acted on its last mandate (live: an older build re-keyed big-file5 after the new one left it to
+          a page). On a PIN login the page hands each earlier build (newest first) an Unlock + an EMPTY mandate, up to
+          the first that does not hold the PIN (one wrong try at most; a silent build is passed over). Live fx: 7 builds
+          retired. Builds from before the fresh start (other Request layout) are not in identity-history: not asked.
   - [x] R5 leaving a space removes the leaver's nodes from its group (a leave = a removal): gov `leave` act + `gone`
         set (test 12/12), moderation.enforce takes out gone DIDs' nodes (upkeep, every 30 s on an admin's page).
   - [x] R6 BURN old pieces at re-key: new `piece` contract (contracts-src/piece, 2 tests; wasm d48911c4…), first
