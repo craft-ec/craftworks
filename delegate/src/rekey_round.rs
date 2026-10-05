@@ -106,7 +106,10 @@ fn space_of<H: Host>(h: &H, member: &[u8; 32], m: &identity::Mandate) -> Option<
             Some((node.try_into().ok()?, craftworks_account::did(&did)))
         })
         .collect();
-    let epochs = (0..=m.epoch).filter_map(|e| Some((e, identity::epoch_secret(h, member, m.space, e)?))).collect();
+    // EVERY epoch held (the page keeps each one as the group moves, before any mandate names it): a row sealed with
+    // an epoch newer than the mandate's group — a new salt after a removal — still reads.
+    let top = identity::latest_epoch(h, member, m.space).unwrap_or(m.epoch).max(m.epoch);
+    let epochs = (0..=top).filter_map(|e| Some((e, identity::epoch_secret(h, member, m.space, e)?))).collect();
     Some((roster, epochs))
 }
 

@@ -416,6 +416,10 @@ pub fn upkeep_set_tick<H: Host>(h: &mut H, m: &[u8; KEY_LEN]) -> bool {
 pub fn epoch_secret<H: Host>(h: &H, m: &[u8; KEY_LEN], space: [u8; 32], epoch: u64) -> Option<[u8; 32]> {
     secret_in(h, m, &Some(space), epoch)
 }
+/// The newest epoch of a space the member holds the secret of (the group may have moved past what a mandate says).
+pub fn latest_epoch<H: Host>(h: &H, m: &[u8; KEY_LEN], space: [u8; 32]) -> Option<u64> {
+    latest_in(h, m, &Some(space))
+}
 pub fn keep_epoch<H: Host>(h: &mut H, m: &[u8; KEY_LEN], space: Option<[u8; 32]>, epoch: u64, secret: &[u8; 32]) -> bool {
     let latest = latest_in(h, m, &space);
     // The secret, then the newest mark if this epoch is newer (a node joining with the words keeps the epochs it
