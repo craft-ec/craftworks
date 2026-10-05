@@ -197,7 +197,8 @@ export async function start(ctx) {
     };
     // THE DEFAULT where nothing is set: what anyone may READ, anyone may comment on and vote on (public participation:
     // outsiders' part kept in their own profiles, `items`); everything else as the core's default (members).
-    const PUBLIC_WRITES = new Set(["comment", "vote"]);
+    // (`signals`: the interactions open where anyone reads — comment, vote.)
+    const PUBLIC_WRITES = new Set(S.interactions().filter(a => a.openWhereRead).map(a => a.action));
     const fallback = (read, action, at) => (PUBLIC_WRITES.has(action) && read === "anyone" ? "anyone" : gv.effective("", action, at));
     // A SIGNAL's own action with nothing set: its parent's (`signals`: save, share → read; react, tag → vote).
     const policyOf = (path, action, at) =>

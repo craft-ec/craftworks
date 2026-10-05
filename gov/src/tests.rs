@@ -342,3 +342,15 @@ fn a_signals_own_action_takes_a_policy_and_an_unknown_one_does_not() {
     assert_eq!(g.policy_at("text", "save", 1e15), Some("admins"), "a signal's action (save) is a policy action");
     assert_eq!(g.policy_at("text", "teleport", 1e15), None, "control: an action no one declared is dropped");
 }
+
+#[test]
+fn every_interaction_the_pages_catalog_names_is_an_action_here() {
+    // `packages/signals.js` declares each interaction's policy action (`action: "…"`); a policy for one this list lacks
+    // would be dropped at replay — the two must not drift.
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../packages/signals.js")).expect("the catalog");
+    let named: Vec<&str> = src.split("action: \"").skip(1).filter_map(|r| r.split('"').next()).collect();
+    assert!(named.len() >= 6, "the catalog's actions found: {named:?}");
+    for a in &named {
+        assert!(*a == "read" || ACTIONS.contains(a), "the catalog names `{a}`, which is not a policy action here");
+    }
+}

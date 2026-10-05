@@ -9,7 +9,8 @@
 // - `action`: the POLICY action it is checked against — inherited as every policy is (the item's own rule, else its
 //   domain's in its space, else the space's). A signal with its OWN action names its parent (`inherits`): where no
 //   rule is set for it, its parent's applies — save and share as who may READ, react and tag as who may VOTE; a view is
-//   who may read. Every settings page lists these (`policyActions`), so a new one appears there by itself.
+//   who may read. Every settings page and the composer list every interaction from here (`interactions`, comment included), so a
+//   new one appears there by itself.
 // - `counted`: shown as a count (on cards, an item's page) to whoever reads the item; `noun`: its words.
 // - `point`: an outsider's points them in the space's bag (so the space finds it); `activity`: counts toward Hot and
 //   Rising.
@@ -21,7 +22,10 @@
 //   signals.summary(item)       // " · 3 views · 1 save" — its counted signals, in one wording everywhere
 export async function start() {
   const CATALOG = [
-    { id: "vote", mark: ["▲", "▼"], value: "updown", action: "vote", counted: false, point: true, activity: true },
+    // A COMMENT: kept as an item of its own (kind `comment`), not a reaction — here for its PERMISSION alone, so every
+    // interaction's rule is declared in one place. `openWhereRead`: where anyone reads, anyone may (public participation).
+    { id: "comment", mark: null, value: "item", action: "comment", label: "Who may comment", openWhereRead: true, counted: false, point: true, activity: false },
+    { id: "vote", mark: ["▲", "▼"], value: "updown", action: "vote", label: "Who may vote", openWhereRead: true, counted: false, point: true, activity: true },
     { id: "view", mark: "👁", value: "once", action: "read", counted: true, noun: ["view", "views"], point: true, activity: false },
     { id: "save", mark: "★", value: "once", action: "save", inherits: "read", label: "Who may save", counted: true, noun: ["save", "saves"], point: true, activity: true },
     { id: "share", mark: "↗", value: "once", action: "share", inherits: "read", label: "Who may share", counted: true, noun: ["share", "shares"], point: true, activity: true },
@@ -32,8 +36,10 @@ export async function start() {
     { id: "tag", mark: "#", value: "many", action: "tag", inherits: "vote", label: "Who may tag", counted: false, point: true, activity: true },
   ].map(s => Object.freeze(s));
   const byId = new Map(CATALOG.map(s => [s.id, s]));
+  // Only what is kept as a REACTION has a mark (a comment is an item).
   const byMark = new Map(CATALOG.filter(s => s.mark).flatMap(s => [s.mark].flat().map(m => [m, s])));
   const REACT = CATALOG.find(s => s.id === "react");
+  // `react`'s mark is "" (any emoji): kept out of the lookup by marks above, found by `isEmoji`.
   // A "many" signal's reaction carries its value after the mark (`#rust`); any other emoji is a REACTION.
   const markOf = e => (byMark.has(e) ? e : ([...byMark.keys()].find(m => byMark.get(m).value === "many" && String(e).startsWith(m)) ?? null));
   const isEmoji = e => /\p{Extended_Pictographic}/u.test(String(e ?? ""));
@@ -41,8 +47,10 @@ export async function start() {
   return {
     all: () => CATALOG,
     of: id => byId.get(id) ?? null,
-    // The policy actions signals add, each with its parent and its words: [{ action, inherits, label }].
-    policyActions: () => CATALOG.filter(s => s.inherits).map(s => ({ action: s.action, inherits: s.inherits, label: s.label })),
+    // EVERY INTERACTION's permission — comment, vote, react, save, share, tag, and any added here — in its order, with
+    // its words, its parent (unset: as it) and whether it is open where anyone reads: what every settings section, the
+    // composer and `roles` list. `[{ action, label, inherits, openWhereRead }]`.
+    interactions: () => CATALOG.filter(s => s.label).map(s => ({ action: s.action, label: s.label, inherits: s.inherits ?? null, openWhereRead: !!s.openWhereRead })),
     // An action's parent where no rule is set for it (or null).
     parentOf: action => CATALOG.find(s => s.inherits && s.action === action)?.inherits ?? null,
     byMark: e => signalOf(e),

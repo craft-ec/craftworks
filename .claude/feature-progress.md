@@ -1222,3 +1222,8 @@ for individual sorting, tags for global categorization, a setting to view NSFW o
       from the catalog with "Default (as who may …)"; the composer's "Who may interact" + Customize each. React hidden
       where not allowed. Live: Card test Board "Who may react: Admins" → B (outside) has no React on its posts,
       React still on profile posts.
+- [x] S11 (10-05) ONE CATALOG for every interaction's permission: comment joins `signals` (kept as an item, declared
+      for its rule), comment and vote declare `openWhereRead`; settings sections, the composer's Customize and roles'
+      public-participation default all read `signals.interactions()` — nothing per interaction written elsewhere. gov
+      test reads packages/signals.js: every action it names must be a gov ACTION (control: a renamed action fails).
+      Live fx: Card test settings list comment · vote · save · share · react · tag in one order with their defaults.

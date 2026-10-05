@@ -49,7 +49,7 @@ export async function start(ctx) {
     // where anyone reads (`roles`' default: public participation).
     // A signal's action with nothing set anywhere: as its parent (`signals`), said so.
     const parent = S.parentOf(action);
-    const inherited = from == null ? (parent ? r.policy(path, action) : r.personal || (["comment", "vote"].includes(action) && r.policy(path, "read") === "anyone") ? "anyone" : "members") : r.policy(from, action);
+    const inherited = from == null ? (parent ? r.policy(path, action) : r.personal || (S.interactions().some(a => a.action === action && a.openWhereRead) && r.policy(path, "read") === "anyone") ? "anyone" : "members") : r.policy(from, action);
     const LEVEL = p => (p === "" ? (r.personal ? "everything you post" : "the space") : p === "chat" ? "Chat" : p === "board" ? "Board" : p === "note" ? "Note" : p);
     // A personal space's: anyone · your followers · your friends · only you (`roles.personal`).
     // A shared space's: anyone (where it may) · members · admins · owner · nobody — and every ROLE composed there (its
@@ -57,7 +57,7 @@ export async function start(ctx) {
     const composed = r.personal || action === "join" ? [] : (r.roles?.() ?? []);
     const options = r.personal
       ? ["anyone", "followers", "friends", "author"].filter(w => !(action === "follow" && w === "followers"))
-      : [...["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || ["read", "join", "post", "comment", "vote", ...S.policyActions().map(a => a.action)].includes(action)), ...composed.map(ro => `role:${ro.id}`)];
+      : [...["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || ["read", "join", "post", ...S.interactions().map(a => a.action)].includes(action)), ...composed.map(ro => `role:${ro.id}`)];
     const named = w => NAMES[w] ?? (w?.startsWith("role:") ? `Role: ${(r.roles?.() ?? []).find(ro => `role:${ro.id}` === w)?.name ?? "deleted role"}` : w);
     const sel = h(
       "select",
@@ -85,7 +85,7 @@ export async function start(ctx) {
   const madePublic = async (r, sp) => (await r.publish().catch(() => {}), await (await ctx.require("index")).listSpace(sp));
   // A SIGNAL's own rule at a path (`signals`: react, save, share, tag — each, unset, as its parent): every settings
   // section lists them, so a new signal shows up here by itself.
-  const SIGNAL_FIELDS = path => S.policyActions().map(a => ({ action: a.action, path, label: a.label }));
+  const SIGNAL_FIELDS = path => S.interactions().map(a => ({ action: a.action, path, label: a.label }));
   const SECTIONS = {
     "": {
       title: "The space",
@@ -94,8 +94,6 @@ export async function start(ctx) {
         { action: "join", path: "", label: "Who may join (Anyone: whoever asks is let in; Members: by an invite)" },
         { action: "invite", path: "", label: "Who may invite (make invite codes, add people, let askers in)" },
         { action: "post", path: "", label: "Who may post (every app, unless it says otherwise)" },
-        { action: "comment", path: "", label: "Who may comment" },
-        { action: "vote", path: "", label: "Who may vote" },
         ...SIGNAL_FIELDS(""),
         { action: "edit", path: "", label: "Who may edit (shared notes and files)" },
       ],
@@ -111,17 +109,15 @@ export async function start(ctx) {
       fields: [
         { action: "read", path: "text", label: "Who may read (Anyone: public — its members and moderation too; posts made before stay as they were)" },
         { action: "post", path: "text", label: "Who may post" },
-        { action: "comment", path: "text", label: "Who may comment" },
-        { action: "vote", path: "text", label: "Who may vote" },
         ...SIGNAL_FIELDS("text"),
         { key: "rules", app: "board", label: "Rules (shown beside the board)" },
       ],
       saved: async (changed, r, sp) => changed["text|read"] === "anyone" && madePublic(r, sp),
     },
-    video: { title: "Video", fields: [...["read", "post", "comment", "vote"].map(action => ({ action, path: "video", label: `Who may ${action}` })), ...SIGNAL_FIELDS("video")], saved: async (c, r, sp) => c["video|read"] === "anyone" && madePublic(r, sp) },
-    audio: { title: "Audio", fields: [...["read", "post", "comment", "vote"].map(action => ({ action, path: "audio", label: `Who may ${action}` })), ...SIGNAL_FIELDS("audio")], saved: async (c, r, sp) => c["audio|read"] === "anyone" && madePublic(r, sp) },
-    image: { title: "Image", fields: [...["read", "post", "comment", "vote"].map(action => ({ action, path: "image", label: `Who may ${action}` })), ...SIGNAL_FIELDS("image")], saved: async (c, r, sp) => c["image|read"] === "anyone" && madePublic(r, sp) },
-    book: { title: "Book", fields: [...["read", "post", "comment", "vote"].map(action => ({ action, path: "book", label: `Who may ${action}` })), ...SIGNAL_FIELDS("book")], saved: async (c, r, sp) => c["book|read"] === "anyone" && madePublic(r, sp) },
+    video: { title: "Video", fields: [...["read", "post"].map(action => ({ action, path: "video", label: `Who may ${action}` })), ...SIGNAL_FIELDS("video")], saved: async (c, r, sp) => c["video|read"] === "anyone" && madePublic(r, sp) },
+    audio: { title: "Audio", fields: [...["read", "post"].map(action => ({ action, path: "audio", label: `Who may ${action}` })), ...SIGNAL_FIELDS("audio")], saved: async (c, r, sp) => c["audio|read"] === "anyone" && madePublic(r, sp) },
+    image: { title: "Image", fields: [...["read", "post"].map(action => ({ action, path: "image", label: `Who may ${action}` })), ...SIGNAL_FIELDS("image")], saved: async (c, r, sp) => c["image|read"] === "anyone" && madePublic(r, sp) },
+    book: { title: "Book", fields: [...["read", "post"].map(action => ({ action, path: "book", label: `Who may ${action}` })), ...SIGNAL_FIELDS("book")], saved: async (c, r, sp) => c["book|read"] === "anyone" && madePublic(r, sp) },
     chat: { title: "Chat", fields: [{ action: "post", path: "chat", label: "Who may post (in every channel that does not say otherwise)" }], extra: chatChannels },
     note: { title: "Note", fields: [{ action: "post", path: "note", label: "Who may add notes" }, { action: "edit", path: "note", label: "Who may edit notes" }] },
     // Drive shows the FILE domain: its rules are the domain's (`kinds.policyDomain`), as Board's are the text domain's.
@@ -219,12 +215,12 @@ export async function start(ctx) {
     // You, as followed: the same rule and credential as a comment on your post (`roles.followable`).
     SECTIONS["me:profile"] ??= { title: "You", fields: [{ action: "follow", path: "profile", label: "Who may follow you" }] };
     // EVERYTHING you post (the space's own level: every app inherits it unless it says otherwise).
-    SECTIONS["me:"] ??= { title: "Everything you post", fields: [{ action: "comment", path: "", label: "Who may comment (every app, unless it says otherwise)" }, { action: "vote", path: "", label: "Who may vote" }, ...SIGNAL_FIELDS("")] };
+    SECTIONS["me:"] ??= { title: "Everything you post", fields: SIGNAL_FIELDS("") };
     const forms = await Promise.all([
       section(null, "me:profile", r, me),
       section(null, "me:", r, me),
       ...Object.entries(PERSONAL).map(([key, title]) => {
-        SECTIONS[`me:${key}`] ??= { title, fields: [{ action: "comment", path: key, label: "Who may comment" }, { action: "vote", path: key, label: "Who may vote" }] };
+        SECTIONS[`me:${key}`] ??= { title, fields: SIGNAL_FIELDS(key) };
         return section(null, `me:${key}`, r, me);
       }),
     ]);
