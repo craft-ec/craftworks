@@ -1,7 +1,10 @@
 //! THE IDENTITY DELEGATE the node runs: the identity's rules (`craftworks_identity::serve_bytes`) over the real delegate
 //! context, and UPKEEP when the node wakes it. The entry is behind `freenet-main-delegate` (OFF natively).
 
+pub mod table;
 pub mod upkeep;
+#[cfg(test)]
+mod table_tests;
 #[cfg(test)]
 mod tests;
 

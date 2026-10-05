@@ -810,12 +810,13 @@ come with keepers as a new codec version.
         current key.
   - [ ] R4 the delegate works due rows on wake-up (no page open). Owner 10-05: "Build it fully" (told: ~1,850 lines of
         page logic to port, one identity change). PHASES (each: build, test, commit):
-    - [ ] R4a SPACE TABLE READER in the delegate (`delegate/src/table.rs`, a pure step machine like upkeep): writers =
+    - [x] (10-05, tests 2/2 + a cap mutant caught) R4a SPACE TABLE READER in the delegate (`delegate/src/table.rs`, a pure step machine like upkeep): writers =
           the group roster's credential WRITER keys (a DID writes a space under `space_writer`, the same on every device);
           the writers bag (sealed with epoch 0's `bag-writers` key, AES-GCM) narrows whose catalogs are asked; each
           writer's catalog `x<id12>-tables` → table listed (blinded: `blind_name(space_table_key)`) → its feed tail →
           tree blocks (Sealed) → epoch keys (`identity::epoch_secret`) → `feed` merge → rows; `departed` caps. Tested
-          against a scripted network with feeds written by the real data/feed crates.
+          against a scripted network with feeds written by the real data/feed crates. NOTE: identity.wasm 1.19→1.58 MB
+          and its hash moves with these deps — NOTHING is published until R4e (packages/build holds the new one).
     - [ ] R4b WRITER: this member's own feed of a table from the delegate (writers bag + catalog listing first when
           new), rows as feed versions, signed with `space_writer`, sealed with the newest epoch held.
     - [ ] R4c DUE + ROTATE in Rust: `acts`/`pub-acts` replayed by `gov` → removals; the group without them; salt

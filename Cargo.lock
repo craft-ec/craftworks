@@ -455,6 +455,7 @@ dependencies = [
 name = "craftworks-delegate"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "bincode",
  "blake3",
  "contract-keys",
@@ -462,6 +463,7 @@ dependencies = [
  "craftworks-account",
  "craftworks-bag-contract",
  "craftworks-data",
+ "craftworks-feed",
  "craftworks-identity",
  "craftworks-idlog-contract",
  "craftworks-mls",
@@ -471,6 +473,7 @@ dependencies = [
  "mls-rs-core",
  "serde",
  "serde_json",
+ "sha2",
  "tail",
 ]
 
