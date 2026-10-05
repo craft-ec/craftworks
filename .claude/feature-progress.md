@@ -1276,3 +1276,7 @@ old key's addresses.
 - [ ] 5 Remaining live checks
 - [ ] 6 Identify node-log contracts HQk7…/J4bh…
 - [ ] Drive files as items; rewards design doc
+- [ ] PASTE app (owner 10-06, queued after style work): kind `paste` in the note family (all note capabilities, global
+      search); its own app = a pastebin layout over the shared components (large monospace editor, Save → link, your
+      pastes, raw view). Plus note/audience options: UNLISTED (link only, not in Discover), EXPIRY; renderer: RAW view,
+      code SYNTAX highlighting.

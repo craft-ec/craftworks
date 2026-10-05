@@ -1,5 +1,5 @@
 // NOTES, an app in the manner of Google Keep: a "Take a note…" composer, notes as coloured cards in a masonry grid,
-// pinned notes first, archive, search, and grid or list. A PRIVATE page: nothing shows until someone is logged in.
+// pinned notes first, archive, and grid or list (search: the header's, across every app). A PRIVATE page: nothing shows until someone is logged in.
 // YOUR notes (`#/note`: the personal space's), or a SHARED space's (`#/s/<space>/note`, the space open,
 // when it uses Notes — its table `notes`, written and read by its members).
 //
@@ -192,10 +192,9 @@ export async function mount(ctx, el) {
       .then(reload)
       .catch(e => said(`Could not delete: ${e?.message ?? e}`));
 
-  // The view: Notes or Archive, grid or list, a search.
+  // The view: Notes or Archive, grid or list (finding one: the header's search, every app's).
   let archive = false;
   let list = false;
-  let query = "";
   let label = null; // showing one label's notes: its id
 
   // A colour picker under `anchor`; `pick(color)` on a choice.
@@ -381,13 +380,11 @@ export async function mount(ctx, el) {
     composer.hidden = others || archive || (!!rs && R.mayWrite({ action: "post", item: { kind: "note", by: null, meta: {} }, writer: meId, r: rs }) !== true);
     if (label && !labels.list().some(l => l.id === label)) label = null; // deleted meanwhile
     bar();
-    const q = query.toLowerCase();
     const inLabel = label ? new Set(labels.refs(label, "item:")) : null;
     const all = held
       .map(note)
       .filter(n => n.archived === archive)
       .filter(n => !inLabel || inLabel.has(ref(n.key)))
-      .filter(n => !q || `${n.title}\n${n.body}\n${labels.of(ref(n.key)).map(l => l.name).join("\n")}`.toLowerCase().includes(q))
       .sort((a, b) => (b.edited || 0) - (a.edited || 0) || (a.key < b.key ? 1 : -1));
     const pinned = all.filter(n => n.pinned && !archive);
     const rest = all.filter(n => !n.pinned || archive);
@@ -397,9 +394,7 @@ export async function mount(ctx, el) {
     root.querySelector(".others").replaceChildren(...rest.map(card));
     const empty = root.querySelector(".empty");
     empty.hidden = all.length > 0;
-    empty.textContent = q
-      ? "No matching notes."
-      : archive
+    empty.textContent = archive
         ? "Your archived notes appear here."
         : label
           ? "No notes with this label yet."
@@ -470,7 +465,6 @@ export async function mount(ctx, el) {
   // THE TABS (`where`'s, in every app's order): Your notes · the app's own · Discover.
   const actions = () => {
     at.tabs([
-      { search: v => ((query = v), render()), placeholder: sp ? `Search ${sp.name}'s notes` : others ? "Search these notes" : "Search your notes", value: query },
       { label: list ? "Grid view" : "List view", run: () => ((list = !list), render(), actions()) },
       ...(others ? [] : [{ label: "Archive", on: archive, run: () => ((archive = !archive), render(), actions()) }]),
     ], { yoursOn: !archive });
