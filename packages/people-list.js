@@ -22,7 +22,7 @@ export async function start(ctx) {
   document.head.append(style);
   const el = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids);
+    e.append(...kids.filter(k => k != null && k !== false));
     return e;
   };
   const SECTIONS = [

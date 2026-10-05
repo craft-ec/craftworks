@@ -69,7 +69,7 @@ export async function start(ctx) {
   document.head.append(style);
   const el = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids);
+    e.append(...kids.filter(k => k != null && k !== false));
     return e;
   };
   // A name clicked: what can be done with that person (asked for the first time a name is clicked).
