@@ -272,9 +272,13 @@ export async function start(ctx) {
           }
           if (!belongs) continue;
           const name = sp.kind === "direct" ? ((await directory.card(me.id))?.handle ?? short(me.id)) : sp.name;
-          await welcome(sp, it.from, name);
+          // A REPAIR that did not open: made again (onto the owner's branch, from their card as it is now) — whatever
+          // the space's record says was repaired already.
+          const own = it.repair ? await ownerBranch(sp).catch(() => null) : null;
+          if (it.repair && !own) continue;
+          await welcome(sp, it.from, name, null, own ? { epoch: own.epoch, branch: own.branch } : undefined);
           await once.put(k, String(Date.now()));
-          ctx.log("conversation", { what: `${short(it.from)} could not open a welcome into ${sp.name ?? "a conversation"}: welcomed again` });
+          ctx.log("conversation", { what: `${short(it.from)} could not open a ${own ? "repair " : ""}welcome into ${sp.name ?? "a conversation"}: welcomed again` });
         } catch (e) {
           ctx.log("conversation", { what: `welcoming ${short(it.from)} again: ${e.message}` });
         }
@@ -347,12 +351,13 @@ export async function start(ctx) {
       } catch (e) {
         const held = it.kp ? await keys.holdsTag(it.kp).catch(() => null) : null;
         // Made for a key package this account does not hold (its card from before): its sender asked — once — to
-        // welcome again from the card as it is now.
+        // welcome again from the card as it is now (renewed below). A REPAIR's too (this account on another branch of
+        // a space it has): asked again AS a repair — else it stays on that branch for good.
         const k = `asked-again:${it.space}|${(it.kp ?? it.welcome).slice(0, 32)}`;
-        if (!held && !done(k) && !had) {
+        if (!held && !done(k) && (!had || it.repair)) {
           unanswerable += 1; // seen failing for the first time (an old one already counted)
           await index
-            .send(it.from, { kind: "welcome-again", space: it.space, from: me.id, kp: it.kp ?? it.welcome.slice(0, 32), at: Date.now() })
+            .send(it.from, { kind: "welcome-again", space: it.space, from: me.id, kp: it.kp ?? it.welcome.slice(0, 32), ...(it.repair ? { repair: true } : {}), at: Date.now() })
             .then(() => once.put(k, String(Date.now())), err => ctx.log("conversation", { what: `asking ${short(it.from)} to welcome again: ${err.message}` }));
         }
         ctx.log("conversation", {

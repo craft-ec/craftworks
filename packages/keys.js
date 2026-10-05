@@ -855,7 +855,9 @@ export async function start(ctx) {
         return [];
       }
     }));
-    return (kps ?? []).some(k => offered.has(k));
+    // EVERY one: a card listing one this account does not hold makes a welcomer that picks it fail (seen: a repair
+    // welcome made for a package "never offered here", stuck for good).
+    return (kps ?? []).length > 0 && kps.every(k => offered.has(k));
   }
   // Whether a key package this account offered (by its TAG: sha-256, 16 bytes, hex — as `keypacks` names them) is held.
   async function holdsTag(tag) {
