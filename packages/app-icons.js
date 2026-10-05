@@ -5,7 +5,9 @@
 //   const icons = await ctx.require("app-icons");
 //   icons.grid(host, [{ app, href, count, pin, add, note }])   // pin: beside the link; add: fn (dimmed, "+ Add");
 //                                                              // no href: dimmed, `note` saying why
-export async function start() {
+//   icons.drawer(host, items, { empty })   // ALL APPS as a phone shows them: by name, or — this person's choice, kept
+//                                          // with their account — grouped by CATEGORY (the manifest's), a switch on top
+export async function start(ctx) {
   const style = document.createElement("style");
   style.textContent = `
     .cw-icons { display: grid; grid-template-columns: repeat(auto-fit, 96px); justify-content: center; gap: var(--cw-space-3); }
@@ -20,7 +22,10 @@ export async function start() {
     .cw-icons .off .icon, .cw-icons .off .name { opacity: .45; }
     .cw-icons .off button { font: inherit; font-size: var(--cw-text-xs); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-accent);
       border-radius: var(--cw-radius-pill); padding: 1px 8px; cursor: pointer; }
-    .cw-icons .empty { grid-column: 1 / -1; color: var(--cw-muted); font-size: var(--cw-text-sm); text-align: center; }`;
+    .cw-icons .empty { grid-column: 1 / -1; color: var(--cw-muted); font-size: var(--cw-text-sm); text-align: center; }
+    .cw-drawer { display: grid; gap: var(--cw-space-2); }
+    .cw-drawer .how { justify-self: center; color: var(--cw-muted); font-size: var(--cw-text-sm); }
+    .cw-drawer h4 { margin: var(--cw-space-2) 0 0; text-align: center; font-size: var(--cw-text-sm); color: var(--cw-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }`;
   document.head.append(style);
   const el = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
@@ -43,5 +48,33 @@ export async function start() {
     host.classList.add("cw-icons");
     host.replaceChildren(...(items.length ? items.map(tile) : empty ? [el("p", { className: "empty", textContent: empty })] : []));
   }
-  return { grid, tile };
+  // THE DRAWER: by name (the loader's order), or grouped by category — categories by name, "Other" last.
+  const GROUPED = "apps-grouped";
+  async function drawer(host, items, { empty = null } = {}) {
+    const prefs = await (await ctx.require("edge")).prefs().catch(() => null);
+    const grouped = () => !!prefs?.get(GROUPED);
+    const toggle = el("input", { type: "checkbox", checked: grouped() });
+    const draw = () => {
+      const body = [];
+      if (!grouped()) {
+        const g = el("div", {});
+        grid(g, items, empty);
+        body.push(g);
+      } else {
+        const cats = [...new Set(items.map(i => i.app.category ?? "Other"))].sort((a, b) => (a === "Other") - (b === "Other") || a.localeCompare(b));
+        for (const c of cats) {
+          const g = el("div", {});
+          grid(g, items.filter(i => (i.app.category ?? "Other") === c));
+          body.push(el("h4", { textContent: c }), g);
+        }
+      }
+      host.replaceChildren(el("div", { className: "cw-drawer" }, el("label", { className: "how" }, toggle, " Group by category"), ...body));
+    };
+    toggle.onchange = async () => {
+      await prefs?.set(GROUPED, toggle.checked);
+      draw();
+    };
+    draw();
+  }
+  return { grid, tile, drawer };
 }

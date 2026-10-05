@@ -101,12 +101,12 @@ export async function mount(ctx, el) {
     // An app ALWAYS there (Settings): never added or removed.
     const uses = a => a.always || on.includes(keyOf(a));
     const appGrid = h("div", {});
-    icons.grid(
+    icons.drawer(
       appGrid,
       sharedApps
         .filter(a => uses(a) || may)
         .map(a => (uses(a) ? { app: a, href: `#/s/${sp.id}${a.route}`, count: activity && ["chat", "board"].includes(keyOf(a)) ? activity.of(sp.id, keyOf(a)) : 0 } : { app: a, add: add(keyOf(a)) })),
-      "No apps yet: its owner or an admin adds them.",
+      { empty: "No apps yet: its owner or an admin adds them." },
     );
     const removable = may ? sharedApps.filter(a => !a.always && on.includes(keyOf(a))) : [];
     root.replaceChildren(

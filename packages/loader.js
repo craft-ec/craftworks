@@ -9,6 +9,9 @@
 // page is up even where the page needs none: to FOLLOW the app's and the loader's sites (below).
 const VERSION = "29";
 
+// THE APPS, as a phone lists them: by NAME (A–Z), each with its CATEGORY (the manifest's) — every list of apps (Home,
+// the header's menus, the spaces panel) in this one order.
+const appsOf = manifest => [...(manifest.apps ?? [])].sort((a, b) => String(a.name).localeCompare(String(b.name)));
 export async function run(boot) {
   const status = document.getElementById("status");
   const root = document.getElementById("app");
@@ -343,7 +346,7 @@ export async function run(boot) {
     manifest = JSON.parse(new TextDecoder().decode(m.bytes));
     ctx.app = manifest.app;
     // The site's APPS, as its manifest lists them ({ name, icon, route }): what a desktop shows.
-    ctx.apps = manifest.apps ?? [];
+    ctx.apps = appsOf(manifest);
     // The kinds of the person's data the site USES (["notes", "pins"]): asked for together, in one prompt.
     ctx.uses = manifest.uses ?? [];
     // Earlier builds of the identity delegate (`<key>:<code hash>`, newest first): where a member made before this
@@ -385,7 +388,7 @@ export async function run(boot) {
       const changed = names.filter(n => manifest.packages[n]?.sha256 !== next.packages[n]?.sha256);
       if (changed.some(n => (next.packages[n] ?? manifest.packages[n]).kind !== "module")) return false;
       manifest = next;
-      ctx.apps = manifest.apps ?? [];
+      ctx.apps = appsOf(manifest);
       for (const n of changed) loaded.delete(n), entries.delete(n), read.delete(n);
       for (const slot of Object.keys(filled)) filled[slot] = null;
       ctx.log("newest", { what: `taken in place (no reload): ${changed.join(", ") || "the manifest"}` });

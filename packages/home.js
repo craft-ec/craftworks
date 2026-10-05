@@ -82,7 +82,7 @@ export async function mount(ctx, el) {
       </style>
       <div class="desk">
         <h3>Pinned</h3><div class="grid pinned"></div>
-        <h3>All apps</h3><div class="grid all"></div>
+        <h3>All apps</h3><div class="all"></div>
       </div>`;
     // The icons show at once; the pins arrive when the account's desktop table has been read (a table the account
     // never wrote takes the network a while to report absent).
@@ -103,7 +103,7 @@ export async function mount(ctx, el) {
       const personal = ctx.apps.filter(a => (a.views ?? ["personal"]).includes("personal"));
       const mine = personal.filter(a => on.has(a.route));
       icons.grid(pinnedGrid, mine.map(item), "Pin an app with 📌 to keep it here.");
-      icons.grid(allGrid, personal.map(item));
+      icons.drawer(allGrid, personal.map(item));
     };
     render();
     Promise.all([ctx.require("edge").then(e => e.pins()), ctx.require("pin-button")]).then(
