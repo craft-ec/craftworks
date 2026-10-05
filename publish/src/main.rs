@@ -82,6 +82,41 @@ fn cut_package(webapp_code: &[u8], file: &str, bytes: &[u8]) -> Result<(Vec<Piec
     Ok((out, fields))
 }
 
+/// The pieces the node does NOT serve: each asked for (a GET, all at once on one connection), and those not answered
+/// with their state within 60 s of the last ask — refused, or silent — named by address.
+async fn not_served(ws: &str, pieces: &[&Piece]) -> Result<std::collections::HashSet<String>> {
+    use futures::{SinkExt, StreamExt};
+    let mut owed: std::collections::HashSet<String> = pieces.iter().map(|p| p.address.clone()).collect();
+    if owed.is_empty() {
+        return Ok(owed);
+    }
+    let (mut c, _) = tokio_tungstenite::connect_async(ws).await.context("the served check's connection")?;
+    let mut r = wire::Reassembler::new();
+    for (i, p) in pieces.iter().enumerate() {
+        let id = ContractInstanceId::from_base58(&p.address).map_err(|e| anyhow::anyhow!("{}: {e}", p.address))?;
+        for f in wire::frame_get(id, false, 1 + i as u32).map_err(|e| anyhow::anyhow!(e))? {
+            c.send(Message::Binary(f.into())).await?;
+        }
+    }
+    let until = Instant::now() + Duration::from_secs(60);
+    while !owed.is_empty() {
+        let Some(left) = until.checked_duration_since(Instant::now()) else { break };
+        match tokio::time::timeout(left, c.next()).await {
+            Err(_) | Ok(None) => break,
+            Ok(Some(Err(e))) => bail!("the served check's connection: {e}"),
+            Ok(Some(Ok(Message::Binary(b)))) => {
+                if let wire::Incoming::Got { id, state } = wire::unframe(&mut r, &b) {
+                    if !state.is_empty() {
+                        owed.remove(&ContractInstanceId::new(id).encode());
+                    }
+                }
+            }
+            Ok(Some(Ok(_))) => {}
+        }
+    }
+    Ok(owed)
+}
+
 /// Put every piece, all at once: the node queues them. The socket is SPLIT, so answers are read while PUTs are still
 /// going out (a client that sends everything before reading deadlocks: the node stops reading while its answers sit
 /// unread). Framing and reading are the SDK's (`wire::frame_put`, `wire::unframe`); answers are matched by the key
@@ -508,8 +543,25 @@ async fn main() -> Result<()> {
     let rebuildable = |missing: &std::collections::HashSet<String>| {
         sent.iter().all(|(_, k, a)| a.iter().filter(|x| !missing.contains(*x)).count() >= *k)
     };
-    let missing = put_all(&ws, &all.iter().collect::<Vec<_>>(), rebuildable).await?;
+    let mut missing = put_all(&ws, &all.iter().collect::<Vec<_>>(), rebuildable).await?;
     println!("pieces: {} of {} accepted in {} ms", all.len() - missing.len(), all.len(), t.elapsed().as_millis());
+    // SERVED, not only accepted: every accepted piece asked for again (a GET) — a PUT's ack can come before the node
+    // serves it, and a page loaded then is answered "not found". Those put again, until each is served (or said).
+    for round in 1..=3 {
+        let accepted: Vec<&Piece> = all.iter().filter(|p| !missing.contains(&p.address)).collect();
+        let unserved = not_served(&ws, &accepted).await?;
+        if unserved.is_empty() {
+            println!("pieces: all {} accepted ones served", accepted.len());
+            break;
+        }
+        println!("pieces: {} accepted but not served yet (round {round}): put again", unserved.len());
+        let again: Vec<&Piece> = accepted.into_iter().filter(|p| unserved.contains(&p.address)).collect();
+        let still = put_all(&ws, &again, |_| false).await?;
+        if round == 3 {
+            missing.extend(still);
+            missing.extend(not_served(&ws, &again).await?);
+        }
+    }
     // RACING needs any k of a package's k + m pieces: a package with fewer accepted cannot be rebuilt, so nothing that
     // names it is published. One with k or more is fine; the rest are said.
     for (name, k, addresses) in &sent {

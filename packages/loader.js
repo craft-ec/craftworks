@@ -69,7 +69,12 @@ export async function run(boot) {
       pieces: p.pieces.map(x => ({ url: new URL(`/v1/contract/web/${x.address}/piece`, location.href).href, sha256: x.sha256 })),
     };
     const raced = await raceK(spec, {
-      fetch: (u, init) => fetch(u, { ...(init ?? {}), cache }),
+      // The browser's copy only when it is the piece: a FAILED answer it kept (a "not found" from before the node
+      // served it) is asked for again from the node, which replaces it — never replayed on every load.
+      fetch: async (u, init) => {
+        const r = await fetch(u, { ...(init ?? {}), cache });
+        return r.ok || cache === "reload" ? r : fetch(u, { ...(init ?? {}), cache: "reload" });
+      },
       onWait: w => {
         const what = `${w.verified} of ${w.k} pieces`;
         ctx.log("waiting", { what: `${name}: ${what}` });
