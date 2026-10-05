@@ -19,8 +19,8 @@ export async function mount(ctx, el) {
   const APPS = {
     "/video": { app: "video", domain: "video", icon: "▶️", name: "Video", one: "video", ones: "videos", accept: "video/*", mine: "Your channel", audio: false },
     "/audio": { app: "audio", domain: "audio", icon: "🎧", name: "Audio", one: "track", ones: "tracks", accept: "audio/*", mine: "Your library", audio: true },
-    "/book": { app: "book", domain: "book", icon: "📚", name: "Books", one: "book", ones: "books", accept: ".pdf,.epub,.cbz", mine: "Your shelf", shelf: true },
-    "/image": { app: "image", domain: "image", icon: "🖼", name: "Images", one: "image", ones: "images", accept: "image/*", mine: "Your photostream", picture: true },
+    "/book": { app: "book", domain: "book", icon: "📚", name: "Book", one: "book", ones: "books", accept: ".pdf,.epub,.cbz", mine: "Your shelf", shelf: true },
+    "/image": { app: "image", domain: "image", icon: "🖼", name: "Image", one: "image", ones: "images", accept: "image/*", mine: "Your photostream", picture: true },
   };
   const C_ROUTE = APPS[ctx.route] ? ctx.route : "/video";
   const C = APPS[C_ROUTE];
