@@ -36,6 +36,7 @@ serde = { version = "1", features = ["derive"] }
 bincode = "1"
 # RE-KEY with no page open (R4): a space's tables read and merged (`table`), its sealed bags opened.
 craftworks-feed = { path = "../feed" }
+craftworks-gov = { path = "../gov" }
 sha2 = { version = "0.10", default-features = false }
 aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 

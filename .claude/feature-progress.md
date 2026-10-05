@@ -821,7 +821,9 @@ come with keepers as a new codec version.
           test: first write lists bag+catalog then PUTs the feed, a version over another's row, flush past 32, guard; a
           listing mutant caught) R4b WRITER: this member's own feed of a table from the delegate (writers bag + catalog listing first when
           new), rows as feed versions, signed with `space_writer`, sealed with the newest epoch held.
-    - [ ] R4c DUE + ROTATE in Rust: `acts`/`pub-acts` replayed by `gov` → removals; the group without them; salt
+    - [x] (10-05: `delegate/src/rekey.rs`; rank checked against the page's rankFor values; rotate waits for the group to
+          move; control without a removal. KNOWN GAP: the page checks each credential's signer against the DID's key log,
+          upkeep trusts the MLS roster) R4c DUE + ROTATE in Rust: `acts`/`pub-acts` replayed by `gov` → removals; the group without them; salt
           rotated (upkeep randomness); due rows as `file-keys.js`; the same rank/takeover hash as pages.
     - [ ] R4d RECODE: a generation per step (GET fragments → decode → encode under the new key → PUT pieces), index and
           root, row changed, old pieces burned; progress `p/<id>` shared with pages; a budget per wake-up.

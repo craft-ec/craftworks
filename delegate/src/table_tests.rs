@@ -306,3 +306,75 @@ fn upkeep_writes_its_own_feed_listing_it_first_when_new_and_flushes_when_due() {
     let seq = o.writer.seq();
     assert!(identity::upkeep_sign_space(&mut h, &member, &p, seq, &[0xEE; 32]).is_err(), "never two different steps at one place");
 }
+
+// ---- R4c: what is due, and when a new salt is ----
+
+use super::rekey;
+
+#[test]
+fn the_rank_is_the_pages_rank() {
+    // Computed by the page's own `rankFor` (file-keys.js) for these DIDs: each member's place per row.
+    let dids: Vec<String> = ["did:craftec:aaa", "did:craftec:bbb", "did:craftec:ccc", "did:craftec:ddd"].iter().map(|s| s.to_string()).collect();
+    for (id, want) in [("f1", [0, 3, 1, 2]), ("f2", [3, 1, 2, 0]), ("3f2a9c", [3, 1, 2, 0]), ("zz", [3, 0, 2, 1])] {
+        let got: Vec<usize> = dids.iter().map(|d| rekey::rank(id, &dids, d)).collect();
+        assert_eq!(got, want, "row {id}");
+    }
+}
+
+#[test]
+fn a_removal_rotates_the_salt_once_the_group_moved_and_its_rows_come_due() {
+    let (s0, s1) = ([0x10; 32], [0x11; 32]);
+    let ep = [(0, s0), (1, s1)];
+    let epochs: BTreeMap<u64, [u8; 32]> = ep.into_iter().collect();
+    let (owner, gone) = (writer(1), writer(2));
+    let (owner_did, gone_did) = ("did:craftec:owner".to_string(), "did:craftec:gone".to_string());
+    let mut net = Net::default();
+    catalog(&mut net, &owner, &ep, &["files", "acts"]);
+    // The files table: salt 0, a row under it, a public row whose app reads members-only, an adopted row, one current.
+    let mut f = Feed::new(&owner, &table::table_name(&SPACE, "files"), &blinded("files"), &ep);
+    let salt0 = table::hex(&[0x55; 32]);
+    f.put(&mut net, "salt", &serde_json::json!({ "s": salt0, "n": 0, "removals": 0 }).to_string(), None);
+    let row = |n: i64, public: bool| serde_json::json!({ "key": "aa", "root": "bb", "n": n, "pub": public, "app": "drive", "at": 1 }).to_string();
+    f.put(&mut net, "k/under0", &row(0, false), None);
+    f.put(&mut net, "k/public", &row(-1, true), None);
+    f.put(&mut net, "k/adopted", &row(-2, false), None);
+    // The acts: the owner admits, then REMOVES the member.
+    let mut acts = Feed::new(&owner, &table::table_name(&SPACE, "acts"), &blinded("acts"), &ep);
+    acts.put(&mut net, "a1", &serde_json::json!({ "at": 10, "act": "added", "did": gone_did }).to_string(), None);
+    writers_bag(&mut net, &s0, &[pubkey(&owner)]);
+    let roster = vec![(pubkey(&owner), owner_did.clone()), (pubkey(&gone), gone_did.clone())];
+    let read = |net: &Net| {
+        let (mut r, first) = Reading::new(&codes(), SPACE, epochs.clone(), roster.iter().map(|(w, _)| *w).collect(), &["files", "acts", "pub-acts"]);
+        run(&mut r, first, net);
+        r
+    };
+
+    // CONTROL: no removal yet — no new salt; only the adopted and the no-longer-public rows are due.
+    let r = read(&net);
+    let g = rekey::governance(&r, &roster, &owner_did, 100);
+    let p = rekey::plan(&r, &g, &[owner_did.clone(), gone_did.clone()], &owner_did, 100);
+    assert_eq!(p.rotate, None);
+    let mut ids: Vec<&str> = p.due.iter().map(|d| d.row.id.as_str()).collect();
+    ids.sort();
+    assert_eq!(ids, ["adopted", "public"]);
+
+    // The REMOVAL counted — while the group still holds them: not yet (the commit not seen).
+    acts.put(&mut net, "a2", &serde_json::json!({ "at": 20, "act": "remove", "did": gone_did }).to_string(), None);
+    let r = read(&net);
+    let g = rekey::governance(&r, &roster, &owner_did, 100);
+    assert_eq!(rekey::plan(&r, &g, &[owner_did.clone(), gone_did.clone()], &owner_did, 100).rotate, None, "the group must move first");
+    // The group without them: a new salt, made after 1 removal — and the row under salt 0 comes due.
+    let p = rekey::plan(&r, &g, &[owner_did.clone()], &owner_did, 100);
+    assert_eq!(p.rotate, Some(1));
+    let mut ids: Vec<&str> = p.due.iter().map(|d| d.row.id.as_str()).collect();
+    ids.sort();
+    assert_eq!(ids, ["adopted", "public", "under0"]);
+    assert!(p.due.iter().all(|d| d.wait == 0), "the only member: its turn for every row");
+    // The rotation's rows: the old salt kept, the new one, and `salt` naming it.
+    let was = rekey::salt(&r.rows("files")).unwrap();
+    let rows = rekey::rotation(&was, [0x66; 32], 1);
+    assert_eq!(rows[0].0, b"salt/0");
+    assert_eq!(rows[1].0, b"salt/1");
+    let v: serde_json::Value = serde_json::from_slice(rows[2].1.as_ref().unwrap()).unwrap();
+    assert_eq!((v["n"].as_i64(), v["removals"].as_u64()), (Some(1), Some(1)));
+}
