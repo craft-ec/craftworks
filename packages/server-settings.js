@@ -385,13 +385,15 @@ export async function start(ctx) {
     let lastCode = null; // the code just made: shown until another tab
     function draw() {
       nav.replaceChildren(
-        nav.firstChild,
-        ...TABS.map(([k, label]) => {
-          const b = el("button", { type: "button", textContent: label, onclick: () => ((current = k), (lastCode = null), draw()) });
-          b.setAttribute("aria-current", String(k === current));
-          return b;
-        }),
-        host ? null : el("button", { type: "button", className: "close", textContent: "Close", onclick: () => d.close() }),
+        ...[
+          nav.firstChild,
+          ...TABS.map(([k, label]) => {
+            const b = el("button", { type: "button", textContent: label, onclick: () => ((current = k), (lastCode = null), draw()) });
+            b.setAttribute("aria-current", String(k === current));
+            return b;
+          }),
+          host ? null : el("button", { type: "button", className: "close", textContent: "Close", onclick: () => d.close() }),
+        ].filter(Boolean),
       );
       main.replaceChildren(said);
       pages[current]();
