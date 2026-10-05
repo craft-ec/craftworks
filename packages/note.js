@@ -48,6 +48,10 @@ export async function mount(ctx, el) {
         box-shadow: var(--cw-shadow-lg); display: grid; gap: var(--cw-space-2); }
       .keep dialog.editor[style*="background"] { color: var(--cw-on-pastel); }
       .keep dialog.editor:not([open]) { display: none; }
+      /* A long note scrolls within the screen: its text, never the dialog past the window. */
+      .keep dialog.editor { max-height: calc(100vh - 32px); grid-template-rows: auto minmax(0, 1fr) auto auto auto; }
+      .keep dialog.editor .body { overflow-y: auto; min-height: 0; }
+      .keep dialog.editor .who { margin: 0; font-size: var(--cw-text-xs); opacity: .7; }
       .keep .labelbar { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 0 auto 12px; max-width: 800px; }
       .keep .labelbar:has(> :only-child) { display: none; }
       .keep .labelbar button { font-size: var(--cw-text-sm); border: 1px solid var(--cw-line); background: none;
@@ -82,6 +86,7 @@ export async function mount(ctx, el) {
         <input class="title" name="title" placeholder="Title">
         <div class="body"></div>
         <div class="label-slot"></div>
+        <p class="who"></p>
         <div class="row"><span class="pin-slot"></span>
           <button type="button" class="palette" title="Background">🎨</button>
           <button type="button" class="label-e" title="Labels">🏷️</button>
@@ -285,6 +290,17 @@ export async function mount(ctx, el) {
     editor.querySelector(".pin-slot").replaceChildren(pinUI.button(ref(n.key)));
     editor.querySelector(".label-slot").replaceChildren(labelUI.chips(ref(n.key), { onPick: show }));
     editor.querySelector(".archive-e").title = n.archived ? "Unarchive" : "Archive";
+    // WHO: who made it and who changed it last, and when (a shared note's editors are its space's members).
+    const it = n.item ?? {};
+    const who = editor.querySelector(".who");
+    who.textContent = "";
+    ctx.require("directory").then(async d => {
+      const name = async did => (did ? d.shown(did, await d.handle(did).catch(() => null)) : "");
+      const when = t => (t ? new Date(t).toLocaleString() : "");
+      const made = it.by ? `By ${await name(it.by)}${it.at ? `, ${when(it.at)}` : ""}` : "";
+      const changed = it.edited ? ` · edited${it.editor && it.editor !== it.by ? ` by ${await name(it.editor)}` : ""} ${when(it.edited)}` : "";
+      if (editing?.key === n.key) who.textContent = `${made}${changed}`;
+    }, () => {});
     editor.showModal();
   };
   const finish = async () => {
