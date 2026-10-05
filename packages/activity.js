@@ -5,7 +5,7 @@
 //
 //   const activity = await ctx.require("activity");
 //   activity.unread(id)          // unread items in a container (a conversation, a channel)
-//   activity.total("chat")       // across conversations (direct, group) and servers' channels: Chat's
+//   activity.total("chat")       // across this person's own conversations (direct, group): personal Chat's
 //   activity.of(serverId, kind?) // across one space's channels and board (kind "chat" | "board": only those)
 //   activity.showing(container)  // on screen now: a container, or several (a board's two tables); null: nothing
 // A space's BOARD is watched too (its members' and its public table): a new post or comment by someone else counts,
@@ -141,7 +141,8 @@ export async function start(ctx) {
 
   return {
     unread,
-    total: kind => [...watched.values()].filter(w => w.kind === kind).reduce((n, w) => n + unread(w.container.id), 0),
+    // PERSONAL only (direct and group conversations): a space's channels count in that space (`of`), never here.
+    total: kind => [...watched.values()].filter(w => w.kind === kind && !w.serverId).reduce((n, w) => n + unread(w.container.id), 0),
     of: (serverId, kind = null) => [...watched.values()].filter(w => w.serverId === serverId && (!kind || w.kind === kind)).reduce((n, w) => n + unread(w.container.id), 0),
     showing(container) {
       const list = Array.isArray(container) ? container : container ? [container] : [];

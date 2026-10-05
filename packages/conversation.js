@@ -180,10 +180,31 @@ export async function start(ctx) {
   async function ownerBranches(sp) {
     const r = await (await ctx.require("roles")).of(sp);
     await r.settled;
-    const devs = await directory.devices(r.owner);
+    // Its owner as its acts say — or, a member whose keys are behind (the acts unread), as the space's record says.
+    const devs = await directory.devices(r.owner ?? sp.governance?.owner);
     return (await index.spacePointers(sp, "writers")).filter(p => p?.branch && devs.includes(p.w)).sort((a, b) => b.epoch - a.epoch);
   }
   const ownerBranch = async sp => (await ownerBranches(sp))[0] ?? null;
+  // BEHIND: this node's keys of a space not on the owner's branch at the owner's epoch (a welcome that opened onto an
+  // older branch; a restored account's) — it reads nothing new there. On EVERY LOAD it asks the owner and the admins
+  // to welcome it again onto the owner's branch (`welcome-again`, a repair: each ask answered), until it is on it.
+  const caughtUpAsked = new Set();
+  async function catchUp(sp) {
+    if (caughtUpAsked.has(sp.id)) return false;
+    const me = await space.account();
+    const g = keys.group(sp);
+    const st = await g.ready().catch(() => null);
+    if (!me || !st || st.removed) return false;
+    const own = await ownerBranch(sp).catch(() => null);
+    if (!own) return false;
+    if (st.epoch >= own.epoch && (await g.fingerprint(own.epoch).catch(() => null)) === own.branch) return false;
+    caughtUpAsked.add(sp.id);
+    const r = await (await ctx.require("roles")).of(sp).catch(() => null);
+    const to = [...new Set([r?.owner ?? sp.governance?.owner, ...(r?.members() ?? []).filter(m => ["owner", "admin"].includes(m.role)).map(m => m.did)].filter(d => d && d !== me.id))];
+    for (const did of to) await index.send(did, { kind: "welcome-again", space: sp.id, from: me.id, repair: true, at: Date.now() }).catch(e => ctx.log("conversation", { what: `${sp.name}: asking ${short(did)} for its keys: ${e.message}` }));
+    ctx.log("conversation", { what: `${sp.name}: this node's keys are behind the owner's (epoch ${st.epoch}, theirs ${own.epoch}) — asked ${to.length} to welcome it onto theirs` });
+    return true;
+  }
   // REPAIR (a fork's heal, for forks from before snapshots): a member whose announced branch is not this node's —
   // where this node is on the OWNER's — welcomed again onto it (`welcome`: their old entry out, a fresh one in; their
   // node keeps its branch's keys, nothing they wrote is lost). Once per divergence, by whichever member gets there
@@ -1023,5 +1044,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, repair, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
+  return { direct, group, invite, accept, repair, catchUp, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
 }
