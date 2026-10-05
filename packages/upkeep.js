@@ -126,7 +126,8 @@ export async function start(ctx) {
     // Piece and Block contracts too (it re-keys a space's files with no page open).
     if (r.upkeep && r.upkeep.codes !== Core.upkeep_codes_hash(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode))
       await auth.identity.upkeepCodes(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode).catch(() => {});
-    ctx.log("upkeep", { what: r.upkeep ? `the delegate watches the inbox (${r.upkeep.wakeups} wake-up(s) so far)` : `the delegate: ${r.refused ?? JSON.stringify(r)}` });
+    // What it last did with no page open (an admission, a re-key), said once a page opens.
+    ctx.log("upkeep", { what: r.upkeep ? `the delegate watches the inbox (${r.upkeep.wakeups} wake-up(s) so far)${r.upkeep.said ? ` — last: ${r.upkeep.said}` : ""}` : `the delegate: ${r.refused ?? JSON.stringify(r)}` });
   }
   handOver().catch(() => {});
   addEventListener("craftworks:auth", () => handOver().catch(() => {}));

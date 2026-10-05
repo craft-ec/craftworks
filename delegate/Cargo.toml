@@ -35,7 +35,7 @@ ed25519-dalek = { version = "=2.2.0", default-features = false }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
 # RE-KEY with no page open (R4): a space's tables read and merged (`table`), its sealed bags opened.
-craftworks-feed = { path = "../feed" }
+craftworks-feed = { path = "../feed", default-features = false }
 craftworks-gov = { path = "../gov" }
 craftworks-files = { path = "../files" }
 sha2 = { version = "0.10", default-features = false }

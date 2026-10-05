@@ -138,8 +138,16 @@ fn a_space_table_reads_as_its_feeds_merged_departed_writers_capped() {
     let mut fd = Feed::new(&d, &files, &blinded("files"), &epochs);
     fd.put(&mut net, "k/d1", "D's d1", None);
     fd.put(&mut net, "k/d2", "D's d2 (after it left)", None);
+    // B removed E: its own departed row (a second remover's).
+    let e = writer(5);
+    catalog(&mut net, &b, &epochs, &["files", "departed"]);
+    let mut db = Feed::new(&b, &departed, &blinded("departed"), &epochs);
+    db.put(&mut net, &table::hex(&pubkey(&e)), &serde_json::json!({ "heads": { files.clone(): 1 } }).to_string(), None);
+    catalog(&mut net, &e, &epochs, &["files"]);
+    let mut fe = Feed::new(&e, &files, &blinded("files"), &epochs);
+    fe.put(&mut net, "k/e1", "E's e1", None);
     // C: in the roster, never listed in the bag (never wrote here): its catalog is never asked.
-    writers_bag(&mut net, &s0, &[pubkey(&a), pubkey(&b), pubkey(&d)]);
+    writers_bag(&mut net, &s0, &[pubkey(&a), pubkey(&b), pubkey(&d), pubkey(&e)]);
 
     let epochs_map: BTreeMap<u64, [u8; 32]> = epochs.into_iter().collect();
     let (mut r, first) = Reading::new(&codes(), SPACE, epochs_map, vec![pubkey(&a), pubkey(&b), pubkey(&c)], &["files"]);
@@ -148,7 +156,7 @@ fn a_space_table_reads_as_its_feeds_merged_departed_writers_capped() {
 
     let rows: BTreeMap<String, String> =
         r.rows("files").into_iter().map(|(k, v)| (String::from_utf8(k).unwrap(), String::from_utf8(v.value).unwrap())).collect();
-    let want: BTreeMap<String, String> = [("salt", "S"), ("k/f1", "B's f1"), ("k/f2", "A's f2"), ("k/f3", "B's f3"), ("k/d1", "D's d1")]
+    let want: BTreeMap<String, String> = [("salt", "S"), ("k/f1", "B's f1"), ("k/f2", "A's f2"), ("k/f3", "B's f3"), ("k/d1", "D's d1"), ("k/e1", "E's e1")]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
@@ -158,9 +166,9 @@ fn a_space_table_reads_as_its_feeds_merged_departed_writers_capped() {
     assert!(!asked.contains(&c_catalog), "a writer not in the bag is never asked");
     // A's rows before its flush came from its TREE: blocks were fetched from Sealed contracts.
     let sealed_ids: Vec<[u8; 32]> = net.0.keys().copied().filter(|id| asked.contains(id)).filter(|id| {
-        ![fa.o.id_bytes(), fb.o.id_bytes(), fd.o.id_bytes(), da.o.id_bytes()].contains(id)
+        ![fa.o.id_bytes(), fb.o.id_bytes(), fd.o.id_bytes(), da.o.id_bytes(), db.o.id_bytes(), fe.o.id_bytes()].contains(id)
             && *id != upkeep::id_of(&contract_keys::code_hash(BAG), &table::sealed_bag_address(&SPACE, "writers"))
-            && ![1u8, 2, 4].iter().any(|n| *id == data::Open::new(TAIL, &pubkey(&writer(*n)), &table::table_name(&SPACE, "tables")).id_bytes())
+            && ![1u8, 2, 4, 5].iter().any(|n| *id == data::Open::new(TAIL, &pubkey(&writer(*n)), &table::table_name(&SPACE, "tables")).id_bytes())
     }).collect();
     assert!(!sealed_ids.is_empty(), "the flushed tree's blocks were read");
 }
@@ -261,10 +269,10 @@ fn upkeep_writes_its_own_feed_listing_it_first_when_new_and_flushes_when_due() {
     // FIRST WRITE: listed first (the bag, its catalog), then the feed made.
     let (mut r, _) = read_files(&net, writers.clone(), &epochs);
     let rows = vec![(b"k/x".to_vec(), Some(b"mine over theirs".to_vec())), (b"k/y".to_vec(), Some(b"new".to_vec()))];
-    let Next::More(listing) = write::rows(&mut h, &member, &codes(), &mut r, "files", &rows, [1; 12]).unwrap() else { panic!("listed first") };
+    let Next::More(listing) = write::rows(&mut h, &member, &codes(), &mut r, "files", &rows, [1; 12], false).unwrap() else { panic!("listed first") };
     assert!(listing.io.iter().any(|io| matches!(io, Io::Put { code: upkeep::Code::Bag, .. })), "in the writers bag before its catalog");
     apply(&mut net, &r, &listing, &me, "files");
-    let Next::Done(sent) = write::rows(&mut h, &member, &codes(), &mut r, "files", &rows, [2; 12]).unwrap() else { panic!("then the rows") };
+    let Next::Done(sent) = write::rows(&mut h, &member, &codes(), &mut r, "files", &rows, [2; 12], false).unwrap() else { panic!("then the rows") };
     assert!(matches!(sent.io[0], Io::Put { code: upkeep::Code::Tail, .. }), "the feed made with a PUT");
     apply(&mut net, &r, &sent, &me, "files");
     let (_, got) = read_files(&net, writers.clone(), &epochs);
@@ -278,12 +286,17 @@ fn upkeep_writes_its_own_feed_listing_it_first_when_new_and_flushes_when_due() {
     let mut flushed = false;
     let mut nonce = 3u8;
     for half in [&many[..20], &many[20..]] {
-        // Called until its rows are written: each step answered before the next.
-        for _ in 0..4 {
+        // Called until its rows are written: each step answered before the next (a flush: its blocks, then its step).
+        let mut blocks_put = false;
+        for _ in 0..6 {
             nonce += 1;
-            match write::rows(&mut h, &member, &codes(), &mut r, "files", half, [nonce; 12]).unwrap() {
+            match write::rows(&mut h, &member, &codes(), &mut r, "files", half, [nonce; 12], blocks_put).unwrap() {
                 Next::More(s) => {
                     flushed |= s.io.iter().any(|io| matches!(io, Io::Put { code: upkeep::Code::Sealed, .. }));
+                    if s.blocks {
+                        assert!(s.io.iter().all(|io| matches!(io, Io::Put { code: upkeep::Code::Sealed, .. })), "a flush's blocks alone first");
+                    }
+                    blocks_put = s.blocks;
                     apply(&mut net, &r, &s, &me, "files");
                 }
                 Next::Done(s) => {
@@ -296,6 +309,20 @@ fn upkeep_writes_its_own_feed_listing_it_first_when_new_and_flushes_when_due() {
     assert!(flushed, "a feed past 32 rows is flushed into its tree");
     let (_, got) = read_files(&net, writers.clone(), &epochs);
     assert_eq!(got.keys().filter(|k| k.starts_with("k/m")).count(), 40, "every row read back (tree and tail)");
+
+    // A STEP SIGNED AND LOST (its write never landed): the next write goes past it as a whole state, not wedged.
+    let (mut r, _) = read_files(&net, writers.clone(), &epochs);
+    let lost = write::rows(&mut h, &member, &codes(), &mut r, "files", &[(b"k/lost".to_vec(), Some(b"never landed".to_vec()))], [40; 12], false).unwrap();
+    assert!(matches!(lost, Next::Done(_)), "signed (and then lost: not applied to the network)");
+    let (mut r, _) = read_files(&net, writers.clone(), &epochs);
+    let Next::Done(past) = write::rows(&mut h, &member, &codes(), &mut r, "files", &[(b"k/after".to_vec(), Some(b"written past it".to_vec()))], [41; 12], false).unwrap() else {
+        panic!("written")
+    };
+    assert!(matches!(past.io[0], Io::Put { code: upkeep::Code::Tail, .. }), "past the lost step: the whole state");
+    apply(&mut net, &r, &past, &me, "files");
+    let (_, got) = read_files(&net, writers.clone(), &epochs);
+    assert_eq!(got.get("k/after").map(String::as_str), Some("written past it"));
+    assert!(!got.contains_key("k/lost"));
 
     // THE FORK GUARD: a different step at a place already signed is refused (a page holding an older state).
     let (r2, _) = read_files(&net, writers, &epochs);
@@ -372,7 +399,7 @@ fn a_removal_rotates_the_salt_once_the_group_moved_and_its_rows_come_due() {
     assert!(p.due.iter().all(|d| d.wait == 0), "the only member: its turn for every row");
     // The rotation's rows: the old salt kept, the new one, and `salt` naming it.
     let was = rekey::salt(&r.rows("files")).unwrap();
-    let rows = rekey::rotation(&was, [0x66; 32], 1);
+    let rows = rekey::rotation(&r.rows("files"), &was, [0x66; 32], 1);
     assert_eq!(rows[0].0, b"salt/0");
     assert_eq!(rows[1].0, b"salt/1");
     let v: serde_json::Value = serde_json::from_slice(rows[2].1.as_ref().unwrap()).unwrap();
@@ -644,4 +671,8 @@ fn with_no_page_open_a_removal_rotates_the_salt_and_the_spaces_files_re_key() {
     assert_eq!(read_file(&n.net, &new_key, &root).as_deref(), Some(content.as_slice()), "the file reads under its new key");
     // The OLD reference reads nothing: its pieces burned.
     assert!(read_file(&n.net, &old_key, &root0).is_none(), "the old pieces burned: {said:?}");
+    // A late answer to one of its burns is the re-key round's — never taken by an admission round.
+    let burn_id = upkeep::id_of(&piece_hash(), &files::hashed_address(&old_key, &root0));
+    assert!(crate::rekey_round::wants(&h, &burn_id), "its own put, remembered");
+    assert!(upkeep::replied(&mut h, upkeep::Reply::Put { id: burn_id, ok: true }, now).is_empty());
 }

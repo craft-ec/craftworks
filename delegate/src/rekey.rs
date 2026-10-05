@@ -52,8 +52,17 @@ impl KeyRow {
 pub struct Due {
     pub row: KeyRow,
     pub public: bool,
-    /// This member's turn for it: now (0), or after `wait` ms more.
+    /// This member's turn for it: now (0), or after `wait` ms more — from when it last MOVED (its row, its progress);
+    /// a caller that knows when it first saw it due floors that too (`wait_from`).
     pub wait: u64,
+    pub rank: usize,
+    pub moved: u64,
+}
+impl Due {
+    /// The wait from `seen` too (when this member first saw it due: a row due since a removal carries an old time).
+    pub fn wait_from(&self, seen: u64, now_ms: u64) -> u64 {
+        (self.rank as u64 * TAKEOVER_MS).saturating_sub(now_ms.saturating_sub(self.moved.max(seen)))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -162,17 +171,21 @@ pub fn plan(r: &Reading, g: &craftworks_gov::Gov, members: &[String], me: &str, 
             .unwrap_or(0);
         let moved = row.at().max(progress);
         let wait = (k * TAKEOVER_MS).saturating_sub(now_ms.saturating_sub(moved));
-        due.push(Due { row, public, wait });
+        due.push(Due { row, public, wait, rank: k as usize, moved });
     }
     Plan { rotate, due }
 }
 
-/// The ROWS a new salt writes: the old one kept (`salt/<n>`, for burning), the new one (`salt/<n+1>`), and `salt`.
-pub fn rotation(was: &Salt, new: [u8; 32], removals: usize) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
+/// The ROWS a new salt writes: the old one kept (`salt/<n>`, for burning — when it is not kept already), the new one
+/// (`salt/<n+1>`), and `salt`.
+pub fn rotation(files: &BTreeMap<Vec<u8>, craftworks_feed::Row>, was: &Salt, new: [u8; 32], removals: usize) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
     let hex = crate::table::hex;
-    vec![
-        (format!("salt/{}", was.n).into_bytes(), Some(hex(&was.s).into_bytes())),
-        (format!("salt/{}", was.n + 1).into_bytes(), Some(hex(&new).into_bytes())),
-        (b"salt".to_vec(), Some(serde_json::json!({ "s": hex(&new), "n": was.n + 1, "removals": removals }).to_string().into_bytes())),
-    ]
+    let old = format!("salt/{}", was.n).into_bytes();
+    let mut out = Vec::new();
+    if !files.contains_key(&old) {
+        out.push((old, Some(hex(&was.s).into_bytes())));
+    }
+    out.push((format!("salt/{}", was.n + 1).into_bytes(), Some(hex(&new).into_bytes())));
+    out.push((b"salt".to_vec(), Some(serde_json::json!({ "s": hex(&new), "n": was.n + 1, "removals": removals }).to_string().into_bytes())));
+    out
 }

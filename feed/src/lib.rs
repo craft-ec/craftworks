@@ -205,7 +205,7 @@ mod tests {
 }
 
 /// The page's side of this package (the `storage` capability composes it with the core, which stores and seals).
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "js"))]
 mod js {
     use super::*;
     use wasm_bindgen::prelude::*;

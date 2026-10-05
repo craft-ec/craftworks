@@ -32,4 +32,7 @@ cargo build -q --release -p probe --bin import-gate
 # Every custom section but the MANIFEST (`freenet-manifest`: the delegate's wake-ups) removed.
 wasm-tools strip -d '^(name|producers|target_features|\.debug.*|linking|reloc\..*|component-type.*)$' "$target/wasm32-unknown-unknown/release/craftworks_delegate.wasm" -o packages/build/identity.wasm
 "$target/release/import-gate" packages/build/identity.wasm
+# AND nothing imported but the node's own modules (`freenet_*`): the gate above names only what the node defines and
+# let a wasm-bindgen placeholder import through (a crate's JS bindings linked in) — a delegate that never instantiates.
+python3 tools/wasm-imports.py packages/build/identity.wasm | awk '$1 !~ /^freenet_/ { bad = 1; print "identity.wasm imports " $1 "::" $2 > "/dev/stderr" } END { exit bad }' || { echo "the identity delegate imports what no node provides" >&2; exit 1; }
 echo "identity: $(wc -c < packages/build/identity.wasm | tr -d ' ') B, sha256 $(shasum -a 256 packages/build/identity.wasm | cut -c1-16)…"

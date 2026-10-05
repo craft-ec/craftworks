@@ -13,12 +13,14 @@ use craftworks_identity::{self as identity, Host};
 use crate::table::{self, Codes, Reading};
 use crate::upkeep::{Code, Io};
 
-/// What a write sends, in order: puts first (a bag item, tree blocks), then ONE tail step — `confirm`: the tail whose
-/// answer the next call waits for.
+/// What a write sends: `confirm`, the contracts whose answers the next call waits for (ALL of them taken) — a tail's
+/// step, or a flush's tree blocks (put and confirmed BEFORE the step naming their root: a tail never names a root whose
+/// blocks are not there). `blocks`: these were a flush's blocks (the next call sends its step).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sent {
     pub io: Vec<Io>,
-    pub confirm: [u8; 32],
+    pub confirm: Vec<[u8; 32]>,
+    pub blocks: bool,
 }
 
 /// What is left to do after this step.
@@ -50,9 +52,19 @@ fn feed_open(c: &Codes, r: &Reading, owner: &[u8; 32], name: &str, label: &str, 
     o
 }
 
-/// A prepared step signed by the identity and committed: what to send.
+/// A prepared step signed by the identity and committed: what to send. A step the identity refuses as a FORK (it signed
+/// this tail further — a step of upkeep's or a page's that never landed): the network ANSWERED with what it holds (the
+/// state read), so this step goes PAST those, as a whole state (as a page does: `tail_skip`).
 fn signed<H: Host>(h: &mut H, member: &[u8; 32], o: &mut data::Open, (seq, hash): (u64, [u8; 32])) -> Result<Io, String> {
-    let sig = identity::upkeep_sign_space(h, member, &o.params, seq, &hash)?;
+    let sig = match identity::upkeep_sign_space(h, member, &o.params, seq, &hash) {
+        Ok(sig) => sig,
+        Err(why) => {
+            let last: Option<u64> = why.strip_prefix("WouldFork { last_seq: ").and_then(|r| r.trim_end_matches(" }").parse().ok());
+            let (Some(last), true) = (last, o.on_network) else { return Err(why) };
+            let (seq, hash) = o.skip_to(last).ok_or("the step could not go past the identity's")?;
+            identity::upkeep_sign_space(h, member, &o.params, seq, &hash)?
+        }
+    };
     Ok(match o.commit(sig).ok_or("the tail would not take its own step")? {
         data::Send::Put(state) => Io::Put { code: Code::Tail, params: o.params.clone(), state },
         data::Send::Update(delta) => Io::Update { id: o.id_bytes(), delta },
@@ -66,9 +78,14 @@ fn block_puts(f: &data::Flush) -> Result<Vec<Io>, String> {
 }
 
 /// WRITE `rows` (key, value; `None`: deleted) into this member's feed of table `name` (short), as read by `r`. `nonce`:
-/// fresh bytes for a writers-bag item (upkeep's randomness).
-pub fn rows<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, r: &mut Reading, name: &str, rows: &[(Vec<u8>, Option<Vec<u8>>)], nonce: [u8; 12]) -> Result<Next, String> {
+/// fresh bytes for a writers-bag item (upkeep's randomness). `blocks_put`: a flush's blocks were put and confirmed (the
+/// last call's `Sent::blocks`): its step now.
+pub fn rows<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, r: &mut Reading, name: &str, rows: &[(Vec<u8>, Option<Vec<u8>>)], nonce: [u8; 12], blocks_put: bool) -> Result<Next, String> {
     let me = identity::upkeep_space_writer(h, member).ok_or("this node does not hold the member's data key")?;
+    // Its OWN feed must read here (as a page's must): a write over rows it cannot see could undo them.
+    if r.own_unreadable(&me, name) {
+        return Err(format!("its own feed of {name} does not read here (a key it lacks)"));
+    }
     let space = r.space();
     let t = table::table_name(&space, name);
     let label = identity::blind_name(&identity::space_table_key(&space, &t), &t);
@@ -94,22 +111,33 @@ pub fn rows<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, r: &mut Reading, n
             let step = cat_o.prepare_row(t.as_bytes(), &env).ok_or("the catalog would not take the row")?;
             io.push(signed(h, member, &mut cat_o, step)?);
             r.took_own(c, &me, "tables", &cat_name, cat_o.state(), cat.map(|(_, b)| b).unwrap_or_default());
-            return Ok(Next::More(Sent { io, confirm: cat_o.id_bytes() }));
+            return Ok(Next::More(Sent { io, confirm: vec![cat_o.id_bytes()], blocks: false }));
         }
     }
 
     // Its tree's blocks as fetched (sealed): what it is read from again.
     let held_blocks = feed.as_ref().map(|(_, b)| b.clone()).unwrap_or_default();
     let mut o = feed_open(c, r, &me, name, &label, feed);
-    // DUE A FLUSH first: its blocks, then the step naming its root.
+    // DUE A FLUSH first: its blocks PUT and confirmed, then (the next call: the same flush, made again) the step
+    // naming its root.
     if o.pending_rows() + rows.len() > data::FLUSH_AT {
         if let Ok(data::Step::Ready(f)) = o.flush() {
-            let mut io = block_puts(&f)?;
-            io.push(signed(h, member, &mut o, (f.seq, f.hash))?);
+            if !blocks_put {
+                let io = block_puts(&f)?;
+                let confirm = io
+                    .iter()
+                    .filter_map(|x| match x {
+                        Io::Put { params, .. } => Some(crate::upkeep::id_of(&c.sealed_hash, params)),
+                        _ => None,
+                    })
+                    .collect();
+                return Ok(Next::More(Sent { io, confirm, blocks: true }));
+            }
+            let io = vec![signed(h, member, &mut o, (f.seq, f.hash))?];
             let mut blocks = held_blocks;
             blocks.extend(f.blocks.iter().cloned());
             r.took_own(c, &me, name, &label, o.state(), blocks);
-            return Ok(Next::More(Sent { io, confirm: o.id_bytes() }));
+            return Ok(Next::More(Sent { io, confirm: vec![o.id_bytes()], blocks: false }));
         }
     }
     // The rows as VERSIONS over what the merge holds now.
@@ -122,7 +150,7 @@ pub fn rows<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, r: &mut Reading, n
     let step = o.prepare_rows(&versions).ok_or("the feed would not take the rows")?;
     let io = signed(h, member, &mut o, step)?;
     r.took_own(c, &me, name, &label, o.state(), held_blocks);
-    Ok(Next::Done(Sent { io: vec![io], confirm: o.id_bytes() }))
+    Ok(Next::Done(Sent { io: vec![io], confirm: vec![o.id_bytes()], blocks: false }))
 }
 
 /// This writer's item in the space's writers bag: `{ w }`, sealed with epoch 0's key (`index.spacePoint`).

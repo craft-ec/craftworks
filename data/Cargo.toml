@@ -19,6 +19,6 @@ blake3 = { version = "1", default-features = false }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
-craftworks-feed = { path = "../feed" }
+craftworks-feed = { path = "../feed", default-features = false }
 craftec-register-contract = { workspace = true, features = ["testing"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false }

@@ -22,6 +22,14 @@ use crate::write::{self, Next};
 
 pub const ROUND: &[u8] = b"identity_upkeep/rekey/round";
 const LAST: &[u8] = b"identity_upkeep/rekey/last";
+/// The member served last (members on one node take turns).
+const LAST_MEMBER: &[u8] = b"identity_upkeep/rekey/member";
+/// Every contract a re-key round asked of or put lately (a burn, a bag item, a block, a fragment asked and not needed):
+/// their answers are the round's — never an admission round's. The newest `ISSUED_MAX`.
+const ISSUED: &[u8] = b"identity_upkeep/rekey/issued";
+const ISSUED_MAX: usize = 4096;
+/// When this member first saw a row due (`<space hex>/<id>` → ms): its takeover counts from there at the least.
+const SEEN: &[u8] = b"identity_upkeep/rekey/seen";
 /// Wake-ups between rounds (one a minute: every ten minutes).
 pub const EVERY: u64 = 10;
 /// A round that has not moved for this many wake-ups is dropped (the next starts over from a read).
@@ -30,9 +38,10 @@ const STUCK: u64 = 5;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Step {
     Reading,
-    /// A write's step sent: waiting on its answer. `rows`: still to write after it (it was a listing or a flush
-    /// step) — none: it was the rows' own; `after`: what comes once they are written.
-    Writing { rows: Vec<(Vec<u8>, Option<Vec<u8>>)>, confirm: [u8; 32], after: After },
+    /// A write's step sent: waiting on its answers (`waiting`: all must be taken). `rows`: still to write after it (it
+    /// was a listing, a flush's blocks or its step) — none: it was the rows' own; `blocks`: those were a flush's blocks
+    /// (its step next); `after`: what comes once the rows are written.
+    Writing { rows: Vec<(Vec<u8>, Option<Vec<u8>>)>, waiting: Vec<[u8; 32]>, refused: bool, blocks: bool, after: After },
     Recoding { rec: Recode, due: Task },
 }
 
@@ -68,6 +77,36 @@ fn load<H: Host>(h: &H) -> Option<Round> {
 fn keep<H: Host>(h: &mut H, r: Option<&Round>) {
     h.set_secret(ROUND, &r.map(|r| bincode::serialize(r).expect("a round encodes")).unwrap_or_default());
 }
+fn issued<H: Host>(h: &H) -> Vec<[u8; 32]> {
+    h.get_secret(ISSUED).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
+}
+/// What a round sends: each contract it names noted as the round's (its answer routed here).
+fn issue<H: Host>(h: &mut H, c: &Held, io: Vec<Io>) -> Vec<Io> {
+    let mut all = issued(h);
+    for x in &io {
+        let id = match x {
+            Io::Get { id, .. } | Io::Update { id, .. } => *id,
+            Io::Put { code, params, .. } => {
+                let hash = match code {
+                    crate::upkeep::Code::Tail => contract_keys::code_hash(&c.tail),
+                    crate::upkeep::Code::Bag => c.bag,
+                    crate::upkeep::Code::Sealed => c.sealed,
+                    crate::upkeep::Code::Piece => c.piece,
+                };
+                crate::upkeep::id_of(&hash, params)
+            }
+        };
+        all.push(id);
+    }
+    let over = all.len().saturating_sub(ISSUED_MAX);
+    all.drain(..over);
+    h.set_secret(ISSUED, &bincode::serialize(&all).expect("ids encode"));
+    io
+}
+fn seen<H: Host>(h: &H) -> std::collections::BTreeMap<String, u64> {
+    h.get_secret(SEEN).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
+}
+
 fn wakeups<H: Host>(h: &H) -> u64 {
     h.get_secret(identity::UPKEEP_WAKEUPS).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes).unwrap_or(0)
 }
@@ -147,7 +186,12 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
         return Vec::new();
     }
     let Some(c) = Held::of(h) else { return Vec::new() };
-    for member in identity::upkeep_members(h) {
+    // Members take turns: the one after the member served last first.
+    let mut members = identity::upkeep_members(h);
+    if let Some(i) = h.get_secret(LAST_MEMBER).and_then(|l| members.iter().position(|m| m.as_slice() == l.as_slice())) {
+        members.rotate_left(i + 1);
+    }
+    for member in members {
         if identity::upkeep_since_tick(h, &member) < crate::upkeep::PAGE_AWAY {
             continue;
         }
@@ -157,25 +201,33 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
             continue;
         }
         h.set_secret(LAST, &w.to_le_bytes());
+        h.set_secret(LAST_MEMBER, &member);
         let first = all.remove(0);
-        return begin(h, &c, member, me, first, all);
+        let io = begin(h, &c, member, me, first, all);
+        return issue(h, &c, io);
     }
     Vec::new()
 }
 
-/// Whether the round waits on contract `id` (its answer is the round's, not an admission's).
+/// Whether contract `id`'s answer is the round's: one it waits on, or one it asked of or put lately (never an
+/// admission round's).
 pub fn wants<H: Host>(h: &H, id: &[u8; 32]) -> bool {
-    load(h).is_some_and(|r| match &r.step {
-        Step::Reading => r.reading.wants(id),
-        Step::Writing { confirm, .. } => confirm == id,
-        Step::Recoding { rec, .. } => rec.wants(id),
-    })
+    issued(h).contains(id)
+        || load(h).is_some_and(|r| match &r.step {
+            Step::Reading => r.reading.wants(id),
+            Step::Writing { waiting, .. } => waiting.contains(id),
+            Step::Recoding { rec, .. } => rec.wants(id),
+        })
 }
 
-/// An ANSWER the round waits for. What to send next.
+/// An ANSWER the round waits for (or one of its own it no longer needs: taken, nothing more). What to send next.
 pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
-    let Some(mut r) = load(h) else { return Vec::new() };
     let Some(c) = Held::of(h) else { return Vec::new() };
+    let io = replied_(h, &c, reply, now_ms);
+    issue(h, &c, io)
+}
+fn replied_<H: Host>(h: &mut H, c: &Held, reply: Reply, now_ms: u64) -> Vec<Io> {
+    let Some(mut r) = load(h) else { return Vec::new() };
     r.moved = wakeups(h);
     match (r.step.clone(), reply) {
         (Step::Reading, Reply::Got { id, state }) => {
@@ -186,14 +238,21 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             }
             plan(h, &c, r, now_ms)
         }
-        (Step::Writing { rows, confirm, after }, Reply::Put { id, ok } | Reply::Updated { id, ok }) if id == confirm => {
-            if !ok {
-                identity::upkeep_say(h, &r.member, "a write was refused (the network holds more): the next round reads again");
-                return next_space(h, &c, r.member, r.me.clone(), r.rest.clone());
+        (Step::Writing { rows, mut waiting, refused, blocks, after }, Reply::Put { id, ok } | Reply::Updated { id, ok }) if waiting.contains(&id) => {
+            waiting.retain(|w| *w != id);
+            let refused = refused || !ok;
+            if !waiting.is_empty() {
+                r.step = Step::Writing { rows, waiting, refused, blocks, after };
+                keep(h, Some(&r));
+                return Vec::new();
             }
-            // A listing or flush step answered: the rows themselves now.
+            if refused {
+                identity::upkeep_say(h, &r.member, "a write was refused (the network holds more): the next round reads again");
+                return next_space(h, c, r.member, r.me.clone(), r.rest.clone());
+            }
+            // A listing, a flush's blocks or its step answered: the rows themselves now (a flush's step first).
             if !rows.is_empty() {
-                return write_step(h, &c, r, rows, after);
+                return write_step(h, c, r, rows, after, blocks);
             }
             match after {
                 After::Replan => plan(h, &c, r, now_ms),
@@ -281,11 +340,22 @@ fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
     if let (Some(removals), Some(was)) = (p.rotate, st.clone()) {
         let Some(new) = identity::upkeep_random(h) else { return next_space(h, c, r.member, r.me.clone(), r.rest.clone()) };
         identity::upkeep_say(h, &r.member, "a member removed: a new salt (the space's files re-key)");
-        let rows = rekey::rotation(&was, new, removals);
-        return write_step(h, c, r, rows, After::Replan);
+        let rows = rekey::rotation(&r.reading.rows("files"), &was, new, removals);
+        return write_step(h, c, r, rows, After::Replan, false);
     }
     r.salt = st.map(|s| (s.s, s.n));
-    r.queue = p.due.iter().filter(|d| d.wait == 0).map(Task::of).collect();
+    // Each row's turn from when it last moved — and from when this member first saw it due.
+    let mut first = seen(h);
+    let mut queue = Vec::new();
+    for d in &p.due {
+        let k = format!("{}/{}", table::hex(&r.space), d.row.id);
+        let at = *first.entry(k).or_insert(now_ms);
+        if d.wait_from(at, now_ms) == 0 {
+            queue.push(Task::of(d));
+        }
+    }
+    h.set_secret(SEEN, &bincode::serialize(&first).expect("seen encodes"));
+    r.queue = queue;
     next_due(h, c, r, now_ms)
 }
 
@@ -321,21 +391,22 @@ fn write_row<H: Host>(h: &mut H, c: &Held, r: Round, due: &Task, row: &str, burn
         (format!("k/{}", due.id).into_bytes(), Some(serde_json::Value::Object(v).to_string().into_bytes())),
         (format!("p/{}", due.id).into_bytes(), None),
     ];
-    write_step(h, c, r, rows, After::Row { burn })
+    write_step(h, c, r, rows, After::Row { burn }, false)
 }
 
-/// One step of a write (listing first when the feed is new: then the rows again once it is answered).
-fn write_step<H: Host>(h: &mut H, c: &Held, mut r: Round, rows: Vec<(Vec<u8>, Option<Vec<u8>>)>, after: After) -> Vec<Io> {
+/// One step of a write (listing first when the feed is new, a flush when due: then the rows again once answered).
+/// `blocks_put`: a flush's blocks were confirmed (its step now).
+fn write_step<H: Host>(h: &mut H, c: &Held, mut r: Round, rows: Vec<(Vec<u8>, Option<Vec<u8>>)>, after: After, blocks_put: bool) -> Vec<Io> {
     let nonce: [u8; 12] = identity::upkeep_random(h).map(|b| b[..12].try_into().expect("12")).unwrap_or([0; 12]);
-    match write::rows(h, &r.member, &c.codes(), &mut r.reading, "files", &rows, nonce) {
+    match write::rows(h, &r.member, &c.codes(), &mut r.reading, "files", &rows, nonce, blocks_put) {
         Ok(Next::Done(sent)) => {
-            r.step = Step::Writing { rows: Vec::new(), confirm: sent.confirm, after };
+            r.step = Step::Writing { rows: Vec::new(), waiting: sent.confirm, refused: false, blocks: false, after };
             keep(h, Some(&r));
             sent.io
         }
         Ok(Next::More(sent)) => {
-            // A listing (or a flush) step: once answered, the same rows again.
-            r.step = Step::Writing { rows, confirm: sent.confirm, after };
+            // A listing, a flush's blocks or its step: once answered, the same rows again.
+            r.step = Step::Writing { rows, waiting: sent.confirm, refused: false, blocks: sent.blocks, after };
             keep(h, Some(&r));
             sent.io
         }

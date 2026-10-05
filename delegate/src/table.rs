@@ -245,7 +245,12 @@ impl Reading {
                 io
             }
             Purpose::Feed { .. } => {
-                if j.table == table_name(&self.space, "departed") && !self.departed_asked {
+                // `departed` read from EVERY writer's feed of it (each remover writes theirs), then its writers read.
+                let name = table_name(&self.space, "departed");
+                let all_in = self.jobs.iter().filter(|x| x.table == name).all(|x| x.rows.is_some())
+                    && !self.waiting.iter().any(|(_, w, _)| self.jobs[*w].table == name)
+                    && self.jobs.iter().filter(|x| matches!(x.purpose, Purpose::Catalog { capped: None })).all(|x| x.rows.is_some());
+                if j.table == name && all_in && !self.departed_asked {
                     self.departed_asked = true;
                     return self.departed(c);
                 }
@@ -395,6 +400,12 @@ impl Reading {
             Ok(data::Step::Ready(rows)) => Some(rows),
             _ => None,
         });
+    }
+
+    /// A writer's feed of a table that was asked and did NOT read (sealed with a key not held, broken).
+    pub fn own_unreadable(&self, owner: &[u8; 32], name: &str) -> bool {
+        let t = table_name(&self.space, name);
+        self.jobs.iter().any(|j| j.owner == *owner && j.table == t && j.state.is_some() && matches!(j.rows, Some(None)))
     }
 
     pub fn space(&self) -> [u8; 32] {
