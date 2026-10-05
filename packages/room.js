@@ -28,6 +28,7 @@ export async function start(ctx) {
       padding: 2px var(--cw-space-3); font-size: var(--cw-text-sm); cursor: pointer; }
     .cw-room .msg { position: relative; padding: 2px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
     .cw-room .msg:hover { background: var(--cw-hover); }
+    .cw-room .msg.flash { outline: 2px solid var(--cw-accent); outline-offset: 2px; border-radius: var(--cw-radius-sm); }
     .cw-room .msg.me-mentioned { background: color-mix(in srgb, var(--cw-accent) 12%, transparent); box-shadow: inset 3px 0 var(--cw-accent); }
     .cw-room .msg .who { font-weight: 600; margin-right: var(--cw-space-2); cursor: pointer; }
     .cw-room .msg .who:hover { text-decoration: underline; }
@@ -36,7 +37,6 @@ export async function start(ctx) {
     .cw-room .msg .text { overflow-wrap: anywhere; }
     .cw-room .msg .text .cw-md p:last-child { margin-bottom: 0; }
     .cw-room .msg .editing .hint { color: var(--cw-muted); font-size: var(--cw-text-xs); }
-    .cw-room .msg .text .mention { color: var(--cw-accent); font-weight: 600; }
     .cw-room .msg .quote { color: var(--cw-muted); font-size: var(--cw-text-sm); border-left: 2px solid var(--cw-line); padding-left: var(--cw-space-2);
       margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cw-room .msg.system { color: var(--cw-muted); font-size: var(--cw-text-sm); }
@@ -90,10 +90,8 @@ export async function start(ctx) {
     // THE COMPOSER (`md-editor`, compact): rich text or Markdown, Enter sends, "@" suggests the room's people; FILES
     // with a message (sealed for this conversation's members) — media inline, others under it.
     const pick = attachments.picker({ space: conversation.scope ?? null, from: { app: "chat" }, media: true });
-    const suggestPeople = async q => {
-      q = q.toLowerCase();
-      return (await candidates()).filter(p => p.shown.toLowerCase().startsWith(q) || p.shown.toLowerCase().includes(q)).map(p => p.shown);
-    };
+    // MENTIONS: the one source (`person.mentionable`), with this room's own people.
+    const suggestPeople = async q => (await ctx.require("person")).mentionable(q, { extra: (await candidates()).map(p => p.did) });
     const ed = mdEditor.create({ compact: true, pick, placeholder: `Message ${title}`, label: `Message ${title}`, onSubmit: () => form.requestSubmit(), suggest: suggestPeople });
     ed.disable(true, `Message ${title}`);
     const line = el("div", { className: "line" }, ed.el);
@@ -124,29 +122,15 @@ export async function start(ctx) {
       }
       return directory.shown(did, names.get(did));
     };
-    // The body, as Markdown (`markdown`: its media where written), its mentions marked.
-    const bodyOf = (text, files = []) => {
-      const out = el("div", { className: "text" }, markdown.render(text ?? "", files));
-      const walker = document.createTreeWalker(out, NodeFilter.SHOW_TEXT);
-      const hits = [];
-      while (walker.nextNode()) if (MENTION.test(walker.currentNode.textContent) && !walker.currentNode.parentElement.closest("code, a")) hits.push(walker.currentNode);
-      for (const n of hits) {
-        const parts = [];
-        let last = 0;
-        for (const m of n.textContent.matchAll(MENTION)) {
-          parts.push(n.textContent.slice(last, m.index), el("span", { className: "mention", textContent: m[0] }));
-          last = m.index + m[0].length;
-        }
-        parts.push(n.textContent.slice(last));
-        n.replaceWith(...parts);
-      }
-      return out;
-    };
-    const mentionsMe = text => [...text.matchAll(MENTION)].some(m => m[0].endsWith(`#${me.replace(/^did:craftec:/, "").slice(0, 6)}`));
+    // The body, as Markdown (`markdown`: its media where written, its mentions links to their cards — as everywhere).
+    const bodyOf = (text, files = []) => el("div", { className: "text" }, markdown.render(text ?? "", files));
+    // This person MENTIONED: by their id (`[@…](person:DID)`), or as written before (`@name#abc123`).
+    const mentionsMe = text => String(text ?? "").includes(`(person:${me})`) || [...String(text ?? "").matchAll(MENTION)].some(m => m[0].endsWith(`#${me.replace(/^did:craftec:/, "").slice(0, 6)}`));
     const fail = what => err => say(`${what}: ${err?.message ?? err}`);
 
     function message(m, byId) {
       const li = el("li", { className: m.kind === "system" ? "msg system" : `msg${m.by !== me && mentionsMe(m.body) ? " me-mentioned" : ""}` });
+      li.dataset.id = m.id;
       if (m.re) {
         const q = byId.get(m.re);
         li.append(el("div", { className: "quote", textContent: q ? `↪ ${nameOf(q.by)}: ${markdown.plain(q.body)}` : "↪ a message not shown" }));
@@ -234,6 +218,16 @@ export async function start(ctx) {
           : []),
         ...shown.map(m => message(m, byId)),
       );
+      // A MESSAGE asked for (`focus`: a mention opened): shown — earlier ones brought in until it is — and marked.
+      if (focusOn && items.some(m => m.id === focusOn)) {
+        const at = msgs.querySelector(`li[data-id="${CSS.escape(focusOn)}"]`);
+        if (!at) return (limit = items.length), draw();
+        focusOn = null;
+        at.scrollIntoView({ block: "center" });
+        at.classList.add("flash");
+        setTimeout(() => at.classList.remove("flash"), 2500);
+        return;
+      }
       if (atEnd || !editing) msgs.scrollTop = msgs.scrollHeight;
     }
     function drawReplying() {
@@ -299,5 +293,7 @@ export async function start(ctx) {
     };
   }
 
-  return { show };
+  // FOCUS: the next room drawn shows message `id` (a mention opened at it: `activity.mentions`).
+  let focusOn = null;
+  return { show, focus: id => (focusOn = id) };
 }

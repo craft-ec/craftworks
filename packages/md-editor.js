@@ -7,8 +7,9 @@
 // picker's: sent with its progress; from Drive, taken into the item's space) — shown where the cursor was, kept as
 // `![name](file:KEY)`; a NEW post or note (the one composer); or any item FOUND (yours, saved, or by its reference),
 // kept as `![title](item:REF)`. 📎 attaches any file below. The item keeps the files (`files()`): who reads it reads them.
-// COMPACT (a chat line): the toolbar behind "Aa", Enter sends (`onSubmit`), Shift+Enter a new line. `suggest`:
-// after "@", names to pick (mentions).
+// COMPACT (a chat line): the toolbar behind "Aa", Enter sends (`onSubmit`), Shift+Enter a new line. MENTIONS, in every
+// composer alike: after "@", people to pick (`suggest(q)` → [{ did, shown }]; by default `person.mentionable`), each
+// written `[@name#abc123](person:DID)` — drawn by `markdown` as a link to their card.
 //
 //   const ed = (await ctx.require("md-editor")).create({ value, placeholder, pick, compact, onSubmit, suggest })
 //   form.append(ed.el)   ed.value()   ed.set(md)   ed.files()   ed.busy()   ed.focus()   ed.clear()   ed.disable(bool)
@@ -91,6 +92,8 @@ export async function start(ctx) {
       else if (tag === "s" || tag === "strike" || tag === "del") out += wrap("~~", inner());
       else if (tag === "code") out += "`" + n.textContent.replace(/`/g, "'") + "`";
       else if (tag === "sup") out += `^(${inner()})`;
+      // A mention written before as plain `@name#abc123` stays plain text.
+      else if (tag === "a" && n.dataset?.typed) out += n.textContent;
       else if (tag === "a") out += `[${inner() || n.href}](${n.getAttribute("href") || ""})`;
       else if (n.classList?.contains("spoiler")) out += `>!${inner()}!<`;
       else if (tag === "input" && n.type === "checkbox") out += n.checked ? "[x] " : "[ ] ";
@@ -414,9 +417,11 @@ export async function start(ctx) {
         return [...saved.filter(Boolean), ...own].filter(it => !seen.has(it.ref) && seen.add(it.ref));
       })();
       const q = find.value.trim();
-      // A REFERENCE: the item read first (as this person may), so it is named — or said not to be readable.
-      if (/^(space:|did:)\S+\/\S+$/.test(q)) {
-        const it = await items.get(q).catch(() => null);
+      // A REFERENCE or a shared LINK (`items.refOf`): the item read first (as this person may), so it is named — or said
+      // not to be readable.
+      const named = items.refOf(q);
+      if (named) {
+        const it = await items.get(named).catch(() => null);
         if (n !== asked) return;
         return found.replaceChildren(it ? btn(`🔗 ${kinds.of(it.kind)?.label ?? it.kind}: ${it.title || (it.body ?? "").slice(0, 40) || "untitled"}`, "Insert it", () => putItem(it.ref, it.title)) : h("span", { className: "s", textContent: "That item is not there, or not yours to read." }));
       }
@@ -445,8 +450,8 @@ export async function start(ctx) {
 
     // MENTIONS: "@" and the start of a name → names to pick.
     const list = h("ul", { className: "suggest", hidden: true });
+    const people = suggest ?? (q => ctx.require("person").then(p => p.mentionable(q)));
     async function suggestNow() {
-      if (!suggest) return;
       let before = "";
       if (mode === "markdown") before = ta.value.slice(0, ta.selectionStart);
       else {
@@ -455,26 +460,33 @@ export async function start(ctx) {
       }
       const m = before.match(/@([^\s@]*)$/);
       if (!m) return (list.hidden = true);
-      const found = (await suggest(m[1])).slice(0, 6);
-      list.replaceChildren(...found.map(name => h("li", { textContent: name, onmousedown: e => (e.preventDefault(), take(name, m[0].length)) })));
+      const found = (await people(m[1]).catch(() => [])).slice(0, 6);
+      list.replaceChildren(...found.map(p => h("li", { textContent: p.shown, onmousedown: e => (e.preventDefault(), take(p, m[0].length)) })));
       list.hidden = !found.length;
     }
-    function take(name, typed) {
+    function take({ did, shown }, typed) {
       list.hidden = true;
       if (mode === "markdown") {
         const s = ta.selectionStart;
-        put(`@${name} `, s - typed, s, name.length + 2, name.length + 2);
+        const md = `[@${shown}](person:${did}) `;
+        put(md, s - typed, s, md.length, md.length);
         return;
       }
+      // Rich: the mention as a link (written back as `[@name](person:DID)`), the caret after it.
       const s = getSelection();
       const n = s.anchorNode;
       const o = s.anchorOffset;
-      n.textContent = n.textContent.slice(0, o - typed) + `@${name}\u00a0` + n.textContent.slice(o);
+      const after = n.splitText(o - typed);
+      after.textContent = after.textContent.slice(typed);
+      const a = h("a", { href: `person:${did}`, textContent: `@${shown}` });
+      const space = document.createTextNode("\u00a0");
+      after.before(a, space);
       const r = document.createRange();
-      r.setStart(n, o - typed + name.length + 2);
+      r.setStart(space, 1);
       r.collapse(true);
       s.removeAllRanges();
       s.addRange(r);
+      rich.dispatchEvent(new Event("input"));
     }
     ta.addEventListener("input", suggestNow);
     rich.addEventListener("input", suggestNow);

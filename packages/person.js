@@ -7,6 +7,9 @@
 //   const person = await ctx.require("person");
 //   person.open(anchor, did, { space })   // a menu by `anchor` (the name clicked); `space`: the one it was clicked in
 //   person.openSpace(anchor, desc)        // a SPACE's card (its name clicked): about, members, apps, Join · Open
+//   await person.mentionable("pa", { extra })  // PEOPLE TO MENTION ([{ did, shown }]): the space open's members, this
+//                                            // account's conversations, friends and followed, and `extra` (a room's)
+//   person.openMention(anchor, { did, typed })  // a MENTION clicked: their card (`typed`: an old `name#abc123`)
 export async function start(ctx) {
   const [edge, conversation, directory, roles, moderation, space] = await Promise.all(["edge", "conversation", "directory", "roles", "moderation", "space"].map(n => ctx.require(n)));
   const style = document.createElement("style");
@@ -194,5 +197,35 @@ export async function start(ctx) {
   }
   const act0 = (label, run, cls = "") => el("button", { type: "button", className: cls, textContent: label, onclick: run });
 
-  return { open, openSpace, close };
+  // MENTIONS — one way everywhere (a message, a post, a comment, a note, a mail): written `[@name#abc123](person:DID)`
+  // by every composer (`md-editor`), drawn by `markdown` as a link that opens their card here.
+  async function mentionable(q = "", { extra = [] } = {}) {
+    const me = (await space.account())?.id;
+    const dids = new Set(extra);
+    const mine = await space.mine().catch(() => []);
+    for (const s of mine) if (s.kind === "direct" && s.with) dids.add(s.with);
+    const here = mine.find(s => s.id === ctx.space && s.kind === "server");
+    if (here) for (const d of await conversation.members(here).catch(() => [])) dids.add(d);
+    const people = await edge.people().catch(() => null);
+    for (const rel of ["friend", "follow"]) for (const d of people?.list(rel) ?? []) if (String(d).startsWith("did:craftec:")) dids.add(d);
+    dids.delete(me);
+    const all = await Promise.all([...dids].map(async did => ({ did, shown: directory.shown(did, await directory.handle(did).catch(() => null)) })));
+    q = String(q).toLowerCase();
+    return all.filter(p => p.shown.toLowerCase().includes(q)).sort((a, b) => a.shown.toLowerCase().startsWith(q) === b.shown.toLowerCase().startsWith(q) ? a.shown.localeCompare(b.shown) : a.shown.toLowerCase().startsWith(q) ? -1 : 1);
+  }
+  async function openMention(anchor, { did = null, typed = null } = {}) {
+    // An old `name#abc123`: among the people this account knows (`conversation.person`), else everyone mentionable
+    // here and this person themselves, by the id's start.
+    const short = String(typed ?? "").split("#")[1] ?? "";
+    const byStart = async () => {
+      const me = (await space.account())?.id;
+      const all = [...(await mentionable("").catch(() => [])).map(p => p.did), me].filter(d => d && d.replace(/^did:craftec:/, "").startsWith(short));
+      return all.length === 1 ? all[0] : null;
+    };
+    const who = did ?? (await conversation.person(typed).catch(() => null)) ?? (short ? await byStart() : null);
+    if (!who) return;
+    const sp = (await space.mine().catch(() => [])).find(s => s.id === ctx.space) ?? null;
+    return open(anchor, who, { space: sp });
+  }
+  return { open, openSpace, close, mentionable, openMention };
 }

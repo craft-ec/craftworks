@@ -218,11 +218,12 @@ export async function start(ctx) {
           ...extra,
           reacts(it, { outside }),
           comments && open ? btn(`💬 ${it.comments ?? 0} Comment${it.comments === 1 ? "" : "s"}`, open) : null,
-          // SHARE: its reference copied (pasted anywhere, it embeds) — and the share signal, counted where it is.
+          // SHARE: its LINK copied (`items.linkOf`: opens it in a browser with a node; pasted in the app, opens it here, or
+          // embeds it through Insert) — and the share signal, counted where it is.
           btn(`↗ Share${n("share")}`, e =>
-            navigator.clipboard.writeText(it.ref).then(() => {
+            navigator.clipboard.writeText(items.linkOf(it.ref, it.kind)).then(() => {
               if (!it.signaled?.share) bump(it, "share", true), items.signal(it.ref, "share", true).catch(() => {});
-              e.target.textContent = `Copied — paste it to embed${n("share")}`;
+              e.target.textContent = `Link copied${n("share")}`;
             }, fail),
           ),
           // VIEWS: how many people opened it (counted, never pressed).

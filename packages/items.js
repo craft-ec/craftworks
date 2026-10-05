@@ -976,6 +976,8 @@ export async function start(ctx) {
   const APP_OF = { video: "video", audio: "audio", image: "image", book: "book", note: "note", file: "drive", document: "drive" };
   const appOf = kind => APP_OF[kinds.domain(kind)] ?? "board";
   // In its PLACE (`where`'s addresses): a space's in the space, a person's in their space (`u/<did>`: yours too).
+  // AN ITEM'S REFERENCE: a space's (`space:<id>/<item>`) or a person's (`did:craftec:<id>/<item>`).
+  const ITEM_REF = /^(space:[0-9a-f]{64}|did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64})\/[A-Za-z0-9_-]{4,80}$/;
   function pageOf(ref, kind) {
     const app = appOf(kind);
     const sp = String(ref).startsWith("space:") ? ref.slice(6, ref.indexOf("/")) : null;
@@ -983,6 +985,47 @@ export async function start(ctx) {
     // THE ONE PAGE (`item-page`), framed by its app: `…/<app>/p/<ref>`.
     return `${base}/p/${ref}`;
   }
+  // ITS LINK, to share: the address this page is served at — a node's (`/v1/contract/web/<site>/`) or a server's own
+  // domain in front of one — with its page (`pageOf`). Opened in a browser it is the item; pasted anywhere in the app,
+  // from ANY address, it opens here (`markdown`): what names the item is its page, never the host.
+  const linkOf = (ref, kind) => {
+    const u = new URL(location.href);
+    return `${u.origin}${u.pathname}${pageOf(ref, kind)}`;
+  };
+  // The item a text NAMES: its reference as it is, or any link to its page (`…#/<app>/…/p/<ref>`, whatever the host).
+  function refOf(text) {
+    const t = String(text ?? "").trim();
+    if (ITEM_REF.test(t)) return t;
+    const m = /^https?:\/\/\S*#\/\S*?\/p\/(\S+)$/.exec(t);
+    const ref = m ? decodeURIComponent(m[1]) : null;
+    return ref && ITEM_REF.test(ref) ? ref : null;
+  }
 
-  return { mayWriteOn, pageOf, appOf, submit, list, get, setFiles, attach, attached, editItem, history, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, publicSpace, outsideOf, syncPublic, signal, view, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
+  // MENTIONS told: everyone a text mentions (`[@…](person:DID)`: `md-editor`) is sent a notice to their inbox (`index`)
+  // — so a mention reaches them wherever it is written (a personal post of someone they never read, a comment), not
+  // only where they already read (`activity.mentions`). `ref`: what opens it (a comment: its post).
+  const mentionsTold = async (ref, kind, body) => {
+    const me = (await space.account())?.id;
+    const dids = [...new Set([...String(body ?? "").matchAll(/\(person:(did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64})\)/g)].map(m => m[1]))].filter(d => d !== me);
+    for (const did of dids) await index.send(did, { kind: "mention", ref, itemKind: kind, from: me, text: String(body).slice(0, 280), at: Date.now() }).catch(e => ctx.log("posts", { what: `telling ${did.slice(12, 20)}… of a mention: ${e.message}` }));
+  };
+  const told = (p, ref, kind, body) => (ref && mentionsTold(ref, kind, body).catch(() => {}), p);
+  return {
+    submit: async o => {
+      const ref = await submit(o);
+      if (o?.audience !== "private") told(null, ref, o?.kind ?? "post", o?.body);
+      return ref;
+    },
+    comment: async (post, re, body, o) => {
+      const out = await comment(post, re, body, o);
+      const ref = typeof post === "string" ? post : post?.ref;
+      told(null, ref, typeof post === "string" ? "post" : (post?.kind ?? "post"), body);
+      return out;
+    },
+    editItem: async (ref, body, o) => {
+      const out = await editItem(ref, body, o);
+      told(null, ref, null, body);
+      return out;
+    },
+    mayWriteOn, pageOf, linkOf, refOf, appOf, list, get, setFiles, attach, attached, history, publicIn, inPlaces, following, thread, vote, remove, boards, boardOf, publicSpaces, publicSpace, outsideOf, syncPublic, signal, view, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
 }

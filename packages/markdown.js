@@ -33,6 +33,7 @@ export async function start(ctx) {
     .cw-md th, .cw-md td { border: 1px solid var(--cw-line); padding: 4px 8px; }
     .cw-md hr { border: 0; border-top: 1px solid var(--cw-line); margin: 0.8em 0; }
     .cw-md a { color: var(--cw-accent); }
+    .cw-md a.cw-mention { font-weight: 600; text-decoration: none; background: color-mix(in srgb, var(--cw-accent) 12%, transparent); border-radius: var(--cw-radius-sm); padding: 0 2px; }
     .cw-md .spoiler { background: var(--cw-fg); color: transparent; border-radius: 3px; cursor: pointer; }
     .cw-md .spoiler.shown { background: none; color: inherit; }
     .cw-md .spoiler.block { display: inline-block; padding: 2px 6px; }
@@ -55,6 +56,13 @@ export async function start(ctx) {
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
   const href = u => ((u = (u || "").trim()), /^(https?:\/\/|\/|\?|#|mailto:)/i.test(u) ? u : "#");
+  // A LINK TO AN ITEM of this app (a shared one: `items.linkOf`) — from ANY address (a node's, a server's own domain):
+  // opened HERE, at its page. What names it is its page (`#/…/p/<ref>`), never the host.
+  const appPage = u => {
+    const m = /^https?:\/\/[^\s"<#]*(#\/[^\s"<#]*\/p\/(?:space:[0-9a-f]{64}|did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64})\/[A-Za-z0-9_-]{4,80})$/.exec(String(u ?? "").trim());
+    return m ? m[1] : null;
+  };
+  const anchor = (u, t) => (appPage(u) ? `<a href="${esc(appPage(u)).replace(/&amp;/g, "&")}">${t}</a>` : `<a href="${href(u)}" target="_blank" rel="noopener">${t}</a>`);
   // A URL may hold one level of balanced parens (https://en.wikipedia.org/wiki/Freenet_(software)).
   const URL_RE = "((?:[^()\\s]|\\([^()\\s]*\\))*)";
   const IMG_RE = new RegExp("!\\[([^\\]]*)\\]\\(" + URL_RE + "\\)", "g");
@@ -62,6 +70,9 @@ export async function start(ctx) {
   const FILE = /^file:([A-Za-z0-9_-]{1,80})$/;
   // AN ITEM embedded by its reference (`item:REF`: a post, a note, a file, a video — any kind; `cards.embed`).
   const ITEM = /^item:([A-Za-z0-9:_~.\/-]{3,200})$/;
+  // A MENTION (`person`): `[@name#abc123](person:DID)` — and, written before, a bare `@name#abc123`.
+  const PERSON = /^person:(did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64})$/;
+  const BARE_MENTION = /(^|[\s(])(@[^\s@#<>]*#[1-9A-HJ-NP-Za-km-z]{6})(?![1-9A-HJ-NP-Za-km-z])/g;
 
   // A backslash keeps the next mark as it is (`\*` shows a star).
   const ESC = String.fromCharCode(1);
@@ -71,8 +82,11 @@ export async function start(ctx) {
     s = s.replace(/\\([\\`*_{}\[\]()#+\-.!|~^]|&gt;|&lt;)/g, (_, c) => (kept.push(c), ESC + (kept.length - 1) + ESC));
     s = s.replace(/`([^`]+)`/g, (_, c) => (codes.push(c), NUL + (codes.length - 1) + NUL));
     s = s.replace(IMG_RE, (_, a, u) => (FILE.test(u) ? `<span data-file="${FILE.exec(u)[1]}" data-alt="${a}"></span>` : ITEM.test(u) ? `<span data-item="${ITEM.exec(u)[1]}" data-alt="${a}"></span>` : `<img src="${href(u)}" alt="${a}" class="cw-md-media">`));
-    s = s.replace(LINK_RE, (_, t, u) => (FILE.test(u) ? `<a data-file-link="${FILE.exec(u)[1]}" href="#">${t}</a>` : `<a href="${href(u)}" target="_blank" rel="noopener">${t}</a>`));
-    s = s.replace(/(^|[\s(])((?:https?:\/\/)[^\s<)]+)/g, (_, pre, u) => `${pre}<a href="${href(u)}" target="_blank" rel="noopener">${u}</a>`);
+    s = s.replace(LINK_RE, (_, t, u) =>
+      FILE.test(u) ? `<a data-file-link="${FILE.exec(u)[1]}" href="#">${t}</a>` : PERSON.test(u) ? `<a class="cw-mention" data-did="${PERSON.exec(u)[1]}" href="person:${PERSON.exec(u)[1]}">${t}</a>` : anchor(u, t),
+    );
+    s = s.replace(BARE_MENTION, (_, pre, m) => `${pre}<a class="cw-mention" data-typed="${m.slice(1)}" href="#">${m}</a>`);
+    s = s.replace(/(^|[\s(])((?:https?:\/\/)[^\s<)]+)/g, (_, pre, u) => `${pre}${anchor(u, appPage(u) ? "🔗 Open in Craftworks" : u)}`);
     s = s
       .replace(/\*\*\*([^*]+)\*\*\*/g, "<strong><em>$1</em></strong>")
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
@@ -261,6 +275,9 @@ export async function start(ctx) {
       const ref = byKey.get(a.dataset.fileLink);
       a.replaceWith(ref ? link(a.dataset.fileLink, ref, a.textContent) : missing(a.dataset.fileLink));
     }
+    // A MENTION opens their card (`person`).
+    for (const a of el.querySelectorAll("a.cw-mention"))
+      a.onclick = e => (e.preventDefault(), e.stopPropagation(), ctx.require("person").then(p => p.openMention(a, { did: a.dataset.did || null, typed: a.dataset.typed || null }), () => {}));
     for (const s of el.querySelectorAll(".spoiler")) s.onclick = e => (e.stopPropagation(), s.classList.toggle("shown"));
     // A link inside a card that opens on a click: it opens itself, not the card.
     for (const a of el.querySelectorAll("a, video, audio")) a.addEventListener("click", e => e.stopPropagation());
