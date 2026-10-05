@@ -31,6 +31,8 @@ pub enum Io {
 pub enum Code {
     Bag,
     Tail,
+    /// A tree block of a sealed table (a flush from upkeep).
+    Sealed,
 }
 
 /// What the network answered.

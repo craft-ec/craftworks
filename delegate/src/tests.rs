@@ -145,6 +145,7 @@ fn network<'a>(w: &'a World, requests: Vec<serde_json::Value>) -> impl FnMut(&Io
         Io::Get { id, .. } => Reply::Got { id: *id, state: None },
         Io::Put { code: Code::Tail, params, .. } => Reply::Put { id: id(TAIL, params), ok: true },
         Io::Put { code: Code::Bag, params, .. } => Reply::Put { id: id(BAG, params), ok: true },
+        Io::Put { code: Code::Sealed, params, .. } => Reply::Put { id: id(b"sealed", params), ok: true },
         Io::Update { id, .. } => Reply::Updated { id: *id, ok: true },
     }
 }

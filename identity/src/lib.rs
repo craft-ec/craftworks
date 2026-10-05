@@ -337,6 +337,9 @@ pub const UPKEEP_MEMBERS: &[u8] = b"identity_upkeep/members";
 pub const UPKEEP_BAG: &[u8] = b"identity_upkeep/bag";
 pub const UPKEEP_TAIL: &[u8] = b"identity_upkeep/tail";
 pub const UPKEEP_IDLOG: &[u8] = b"identity_upkeep/idlog";
+/// The Sealed contract's code (a table's tree blocks) and the Piece contract's (a file's pieces): upkeep RE-KEYS.
+pub const UPKEEP_SEALED: &[u8] = b"identity_upkeep/sealed";
+pub const UPKEEP_PIECE: &[u8] = b"identity_upkeep/piece";
 pub const UPKEEP_CODES_HASH: &[u8] = b"identity_upkeep/codes";
 pub const UPKEEP_MANDATE: &[u8] = b"identity_upkeep/mandate/";
 pub const UPKEEP_ADMITTED: &[u8] = b"identity_upkeep/admitted/";
@@ -1278,26 +1281,57 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             if !may {
                 return Refused(Why::NotGranted { table: table.into() });
             }
-            let guard = [GUARD, &p.hash[..]].concat();
-            if let Some(g) = h.get_secret(&guard) {
-                // Only this code writes a guard; one it cannot read signs nothing (u64::MAX: nothing is above it).
-                let (last_seq, last_hash) = match g.split_at_checked(8) {
-                    Some((s, v)) if v.len() == HASH_LEN => (u64::from_le_bytes(s.try_into().unwrap_or([0xff; 8])), v),
-                    _ => (u64::MAX, &[][..]),
-                };
-                let same = seq == last_seq && last_hash == value_hash;
-                if !same && seq <= last_seq {
-                    return Refused(Why::WouldFork { last_seq });
-                }
+            match guarded(h, &p.hash, seq, &value_hash) {
+                Ok(()) => Signed { sig: key.sign(&p.signed_message(false, seq, &value_hash)).to_bytes().to_vec() },
+                Err(why) => Refused(why),
             }
-            let mut g = seq.to_le_bytes().to_vec();
-            g.extend_from_slice(&value_hash);
-            if !h.set_secret(&guard, &g) {
-                return Refused(Why::NotSaved);
-            }
-            Signed { sig: key.sign(&p.signed_message(false, seq, &value_hash)).to_bytes().to_vec() }
         }
     }
+}
+
+/// THE FORK GUARD of a tail (`GUARD ‖ its params' hash` → the last step signed: `seq ‖ value hash`): a step at or below
+/// it is signed only if it is that same step — never two different steps at one place, by a page or by upkeep.
+fn guarded<H: Host>(h: &mut H, params_hash: &[u8], seq: u64, value_hash: &[u8]) -> Result<(), Why> {
+    let guard = [GUARD, params_hash].concat();
+    if let Some(g) = h.get_secret(&guard) {
+        // Only this code writes a guard; one it cannot read signs nothing (u64::MAX: nothing is above it).
+        let (last_seq, last_hash) = match g.split_at_checked(8) {
+            Some((s, v)) if v.len() == HASH_LEN => (u64::from_le_bytes(s.try_into().unwrap_or([0xff; 8])), v),
+            _ => (u64::MAX, &[][..]),
+        };
+        let same = seq == last_seq && last_hash == value_hash;
+        if !same && seq <= last_seq {
+            return Err(Why::WouldFork { last_seq });
+        }
+    }
+    let mut g = seq.to_le_bytes().to_vec();
+    g.extend_from_slice(value_hash);
+    if !h.set_secret(&guard, &g) {
+        return Err(Why::NotSaved);
+    }
+    Ok(())
+}
+
+/// UPKEEP's KEY in a space: the member's space writer (from its data seed, held here) — the public half, whose feeds
+/// are the member's in every space. `None`: this node does not hold the member's data seed.
+pub fn upkeep_space_writer<H: Host>(h: &H, member: &[u8; KEY_LEN]) -> Option<[u8; 32]> {
+    Some(space_writer(&member_(h, member)?.data?).verifying_key().to_bytes())
+}
+fn member_<H: Host>(h: &H, public: &[u8]) -> Option<Member> {
+    member(h, public)
+}
+
+/// UPKEEP SIGNS a step of one of the member's SPACE feeds with no page open: the member's space writer, through the
+/// same fork guard as a page's signing (neither ever signs a step the other signed differently).
+pub fn upkeep_sign_space<H: Host>(h: &mut H, member: &[u8; KEY_LEN], params: &[u8], seq: u64, value_hash: &[u8; 32]) -> Result<[u8; 64], String> {
+    let data = member_(h, member).and_then(|a| a.data).ok_or("this node does not hold the member's data key")?;
+    let key = space_writer(&data);
+    let p = Params::parse(params).ok_or("not a tail's params")?;
+    if !matches!(&p.authority, Authority::One(v) if *v == key.verifying_key()) {
+        return Err("not one of the member's space feeds".into());
+    }
+    guarded(h, &p.hash, seq, value_hash).map_err(|w| format!("{w:?}"))?;
+    Ok(key.sign(&p.signed_message(false, seq, value_hash)).to_bytes())
 }
 
 /// A question for the person, which the node itself shows (the delegate entry turns it into `RequestUserInput`).

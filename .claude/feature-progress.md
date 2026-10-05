@@ -817,7 +817,9 @@ come with keepers as a new codec version.
           tree blocks (Sealed) → epoch keys (`identity::epoch_secret`) → `feed` merge → rows; `departed` caps. Tested
           against a scripted network with feeds written by the real data/feed crates. NOTE: identity.wasm 1.19→1.58 MB
           and its hash moves with these deps — NOTHING is published until R4e (packages/build holds the new one).
-    - [ ] R4b WRITER: this member's own feed of a table from the delegate (writers bag + catalog listing first when
+    - [x] (10-05: `delegate/src/write.rs`, `identity::upkeep_sign_space` through the page's fork guard, `data::prepare_rows`;
+          test: first write lists bag+catalog then PUTs the feed, a version over another's row, flush past 32, guard; a
+          listing mutant caught) R4b WRITER: this member's own feed of a table from the delegate (writers bag + catalog listing first when
           new), rows as feed versions, signed with `space_writer`, sealed with the newest epoch held.
     - [ ] R4c DUE + ROTATE in Rust: `acts`/`pub-acts` replayed by `gov` → removals; the group without them; salt
           rotated (upkeep randomness); due rows as `file-keys.js`; the same rank/takeover hash as pages.

@@ -2,6 +2,7 @@
 //! context, and UPKEEP when the node wakes it. The entry is behind `freenet-main-delegate` (OFF natively).
 
 pub mod table;
+pub mod write;
 pub mod upkeep;
 #[cfg(test)]
 mod table_tests;
@@ -76,6 +77,7 @@ mod entry {
                     let key = match code {
                         Code::Bag => identity::UPKEEP_BAG,
                         Code::Tail => identity::UPKEEP_TAIL,
+                        Code::Sealed => identity::UPKEEP_SEALED,
                     };
                     let Some(code) = identity::Host::get_secret(c, key) else { continue };
                     let contract = ContractContainer::from(ContractWasmAPIVersion::V1(WrappedContract::new(

@@ -359,10 +359,49 @@ impl Reading {
         merge(&feeds, &caps)
     }
 
-    /// A writer's own feed of a table, as read (its tail's state and blocks): what a write from upkeep goes on from.
+    /// A writer's tail of a table (`name`: short — `tables` its catalog), as read: its state (`None`: not there) and its
+    /// tree's blocks — what a write from upkeep goes on from. `None`: never asked.
     pub fn own(&self, owner: &[u8; 32], name: &str) -> Option<(Option<Vec<u8>>, Vec<([u8; 32], Vec<u8>)>)> {
         let t = table_name(&self.space, name);
         self.jobs.iter().find(|j| j.owner == *owner && j.table == t).map(|j| (j.state.clone(), j.blocks.clone()))
+    }
+
+    /// A writer's tail of a table WRITTEN since (its new state, its tree's blocks): what the next write goes on from.
+    /// Its rows read again from what it holds (its tree's blocks are all held: it was just written here).
+    pub fn took_own(&mut self, c: &Codes, owner: &[u8; 32], name: &str, label: &str, state: Vec<u8>, blocks: Vec<([u8; 32], Vec<u8>)>) {
+        let t = table_name(&self.space, name);
+        let i = match self.jobs.iter().position(|j| j.owner == *owner && j.table == t) {
+            Some(i) => {
+                self.jobs[i].state = Some(state);
+                self.jobs[i].blocks = blocks;
+                i
+            }
+            None => {
+                self.jobs.push(Job {
+                owner: *owner,
+                table: t.clone(),
+                label: label.to_string(),
+                public: is_public(&self.space, &t),
+                purpose: Purpose::Feed { cap: None },
+                state: Some(state),
+                blocks,
+                rows: None,
+                });
+                self.jobs.len() - 1
+            }
+        };
+        let mut o = self.open(c, &self.jobs[i]);
+        self.jobs[i].rows = Some(match o.opened() {
+            Ok(data::Step::Ready(rows)) => Some(rows),
+            _ => None,
+        });
+    }
+
+    pub fn space(&self) -> [u8; 32] {
+        self.space
+    }
+    pub fn epochs(&self) -> &BTreeMap<u64, [u8; 32]> {
+        &self.epochs
     }
 }
 

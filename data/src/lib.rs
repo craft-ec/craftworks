@@ -403,9 +403,25 @@ impl Open {
     /// that key, or if the tail would refuse it. The row's copies under older keys are deleted in the same step. (A
     /// feed's value is already a version, shaped by the `feed` package; a delete there is a version, never empty.)
     pub fn prepare_row(&mut self, key: &[u8], value: &[u8]) -> Option<(u64, [u8; 32])> {
+        let ops = self.row_ops(key, value)?;
+        self.prepare(ops)
+    }
+
+    /// SEVERAL ROWS in ONE step (what must land together: a re-keyed file's row and its progress cleared), each as
+    /// `prepare_row` writes one.
+    pub fn prepare_rows(&mut self, rows: &[(Vec<u8>, Vec<u8>)]) -> Option<(u64, [u8; 32])> {
+        let mut ops = Vec::new();
+        for (k, v) in rows {
+            ops.extend(self.row_ops(k, v)?);
+        }
+        self.prepare(ops)
+    }
+
+    /// One row's operations: sealed with the key writes use (a public tail: in the clear), its copies under older keys
+    /// deleted.
+    fn row_ops(&self, key: &[u8], value: &[u8]) -> Option<Vec<Op>> {
         if self.public {
-            let op = if value.is_empty() { Op::Delete { key: key.to_vec() } } else { Op::Set { key: key.to_vec(), value: value.to_vec() } };
-            return self.prepare(vec![op]);
+            return Some(vec![if value.is_empty() { Op::Delete { key: key.to_vec() } } else { Op::Set { key: key.to_vec(), value: value.to_vec() } }]);
         }
         let by = self.writes?;
         let tk = self.key_for(by)?;
@@ -418,7 +434,7 @@ impl Open {
         if let Some((old, _)) = self.stale.get(key) {
             ops.extend(old.iter().filter(|o| **o != sk).map(|o| Op::Delete { key: o.clone() }));
         }
-        self.prepare(ops)
+        Some(ops)
     }
 
     /// SEAL OVER up to `n` rows under an older key (or an alternate's): each written under the key writes use and its old

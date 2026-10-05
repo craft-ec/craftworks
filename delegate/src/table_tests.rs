@@ -188,3 +188,121 @@ fn without_the_epoch_a_feed_is_sealed_with_nothing_of_it_reads() {
     run(&mut r, first, &net);
     assert_eq!(r.rows("files").len(), 1);
 }
+
+// ---- R4b: writing this member's own feed with no page open ----
+
+use super::write::{self, Next};
+use craftworks_identity::{Host, Request};
+
+#[derive(Default)]
+struct Secrets(HashMap<Vec<u8>, Vec<u8>>);
+impl Host for Secrets {
+    fn get_secret(&self, key: &[u8]) -> Option<Vec<u8>> {
+        self.0.get(key).cloned()
+    }
+    fn set_secret(&mut self, key: &[u8], value: &[u8]) -> bool {
+        self.0.insert(key.to_vec(), value.to_vec());
+        true
+    }
+}
+const SEED: [u8; 32] = [0x31; 32];
+const DATA: [u8; 32] = [0xD1; 32];
+/// A node holding a member (its data seed too); the member's public key.
+fn node() -> (Secrets, [u8; 32]) {
+    let mut h = Secrets::default();
+    identity::serve(&mut h, Request::Provision { seed: SEED, did: [0x44; 32], pin: "246810".into(), data: DATA.to_vec() }, [9; 32]);
+    (h, SigningKey::from_bytes(&SEED).verifying_key().to_bytes())
+}
+/// What a write sent, applied to the network: PUTs and UPDATEs as the tail's (or bag's, block's) whole state now.
+fn apply(net: &mut Net, r: &Reading, sent: &write::Sent, me: &[u8; 32], name: &str) {
+    for io in &sent.io {
+        match io {
+            Io::Put { code: upkeep::Code::Bag, params, state } => {
+                net.0.insert(upkeep::id_of(&contract_keys::code_hash(BAG), params), state.clone());
+            }
+            Io::Put { code: upkeep::Code::Sealed, params, state } => {
+                net.0.insert(upkeep::id_of(&contract_keys::code_hash(SEALED), params), state.clone());
+            }
+            _ => {}
+        }
+    }
+    // The tail the step was for: as the write left it.
+    for n in [name, "tables"] {
+        if let Some((Some(st), _)) = r.own(me, n) {
+            let label = if n == "tables" { table::table_name(&SPACE, "tables") } else { blinded(n) };
+            net.0.insert(data::Open::new(TAIL, me, &label).id_bytes(), st);
+        }
+    }
+}
+fn read_files(net: &Net, writers: Vec<[u8; 32]>, epochs: &BTreeMap<u64, [u8; 32]>) -> (Reading, BTreeMap<String, String>) {
+    let (mut r, first) = Reading::new(&codes(), SPACE, epochs.clone(), writers, &["files"]);
+    run(&mut r, first, net);
+    let rows = r.rows("files").into_iter().map(|(k, v)| (String::from_utf8(k).unwrap(), String::from_utf8(v.value).unwrap())).collect();
+    (r, rows)
+}
+
+#[test]
+fn upkeep_writes_its_own_feed_listing_it_first_when_new_and_flushes_when_due() {
+    let (mut h, member) = node();
+    let me_key = identity::space_writer(&DATA);
+    let me = me_key.verifying_key().to_bytes();
+    assert_eq!(identity::upkeep_space_writer(&h, &member), Some(me));
+    let epochs: BTreeMap<u64, [u8; 32]> = [(0, [0x10; 32]), (1, [0x11; 32])].into_iter().collect();
+    let ep: Vec<(u64, [u8; 32])> = epochs.clone().into_iter().collect();
+    let other = writer(2);
+    let mut net = Net::default();
+    // Another member's feed holds k/x; this member has written nothing here (no catalog, not in the bag).
+    catalog(&mut net, &other, &ep, &["files"]);
+    let mut fo = Feed::new(&other, &table::table_name(&SPACE, "files"), &blinded("files"), &ep);
+    let x = fo.put(&mut net, "k/x", "theirs", None);
+    writers_bag(&mut net, &[0x10; 32], &[pubkey(&other)]);
+    let writers = vec![pubkey(&other), me];
+
+    // FIRST WRITE: listed first (the bag, its catalog), then the feed made.
+    let (mut r, _) = read_files(&net, writers.clone(), &epochs);
+    let rows = vec![(b"k/x".to_vec(), Some(b"mine over theirs".to_vec())), (b"k/y".to_vec(), Some(b"new".to_vec()))];
+    let Next::More(listing) = write::rows(&mut h, &member, &codes(), &mut r, "files", &rows, [1; 12]).unwrap() else { panic!("listed first") };
+    assert!(listing.io.iter().any(|io| matches!(io, Io::Put { code: upkeep::Code::Bag, .. })), "in the writers bag before its catalog");
+    apply(&mut net, &r, &listing, &me, "files");
+    let Next::Done(sent) = write::rows(&mut h, &member, &codes(), &mut r, "files", &rows, [2; 12]).unwrap() else { panic!("then the rows") };
+    assert!(matches!(sent.io[0], Io::Put { code: upkeep::Code::Tail, .. }), "the feed made with a PUT");
+    apply(&mut net, &r, &sent, &me, "files");
+    let (_, got) = read_files(&net, writers.clone(), &epochs);
+    assert_eq!(got.get("k/x").map(String::as_str), Some("mine over theirs"), "a version over the one current (theirs): {got:?}");
+    assert_eq!(got.get("k/y").map(String::as_str), Some("new"));
+    let _ = x;
+
+    // MANY ROWS: past 32 waiting, a FLUSH first (its tree's blocks put), then the rows; all read back from the tree.
+    let (mut r, _) = read_files(&net, writers.clone(), &epochs);
+    let many: Vec<(Vec<u8>, Option<Vec<u8>>)> = (0..40).map(|i| (format!("k/m{i:02}").into_bytes(), Some(b"m".to_vec()))).collect();
+    let mut flushed = false;
+    let mut nonce = 3u8;
+    for half in [&many[..20], &many[20..]] {
+        // Called until its rows are written: each step answered before the next.
+        for _ in 0..4 {
+            nonce += 1;
+            match write::rows(&mut h, &member, &codes(), &mut r, "files", half, [nonce; 12]).unwrap() {
+                Next::More(s) => {
+                    flushed |= s.io.iter().any(|io| matches!(io, Io::Put { code: upkeep::Code::Sealed, .. }));
+                    apply(&mut net, &r, &s, &me, "files");
+                }
+                Next::Done(s) => {
+                    apply(&mut net, &r, &s, &me, "files");
+                    break;
+                }
+            }
+        }
+    }
+    assert!(flushed, "a feed past 32 rows is flushed into its tree");
+    let (_, got) = read_files(&net, writers.clone(), &epochs);
+    assert_eq!(got.keys().filter(|k| k.starts_with("k/m")).count(), 40, "every row read back (tree and tail)");
+
+    // THE FORK GUARD: a different step at a place already signed is refused (a page holding an older state).
+    let (r2, _) = read_files(&net, writers, &epochs);
+    let (Some(st), _) = r2.own(&me, "files").unwrap() else { panic!("its feed") };
+    let mut o = data::Open::new(TAIL, &me, &blinded("files"));
+    o.absorb(&st);
+    let p = o.params.clone();
+    let seq = o.writer.seq();
+    assert!(identity::upkeep_sign_space(&mut h, &member, &p, seq, &[0xEE; 32]).is_err(), "never two different steps at one place");
+}
