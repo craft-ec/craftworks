@@ -1236,3 +1236,19 @@ for individual sorting, tags for global categorization, a setting to view NSFW o
 - [x] ARCHITECTURE plan table brought to 10-05: 5–8 done, 9 observability done / privacy not, 11 Global analytics
       (proposed: tallies, qualified counts, resource quotas, settled periods — awaiting the owner's two decisions),
       12 Compute, 13 App domains, 14 Templates.
+
+## HISTORY in the storage layer (owner 10-05: "records on prolly tree… history"; baseline 7 days and 20 versions;
+## premium a higher ceiling later; personal and shared spaces the same; every kind)
+Today a tail row is replaced in place and a flush replaces the root: old versions sit in unreferenced blocks, unkept.
+- [ ] H1 data crate (new fns only — the identity delegate links this crate; its hash must stay 5dea06e6): `root()`,
+      `value_at(root, key)` (prolly::read::get through the same Step/Need loop), `pending_rows_without(key)`,
+      `asset_at(root)` for keep.
+- [ ] H2 ROOT LOG: after each flush, the replaced root (+ when) appended to a reserved row of the table, pruned to
+      7 days; flush-when-quiet ignores that row (no flush loop). A version = the state after a quiet period (edits
+      within one are one version) — honest grain without a flush per keystroke.
+- [ ] H3 KEEP also keeps the blocks every logged root reaches, until it ages out.
+- [ ] H4 items.history(ref): each member's feed walked root by root → [{ at, by (the feed's writer), value }],
+      consecutive duplicates folded, newest 20; History view (item page, note) with Restore.
+- [ ] H5 Retention a space setting (≤ the plan's ceiling: baseline 7 d / 20 v); premium ceiling with payments.
+Known limit: a table RESEALED (an epoch moved after a removal) starts its history again — older trees sit under the
+old key's addresses.

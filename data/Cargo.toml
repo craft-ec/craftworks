@@ -6,6 +6,11 @@ license = "MIT OR Apache-2.0"
 publish = false
 description = "DATA: an account's (or a space's) table as a tail — read, sealed, written, flushed into its tree. No I/O: the page (through the core) and the identity delegate (upkeep, no page open) drive it."
 
+[features]
+# The table's HISTORY (`ROOT_LOG`, `value_at`): the page's core only — the identity delegate links this crate
+# without it, so its build (its identity) does not change.
+history = []
+
 [dependencies]
 # The tail's params and ids, sans-IO (`contract_keys`: no client API — the identity delegate links this crate too).
 contract-keys = { workspace = true }

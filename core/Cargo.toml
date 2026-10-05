@@ -37,7 +37,7 @@ craftworks-account = { path = "../account" }
 # A space's governance: the one replay of its acts (the identity delegate reads a space by it too).
 craftworks-gov = { path = "../gov" }
 # A table as a tail (read, sealed, written, flushed): its own crate, driven by the identity delegate too.
-craftworks-data = { path = "../data" }
+craftworks-data = { path = "../data", features = ["history"] }
 # Files: RLNC-coded, sealed pieces (ARCHITECTURE §6).
 craftworks-files = { path = "../files" }
 # The account's encryption key (X25519) and its vault (XChaCha20-Poly1305).

@@ -1730,3 +1730,125 @@ mod tests {
         let _ = S { terminal: false, seq: 0, value_hash: [0; 32], bitmap: 0, sigs: vec![] };
     }
 }
+
+// HISTORY (the page's only: `--features history`, which the identity delegate's build never names — its bytes, its
+// key, stay as they are).
+#[cfg(feature = "history")]
+impl Open {
+    /// THE ROOT of the table's tree now (none: never flushed).
+    pub fn root(&self) -> Option<Cid> {
+        self.writer.body().root
+    }
+
+    /// ITS HISTORY: the roots it had, each with when it was replaced, oldest first (`ROOT_LOG`).
+    pub fn root_log(&self) -> Vec<(u64, Cid)> {
+        let body = self.writer.body();
+        let Some(raw) = body.entries.get(ROOT_LOG).and_then(|e| e.value.clone()) else { return Vec::new() };
+        raw.chunks_exact(40)
+            .filter_map(|c| Some((u64::from_be_bytes(c[..8].try_into().ok()?), c[8..].try_into().ok()?)))
+            .collect()
+    }
+
+    /// The step LOGGING `root` (the one a flush just replaced) as replaced at `at_ms`, after `prior` — the log as it
+    /// was BEFORE that flush (a flush keeps only the tail's entries newer than itself: it drops the log, so it is read
+    /// first and written again here): entries before `keep_after_ms` dropped (the retention), and at most `max` kept
+    /// (the newest). `None`: nothing to log (already its last).
+    pub fn prepare_root_log(&mut self, prior: &[(u64, Cid)], root: Cid, at_ms: u64, keep_after_ms: u64, max: usize) -> Option<(u64, [u8; 32])> {
+        let mut log = prior.to_vec();
+        if log.last().map(|x| x.1) == Some(root) {
+            return None;
+        }
+        log.retain(|(t, _)| *t >= keep_after_ms);
+        log.push((at_ms, root));
+        let skip = log.len().saturating_sub(max);
+        let value: Vec<u8> = log[skip..].iter().flat_map(|(t, r)| [t.to_be_bytes().as_slice(), r.as_slice()].concat()).collect();
+        self.prepare(vec![Op::Set { key: ROOT_LOG.to_vec(), value }])
+    }
+
+    /// A row's VALUE in the tree at `root` (one the table had: its history) — `Need` names the blocks to fetch first
+    /// (the same as any read), `None`: no such row then.
+    pub fn value_at(&mut self, root: &Cid, key: &[u8]) -> Result<Step<Option<Vec<u8>>>, String> {
+        match freenet_prolly::read::get(&self.blocks, root, key) {
+            Ok(None) => Ok(Step::Ready(None)),
+            Ok(Some(v)) => match read_value(&self.blocks, v) {
+                Ok(b) => Ok(Step::Ready(Some(b.to_vec()))),
+                Err(ReadError::Need(ids)) => self.need(ids),
+                Err(e) => Err(format!("a value then does not read: {e:?}")),
+            },
+            Err(ReadError::Need(ids)) => self.need(ids),
+            Err(e) => Err(format!("the tree then does not read: {e:?}")),
+        }
+    }
+
+}
+
+/// The tail's own row LOGGING the roots this table's tree had — its HISTORY (a flush replaces the root; the old one,
+/// with when it was replaced, is kept here so every row's earlier values can be read back: [`Open::value_at`]).
+/// Entries of 8 bytes (when, ms, big-endian) and 32 (the root), oldest first; pruned to the table's retention. Hidden
+/// from the rows; never written into the tree; never counted as a pending row (no flush is ever owed to it).
+#[cfg(feature = "history")]
+pub const ROOT_LOG: &[u8] = b"\0root-log";
+
+#[cfg(all(test, feature = "history"))]
+mod history_tests {
+    use super::*;
+    use craftec_register_contract::wire::Params;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    const CODE: &[u8] = b"\0asm\x01\0\0\0";
+    fn sign(key: &SigningKey, o: &Open, seq: u64, hash: [u8; 32]) -> [u8; 64] {
+        key.sign(&Params::parse(&o.params).unwrap().signed_message(false, seq, &hash)).to_bytes()
+    }
+    fn write(key: &SigningKey, o: &mut Open, k: &str, v: &str) {
+        let (seq, h) = o.prepare_row(k.as_bytes(), v.as_bytes()).unwrap();
+        o.commit(sign(key, o, seq, h)).unwrap();
+    }
+    fn flush(key: &SigningKey, o: &mut Open) -> Vec<(Cid, Vec<u8>)> {
+        let Ok(Step::Ready(f)) = o.flush() else { panic!("a flush of held rows is ready") };
+        o.commit(sign(key, o, f.seq, f.hash)).unwrap();
+        f.blocks
+    }
+
+    /// HISTORY: a row changed across two flushes reads back at the root it had — the log written AFTER the flush that
+    /// replaced it (a flush drops the tail's older entries), from the log read BEFORE it; a reader with the state only
+    /// fetches the old tree's blocks as any read does.
+    #[test]
+    fn a_row_reads_back_as_it_was_at_a_logged_root() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        let mut o = Open::new(CODE, &member, "notes");
+        o.set_table_key([7; 32]);
+        let mut net: HashMap<Cid, Vec<u8>> = HashMap::new();
+        write(&key, &mut o, "a", "v1");
+        net.extend(flush(&key, &mut o));
+        let r1 = o.root().expect("a root after the first flush");
+        write(&key, &mut o, "a", "v2");
+        let prior = o.root_log();
+        net.extend(flush(&key, &mut o));
+        let r2 = o.root().unwrap();
+        assert_ne!(r1, r2);
+        assert!(o.root_log().is_empty(), "a flush keeps none of the tail's older entries");
+        let (seq, h) = o.prepare_root_log(&prior, r1, 1_000, 0, 20).expect("the replaced root is logged");
+        o.commit(sign(&key, &o, seq, h)).unwrap();
+        assert_eq!(o.root_log(), vec![(1_000, r1)]);
+        assert_eq!(o.pending_rows(), 0, "the log is no row: no flush is owed to it");
+        // A reader with the state only.
+        let mut r = Open::new(CODE, &member, "notes");
+        r.set_table_key([7; 32]);
+        assert!(r.absorb(&o.writer.state()));
+        let logged = r.root_log()[0].1;
+        let mut at = |root: Cid, k: &str| -> Option<Vec<u8>> {
+            for _ in 0..10 {
+                match r.value_at(&root, k.as_bytes()).unwrap() {
+                    Step::Ready(v) => return v,
+                    Step::Need(ids) => ids.iter().for_each(|id| assert!(r.absorb_block(id, &net[id]))),
+                    Step::Keys(k) => panic!("no epochs here: {k:?}"),
+                }
+            }
+            panic!("the read did not finish")
+        };
+        assert_eq!(at(logged, "a").as_deref(), Some(b"v1".as_slice()), "as it was then");
+        assert_eq!(at(r2, "a").as_deref(), Some(b"v2".as_slice()), "as it is now");
+        assert_eq!(at(logged, "zz"), None, "control: a row that never was");
+    }
+}

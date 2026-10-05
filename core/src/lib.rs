@@ -1590,6 +1590,66 @@ mod js {
             prepared(&o.params, seq, hash)
         }
 
+        /// HISTORY (`data::ROOT_LOG`): the table's tree root now (hex, or null), and the roots it had — `[[at, root]]`,
+        /// oldest first (each with when it was replaced).
+        pub fn tail_root(&mut self, id: &[u8]) -> Result<JsValue, JsValue> {
+            Ok(match self.0.tail(&b32(id)?).map_err(err)?.root() {
+                Some(r) => JsValue::from(hex(&r)),
+                None => JsValue::NULL,
+            })
+        }
+        pub fn tail_root_log(&mut self, id: &[u8]) -> Result<js_sys::Array, JsValue> {
+            Ok(self
+                .0
+                .tail(&b32(id)?)
+                .map_err(err)?
+                .root_log()
+                .into_iter()
+                .map(|(at, r)| -> JsValue { [JsValue::from(at as f64), JsValue::from(hex(&r))].into_iter().collect::<js_sys::Array>().into() })
+                .collect())
+        }
+        /// The step LOGGING `root` (just replaced by a flush, at `at` ms) after `prior` (`tail_root_log` read BEFORE that
+        /// flush: a flush drops the log), keeping what is newer than `keep_after` and at most `max`: `{ params, seq,
+        /// valueHash }` to sign, or null (nothing to log).
+        pub fn tail_log_root(&mut self, id: &[u8], prior: js_sys::Array, root: &str, at: f64, keep_after: f64, max: u32) -> Result<JsValue, JsValue> {
+            let cid = |s: &str| -> Option<[u8; 32]> { (0..32).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect::<Option<Vec<u8>>>()?.try_into().ok() };
+            let prior: Vec<(u64, [u8; 32])> = prior
+                .iter()
+                .filter_map(|e| {
+                    let a = js_sys::Array::from(&e);
+                    Some((a.get(0).as_f64()? as u64, cid(&a.get(1).as_string()?)?))
+                })
+                .collect();
+            let root = cid(root).ok_or_else(|| err("not a root".into()))?;
+            let o = self.0.tail(&b32(id)?).map_err(err)?;
+            match o.prepare_root_log(&prior, root, at as u64, keep_after as u64, max as usize) {
+                Some((seq, hash)) => Ok(prepared(&o.params, seq, hash)?.into()),
+                None => Ok(JsValue::NULL),
+            }
+        }
+        /// A row's value in the tree at an earlier `root` (hex; its history): `{ value }` (bytes, or null: no such row
+        /// then), or `{ fetch }` — Block contract ids to GET first (their answers through `take`), then ask again.
+        pub fn tail_value_at(&mut self, id: &[u8], root: &str, key: &[u8]) -> Result<JsValue, JsValue> {
+            let cid: [u8; 32] = (0..32)
+                .map(|i| u8::from_str_radix(root.get(2 * i..2 * i + 2).unwrap_or("zz"), 16).ok())
+                .collect::<Option<Vec<u8>>>()
+                .and_then(|v| v.try_into().ok())
+                .ok_or_else(|| err("not a root".into()))?;
+            let out = js_sys::Object::new();
+            match self.0.read(&b32(id)?, |o| o.value_at(&cid, key)).map_err(err)? {
+                Err(fetch) => {
+                    let _ = js_sys::Reflect::set(&out, &"fetch".into(), &fetch.into_iter().map(JsValue::from).collect::<js_sys::Array>());
+                }
+                Ok(data::Step::Ready(v)) => {
+                    let _ = js_sys::Reflect::set(&out, &"value".into(), &v.map(|b| JsValue::from(js_sys::Uint8Array::from(&b[..]))).unwrap_or(JsValue::NULL));
+                }
+                Ok(_) => {
+                    let _ = js_sys::Reflect::set(&out, &"value".into(), &JsValue::NULL);
+                }
+            }
+            Ok(out.into())
+        }
+
         /// SKIP AHEAD (`data::Open::skip_to`): the prepared step moved past `last` (the identity signed through it; the
         /// network, which answered, holds less): the step to sign, or null.
         pub fn tail_skip(&mut self, id: &[u8], last: f64) -> Result<JsValue, JsValue> {
