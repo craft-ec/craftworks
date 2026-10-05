@@ -1145,7 +1145,8 @@ capability — shared capability component that can be used across apps". An APP
       (`items.publicSpace`, `items.outsideOf`) — Board's descOf/outsideFor, Media's outsideOf, where's saved read,
       conversation, spaces-panel, space-home. `discovering()` is `where`'s; votes() is `actions`' only. Server settings'
       nav "null" (a hosted page has no Close) fixed.
-Then: Settings app in every space (Account moved in; space Home's settings moved in; header Account link gone).
+Settings app in every space: DONE 10-04 (575130b, a4e8c5a — Account is the personal space's Settings; a space's
+settings a page; a tile on every Home; no header Account link).
 Step 1 done: Board, Video/Audio, Note, Drive, Caption, Contact on `where` (Chat with its rework). Uncommitted on fx/17692 only: personal
 Chat circle tabs (to be replaced: channels with an audience, person Chat via `where`).
 

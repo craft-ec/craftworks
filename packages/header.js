@@ -1,7 +1,7 @@
 // HEADER: a top bar like a Mac's menu bar. On the left: ⌂ (home), the SPACE you are in — its name opens the spaces panel,
 // every space you can go to (yours, your friends', those you follow) —, the CURRENT APP — a dropdown switching between the apps of that space
 // (its Home, and the apps it uses; Personal: the apps with a personal view) — and
-// that app's MENU — its sub-pages and actions; on the right: the app's ending actions, and Account. It changes with the app: on Home it reads
+// that app's MENU — its sub-pages and actions; on the right: the app's ending actions (Account is the Settings app's). It changes with the app: on Home it reads
 // "Home"; in an app, the app's name (from the manifest's apps) and what the app put under its route in `ctx.actions`:
 // `{ label, href }` (a sub-page: a link; `on` when it is the one shown), `{ label, run }` (an action; `end`: at the
 // right), a search box, or a MENU (`{ label, menu: [{ label, href, on } | { label, run }] }`: a button opening a dropdown, closed
