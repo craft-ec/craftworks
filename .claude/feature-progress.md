@@ -808,7 +808,22 @@ come with keepers as a new codec version.
         salt rotated when a removal is in the group; adopt on cross-space attach / Save to Drive; a post made private.
   - [x] R3 own uploads kept on removal (the removed page copies them into its own space); public copies carry the
         current key.
-  - [ ] R4 the delegate works due rows on wake-up (no page open).
+  - [ ] R4 the delegate works due rows on wake-up (no page open). Owner 10-05: "Build it fully" (told: ~1,850 lines of
+        page logic to port, one identity change). PHASES (each: build, test, commit):
+    - [ ] R4a SPACE TABLE READER in the delegate (`delegate/src/table.rs`, a pure step machine like upkeep): writers =
+          the group roster's credential WRITER keys (a DID writes a space under `space_writer`, the same on every device);
+          the writers bag (sealed with epoch 0's `bag-writers` key, AES-GCM) narrows whose catalogs are asked; each
+          writer's catalog `x<id12>-tables` → table listed (blinded: `blind_name(space_table_key)`) → its feed tail →
+          tree blocks (Sealed) → epoch keys (`identity::epoch_secret`) → `feed` merge → rows; `departed` caps. Tested
+          against a scripted network with feeds written by the real data/feed crates.
+    - [ ] R4b WRITER: this member's own feed of a table from the delegate (writers bag + catalog listing first when
+          new), rows as feed versions, signed with `space_writer`, sealed with the newest epoch held.
+    - [ ] R4c DUE + ROTATE in Rust: `acts`/`pub-acts` replayed by `gov` → removals; the group without them; salt
+          rotated (upkeep randomness); due rows as `file-keys.js`; the same rank/takeover hash as pages.
+    - [ ] R4d RECODE: a generation per step (GET fragments → decode → encode under the new key → PUT pieces), index and
+          root, row changed, old pieces burned; progress `p/<id>` shared with pages; a budget per wake-up.
+    - [ ] R4e WIRING + LIVE: wake-ups run re-key rounds after admissions; identity rebuilt (one PIN re-entry); fx/fy: A
+          removes B with A's page closed → A's delegate re-keys; B's old reference not found.
   - [x] R5 leaving a space removes the leaver's nodes from its group (a leave = a removal): gov `leave` act + `gone`
         set (test 12/12), moderation.enforce takes out gone DIDs' nodes (upkeep, every 30 s on an admin's page).
   - [x] R6 BURN old pieces at re-key: new `piece` contract (contracts-src/piece, 2 tests; wasm d48911c4…), first
