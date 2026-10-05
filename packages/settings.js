@@ -8,6 +8,9 @@ export async function mount(ctx, el) {
     return;
   }
   if (!ctx.space) return (await ctx.require("account")).mount(ctx, el);
+  // A SPACE's settings: none of the personal settings' header tabs (the account's) — its own tabs are in the page.
+  delete ctx.actions[ctx.route];
+  dispatchEvent(new CustomEvent("craftworks:actions"));
   // The whole area (.cw-fill, as Chat and Mail): its tabs and the tab open, each scrolling itself.
   el.classList.add("cw-fill");
   const sp = (await (await ctx.require("space")).mine()).find(s => s.id === ctx.space);

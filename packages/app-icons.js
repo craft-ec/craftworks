@@ -7,6 +7,9 @@
 //                                                              // no href: dimmed, `note` saying why
 //   icons.drawer(host, items, { empty })   // ALL APPS as a phone shows them: by name, or — this person's choice, kept
 //                                          // with their account — grouped by CATEGORY (the manifest's), a switch on top
+//   const desk = icons.desk(host, { items, pinKey, empty })   // THE HOME LAYOUT, the same for every Home (yours and a
+//                                          // space's): PINNED, then ALL APPS (the drawer). `items()`: the tiles now;
+//                                          // `pinKey(app)`: its pin's key (a space's own pins are its own). desk.redraw()
 export async function start(ctx) {
   const style = document.createElement("style");
   style.textContent = `
@@ -23,6 +26,7 @@ export async function start(ctx) {
     .cw-icons .off button { font: inherit; font-size: var(--cw-text-xs); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-accent);
       border-radius: var(--cw-radius-pill); padding: 1px 8px; cursor: pointer; }
     .cw-icons .empty { grid-column: 1 / -1; color: var(--cw-muted); font-size: var(--cw-text-sm); text-align: center; }
+    .cw-desk-h { margin: 1.2em 0 .5em; font-size: 1rem; color: var(--cw-muted); text-align: center; }
     .cw-drawer { display: grid; gap: var(--cw-space-2); }
     .cw-drawer .how { justify-self: center; color: var(--cw-muted); font-size: var(--cw-text-sm); }
     .cw-drawer h4 { margin: var(--cw-space-2) 0 0; text-align: center; font-size: var(--cw-text-sm); color: var(--cw-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }`;
@@ -76,5 +80,31 @@ export async function start(ctx) {
     };
     draw();
   }
-  return { grid, tile, drawer };
+  // THE DESK: Pinned (this person's pins of these apps) and All apps — pins and their buttons once they are read.
+  function desk(host, { items, pinKey, empty = null }) {
+    const pinned = el("div", {});
+    const all = el("div", {});
+    host.replaceChildren(el("h3", { className: "cw-desk-h", textContent: "Pinned" }), pinned, el("h3", { className: "cw-desk-h", textContent: "All apps" }), all);
+    let pins = null;
+    let pinUI = null;
+    const redraw = () => {
+      if (!host.isConnected) return;
+      const on = new Set(pins?.refs("app:") ?? []);
+      const tiles = items().map(t => ({ ...t, pin: pins && pinUI && t.href ? pinUI.button(pinKey(t.app)) : null }));
+      grid(pinned, tiles.filter(t => on.has(pinKey(t.app))), "Pin an app with 📌 to keep it here.");
+      drawer(all, tiles, { empty });
+    };
+    redraw();
+    Promise.all([ctx.require("edge").then(e => e.pins()), ctx.require("pin-button")]).then(
+      ([t, ui]) => {
+        pins = t;
+        pinUI = ui;
+        pins.onChange(redraw);
+        redraw();
+      },
+      e => ctx.log("desk without pins", { what: e?.message ?? String(e) }),
+    );
+    return { redraw };
+  }
+  return { grid, tile, drawer, desk };
 }

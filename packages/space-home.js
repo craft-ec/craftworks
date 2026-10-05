@@ -100,14 +100,17 @@ export async function mount(ctx, el) {
     };
     // An app ALWAYS there (Settings): never added or removed.
     const uses = a => a.always || on.includes(keyOf(a));
+    // THE DESK (`app-icons`: the same layout as your own Home): Pinned (this space's pins, its own) and All apps — the
+    // apps it uses, and for who may, those it does not yet, dimmed with Add.
     const appGrid = h("div", {});
-    icons.drawer(
-      appGrid,
-      sharedApps
-        .filter(a => uses(a) || may)
-        .map(a => (uses(a) ? { app: a, href: `#/s/${sp.id}${a.route}`, count: activity && ["chat", "board"].includes(keyOf(a)) ? activity.of(sp.id, keyOf(a)) : 0 } : { app: a, add: add(keyOf(a)) })),
-      { empty: "No apps yet: its owner or an admin adds them." },
-    );
+    icons.desk(appGrid, {
+      items: () =>
+        sharedApps
+          .filter(a => uses(a) || may)
+          .map(a => (uses(a) ? { app: a, href: `#/s/${sp.id}${a.route}`, count: activity && ["chat", "board"].includes(keyOf(a)) ? activity.of(sp.id, keyOf(a)) : 0 } : { app: a, add: add(keyOf(a)) })),
+      pinKey: a => `app:/s/${sp.id}${a.route}`,
+      empty: "No apps yet: its owner or an admin adds them.",
+    });
     const removable = may ? sharedApps.filter(a => !a.always && on.includes(keyOf(a))) : [];
     root.replaceChildren(
       ...[
@@ -121,12 +124,7 @@ export async function mount(ctx, el) {
         // Its PEOPLE: the space's Contact (`members-list`: the one list, its roles).
         h("p", {}, h("a", { href: `#/s/${sp.id}/contact`, textContent: `${members.length} member${members.length === 1 ? "" : "s"}` }), ` · you: ${r.role(me) ?? "member"}`),
       ),
-      h(
-        "section",
-        {},
-        h("h3", { textContent: "Apps" }),
-        appGrid,
-      ),
+      appGrid,
       removable.length
         ? h(
             "section",

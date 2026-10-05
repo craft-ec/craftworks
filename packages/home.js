@@ -80,46 +80,21 @@ export async function mount(ctx, el) {
         .desk .app .new { position: absolute; top: 2px; left: calc(50% + 10px); margin: 0; }
         .desk .empty { grid-column: 1 / -1; color: var(--cw-muted); font-size: var(--cw-text-sm); text-align: center; }
       </style>
-      <div class="desk">
-        <h3>Pinned</h3><div class="grid pinned"></div>
-        <h3>All apps</h3><div class="all"></div>
-      </div>`;
-    // The icons show at once; the pins arrive when the account's desktop table has been read (a table the account
-    // never wrote takes the network a while to report absent).
-    let pins = null;
-    let pinUI = null;
+      <div class="desk"></div>`;
+    // THE DESK (`app-icons`: the same layout as a space's Home): the PERSONAL space's apps (those with a personal view;
+    // a shared space's are on its own Home), each with its pill (what is new: `activity`) and its pin (`app:<route>`).
     let activity = null;
-    // An app's pin is the account's pin of `app:<route>`: the same pins every app uses.
-    const pinned = () => new Set((pins?.refs("app:") ?? []).map(r => r.slice(4)));
-    // A tile is the app's link and, beside it (never inside: the loader takes every click on a `#` link), its pin.
-    // A tile: the one `app-icons` look — its pill (what is new: `activity`'s totals, the manifest says what) and its pin.
     const icons = await ctx.require("app-icons");
-    const item = a => ({ app: a, href: `#${a.route}`, count: a.counts && activity ? activity.total(a.counts) : 0, pin: pins && pinUI ? pinUI.button(`app:${a.route}`) : null });
-    const render = () => {
-      if (!el.isConnected) return;
-      const on = pinned();
-      const [pinnedGrid, allGrid] = [el.querySelector(".pinned"), el.querySelector(".all")];
-      // The PERSONAL space's apps: those with a personal view (a shared space's are on its own Home).
-      const personal = ctx.apps.filter(a => (a.views ?? ["personal"]).includes("personal"));
-      const mine = personal.filter(a => on.has(a.route));
-      icons.grid(pinnedGrid, mine.map(item), "Pin an app with 📌 to keep it here.");
-      icons.drawer(allGrid, personal.map(item));
-    };
-    render();
-    Promise.all([ctx.require("edge").then(e => e.pins()), ctx.require("pin-button")]).then(
-      ([t, ui]) => {
-        pins = t;
-        pinUI = ui;
-        pins.onChange(render);
-        render();
-      },
-      e => ctx.log("desktop without pins", { what: e?.message ?? String(e) }),
-    );
+    const personal = ctx.apps.filter(a => (a.views ?? ["personal"]).includes("personal"));
+    const desk = icons.desk(el.querySelector(".desk"), {
+      items: () => personal.map(a => ({ app: a, href: `#${a.route}`, count: a.counts && activity ? activity.total(a.counts) : 0 })),
+      pinKey: a => `app:${a.route}`,
+    });
     // What is new in each app: its badge, kept current.
     ctx.require("activity").then(a => {
       activity = a;
-      a.onChange(render);
-      render();
+      a.onChange(desk.redraw);
+      desk.redraw();
     }, () => {});
   };
 

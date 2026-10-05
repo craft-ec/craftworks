@@ -21,7 +21,8 @@ export async function start(ctx) {
     const views = app?.views ?? [];
     const me = (await space.account().catch(() => null))?.id;
     if (person && person !== me) return views.includes("person") ? `#${app.route}/u/${person}` : `#/u/${person}`;
-    if (sp) return views.includes("shared") && (await roles.of(sp).then(r => r.apps(), () => [])).includes(app.route.slice(1)) ? `#/s/${sp.id}${app.route}` : `#/s/${sp.id}`;
+    // An app ALWAYS there (Settings) is in every space; any other where that space uses it.
+    if (sp) return views.includes("shared") && (app.always || (await roles.of(sp).then(r => r.apps(), () => [])).includes(app.route.slice(1))) ? `#/s/${sp.id}${app.route}` : `#/s/${sp.id}`;
     return views.includes("personal") ? `#${app.route}` : "#/";
   }
   const style = document.createElement("style");
