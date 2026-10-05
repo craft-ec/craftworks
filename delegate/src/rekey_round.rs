@@ -160,7 +160,10 @@ fn space_of<H: Host>(h: &H, member: &[u8; 32], m: &identity::Mandate) -> Option<
 fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, space: [u8; 32], rest: Vec<[u8; 32]>) -> Vec<Io> {
     let Some((_, spaces)) = identity::upkeep_mandate(h, &member) else { return Vec::new() };
     let Some(m) = spaces.iter().find(|m| m.space == space).cloned() else { return next_space(h, c, member, me, rest) };
-    let Some((roster, epochs)) = space_of(h, &member, &m) else { return next_space(h, c, member, me, rest) };
+    let Some((roster, epochs)) = space_of(h, &member, &m) else {
+        identity::upkeep_say(h, &member, &format!("{}: its group does not load here: not re-keyed", m.name));
+        return next_space(h, c, member, me, rest);
+    };
     let (reading, io) = Reading::new(&c.codes(), space, epochs, roster.iter().map(|(w, _)| *w).collect(), &["files", "acts", "pub-acts"]);
     let r = Round { member, me, rest, space, name: m.name.clone(), owner: m.owner.clone(), roster, reading, step: Step::Reading, queue: Vec::new(), moved: wakeups(h), salt: None };
     keep(h, Some(&r));
@@ -389,14 +392,22 @@ fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
         }
     }
     h.set_secret(SEEN, &bincode::serialize(&first).expect("seen encodes"));
-    // What it found, SAID (a round that does nothing is otherwise silent): and a row not its turn yet brings the next
-    // round forward to that turn.
-    if !p.due.is_empty() {
+    // What it found, SAID — always (a round that does nothing is otherwise silent): what it read, what is due, and a row
+    // not its turn yet brings the next round forward to that turn.
+    {
         let name = r.name.clone();
+        let files = r.reading.rows("files");
+        let notes = if r.reading.notes.is_empty() { String::new() } else { format!(" ({})", r.reading.notes.join("; ")) };
         identity::upkeep_say(
             h,
             &r.member,
-            &format!("{name}: {} file(s) due, {} at my turn now{}", p.due.len(), queue.len(), soonest.map(|s| format!(", the next in {} s", s / 1000)).unwrap_or_default()),
+            &format!(
+                "{name}: {} row(s) of files read{notes}; {} file(s) due, {} at my turn now{}",
+                files.len(),
+                p.due.len(),
+                queue.len(),
+                soonest.map(|s| format!(", the next in {} s", s / 1000)).unwrap_or_default()
+            ),
         );
         if let Some(s) = soonest {
             let at = wakeups(h) + s.div_ceil(60_000) + 1;
