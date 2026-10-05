@@ -3,13 +3,22 @@
 // The words shown are the page's (`title`).
 //
 //   const labelUI = await ctx.require("label-menu");
-//   labelUI.menu(anchor, ref, { title: "Label note" })
-//   el.append(labelUI.chips(ref, { onPick: id => … }))
+//   labelUI.key(itemRef)        // an ITEM's label key — one for every kind (`item:<ref>`)
+//   labelUI.menu(anchor, key, { title: "Label note" })
+//   el.append(labelUI.chips(key, { onPick: id => … }))
 export async function start(ctx) {
   const labels = await (await ctx.require("edge")).labels();
   const { list, of, set, create } = labels;
+  // ONE KEY per item, whatever its kind (a note, a post, a video): its labels are the account's one list.
+  const key = ref => `item:${ref}`;
   const find = name => list().find(l => l.name.localeCompare(name.trim(), undefined, { sensitivity: "base" }) === 0);
   const fail = e => ctx.log("label failed", { what: e?.message ?? String(e) });
+  // Notes' labels from before (`notes:<ref>`) moved to it, once (none left: nothing to do).
+  for (const l of list())
+    for (const old of labels.refs(l.id, "notes:"))
+      await set(key(old.slice(6)), l.id, true)
+        .then(() => set(old, l.id, false))
+        .catch(fail);
   const t = { onChange: labels.onChange };
 
   const style = document.createElement("style");
@@ -117,5 +126,5 @@ export async function start(ctx) {
     if (openMenu?.isConnected) openMenu.refresh();
   });
 
-  return { menu, chips };
+  return { key, menu, chips };
 }

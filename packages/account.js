@@ -1,8 +1,8 @@
 // ACCOUNT, a PRIVATE page: it shows nothing until someone is logged in. It asks `login`, which shows its dialog if
 // nobody is; closing the dialog goes home. It is the personal space's SETTINGS (`settings`: `#/settings/<sub>`). Its
 // SUB-PAGES are in the top bar, one shown at a time:
-// Card, Nodes, Security (how the keys stand), Storage, Apps, Recovery (the words, and a passphrase carrying them),
-// Moderation; Log out is the bar's action.
+// Card, Nodes, Security (how the keys stand), Storage, Apps, Content (adult content shown or not), Recovery (the words,
+// and a passphrase carrying them), Moderation; Log out is the bar's action.
 export async function mount(ctx, el) {
   const [auth, login, grantsOf, membership, keys, storage, blocks] = await Promise.all(
     ["auth", "login", "access", "membership", "keys", "storage", "blocks"].map(n => ctx.require(n)),
@@ -437,7 +437,25 @@ export async function mount(ctx, el) {
     lists.onChange(draw);
     box.append(sec);
   };
-  const titles = { card: "Card", permissions: "Permissions", nodes: "Nodes", security: "Security", storage: "Storage", apps: "Apps", recovery: "Recovery", moderation: "Moderation" };
+  // CONTENT: what this person chooses to see — adult content (items tagged NSFW), off unless turned on; kept with the
+  // account (`edge.prefs`: every device).
+  sections.content = async () => {
+    const prefs = await (await ctx.require("edge")).prefs();
+    const sec = document.createElement("section");
+    const box_ = Object.assign(document.createElement("input"), { type: "checkbox", checked: !!prefs.get("nsfw") });
+    const said = Object.assign(document.createElement("span"), { className: "note" });
+    box_.onchange = async () => {
+      box_.disabled = true;
+      await prefs.set("nsfw", box_.checked).then(() => (said.textContent = box_.checked ? " Shown." : " Hidden."), e => (said.textContent = ` Not saved: ${e.message ?? e}`));
+      box_.disabled = false;
+    };
+    const label = document.createElement("label");
+    label.append(box_, " Show adult content (items tagged NSFW) in lists and feeds", said);
+    const note = Object.assign(document.createElement("p"), { className: "note", textContent: "Off: NSFW items are left out of every list, and opening one asks first. Your own are always shown. Kept with your account, on every device." });
+    sec.append(label, note);
+    box.append(sec);
+  };
+  const titles = { card: "Card", permissions: "Permissions", nodes: "Nodes", security: "Security", storage: "Storage", apps: "Apps", content: "Content", recovery: "Recovery", moderation: "Moderation" };
   const [subName, focus] = String(ctx.sub ?? "").split("/");
   const sub = sections[subName] ? subName : "card";
   // The top bar: the sub-pages, and Log out.

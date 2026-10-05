@@ -78,6 +78,7 @@ export async function start(ctx) {
     // Anything that stands on its own (a post, a video, …: `kinds`) is posted; a comment commented; a reaction voted.
     // (An ATTACHING kind — a caption — is contributed like a comment.)
     const K = await ctx.require("kinds");
+    const S = await ctx.require("signals");
     const ACTION = { message: "post", comment: "comment", reaction: "vote", ...Object.fromEntries(K.all().map(k => [k, "post"])), ...Object.fromEntries(K.attaching().map(k => [k, "comment"])) };
     const [r, m] = outside
       ? await ctx.require("roles").then(async x => {
@@ -191,8 +192,12 @@ export async function start(ctx) {
       const sid = inSpace ? container.scope?.id : null;
       return [...rowsNow().filter(row => !hidden.has(row.key)).map(item), ...(extra?.items() ?? []).filter(it => !hidden.has(it.id) && !r?.banned?.(it.by))]
         .filter(it => it && !lists.flagged({ by: it.by, id: it.id, space: sid }))
-        // A post or message by someone the setting did not allow when it was made: not counted.
-        .filter((it, _, all) => !(governed && app && ACTION[it.kind] && !allowed(ACTION[it.kind], it.by, it, all, it.at)));
+        // A post or message by someone the setting did not allow when it was made: not counted. A REACTION by its
+        // signal's policy action (`signals`: a view, a save, a share by who may read; a vote by who may vote).
+        .filter((it, _, all) => {
+          const action = it.kind === "reaction" ? (S.byMark(it.emoji)?.action ?? ACTION.reaction) : ACTION[it.kind];
+          return !(governed && app && action && !allowed(action, it.by, it, all, it.at));
+        });
     };
     // WHICH RULE: a channel's (its path); on a board, THE ONE CHECK (`roles.mayWrite`, the same for a personal item):
     // posting by the space's policy for what is posted; a comment or a vote by the rule of the item it answers (its

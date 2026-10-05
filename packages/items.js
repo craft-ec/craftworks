@@ -33,8 +33,9 @@
 export async function start(ctx) {
   const [content, index, space, edge] = await Promise.all(["content", "index", "space", "edge"].map(n => ctx.require(n)));
   const TAIL = "posts";
-  const UP = "▲";
-  const DOWN = "▼";
+  // SIGNALS (`signals`): every interaction with an item — a vote, a view, a save, a share, a tag — kept as a reaction
+  // where its giver's vote is, counted, windowed and sealed by the one path below.
+  const signals = await ctx.require("signals");
   // What stands on its own (a post, a video, a movie …: `kinds`): comments and votes answer these.
   const kinds = await ctx.require("kinds");
   const TOP = new Set(kinds.all());
@@ -110,7 +111,8 @@ export async function start(ctx) {
   const boards = async () => {
     const all = await space.mine();
     // Its apps once its acts are read (before, a space shows the default apps: a Chat-only space would open a board).
-    const on = await Promise.all(all.map(sp => roles.of(sp).then(async r => (await r.settled, r.apps().some(a => PLACE_APPS.includes(a))), () => false)));
+    // A space whose rules do not read here is not a board here — said, never dropped silently.
+    const on = await Promise.all(all.map(sp => roles.of(sp).then(async r => (await r.settled, r.apps().some(a => PLACE_APPS.includes(a))), e => (ctx.log("posts", { what: `${sp.name ?? sp.id.slice(0, 8)}: its rules do not read (${e?.message ?? e})` }), false))));
     return all.filter((_, i) => on[i]);
   };
   const boardOf = async x => {
@@ -313,22 +315,50 @@ export async function start(ctx) {
   const idOf = ref => ref.slice(ref.lastIndexOf("/") + 1);
   const whereOf = ref => ref.slice(0, ref.lastIndexOf("/"));
 
-  // VOTES: ref → (did → 1 | -1), from reactions (both at once — a change half-made — counts as neither).
-  // VOTES counted — within a WINDOW when one is given (`since`, ms: a list's counts match its window, as Grid's did).
+  // SIGNALS COUNTED, from reactions — within a WINDOW when one is given (`since`, ms: a list's counts match its window,
+  // as Grid's did). VOTES: ref → (did → 1 | -1) (both at once — a change half-made — counts as neither); every other
+  // signal beside them (`votes.counts`: ref → signal → (did → its values)).
   function tally(reactions, votes = new Map(), since = 0) {
+    votes.counts ??= new Map();
     for (const x of reactions) {
-      if (x.emoji !== UP && x.emoji !== DOWN) continue;
-      if (since && (x.at ?? Infinity) < since) continue;
-      const on = votes.get(x.item) ?? new Map();
-      on.set(x.by, on.has(x.by) ? 0 : x.emoji === UP ? 1 : -1);
-      votes.set(x.item, on);
+      const s = signals.byMark(x.emoji);
+      if (!s || (since && (x.at ?? Infinity) < since)) continue;
+      if (s.value === "updown") {
+        const on = votes.get(x.item) ?? new Map();
+        on.set(x.by, on.has(x.by) ? 0 : signals.valueOf(x.emoji));
+        votes.set(x.item, on);
+        continue;
+      }
+      const of = votes.counts.get(x.item) ?? new Map();
+      const by = of.get(s.id) ?? new Map();
+      by.set(x.by, (by.get(x.by) ?? new Set()).add(signals.valueOf(x.emoji)));
+      of.set(s.id, by);
+      votes.counts.set(x.item, of);
     }
     return votes;
   }
+  // An item's counts: its votes (`score`, `ups`, `downs`, `mine`), and `counts` — per signal, how many people gave it
+  // (a many-signal: per value) — and `signaled`: this person's own (a save's state, the tags they put).
   const scored = (key, votes, self) => {
     const on = votes.get(key);
     const vs = on ? [...on.values()] : [];
-    return { score: vs.reduce((n, v) => n + v, 0), ups: vs.filter(v => v > 0).length, downs: vs.filter(v => v < 0).length, mine: on?.get(self) ?? 0 };
+    const counts = {};
+    const signaled = {};
+    for (const [id, by] of votes.counts?.get(key) ?? []) {
+      const many = signals.of(id)?.value === "many";
+      if (many) {
+        const t = {};
+        for (const values of by.values()) for (const v of values) t[v] = (t[v] ?? 0) + 1;
+        counts[id] = t;
+      } else counts[id] = by.size;
+      if (by.has(self)) signaled[id] = many ? [...by.get(self)] : true;
+    }
+    return { score: vs.reduce((n, v) => n + v, 0), ups: vs.filter(v => v > 0).length, downs: vs.filter(v => v < 0).length, mine: on?.get(self) ?? 0, counts, signaled };
+  };
+  // Who may give a signal, by its policy action: a READ one (a view, a save, a share) whoever reads it — they read it.
+  const signalPasses = (emoji, check) => {
+    const s = signals.byMark(emoji);
+    return !!s && (s.action === "read" || check(s.action));
   };
   const postOf = c => c.in; // a comment's post
   const shape = (it, ref, board) => {
@@ -436,7 +466,7 @@ export async function start(ctx) {
       return !p || roles.mayWrite({ action, item: p, writer: by, cred, at: at ?? Infinity }) === true;
     };
     for (const r of rs) {
-      tally(r.reactions().filter(x => counts_(x.item, "vote", x.by, x.cred, x.at)), votes, since);
+      tally(r.reactions().filter(x => signalPasses(x.emoji, action => counts_(x.item, action, x.by, x.cred, x.at))), votes, since);
       for (const it of r.list()) if (it.kind === "comment" && it.at >= since && counts_(postOf(it), "comment", it.by, it.meta?.cred, it.at)) counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
     }
     const out = [];
@@ -453,10 +483,15 @@ export async function start(ctx) {
   // THE RANKS (Grid's), each over its window's counts: HOT — activity (every vote, up or down, and comments); BEST —
   // quality (net votes and comments); RISING — interactions per hour of age; TOP — net votes (or, `by: "comments"`,
   // comments); NEW — newest. Ties go to the newer.
+  // ACTIVITY: every vote, comment and signal the catalog counts as activity (`signals`: a save, a share, a tag).
+  const activity = p =>
+    (p.ups ?? 0) + (p.downs ?? 0) + (p.comments ?? 0) + signals.all().filter(s => s.activity && s.value !== "updown").reduce((n, s) => n + (typeof p.counts?.[s.id] === "object" ? Object.values(p.counts[s.id]).reduce((a, b) => a + b, 0) : (p.counts?.[s.id] ?? 0)), 0);
   const RANK = {
-    hot: p => (p.ups ?? 0) + (p.downs ?? 0) + (p.comments ?? 0),
+    hot: activity,
     best: p => (p.score ?? 0) + (p.comments ?? 0),
-    rising: p => ((p.ups ?? 0) + (p.downs ?? 0) + (p.comments ?? 0)) / Math.max(1, (Date.now() - p.at) / 3600e3),
+    rising: p => activity(p) / Math.max(1, (Date.now() - p.at) / 3600e3),
+    // POPULAR: how many people viewed it (over the window).
+    popular: p => p.counts?.view ?? 0,
     top: p => p.score ?? 0,
     comments: p => p.comments ?? 0,
   };
@@ -512,6 +547,20 @@ export async function start(ctx) {
   }
 
   // WINDOW, bounded unless asked for "all": New the last 30 days (older on asking), a rank the last week.
+  // TAGS: an item's own (its author's: `meta.tags`, lowercase) — what it is, for everyone; `nsfw` marks adult content,
+  // shown only to whoever chose to see it (`edge.prefs` "nsfw"), and always to its author.
+  const NSFW = "nsfw";
+  const tagsOf = it => (Array.isArray(it?.meta?.tags) ? it.meta.tags : []);
+  const normalTags = text =>
+    [...new Set(String(text ?? "").split(/[,\s]+/).map(t => t.replace(/^#/, "").toLowerCase().replace(/[^\p{L}\p{N}_-]/gu, "").slice(0, 40)).filter(Boolean))].slice(0, 20);
+  const nsfwShown = async () => !!(await edge.prefs()).get("nsfw");
+  const isNsfw = it => tagsOf(it).includes(NSFW);
+  // What a list shows of what it read: its TAG (`where.tag`), and NSFW only where chosen.
+  async function shownOf(out, where) {
+    const self = await me();
+    const nsfw = await nsfwShown();
+    return out.filter(p => (!where.tag || tagsOf(p).includes(where.tag)) && (nsfw || p.by === self || !isNsfw(p)));
+  }
   async function list(where = {}, sort = "hot", kind = "post", { window = sort === "new" ? 30 : "week", by = "votes" } = {}) {
     const kinds = kindsFor(kind);
     const inWindow = (at, w = window) => sinceOf(w) == null || at >= sinceOf(w);
@@ -551,7 +600,7 @@ export async function start(ctx) {
       const by = where.by ?? (await me());
       out = await profilePosts([by], [], kinds, sinceOf(window) ?? 0);
     }
-    return out.filter(p => inWindow(p.at)).sort(sorter(sort, by));
+    return (await shownOf(out.filter(p => inWindow(p.at)), where)).sort(sorter(sort, by));
   }
 
   async function get(ref, { outside = null } = {}) {
@@ -650,7 +699,7 @@ export async function start(ctx) {
       const post = rs.flatMap(r => r.list()).find(it => `${it.by}/${it.id}` === ref) ?? null;
       const may = (action, by, cred, at) => !post || roles.mayWrite({ action, item: post, writer: by, cred, at: at ?? Infinity }) === true;
       const votes = new Map();
-      for (const r of rs) tally(r.reactions().filter(x => x.item !== ref || may("vote", x.by, x.cred, x.at)), votes);
+      for (const r of rs) tally(r.reactions().filter(x => x.item !== ref || signalPasses(x.emoji, action => may(action, x.by, x.cred, x.at))), votes);
       for (const r of rs)
         for (const it of r.list())
           if (it.kind === "comment" && postOf(it) === ref && may("comment", it.by, it.meta?.cred, it.at)) {
@@ -734,30 +783,59 @@ export async function start(ctx) {
     if (!mine.isPrivate?.(post)) await pointTo(post);
   }
 
-  async function vote(ref, v, post = ref, { outside = null } = {}) {
-    // On a space's item — its post, a comment in its room, or an outsider's comment there.
+  // A SIGNAL (`signals`): this person's interaction with an item, set (or taken back) — the ONE writer of them all.
+  // `value`: a vote's +1, −1 or 0; a many-signal's value (a tag) with `on`; else on/off. Kept where their vote is: the
+  // item's space's room (a member; `post`: where a comment's are kept — its post's), their own profile pointed in the
+  // space's bag (from outside a public space, by its policy), or their own profile (a person's item: its rule's
+  // credential cited, pointed for its author where public). Only what changes is written.
+  async function signal(ref, id, value = true, { post = ref, outside = null, on = true } = {}) {
+    const s = signals.of(id);
+    if (!s) throw new Error(`no such signal: ${id}`);
+    const want = new Map(
+      s.value === "updown"
+        ? [[signals.markFor(id, 1), value === 1], [signals.markFor(id, -1), value === -1]]
+        : [[signals.markFor(id, value), s.value === "many" ? !!on : !!value]],
+    );
+    const adding = [...want.values()].some(Boolean);
+    const self = await me();
     const inSpace = String(post).startsWith("space:");
     const sp = inSpace ? await boardOf(post) : null;
     if (inSpace && !sp) {
       // NOT IN IT (public participation): in this person's own profile, pointed in the space's bag.
-      if (!outside || !(await mayWriteOn(await get(post, { outside }), "vote", { outside }))) throw new Error("only its members vote here");
-      const mine = await profileRoom(await me());
-      const self = await me();
+      outside ??= await outsideOf(post);
+      if (!outside) throw new Error("not a space you can reach");
+      if (s.action !== "read" && !(await mayWriteOn(await get(post, { outside }), s.action, { outside }))) throw new Error(`only its members ${s.action} here`);
+      const mine = await profileRoom(self);
       const had = new Set(mine.reactions().filter(x => x.item === ref && x.by === self).map(x => x.emoji));
-      for (const [e, on] of [[UP, v === 1], [DOWN, v === -1]]) if (on !== had.has(e)) await mine.react(ref, e, on, {});
-      if (v) await pointToSpace(outside);
+      for (const [e, v] of want) if (v !== had.has(e)) await mine.react(ref, e, v, {});
+      if (adding && s.point) await pointToSpace(outside);
       return;
     }
     const onBoard = !!sp;
-    const r = onBoard ? await boardRoom(sp) : await profileRoom(await me());
+    const r = onBoard ? await boardRoom(sp) : await profileRoom(self);
     const item = onBoard && ref.startsWith("space:") ? idOf(ref) : ref;
-    const self = await me();
     const had = new Set(r.reactions().filter(x => x.item === item && x.by === self).map(x => x.emoji));
-    const cred = onBoard ? null : await writeCred(ref, "vote");
-    // Only what changes is written (taking back a vote that is not there writes nothing).
-    for (const [e, on] of [[UP, v === 1], [DOWN, v === -1]]) if (on !== had.has(e)) await r.react(item, e, on, { cred });
-    if (v && !onBoard) await r.whenPrivate?.();
-    if (v && !onBoard && !r.isPrivate?.(post)) await pointTo(post);
+    const cred = onBoard || s.action === "read" ? null : await writeCred(ref, s.action);
+    for (const [e, v] of want) if (v !== had.has(e)) await r.react(item, e, v, { cred });
+    if (adding && !onBoard) await r.whenPrivate?.();
+    if (adding && s.point && !onBoard && !r.isPrivate?.(post)) await pointTo(post);
+  }
+  // A VOTE: the up/down signal.
+  const vote = (ref, v, post = ref, { outside = null } = {}) => signal(ref, "vote", v, { post, outside });
+
+  // VIEWED: this person read the item (its page opened) — the view signal, once per page, never on one's own. Never
+  // fails the page: a view is best effort.
+  const viewedHere = new Set();
+  async function view(ref, { outside = null } = {}) {
+    if (viewedHere.has(ref)) return;
+    viewedHere.add(ref);
+    try {
+      const it = await get(ref, { outside }).catch(() => null);
+      if (!it || it.by === (await me()) || it.signaled?.view) return;
+      await signal(ref, "view", true, { outside });
+    } catch (e) {
+      ctx.log("posts", { what: `a view not kept: ${e.message ?? e}` });
+    }
   }
 
   // REMOVE: this person's own, or — on a board, as its moderator — anyone's (hidden, as the server's moderation does).
@@ -888,5 +966,5 @@ export async function start(ctx) {
     return `${base}/p/${ref}`;
   }
 
-  return { mayWriteOn, pageOf, appOf, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, publicSpace, outsideOf, syncPublic, onChange: f => changed.push(f) };
+  return { mayWriteOn, pageOf, appOf, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, publicSpace, outsideOf, syncPublic, signal, view, tagsOf, normalTags, isNsfw, nsfwShown, onChange: f => changed.push(f) };
 }

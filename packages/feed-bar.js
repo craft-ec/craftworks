@@ -1,8 +1,9 @@
 // FEED BAR, a component: the one way every content app (Board, Videos, Audio, a composed app) chooses and orders what
 // it lists — as Grid's. A FEED picks the set: New (by date, a month at a time, older as the end is scrolled to), Hot
-// (every vote and comment), Best (net votes and comments), Rising (interactions per hour of age) or Top (net votes, or
-// comments) — the ranked ones over TODAY, THIS WEEK or THIS MONTH, their counts over the same window (`items.list`).
-// A SORT then only reorders what is shown: by time, votes or comments, ▲▼. What is read is that window, never all.
+// (every vote and comment), Best (net votes and comments), Rising (interactions per hour of age), Top (net votes, or
+// comments) or Popular (how many people viewed it) — the ranked ones over TODAY, THIS WEEK or THIS MONTH, their counts
+// over the same window (`items.list`). A SORT then only reorders what is shown: by time, votes, comments or views, ▲▼.
+// What is read is that window, never all.
 //
 //   const bar = (await ctx.require("feed-bar")).create({ onChange: draw })
 //   host.append(bar.el())                         // the controls (drawn again with each list)
@@ -41,16 +42,16 @@ export async function start() {
           "div",
           { className: "cw-feedbar" },
           h("span", { className: "lbl", textContent: "feed" }),
-          pick([["new", "✨ New"], ["hot", "🔥 Hot"], ["best", "👍 Best"], ["rising", "📈 Rising"], ["top", "🏆 Top"]], st.sort, v => ((st.sort = v), (st.months = 1), (st.counts = []))),
+          pick([["new", "✨ New"], ["hot", "🔥 Hot"], ["best", "👍 Best"], ["rising", "📈 Rising"], ["top", "🏆 Top"], ["popular", "👁 Popular"]], st.sort, v => ((st.sort = v), (st.months = 1), (st.counts = []))),
           st.sort === "new" ? null : pick([["day", "Today"], ["week", "This week"], ["month", "This month"]], st.window, v => (st.window = v)),
           st.sort === "top" ? pick([["votes", "Top votes"], ["comments", "Top comments"]], st.by, v => (st.by = v)) : null,
           h("span", { className: "lbl", textContent: "sort" }),
-          pick([["ranked", "Default"], ["time", "Time"], ["votes", "Votes"], ["comments", "Comments"]], st.reorder, v => (st.reorder = v)),
+          pick([["ranked", "Default"], ["time", "Time"], ["votes", "Votes"], ["comments", "Comments"], ["views", "Views"]], st.reorder, v => (st.reorder = v)),
           st.reorder === "ranked" ? null : h("button", { type: "button", title: "Direction", textContent: st.desc ? "▼" : "▲", onclick: () => ((st.desc = !st.desc), changed()) }),
         ),
       reorder: list => {
         if (st.reorder === "ranked") return list;
-        const key = { time: p => p.at, votes: p => p.score ?? 0, comments: p => p.comments ?? 0 }[st.reorder];
+        const key = { time: p => p.at, votes: p => p.score ?? 0, comments: p => p.comments ?? 0, views: p => p.counts?.view ?? 0 }[st.reorder];
         return [...list].sort((a, b) => (st.desc ? key(b) - key(a) : key(a) - key(b)) || b.at - a.at);
       },
       // NEW reaches a month further back — on a click, or as the end comes into view, but only while reaching back

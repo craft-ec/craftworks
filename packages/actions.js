@@ -1,6 +1,7 @@
 // ACTIONS, a capability: what a person can DO with an item — the same in every app, on every kind: vote (▲ score ▼),
-// its comments (how many; opening its page), share (its reference: pasted anywhere, it embeds), save (yours, any kind),
-// hide (yours: `moderation`), flag (your public list, in Discover), edit, remove. Each shown only where this person
+// react (an emoji, counted — as Chat's), its comments (how many; opening its page), share (its reference: pasted
+// anywhere, it embeds), save (yours, any kind; counted), label (your private tags, any kind: `label-menu`), hide (yours:
+// `moderation`), flag (your public list, in Discover), edit, remove. Every interaction is a SIGNAL (`signals`). Each shown only where this person
 // may, by THE ONE CHECK (`items.mayWriteOn`: a space's member, from outside by its public policy, a personal item's own
 // rule with its credential) — never an app's own.
 //
@@ -12,7 +13,7 @@
 //   actions.save(item)      // Save alone (☆/★: a card's tool)
 //   actions.saved()         // the refs this person saved, newest first (any kind) — every app's Saved (`where`)
 export async function start(ctx) {
-  const [items, edge, space] = await Promise.all(["items", "edge", "space"].map(n => ctx.require(n)));
+  const [items, edge, space, signals, labelUI] = await Promise.all(["items", "edge", "space", "signals", "label-menu"].map(n => ctx.require(n)));
   const pins = await edge.pins();
   const me = async () => (await space.account()).id;
   const style = document.createElement("style");
@@ -30,7 +31,15 @@ export async function start(ctx) {
       padding: 4px 8px; border-radius: var(--cw-radius-sm); }
     .cw-acts button:hover { background: var(--cw-hover); color: var(--cw-fg); }
     .cw-acts button.on { color: var(--cw-accent); }
-    .cw-acts .said { color: var(--cw-danger); font-size: var(--cw-text-sm); }`;
+    .cw-acts .said { color: var(--cw-danger); font-size: var(--cw-text-sm); }
+    .cw-acts .n { color: var(--cw-muted); font-size: var(--cw-text-sm); font-weight: 600; padding: 4px 8px; }
+    .cw-reacts { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; position: relative; }
+    .cw-reacts .chip { border: 1px solid var(--cw-line); border-radius: var(--cw-radius-pill); padding: 1px 8px; background: none; cursor: pointer; font: inherit; font-size: var(--cw-text-sm); }
+    .cw-reacts .chip.mine { border-color: var(--cw-accent); background: var(--cw-hover); }
+    .cw-reacts .pick { position: absolute; bottom: 100%; left: 0; z-index: 20; display: flex; gap: 2px; background: var(--cw-surface); border: 1px solid var(--cw-line);
+      border-radius: var(--cw-radius-pill); padding: 2px 6px; box-shadow: var(--cw-shadow-lg); }
+    .cw-reacts .pick[hidden] { display: none; }
+    .cw-reacts .pick button { border: 0; background: none; cursor: pointer; font-size: 1.1rem; padding: 2px 4px; }`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
@@ -65,21 +74,63 @@ export async function start(ctx) {
     return h("div", { className: `cw-votes${row ? " row" : ""}` }, up, n, down);
   }
 
+  // REACTIONS (the react signal: `signals`): each emoji with how many gave it — this person's own marked, a click
+  // taking it back — and React (the catalog's choices). The same on every kind as on Chat's messages.
+  function reacts(it, { outside = null } = {}) {
+    const counts = () => it.counts?.react ?? {};
+    const mine = () => new Set(it.signaled?.react ?? []);
+    const el = h("span", { className: "cw-reacts", onclick: e => e.stopPropagation() });
+    const toggle = async emoji => {
+      const on = !mine().has(emoji);
+      const c = { ...counts(), [emoji]: Math.max(0, (counts()[emoji] ?? 0) + (on ? 1 : -1)) };
+      if (!c[emoji]) delete c[emoji];
+      it.counts = { ...(it.counts ?? {}), react: c };
+      it.signaled = { ...(it.signaled ?? {}), react: on ? [...mine(), emoji] : [...mine()].filter(x => x !== emoji) };
+      draw();
+      await items.signal(it.ref, "react", emoji, { on, outside: await outsideOf(outside) }).catch(e => ctx.log("actions", { what: `not reacted: ${e.message ?? e}` }));
+    };
+    const pick = h("span", { className: "pick", hidden: true }, ...signals.of("react").choices.map(emoji => h("button", { type: "button", textContent: emoji, onclick: e => (e.preventDefault(), (pick.hidden = true), toggle(emoji)) })));
+    const draw = () =>
+      el.replaceChildren(
+        ...Object.entries(counts()).map(([emoji, n]) => h("button", { type: "button", className: `chip${mine().has(emoji) ? " mine" : ""}`, textContent: `${emoji} ${short(n)}`, onclick: e => (e.preventDefault(), toggle(emoji)) })),
+        h("button", { type: "button", className: "chip", title: "React", textContent: "☺︎+", onclick: e => (e.preventDefault(), (pick.hidden = !pick.hidden)) }),
+        pick,
+      );
+    draw();
+    return el;
+  }
+
   // SAVED: any item, one key (`saved:<ref>`).
   const SAVED = ref => `saved:${ref}`;
   const isSaved = ref => pins.has(SAVED(ref));
   const saved = () => pins.refs("saved:").map(k => k.slice(6));
-  const setSaved = (ref, on) => pins.set(SAVED(ref), on);
+  // A SAVE is two things, written together: this person's own list of what they saved (`pins`: every app's Saved,
+  // across every place) and the item's save SIGNAL (`items.signal`: counted where it is). The signal is best effort.
+  const setSaved = async (ref, on) => {
+    await pins.set(SAVED(ref), on);
+    items.signal(ref, "save", on).catch(e => ctx.log("actions", { what: `save not counted: ${e.message ?? e}` }));
+  };
 
-  // SAVE alone (a card's: a note, a file, a track).
+  // A COUNT on its button, as TikTok's (`signals`' counted ones: how many people saved, shared): 999, 1.2K, 3.4M.
+  const short = n => (n < 1000 ? String(n) : n < 1e6 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0).replace(/\.0$/, "")}K` : `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M`);
+  const countOf = (it, id) => it.counts?.[id] ?? 0;
+  // Its count moved at once with this person's own signal (written after).
+  const bump = (it, id, on) => {
+    it.counts = { ...(it.counts ?? {}), [id]: Math.max(0, countOf(it, id) + (on ? 1 : -1)) };
+    it.signaled = { ...(it.signaled ?? {}), [id]: on || undefined };
+  };
+
+  // SAVE alone (a card's: a note, a file, a track): ☆ / ★ and how many saved it.
   function save(it) {
-    const b = h("button", { type: "button", title: "Save: kept in this app's Saved", textContent: isSaved(it.ref) ? "★" : "☆" });
+    const draw = (on = isSaved(it.ref)) => `${on ? "★" : "☆"}${countOf(it, "save") ? ` ${short(countOf(it, "save"))}` : ""}`;
+    const b = h("button", { type: "button", title: "Save: kept in this app's Saved", textContent: draw() });
     b.onclick = async e => {
       e.stopPropagation();
       e.preventDefault();
       const on = !isSaved(it.ref);
+      bump(it, "save", on);
+      b.textContent = draw(on);
       await setSaved(it.ref, on).catch(() => {});
-      b.textContent = on ? "★" : "☆";
     };
     return b;
   }
@@ -93,18 +144,32 @@ export async function start(ctx) {
     const el = h("div", { className: "cw-acts" });
     me().then(self => {
       const mine = it.by === self;
-      const save = btn(isSaved(it.ref) ? "Saved ✓" : "Save", async () => {
+      const n = id => (countOf(it, id) ? ` ${short(countOf(it, id))}` : "");
+      const saveLabel = (on = isSaved(it.ref)) => `${on ? "★ Saved" : "☆ Save"}${n("save")}`;
+      const save = btn(saveLabel(), async () => {
         const on = !isSaved(it.ref);
-        await setSaved(it.ref, on).catch(fail);
-        save.textContent = on ? "Saved ✓" : "Save";
+        bump(it, "save", on);
+        save.textContent = saveLabel(on);
         save.className = on ? "on" : "";
+        await setSaved(it.ref, on).catch(fail);
       }, { className: isSaved(it.ref) ? "on" : "" });
       el.replaceChildren(
         ...[
           ...extra,
+          reacts(it, { outside }),
           comments && open ? btn(`💬 ${it.comments ?? 0} Comment${it.comments === 1 ? "" : "s"}`, open) : null,
-          btn("Share", e => navigator.clipboard.writeText(it.ref).then(() => (e.target.textContent = "Copied — paste it to embed"), fail)),
+          // SHARE: its reference copied (pasted anywhere, it embeds) — and the share signal, counted where it is.
+          btn(`↗ Share${n("share")}`, e =>
+            navigator.clipboard.writeText(it.ref).then(() => {
+              if (!it.signaled?.share) bump(it, "share", true), items.signal(it.ref, "share", true).catch(() => {});
+              e.target.textContent = `Copied — paste it to embed${n("share")}`;
+            }, fail),
+          ),
+          // VIEWS: how many people opened it (counted, never pressed).
+          countOf(it, "view") ? h("span", { className: "n", title: "People who opened it", textContent: `👁 ${short(countOf(it, "view"))}` }) : null,
           save,
+          // LABEL: this person's private tags on it (any kind, as Notes' — `label-menu`).
+          btn("🏷 Label", e => labelUI.menu(e.currentTarget, labelUI.key(it.ref), { title: "Label" })),
           // HIDE: for you only (`moderation`: the one check every read asks).
           !mine ? btn("Hide", () => ctx.require("moderation").then(m => m.lists()).then(l => l.hide({ by: it.by, id: it.id ?? String(it.ref).split("/").pop() })).then(() => changed?.(), fail)) : null,
           // FLAG (Discover): on your public moderation list — for you and whoever applies it.
@@ -124,5 +189,5 @@ export async function start(ctx) {
     return el;
   }
 
-  return { votes, bar, save, saved, isSaved, setSaved };
+  return { votes, reacts, bar, save, saved, isSaved, setSaved };
 }

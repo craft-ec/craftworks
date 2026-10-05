@@ -14,7 +14,9 @@
 //     to what this person sees in Discover: `moderation.lists`)
 //
 // PEOPLE: table `people`, a row `<relation>/<did>` per link (one table: the relations are one mechanism).
-// PINS: table `pins`, a row per pinned ref. LABELS: table `tags` (its name from before; private tags):
+// PINS: table `pins`, a row per pinned ref. PREFS: the account's own settings (every device), rows `pref:<name>` of
+//   the same table (`edge.prefs()`: `prefs.get(name)`, `await prefs.set(name, value)`, `prefs.onChange(fn)`) — e.g.
+//   `nsfw`: show items tagged NSFW. LABELS: table `tags` (its name from before; private tags):
 //   `l/<id>` { name } a label;  `a/<id>/<ref>` { at } that label on a thing.
 export async function start(ctx) {
   const storage = await ctx.require("storage");
@@ -23,7 +25,7 @@ export async function start(ctx) {
   function pins() {
     return (pinsOpen ??= storage.table("pins").then(t => {
       const has = ref => t.rows().some(r => r.key === ref);
-      const refs = prefix => t.rows().map(r => r.key).filter(k => !prefix || k.startsWith(prefix));
+      const refs = prefix => t.rows().map(r => r.key).filter(k => !k.startsWith("pref:") && (!prefix || k.startsWith(prefix)));
       const set = (ref, on) => (on ? t.put(ref, JSON.stringify({ at: Date.now() })) : t.remove(ref));
       return { has, refs, set, onChange: t.onChange };
     }));
@@ -138,5 +140,21 @@ export async function start(ctx) {
     }));
   }
 
-  return { pins, labels, people };
+  let prefsOpen = null;
+  function prefs() {
+    return (prefsOpen ??= storage.table("pins").then(t => {
+      const get = name => {
+        const r = t.rows().find(x => x.key === `pref:${name}`);
+        try {
+          return r ? JSON.parse(r.value).v : undefined;
+        } catch {
+          return undefined;
+        }
+      };
+      const set = (name, v) => (v === undefined || v === false ? t.remove(`pref:${name}`) : t.put(`pref:${name}`, JSON.stringify({ v, at: Date.now() })));
+      return { get, set, onChange: t.onChange };
+    }));
+  }
+
+  return { pins, labels, people, prefs };
 }

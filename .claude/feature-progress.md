@@ -1183,3 +1183,31 @@ Open: F5b R4 (the delegate works due re-key rows
 on wake-up). Group-fork rows were done 10-03/04 (a5db5a4, d95ad33, a262c33), ticked 10-05.
 Test nodes 17691/17692: fresh accounts, PIN 246810 (older test accounts' PINs above are void).
 Late-joiner history CONFIRMED live 10-05: after Ivvor reloaded + PIN, onlyabrak sees Ivvor's New Space whole (apps shown).
+
+## Item observability: SIGNALS, reactions, labels, tags, NSFW (owner 10-05)
+Owner: "the whole item observability as one implementation … save, share … tags … composable and inherited like
+policy"; "save counted, shown like TikTok"; "tags to all kinds"; "react only on chat — extend to all kinds"; "labels
+for individual sorting, tags for global categorization, a setting to view NSFW or not".
+- [x] S1 `signals` catalog (packages/signals.js): vote, view, save, share, tag, react — mark, value (once/updown/many),
+      policy ACTION (inherited as policy: view/save/share by who may READ, vote/react/tag by who may vote), counted,
+      point, activity. ONE writer `items.signal`, ONE tally (`counts`, `signaled`), content's check by signal action.
+- [x] S2 counts on the buttons (TikTok): ☆ Save N, ↗ Share N, 👁 N; card line " · 3 views · 1 save"; Popular sort +
+      Views reorder; Hot/Rising from the catalog's activity signals. Live: ★ Saved 1, ↗ Share 1, 👁 1 (B's view from Discover, outside).
+- [x] S3 REACT on every kind: the react signal = any emoji (Chat's rows as they are); chips with counts + picker in
+      the one action bar; Chat reads its emoji list from `signals`. Live: 👍 1 kept across a reload.
+- [x] S4 LABELS on every kind (private, one account list): one key `item:<ref>` (label-menu), Notes' `notes:` rows
+      moved once; 🏷 Label in the action bar; chips on every card look.
+- [x] S5 TAGS (public, global): author's `meta.tags` set in the one composer (written + media) and on edit; #chips on
+      cards and the item page; `#/tag/<t>` lists every kind with it (feed + Discover); `items.list({ tag })`.
+- [x] S6 NSFW: `nsfw` tag + "Adult content" box in the composer; Settings → "Show NSFW content" (edge.prefs, every
+      device, off by default); lists hide NSFW (own always shown); item page gate "Show anyway"; 🔞 badge when shown.
+- [x] S7 LOGIN KEYS fix: a member moved from an OLDER build (a newer one slow) lost later epochs (B: "no key for epoch
+      17"); the retire walk now gathers EPOCH keys only (never group state) from every build holding the PIN.
+- [x] S8 Live: A posts in History test; B (17692) views, reacts, saves, shares, labels; A sees counts; tag page;
+      NSFW hidden/shown by the setting. Then review, commit, publish to all sites.
+      Live 10-05 (fx A, fy B): A — 👍 1, ★ Saved 1, ↗ Share 1, label "watch-later" on a post; tags cooking/travel → the
+      card's #chips → `#/tag/cooking` lists it; A's own NSFW post shown to A. B (outside, Discover) — setting off: the
+      adult post left out, opening it shows the gate, Show anyway opens it; Settings → Content on → listed, 🔞 #spicy.
+      A sees B's view (· 1 view, 👁 1) after a reload. S7: B's walk gathered keys from 3 builds. B's remaining "no key
+      for epoch N" is CORRECT (A removed B from those spaces in the re-key tests); B's spaces list still names spaces it
+      was removed from — open, separate.

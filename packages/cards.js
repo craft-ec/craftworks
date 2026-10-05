@@ -10,9 +10,9 @@
 //         // the list's preview
 //   cards.embed(ref)          // ANY item embedded in text (`![title](item:REF)`: a post, a note, a file, a video…) —
 //                             // read with its own access; a video or an audio plays where it is, the rest is its card
-//   cards.ago(at)   cards.clock(seconds)      // "3 hours ago", "1:02:03" — one wording everywhere
+//   cards.ago(at)   cards.clock(seconds)   cards.counted(item)   // "3 hours ago", "1:02:03", " · 3 views · 1 save" — one wording everywhere
 export async function start(ctx) {
-  const [kinds, items, directory] = await Promise.all(["kinds", "items", "directory"].map(n => ctx.require(n)));
+  const [kinds, items, directory, signals, labelUI] = await Promise.all(["kinds", "items", "directory", "signals", "label-menu"].map(n => ctx.require(n)));
   const MANIFEST = "application/vnd.craftworks.video+json";
   const style = document.createElement("style");
   style.textContent = `
@@ -56,6 +56,11 @@ export async function start(ctx) {
     .cw-note .corner .cw-pin[aria-pressed="false"] { opacity: 0; }
     .cw-note:hover .corner .cw-pin[aria-pressed="false"] { opacity: .45; }
     .cw-note .below { margin-top: var(--cw-space-2); }
+    .cw-marks { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    .cw-marks:not(:has(.nsfw, .tag, .cw-chip)) { display: none; }
+    .cw-marks .tag { border: 0; background: none; color: var(--cw-accent); font: inherit; font-size: var(--cw-text-xs); padding: 0 2px; cursor: pointer; }
+    .cw-marks .tag:hover { text-decoration: underline; }
+    .cw-marks .nsfw { font-size: var(--cw-text-xs); }
     .cw-embed { display: grid; gap: 6px; max-width: 420px; margin: var(--cw-space-2) 0; }
     .cw-file { border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-surface); overflow: hidden;
       grid-template-rows: 120px auto; cursor: pointer; position: relative; gap: 0; }
@@ -109,6 +114,8 @@ export async function start(ctx) {
     if (s < 60) return "just now";
     for (const [n, u] of [[31536000, "year"], [2592000, "month"], [86400, "day"], [3600, "hour"], [60, "minute"]]) if (s >= n) return `${Math.floor(s / n)} ${u}${Math.floor(s / n) > 1 ? "s" : ""} ago`;
   };
+  // Its COUNTED SIGNALS (`signals`: views, saves, shares — over the list's window): " · 3 views · 1 save".
+  const counted = it => signals.summary(it);
   const clock = d => {
     d = Math.round(d || 0);
     const hh = Math.floor(d / 3600);
@@ -138,7 +145,7 @@ export async function start(ctx) {
       ),
       audio && (it.meta?.artist || it.meta?.show || it.meta?.author) ? h("div", { className: "s", textContent: it.meta.artist ?? it.meta.show ?? it.meta.author }) : null,
       h("div", { className: "t", textContent: it.title }),
-      h("div", { className: "s" }, by ? author(it.by, items.appOf(it.kind)) : null, `${by ? " · " : ""}${ago(it.at)}${it.private ? " · only you" : ""}`),
+      h("div", { className: "s" }, by ? author(it.by, items.appOf(it.kind)) : null, `${by ? " · " : ""}${ago(it.at)}${counted(it)}${it.private ? " · only you" : ""}`),
       actions.length ? h("div", { className: "acts", onclick: e => e.preventDefault() }, ...actions) : null,
     );
   }
@@ -202,6 +209,7 @@ export async function start(ctx) {
           by ? author(it.by, "board") : null,
           h("time", { textContent: ago(it.at), title: new Date(it.at).toLocaleString() }),
           it.edited ? h("span", { textContent: "(edited)" }) : null,
+          counted(it) ? h("span", { textContent: counted(it).slice(1) }) : null,
         ),
         it.title ? h("h3", { textContent: it.title }) : null,
         body ?? h("div", { className: "text" }, it.body ? when("markdown", m => h("p", { className: "preview", textContent: m.plain(it.body) })) : null, it.files?.length ? when("attachments", a => a.show(it.files)) : null),
@@ -234,7 +242,7 @@ export async function start(ctx) {
       "a",
       { className: "cw-pic", href },
       src ? h("img", { src, alt: it.title ?? "", loading: "lazy" }) : h("div", { className: "none", textContent: "🖼" }),
-      h("div", { className: "over" }, h("div", { className: "t", textContent: it.title }), h("div", { className: "s" }, by ? author(it.by, "image") : null, `${by ? " · " : ""}${ago(it.at)}${it.kind !== "image" ? ` · ${kinds.of(it.kind)?.label ?? it.kind}` : ""}${it.private ? " · only you" : ""}`)),
+      h("div", { className: "over" }, h("div", { className: "t", textContent: it.title }), h("div", { className: "s" }, by ? author(it.by, "image") : null, `${by ? " · " : ""}${ago(it.at)}${it.kind !== "image" ? ` · ${kinds.of(it.kind)?.label ?? it.kind}` : ""}${counted(it)}${it.private ? " · only you" : ""}`)),
     );
   }
 
@@ -247,8 +255,24 @@ export async function start(ctx) {
       h("div", { className: "cover" }, f?.preview ? h("img", { src: f.preview, alt: "" }) : it.kind === "comic" ? "💬" : "📚", it.kind !== "book" ? h("span", { className: "kind", textContent: kinds.of(it.kind)?.label ?? it.kind }) : null),
       h("div", { className: "t", textContent: it.title }),
       it.meta?.author || it.meta?.writer ? h("div", { className: "s", textContent: it.meta.author ?? it.meta.writer }) : null,
-      h("div", { className: "s" }, by ? author(it.by, "book") : null, `${by ? " · " : ""}${ago(it.at)}${f?.pages ? ` · ${f.pages} pages` : ""}${it.private ? " · only you" : ""}`),
+      h("div", { className: "s" }, by ? author(it.by, "book") : null, `${by ? " · " : ""}${ago(it.at)}${f?.pages ? ` · ${f.pages} pages` : ""}${counted(it)}${it.private ? " · only you" : ""}`),
       actions.length ? h("div", { className: "acts", onclick: e => e.preventDefault() }, ...actions) : null,
+    );
+  }
+
+  // ITS MARKS, the same on every look: 🔞 (tagged NSFW — shown because this person chose to see it, or theirs), its
+  // TAGS (public, its author's: each opens every item with it, `#/tag/<tag>`) and this person's LABELS on it (private:
+  // `label-menu`, one key for every kind). `labels: false`: the look shows them already (Notes' own chips).
+  function marks(it, { labels = true } = {}) {
+    const tags = items.tagsOf(it);
+    const go = t => e => (e.preventDefault(), e.stopPropagation(), (location.hash = `#/tag/${encodeURIComponent(t)}`));
+    return h(
+      "div",
+      // A click on its marks never follows the card's own link (a video's, a book's).
+      { className: "cw-marks", onclick: e => (e.stopPropagation(), e.preventDefault()) },
+      items.isNsfw(it) ? h("span", { className: "nsfw", title: "Adult content (NSFW)", textContent: "🔞" }) : null,
+      ...tags.filter(t => t !== "nsfw").map(t => h("button", { type: "button", className: "tag", textContent: `#${t}`, title: `Everything tagged #${t}`, onclick: go(t) })),
+      labels && it.ref ? labelUI.chips(labelUI.key(it.ref)) : null,
     );
   }
 
@@ -257,7 +281,12 @@ export async function start(ctx) {
   function card(it, { href = items.pageOf(it.ref, it.kind), actions = [], by = true, corner = null, below = null, open = null, lead = null, body = null } = {}) {
     const look = LOOKS[it.kind] ?? LOOKS[kinds.domain(it.kind)];
     if (!look) throw new Error(`no look for ${it.kind} yet`);
-    return look(it, { href, actions, by, corner, below, open, lead, body });
+    // Its marks: in the look's own place below it (a note, a file), else after it.
+    const m = marks(it, { labels: !below });
+    if (look === note || look === file) return look(it, { href, actions, by, corner, below: below ? h("div", {}, below, m) : m, open, lead, body });
+    const el = look(it, { href, actions, by, corner, below, open, lead, body });
+    (el.querySelector(".in") ?? el).append(m);
+    return el;
   }
   // AN ITEM EMBEDDED — in a post, a comment, a message, a note, a mail: by its reference, read as its reader may (what
   // they may not read is said, never shown); its kind's look: a video or an audio its player, the rest its card.
@@ -285,5 +314,5 @@ export async function start(ctx) {
   }
   const MEDIA = new Set(["video", "audio"]);
 
-  return { card, picture, embed, ago, clock, author, sizeOf };
+  return { card, picture, embed, ago, clock, counted, marks, author, sizeOf };
 }

@@ -150,7 +150,8 @@ export async function mount(ctx, el) {
       .catch(e => said(`Could not read the notes: ${e?.message ?? e}`));
 
   // A note: an item (its key its ref). `pinned` comes from the account's pins; a pin or a label names it `notes:<ref>`.
-  const ref = key => `notes:${key}`;
+  // Its LABEL key: an item's, as every kind's (`label-menu`).
+  const ref = key => labelUI.key(key);
   const note = it => ({
     key: it.ref,
     title: it.title ?? "",
@@ -358,7 +359,7 @@ export async function mount(ctx, el) {
     if (label && !labels.list().some(l => l.id === label)) label = null; // deleted meanwhile
     bar();
     const q = query.toLowerCase();
-    const inLabel = label ? new Set(labels.refs(label, "notes:")) : null;
+    const inLabel = label ? new Set(labels.refs(label, "item:")) : null;
     const all = held
       .map(note)
       .filter(n => n.archived === archive)

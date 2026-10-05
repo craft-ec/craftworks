@@ -349,7 +349,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 93] = [
+    let packages: [(&str, &str, PathBuf); 95] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -404,6 +404,8 @@ async fn main() -> Result<()> {
         ("contact", "module", app.join("packages/contact.js")),
         ("items", "service", app.join("packages/items.js")),
         ("board", "module", app.join("packages/board.js")),
+        // Everything tagged #<tag>, every kind.
+        ("tag", "module", app.join("packages/tag.js")),
         ("spaces-panel", "service", app.join("packages/spaces-panel.js")),
         ("where", "service", app.join("packages/where.js")),
         ("cards", "service", app.join("packages/cards.js")),
@@ -426,6 +428,7 @@ async fn main() -> Result<()> {
         ("drive-store", "service", app.join("packages/drive-store.js")),
         ("drive", "module", app.join("packages/drive.js")),
         ("kinds", "service", app.join("packages/kinds.js")),
+        ("signals", "service", app.join("packages/signals.js")),
         ("audience", "service", app.join("packages/audience.js")),
         ("image-studio", "service", app.join("packages/image-studio.js")),
         ("zip", "service", app.join("packages/zip.js")),
@@ -538,7 +541,7 @@ async fn main() -> Result<()> {
     let names: Vec<&str> = packages.iter().map(|(n, _, _)| *n).collect();
     let mentions = |src: &str| -> Vec<&str> { names.iter().copied().filter(|n| src.contains(&format!("\"{n}\""))).collect() };
     // The app's PAGES (route → its package): the manifest's `pages`, and where each page's needs start.
-    let pages: [(&str, &str); 14] = [("/caption", "caption"), ("/video", "media"), ("/audio", "media"), ("/image", "media"), ("/book", "media"), ("/space", "space-home"), ("/", "home"), ("/settings", "settings"), ("/note", "note"), ("/chat", "chat"), ("/mail", "mail"), ("/contact", "contact"), ("/board", "board"), ("/drive", "drive")];
+    let pages: [(&str, &str); 15] = [("/tag", "tag"), ("/caption", "caption"), ("/video", "media"), ("/audio", "media"), ("/image", "media"), ("/book", "media"), ("/space", "space-home"), ("/", "home"), ("/settings", "settings"), ("/note", "note"), ("/chat", "chat"), ("/mail", "mail"), ("/contact", "contact"), ("/board", "board"), ("/drive", "drive")];
     let mut needs = Vec::new();
     for (route, page) in pages {
         let mut have: Vec<&str> = vec!["theme", "header", "footer", page];

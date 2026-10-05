@@ -68,6 +68,16 @@ export async function start(ctx) {
     dialog.cw-pub-dlg { max-width: min(560px, 92vw); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-bg); color: var(--cw-fg); }`;
   document.head.append(style);
 
+  // ITS TAGS (public: what it is, for everyone — `items.tagsOf`) and ADULT CONTENT (the `nsfw` tag: shown only to
+  // whoever chose to see it): the same two fields in every form.
+  const tagFields = (initial = []) => {
+    const tags = h("input", { name: "tags", placeholder: "Tags (comma or space: cooking, travel…)", value: initial.filter(t => t !== "nsfw").join(", "), autocomplete: "off" });
+    const nsfw = h("input", { type: "checkbox", name: "nsfw", checked: initial.includes("nsfw") });
+    return {
+      el: h("div", { style: "display:grid;gap:6px" }, tags, h("label", { className: "s" }, nsfw, " Adult content (NSFW): shown only to people who chose to see it")),
+      value: () => items.normalTags(`${tags.value}${nsfw.checked ? " nsfw" : ""}`),
+    };
+  };
   // A WRITTEN item (a post, a note): its kind (the domain's), a title (optional where its kind is untitled), its text
   // in the one editor (media inline, files, other items embedded), whom it is for. In a space this person is not in
   // (its policy lets anyone post): public, from outside, as `publish`.
@@ -81,6 +91,7 @@ export async function start(ctx) {
     const ed = mdEditor.create({ pick, label: "Text" });
     const said = h("p", { className: "said", hidden: true });
     const title = h("input", { name: "title", placeholder: kinds.titled(ks[0]) ? "Title" : "Title (optional)", required: kinds.titled(ks[0]), maxLength: 300, autocomplete: "off" });
+    const tg = tagFields();
     const f = h(
       "form",
       { className: "cw-pub" },
@@ -88,6 +99,7 @@ export async function start(ctx) {
       ks.length > 1 ? h("label", { className: "s" }, "What it is ", kindSel) : null,
       title,
       ed.el,
+      tg.el,
       outside ? null : who.el,
       h("div", { className: "row" }, h("button", { className: "go", textContent: domain === "text" ? "Post" : "Save" }), onCancel ? h("button", { type: "button", className: "ghost", textContent: "Cancel", onclick: () => onCancel() }) : null),
       said,
@@ -99,7 +111,8 @@ export async function start(ctx) {
       const btn = f.querySelector("button.go");
       btn.disabled = true;
       try {
-        const item = await items.submit({ board: space?.id ?? null, outside, title: title.value.trim(), body: ed.value(), kind: kindSel.value, files: ed.files(), audience: outside ? "public" : who.value(), write: outside ? null : who.write() });
+        const tags = tg.value();
+        const item = await items.submit({ board: space?.id ?? null, outside, title: title.value.trim(), body: ed.value(), kind: kindSel.value, files: ed.files(), meta: tags.length ? { tags } : {}, audience: outside ? "public" : who.value(), write: outside ? null : who.write() });
         onPublished({ item, title: title.value.trim() });
       } catch (err) {
         said.textContent = err.message ?? String(err);
@@ -123,6 +136,7 @@ export async function start(ctx) {
     kindSel.onchange = drawFields;
     drawFields();
     const who = await (await ctx.require("audience")).picker({ space, kind: spec.kind, initial });
+    const tg = tagFields();
     const f = h(
       "form",
       { className: "cw-pub" },
@@ -134,6 +148,7 @@ export async function start(ctx) {
       h("textarea", { name: "body", rows: 3, placeholder: "Description" }),
       h("label", { className: "s" }, "What it is ", kindSel),
       fieldsBox,
+      tg.el,
       who.el,
       h("div", { className: "row" }, h("button", { className: "go", textContent: "Publish" }), onCancel ? h("button", { type: "button", className: "ghost", textContent: "Cancel", onclick: () => onCancel() }) : null, progress),
       said,
@@ -163,6 +178,7 @@ export async function start(ctx) {
       try {
         progress.textContent = "Reading…";
         const meta = Object.fromEntries(kinds.of(kindSel.value).fields.map(k => [k, String(f.elements[`meta.${k}`]?.value ?? "").trim()]).filter(([, v]) => v));
+        if (tg.value().length) meta.tags = tg.value();
         const done = await publish(x, {
           domain: spec.domain,
           space,
@@ -205,5 +221,5 @@ export async function start(ctx) {
       d.showModal();
     });
   }
-  return { publish, form, dialog };
+  return { publish, form, dialog, tagFields };
 }

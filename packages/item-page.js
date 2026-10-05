@@ -41,22 +41,39 @@ export async function start(ctx) {
     const pick = attachments.picker({ space: sp, from: { app: items.appOf(it.kind) }, public: () => pub, media: true, publish: true });
     pick.preset(it.files ?? []);
     const ed = mdEditor.create({ value: it.body ?? "", pick, label: "Edit" });
+    // Its TAGS edited with it (the one pair of fields: `publisher.tagFields`).
+    const tg = (await ctx.require("publisher")).tagFields(items.tagsOf(it));
     const said = h("p", { className: "said", hidden: true });
     const save = h("button", { type: "button", className: "go", textContent: "Save" });
     save.onclick = async () => {
       if (ed.busy()) return ((said.textContent = "Still sending the files: a moment…"), (said.hidden = false));
       save.disabled = true;
-      await items.editItem(it.ref, ed.value().trim(), { files: ed.files() }).then(done, e => ((said.textContent = e.message ?? String(e)), (said.hidden = false)));
+      const tags = tg.value();
+      await items.editItem(it.ref, ed.value().trim(), { files: ed.files(), meta: { ...(it.meta ?? {}), tags } }).then(done, e => ((said.textContent = e.message ?? String(e)), (said.hidden = false)));
       save.disabled = false;
     };
-    host.replaceChildren(h("div", { className: "editing" }, ed.el, h("div", { className: "row" }, said, h("button", { type: "button", textContent: "Cancel", onclick: () => done() }), save)));
+    host.replaceChildren(h("div", { className: "editing" }, ed.el, tg.el, h("div", { className: "row" }, said, h("button", { type: "button", textContent: "Cancel", onclick: () => done() }), save)));
     ed.focus();
   }
 
-  async function show(ref, { outside = null, app = null, back = null, discover = false, item = null } = {}) {
+  async function show(ref, { outside = null, app = null, back = null, discover = false, item = null, shown = false } = {}) {
     const it = item ?? (await items.get(ref, { outside }));
     if (!it) return h("p", { className: "none", textContent: "This is not here (removed, or not shared with you)." });
+    // ADULT CONTENT (tagged NSFW) for someone who did not choose to see it: said, and shown only on asking.
+    if (!shown && items.isNsfw(it) && !(await items.nsfwShown())) {
+      const space = await ctx.require("space");
+      if (it.by !== (await space.account())?.id) {
+        const gate = h(
+          "div",
+          { className: "cw-page" },
+          h("div", { className: "about" }, h("p", { textContent: "🔞 Adult content (NSFW). You chose not to see it: Settings → Content shows it everywhere." }), h("button", { type: "button", textContent: "Show anyway", onclick: async () => gate.replaceWith(await show(ref, { outside, app, back, discover, item: it, shown: true })) })),
+        );
+        return gate;
+      }
+    }
     const parts = kinds.parts(it.kind);
+    // VIEWED: its page opened counts once for this reader (`items.view`; never one's own), where votes are kept.
+    if (parts.votes) items.view(ref, { outside });
     const page = h("div", { className: "cw-page" });
     const redraw = async () => page.replaceWith(await show(ref, { outside, app, back, discover }));
     const removed = () => (location.hash = back ?? items.pageOf(ref, it.kind).replace(/\/(p|w)\/.*$/, ""));
@@ -72,8 +89,9 @@ export async function start(ctx) {
         ...[
           m.el,
           h("h1", { textContent: it.title }),
-          h("div", { className: "line" }, h("span", { className: "s" }, cards.author(it.by, items.appOf(it.kind)), ` · ${cards.ago(it.at)}${k ? ` · ${k.label}` : ""}${it.private ? " · only you" : ""}`), votes, bar),
+          h("div", { className: "line" }, h("span", { className: "s" }, cards.author(it.by, items.appOf(it.kind)), ` · ${cards.ago(it.at)}${k ? ` · ${k.label}` : ""}${cards.counted(it)}${it.private ? " · only you" : ""}`), votes, bar),
           fields.length ? h("div", { className: "fields" }, ...fields) : null,
+          cards.marks(it),
           parts.about && it.body ? h("div", { className: "about" }, written(it)) : null,
         ].filter(Boolean),
       );

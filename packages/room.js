@@ -11,7 +11,8 @@
 //   r.close()                                                 // stops following it
 export async function start(ctx) {
   const [content, directory, space, attachments, markdown, mdEditor] = await Promise.all(["content", "directory", "space", "attachments", "markdown", "md-editor"].map(n => ctx.require(n)));
-  const EMOJI = ["👍", "❤️", "😂", "🎉", "😮", "🙏"];
+  // The emoji offered: the react signal's (`signals`: one list for messages and every kind).
+  const EMOJI = (await ctx.require("signals")).of("react").choices;
   const PAGE = 60;
   const MENTION = /@[^\s@#]*#[1-9A-HJ-NP-Za-km-z]{6}/g;
   const style = document.createElement("style");
