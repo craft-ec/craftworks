@@ -63,6 +63,8 @@ export async function start(ctx) {
     // personal item (its author's friends or followers, by the credential this person holds).
     // From outside (not in its space): as its public policy says (`items.mayWriteOn`: anyone may, or nobody outside).
     const [mayComment, mayVote] = await Promise.all(["comment", "vote"].map(a => items.mayWriteOn(item, a, { outside }).catch(() => false)));
+    // The rule that closed it, to say (a personal item: its own, else its author's policy for what it is).
+    const closedBy = item.meta?.write?.comment ?? (!sp && !outside && !String(ref).startsWith("space:") ? roles.personal(item.by).policyIn((await ctx.require("kinds")).policyDomain(item.kind), "comment") : null);
 
     const who = did => {
       const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.stopPropagation(), person.open(e.currentTarget, did, sp ? { space: sp } : {})) });
@@ -168,7 +170,7 @@ export async function start(ctx) {
     const el = h(
       "div",
       { className: "cw-cm" },
-      mayComment ? replyForm(ref, "Comment") : outside ? h("p", { className: "none", textContent: "Only the space's members comment here." }) : h("p", { className: "none", textContent: ({ friends: `Only ${directory.shown(item.by)}'s friends comment here.`, followers: `Only ${directory.shown(item.by)}'s followers comment here.`, author: "Only its author comments here." })[item.meta?.write?.comment] ?? "Comments are closed to you here." }),
+      mayComment ? replyForm(ref, "Comment") : outside ? h("p", { className: "none", textContent: "Only the space's members comment here." }) : h("p", { className: "none", textContent: ({ friends: `Only ${directory.shown(item.by)}'s friends comment here.`, followers: `Only ${directory.shown(item.by)}'s followers comment here.`, author: "Only its author comments here." })[closedBy] ?? "Comments are closed to you here." }),
       tree,
     );
     refresh().catch(() => {});

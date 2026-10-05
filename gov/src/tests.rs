@@ -308,3 +308,27 @@ fn a_list_passes_its_people_and_maker_only() {
     assert!(g.passes_did("admins", A, role(A).as_deref()), "control: the admin passes an admins audience");
     assert_eq!(g.lists["l1"].0, M, "the list is still its maker's");
 }
+
+#[test]
+fn a_personal_space_replays_its_owners_policies_in_time() {
+    // A personal space: the owner's acts only (its first owner is the account), its groups as `who`.
+    let g = gov(&[
+        act("1", "no", 10, json!({"act":"policy","path":"","action":"comment","who":"followers"})),
+        act("2", "no", 20, json!({"act":"policy","path":"text","action":"comment","who":"friends"})),
+        act("3", "no", 30, json!({"act":"policy","path":"text","action":"comment","who":"inherit"})),
+    ]);
+    assert_eq!(g.policy_at("text", "comment", 15.0), None, "nothing at the app's path yet");
+    assert_eq!(g.effective("text", "comment", 15.0), "followers", "inherited from the space");
+    assert_eq!(g.effective("text", "comment", 25.0), "friends", "the app's own, while it was set");
+    assert_eq!(g.effective("text", "comment", 35.0), "followers", "inherit: the space's again");
+    assert_eq!(g.effective("text", "comment", 5.0), "members", "control: before any act, the built-in default");
+}
+
+#[test]
+fn no_space_role_passes_a_personal_group() {
+    for who in PERSONAL_WHO {
+        assert!(valid_who(who), "{who} is a valid who");
+        assert!(!passes(who, Some("owner")), "{who}: not by a role, even the owner's");
+    }
+    assert!(passes("members", Some("member")), "control: a member passes members");
+}

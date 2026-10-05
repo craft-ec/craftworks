@@ -47,7 +47,7 @@ export async function start(ctx) {
     // The default (nothing set above): anyone, in a personal space; in a shared one, members — but comments and votes
     // where anyone reads (`roles`' default: public participation).
     const inherited = from == null ? (r.personal || (["comment", "vote"].includes(action) && r.policy(path, "read") === "anyone") ? "anyone" : "members") : r.policy(from, action);
-    const LEVEL = p => (p === "" ? "the space" : p === "chat" ? "Chat" : p === "board" ? "Board" : p === "note" ? "Note" : p);
+    const LEVEL = p => (p === "" ? (r.personal ? "everything you post" : "the space") : p === "chat" ? "Chat" : p === "board" ? "Board" : p === "note" ? "Note" : p);
     // A personal space's: anyone · your followers · your friends · only you (`roles.personal`).
     // A shared space's: anyone (where it may) · members · admins · owner · nobody — and every ROLE composed there (its
     // holders, the owner and admins: `roles`), for anything but joining.
@@ -160,7 +160,7 @@ export async function start(ctx) {
     });
     const btn = h("button", { type: "submit", className: "main", textContent: "Save" });
     const more = S.extra ? h("div", {}) : null;
-    const form = h("form", { className: "cw-appset", id: `settings-${(key || "space").replace("me:", "")}` }, h("h3", { textContent: S.title }), ...inputs.map(({ f, input }) => h("label", {}, f.label, input)), more, h("div", { className: "row" }, said, btn));
+    const form = h("form", { className: "cw-appset", id: `settings-${(key || "space").replace("me:", "") || "everything"}` }, h("h3", { textContent: S.title }), ...inputs.map(({ f, input }) => h("label", {}, f.label, input)), more, h("div", { className: "row" }, said, btn));
     form.onsubmit = async e => {
       e.preventDefault();
       btn.disabled = true;
@@ -198,8 +198,9 @@ export async function start(ctx) {
   }
   // A space's: its Settings, "Apps & rules", at that app's section; yours: Settings, "Permissions", at it.
   const href = (sp, key) => (sp ? `#/s/${sp.id}/settings/apps/${key}` : `#/settings/permissions/${key}`);
-  // YOUR SPACE's SETTINGS (your Home): who may comment and vote on what you post in each app, by default — an item's
-  // own setting over it. The same sections, read and written through `roles.personal`.
+  // YOUR SPACE's SETTINGS (your Home): who may comment and vote on what you post — everything, then each app, an
+  // item's own setting over both; inherited and kept in time as a space's are. The same sections, read and written
+  // through `roles.personal`.
   // Each by its DOMAIN (what governs its items: `kinds.policyDomain`), titled as the app showing it.
   const PERSONAL = { text: "Board", video: "Video", audio: "Audio", image: "Image", book: "Book" };
   async function personalPage() {
@@ -208,8 +209,11 @@ export async function start(ctx) {
     await r.ready;
     // You, as followed: the same rule and credential as a comment on your post (`roles.followable`).
     SECTIONS["me:profile"] ??= { title: "You", fields: [{ action: "follow", path: "profile", label: "Who may follow you" }] };
+    // EVERYTHING you post (the space's own level: every app inherits it unless it says otherwise).
+    SECTIONS["me:"] ??= { title: "Everything you post", fields: [{ action: "comment", path: "", label: "Who may comment (every app, unless it says otherwise)" }, { action: "vote", path: "", label: "Who may vote" }] };
     const forms = await Promise.all([
       section(null, "me:profile", r, me),
+      section(null, "me:", r, me),
       ...Object.entries(PERSONAL).map(([key, title]) => {
         SECTIONS[`me:${key}`] ??= { title, fields: [{ action: "comment", path: key, label: "Who may comment" }, { action: "vote", path: key, label: "Who may vote" }] };
         return section(null, `me:${key}`, r, me);

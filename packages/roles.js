@@ -299,27 +299,50 @@ export async function start(ctx) {
   // account at the token it cites, naming the writer — `circles` issues them). True, false, or null: not checked yet
   // (a credential being read: `onChecked` fires when it is).
   const CIRCLES_OF = { followers: ["followers", "friends"], friends: ["friends"] };
-  // A PERSONAL SPACE's policies, read as a space's are (`policiesAt`, `policy`, `policyIn`, `act`): rows of its owner's
-  // CARD (`policy:<path>|<action>` → who: anyone · followers · friends · author) — public, the person's own record, so
-  // every reader applies them; written by its owner on their Home's settings (`app-settings`). Not read: `loaded()` false.
+  // A PERSONAL SPACE, governed as a shared one is: its POLICY ACTS replayed by the core's `Governance` (the one
+  // replay — inherited along the path, TIME-AWARE: an item is judged by the policy in force when it was made). Its acts
+  // are rows of its owner's CARD (`act:<id>` → { at, act: "policy", path, action, who }) — public, the person's own
+  // record (only their devices write it: every row is theirs), so every reader applies them; written on their
+  // Settings (`app-settings`). Who: anyone · followers · friends · author (only they) — checked by credential
+  // (`mayWrite`). Its default: anyone. Rows of the first shape (`policy:<path>|<action>` → who) count as acts made
+  // before anything. Not read yet: `loaded()` false.
   const personals = new Map();
   function personal(did) {
     if (!personals.has(did)) {
       let t = null;
       let loaded = false;
+      let gv = null;
+      const replay = () => {
+        const rows = (t?.rows() ?? []).flatMap(x => {
+          if (!x.value) return [];
+          if (x.key.startsWith("act:")) return [[x.key, x.value, "card"]];
+          const m = x.key.match(/^policy:(.*)\|([a-z]+)$/);
+          return m ? [[x.key, JSON.stringify({ at: 0, act: "policy", path: m[1], action: m[2], who: x.value }), "card"]] : [];
+        });
+        const next = G.replay(JSON.stringify(rows), JSON.stringify({ card: did }), did, Date.now());
+        gv?.free();
+        gv = next;
+      };
       const ready = directory
         .publicOf(did, "card")
-        .then(async x => ((t = x), x && (await x.answer(), x.onChange(() => checked.forEach(f => f())))))
+        .then(async x => ((t = x), x && (await x.answer(), replay(), x.onChange(() => (replay(), checked.forEach(f => f()))))))
         .catch(() => {})
         .finally(() => ((loaded = true), checked.forEach(f => f())));
-      const at = (path, action) => t?.rows().find(x => x.key === `policy:${path}|${action}` && x.value)?.value;
+      const policyAt = (path, action, at) => gv?.policy_at(path, action, at) || null;
+      // Walked up the path (`board/p/<id>` → `board` → the space), else anyone.
+      const along = (path, action, at) => {
+        for (let p = path; ; p = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "") {
+          const w = policyAt(p, action, at);
+          if (w || p === "") return w ?? "anyone";
+        }
+      };
       personals.set(did, {
         personal: true,
         ready,
         loaded: () => loaded,
-        policiesAt: path => Object.fromEntries(ACTIONS.map(a => [a, at(path, a)]).filter(([, w]) => w)),
-        policy: (path, action) => at(path, action) ?? "anyone",
-        policyIn: (domain, action) => at(domain, action) ?? "anyone",
+        policiesAt: path => Object.fromEntries(ACTIONS.map(a => [a, policyAt(path, a, Infinity)]).filter(([, w]) => w)),
+        policy: (path, action, at = Infinity) => along(path, action, at),
+        policyIn: (domain, action, at = Infinity) => along(domain, action, at),
         role: d => (d === did ? "owner" : null),
         can: d => d === did,
         config: (_a, _k, dflt = null) => dflt,
@@ -328,7 +351,8 @@ export async function start(ctx) {
           if (act !== "policy") throw new Error("a personal space keeps policies only");
           await ready;
           if (!t) throw new Error("your card is not readable here");
-          await (who === "inherit" ? t.remove(`policy:${path}|${action}`) : t.put(`policy:${path}|${action}`, who));
+          await t.put(`act:${newId()}`, JSON.stringify({ at: Date.now(), act, path, action, who }));
+          replay();
         },
       });
     }

@@ -22,7 +22,10 @@ pub fn app_name(x: &str) -> bool {
     (1..=24).contains(&x.len()) && x.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
 }
 pub const ACTIONS: [&str; 7] = ["read", "post", "comment", "vote", "edit", "join", "invite"];
-pub const WHO: [&str; 6] = ["anyone", "members", "admins", "owner", "nobody", "inherit"];
+pub const WHO: [&str; 9] = ["anyone", "members", "admins", "owner", "nobody", "inherit", "followers", "friends", "author"];
+/// A PERSONAL space's groups (its owner's followers, friends, or the item's author alone): checked by credential
+/// (`roles.mayWrite`), never by a space role — no role passes one.
+pub const PERSONAL_WHO: [&str; 3] = ["followers", "friends", "author"];
 /// What a composed role may carry (granting the admin role stays the owner's alone).
 pub const PERMS: [&str; 7] = ["post", "invite", "channels", "moderate", "remove", "apps", "roles"];
 
@@ -65,6 +68,9 @@ pub fn rank(role: Option<&str>) -> u8 {
 }
 /// Does a role pass a policy's `who` (anyone, here, is any member: only members act in a space).
 pub fn passes(who: &str, role: Option<&str>) -> bool {
+    if PERSONAL_WHO.contains(&who) {
+        return false;
+    }
     match (who, role) {
         ("nobody", _) | (_, None) => false,
         ("owner", r) => r == Some("owner"),

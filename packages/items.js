@@ -429,15 +429,15 @@ export async function start(ctx) {
     const authorSet = new Set(authors);
     const votes = new Map();
     const counts = new Map();
-    // What counts about an item: by its rule (`roles.mayWrite`: the one check, as in a space).
+    // What counts about an item: by its rule (`roles.mayWrite`: the one check, as in a space) — as it was when written.
     const posts = new Map(rs.flatMap(r => r.list().filter(it => TOP.has(it.kind)).map(it => [`${it.by}/${it.id}`, it])));
-    const counts_ = (ref, action, by, cred) => {
+    const counts_ = (ref, action, by, cred, at) => {
       const p = posts.get(ref);
-      return !p || roles.mayWrite({ action, item: p, writer: by, cred }) === true;
+      return !p || roles.mayWrite({ action, item: p, writer: by, cred, at: at ?? Infinity }) === true;
     };
     for (const r of rs) {
-      tally(r.reactions().filter(x => counts_(x.item, "vote", x.by, x.cred)), votes, since);
-      for (const it of r.list()) if (it.kind === "comment" && it.at >= since && counts_(postOf(it), "comment", it.by, it.meta?.cred)) counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
+      tally(r.reactions().filter(x => counts_(x.item, "vote", x.by, x.cred, x.at)), votes, since);
+      for (const it of r.list()) if (it.kind === "comment" && it.at >= since && counts_(postOf(it), "comment", it.by, it.meta?.cred, it.at)) counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
     }
     const out = [];
     for (const r of rs)
@@ -634,14 +634,15 @@ export async function start(ctx) {
           all.push({ ...it, ref: `space:${sp.id}/${it.id}`, parent: it.re === post ? ref : `space:${sp.id}/${it.re}`, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it), replies: [] });
     } else {
       const rs = await profiles([whereOf(ref), self, ...(await following()), ...(await pointersTo(ref))]);
-      // The post's rule (`roles.mayWrite`): who may comment and vote on it — what does not pass, not counted.
+      // The post's rule (`roles.mayWrite`): who may comment and vote on it, as it was when each was written (a rule made
+      // later never takes back what it allowed) — what does not pass, not counted.
       const post = rs.flatMap(r => r.list()).find(it => `${it.by}/${it.id}` === ref) ?? null;
-      const may = (action, by, cred) => !post || roles.mayWrite({ action, item: post, writer: by, cred }) === true;
+      const may = (action, by, cred, at) => !post || roles.mayWrite({ action, item: post, writer: by, cred, at: at ?? Infinity }) === true;
       const votes = new Map();
-      for (const r of rs) tally(r.reactions().filter(x => x.item !== ref || may("vote", x.by, x.cred)), votes);
+      for (const r of rs) tally(r.reactions().filter(x => x.item !== ref || may("vote", x.by, x.cred, x.at)), votes);
       for (const r of rs)
         for (const it of r.list())
-          if (it.kind === "comment" && postOf(it) === ref && may("comment", it.by, it.meta?.cred)) {
+          if (it.kind === "comment" && postOf(it) === ref && may("comment", it.by, it.meta?.cred, it.at)) {
             const cref = `${it.by}/${it.id}`;
             all.push({ ...it, ref: cref, parent: it.re, ...scored(cref, votes, self), mayRemove: it.by === self, replies: [] });
           }
@@ -654,13 +655,20 @@ export async function start(ctx) {
     return order(top);
   }
 
-  // The CREDENTIAL to cite writing about a profile item (`roles.credToCite`: its rule names its author's friends or
-  // followers) — null where none is needed; refused where this person holds none.
+  // MAY THIS PERSON write about a profile item (comment, vote), by its rule (`roles.mayWrite`, the one check: its own,
+  // else its author's policy now) — and the CREDENTIAL to cite where the rule names the author's friends or followers
+  // (`roles.credToCite`): null where none is needed; refused, by name, where they may not.
   async function writeCred(ref, action) {
     const owner = whereOf(ref);
-    if (!owner || owner === (await me())) return null;
+    const self = await me();
+    if (!owner || owner === self) return null;
     const post = (await profileRoom(owner)).list().find(it => `${it.by}/${it.id}` === ref);
-    return post ? roles.credToCite(post, action) : null;
+    if (!post) return null;
+    await roles.personal(owner).ready;
+    const cred = await roles.credToCite(post, action);
+    // false: refused (null: a credential still being read — let it through; every reader checks it).
+    if (roles.mayWrite({ action, item: post, writer: self, cred }) === false) throw new Error(`only ${(await ctx.require("directory")).shown(owner)} may ${action} here`);
+    return cred;
   }
   // May this person comment or vote on item `it` (as `list`/`get` give it): the one check.
   async function mayWriteOn(it, action, { outside = null } = {}) {
