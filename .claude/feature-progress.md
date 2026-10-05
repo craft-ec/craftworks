@@ -1112,7 +1112,9 @@ Chat circle tabs (to be replaced: channels with an audience, person Chat via `wh
 - [x] READ by a role (admins, owner): one GROUP per space and audience (`groups`, circles on it too), any kind —
       posts, videos, files, a channel; kept in step by upkeep; a member removed reads nothing new and sees it no more.
       DONE 10-05: named people as an audience (`list` act, ff0678d); a group's maker offline → the space's admins in it
-      keep it after 10 min (b4658b1). LEFT: Drive uploads to a role audience.
+      keep it after 10 min (b4658b1). Drive uploads to the audience chosen (10-05): before, only public-or-not was
+      passed, so "Admins only" became all members. fx: A uploaded admins-only + members files in History test; B (member)
+      saw only the members' one. Note: the same bytes uploaded again fold into the existing entry (its audience kept).
 - [x] Conversations (direct, group) = your personal Chat's channels; Message merged into Chat (old links forward);
       Friends/Followers channel work dropped. Fixed with it: a paged room missed a late feed's earlier items.
 
@@ -1129,7 +1131,7 @@ Done (commits on main):
 - Board's rules are the text domain's (d5b1304) — spaces saved public before must be re-saved once.
 - Writers bag fresh reads shared; tail.whole once (measured: tree blocks never fetched twice).
 - Named-people lists; audiences kept by admins while the maker is away.
-Open: Mail spaces in "To" (owner: later); Drive uploads to a role audience; F5b R4 (the delegate works due re-key rows
+Open: Mail spaces in "To" (owner: later); F5b R4 (the delegate works due re-key rows
 on wake-up). Group-fork rows were done 10-03/04 (a5db5a4, d95ad33, a262c33), ticked 10-05.
 Test nodes 17691/17692: fresh accounts, PIN 246810 (older test accounts' PINs above are void).
 Late-joiner history CONFIRMED live 10-05: after Ivvor reloaded + PIN, onlyabrak sees Ivvor's New Space whole (apps shown).
