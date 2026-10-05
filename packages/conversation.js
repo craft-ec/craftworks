@@ -933,6 +933,26 @@ export async function start(ctx) {
 
   const mail = {
     of: spaceMailOf,
+    // Does a space take mail (its owner turned its mail on: a key in their record)?
+    accepts: async id => !!(await spaceKey(await spaceDesc(id)).catch(() => null))?.box,
+    // WHOM mail can be written to BY NAME (the "To" picker): the people this person knows (friends, followed) and the
+    // spaces whose mail is on — theirs and the public ones listed. [{ ref, label, kind: "person" | "space" }]
+    async addresses() {
+      const people = await (await ctx.require("edge")).people();
+      const dids = [...new Set([...people.list("friend"), ...people.list("follow")])].filter(d => d.startsWith("did:"));
+      const persons = dids.map(d => ({ ref: d, label: directory.shown(d), kind: "person" }));
+      const listed = await (await ctx.require("items")).publicSpaces().catch(() => []);
+      const descs = [...(await space.mine()).filter(s => s.kind === "server" && !space.isGroup(s)), ...listed];
+      const seen = new Set();
+      const spaces = (
+        await Promise.all(
+          descs
+            .filter(d => !seen.has(d.id) && seen.add(d.id))
+            .map(async d => ((await mail.accepts(d.id)) ? { ref: `space:${d.id}`, label: `🏠 ${space.shown(d)}`, kind: "space" } : null)),
+        )
+      ).filter(Boolean);
+      return [...spaces, ...persons];
+    },
     // `files`: references (`files`), sealed in the mail with the rest: its recipients read them.
     async send(to, subject, body, re = null, files = []) {
       const me = await space.account();

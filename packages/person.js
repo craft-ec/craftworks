@@ -27,7 +27,7 @@ export async function start(ctx) {
   document.head.append(style);
   const el = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids);
+    e.append(...kids.filter(k => k != null && k !== false));
     return e;
   };
   let openBox = null;
@@ -106,6 +106,7 @@ export async function start(ctx) {
                   ? el("button", { type: "button", textContent: "Friend request sent", disabled: true })
                   : act("Add friend", () => conversation.befriend(did)),
               toggle("follow", "Follow", "Following ✓"),
+              act("✉ Mail", () => (close(), (location.hash = `#/mail/to/${encodeURIComponent(did)}`))),
               posts,
               toggle("modlist", "Use their moderation list", "Their list applies ✓"),
             ),
@@ -161,12 +162,14 @@ export async function start(ctx) {
     const apps = ctx.apps.filter(a => (a.views ?? []).includes("shared") && !a.always && pr.apps().includes(a.route.slice(1)));
     const n = pr.members().length;
     const join = await (await ctx.require("join-button")).control(desc, { open: `#/s/${desc.id}`, joinable: pr.policy("", "join") === "anyone" });
+    // Its MAIL, where its owner turned it on: written to from here, member or not.
+    const mailable = await conversation.mail.accepts(desc.id).catch(() => false);
     if (openBox !== box) return;
     box.replaceChildren(
       el("h3", { textContent: space.shown(desc) }),
       about ? el("p", { textContent: String(about).slice(0, 400) }) : el("p", { className: "id", textContent: "A space." }),
       el("p", { className: "id", textContent: `${n} member${n === 1 ? "" : "s"} · ${apps.map(a => `${a.icon ?? ""} ${a.name}`).join("  ") || "no apps yet"}` }),
-      el("div", { className: "grid" }, act0("Open", () => (close(), (location.hash = `#/s/${desc.id}`)), "main")),
+      el("div", { className: "grid" }, act0("Open", () => (close(), (location.hash = `#/s/${desc.id}`)), "main"), mailable ? act0("✉ Mail", () => (close(), (location.hash = `#/mail/to/${encodeURIComponent(`space:${desc.id}`)}`))) : null),
       join,
     );
   }

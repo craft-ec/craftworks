@@ -64,6 +64,11 @@ export async function mount(ctx, el) {
       .ml dialog .row .said { flex: 1; padding: 0; }
       .ml dialog button { border: 1px solid var(--cw-line); background: none; color: inherit; border-radius: var(--cw-radius-sm);
         padding: var(--cw-space-1) var(--cw-space-3); }
+      .ml dialog .to { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); padding: 3px; }
+      .ml dialog .to input { flex: 1; min-width: 10em; border: 0; outline: none; }
+      .ml dialog .chips { display: contents; }
+      .ml dialog .chip { display: inline-flex; gap: 4px; align-items: center; background: var(--cw-hover); color: var(--cw-fg); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: var(--cw-text-sm); }
+      .ml dialog .chip button { border: 0; background: none; color: var(--cw-muted); cursor: pointer; padding: 0 4px; }
       .ml dialog button[value="ok"] { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       @media (max-width: 700px) { .ml { grid-template-columns: 1fr; } .ml.reading .list { display: none; } .ml:not(.reading) .read { display: none; } }
     </style>
@@ -71,7 +76,7 @@ export async function mount(ctx, el) {
       <nav class="list" aria-label="${box === "sent" ? "Sent" : "Inbox"}"></nav>
       <article class="read"><p class="empty">Pick a mail.</p></article>
       <dialog class="compose"><form method="dialog">
-        <label>To — name#abc123 or ids (did:craftec:…), separated by commas <input name="to" autocomplete="off" required></label>
+        <label>To — a person or a space by name (or name#abc123, an id) <span class="to"><span class="chips"></span><input name="to" autocomplete="off" list="ml-to" placeholder="Type a name…"></span><datalist id="ml-to"></datalist></label>
         <label>Subject <input name="subject" autocomplete="off"></label>
         <div class="message"></div>
         <div class="row"><p class="said" hidden></p><button value="cancel" formnovalidate>Cancel</button><button value="ok">Send</button></div>
@@ -124,16 +129,58 @@ export async function mount(ctx, el) {
     if (box === "in") read.append(node("button", { type: "button", className: "reply", textContent: "Reply", onclick: () => compose(m) }));
   }
 
-  // COMPOSE (or reply to `re`): the recipients resolved one by one, then one mail to them all.
-  function compose(re = null) {
+  // THE RECIPIENTS: chips — picked by name from whom mail can go to (`conversation.mail.addresses`: people known,
+  // spaces whose mail is on), or typed (name#abc123, an id: resolved on sending). Enter, a comma or a pick adds one.
+  let addresses = [];
+  const toChips = [];
+  const drawChips = () =>
+    dlg.querySelector(".chips").replaceChildren(
+      ...toChips.map((c, i) => {
+        const chip = node("span", { className: "chip", textContent: c.label });
+        chip.append(node("button", { type: "button", textContent: "×", ariaLabel: `Remove ${c.label}`, onclick: () => (toChips.splice(i, 1), drawChips()) }));
+        return chip;
+      }),
+    );
+  const addTo = text => {
+    const t = String(text ?? "").trim().replace(/,$/, "").trim();
+    if (!t) return;
+    const known = addresses.find(a => a.label === t || a.ref === t);
+    // Not a suggestion: as typed — an id shown by its name (a person's), named once the suggestions are read (a space's).
+    const c = known ?? { ref: t, label: t.startsWith("did:") ? directory.shown(t) : t, typed: true };
+    if (!toChips.some(x => x.ref === c.ref)) toChips.push(c);
+    drawChips();
+  };
+  const toInput = dlg.querySelector("input[name=to]");
+  toInput.addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === ",") (e.preventDefault(), addTo(toInput.value), (toInput.value = ""));
+    else if (e.key === "Backspace" && !toInput.value && toChips.length) (toChips.pop(), drawChips());
+  });
+  // A suggestion picked (its whole label now in the box): added at once.
+  toInput.addEventListener("input", () => addresses.some(a => a.label === toInput.value) && (addTo(toInput.value), (toInput.value = "")));
+  conversation.mail
+    .addresses()
+    .then(list => {
+      addresses = list;
+      dlg.querySelector("#ml-to").replaceChildren(...list.map(a => node("option", { value: a.label })));
+      // Chips added before the list was read (a card's ✉ Mail, a reply): their names now.
+      for (const c of toChips) c.label = list.find(a => a.ref === c.ref)?.label ?? c.label;
+      drawChips();
+    })
+    .catch(e => ctx.log("mail", { what: `addresses: ${e.message}` }));
+
+  // COMPOSE (or reply to `re`; or to `to`, an address): the recipients resolved one by one, then one mail to them all.
+  function compose(re = null, to = null) {
     const f = dlg.querySelector("form");
     const said = dlg.querySelector(".said");
     f.reset();
     said.hidden = true;
+    toChips.length = 0;
     if (re) {
-      f.elements.to.value = re.from;
+      addTo(re.from);
       f.elements.subject.value = /^re:/i.test(re.subject) ? re.subject : `Re: ${re.subject}`;
     }
+    if (to) addTo(to);
+    drawChips();
     dlg.onclose = null;
     // THE ONE EDITOR (`md-editor`): its media inline, any item inserted, files attached — sent as picked (sealed; the
     // mail's recipients read them).
@@ -146,7 +193,10 @@ export async function mount(ctx, el) {
       said.hidden = true;
       try {
         if (ed.busy()) throw new Error("still sending the files: a moment");
-        const to = await Promise.all(f.elements.to.value.split(",").map(x => x.trim()).filter(Boolean).map(x => (x.startsWith("space:") ? x : conversation.person(x))));
+        addTo(toInput.value);
+        toInput.value = "";
+        if (!toChips.length) throw new Error("to nobody: name a person or a space");
+        const to = await Promise.all(toChips.map(c => (c.ref.startsWith("space:") || c.ref.startsWith("did:") ? c.ref : conversation.person(c.ref))));
         await src.send(to, f.elements.subject.value.trim(), ed.value(), re?.id ?? null, ed.files());
         dlg.close();
         if (box === "sent") draw();
@@ -157,12 +207,14 @@ export async function mount(ctx, el) {
       }
     };
     dlg.showModal();
-    if (re) ed.focus();
-    else f.elements.to.focus();
+    if (re || to) ed.focus();
+    else toInput.focus();
   }
 
   list.replaceChildren(theme.loading(box === "sent" ? "Loading sent mail…" : "Loading your mail…"));
   await draw();
+  // WRITE TO someone named in the address (`…/mail/to/<did | space:id>`: a card's ✉ Mail): the composer opened to them.
+  if (String(ctx.sub ?? "").startsWith("to/")) compose(null, decodeURIComponent(ctx.sub.slice(3)));
   src.onChange(() => el.isConnected && draw());
   if (box === "in") {
     // New mail pointed to in the inbox: opened and kept (the list redraws as it arrives).
