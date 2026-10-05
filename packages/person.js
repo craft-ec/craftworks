@@ -11,7 +11,8 @@ export async function start(ctx) {
   const [edge, conversation, directory, roles, moderation, space] = await Promise.all(["edge", "conversation", "directory", "roles", "moderation", "space"].map(n => ctx.require(n)));
   const style = document.createElement("style");
   style.textContent = `
-    .cw-person { position: fixed; z-index: 50; width: 280px; background: var(--cw-surface); color: var(--cw-fg); border: 1px solid var(--cw-line);
+    /* Above every panel and menu (the spaces panel is 70): a card opened from one shows over it. */
+    .cw-person { position: fixed; z-index: 90; width: 280px; background: var(--cw-surface); color: var(--cw-fg); border: 1px solid var(--cw-line);
       border-radius: var(--cw-radius); box-shadow: var(--cw-shadow-lg); padding: var(--cw-space-3); display: grid; gap: var(--cw-space-2); font-size: var(--cw-text-sm); }
     .cw-person h3 { margin: 0; font-size: 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cw-person .id { color: var(--cw-muted); font-size: var(--cw-text-xs); word-break: break-all; cursor: copy; }
