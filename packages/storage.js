@@ -113,6 +113,9 @@ export async function start(ctx) {
         u.epochs.add(e);
         ctx.log("table sealed", { what: `${app}: no key here for epoch ${e} (${k.why})` });
         problem(spaceId, `${app}: no key for epoch ${e} (${k.why})`);
+        // A space's epoch this identity was never given (its history): ASKED of the space's members (`conversation`),
+        // then this table read again when the key arrives (`craftworks:keys`).
+        if (spaceId) dispatchEvent(new CustomEvent("craftworks:history-gap", { detail: { space: spaceKey(spaceId), below: e } }));
       }
       if (u.epochs.size) unkeyed.set(idHex, u);
       else unkeyed.delete(idHex);

@@ -296,7 +296,9 @@ export async function start(ctx) {
     }
     return n;
   }
-  // A HISTORY GAP here (`keys`: its walk stopped): asked of the space's owner and admins, once a page.
+  // A HISTORY GAP here (`keys`: its walk stopped; `storage`: a table sealed with an epoch never given): ALL of the
+  // space's history up to its epoch now asked — once a page — of its members, the owner and admins first (any member
+  // holding it answers: the owner need not be online).
   const askedHistory = new Set();
   addEventListener("craftworks:history-gap", async ({ detail }) => {
     if (askedHistory.has(detail.space)) return;
@@ -305,9 +307,12 @@ export async function start(ctx) {
     const sp = (await space.mine()).find(s => s.id === detail.space);
     if (!me || !sp) return;
     const r = await (await ctx.require("roles")).of(sp).catch(() => null);
-    const to = new Set([sp.governance?.owner, ...((r?.members() ?? []).filter(m => m.role === "admin" || m.role === "owner").map(m => m.did))].filter(d => d && d !== me.id));
-    for (const did of to) await index.send(did, { kind: "history-ask", space: sp.id, from: me.id, below: detail.below + 1, at: Date.now() }).catch(() => {});
-    ctx.log("conversation", { what: `${sp.name}: its history asked of ${to.size} admin(s)` });
+    const now = (await keys.group(sp).ready().catch(() => null))?.epoch ?? 0;
+    const below = Math.max(Number(detail.below) + 1 || 0, now);
+    const ranked = (r?.members() ?? []).sort((a, b) => ["owner", "admin"].includes(b.role) - ["owner", "admin"].includes(a.role)).map(m => m.did);
+    const to = [...new Set([sp.governance?.owner, ...ranked].filter(d => d && d !== me.id))].slice(0, 12);
+    for (const did of to) await index.send(did, { kind: "history-ask", space: sp.id, from: me.id, below, at: Date.now() }).catch(() => {});
+    ctx.log("conversation", { what: `${sp.name}: its history (epochs below ${below}) asked of ${to.length} member(s)` });
   });
   let renewedForWelcomes = false;
   async function accept() {
