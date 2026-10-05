@@ -47,7 +47,8 @@ export async function start(ctx) {
         }
         // BEHIND on its keys (a welcome onto an older branch): the owner and admins asked to welcome this node onto
         // theirs, once each load — before anything that needs the acts this node cannot read yet.
-        await conversation.catchUp(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: catching up: ${e.message}` }));
+        // (The automatic catch-up ask is OFF: answering it re-welcomes the asker — taking their entry out first — and a
+        // page only briefly "behind" (a key change not processed yet) could be taken out of the space that way.)
         // What this page cannot read here, reported into the space (seen by any member on Members & roles).
         await conversation.reportReads(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: reporting reads: ${e.message}` }));
         const r = await roles.of(sp).catch(() => null);
