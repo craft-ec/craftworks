@@ -75,7 +75,7 @@ export async function start(ctx) {
     return [...own, ...(await viewed(sp))].sort((a, b) => b.at - a.at);
   }
 
-  async function add(ref, { space: sp = null, from = null, folder = null, public: pub = !!ref?.public, at = Date.now(), write = null } = {}) {
+  async function add(ref, { space: sp = null, from = null, folder = null, public: pub = !!ref?.public, audience = null, at = Date.now(), write = null } = {}) {
     // A file another app made (a video, a post's image): its item lists it (`list`'s views) — not a second entry.
     if (from?.app && from.app !== "drive" && !from.saved) return null;
     const fid = await fidOf(ref);
@@ -89,15 +89,20 @@ export async function start(ctx) {
         id ??= had.ref;
         continue;
       }
-      const made = await items.submit({ board: w?.id ?? null, title: ref.name ?? "", body: "", kind: "file", files: [ref], meta, audience: audienceOf(w, pub), at, write });
+      // The audience chosen is the entry's where it was chosen (the space's Drive, or yours); your own copy of a
+      // space's upload is yours alone (or public, with it).
+      const chosenHere = audience && (shared(sp) ? w === sp : !w);
+      const made = await items.submit({ board: w?.id ?? null, title: ref.name ?? "", body: "", kind: "file", files: [ref], meta, audience: chosenHere ? audience : audienceOf(w, pub), at, write });
       id ??= made;
     }
     return id;
   }
 
-  async function upload(file, { space: sp = null, public: pub = false, from = null, folder = null, write = null, onProgress = () => {} } = {}) {
+  // `audience`: who sees it (`audience`'s choice: public, a space's members or fewer — a role, the admins, chosen
+  // people —, your followers or friends, only you); none given: public or not, by `public`.
+  async function upload(file, { space: sp = null, public: pub = false, audience = null, from = null, folder = null, write = null, onProgress = () => {} } = {}) {
     const ref = await files.put(file, { space: sp, public: pub, app: from?.app ?? "drive", onProgress });
-    await add(ref, { space: sp, from, folder, public: pub, write }).catch(e => ctx.log("drive", { what: `listing ${file.name}: ${e.message}` }));
+    await add(ref, { space: sp, from, folder, public: pub, audience, write }).catch(e => ctx.log("drive", { what: `listing ${file.name}: ${e.message}` }));
     return ref;
   }
 

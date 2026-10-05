@@ -84,7 +84,7 @@ export async function mount(ctx, el) {
       const no = h("button", { type: "button", textContent: "Cancel", onclick: () => d.close() });
       const f = h("form", { method: "dialog" }, h("h3", { textContent: list.length === 1 ? list[0].name : `${list.length} files` }), who.el, h("div", { className: "row" }, no, go));
       let chosen = null;
-      f.onsubmit = e => ((e.preventDefault()), (chosen = { public: who.isPublic(), write: who.write() }), d.close());
+      f.onsubmit = e => ((e.preventDefault()), (chosen = { public: who.isPublic(), audience: who.value(), write: who.write() }), d.close());
       d.append(f);
       d.onclose = () => (d.remove(), resolve(chosen));
       document.body.append(d);
@@ -178,7 +178,7 @@ export async function mount(ctx, el) {
       const line = h("div", { textContent: `${file.name}: starting…` });
       ups.append(line);
       drive
-        .upload(file, { space: sp, public: who.public, write: who.write, folder: folder(), from: { app: "drive" }, onProgress: e => (line.textContent = `${file.name}: ${e.phase === "reading" ? "reading" : `${Math.round((100 * e.done) / Math.max(1, e.size))}%`}`) })
+        .upload(file, { space: sp, public: who.public, audience: who.audience, write: who.write, folder: folder(), from: { app: "drive" }, onProgress: e => (line.textContent = `${file.name}: ${e.phase === "reading" ? "reading" : `${Math.round((100 * e.done) / Math.max(1, e.size))}%`}`) })
         .then(
           () => (line.remove(), draw()),
           e => (line.textContent = `${file.name}: not uploaded — ${e.message ?? e}`),
