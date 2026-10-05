@@ -107,6 +107,35 @@ export async function start(ctx) {
     return el;
   }
 
+  // TAG IT: a word typed, put on the item as everyone's tag (taken back by tagging it the same again).
+  function tagButton(it) {
+    const b = h("button", { type: "button", textContent: "＃ Tag", title: "Tag it, for everyone (your private sorting is Label)" });
+    b.onclick = e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const input = h("input", { placeholder: "a tag", style: "width:8em;font:inherit", onclick: x => x.stopPropagation() });
+      const done = () => input.replaceWith(b);
+      input.onkeydown = async k => {
+        if (k.key === "Escape") return done();
+        if (k.key !== "Enter") return;
+        k.preventDefault();
+        const t = items.normalTags(input.value)[0];
+        done();
+        if (!t) return;
+        const mine = (it.signaled?.tag ?? []).includes(t);
+        const c = { ...(it.counts?.tag ?? {}) };
+        c[t] = Math.max(0, (c[t] ?? 0) + (mine ? -1 : 1));
+        if (!c[t]) delete c[t];
+        it.counts = { ...(it.counts ?? {}), tag: c };
+        it.signaled = { ...(it.signaled ?? {}), tag: mine ? (it.signaled.tag ?? []).filter(x => x !== t) : [...(it.signaled?.tag ?? []), t] };
+        await items.signal(it.ref, "tag", t, { on: !mine }).catch(err => ctx.log("actions", { what: `not tagged: ${err.message ?? err}` }));
+      };
+      b.replaceWith(input);
+      input.focus();
+    };
+    return b;
+  }
+
   // THE ⋯ MENU: Hide post · Hide author · Hide space | Flag post · Flag author · Flag space — each on or off, as on a
   // person's card and a space's.
   function more(it, { changed, fail }) {
@@ -199,6 +228,8 @@ export async function start(ctx) {
           // VIEWS: how many people opened it (counted, never pressed).
           countOf(it, "view") ? h("span", { className: "n", title: "People who opened it", textContent: `👁 ${short(countOf(it, "view"))}` }) : null,
           save,
+          // TAG: a public tag on it (the tag signal: counted, everyone sees it — its author's own are set in the composer).
+          tagButton(it),
           // LABEL: this person's private tags on it (any kind, as Notes' — `label-menu`).
           btn("🏷 Label", e => labelUI.menu(e.currentTarget, labelUI.key(it.ref), { title: "Label" })),
           // ⋯ HIDE and FLAG, the same six everywhere (`moderation.lists`): hide (private, everywhere) or flag (public:

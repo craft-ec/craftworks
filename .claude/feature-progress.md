@@ -1227,3 +1227,12 @@ for individual sorting, tags for global categorization, a setting to view NSFW o
       public-participation default all read `signals.interactions()` — nothing per interaction written elsewhere. gov
       test reads packages/signals.js: every action it names must be a gov ACTION (control: a renamed action fails).
       Live fx: Card test settings list comment · vote · save · share · react · tag in one order with their defaults.
+- [x] S12 (10-05) Loose ends: spaces this account was removed from leave its list (upkeep: `keys.group().removed()` →
+      `space.forget`; live fy: B's 6 removed spaces gone — each checked: A's member list has only A); NSFW gated in
+      embeds and filtered in Saved (`items.visible`); Images wall shows tags; OTHERS' TAGS (＃ Tag, the tag signal: chips
+      "#greeting 1", the tag page finds them); a Discover space read that fails is said, never an empty list.
+      MEASURED: outsiders' views reach an open page LIVE (no reload: "· 1 view" within ~30 s, same document) — the
+      earlier "needs a reload" was B's first pointer to the space.
+- [x] ARCHITECTURE plan table brought to 10-05: 5–8 done, 9 observability done / privacy not, 11 Global analytics
+      (proposed: tallies, qualified counts, resource quotas, settled periods — awaiting the owner's two decisions),
+      12 Compute, 13 App domains, 14 Templates.

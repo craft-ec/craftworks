@@ -536,7 +536,8 @@ export async function start(ctx) {
     const [inSpaces, profile] = await Promise.all([
       Promise.all(
         [...bySpace].map(async ([id, ptrs]) =>
-          (async () => boardPostsOf(spaces.get(id), { outside: true, kinds: kinds_, room: await pointedRoom(spaces.get(id), ptrs) }))().catch(() => []),
+          // A space that does not read: SAID (never a silent empty list).
+          (async () => boardPostsOf(spaces.get(id), { outside: true, kinds: kinds_, room: await pointedRoom(spaces.get(id), ptrs) }))().catch(e => (ctx.log("posts", { what: `Discover: ${spaces.get(id).name ?? id.slice(0, 8)} not read: ${e?.message ?? e}` }), [])),
         ),
       ).then(x => x.flat()),
       dids.size ? profilePosts([...dids], [], kinds_, since).catch(() => []) : [],
@@ -559,7 +560,8 @@ export async function start(ctx) {
   async function shownOf(out, where) {
     const self = await me();
     const nsfw = await nsfwShown();
-    return out.filter(p => (!where.tag || tagsOf(p).includes(where.tag)) && (nsfw || p.by === self || !isNsfw(p)));
+    // A tag its author put, or others did (the tag signal).
+    return out.filter(p => (!where.tag || tagsOf(p).includes(where.tag) || !!p.counts?.tag?.[where.tag]) && (nsfw || p.by === self || !isNsfw(p)));
   }
   async function list(where = {}, sort = "hot", kind = "post", { window = sort === "new" ? 30 : "week", by = "votes" } = {}) {
     const kinds = kindsFor(kind);
@@ -966,5 +968,5 @@ export async function start(ctx) {
     return `${base}/p/${ref}`;
   }
 
-  return { mayWriteOn, pageOf, appOf, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, publicSpace, outsideOf, syncPublic, signal, view, tagsOf, normalTags, isNsfw, nsfwShown, onChange: f => changed.push(f) };
+  return { mayWriteOn, pageOf, appOf, submit, list, get, setFiles, attach, attached, editItem, publicIn, inPlaces, following, thread, comment, vote, remove, boards, boardOf, publicSpaces, publicSpace, outsideOf, syncPublic, signal, view, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
 }

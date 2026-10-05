@@ -62,7 +62,8 @@ export async function start(ctx) {
         return ctx
           .require("actions")
           .then(a => Promise.all(a.saved().map(getSaved)))
-          .then(list => list.filter(it => it && ks.includes(it.kind)));
+          // NSFW as every list (`items.visible`).
+          .then(list => items.visible(list.filter(it => it && ks.includes(it.kind))));
       if (discover) return items.list({ discover: true }, sort, ks, { window, ...options });
       if (whole) return items.inPlaces(sp ? { spaces: [sp] } : { people: [person ?? me] }, ks, { withVotes: false });
       return items.list(sp ? { board: sp.id } : { by: person ?? me }, sort, ks, { window, ...options });

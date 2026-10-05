@@ -715,6 +715,14 @@ export async function start(ctx) {
           const s = m.status();
           return s.removed ? null : { epoch: s.epoch, state: hexOf(s.state) };
         })),
+      // REMOVED: this account taken out of the space's group (a removal or a ban by its acts, a commit read since) —
+      // the group brought current first. Not joined yet (no group here): not removed.
+      removed: () =>
+        (queue = queue.catch(() => {}).then(async () => {
+          if (!m && !(await load())) return false;
+          await current(false).catch(() => null);
+          return !!m?.status().removed;
+        })),
       adopt: (epoch, stateHex) =>
         (queue = queue.catch(() => {}).then(async () => {
           if (m && m.status().epoch >= epoch) return false;

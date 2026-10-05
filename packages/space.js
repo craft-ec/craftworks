@@ -150,11 +150,18 @@ export async function start(ctx) {
     ctx.log("space", { what: `left ${sp.kind} “${sp.name}”` });
   }
 
+  // FORGET: out of this person's list without a word to the space — they are out of it already (removed or banned:
+  // its group says so), so it is no longer theirs to list.
+  async function forget(sp) {
+    await (await (await ctx.require("storage")).table(SPACES)).remove(sp.id);
+    ctx.log("space", { what: `removed from ${sp.kind} “${sp.name}”: no longer listed` });
+  }
+
   // How a space is SHOWN, everywhere: its name and the start of its id — `Makers#30fe18` (names are not unique; the id
   // is), as people are (`pat#8r4orC`).
   const shown = sp => `${String(sp?.name ?? "").trim() || "space"}#${String(sp?.id ?? "").slice(0, 6)}`;
 
   // A GROUP (a person's circle, a channel's readers — `groups`): a space of its own, never listed as one.
   const isGroup = sp => !!(sp?.circle || sp?.group);
-  return { isGroup, account, tables, mine, create, record, describe, tableOf, channel, board, owner, leave, shown };
+  return { isGroup, account, tables, mine, create, record, describe, tableOf, channel, board, owner, leave, forget, shown };
 }

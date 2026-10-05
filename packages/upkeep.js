@@ -40,6 +40,11 @@ export async function start(ctx) {
       // The space open first.
       for (const sp of [...servers.filter(s => s.id === ctx.space), ...servers.filter(s => s.id !== ctx.space)]) {
         await node.idle();
+        // REMOVED from it (its group says so): no longer in this person's list — never left shown as theirs.
+        if (await (await ctx.require("keys")).group(sp).removed().catch(() => false)) {
+          await space.forget(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: ${e.message}` }));
+          continue;
+        }
         const r = await roles.of(sp).catch(() => null);
         // The acts hold in the group: whoever is banned, removed or has left and is still in it, out — by ANY member
         // (the acts already decided it; the group's one order refuses a second commit of the same removal).

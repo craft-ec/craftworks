@@ -242,7 +242,7 @@ export async function start(ctx) {
       "a",
       { className: "cw-pic", href },
       src ? h("img", { src, alt: it.title ?? "", loading: "lazy" }) : h("div", { className: "none", textContent: "🖼" }),
-      h("div", { className: "over" }, h("div", { className: "t", textContent: it.title }), h("div", { className: "s" }, by ? author(it.by, "image") : null, `${by ? " · " : ""}${ago(it.at)}${it.kind !== "image" ? ` · ${kinds.of(it.kind)?.label ?? it.kind}` : ""}${counted(it)}${it.private ? " · only you" : ""}`)),
+      h("div", { className: "over" }, h("div", { className: "t", textContent: it.title }), h("div", { className: "s" }, by ? author(it.by, "image") : null, `${by ? " · " : ""}${ago(it.at)}${it.kind !== "image" ? ` · ${kinds.of(it.kind)?.label ?? it.kind}` : ""}${counted(it)}${it.private ? " · only you" : ""}`), marks(it)),
     );
   }
 
@@ -272,6 +272,11 @@ export async function start(ctx) {
       { className: "cw-marks", onclick: e => (e.stopPropagation(), e.preventDefault()) },
       items.isNsfw(it) ? h("span", { className: "nsfw", title: "Adult content (NSFW)", textContent: "🔞" }) : null,
       ...tags.filter(t => t !== "nsfw").map(t => h("button", { type: "button", className: "tag", textContent: `#${t}`, title: `Everything tagged #${t}`, onclick: go(t) })),
+      // Tags OTHERS put on it (the tag signal: each with how many put it), beside its author's.
+      ...Object.entries(it.counts?.tag ?? {})
+        .filter(([t]) => !tags.includes(t))
+        .sort((a, b) => b[1] - a[1])
+        .map(([t, n]) => h("button", { type: "button", className: "tag", textContent: `#${t} ${n}`, title: `${n} ${n === 1 ? "person" : "people"} tagged it #${t}`, onclick: go(t) })),
       labels && it.ref ? labelUI.chips(labelUI.key(it.ref)) : null,
     );
   }
@@ -303,11 +308,17 @@ export async function start(ctx) {
           if (shown) return;
           if (!it) return none();
           shown = true;
-          const main = MEDIA.has(kinds.domain(it.kind)) ? (it.files?.find(x => x.type === MANIFEST || /^(video|audio)\//.test(x.type ?? "")) ?? null) : null;
-          if (main) return ph.replaceChildren((await ctx.require("markdown")).fileView(main, { item: it.ref, alt: it.title }), card(it, { by: true }));
-          ph.replaceChildren(card(it, { by: true }));
+          // ADULT CONTENT someone chose not to see: said, shown on asking (as its page asks).
+          if (items.isNsfw(it) && !(await items.nsfwShown()) && !(await items.visible([it])).length)
+            return ph.replaceChildren(h("button", { type: "button", className: "s", textContent: "🔞 Adult content (NSFW) — show", onclick: e => (e.preventDefault(), e.stopPropagation(), show(it)) }));
+          await show(it);
         })
         .catch(none);
+    const show = async it => {
+      const main = MEDIA.has(kinds.domain(it.kind)) ? (it.files?.find(x => x.type === MANIFEST || /^(video|audio)\//.test(x.type ?? "")) ?? null) : null;
+      if (main) return ph.replaceChildren((await ctx.require("markdown")).fileView(main, { item: it.ref, alt: it.title }), card(it, { by: true }));
+      ph.replaceChildren(card(it, { by: true }));
+    };
     draw();
     items.onChange(() => !shown && draw());
     return ph;
