@@ -49,9 +49,24 @@ export async function start(ctx) {
   // contracts, fetched (raced, rebuilt if missing) until the rows are all there; one that names EPOCHS gets their keys
   // for this table from the identity (none, for an epoch this node has no key of: what is sealed with it stays
   // unread). Returns the last view: `{ kind: "tail", tail: { rows, … } }`, or `tail-unreadable`.
+  // PROGRESS, not a count of rounds: a walk goes on while each round asks for something not asked before (a big
+  // table — many epochs' keys — needs many rounds), and stops after STALLED rounds that ask for nothing new.
+  const STALLED = 3;
+  const progress = () => {
+    const asked = new Set();
+    let stalled = 0;
+    return v => {
+      const wanted = v.kind === "tail-keys" ? v.epochs.map(e => `e${e}`) : (v.blocks ?? []);
+      const fresh = wanted.filter(x => !asked.has(x));
+      wanted.forEach(x => asked.add(x));
+      stalled = fresh.length ? 0 : stalled + 1;
+      return stalled < STALLED;
+    };
+  };
   async function settle(view, app) {
+    const going = progress();
     for (let round = 0; view.kind === "tail-need" || view.kind === "tail-keys"; round++) {
-      if (round >= 24) throw new Error(`${app}: the tree did not finish loading`);
+      if (!going(view)) throw new Error(`${app}: the tree did not finish loading (${round} rounds, the last ${STALLED} asked nothing new)`);
       if (view.kind === "tail-keys") await epochKeys(view.id, view.epochs, app);
       else await blocks.fetch(view.id, view.blocks, app);
       view = JSON.parse(core.tail_view(bytes(view.id)));
@@ -64,14 +79,15 @@ export async function start(ctx) {
   // stored value bytes]], next }` — the blocks on its path fetched, and only those.
   async function pageOf(idHex, app, { lo = "", hi = "", after = "", reverse = true, limit = 50 } = {}) {
     const b = x => (x ? enc.encode(x) : new Uint8Array(0));
-    for (let round = 0; round < 24; round++) {
+    const going = progress();
+    for (let round = 0; ; round++) {
       const v = JSON.parse(core.tail_page(bytes(idHex), b(lo), b(hi), reverse, b(after), limit));
       if (v.kind === "tail-page") return { rows: v.rows.map(([k, val]) => [bytes(k), bytes(val)]), next: v.next ? dec.decode(bytes(v.next)) : null };
+      if ((v.kind === "tail-keys" || v.kind === "tail-need") && !going(v)) throw new Error(`${app}: a page did not finish loading (${round} rounds, the last ${STALLED} asked nothing new)`);
       if (v.kind === "tail-keys") await epochKeys(v.id, v.epochs, app);
       else if (v.kind === "tail-need") await blocks.fetch(v.id, v.blocks, app);
       else throw new Error(`${app}: ${v.said ?? v.kind}`);
     }
-    throw new Error(`${app}: a page did not finish loading`);
   }
 
   // REFUSING: set by `keys` when the group says this node was REMOVED from the account. From then on it writes
@@ -301,12 +317,14 @@ export async function start(ctx) {
         for (const [at, root] of roots) {
           if (at < since) continue;
           try {
-            for (let round = 0; round < 24; round++) {
+            const going = progress();
+            for (let round = 0; ; round++) {
               const r = core.tail_value_at(id, root, k);
               if (!r.fetch) {
                 out.push({ at, root, value: r.value });
                 break;
               }
+              if (!going({ kind: "tail-need", blocks: r.fetch })) throw new Error("its blocks did not arrive");
               await blocks.fetch(idHex, r.fetch, app);
             }
           } catch (e) {
