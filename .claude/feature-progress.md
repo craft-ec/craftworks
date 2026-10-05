@@ -1016,7 +1016,13 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       circle); a comment/vote cites it; a reader reads that table and checks it names the writer. Never listed (card,
       catalog): not enumerable. Removed: the owner clears it — later writes stop verifying. (Superseded: sealing restricted comments inside the circle, which hid them from
       public readers — the owner: "in a database, write members-only, read public".)
-- [ ] ONE ACCESS CONTROL, PERSONAL SPACE TOO (owner 10-03: "replicate access control for vote/comment for personal
+- [x] ONE ACCESS CONTROL, PERSONAL SPACE TOO (DONE 10-05: the personal space's policies are `policy` ACTS on its owner's
+      card replayed by the core's `Governance` — inherited (Everything you post → each app → the item) and TIME-AWARE
+      (profile threads and counts judge each comment/vote at its own time); gov `who` gains followers/friends/author
+      (no space role passes them); `items.writeCred` applies the full rule (Only you closed nothing before). Old
+      `policy:` card rows count as acts at time 0. fx: B commented, A set Everything → Only you: B's box closed
+      ("Only its author comments here"), the earlier comment kept, one sent after not counted; A set Image → Anyone:
+      box back. Test account A left with Everything=Only you, Image=Anyone.) (owner 10-03: "replicate access control for vote/comment for personal
       space … same access control across all, not a separate implementation"): the personal space governed by the SAME
       `roles` model as a shared space — an acts log the account signs; policies per app/domain/item for read, post,
       comment, vote; `r.allows(action, who, path)` the one check everywhere (comments.js today skips it for a profile:
@@ -1121,7 +1127,7 @@ Done (commits on main):
 - Board's rules are the text domain's (d5b1304) — spaces saved public before must be re-saved once.
 - Writers bag fresh reads shared; tail.whole once (measured: tree blocks never fetched twice).
 - Named-people lists; audiences kept by admins while the maker is away.
-Open, in order: one access control for the personal space; group-fork
+Open, in order: group-fork
 leftovers (heal own commits only, keep losing-branch keys, owner re-adds members on another branch).
 Test nodes 17691/17692: fresh accounts, PIN 246810 (older test accounts' PINs above are void).
 Late-joiner history CONFIRMED live 10-05: after Ivvor reloaded + PIN, onlyabrak sees Ivvor's New Space whole (apps shown).
