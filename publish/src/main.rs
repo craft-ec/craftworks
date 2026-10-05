@@ -527,7 +527,11 @@ async fn main() -> Result<()> {
         history.push(this_build.clone());
         std::fs::write(&history_file, history.join("\n") + "\n").context("writing contracts/identity-history")?;
     }
-    let prior: Vec<String> = history.iter().rev().filter(|l| **l != this_build).take(8).map(|l| format!("\"{l}\"")).collect();
+    // EVERY earlier build, not the newest few: builds published only to test nodes push a user's real build out of any
+    // window (10-05: eight test builds hid the sites' build, and every PIN read as wrong). A build a node never ran answers
+    // "missing" at once; the list restarts at a fresh start.
+    let prior: Vec<String> = history.iter().rev().filter(|l| **l != this_build).map(|l| format!("\"{l}\"")).collect();
+    println!("identity: {} earlier build(s) asked on a PIN it does not know, oldest {}", prior.len(), history.first().map(|l| &l[..12.min(l.len())]).unwrap_or("none"));
     // Each page's NEEDS: every package its code could ask for — its own, the layout's and the theme, and, through
     // them, every package name any of them mentions (a name in a string: over-counting costs a few small reads; missing
     // one would only cost a read later). The loader asks for them all at once when the page opens.
