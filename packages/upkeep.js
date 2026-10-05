@@ -103,7 +103,9 @@ export async function start(ctx) {
         space: sp.id, name: sp.name, kind: sp.kind, owner: sp.governance.owner, nonce: sp.governance.nonce ?? null, channel: sp.tables.channel,
         open: r.policy("", "join") === "anyone",
         codes: r.invites().map(i => [i.code, i.expires || 0, i.uses ? i.uses - i.admitted.length : 0]),
-        bans: r.bannedList(), members: r.members().map(m => m.did), epoch: g.epoch, state: g.state,
+        // Never let in again: the banned AND whoever the acts put out (removed, left) — an old request of theirs still
+        // sits in a bag upkeep reads.
+        bans: [...new Set([...r.bannedList(), ...r.goneList()])], members: r.members().map(m => m.did), epoch: g.epoch, state: g.state,
       });
     }
     // With it, the key packages this account used already: upkeep never uses one again.
@@ -126,8 +128,9 @@ export async function start(ctx) {
     // Piece and Block contracts too (it re-keys a space's files with no page open).
     if (r.upkeep && r.upkeep.codes !== Core.upkeep_codes_hash(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode))
       await auth.identity.upkeepCodes(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode).catch(() => {});
-    // What it last did with no page open (an admission, a re-key), said once a page opens.
-    ctx.log("upkeep", { what: r.upkeep ? `the delegate watches the inbox (${r.upkeep.wakeups} wake-up(s) so far)${r.upkeep.said ? ` — last: ${r.upkeep.said}` : ""}` : `the delegate: ${r.refused ?? JSON.stringify(r)}` });
+    ctx.log("upkeep", { what: r.upkeep ? `the delegate watches the inbox (${r.upkeep.wakeups} wake-up(s) so far)` : `the delegate: ${r.refused ?? JSON.stringify(r)}` });
+    // What it did with no page open (admissions, re-keys): its last lines, each said once a page opens.
+    for (const line of String(r.upkeep?.said ?? "").split("\n").filter(Boolean)) ctx.log("upkeep said", { what: line });
   }
   handOver().catch(() => {});
   addEventListener("craftworks:auth", () => handOver().catch(() => {}));

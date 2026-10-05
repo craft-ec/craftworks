@@ -399,8 +399,14 @@ pub fn upkeep_moved<H: Host>(h: &H, m: &[u8; KEY_LEN], space: &[u8; 32]) -> bool
 pub fn upkeep_set_moved<H: Host>(h: &mut H, m: &[u8; KEY_LEN], space: &[u8; 32], moved: bool) -> bool {
     h.set_secret(&[UPKEEP_MOVED, &m[..], &space[..]].concat(), &[u8::from(moved)])
 }
+/// What upkeep did, SAID: the last 12 lines (each with upkeep's clock, s), newest last — a page shows them.
 pub fn upkeep_say<H: Host>(h: &mut H, m: &[u8; KEY_LEN], what: &str) {
-    h.set_secret(&of(UPKEEP_SAID, m), what.as_bytes());
+    let had = h.get_secret(&of(UPKEEP_SAID, m)).and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
+    let mut lines: Vec<String> = had.lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
+    lines.push(format!("[{}] {what}", upkeep_now(h).unwrap_or(0)));
+    let over = lines.len().saturating_sub(12);
+    lines.drain(..over);
+    h.set_secret(&of(UPKEEP_SAID, m), lines.join("\n").as_bytes());
 }
 /// Wake-ups since the member's page last handed the mandate over.
 pub fn upkeep_since_tick<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> u64 {
