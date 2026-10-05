@@ -185,6 +185,31 @@ export async function start(ctx) {
     return (await index.spacePointers(sp, "writers")).filter(p => p?.branch && devs.includes(p.w)).sort((a, b) => b.epoch - a.epoch);
   }
   const ownerBranch = async sp => (await ownerBranches(sp))[0] ?? null;
+  // EVERY MEMBER's KEYS, as their devices announced them in the space's writers list (any member reads it): each one
+  // on the owner's keys now, BEHIND (an older epoch), on ANOTHER BRANCH, or not announced — and who caught them up.
+  // `Map did → { state, epoch, branch, devices, repairedBy }`, and the owner's own `{ epoch, branch }`.
+  async function keyStatus(sp) {
+    const r = await (await ctx.require("roles")).of(sp);
+    await r.settled;
+    const ptrs = await index.spacePointers(sp, "writers").catch(() => []);
+    const own = (await ownerBranches(sp).catch(() => []))[0] ?? null;
+    const out = new Map();
+    for (const m of r.members()) {
+      const devs = await directory.devices(m.did).catch(() => []);
+      const anns = ptrs.filter(p => p?.branch && devs.includes(p.w)).sort((a, b) => b.epoch - a.epoch);
+      const a = anns[0] ?? null;
+      const repaired = ptrs.filter(p => p?.repair === m.did);
+      const by = repaired.length ? await Promise.all(repaired.map(async p => (await directory.name(Object.keys(await whoseDevice(p.w, r)).at(0) ?? "").catch(() => null)) ?? short(p.w ?? ""))) : [];
+      const state = !a ? "not announced" : !own ? "unknown" : a.epoch === own.epoch && a.branch === own.branch ? "current" : a.epoch < own.epoch ? "behind" : a.epoch === own.epoch ? "another branch" : "ahead";
+      out.set(m.did, { state, epoch: a?.epoch ?? null, branch: a?.branch ?? null, devices: anns.length, repairedBy: by });
+    }
+    return { owner: own ? { epoch: own.epoch, branch: own.branch } : null, members: out };
+  }
+  // The member a device writes for (`{ did: true }`), among this space's members.
+  async function whoseDevice(w, r) {
+    for (const m of r.members()) if ((await directory.devices(m.did).catch(() => [])).includes(w)) return { [m.did]: true };
+    return {};
+  }
   // BEHIND: this node's keys of a space not on the owner's branch at the owner's epoch (a welcome that opened onto an
   // older branch; a restored account's) — it reads nothing new there. On EVERY LOAD it asks the owner, the admins and
   // the other members to welcome it again onto the owner's branch (`welcome-again`, a repair: each ask answered by any
@@ -376,7 +401,7 @@ export async function start(ctx) {
         const answered = x => x.key === it.space || (it.code && x.key === `code:${it.code}`);
         if (t) for (const r of t.rows().filter(x => x.value && answered(x))) await t.remove(r.key).catch(() => {});
         out.push(sp);
-        ctx.log("conversation", { what: `joined a ${it.spaceKind} conversation with ${short(it.from)}` });
+        ctx.log("conversation", { what: it.repair ? `${it.name ?? it.space.slice(0, 8)}: caught up onto the owner's keys — welcomed by ${short(it.from)}, ${Array.isArray(it.history) ? it.history.length : 0} earlier key(s) with it` : `joined a ${it.spaceKind} conversation with ${short(it.from)}` });
       } catch (e) {
         const held = it.kp ? await keys.holdsTag(it.kp).catch(() => null) : null;
         // Made for a key package this account does not hold (its card from before): its sender asked — once — to
@@ -1051,5 +1076,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, repair, catchUp, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
+  return { direct, group, invite, accept, repair, catchUp, keyStatus, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
 }

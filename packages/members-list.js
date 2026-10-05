@@ -15,6 +15,8 @@ export async function start(ctx) {
     .cw-members .m { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border-radius: var(--cw-radius-sm); }
     .cw-members .m:hover { background: var(--cw-hover); }
     .cw-members .n { font-weight: 600; cursor: pointer; }
+    .cw-members .chip.key.ok { color: var(--cw-muted); }
+    .cw-members .chip.key.warn { color: var(--cw-danger); border-color: var(--cw-danger); }
     .cw-members .chip { font-size: var(--cw-text-xs); border: 1px solid var(--cw-line); border-radius: 999px; padding: 1px 8px; color: var(--cw-muted); display: inline-flex; gap: 4px; align-items: center; }
     .cw-members .acts { margin-left: auto; }
     .cw-members .acts button { font: inherit; font-size: var(--cw-text-sm); cursor: pointer; border: 0; background: none; color: var(--cw-danger); }
@@ -52,6 +54,18 @@ export async function start(ctx) {
       c.onchange = () => (say(""), run(c.checked).then(() => r.refresh(), err => say(`Role: ${err?.message ?? err}`)));
       return h("label", { className: "chip", onclick: e => e.stopPropagation() }, c, label);
     };
+    // EACH MEMBER's KEYS (`conversation.keyStatus`: what their devices announced) — seen by any member, so nobody has
+    // to ask another for a log: on the owner's keys, behind, or on another branch, and who caught them up.
+    let keyState = null;
+    ctx.require("conversation").then(c => c.keyStatus(sp)).then(k => ((keyState = k), box.isConnected && draw()), () => {});
+    const keyChip = did => {
+      const k = keyState?.members.get(did);
+      if (!k) return null;
+      const o = keyState.owner;
+      const text = k.state === "current" ? "🔑 keys current" : k.state === "behind" ? `🔑 behind: epoch ${k.epoch} of ${o?.epoch}` : k.state === "another branch" ? `🔑 on another branch (epoch ${k.epoch})` : k.state === "not announced" ? "🔑 keys not announced" : `🔑 ${k.state}`;
+      const by = k.repairedBy.length ? ` · caught up by ${[...new Set(k.repairedBy)].join(", ")}` : "";
+      return h("span", { className: `chip key ${k.state === "current" ? "ok" : "warn"}`, textContent: text + by });
+    };
     const draw = () => {
       const people = r.members().filter(m => !who || r.passes(who, m.did));
       box.replaceChildren(
@@ -75,6 +89,7 @@ export async function start(ctx) {
             directory.nameEl(m.did, "span", { className: "n", onclick: e => person.open(e.currentTarget, m.did, { space: sp }) }),
             m.did === me.id ? h("span", { className: "chip", textContent: "you" }) : null,
             ...chips,
+            keyChip(m.did),
             remove ? h("span", { className: "acts" }, remove) : null,
           );
         }),
