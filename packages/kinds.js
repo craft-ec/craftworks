@@ -50,6 +50,8 @@ export async function start() {
     ["post", "text", "Post", []],
     // Note (Notes: a card of text, its own domain — its own policy)
     ["note", "note", "Note", []],
+    // Paste (Paste: code or text kept as it is — the note family's, with its language and an expiry)
+    ["paste", "note", "Paste", ["language", "expires"]],
     // Channel (Chat: a place for messages — its title its name; `meta.cid` names its messages' table)
     ["channel", "chat", "Channel", []],
   ];
@@ -77,7 +79,7 @@ export async function start() {
     const t = String((typeof x === "string" ? x : x?.type) ?? "").toLowerCase();
     return MEDIA.find(m => m.is(t, ref)) ?? null;
   };
-  const UNTITLED = new Set(["note", "file"]);
+  const UNTITLED = new Set(["note", "file", "paste"]);
   // ATTACHING kinds: their own data, about another item (`in`) — contributed like a comment, listed with what they are
   // about, and a lens of their own (the Caption app). A CAPTION — subtitles, lyrics, a transcript: WebVTT (its file),
   // its language and label.

@@ -208,7 +208,7 @@ export async function start(ctx) {
               continue;
             }
             const about = TOP.has(x.kind) ? k : x.kind === "reaction" ? x.item : x.in;
-            if (!about || !x.at) continue;
+            if (!about || !x.at || x.meta?.unlisted) continue;
             await listPublic(`space:${sp.id}/${about}`, x, where).catch(e => ctx.log("posts", { what: `listing ${k} in Discover: ${e?.message ?? e}` }));
           }
         })().finally(() => (syncing = null)));
@@ -686,7 +686,8 @@ export async function start(ctx) {
     await (await ctx.require("files")).publicity(files, null, !only).catch(e => ctx.log("posts", { what: `its files: ${e.message}` }));
     const ref = `${self}/${await (await profileRoom(self)).post(kind, body, { title, private: only, files, meta, at })}`;
     // Listed in Discover (its own bag made with it: nobody reading it waits on one that does not exist).
-    if (!only) await listPublic(ref, { kind, at }, { did: self }).catch(e => ctx.log("posts", { what: `listing ${ref}: ${e.message}` }));
+    // UNLISTED (`meta.unlisted`): public — anyone with its link reads it — but never listed in Discover.
+    if (!only && !meta.unlisted) await listPublic(ref, { kind, at }, { did: self }).catch(e => ctx.log("posts", { what: `listing ${ref}: ${e.message}` }));
     return ref;
   }
 
@@ -988,7 +989,9 @@ export async function start(ctx) {
   // WHERE AN ITEM IS SHOWN — the one link to its page, for every app that links to one: a video or a track where it
   // plays (Video, Audio, Image), a post (or anything else) on its board, a note in Note, a file in Drive.
   const APP_OF = { video: "video", audio: "audio", image: "image", book: "book", note: "note", file: "drive", document: "drive" };
-  const appOf = kind => APP_OF[kinds.domain(kind)] ?? "board";
+  // A kind with an app of its own (a paste: Paste, though of the note family) first; else its domain's.
+  const APP_OF_KIND = { paste: "paste" };
+  const appOf = kind => APP_OF_KIND[kind] ?? APP_OF[kinds.domain(kind)] ?? "board";
   // In its PLACE (`where`'s addresses): a space's in the space, a person's in their space (`u/<did>`: yours too).
   // AN ITEM'S REFERENCE: a space's (`space:<id>/<item>`) or a person's (`did:craftec:<id>/<item>`).
   const ITEM_REF = /^(space:[0-9a-f]{64}|did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64})\/[A-Za-z0-9_-]{4,80}$/;

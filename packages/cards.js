@@ -47,6 +47,12 @@ export async function start(ctx) {
     .cw-note[style*="background"] { color: var(--cw-on-pastel); border-color: transparent; }
     .cw-note .t { margin-bottom: 6px; }
     .cw-note .b { overflow-wrap: anywhere; max-height: 18em; overflow: hidden; }
+    .cw-paste { display: grid; gap: 6px; padding: var(--cw-space-3); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-surface); color: inherit; text-decoration: none; min-width: 0; }
+    .cw-paste .t { font-weight: 600; }
+    .cw-paste .s { font-size: var(--cw-text-xs); color: var(--cw-muted); margin: 0; }
+    .cw-paste pre.code { margin: 0; padding: var(--cw-space-2); max-height: 14em; overflow: auto; background: var(--cw-hover); border-radius: var(--cw-radius-sm);
+      font: 12.5px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre; tab-size: 2; }
+    .cw-page .cw-paste pre.code { max-height: none; font-size: 13px; }
     .cw-note .s { margin-top: 6px; font-size: var(--cw-text-xs); }
     .cw-note .acts { gap: 2px; margin-top: 6px; }
     .cw-note .acts button { border: 0; background: none; cursor: pointer; font-size: 15px; padding: var(--cw-space-1) 6px; border-radius: 50%; color: inherit; }
@@ -336,7 +342,24 @@ export async function start(ctx) {
   }
 
   // Each kind's look: its own (a caption), else its domain's.
-  const LOOKS = { video: media, audio: media, book, note, file, image: file, document: file, text, caption };
+  // A PASTE: its title, its language, its code coloured (`highlight`) — whole on its page, its first lines in a list;
+  // an expired one says so (the text not shown).
+  function paste(it, { href, actions, by, open }) {
+    const expired = !!it.meta?.expires && it.meta.expires < Date.now();
+    const pre = h("pre", { className: "code" }, when("highlight", hl => hl.code(String(it.body ?? ""), it.meta?.language)));
+    const lang = it.meta?.language && it.meta.language !== "plain" ? it.meta.language : "text";
+    const c = h(
+      href ? "a" : "div",
+      { className: "cw-card cw-paste", ...(href ? { href } : { tabIndex: 0 }) },
+      h("div", { className: "t", textContent: it.title || "Untitled paste" }),
+      h("div", { className: "s" }, `${lang}`, it.meta?.expires ? ` · ${expired ? "expired" : `expires ${new Date(it.meta.expires).toLocaleString()}`}` : "", it.meta?.unlisted ? " · unlisted" : "", by ? h("span", {}, " · ", author(it.by, "paste")) : null),
+      expired ? h("p", { className: "s", textContent: "This paste has expired." }) : pre,
+      actions.length ? h("div", { className: "acts" }, ...actions) : null,
+    );
+    if (open) c.onclick = e => !e.target.closest("button, .by") && open();
+    return c;
+  }
+  const LOOKS = { video: media, audio: media, book, note, file, image: file, document: file, text, caption, paste };
   function card(it, { href = items.pageOf(it.ref, it.kind), actions = [], by = true, corner = null, below = null, open = null, lead = null, body = null } = {}) {
     const look = LOOKS[it.kind] ?? LOOKS[kinds.domain(it.kind)];
     if (!look) throw new Error(`no look for ${it.kind} yet`);
