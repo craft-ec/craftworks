@@ -21,8 +21,6 @@ export async function start(ctx) {
     .cw-appset label { display: grid; gap: 4px; margin-bottom: var(--cw-space-3); font-size: var(--cw-text-sm); font-weight: 600; }
     .cw-appset select, .cw-appset textarea, .cw-appset input { font: inherit; padding: 6px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
     .cw-appset textarea { min-height: 90px; resize: vertical; }
-    .cw-appset button { font: inherit; cursor: pointer; border: 1px solid var(--cw-line); background: none; color: var(--cw-fg); border-radius: var(--cw-radius-sm); padding: 4px var(--cw-space-3); }
-    .cw-appset button.main { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
     .cw-appset .row { display: flex; gap: var(--cw-space-2); justify-content: flex-end; align-items: center; }
     .cw-appset .said { color: var(--cw-danger); font-size: var(--cw-text-sm); margin: 0; flex: 1; }
     .cw-appset .ok { color: var(--cw-muted); font-size: var(--cw-text-sm); margin: 0; flex: 1; }
@@ -93,6 +91,7 @@ export async function start(ctx) {
       title: "The space",
       fields: [
         { key: "about", app: "space", label: "About (what this space is: on its card and its Home, also from outside)" },
+        { key: "history", app: "space", label: "Keep earlier versions of what is changed (History)", choices: [["", "7 days, the last 20 (the most this plan keeps)"], ["3", "3 days"], ["1", "1 day"], ["0", "Off: no earlier versions"]] },
         { action: "join", path: "", label: "Who may join (Anyone: whoever asks is let in; Members: by an invite)" },
         { action: "invite", path: "", label: "Who may invite (make invite codes, add people, let askers in)" },
         { action: "post", path: "", label: "Who may post (every app, unless it says otherwise)" },
@@ -163,6 +162,7 @@ export async function start(ctx) {
     const inputs = S.fields.map(f => {
       if (f.action) return { f, input: who(r, f.path, f.action, { me }) };
       const now = r.config(f.app, f.key, "");
+      if (f.choices) return { f, input: h("select", {}, ...f.choices.map(([v, t]) => h("option", { value: v, textContent: t, selected: String(now ?? "") === v }))), now: String(now ?? "") };
       return { f, input: h("textarea", { value: now ?? "", maxLength: 2000 }), now };
     });
     const btn = h("button", { type: "submit", className: "main", textContent: "Save" });

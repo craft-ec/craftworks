@@ -62,7 +62,7 @@ export async function mount(ctx, el) {
       .keep dialog.labels-editor { border: 0; border-radius: var(--cw-radius); padding: 14px var(--cw-space-4); width: min(320px, calc(100vw - 32px));
         box-shadow: var(--cw-shadow-lg); }
       .keep dialog.labels-editor:not([open]) { display: none; }
-      .keep .labels-editor h3 { margin: 0 0 10px; font-size: 1rem; }
+      .keep .labels-editor h3 { margin: 0 0 10px; }
       .keep .labels-editor .line { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
       .keep .labels-editor input { flex: 1; font: inherit; border: 0; border-bottom: 1px solid var(--cw-line); border-radius: 0; background: transparent;
         color: inherit; outline: 0; padding: 3px 0; }

@@ -48,9 +48,6 @@ export async function mount(ctx, el) {
         box-shadow: var(--cw-shadow-lg); }
       .dc dialog.ask form, .dc dialog.start form { display: grid; gap: var(--cw-space-3); }
       .dc dialog.ask .row, .dc dialog.start .row { display: flex; gap: var(--cw-space-2); justify-content: flex-end; }
-      .dc dialog.ask button, .dc dialog.start button { border: 1px solid var(--cw-line); background: none; color: inherit; border-radius: var(--cw-radius-sm);
-        padding: var(--cw-space-1) var(--cw-space-3); }
-      .dc dialog.ask button[value="ok"], .dc dialog.start button[value="ok"] { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       @media (max-width: 800px) { .dc { grid-template-columns: 180px 1fr; } .dc .people { display: none; } }
     }</style>
     <div class="dc">

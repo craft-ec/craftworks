@@ -69,7 +69,7 @@ export async function mount(ctx, el) {
       .bd .main { display: grid; gap: var(--cw-space-2); min-width: 0; }
       .bd .panel { background: var(--cw-surface); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-3); display: grid; gap: var(--cw-space-2); }
       .bd .side { display: grid; gap: var(--cw-space-3); }
-      .bd .side h3 { margin: 0; font-size: 1rem; }
+      .bd .side h3 { margin: 0; }
       .bd .side p { margin: 0; color: var(--cw-muted); font-size: var(--cw-text-sm); }
       .bd .side ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
       .bd .side li button.link { display: block; width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 4px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
@@ -81,7 +81,7 @@ export async function mount(ctx, el) {
       .bd .go { border: 0; border-radius: var(--cw-radius-pill); padding: 6px var(--cw-space-4); background: var(--cw-accent); color: var(--cw-accent-fg); font-weight: 600; text-align: center; }
       .bd .ghost { border: 1px solid var(--cw-accent); border-radius: var(--cw-radius-pill); padding: 6px var(--cw-space-4); background: none; color: var(--cw-accent); font-weight: 600; text-align: center; }
       .bd .banner { display: flex; align-items: center; gap: var(--cw-space-3); padding: var(--cw-space-3); }
-      .bd .banner h2 { margin: 0; font-size: 1.4rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .bd .banner h2 { margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .bd .sorts { display: flex; gap: var(--cw-space-2); padding: var(--cw-space-2); align-items: center; flex-wrap: wrap; }
       .bd .sorts .lbl { color: var(--cw-muted); font-size: var(--cw-text-sm); }
       .bd .sorts select { font: inherit; padding: 3px 6px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); }

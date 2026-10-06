@@ -27,8 +27,6 @@ export async function mount(ctx, el) {
       .sb input, .sb textarea { font: inherit; padding: 6px 8px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); }
       .sb textarea { font-family: var(--cw-mono, monospace); font-size: 13px; min-height: 360px; }
       .sb .row { display: flex; gap: var(--cw-space-2); flex-wrap: wrap; align-items: center; }
-      .sb button { font: inherit; cursor: pointer; border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); border-radius: 999px; padding: 5px 14px; }
-      .sb button.go { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       .sb .said { color: var(--cw-danger); margin: 0; }
       .sb .none { color: var(--cw-muted); }
     }</style>

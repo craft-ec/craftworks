@@ -35,10 +35,7 @@ export async function start(ctx) {
     .cw-set th { color: var(--cw-muted); font-weight: 500; }
     .cw-set tr.me td { background: var(--cw-hover); }
     .cw-set tr.focus td { outline: 2px solid var(--cw-accent); outline-offset: -2px; }
-    .cw-set button.act, .cw-set select, .cw-set input { font: inherit; }
-    .cw-set button.act { border: 1px solid var(--cw-line); background: none; color: var(--cw-fg); border-radius: var(--cw-radius-sm); padding: 2px var(--cw-space-2); cursor: pointer; }
-    .cw-set button.act:hover { background: var(--cw-hover); }
-    .cw-set button.act.main { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
+    .cw-set select, .cw-set input { font: inherit; }
     .cw-set button.act.danger { color: var(--cw-danger); }
     .cw-set .row { display: flex; gap: var(--cw-space-2); align-items: center; flex-wrap: wrap; margin-bottom: var(--cw-space-3); }
     .cw-set code.code { font-size: 1.1rem; letter-spacing: .06em; padding: 4px 8px; border-radius: var(--cw-radius-sm); background: var(--cw-hover); }

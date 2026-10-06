@@ -48,7 +48,7 @@ export async function mount(ctx, el) {
       .ml .list .sub, .ml .list .when { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--cw-text-sm); }
       .ml .list .when { color: var(--cw-muted); font-size: var(--cw-text-xs); }
       .ml .read { overflow-y: auto; padding: var(--cw-space-4) var(--cw-space-5); min-width: 0; }
-      .ml .read h2 { margin: 0 0 var(--cw-space-2); font-size: 1.2rem; }
+      .ml .read h2 { margin: 0 0 var(--cw-space-2); }
       .ml .read .meta { color: var(--cw-muted); font-size: var(--cw-text-sm); margin-bottom: var(--cw-space-4); }
       .ml .read .body { overflow-wrap: anywhere; line-height: 1.5; }
       .ml .read .reply { margin-top: var(--cw-space-4); border: 1px solid var(--cw-line); background: none; color: var(--cw-accent);

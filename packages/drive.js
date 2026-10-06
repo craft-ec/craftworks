@@ -13,16 +13,16 @@ export async function mount(ctx, el) {
     <style>@layer apps {
       .dv { display: grid; gap: var(--cw-space-3); }
       .dv .top { display: flex; align-items: center; gap: var(--cw-space-2); flex-wrap: wrap; }
-      .dv .top h2 { margin: 0; font-size: 1.3rem; flex: 1; min-width: 0; }
+      .dv .top h2 { margin: 0; flex: 1; min-width: 0; }
       .dv .crumbs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; color: var(--cw-muted); font-size: var(--cw-text-sm); }
       .dv .crumbs a { color: var(--cw-fg); text-decoration: none; }
       .dv .crumbs a:hover { text-decoration: underline; }
       .dv-who { border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-bg); color: var(--cw-fg); min-width: min(420px, 92vw); }
       .dv-who form { display: grid; gap: var(--cw-space-3); }
-      .dv-who h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+      .dv-who h3 { margin: 0; overflow-wrap: anywhere; }
       .dv-who .row { display: flex; gap: var(--cw-space-2); justify-content: flex-end; }
       .dv select { font: inherit; padding: 5px 8px; border-radius: var(--cw-radius-sm); max-width: 260px; }
-      .dv button, .dv label.up { font: inherit; cursor: pointer; border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg);
+      .dv label.up { font: inherit; cursor: pointer; border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg);
         border-radius: var(--cw-radius-sm); padding: 6px var(--cw-space-3); }
       .dv label.up { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       .dv .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--cw-space-3); }
@@ -33,11 +33,9 @@ export async function mount(ctx, el) {
       .dv .said { color: var(--cw-danger); font-size: var(--cw-text-sm); margin: 0; }
       .dv-ask { border: 0; border-radius: var(--cw-radius); padding: var(--cw-space-4); width: min(360px, calc(100vw - 32px)); box-shadow: var(--cw-shadow-lg);
         background: var(--cw-surface); color: var(--cw-fg); }
-      .dv-ask h3 { margin: 0 0 var(--cw-space-2); font-size: 1rem; }
+      .dv-ask h3 { margin: 0 0 var(--cw-space-2); }
       .dv-ask input { width: 100%; box-sizing: border-box; font: inherit; padding: 6px 8px; border-radius: var(--cw-radius-sm); margin-bottom: var(--cw-space-3); }
       .dv-ask .row { display: flex; justify-content: flex-end; gap: var(--cw-space-2); }
-      .dv-ask button { font: inherit; cursor: pointer; border: 1px solid var(--cw-line); background: none; color: var(--cw-fg); border-radius: var(--cw-radius-sm); padding: 4px 12px; }
-      .dv-ask button.go { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
     }</style>
     <div class="dv"></div>`;
   const root = el.querySelector(".dv");

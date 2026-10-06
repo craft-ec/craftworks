@@ -75,6 +75,14 @@ export async function start() {
     a { color: var(--cw-accent); }
     code, pre { font-family: var(--cw-font-mono); }
     button, input, textarea, select { font: inherit; color: inherit; }
+    /* ONE BUTTON LOOK for every page (owner: apps use the theme's parts): a component or a page's special button (a list
+       row, a chip, a tool) still sets its own — its layer is above this one. */
+    button { border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); border-radius: var(--cw-radius-sm);
+      padding: var(--cw-space-1) 10px; cursor: pointer; }
+    button:hover:not(:disabled) { background: var(--cw-hover); }
+    button.go, button.main, button.primary, button[value="ok"] { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
+    button.danger { color: var(--cw-danger); }
+    button:disabled { opacity: .5; cursor: default; }
     input:not([type="checkbox"]):not([type="radio"]), textarea, select {
       background: var(--cw-surface); border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm);
       padding: var(--cw-space-1) var(--cw-space-2);

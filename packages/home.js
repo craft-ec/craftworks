@@ -18,9 +18,6 @@ export async function mount(ctx, el) {
         .welcome h2 { margin: 0; font-size: clamp(1.8rem, 5vw, 2.6rem); line-height: 1.1; }
         .welcome .lead { margin: 0; font-size: 1.1rem; color: var(--cw-muted); max-width: 60ch; }
         .welcome .go { display: flex; gap: var(--cw-space-2); flex-wrap: wrap; }
-        .welcome .go button { border: 1px solid var(--cw-line); background: var(--cw-surface); border-radius: var(--cw-radius-sm);
-          padding: var(--cw-space-2) var(--cw-space-4); cursor: pointer; }
-        .welcome .go button.main { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
         .welcome .apps { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--cw-space-3); }
         .welcome .app { border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-3); background: var(--cw-surface); }
         .welcome .app b { display: block; margin-bottom: var(--cw-space-1); }

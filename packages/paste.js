@@ -22,7 +22,7 @@ export async function mount(ctx, el) {
       .pb .new { display: grid; gap: var(--cw-space-2); }
       .pb .opts { display: flex; flex-wrap: wrap; gap: var(--cw-space-2); align-items: center; }
       .pb .opts label { display: inline-flex; gap: 6px; align-items: center; font-size: var(--cw-text-sm); color: var(--cw-muted); }
-      .pb textarea.code { min-height: 45vh; width: 100%; font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; tab-size: 2; resize: vertical; white-space: pre; }
+      .pb textarea.code { box-sizing: border-box; min-height: 45vh; width: 100%; font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; tab-size: 2; resize: vertical; white-space: pre; }
       .pb .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--cw-space-3); align-items: start; }
       .pb .said { color: var(--cw-danger); margin: 0; }
       .pb .none { color: var(--cw-muted); }
@@ -130,10 +130,29 @@ export async function mount(ctx, el) {
     list.replaceChildren(...(mine.length ? mine.map(p => cards.card(p, { actions: [], by: false })) : [h("p", { className: "none", textContent: "Nothing yet: save one above." })]));
   }
 
+  // DISCOVER: everyone's PUBLIC pastes (an unlisted one never is), newest first — from Discover's listing, as every
+  // app's public view.
+  async function discover() {
+    const list = h("div", { className: "list" }, theme.loading("Public pastes…"));
+    root.replaceChildren(h("h2", { textContent: "🌐 Public pastes" }), list);
+    const all = (await items.list({ discover: true }, "new", ["paste"]).catch(() => [])).filter(p => !expired(p) && !p.meta?.unlisted);
+    list.replaceChildren(...(all.length ? all.map(p => cards.card(p, { actions: [] })) : [h("p", { className: "none", textContent: "No public pastes yet." })]));
+  }
+  // THE TOP BAR: write one, yours, everyone's.
+  const bar = s => {
+    const at = s.startsWith("discover") ? "discover" : s ? null : "new";
+    ctx.actions[ctx.route] = [
+      { label: "New paste", href: "#/paste", on: at === "new" },
+      { label: "Discover", href: "#/paste/discover", on: at === "discover" },
+    ];
+    dispatchEvent(new CustomEvent("craftworks:actions"));
+  };
   async function draw() {
     const s = sub();
+    bar(s);
     if (s.startsWith("r/")) return raw(decodeURIComponent(s.slice(2)));
     if (s.includes("p/")) return page(refIn(s));
+    if (s.startsWith("discover")) return discover();
     return home();
   }
   await draw();

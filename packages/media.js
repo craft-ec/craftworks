@@ -32,7 +32,7 @@ export async function mount(ctx, el) {
     <style>@layer apps {
       .vd { display: grid; gap: var(--cw-space-3); }
       .vd .top { display: flex; align-items: center; gap: var(--cw-space-2); flex-wrap: wrap; }
-      .vd .top h2 { margin: 0; font-size: 1.3rem; }
+      .vd .top h2 { margin: 0; }
       .vd .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--cw-space-4) var(--cw-space-3); }
       .vd .t { font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
       .vd .s { color: var(--cw-muted); font-size: var(--cw-text-sm); }
@@ -40,8 +40,7 @@ export async function mount(ctx, el) {
       .vd .by:hover { color: var(--cw-fg); }
       .vd .none { color: var(--cw-muted); text-align: center; padding: var(--cw-space-5); }
       .vd .row { display: flex; gap: var(--cw-space-3); align-items: center; flex-wrap: wrap; }
-      .vd button:not(.cw-acts button, .cw-votes button, .cw-reacts button, .cw-pc button) { font: inherit; cursor: pointer; border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); border-radius: 999px; padding: 5px 14px; }
-      .vd button.on:not(.cw-acts button, .cw-votes button) { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
+      .vd .chips button.on { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       .vd form { display: grid; gap: var(--cw-space-2); max-width: 640px; }
       .vd input:not(.cw-pc input), .vd textarea, .vd select:not(.cw-pc select) { font: inherit; padding: 6px 8px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); }
       .vd .said { color: var(--cw-danger); margin: 0; }
