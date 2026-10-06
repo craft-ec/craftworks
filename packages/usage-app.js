@@ -54,8 +54,37 @@ export async function mount(ctx, el) {
   };
   pick.onchange = draw;
   const note = Object.assign(document.createElement("p"), { className: "note", textContent: "Time: what played, for a video or an audio; the time its page was in front of you, for everything else. Data: what its files brought over the network. Kept in your own table — only you see it." });
-  root.append(pick, note, out);
+  // YOUR FEE (rewards §2-§3, SHADOW MODE): where this month's fee would go — creators by your time on their items,
+  // carriers by the data their kept files brought you, the network the rest. Nothing is charged or paid yet.
+  const directory = await ctx.require("directory");
+  const fh = Object.assign(document.createElement("h3"), { textContent: "Your fee this month (preview)" });
+  const fnote = Object.assign(document.createElement("p"), { className: "note", textContent: "Not charged: a preview of how a 10-token month would be shared — creators by your time on their items, keepers by the data their copies brought you, the network the rest. Never to you." });
+  const fout = document.createElement("div");
+  const drawFee = async () => {
+    fout.textContent = "Working it out…";
+    const st = await usage.statement(pick.value).catch(e => ((fout.textContent = `Could not: ${e?.message ?? e}`), null));
+    if (!st) return;
+    const t = document.createElement("table");
+    const head = t.createTHead().insertRow();
+    for (const x of ["To", "For", "Tokens"]) head.append(Object.assign(document.createElement("th"), { textContent: x }));
+    const body = t.createTBody();
+    const row = (who, why, n) => {
+      const tr = body.insertRow();
+      const w = document.createElement("td");
+      w.append(who);
+      tr.append(w, td(why), td(n.toFixed(2), "num"));
+    };
+    for (const [did, n] of Object.entries(st.creators).sort((a, b) => b[1] - a[1])) row(directory.nameEl(did), "creator", n);
+    for (const [did, n] of Object.entries(st.carriers).sort((a, b) => b[1] - a[1])) row(directory.nameEl(did), "keeper", n);
+    row("Network", "free tier, shared nodes", st.network);
+    const foot = t.createTFoot().insertRow();
+    foot.append(td("Total"), td(""), td(st.fee.toFixed(2), "num"));
+    fout.replaceChildren(t);
+  };
+  pick.addEventListener("change", drawFee);
+  root.append(pick, note, out, fh, fnote, fout);
   await draw();
+  drawFee();
   // KEPT FOR OTHERS (rewards step 2, `keep`): what this node keeps of what you played — re-read a day apart so the
   // node does not drop it — within the limit chosen here (oldest played dropped past it).
   const keep = await ctx.require("keep");

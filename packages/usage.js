@@ -12,6 +12,8 @@
 //   usage.reading(pageElement, itemRef, { kind, title })     // its time on the page counted (an item that does not play)
 //   await usage.month("2026-10")                             // [{ ref, kind, title, s, b, n }], most used first
 //   await usage.flush()
+//   await usage.statement("2026-10")                         // this person's fee split (rewards §2, shadow mode):
+//                                                            // { month, fee, creators: {did: n}, carriers: {did: n}, network }
 export async function start(ctx) {
   const storage = await ctx.require("storage");
   const monthOf = (t = Date.now()) => new Date(t).toISOString().slice(0, 7);
@@ -33,6 +35,11 @@ export async function start(ctx) {
     if (!root || !bytes) return;
     const o = owners.get(root);
     o ? add(o.ref, o, { b: bytes }) : add(`file:${root}`, { kind: "file" }, { b: bytes });
+    // PER FILE too (`r:<month>:<root>`): what pays its keepers (rewards §2: carriers by the data each file brought).
+    const rk = `r:${monthOf()}:${root}`;
+    const r = pending.get(rk) ?? { item: o?.ref ?? null, s: 0, b: 0, n: 0 };
+    r.b += bytes;
+    pending.set(rk, r);
     // WHAT IT PLAYED, kept for others (rewards step 2): a file of an item that brought bytes here, never one's own.
     if (o?.file && !o.mine) ctx.require("keep").then(k => k.watched(o.file, o.ref, { title: o.title }), () => {});
   });
@@ -91,7 +98,7 @@ export async function start(ctx) {
         const s = Math.round(((was.s ?? 0) + a.s) * 10) / 10;
         await t.put(k, JSON.stringify({ kind: a.kind ?? was.kind ?? null, title: a.title ?? was.title ?? null, s, b: (was.b ?? 0) + a.b, n: (was.n ?? 0) + a.n, at: Date.now() }));
         const ref = k.slice(k.indexOf(":", 2) + 1);
-        if (!ref.startsWith("file:") && (a.s || a.b)) totals.set(ref, { s: (totals.get(ref)?.s ?? 0) + a.s, b: (totals.get(ref)?.b ?? 0) + a.b });
+        if (k.startsWith("m:") && !ref.startsWith("file:") && (a.s || a.b)) totals.set(ref, { s: (totals.get(ref)?.s ?? 0) + a.s, b: (totals.get(ref)?.b ?? 0) + a.b });
       }
       // Every item's running total; given when it grew enough (or on leaving), in the background.
       const items = await ctx.require("items");
@@ -122,5 +129,39 @@ export async function start(ctx) {
       .map(r => ({ ref: r.key.slice(p.length), ...parse(r.value) }))
       .sort((a, b) => b.s - a.s || b.b - a.b);
   }
-  return { track, watch, opened, reading, month, flush, monthOf };
+  // THE STATEMENT (rewards §2-§3, SHADOW MODE: nothing is charged or paid): this person's FEE split by their own
+  // month — creators by time on their items, carriers by the data each file brought (among the file's keepers, this
+  // person's own nodes never), the network the rest; a share with no one to receive it goes to the network.
+  const FEE = 10; // tokens a month (shadow: a set fee until there are passes)
+  const SPLIT = { creators: 0.6, carriers: 0.3, network: 0.1 };
+  async function statement(m = monthOf()) {
+    await flush();
+    const [items, space, keep] = await Promise.all(["items", "space", "keep"].map(n => ctx.require(n)));
+    const me = (await space.account())?.id;
+    const t = await storage.table("usage");
+    await t.settled;
+    const rows = p => t.rows().filter(r => r.key.startsWith(p) && r.value).map(r => ({ key: r.key.slice(p.length), ...parse(r.value) }));
+    const out = { month: m, fee: FEE, creators: {}, carriers: {}, network: 0, at: Date.now() };
+    const give = (to, who, n) => (to[who] = Math.round(((to[who] ?? 0) + n) * 1e6) / 1e6);
+    // CREATORS: by time (one unit for every kind), on items not this person's.
+    const timed = rows(`m:${m}:`).filter(r => !r.key.startsWith("file:") && r.s > 0);
+    const byOf = async ref => (String(ref).startsWith("did:") ? String(ref).slice(0, String(ref).lastIndexOf("/")) : (await items.get(ref).catch(() => null))?.by ?? null);
+    const owned = (await Promise.all(timed.map(async r => ({ ...r, by: await byOf(r.key) })))).filter(r => r.by && r.by !== me);
+    const time = owned.reduce((n, r) => n + r.s, 0);
+    for (const r of owned) give(out.creators, r.by, (FEE * SPLIT.creators * r.s) / time);
+    // CARRIERS: by data, per file, shared equally by its keepers (not this person: their own nodes are never paid).
+    const files = rows(`r:${m}:`).filter(r => r.b > 0);
+    const data = files.reduce((n, r) => n + r.b, 0);
+    let unpaid = time ? 0 : FEE * SPLIT.creators;
+    for (const f of files) {
+      const share = (FEE * SPLIT.carriers * f.b) / data;
+      const ks = (await keep.keepers(f.key).catch(() => [])).filter(d => d !== me);
+      if (!ks.length) unpaid += share;
+      else for (const d of ks) give(out.carriers, d, share / ks.length);
+    }
+    if (!data) unpaid += FEE * SPLIT.carriers;
+    out.network = Math.round((FEE * SPLIT.network + unpaid) * 1e6) / 1e6;
+    return out;
+  }
+  return { track, watch, opened, reading, month, flush, monthOf, statement };
 }
