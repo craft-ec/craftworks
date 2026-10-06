@@ -40,7 +40,6 @@ export async function mount(ctx, el) {
       .vd .by:hover { color: var(--cw-fg); }
       .vd .none { color: var(--cw-muted); text-align: center; padding: var(--cw-space-5); }
       .vd .row { display: flex; gap: var(--cw-space-3); align-items: center; flex-wrap: wrap; }
-      .cw-tile-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; color: var(--cw-fg); background: var(--cw-surface); padding: 2px 4px; }
       .vd button:not(.cw-acts button, .cw-votes button, .cw-reacts button, .cw-pc button) { font: inherit; cursor: pointer; border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); border-radius: 999px; padding: 5px 14px; }
       .vd button.on:not(.cw-acts button, .cw-votes button) { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       .vd form { display: grid; gap: var(--cw-space-2); max-width: 640px; }
@@ -102,14 +101,9 @@ export async function mount(ctx, el) {
 
   // A video's or a track's CARD: its kind's look (`cards`), opened here (in Discover: from outside).
   const cards = await ctx.require("cards");
-  // Each tile with THE action row every item has (`actions`: the same as everywhere, its votes first).
-  const actionsCap = await ctx.require("actions");
-  const card = v => {
-    const href = `${base()}/p/${v.ref}`;
-    const open = () => (location.hash = href);
-    const row = h("div", { className: "cw-tile-acts" }, actionsCap.bar(v, { vote: true, open, changed: () => draw?.(), removed: () => draw?.() }));
-    return (C.picture ? cards.picture : cards.card)(v, { href, actions: [row] });
-  };
+  // A tile: the item, linked to its page — the action row (votes, comments, share, …) is on the page, not here
+  // (owner 10-06: feeds show items; their page acts on one).
+  const card = v => (C.picture ? cards.picture : cards.card)(v, { href: `${base()}/p/${v.ref}`, actions: [] });
 
   async function list(w) {
     // SAVED: what this person saved (`actions`: any kind, one key) — of this app's kinds.

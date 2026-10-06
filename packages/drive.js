@@ -101,8 +101,29 @@ export async function mount(ctx, el) {
   async function draw() {
     // A FILE's PAGE (`…/drive/p/<ref>`): the one item page — its preview, its comments — framed here.
     if (place.sub.startsWith("p/")) {
-      const page = await (await ctx.require("item-page")).show(decodeURIComponent(place.sub.slice(2)), { app: "drive", back: base(), discover });
-      return root.replaceChildren(h("nav", { className: "crumbs" }, h("a", { href: base(), textContent: "← Drive" })), page);
+      const id = decodeURIComponent(place.sub.slice(2));
+      const page = await (await ctx.require("item-page")).show(id, { app: "drive", back: base(), discover });
+      // Drive's own, beside the page's action row: Open (show or download it) and, for one listed here, Move…
+      const row = (await drive.list(sp, opts).catch(() => [])).find(r => r.id === id);
+      const note = h("span", { className: "s" });
+      const tools = row
+        ? [
+            h("button", { type: "button", className: "cw-btn", textContent: "Open", onclick: () => attachments.open(row.ref, note) }),
+            row.readOnly
+              ? null
+              : h("button", {
+                  type: "button",
+                  className: "cw-btn",
+                  textContent: "Move…",
+                  onclick: async () => {
+                    const to = await ask("Move to folder (e.g. /Photos)", row.folder);
+                    if (to != null) await drive.move(sp, row.id, to).then(() => (location.hash = base()), fail);
+                  },
+                }),
+            note,
+          ]
+        : [];
+      return root.replaceChildren(h("nav", { className: "crumbs" }, h("a", { href: base(), textContent: "← Drive" }), " ", ...tools.filter(Boolean)), page);
     }
     const at = folder();
     // SAVED: `where`'s (the files you saved, of anyone's) — one folder.
@@ -143,30 +164,14 @@ export async function mount(ctx, el) {
     );
   }
 
-  // A FILE's tile: the file look (`cards`: the same wherever a file shows), with Drive's actions — a file of an item
-  // made in another app shown here and changed there (its page); someone else's (Discover, their space) read only.
+  // A FILE's tile: the file look (`cards`: the same wherever a file shows), linked to its page — the action row and
+  // Drive's Open and Move… are there, not on the tile (owner 10-06: feeds show items; their page acts on one). A file
+  // of an item made in another app opens that item's page.
   const cards = await ctx.require("cards");
-  const actionsCap = await ctx.require("actions");
   function tile(r) {
     const note = h("span", { className: "s" });
-    const openIt = () => attachments.open(r.ref, note);
-    // Save (`actions`): any file listed by its item (not a view of another app's item: that one is saved there).
-    const actions = [h("button", { type: "button", textContent: "Open", onclick: openIt }), ...(String(r.id).includes("#") ? [] : [actionsCap.save({ ref: r.id })])];
-    if (r.readOnly) {
-      if (r.page) actions.push(h("a", { href: r.page, textContent: `Open in ${r.from?.app === "text" ? "Board" : kinds.domainName(r.from?.app)}` }));
-    } else
-      actions.push(
-        h("button", {
-          type: "button",
-          textContent: "Move…",
-          onclick: async () => {
-            const to = await ask("Move to folder (e.g. /Photos)", r.folder);
-            if (to != null) await drive.move(sp, r.id, to).then(draw, fail);
-          },
-        }),
-        h("button", { type: "button", textContent: "Remove from Drive", onclick: () => drive.remove(sp, r.id).then(draw, fail) }),
-      );
-    return cards.card({ kind: "file", files: [r.ref], title: r.ref.name, at: r.at, by: r.by }, { href: null, actions, by: !!r.others, open: openIt, below: note });
+    const href = r.page ?? (String(r.id).includes("#") ? null : `${base()}/p/${encodeURIComponent(r.id)}`);
+    return cards.card({ kind: "file", files: [r.ref], title: r.ref.name, at: r.at, by: r.by }, { href, actions: [], by: !!r.others, open: href ? () => (location.hash = href) : () => attachments.open(r.ref, note), below: note });
   }
 
   // UPLOAD into the folder open, seen by whom the picker says (public: put in the clear; else sealed).

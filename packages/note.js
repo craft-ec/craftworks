@@ -89,10 +89,8 @@ export async function mount(ctx, el) {
         <p class="who"></p>
         <div class="row"><span class="pin-slot"></span>
           <button type="button" class="palette" title="Background">🎨</button>
-          <button type="button" class="label-e" title="Labels">🏷️</button>
           <button type="button" class="archive-e" title="Archive">🗃️</button>
-          <span class="history-slot"></span>
-          <button type="button" class="delete-e" title="Delete">🗑️</button>
+          <span class="acts-slot"></span>
           <button type="button" class="end done">Close</button></div>
       </dialog>
       <dialog class="labels-editor">
@@ -290,14 +288,12 @@ export async function mount(ctx, el) {
     editor.querySelector(".pin-slot").replaceChildren(pinUI.button(ref(n.key)));
     editor.querySelector(".label-slot").replaceChildren(labelUI.chips(ref(n.key), { onPick: show }));
     editor.querySelector(".archive-e").title = n.archived ? "Unarchive" : "Archive";
-    // HISTORY: its earlier versions (`history`), restored over what is open — the note closed without saving it.
-    const hSlot = editor.querySelector(".history-slot");
-    hSlot.replaceChildren();
-    if (n.item?.edited)
-      ctx.require("history").then(
-        hi => editing?.key === n.key && hSlot.replaceChildren(hi.button(n.key, () => ({ current: n.item, restored: () => ((editing = null), editor.close(), reload()) }))),
-        () => {},
-      );
+    // THE ACTION ROW (the note's detail: here, not on its card in the list) — votes, Save, Share, Label, History,
+    // Delete, as every item's.
+    const close = () => ((editing = null), editor.close(), reload());
+    editor.querySelector(".acts-slot").replaceChildren(
+      n.item ? actionsCap.bar({ ...n.item, mayRemove: n.mayEdit || n.item.mayRemove }, { vote: true, comments: false, changed: () => reload(), removed: close }) : "",
+    );
     // WHO: who made it and who changed it last, and when (a shared note's editors are its space's members).
     const it = n.item ?? {};
     const who = editor.querySelector(".who");
@@ -342,34 +338,19 @@ export async function mount(ctx, el) {
       tint(editor, c);
       live();
     });
-  editor.querySelector(".label-e").onclick = e => labelUI.menu(e.currentTarget, ref(editing.key));
   editor.querySelector(".archive-e").onclick = () => ((editing.archived = !editing.archived), finish());
-  editor.querySelector(".delete-e").onclick = async () => {
-    const key = editing.key;
-    editing = null;
-    editor.close();
-    await remove(key);
-  };
+
 
   // A CARD: the note's look (`cards`: the same wherever a note shows), with Note's tools — someone else's (Discover,
   // their space) its author named and read only (your pin and labels on it are yours).
   const cards = await ctx.require("cards");
   const actionsCap = await ctx.require("actions");
   const card = n => {
-    const tools = [];
-    const tool = (icon, title, run) => tools.push(Object.assign(document.createElement("button"), { type: "button", textContent: icon, title, onclick: e => (e.stopPropagation(), run(e)) }));
-    // THE action row every item has (`actions`: the same as everywhere) — Note's own first: its colour
-    // and Archive, for whoever may edit it. Save, Label, Share, History, Delete… are the row's, as everywhere.
-    if (n.mayEdit) tool("🎨", "Background", e => palette(e.currentTarget, color => save(n.key, { ...n, color })));
-    if (n.mayEdit)
-      tool(n.archived ? "📤" : "🗃️", n.archived ? "Unarchive" : "Archive", () => {
-        save(n.key, { ...n, archived: !n.archived });
-        if (!n.archived && n.pinned) pins.set(ref(n.key), false).catch(e => said(`Could not unpin: ${e?.message ?? e}`)); // an archived note is not pinned, as in Keep
-      });
-    const row = actionsCap.bar({ ...n.item, mayRemove: n.mayEdit || n.item.mayRemove }, { extra: tools, vote: true, edit: n.mayEdit ? () => edit(n) : null, open: () => edit(n), comments: false, changed: () => reload(), removed: () => reload() });
+    // No action row on the card (owner 10-06: the list shows notes; the row is on the note itself — its editor, or
+    // someone else's note's page).
     return cards.card(
       { ...n.item, meta: { ...(n.item.meta ?? {}), color: n.color } },
-      { href: null, actions: [row], by: others, corner: pinUI.button(ref(n.key)), below: labelUI.chips(ref(n.key), { onPick: show }), open: n.mayEdit ? () => edit(n) : null },
+      { ...(n.mayEdit ? { href: null } : {}), actions: [], by: others, corner: pinUI.button(ref(n.key)), below: labelUI.chips(ref(n.key), { onPick: show }), open: n.mayEdit ? () => edit(n) : null },
     );
   };
 

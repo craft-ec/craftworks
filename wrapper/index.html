@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>App</title>
 <style>
+  /* The BOOT page's look, in the lowest layer: once the app's theme loads (layers base < apps < components < templates),
+     every rule of it wins — this page sets no width for the app. */
+  @layer boot, base, apps, components, templates;
+  @layer boot {
   :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
   body { margin: 0 auto; padding: 16px; max-width: 900px; }
   #status.bad { color: #b3261e; }
@@ -14,6 +18,7 @@
   td, th { text-align: left; padding: 3px 8px; border-bottom: 1px solid #8884; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   code { font-size: .85em; word-break: break-all; }
+  }
 </style>
 </head>
 <body>
