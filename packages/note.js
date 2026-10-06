@@ -23,7 +23,7 @@ export async function mount(ctx, el) {
     return;
   }
   el.innerHTML = `
-    <style>
+    <style>@layer apps {
       .keep { position: relative; }
             .keep .composer { max-width: 600px; margin: 8px auto 28px; border: 1px solid var(--cw-line); border-radius: var(--cw-radius);
         box-shadow: var(--cw-shadow); padding: 10px var(--cw-space-4); display: grid; gap: var(--cw-space-2); background: var(--cw-surface); }
@@ -68,7 +68,7 @@ export async function mount(ctx, el) {
         color: inherit; outline: 0; padding: 3px 0; }
       .keep .labels-editor button { border: 0; background: none; cursor: pointer; font: inherit; color: inherit; }
       .keep .labels-editor .done-l { display: block; margin: 12px 0 0 auto; }
-    </style>
+    }</style>
     <div class="keep">
       <div class="labelbar"></div>
       <form class="composer">

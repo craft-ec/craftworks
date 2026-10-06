@@ -15,14 +15,14 @@ export async function mount(ctx, el) {
   if (at.discover) return people(ctx, el, { directory, person });
   if (at.space) return spacePeople(ctx, el, at.space);
   el.innerHTML = `
-    <style>
+    <style>@layer apps {
       .ct { display: grid; gap: var(--cw-space-3); }
       .ct form { display: flex; gap: var(--cw-space-2); padding: 0 var(--cw-space-3); }
       .ct form input { flex: 1; min-width: 0; padding: 8px var(--cw-space-3); border-radius: var(--cw-radius); }
       .ct form button { font: inherit; border: 0; border-radius: var(--cw-radius); padding: 0 var(--cw-space-4); background: var(--cw-accent); color: var(--cw-accent-fg); cursor: pointer; }
       .ct .said { color: var(--cw-danger); font-size: var(--cw-text-sm); margin: 0; padding: 0 var(--cw-space-3); }
       .ct .listed { display: flex; gap: var(--cw-space-2); align-items: center; padding: 0 var(--cw-space-3); font-size: var(--cw-text-sm); color: var(--cw-muted); }
-    </style>
+    }</style>
     <div class="ct">
       <form><input name="who" autocomplete="off" placeholder="Find someone: name#abc123 or did:craftec:…" aria-label="Find someone"><button>Find</button></form>
       <p class="said" hidden></p>
@@ -60,17 +60,19 @@ async function spacePeople(ctx, el, sp) {
   const [ml, roles, space] = await Promise.all(["members-list", "roles", "space"].map(n => ctx.require(n)));
   const [r, me] = await Promise.all([roles.of(sp), space.account()]);
   el.innerHTML = `
-    <style>
+    <style>@layer apps {
       .ct { display: grid; gap: var(--cw-space-3); }
       .ct .top { display: flex; gap: var(--cw-space-3); align-items: center; flex-wrap: wrap; }
       .ct .top h2 { margin: 0; font-size: 1.3rem; }
       .ct .top button { font: inherit; border: 0; border-radius: var(--cw-radius); padding: 6px var(--cw-space-4); background: var(--cw-accent); color: var(--cw-accent-fg); cursor: pointer; }
       .ct .s { color: var(--cw-muted); font-size: var(--cw-text-sm); }
-    </style>
+    }</style>
     <div class="ct"><div class="top"><h2></h2><span class="s"></span></div></div>`;
   const root = el.querySelector(".ct");
   root.querySelector("h2").textContent = `${space.shown(sp)} · people`;
-  const count = () => (root.querySelector(".top .s").textContent = `${r.members().length} member${r.members().length === 1 ? "" : "s"} · you: ${r.role(me.id) ?? "member"}`);
+  const count = () => (root.querySelector(".top .s").textContent = `@layer apps {
+${r.members().length} member${r.members().length === 1 ? "" : "s"} · you: ${r.role(me.id) ?? "member"}
+}`);
   count();
   r.onChange(() => root.isConnected && count());
   if (r.can(me.id, "invite"))
@@ -82,7 +84,7 @@ async function spacePeople(ctx, el, sp) {
 async function people(ctx, el, { directory, person }) {
   const [moderation, posts, theme] = await Promise.all(["moderation", "items", "theme"].map(n => ctx.require(n)));
   el.innerHTML = `
-    <style>
+    <style>@layer apps {
       .ppl { display: grid; gap: var(--cw-space-3); }
       .ppl h2 { margin: 0; font-size: 1.4rem; }
       .ppl .note { margin: 0; color: var(--cw-muted); font-size: var(--cw-text-sm); }
@@ -91,7 +93,7 @@ async function people(ctx, el, { directory, person }) {
       .ppl .card:hover { border-color: var(--cw-muted); }
       .ppl .card b { overflow-wrap: anywhere; }
       .ppl .card span { color: var(--cw-muted); font-size: var(--cw-text-sm); }
-    </style>
+    }</style>
     <div class="ppl"><h2>👤 People</h2><p class="note">People who chose to be shown in Discover. Show yourself from your Contacts.</p><div class="grid"></div></div>`;
   const grid = el.querySelector(".grid");
   grid.replaceChildren(theme.loading("Finding people…"));
@@ -107,7 +109,9 @@ async function people(ctx, el, { directory, person }) {
       ? dids.map(d => {
           const name = directory.nameEl(d, "b");
           const about = h("span", { textContent: "public profile" });
-          posts.list({ by: d }).then(ps => (about.textContent = `${ps.length} public post${ps.length === 1 ? "" : "s"}`), () => {});
+          posts.list({ by: d }).then(ps => (about.textContent = `@layer apps {
+${ps.length} public post${ps.length === 1 ? "" : "s"}
+}`), () => {});
           return h("div", { className: "card", onclick: e => person.open(e.currentTarget, d) }, name, about);
         })
       : [h("p", { className: "note", textContent: "Nobody listed yet: show yourself from your Contacts (Show me in Discover)." })]),

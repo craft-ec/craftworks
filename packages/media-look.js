@@ -10,7 +10,8 @@
 export async function start(ctx) {
   const [player, kinds, studio, files, mediaView, cards, space, chrome] = await Promise.all(["video-player", "kinds", "video-studio", "files", "media-view", "cards", "space", "player-chrome"].map(n => ctx.require(n)));
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-media { display: grid; gap: var(--cw-space-3); }
     .cw-media video:not(.cw-pc > video) { width: 100%; max-height: 70vh; background: #000; border-radius: var(--cw-radius); }
     .cw-media audio { width: 100%; }
@@ -28,7 +29,8 @@ export async function start(ctx) {
     .cw-media.pic .frame img { max-width: 100%; max-height: 80vh; object-fit: contain; }
     .cw-media.pic.actual .frame { cursor: zoom-out; place-items: start; }
     .cw-media.pic.actual .frame img { max-width: none; max-height: none; }
-    .cw-media select { font: inherit; padding: 4px 8px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); }`;
+    .cw-media select { font: inherit; padding: 4px 8px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); }
+}`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

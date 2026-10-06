@@ -11,7 +11,7 @@ export async function mount(ctx, el) {
   // The WELCOME: what Craftworks is, for someone who has not logged in (or never has).
   const publicView = () => {
     el.innerHTML = `
-      <style>
+      <style>@layer apps {
         .welcome { display: grid; gap: var(--cw-space-5); padding: var(--cw-space-5) 0; }
         .welcome .hero { display: grid; gap: var(--cw-space-2); }
         .welcome .tag { margin: 0; color: var(--cw-accent); font-size: var(--cw-text-sm); letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
@@ -27,7 +27,7 @@ export async function mount(ctx, el) {
         .welcome .app p, .welcome li { margin: 0; color: var(--cw-muted); font-size: var(--cw-text-sm); }
         .welcome h3 { margin: 0 0 var(--cw-space-2); font-size: 1rem; }
         .welcome ul { margin: 0; padding-left: 1.2em; display: grid; gap: var(--cw-space-1); }
-      </style>
+      }</style>
       <div class="welcome">
         <div class="hero">
           <p class="tag">Craftec · Craft The Future</p>
@@ -67,7 +67,7 @@ export async function mount(ctx, el) {
 
   const desktop = async () => {
     el.innerHTML = `
-      <style>
+      <style>@layer apps {
         .desk h3 { margin: 1.2em 0 .5em; font-size: 1rem; color: var(--cw-muted); text-align: center; }
         .desk .grid { display: grid; grid-template-columns: repeat(auto-fit, 96px); justify-content: center; gap: var(--cw-space-3); }
         .desk .tile { position: relative; }
@@ -79,7 +79,7 @@ export async function mount(ctx, el) {
         .desk .app { position: relative; }
         .desk .app .new { position: absolute; top: 2px; left: calc(50% + 10px); margin: 0; }
         .desk .empty { grid-column: 1 / -1; color: var(--cw-muted); font-size: var(--cw-text-sm); text-align: center; }
-      </style>
+      }</style>
       <div class="desk"></div>`;
     // THE DESK (`app-icons`: the same layout as a space's Home): the PERSONAL space's apps (those with a personal view;
     // a shared space's are on its own Home), each with its pill (what is new: `activity`) and its pin (`app:<route>`).
@@ -102,7 +102,7 @@ export async function mount(ctx, el) {
   const personHome = async did => {
     const [directory, person, icons] = await Promise.all(["directory", "person", "app-icons"].map(n => ctx.require(n)));
     el.innerHTML = `
-      <style>
+      <style>@layer apps {
         .them { display: grid; gap: var(--cw-space-3); justify-items: center; padding: var(--cw-space-5) 0; }
         .them h2 { margin: 0; font-size: 1.6rem; overflow-wrap: anywhere; text-align: center; }
         .them .did { margin: 0; color: var(--cw-muted); font-size: var(--cw-text-xs); overflow-wrap: anywhere; text-align: center; }
@@ -112,7 +112,7 @@ export async function mount(ctx, el) {
         .them .app { display: grid; justify-items: center; gap: 6px; padding: var(--cw-space-3) 6px; border-radius: var(--cw-radius); text-decoration: none; color: inherit; }
         .them .app:hover { background: var(--cw-hover); }
         .them .icon { font-size: 40px; line-height: 1; }
-      </style>
+      }</style>
       <div class="them"><h2></h2><p class="did"></p><button type="button" class="act">Follow, friend, message…</button><div class="grid"></div></div>`;
     const name = el.querySelector("h2");
     name.textContent = directory.shown(did);

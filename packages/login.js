@@ -18,7 +18,7 @@ export async function start(ctx) {
       const box = document.createElement("div");
       box.className = "auth-dialog";
       box.innerHTML = `
-        <style>
+        <style>@layer components {
           .auth-dialog { position: fixed; inset: 0; background: var(--cw-scrim); display: grid; place-items: center; z-index: 20; }
           .auth-dialog .card { background: var(--cw-surface); color: var(--cw-fg); padding: 1.2em 1.4em; border-radius: var(--cw-radius);
             box-shadow: var(--cw-shadow-lg); width: min(26em, calc(100vw - 32px)); display: grid; gap: .7em; }
@@ -34,7 +34,7 @@ export async function start(ctx) {
           .auth-dialog .said { min-height: 1.2em; font-size: var(--cw-text-sm); margin: 0; }
           .auth-dialog.busy .card { cursor: progress; }
           .auth-dialog .note { font-size: var(--cw-text-sm); color: var(--cw-muted); margin: 0; }
-        </style>
+        }</style>
         <div class="card">
           <div class="tabs" role="tablist">
             <button type="button" role="tab" data-tab="login" aria-selected="true">Login</button>

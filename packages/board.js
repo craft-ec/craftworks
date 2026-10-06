@@ -58,7 +58,7 @@ export async function mount(ctx, el) {
   };
   el.classList.add("cw-fill");
   el.innerHTML = `
-    <style>
+    <style>@layer apps {
       /* The whole area (.cw-fill, as Chat and Mail): its posts and its side, each a pane scrolling itself. */
       .bd { display: grid; grid-template-columns: minmax(0, 1fr) 300px; height: 100%; min-height: 0; }
       .bd > .main { overflow-y: auto; min-height: 0; padding: var(--cw-space-3) var(--cw-gutter); align-content: start; }
@@ -93,7 +93,7 @@ export async function mount(ctx, el) {
       .bd .meta .b:hover, .bd .meta .by:hover { text-decoration: underline; cursor: pointer; }
       .bd .acts .votes { display: flex; align-items: center; gap: 2px; }
       .bd .none { color: var(--cw-muted); text-align: center; padding: var(--cw-space-5); margin: 0; }
-    </style>
+    }</style>
     <div class="bd"><div class="main"></div><aside class="side"></aside></div>`;
   const main = el.querySelector(".main");
   const side = el.querySelector(".side");

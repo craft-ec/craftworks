@@ -9,7 +9,8 @@
 export async function start(ctx) {
   const [roles, moderation, conversation, directory, theme] = await Promise.all(["roles", "moderation", "conversation", "directory", "theme"].map(n => ctx.require(n)));
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer apps {
+
     .cw-set { border: 0; border-radius: var(--cw-radius); padding: 0; width: min(760px, calc(100vw - 32px)); height: min(620px, calc(100vh - 64px));
       box-shadow: var(--cw-shadow-lg); background: var(--cw-surface); color: var(--cw-fg); }
     .cw-set[open] { display: grid; grid-template-columns: 180px 1fr; }
@@ -49,7 +50,8 @@ export async function start(ctx) {
     .cw-set.page { display: grid; grid-template-columns: 200px 1fr; width: auto; height: 100%; min-height: 0; background: var(--cw-surface); }
     .cw-set.page > nav { overflow-y: auto; min-height: 0; }
     @media (max-width: 640px) { .cw-set.page { grid-template-columns: 1fr; } }
-    @media (max-width: 640px) { .cw-set[open] { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .cw-set nav { display: flex; overflow-x: auto; } }`;
+    @media (max-width: 640px) { .cw-set[open] { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .cw-set nav { display: flex; overflow-x: auto; } }
+}`;
   document.head.append(style);
   const el = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

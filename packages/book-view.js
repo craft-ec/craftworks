@@ -10,7 +10,8 @@
 export async function start(ctx) {
   const [files, studio, kinds] = await Promise.all(["files", "book-studio", "kinds"].map(n => ctx.require(n)));
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-bv { display: grid; gap: 6px; max-width: 100%; }
     .cw-bv .cover { position: relative; padding: 0; cursor: pointer; width: min(200px, 100%); aspect-ratio: 2 / 3; overflow: hidden; color: #fff; background: #222;
       border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); }
@@ -30,7 +31,8 @@ export async function start(ctx) {
     .cw-bv .flow { width: 100%; height: 75vh; border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: #fff; }
     .cw-bv .note { color: var(--cw-muted); font-size: var(--cw-text-sm); }
     .cw-bv:fullscreen { background: var(--cw-bg); padding: 12px; overflow: auto; }
-    .cw-bv:fullscreen .flow { height: calc(100vh - 80px); }`;
+    .cw-bv:fullscreen .flow { height: calc(100vh - 80px); }
+}`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

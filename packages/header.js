@@ -9,7 +9,7 @@
 // component (the layout names it), so editing it is publishing the app, never the loader.
 export function mount(ctx, el) {
   el.innerHTML = `
-    <style>
+    <style>@layer components {
       .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--cw-line); height: var(--cw-bar); box-sizing: border-box;
         font-size: var(--cw-text-sm); }
       .bar .home { text-decoration: none; font-size: 1.1rem; color: inherit; }
@@ -68,7 +68,7 @@ export function mount(ctx, el) {
       .bar .inbox .results .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .bar .inbox .results .none { color: var(--cw-muted); padding: 6px var(--cw-space-2); margin: 0; }
 
-    </style>
+    }</style>
     <nav class="bar">
       <a class="home" href="#/" title="Home">⌂</a>
       <button type="button" class="space-name" data-spaces title="Spaces: yours, your friends', following" hidden></button>

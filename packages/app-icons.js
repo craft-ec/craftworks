@@ -12,7 +12,8 @@
 //                                          // `pinKey(app)`: its pin's key (a space's own pins are its own). desk.redraw()
 export async function start(ctx) {
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-icons { display: grid; grid-template-columns: repeat(auto-fit, 96px); justify-content: center; gap: var(--cw-space-3); }
     .cw-icons .tile { position: relative; }
     .cw-icons .app { position: relative; display: grid; justify-items: center; gap: 6px; padding: var(--cw-space-3) 6px; border-radius: var(--cw-radius);
@@ -29,7 +30,8 @@ export async function start(ctx) {
     .cw-desk-h { margin: 1.2em 0 .5em; font-size: 1rem; color: var(--cw-muted); text-align: center; }
     .cw-drawer { display: grid; gap: var(--cw-space-2); }
     .cw-drawer .how { justify-self: center; color: var(--cw-muted); font-size: var(--cw-text-sm); }
-    .cw-drawer h4 { margin: var(--cw-space-2) 0 0; text-align: center; font-size: var(--cw-text-sm); color: var(--cw-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }`;
+    .cw-drawer h4 { margin: var(--cw-space-2) 0 0; text-align: center; font-size: var(--cw-text-sm); color: var(--cw-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+}`;
   document.head.append(style);
   const el = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

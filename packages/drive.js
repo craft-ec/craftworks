@@ -10,7 +10,7 @@ export async function mount(ctx, el) {
   }
   const [drive, space, attachments, theme, kinds] = await Promise.all(["drive-store", "space", "attachments", "theme", "kinds"].map(n => ctx.require(n)));
   el.innerHTML = `
-    <style>
+    <style>@layer apps {
       .dv { display: grid; gap: var(--cw-space-3); }
       .dv .top { display: flex; align-items: center; gap: var(--cw-space-2); flex-wrap: wrap; }
       .dv .top h2 { margin: 0; font-size: 1.3rem; flex: 1; min-width: 0; }
@@ -38,7 +38,7 @@ export async function mount(ctx, el) {
       .dv-ask .row { display: flex; justify-content: flex-end; gap: var(--cw-space-2); }
       .dv-ask button { font: inherit; cursor: pointer; border: 1px solid var(--cw-line); background: none; color: var(--cw-fg); border-radius: var(--cw-radius-sm); padding: 4px 12px; }
       .dv-ask button.go { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
-    </style>
+    }</style>
     <div class="dv"></div>`;
   const root = el.querySelector(".dv");
   const h = (tag, props = {}, ...kids) => {

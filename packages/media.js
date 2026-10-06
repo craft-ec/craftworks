@@ -29,7 +29,7 @@ export async function mount(ctx, el) {
   const bar = (await ctx.require("feed-bar")).create({ start: "new", onChange: () => draw() });
   const me = (await space.account()).id;
   el.innerHTML = `
-    <style>
+    <style>@layer apps {
       .vd { display: grid; gap: var(--cw-space-3); }
       .vd .top { display: flex; align-items: center; gap: var(--cw-space-2); flex-wrap: wrap; }
       .vd .top h2 { margin: 0; font-size: 1.3rem; }
@@ -55,7 +55,7 @@ export async function mount(ctx, el) {
       .vd .subs { display: grid; gap: 6px; border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-3); }
       .vd .subs .row input[name=label] { width: 12em; }
       .vd .subs .row input[name=lang] { width: 4em; }
-    </style>
+    }</style>
     <div class="vd"></div>`;
   const root = el.querySelector(".vd");
   const h = (tag, props = {}, ...kids) => {

@@ -18,7 +18,8 @@
 export async function start(ctx) {
   const K = await ctx.require("kinds");
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-md { overflow-wrap: anywhere; line-height: 1.5; }
     .cw-md > :first-child { margin-top: 0; } .cw-md > :last-child { margin-bottom: 0; }
     .cw-md p { margin: 0 0 0.6em; }
@@ -44,7 +45,8 @@ export async function start(ctx) {
     .cw-md audio.cw-md-media { width: min(560px, 100%); border: 0; background: none; }
     .cw-md .cw-md-ph { display: block; aspect-ratio: 16 / 9; width: min(560px, 100%); background: var(--cw-hover); }
     .cw-md .cw-md-ph.audio { aspect-ratio: 1; width: min(240px, 100%); }
-    .cw-md .cw-md-missing { color: var(--cw-muted); font-size: var(--cw-text-sm); }`;
+    .cw-md .cw-md-missing { color: var(--cw-muted); font-size: var(--cw-text-sm); }
+}`;
   document.head.append(style);
 
   const NUL = String.fromCharCode(0);

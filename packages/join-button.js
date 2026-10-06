@@ -8,14 +8,16 @@
 export async function start(ctx) {
   const [conversation, space] = await Promise.all(["conversation", "space"].map(n => ctx.require(n)));
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-join { display: grid; gap: 4px; justify-items: start; }
     .cw-join button, .cw-join a { font: inherit; border: 0; border-radius: var(--cw-radius-pill); padding: 6px var(--cw-space-4); font-weight: 600;
       background: var(--cw-accent); color: var(--cw-accent-fg); cursor: pointer; text-decoration: none; }
     .cw-join button.follow { background: var(--cw-surface); color: var(--cw-fg); border: 1px solid var(--cw-line); }
     .cw-join button[disabled] { background: var(--cw-surface); color: var(--cw-muted); border: 1px solid var(--cw-line); cursor: default; }
     .cw-join p { margin: 0; color: var(--cw-muted); font-size: var(--cw-text-sm); }
-    .cw-join p.err { color: var(--cw-danger); }`;
+    .cw-join p.err { color: var(--cw-danger); }
+}`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

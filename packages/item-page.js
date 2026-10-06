@@ -10,7 +10,8 @@
 export async function start(ctx) {
   const [items, kinds, cards, actions, markdown, attachments, mdEditor] = await Promise.all(["items", "kinds", "cards", "actions", "markdown", "attachments", "md-editor"].map(n => ctx.require(n)));
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-page { display: grid; gap: var(--cw-space-3); }
     .cw-page h1 { font-size: 1.25rem; margin: 0; overflow-wrap: anywhere; }
     .cw-page .line { display: flex; gap: var(--cw-space-3); align-items: center; flex-wrap: wrap; }
@@ -21,7 +22,8 @@ export async function start(ctx) {
     .cw-page .thread h3 { margin: 0 0 var(--cw-space-2); font-size: 1rem; }
     .cw-page .said { color: var(--cw-danger); margin: 0; }
     .cw-page .editing { display: grid; gap: var(--cw-space-2); }
-    .cw-page .editing .row { display: flex; gap: var(--cw-space-2); justify-content: flex-end; align-items: center; }`;
+    .cw-page .editing .row { display: flex; gap: var(--cw-space-2); justify-content: flex-end; align-items: center; }
+}`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

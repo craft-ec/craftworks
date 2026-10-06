@@ -57,7 +57,8 @@ export async function start(ctx) {
     return e;
   };
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-pub { display: grid; gap: 8px; }
     .cw-pub .s { color: var(--cw-muted); font-size: var(--cw-text-sm); }
     .cw-pub input:not([type=checkbox]):not([type=file]), .cw-pub textarea, .cw-pub select { font: inherit; padding: 6px 8px; border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); background: var(--cw-surface); color: var(--cw-fg); }
@@ -65,7 +66,8 @@ export async function start(ctx) {
     .cw-pub .said { color: var(--cw-danger); margin: 0; }
     .cw-pub .go { border: 0; border-radius: var(--cw-radius-pill); padding: 6px 16px; background: var(--cw-accent); color: var(--cw-accent-fg); font-weight: 600; cursor: pointer; }
     .cw-pub .ghost { border: 1px solid var(--cw-line); border-radius: var(--cw-radius-pill); padding: 6px 16px; background: none; color: var(--cw-fg); cursor: pointer; }
-    dialog.cw-pub-dlg { max-width: min(560px, 92vw); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-bg); color: var(--cw-fg); }`;
+    dialog.cw-pub-dlg { max-width: min(560px, 92vw); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-bg); color: var(--cw-fg); }
+}`;
   document.head.append(style);
 
   // ITS TAGS (public: what it is, for everyone — `items.tagsOf`) and ADULT CONTENT (the `nsfw` tag: shown only to

@@ -7,7 +7,8 @@
 export async function start(ctx) {
   const [items, directory, theme] = await Promise.all(["items", "directory", "theme"].map(n => ctx.require(n)));
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     dialog.cw-history { border: 0; border-radius: var(--cw-radius); padding: var(--cw-space-3) var(--cw-space-4);
       width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 32px); background: var(--cw-surface); color: var(--cw-fg);
       box-shadow: var(--cw-shadow); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: var(--cw-space-2); }
@@ -19,7 +20,8 @@ export async function start(ctx) {
     dialog.cw-history .v .t { font-weight: 600; }
     dialog.cw-history .v .b { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9em; overflow: hidden; }
     dialog.cw-history .none, dialog.cw-history .said { color: var(--cw-muted); margin: 0; }
-    dialog.cw-history .end { justify-self: end; }`;
+    dialog.cw-history .end { justify-self: end; }
+}`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

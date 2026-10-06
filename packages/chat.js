@@ -17,7 +17,7 @@ export async function mount(ctx, el) {
   if (ctx.space === "discover") return openSpaces(ctx, el, { space, roles, conversation, theme });
   el.classList.add("cw-fill");
   el.innerHTML = `
-    <style>
+    <style>@layer apps {
       .dc { display: grid; grid-template-columns: 240px 1fr 220px; min-height: 420px;
         overflow: hidden; background: var(--cw-surface); }
       .dc button { font: inherit; cursor: pointer; }
@@ -52,7 +52,7 @@ export async function mount(ctx, el) {
         padding: var(--cw-space-1) var(--cw-space-3); }
       .dc dialog.ask button[value="ok"], .dc dialog.start button[value="ok"] { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       @media (max-width: 800px) { .dc { grid-template-columns: 180px 1fr; } .dc .people { display: none; } }
-    </style>
+    }</style>
     <div class="dc">
       <aside class="side"><h2>—</h2><div class="chans"></div><p class="said" hidden></p></aside>
       <section class="room"></section>
@@ -339,7 +339,7 @@ export async function mount(ctx, el) {
 async function openSpaces(ctx, el, { space, roles, conversation, theme }) {
   const posts = await ctx.require("items");
   el.innerHTML = `
-    <style>
+    <style>@layer apps {
       .dir { max-width: 880px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
       .dir h2 { margin: 0; font-size: 1.4rem; }
       .dir .note { margin: 0; color: var(--cw-muted); font-size: var(--cw-text-sm); }
@@ -350,7 +350,7 @@ async function openSpaces(ctx, el, { space, roles, conversation, theme }) {
       .dir .card button, .dir .card a { justify-self: start; font: inherit; border: 0; border-radius: var(--cw-radius-pill); padding: 6px var(--cw-space-4);
         background: var(--cw-accent); color: var(--cw-accent-fg); cursor: pointer; text-decoration: none; font-weight: 600; }
       .dir .card .said { color: var(--cw-muted); font-size: var(--cw-text-sm); margin: 0; }
-    </style>
+    }</style>
     <div class="dir"><h2>💬 Open spaces</h2><p class="note">Spaces anyone may join. What is said in them is for their members.</p><div class="grid"></div></div>`;
   const grid = el.querySelector(".grid");
   const h = (tag, props = {}, ...kids) => {

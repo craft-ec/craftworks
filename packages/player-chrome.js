@@ -10,7 +10,8 @@
 //   c.level(label)                             // the one playing (`video-player`'s onLevel)
 export async function start() {
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     /* ONE SHAPE, the video's own (--cw-pc-w / --cw-pc-h), never taller than 70% of the screen: the box never resizes
        as renditions change; the picture fits inside it. */
     .cw-pc { position: relative; width: 100%; aspect-ratio: var(--cw-pc-w, 16) / var(--cw-pc-h, 9); max-height: 70vh;
@@ -57,7 +58,8 @@ export async function start() {
     .cw-pc.cw-pc .cw-pc-row input[type=range] { -webkit-appearance: none; appearance: none; box-sizing: content-box; width: 64px; height: 4px; min-height: 0; padding: 0; border: 0; box-shadow: none; outline: 0; margin: 0 6px 0 2px; border-radius: 2px; cursor: pointer;
       background: linear-gradient(#fff, #fff) 0 / var(--v, 100%) 100% no-repeat, rgba(255, 255, 255, 0.3); }
     .cw-pc .cw-pc-row input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 0; }
-    .cw-pc .cw-pc-row input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 0; }`;
+    .cw-pc .cw-pc-row input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 0; }
+}`;
   // ONE ICON SET (drawn, so every control looks alike — an emoji's look is the system's).
   const ICON = {
     play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',

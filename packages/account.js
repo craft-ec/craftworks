@@ -192,7 +192,9 @@ export async function mount(ctx, el) {
             ].map((tr, i) => (i === 0 && (tr.querySelector("th").textContent = `${s.space.name ?? s.space.id.slice(0, 8)} (a space)`), tr))),
           );
           const b = blocks.stats();
-          sto.querySelector(".blocks").textContent = `This page read ${b.read} tree block${b.read === 1 ? "" : "s"}; ${b.rebuilt} came from their recovery group first (rebuilt and checked).`;
+          sto.querySelector(".blocks").textContent = `@layer apps {
+This page read ${b.read} tree block${b.read === 1 ? "" : "s"}; ${b.rebuilt} came from their recovery group first (rebuilt and checked).
+}`;
         },
         e => (sto.querySelector("tbody").textContent = `Could not read: ${e?.message ?? e}`),
       );

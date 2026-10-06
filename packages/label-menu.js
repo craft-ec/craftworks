@@ -22,7 +22,8 @@ export async function start(ctx) {
   const t = { onChange: labels.onChange };
 
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-chips { display: flex; flex-wrap: wrap; gap: var(--cw-space-1); }
     .cw-chips:empty { display: none; }
     .cw-chip { font-size: var(--cw-text-xs); padding: 1px var(--cw-space-2); border-radius: var(--cw-radius-pill); border: 0;
@@ -36,7 +37,8 @@ export async function start(ctx) {
     .cw-labels-menu label, .cw-labels-menu .create { display: flex; align-items: center; gap: var(--cw-space-2);
       padding: var(--cw-space-1) var(--cw-space-3); cursor: pointer; overflow-wrap: anywhere; }
     .cw-labels-menu label:hover, .cw-labels-menu .create:hover { background: var(--cw-hover); }
-    .cw-labels-menu .create { border: 0; background: none; width: 100%; text-align: left; }`;
+    .cw-labels-menu .create { border: 0; background: none; width: 100%; text-align: left; }
+}`;
   document.head.append(style);
 
   // CHIPS: a thing's labels, following the table.

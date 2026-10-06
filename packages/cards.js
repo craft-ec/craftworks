@@ -15,7 +15,8 @@ export async function start(ctx) {
   const [kinds, items, directory, signals, labelUI] = await Promise.all(["kinds", "items", "directory", "signals", "label-menu"].map(n => ctx.require(n)));
   const MANIFEST = "application/vnd.craftworks.video+json";
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-card { text-decoration: none; color: inherit; display: grid; gap: 6px; min-width: 0; }
     .cw-book .cover { position: relative; aspect-ratio: 2 / 3; border-radius: var(--cw-radius-sm); overflow: hidden; background: var(--cw-hover); display: grid; place-items: center; font-size: 2.5rem; box-shadow: 0 1px 4px rgba(0, 0, 0, .25); }
     .cw-book .cover img { width: 100%; height: 100%; object-fit: cover; }
@@ -71,7 +72,8 @@ export async function start(ctx) {
     .cw-file .menu { position: absolute; top: 28px; right: 4px; z-index: 5; display: grid; background: var(--cw-surface); border: 1px solid var(--cw-line);
       border-radius: var(--cw-radius-sm); box-shadow: var(--cw-shadow-lg); padding: 4px; }
     .cw-file .menu button, .cw-file .menu a { border: 0; background: none; text-align: left; padding: 6px 10px; font: inherit; color: inherit; text-decoration: none; cursor: pointer; }
-    .cw-file .menu button:hover, .cw-file .menu a:hover { background: var(--cw-hover); }`;
+    .cw-file .menu button:hover, .cw-file .menu a:hover { background: var(--cw-hover); }
+}`;
   style.textContent += `
     .cw-post { display: block; color: inherit; text-decoration: none; min-width: 0; }
     .cw-post.link { border-bottom: 1px solid var(--cw-line); }

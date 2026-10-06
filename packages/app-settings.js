@@ -13,7 +13,8 @@ export async function start(ctx) {
   const roles = await ctx.require("roles");
   const S = await ctx.require("signals");
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer apps {
+
     .cw-appset { border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-4); background: var(--cw-surface); color: var(--cw-fg); }
     .cw-appset h3 { margin: 0 0 var(--cw-space-3); font-size: 1.05rem; }
     .cw-appset h4 { margin: var(--cw-space-3) 0 var(--cw-space-2); font-size: var(--cw-text-xs); letter-spacing: .08em; text-transform: uppercase; color: var(--cw-muted); }
@@ -24,7 +25,8 @@ export async function start(ctx) {
     .cw-appset button.main { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
     .cw-appset .row { display: flex; gap: var(--cw-space-2); justify-content: flex-end; align-items: center; }
     .cw-appset .said { color: var(--cw-danger); font-size: var(--cw-text-sm); margin: 0; flex: 1; }
-    .cw-appset .ok { color: var(--cw-muted); font-size: var(--cw-text-sm); margin: 0; flex: 1; }`;
+    .cw-appset .ok { color: var(--cw-muted); font-size: var(--cw-text-sm); margin: 0; flex: 1; }
+}`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

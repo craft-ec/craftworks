@@ -16,7 +16,7 @@ export async function mount(ctx, el) {
   ctx.require("activity").then(a => ((activity = a), a.onChange(() => el.isConnected && ctx.route === "/space" && draw())), () => {});
   const me = (await space.account()).id;
   el.innerHTML = `
-    <style>
+    <style>@layer apps {
       .sh { display: grid; gap: var(--cw-space-4); }
       .sh button { font: inherit; cursor: pointer; }
       .sh .top { display: flex; align-items: center; gap: var(--cw-space-3); flex-wrap: wrap; }
@@ -32,7 +32,7 @@ export async function mount(ctx, el) {
       .sh li i { color: var(--cw-muted); font-style: normal; margin-left: 4px; }
       .sh .said { color: var(--cw-danger); font-size: var(--cw-text-sm); margin: 0; }
       .sh .none { color: var(--cw-muted); text-align: center; padding: var(--cw-space-5); }
-    </style>
+    }</style>
     <div class="sh"></div>`;
   const root = el.querySelector(".sh");
   const h = (tag, props = {}, ...kids) => {

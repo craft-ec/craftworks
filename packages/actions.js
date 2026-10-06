@@ -20,32 +20,34 @@ export async function start(ctx) {
   const pins = await edge.pins();
   const me = async () => (await space.account()).id;
   const style = document.createElement("style");
-  style.textContent = `
-    body .cw-votes { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 32px; }
+  style.textContent = `@layer components {
+
+    .cw-votes { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 32px; }
     /* THE one spacing, wherever the row is (a post, a tile, a comment, a page): nothing else styles its parts. */
-    body .cw-votes.row { flex-direction: row; gap: 4px; min-width: 0; }
-    body .cw-votes button { border: 0; background: none; cursor: pointer; color: var(--cw-muted); font-size: 1rem; padding: 2px 6px; border-radius: var(--cw-radius-sm); }
-    body .cw-votes button:hover { background: var(--cw-hover); }
-    body .cw-votes button[aria-pressed="true"].up { color: var(--cw-accent); }
-    body .cw-votes button[aria-pressed="true"].down { color: var(--cw-danger); }
-    body .cw-votes button:disabled { opacity: .4; cursor: default; }
-    body .cw-votes .n { font-weight: 700; font-size: var(--cw-text-sm); }
-    body .cw-acts { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; }
-    body .cw-acts button { border: 0; background: none; cursor: pointer; color: var(--cw-muted); font: inherit; font-size: var(--cw-text-sm); font-weight: 600;
+    .cw-votes.row { flex-direction: row; gap: 4px; min-width: 0; }
+    .cw-votes button { border: 0; background: none; cursor: pointer; color: var(--cw-muted); font-size: 1rem; padding: 2px 6px; border-radius: var(--cw-radius-sm); }
+    .cw-votes button:hover { background: var(--cw-hover); }
+    .cw-votes button[aria-pressed="true"].up { color: var(--cw-accent); }
+    .cw-votes button[aria-pressed="true"].down { color: var(--cw-danger); }
+    .cw-votes button:disabled { opacity: .4; cursor: default; }
+    .cw-votes .n { font-weight: 700; font-size: var(--cw-text-sm); }
+    .cw-acts { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; }
+    .cw-acts button { border: 0; background: none; cursor: pointer; color: var(--cw-muted); font: inherit; font-size: var(--cw-text-sm); font-weight: 600;
       padding: 4px 8px; border-radius: var(--cw-radius-sm); }
-    body .cw-acts button:hover { background: var(--cw-hover); color: var(--cw-fg); }
-    body .cw-acts button.on { color: var(--cw-accent); }
-    body .cw-acts .said { color: var(--cw-danger); font-size: var(--cw-text-sm); }
-    body .cw-acts .n { color: var(--cw-muted); font-size: var(--cw-text-sm); font-weight: 600; padding: 4px 8px; }
-    body .cw-reacts { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; position: relative; }
-    body .cw-reacts .chip { border: 1px solid var(--cw-line); border-radius: var(--cw-radius-pill); padding: 1px 8px; background: none; cursor: pointer; font: inherit; font-size: var(--cw-text-sm); }
-    body .cw-reacts .chip.mine { border-color: var(--cw-accent); background: var(--cw-hover); }
-    body .cw-reacts .pick { position: absolute; bottom: 100%; left: 0; z-index: 20; display: flex; gap: 2px; background: var(--cw-surface); border: 1px solid var(--cw-line);
+    .cw-acts button:hover { background: var(--cw-hover); color: var(--cw-fg); }
+    .cw-acts button.on { color: var(--cw-accent); }
+    .cw-acts .said { color: var(--cw-danger); font-size: var(--cw-text-sm); }
+    .cw-acts .n { color: var(--cw-muted); font-size: var(--cw-text-sm); font-weight: 600; padding: 4px 8px; }
+    .cw-reacts { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; position: relative; }
+    .cw-reacts .chip { border: 1px solid var(--cw-line); border-radius: var(--cw-radius-pill); padding: 1px 8px; background: none; cursor: pointer; font: inherit; font-size: var(--cw-text-sm); }
+    .cw-reacts .chip.mine { border-color: var(--cw-accent); background: var(--cw-hover); }
+    .cw-reacts .pick { position: absolute; bottom: 100%; left: 0; z-index: 20; display: flex; gap: 2px; background: var(--cw-surface); border: 1px solid var(--cw-line);
       border-radius: var(--cw-radius-pill); padding: 2px 6px; box-shadow: var(--cw-shadow-lg); }
-    body .cw-reacts .pick[hidden] { display: none; }
-    body .cw-reacts .pick button { border: 0; background: none; cursor: pointer; font-size: 1.1rem; padding: 2px 4px; }
-    body .cw-reacts .more-menu { flex-direction: column; border-radius: var(--cw-radius); padding: 4px; right: 0; left: auto; }
-    body .cw-reacts .more-menu button { font-size: var(--cw-text-sm); text-align: left; white-space: nowrap; padding: 4px 10px; }`;
+    .cw-reacts .pick[hidden] { display: none; }
+    .cw-reacts .pick button { border: 0; background: none; cursor: pointer; font-size: 1.1rem; padding: 2px 4px; }
+    .cw-reacts .more-menu { flex-direction: column; border-radius: var(--cw-radius); padding: 4px; right: 0; left: auto; }
+    .cw-reacts .more-menu button { font-size: var(--cw-text-sm); text-align: left; white-space: nowrap; padding: 4px 10px; }
+}`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
@@ -250,7 +252,9 @@ export async function start(ctx) {
           it.edited ? btn("🕘 History", e => history.open(e.currentTarget, it.ref, { current: it, mayRestore: mine || !!it.mayEdit, restored: () => changed?.() })) : null,
           it.mayRemove
             ? btn(mine ? "Delete" : "Remove", async e => {
-                if (e.target.dataset.armed !== "1") return ((e.target.dataset.armed = "1"), (e.target.textContent = `Confirm: ${mine ? "delete" : "remove"}`));
+                if (e.target.dataset.armed !== "1") return ((e.target.dataset.armed = "1"), (e.target.textContent = `@layer components {
+Confirm: ${mine ? "delete" : "remove"}
+}`));
                 await items.remove(it.ref).then(() => removed?.(), fail);
               })
             : null,

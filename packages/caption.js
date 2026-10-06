@@ -14,7 +14,7 @@ export async function mount(ctx, el) {
   const bar = (await ctx.require("feed-bar")).create({ start: "new", onChange: () => draw() });
   const me = (await space.account()).id;
   el.innerHTML = `
-    <style>
+    <style>@layer apps {
       .sb { display: grid; gap: var(--cw-space-3); }
       .sb h2 { margin: 0; font-size: 1.3rem; }
       .sb .top { display: flex; gap: var(--cw-space-3); align-items: center; flex-wrap: wrap; }
@@ -31,7 +31,7 @@ export async function mount(ctx, el) {
       .sb button.go { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       .sb .said { color: var(--cw-danger); margin: 0; }
       .sb .none { color: var(--cw-muted); }
-    </style>
+    }</style>
     <div class="sb"></div>`;
   const root = el.querySelector(".sb");
   const h = (tag, props = {}, ...kids) => {

@@ -13,7 +13,8 @@
 export async function start(ctx) {
   const [files, drive, spaces, kinds] = await Promise.all(["files", "drive-store", "space", "kinds"].map(n => ctx.require(n)));
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-att-pick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     .cw-att-pick > button.clip { border: 0; background: none; font-size: 1.1rem; cursor: pointer; padding: 2px 4px; color: var(--cw-muted); }
     .cw-att-pick > button.clip:hover { color: var(--cw-fg); }
@@ -49,7 +50,8 @@ export async function start(ctx) {
     .cw-att-full { border: 0; padding: 0; background: transparent; max-width: 96vw; max-height: 96vh; }
     .cw-att-full::backdrop { background: rgba(0, 0, 0, .8); }
     .cw-att-full img, .cw-att-full video { max-width: 96vw; max-height: 92vh; display: block; }
-    .cw-att-full p { color: #fff; margin: 8px 0 0; font-size: var(--cw-text-sm); }`;
+    .cw-att-full p { color: #fff; margin: 8px 0 0; font-size: var(--cw-text-sm); }
+}`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

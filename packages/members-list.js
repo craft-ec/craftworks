@@ -10,7 +10,8 @@
 export async function start(ctx) {
   const [roles, moderation, directory, person, space] = await Promise.all(["roles", "moderation", "directory", "person", "space"].map(n => ctx.require(n)));
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-members { display: grid; gap: 2px; }
     .cw-members .m { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border-radius: var(--cw-radius-sm); }
     .cw-members .m:hover { background: var(--cw-hover); }
@@ -20,7 +21,8 @@ export async function start(ctx) {
     .cw-members .chip { font-size: var(--cw-text-xs); border: 1px solid var(--cw-line); border-radius: 999px; padding: 1px 8px; color: var(--cw-muted); display: inline-flex; gap: 4px; align-items: center; }
     .cw-members .acts { margin-left: auto; }
     .cw-members .acts button { font: inherit; font-size: var(--cw-text-sm); cursor: pointer; border: 0; background: none; color: var(--cw-danger); }
-    .cw-members .said { color: var(--cw-danger); margin: 0; font-size: var(--cw-text-sm); }`;
+    .cw-members .said { color: var(--cw-danger); margin: 0; font-size: var(--cw-text-sm); }
+}`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

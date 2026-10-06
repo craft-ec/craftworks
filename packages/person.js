@@ -13,7 +13,8 @@
 export async function start(ctx) {
   const [edge, conversation, directory, roles, moderation, space] = await Promise.all(["edge", "conversation", "directory", "roles", "moderation", "space"].map(n => ctx.require(n)));
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     /* Above every panel and menu (the spaces panel is 70): a card opened from one shows over it. */
     .cw-person { position: fixed; z-index: 90; width: 280px; background: var(--cw-surface); color: var(--cw-fg); border: 1px solid var(--cw-line);
       border-radius: var(--cw-radius); box-shadow: var(--cw-shadow-lg); padding: var(--cw-space-3); display: grid; gap: var(--cw-space-2); font-size: var(--cw-text-sm); }
@@ -27,7 +28,8 @@ export async function start(ctx) {
     .cw-person button.main { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
     .cw-person button.on { background: var(--cw-pressed); }
     .cw-person button.danger { color: var(--cw-danger); }
-    .cw-person .said { color: var(--cw-danger); font-size: var(--cw-text-xs); min-height: 1em; margin: 0; }`;
+    .cw-person .said { color: var(--cw-danger); font-size: var(--cw-text-xs); min-height: 1em; margin: 0; }
+}`;
   document.head.append(style);
   const el = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

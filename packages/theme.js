@@ -12,7 +12,12 @@
 export async function start() {
   const style = document.createElement("style");
   style.dataset.theme = "craftworks";
-  style.textContent = `
+  style.textContent = `/* THE CASCADE, in layers (owner 10-06): base (the theme) < apps (pages) < components (shared parts) < templates (a
+   chosen look, last). A component's own look beats any page rule by LAYER, not by specificity: a page may place a
+   component, never restyle it (the build's style check), and no selector tricks are needed to win. */
+@layer base, apps, components, templates;
+@layer base {
+
     :root {
       color-scheme: light dark;
       --cw-font: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -141,7 +146,8 @@ export async function start() {
       var(--cw-hover) 25%, var(--cw-line) 50%, var(--cw-hover) 75%) 0 0 / 200% 100%; animation: cw-shimmer 1.4s linear infinite; }
     .cw-loading i:nth-of-type(2) { width: 80%; } .cw-loading i:nth-of-type(3) { width: 55%; }
     @keyframes cw-shimmer { to { background-position: -200% 0; } }
-    @media (prefers-reduced-motion: reduce) { .cw-loading i { animation: none; } }`;
+    @media (prefers-reduced-motion: reduce) { .cw-loading i { animation: none; } }
+}`;
   document.head.append(style);
   // LOADING: what stands in place of something still on its way — a label and three shimmering lines. The one
   // placeholder: the loader's for a component, a component's for its own parts (a list, a room). `label` may change.

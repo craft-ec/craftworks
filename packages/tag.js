@@ -16,12 +16,12 @@ export async function mount(ctx, el) {
     return e;
   };
   el.innerHTML = `
-    <style>
+    <style>@layer apps {
       .tg { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); }
       .tg h2 { margin: 0; }
       .tg .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--cw-space-3); align-items: start; }
       .tg .none { color: var(--cw-muted); }
-    </style>
+    }</style>
     <div class="tg"><h2></h2><div class="bar"></div><div class="grid"></div></div>`;
   const grid = el.querySelector(".grid");
   // Every kind that stands on its own and has a look (a channel is a place, a folder Drive's).

@@ -26,7 +26,8 @@ export async function start(ctx) {
     return views.includes("personal") ? `#${app.route}` : "#/";
   }
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-panel { position: fixed; top: var(--cw-bar); bottom: 0; left: 0; z-index: 70; width: min(1180px, 100vw); box-sizing: border-box;
       background: var(--cw-bg); border-right: 1px solid var(--cw-line); box-shadow: var(--cw-shadow-lg); display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; }
@@ -60,7 +61,8 @@ export async function start(ctx) {
     .cw-ask input { flex: 1; min-width: 0; padding: 6px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
     .cw-ask button { font: inherit; border: 0; border-radius: var(--cw-radius-sm); padding: 6px var(--cw-space-3); background: var(--cw-accent); color: var(--cw-accent-fg); cursor: pointer; }
     .cw-ask .said { color: var(--cw-danger); }
-    .cw-ask .waiting { margin: 0; padding-left: 1.2em; color: var(--cw-muted); font-size: var(--cw-text-sm); }`;
+    .cw-ask .waiting { margin: 0; padding-left: 1.2em; color: var(--cw-muted); font-size: var(--cw-text-sm); }
+}`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

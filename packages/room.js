@@ -16,7 +16,8 @@ export async function start(ctx) {
   const PAGE = 60;
   const MENTION = /@[^\s@#]*#[1-9A-HJ-NP-Za-km-z]{6}/g;
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-room { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
     .cw-room h2 { margin: 0; font-size: 1rem; padding: 12px var(--cw-space-4); border-bottom: 1px solid var(--cw-line);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -65,7 +66,8 @@ export async function start(ctx) {
     .cw-room .suggest { position: absolute; bottom: calc(100% - var(--cw-space-2)); left: var(--cw-space-4); margin: 0; padding: 4px; list-style: none;
       background: var(--cw-surface); border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); box-shadow: var(--cw-shadow-lg); min-width: 200px; }
     .cw-room .suggest li { padding: 4px 8px; border-radius: var(--cw-radius-sm); cursor: pointer; }
-    .cw-room .suggest li:hover, .cw-room .suggest li.on { background: var(--cw-hover); }`;
+    .cw-room .suggest li:hover, .cw-room .suggest li.on { background: var(--cw-hover); }
+}`;
   document.head.append(style);
   const el = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

@@ -15,7 +15,8 @@ export async function start(ctx) {
   );
   const actionsCap = await ctx.require("actions");
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-cm { display: grid; gap: var(--cw-space-2); }
     .cw-cm button { font: inherit; cursor: pointer; }
     .cw-cm .go { border: 0; border-radius: var(--cw-radius-pill); padding: 6px var(--cw-space-4); background: var(--cw-accent); color: var(--cw-accent-fg); font-weight: 600; }
@@ -38,7 +39,8 @@ export async function start(ctx) {
     .cw-cm .c.folded .text, .cw-cm .c.folded .acts, .cw-cm .c.folded .kids, .cw-cm .c.folded form { display: none; }
     .cw-cm .c .fold { border: 0; background: none; color: var(--cw-muted); font-size: var(--cw-text-xs); padding: 0; }
     .cw-cm .none { color: var(--cw-muted); text-align: center; padding: var(--cw-space-4); margin: 0; }
-    .cw-cm .said { color: var(--cw-danger); font-size: var(--cw-text-sm); margin: 0; }`;
+    .cw-cm .said { color: var(--cw-danger); font-size: var(--cw-text-sm); margin: 0; }
+}`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

@@ -16,7 +16,8 @@
 export async function start(ctx) {
   const [markdown, kinds, attachments] = await Promise.all([ctx.require("markdown"), ctx.require("kinds"), ctx.require("attachments")]);
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-mde { display: grid; gap: 4px; position: relative; }
     .cw-mde .bar { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
     .cw-mde .bar[hidden] { display: none; }
@@ -44,7 +45,8 @@ export async function start(ctx) {
       background: var(--cw-surface); border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); box-shadow: var(--cw-shadow-lg); }
     .cw-mde .suggest[hidden] { display: none; }
     .cw-mde .suggest li { padding: 4px 8px; cursor: pointer; border-radius: var(--cw-radius-sm); }
-    .cw-mde .suggest li:hover { background: var(--cw-hover); }`;
+    .cw-mde .suggest li:hover { background: var(--cw-hover); }
+}`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

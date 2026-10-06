@@ -20,13 +20,15 @@ export async function start() {
     return e;
   };
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-feedbar { display: flex; gap: var(--cw-space-2); align-items: center; flex-wrap: wrap; }
     .cw-feedbar .lbl { color: var(--cw-muted); font-size: var(--cw-text-sm); }
     .cw-feedbar select, .cw-feedbar button { font: inherit; padding: 3px 8px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line);
       background: var(--cw-surface); color: var(--cw-fg); cursor: pointer; }
     .cw-feedbar-older { display: block; margin: var(--cw-space-3) auto; font: inherit; padding: 5px 14px; border-radius: 999px;
-      border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); cursor: pointer; }`;
+      border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); cursor: pointer; }
+}`;
   document.head.append(style);
 
   function create({ onChange = () => {}, start = "new" } = {}) {

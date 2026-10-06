@@ -14,7 +14,8 @@ export async function start(ctx) {
   const [player, subs, kindsCap] = await Promise.all(["video-player", "caption-store", "kinds"].map(n => ctx.require(n)));
   const markdown = await ctx.require("markdown");
   const style = document.createElement("style");
-  style.textContent = `
+  style.textContent = `@layer components {
+
     .cw-mv { display: grid; gap: 4px; max-width: 100%; }
     .cw-mv video { width: 100%; max-height: 70vh; background: #000; border-radius: var(--cw-radius-sm); }
     .cw-mv audio { width: min(560px, 100%); }
@@ -35,7 +36,8 @@ export async function start(ctx) {
     .cw-mv .timed { max-height: 240px; overflow-y: auto; border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); padding: 6px 10px; }
     .cw-mv .timed[hidden] { display: none; }
     .cw-mv .timed p { margin: 2px 0; cursor: pointer; color: var(--cw-muted); }
-    .cw-mv .timed p.on { color: var(--cw-fg); font-weight: 600; }`;
+    .cw-mv .timed p.on { color: var(--cw-fg); font-weight: 600; }
+}`;
   document.head.append(style);
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

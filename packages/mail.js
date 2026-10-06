@@ -36,7 +36,7 @@ export async function mount(ctx, el) {
   const nameOf = (m, ref, props) => (String(ref).startsWith("space:") ? Object.assign(document.createElement("span"), { textContent: `🏠 ${spaceName(m, ref)}` }) : directory.nameEl(ref, ...(props ? ["a", props(ref)] : [])));
   el.classList.add("cw-fill");
   el.innerHTML = `
-    <style>
+    <style>@layer apps {
       .ml { display: grid; grid-template-columns: 340px 1fr; min-height: 420px; overflow: hidden; background: var(--cw-surface); }
       .ml button { font: inherit; cursor: pointer; }
       .ml .list { background: var(--cw-bg); border-right: 1px solid var(--cw-line); overflow-y: auto; min-width: 0; }
@@ -71,7 +71,7 @@ export async function mount(ctx, el) {
       .ml dialog .chip button { border: 0; background: none; color: var(--cw-muted); cursor: pointer; padding: 0 4px; }
       .ml dialog button[value="ok"] { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       @media (max-width: 700px) { .ml { grid-template-columns: 1fr; } .ml.reading .list { display: none; } .ml:not(.reading) .read { display: none; } }
-    </style>
+    }</style>
     <div class="ml">
       <nav class="list" aria-label="${box === "sent" ? "Sent" : "Inbox"}"></nav>
       <article class="read"><p class="empty">Pick a mail.</p></article>
