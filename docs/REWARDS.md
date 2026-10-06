@@ -85,6 +85,18 @@ of cold files, §6).
 - Exact per-answer bandwidth pay would need the node to name the peer that delivered each piece (a node change, and
   even then only the last hop): not planned.
 
+## 4a. What is signed, what is provable
+
+| Data | Signed by | Provable? | Used to pay |
+|---|---|---|---|
+| Usage record (time, data, opens) | the subscriber's account (its own table) | its author is; its content is the subscriber's claim | via the statement |
+| Monthly statement | the subscriber's account, sealed to the treasury | the same: a claim about their own money only | yes |
+| Keeper proofs | the keeper's node | yes: anyone recomputes `hash(piece ‖ beacon ‖ node id)` from the public piece | yes |
+| Node → account | the node, vouched for by the account's node list | yes | yes |
+| Public tally (per-item totals) | anyone may add | no | never: display only |
+
+A subscriber's claims only steer their own fee (§1): misreporting can move it, never mint it or take another's.
+
 ## 5. Paying and settling
 
 - **Subscription:** paid on an external rail (card or stablecoin) to the Craftworks treasury, which signs a monthly
