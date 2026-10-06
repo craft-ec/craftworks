@@ -175,6 +175,7 @@ export async function start(ctx) {
     const sp = await strip(M, track, duration).catch(() => null);
     // THE ORIGINAL, kept: what the background makes the rest from (and a newer codec later).
     const source = await files.put(file, { space, public: pub, app: "video", onProgress: e => say("keeping the original", e.done / Math.max(1, e.size)) });
+    originals.set(source.id ?? source.root, file);
     // THE VIDEO's ID, fixed now (a re-key later does not change it): from the original's key — public: its content
     // alone (the same video anywhere has one id); otherwise salted by its space (only its readers can name it).
     const vid = await videoId(source.key);
@@ -290,6 +291,17 @@ export async function start(ctx) {
     return M.canEncodeVideo(r.codec, { width, height: r.height }).catch(() => false);
   }
 
+  // THE ORIGINAL on this page: the file picked at upload (on disk, nothing read), or read from the network ONCE and kept
+  // for every rendition after it (reading it per rendition cost minutes each). One read original at a time.
+  const originals = new Map(); // source id → File picked at upload (kept: on disk, not in memory)
+  let read = null; // { k, file }: the one original read from the network (in memory)
+  async function originalOf(m) {
+    const k = m.source.id ?? m.source.root;
+    if (originals.has(k)) return originals.get(k);
+    if (read?.k !== k) read = { k, file: new File([await files.get(m.source)], m.name ?? "video", { type: m.source.type }) };
+    return read.file;
+  }
+
   // THE BACKGROUND: this person's videos with renditions pending, made one at a time here.
   const LEASE_QUIET = 2 * 60 * 1000;
   const device = (crypto.randomUUID?.() ?? String(Math.random())).slice(0, 12);
@@ -335,7 +347,7 @@ export async function start(ctx) {
       const say = (stage, p) => Date.now() - beat > 5000 && ((beat = Date.now()), lease(stage, p).catch(() => {}));
       await lease("reading the original", 0);
       const M = await mb();
-      const original = new File([await files.get(m.source)], m.name ?? "video", { type: m.source.type });
+      const original = await originalOf(m);
       const sp = v.board ? (await space.mine()).find(x => x.id === v.board.id) ?? null : null;
       // One rendition — the first pending this device CAN make (the rest wait for a device that can) — then the manifest
       // written again and the item's file replaced.
