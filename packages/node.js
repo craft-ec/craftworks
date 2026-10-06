@@ -100,6 +100,22 @@ export async function start(ctx) {
       });
     });
 
+  // GETS AT ONCE, capped — ONE limit for every get any package makes (files' pieces, tables' blocks): racing asks many
+  // together, and past what the node answers they come back refused or late (measured 2026-10-06: a file read with
+  // ~144 gets in flight left 294 of 433 pieces unanswered; capped at 32, 68). `slot(f)`: f run when a place is free.
+  const MAX_GETS = 32;
+  let free = MAX_GETS;
+  const queue = [];
+  const slot = async f => {
+    if (free > 0) free--;
+    else await new Promise(r => queue.push(r));
+    try {
+      return await f();
+    } finally {
+      queue.length ? queue.shift()() : free++;
+    }
+  };
+
   // IDLE: nothing asked of the node for WAIT.hint (the one wait policy's) — what BACKGROUND work waits for before each
   // step (unread counts, upkeep, keeping), so a page's own reads never queue behind it.
   const idle = (quiet = WAIT.hint) =>
@@ -117,5 +133,5 @@ export async function start(ctx) {
   // `drop()`: close the connection as a sleep or a network change does (to see the recovery work).
   // WHAT IS IN FLIGHT now — each request's label and how long it has waited (ms): to see what a page waits on.
   const inFlight = () => waiters.map(w => ({ what: w.what, ms: Math.round(performance.now() - w.at) })).sort((a, b) => b.ms - a.ms);
-  return { core, glue, ask, listen, url, drop: () => ws.close(), WAIT, backoff, idle, busy: () => waiters.length, inFlight };
+  return { core, glue, ask, slot, listen, url, drop: () => ws.close(), WAIT, backoff, idle, busy: () => waiters.length, inFlight };
 }

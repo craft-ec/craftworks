@@ -23,7 +23,7 @@
 //   const ref2 = await files.adopt(ref, space)          // a file from another space: listed in this one (then copied)
 //   await files.publicity(refs, space, pub)             // the items holding them are (not) read by anyone now
 export async function start(ctx) {
-  const { core, glue, ask, WAIT } = await ctx.require("node");
+  const { core, glue, ask, slot, WAIT } = await ctx.require("node");
   const [storage, space] = await Promise.all(["storage", "space"].map(n => ctx.require(n)));
   core.set_sealed_code(await ctx.require("sealed-wasm"));
   core.set_piece_code(await ctx.require("piece-wasm"));
@@ -279,25 +279,14 @@ export async function start(ctx) {
 
   // One GET: the state, taken (a file's pieces are read once, never kept in the core), or null. A piece's state is
   // `LIVE ‖ burn hash ‖ piece` (its piece given back), or burned (none: as good as missing); `raw`: as stored.
-  // GETS AT ONCE, capped: racing asks many pieces together, and past what the node answers they come back refused or
-  // late (measured 2026-10-06: one file read with ~144 gets in flight left 294 of 433 pieces unanswered; one generation
-  // at a time, 61). A get waits for a free place; the deadline runs from when it is asked.
-  const MAX_GETS = 32;
-  const gate = (() => {
-    let open = MAX_GETS;
-    const waiting = [];
-    return { take: () => (open > 0 ? (open--, Promise.resolve()) : new Promise(r => waiting.push(r))), give: () => (waiting.length ? waiting.shift()() : open++) };
-  })();
   async function fetchState(idHex, what, { raw = false } = {}) {
     // An answer that came LATE (after an earlier ask gave up) is kept by the core: taken now, not asked again.
     // Measured 2026-10-06: a 4K play logged hundreds of pieces arriving after their ask's deadline, each then asked again.
     const late = core.take_got(idHex);
     if (late) return raw ? late : livePiece(late);
     const [, frames] = core.frames_get(bytes(idHex));
-    await gate.take();
-    const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex, what, WAIT.ask)
-      .catch(() => ({ kind: "get-failed" }))
-      .finally(() => gate.give());
+    // Through the node's one cap on gets (`slot`).
+    const said = await slot(() => ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex, what, WAIT.ask).catch(() => ({ kind: "get-failed" })));
     const st = said.kind === "got" ? core.take_got(idHex) : null;
     return !st || raw ? st : livePiece(st);
   }

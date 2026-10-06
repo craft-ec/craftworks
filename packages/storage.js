@@ -580,19 +580,22 @@ export async function start(ctx) {
         out.blocks += g.slots.length;
         out.missing += g.slots.length - present;
         out[present - g.k >= parity ? "whole" : present >= g.k ? "degraded" : "damaged"] += 1;
+        // Only what did not answer is put (rebuilt from its group where needed): re-putting every block read floods the
+        // node until its own reads fail (measured on files 2026-10-06: 256 of 433 unanswered re-putting all, 0 reading).
         const puts = [];
-        for (const [b] of g.slots) {
+        g.slots.forEach(([b], i) => {
+          if (there[i]) return;
           const p = core.tail_keep_put(id, b);
           if (p) puts.push(p);
           else out.unmade += 1;
-        }
+        });
         await blocks.put(puts, `keeping ${app}`);
         out.put += puts.length;
       }
       const said = await ask(core.tail_keep_state(id), x => (x.kind === "put" && x.key === name) || x.kind === "refused", `keeping ${app}`, 60000);
       if (said.kind === "refused") throw new Error(`${app}: its state was refused: ${said.said}`);
       out.ms = Math.round(performance.now() - t0);
-      ctx.log("kept", { what: `${app}: ${out.blocks} block(s) in ${out.groups} group(s) — ${out.whole} whole, ${out.degraded} degraded, ${out.damaged} damaged; ${out.put} put again${out.unmade ? `, ${out.unmade} not made here` : ""}`, ms: out.ms });
+      ctx.log("kept", { what: `${app}: ${out.blocks} block(s) in ${out.groups} group(s) — ${out.whole} whole, ${out.degraded} degraded, ${out.damaged} damaged; ${out.put} put again (not answering)${out.unmade ? `, ${out.unmade} not made here` : ""}`, ms: out.ms });
       return out;
     }
 

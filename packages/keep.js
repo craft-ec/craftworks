@@ -1,11 +1,11 @@
 // KEEP, a service (started by the header, on every page, after the page is up): the LIFECYCLE of this person's data
 // (phase 4) — what keeps it on the network with no server. A table's ASSET is every block its current tree reaches;
-// KEEPING it asks each block (its HEALTH: per group, WHOLE / DEGRADED / DAMAGED), puts each one again (re-published
-// where it is there, repaired where it is not) and puts the tail's signed state again (`storage` tables' `keep`).
+// KEEPING it asks each block (its HEALTH: per group, WHOLE / DEGRADED / DAMAGED), puts again only those that do not
+// answer (rebuilt from their group) and puts the tail's signed state again (`storage` tables' `keep`).
 // DUE, with no job list: a table this node writes is due when its record in the account's table `keep` is missing or
 // older than a week. FILES too (`files.keep`): every coded file of the account and of each space this person is in —
-// each piece asked (HEALTH per generation) and put again. One table or file at a time, in the background, while any
-// page of the account is open — and the Storage page keeps them all at once on a click.
+// each piece asked (HEALTH per generation), a generation not whole rebuilt and its missing fragments made again.
+// One table or file at a time, in the background, while any page of the account is open — and the Storage page keeps them all at once on a click.
 //
 //   const keep = await ctx.require("keep");
 //   await keep.status()      // tables: [{ name, at, groups, blocks, whole, degraded, damaged, missing, put, unmade, ms }]
