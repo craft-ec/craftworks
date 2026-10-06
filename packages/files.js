@@ -155,7 +155,7 @@ export async function start(ctx) {
       () => false,
     );
 
-  async function put(file, { space: sp = null, public: pub = false, app = null, inline = true, onProgress = () => {} } = {}) {
+  async function put(file, { space: sp = null, public: pub = false, app = null, inline = true, made = false, onProgress = () => {} } = {}) {
     const size = file.size;
     const name = file.name ?? "file";
     const type = file.type || "application/octet-stream";
@@ -173,7 +173,7 @@ export async function start(ctx) {
     const keyHex = hex(key);
     const secret = pub ? null : await secretOf(st.s, key);
     const burn = secret ? await sha(secret) : new Uint8Array(32);
-    const root = await store(key, size, name, type, (a, b) => file.slice(a, b).arrayBuffer().then(x => new Uint8Array(x)), onProgress, null, burn);
+    const root = await store(key, size, name, type, (a, b) => file.slice(a, b).arrayBuffer().then(x => new Uint8Array(x)), onProgress, null, burn, made ? { made: true } : {});
     const id = root;
     // The row keeps the BURN SECRET (`x`): whoever re-keys the file later burns these pieces with it.
     if (!(await rowOf(sp, id).catch(() => null))) await setRow(sp, { id, key: keyHex, root, b: hex(burn), ...(secret ? { x: hex(secret) } : {}), h: hex(hash), pub: !!pub, app, n: pub ? -1 : st.n });
@@ -212,7 +212,8 @@ export async function start(ctx) {
     };
     return { at, read: () => t.rows().find(r => r.key === k && r.value)?.value, write: v => t.put(k, v), done: () => t.remove(k) };
   }
-  async function store(key, size, name, type, slice, onProgress = () => {}, progress = null, burn = new Uint8Array(32)) {
+  // `extra`: kept with its progress (`made`: bytes a page made, not a file a person picked — not listed as their upload).
+  async function store(key, size, name, type, slice, onProgress = () => {}, progress = null, burn = new Uint8Array(32), extra = {}) {
     const keyHex = hex(key);
     const plan = JSON.parse(glue.file_plan(size));
     // RESUME: the generations already stored (the same key: the same fragments at the same addresses).
@@ -228,7 +229,7 @@ export async function start(ctx) {
     // 1.36 MB/s link). Each finished generation is recorded at once, so a resume still skips exactly the stored ones.
     let sentBytes = stored.reduce((n, s, g) => n + (s?.length >= Math.min(GEN, plan.chunks - g * GEN) + EXTRA ? Math.min(genBytes, size - g * genBytes) : 0), 0);
     let recording = Promise.resolve();
-    const record = () => (recording = recording.then(() => prog.write(JSON.stringify({ key: keyHex, name, size, type, stored, at: Date.now() })).catch(() => {})));
+    const record = () => (recording = recording.then(() => prog.write(JSON.stringify({ key: keyHex, name, size, type, stored, at: Date.now(), ...extra })).catch(() => {})));
     let nextGen = 0;
     let failed = null;
     const worker = async () => {
@@ -541,5 +542,24 @@ export async function start(ctx) {
     return out;
   }
 
-  return { keep, put, keyOf, get, stream, chunk, range, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
+  // UPLOADS NOT FINISHED (this account's, from any device): the background queue lists them.
+  async function uploads() {
+    const ups = await storage.table("uploads");
+    await ups.settled;
+    return ups
+      .rows()
+      .filter(r => r.value)
+      .flatMap(r => {
+        try {
+          const v = JSON.parse(r.value);
+          // A rendition's (rows from before `made` named it by its codec and height).
+          if (v.made || /\.(avc|hevc|av1|aac)\.\d+p\.mp4$/.test(v.name ?? "")) return [];
+          const gens = JSON.parse(glue.file_plan(v.size)).gens;
+          return [{ name: v.name, size: v.size, done: (v.stored ?? []).filter(Boolean).length / Math.max(1, gens), at: v.at }];
+        } catch {
+          return [];
+        }
+      });
+  }
+  return { keep, put, uploads, keyOf, get, stream, chunk, range, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
 }

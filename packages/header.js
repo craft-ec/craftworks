@@ -77,11 +77,12 @@ export function mount(ctx, el) {
       <span class="end"></span>
       <span class="inbox" data-of="recent"><button type="button" title="Notifications">🔔</button><div class="results" hidden></div></span>
       <span class="inbox" data-of="mentions"><button type="button" title="Mentions">@</button><div class="results" hidden></div></span>
+      <span class="inbox tasks" hidden><button type="button" title="Background work: uploads and videos still being made">⏳</button><div class="results" hidden></div></span>
       <span class="find"><input type="search" placeholder="🔍 Search or paste a link" aria-label="Search everything" autocomplete="off"><div class="results" hidden></div></span>
     </nav>`;
   // NOTIFICATIONS (🔔: each place with something unread, newest first — opened there) and MENTIONS (@: every message,
   // post or comment that mentions this person — opened at that very item), each with its count (`activity`).
-  for (const box of el.querySelectorAll(".inbox")) {
+  for (const box of el.querySelectorAll(".inbox:not(.tasks)")) {
     const of = box.dataset.of;
     const btn = box.querySelector("button");
     const out = box.querySelector(".results");
@@ -122,6 +123,50 @@ export function mount(ctx, el) {
         };
       })
       .catch(() => (box.hidden = true));
+    addEventListener("mousedown", e => !out.hidden && !box.contains(e.target) && (out.hidden = true), true);
+  }
+  // BACKGROUND WORK (⏳, shown only while there is some): this person's uploads not finished and videos with renditions
+  // still to make — the stage, how far, on this page or another, and what went quiet (its page gone: an open page of
+  // theirs takes it over within a minute). Read every 30 s; every 3 s while open. A video opens its page.
+  {
+    const box = el.querySelector(".tasks");
+    const btn = box.querySelector("button");
+    const out = box.querySelector(".results");
+    const h = (tag, props = {}, ...kids) => {
+      const e = Object.assign(document.createElement(tag), props);
+      e.append(...kids.filter(k => k != null && k !== false));
+      return e;
+    };
+    const pct = p => `${Math.round((p || 0) * 100)}%`;
+    let list = [];
+    const read = async () => {
+      if (!(await ctx.require("auth")).current()) return (list = []);
+      const [files, studio] = await Promise.all([ctx.require("files"), ctx.require("video-studio")]);
+      const [ups, vids] = await Promise.all([files.uploads().catch(() => []), studio.queue().catch(() => [])]);
+      list = [
+        ...ups.map(u => ({ what: `Uploading ${u.name}`, where: `${pct(u.done)} stored · ${(u.size / 1e6).toFixed(0)} MB · resumes when the file is picked again` })),
+        ...vids.map(v => ({
+          what: v.title,
+          where: `${v.done} of ${v.of} versions · ${v.stage}${v.p ? ` ${pct(v.p)}` : ""}${v.here ? " · on this page" : v.stalled ? " · an open page of yours takes it over within a minute" : ""} · next: ${v.next.join(", ")}`,
+          open: () => (location.hash = `#/video/p/${v.ref}`),
+        })),
+      ];
+    };
+    const draw = () => {
+      box.hidden = !list.length;
+      btn.replaceChildren("⏳", ...(list.length ? [h("span", { className: "cw-badge", textContent: String(list.length) })] : []));
+      if (out.hidden) return;
+      out.replaceChildren(
+        ...(list.length
+          ? list.map(x => h("button", { type: "button", onclick: () => x.open && ((out.hidden = true), x.open()) }, h("span", { className: "what", textContent: x.what }), h("span", { className: "where", textContent: x.where })))
+          : [h("p", { className: "none", textContent: "Nothing in the background." })]),
+      );
+    };
+    const tick = () => read().then(draw, () => {});
+    setTimeout(tick, 20000);
+    setInterval(() => out.hidden && tick(), 30000);
+    setInterval(() => !out.hidden && tick(), 3000);
+    btn.onclick = () => ((out.hidden = !out.hidden), draw(), tick());
     addEventListener("mousedown", e => !out.hidden && !box.contains(e.target) && (out.hidden = true), true);
   }
   // SEARCH, across every app: a shared item's LINK (`items.linkOf`, from any address — a node's, a server's own domain)

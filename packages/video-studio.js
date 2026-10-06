@@ -272,7 +272,7 @@ export async function start(ctx) {
     });
     if (!out) return null;
     say(`storing ${label}`);
-    const ref = await files.put(new File([out.bytes], `${name}.${r.codec}.${r.height}p.mp4`, { type: "video/mp4" }), { space, public: pub, app: "video", onProgress: e => say(`storing ${label}`, e.done / Math.max(1, e.size)) });
+    const ref = await files.put(new File([out.bytes], `${name}.${r.codec}.${r.height}p.mp4`, { type: "video/mp4" }), { space, public: pub, app: "video", made: true, onProgress: e => say(`storing ${label}`, e.done / Math.max(1, e.size)) });
     return { codec: r.codec, mime: out.mime, width, height: r.height, bitrate: r.bitrate, size: out.bytes.byteLength, ref, index: out.index };
   }
   // Never inline: it grows with the video (its fragment index), and the item's row must stay small.
@@ -295,10 +295,10 @@ export async function start(ctx) {
   // for every rendition after it (reading it per rendition cost minutes each). One read original at a time.
   const originals = new Map(); // source id → File picked at upload (kept: on disk, not in memory)
   let read = null; // { k, file }: the one original read from the network (in memory)
-  async function originalOf(m) {
+  async function originalOf(m, onProgress) {
     const k = m.source.id ?? m.source.root;
     if (originals.has(k)) return originals.get(k);
-    if (read?.k !== k) read = { k, file: new File([await files.get(m.source)], m.name ?? "video", { type: m.source.type }) };
+    if (read?.k !== k) read = { k, file: new File([await files.get(m.source, { onProgress })], m.name ?? "video", { type: m.source.type }) };
     return read.file;
   }
 
@@ -308,8 +308,12 @@ export async function start(ctx) {
   const leases = () => storage.table("encodes");
   let working = false;
   let again = false;
+  // A WATCHDOG: the work here reports as it goes (`lease`); none for LEASE_QUIET means it hung (a store sat at 45% with
+  // nothing sent, 2026-10-06) — the next kick starts it again rather than waiting on it forever.
+  let lastBeat = 0;
   async function kick() {
-    if (working) return void (again = true);
+    if (working && Date.now() - lastBeat < LEASE_QUIET) return void (again = true);
+    if (working) ctx.log("video", { what: "background: no progress for 2 minutes — started again" });
     working = true;
     try {
       do {
@@ -342,12 +346,12 @@ export async function start(ctx) {
         held = JSON.parse(t.rows().find(r => r.key === v.ref)?.value ?? "null");
       } catch {}
       if (held && !held.waiting && held.device !== device && Date.now() - held.at < LEASE_QUIET) continue;
-      const lease = (stage, p) => t.put(v.ref, JSON.stringify({ device, at: Date.now(), stage, p: Math.round((p || 0) * 100) / 100, done: m.renditions.length, of: m.renditions.length + m.pending.length }));
+      const lease = (stage, p) => ((lastBeat = Date.now()), t.put(v.ref, JSON.stringify({ device, at: Date.now(), stage, p: Math.round((p || 0) * 100) / 100, done: m.renditions.length, of: m.renditions.length + m.pending.length })));
       let beat = 0;
       const say = (stage, p) => Date.now() - beat > 5000 && ((beat = Date.now()), lease(stage, p).catch(() => {}));
       await lease("reading the original", 0);
       const M = await mb();
-      const original = await originalOf(m);
+      const original = await originalOf(m, e => say("reading the original", e.done / Math.max(1, e.size)));
       const sp = v.board ? (await space.mine()).find(x => x.id === v.board.id) ?? null : null;
       // One rendition — the first pending this device CAN make (the rest wait for a device that can) — then the manifest
       // written again and the item's file replaced.
@@ -397,5 +401,37 @@ export async function start(ctx) {
   const replaceManifest = (item, old, ref) =>
     items.setFiles(item.ref, item.files.map(x => (x === old ? { ...ref, ...(old.preview ? { preview: old.preview } : {}), duration: old.duration, width: old.width, height: old.height } : x)));
 
-  return { make, probe, progress, kick, videoId, MANIFEST };
+  // THE QUEUE (the header's ⏳): this person's videos with renditions still to make — what is being made now, by which
+  // device, and whether it went quiet (its page gone: an open page takes it over within a minute).
+  async function queue() {
+    const me = await space.account().catch(() => null);
+    if (!me) return [];
+    const t = await leases();
+    const mine = await items.list({ by: me.id }, "new", kinds.inDomain("video")).catch(() => []);
+    const out = [];
+    for (const v of mine) {
+      const f = v.files?.find(x => x.type === MANIFEST);
+      if (!f) continue;
+      const m = await (await ctx.require("video-player")).manifest(f).catch(() => null);
+      if (!m?.pending?.length) continue;
+      let l = null;
+      try {
+        l = JSON.parse(t.rows().find(r => r.key === v.ref)?.value ?? "null");
+      } catch {}
+      const quiet = !l || Date.now() - l.at > LEASE_QUIET;
+      out.push({
+        ref: v.ref,
+        title: v.title || m.name || "video",
+        done: m.renditions.length,
+        of: m.renditions.length + m.pending.length,
+        next: m.pending.map(x => `${LABEL[x.codec]} ${x.height}p`),
+        stage: !l ? "waiting for an open page of yours" : quiet && !l.waiting ? `stalled at ${l.stage}${l.p ? ` ${Math.round(l.p * 100)}%` : ""}` : l.stage,
+        p: quiet ? 0 : l.p,
+        here: !!l && l.device === device && !quiet,
+        stalled: !!l && quiet && !l.waiting,
+      });
+    }
+    return out;
+  }
+  return { make, probe, progress, kick, queue, videoId, MANIFEST };
 }
