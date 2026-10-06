@@ -44,10 +44,14 @@ earlier users keeping what they used, and comes back to them from the later user
 subscriber's own nodes** (§1). Anyone else may opt in as a keeper too (a creator's own nodes, a space's, paid pinning
 of cold files, §6).
 
-- **Proof of holding:** each day a public beacon (the hash of the day's newest Discover entries) picks, per keeper, a
-  **fixed share of the pieces it claims** (about 1% a day); the keeper publishes `hash(piece ‖ beacon ‖ node id)` for
-  each. The node id makes every keeper's answer its own (one cannot copy another's); the piece is public data at a
-  known address, so anyone can check an answer. A claim that cannot be answered earns nothing that day.
+- **Proof of holding — a continuous, deterministic random queue** (as ZephCraft's HealthScan: a small slice every
+  cycle, never one big daily round; `craftec/docs/CRAFTOBJ_DESIGN.md` §HealthScan, rendezvous by
+  `BLAKE3(node_id ‖ cid ‖ epoch)`). Every few minutes a public **beacon** turns over (the newest Discover head — known
+  to nobody beforehand); each keeper's queue is its claimed pieces ranked by `BLAKE3(beacon ‖ node id ‖ piece)`, and it
+  answers the head of that queue — a slice sized so a day adds up to about 1% of its claim — with
+  `hash(piece ‖ beacon ‖ node id)`, within that beacon's window. Deterministic: anyone recomputes which pieces were due
+  and checks a sample against the public pieces. Random: nobody knows the next slice before its beacon. The node id
+  makes every keeper's answer its own (none can copy another's); a slice not answered in its window earns nothing.
 - **Why holding beats fetching on demand:** the challenge grows with the claim, so a keeper that deletes and re-fetches
   pieces only when challenged re-fetches the whole file about every 100 days, forever — bandwidth costs more than
   disk, so receive-and-delete costs more than keeping. Bandwidth is the overhead of carrying, never the thing paid;
