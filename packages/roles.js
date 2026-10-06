@@ -293,6 +293,14 @@ export async function start(ctx) {
       onChange: f => changed.push(f),
       settled: t.settled,
     };
+    // ITS RETENTION handed to `storage` (its tables' history kept that long): the `space`/`history` setting, in days
+    // ("" — the plan's; "0": off).
+    const retain = () => {
+      const v = r.config("space", "history", "");
+      storage.setRetention(sp.id, v === "" || v == null ? null : Number(v));
+    };
+    t.settled.then(retain, () => {});
+    changed.push(retain);
     return r;
   }
 

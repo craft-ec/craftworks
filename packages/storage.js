@@ -16,6 +16,9 @@
 //   await notes.put(key, value)   await notes.remove(key)   notes.onChange(fn)
 // HISTORY's retention (baseline; a plan raises it later): the roots a table had are kept this long, at most this many.
 const HISTORY = { days: 7, roots: 200 };
+// A SPACE's own retention (its setting, `roles` hands it here): at most the plan's (HISTORY.days); 0: no history kept.
+const retention = new Map(); // space id → days
+const daysFor = sp => Math.min(HISTORY.days, retention.get(sp?.id ?? sp) ?? HISTORY.days);
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   // What a space is: its keys and its own tables' names (the account, here).
@@ -309,7 +312,7 @@ export async function start(ctx) {
         const out = [];
         // Within the retention, whenever it is read (the log is pruned only by the next flush: a table not written
         // again keeps older entries, never shown).
-        const since = Date.now() - HISTORY.days * 86400e3;
+        const since = Date.now() - daysFor(inSpace) * 86400e3;
         // The CURRENT tree too: a row changed since the last flush (in the tail) had its tree's value before that
         // change — an earlier version as much as a logged root's (its `at`: now — replaced by what the tail holds).
         const now = core.tail_root(id);
@@ -624,7 +627,9 @@ export async function start(ctx) {
         // …then the replaced root LOGGED (its history: kept for the retention — every row as it was then reads back).
         if (was) {
           const now = Date.now();
-          const l = core.tail_log_root(id, prior, was, now, now - HISTORY.days * 86400e3, HISTORY.roots);
+          // The space's retention (0: Off — the log pruned to nothing, the replaced root not kept).
+          const days = daysFor(inSpace);
+          const l = core.tail_log_root(id, prior, was, now, now - days * 86400e3, days ? HISTORY.roots : 0);
           if (l) await step(l, "keeping its history").catch(e => ctx.log("history", { what: `${app}: its history not logged: ${e.message}` }));
         }
         return;
@@ -1109,6 +1114,8 @@ export async function start(ctx) {
 
   const openedNames = new Set(); // the account's tables this page asked for
   // A table of the account, or (`sp`) of another space.
+  // A SPACE's RETENTION (`roles`, from its `space`/`history` setting): days, at most the plan's.
+  const setRetention = (spaceId, days) => (days == null ? retention.delete(spaceId) : retention.set(spaceId, Math.max(0, Math.min(HISTORY.days, days))));
   async function table(name, sp = null, opts = {}) {
     if (sp && sp.kind !== "account") return merged(name, sp, opts);
     if (CHANNELS.has(name)) return channel(name);
@@ -1319,5 +1326,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], own: ownTables, table, log, publicTail, readOnly, describe, describeSpaces, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }
