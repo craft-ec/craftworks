@@ -8,6 +8,7 @@
 //   usage.track(itemRef, { kind, title }, [fileRoot, …])   // whose files are these (their bytes count for the item)
 //   usage.watch(mediaElement, itemRef, { kind, title })      // its playing time counted
 //   usage.opened(itemRef, { kind, title })                   // an item's page opened
+//   usage.reading(pageElement, itemRef, { kind, title })     // its time on the page counted (an item that does not play)
 //   await usage.month("2026-10")                             // [{ ref, kind, title, s, b, n }], most used first
 //   await usage.flush()
 export async function start(ctx) {
@@ -50,6 +51,18 @@ export async function start(ctx) {
     media.addEventListener("seeking", () => (last = null));
   }
   const opened = (ref, info) => add(ref, info, { n: 1 });
+  // TIME ON THE PAGE: each second its page is shown, the window focused and the person active (an input in the last
+  // 2 minutes: a tab left open is not reading), until the page goes.
+  let lastInput = Date.now();
+  for (const e of ["pointermove", "pointerdown", "keydown", "wheel", "scroll", "touchstart"]) addEventListener(e, () => (lastInput = Date.now()), { passive: true, capture: true });
+  function reading(el, ref, info) {
+    let shown = false; // attached after it is made: gone only once it was there
+    const t = setInterval(() => {
+      if (!el.isConnected) return shown ? clearInterval(t) : undefined;
+      shown = true;
+      if (document.visibilityState === "visible" && document.hasFocus() && Date.now() - lastInput < 120e3) add(ref, info, { s: 1 });
+    }, 1000);
+  }
   const parse = v => {
     try {
       return JSON.parse(v ?? "null");
@@ -86,5 +99,5 @@ export async function start(ctx) {
       .map(r => ({ ref: r.key.slice(p.length), ...parse(r.value) }))
       .sort((a, b) => b.s - a.s || b.b - a.b);
   }
-  return { track, watch, opened, month, flush, monthOf };
+  return { track, watch, opened, reading, month, flush, monthOf };
 }

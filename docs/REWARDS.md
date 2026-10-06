@@ -19,10 +19,17 @@ fetching your own pieces) moves your money back to you and earns nothing. There 
 
 The percentages are a setting of the Craftworks treasury (governed, published), not hard-coded.
 
+**Example.** A pays $10. A watched 3 h of Ana's videos and 1 h of Ben's; those files were 9 GB and 3 GB of data for A;
+three keepers proved equal shares of Ana's files. Creators' $6: Ana $4.50, Ben $1.50 (by time). Carriers' $3: Ana's
+files $2.25, Ben's $0.75 (by data), Ana's split $0.75 to each of her three keepers (by pieces proved). Network $1.
+Nothing goes to A's own account or nodes; a file A never touched earns nothing from A.
+
 ## 3. Creators: the subscriber's own record
 
 Each subscriber's pages keep a **usage record** in the subscriber's own table (`usage`, sealed like any table):
-item → time watched / listened (media), opened (text), downloaded (files), per month. At month end the record is
+item → its TIME, per month, in ONE unit for every kind (owner, 2026-10-06): seconds — what played, for a video or
+an audio; the time its page was in front of the person (shown, focused, with an input in the last 2 minutes), for
+everything else (a note, a paste, a picture, a book). Also kept: opens, and the data its files brought. At month end the record is
 summed into weights, signed by the subscriber's account, and published as a **statement** (one per subscriber per
 month). The creators' share is split by those weights.
 

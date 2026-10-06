@@ -38,7 +38,7 @@ export async function mount(ctx, el) {
     if (!rows.length) return (out.textContent = "Nothing used this month yet.");
     const t = document.createElement("table");
     const head = t.createTHead().insertRow();
-    for (const x of ["What", "Watched", "Data", "Opened"]) head.append(Object.assign(document.createElement("th"), { textContent: x }));
+    for (const x of ["What", "Time", "Data", "Opened"]) head.append(Object.assign(document.createElement("th"), { textContent: x }));
     const body = t.createTBody();
     for (const r of rows) {
       const tr = body.insertRow();
@@ -53,7 +53,7 @@ export async function mount(ctx, el) {
     out.replaceChildren(t);
   };
   pick.onchange = draw;
-  const note = Object.assign(document.createElement("p"), { className: "note", textContent: "Watched: the time a video or an audio played. Data: what its files brought over the network. Kept in your own table — only you see it." });
+  const note = Object.assign(document.createElement("p"), { className: "note", textContent: "Time: what played, for a video or an audio; the time its page was in front of you, for everything else. Data: what its files brought over the network. Kept in your own table — only you see it." });
   root.append(pick, note, out);
   await draw();
 }

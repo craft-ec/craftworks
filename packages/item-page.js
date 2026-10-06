@@ -80,7 +80,12 @@ export async function start(ctx) {
     if (parts.votes) items.view(ref, { outside });
     const page = h("div", { className: "cw-page" });
     // OPENED: counted in this person's month (`usage`).
-    ctx.require("usage").then(u => u.opened(it.ref ?? ref, { kind: it.kind, title: it.title ?? null }), () => {});
+    // Its TIME: what played, for a video or an audio (`media-look`); else the time on this page.
+    ctx.require("usage").then(u => {
+      const info = { kind: it.kind, title: it.title ?? null };
+      u.opened(it.ref ?? ref, info);
+      if (kinds.parts(it.kind).look !== "player") u.reading(page, it.ref ?? ref, info);
+    }, () => {});
     const redraw = async () => page.replaceWith(await show(ref, { outside, app, back, discover }));
     const removed = () => (location.hash = back ?? items.pageOf(ref, it.kind).replace(/\/(p|w)\/.*$/, ""));
     let host = null; // where its text is, to edit in place
