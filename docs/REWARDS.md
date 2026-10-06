@@ -44,8 +44,8 @@ month). The creators' share is split by those weights.
 Freenet does not tell a reader which node answered (a get may be answered by any node that cached it on the way), so
 bandwidth cannot be paid per answer. Owner, 2026-10-06: **pay the holders, weighted by demand** — and **the users are
 the keepers**: a subscriber's node already received every piece of what it watched, read or downloaded, so it keeps
-what it used (up to a storage limit its owner sets, oldest dropped first; the `keep` capability re-reads and repairs
-it) and registers in the **keepers bag** as its keeper. Supply follows demand by itself (a hit has as many keepers as
+what it used (up to a storage limit its owner sets, oldest dropped first; the `keep` capability re-reads it, READ ONLY — owner 2026-10-07: a keeper only keeps, healing is every reader's,
+during its read) and registers in the **keepers bag** as its keeper. Supply follows demand by itself (a hit has as many keepers as
 past viewers, as torrent seeding), and the money moves between subscribers: a subscriber's carrier share goes to the
 earlier users keeping what they used, and comes back to them from the later users of what they keep — **never to the
 subscriber's own nodes** (§1). Anyone else may opt in as a keeper too (a creator's own nodes, a space's, paid pinning
@@ -89,7 +89,8 @@ of cold files, §6).
   work.
 - **Everyone gets their turn:** on the global network every node eventually takes part in hosting (Freenet places data
   across the ring), so carrying pay spreads across participants over time rather than pooling at a few servers.
-- Readers repair and keep (files that heal on read) work whether or not anyone is paid; keepers make them reliable.
+- Healing is every reader's (files heal on read: a missing fragment is made again by whoever reads it), paid or not; a keeper
+  does not repair — it KEEPS, so that a reader finds enough to read and heal from.
 - Exact per-answer bandwidth pay would need the node to name the peer that delivered each piece (a node change, and
   even then only the last hop): not planned.
 

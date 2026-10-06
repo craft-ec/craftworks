@@ -9,8 +9,8 @@
 // WATCHED (rewards step 2, docs/REWARDS.md §4: the users are the keepers): the files this person PLAYED — anyone's —
 // kept on this node by RE-READING them (Freenet evicts what was read least recently: measured 2026-10-07, a piece
 // re-read survives a flood that evicts its control), a day apart, newest used first, within a LIMIT the person sets
-// (Usage app; oldest dropped past it). Each re-read is `files.keep`: a piece the node no longer holds is fetched back,
-// a fragment no one holds made again.
+// (Usage app; oldest dropped past it). Each pass is `files.keep` READ ONLY (owner 10-07: a keeper only keeps; healing
+// is every reader's, during its read): a piece the node no longer holds is fetched back by the read itself.
 //
 //   const keep = await ctx.require("keep");
 //   await keep.status()      // tables: [{ name, at, groups, blocks, whole, degraded, damaged, missing, put, unmade, ms }]
@@ -19,6 +19,12 @@
 //   keep.watched(fileRef, itemRef, { title })   // a file this person played: kept for others (rewards step 2)
 //   await keep.kept()        // { limit, files: [{ root, item, title, size, used, at, whole, missing, error }] }
 //   await keep.setLimit(bytes)   // how much of what was played this node keeps (0: none)
+//   await keep.keepers(root) // [did, …]: who keeps a file (this month or last) — the KEEPERS BAG (rewards step 3)
+//
+// THE KEEPERS BAG (rewards step 3): each file's public bag `keepers:<root>` (`index.point`), where a keeper says, once
+// a month, that it keeps the file (`{ did, m: "YYYY-MM" }`; the same claim again merges). A CLAIM, unsigned like every
+// pointer and public like a view count (owner 10-06: confidential later): it shows who keeps what; the proofs (step 4)
+// are what will make a claim count for pay.
 export async function start(ctx) {
   const [storage, space, files] = await Promise.all(["storage", "space", "files"].map(n => ctx.require(n)));
   const EVERY = 7 * 86400000; // a table kept longer ago than this is due
@@ -144,12 +150,28 @@ export async function start(ctx) {
   async function keepWatched(w) {
     let timer;
     const row = { id: w.root, key: w.w.file.key, root: w.root, ...(w.w.file.b ? { b: w.w.file.b } : {}) };
-    const out = await Promise.race([files.keep(null, row), new Promise((_, no) => (timer = setTimeout(() => no(new Error(`not kept in ${WATCH_LIMIT / 60000} min: tried again later`)), WATCH_LIMIT)))])
+    const out = await Promise.race([files.keep(null, row, { repair: false }), new Promise((_, no) => (timer = setTimeout(() => no(new Error(`not kept in ${WATCH_LIMIT / 60000} min: tried again later`)), WATCH_LIMIT)))])
       .catch(e => ({ error: e?.message ?? String(e) }))
       .finally(() => clearTimeout(timer));
     const { id: _id, ...rec } = out;
+    if (!rec.error && rec.gens && rec.whole === rec.gens) await claim(w.root).catch(e => ctx.log("keep", { what: `not said in the keepers bag: ${e?.message ?? e}` }));
     // A failure is retried within the hour, as a table's; a keep is good for a DAY.
     await (await keptTable()).put(w.key, JSON.stringify({ ...w.w, ...rec, at: rec.error ? Date.now() - DAY + RETRY : Date.now() }));
+  }
+  const monthOf = (t = Date.now()) => new Date(t).toISOString().slice(0, 7);
+  async function keepers(root) {
+    const index = await ctx.require("index");
+    const now = new Date();
+    const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const months = new Set([monthOf(), monthOf(last.getTime())]);
+    const claims = await index.pointers(`keepers:${root}`).catch(() => []);
+    return [...new Set(claims.filter(c => c && typeof c.did === "string" && months.has(c.m)).map(c => c.did))];
+  }
+  // Said in the bag once the file is WHOLE here (every generation), once a month (the same claim merges).
+  async function claim(root) {
+    const me = (await space.account())?.id;
+    if (!me) return;
+    await (await ctx.require("index")).point(`keepers:${root}`, { did: me, m: monthOf() });
   }
   const watchedDue = async () => (await kept()).files.filter(w => Date.now() - w.at > DAY);
 
@@ -200,5 +222,5 @@ export async function start(ctx) {
     tick();
     setInterval(tick, 60000);
   }, 120000);
-  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.log("keep", { what: `not noted for keeping: ${e?.message ?? e}` })), kept, setLimit };
+  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.log("keep", { what: `not noted for keeping: ${e?.message ?? e}` })), kept, setLimit, keepers };
 }

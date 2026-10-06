@@ -80,17 +80,20 @@ export async function mount(ctx, el) {
     if (!k.files.length) return (klist.textContent = k.limit ? "Nothing yet: play something (not yours)." : "Off.");
     const t = document.createElement("table");
     const head = t.createTHead().insertRow();
-    for (const x of ["What", "Size", "Played", "Kept", "Health"]) head.append(Object.assign(document.createElement("th"), { textContent: x }));
+    for (const x of ["What", "Size", "Played", "Kept", "Health", "Keepers"]) head.append(Object.assign(document.createElement("th"), { textContent: x }));
     const body = t.createTBody();
     for (const f of k.files) {
       const tr = body.insertRow();
       const what = document.createElement("td");
       what.append(f.item ? Object.assign(document.createElement("a"), { href: items.pageOf(f.item, "video"), textContent: f.title || "an item" }) : `${f.root.slice(0, 8)}…`);
       const health = f.error ? f.error : f.gens ? `${f.whole}/${f.gens} whole${f.missing ? `, ${f.missing} unanswered` : ""}` : "—";
-      tr.append(what, td(size(f.size), "num"), td(ago(f.used)), td(ago(f.at)), td(health));
+      const who = td("…", "num");
+      tr.append(what, td(size(f.size), "num"), td(ago(f.used)), td(ago(f.at)), td(health), who);
+      // Who keeps it (the keepers bag, this month or last): you among them once it is whole here.
+      keep.keepers(f.root).then(ds => (who.textContent = String(ds.length)), () => (who.textContent = "—"));
     }
     const foot = t.createTFoot().insertRow();
-    foot.append(td("Total"), td(`${size(k.total)} of ${size(k.limit)}`, "num"), td(""), td(""), td(""));
+    foot.append(td("Total"), td(`${size(k.total)} of ${size(k.limit)}`, "num"), td(""), td(""), td(""), td(""));
     klist.replaceChildren(t);
   };
   limit.onchange = async () => (await keep.setLimit(Number(limit.value)), drawKept());

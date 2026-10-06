@@ -489,7 +489,9 @@ export async function start(ctx) {
   // and put again as it is stored (a burned piece never: it stays burned). HEALTH per generation: WHOLE (every listed
   // fragment there), DEGRADED (at least the k it decodes from), DAMAGED (fewer). `{ id, at, pieces, missing, gens,
   // whole, degraded, damaged, put }`.
-  async function keep(sp, row) {
+  // `repair: false` — READ ONLY (a keeper's pass, `keep.js` WATCHED: keeping is reading; healing is every reader's,
+  // during its read): every piece asked, health counted, nothing made again or put.
+  async function keep(sp, row, { repair = true } = {}) {
     const t0 = performance.now();
     const ref = { key: row.key, root: row.root, name: `${row.id.slice(0, 8)}…`, ...(row.b ? { b: row.b } : {}) };
     const f = await open(ref);
@@ -527,7 +529,7 @@ export async function start(ctx) {
       const there = got.filter(Boolean).length;
       const k = Math.min(GEN, f.plan.chunks - g * GEN);
       out[there === listed.length ? "whole" : there >= k ? "degraded" : "damaged"] += 1;
-      if (there === listed.length) return;
+      if (there === listed.length || !repair) return;
       // Fewer than 16 answered HERE is not "lost": this read ran among keep's own puts (measured 2026-10-06: a pass
       // counted generations damaged whose pieces a plain read then found). The rebuild races every fragment itself and
       // fails cleanly when it truly cannot; a fragment made again that was there is the same bytes.

@@ -102,7 +102,8 @@ export async function start(ctx) {
     };
     // STILL BEING MADE (the uploader's devices, in the background): what is done, and what now.
     const making = h("span", { className: "level" });
-    const el = h("div", { className: "cw-media" }, audio ? view.el : stage, h("div", {}, making), view.note, speed, view.line, view.timed);
+    const kept = h("span", { className: "level" });
+    const el = h("div", { className: "cw-media" }, audio ? view.el : stage, h("div", {}, making, kept), view.note, speed, view.line, view.timed);
     let quiet = 0; // checks in a row with nothing being made (the work may not have started yet)
     const showMaking = async () => {
       if (!el.isConnected || v.by !== (await space.account())?.id) return;
@@ -122,10 +123,16 @@ export async function start(ctx) {
         // File REFS (not only roots): what brings bytes here is also kept for others (`keep.watched`) — not one's own.
         const mine = v.by === (await space.account())?.id;
         u.track(v.ref, { ...info, mine }, [f]);
+        let roots = [f.root];
         if (f.type === studio.MANIFEST) {
           const m = await player.manifest(f).catch(() => null);
           if (m) u.track(v.ref, { ...info, mine }, [m.strip?.ref, ...m.renditions.map(r => r.ref)]);
+          if (m) roots = m.renditions.map(r => r.ref?.root).filter(Boolean);
         }
+        // WHO KEEPS IT (the keepers bag, `keep.keepers`): the people keeping any of its files this month or last.
+        const keep = await ctx.require("keep");
+        const ds = new Set((await Promise.all(roots.map(r => keep.keepers(r).catch(() => [])))).flat());
+        if (ds.size && el.isConnected) kept.textContent = ` · kept by ${ds.size} ${ds.size === 1 ? "person" : "people"}`;
       }, () => {});
       if (f && audio) view.prepare().catch(e => (view.note.textContent = e.message ?? String(e)));
       else if (f)
