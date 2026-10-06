@@ -230,6 +230,15 @@ export async function start(ctx) {
   // older branch; a restored account's) — it reads nothing new there. On EVERY LOAD it asks the owner, the admins and
   // the other members to welcome it again onto the owner's branch (`welcome-again`, a repair: each ask answered by any
   // member on that branch — nobody new is let in), until it is on it.
+  // SAFE (owner 10-06, after an ask from a page only briefly behind took its asker out): asked only once BEHIND FOR
+  // 10 minutes in this page (a key change still being processed never asks), carrying where this node is (epoch,
+  // branch) — the answer checks it, and the asker's own announcement, before welcoming anyone again.
+  const BEHIND_FOR = 10 * 60 * 1000;
+  // Kept in the page (the app's frame is sandboxed: no localStorage): a page behind for 10 minutes asks; a reload
+  // starts the clock again — on the safe side.
+  const behind = new Map(); // space id → since when this page has seen it behind
+  const behindSince = id => behind.get(id) ?? 0;
+  const setBehind = (id, at) => (at ? behind.set(id, at) : behind.delete(id));
   const caughtUpAsked = new Set();
   async function catchUp(sp) {
     if (caughtUpAsked.has(sp.id)) return false;
@@ -239,14 +248,18 @@ export async function start(ctx) {
     if (!me || !st || st.removed) return false;
     const own = await ownerBranch(sp).catch(() => null);
     if (!own) return false;
-    if (st.epoch >= own.epoch && (await g.fingerprint(own.epoch).catch(() => null)) === own.branch) return false;
+    const mine = await g.fingerprint(st.epoch).catch(() => null);
+    if (st.epoch >= own.epoch && (await g.fingerprint(own.epoch).catch(() => null)) === own.branch) return (setBehind(sp.id, 0), false);
+    const since = behindSince(sp.id);
+    if (!since) return (setBehind(sp.id, Date.now()), false);
+    if (Date.now() - since < BEHIND_FOR) return false;
     caughtUpAsked.add(sp.id);
     const r = await (await ctx.require("roles")).of(sp).catch(() => null);
     // Its people as the public acts list them too (this node may read none of the space's own acts yet).
     const pub = await (await ctx.require("roles")).ofPublic(sp).then(async p => (await p.settled, p.members()), () => []);
     const byRole = [...(r?.members() ?? []), ...pub].sort((a, b) => ["owner", "admin"].includes(b.role) - ["owner", "admin"].includes(a.role));
     const to = [...new Set([r?.owner ?? sp.governance?.owner, ...byRole.map(m => m.did)].filter(d => d && d !== me.id))].slice(0, 12);
-    for (const did of to) await index.send(did, { kind: "welcome-again", space: sp.id, from: me.id, repair: true, at: Date.now() }).catch(e => ctx.log("conversation", { what: `${sp.name}: asking ${short(did)} for its keys: ${e.message}` }));
+    for (const did of to) await index.send(did, { kind: "welcome-again", space: sp.id, from: me.id, repair: true, epoch: st.epoch, branch: mine, at: Date.now() }).catch(e => ctx.log("conversation", { what: `${sp.name}: asking ${short(did)} for its keys: ${e.message}` }));
     ctx.log("conversation", { what: `${sp.name}: this node's keys are behind the owner's (epoch ${st.epoch}, theirs ${own.epoch}) — asked ${to.length} to welcome it onto theirs` });
     return true;
   }
@@ -351,6 +364,15 @@ export async function start(ctx) {
           if (it.repair && !own) continue;
           // Only from ON the owner's branch: a welcome from another branch would leave them as behind as before.
           if (own && (await keys.group(sp).fingerprint(own.epoch).catch(() => null)) !== own.branch) continue;
+          // CONFIRMED BEHIND, or nothing is done (a welcome again takes their entry out first): an ask that says it is
+          // on the owner's branch already, or one without where it is (from before), is not answered; nor one whose
+          // device has announced the owner's branch at the owner's epoch since.
+          if (it.repair) {
+            if (it.epoch == null || (it.epoch >= own.epoch && it.branch === own.branch)) continue;
+            const devs = await directory.devices(it.from).catch(() => []);
+            const ann = (await index.spacePointers(sp, "writers").catch(() => [])).filter(x => x?.branch && devs.includes(x.w));
+            if (ann.some(x => x.epoch >= own.epoch && x.branch === own.branch)) continue;
+          }
           await welcome(sp, it.from, name, null, own ? { epoch: own.epoch, branch: own.branch } : undefined);
           // A catch-up recorded in the space (who welcomed whom: `keyStatus`'s "caught up by").
           if (own) await index.spacePoint(sp, "writers", { w: sp.self, repair: it.from, for: own.branch }).catch(() => {});
