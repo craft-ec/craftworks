@@ -280,6 +280,10 @@ export async function start(ctx) {
   // One GET: the state, taken (a file's pieces are read once, never kept in the core), or null. A piece's state is
   // `LIVE ‖ burn hash ‖ piece` (its piece given back), or burned (none: as good as missing); `raw`: as stored.
   async function fetchState(idHex, what, { raw = false } = {}) {
+    // An answer that came LATE (after an earlier ask gave up) is kept by the core: taken now, not asked again.
+    // Measured 2026-10-06: a 4K play logged hundreds of pieces arriving after their ask's deadline, each then asked again.
+    const late = core.take_got(idHex);
+    if (late) return raw ? late : livePiece(late);
     const [, frames] = core.frames_get(bytes(idHex));
     const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex, what, WAIT.ask).catch(() => ({ kind: "get-failed" }));
     const st = said.kind === "got" ? core.take_got(idHex) : null;

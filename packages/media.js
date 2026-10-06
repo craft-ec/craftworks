@@ -41,10 +41,10 @@ export async function mount(ctx, el) {
       .vd .none { color: var(--cw-muted); text-align: center; padding: var(--cw-space-5); }
       .vd .row { display: flex; gap: var(--cw-space-3); align-items: center; flex-wrap: wrap; }
       .cw-tile-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; color: var(--cw-fg); background: var(--cw-surface); padding: 2px 4px; }
-      .vd button:not(.cw-acts button, .cw-votes button, .cw-reacts button) { font: inherit; cursor: pointer; border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); border-radius: 999px; padding: 5px 14px; }
+      .vd button:not(.cw-acts button, .cw-votes button, .cw-reacts button, .cw-pc button) { font: inherit; cursor: pointer; border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); border-radius: 999px; padding: 5px 14px; }
       .vd button.on:not(.cw-acts button, .cw-votes button) { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       .vd form { display: grid; gap: var(--cw-space-2); max-width: 640px; }
-      .vd input, .vd textarea, .vd select { font: inherit; padding: 6px 8px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); }
+      .vd input:not(.cw-pc input), .vd textarea, .vd select:not(.cw-pc select) { font: inherit; padding: 6px 8px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); }
       .vd .said { color: var(--cw-danger); margin: 0; }
       .vd .chips { flex-basis: 100%; display: flex; gap: 6px; flex-wrap: wrap; }
       .vd .chips button { padding: 3px 12px; font-size: var(--cw-text-sm); }

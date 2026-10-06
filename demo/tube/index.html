@@ -15,8 +15,10 @@
   /* The player: 16:9, never taller than 70% of the screen (its width follows), before and after it starts. */
   .stage { position: relative; aspect-ratio: 16 / 9; max-height: 70vh; max-width: calc(70vh * 16 / 9); margin-inline: auto; background: #000; border-radius: 12px; overflow: hidden; }
   .stage video { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; object-fit: contain; }
-  .stage .start { position: absolute; inset: 0; margin: auto; width: 76px; height: 54px; border: 0; border-radius: 14px; background: var(--hot); color: #fff; font-size: 24px; cursor: pointer; z-index: 2 }
-  .stage .start:focus-visible { outline: 3px solid #fff }
+  /* The whole poster is the ▶. */
+  .stage .start { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: pointer }
+  .stage .start span { display: grid; place-items: center; width: 76px; height: 54px; border-radius: 14px; background: var(--hot); color: #fff; font-size: 24px }
+  .stage .start:focus-visible span { outline: 3px solid #fff }
   h1 { font-size: 20px; margin: 14px 0 4px }
   .meta { color: var(--dim); font-size: 14px }
   .desc { background: var(--panel); border-radius: 12px; padding: 12px 14px; margin-top: 12px }
@@ -50,7 +52,7 @@
 </header>
 <main>
   <div>
-    <div class="stage" id="stage"><video id="v" playsinline preload="none"></video><button class="start" id="start" title="Play" hidden>▶</button></div>
+    <div class="stage" id="stage"><video id="v" playsinline preload="none"></video><button class="start" id="start" title="Play" aria-label="Play" hidden><span>▶</span></button></div>
     <h1 id="title">Loading…</h1>
     <div class="meta" id="meta">connecting to your node…</div>
     <div class="desc" id="desc"></div>
@@ -127,7 +129,7 @@ const ctx = {
   params: new URLSearchParams(location.search),
   route: "/",
   // The modules' own log lines, kept short (a socket URL as its host).
-  log: (step, d = {}) => log(`${step}${d.what ? ": " + String(d.what).replace(/wss?:\/\/([^/]+)\/\S*/, "$1") : ""}`),
+  log: (step, d = {}) => step !== "node said" && log(`${step}${d.what ? ": " + String(d.what).replace(/wss?:\/\/([^/]+)\/\S*/, "$1") : ""}`),
   require: name => {
     if (!started.has(name)) started.set(name, (async () => {
       const [kind, file] = MODULES[name] ?? [];
@@ -222,7 +224,7 @@ try {
   $("start").hidden = false;
   $("start").onclick = async () => {
     $("start").remove();
-    const c = chrome.attach(stage, video, { duration: m.duration });
+    const c = chrome.attach(stage, video, { duration: m.duration, width: m.width, height: m.height });
     if (strip) c.strip(strip);
     video.autoplay = true;
     let stalls = 0;

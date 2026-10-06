@@ -12,12 +12,13 @@ export async function start(ctx) {
   const style = document.createElement("style");
   style.textContent = `
     .cw-media { display: grid; gap: var(--cw-space-3); }
-    .cw-media video { width: 100%; max-height: 70vh; background: #000; border-radius: var(--cw-radius); }
+    .cw-media video:not(.cw-pc > video) { width: 100%; max-height: 70vh; background: #000; border-radius: var(--cw-radius); }
     .cw-media audio { width: 100%; }
     .cw-media .level { font-size: var(--cw-text-xs); color: var(--cw-muted); }
     .cw-media .stage { position: relative; }
-    .cw-media .stage .start { position: absolute; inset: 0; margin: auto; width: 72px; height: 52px; border: 0; border-radius: 14px; background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 24px; cursor: pointer; }
-    .cw-media .stage .start:focus-visible { outline: 2px solid var(--cw-accent); }
+    .cw-media .stage .start { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; width: 100%; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: pointer; }
+    .cw-media .stage .start span { display: grid; place-items: center; width: 72px; height: 52px; border-radius: 14px; background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 24px; }
+    .cw-media .stage .start:focus-visible span { outline: 2px solid var(--cw-accent); }
     .cw-media .cover { width: min(320px, 70vw); aspect-ratio: 1; border-radius: var(--cw-radius); overflow: hidden; background: var(--cw-hover); display: grid; place-items: center; font-size: 4rem; }
     .cw-media .cover img { width: 100%; height: 100%; object-fit: cover; }
     .cw-media .timed { max-height: 320px; overflow: auto; border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-3); }
@@ -85,8 +86,9 @@ export async function start(ctx) {
     const view = mediaView.create({ file: f, item: v.ref, kind: audio ? "audio" : "video", outside, itemKind: v.kind, onLevel, onLevels, cover: audio, place: audio });
     const video = view.media;
     if (!audio && f?.preview) video.poster = f.preview;
-    const start = h("button", { type: "button", className: "start", title: "Play", textContent: "▶" });
-    const stage = h("div", { className: "stage" }, video, start);
+    // The whole poster is the ▶ (a click anywhere on it starts the player).
+    const start = h("button", { type: "button", className: "start", title: "Play", "aria-label": "Play" }, h("span", { textContent: "▶" }));
+    const stage = chrome.frame(h("div", { className: "stage" }, video, start), { width: f?.width, height: f?.height });
     if (!audio) video.controls = false;
     const speed = audio && ["podcast", "audiobook"].includes(v.kind) ? h("select", { title: "Speed", onchange: e => (video.playbackRate = Number(e.target.value)) }, ...[0.75, 1, 1.25, 1.5, 2].map(x => h("option", { value: x, textContent: `${x}×`, selected: x === 1 }))) : null;
     const scrubStrip = async () => {
@@ -113,7 +115,7 @@ export async function start(ctx) {
       else if (f)
         start.onclick = () => {
           start.remove();
-          c = chrome.attach(stage, video, { duration: f.duration ?? 0 });
+          c = chrome.attach(stage, video, { duration: f.duration ?? 0, width: f.width, height: f.height });
           if (strip) c.strip(strip);
           if (levels) c.levels(...levels);
           if (label) c.level(label);
