@@ -20,6 +20,9 @@ export async function start(ctx) {
       background-repeat: no-repeat; pointer-events: none; display: none; }
     .cw-media .scrub .tip span { position: absolute; bottom: 2px; left: 0; right: 0; text-align: center; color: #fff; font-size: 11px; text-shadow: 0 0 3px #000; }
     .cw-media .level { font-size: var(--cw-text-xs); color: var(--cw-muted); }
+    .cw-media .stage { position: relative; }
+    .cw-media .stage .start { position: absolute; inset: 0; margin: auto; width: 72px; height: 52px; border: 0; border-radius: 14px; background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 24px; cursor: pointer; }
+    .cw-media .stage .start:focus-visible { outline: 2px solid var(--cw-accent); }
     .cw-media .quality { font-size: var(--cw-text-xs); margin-right: var(--cw-space-2); }
     .cw-media .cover { width: min(320px, 70vw); aspect-ratio: 1; border-radius: var(--cw-radius); overflow: hidden; background: var(--cw-hover); display: grid; place-items: center; font-size: 4rem; }
     .cw-media .cover img { width: 100%; height: 100%; object-fit: cover; }
@@ -87,8 +90,12 @@ export async function start(ctx) {
     };
     const view = mediaView.create({ file: f, item: v.ref, kind: audio ? "audio" : "video", outside, itemKind: v.kind, onLevel: l => (level.textContent = l), onLevels, cover: audio, place: audio });
     const video = view.media;
-    // NOTHING LOADS until ▶: the poster shows; the first play starts the player.
+    // NOTHING LOADS until ▶: the poster shows with a ▶ over it (the element's own controls do nothing with no source);
+    // its click starts the player, playing.
     if (!audio && f?.preview) video.poster = f.preview;
+    const start = h("button", { type: "button", className: "start", title: "Play", textContent: "▶" });
+    const stage = h("div", { className: "stage" }, video, start);
+    if (!audio) video.controls = false;
     const speed = audio && ["podcast", "audiobook"].includes(v.kind) ? h("select", { title: "Speed", onchange: e => (video.playbackRate = Number(e.target.value)) }, ...[0.75, 1, 1.25, 1.5, 2].map(x => h("option", { value: x, textContent: `${x}×`, selected: x === 1 }))) : null;
     // THE SCRUB BAR: the video's strip of frames, shown where the pointer is; a click seeks.
     const scrub = h("div", { className: "scrub" });
@@ -117,7 +124,7 @@ export async function start(ctx) {
     };
     // STILL BEING MADE (the uploader's devices, in the background): what is done, and what now.
     const making = h("span", { className: "level" });
-    const el = h("div", { className: "cw-media" }, audio ? view.el : video, h("div", {}, audio ? null : scrub, quality, level, making), view.note, speed, view.line, view.timed);
+    const el = h("div", { className: "cw-media" }, audio ? view.el : stage, h("div", {}, audio ? null : scrub, quality, level, making), view.note, speed, view.line, view.timed);
     let quiet = 0; // checks in a row with nothing being made (the work may not have started yet)
     const showMaking = async () => {
       if (!el.isConnected || v.by !== (await space.account())?.id) return;
@@ -129,7 +136,12 @@ export async function start(ctx) {
     const begin = () => {
       setTimeout(showMaking, 500);
       if (f && audio) view.prepare().catch(e => (view.note.textContent = e.message ?? String(e)));
-      else if (f) video.addEventListener("play", () => view.play({ autoplay: true }).catch(e => (view.note.textContent = e.message ?? String(e))), { once: true });
+      else if (f)
+        start.onclick = () => {
+          start.remove();
+          video.controls = true;
+          view.play({ autoplay: true }).catch(e => (view.note.textContent = e.message ?? String(e)));
+        };
       scrubStrip().catch(() => {});
     };
     return { el, start: begin, media: video };
