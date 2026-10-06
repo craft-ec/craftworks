@@ -102,17 +102,30 @@ export async function start(ctx) {
 
   // GETS AT ONCE, capped — ONE limit for every get any package makes (files' pieces, tables' blocks): racing asks many
   // together, and past what the node answers they come back refused or late (measured 2026-10-06: a file read with
-  // ~144 gets in flight left 294 of 433 pieces unanswered; capped at 32, 68). `slot(f)`: f run when a place is free.
+  // ~144 gets in flight left 294 of 433 pieces unanswered; capped at 32, 68). `slot(f, { urgent })`: f run when a place
+  // is free. URGENT (what a page needs NOW: the fragment playback reaches next) goes first and may use every place;
+  // the rest (prefetch, keeping) at most half — so what is needed never waits behind a queue of what is merely wanted.
   const MAX_GETS = 32;
-  let free = MAX_GETS;
-  const queue = [];
-  const slot = async f => {
-    if (free > 0) free--;
-    else await new Promise(r => queue.push(r));
+  const MAX_BACKGROUND = 16;
+  let running = 0;
+  let background = 0;
+  const urgentQ = [];
+  const backgroundQ = [];
+  const can = urgent => running < MAX_GETS && (urgent || background < MAX_BACKGROUND);
+  const take = urgent => (running++, urgent || background++);
+  const grant = () => {
+    while (urgentQ.length && can(true)) (take(true), urgentQ.shift()());
+    while (backgroundQ.length && can(false)) (take(false), backgroundQ.shift()());
+  };
+  const slot = async (f, { urgent = false } = {}) => {
+    if (can(urgent) && !(urgent ? urgentQ : backgroundQ).length) take(urgent);
+    else await new Promise(r => (urgent ? urgentQ : backgroundQ).push(r)); // `grant` took the place for it
     try {
       return await f();
     } finally {
-      queue.length ? queue.shift()() : free++;
+      running--;
+      if (!urgent) background--;
+      grant();
     }
   };
 

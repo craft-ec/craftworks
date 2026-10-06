@@ -73,6 +73,18 @@ export async function start(ctx) {
     // (Every race recorded: how it ended — or that it has not: a page's measure.)
     const rec = { b: b.slice(0, 8), what, group: group.length, at: Math.round(performance.now()), end: null };
     races.push(rec);
+    // READERS REPAIR: the block itself answered NOT THERE (not merely slow) and its group rebuilt it — this read puts it
+    // back (in the background), so a table heals as it is read, as files do.
+    let absent = false;
+    let repaired = false;
+    const repair = () => {
+      if (repaired || !absent || rec.end !== "rebuilt") return;
+      repaired = true;
+      try {
+        const p = core.tail_keep_put(bytes(tail), b);
+        if (p) put([p], `repairing ${what}`).then(() => ctx.log("block repaired", { what: `${what}: block ${b.slice(0, 12)}… was not there; rebuilt from its group and put back` }), () => {});
+      } catch {}
+    };
     return new Promise((resolve, reject) => {
       let open = 1 + group.length;
       let answered = 0; // of its group: how many came
@@ -86,6 +98,7 @@ export async function start(ctx) {
         if (held) {
           done = true;
           rec.end = "rebuilt";
+          repair();
           resolve("rebuilt");
         } else if (open === 0) {
           done = true;
@@ -98,7 +111,8 @@ export async function start(ctx) {
       };
       get(b, what).then(a => {
         open--;
-        if (done) return;
+        if (a.kind === "get-failed" && !a.waited) absent = true;
+        if (done) return repair();
         // REFUSED: the node sent bytes that are not this block (the core says why) — a miss, never a win: its group
         // may still rebuild it.
         if (a.kind === "tail-unreadable") {

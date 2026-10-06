@@ -279,14 +279,14 @@ export async function start(ctx) {
 
   // One GET: the state, taken (a file's pieces are read once, never kept in the core), or null. A piece's state is
   // `LIVE ‖ burn hash ‖ piece` (its piece given back), or burned (none: as good as missing); `raw`: as stored.
-  async function fetchState(idHex, what, { raw = false } = {}) {
+  async function fetchState(idHex, what, { raw = false, urgent = false } = {}) {
     // An answer that came LATE (after an earlier ask gave up) is kept by the core: taken now, not asked again.
     // Measured 2026-10-06: a 4K play logged hundreds of pieces arriving after their ask's deadline, each then asked again.
     const late = core.take_got(idHex);
     if (late) return raw ? late : livePiece(late);
     const [, frames] = core.frames_get(bytes(idHex));
     // Through the node's one cap on gets (`slot`).
-    const said = await slot(() => ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex, what, WAIT.ask).catch(() => ({ kind: "get-failed" })));
+    const said = await slot(() => ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex, what, WAIT.ask).catch(() => ({ kind: "get-failed" })), { urgent });
     const st = said.kind === "got" ? core.take_got(idHex) : null;
     return !st || raw ? st : livePiece(st);
   }
@@ -353,14 +353,14 @@ export async function start(ctx) {
   }
 
   // A GENERATION, RACED: every listed fragment asked at once, decoded on the first k valid, independent ones.
-  async function generation(ref, f, g) {
+  async function generation(ref, f, g, { urgent = false } = {}) {
     const listed = await f.listed(g);
     const d = new glue.FileDecoder(f.key, f.plan.size, g, JSON.stringify(listed));
     const absent = []; // listed fragments the node answered are not there
     await new Promise((resolve, reject) => {
       let left = listed.length;
       for (const [j] of listed)
-        fetchState(core.file_fragment_id(f.key, g, j), `${ref.name}: part ${g + 1} of ${f.plan.gens}`).then(state => {
+        fetchState(core.file_fragment_id(f.key, g, j), `${ref.name}: part ${g + 1} of ${f.plan.gens}`, { urgent }).then(state => {
           if (!state) absent.push(j);
           if (d.done()) return;
           if (state) {
@@ -408,14 +408,14 @@ export async function start(ctx) {
   // and the first to arrive is taken. Measured 2026-10-06: a 4K fragment's lone chunk waited a get's whole deadline
   // (30 s) while the rest of it took 0.1 s.
   const HEDGE = 2000;
-  async function chunk(ref, i) {
+  async function chunk(ref, i, { urgent = false } = {}) {
     if (ref.inline) return unb64(ref.inline);
     ref = await current(ref);
     const f = await open(ref);
     const g = Math.floor(i / GEN);
     const listed = await f.listed(g);
     const at = (i % GEN) * f.plan.chunk;
-    const alone = fetchState(core.file_fragment_id(f.key, g, i % GEN), `${ref.name}: a part`).then(state => {
+    const alone = fetchState(core.file_fragment_id(f.key, g, i % GEN), `${ref.name}: a part`, { urgent }).then(state => {
       if (!state) throw new Error(`${ref.name}: a part is not there`);
       return glue.file_read_chunk(f.key, f.plan.size, JSON.stringify(listed), i, state);
     });
@@ -427,7 +427,7 @@ export async function start(ctx) {
         if (raced) return;
         raced = true;
         clearTimeout(timer);
-        genOnce(ref, f, g).then(all => resolve(all.slice(at, at + f.plan.chunk)), fail);
+        genOnce(ref, f, g, { urgent }).then(all => resolve(all.slice(at, at + f.plan.chunk)), fail);
       };
       const timer = setTimeout(race, HEDGE);
       alone.then(
@@ -546,26 +546,30 @@ export async function start(ctx) {
 
   // A BYTE RANGE of a file (a video played by range): the chunks it covers, each read alone (a seek reads only what it
   // lands in), the last few kept.
-  const chunks = new Map(); // `${root}/${i}` → Promise<bytes>, the latest 96
-  const chunkOnce = (ref, i) => {
-    const k = `${ref.root}/${i}`;
-    if (!chunks.has(k)) {
-      chunks.set(k, chunk(ref, i).catch(e => (chunks.delete(k), Promise.reject(e))));
-      while (chunks.size > 96) chunks.delete(chunks.keys().next().value);
+  // Each kept with whether it was asked URGENT: an urgent ask of one first asked in the background (a prefetch, waiting
+  // its turn) asks again, urgently, and takes whichever comes first.
+  const once = (map, cap, k, make, urgent) => {
+    const had = map.get(k);
+    if (!had || (urgent && !had.urgent)) {
+      const p = make();
+      const entry = { urgent };
+      // Dropped only when every ask of it failed; the error is the last one's (not Promise.any's AggregateError).
+      entry.p = (had ? Promise.any([had.p, p]) : p).catch(e => {
+        if (map.get(k) === entry) map.delete(k);
+        throw e?.errors?.at(-1) ?? e;
+      });
+      map.set(k, entry);
+      while (map.size > cap) map.delete(map.keys().next().value);
     }
-    return chunks.get(k);
+    return map.get(k).p;
   };
+  const chunks = new Map(); // `${root}/${i}` → { urgent, p: Promise<bytes> }, the latest 96
+  const chunkOnce = (ref, i, { urgent = false } = {}) => once(chunks, 96, `${ref.root}/${i}`, () => chunk(ref, i, { urgent }), urgent);
   // A GENERATION whole, raced (`generation`), the latest 8 kept (a 4K fragment's neighbours share them).
   const gens = new Map();
-  const genOnce = (ref, f, g) => {
-    const k = `${ref.root}/g${g}`;
-    if (!gens.has(k)) {
-      gens.set(k, generation(ref, f, g).catch(e => (gens.delete(k), Promise.reject(e))));
-      while (gens.size > 8) gens.delete(gens.keys().next().value);
-    }
-    return gens.get(k);
-  };
-  async function range(ref, start, len) {
+  const genOnce = (ref, f, g, { urgent = false } = {}) => once(gens, 8, `${ref.root}/g${g}`, () => generation(ref, f, g, { urgent }), urgent);
+  // `urgent`: what the page needs NOW (the fragment playback reaches next) — first in the node's queue of gets.
+  async function range(ref, start, len, { urgent = false } = {}) {
     if (ref.inline) return unb64(ref.inline).subarray(start, start + len);
     ref = await current(ref);
     const size = (await open(ref)).plan.chunk;
@@ -583,8 +587,8 @@ export async function start(ctx) {
     const got = await Promise.all(
       at.map(i => {
         const g = Math.floor(i / GEN);
-        if (!raced(g)) return chunkOnce(ref, i);
-        return genOnce(ref, f, g).then(all => all.subarray((i % GEN) * size, (i % GEN + 1) * size));
+        if (!raced(g)) return chunkOnce(ref, i, { urgent });
+        return genOnce(ref, f, g, { urgent }).then(all => all.subarray((i % GEN) * size, (i % GEN + 1) * size));
       }),
     );
     at.forEach((i, n) => {

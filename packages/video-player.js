@@ -245,16 +245,57 @@ export async function start(ctx) {
     // THE VIEWER's choice: a rendition (its index), or null for automatic.
     let fixed = null;
     const label = r => (r.codec === "aac" ? `AAC ${Math.round(r.bitrate / 1000)} kbps` : `${{ av1: "AV1", hevc: "HEVC", avc: "H.264" }[r.codec] ?? r.codec} ${r.height}p`);
-    const fetchSeg = (lv, i) => {
+    // A FRAGMENT's bytes (`lv`, `i`), asked once: `urgent` when playback needs it next (first in the node's queue); a
+    // fragment first asked ahead (background) and then needed asks again, urgently, and takes whichever comes first.
+    const fetchSeg = (lv, i, urgent = false) => {
       const k = `${lv}:${i}`;
-      if (!asked.has(k)) {
+      const had = asked.get(k);
+      if (!had || (urgent && !had.urgent)) {
         const r = rs[lv], seg = r.index.segments[i];
-        const p = files.range(r.ref, seg.start, seg.end - seg.start);
-        p.catch(() => asked.delete(k));
-        asked.set(k, p);
+        const p = files.range(r.ref, seg.start, seg.end - seg.start, { urgent });
+        const entry = { urgent, p: had ? Promise.any([had.p, p]).catch(e => Promise.reject(e?.errors?.at(-1) ?? e)) : p };
+        entry.p.catch(() => asked.get(k) === entry && asked.delete(k));
+        asked.set(k, entry);
       }
-      return asked.get(k);
+      return asked.get(k).p;
     };
+    // Each rendition's INIT segment (codec setup), read once.
+    const inits = new Map();
+    const initOf_ = lv => {
+      if (!inits.has(lv)) inits.set(lv, files.range(rs[lv].ref, 0, rs[lv].index.init, { urgent: true }).catch(e => (inits.delete(lv), Promise.reject(e))));
+      return inits.get(lv);
+    };
+    // THE MOMENT `t`, from rendition `lv` — or LOWER: when it has not come by the time playback would need it (what is
+    // buffered, less a margin; at least 2 s) or it failed (a part that could not be rebuilt), the same moment is asked
+    // from the next rendition down too, and so on to the lowest; the first to arrive is taken. Null: none could be read.
+    // (Waiting on one fragment with no limit held playback still for 27–44 s, and a failed one was asked again for ever.)
+    const obtain = (lv, t) =>
+      new Promise(resolve => {
+        let settled = false;
+        let running = 0;
+        let lowest = lv + 1;
+        let timer = 0;
+        const finish = v => !settled && ((settled = true), clearTimeout(timer), resolve(v));
+        const lower = () => {
+          clearTimeout(timer);
+          if (settled) return;
+          if (lowest > 0) start(lowest - 1);
+          else if (!running) finish(null);
+        };
+        const start = cur => {
+          lowest = cur;
+          running++;
+          const i = segAt(rs[cur], t);
+          Promise.all([initOf_(cur), fetchSeg(cur, i, true)]).then(
+            ([init, bytes]) => finish({ lv: cur, i, init, bytes }),
+            () => (running--, lower()),
+          );
+          timer = setTimeout(lower, Math.max(2000, (ahead() - 4) * 1000));
+        };
+        start(lv);
+      });
+    // GAPS: a moment no rendition could give is skipped (playback jumps it, below).
+    const gaps = [];
     let done = false;
     const segAt = (r, t) => Math.max(0, r.index.segments.findLastIndex(s => s.t <= t + 0.05));
     const ahead = () => {
@@ -276,28 +317,45 @@ export async function start(ctx) {
             const fit = Math.max(0, rs.findLastIndex(r => r.bitrate < bps * 0.75));
             level = fit < level ? fit : Math.min(fit, level + 1);
           }
-          const r = rs[level];
-          if (initOf !== level) {
-            if (sb.updating) await new Promise(ok => (sb.onupdateend = ok));
-            if (initOf !== -1 && typeof sb.changeType === "function") sb.changeType(r.mime);
-            await appended(await files.range(r.ref, 0, r.index.init));
-            initOf = level;
-            onLevel?.(`${fixed == null ? "Auto · " : ""}${label(r)}`);
-          }
           const e = epoch;
-          const i = segAt(r, next);
-          for (let k = 1; k < FRAGMENTS_IN_FLIGHT && r.index.segments[i + k]; k++) fetchSeg(level, i + k);
-          const bytes = await fetchSeg(level, i);
-          asked.delete(`${level}:${i}`);
+          const i0 = segAt(rs[level], next);
+          for (let k = 1; k < FRAGMENTS_IN_FLIGHT && rs[level].index.segments[i0 + k]; k++) fetchSeg(level, i0 + k).catch(() => {});
+          const got = await obtain(level, next);
           if (e !== epoch) continue;
+          if (!got) {
+            // No rendition could give this moment: skipped (a gap playback jumps), the rest goes on.
+            const seg = rs[level].index.segments[i0];
+            const after = rs[level].index.segments[i0 + 1];
+            gaps.push([seg.t, after ? after.t : m.duration]);
+            ctx.log("video", { what: `${ref.name}: ${seg.t.toFixed(0)} s could not be read in any rendition: skipped` });
+            if (!after) {
+              done = true;
+              if (!sb.updating) ms.endOfStream();
+            } else next = after.t;
+            continue;
+          }
+          const fellBack = got.lv < level;
+          if (initOf !== got.lv) {
+            await idle();
+            if (initOf !== -1 && typeof sb.changeType === "function") sb.changeType(rs[got.lv].mime);
+            await appended(got.init);
+            initOf = got.lv;
+            onLevel?.(`${fixed == null ? "Auto · " : ""}${label(rs[got.lv])}`);
+          }
           const now = performance.now();
-          arrivals = [...arrivals.filter(a => now - a.at < WINDOW), { at: now, bytes: bytes.byteLength }];
+          arrivals = [...arrivals.filter(a => now - a.at < WINDOW), { at: now, bytes: got.bytes.byteLength }];
           const span = Math.max(1000, now - Math.max(now - WINDOW, busySince));
           bps = (arrivals.reduce((n, a) => n + a.bytes, 0) * 8) / (span / 1000);
-          await appended(bytes);
+          // Taken from a LOWER rendition (the one asked was late or failed): go on from there, and climb back only as
+          // measured (one rendition at a time).
+          if (fellBack) {
+            if (fixed == null) level = got.lv;
+            bps = Math.min(bps, rs[got.lv].bitrate / 0.75);
+          }
+          await appended(got.bytes);
           onNote("");
           if (e !== epoch) continue;
-          const after = r.index.segments[i + 1];
+          const after = rs[got.lv].index.segments[got.i + 1];
           if (!after) {
             done = true;
             if (!sb.updating) ms.endOfStream();
@@ -338,7 +396,19 @@ export async function start(ctx) {
       pump();
     };
     onLevels?.(rs.map(label), pick);
-    const tick = setInterval(() => (video.isConnected ? pump() : clearInterval(tick)), 1000);
+    // STALLED AT A HOLE (a skipped moment, or renditions whose fragments do not meet exactly): playback jumps to what is
+    // buffered just ahead, rather than waiting for a moment that will not come.
+    const jump = () => {
+      if (video.paused || video.readyState >= 3) return;
+      const t = video.currentTime;
+      const b = video.buffered;
+      for (let i = 0; i < b.length; i++)
+        if (b.start(i) > t && b.start(i) - t < 5) {
+          video.currentTime = b.start(i) + 0.05;
+          return;
+        }
+    };
+    const tick = setInterval(() => (video.isConnected ? (jump(), pump()) : clearInterval(tick)), 1000);
     await pump();
     onNote("");
     return true;
