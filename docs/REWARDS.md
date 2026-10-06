@@ -35,10 +35,14 @@ month). The creators' share is split by those weights.
 ## 4. Carriers: keepers who prove they hold
 
 Freenet does not tell a reader which node answered (a get may be answered by any node that cached it on the way), so
-bandwidth cannot be paid per answer. Owner, 2026-10-06: **pay the holders, weighted by demand.** Freenet routes a get
-toward the nodes hosting the data, so the node holding a popular file is the one carrying its traffic; holding is
-measurable, and demand on what is held stands for the bandwidth. A **keeper** is any node that opts in: it keeps
-chosen files (its own, its spaces', or files subscribers used) and registers in the **keepers bag** with what it holds.
+bandwidth cannot be paid per answer. Owner, 2026-10-06: **pay the holders, weighted by demand** — and **the users are
+the keepers**: a subscriber's node already received every piece of what it watched, read or downloaded, so it keeps
+what it used (up to a storage limit its owner sets, oldest dropped first; the `keep` capability re-reads and repairs
+it) and registers in the **keepers bag** as its keeper. Supply follows demand by itself (a hit has as many keepers as
+past viewers, as torrent seeding), and the money moves between subscribers: a subscriber's carrier share goes to the
+earlier users keeping what they used, and comes back to them from the later users of what they keep — **never to the
+subscriber's own nodes** (§1). Anyone else may opt in as a keeper too (a creator's own nodes, a space's, paid pinning
+of cold files, §6).
 
 - **Proof of holding:** each day a public beacon (the hash of the day's newest Discover entries) picks, per keeper, a
   **fixed share of the pieces it claims** (about 1% a day); the keeper publishes `hash(piece ‖ beacon ‖ node id)` for
