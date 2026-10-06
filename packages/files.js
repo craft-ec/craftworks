@@ -502,16 +502,38 @@ export async function start(ctx) {
     }
     return chunks.get(k);
   };
+  // A GENERATION whole, raced (`generation`), the latest 8 kept (a 4K fragment's neighbours share them).
+  const gens = new Map();
+  const genOnce = (ref, f, g) => {
+    const k = `${ref.root}/g${g}`;
+    if (!gens.has(k)) {
+      gens.set(k, generation(ref, f, g).catch(e => (gens.delete(k), Promise.reject(e))));
+      while (gens.size > 8) gens.delete(gens.keys().next().value);
+    }
+    return gens.get(k);
+  };
   async function range(ref, start, len) {
     if (ref.inline) return unb64(ref.inline).subarray(start, start + len);
     ref = await current(ref);
     const size = (await open(ref)).plan.chunk;
     const end = Math.min(ref.size, start + len);
     const out = new Uint8Array(Math.max(0, end - start));
-    // ALL the range's chunks asked AT ONCE: one after another ran at a get's round trip per chunk, not the link.
+    // ALL the range's chunks asked AT ONCE: one after another ran at a get's round trip per chunk, not the link. Where
+    // the range needs half a generation or more (a 4K fragment: most of one), the generation is read RACED — every
+    // fragment asked, decoded on the first 16 — so no one slow piece holds it; a few chunks are read alone.
     const at = [];
     for (let i = Math.floor(start / size); i * size < end; i++) at.push(i);
-    const got = await Promise.all(at.map(i => chunkOnce(ref, i)));
+    const f = await open(ref);
+    const perGen = new Map();
+    for (const i of at) perGen.set(Math.floor(i / GEN), (perGen.get(Math.floor(i / GEN)) ?? 0) + 1);
+    const raced = g => perGen.get(g) * 2 >= Math.min(GEN, f.plan.chunks - g * GEN);
+    const got = await Promise.all(
+      at.map(i => {
+        const g = Math.floor(i / GEN);
+        if (!raced(g)) return chunkOnce(ref, i);
+        return genOnce(ref, f, g).then(all => all.subarray((i % GEN) * size, (i % GEN + 1) * size));
+      }),
+    );
     at.forEach((i, n) => {
       const from = Math.max(start, i * size);
       out.set(got[n].subarray(from - i * size, Math.min(end, (i + 1) * size) - i * size), from - start);

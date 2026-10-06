@@ -41,7 +41,7 @@ export async function start(ctx) {
 
   const canStream = () => "MediaSource" in window && typeof MediaSource.isTypeSupported === "function";
   const KEEP_AHEAD = 30; // seconds buffered ahead before fetching pauses
-  const FRAGMENTS_IN_FLIGHT = 3; // fragments asked ahead of the one appended next (each a few chunks, all at once)
+  const FRAGMENTS_IN_FLIGHT = 4; // fragments asked at once (~16 s of video; each its chunks all at once — 4K: ~20 each)
   const STEP = 512 * 1024; // bytes per range fed to mp4box
 
   // One SourceBuffer's appends, one at a time (appendBuffer throws while updating).
@@ -135,6 +135,26 @@ export async function start(ctx) {
       } catch {}
       return false;
     }
+    // THE VIEWER CHOOSES a rendition (or automatic): what is buffered past the next second is dropped and fetched again
+    // in it, so the choice shows at once.
+    const pick = async i => {
+      fixed = i;
+      epoch++;
+      asked = new Map();
+      const from = video.currentTime + 1;
+      try {
+        await idle();
+        const b = video.buffered;
+        if (b.length && b.end(b.length - 1) > from) {
+          sb.remove(from, Infinity);
+          await idle();
+        }
+      } catch {}
+      next = from;
+      done = false;
+      pump();
+    };
+    onLevels?.(rs.map(label), pick);
     const tick = setInterval(() => {
       if (!video.isConnected) return clearInterval(tick);
       if (ms.readyState !== "open") return;
@@ -167,7 +187,7 @@ export async function start(ctx) {
   };
 
   // ADAPTIVE: one SourceBuffer; fragments appended in order ahead of the playhead; the rendition picked per fragment.
-  async function adaptive(video, ref, { onNote, onLevel }) {
+  async function adaptive(video, ref, { onNote, onLevel, onLevels }) {
     if (!canStream()) return false;
     const m = await manifest(ref);
     // Audio (AAC): what MediaSource takes; video: what this device decodes smoothly.
@@ -205,14 +225,26 @@ export async function start(ctx) {
     const want = Math.min(720, (video.clientHeight || 360) * (devicePixelRatio || 1));
     let level = Math.max(0, rs.findLastIndex(r => r.height <= want));
     let sb = ms.addSourceBuffer(rs[level].mime);
-    const appended = buf => new Promise((ok, no) => ((sb.onupdateend = ok), (sb.onerror = no), sb.appendBuffer(buf)));
+    const idle = async () => {
+      while (sb.updating) await new Promise(ok => sb.addEventListener("updateend", ok, { once: true }));
+    };
+    const appended = async buf => (await idle(), new Promise((ok, no) => ((sb.onupdateend = ok), (sb.onerror = no), sb.appendBuffer(buf))));
+    // A RESTART (a seek, a rendition chosen): what was asked before it is not appended after it.
+    let epoch = 0;
     let initOf = -1;
     let bps = 0; // measured throughput, bits/s (a moving average)
     let next = 0; // the next fragment's time
     let busy = false;
     // FRAGMENTS AHEAD, asked at once (`level:index` → its bytes): one at a time waited a round trip per fragment.
     let asked = new Map();
-    let lastDone = 0; // when the previous fragment arrived: throughput is bytes over the time BETWEEN arrivals
+    // THROUGHPUT: the bytes that ARRIVED in the last 20 s over the time spent fetching in it (fragments asked ahead
+    // arrive back to back: one fragment over the gap since the one before read as a link many times too fast).
+    let arrivals = [];
+    let busySince = 0;
+    const WINDOW = 20000;
+    // THE VIEWER's choice: a rendition (its index), or null for automatic.
+    let fixed = null;
+    const label = r => (r.codec === "aac" ? `AAC ${Math.round(r.bitrate / 1000)} kbps` : `${{ av1: "AV1", hevc: "HEVC", avc: "H.264" }[r.codec] ?? r.codec} ${r.height}p`);
     const fetchSeg = (lv, i) => {
       const k = `${lv}:${i}`;
       if (!asked.has(k)) {
@@ -233,13 +265,16 @@ export async function start(ctx) {
     async function pump() {
       if (busy || done || ms.readyState !== "open") return;
       busy = true;
-      lastDone = performance.now();
+      busySince = performance.now();
+      arrivals = []; // time idle (the buffer full) is not counted
       try {
         while (!done && ahead() < 30) {
           // THE LEVEL: the highest rendition whose bitrate fits under 3/4 of the throughput measured.
-          if (bps) {
-            const fit = rs.findLastIndex(r => r.bitrate < bps * 0.75);
-            level = Math.max(0, fit);
+          if (fixed != null) level = fixed;
+          else if (bps) {
+            // Down at once; UP one rendition at a time (a burst of fast fragments is not yet a fast link).
+            const fit = Math.max(0, rs.findLastIndex(r => r.bitrate < bps * 0.75));
+            level = fit < level ? fit : Math.min(fit, level + 1);
           }
           const r = rs[level];
           if (initOf !== level) {
@@ -247,19 +282,21 @@ export async function start(ctx) {
             if (initOf !== -1 && typeof sb.changeType === "function") sb.changeType(r.mime);
             await appended(await files.range(r.ref, 0, r.index.init));
             initOf = level;
-            onLevel?.(r.codec === "aac" ? `AAC ${Math.round(r.bitrate / 1000)} kbps` : `${{ av1: "AV1", hevc: "HEVC", avc: "H.264" }[r.codec] ?? r.codec} ${r.height}p`);
+            onLevel?.(`${fixed == null ? "Auto · " : ""}${label(r)}`);
           }
+          const e = epoch;
           const i = segAt(r, next);
           for (let k = 1; k < FRAGMENTS_IN_FLIGHT && r.index.segments[i + k]; k++) fetchSeg(level, i + k);
           const bytes = await fetchSeg(level, i);
           asked.delete(`${level}:${i}`);
+          if (e !== epoch) continue;
           const now = performance.now();
-          const secs = Math.max(0.05, (now - lastDone) / 1000);
-          lastDone = now;
-          const rate = (bytes.byteLength * 8) / secs;
-          bps = bps ? 0.7 * bps + 0.3 * rate : rate;
+          arrivals = [...arrivals.filter(a => now - a.at < WINDOW), { at: now, bytes: bytes.byteLength }];
+          const span = Math.max(1000, now - Math.max(now - WINDOW, busySince));
+          bps = (arrivals.reduce((n, a) => n + a.bytes, 0) * 8) / (span / 1000);
           await appended(bytes);
           onNote("");
+          if (e !== epoch) continue;
           const after = r.index.segments[i + 1];
           if (!after) {
             done = true;
@@ -276,20 +313,41 @@ export async function start(ctx) {
     video.addEventListener("seeking", () => {
       next = video.currentTime;
       asked = new Map();
+      epoch++;
       if (done && ms.readyState === "ended") return;
       done = false;
       pump();
     });
+    // THE VIEWER CHOOSES a rendition (or automatic): what is buffered past the next second is dropped and fetched again
+    // in it, so the choice shows at once.
+    const pick = async i => {
+      fixed = i;
+      epoch++;
+      asked = new Map();
+      const from = video.currentTime + 1;
+      try {
+        await idle();
+        const b = video.buffered;
+        if (b.length && b.end(b.length - 1) > from) {
+          sb.remove(from, Infinity);
+          await idle();
+        }
+      } catch {}
+      next = from;
+      done = false;
+      pump();
+    };
+    onLevels?.(rs.map(label), pick);
     const tick = setInterval(() => (video.isConnected ? pump() : clearInterval(tick)), 1000);
     await pump();
     onNote("");
     return true;
   }
 
-  async function play(video, ref, { onNote = () => {}, onLevel = null } = {}) {
+  async function play(video, ref, { onNote = () => {}, onLevel = null, onLevels = null } = {}) {
     onNote("Loading…");
     if (ref.type === MANIFEST) {
-      if (await adaptive(video, ref, { onNote, onLevel }).catch(e => (onNote(e.message ?? String(e)), false))) return "adaptive";
+      if (await adaptive(video, ref, { onNote, onLevel, onLevels }).catch(e => (onNote(e.message ?? String(e)), false))) return "adaptive";
       // No MediaSource here: the lowest H.264 rendition whole.
       const m = await manifest(ref);
       const low = m.renditions.filter(r => r.codec === "avc").sort((a, b) => a.height - b.height)[0];

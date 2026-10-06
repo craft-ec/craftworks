@@ -6,7 +6,7 @@
 // this item); an audio's first track shown IN TIME beside it (the line playing lit; a click plays from it).
 //
 //   const mv = await ctx.require("media-view");
-//   const v = mv.create({ file, item, kind, cover, outside, label, onNote, onLevel })
+//   const v = mv.create({ file, item, kind, cover, outside, label, onNote, onLevel, onLevels })
 //   host.append(v.el)      // cover, or the player (with an audio's cover above it)
 //   v.media                // the <video>/<audio> (once playing)      v.line   v.timed   (placed by the caller, or in v.el)
 //   v.play()               // start (a cover: its click does)      v.prepare()   // its tracks' line now, nothing played
@@ -44,7 +44,7 @@ export async function start(ctx) {
   };
   const clock = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-  function create({ file, item = null, kind = null, cover = false, outside = null, label = null, itemKind = null, onNote = null, onLevel = null, place = true } = {}) {
+  function create({ file, item = null, kind = null, cover = false, outside = null, label = null, itemKind = null, onNote = null, onLevel = null, onLevels = null, place = true } = {}) {
     kind ??= markdown.kindOf(file) === "audio" ? "audio" : "video";
     // What its tracks are called: Subtitles, Lyrics (a song), Transcript (a podcast, an audiobook).
     const NAME = label ?? kindsCap.attachLabel("caption", itemKind ?? (kind === "audio" ? "music" : "video"));
@@ -64,15 +64,15 @@ export async function start(ctx) {
     // Its TRACKS read (a few rows, not the media): shown in its line at once, the player's once it plays.
     let prepared = null;
     const prepare = () => (prepared ??= tracks().catch(e => (line.textContent = e.message ?? String(e))));
-    async function play() {
+    async function play({ autoplay = false } = {}) {
       if (started) return;
       started = true;
       if (place) {
         el.replaceChildren(...[kind === "audio" && file?.preview ? h("img", { className: "album", src: file.preview, alt: file?.name ?? "" }) : null, caption, media, note, line, timed].filter(Boolean));
       }
-      media.autoplay = cover; // a click on a cover asked for it to play
+      media.autoplay = cover || autoplay; // a click on a cover (or the player's ▶) asked for it to play
       try {
-        await player.play(media, file, { onNote: t => ((note.textContent = t), onNote?.(t)), onLevel: onLevel ?? undefined });
+        await player.play(media, file, { onNote: t => ((note.textContent = t), onNote?.(t)), onLevel: onLevel ?? undefined, onLevels: onLevels ?? undefined });
       } catch (e) {
         note.textContent = `${file?.name ?? "it"}: ${e.message ?? e}`;
       }

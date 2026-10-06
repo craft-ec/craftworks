@@ -382,7 +382,9 @@ export async function start(ctx) {
     }
   }
   // Started with the page (the header asks for it), and whenever this person's posts change.
+  // And EVERY MINUTE: a lease whose page went away (closed, reloaded) goes quiet, and an open page takes it over then.
   setTimeout(() => (space.account().then(a => a && kick(), () => {}), items.onChange(() => kick())), 5000);
+  setInterval(() => space.account().then(a => a && kick(), () => {}), 60000);
 
   // A video's item and manifest as they are now.
   async function latest(ref) {

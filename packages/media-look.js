@@ -20,6 +20,7 @@ export async function start(ctx) {
       background-repeat: no-repeat; pointer-events: none; display: none; }
     .cw-media .scrub .tip span { position: absolute; bottom: 2px; left: 0; right: 0; text-align: center; color: #fff; font-size: 11px; text-shadow: 0 0 3px #000; }
     .cw-media .level { font-size: var(--cw-text-xs); color: var(--cw-muted); }
+    .cw-media .quality { font-size: var(--cw-text-xs); margin-right: var(--cw-space-2); }
     .cw-media .cover { width: min(320px, 70vw); aspect-ratio: 1; border-radius: var(--cw-radius); overflow: hidden; background: var(--cw-hover); display: grid; place-items: center; font-size: 4rem; }
     .cw-media .cover img { width: 100%; height: 100%; object-fit: cover; }
     .cw-media .timed { max-height: 320px; overflow: auto; border: 1px solid var(--cw-line); border-radius: var(--cw-radius); padding: var(--cw-space-3); }
@@ -77,8 +78,17 @@ export async function start(ctx) {
     const audio = kinds.domain(v.kind) === "audio";
     const f = fileOf(v);
     const level = h("span", { className: "level" });
-    const view = mediaView.create({ file: f, item: v.ref, kind: audio ? "audio" : "video", outside, itemKind: v.kind, onLevel: l => (level.textContent = l), cover: audio, place: audio });
+    // QUALITY: Auto, or one rendition (the player's list, once it knows the ladder this browser plays).
+    const quality = h("select", { className: "quality", title: "Quality", hidden: true });
+    const onLevels = (labels, pick) => {
+      quality.replaceChildren(h("option", { value: "", textContent: "Auto" }), ...labels.map((l, i) => h("option", { value: i, textContent: l })).reverse());
+      quality.onchange = () => pick(quality.value === "" ? null : Number(quality.value));
+      quality.hidden = labels.length < 2;
+    };
+    const view = mediaView.create({ file: f, item: v.ref, kind: audio ? "audio" : "video", outside, itemKind: v.kind, onLevel: l => (level.textContent = l), onLevels, cover: audio, place: audio });
     const video = view.media;
+    // NOTHING LOADS until ▶: the poster shows; the first play starts the player.
+    if (!audio && f?.preview) video.poster = f.preview;
     const speed = audio && ["podcast", "audiobook"].includes(v.kind) ? h("select", { title: "Speed", onchange: e => (video.playbackRate = Number(e.target.value)) }, ...[0.75, 1, 1.25, 1.5, 2].map(x => h("option", { value: x, textContent: `${x}×`, selected: x === 1 }))) : null;
     // THE SCRUB BAR: the video's strip of frames, shown where the pointer is; a click seeks.
     const scrub = h("div", { className: "scrub" });
@@ -107,7 +117,7 @@ export async function start(ctx) {
     };
     // STILL BEING MADE (the uploader's devices, in the background): what is done, and what now.
     const making = h("span", { className: "level" });
-    const el = h("div", { className: "cw-media" }, audio ? view.el : video, h("div", {}, audio ? null : scrub, level, making), view.note, speed, view.line, view.timed);
+    const el = h("div", { className: "cw-media" }, audio ? view.el : video, h("div", {}, audio ? null : scrub, quality, level, making), view.note, speed, view.line, view.timed);
     let quiet = 0; // checks in a row with nothing being made (the work may not have started yet)
     const showMaking = async () => {
       if (!el.isConnected || v.by !== (await space.account())?.id) return;
@@ -118,7 +128,8 @@ export async function start(ctx) {
     };
     const begin = () => {
       setTimeout(showMaking, 500);
-      if (f) (audio ? view.prepare() : view.play()).catch(e => (view.note.textContent = e.message ?? String(e)));
+      if (f && audio) view.prepare().catch(e => (view.note.textContent = e.message ?? String(e)));
+      else if (f) video.addEventListener("play", () => view.play({ autoplay: true }).catch(e => (view.note.textContent = e.message ?? String(e))), { once: true });
       scrubStrip().catch(() => {});
     };
     return { el, start: begin, media: video };
