@@ -41,6 +41,7 @@ export async function start(ctx) {
 
   const canStream = () => "MediaSource" in window && typeof MediaSource.isTypeSupported === "function";
   const KEEP_AHEAD = 30; // seconds buffered ahead before fetching pauses
+  const FRAGMENTS_IN_FLIGHT = 3; // fragments asked ahead of the one appended next (each a few chunks, all at once)
   const STEP = 512 * 1024; // bytes per range fed to mp4box
 
   // One SourceBuffer's appends, one at a time (appendBuffer throws while updating).
@@ -209,6 +210,19 @@ export async function start(ctx) {
     let bps = 0; // measured throughput, bits/s (a moving average)
     let next = 0; // the next fragment's time
     let busy = false;
+    // FRAGMENTS AHEAD, asked at once (`level:index` → its bytes): one at a time waited a round trip per fragment.
+    let asked = new Map();
+    let lastDone = 0; // when the previous fragment arrived: throughput is bytes over the time BETWEEN arrivals
+    const fetchSeg = (lv, i) => {
+      const k = `${lv}:${i}`;
+      if (!asked.has(k)) {
+        const r = rs[lv], seg = r.index.segments[i];
+        const p = files.range(r.ref, seg.start, seg.end - seg.start);
+        p.catch(() => asked.delete(k));
+        asked.set(k, p);
+      }
+      return asked.get(k);
+    };
     let done = false;
     const segAt = (r, t) => Math.max(0, r.index.segments.findLastIndex(s => s.t <= t + 0.05));
     const ahead = () => {
@@ -219,6 +233,7 @@ export async function start(ctx) {
     async function pump() {
       if (busy || done || ms.readyState !== "open") return;
       busy = true;
+      lastDone = performance.now();
       try {
         while (!done && ahead() < 30) {
           // THE LEVEL: the highest rendition whose bitrate fits under 3/4 of the throughput measured.
@@ -235,13 +250,16 @@ export async function start(ctx) {
             onLevel?.(r.codec === "aac" ? `AAC ${Math.round(r.bitrate / 1000)} kbps` : `${{ av1: "AV1", hevc: "HEVC", avc: "H.264" }[r.codec] ?? r.codec} ${r.height}p`);
           }
           const i = segAt(r, next);
-          const seg = r.index.segments[i];
-          const t0 = performance.now();
-          const bytes = await files.range(r.ref, seg.start, seg.end - seg.start);
-          const secs = Math.max(0.05, (performance.now() - t0) / 1000);
+          for (let k = 1; k < FRAGMENTS_IN_FLIGHT && r.index.segments[i + k]; k++) fetchSeg(level, i + k);
+          const bytes = await fetchSeg(level, i);
+          asked.delete(`${level}:${i}`);
+          const now = performance.now();
+          const secs = Math.max(0.05, (now - lastDone) / 1000);
+          lastDone = now;
           const rate = (bytes.byteLength * 8) / secs;
           bps = bps ? 0.7 * bps + 0.3 * rate : rate;
           await appended(bytes);
+          onNote("");
           const after = r.index.segments[i + 1];
           if (!after) {
             done = true;
@@ -257,6 +275,7 @@ export async function start(ctx) {
     // A SEEK: go on from the fragment holding that time.
     video.addEventListener("seeking", () => {
       next = video.currentTime;
+      asked = new Map();
       if (done && ms.readyState === "ended") return;
       done = false;
       pump();

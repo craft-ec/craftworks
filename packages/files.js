@@ -493,12 +493,12 @@ export async function start(ctx) {
 
   // A BYTE RANGE of a file (a video played by range): the chunks it covers, each read alone (a seek reads only what it
   // lands in), the last few kept.
-  const chunks = new Map(); // `${root}/${i}` → Promise<bytes>, the latest 24
+  const chunks = new Map(); // `${root}/${i}` → Promise<bytes>, the latest 96
   const chunkOnce = (ref, i) => {
     const k = `${ref.root}/${i}`;
     if (!chunks.has(k)) {
       chunks.set(k, chunk(ref, i).catch(e => (chunks.delete(k), Promise.reject(e))));
-      while (chunks.size > 24) chunks.delete(chunks.keys().next().value);
+      while (chunks.size > 96) chunks.delete(chunks.keys().next().value);
     }
     return chunks.get(k);
   };
@@ -508,11 +508,14 @@ export async function start(ctx) {
     const size = (await open(ref)).plan.chunk;
     const end = Math.min(ref.size, start + len);
     const out = new Uint8Array(Math.max(0, end - start));
-    for (let i = Math.floor(start / size); i * size < end; i++) {
-      const c = await chunkOnce(ref, i);
+    // ALL the range's chunks asked AT ONCE: one after another ran at a get's round trip per chunk, not the link.
+    const at = [];
+    for (let i = Math.floor(start / size); i * size < end; i++) at.push(i);
+    const got = await Promise.all(at.map(i => chunkOnce(ref, i)));
+    at.forEach((i, n) => {
       const from = Math.max(start, i * size);
-      out.set(c.subarray(from - i * size, Math.min(end, (i + 1) * size) - i * size), from - start);
-    }
+      out.set(got[n].subarray(from - i * size, Math.min(end, (i + 1) * size) - i * size), from - start);
+    });
     return out;
   }
 
