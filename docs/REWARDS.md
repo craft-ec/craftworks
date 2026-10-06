@@ -111,8 +111,8 @@ A subscriber's claims only steer their own fee (§1): misreporting can move it, 
 - **Subscription:** paid on an external rail (card or stablecoin) to the Craftworks treasury, which signs a monthly
   **pass** to the account (a register entry: account → month). Pages show subscriber features to a pass holder.
 - **Settlement:** at month end the treasury sums the statements and the keepers' proofs, publishes the monthly
-  ledger (who earns what, from which statements, all checkable), and pays out on the same rail. Earnings below a
-  minimum carry over.
+  ledger (who earns what, from which statements, all checkable), and pays out IN THE TOKEN (owner 2026-10-07): any
+  amount, however small — no minimum, nothing carried over.
 - **What a pass buys (owner, 2026-10-06): the private.** Public data is open on Freenet — any client, ours or a
   custom one, reads it free (its pieces are at public addresses, its key travels with the item), and the usage
   record runs only in our pages. So a subscription never gates the public: it unlocks **subscriber-only items** (an
