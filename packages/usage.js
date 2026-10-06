@@ -12,22 +12,28 @@
 //   usage.reading(pageElement, itemRef, { kind, title })     // its time on the page counted (an item that does not play)
 //   await usage.month("2026-10")                             // [{ ref, kind, title, s, b, n }], most used first
 //   await usage.flush()
-//   await usage.statement("2026-10")                         // this person's fee split (rewards §2, shadow mode):
-//                                                            // { month, fee, creators: {did: n}, carriers: {did: n}, network }
+//   await usage.contribute(amount, days = 30)                // a contribution (SHADOW: a preview, nothing given)
+//   await usage.contributions()                              // [{ at, amount, days }]
+//   await usage.statement("2026-10")                         // the month so far, each day's share of the
+//                                                            // contributions split by that day's use: { month, amount,
+//                                                            // days, creators, carriers, unclaimed, network } ({did: n})
 export async function start(ctx) {
   const storage = await ctx.require("storage");
   const monthOf = (t = Date.now()) => new Date(t).toISOString().slice(0, 7);
   // In memory until written (every 30 s, and when the page goes away): `m:<month>:<ref>` → { kind, title, s, b, n }.
   const pending = new Map();
   const owners = new Map(); // a file's root → { ref, kind, title, file }
+  const dayOf = (t = Date.now()) => new Date(t).toISOString().slice(0, 10);
+  // Per MONTH (`m:`, the Usage table) and per DAY (`d:`, what a day's share of a contribution is split by).
   const add = (ref, info, d) => {
-    const k = `m:${monthOf()}:${ref}`;
-    const a = pending.get(k) ?? { kind: info?.kind ?? null, title: info?.title ?? null, s: 0, b: 0, n: 0 };
-    a.s += d.s ?? 0;
-    a.b += d.b ?? 0;
-    a.n += d.n ?? 0;
-    if (info?.title && !a.title) a.title = info.title;
-    pending.set(k, a);
+    for (const k of [`m:${monthOf()}:${ref}`, `d:${dayOf()}:${ref}`]) {
+      const a = pending.get(k) ?? { kind: info?.kind ?? null, title: info?.title ?? null, s: 0, b: 0, n: 0 };
+      a.s += d.s ?? 0;
+      a.b += d.b ?? 0;
+      a.n += d.n ?? 0;
+      if (info?.title && !a.title) a.title = info.title;
+      pending.set(k, a);
+    }
   };
   // DATA: every piece `files` received over the network, by its file's root — to the item that file is (else the file).
   addEventListener("craftworks:bytes", e => {
@@ -35,8 +41,8 @@ export async function start(ctx) {
     if (!root || !bytes) return;
     const o = owners.get(root);
     o ? add(o.ref, o, { b: bytes }) : add(`file:${root}`, { kind: "file" }, { b: bytes });
-    // PER FILE too (`r:<month>:<root>`): what pays its keepers (rewards §2: carriers by the data each file brought).
-    const rk = `r:${monthOf()}:${root}`;
+    // PER FILE and DAY too (`r:<day>:<root>`): what pays its keepers (rewards §2: carriers by the data each file brought).
+    const rk = `r:${dayOf()}:${root}`;
     const r = pending.get(rk) ?? { item: o?.ref ?? null, s: 0, b: 0, n: 0 };
     r.b += bytes;
     pending.set(rk, r);
@@ -96,7 +102,7 @@ export async function start(ctx) {
       for (const [k, a] of now) {
         const was = parse(t.rows().find(r => r.key === k)?.value) ?? {};
         const s = Math.round(((was.s ?? 0) + a.s) * 10) / 10;
-        await t.put(k, JSON.stringify({ kind: a.kind ?? was.kind ?? null, title: a.title ?? was.title ?? null, s, b: (was.b ?? 0) + a.b, n: (was.n ?? 0) + a.n, at: Date.now() }));
+        await t.put(k, JSON.stringify({ kind: a.kind ?? was.kind ?? null, title: a.title ?? was.title ?? null, ...(a.item ?? was.item ? { item: a.item ?? was.item } : {}), s, b: (was.b ?? 0) + a.b, n: (was.n ?? 0) + a.n, at: Date.now() }));
         const ref = k.slice(k.indexOf(":", 2) + 1);
         if (k.startsWith("m:") && !ref.startsWith("file:") && (a.s || a.b)) totals.set(ref, { s: (totals.get(ref)?.s ?? 0) + a.s, b: (totals.get(ref)?.b ?? 0) + a.b });
       }
@@ -129,39 +135,88 @@ export async function start(ctx) {
       .map(r => ({ ref: r.key.slice(p.length), ...parse(r.value) }))
       .sort((a, b) => b.s - a.s || b.b - a.b);
   }
-  // THE STATEMENT (rewards §2-§3, SHADOW MODE: nothing is charged or paid): this person's FEE split by their own
-  // month — creators by time on their items, carriers by the data each file brought (among the file's keepers, this
-  // person's own nodes never), the network the rest; a share with no one to receive it goes to the network.
-  const FEE = 10; // tokens a month (shadow: a set fee until there are passes)
+  // CONTRIBUTIONS (owner 10-07: contribution, not subscription — any amount, whenever): each SPREAD over its days
+  // (default 30) and SPLIT PER DAY by that day's use; contributions that overlap add up on the days they share.
+  // SHADOW MODE: a contribution here is a preview (table `contrib`), nothing is given or paid.
+  const DAYS = 30;
   const SPLIT = { creators: 0.6, carriers: 0.3, network: 0.1 };
+  async function contribute(amount, days = DAYS) {
+    const t = await storage.table("contrib");
+    await t.settled;
+    const at = Date.now();
+    await t.put(`c:${at}`, JSON.stringify({ at, amount: Math.max(0, Number(amount) || 0), days: Math.max(1, Math.round(Number(days) || DAYS)) }));
+  }
+  async function contributions() {
+    const t = await storage.table("contrib");
+    await t.settled;
+    return t.rows().filter(r => r.key.startsWith("c:") && r.value).map(r => parse(r.value)).filter(c => c?.amount > 0).sort((a, b) => a.at - b.at);
+  }
+  // A DAY's share of every contribution active on it (from its day, for its days).
+  const shareOn = (cs, day) =>
+    cs.reduce((n, c) => {
+      const from = dayOf(c.at);
+      const until = dayOf(c.at + (c.days - 1) * 86400000);
+      return day >= from && day <= until ? n + c.amount / c.days : n;
+    }, 0);
+  // THE STATEMENT (rewards §2-§3): the month so far, day by day — each day's share split by that day's use: creators by
+  // time on others' items, carriers by the data each file brought (among its keepers, never this person), the network
+  // 10%. A file with no keeper but this person: its share to its item's CREATOR (owner 10-07), else the day's creators
+  // by time; a day with no use at all: its share to the network.
   async function statement(m = monthOf()) {
     await flush();
     const [items, space, keep] = await Promise.all(["items", "space", "keep"].map(n => ctx.require(n)));
     const me = (await space.account())?.id;
+    const cs = await contributions();
     const t = await storage.table("usage");
     await t.settled;
     const rows = p => t.rows().filter(r => r.key.startsWith(p) && r.value).map(r => ({ key: r.key.slice(p.length), ...parse(r.value) }));
-    const out = { month: m, fee: FEE, creators: {}, carriers: {}, network: 0, at: Date.now() };
+    const out = { month: m, amount: 0, days: 0, creators: {}, carriers: {}, unclaimed: {}, network: 0, at: Date.now() };
     const give = (to, who, n) => (to[who] = Math.round(((to[who] ?? 0) + n) * 1e6) / 1e6);
-    // CREATORS: by time (one unit for every kind), on items not this person's.
-    const timed = rows(`m:${m}:`).filter(r => !r.key.startsWith("file:") && r.s > 0);
-    const byOf = async ref => (String(ref).startsWith("did:") ? String(ref).slice(0, String(ref).lastIndexOf("/")) : (await items.get(ref).catch(() => null))?.by ?? null);
-    const owned = (await Promise.all(timed.map(async r => ({ ...r, by: await byOf(r.key) })))).filter(r => r.by && r.by !== me);
-    const time = owned.reduce((n, r) => n + r.s, 0);
-    for (const r of owned) give(out.creators, r.by, (FEE * SPLIT.creators * r.s) / time);
-    // CARRIERS: by data, per file, shared equally by its keepers (not this person: their own nodes are never paid).
-    const files = rows(`r:${m}:`).filter(r => r.b > 0);
-    const data = files.reduce((n, r) => n + r.b, 0);
-    let unpaid = time ? 0 : FEE * SPLIT.creators;
-    for (const f of files) {
-      const share = (FEE * SPLIT.carriers * f.b) / data;
-      const ks = (await keep.keepers(f.key).catch(() => [])).filter(d => d !== me);
-      if (!ks.length) unpaid += share;
-      else for (const d of ks) give(out.carriers, d, share / ks.length);
+    const bys = new Map();
+    const byOf = ref => {
+      if (!bys.has(ref)) bys.set(ref, String(ref).startsWith("did:") ? Promise.resolve(String(ref).slice(0, String(ref).lastIndexOf("/"))) : items.get(ref).then(it => it?.by ?? null, () => null));
+      return bys.get(ref);
+    };
+    const keepersOf = new Map();
+    const keepers = root => (keepersOf.has(root) || keepersOf.set(root, keep.keepers(root).catch(() => [])), keepersOf.get(root));
+    const today = dayOf();
+    const [y, mo] = m.split("-").map(Number);
+    for (let d = 1; d <= 31; d++) {
+      const day = `${m}-${String(d).padStart(2, "0")}`;
+      if (new Date(Date.UTC(y, mo - 1, d)).getUTCMonth() !== mo - 1 || day > today) break;
+      const fee = shareOn(cs, day);
+      if (!fee) continue;
+      out.amount += fee;
+      out.days += 1;
+      const owned = (await Promise.all(rows(`d:${day}:`).filter(r => !r.key.startsWith("file:") && r.s > 0).map(async r => ({ ...r, by: await byOf(r.key) })))).filter(r => r.by && r.by !== me);
+      const time = owned.reduce((n, r) => n + r.s, 0);
+      const files = rows(`r:${day}:`).filter(r => r.b > 0);
+      const data = files.reduce((n, r) => n + r.b, 0);
+      if (!time && !data) {
+        out.network += fee;
+        continue;
+      }
+      let unpaid = 0;
+      if (time) for (const r of owned) give(out.creators, r.by, (fee * SPLIT.creators * r.s) / time);
+      else unpaid += fee * SPLIT.creators;
+      const toCreators = async (share, item) => {
+        const by = item ? await byOf(item) : null;
+        if (by && by !== me) return give(out.unclaimed, by, share);
+        if (!time) return (unpaid += share);
+        for (const r of owned) give(out.unclaimed, r.by, (share * r.s) / time);
+      };
+      for (const f of files) {
+        const share = (fee * SPLIT.carriers * f.b) / data;
+        const ks = (await keepers(f.key)).filter(x => x !== me);
+        if (!ks.length) await toCreators(share, f.item);
+        else for (const x of ks) give(out.carriers, x, share / ks.length);
+      }
+      if (!data) await toCreators(fee * SPLIT.carriers, null);
+      out.network += fee * SPLIT.network + unpaid;
     }
-    if (!data) unpaid += FEE * SPLIT.carriers;
-    out.network = Math.round((FEE * SPLIT.network + unpaid) * 1e6) / 1e6;
+    out.amount = Math.round(out.amount * 1e6) / 1e6;
+    out.network = Math.round(out.network * 1e6) / 1e6;
     return out;
   }
-  return { track, watch, opened, reading, month, flush, monthOf, statement };
+  return { track, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions };
 }

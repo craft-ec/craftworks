@@ -24,7 +24,8 @@
 // THE KEEPERS BAG (rewards step 3): each file's public bag `keepers:<root>` (`index.point`), where a keeper says, once
 // a month, that it keeps the file (`{ did, m: "YYYY-MM" }`; the same claim again merges). A CLAIM, unsigned like every
 // pointer and public like a view count (owner 10-06: confidential later): it shows who keeps what; the proofs (step 4)
-// are what will make a claim count for pay.
+// are what will make a claim count for pay. Its OWN files' and its spaces' files' holders claim too, once a pass finds
+// them whole (the uploader's node holds the original: the first keeper of anything).
 export async function start(ctx) {
   const [storage, space, files] = await Promise.all(["storage", "space", "files"].map(n => ctx.require(n)));
   const EVERY = 7 * 86400000; // a table kept longer ago than this is due
@@ -89,6 +90,9 @@ export async function start(ctx) {
     let rec = { ...out, file: row.id, space: sp?.id ?? null };
     delete rec.id;
     if (rec.error) rec = await failed(key, rec);
+    // ITS KEEPER too (owner 10-07): the uploader's node holds the original — said in the keepers bag, as a viewer who
+    // keeps it is, so the data others fetch of it pays its holders (rewards §2), not "no keeper".
+    else if (rec.gens && rec.whole === rec.gens) await claim(row.root).catch(e => ctx.log("keep", { what: `not said in the keepers bag: ${e?.message ?? e}` }));
     await (await records()).put(key, JSON.stringify(rec));
     return rec;
   }
@@ -173,6 +177,17 @@ export async function start(ctx) {
     if (!me) return;
     await (await ctx.require("index")).point(`keepers:${root}`, { did: me, m: monthOf() });
   }
+  // ITS OWN FILES' CLAIMS, once a month (no re-read: a file its weekly pass found whole is held here): one a turn.
+  async function claimOwn() {
+    const t = await records();
+    const m = monthOf();
+    const r = t.rows().find(x => x.key.startsWith("f/") && (v => v && !v.error && v.gens && v.whole === v.gens && v.claimed !== m)(read(x)));
+    if (!r) return;
+    const v = read(r);
+    const row = (await files.rows(v.space ? (await space.mine()).find(s => s.id === v.space) ?? null : null).catch(() => [])).find(x => x.id === v.file);
+    if (row?.root) await claim(row.root);
+    await t.put(r.key, JSON.stringify({ ...v, claimed: m }));
+  }
   const watchedDue = async () => (await kept()).files.filter(w => Date.now() - w.at > DAY);
 
   let running = false;
@@ -193,6 +208,7 @@ export async function start(ctx) {
         // Its own first; then what it played, kept for others.
         const w = (await watchedDue().catch(() => []))[0];
         if (w) await keepWatched(w);
+        else await claimOwn().catch(e => ctx.log("keep", { what: `own files not said in the keepers bag: ${e?.message ?? e}` }));
       }
     } finally {
       running = false;

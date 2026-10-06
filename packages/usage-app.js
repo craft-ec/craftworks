@@ -15,6 +15,7 @@ export async function mount(ctx, el) {
     .us th, .us td { text-align: left; padding: 6px 14px 6px 0; border-bottom: 1px solid var(--cw-line); }
     .us td.num { text-align: right; font-variant-numeric: tabular-nums; }
     .us tfoot td { font-weight: 600; border-bottom: 0; }
+    .us input.amount { width: 6em; margin: 0 4px; }
   }</style><div class="us"><h2>📊 Usage</h2></div>`;
   const root = el.querySelector(".us");
   const usage = await ctx.require("usage");
@@ -54,16 +55,26 @@ export async function mount(ctx, el) {
   };
   pick.onchange = draw;
   const note = Object.assign(document.createElement("p"), { className: "note", textContent: "Time: what played, for a video or an audio; the time its page was in front of you, for everything else. Data: what its files brought over the network. Kept in your own table — only you see it." });
-  // YOUR FEE (rewards §2-§3, SHADOW MODE): where this month's fee would go — creators by your time on their items,
+  // YOUR CONTRIBUTION (rewards §2-§3, SHADOW MODE): where an amount you give this month would go — any amount (owner
+  // 10-07: contribution, not subscription); creators by your time on their items,
   // carriers by the data their kept files brought you, the network the rest. Nothing is charged or paid yet.
   const directory = await ctx.require("directory");
-  const fh = Object.assign(document.createElement("h3"), { textContent: "Your fee this month (preview)" });
-  const fnote = Object.assign(document.createElement("p"), { className: "note", textContent: "Not charged: a preview of how a 10-token month would be shared — creators by your time on their items, keepers by the data their copies brought you, the network the rest. Never to you." });
+  const fh = Object.assign(document.createElement("h3"), { textContent: "Your contributions (preview)" });
+  const amount = Object.assign(document.createElement("input"), { type: "number", min: "0", step: "1", value: "10", title: "Tokens", className: "amount" });
+  const days = Object.assign(document.createElement("input"), { type: "number", min: "1", step: "1", value: "30", title: "Days", className: "amount" });
+  const giveBtn = Object.assign(document.createElement("button"), { type: "button", textContent: "Give (preview)" });
+  const amountLine = Object.assign(document.createElement("div"), { className: "note" });
+  amountLine.append("Give ", amount, " tokens over ", days, " days ", giveBtn);
+  const given = Object.assign(document.createElement("p"), { className: "note" });
+  const fnote = Object.assign(document.createElement("p"), { className: "note", textContent: "Nothing is given yet (a preview). Any amount, any time: spread over its days, each day's share split by what you used that day — contributions that overlap add up. Creators by your time on their items (60%), keepers by the data their copies brought you (30%; with no keeper yet, to the creator), the network 10%. Never to you." });
   const fout = document.createElement("div");
   const drawFee = async () => {
     fout.textContent = "Working it out…";
+    const cs = await usage.contributions().catch(() => []);
+    given.textContent = cs.length ? `Given: ${cs.map(c => `${c.amount} over ${c.days} days from ${usage.dayOf(c.at)}`).join("; ")}` : "Nothing given yet.";
     const st = await usage.statement(pick.value).catch(e => ((fout.textContent = `Could not: ${e?.message ?? e}`), null));
     if (!st) return;
+    if (!st.amount) return (fout.textContent = "Nothing to share this month: give something above (a preview).");
     const t = document.createElement("table");
     const head = t.createTHead().insertRow();
     for (const x of ["To", "For", "Tokens"]) head.append(Object.assign(document.createElement("th"), { textContent: x }));
@@ -74,15 +85,24 @@ export async function mount(ctx, el) {
       w.append(who);
       tr.append(w, td(why), td(n.toFixed(2), "num"));
     };
-    for (const [did, n] of Object.entries(st.creators).sort((a, b) => b[1] - a[1])) row(directory.nameEl(did), "creator", n);
+    for (const did of [...new Set([...Object.keys(st.creators), ...Object.keys(st.unclaimed)])].sort((a, b) => (st.creators[b] ?? 0) + (st.unclaimed[b] ?? 0) - (st.creators[a] ?? 0) - (st.unclaimed[a] ?? 0))) {
+      const u = st.unclaimed[did] ?? 0;
+      row(directory.nameEl(did), u ? `creator (incl. ${u.toFixed(2)} keepers' share: no keeper yet)` : "creator", (st.creators[did] ?? 0) + u);
+    }
     for (const [did, n] of Object.entries(st.carriers).sort((a, b) => b[1] - a[1])) row(directory.nameEl(did), "keeper", n);
-    row("Network", "free tier, shared nodes", st.network);
+    row("Network", "network share (10%)", st.network);
     const foot = t.createTFoot().insertRow();
-    foot.append(td("Total"), td(""), td(st.fee.toFixed(2), "num"));
+    foot.append(td("Total"), td(`${st.days} day(s) so far this month`), td(st.amount.toFixed(2), "num"));
     fout.replaceChildren(t);
   };
   pick.addEventListener("change", drawFee);
-  root.append(pick, note, out, fh, fnote, fout);
+  giveBtn.onclick = async () => {
+    giveBtn.disabled = true;
+    await usage.contribute(amount.value, days.value).catch(e => (given.textContent = `Not saved: ${e?.message ?? e}`));
+    giveBtn.disabled = false;
+    drawFee();
+  };
+  root.append(pick, note, out, fh, fnote, amountLine, given, fout);
   await draw();
   drawFee();
   // KEPT FOR OTHERS (rewards step 2, `keep`): what this node keeps of what you played — re-read a day apart so the
