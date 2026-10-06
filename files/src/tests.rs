@@ -352,3 +352,20 @@ fn two_uploads_of_one_file_that_stored_different_fragments_never_share_an_index_
     // The same stored set indexes the same way twice (deterministic: a resumed upload writes the same pieces).
     assert_eq!(index_hashed(&u.key, &u.plan, &stored).1, b_root);
 }
+
+#[test]
+fn a_fragment_made_again_is_the_one_stored() {
+    // `keep` repairs a generation by making its missing fragments again: each must be the very piece stored (address,
+    // bytes, hash), or the repair would occupy its address with one the index rejects.
+    let file = bytes(3 * 16 * 64 * 1024 + 12_345, 9);
+    let plan = Plan::of(file.len() as u64);
+    let key = content_key(&content(&file), None);
+    for g in 0..plan.gens as u64 {
+        let (a, b) = plan.range(g);
+        let plain = &file[a as usize..b as usize];
+        for (j, p) in encode(&key, &plan, g, plain, EXTRA) {
+            let again = mint(&key, &plan, g, plain, j);
+            assert_eq!((again.address, again.state.clone(), again.hash()), (p.address, p.state.clone(), p.hash()), "generation {g}, fragment {j}");
+        }
+    }
+}

@@ -498,14 +498,29 @@ export async function start(ctx) {
         const h = await f.indexHash(level, n);
         await one("index", level, n, core.file_index_id(f.key, h), h);
       }
-    for (let g = 0; g < f.plan.gens; g++) {
+    // Each generation: its listed fragments read and put again; a DEGRADED one (some missing, 16 still there) REPAIRED —
+    // rebuilt from any 16 and its missing fragments made again (a fragment is deterministic: the same bytes, address and
+    // hash as the index lists) and put. Measured 2026-10-06: 14% of a video's fragments were gone from the network a day
+    // after upload; put-again alone never brought one back. Several generations at a time (one waits on its slowest).
+    const burn = row.b ? bytes(row.b) : new Uint8Array(32);
+    out.repaired = 0;
+    const gen = async g => {
       const listed = await f.listed(g);
-      const there = (await Promise.all(listed.map(([j]) => one("fragment", g, j, core.file_fragment_id(f.key, g, j))))).filter(Boolean).length;
+      const got = await Promise.all(listed.map(([j]) => one("fragment", g, j, core.file_fragment_id(f.key, g, j))));
+      const there = got.filter(Boolean).length;
       const k = Math.min(GEN, f.plan.chunks - g * GEN);
       out[there === listed.length ? "whole" : there >= k ? "degraded" : "damaged"] += 1;
-    }
+      if (there === listed.length || there < k) return;
+      const plain = await generation(ref, f, g).catch(() => null);
+      if (!plain) return;
+      const lost = listed.filter((_, n) => !got[n]);
+      const made = await Promise.all(lost.map(([j]) => putOne(core.file_mint(f.key, f.plan.size, g, plain, j, burn), `repairing ${ref.name}`)));
+      out.repaired += made.filter(Boolean).length;
+    };
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(GENS_IN_FLIGHT, f.plan.gens) }, async () => { while (next < f.plan.gens) await gen(next++); }));
     out.ms = Math.round(performance.now() - t0);
-    ctx.log("kept", { what: `file ${ref.name}: ${out.pieces} piece(s) — ${out.whole}/${out.gens} generation(s) whole${out.degraded ? `, ${out.degraded} degraded` : ""}${out.damaged ? `, ${out.damaged} DAMAGED` : ""}; ${out.put} put again`, ms: out.ms });
+    ctx.log("kept", { what: `file ${ref.name}: ${out.pieces} piece(s) — ${out.whole}/${out.gens} generation(s) whole${out.degraded ? `, ${out.degraded} degraded` : ""}${out.damaged ? `, ${out.damaged} DAMAGED` : ""}; ${out.put} put again${out.repaired ? `, ${out.repaired} made again` : ""}`, ms: out.ms });
     return out;
   }
 
