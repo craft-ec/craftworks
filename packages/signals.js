@@ -5,7 +5,9 @@
 // - `mark`: the reaction it is kept as (a vote: two, one per side).
 // - `value`: "once" (one per person: a view, a save, a share), "updown" (+1 or −1: a vote), "many" (several values per
 //   person, each counted: an emoji REACTION — any emoji not another signal's mark, its value the emoji; a tag someone
-//   puts on another's item — its value the tag).
+//   puts on another's item — its value the tag), "sum" (one running NUMBER per person, the latest replacing the last;
+//   counted as the sum over people: the TIME spent on an item, the DATA its files took — owner 10-06: public as a view
+//   count for now, a confidential roll-up later).
 // - `action`: the POLICY action it is checked against — inherited as every policy is (the item's own rule, else its
 //   domain's in its space, else the space's). A signal with its OWN action names its parent (`inherits`): where no
 //   rule is set for it, its parent's applies — save and share as who may READ, react and tag as who may VOTE; a view is
@@ -27,6 +29,9 @@ export async function start() {
     { id: "comment", mark: null, value: "item", action: "comment", label: "Who may comment", openWhereRead: true, counted: false, point: true, activity: false },
     { id: "vote", mark: ["▲", "▼"], value: "updown", action: "vote", label: "Who may vote", openWhereRead: true, counted: false, point: true, activity: true },
     { id: "view", mark: "👁", value: "once", action: "read", counted: true, noun: ["view", "views"], point: true, activity: false },
+    // TIME and DATA (`usage`: what played, else the time on its page; what its files brought): a person's running total.
+    { id: "time", mark: "⏱", value: "sum", unit: "seconds", action: "read", counted: true, point: true, activity: false },
+    { id: "data", mark: "⇣", value: "sum", unit: "bytes", action: "read", counted: true, point: true, activity: false },
     { id: "save", mark: "★", value: "once", action: "save", inherits: "read", label: "Who may save", counted: true, noun: ["save", "saves"], point: true, activity: true },
     { id: "share", mark: "↗", value: "once", action: "share", inherits: "read", label: "Who may share", counted: true, noun: ["share", "shares"], point: true, activity: true },
     // A REACTION: an emoji (`counts.react`: emoji → how many) — Chat's messages and every kind alike. `choices`: the
@@ -41,9 +46,14 @@ export async function start() {
   const REACT = CATALOG.find(s => s.id === "react");
   // `react`'s mark is "" (any emoji): kept out of the lookup by marks above, found by `isEmoji`.
   // A "many" signal's reaction carries its value after the mark (`#rust`); any other emoji is a REACTION.
-  const markOf = e => (byMark.has(e) ? e : ([...byMark.keys()].find(m => byMark.get(m).value === "many" && String(e).startsWith(m)) ?? null));
+  const markOf = e => (byMark.has(e) ? e : ([...byMark.keys()].find(m => ["many", "sum"].includes(byMark.get(m).value) && String(e).startsWith(m)) ?? null));
   const isEmoji = e => /\p{Extended_Pictographic}/u.test(String(e ?? ""));
   const signalOf = e => byMark.get(markOf(e)) ?? (isEmoji(e) ? REACT : null);
+  // A SUM in words: "1 h 3 min spent", "12 MB fetched".
+  const amount = (s, n) =>
+    s.unit === "seconds"
+      ? `${n >= 3600 ? `${Math.floor(n / 3600)} h ${Math.round((n % 3600) / 60)} min` : n >= 60 ? `${Math.round(n / 60)} min` : `${Math.round(n)} s`} spent`
+      : `${n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${Math.round(n / 1e6)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`} fetched`;
   return {
     all: () => CATALOG,
     of: id => byId.get(id) ?? null,
@@ -60,6 +70,7 @@ export async function start() {
       if (!s) return null;
       if (s.value === "updown") return e === s.mark[0] ? 1 : -1;
       if (s.value === "many") return String(e).slice(s.mark.length);
+      if (s.value === "sum") return Number(String(e).slice(s.mark.length)) || 0;
       return true;
     },
     // The reaction a signal (and its value) is kept as.
@@ -69,11 +80,12 @@ export async function start() {
       if (s.value === "updown") return value > 0 ? s.mark[0] : s.mark[1];
       if (s.id === "react") return String(value);
       if (s.value === "many") return `${s.mark}${String(value).replace(/\s+/g, "-").toLowerCase().slice(0, 40)}`;
+      if (s.value === "sum") return `${s.mark}${Math.max(0, Math.round(Number(value) || 0))}`;
       return s.mark;
     },
     summary: it =>
       CATALOG.filter(s => s.counted && it?.counts?.[s.id])
-        .map(s => ` · ${it.counts[s.id]} ${s.noun[it.counts[s.id] === 1 ? 0 : 1]}`)
+        .map(s => ` · ${s.value === "sum" ? amount(s, it.counts[s.id]) : `${it.counts[s.id]} ${s.noun[it.counts[s.id] === 1 ? 0 : 1]}`}`)
         .join(""),
   };
 }

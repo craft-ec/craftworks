@@ -351,6 +351,13 @@ export async function start(ctx) {
     const signaled = {};
     for (const [id, by] of votes.counts?.get(key) ?? []) {
       const many = signals.of(id)?.value === "many";
+      // A SUM: each person's latest (their largest: a replacement half-made counts once), added up.
+      if (signals.of(id)?.value === "sum") {
+        const latest = values => Math.max(0, ...[...values].map(Number));
+        counts[id] = [...by.values()].reduce((n, v) => n + latest(v), 0);
+        if (by.has(self)) signaled[id] = latest(by.get(self));
+        continue;
+      }
       if (many) {
         const t = {};
         for (const values of by.values()) for (const v of values) t[v] = (t[v] ?? 0) + 1;
@@ -813,6 +820,8 @@ export async function start(ctx) {
         : [[signals.markFor(id, value), s.value === "many" ? !!on : !!value]],
     );
     const adding = [...want.values()].some(Boolean);
+    // A SUM replaces this person's last value: every other value of it they gave, taken back.
+    const replacing = had => (s.value === "sum" ? new Map([...[...had].filter(e => signals.byMark(e)?.id === id && !want.has(e)).map(e => [e, false]), ...want]) : want);
     const self = await me();
     const inSpace = String(post).startsWith("space:");
     const sp = inSpace ? await boardOf(post) : null;
@@ -823,7 +832,7 @@ export async function start(ctx) {
       if (s.action !== "read" && !(await mayWriteOn(await get(post, { outside }), s.action, { outside }))) throw new Error(`only its members ${s.action} here`);
       const mine = await profileRoom(self);
       const had = new Set(mine.reactions().filter(x => x.item === ref && x.by === self).map(x => x.emoji));
-      for (const [e, v] of want) if (v !== had.has(e)) await mine.react(ref, e, v, {});
+      for (const [e, v] of replacing(had)) if (v !== had.has(e)) await mine.react(ref, e, v, {});
       if (adding && s.point) await pointToSpace(outside);
       return;
     }
@@ -832,7 +841,7 @@ export async function start(ctx) {
     const item = onBoard && ref.startsWith("space:") ? idOf(ref) : ref;
     const had = new Set(r.reactions().filter(x => x.item === item && x.by === self).map(x => x.emoji));
     const cred = onBoard || s.action === "read" ? null : await writeCred(ref, s.action);
-    for (const [e, v] of want) if (v !== had.has(e)) await r.react(item, e, v, { cred });
+    for (const [e, v] of replacing(had)) if (v !== had.has(e)) await r.react(item, e, v, { cred });
     if (adding && !onBoard) await r.whenPrivate?.();
     if (adding && s.point && !onBoard && !r.isPrivate?.(post)) await pointTo(post);
   }
@@ -851,6 +860,20 @@ export async function start(ctx) {
       await signal(ref, "view", true, { outside });
     } catch (e) {
       ctx.log("posts", { what: `a view not kept: ${e.message ?? e}` });
+    }
+  }
+
+  // USED: this person's running TIME and DATA on an item (`usage`), as its public counts — never on one's own; best
+  // effort, as a view.
+  async function used(ref, { s = 0, b = 0 } = {}) {
+    try {
+      const outside = await outsideOf(ref).catch(() => null);
+      const it = await get(ref, { outside }).catch(() => null);
+      if (!it || it.by === (await me())) return;
+      if (s) await signal(ref, "time", s, { outside });
+      if (b) await signal(ref, "data", b, { outside });
+    } catch (e) {
+      ctx.log("posts", { what: `time and data not kept: ${e.message ?? e}` });
     }
   }
 
@@ -1044,5 +1067,5 @@ export async function start(ctx) {
       told(null, ref, null, body);
       return out;
     },
-    mayWriteOn, pageOf, linkOf, refOf, appOf, list, get, setFiles, attach, attached, history, publicIn, inPlaces, following, thread, vote, remove, boards, boardOf, publicSpaces, publicSpace, outsideOf, syncPublic, signal, view, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
+    mayWriteOn, pageOf, linkOf, refOf, appOf, list, get, setFiles, attach, attached, history, publicIn, inPlaces, following, thread, vote, remove, boards, boardOf, publicSpaces, publicSpace, outsideOf, syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
 }

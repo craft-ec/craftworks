@@ -133,6 +133,6 @@ A subscriber's claims only steer their own fee (§1): misreporting can move it, 
 
 ## 7. Build order
 
-1. Usage record in the subscriber's table (no money: shows "your month" to the user). (Per-item time/data totals for owners: PARKED until confidential data — owner 2026-10-06; signed per-viewer entries would show who watched.) 2. Keepers bag + daily proofs
+1. Usage record in the subscriber's table (no money: shows "your month" to the user). Per-item TIME and DATA shown as public counts beside views (owner 2026-10-06: as a view count for now — each person's running total, signed, so who-spent-how-long is readable; a confidential roll-up replaces it with confidential data). 2. Keepers bag + daily proofs
 (no money: shows who holds what beside the usage record — useful for durability now). 3. Treasury pass + statements + monthly ledger in
 shadow mode (computed, not paid) for a few months to calibrate the split. 4. Payouts.

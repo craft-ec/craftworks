@@ -70,23 +70,42 @@ export async function start(ctx) {
       return null;
     }
   };
+  // THE PUBLIC COUNTS (`items.used`: an item's time and data, as its views — owner 10-06, a confidential roll-up
+  // later): this person's running total per item (`t:<ref>`, all months), given again once it grew by a minute or
+  // 5 MB since it was last given, or when the page goes.
+  const STEP = { s: 60, b: 5e6 };
   let writing = Promise.resolve();
-  const flush = () =>
+  const flush = (leaving = false) =>
     (writing = writing.then(async () => {
-      if (!pending.size) return;
       const now = [...pending];
       pending.clear();
       const t = await storage.table("usage");
       await t.settled;
+      const totals = new Map();
       for (const [k, a] of now) {
         const was = parse(t.rows().find(r => r.key === k)?.value) ?? {};
         const s = Math.round(((was.s ?? 0) + a.s) * 10) / 10;
         await t.put(k, JSON.stringify({ kind: a.kind ?? was.kind ?? null, title: a.title ?? was.title ?? null, s, b: (was.b ?? 0) + a.b, n: (was.n ?? 0) + a.n, at: Date.now() }));
+        const ref = k.slice(k.indexOf(":", 2) + 1);
+        if (!ref.startsWith("file:") && (a.s || a.b)) totals.set(ref, { s: (totals.get(ref)?.s ?? 0) + a.s, b: (totals.get(ref)?.b ?? 0) + a.b });
+      }
+      // Every item's running total; given when it grew enough (or on leaving), in the background.
+      const items = await ctx.require("items");
+      for (const ref of new Set([...totals.keys(), ...(leaving ? [...given.keys()] : [])])) {
+        const k = `t:${ref}`;
+        const was = parse(t.rows().find(r => r.key === k)?.value) ?? { s: 0, b: 0, gs: 0, gb: 0 };
+        const add = totals.get(ref) ?? { s: 0, b: 0 };
+        const cur = { s: Math.round(was.s + add.s), b: was.b + add.b };
+        const due = cur.s - was.gs >= STEP.s || cur.b - was.gb >= STEP.b || (leaving && (cur.s > was.gs || cur.b > was.gb));
+        await t.put(k, JSON.stringify({ ...cur, gs: due ? cur.s : was.gs, gb: due ? cur.b : was.gb }));
+        given.set(ref, true);
+        if (due) items.used(ref, cur);
       }
     }).catch(e => ctx.log("usage", { what: `not written: ${e?.message ?? e}` })));
-  setInterval(flush, 30000);
-  addEventListener("pagehide", () => flush());
-  addEventListener("visibilitychange", () => document.visibilityState === "hidden" && flush());
+  const given = new Map(); // the items this page counted (given on leaving)
+  setInterval(() => pending.size && flush(), 30000);
+  addEventListener("pagehide", () => flush(true));
+  addEventListener("visibilitychange", () => document.visibilityState === "hidden" && flush(true));
   // A MONTH: what was used, most first (watch time, then data), what is still in memory counted too.
   async function month(m = monthOf()) {
     await flush();
