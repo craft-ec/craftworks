@@ -356,10 +356,12 @@ export async function start(ctx) {
   async function generation(ref, f, g) {
     const listed = await f.listed(g);
     const d = new glue.FileDecoder(f.key, f.plan.size, g, JSON.stringify(listed));
+    const absent = []; // listed fragments the node answered are not there
     await new Promise((resolve, reject) => {
       let left = listed.length;
       for (const [j] of listed)
         fetchState(core.file_fragment_id(f.key, g, j), `${ref.name}: part ${g + 1} of ${f.plan.gens}`).then(state => {
+          if (!state) absent.push(j);
           if (d.done()) return;
           if (state) {
             try {
@@ -372,7 +374,15 @@ export async function start(ctx) {
           if (--left === 0) reject(new Error(`${ref.name}: part ${g + 1} could not be rebuilt (${d.rank()} of ${Math.min(GEN, f.plan.chunks - g * GEN)} pieces found)`));
         });
     });
-    return d.plain();
+    const plain = d.plain();
+    // READERS REPAIR: what a read had to rebuild around is made again and put back (in the background; a fragment is
+    // deterministic, so a viewer's copy is the uploader's). Only with the file's burn hash — a piece's first write names it.
+    if (absent.length && ref.b) {
+      const burn = bytes(ref.b);
+      for (const j of absent) putOne(core.file_mint(f.key, f.plan.size, g, plain, j, burn), `repairing ${ref.name}`).catch(() => {});
+      ctx.log("files", { what: `${ref.name}: part ${g + 1}: ${absent.length} fragment(s) not there, made again and put` });
+    }
+    return plain;
   }
 
   async function* stream(ref, { from = 0 } = {}) {
