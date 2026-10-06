@@ -1,0 +1,18 @@
+{
+ "title": "Big Buck Bunny (4K, full length)",
+ "about": "Blender Foundation open movie (CC BY 3.0, peach.blender.org). The full 10-minute 4K original, encoded in a browser into an HEVC + H.264 ladder and stored on Freenet.",
+ "by": "Wren#BZ6QnL",
+ "file": {
+  "id": "b118a56fd100f5db50b2b02e8a946ce5efa33751f3f55c51814a9e8a8b85739e",
+  "in": null,
+  "key": "ad893ab12b3cfad7be07d3d348699ddc73dcbb940428d59de05a39484a1efb00",
+  "root": "b118a56fd100f5db50b2b02e8a946ce5efa33751f3f55c51814a9e8a8b85739e",
+  "b": "0000000000000000000000000000000000000000000000000000000000000000",
+  "size": 44713,
+  "name": "bbb4k.mp4.video.json",
+  "type": "application/vnd.craftworks.video+json",
+  "duration": 634.6,
+  "width": 3840,
+  "height": 2160
+ }
+}

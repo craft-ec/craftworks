@@ -1,0 +1,246 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FreenetTube</title>
+<style>
+  :root { --bg: #0f0f0f; --panel: #1b1b1b; --line: #2b2b2b; --fg: #f1f1f1; --dim: #a5a5a5; --acc: #3ea6ff; --ok: #2ecc71; --hot: #f03; --cw-radius: 12px; }
+  * { box-sizing: border-box }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif }
+  header { display: flex; align-items: center; gap: 14px; padding: 10px 20px; border-bottom: 1px solid var(--line) }
+  header .logo { font-weight: 700; font-size: 20px; letter-spacing: -0.5px }
+  header .logo span { background: var(--hot); color: #fff; border-radius: 6px; padding: 0 6px; margin-right: 4px }
+  header .tag { color: var(--dim); font-size: 13px }
+  main { display: grid; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: 24px; padding: 20px; max-width: 1400px; margin: 0 auto }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px } }
+  /* The player: 16:9, never taller than 70% of the screen (its width follows), before and after it starts. */
+  .stage { position: relative; aspect-ratio: 16 / 9; max-height: 70vh; max-width: calc(70vh * 16 / 9); margin-inline: auto; background: #000; border-radius: 12px; overflow: hidden; }
+  .stage video { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; object-fit: contain; }
+  .stage .start { position: absolute; inset: 0; margin: auto; width: 76px; height: 54px; border: 0; border-radius: 14px; background: var(--hot); color: #fff; font-size: 24px; cursor: pointer; z-index: 2 }
+  .stage .start:focus-visible { outline: 3px solid #fff }
+  h1 { font-size: 20px; margin: 14px 0 4px }
+  .meta { color: var(--dim); font-size: 14px }
+  .desc { background: var(--panel); border-radius: 12px; padding: 12px 14px; margin-top: 12px }
+  .card { background: var(--panel); border-radius: 12px; padding: 14px; margin-bottom: 16px }
+  .card h2 { font-size: 13px; margin: 0 0 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .6px }
+  .tree { display: grid; gap: 4px }
+  .row { margin-left: calc(var(--lvl) * 16px); padding: 6px 10px; border-left: 2px solid var(--line); border-radius: 0 6px 6px 0; background: #161616; font-size: 13px; opacity: .55; transition: opacity .3s }
+  .row.on { opacity: 1; border-left-color: var(--acc) }
+  .row.done { border-left-color: var(--ok) }
+  .row.hot { border-left-color: var(--hot); background: #201417 }
+  .row b { color: var(--fg) }
+  .row span { color: var(--dim) }
+  .row small { display: block; color: #cfcfcf; font-variant-numeric: tabular-nums; margin-top: 2px }
+  .row code { font-size: 11px }
+  .note { color: var(--dim); font-size: 12.5px; margin: 10px 0 0 }
+  .log { font: 12px/1.5 ui-monospace, Menlo, monospace; max-height: 240px; overflow: auto; white-space: pre-wrap; color: #ccc }
+  .kv { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 3px 10px; font-size: 13px }
+  .kv code { color: #ddd; word-break: break-all; font: 12px ui-monospace, Menlo, monospace }
+  section.explain { max-width: 1400px; margin: 0 auto; padding: 0 20px 48px }
+  section.explain h2 { border-top: 1px solid var(--line); padding-top: 20px }
+  section.explain p, section.explain li { color: #ddd; max-width: 72ch }
+  .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin: 14px 0 }
+  .flow div { background: var(--panel); border-radius: 10px; padding: 12px; font-size: 14px }
+  .flow div b { display: block; color: var(--acc); margin-bottom: 4px }
+  code { font: 13px ui-monospace, Menlo, monospace; background: #222; padding: 1px 4px; border-radius: 4px }
+  a { color: var(--acc) }
+</style>
+<header>
+  <div class="logo"><span>▶</span>FreenetTube</div>
+  <div class="tag">video straight from Freenet: no server, no account</div>
+</header>
+<main>
+  <div>
+    <div class="stage" id="stage"><video id="v" playsinline preload="none"></video><button class="start" id="start" title="Play" hidden>▶</button></div>
+    <h1 id="title">Loading…</h1>
+    <div class="meta" id="meta">connecting to your node…</div>
+    <div class="desc" id="desc"></div>
+    <div class="card" style="margin-top:16px">
+      <h2>Where the bytes are</h2>
+      <div class="kv" id="where"></div>
+    </div>
+  </div>
+  <aside>
+    <div class="card">
+      <h2>How the contracts build it, live</h2>
+      <div class="tree" id="tree">
+        <div class="row" id="R-node" style="--lvl:0"><b>Freenet node</b> <span>this machine; the page's only way to the network</span><small>connecting…</small></div>
+        <div class="row" id="R-site" style="--lvl:0"><b>website contract</b> <code id="site-key"></code><span>serves this page: its HTML, the player modules, the core and contract code</span><small>loaded</small></div>
+        <div class="row" id="R-ref" style="--lvl:1"><b>video reference</b> <span>inside the page: the manifest's key and root hash, all it takes to find and check everything below</span></div>
+        <div class="row" id="R-manifest" style="--lvl:2"><b>manifest</b> <span>a file of piece contracts: renditions, fragment index, timeline frames</span><small>not read yet</small></div>
+        <div id="R-files"></div>
+        <div class="row" id="R-player" style="--lvl:0"><b>player</b> <span>MediaSource: four fragments asked at a time, a rendition per fragment</span><small>press ▶</small></div>
+      </div>
+      <p class="note">Every piece is its own <code>piece</code> contract, at an address only the file's key can compute. A file is one <b>root</b> piece, then <b>index</b> pieces (which fragments exist and their hashes), then <b>fragment</b> pieces: 16 chunks per generation plus 8 coded extras, any 16 of which rebuild it. No contract can read what it holds; this page checks each piece against the root hash. In the Craftworks app the reference is not baked in: it is a row in the uploader's table (a <code>tail</code> contract they sign; their identity is an <code>idlog</code> contract), listed in Discover (a <code>bag</code> contract).</p>
+    </div>
+    <div class="card">
+      <h2>Log</h2>
+      <div class="log" id="log"></div>
+    </div>
+  </aside>
+</main>
+<section class="explain">
+  <h2>How this page works</h2>
+  <p>This page is a website stored on Freenet, and the film is too. The only thing on this machine is a Freenet node; the page talks to it over a local WebSocket. Everything else happens in this tab: fetching pieces, checking them, decoding, decrypting and playback. Nothing is downloaded until you press ▶, and then only the fragments around the playhead.</p>
+  <div class="flow">
+    <div><b>1. Reference</b>The page holds one small reference: the video manifest's key, root hash and size. Public files are keyed by their content, so anyone with the reference can read it and nobody without it can find the pieces.</div>
+    <div><b>2. Pieces</b>Every piece lives in its own <code>piece</code> contract at an address computed from the key. The contract cannot read it; this page checks every piece against the root hash as it arrives.</div>
+    <div><b>3. Coding</b>A file is cut into chunks, encrypted, and coded in generations of 16 with random linear network coding. A healthy chunk reads alone; a slow or missing one is rebuilt from any 16 of the generation's fragments, asked all at once.</div>
+    <div><b>4. Manifest</b>The manifest lists the renditions (HEVC 2160p to 480p, H.264 720p and 360p), each a fragmented MP4 indexed by byte and time, plus a strip of frames for the timeline.</div>
+    <div><b>5. Playback</b>The player picks the family your browser plays smoothly, asks four 4-second fragments at a time, and moves between renditions by measured throughput. Quality can also be chosen by hand.</div>
+    <div><b>6. Same code</b>These are the same modules the Craftworks Video app uses (<code>node</code>, <code>files</code>, <code>video-player</code>, <code>player-chrome</code>), loaded here without accounts, tables or apps.</div>
+  </div>
+  <p>Source: <a href="https://github.com/craft-ec/craftworks">github.com/craft-ec/craftworks</a> (this page: <code>demo/tube</code>).</p>
+</section>
+<script type="module">
+// FREENETTUBE: the Craftworks video path alone. A tiny `require` in place of the app's loader: each module started once,
+// the same files the app ships (copied in by build.sh), and no account — what needs one (tables, spaces) is absent.
+const $ = id => document.getElementById(id);
+const t0 = performance.now();
+const ms = () => Math.round(performance.now() - t0);
+const log = s => { const el = $("log"); el.textContent += `${ms()} ms  ${s}\n`; el.scrollTop = el.scrollHeight; };
+// A tree ROW lit, with its live line.
+const on = (id, text, done) => { const r = $("R-" + id); if (!r) return; r.classList.add("on"); if (done) r.classList.add("done"); if (text != null) (r.querySelector("small") ?? r.appendChild(document.createElement("small"))).textContent = text; };
+// PIECES BY FILE AND ROLE: every get the files module asks names its file and what it is (its root, its index, a part).
+const perFile = new Map();
+const statOf = name => perFile.get(name) ?? perFile.set(name, { root: 0, index: 0, frag: 0, missed: 0 }).get(name);
+const fileRows = new Map(); // file name → { id, total }
+let drawQueued = false;
+const drawFiles = () => {
+  if (drawQueued) return; drawQueued = true;
+  requestAnimationFrame(() => {
+    drawQueued = false;
+    for (const [name, row] of fileRows) {
+      const s = perFile.get(name);
+      if (!s) continue;
+      on(row.id, `root ${s.root ? "✓" : "–"} · ${s.index} index · ${s.frag.toLocaleString()} of ~${row.total.toLocaleString()} fragment pieces read${s.missed ? ` · ${s.missed} unanswered, raced around` : ""}`, true);
+    }
+  });
+};
+const MODULES = {
+  "core-glue": ["module", "craftworks_core.js"], "core-wasm": ["bytes", "craftworks_core_bg.wasm"], "identity-wasm": ["bytes", "identity.wasm"],
+  "sealed-wasm": ["bytes", "sealed.wasm"], "piece-wasm": ["bytes", "piece.wasm"],
+  node: ["package", "node.js"], files: ["package", "files.js"], "video-player": ["package", "video-player.js"], "player-chrome": ["package", "player-chrome.js"],
+  storage: ["none"], space: ["none"],
+};
+const started = new Map();
+const ctx = {
+  params: new URLSearchParams(location.search),
+  route: "/",
+  // The modules' own log lines, kept short (a socket URL as its host).
+  log: (step, d = {}) => log(`${step}${d.what ? ": " + String(d.what).replace(/wss?:\/\/([^/]+)\/\S*/, "$1") : ""}`),
+  require: name => {
+    if (!started.has(name)) started.set(name, (async () => {
+      const [kind, file] = MODULES[name] ?? [];
+      if (!kind) throw new Error(`${name}: not part of this page`);
+      if (kind === "none") return {}; // no account here: nothing a file in a space would need
+      const url = new URL(file, location.href);
+      if (kind === "bytes") return new Uint8Array(await (await fetch(url)).arrayBuffer());
+      const mod = await import(url);
+      if (kind === "module") return mod;
+      const api = await mod.start(ctx);
+      return name === "node" ? watchNode(api) : api;
+    })());
+    return started.get(name);
+  },
+};
+// THE PIECE LAYER, counted: every get the files module asks the node (a piece of the manifest, an index, a fragment).
+const pc = { asked: 0, got: 0, missed: 0, ms: 0, slow: 0 };
+function watchNode(api) {
+  const ask = api.ask;
+  api.ask = (frames, match, what, wait) => {
+    const t = performance.now(); pc.asked++;
+    return ask(frames, match, what, wait).then(r => {
+      const d = performance.now() - t; pc.ms += d; pc.slow = Math.max(pc.slow, d);
+      const ok = r?.kind === "got";
+      ok ? pc.got++ : pc.missed++;
+      const m = /^(.*): (its root|its index|part \d+ of \d+|a part)$/.exec(what ?? "");
+      if (m) { const s = statOf(m[1]); if (!ok) s.missed++; else s[m[2] === "its root" ? "root" : m[2] === "its index" ? "index" : "frag"]++; drawFiles(); }
+      on("node", `connected · ${new URL(api.url.replace(/^ws/, "http")).host} · ${pc.got.toLocaleString()} piece contracts read · avg ${(pc.ms / Math.max(1, pc.got + pc.missed) / 1000).toFixed(2)} s each`, true);
+      return r;
+    }, e => { pc.missed++; throw e; });
+  };
+  return api;
+}
+
+// ~How many fragment pieces a file has: chunks of size/16 within 16 KiB–256 KiB, generations of 16, 24 pieces stored each.
+const files_total = size => { const chunk = Math.min(262144, Math.max(16384, Math.ceil(size / 16))); const chunks = Math.ceil(size / chunk); return Math.ceil(chunks / 16) * 24; };
+const video = $("v");
+const stage = $("stage");
+let ref;
+try {
+  const v = await (await fetch(new URL("video.json", location.href))).json();
+  ref = v.file;
+  $("title").textContent = v.title; $("desc").textContent = v.about;
+  $("meta").textContent = `${v.by} · ${Math.floor(ref.duration / 60)}:${String(Math.round(ref.duration % 60)).padStart(2, "0")} · ${ref.width}×${ref.height}`;
+  const node = await ctx.require("node");
+  on("node", `connected · ${new URL(node.url.replace(/^ws/, "http")).host}`, true);
+  $("site-key").textContent = (location.pathname.split("/")[4] || "(served locally)").slice(0, 12) + "…";
+  on("site", null, true);
+  on("ref", null, true);
+  fileRows.set(ref.name, { id: "manifest", total: files_total(ref.size) });
+  const [files, player, chrome] = await Promise.all(["files", "video-player", "player-chrome"].map(ctx.require));
+  // THE FILES LAYER, counted: every byte range the player reads (a fragment, an init segment).
+  const fl = { n: 0, bytes: 0, ms: 0, slow: 0 };
+  const range = files.range;
+  files.range = async (r, s, l) => {
+    const t = performance.now(); const b = await range(r, s, l); const d = performance.now() - t;
+    fl.n++; fl.bytes += b.length; fl.ms += d; fl.slow = Math.max(fl.slow, d);
+    if (l > 100_000) log(`fragment ${(b.length / 1e6).toFixed(1)} MB in ${(d / 1000).toFixed(2)} s · ${r.name.replace(/^.*\.(\w+)\.(\d+p)\.mp4$/, "$1 $2")}`);
+    return b;
+  };
+  // THE MANIFEST (44 KB): read now — what the video is made of, and its frames for the poster and the timeline.
+  const m = await player.manifest(ref);
+  // ITS FILES, each a set of piece contracts of its own: the timeline frames and every rendition.
+  const LABEL = { avc: "H.264", hevc: "HEVC", av1: "AV1", aac: "AAC" };
+  const addFile = (id, label, fref, what) => {
+    const row = document.createElement("div");
+    row.className = "row"; row.id = "R-" + id; row.style.setProperty("--lvl", 3);
+    row.append(Object.assign(document.createElement("b"), { textContent: label }), " ", Object.assign(document.createElement("span"), { textContent: what }), Object.assign(document.createElement("small"), { textContent: "not read yet" }));
+    $("R-files").append(row);
+    fileRows.set(fref.name, { id, total: files_total(fref.size) });
+  };
+  if (m.strip) addFile("strip", "timeline frames", m.strip.ref, `an image file · ${(m.strip.ref.size / 1e6).toFixed(1)} MB`);
+  for (const r of [...m.renditions].sort((a, b) => b.height - a.height || a.codec.localeCompare(b.codec))) addFile(`r-${r.codec}-${r.height}`, `${LABEL[r.codec] ?? r.codec} ${r.height}p`, r.ref, `${(r.size / 1e6).toFixed(0)} MB · ${(r.bitrate / 1e6).toFixed(1)} Mb/s · ${r.index.segments.length} fragments`);
+  drawFiles();
+  log(`manifest: ${m.renditions.length} renditions, ${m.renditions[0].index.segments.length} fragments each`);
+  $("where").innerHTML = "";
+  const kv = (k, val) => $("where").append(Object.assign(document.createElement("span"), { textContent: k }), Object.assign(document.createElement("code"), { textContent: val }));
+  kv("manifest root", ref.root);
+  for (const r of m.renditions) kv(`${r.codec} ${r.height}p`, `${(r.size / 1e6).toFixed(0)} MB · ${(r.bitrate / 1e6).toFixed(1)} Mb/s · root ${r.ref.root.slice(0, 16)}…`);
+  let strip = null;
+  if (m.strip) {
+    const url = URL.createObjectURL(await files.get(m.strip.ref));
+    strip = { ...m.strip, url };
+    // The POSTER: a frame of the strip (a minute in).
+    const img = new Image(); img.src = url; await img.decode();
+    const i = Math.min(m.strip.n - 1, Math.floor(60 / m.strip.every));
+    const c = document.createElement("canvas"); c.width = m.strip.w; c.height = m.strip.h;
+    c.getContext("2d").drawImage(img, (i % m.strip.cols) * m.strip.w, Math.floor(i / m.strip.cols) * m.strip.h, m.strip.w, m.strip.h, 0, 0, m.strip.w, m.strip.h);
+    video.poster = c.toDataURL("image/jpeg", 0.8);
+    log(`timeline frames: ${m.strip.n}, one every ${m.strip.every} s`);
+  }
+  $("start").hidden = false;
+  $("start").onclick = async () => {
+    $("start").remove();
+    const c = chrome.attach(stage, video, { duration: m.duration });
+    if (strip) c.strip(strip);
+    video.autoplay = true;
+    let stalls = 0;
+    video.addEventListener("waiting", () => stalls++);
+    const ahead = () => { const b = video.buffered; for (let i = 0; i < b.length; i++) if (video.currentTime >= b.start(i) - 0.3 && video.currentTime <= b.end(i)) return b.end(i) - video.currentTime; return 0; };
+    let level = "";
+    setInterval(() => on("player", `${level} · showing ${video.videoWidth}×${video.videoHeight} · ${ahead().toFixed(0)} s buffered · ${stalls} stall(s)`, !video.paused), 1000);
+    await player.play(video, ref, {
+      onNote: t => t && log(t),
+      onLevel: l => {
+        level = l; c.level(l); log(`playing ${l}`);
+        const k = /(\w[\w.]*) (\d+)p/.exec(l.replace("Auto · ", ""));
+        for (const r of $("R-files").children) r.classList.toggle("hot", !!k && r.id === `R-r-${{ "H.264": "avc", HEVC: "hevc", AV1: "av1" }[k[1]]}-${k[2]}`);
+      },
+      onLevels: (labels, pick) => c.levels(labels, pick),
+    });
+  };
+} catch (e) {
+  log("error: " + (e.message ?? e)); $("meta").textContent = "error: " + (e.message ?? e);
+}
+</script>
