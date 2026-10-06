@@ -1270,13 +1270,32 @@ old key's addresses.
 - Live checks: History seen; restore, notifications, mentions not checked by owner — owner flags issues separately.
 
 ## Sequence (owner: in order)
-- [ ] 2 Style: move the 6 outside overrides into their components; build check (no cross-package styling, no duplicate class names)
-- [ ] 3 Cascade layers (base, apps, components, templates); drop the `body` prefix
+- [x] 2 Style: outside overrides moved into their components; build check (tools/style-check.mjs: no cross-package styling,
+      no duplicate class names)
+- [x] 3 Cascade layers (10-06): `@layer base, apps, components, templates` declared once in the theme; every package's CSS
+      in its layer (28 style blocks + 13 in-template <style>); `body` prefixes dropped. The boot page (wrapper/index.html)
+      in a lowest `boot` layer — unlayered, its `body { max-width: 900px }` had capped the whole app.
 - [ ] 4 Strip each app's own buttons/headings/widths → theme parts; screenshot each app at phone width
 - [ ] 5 Remaining live checks
 - [ ] 6 Identify node-log contracts HQk7…/J4bh…
-- [ ] Drive files as items; rewards design doc
-- [ ] PASTE app (owner 10-06, queued after style work): kind `paste` in the note family (all note capabilities, global
-      search); its own app = a pastebin layout over the shared components (large monospace editor, Save → link, your
-      pastes, raw view). Plus note/audience options: UNLISTED (link only, not in Discover), EXPIRY; renderer: RAW view,
-      code SYNTAX highlighting.
+- [x] Catch-up made SAFE and back on (10-06, 241d8df): asked after 10 min behind in a page (page memory: the app frame
+      has no localStorage), the ask carries epoch+branch; answered only when confirmed behind (ask + device announcements).
+- [x] Drive files as items (already items in drive-store); 10-06: feed tiles open the file's page (bar + Open/Move…).
+- [x] FEEDS without the action row (owner 10-06): note/video/audio/image/book/drive tiles; the row on the item's page
+      (a note's: its editor).
+- [x] Rewards design: docs/REWARDS.md (user-centric split of each subscriber's fee; keepers by possession proofs;
+      treasury pass + monthly ledger; shadow mode first).
+- [x] PASTE app (10-06): kind `paste` (note family; meta language/expires/unlisted), #/paste composer + your pastes,
+      item page with `highlight` (per-family tokenizer, text in spans), raw view + download; unlisted = public, never in
+      Discover (profile submit + space sync both skip). fx: rust paste coloured, raw exact, Discover 0.
+
+## Video / storage hardening (10-06)
+- Upload 6 generations in flight (a402b1a: 56 KB/s → link speed); playback chunks at once, 4 fragments ahead, raced
+  generations, 2 s hedge; ONE cap on gets (node.slot: 32, urgent first, background ≤16); late answers taken; a fragment
+  late/failed raced from lower renditions, a moment none can give skipped and jumped (d1fce88).
+- keep reads and REPAIRS (deterministic fragments re-made; tested byte-identical), never re-puts what answers; readers
+  repair files (f6e1ab1) and tables (blocks: a block "not there" rebuilt from its group is put back).
+- Measured: from B 428/433 pieces of a 360p rendition answer in 1st try (p50 0.9 s), the "unanswered" were slow gets;
+  the 3 "missing" fragments of the probe were never listed (upload replaced them with higher numbers).
+- Player chrome on the picture (timeline + frames, settings: quality/speed, CC, sound, full screen); FreenetTube demo
+  at DkG6Jqkc… (demo/tube) with the contracts tree live.
