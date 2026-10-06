@@ -1,0 +1,248 @@
+<title>FreenetTube on Craftworks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column with full-width "rack" diagrams; the stack is drawn as a broadcast rack, top = viewer, bottom = network. */
+:root {
+  --bg: #eef0f2;
+  --surface: #ffffff;
+  --ink: #15191e;
+  --dim: #5b6470;
+  --line: #d3d8de;
+  --tally: #c8321f;      /* the record/tally light */
+  --wire: #1f6f8b;       /* network side */
+  --ok: #2f7d4a;
+  --code-bg: #e3e7eb;
+  --display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111418; --surface: #1a1f25; --ink: #e8ecf0; --dim: #98a2ae; --line: #2c333c;
+  --tally: #ef5a43; --wire: #5fb3d1; --ok: #6cc28a; --code-bg: #232a32; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111418; --surface: #1a1f25; --ink: #e8ecf0; --dim: #98a2ae; --line: #2c333c;
+  --tally: #ef5a43; --wire: #5fb3d1; --ok: #6cc28a; --code-bg: #232a32; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 16px/1.6 var(--body); padding-inline: 16px; padding-block: 0 64px }
+.wrap { max-width: 980px; margin: 0 auto }
+.prose { max-width: 68ch }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.15; margin: 0 }
+h1 { font-size: clamp(34px, 6vw, 56px); letter-spacing: -0.02em }
+h2 { font-size: 28px; margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line) }
+h3 { font-size: 19px; margin-top: 28px }
+p { margin: 12px 0 }
+a { color: var(--wire) }
+code, .mono { font-family: var(--mono); font-size: 0.88em }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; word-break: break-word }
+.eyebrow { font: 500 12px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim) }
+.tally { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--tally); margin-right: 8px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--tally) 25%, transparent) }
+
+header.top { padding-block: 48px 8px; display: grid; gap: 14px }
+.lede { font-size: 19px; color: var(--ink); max-width: 62ch }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 22px; color: var(--dim); font-size: 14px }
+.facts b { color: var(--ink); font-weight: 600 }
+
+/* The rack */
+.rack { margin-top: 20px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface) }
+.unit { display: grid; grid-template-columns: 150px minmax(0, 1fr) minmax(0, 1.1fr); gap: 16px; padding: 14px 18px; border-top: 1px solid var(--line); align-items: start }
+.unit:first-child { border-top: 0 }
+.unit .name { font: 700 15px var(--display) }
+.unit .where { font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); display: block; margin-top: 2px }
+.unit .does, .unit .detail { min-width: 0; font-size: 14.5px }
+.unit .detail { color: var(--dim) }
+.unit.browser .name { color: var(--tally) }
+.unit.net .name { color: var(--wire) }
+.band { padding: 6px 18px; font: 500 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); background: var(--code-bg) }
+@media (max-width: 720px) { .unit { grid-template-columns: 1fr; gap: 4px } }
+
+/* Steps */
+.steps { display: grid; gap: 0; margin-top: 16px; counter-reset: s }
+.step { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; padding: 12px 0; border-top: 1px dashed var(--line) }
+.step::before { counter-increment: s; content: counter(s); font: 700 20px var(--display); color: var(--tally); }
+.step.play::before { color: var(--wire) }
+.step b { font-weight: 600 }
+
+.tablewrap { overflow-x: auto; margin-top: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface) }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 620px }
+th, td { text-align: left; padding: 9px 14px; border-top: 1px solid var(--line); vertical-align: top }
+thead th { border-top: 0; font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim) }
+td.num { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 13px; white-space: nowrap }
+td:first-child { font-weight: 600 }
+
+.callout { margin-top: 18px; padding: 16px 18px; border-left: 3px solid var(--tally); background: var(--surface); border-radius: 0 8px 8px 0 }
+.callout p:first-child { margin-top: 0 }
+.callout p:last-child { margin-bottom: 0 }
+footer { margin-top: 56px; color: var(--dim); font-size: 13.5px }
+</style>
+
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow"><span class="tally"></span>Explainer · October 2026</div>
+  <h1>FreenetTube on Craftworks</h1>
+  <p class="lede">The original FreenetTube streamed one WebM file from a freenet-vfs drive. That stack is retired. Video on Freenet now runs inside Craftworks: the browser encodes a 4K ladder, the network keeps encrypted, erasure-coded pieces, and any page that knows the formats can play it. FreenetTube becomes one more frontend over the same contracts.</p>
+  <div class="facts">
+    <span>Source <a href="https://github.com/craft-ec/craftworks">github.com/craft-ec/craftworks</a></span>
+    <span>Design <code>docs/ARCHITECTURE.md §6</code></span>
+    <span>Runs on <b>any freenet node</b> at <code>/v1/contract/web/B8Y3M8Z3…/</code></span>
+  </div>
+</header>
+
+<section class="prose">
+  <h2>What changed since the first FreenetTube</h2>
+  <p>The first version proved that a page could play a film straight from contract state. It also had limits that a real video site cannot live with: one hand-made WebM, one quality, a single drive owner, a whole SQLite database to open before the first frame, and chunks that a missing peer could make unreadable.</p>
+</section>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Concern</th><th>First FreenetTube (freenet-vfs)</th><th>Now (Craftworks)</th></tr></thead>
+    <tbody>
+      <tr><td>Encoding</td><td>Done offline with ffmpeg, VP9 + Opus WebM, one quality</td><td>In the uploader's browser (WebCodecs via Mediabunny): AV1 or HEVC up to 4K, plus H.264 720p/360p</td></tr>
+      <tr><td>Container</td><td>WebM, cue index at the front</td><td>Fragmented MP4 (CMAF): ~4 s fragments, key frame every 2 s, indexed by byte and time</td></tr>
+      <tr><td>Finding the file</td><td>SQLite over pages: head → root → page groups → row → manifest</td><td>The item's row holds the file reference directly; one read</td></tr>
+      <tr><td>Storage</td><td>256 KiB encrypted chunks, one copy each</td><td>Chunks coded with RLNC in generations of 16; any 16 of the fragments rebuild a generation</td></tr>
+      <tr><td>Who can name the pieces</td><td>Anyone with the manifest hash</td><td>Only key holders: every piece sits at a keyed-hash address</td></tr>
+      <tr><td>People</td><td>One drive, one owner key</td><td>Accounts (DID + key log), channels, shared spaces with roles, comments, votes, subtitles</td></tr>
+      <tr><td>Quality switching</td><td>None</td><td>Player picks the family the browser decodes smoothly and switches rung by measured throughput</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<section>
+  <h2>The stack, top to bottom</h2>
+  <p class="prose">Everything above the line runs in the viewer's browser tab. Below it, the only thing that exists is a freenet node and the contract states it keeps. There is no server, CDN or index service anywhere in the path.</p>
+  <div class="rack" role="list">
+    <div class="unit browser" role="listitem">
+      <div><span class="name">Player</span><span class="where">browser</span></div>
+      <div class="does">MediaSource with one SourceBuffer per track. Reads the video manifest, chooses a codec family and rung.</div>
+      <div class="detail">MediaCapabilities picks AV1, else HEVC, else H.264. A seek reads only the fragment that holds that time.</div>
+    </div>
+    <div class="unit browser" role="listitem">
+      <div><span class="name">Video manifest</span><span class="where">browser</span></div>
+      <div class="does">A small JSON file, <code>application/vnd.craftworks.video+json</code>: renditions, their fragment index, poster, scrub strip, pending rungs.</div>
+      <div class="detail">The manifest is itself a file, so it is encrypted and coded like the video.</div>
+    </div>
+    <div class="unit browser" role="listitem">
+      <div><span class="name">Files</span><span class="where">browser</span></div>
+      <div class="does">Turns a byte range into chunk reads. Fetches the generation's fragments in parallel, verifies each against the index, decodes on the first 16 that are useful.</div>
+      <div class="detail">Chunk = file size ÷ 16, clamped to 16 KiB–256 KiB. XChaCha20-Poly1305 per chunk. Files up to 64 KiB ride inline in the item.</div>
+    </div>
+    <div class="unit browser" role="listitem">
+      <div><span class="name">Items & tables</span><span class="where">browser</span></div>
+      <div class="does">A video is an item of kind <code>video</code> / <code>movie</code> / … in its owner's table: title, about, tags, poster, duration and the file reference.</div>
+      <div class="detail">Every writer has its own feed (a tail plus a tree); readers merge feeds. Comments, votes and subtitles are their authors' items, pointed to from bags.</div>
+    </div>
+    <div class="unit browser" role="listitem">
+      <div><span class="name">Keys</span><span class="where">browser + delegate</span></div>
+      <div class="does">Public videos are keyed from their content, so the network deduplicates them. Private ones are keyed by their space's salt.</div>
+      <div class="detail">Spaces use MLS; table keys are exports of the epoch secret. The identity delegate on the node keeps the secrets.</div>
+    </div>
+    <div class="band">WebSocket to the local node · <code>/v1/contract/command</code></div>
+    <div class="unit net" role="listitem">
+      <div><span class="name">Contracts</span><span class="where">network</span></div>
+      <div class="does">A handful of small WASM contracts, each a primitive: immutable pieces, signed tails, logs, registers, bags and sites.</div>
+      <div class="detail">Contracts never hold keys. They check shape, signatures or proof of work; readers check content against the index.</div>
+    </div>
+    <div class="unit net" role="listitem">
+      <div><span class="name">Freenet node</span><span class="where">every machine</span></div>
+      <div class="does">Stores, routes and serves contract state. Serves the app itself as a web container.</div>
+      <div class="detail">The same site works from any node; links work from any host and custom domains.</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Upload: what happens when you press Publish</h2>
+  <div class="steps prose">
+    <div class="step"><div><b>Probe.</b> Mediabunny reads the file in the browser: duration, tracks, size. The page asks WebCodecs which encoders exist in hardware and plans the ladder.</div></div>
+    <div class="step"><div><b>Poster and scrub strip.</b> A poster frame and a sprite of thumbnails for seeking are drawn from the source.</div></div>
+    <div class="step"><div><b>First rendition, fast.</b> One H.264 rung near 720p is encoded with the hardware encoder and stored. The item posts now, so the video is watchable within the time it takes to encode one rung.</div></div>
+    <div class="step"><div><b>The rest in the background.</b> The remaining rungs are listed as <em>pending</em> in the manifest. Any open page on the uploader's devices takes one at a time under a lease in the account's <code>encodes</code> table. Each finished rung writes a new manifest.</div></div>
+    <div class="step"><div><b>Storing a rendition.</b> The file is cut into chunks, each encrypted, then coded with RLNC in generations of 16. Fragments go up in parallel; a slow put is replaced by a fresh fragment. The index goes up last, so a file is readable only once complete, and an interrupted upload resumes at the same addresses.</div></div>
+    <div class="step"><div><b>Listing.</b> A public video adds a pointer to Discover's bag for its domain and month. Followers and spaces see it through their own reads.</div></div>
+  </div>
+
+  <h3>The ladder this Mac makes</h3>
+  <p class="prose">A Mac encodes HEVC in hardware, so the efficient family is HEVC + AAC. H.264 is kept only at 720p and 360p as the safety net. Target bitrates from <code>packages/video-studio.js</code>:</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Rung</th><th>Codec</th><th>Video bitrate</th><th>Audio</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td>2160p</td><td>HEVC</td><td class="num">10.0 Mb/s</td><td class="num">AAC 128 kb/s</td><td>Full quality</td></tr>
+        <tr><td>1080p</td><td>HEVC</td><td class="num">3.3 Mb/s</td><td class="num">AAC 128 kb/s</td><td>Most screens</td></tr>
+        <tr><td>720p</td><td>HEVC</td><td class="num">1.9 Mb/s</td><td class="num">AAC 128 kb/s</td><td>Laptops, phones</td></tr>
+        <tr><td>480p</td><td>HEVC</td><td class="num">0.95 Mb/s</td><td class="num">AAC 128 kb/s</td><td>Slow links</td></tr>
+        <tr><td>720p</td><td>H.264</td><td class="num">2.8 Mb/s</td><td class="num">AAC 128 kb/s</td><td>First rung; any browser</td></tr>
+        <tr><td>360p</td><td>H.264</td><td class="num">0.8 Mb/s</td><td class="num">AAC 128 kb/s</td><td>Any browser, slow link</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">A device with an AV1 hardware encoder makes AV1 + Opus instead (9 Mb/s at 2160p). A device with no efficient hardware encoder makes an H.264 ladder alone.</p>
+</section>
+
+<section>
+  <h2>Playback: from a link to the first frame</h2>
+  <div class="steps prose">
+    <div class="step play"><div><b>Open the item.</b> The link names the item by its writer and id. The page reads that writer's table and gets the item, including the file reference <code>{ key, root, size, name, type }</code>.</div></div>
+    <div class="step play"><div><b>Read the manifest.</b> The reference points at the manifest file. Its index pieces and fragments are fetched from keyed addresses and checked against the root hash.</div></div>
+    <div class="step play"><div><b>Pick a rung.</b> MediaCapabilities says which family plays smoothly. The starting rung fits the screen; later fragments switch by measured throughput.</div></div>
+    <div class="step play"><div><b>Fetch fragments.</b> A CMAF fragment is a byte range. That range maps to one or two chunks. A healthy file reads each chunk directly, with no decoding; if a piece is missing, the generation is rebuilt from any 16 fragments.</div></div>
+    <div class="step play"><div><b>Seek.</b> The fragment index maps time to bytes, so a jump reads only the fragment at the new position.</div></div>
+  </div>
+</section>
+
+<section>
+  <h2>What is on the network</h2>
+  <p class="prose">Every contract is in <code>contracts/</code>, pinned by <code>SHA256SUMS</code>. None of them can read what they hold.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Contract</th><th>Holds</th><th>Video uses it for</th></tr></thead>
+      <tbody>
+        <tr><td><code>piece</code></td><td>One sealed file piece at a keyed address. First valid write stays. Can be burned with a secret when the file is re-keyed.</td><td>Every fragment and index piece of every rendition and manifest</td></tr>
+        <tr><td><code>tail</code></td><td>One writer's signed sequence: a table's head and newest rows</td><td>The channel's <code>videos</code> rows, the <code>encodes</code> lease</td></tr>
+        <tr><td><code>sealed</code> / <code>block</code></td><td>Tree blocks of a table, sealed whole, plus parity</td><td>Older rows once a tail is flushed into the tree</td></tr>
+        <tr><td><code>bag</code></td><td>Unordered pointers, no signer, ranked by proof of work</td><td>Discover listing, comments and votes on a video, inbox notices</td></tr>
+        <tr><td><code>idlog</code></td><td>An account's self-certifying key event log; the DID is its first event</td><td>Who uploaded; verifying their signatures</td></tr>
+        <tr><td><code>register</code></td><td>One signed value</td><td>Recovery words → DID, site versions</td></tr>
+        <tr><td><code>site</code> / <code>webapp</code></td><td>Web containers of erasure-coded pieces</td><td>The app itself: wrapper, loader and every package by hash</td></tr>
+        <tr><td>identity delegate</td><td>Node-local secrets</td><td>Account keys, MLS state; background upkeep with no page open</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="prose">
+  <h2>So is FreenetTube another frontend?</h2>
+  <p>Yes. The data model is open: an item row, a file reference, the video manifest, and the piece addresses. A page that implements those formats can list, play, comment on and upload videos that Craftworks users see, and the reverse. Craftworks' own Video app is one lens over that data. A FreenetTube page with a YouTube-like layout would be another, reading the same tables and bags. Nothing about a video belongs to the app that made it.</p>
+  <div class="callout">
+    <p><b>For a FreenetTube build</b>, the pieces to reuse are <code>packages/files.js</code> (byte ranges over coded pieces), <code>packages/video-player.js</code> (manifest → MediaSource) and <code>packages/video-studio.js</code> (browser encoding). The fastest path is a Craftworks theme plus a page that composes them. A separate site works too, as long as it reads the same formats.</p>
+  </div>
+
+  <h2>The sample: Big Buck Bunny in 4K</h2>
+  <p>The test upload is the Blender Foundation's open movie (CC BY 3.0): 10 min 35 s, 3840×2160, 30 fps, a 633 MB H.264 source. It is being encoded in a browser on an M4 Max Mac and stored through a freenet node on a Hetzner server, under the account <b>Wren</b>, Craftworks' resident developer.</p>
+  <p>Open it on any freenet node (replace the host with your own node's):</p>
+  <p><code>http://127.0.0.1:7509/v1/contract/web/B8Y3M8Z3eDzXoxKDmJnU72ysWGzQ9xjpYWGkbkMaUiZr/#/video/p/did:craftec:BZ6QnLTT3pnaWtUvfWr9bjtc8nCeRnC2Q7q44XMNUt5h/t0muvwakud4ad445ae</code></p>
+  <h3>Measured, 6 October 2026 (UTC)</h3>
+  <p class="prose">The Mac's link to the node measured 1.36 MB/s for a raw SSH copy and carried about 2.7 MB/s during the upload.</p>
+</section>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Step</th><th>Time</th><th>Took</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Publish pressed</td><td class="num">23:25:50</td><td class="num">–</td><td>Hash read and poster drawn locally</td></tr>
+      <tr><td>Original stored</td><td class="num">23:36:45</td><td class="num">≈ 11 min</td><td>633 MB, kept so the background can make the other rungs</td></tr>
+      <tr><td>H.264 720p encoded</td><td class="num">23:37:35</td><td class="num">≈ 50 s</td><td>Hardware encoder, the full 10 min 35 s</td></tr>
+      <tr><td>720p stored, item posted</td><td class="num">23:43:05</td><td class="num">≈ 5.5 min</td><td>Watchable from here: plays at 1280×720</td></tr>
+      <tr><td>H.264 360p, HEVC 2160p, 1080p, 720p, 480p</td><td class="num" id="ladder-at">01:25:29</td><td class="num">≈ 1 h 42 min</td><td>Made in the background by the uploader's open page. Includes a 9-minute stall (a store that stopped sending) and re-reading the original for each version, both since fixed</td></tr>
+    </tbody>
+  </table>
+</div>
+<section class="prose">
+  <p>An earlier attempt stored one generation at a time and ran at 56 KB/s, held back by the slowest put in each generation. Keeping six generations in flight brought it to the link's speed (commit <code>a402b1a</code>). Playback had the same shape: one chunk per round trip. It now fetches a fragment's chunks at once, keeps four fragments in flight, reads most-of-a-generation ranges raced, and offers a quality menu (Auto or any version).</p>
+</section>
+
+<footer class="prose">
+  Written from <code>docs/ARCHITECTURE.md</code> and the code in <code>packages/</code> at the time of writing. The source is public at <a href="https://github.com/craft-ec/craftworks">craft-ec/craftworks</a>. The earlier freenet-vfs demo is archived.
+</footer>
+</div>
