@@ -46,14 +46,14 @@ of cold files, §6).
 
 - **Proof of holding — a continuous, deterministic random queue** (as ZephCraft's HealthScan: a small slice every
   cycle, never one big daily round; `craftec/docs/CRAFTOBJ_DESIGN.md` §HealthScan, rendezvous by
-  `BLAKE3(node_id ‖ cid ‖ epoch)`). Every few minutes a public **beacon** turns over (the newest Discover head — known
+  `BLAKE3(node_id ‖ cid ‖ epoch)`). At a cadence still to be tuned (§6), a public **beacon** turns over (the newest Discover head — known
   to nobody beforehand); each keeper's queue is its claimed pieces ranked by `BLAKE3(beacon ‖ node id ‖ piece)`, and it
-  answers the head of that queue — a slice sized so a day adds up to about 1% of its claim — with
+  answers the head of that queue — a slice sized so the queue covers a set share of its claim over time (the share and pace to be tuned, §6) — with
   `hash(piece ‖ beacon ‖ node id)`, within that beacon's window. Deterministic: anyone recomputes which pieces were due
   and checks a sample against the public pieces. Random: nobody knows the next slice before its beacon. The node id
   makes every keeper's answer its own (none can copy another's); a slice not answered in its window earns nothing.
 - **Why holding beats fetching on demand:** the challenge grows with the claim, so a keeper that deletes and re-fetches
-  pieces only when challenged re-fetches the whole file about every 100 days, forever — bandwidth costs more than
+  pieces only when challenged ends up re-fetching the whole file once per pass of its queue (at, say, 1% a day: every 100 days), forever — bandwidth costs more than
   disk, so receive-and-delete costs more than keeping. Bandwidth is the overhead of carrying, never the thing paid;
   honest keeping is the cheapest way to answer. (Stronger, if ever needed: a copy unique per keeper, slow to make.)
 - **What it pays for is durability:** Freenet routes a get by ring position, not to keepers, so a keeper answers only
@@ -87,6 +87,14 @@ of cold files, §6).
   bounded by the free tier's limits.
 - *A creator who is also a keeper:* allowed; each share is earned separately and both are bounded by real fees.
 - *Paid pinning (cold files nobody watches):* the owner pays keepers directly to hold them, by the same proofs (§4).
+
+- *Proof tuning (concept only — to discuss and detail):* the queue's shape is decided (continuous, deterministic,
+  random per beacon, bound to the node id); its numbers are not. To settle: the beacon's source and cadence (minutes
+  is likely too often); the share of a claim covered per day and so the length of a pass; the answer window; the cost
+  to a keeper (reads, hashes, writes of answers to the network) and to checkers at network scale; who checks and how
+  many samples; what a missed slice costs (that window's pay only, or the claim's month); behaviour for nodes that
+  sleep (home machines: offline is not lost); and where answers are written (one contract per keeper, the bag, a
+  log).
 
 ## 7. Build order
 
