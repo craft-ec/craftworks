@@ -228,7 +228,7 @@ export function mount(ctx, el) {
           const seen = new Set();
           return [...a, ...b].filter(it => !seen.has(it.ref) && seen.add(it.ref));
         });
-        const found = (await itemsHeld).filter(it => `${it.title ?? ""} ${it.body ?? ""}`.toLowerCase().includes(t)).slice(0, 8);
+        const found = (await itemsHeld).filter(it => !(it.meta?.expires < Date.now()) && `${it.title ?? ""} ${it.body ?? ""}`.toLowerCase().includes(t)).slice(0, 8);
         if (n !== asked) return;
         if (found.length) groups.push(["Items", found.map(it => h("a", { href: items.pageOf(it.ref, it.kind), textContent: `${ctx.apps.find(a => a.route === `/${items.appOf(it.kind)}`)?.icon ?? "📄"} ${it.title || String(it.body ?? "").slice(0, 60) || "untitled"}`, onclick: e => (e.preventDefault(), go(items.pageOf(it.ref, it.kind))) }))]);
       }

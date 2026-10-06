@@ -279,15 +279,18 @@ export async function start(ctx) {
 
   // One GET: the state, taken (a file's pieces are read once, never kept in the core), or null. A piece's state is
   // `LIVE ‖ burn hash ‖ piece` (its piece given back), or burned (none: as good as missing); `raw`: as stored.
-  async function fetchState(idHex, what, { raw = false, urgent = false } = {}) {
+  // `root`: the file it is a piece of — its bytes reported (`craftworks:bytes`: `usage` counts the data used).
+  const fetched = (root, st) => root && st && dispatchEvent(new CustomEvent("craftworks:bytes", { detail: { root, bytes: st.length } }));
+  async function fetchState(idHex, what, { raw = false, urgent = false, root = null } = {}) {
     // An answer that came LATE (after an earlier ask gave up) is kept by the core: taken now, not asked again.
     // Measured 2026-10-06: a 4K play logged hundreds of pieces arriving after their ask's deadline, each then asked again.
     const late = core.take_got(idHex);
-    if (late) return raw ? late : livePiece(late);
+    if (late) return fetched(root, late), raw ? late : livePiece(late);
     const [, frames] = core.frames_get(bytes(idHex));
     // Through the node's one cap on gets (`slot`).
     const said = await slot(() => ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex, what, WAIT.ask).catch(() => ({ kind: "get-failed" })), { urgent });
     const st = said.kind === "got" ? core.take_got(idHex) : null;
+    fetched(root, st);
     return !st || raw ? st : livePiece(st);
   }
   // A piece's state `LIVE ‖ burn hash ‖ piece`: the piece (burned, or another shape: none).
@@ -360,7 +363,7 @@ export async function start(ctx) {
     await new Promise((resolve, reject) => {
       let left = listed.length;
       for (const [j] of listed)
-        fetchState(core.file_fragment_id(f.key, g, j), `${ref.name}: part ${g + 1} of ${f.plan.gens}`, { urgent }).then(state => {
+        fetchState(core.file_fragment_id(f.key, g, j), `${ref.name}: part ${g + 1} of ${f.plan.gens}`, { urgent, root: ref.root }).then(state => {
           if (!state) absent.push(j);
           if (d.done()) return;
           if (state) {
@@ -415,7 +418,7 @@ export async function start(ctx) {
     const g = Math.floor(i / GEN);
     const listed = await f.listed(g);
     const at = (i % GEN) * f.plan.chunk;
-    const alone = fetchState(core.file_fragment_id(f.key, g, i % GEN), `${ref.name}: a part`, { urgent }).then(state => {
+    const alone = fetchState(core.file_fragment_id(f.key, g, i % GEN), `${ref.name}: a part`, { urgent, root: ref.root }).then(state => {
       if (!state) throw new Error(`${ref.name}: a part is not there`);
       return glue.file_read_chunk(f.key, f.plan.size, JSON.stringify(listed), i, state);
     });

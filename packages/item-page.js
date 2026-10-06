@@ -79,6 +79,8 @@ export async function start(ctx) {
     // VIEWED: its page opened counts once for this reader (`items.view`; never one's own), where votes are kept.
     if (parts.votes) items.view(ref, { outside });
     const page = h("div", { className: "cw-page" });
+    // OPENED: counted in this person's month (`usage`).
+    ctx.require("usage").then(u => u.opened(it.ref ?? ref, { kind: it.kind, title: it.title ?? null }), () => {});
     const redraw = async () => page.replaceWith(await show(ref, { outside, app, back, discover }));
     const removed = () => (location.hash = back ?? items.pageOf(ref, it.kind).replace(/\/(p|w)\/.*$/, ""));
     let host = null; // where its text is, to edit in place

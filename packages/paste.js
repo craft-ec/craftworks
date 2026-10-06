@@ -1,7 +1,7 @@
 // PASTE, an app (`#/paste`): a pastebin over the shared parts. A paste is an item of kind `paste` — the note family
 // (`kinds`: its policy, search, votes, comments, history are a note's) — with its LANGUAGE and an EXPIRY in `meta`.
 // Write one (a large monospace editor), choose who sees it — Public, UNLISTED (anyone with its link, never listed in
-// Discover) or Private — and when it expires; Save gives its page (`…/paste/…/p/<ref>`: the item page, the code
+// Discover) or Private — and when it expires; Save gives its page; the tabs are every app's (`where`: Your pastes, Saved, Discover, ＋ New paste) (`…/paste/…/p/<ref>`: the item page, the code
 // coloured by `highlight`, its action row) and its RAW view (`#/paste/r/<ref>`: the text alone). Below: your pastes.
 export async function mount(ctx, el) {
   const login = await ctx.require("login");
@@ -9,7 +9,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [items, cards, theme, space, hl] = await Promise.all(["items", "cards", "theme", "space", "highlight"].map(n => ctx.require(n)));
+  const [items, cards, theme, hl] = await Promise.all(["items", "cards", "theme", "highlight"].map(n => ctx.require(n)));
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
     e.append(...kids.filter(k => k != null && k !== false));
@@ -39,8 +39,7 @@ export async function mount(ctx, el) {
     [String(30 * 86400e3), "1 month"],
   ];
   const select = (opts, value) => h("select", {}, ...opts.map(([v, t]) => h("option", { value: v, textContent: t, selected: v === value })));
-  const sub = () => String(ctx.sub ?? "");
-  const refIn = s => decodeURIComponent(s.slice(s.indexOf("p/") + 2));
+    const refIn = s => decodeURIComponent(s.slice(s.indexOf("p/") + 2));
 
   // A PASTE's page: the one item page, framed here, with Raw and Copy link beside it.
   async function page(ref) {
@@ -69,7 +68,7 @@ export async function mount(ctx, el) {
   }
   const expired = it => !!it.meta?.expires && it.meta.expires < Date.now();
 
-  // NEW: the editor and its options; your pastes below.
+  // NEW (`#/paste/new`, the ＋ tab): the editor and its options.
   async function home() {
     const title = h("input", { type: "text", placeholder: "Title (optional)", maxLength: 300 });
     const lang = select(hl.LANGUAGES, "plain");
@@ -123,37 +122,27 @@ export async function mount(ctx, el) {
         save.disabled = false;
       }
     };
-    const list = h("div", { className: "list" }, theme.loading("Your pastes…"));
-    root.replaceChildren(h("h2", { textContent: "📋 Paste" }), form, h("h2", { textContent: "Your pastes" }), list);
-    const me = (await space.account())?.id;
-    const mine = (await items.list({ by: me }, "new", ["paste"]).catch(() => [])).filter(p => !expired(p));
-    list.replaceChildren(...(mine.length ? mine.map(p => cards.card(p, { actions: [], by: false })) : [h("p", { className: "none", textContent: "Nothing yet: save one above." })]));
+    root.replaceChildren(h("h2", { textContent: "📄 New paste" }), form);
   }
 
-  // DISCOVER: everyone's PUBLIC pastes (an unlisted one never is), newest first — from Discover's listing, as every
-  // app's public view.
-  async function discover() {
-    const list = h("div", { className: "list" }, theme.loading("Public pastes…"));
-    root.replaceChildren(h("h2", { textContent: "🌐 Public pastes" }), list);
-    const all = (await items.list({ discover: true }, "new", ["paste"]).catch(() => [])).filter(p => !expired(p) && !p.meta?.unlisted);
-    list.replaceChildren(...(all.length ? all.map(p => cards.card(p, { actions: [] })) : [h("p", { className: "none", textContent: "No public pastes yet." })]));
+  // A PLACE's pastes (`where`: yours, Saved, Discover, a person's) — expired ones, and on Discover unlisted ones, left out.
+  async function place(at) {
+    const list = h("div", { className: "list" }, theme.loading("Pastes…"));
+    const title = at.saved ? "Saved pastes" : at.who === "discover" ? "Public pastes" : at.who === "person" ? "Their pastes" : "Your pastes";
+    root.replaceChildren(h("h2", { textContent: `📄 ${title}` }), list);
+    const all = (await at.read().catch(() => [])).filter(p => !expired(p) && !(at.others && p.meta?.unlisted));
+    const none = at.saved ? "Nothing saved: “Save” on a paste keeps it here." : at.who === "discover" ? "No public pastes yet." : at.who === "person" ? "No pastes." : "Nothing yet: ＋ New paste above.";
+    list.replaceChildren(...(all.length ? all.map(p => cards.card(p, { href: at.href(`p/${encodeURIComponent(p.ref)}`), actions: [], by: at.others })) : [h("p", { className: "none", textContent: none })]));
   }
-  // THE TOP BAR: write one, yours, everyone's.
-  const bar = s => {
-    const at = s.startsWith("discover") ? "discover" : s ? null : "new";
-    ctx.actions[ctx.route] = [
-      { label: "New paste", href: "#/paste", on: at === "new" },
-      { label: "Discover", href: "#/paste/discover", on: at === "discover" },
-    ];
-    dispatchEvent(new CustomEvent("craftworks:actions"));
-  };
+
   async function draw() {
-    const s = sub();
-    bar(s);
+    const at = await (await ctx.require("where")).of({ kind: "paste", app: "paste", yours: "Your pastes" });
+    const s = at.sub;
+    at.tabs([], { yoursOn: !s, create: { label: "New paste", href: "#/paste/new", on: s === "new" } });
     if (s.startsWith("r/")) return raw(decodeURIComponent(s.slice(2)));
-    if (s.includes("p/")) return page(refIn(s));
-    if (s.startsWith("discover")) return discover();
-    return home();
+    if (s.startsWith("p/")) return page(refIn(s));
+    if (s === "new") return home();
+    return place(at);
   }
   await draw();
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/paste" && draw());

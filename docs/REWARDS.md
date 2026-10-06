@@ -34,17 +34,27 @@ month). The creators' share is split by those weights.
 
 ## 4. Carriers: keepers who prove they hold
 
-Freenet does not tell a reader which node answered, so "who served" cannot be measured directly. What can be
-measured is **who holds**. A **keeper** is any node that opts in: it keeps chosen files (its own, its spaces', or
-files subscribers used) and registers in the **keepers bag** with what it holds.
+Freenet does not tell a reader which node answered (a get may be answered by any node that cached it on the way), so
+bandwidth cannot be paid per answer. Owner, 2026-10-06: **pay the holders, weighted by demand.** Freenet routes a get
+toward the nodes hosting the data, so the node holding a popular file is the one carrying its traffic; holding is
+measurable, and demand on what is held stands for the bandwidth. A **keeper** is any node that opts in: it keeps
+chosen files (its own, its spaces', or files subscribers used) and registers in the **keepers bag** with what it holds.
 
 - **Proof of holding:** each day a public beacon (the hash of the day's newest Discover entries) picks, per keeper and
   file, a few random pieces; the keeper publishes `hash(piece ‖ beacon)` for each. Anyone can check one against the
   piece (it is public data at a known address). A keeper that fetched the piece on demand to answer still paid the
   bandwidth to do so; a keeper that cannot answer earns nothing that day.
-- **Share:** a subscriber's carrier share goes to the keepers of the files *that subscriber* used, in proportion to
-  the pieces of those files each keeper proved that month. A keeper of files nobody pays to use earns nothing.
+- **Share:** a subscriber's carrier share goes to the keepers of the files *that subscriber* used, each in proportion
+  to `pieces of those files it proved held × that subscriber's data for those files` (the usage record's bytes, §3).
+  A keeper of files nobody pays to use earns nothing; a keeper of a hit earns most.
+- **Seen beside the usage:** next to an item's watch time, opens and data, the usage record shows **who hosts it**
+  (the keepers proving its files) — the viewer sees where their carrier share goes, the owner sees who carries their
+  work.
+- **Everyone gets their turn:** on the global network every node eventually takes part in hosting (Freenet places data
+  across the ring), so carrying pay spreads across participants over time rather than pooling at a few servers.
 - Readers repair and keep (files that heal on read) work whether or not anyone is paid; keepers make them reliable.
+- Exact per-answer bandwidth pay would need the node to name the peer that delivered each piece (a node change, and
+  even then only the last hop): not planned.
 
 ## 5. Paying and settling
 
@@ -67,5 +77,5 @@ files subscribers used) and registers in the **keepers bag** with what it holds.
 ## 7. Build order
 
 1. Usage record in the subscriber's table (no money: shows "your month" to the user). 2. Keepers bag + daily proofs
-(no money: shows who holds what — useful for durability now). 3. Treasury pass + statements + monthly ledger in
+(no money: shows who holds what beside the usage record — useful for durability now). 3. Treasury pass + statements + monthly ledger in
 shadow mode (computed, not paid) for a few months to calibrate the split. 4. Payouts.

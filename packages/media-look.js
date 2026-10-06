@@ -113,6 +113,18 @@ export async function start(ctx) {
     };
     const begin = () => {
       setTimeout(showMaking, 500);
+      // ITS USE counted (`usage`): the time it plays, and the data its files bring — the manifest's, the frames', every
+      // rendition's (whichever plays).
+      ctx.require("usage").then(async u => {
+        const info = { kind: v.kind, title: v.title ?? f?.name ?? null };
+        u.watch(video, v.ref, info);
+        if (!f) return;
+        u.track(v.ref, info, [f.root]);
+        if (f.type === studio.MANIFEST) {
+          const m = await player.manifest(f).catch(() => null);
+          if (m) u.track(v.ref, info, [m.strip?.ref?.root, ...m.renditions.map(r => r.ref?.root)]);
+        }
+      }, () => {});
       if (f && audio) view.prepare().catch(e => (view.note.textContent = e.message ?? String(e)));
       else if (f)
         start.onclick = () => {
