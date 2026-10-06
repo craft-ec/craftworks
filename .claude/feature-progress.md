@@ -1299,3 +1299,21 @@ old key's addresses.
   the 3 "missing" fragments of the probe were never listed (upload replaced them with higher numbers).
 - Player chrome on the picture (timeline + frames, settings: quality/speed, CC, sound, full screen); FreenetTube demo
   at DkG6Jqkc… (demo/tube) with the contracts tree live.
+
+## Rewards track (10-06/07) — docs/REWARDS.md is the design
+- [x] Step 1 usage record: Usage app `#/usage` (per month/item: time, data, opens; own table `usage`). One unit for
+      every kind: time played, else time on the item's page (shown, focused, input in last 2 min). 7f22402, a11f34a.
+- [x] Time/data as PUBLIC counts beside views (signal kind `sum`: each person's running total; owner: as view count
+      for now, confidential roll-up later — signed per-person entries show who spent how long). 7f22402.
+- [x] Step 2 keep what you watched: `keep.watched` (from `usage.track` file refs), table `kept`, re-read a day apart
+      via files.keep, limit in Usage app (default 512 MB, oldest dropped). Tested fx: 4 files noted, re-read 12/12 and
+      5/5 whole within 4 min. 3e826cb. Measured basis: re-read piece survives 94 evictions, control evicted (6c618c7);
+      subscriptions ruled out (2-minute renewal per piece).
+- [ ] Step 3 keeper app + keepers bag (account + node + files), put back lost pieces.
+- [ ] Step 4 proofs: deterministic random queue; numbers to tune with owner (REWARDS §6 "Proof tuning").
+- Decisions recorded in REWARDS: carriers = holders weighted by demand; users are the keepers; never paid to own
+  account/nodes; a pass buys the private (public stays free); §4a what is signed vs provable.
+- Nodes: all on freenet 0.2.142; 7509 + B `--hosting-mem-share 0.5`; node settings otherwise unchanged (owner 10-07).
+- Upstream: #5750 updated (head c5f584be) + reply; #5828 opened for #5785; both await maintainer CI approval (owner:
+  do not ask). Unanswered-GET report uploaded from B: code 6YRSRD (9 unanswered + 9 NotFound of 100 small, listed in
+  the report message).
