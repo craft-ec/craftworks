@@ -388,22 +388,38 @@ export async function start(ctx) {
     return new Blob(parts, { type: ref.type });
   }
 
-  // ONE CHUNK alone (a seek): its systematic fragment, else its whole generation rebuilt.
+  // ONE CHUNK alone (a seek, a range's few chunks in a generation): its systematic fragment — HEDGED: not back in
+  // HEDGE (or not there), its generation is raced as well (`genOnce`: every fragment asked, decoded on the first 16),
+  // and the first to arrive is taken. Measured 2026-10-06: a 4K fragment's lone chunk waited a get's whole deadline
+  // (30 s) while the rest of it took 0.1 s.
+  const HEDGE = 2000;
   async function chunk(ref, i) {
     if (ref.inline) return unb64(ref.inline);
     ref = await current(ref);
     const f = await open(ref);
     const g = Math.floor(i / GEN);
     const listed = await f.listed(g);
-    const state = await fetchState(core.file_fragment_id(f.key, g, i % GEN), `${ref.name}: a part`);
-    if (state) {
-      try {
-        return glue.file_read_chunk(f.key, f.plan.size, JSON.stringify(listed), i, state);
-      } catch {}
-    }
-    const all = await generation(ref, f, g);
     const at = (i % GEN) * f.plan.chunk;
-    return all.slice(at, at + f.plan.chunk);
+    const alone = fetchState(core.file_fragment_id(f.key, g, i % GEN), `${ref.name}: a part`).then(state => {
+      if (!state) throw new Error(`${ref.name}: a part is not there`);
+      return glue.file_read_chunk(f.key, f.plan.size, JSON.stringify(listed), i, state);
+    });
+    return new Promise((resolve, reject) => {
+      let raced = false;
+      let fails = 0;
+      const fail = e => ++fails === 2 && reject(e);
+      const race = () => {
+        if (raced) return;
+        raced = true;
+        clearTimeout(timer);
+        genOnce(ref, f, g).then(all => resolve(all.slice(at, at + f.plan.chunk)), fail);
+      };
+      const timer = setTimeout(race, HEDGE);
+      alone.then(
+        c => (clearTimeout(timer), resolve(c)),
+        e => (fail(e), race()),
+      );
+    });
   }
 
   // RE-KEY one row (`file-keys`): read under the key it has, coded under `to` (public, or the space's salt now) — the
