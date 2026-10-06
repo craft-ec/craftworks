@@ -279,13 +279,25 @@ export async function start(ctx) {
 
   // One GET: the state, taken (a file's pieces are read once, never kept in the core), or null. A piece's state is
   // `LIVE ‖ burn hash ‖ piece` (its piece given back), or burned (none: as good as missing); `raw`: as stored.
+  // GETS AT ONCE, capped: racing asks many pieces together, and past what the node answers they come back refused or
+  // late (measured 2026-10-06: one file read with ~144 gets in flight left 294 of 433 pieces unanswered; one generation
+  // at a time, 61). A get waits for a free place; the deadline runs from when it is asked.
+  const MAX_GETS = 32;
+  const gate = (() => {
+    let open = MAX_GETS;
+    const waiting = [];
+    return { take: () => (open > 0 ? (open--, Promise.resolve()) : new Promise(r => waiting.push(r))), give: () => (waiting.length ? waiting.shift()() : open++) };
+  })();
   async function fetchState(idHex, what, { raw = false } = {}) {
     // An answer that came LATE (after an earlier ask gave up) is kept by the core: taken now, not asked again.
     // Measured 2026-10-06: a 4K play logged hundreds of pieces arriving after their ask's deadline, each then asked again.
     const late = core.take_got(idHex);
     if (late) return raw ? late : livePiece(late);
     const [, frames] = core.frames_get(bytes(idHex));
-    const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex, what, WAIT.ask).catch(() => ({ kind: "get-failed" }));
+    await gate.take();
+    const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex, what, WAIT.ask)
+      .catch(() => ({ kind: "get-failed" }))
+      .finally(() => gate.give());
     const st = said.kind === "got" ? core.take_got(idHex) : null;
     return !st || raw ? st : livePiece(st);
   }
@@ -500,8 +512,9 @@ export async function start(ctx) {
       }
     // Each generation: its listed fragments read and put again; a DEGRADED one (some missing, 16 still there) REPAIRED —
     // rebuilt from any 16 and its missing fragments made again (a fragment is deterministic: the same bytes, address and
-    // hash as the index lists) and put. Measured 2026-10-06: 14% of a video's fragments were gone from the network a day
-    // after upload; put-again alone never brought one back. Several generations at a time (one waits on its slowest).
+    // hash as the index lists) and put. Measured 2026-10-06: 14% of a video's fragments unanswered a day after upload as
+    // read then; later passes showed most of those were gets unanswered under load, not pieces gone. Put-again
+    // alone never brings a lost one back. Several generations at a time (the gets are capped in `fetchState`).
     const burn = row.b ? bytes(row.b) : new Uint8Array(32);
     out.repaired = 0;
     const gen = async g => {
