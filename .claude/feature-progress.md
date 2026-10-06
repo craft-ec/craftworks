@@ -1309,8 +1309,9 @@ old key's addresses.
       via files.keep, limit in Usage app (default 512 MB, oldest dropped). Tested fx: 4 files noted, re-read 12/12 and
       5/5 whole within 4 min. 3e826cb. Measured basis: re-read piece survives 94 evictions, control evicted (6c618c7);
       subscriptions ruled out (2-minute renewal per piece).
-- [ ] Step 3 keeper app + keepers bag (account + node + files), put back lost pieces.
-- [ ] Step 4 proofs: deterministic random queue; numbers to tune with owner (REWARDS §6 "Proof tuning").
+- [x] Step 3 keepers bag (claims, monthly, public) + read-only keeper pass. 2379ad9.
+- [ ] Proofs: DEFERRED until rewards pay (owner 10-07); low-cost plan in REWARDS §7 item 5. Next on the track: treasury
+      pass + statements + shadow ledger (REWARDS §7 item 4).
 - Decisions recorded in REWARDS: carriers = holders weighted by demand; users are the keepers; never paid to own
   account/nodes; a pass buys the private (public stays free); §4a what is signed vs provable.
 - Nodes: all on freenet 0.2.142; 7509 + B `--hosting-mem-share 0.5`; node settings otherwise unchanged (owner 10-07).

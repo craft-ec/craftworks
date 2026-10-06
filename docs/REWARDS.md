@@ -142,6 +142,16 @@ A subscriber's claims only steer their own fee (§1): misreporting can move it, 
 
 ## 7. Build order
 
-1. Usage record in the subscriber's table (no money: shows "your month" to the user). Per-item TIME and DATA shown as public counts beside views (owner 2026-10-06: as a view count for now — each person's running total, signed, so who-spent-how-long is readable; a confidential roll-up replaces it with confidential data). 2. Keepers bag + daily proofs
-(no money: shows who holds what beside the usage record — useful for durability now). 3. Treasury pass + statements + monthly ledger in
-shadow mode (computed, not paid) for a few months to calibrate the split. 4. Payouts.
+1. Usage record in the subscriber's table (no money: shows "your month" to the user) — BUILT. Per-item TIME and DATA
+   shown as public counts beside views (owner 2026-10-06: as a view count for now; a confidential roll-up replaces it).
+2. Keep what you watched (re-read daily, read only, within a limit) — BUILT.
+3. Keepers bag: claims of who keeps which file — BUILT (claims, unsigned, public).
+4. Treasury pass + statements + monthly ledger in shadow mode (computed, not paid) for a few months to calibrate the
+   split — carriers' shares computed from CLAIMS.
+5. PROOFS, only before money moves (owner 2026-10-07: skip until rewards pay — a claim is enough to show who keeps
+   what; a proof only stops paying a false one). Planned so they cost the network almost nothing: computed during the
+   keeper's existing daily re-read (no extra gets), one small write per keeper per day (about 13 KB for 10 GB kept:
+   ~1% of its pieces × 32 bytes), the day's Discover head as the beacon (already read by every node), checked for free
+   by readers who fetch a challenged piece anyway and by a monthly sample at settlement. A receive-and-delete keeper
+   pays by fetching ~1% of its claim every day; an honest one pays nothing on the network.
+6. Payouts.
