@@ -104,7 +104,15 @@ A subscriber's claims only steer their own fee (§1): misreporting can move it, 
 - **Settlement:** at month end the treasury sums the statements and the keepers' proofs, publishes the monthly
   ledger (who earns what, from which statements, all checkable), and pays out on the same rail. Earnings below a
   minimum carry over.
-- **Free tier:** no pass, no statement; usage is carried by the network share and by keepers' goodwill.
+- **What a pass buys (owner, 2026-10-06): the private.** Public data is open on Freenet — any client, ours or a
+  custom one, reads it free (its pieces are at public addresses, its key travels with the item), and the usage
+  record runs only in our pages. So a subscription never gates the public: it unlocks **subscriber-only items** (an
+  item's key sealed to pass holders, as a space's keys are sealed to its members — a client without a pass gets
+  ciphertext), and supports creators. **The public benefits along the way:** a subscriber's fee is split by
+  everything they used, public items included, so public creators earn from subscribers' viewing, public files are
+  kept alive by keepers subscribers pay, and the network share carries the free readers.
+- **Free tier:** no pass, no statement; usage is carried by the network share and by keepers' goodwill. A reader who
+  bypasses our pages costs no one their pay (no fee, nothing to split) — only unpaid load, as any free use.
 
 ## 6. What is open, and the proposal for each
 
