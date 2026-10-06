@@ -50,9 +50,8 @@ of cold files, §6).
   10:48:00, evicted 10:48:02), A not. With the gateway stopped, the keeper answered A from its own store in 0.3 ms;
   B did not answer in 30 s. Freenet orders eviction by subscriber count (`ring/hosting/cache.rs`): a subscribed
   contract goes last, and still goes as a last resort if the node stays over its limit with nothing else to drop —
-  a keeper keeps its claim inside its node's storage limit. Not yet settled: how long the protection lasts after
-  the keeper's page closes (the second run was confounded: the restarted gateway subscribed to A through the keeper,
-  and a downstream subscriber protects too).
+  a keeper keeps its claim inside its node's storage limit. A copy stays as long as it is not evicted; while the
+  keeper's page is open its subscription puts the copy last in line, and its proofs show it is still there.
 - **Proof of holding — a continuous, deterministic random queue** (as ZephCraft's HealthScan: a small slice every
   cycle, never one big daily round; `craftec/docs/CRAFTOBJ_DESIGN.md` §HealthScan, rendezvous by
   `BLAKE3(node_id ‖ cid ‖ epoch)`). At a cadence still to be tuned (§6), a public **beacon** turns over (the newest Discover head — known
