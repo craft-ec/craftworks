@@ -44,6 +44,15 @@ earlier users keeping what they used, and comes back to them from the later user
 subscriber's own nodes** (§1). Anyone else may opt in as a keeper too (a creator's own nodes, a space's, paid pinning
 of cold files, §6).
 
+- **The keeper's copy is the node's own, held by a SUBSCRIPTION** (no second store, no node change). Measured
+  2026-10-06 on freenet 0.2.139, a gateway plus a keeper node with `--max-hosting-storage` 1 MiB and 64 KiB contracts:
+  the keeper subscribed to A and only got B, then fetched 60 others; 84 evictions followed, B among them (got
+  10:48:00, evicted 10:48:02), A not. With the gateway stopped, the keeper answered A from its own store in 0.3 ms;
+  B did not answer in 30 s. Freenet orders eviction by subscriber count (`ring/hosting/cache.rs`): a subscribed
+  contract goes last, and still goes as a last resort if the node stays over its limit with nothing else to drop —
+  a keeper keeps its claim inside its node's storage limit. Not yet settled: how long the protection lasts after
+  the keeper's page closes (the second run was confounded: the restarted gateway subscribed to A through the keeper,
+  and a downstream subscriber protects too).
 - **Proof of holding — a continuous, deterministic random queue** (as ZephCraft's HealthScan: a small slice every
   cycle, never one big daily round; `craftec/docs/CRAFTOBJ_DESIGN.md` §HealthScan, rendezvous by
   `BLAKE3(node_id ‖ cid ‖ epoch)`). At a cadence still to be tuned (§6), a public **beacon** turns over (the newest Discover head — known
