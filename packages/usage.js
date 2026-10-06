@@ -5,7 +5,8 @@
 // Settings → Usage.
 //
 //   const usage = await ctx.require("usage");
-//   usage.track(itemRef, { kind, title }, [fileRoot, …])   // whose files are these (their bytes count for the item)
+//   usage.track(itemRef, { kind, title }, [fileRef | fileRoot, …])   // whose files are these (their bytes count for the
+//                                                         // item); a file ref that brings bytes is also KEPT (`keep.watched`)
 //   usage.watch(mediaElement, itemRef, { kind, title })      // its playing time counted
 //   usage.opened(itemRef, { kind, title })                   // an item's page opened
 //   usage.reading(pageElement, itemRef, { kind, title })     // its time on the page counted (an item that does not play)
@@ -16,7 +17,7 @@ export async function start(ctx) {
   const monthOf = (t = Date.now()) => new Date(t).toISOString().slice(0, 7);
   // In memory until written (every 30 s, and when the page goes away): `m:<month>:<ref>` → { kind, title, s, b, n }.
   const pending = new Map();
-  const owners = new Map(); // a file's root → { ref, kind, title }
+  const owners = new Map(); // a file's root → { ref, kind, title, file }
   const add = (ref, info, d) => {
     const k = `m:${monthOf()}:${ref}`;
     const a = pending.get(k) ?? { kind: info?.kind ?? null, title: info?.title ?? null, s: 0, b: 0, n: 0 };
@@ -32,8 +33,11 @@ export async function start(ctx) {
     if (!root || !bytes) return;
     const o = owners.get(root);
     o ? add(o.ref, o, { b: bytes }) : add(`file:${root}`, { kind: "file" }, { b: bytes });
+    // WHAT IT PLAYED, kept for others (rewards step 2): a file of an item that brought bytes here, never one's own.
+    if (o?.file && !o.mine) ctx.require("keep").then(k => k.watched(o.file, o.ref, { title: o.title }), () => {});
   });
-  const track = (ref, info, roots) => roots.filter(Boolean).forEach(r => owners.set(r, { ref, ...info }));
+  const track = (ref, info, roots) =>
+    roots.filter(Boolean).forEach(r => (typeof r === "string" ? owners.set(r, { ref, ...info }) : r.root && owners.set(r.root, { ref, ...info, file: r })));
   // WATCH TIME: while it plays, the time it moved (a seek or a stall is not watching: at most 2 s a tick, at its speed).
   const watched = new WeakSet();
   function watch(media, ref, info) {

@@ -6,11 +6,19 @@
 // older than a week. FILES too (`files.keep`): every coded file of the account and of each space this person is in —
 // each piece asked (HEALTH per generation), a generation not whole rebuilt and its missing fragments made again.
 // One table or file at a time, in the background, while any page of the account is open — and the Storage page keeps them all at once on a click.
+// WATCHED (rewards step 2, docs/REWARDS.md §4: the users are the keepers): the files this person PLAYED — anyone's —
+// kept on this node by RE-READING them (Freenet evicts what was read least recently: measured 2026-10-07, a piece
+// re-read survives a flood that evicts its control), a day apart, newest used first, within a LIMIT the person sets
+// (Usage app; oldest dropped past it). Each re-read is `files.keep`: a piece the node no longer holds is fetched back,
+// a fragment no one holds made again.
 //
 //   const keep = await ctx.require("keep");
 //   await keep.status()      // tables: [{ name, at, groups, blocks, whole, degraded, damaged, missing, put, unmade, ms }]
 //                            // and files: [{ file: id, space, at, pieces, gens, whole, degraded, damaged, missing, put }]
 //   await keep.now()         // every table kept now; their records
+//   keep.watched(fileRef, itemRef, { title })   // a file this person played: kept for others (rewards step 2)
+//   await keep.kept()        // { limit, files: [{ root, item, title, size, used, at, whole, missing, error }] }
+//   await keep.setLimit(bytes)   // how much of what was played this node keeps (0: none)
 export async function start(ctx) {
   const [storage, space, files] = await Promise.all(["storage", "space", "files"].map(n => ctx.require(n)));
   const EVERY = 7 * 86400000; // a table kept longer ago than this is due
@@ -90,6 +98,61 @@ export async function start(ctx) {
     return { tables: catalogFirst((await storage.own()).filter(t => stale(idOf(t)))), files: (await allFiles()).filter(f => stale(f.key)) };
   }
 
+  // WATCHED: a file this person played, in their table `kept` (`w/<root>`): its ref (to read it again), the item it
+  // is, its size; `used` (last played) orders them, `at` (last kept) makes one due a DAY later.
+  const DAY = 86400000;
+  const WATCH_LIMIT = 10 * 60000; // a large file's re-read takes longer than a table's
+  const DEFAULT_LIMIT = 512e6;
+  const keptTable = async () => {
+    const t = await storage.table("kept");
+    await t.settled;
+    return t;
+  };
+  const noted = new Set(); // once per page
+  async function watched(file, item, { title = null } = {}) {
+    if (!file?.root || !file?.key || noted.has(file.root)) return;
+    noted.add(file.root);
+    const t = await keptTable();
+    const k = `w/${file.root}`;
+    const was = read(t.rows().find(r => r.key === k) ?? { value: "null" }) ?? {};
+    await t.put(k, JSON.stringify({ ...was, file: { key: file.key, root: file.root, size: file.size ?? 0, ...(file.b ? { b: file.b } : {}) }, item, title: title ?? was.title ?? null, used: Date.now() }));
+  }
+  const limitOf = t => {
+    const v = read(t.rows().find(r => r.key === "limit") ?? { value: "null" });
+    return typeof v === "number" ? v : DEFAULT_LIMIT;
+  };
+  async function setLimit(bytes) {
+    await (await keptTable()).put("limit", JSON.stringify(Math.max(0, Number(bytes) || 0)));
+  }
+  // What is kept: newest used first, while the sizes fit the limit; the rest dropped (no longer re-read).
+  async function kept() {
+    const t = await keptTable();
+    const limit = limitOf(t);
+    const all = t.rows().filter(r => r.key.startsWith("w/") && r.value).map(r => ({ key: r.key, rec: read(r) })).filter(w => w.rec?.file).map(w => ({ ...w.rec, key: w.key, w: w.rec })).sort((a, b) => (b.used ?? 0) - (a.used ?? 0));
+    let total = 0;
+    const files = [];
+    for (const w of all) {
+      if (total + (w.file.size ?? 0) > limit) {
+        await t.remove(w.key).catch(() => {});
+        continue;
+      }
+      total += w.file.size ?? 0;
+      files.push({ root: w.file.root, item: w.item, title: w.title, size: w.file.size ?? 0, used: w.used, at: w.at ?? 0, whole: w.whole, gens: w.gens, missing: w.missing, error: w.error ?? null, key: w.key, w });
+    }
+    return { limit, total, files };
+  }
+  async function keepWatched(w) {
+    let timer;
+    const row = { id: w.root, key: w.w.file.key, root: w.root, ...(w.w.file.b ? { b: w.w.file.b } : {}) };
+    const out = await Promise.race([files.keep(null, row), new Promise((_, no) => (timer = setTimeout(() => no(new Error(`not kept in ${WATCH_LIMIT / 60000} min: tried again later`)), WATCH_LIMIT)))])
+      .catch(e => ({ error: e?.message ?? String(e) }))
+      .finally(() => clearTimeout(timer));
+    const { id: _id, ...rec } = out;
+    // A failure is retried within the hour, as a table's; a keep is good for a DAY.
+    await (await keptTable()).put(w.key, JSON.stringify({ ...w.w, ...rec, at: rec.error ? Date.now() - DAY + RETRY : Date.now() }));
+  }
+  const watchedDue = async () => (await kept()).files.filter(w => Date.now() - w.at > DAY);
+
   let running = false;
   let said = false;
   async function tick() {
@@ -104,6 +167,11 @@ export async function start(ctx) {
       });
       if (d.tables[0]) await keepOne(d.tables[0]).catch(e => ctx.log("keep", { what: `${d.tables[0].app}: ${e?.message ?? e}` }));
       else if (d.files[0]) await keepFile(d.files[0]);
+      else {
+        // Its own first; then what it played, kept for others.
+        const w = (await watchedDue().catch(() => []))[0];
+        if (w) await keepWatched(w);
+      }
     } finally {
       running = false;
     }
@@ -132,5 +200,5 @@ export async function start(ctx) {
     tick();
     setInterval(tick, 60000);
   }, 120000);
-  return { status, now };
+  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.log("keep", { what: `not noted for keeping: ${e?.message ?? e}` })), kept, setLimit };
 }

@@ -119,10 +119,12 @@ export async function start(ctx) {
         const info = { kind: v.kind, title: v.title ?? f?.name ?? null };
         u.watch(video, v.ref, info);
         if (!f) return;
-        u.track(v.ref, info, [f.root]);
+        // File REFS (not only roots): what brings bytes here is also kept for others (`keep.watched`) — not one's own.
+        const mine = v.by === (await space.account())?.id;
+        u.track(v.ref, { ...info, mine }, [f]);
         if (f.type === studio.MANIFEST) {
           const m = await player.manifest(f).catch(() => null);
-          if (m) u.track(v.ref, info, [m.strip?.ref?.root, ...m.renditions.map(r => r.ref?.root)]);
+          if (m) u.track(v.ref, { ...info, mine }, [m.strip?.ref, ...m.renditions.map(r => r.ref)]);
         }
       }, () => {});
       if (f && audio) view.prepare().catch(e => (view.note.textContent = e.message ?? String(e)));

@@ -56,4 +56,44 @@ export async function mount(ctx, el) {
   const note = Object.assign(document.createElement("p"), { className: "note", textContent: "Time: what played, for a video or an audio; the time its page was in front of you, for everything else. Data: what its files brought over the network. Kept in your own table — only you see it." });
   root.append(pick, note, out);
   await draw();
+  // KEPT FOR OTHERS (rewards step 2, `keep`): what this node keeps of what you played — re-read a day apart so the
+  // node does not drop it — within the limit chosen here (oldest played dropped past it).
+  const keep = await ctx.require("keep");
+  const kh = Object.assign(document.createElement("h3"), { textContent: "Kept for others" });
+  const knote = Object.assign(document.createElement("p"), {
+    className: "note",
+    textContent: "What you play is kept on your node for whoever plays it next, re-read once a day so your node does not drop it. It shares your node's contract storage limit (Freenet's --max-hosting-storage: by default an eighth of its memory, at most 1 GiB — not the larger “Disk budget” on the node's dashboard), so keep this below that.",
+  });
+  const limit = Object.assign(document.createElement("select"), { title: "How much to keep" });
+  const LIMITS = [["0", "Off"], ["256000000", "256 MB"], ["512000000", "512 MB"], ["1000000000", "1 GB"], ["5000000000", "5 GB"]];
+  limit.append(...LIMITS.map(([v, t]) => Object.assign(document.createElement("option"), { value: v, textContent: t })));
+  const klist = document.createElement("div");
+  const ago = t => {
+    if (!t) return "not yet";
+    const m = Math.round((Date.now() - t) / 60000);
+    return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
+  };
+  const drawKept = async () => {
+    const k = await keep.kept().catch(e => ((klist.textContent = `Could not read: ${e?.message ?? e}`), null));
+    if (!k) return;
+    limit.value = String(LIMITS.find(([v]) => Number(v) === k.limit)?.[0] ?? "512000000");
+    if (!k.files.length) return (klist.textContent = k.limit ? "Nothing yet: play something (not yours)." : "Off.");
+    const t = document.createElement("table");
+    const head = t.createTHead().insertRow();
+    for (const x of ["What", "Size", "Played", "Kept", "Health"]) head.append(Object.assign(document.createElement("th"), { textContent: x }));
+    const body = t.createTBody();
+    for (const f of k.files) {
+      const tr = body.insertRow();
+      const what = document.createElement("td");
+      what.append(f.item ? Object.assign(document.createElement("a"), { href: items.pageOf(f.item, "video"), textContent: f.title || "an item" }) : `${f.root.slice(0, 8)}…`);
+      const health = f.error ? f.error : f.gens ? `${f.whole}/${f.gens} whole${f.missing ? `, ${f.missing} unanswered` : ""}` : "—";
+      tr.append(what, td(size(f.size), "num"), td(ago(f.used)), td(ago(f.at)), td(health));
+    }
+    const foot = t.createTFoot().insertRow();
+    foot.append(td("Total"), td(`${size(k.total)} of ${size(k.limit)}`, "num"), td(""), td(""), td(""));
+    klist.replaceChildren(t);
+  };
+  limit.onchange = async () => (await keep.setLimit(Number(limit.value)), drawKept());
+  root.append(kh, knote, limit, klist);
+  await drawKept();
 }
