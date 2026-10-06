@@ -17,7 +17,8 @@ fetching your own pieces) moves your money back to you and earns nothing. There 
 | Carriers (default 30%) | the keepers who held and served what this subscriber read (§4) | keepers' possession proofs for those files |
 | Network (default 10%) | upkeep of what nobody pays for yet: the free tier, the demo, shared infrastructure | — |
 
-The percentages are a setting of the Craftworks treasury (governed, published), not hard-coded.
+The percentages are part of the token contract's published rules (changed only through its own governance), the same
+for everyone and not any party's choice.
 
 **Example.** A pays $10. A watched 3 h of Ana's videos and 1 h of Ben's; those files were 9 GB and 3 GB of data for A;
 three keepers proved equal shares of Ana's files. Creators' $6: Ana $4.50, Ben $1.50 (by time). Carriers' $3: Ana's
@@ -29,15 +30,16 @@ Nothing goes to A's own account or nodes; a file A never touched earns nothing f
 Each subscriber's pages keep a **usage record** in the subscriber's own table (`usage`, sealed like any table):
 item → its TIME, per month, in ONE unit for every kind (owner, 2026-10-06): seconds — what played, for a video or
 an audio; the time its page was in front of the person (shown, focused, with an input in the last 2 minutes), for
-everything else (a note, a paste, a picture, a book). Also kept: opens, and the data its files brought. At month end the record is
-summed into weights, signed by the subscriber's account, and published as a **statement** (one per subscriber per
-month). The creators' share is split by those weights.
+everything else (a note, a paste, a picture, a book). Also kept: opens, and the data its files brought. The
+subscriber's own pages sum it into weights and SPLIT THEIR OWN FEE by them (the split is user-centric: a fee follows
+only its payer's use, so nobody needs anyone else's record), signed by the subscriber's account and published as a
+**statement** — RUNNING during the month (the "pending" view), final at its end.
 
 - Unfakeable by others: only the subscriber's account signs its statement; nobody can add usage to someone else's.
 - Self-dealing is zero-sum (§1). A creator buying subscriptions to watch their own work gets back less than they paid
   (the carriers' and network shares).
-- Privacy: a statement names items and weights only to the treasury that settles it (sealed to the treasury key),
-  not to the public. A subscriber may opt to publish theirs.
+- Privacy: for now, PUBLIC (owner 2026-10-07: everything public, no central party) — a statement shows what its
+  subscriber used, as the time counts beside views do. The confidential version is §5's.
 
 ## 4. Carriers: keepers who prove they hold
 
@@ -99,7 +101,7 @@ of cold files, §6).
 | Data | Signed by | Provable? | Used to pay |
 |---|---|---|---|
 | Usage record (time, data, opens) | the subscriber's account (its own table) | its author is; its content is the subscriber's claim | via the statement |
-| Monthly statement | the subscriber's account, sealed to the treasury | the same: a claim about their own money only | yes |
+| Monthly statement (running, then final) | the subscriber's account; PUBLIC now, encrypted to its recipients later (§5) | the same: a claim about their own money only | yes |
 | Keeper proofs | the keeper's node | yes: anyone recomputes `hash(piece ‖ beacon ‖ node id)` from the public piece | yes |
 | Node → account | the node, vouched for by the account's node list | yes | yes |
 | Public tally (per-item totals) | anyone may add | no | never: display only |
@@ -108,11 +110,22 @@ A subscriber's claims only steer their own fee (§1): misreporting can move it, 
 
 ## 5. Paying and settling
 
-- **Subscription:** paid on an external rail (card or stablecoin) to the Craftworks treasury, which signs a monthly
-  **pass** to the account (a register entry: account → month). Pages show subscriber features to a pass holder.
-- **Settlement:** at month end the treasury sums the statements and the keepers' proofs, publishes the monthly
-  ledger (who earns what, from which statements, all checkable), and pays out IN THE TOKEN (owner 2026-10-07): any
-  amount, however small — no minimum, nothing carried over.
+- **No treasury, no central party (owner 2026-10-07).** Nothing settles but arithmetic anyone can redo:
+  - **Subscription:** paid in the token to a token contract, which itself records the **pass** (account → month) —
+    no one signs it. Pages show subscriber features to a pass holder.
+  - **Split:** each subscriber's own pages split that subscriber's fee (§2, §3) into a signed, PUBLIC statement:
+    running during the month, final at its end.
+  - **Ledger:** anyone sums the statements (and the keepers' claims, later proofs) — the same result for everyone; a
+    creator or keeper sees their PENDING earnings at any time from the running statements.
+  - **Payout:** the token contract pays each subscriber's fee out as their final statement says, IN THE TOKEN — any
+    amount, however small: no minimum, nothing carried over. It checks only that a statement's amounts add up to its
+    fee and none is negative (it cannot pay out more than came in).
+- **Later, confidential (the real implementation):** the same flow with the amounts hidden. Each subscriber encrypts
+  each amount under its RECIPIENT's key with additively homomorphic encryption, plus a proof that the amounts add up
+  to the fee and are not negative (as confidential token transfers do); the token contract adds the ciphertexts per
+  recipient and checks the proofs, and only the recipient decrypts its own total (its pending view). No key reads a
+  statement and no one settles. What stays visible: that a subscriber sent something to a recipient, unless entries
+  are padded or mixed.
 - **What a pass buys (owner, 2026-10-06): the private.** Public data is open on Freenet — any client, ours or a
   custom one, reads it free (its pieces are at public addresses, its key travels with the item), and the usage
   record runs only in our pages. So a subscription never gates the public: it unlocks **subscriber-only items** (an
@@ -125,8 +138,8 @@ A subscriber's claims only steer their own fee (§1): misreporting can move it, 
 
 ## 6. What is open, and the proposal for each
 
-- *Treasury trust:* one key settles payouts. Proposal: a k-of-n signer set (the owner plus independent members), and
-  a public ledger anyone can recompute from statements and proofs.
+- *Central trust:* none (§5) — the token contract only checks arithmetic; statements are public now, encrypted to
+  their recipients later.
 - *Sybil subscribers:* cannot mint money (every reward is a real fee); they only cost the network share, which is
   bounded by the free tier's limits.
 - *A creator who is also a keeper:* allowed; each share is earned separately and both are bounded by real fees.
@@ -146,8 +159,8 @@ A subscriber's claims only steer their own fee (§1): misreporting can move it, 
    shown as public counts beside views (owner 2026-10-06: as a view count for now; a confidential roll-up replaces it).
 2. Keep what you watched (re-read daily, read only, within a limit) — BUILT.
 3. Keepers bag: claims of who keeps which file — BUILT (claims, unsigned, public).
-4. Treasury pass + statements + monthly ledger in shadow mode (computed, not paid) for a few months to calibrate the
-   split — carriers' shares computed from CLAIMS.
+4. Public statements (running, then final), the ledger anyone sums and each one's pending view — in shadow mode
+   (computed, not paid) for a few months to calibrate the split; carriers' shares from CLAIMS. No treasury (§5).
 5. PROOFS, only before money moves (owner 2026-10-07: skip until rewards pay — a claim is enough to show who keeps
    what; a proof only stops paying a false one). Planned so they cost the network almost nothing: computed during the
    keeper's existing daily re-read (no extra gets), one small write per keeper per day (about 13 KB for 10 GB kept:
