@@ -492,11 +492,13 @@ export async function start(ctx) {
     const ref = { key: row.key, root: row.root, name: `${row.id.slice(0, 8)}…`, ...(row.b ? { b: row.b } : {}) };
     const f = await open(ref);
     const out = { id: row.id, at: Date.now(), pieces: 0, missing: 0, gens: f.plan.gens, whole: 0, degraded: 0, damaged: 0, put: 0 };
-    const one = async (what, a, b, idHex, hash = "") => {
+    // READ, not re-put: a piece that answers is left as it is (re-putting every piece read flooded the node until its
+    // own reads failed — measured 2026-10-06: 256 of 433 unanswered while re-putting, 5 when only reading). Only what
+    // does not answer is made again (a fragment, through its generation's rebuild).
+    const one = async (what, a, b, idHex) => {
       out.pieces += 1;
       const st = await fetchState(idHex, `keeping ${ref.name}`, { raw: true });
       if (!st || st[0] !== 2) return (out.missing += 1), false;
-      if (await putOne([0, ...Array.from(core.file_keep(f.key, what, a, b, st, hash))], `keeping ${ref.name}`)) out.put += 1;
       return true;
     };
     await one("root", 0, 0, core.file_root_id(f.key, f.rootHash), f.rootHash);
@@ -536,7 +538,7 @@ export async function start(ctx) {
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(GENS_IN_FLIGHT, f.plan.gens) }, async () => { while (next < f.plan.gens) await gen(next++); }));
     out.ms = Math.round(performance.now() - t0);
-    ctx.log("kept", { what: `file ${ref.name}: ${out.pieces} piece(s) — ${out.whole}/${out.gens} generation(s) whole${out.degraded ? `, ${out.degraded} degraded` : ""}${out.damaged ? `, ${out.damaged} DAMAGED` : ""}; ${out.put} put again${out.repaired ? `, ${out.repaired} made again` : ""}`, ms: out.ms });
+    ctx.log("kept", { what: `file ${ref.name}: ${out.pieces} piece(s) — ${out.whole}/${out.gens} generation(s) whole${out.degraded ? `, ${out.degraded} degraded` : ""}${out.damaged ? `, ${out.damaged} DAMAGED` : ""}; ${out.missing} unanswered, ${out.repaired} made again`, ms: out.ms });
     return out;
   }
 
