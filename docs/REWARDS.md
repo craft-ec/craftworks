@@ -40,10 +40,16 @@ toward the nodes hosting the data, so the node holding a popular file is the one
 measurable, and demand on what is held stands for the bandwidth. A **keeper** is any node that opts in: it keeps
 chosen files (its own, its spaces', or files subscribers used) and registers in the **keepers bag** with what it holds.
 
-- **Proof of holding:** each day a public beacon (the hash of the day's newest Discover entries) picks, per keeper and
-  file, a few random pieces; the keeper publishes `hash(piece ‖ beacon)` for each. Anyone can check one against the
-  piece (it is public data at a known address). A keeper that fetched the piece on demand to answer still paid the
-  bandwidth to do so; a keeper that cannot answer earns nothing that day.
+- **Proof of holding:** each day a public beacon (the hash of the day's newest Discover entries) picks, per keeper, a
+  **fixed share of the pieces it claims** (about 1% a day); the keeper publishes `hash(piece ‖ beacon ‖ node id)` for
+  each. The node id makes every keeper's answer its own (one cannot copy another's); the piece is public data at a
+  known address, so anyone can check an answer. A claim that cannot be answered earns nothing that day.
+- **Why holding beats fetching on demand:** the challenge grows with the claim, so a keeper that deletes and re-fetches
+  pieces only when challenged re-fetches the whole file about every 100 days, forever — bandwidth costs more than
+  disk, so receive-and-delete costs more than keeping. Bandwidth is the overhead of carrying, never the thing paid;
+  honest keeping is the cheapest way to answer. (Stronger, if ever needed: a copy unique per keeper, slow to make.)
+- **What it pays for is durability:** Freenet routes a get by ring position, not to keepers, so a keeper answers only
+  the gets that pass through it. Carrier pay is pay for keeping copies alive, weighted by the demand on them.
 - **Share:** a subscriber's carrier share goes to the keepers of the files *that subscriber* used, each in proportion
   to `pieces of those files it proved held × that subscriber's data for those files` (the usage record's bytes, §3).
   A keeper of files nobody pays to use earns nothing; a keeper of a hit earns most.
