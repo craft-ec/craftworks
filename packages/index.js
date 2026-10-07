@@ -197,6 +197,8 @@ export async function start(ctx) {
       }
     }
     if (unread.size) ctx.log("index", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${name} bag — ${raw} item(s), ${out.length} read; no key opens ${[...unread].map(([e, n]) => `${n} sealed at epoch ${e}`).join(", ")}` });
+    // How many no key here opened: what it lists is not known to be all.
+    out.unread = [...unread.values()].reduce((a, n) => a + n, 0);
     return out;
   }
 

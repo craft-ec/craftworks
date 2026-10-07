@@ -871,7 +871,9 @@ export async function start(ctx) {
           const t0 = performance.now();
           const index = await ctx.require("index");
           const items = await index.spacePointers(sp, "writers");
-          const b = { set: new Set(items.map(i => i?.w).filter(w => typeof w === "string")) };
+          // `blind`: entries no key here opens — who they name is unknown, so every member's device is read (a
+          // missing catalog only costs a lookup, asked less and less often).
+          const b = { set: new Set(items.map(i => i?.w).filter(w => typeof w === "string")), blind: (items.unread ?? 0) > 0 };
           ctx.log("storage", { what: `${sp.name ?? sp.id.slice(0, 8)}: writers bag — ${b.set.size} writer(s)`, ms: Math.round(performance.now() - t0) });
           // A writer listed only under an EPOCH (before the list was sealed with the space's own key): listed again as
           // every member reads it, by whoever reads it now — once per page and writer.
@@ -920,7 +922,7 @@ export async function start(ctx) {
       const [mine, others] = await Promise.all([scope.catalogOf(scope.self).then(async c => (await c.answer(), c)), scope.writers()]);
       // A space: its WRITERS BAG says whose catalogs exist — only those are read (the account: its directory's nodes).
       const bag = scope.bag ? await scope.bag().catch(() => null) : null;
-      const listed = o => !scope.bag || (bag ? bag.set.has(o) : false);
+      const listed = o => !scope.bag || (bag ? bag.blind || bag.set.has(o) : false);
       const lists = (cat, n) => own(cat).some(r => r.key === n);
       const all = [];
       // Another writer's feed that does not open here (sealed under a key this node lacks — a node that has not
@@ -1009,7 +1011,7 @@ export async function start(ctx) {
       const seen = new Set(others.filter(listed));
       scope.watch?.(async () => {
         const b = scope.bag ? await scope.bag(true).catch(() => bag) : null;
-        for (const o of await scope.writers().catch(() => [])) if (!seen.has(o) && (!scope.bag || b?.set.has(o))) seen.add(o), gather(o).catch(() => {});
+        for (const o of await scope.writers().catch(() => [])) if (!seen.has(o) && (!scope.bag || b?.blind || b?.set.has(o))) seen.add(o), gather(o).catch(() => {});
       });
       ctx.log("table open", { what: `${name}: ${rows.length} row(s) from ${all.filter(f => !f.absent).length} feed(s)` });
       // A write in a space: its group brought current first, so what is written is sealed with the newest epoch's key
