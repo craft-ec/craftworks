@@ -106,7 +106,7 @@ export async function mount(ctx, el) {
       const note = h("span", { className: "s" });
       const tools = row
         ? [
-            h("button", { type: "button", className: "cw-btn", textContent: "Open", onclick: () => attachments.open(row.ref, note) }),
+            h("button", { type: "button", className: "cw-btn", textContent: "Open", onclick: () => attachments.open(row.ref, note, id) }),
             row.readOnly
               ? null
               : h("button", {

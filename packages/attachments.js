@@ -225,8 +225,10 @@ export async function start(ctx) {
 
   // Open a file full: a MEDIA file in a dialog by its domain's VIEWER (`kinds`: an image drawn, a video or an audio
   // by `media-view` — the one player, streamed, as in its app); anything else saved.
-  async function openFull(ref, note) {
+  async function openFull(ref, note, item = null) {
     const m = kinds.mediaOf(ref);
+    // Counted for its ITEM, and kept for others (`usage.trackItem`).
+    if (item) ctx.require("usage").then(u => u.trackItem(item, [ref]), () => {});
     const show = (media, url = null) => {
       const d = h("dialog", { className: "cw-att-full" }, media, h("p", { textContent: `${ref.name} · ${sizeOf(ref.size)}` }));
       d.addEventListener("click", e => e.target === d && d.close());
@@ -268,7 +270,7 @@ export async function start(ctx) {
   // THE FILES of an item (what its text does not show inline): each the file look (`cards`: the same as in Drive, as
   // anywhere a file shows) — opened on a click, saved to your Drive from its menu.
   const cards = await ctx.require("cards");
-  function show(refs) {
+  function show(refs, { item = null } = {}) {
     const list = (Array.isArray(refs) ? refs : []).filter(r => r && typeof r === "object" && r.name && (r.inline || (r.key && r.root)));
     if (!list.length) return null;
     return h(
@@ -276,11 +278,11 @@ export async function start(ctx) {
       { className: "cw-att" },
       ...list.map(r => {
         const note = h("span", { className: "s" });
-        const open = () => openFull(r, note);
+        const open = () => openFull(r, note, item);
         return cards.card({ kind: "file", files: [r], title: r.name }, { href: null, by: false, open, below: note, actions: [h("button", { type: "button", textContent: "Open", onclick: open }), saveButton(r, note)] });
       }),
     );
   }
 
-  return { picker, fileButton, fitMenu, show, open: (ref, note = document.createElement("span")) => openFull(ref, note), sizeOf, isImage };
+  return { picker, fileButton, fitMenu, show, open: (ref, note = document.createElement("span"), item = null) => openFull(ref, note, item), sizeOf, isImage };
 }

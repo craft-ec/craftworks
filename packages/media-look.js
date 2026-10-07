@@ -39,6 +39,11 @@ export async function start(ctx) {
   };
   const fileOf = v => v.files?.find(f => f.type === studio.MANIFEST || /^(video|audio)\//.test(f.type ?? "")) ?? v.files?.[0] ?? null;
 
+  // ITS USE counted and its file KEPT for others (`usage.track` with the file's REF: data counted for the item, and
+  // `keep.watched` once it brings bytes here) — a picture's and a book's, as a video's in `begin` (owner 10-07: a book
+  // opened did not show in Kept for others).
+  const trackFile = (v, f) => f && ctx.require("usage").then(u => u.trackItem(v.ref, [f], { kind: v.kind, title: v.title ?? f.name ?? null, by: v.by }), () => {});
+
   // AN IMAGE whole: its preview at once, the picture itself when read; a click shows it at its own size.
   function picture(v, { outside = null } = {}) {
     const f = v.files?.find(x => kinds.mediaOf(x)?.domain === "image") ?? v.files?.[0] ?? null;
@@ -49,6 +54,7 @@ export async function start(ctx) {
     const start = async () => {
       if (!f) return;
       note.textContent = "Loading the picture…";
+      trackFile(v, f);
       try {
         const blob = await files.get(f, { onProgress: e => (note.textContent = `Loading ${Math.round((100 * e.done) / Math.max(1, e.size))}%`) });
         img.src = URL.createObjectURL(blob);
@@ -66,6 +72,7 @@ export async function start(ctx) {
     const el = h("div", { className: "cw-media" });
     const start = async () => {
       if (!f) return;
+      trackFile(v, f);
       const bv = await ctx.require("book-view");
       el.replaceChildren(bv.create({ file: f, item: v.ref, cover: false, kind: v.kind }).el);
     };

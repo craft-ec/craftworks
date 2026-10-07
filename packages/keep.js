@@ -119,13 +119,13 @@ export async function start(ctx) {
     return t;
   };
   const noted = new Set(); // once per page
-  async function watched(file, item, { title = null } = {}) {
+  async function watched(file, item, { title = null, kind = null } = {}) {
     if (!file?.root || !file?.key || noted.has(file.root)) return;
     noted.add(file.root);
     const t = await keptTable();
     const k = `w/${file.root}`;
     const was = read(t.rows().find(r => r.key === k) ?? { value: "null" }) ?? {};
-    await t.put(k, JSON.stringify({ ...was, file: { key: file.key, root: file.root, size: file.size ?? 0, ...(file.b ? { b: file.b } : {}) }, item, title: title ?? was.title ?? null, used: Date.now() }));
+    await t.put(k, JSON.stringify({ ...was, file: { key: file.key, root: file.root, size: file.size ?? 0, ...(file.b ? { b: file.b } : {}) }, item, title: title ?? was.title ?? null, kind: kind ?? was.kind ?? null, used: Date.now() }));
   }
   const limitOf = t => {
     const v = read(t.rows().find(r => r.key === "limit") ?? { value: "null" });
@@ -147,7 +147,7 @@ export async function start(ctx) {
         continue;
       }
       total += w.file.size ?? 0;
-      files.push({ root: w.file.root, item: w.item, title: w.title, size: w.file.size ?? 0, used: w.used, at: w.at ?? 0, whole: w.whole, gens: w.gens, missing: w.missing, error: w.error ?? null, key: w.key, w });
+      files.push({ root: w.file.root, item: w.item, title: w.title, kind: w.kind ?? null, size: w.file.size ?? 0, used: w.used, at: w.at ?? 0, whole: w.whole, gens: w.gens, missing: w.missing, error: w.error ?? null, key: w.key, w });
     }
     return { limit, total, files };
   }

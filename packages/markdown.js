@@ -223,6 +223,8 @@ export async function start(ctx) {
   };
   function media(key, ref, alt, item = null) {
     const kind = kindOf(ref);
+    // Counted for its ITEM, and kept for others once it loads (`usage.trackItem`).
+    if (item && !ref.inline) ctx.require("usage").then(u => u.trackItem(item, [ref]), () => {});
     const spec = K.mediaOf(ref);
     if (spec?.view === "image") {
       const img = Object.assign(document.createElement("img"), { className: "cw-md-media", alt: alt || ref.name || "", title: ref.name || "" });

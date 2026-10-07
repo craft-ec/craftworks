@@ -273,7 +273,7 @@ export async function start(ctx) {
             { className: "text" },
             it.files?.length ? when("markdown", m => carousel(it.files.filter(f => VISUAL.has(m.kindOf(f))).map(f => m.fileView(f, { item: it.ref, alt: it.title })))) : null,
             it.body && !gated(it) ? when("markdown", m => h("p", { className: "preview", textContent: m.plain(it.body) })) : null,
-            it.files?.length ? when("markdown", m => when("attachments", a => (it.files.some(f => !VISUAL.has(m.kindOf(f))) ? a.show(it.files.filter(f => !VISUAL.has(m.kindOf(f)))) : null))) : null,
+            it.files?.length ? when("markdown", m => when("attachments", a => (it.files.some(f => !VISUAL.has(m.kindOf(f))) ? a.show(it.files.filter(f => !VISUAL.has(m.kindOf(f))), { item: it.ref ?? null }) : null))) : null,
           ),
         lead || actions.length ? h("div", { className: "acts", onclick: e => e.stopPropagation() }, lead, ...actions) : null,
       ),
