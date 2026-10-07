@@ -61,10 +61,12 @@ export async function mount(ctx, el) {
   const directory = await ctx.require("directory");
   const fh = Object.assign(document.createElement("h3"), { textContent: "Your contributions (preview)" });
   const amount = Object.assign(document.createElement("input"), { type: "number", min: "0", step: "1", value: "10", title: "Tokens", className: "amount" });
-  const days = Object.assign(document.createElement("input"), { type: "number", min: "1", step: "1", value: "30", title: "Days", className: "amount" });
+  // OVER: a week or a month (owner 10-07), a month unless chosen.
+  const days = Object.assign(document.createElement("select"), { title: "Spread over" });
+  days.append(...[["7", "a week (7 days)"], ["30", "a month (30 days)"]].map(([v, t]) => Object.assign(document.createElement("option"), { value: v, textContent: t, selected: v === "30" })));
   const giveBtn = Object.assign(document.createElement("button"), { type: "button", textContent: "Give (preview)" });
   const amountLine = Object.assign(document.createElement("div"), { className: "note" });
-  amountLine.append("Give ", amount, " tokens over ", days, " days ", giveBtn);
+  amountLine.append("Give ", amount, " tokens over ", days, " ", giveBtn);
   const given = Object.assign(document.createElement("p"), { className: "note" });
   const fnote = Object.assign(document.createElement("p"), { className: "note", textContent: "Nothing is given yet (a preview). Any amount, any time: spread over its days, each day's share split by what you used that day — contributions that overlap add up. Creators by your time on their items (60%), keepers by the data their copies brought you (30%; with no keeper yet, to the creator), the network 10%. Never to you." });
   const fout = document.createElement("div");

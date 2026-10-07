@@ -5,9 +5,9 @@ is shared among the people whose content they used and the people whose machines
 month. Nothing is paid out of thin air: every reward is someone's contribution. (First written 2026-10-06 as a
 monthly subscription; the split, statements, ledger and payout are the same — only the amount is the giver's.)
 
-**Split PER DAY (owner, 2026-10-07).** A contribution is spread evenly over its days (30 unless the giver says
-otherwise) and each day's slice is split by what the giver used THAT day. Contributions that overlap add up on the
-days they share (10 over 30 days and 15 over 5 days: 3.33 a day for five days, then 0.33). A day with no use sends
+**Split PER DAY (owner, 2026-10-07).** A contribution is spread evenly over a WEEK (7 days) or a MONTH (30
+days, the default) — the giver's choice and each day's slice is split by what the giver used THAT day. Contributions that overlap add up on the
+days they share (10 over a month and 7 over a week: 1.33 a day for the week, then 0.33). A day with no use sends
 its slice to the network. Statements and the ledger are the sum of the days.
 
 ## 1. The rule
