@@ -306,7 +306,11 @@ export async function start(ctx) {
       return status;
     }));
     readyShared = p;
-    p.catch(() => readyShared === p && (readyShared = null));
+    // A null ("not here yet") is never kept as the answer: the next read asks again (as a space's group's, below).
+    p.then(
+      s => !s && readyShared === p && (readyShared = null),
+      () => readyShared === p && (readyShared = null),
+    );
     return p;
   }
 
@@ -768,8 +772,13 @@ export async function start(ctx) {
           return s;
         }));
         shared = p;
-        // Finished: current (every change of the group runs in this same queue) — what reads share from now on.
-        p.then(() => shared === null && (shared = p), () => shared === p && (shared = null));
+        // Finished: current (every change of the group runs in this same queue) — what reads share from now on. NOT a
+        // null ("not here yet": a fresh load's `spacekeys` still arriving when a space asked first — owner 10-07: kept
+        // as the answer, a member's space showed 0 members and no apps for the whole session): the next read asks again.
+        p.then(
+          s => (s ? shared === null && (shared = p) : shared === p && (shared = null)),
+          () => shared === p && (shared = null),
+        );
         return p;
       },
       lost: async () => JSON.parse((await spacekeys()).rows().find(r => r.key === `${at}~lost`)?.value ?? "[]"),
