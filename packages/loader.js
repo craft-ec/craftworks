@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. The node's code is loaded after the first
 // page is up even where the page needs none: to FOLLOW the app's and the loader's sites (below).
-const VERSION = "29";
+const VERSION = "30";
 
 // THE APPS, as a phone lists them: by NAME (A–Z), each with its CATEGORY (the manifest's) — every list of apps (Home,
 // the header's menus, the spaces panel) in this one order.
@@ -474,8 +474,10 @@ export async function run(boot) {
   }
 
   function fail(e) {
-    ctx.log("FAILED", { what: e.message });
-    status.textContent = `Could not load: ${e.message}`;
+    // Whatever was thrown, said (a rejection with no Error showed "undefined").
+    const said = e?.message ?? (typeof e === "string" ? e : (() => { try { return JSON.stringify(e); } catch { return String(e); } })());
+    ctx.log("FAILED", { what: `${location.hash}: ${said}${e?.stack ? ` — ${String(e.stack).split("\n").slice(0, 3).join(" | ")}` : ""}` });
+    status.textContent = `Could not load: ${said}`;
     status.className = "bad";
     status.hidden = false;
   }
