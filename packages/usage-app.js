@@ -17,14 +17,19 @@ export async function mount(ctx, el) {
     .us tfoot td { font-weight: 600; border-bottom: 0; }
     .us input.amount { width: 6em; margin: 0 4px; }
     .us .level { margin: 0; font-weight: 600; }
+    .us .us-bar { display: grid; gap: 0; width: 460px; max-width: 100%; height: 24px; border-radius: 6px; overflow: hidden; font-size: var(--cw-text-sm); border: 1px solid var(--cw-line); }
+    .us .us-bar > span { display: flex; min-width: 0; margin: 0; padding: 0; align-items: center; justify-content: center; color: #fff; white-space: nowrap; overflow: hidden; }
+    .us .us-bar .c { background: #2f7de1; } .us .us-bar .k { background: #2aa876; } .us .us-bar .n { background: #8a8f98; }
+    .us .us-bar .used { background: #2aa876; } .us .us-bar .free { background: var(--cw-line); }
+    .us .us-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   }</style><div class="us"><h2>📊 Usage</h2></div>`;
   const root = el.querySelector(".us");
   const usage = await ctx.require("usage");
   const items = await ctx.require("items");
   // FIVE PAGES (owner 10-07), the header's tabs: Summary, Usage, Kept, Contribution, Reward.
-  const PAGES = [["", "Summary"], ["use", "Usage"], ["kept", "Kept"], ["give", "Contribution"], ["reward", "Reward"]];
-  const page = PAGES.some(([k]) => k === (ctx.sub ?? "")) ? (ctx.sub ?? "") : "";
-  ctx.actions[ctx.route] = PAGES.map(([k, label]) => ({ label, href: k ? `#/usage/${k}` : "#/usage", on: k === page }));
+  const PAGES = [["summary", "Summary"], ["use", "Usage"], ["kept", "Kept"], ["give", "Contribution"], ["reward", "Reward"]];
+  const page = PAGES.some(([k]) => k === (ctx.sub ?? "")) ? ctx.sub : "summary";
+  ctx.actions[ctx.route] = PAGES.map(([k, label]) => ({ label, href: `#/usage/${k}`, on: k === page }));
   dispatchEvent(new CustomEvent("craftworks:actions"));
   root.querySelector("h2").textContent = `📊 ${PAGES.find(([k]) => k === page)[1]}`;
   const months = [0, 1, 2].map(n => {
@@ -60,7 +65,7 @@ export async function mount(ctx, el) {
     foot.append(td("Total"), td(clock(sum("s")), "num"), td(size(sum("b")), "num"), td(String(sum("n")), "num"));
     out.replaceChildren(t);
   };
-  const note = Object.assign(document.createElement("p"), { className: "note", textContent: "Time: what played, for a video or an audio; the time its page was in front of you, for everything else. Data: what its files brought over the network. Kept in your own table — only you see it." });
+  const note = document.createDocumentFragment();
   // YOUR CONTRIBUTION (rewards §2-§3, SHADOW MODE): where an amount you give this month would go — any amount (owner
   // 10-07: contribution, not subscription); creators by your time on their items,
   // carriers by the data their kept files brought you, the network the rest. Nothing is charged or paid yet.
@@ -73,23 +78,33 @@ export async function mount(ctx, el) {
   const days = Object.assign(document.createElement("select"), { title: "Spread over" });
   days.append(...[["7", "a week (7 days)"], ["30", "a month (30 days)"]].map(([v, t]) => Object.assign(document.createElement("option"), { value: v, textContent: t, selected: v === "30" })));
   const giveBtn = Object.assign(document.createElement("button"), { type: "button", textContent: "Give (preview)" });
-  const amountLine = Object.assign(document.createElement("div"), { className: "note" });
-  amountLine.append("Give ", amount, " tokens over ", days, " ", giveBtn);
-  const given = Object.assign(document.createElement("p"), { className: "note" });
-  const levelLine = Object.assign(document.createElement("p"), { className: "level" });
-  const fnote = Object.assign(document.createElement("p"), { className: "note", textContent: "Nothing is given yet (a preview). Any amount, any time: spread over its days, each day's share split by what you used that day — contributions that overlap add up. Creators by your time on their items (60%), keepers by the data their copies brought you (30%; with no keeper yet, to the creator), the network 10%. Never to you." });
+  const amountLine = Object.assign(document.createElement("div"), { className: "us-row" });
+  amountLine.append(amount, days, giveBtn);
+  const given = document.createElement("div");
+  const levelLine = document.createElement("div");
+  // THE SPLIT, as a bar: creators 60 · keepers 30 · network 10.
+  const fnote = Object.assign(document.createElement("div"), { className: "us-bar", title: "Each day's share: creators by your time on their items, keepers by the data their copies brought you, the network the rest" });
+  fnote.style.gridTemplateColumns = "60fr 30fr 10fr";
+  for (const [cls, label] of [["c", "Creators 60%"], ["k", "Keepers 30%"], ["n", "10%"]]) fnote.append(Object.assign(document.createElement("span"), { className: cls, textContent: label }));
+  const grid = (head, rows) => {
+    const t = document.createElement("table");
+    const h = t.createTHead().insertRow();
+    for (const x of head) h.append(Object.assign(document.createElement("th"), { textContent: x }));
+    const b = t.createTBody();
+    for (const r of rows) b.insertRow().append(...r.map((v, i) => (v instanceof Node ? Object.assign(document.createElement("td"), {}).appendChild(v).parentNode : td(String(v), i ? "num" : ""))));
+    return t;
+  };
   const fout = document.createElement("div");
   const drawFee = async () => {
     fout.textContent = "Working it out…";
     const cs = await usage.contributions().catch(() => []);
     const lv = await usage.level().catch(() => null);
     const plan = await usage.levelPlan().catch(() => []);
-    const ahead = plan.length ? ` ${plan.map(p => `${p.name} until ${p.until}`).join(", then ")}, then Free.` : "";
-    levelLine.textContent = lv ? `Your level: ${lv.name} — giving ${lv.perMonth} a month now${lv.next ? ` (${lv.next[1]} from ${lv.next[2]})` : ""}.${ahead}` : "";
-    given.textContent = cs.length ? `Given: ${cs.map(c => `${c.amount} over ${c.days} days, ${usage.dayOf(c.at)} to ${usage.dayOf(c.at + (c.days - 1) * 86400000)}`).join("; ")}` : "Nothing given yet.";
+    levelLine.replaceChildren(grid(["Level", "Per month", "Until"], lv ? [[lv.name, String(lv.perMonth), plan.find(p => p.id === lv.id)?.until ?? "—"], ...plan.filter(p => p.id !== lv.id).map(p => [p.name, "", p.until])] : []));
+    given.replaceChildren(grid(["Given", "Days", "From", "To"], cs.map(c => [tok(c.amount), String(c.days), usage.dayOf(c.at), usage.dayOf(c.at + (c.days - 1) * 86400000)])));
     const st = await usage.statement(pick.value).catch(e => ((fout.textContent = `Could not: ${e?.message ?? e}`), null));
     if (!st) return;
-    if (!st.amount) return (fout.textContent = "Nothing to share this month: give something above (a preview).");
+    if (!st.amount) return fout.replaceChildren();
     const t = document.createElement("table");
     const head = t.createTHead().insertRow();
     for (const x of ["To", "For", "Tokens"]) head.append(Object.assign(document.createElement("th"), { textContent: x }));
@@ -102,17 +117,17 @@ export async function mount(ctx, el) {
     };
     for (const did of [...new Set([...Object.keys(st.creators), ...Object.keys(st.unclaimed)])].sort((a, b) => (st.creators[b] ?? 0) + (st.unclaimed[b] ?? 0) - (st.creators[a] ?? 0) - (st.unclaimed[a] ?? 0))) {
       const u = st.unclaimed[did] ?? 0;
-      row(directory.nameEl(did), u ? `creator (incl. ${tok(u)} keepers' share: no keeper yet)` : "creator", (st.creators[did] ?? 0) + u);
+      row(directory.nameEl(did), u ? "creator + keeper share" : "creator", (st.creators[did] ?? 0) + u);
     }
     for (const [did, n] of Object.entries(st.carriers).sort((a, b) => b[1] - a[1])) row(directory.nameEl(did), "keeper", n);
-    row("Network", "network share (10%)", st.network);
+    row("Network", "network", st.network);
     const foot = t.createTFoot().insertRow();
-    foot.append(td("Total"), td(`${st.days} day(s) so far this month`), td(tok(st.amount), "num"));
+    foot.append(td("Total"), td(`${st.days} day(s)`), td(tok(st.amount), "num"));
     fout.replaceChildren(t);
   };
   giveBtn.onclick = async () => {
     giveBtn.disabled = true;
-    await usage.contribute(amount.value, days.value).catch(e => (given.textContent = `Not saved: ${e?.message ?? e}`));
+    await usage.contribute(amount.value, days.value).catch(e => (given.textContent = `✕ ${e?.message ?? e}`));
     giveBtn.disabled = false;
     drawFee();
   };
@@ -174,7 +189,7 @@ export async function mount(ctx, el) {
   const show = async () => {
     if (page === "kept") return; // its own, below (no month)
     if (page === "use") (body.replaceChildren(note, out), await draw());
-    else if (page === "give") (body.replaceChildren(fh, levelLine, fnote, amountLine, given, fout), await drawFee());
+    else if (page === "give") (body.replaceChildren(amountLine, levelLine, given, fnote, fout), await drawFee());
     else if (page === "reward") (body.replaceChildren(eh, eout), await drawEarnings());
     else body.replaceChildren(await summary());
   };
@@ -183,10 +198,8 @@ export async function mount(ctx, el) {
   // node does not drop it — within the limit chosen here (oldest played dropped past it).
   const keep = await ctx.require("keep");
   const kh = Object.assign(document.createElement("h3"), { textContent: "Kept for others" });
-  const knote = Object.assign(document.createElement("p"), {
-    className: "note",
-    textContent: "What you play is kept on your node for whoever plays it next, re-read once a day so your node does not drop it. It shares your node's contract storage limit (Freenet's --max-hosting-storage: by default an eighth of its memory, at most 1 GiB — not the larger “Disk budget” on the node's dashboard), so keep this below that.",
-  });
+  const knote = Object.assign(document.createElement("div"), { className: "us-bar", title: "Kept of your limit (it shares your node's contract storage, at most 1 GiB by default)" });
+  const kfig = Object.assign(document.createElement("span"), { className: "num" });
   const limit = Object.assign(document.createElement("select"), { title: "How much to keep" });
   const LIMITS = [["0", "Off"], ["256000000", "256 MB"], ["512000000", "512 MB"], ["1000000000", "1 GB"], ["5000000000", "5 GB"]];
   limit.append(...LIMITS.map(([v, t]) => Object.assign(document.createElement("option"), { value: v, textContent: t })));
@@ -200,7 +213,11 @@ export async function mount(ctx, el) {
     const k = await keep.kept().catch(e => ((klist.textContent = `Could not read: ${e?.message ?? e}`), null));
     if (!k) return;
     limit.value = String(LIMITS.find(([v]) => Number(v) === k.limit)?.[0] ?? "512000000");
-    if (!k.files.length) return (klist.textContent = k.limit ? "Nothing yet: play something (not yours)." : "Off.");
+    const pct = k.limit ? Math.min(100, Math.round((100 * k.total) / k.limit)) : 0;
+    kfig.textContent = `${size(k.total)} / ${size(k.limit)} · ${k.files.length} file(s)`;
+    knote.style.gridTemplateColumns = `${pct}fr ${100 - pct}fr`;
+    knote.replaceChildren(Object.assign(document.createElement("span"), { className: "used", textContent: pct >= 12 ? `${pct}%` : "" }), Object.assign(document.createElement("span"), { className: "free", textContent: "" }));
+    if (!k.files.length) return klist.replaceChildren();
     const t = document.createElement("table");
     const head = t.createTHead().insertRow();
     for (const x of ["What", "Size", "Played", "Kept", "Health", "Keepers"]) head.append(Object.assign(document.createElement("th"), { textContent: x }));
@@ -222,7 +239,9 @@ export async function mount(ctx, el) {
   limit.onchange = async () => (await keep.setLimit(Number(limit.value)), drawKept());
   if (page === "kept") {
     pick.hidden = true;
-    body.replaceChildren(kh, knote, limit, klist);
+    const krow = Object.assign(document.createElement("div"), { className: "us-row" });
+    krow.append(limit, knote, kfig);
+    body.replaceChildren(krow, klist);
     await drawKept();
   }
 }
