@@ -1318,3 +1318,14 @@ old key's addresses.
 - Upstream: #5750 updated (head c5f584be) + reply; #5828 opened for #5785; both await maintainer CI approval (owner:
   do not ask). Unanswered-GET report uploaded from B: code 6YRSRD (9 unanswered + 9 NotFound of 100 small, listed in
   the report message).
+
+## Level groups — real encryption for PRO / VIP (owner 10-07; REWARDS §5a "Who hands over a key")
+Reuse groups (circles) + ask/admit + delegate upkeep; any member admits; honor system; lapsed removed by any member.
+- [ ] L1 Contributors list: a public bag the contributor joins (with their card's contributions) — what admitters read.
+- [ ] L2 Per-creator PRO / VIP groups (`groups.of("level:pro")`), policy "members may invite"; made when a creator first
+      gates an item.
+- [ ] L3 A gated item SEALED into its creator's level group (audience `level:pro` / `level:vip`, as role:/list:/circles).
+- [ ] L4 A reader at the level ASKS to join the creator's group (existing request bag) on opening a gated item.
+- [ ] L5 Admission checks the asker's card level — page upkeep (JS) and the identity delegate (Rust `delegate/`, no page).
+- [ ] L6 Lapsed members removed by any member (page + delegate), the group moving to a new key.
+- [ ] Remove the page-only gate's "not encrypted yet" note once L3-L5 are live.

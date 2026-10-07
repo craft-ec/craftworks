@@ -158,9 +158,13 @@ A contributor's claims only steer their own contribution (§1): misreporting can
 - **An item's minimum level** (creator's choice: everyone, PRO, VIP): the item ENCRYPTED, its key sealed to the people at
   that level — never one server secret that decrypts everything (Handcraft's `CONTENT_ENCRYPTION_SECRET`).
 - **Paying for one item:** in the token, to its creator; the buyer gets the item's key sealed to them.
-- **Open — who hands over a key** when a level or a payment is seen: the creator's pages do nothing while the creator is
-  offline. Options: the creator's always-open keeper page; a k-of-n group of keepers holding the keys between them; the
-  confidential version (§5). To decide before gated items are built.
+- **Who hands over a key (owner, 2026-10-07): the existing groups and upkeep — no new mechanism.** Each creator's PRO
+  and VIP are GROUPS (as circles: friends, followers), a gated item sealed to the group's key. Joining is the existing
+  ASK → ADMIT flow, and admitting needs no page open (the identity delegate, woken every minute, admits askers); the
+  group's rule is "members may invite", so ANY current member's node admits a person whose public card shows the level
+  — the creator need never be online. A lapsed level: removed by any member (anyone verifies it from the card), the
+  group moving to a new key. Honor system, accepted: a malicious member could admit a non-contributor, but honest
+  members' nodes remove whoever's card does not show the level on their next tick.
 
 ## 6. What is open, and the proposal for each
 
