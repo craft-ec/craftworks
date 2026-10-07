@@ -650,7 +650,8 @@ export async function start(ctx) {
       if (have === null || usage.reaches(have, lv)) continue;
       const k = `lapse|${sp.id}|${did}`;
       if (!pendingSince.has(k)) pendingSince.set(k, Date.now());
-      const turn = ordering.turn(k, members, me.id);
+      // Ranked among the OTHER members (the lapsed one never acts on itself: ranked first, it cost every other a turn).
+      const turn = ordering.turn(k, members.filter(d => d !== did), me.id);
       if (turn < 0 || Date.now() - pendingSince.get(k) < (turn + 1) * ordering.TAKEOVER) continue;
       await r.act({ act: "lapsed", did }).then(
         () => (pendingSince.delete(k), out.push(did), ctx.log("conversation", { what: `${sp.name}: ${short(did)}'s level ran out — taken out (they ask again when they give again)` })),

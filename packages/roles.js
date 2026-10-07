@@ -331,7 +331,10 @@ export async function start(ctx) {
         const leaving = a.act === "leave" && role(me.id) && role(me.id) !== "owner";
         // A list of named people: any member's own (only its maker changes it — the acts' check).
         const listing = a.act === "list" && !!role(me.id);
-        if (!leaving && !listing && (!need || !can(me.id, need))) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
+        // A LAPSE (a level group): any member's, as the replay rules it (`gov`: level groups only, never the owner or an
+        // admin) — owner 10-07: this check had no entry for it, so no page could write one.
+        const lapsing = a.act === "lapsed" && !!role(me.id) && /^level:(pro|vip)$/.test(policyOf("", "join", Infinity) ?? "");
+        if (!leaving && !listing && !lapsing && (!need || !can(me.id, need))) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
         // A public space's acts are public (readers outside must know them); a private one's sealed.
         const toPublic = isPublic() || (a.act === "policy" && (a.action === "read" || a.action === "join") && a.who === "anyone");
         // Its time: after every act seen (`dag`: now, or just past the latest) — or when it happened (upkeep let someone
