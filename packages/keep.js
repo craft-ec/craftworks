@@ -3,7 +3,7 @@
 // KEEPING it asks each block (its HEALTH: per group, WHOLE / DEGRADED / DAMAGED), puts again only those that do not
 // answer (rebuilt from their group) and puts the tail's signed state again (`storage` tables' `keep`).
 // DUE, with no job list: a table this node writes is due when its record in the account's table `keep` is missing or
-// older than a week. FILES too (`files.keep`): every coded file of the account and of each space this person is in —
+// older than a day (a file: a week). FILES too (`files.keep`): every coded file of the account and of each space this person is in —
 // each piece asked (HEALTH per generation), a generation not whole rebuilt and its missing fragments made again.
 // One table or file at a time, in the background, while any page of the account is open — and the Storage page keeps them all at once on a click.
 // WATCHED (rewards step 2, docs/REWARDS.md §4: the users are the keepers): the files this person PLAYED — anyone's —
@@ -28,7 +28,11 @@
 // them whole (the uploader's node holds the original: the first keeper of anything).
 export async function start(ctx) {
   const [storage, space, files] = await Promise.all(["storage", "space", "files"].map(n => ctx.require(n)));
-  const EVERY = 7 * 86400000; // a table kept longer ago than this is due
+  const EVERY = 7 * 86400000; // a FILE kept longer ago than this is due
+  // A TABLE: a DAY (owner 10-07, measured: a block of `spacekeys` put 10-06 08:03 was evicted from the owner's node at
+  // 19:30, its table last kept 10-04 — a week between keeps let it go unnoticed; a keep rebuilds a missing block from
+  // its group and puts it back while the group is still there).
+  const TABLE_EVERY = 86400000;
   const RETRY = 3600000; // one that failed: due again after this
   const TRIES = 3; // failures in a row before it is called lost
   // A failure's record: how many in a row (`tries`), and LOST once there are TRIES.
@@ -98,14 +102,14 @@ export async function start(ctx) {
   }
   async function due() {
     const held = new Map((await records()).rows().map(r => [r.key, read(r)]));
-    const stale = k => {
+    const stale = (k, every) => {
       const r = held.get(k);
       // A FAILED attempt is not a keep. "Not found" can be a search that missed (asked again within the hour) or a
       // loss (no node holds it — this one neither): after TRIES failures it is LOST, said so, and never asked again.
       if (r?.lost) return false;
-      return !r || Date.now() - r.at > (r.error ? RETRY : EVERY);
+      return !r || Date.now() - r.at > (r.error ? RETRY : every);
     };
-    return { tables: catalogFirst((await storage.own()).filter(t => stale(idOf(t)))), files: (await allFiles()).filter(f => stale(f.key)) };
+    return { tables: catalogFirst((await storage.own()).filter(t => stale(idOf(t), TABLE_EVERY))), files: (await allFiles()).filter(f => stale(f.key, EVERY)) };
   }
 
   // WATCHED: a file this person played, in their table `kept` (`w/<root>`): its ref (to read it again), the item it
