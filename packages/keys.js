@@ -121,10 +121,15 @@ export async function start(ctx) {
     async function ensure(st, made, prev = null, why = made ? "made" : "looked-for") {
       const log = await storage.log(g.channel, glue.epoch_log_public(st.secret), { known: made ? false : null, sealWith: await g.seal(st.epoch), space: g.space });
       await log.answer?.();
-      if (log.absent) {
+      // NEVER A BROKEN LINK (owner 10-07: "don't let it happen in the first place"): an epoch's open row is written only
+      // WITH its prev — the way back every later member walks — save epoch 0 (nothing before it). A node that does not
+      // hold the epoch before (a newcomer joining, a page reading) writes nothing: the row is the maker's, or a
+      // member's who caught up from the epoch before.
+      // (A SPACE's only: the account's history is its escrow — its logs open as they always did.)
+      if (log.absent && (prev || st.epoch === 0 || !g.space)) {
         await log.put("open", JSON.stringify({ info: hexOf(st.info), ...(prev ? { prev } : {}), ...(await provOf(why)) }));
         if (g.space) keyEvent("log-open-written", { space: hexOf(g.space), epoch: st.epoch, prev: !!prev, made: !!made, reason: why });
-      }
+      } else if (log.absent && g.space) keyEvent("log-open-left", { space: hexOf(g.space), epoch: st.epoch, reason: why });
       return log;
     }
     // Every EARLIER epoch this group's log hands on, from `st` back: each secret kept here, so rows sealed before this
@@ -624,7 +629,13 @@ export async function start(ctx) {
     async function current(fresh = false) {
       for (let tries = 0; ; tries++) {
         try {
-          if (await logs.catchUp(undefined, fresh)) return save(false, null, "catch-up");
+          // CAUGHT UP one epoch: the epoch before's secret held here is the new log's PREV (owner 10-07: an open row with no
+          // prev breaks every later member's way back). More than one: the logs between were read, not made here.
+          const before = m?.status();
+          if (await logs.catchUp(undefined, fresh)) {
+            const now = m.status();
+            return save(false, before && now.epoch === before.epoch + 1 ? hexOf(before.secret) : null, "catch-up");
+          }
           return status(m.status());
         } catch (e) {
           if (await load()) continue;
