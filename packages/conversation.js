@@ -333,7 +333,20 @@ export async function start(ctx) {
     ctx.log("conversation", { what: `${sp.name}: its history (epochs below ${below}) asked of ${to.length} member(s)` });
   });
   let renewedForWelcomes = false;
-  async function accept() {
+  // ONE AT A TIME (the chat page and upkeep both ask): two passes taking the same welcome at once — one joins, spending
+  // its key package; the other finds it not held and asks for another, a remove and an add more.
+  // Asked again mid-pass (a welcome may have arrived after its read): one more pass after it.
+  let accepting = null;
+  let acceptAgain = false;
+  const accept = () => {
+    if (accepting) return ((acceptAgain = true), accepting);
+    return (accepting = (async () => {
+      let out = await acceptOnce();
+      while (acceptAgain) (acceptAgain = false), (out = [...out, ...(await acceptOnce())]);
+      return out;
+    })().finally(() => (accepting = null)));
+  };
+  async function acceptOnce() {
     const me = await space.account();
     if (!me) return [];
     const mine = await space.mine();
@@ -344,7 +357,15 @@ export async function start(ctx) {
     await once.settled;
     const done = k => once.rows().some(r => r.key === k && r.value);
     let unanswerable = 0; // welcomes made for a key package this account does not hold
-    for (const it of await index.inbox()) {
+    const inbox = await index.inbox();
+    // Each space's NEWEST welcome (its inviter's last word): an older one for the same space is from before (a removal,
+    // a welcome again) — its key package spent or never to be used — set aside, never tried or asked about again.
+    const newestOf = new Map();
+    // Per SENDER (their own clock, compared with itself), never a blocked one's: one sender's welcome never sets
+    // another's aside.
+    const newestKey = it => `${it.space}|${it.from}`;
+    for (const it of inbox) if (it.kind === "welcome" && it.welcome && !it.repair && !p.is("block", it.from)) newestOf.set(newestKey(it), Math.max(newestOf.get(newestKey(it)) ?? 0, Number(it.made) || 0));
+    for (const it of inbox) {
       // WELCOME AGAIN, asked by someone a welcome from this account never opened for (made from their card's key
       // packages before they renewed them): welcomed again from their card now — into a space this account has, where
       // they belong (the other of a direct conversation; a member of a group or a space this account may invite to).
@@ -449,7 +470,13 @@ export async function start(ctx) {
         expect = { epoch: own.epoch, branch: own.branch };
       }
       const tried = `${it.space}|${it.welcome.slice(0, 64)}`;
-      if (had && welcomesTried.has(tried)) continue;
+      // Tried once per page, listed or not (a space left after a removal is not listed: two tries of one welcome).
+      if (welcomesTried.has(tried)) continue;
+      if (!it.repair && (Number(it.made) || 0) < (newestOf.get(newestKey(it)) ?? 0)) {
+        welcomesTried.add(tried);
+        if (!done(`dead:${tried}`)) await once.put(`dead:${tried}`, `older ${Date.now()}`).catch(() => {});
+        continue;
+      }
       // DEAD: a welcome made for a key package this account never held opens nowhere, ever (its sender was asked once
       // to welcome again: a NEW welcome). Skipped from then on — measured 10-07: 33 of them tried every 30 s, ~2 s each.
       if (done(`dead:${tried}`)) continue;
@@ -458,6 +485,8 @@ export async function start(ctx) {
       try {
         const sp = await space.describe(it.space, v);
         await keys.group(sp).join(it.welcome, { expect });
+        // JOINED by it: never tried again (its key package is spent — after a removal it would only fail and ask).
+        await once.put(`dead:${tried}`, `joined ${Date.now()}`).catch(() => {});
         await keepHistory(sp, it.history);
         await space.record(it.space, v);
         // Its request answered: no longer waiting — the space's, and the code the welcome names.
@@ -469,6 +498,8 @@ export async function start(ctx) {
       } catch (e) {
         const held = it.kp ? await keys.holdsTag(it.kp).catch(() => null) : null;
         if (!held && /WelcomeKeyPackageNotFound/.test(e?.message ?? "")) await once.put(`dead:${tried}`, String(Date.now())).catch(() => {});
+        // Not dead (a passing failure): tried again on the next pass.
+        else welcomesTried.delete(tried);
         // Made for a key package this account does not hold (its card from before): its sender asked — once — to
         // welcome again from the card as it is now (renewed below). A REPAIR's too (this account on another branch of
         // a space it has): asked again AS a repair — else it stays on that branch for good.
@@ -703,10 +734,71 @@ export async function start(ctx) {
   }
   // LET IN: one asker welcomed and recorded `admitted` (by the code they asked with, or "open") — the one way in, for
   // the automatic admit below and for a member's own Let in (`requestsOf`).
+  // The ACT FIRST, then the group (as `invite`): a welcome that fails after it is made again by `reconcile`.
+  // Its act only where the acts do not count them in already (a welcome that failed is not a second admission —
+  // each one would count a use of the code).
   async function letIn(sp, did, code) {
     const r = await (await ctx.require("roles")).of(sp);
+    if (!r.roster().includes(did)) await r.act({ act: "admitted", code, did });
     await welcome(sp, did, sp.name, code);
-    await r.act({ act: "admitted", code, did });
+  }
+  // RECONCILE (the acts decide, the group carries out — any member who may invite, in turn): whoever the acts say is
+  // in and the group does not hold — an add whose act was written and whose commit never happened (a page closed
+  // between, a welcome that failed) — added now. Removals are `moderation.enforce`'s. Turns (`ordering.turn`): the
+  // first does it at once, the k-th once it has waited k × TAKEOVER (two committing at once: one wins the epoch, the
+  // other's add is undone and finds them in). Who was added.
+  const pendingSince = new Map(); // space|did → when this page first saw it pending
+  const failedAt = new Map(); // space|did → { at, n }: when adding it last failed, how many times (back-off doubles)
+  const reconcileSaid = new Map();
+  const BACKOFF = 10 * 60 * 1000;
+  const backedOff = k => {
+    const f = failedAt.get(k);
+    return !!f && Date.now() - f.at < Math.min(BACKOFF * 2 ** (f.n - 1), 6 * 3600e3);
+  };
+  const failed = k => failedAt.set(k, { at: Date.now(), n: (failedAt.get(k)?.n ?? 0) + 1 });
+  // MEASURED FIRST (10-07, dry run): Craftworks 5 in / 5 held, Ivvor's two spaces 1 / 5 and 1 / 7 — nothing to add
+  // anywhere (from an account that reads few of those acts): on.
+  const RECONCILE_DRY = false;
+  async function reconcile(sp) {
+    const me = await space.account();
+    const r = await (await ctx.require("roles")).of(sp);
+    await r.refresh();
+    if (!me || r.left || !r.can(me.id, "invite")) return [];
+    const ordering = await ctx.require("ordering");
+    const inGroup = new Set(r.members().map(m => m.did));
+    const inviters = r.members().filter(m => r.can(m.did, "invite")).map(m => m.did);
+    const out = [];
+    // SAID when it changes: the acts' count against the group's (what reconcile works from).
+    const pending = r.roster().filter(d => d !== me.id && !inGroup.has(d) && !r.banned(d));
+    const said = `acts say ${r.roster().length} in, the group holds ${inGroup.size}, ${pending.length} to add${pending.length ? ` (${pending.slice(0, 3).map(short).join(", ")})` : ""}`;
+    if (reconcileSaid.get(sp.id) !== said) reconcileSaid.set(sp.id, said), ctx.log("conversation", { what: `${sp.name}: reconcile — ${said}` });
+    for (const did of r.roster()) {
+      const k = `${sp.id}|${did}`;
+      if (did === me.id || inGroup.has(did) || r.banned(did)) {
+        pendingSince.delete(k);
+        continue;
+      }
+      if (!pendingSince.has(k)) pendingSince.set(k, Date.now());
+      const turn = ordering.turn(k, inviters, me.id);
+      // Every turn waits ONE TAKEOVER first (the first too): an inviter mid-welcome finishes, a removal's act arrives
+      // after its commit — never a re-add of who was just taken out.
+      if (turn < 0 || Date.now() - pendingSince.get(k) < (turn + 1) * ordering.TAKEOVER || backedOff(k)) continue;
+      if (RECONCILE_DRY) {
+        failed(k);
+        ctx.log("conversation", { what: `${sp.name}: ${short(did)} is in by its acts, not in its group — WOULD add (turn ${turn}; dry run)` });
+        continue;
+      }
+      try {
+        await welcome(sp, did, sp.name);
+        pendingSince.delete(k);
+        out.push(did);
+        ctx.log("conversation", { what: `${sp.name}: ${short(did)} is in by its acts, not in its group — added (turn ${turn})` });
+      } catch (e) {
+        failed(k);
+        ctx.log("conversation", { what: `${sp.name}: adding ${short(did)} as its acts say: ${e.message}` });
+      }
+    }
+    return out;
   }
   // WHO ASKED TO JOIN this space, and who was let in: `{ waiting: [{ did, at, code }], admitted: [{ did, at, by, code }] }`
   // — waiting: a request under its open door or a code in force, from someone not in it (nor banned), newer than their
@@ -743,6 +835,8 @@ export async function start(ctx) {
     const out = [];
     // Each WAITING asker (`requestsOf`): its open door only while the space lets anyone in; a code while in force.
     for (const q of (await requestsOf(sp)).waiting) {
+      // In by the acts already (let in, never in the group): `reconcile`'s — in turn, backing off — not tried again here.
+      if (r.roster().includes(q.did)) continue;
       try {
         await letIn(sp, q.did, q.code);
         out.push(q.did);
@@ -1148,5 +1242,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, repair, catchUp, keyStatus, reportReads, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
+  return { direct, group, invite, accept, reconcile, repair, catchUp, keyStatus, reportReads, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
 }

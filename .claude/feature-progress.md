@@ -1348,7 +1348,16 @@ then joined at 35 with 35 earlier epochs kept; epoch 33's row "prev+8 back".
 - [x] keys: open rows carry `back` (e-2…e-9, from the epoch before's own row: on its branch); history walks every link,
       nearest wins, crosses broken rows, reports the highest gap; mend adds `back` to rows that lack it.
 - [x] conversation.invite: the `added` act first, then the welcome; stale welcome-again asks dropped (newest tag kept).
-- [ ] Open: a card listing key packages offered by another device of the account that this one does not hold (fx /
-      muxrky2j) — costs one dead welcome per add until the card is renewed.
+- [x] (Corrected: `muxrky2j` is a key-package BATCH id, not a device.) The dead welcomes on re-add, measured: after a
+      removal fx retried welcomes it had already joined (spent packages) and two inbox passes (chat + upkeep) could take
+      one welcome at once. Fixed: accept() one at a time; a welcome tried once per page (retried only if not dead);
+      only each space's newest welcome tried; a joined welcome marked done. Measured after: remove → 36, re-add → 37,
+      joined with 37 earlier epochs (one epoch each way; before: 12 → 17).
+- [x] Reconcile (owner 10-07: any node advances any request; the delegate commits too): `conversation.reconcile` —
+      in by the acts, not in the group → added, members who may invite taking turns (`ordering.turn`, moved from
+      file-keys: one ranking), 10 min back-off; `letIn` act-first. Dry run first: fx/fy all 0 to add; Wren's spaces:
+      Craftworks 5/5, Ivvor's New Space acts 1 / group 5, Ivvor's Space 1 / 7 — 0 to add (Wren reads few of Ivvor's
+      acts: hypothesis, the history gap). Control: invite faulted after its act → reconcile "2 in, holds 1, 1 to add"
+      → added at epoch 39, then 0 to add.
 - Next (not built): commits as pure reconciliation of the group to the acts (drop redo/snaps intent tracking);
   witnessed ordering when a claimed time must not be trusted.

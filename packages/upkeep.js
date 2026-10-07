@@ -66,6 +66,9 @@ export async function start(ctx) {
           await conversation.keepReaders(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: readers: ${e.message}` }));
         }
         if (!r?.can(me.id, "invite")) continue;
+        // In by the acts, not in the group: added (in turn).
+        const added = await conversation.reconcile(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: reconcile: ${e.message}` }), []));
+        if (added.length) ctx.log("upkeep", { what: `${added.length} added to ${sp.name} as its acts say` });
         const let_in = await conversation.admit(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: ${e.message}` }), []));
         if (let_in.length) ctx.log("upkeep", { what: `${let_in.length} let into ${sp.name}` });
       }

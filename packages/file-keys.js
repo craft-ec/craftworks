@@ -16,19 +16,15 @@
 // and roles changing, a new epoch (`craftworks:keys`), and a takeover falling due. A row that failed is tried again on
 // the next trigger, not in a loop.
 export async function start(ctx) {
-  const [space, files, roles, keys, storage, driveStore] = await Promise.all(["space", "files", "roles", "keys", "storage", "drive-store"].map(n => ctx.require(n)));
+  const [space, files, roles, keys, storage, driveStore, ordering] = await Promise.all(["space", "files", "roles", "keys", "storage", "drive-store", "ordering"].map(n => ctx.require(n)));
   const shared = sp => sp && sp.kind !== "account";
   const label = sp => (shared(sp) ? space.shown(sp) : "your files");
   const failed = new Map(); // row → the trigger count it failed at
   let triggers = 0;
-  const TAKEOVER = 2 * 60 * 1000;
-  const hash = s => {
-    let h = 2166136261;
-    for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
-    return h;
-  };
-  // This person's place among the members for a row: 0 does it; k takes over after k × TAKEOVER of no movement.
-  const rankFor = (id, dids, me) => [...new Set(dids)].sort((a, b) => hash(`${id}|${b}`) - hash(`${id}|${a}`) || (a < b ? -1 : 1)).indexOf(me);
+  // This person's place among the members for a row: 0 does it; k takes over after k × TAKEOVER of no movement
+  // (`ordering`'s turns: one ranking, the delegate's too).
+  const { TAKEOVER } = ordering;
+  const rankFor = ordering.turn;
   const later = new Map(); // row → its takeover timer
   const seen = new Map(); // row → when this page first saw it due
 

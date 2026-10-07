@@ -24,6 +24,9 @@
 //   const d = await ordering.open({ type: "dag", source })   // source: () => the entries that COUNT, [{ id, at, deps }]
 //   d.stamp({ act: "grant", … })   // the value to write: `deps` (the heads now) and `at` (kept when the caller gives one)
 //   d.heads()                      // ids no entry names
+//   ordering.turn(id, dids, me)    // WHO DOES A THING (no claim, no message): every member ranks the members for `id`
+//                                  // the same way — 0 does it now, k takes it over after k × ordering.TAKEOVER of no
+//                                  // movement (a member away); -1: not among them
 //   d.missing(have)                // ids entries name that are not among `have` (a Set: every id written, counted or
 //                                  // not) — this reader's view is short
 // Only entries that COUNT time and head a new one (a refused act — a non-member's, a time pushed far ahead by one
@@ -115,5 +118,14 @@ export async function start(ctx) {
     return make(spec);
   }
 
-  return { open, types: Object.keys(types) };
+  // TURNS (a hash of the thing and each DID, FNV-1a — the identity delegate ranks the same way).
+  const TAKEOVER = 2 * 60 * 1000;
+  const hash = s => {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
+    return h;
+  };
+  const turn = (id, dids, me) => [...new Set(dids)].sort((a, b) => hash(`${id}|${b}`) - hash(`${id}|${a}`) || (a < b ? -1 : 1)).indexOf(me);
+
+  return { open, types: Object.keys(types), turn, TAKEOVER };
 }

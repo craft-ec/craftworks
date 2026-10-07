@@ -120,7 +120,11 @@ uses the tokens, never its own colours or sizes — so a new look, or a second t
   that point. MLS + a DAG, composed (owner 10-07): the space's ACTS are a DAG (`ordering`'s `dag`) — each names what
   its writer had seen and is timed past it, so a member whose clock is behind never has an act replayed before the
   grant it rested on, and a reader that lacks an act another names knows it; the replay (`gov`) is unchanged, its
-  time order now causal. The GROUP's commits stay one line per epoch (`tail`): MLS carries out what the acts decide.
+  time order now causal. The GROUP's commits stay one line per epoch (`tail`): MLS carries out what the acts decide —
+  by RECONCILING, any member in turn (`ordering.turn`): whoever the acts say is in and the group does not hold is added
+  (`conversation.reconcile`), whoever they put out is removed (`moderation.enforce`); an act is always written BEFORE
+  its commit, so a page that closes between leaves work any member finishes, and a lost race needs no redo. With no
+  page open, the identity delegate admits askers the same way (its own rules, frozen with the identity).
   HISTORY has more than one way back: each epoch's log names the epoch before (`prev`) and the eight before that
   (`back`, from the epoch before's own row: on its branch), so one broken row no longer cuts a space's history. Limits:
   a writer can still claim an early time or name nothing (honour, as before); a clock more than an hour ahead is not
