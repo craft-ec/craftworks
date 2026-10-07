@@ -175,7 +175,7 @@ export async function mount(ctx, el) {
     try {
       const was = key && held.find(x => x.ref === key);
       if (was) await items.editItem(key, body, { title, meta: { ...(was.meta ?? {}), color, archived }, ...(files ? { files } : {}) });
-      else key = await items.submit({ board: sp?.id ?? null, title, body, kind: "note", meta: { color, archived }, files: files ?? [], audience: n.audience ?? who.value(), write: who.write() });
+      else key = await items.submit({ board: sp?.id ?? null, title, body, kind: "note", meta: { color, archived, ...(who.level() ? { level: who.level() } : {}) }, files: files ?? [], audience: n.audience ?? who.value(), write: who.write() });
       reload();
       return key;
     } catch (e) {

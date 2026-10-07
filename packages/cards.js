@@ -132,7 +132,10 @@ export async function start(ctx) {
     for (const [n, u] of [[31536000, "year"], [2592000, "month"], [86400, "day"], [3600, "hour"], [60, "minute"]]) if (s >= n) return `${Math.floor(s / n)} ${u}${Math.floor(s / n) > 1 ? "s" : ""} ago`;
   };
   // Its COUNTED SIGNALS (`signals`: views, saves, shares — over the list's window): " · 3 views · 1 save".
-  const counted = it => signals.summary(it);
+  // Its counts, and its LEVEL (rewards §5a): who may open it.
+  // A LEVEL'S ITEM shows no body on a card (its page decides who opens it: `item-page`).
+  const gated = it => it?.meta?.level === "pro" || it?.meta?.level === "vip";
+  const counted = it => signals.summary(it) + (it?.meta?.level === "pro" || it?.meta?.level === "vip" ? ` · 🔒 ${it.meta.level.toUpperCase()}` : "");
   const clock = d => {
     d = Math.round(d || 0);
     const hh = Math.floor(d / 3600);
@@ -173,7 +176,7 @@ export async function start(ctx) {
       href ? "a" : "div",
       { className: "cw-card cw-note", ...(href ? { href } : { tabIndex: 0 }) },
       it.title ? h("div", { className: "t", textContent: it.title }) : null,
-      it.body ? h("div", { className: "b" }, when("markdown", m => m.render(it.body, it.files ?? [], { item: it.ref ?? null }))) : null,
+      it.body && !gated(it) ? h("div", { className: "b" }, when("markdown", m => m.render(it.body, it.files ?? [], { item: it.ref ?? null }))) : null,
       below ? h("div", { className: "below" }, below) : null,
       by ? h("div", { className: "s" }, author(it.by, "note")) : null,
       corner ? h("div", { className: "corner" }, corner) : null,
@@ -269,7 +272,7 @@ export async function start(ctx) {
             "div",
             { className: "text" },
             it.files?.length ? when("markdown", m => carousel(it.files.filter(f => VISUAL.has(m.kindOf(f))).map(f => m.fileView(f, { item: it.ref, alt: it.title })))) : null,
-            it.body ? when("markdown", m => h("p", { className: "preview", textContent: m.plain(it.body) })) : null,
+            it.body && !gated(it) ? when("markdown", m => h("p", { className: "preview", textContent: m.plain(it.body) })) : null,
             it.files?.length ? when("markdown", m => when("attachments", a => (it.files.some(f => !VISUAL.has(m.kindOf(f))) ? a.show(it.files.filter(f => !VISUAL.has(m.kindOf(f)))) : null))) : null,
           ),
         lead || actions.length ? h("div", { className: "acts", onclick: e => e.stopPropagation() }, lead, ...actions) : null,
@@ -346,7 +349,7 @@ export async function start(ctx) {
   // an expired one says so (the text not shown).
   function paste(it, { href, actions, by, open }) {
     const expired = !!it.meta?.expires && it.meta.expires < Date.now();
-    const pre = h("pre", { className: "code" }, when("highlight", hl => hl.code(String(it.body ?? ""), it.meta?.language)));
+    const pre = h("pre", { className: "code" }, gated(it) ? "🔒" : when("highlight", hl => hl.code(String(it.body ?? ""), it.meta?.language)));
     const lang = it.meta?.language && it.meta.language !== "plain" ? it.meta.language : "text";
     const c = h(
       href ? "a" : "div",

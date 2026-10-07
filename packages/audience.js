@@ -10,6 +10,8 @@
 //   form.append(a.el)
 //   a.value()      // "public" | "private" (yours) | "members" (a space's)
 //   a.isPublic()   // read by everyone (its files are put public)
+//   a.level()      // "" (anyone who sees it) | "pro" | "vip": the LEVEL who may open it (rewards §5a) — enforced in
+//                  // Craftworks' pages only until gated keys are built (said beside the choice)
 export async function start(ctx) {
   const [items, space] = await Promise.all(["items", "space"].map(n => ctx.require(n)));
   const h = (tag, props = {}, ...kids) => {
@@ -72,11 +74,15 @@ export async function start(ctx) {
     const wsel = h("select", { className: "field", name: "write" }, ...writes.map(([value, textContent]) => h("option", { value, textContent })));
     const each = Object.fromEntries(ACTS.map(([a]) => [a, h("select", { className: "field", name: `write.${a}` }, h("option", { value: "", textContent: "As above" }), ...writes.map(([value, textContent]) => h("option", { value, textContent })))]));
     const custom = h("details", {}, h("summary", { textContent: `Customize each (${ACTS.map(([a]) => a).join(", ")})` }), ...ACTS.map(([a, label]) => h("label", {}, label, each[a])));
-    const el = h("div", { className: "cw-aud", style: "display:grid;gap:6px" }, h("label", {}, "Who sees it", sel), h("label", {}, "Who may interact", wsel), custom);
+    // WHO CAN OPEN IT: a contribution LEVEL (rewards §5a), on top of who sees it.
+    const lsel = h("select", { className: "field", name: "level" }, ...[["", "Anyone who sees it"], ["pro", "🔒 PRO and VIP"], ["vip", "🔒 VIP only"]].map(([value, textContent]) => h("option", { value, textContent })));
+    const lnote = h("small", { textContent: "Shown only to that level in Craftworks — not encrypted yet, so another app could still read it." });
+    const el = h("div", { className: "cw-aud", style: "display:grid;gap:6px" }, h("label", {}, "Who sees it", sel), h("label", {}, "Who can open it", lsel), lnote, h("label", {}, "Who may interact", wsel), custom);
     return {
       el,
       value: () => sel.value,
       isPublic: () => sel.value === "public",
+      level: () => lsel.value,
       // The write rule ({ comment, vote, react, … }): each action's own choice, else the one choice — only what differs
       // from the space's own (nothing to set on the item: null).
       write: () => {

@@ -114,7 +114,7 @@ export async function start(ctx) {
       btn.disabled = true;
       try {
         const tags = tg.value();
-        const item = await items.submit({ board: space?.id ?? null, outside, title: title.value.trim(), body: ed.value(), kind: kindSel.value, files: ed.files(), meta: tags.length ? { tags } : {}, audience: outside ? "public" : who.value(), write: outside ? null : who.write() });
+        const item = await items.submit({ board: space?.id ?? null, outside, title: title.value.trim(), body: ed.value(), kind: kindSel.value, files: ed.files(), meta: { ...(tags.length ? { tags } : {}), ...(who.level() ? { level: who.level() } : {}) }, audience: outside ? "public" : who.value(), write: outside ? null : who.write() });
         onPublished({ item, title: title.value.trim() });
       } catch (err) {
         said.textContent = err.message ?? String(err);
@@ -181,6 +181,7 @@ export async function start(ctx) {
         progress.textContent = "Reading…";
         const meta = Object.fromEntries(kinds.of(kindSel.value).fields.map(k => [k, String(f.elements[`meta.${k}`]?.value ?? "").trim()]).filter(([, v]) => v));
         if (tg.value().length) meta.tags = tg.value();
+        if (who.level()) meta.level = who.level();
         const done = await publish(x, {
           domain: spec.domain,
           space,

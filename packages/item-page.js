@@ -75,6 +75,21 @@ export async function start(ctx) {
         return gate;
       }
     }
+    // A LEVEL'S ITEM (rewards §5a) for someone below it: said, with where to contribute — its author always opens it.
+    // Enforced here, in Craftworks' pages (not encrypted yet).
+    const lv = it.meta?.level;
+    if (lv === "pro" || lv === "vip") {
+      const usage = await ctx.require("usage");
+      if (!(await usage.mayOpen(lv, it.by))) {
+        const mine = await usage.level().catch(() => ({ name: "Free" }));
+        return h(
+          "div",
+          { className: "cw-page" },
+          h("h1", { textContent: it.title || "" }),
+          h("div", { className: "about" }, h("p", { textContent: `🔒 For ${lv === "vip" ? "VIP" : "PRO and VIP"} contributors. Your level: ${mine.name}.` }), h("a", { href: "#/usage", textContent: "Contribute (Usage)" })),
+        );
+      }
+    }
     const parts = kinds.parts(it.kind);
     // VIEWED: its page opened counts once for this reader (`items.view`; never one's own), where votes are kept.
     if (parts.votes) items.view(ref, { outside });
