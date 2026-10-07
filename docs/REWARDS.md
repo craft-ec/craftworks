@@ -42,7 +42,9 @@ an audio; the time its page was in front of the person (shown, focused, with an 
 everything else (a note, a paste, a picture, a book). Also kept: opens, and the data its files brought. The
 contributor's own pages sum it into weights and SPLIT THEIR OWN CONTRIBUTION by them (the split is user-centric: a contribution follows
 only its payer's use, so nobody needs anyone else's record), signed by the contributor's account and published as a
-**statement** — RUNNING during the month (the "pending" view), final at its end.
+**statement** — one per DAY (owner 2026-10-07: each contribution starts and ends on its own day, so the cutoff is the
+day, never a month): today's RUNNING, every earlier day's FINAL (written once, never again); a month or any span is
+just the sum of its days.
 
 - Unfakeable by others: only the contributor's account signs its statement; nobody can add usage to someone else's.
 - Self-dealing is zero-sum (§1). A creator buying contributions to watch their own work gets back less than they paid
@@ -122,8 +124,9 @@ A contributor's claims only steer their own contribution (§1): misreporting can
 - **No treasury, no central party (owner 2026-10-07).** Nothing settles but arithmetic anyone can redo:
   - **Contribution:** any amount, in the token, to a token contract, which itself records it (account → month,
     amount) — no one signs it.
-  - **Split:** each contributor's own pages split that contributor's contribution (§2, §3) into a signed, PUBLIC statement:
-    running during the month, final at its end.
+  - **Split:** each contributor's own pages split that contributor's contribution (§2, §3) into signed, PUBLIC DAILY
+    statements (their account's public tail `statements`, a row per day; listed in the month's bag `statements <month>`):
+    today's running, earlier days final.
   - **Ledger:** anyone sums the statements (and the keepers' claims, later proofs) — the same result for everyone; a
     creator or keeper sees their PENDING earnings at any time from the running statements.
   - **Payout:** the token contract pays each contributor's contribution out as their final statement says, IN THE TOKEN — any
@@ -195,8 +198,9 @@ A contributor's claims only steer their own contribution (§1): misreporting can
    shown as public counts beside views (owner 2026-10-06: as a view count for now; a confidential roll-up replaces it).
 2. Keep what you watched (re-read daily, read only, within a limit) — BUILT.
 3. Keepers bag: claims of who keeps which file — BUILT (claims, unsigned, public).
-4. Public statements (running, then final), the ledger anyone sums and each one's pending view — in shadow mode
-   (computed, not paid) for a few months to calibrate the split; carriers' shares from CLAIMS. No treasury (§5).
+4. Public DAILY statements (today running, earlier days final), the ledger anyone sums and each one's pending view
+   (Usage app: "Your earnings") — BUILT 2026-10-07, in shadow mode (computed, not paid) for a few months to calibrate
+   the split; carriers' shares from CLAIMS; a day that does not add up is left out of every sum. No treasury (§5).
 5. PROOFS, only before money moves (owner 2026-10-07: skip until rewards pay — a claim is enough to show who keeps
    what; a proof only stops paying a false one). Planned so they cost the network almost nothing: computed during the
    keeper's existing daily re-read (no extra gets), one small write per keeper per day (about 13 KB for 10 GB kept:

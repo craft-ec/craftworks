@@ -112,9 +112,26 @@ export async function mount(ctx, el) {
     giveBtn.disabled = false;
     drawFee();
   };
-  root.append(pick, note, out, fh, levelLine, fnote, amountLine, given, fout);
+  // YOUR EARNINGS (pending) and THE LEDGER (rewards §5, shadow mode): every contributor's public statement for the
+  // month, summed here — the same sum anyone gets; yours is your line of it. Nothing is paid yet.
+  const eh = Object.assign(document.createElement("h3"), { textContent: "Your earnings (pending, preview)" });
+  const eout = Object.assign(document.createElement("div"), { className: "note" });
+  const drawEarnings = async () => {
+    eout.textContent = "Adding up this month's statements…";
+    const e = await usage.earnings(pick.value).catch(err => ((eout.textContent = `Could not: ${err?.message ?? err}`), null));
+    if (!e) return;
+    const l = e.ledger;
+    const lines = [
+      `From ${e.from} contributor(s): ${tok(e.total)} tokens — ${tok(e.creator)} as a creator, ${tok(e.carrier)} as a keeper.`,
+      `The month's public ledger: ${l.contributors} contributor(s), ${l.days} daily statement(s) (${l.final} final, the rest today's, still running), ${tok(l.total)} tokens in all, ${tok(l.network)} to the network${l.refused ? `; ${l.refused} day(s) left out (not adding up)` : ""}. Anyone gets the same sum.`,
+    ];
+    eout.replaceChildren(...lines.map(t => Object.assign(document.createElement("p"), { textContent: t })));
+  };
+  pick.addEventListener("change", drawEarnings);
+  root.append(pick, note, out, fh, levelLine, fnote, amountLine, given, fout, eh, eout);
   await draw();
   drawFee();
+  drawEarnings();
   // KEPT FOR OTHERS (rewards step 2, `keep`): what this node keeps of what you played — re-read a day apart so the
   // node does not drop it — within the limit chosen here (oldest played dropped past it).
   const keep = await ctx.require("keep");

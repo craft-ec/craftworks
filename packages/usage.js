@@ -17,6 +17,8 @@
 //   await usage.level()                                      // { id: "free"|"pro"|"vip", name, perMonth, next }
 //   await usage.levelPlan()                                  // [{ id, name, until: "YYYY-MM-DD" }] — the level ahead
 //   await usage.mayOpen(level, by)                           // this person may open an item of that level
+//   await usage.publishStatements()  /  usage.ledger("2026-10")  /  usage.earnings()   // statements (public), anyone's
+//                                                            // sum of them, this person's line (rewards §5; shadow)
 //   await usage.statement("2026-10")                         // the month so far, each day's share of the
 //                                                            // contributions split by that day's use: { month, amount,
 //                                                            // days, creators, carriers, unclaimed, network } ({did: n})
@@ -219,42 +221,31 @@ export async function start(ctx) {
   // time on others' items, carriers by the data each file brought (among its keepers, never this person), the network
   // 10%. A file with no keeper but this person: its share to its item's CREATOR (owner 10-07), else the day's creators
   // by time; a day with no use at all: its share to the network.
-  async function statement(m = monthOf()) {
-    await flush();
-    const [items, space, keep] = await Promise.all(["items", "space", "keep"].map(n => ctx.require(n)));
-    const me = (await space.account())?.id;
-    const cs = await contributions();
+  // ONE DAY's statement (the CUTOFF is the day, owner 10-07: each contribution starts and ends on its own day, so a
+  // day's split is final once the day is over — never a month that means nothing to a contribution): that day's share
+  // of every running contribution, split by that day's use — creators by time on others' items, carriers by the data
+  // each file brought (among its keepers, never this person), the network 10%. A file with no keeper but this person:
+  // its share to its item's CREATOR (owner 10-07), else the day's creators by time; a day with no use: to the network.
+  // Added up EXACTLY, each share rounded once to the token's 8 decimals, the network taking what is left — so a day's
+  // rows always add up to its amount, to the last 0.00000001.
+  const UNIT = 10 ** DECIMALS;
+  async function dayStatement(day, { cs = null, me = null, byOf, keepers } = {}) {
+    cs ??= await contributions();
     const t = await storage.table("usage");
     await t.settled;
     const rows = p => t.rows().filter(r => r.key.startsWith(p) && r.value).map(r => ({ key: r.key.slice(p.length), ...parse(r.value) }));
-    const out = { month: m, amount: 0, days: 0, creators: {}, carriers: {}, unclaimed: {}, network: 0, at: Date.now() };
-    // Added up EXACTLY (no rounding along the way); each share rounded once at the end, to the token's 8 decimals, and
-    // the network takes what is left — so the rows always add up to the amount, to the last 0.00000001.
+    const out = { day, amount: 0, creators: {}, carriers: {}, unclaimed: {}, network: 0 };
     const give = (to, who, n) => (to[who] = (to[who] ?? 0) + n);
-    const bys = new Map();
-    const byOf = ref => {
-      if (!bys.has(ref)) bys.set(ref, String(ref).startsWith("did:") ? Promise.resolve(String(ref).slice(0, String(ref).lastIndexOf("/"))) : items.get(ref).then(it => it?.by ?? null, () => null));
-      return bys.get(ref);
-    };
-    const keepersOf = new Map();
-    const keepers = root => (keepersOf.has(root) || keepersOf.set(root, keep.keepers(root).catch(() => [])), keepersOf.get(root));
-    const today = dayOf();
-    const [y, mo] = m.split("-").map(Number);
-    for (let d = 1; d <= 31; d++) {
-      const day = `${m}-${String(d).padStart(2, "0")}`;
-      if (new Date(Date.UTC(y, mo - 1, d)).getUTCMonth() !== mo - 1 || day > today) break;
-      const fee = shareOn(cs, day);
-      if (!fee) continue;
-      out.amount += fee;
-      out.days += 1;
-      const owned = (await Promise.all(rows(`d:${day}:`).filter(r => !r.key.startsWith("file:") && r.s > 0).map(async r => ({ ...r, by: await byOf(r.key) })))).filter(r => r.by && r.by !== me);
-      const time = owned.reduce((n, r) => n + r.s, 0);
-      const files = rows(`r:${day}:`).filter(r => r.b > 0);
-      const data = files.reduce((n, r) => n + r.b, 0);
-      if (!time && !data) {
-        out.network += fee;
-        continue;
-      }
+    const fee = shareOn(cs, day);
+    if (!fee) return out;
+    out.amount = fee;
+    const owned = (await Promise.all(rows(`d:${day}:`).filter(r => !r.key.startsWith("file:") && r.s > 0).map(async r => ({ ...r, by: await byOf(r.key) })))).filter(r => r.by && r.by !== me);
+    const time = owned.reduce((n, r) => n + r.s, 0);
+    const files = rows(`r:${day}:`).filter(r => r.b > 0);
+    const data = files.reduce((n, r) => n + r.b, 0);
+    if (!time && !data) {
+      out.network = fee;
+    } else {
       let unpaid = 0;
       if (time) for (const r of owned) give(out.creators, r.by, (fee * SPLIT.creators * r.s) / time);
       else unpaid += fee * SPLIT.creators;
@@ -271,22 +262,161 @@ export async function start(ctx) {
         else for (const x of ks) give(out.carriers, x, share / ks.length);
       }
       if (!data) await toCreators(fee * SPLIT.carriers, null);
-      out.network += fee * SPLIT.network + unpaid;
     }
-    const unit = 10 ** DECIMALS;
-    const units = n => Math.round(n * unit);
+    const units = n => Math.round(n * UNIT);
     const total = units(out.amount);
     let given = 0;
     for (const to of [out.creators, out.carriers, out.unclaimed])
       for (const k of Object.keys(to)) {
         const u = units(to[k]);
         given += u;
-        to[k] = u / unit;
+        to[k] = u / UNIT;
       }
-    out.amount = total / unit;
-    out.network = (total - given) / unit;
+    out.amount = total / UNIT;
+    out.network = (total - given) / UNIT;
     return out;
   }
+  // Who made an item, and who keeps a file — asked once per pass.
+  async function lookups() {
+    const [items, space, keep] = await Promise.all(["items", "space", "keep"].map(n => ctx.require(n)));
+    const bys = new Map();
+    const byOf = ref => {
+      if (!bys.has(ref)) bys.set(ref, String(ref).startsWith("did:") ? Promise.resolve(String(ref).slice(0, String(ref).lastIndexOf("/"))) : items.get(ref).then(it => it?.by ?? null, () => null));
+      return bys.get(ref);
+    };
+    const keepersOf = new Map();
+    const keepers = root => (keepersOf.has(root) || keepersOf.set(root, keep.keepers(root).catch(() => [])), keepersOf.get(root));
+    return { me: (await space.account())?.id ?? null, byOf, keepers, cs: await contributions() };
+  }
+  const daysOfMonth = m => {
+    const [y, mo] = m.split("-").map(Number);
+    const out = [];
+    for (let d = 1; d <= 31; d++) {
+      const day = `${m}-${String(d).padStart(2, "0")}`;
+      if (new Date(Date.UTC(y, mo - 1, d)).getUTCMonth() !== mo - 1 || day > dayOf()) break;
+      out.push(day);
+    }
+    return out;
+  };
+  // A MONTH, for showing: the sum of its days' statements so far (each exact, so their sum is too).
+  async function statement(m = monthOf()) {
+    await flush();
+    const l = await lookups();
+    const out = { month: m, amount: 0, days: 0, creators: {}, carriers: {}, unclaimed: {}, network: 0, at: Date.now() };
+    const add = (to, from) => {
+      for (const [k, n] of Object.entries(from)) to[k] = (Math.round((to[k] ?? 0) * UNIT) + Math.round(n * UNIT)) / UNIT;
+    };
+    for (const day of daysOfMonth(m)) {
+      const d = await dayStatement(day, l);
+      if (!d.amount) continue;
+      out.days += 1;
+      out.amount = (Math.round(out.amount * UNIT) + Math.round(d.amount * UNIT)) / UNIT;
+      out.network = (Math.round(out.network * UNIT) + Math.round(d.network * UNIT)) / UNIT;
+      add(out.creators, d.creators);
+      add(out.carriers, d.carriers);
+      add(out.unclaimed, d.unclaimed);
+    }
+    return out;
+  }
+  // STATEMENTS, THE LEDGER, EARNINGS (rewards §5, build step 4 — SHADOW MODE: computed, never paid). No treasury, no
+  // central party: each contributor's own page publishes its DAILY statements — its split of its own contribution, one
+  // row per day (`YYYY-MM-DD`) in its account's PUBLIC tail `statements` (only its account signs it): today's RUNNING,
+  // every earlier day's FINAL (written once, never again) — and lists itself in the month's bag `statements <month>`, so
+  // anyone finds them. The LEDGER is anyone's sum of the days they ask for (the same result for everyone); a creator's
+  // or keeper's EARNINGS are their line of it.
+  const STATEMENTS = "statements";
+  const bagOf = m => `statements ${m}`;
+  const prevMonth = (m = monthOf()) => {
+    const [y, mo] = m.split("-").map(Number);
+    return new Date(Date.UTC(y, mo - 2, 1)).toISOString().slice(0, 7);
+  };
+  async function publishStatements(months = [prevMonth(), monthOf()]) {
+    const space = await ctx.require("space");
+    const me = await space.account();
+    if (!me?.shared) return 0;
+    const l = await lookups();
+    if (!l.cs.length) return 0;
+    const first = dayOf(Math.min(...l.cs.map(c => c.at)));
+    const today = dayOf();
+    const t = await storage.publicTail(STATEMENTS, me.shared);
+    await t.answer?.();
+    const index = await ctx.require("index");
+    let wrote = 0;
+    for (const m of months) {
+      let any = false;
+      for (const day of daysOfMonth(m).filter(d => d >= first)) {
+        const was = parse(t.rows().find(r => r.key === day)?.value ?? "null");
+        if (was?.final) {
+          any = true;
+          continue; // a day over is final: never written again
+        }
+        const d = await dayStatement(day, l);
+        if (!d.amount) continue;
+        any = true;
+        const body = { ...d, final: day < today, at: Date.now() };
+        if (was && JSON.stringify({ ...was, at: 0 }) === JSON.stringify({ ...body, at: 0 })) continue;
+        await t.put(day, JSON.stringify(body));
+        wrote += 1;
+      }
+      if (any && !(await index.pointers(bagOf(m)).catch(() => [])).some(x => x?.did === me.id)) await index.point(bagOf(m), { did: me.id });
+    }
+    return wrote;
+  }
+  // A day that does not add up — its shares over its amount, or a share below zero — is left out (what the token
+  // contract will refuse to pay).
+  const units = n => Math.round(Number(n) * UNIT);
+  function addsUp(v) {
+    const parts = [...Object.values(v.creators ?? {}), ...Object.values(v.carriers ?? {}), ...Object.values(v.unclaimed ?? {}), v.network ?? 0].map(units);
+    return Number.isFinite(units(v.amount)) && units(v.amount) > 0 && parts.every(n => Number.isFinite(n) && n >= 0) && parts.reduce((a, b) => a + b, 0) === units(v.amount);
+  }
+  // THE LEDGER of a month (or any days of it: `days`, a test): every contributor's daily statements, summed.
+  async function ledger(m = monthOf(), { days = () => true } = {}) {
+    const [index, directory] = await Promise.all(["index", "directory"].map(n => ctx.require(n)));
+    const dids = [...new Set((await index.pointers(bagOf(m)).catch(() => [])).map(x => x?.did).filter(d => typeof d === "string" && d.startsWith("did:")))];
+    const by = {};
+    const out = { month: m, contributors: 0, days: 0, final: 0, refused: 0, total: 0, network: 0, by };
+    const add = (did, k, n) => ((by[did] ??= { creator: 0, carrier: 0 })[k] += units(n));
+    await Promise.all(
+      dids.map(async did => {
+        const t = await directory.publicOf(did, STATEMENTS).catch(() => null);
+        await t?.answer?.();
+        let counted = false;
+        for (const r of t?.rows() ?? []) {
+          if (!r.key.startsWith(`${m}-`) || !days(r.key)) continue;
+          const v = parse(r.value);
+          if (!v || v.day !== r.key) continue;
+          if (!addsUp(v)) {
+            out.refused += 1;
+            continue;
+          }
+          counted = true;
+          out.days += 1;
+          if (v.final) out.final += 1;
+          out.total += units(v.amount);
+          out.network += units(v.network);
+          for (const [d, n] of Object.entries(v.creators ?? {})) add(d, "creator", n);
+          for (const [d, n] of Object.entries(v.unclaimed ?? {})) add(d, "creator", n);
+          for (const [d, n] of Object.entries(v.carriers ?? {})) add(d, "carrier", n);
+        }
+        if (counted) out.contributors += 1;
+      }),
+    );
+    out.total /= UNIT;
+    out.network /= UNIT;
+    for (const d of Object.keys(by)) (by[d].creator /= UNIT), (by[d].carrier /= UNIT);
+    return out;
+  }
+  // THIS person's earnings for the month: their line of the ledger (finished days final, today running).
+  async function earnings(m = monthOf()) {
+    const me = (await (await ctx.require("space")).account())?.id;
+    const l = await ledger(m);
+    const mine = l.by[me] ?? { creator: 0, carrier: 0 };
+    return { month: m, creator: mine.creator, carrier: mine.carrier, total: (units(mine.creator) + units(mine.carrier)) / UNIT, from: l.contributors, ledger: l };
+  }
+  // Kept current while any page is open: a minute after it is up, then hourly (a finished day final once written).
+  const publishing = () => publishStatements().catch(e => ctx.log("usage", { what: `statements not published: ${e?.message ?? e}` }));
+  setTimeout(publishing, 60000);
+  setInterval(publishing, 3600000);
   // THE LEVEL AHEAD: each level and its LAST day, from today, as the contributions run out — [{ id, name, until }].
   async function levelPlan() {
     const cs = await contributions();
@@ -308,5 +438,5 @@ export async function start(ctx) {
     if (by && by === (await (await ctx.require("space")).account())?.id) return true;
     return reaches((await level()).id, lv);
   }
-  return { track, trackItem, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions, level, levelFrom, levelPlan, mayOpen, reaches, LEVELS };
+  return { track, trackItem, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions, level, levelFrom, levelPlan, mayOpen, reaches, LEVELS, publishStatements, ledger, earnings };
 }
