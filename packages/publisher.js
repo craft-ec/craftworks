@@ -106,21 +106,21 @@ export async function start(ctx) {
       h("div", { className: "row" }, h("button", { className: "go", textContent: domain === "text" ? "Post" : "Save" }), onCancel ? h("button", { type: "button", className: "ghost", textContent: "Cancel", onclick: () => onCancel() }) : null),
       said,
     );
-    f.onsubmit = async e => {
-      e.preventDefault();
-      said.hidden = true;
-      if (ed.busy()) return ((said.textContent = "Still sending the files: a moment…"), (said.hidden = false));
-      const btn = f.querySelector("button.go");
-      btn.disabled = true;
-      try {
+    // POSTED ONCE (`theme.action`): the button locked and saying "Posting…" from the first press.
+    const post = (await ctx.require("theme")).action(
+      f.querySelector("button.go"),
+      async () => {
         const tags = tg.value();
         const item = await items.submit({ board: space?.id ?? null, outside, title: title.value.trim(), body: ed.value(), kind: kindSel.value, files: ed.files(), meta: { ...(tags.length ? { tags } : {}), ...(who.level() ? { level: who.level() } : {}) }, audience: outside ? "public" : who.value(), write: outside ? null : who.write() });
         onPublished({ item, title: title.value.trim() });
-      } catch (err) {
-        said.textContent = err.message ?? String(err);
-        said.hidden = false;
-        btn.disabled = false;
-      }
+      },
+      { busy: domain === "text" ? "Posting…" : "Saving…", done: domain === "text" ? "Posted ✓" : "Saved ✓" },
+    );
+    f.onsubmit = e => {
+      e.preventDefault();
+      said.hidden = true;
+      if (ed.busy()) return ((said.textContent = "Still sending the files: a moment…"), (said.hidden = false));
+      post().catch(err => ((said.textContent = err.message ?? String(err)), (said.hidden = false)));
     };
     return f;
   }

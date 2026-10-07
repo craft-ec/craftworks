@@ -170,5 +170,45 @@ export async function start() {
     box.say = text => (said.textContent = text);
     return box;
   }
-  return { loading };
+  // AN ACTION's button (owner 10-07: a mail sent 7 times — no sign it was sending): `action(button, run, words)` gives
+  // the one way every action runs — the button LOCKED at once and saying so ("Sending…", then the seconds from 3 s),
+  // a second press while it runs joining the first (never a second send), "Sent ✓" a moment when done, the button back
+  // on a failure (its error the caller's to say, from the promise).
+  //   const send = theme.action(btn, () => mail.send(…), { busy: "Sending…", done: "Sent ✓" });  await send();
+  function action(btn, run, { busy = "Working…", done = "Done ✓" } = {}) {
+    let inFlight = null;
+    return (...args) => {
+      if (inFlight) return inFlight;
+      const label = btn.textContent;
+      btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
+      btn.textContent = busy;
+      const t0 = performance.now();
+      const tick = setInterval(() => {
+        const s = Math.round((performance.now() - t0) / 1000);
+        if (s >= 3) btn.textContent = `${busy.replace(/…$/, "")}… ${s} s`;
+      }, 1000);
+      inFlight = Promise.resolve()
+        .then(() => run(...args))
+        .then(
+          v => {
+            btn.textContent = done;
+            setTimeout(() => btn.isConnected && ((btn.textContent = label), (btn.disabled = false)), 1500);
+            return v;
+          },
+          e => {
+            btn.textContent = label;
+            btn.disabled = false;
+            throw e;
+          },
+        )
+        .finally(() => {
+          clearInterval(tick);
+          btn.removeAttribute("aria-busy");
+          inFlight = null;
+        });
+      return inFlight;
+    };
+  }
+  return { loading, action };
 }

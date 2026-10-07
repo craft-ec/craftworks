@@ -101,22 +101,22 @@ export async function start(ctx) {
       const said = h("p", { className: "said", hidden: true });
       const ed = editorFor({ placeholder: re === ref ? "What are your thoughts?" : "Write a reply", label });
       const f = h("form", { className: "reply" }, ed.el, h("div", { className: "row" }, said, cancel ? h("button", { type: "button", className: "ghost", textContent: "Cancel", onclick: cancel }) : null, h("button", { className: "go", textContent: label })));
-      f.onsubmit = async e => {
-        e.preventDefault();
-        said.hidden = true;
-        const btn = f.querySelector("button.go");
-        if (ed.busy()) return errorTo(said)(new Error("Still sending the files: a moment…"));
-        btn.disabled = true;
-        try {
+      // SENT ONCE (`theme.action`): the button locked and saying "Sending…" from the first press.
+      const send = theme.action(
+        f.querySelector("button.go"),
+        async () => {
           await items.comment(ref, re, ed.value(), { files: ed.files(), outside });
           ed.clear();
           cancel?.();
           await refresh();
-        } catch (err) {
-          errorTo(said)(err);
-        } finally {
-          btn.disabled = false;
-        }
+        },
+        { busy: "Sending…", done: "Sent ✓" },
+      );
+      f.onsubmit = e => {
+        e.preventDefault();
+        said.hidden = true;
+        if (ed.busy()) return errorTo(said)(new Error("Still sending the files: a moment…"));
+        send().catch(err => errorTo(said)(err));
       };
       return f;
     }

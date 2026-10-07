@@ -187,9 +187,15 @@ export async function mount(ctx, el) {
     const pick = attachments.picker({ from: { app: "mail" }, media: true });
     const ed = mdEditor.create({ pick, placeholder: "Message", label: "Message" });
     f.querySelector(".message").replaceChildren(ed.el);
-    f.onsubmit = async e => {
+    // SENT ONCE (`theme.action`): the button locked and saying "Sending…" from the first press.
+    const okBtn = f.querySelector('button[value="ok"]');
+    const sendOnce = okBtn ? theme.action(okBtn, () => sendNow(), { busy: "Sending…", done: "Sent ✓" }) : () => sendNow();
+    f.onsubmit = e => {
       if (e.submitter?.value !== "ok") return;
       e.preventDefault();
+      sendOnce().catch(() => {});
+    };
+    async function sendNow() {
       said.hidden = true;
       try {
         if (ed.busy()) throw new Error("still sending the files: a moment");
@@ -204,8 +210,9 @@ export async function mount(ctx, el) {
       } catch (err) {
         said.textContent = `Not sent: ${err?.message ?? err}`;
         said.hidden = false;
+        throw err;
       }
-    };
+    }
     dlg.showModal();
     if (re || to) ed.focus();
     else toInput.focus();

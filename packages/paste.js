@@ -102,10 +102,14 @@ export async function mount(ctx, el) {
       h("div", { className: "opts" }, h("label", {}, "Language ", lang), h("label", {}, "Who sees it ", who), h("label", {}, "Expires ", expiry), save),
       said,
     );
-    form.onsubmit = async e => {
+    // SAVED ONCE (`theme.action`): the button locked and saying "Saving…" from the first press.
+    const saveOnce = theme.action(save, () => saveNow(), { busy: "Saving…", done: "Saved ✓" });
+    form.onsubmit = e => {
       e.preventDefault();
       if (!text.value.trim()) return (said.textContent = "Nothing to save yet.");
-      save.disabled = true;
+      saveOnce().catch(() => {});
+    };
+    async function saveNow() {
       said.textContent = "";
       try {
         const ttl = Number(expiry.value) || 0;
@@ -119,9 +123,9 @@ export async function mount(ctx, el) {
         location.hash = items.pageOf(ref, "paste");
       } catch (err) {
         said.textContent = err?.message ?? String(err);
-        save.disabled = false;
+        throw err;
       }
-    };
+    }
     root.replaceChildren(h("h2", { textContent: "📄 New paste" }), form);
   }
 

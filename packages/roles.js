@@ -99,12 +99,16 @@ export async function start(ctx) {
     const writers = new Map();
     let group = [];
     let left = false;
+    let lastSaid = null;
     const learn = async st => {
       left = !!st?.removed;
       const all = (st?.members ?? []).filter(m => m.cred).map(m => ({ key: m.key, index: m.index, did: node.glue.did_of(didOf(m.cred)), signer: signerOf(m.cred) }));
       const real = await Promise.all(all.map(async m => (await directory.dataKey(m.did)) === m.signer));
       for (const [i, m] of all.entries()) if (!real[i]) ctx.log("roles", { what: `a member claims ${m.did.slice(12, 20)}… with a key that is not its: left out` });
       group = all.filter((_, i) => real[i]);
+      // SAID when it changes (owner 10-07: a member's space showed 0 members): what the group gave, and what was kept.
+      const said = `${st ? `${st.members?.length ?? 0} member(s) at epoch ${st.epoch ?? "?"}${st.removed ? " (this node removed)" : ""}` : "not ready"}, ${all.length} with a credential, ${group.length} kept`;
+      if (said !== lastSaid) (lastSaid = said), ctx.log("roles", { what: `${sp.name ?? sp.id.slice(0, 8)}: its group — ${said}` });
       // Each member's DEVICES write on its behalf (their feeds): device key → the DID (the DID's card, checked
       // against its key log).
       const sets = await Promise.all(group.map(m => directory.devices(m.did)));
