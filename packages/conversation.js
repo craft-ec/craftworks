@@ -288,6 +288,7 @@ export async function start(ctx) {
       if (!fp || fp === ann.branch) continue;
       try {
         await welcome(sp, did, sp.name, null, { epoch: own.epoch, branch: own.branch });
+        keys.event("repair-sent", { space: sp.id, to: did, theirEpoch: ann.epoch, theirBranch: String(ann.branch).slice(0, 8), ownerEpoch: own.epoch });
         await index.spacePoint(sp, "writers", { w: sp.self, repair: did, for: ann.branch });
         ctx.log("conversation", { what: `${sp.name}: ${short(did)} was on another branch of its keys — welcomed back onto the owner's` });
         out.push(did);
@@ -304,6 +305,7 @@ export async function start(ctx) {
     let n = 0;
     for (const [e, s] of history) if (typeof e === "number" && typeof s === "string") await identity.epochKeep(e, bytesOf(s), sp.idBytes).then(() => (n += 1), () => {});
     if (n) {
+      keys.event("history-received", { space: sp.id, epochs: n, from: history.length ? `${history[0][0]}..${history.at(-1)[0]}` : null });
       ctx.log("conversation", { what: `${sp.name ?? "a space"}: ${n} earlier epoch(s) of its history handed over` });
       dispatchEvent(new CustomEvent("craftworks:keys"));
     }
@@ -374,6 +376,7 @@ export async function start(ctx) {
             if (ann.some(x => x.epoch >= own.epoch && x.branch === own.branch)) continue;
           }
           await welcome(sp, it.from, name, null, own ? { epoch: own.epoch, branch: own.branch } : undefined);
+          keys.event("welcome-again-sent", { space: sp.id, to: it.from, repair: !!it.repair, theirEpoch: it.epoch ?? null, ownerEpoch: own?.epoch ?? null });
           // A catch-up recorded in the space (who welcomed whom: `keyStatus`'s "caught up by").
           if (own) await index.spacePoint(sp, "writers", { w: sp.self, repair: it.from, for: own.branch }).catch(() => {});
           await once.put(k, String(Date.now()));
@@ -406,6 +409,7 @@ export async function start(ctx) {
         if (!r?.members().some(m => m.did === it.from)) continue;
         const epochs = await (await ctx.require("auth")).identity.epochSecrets(sp.idBytes, Math.max(0, Number(it.below) || 0)).catch(() => []);
         if (epochs.length) await index.send(it.from, { kind: "history", space: sp.id, from: me.id, epochs, at: Date.now() }).catch(() => {});
+        keys.event("history-handed", { space: sp.id, to: it.from, epochs: epochs.length, below: it.below });
         await once.put(k, String(Date.now()));
         ctx.log("conversation", { what: `${sp.name}: ${epochs.length} earlier epoch(s) of its history handed to ${short(it.from)}` });
         continue;

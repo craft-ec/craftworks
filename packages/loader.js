@@ -349,6 +349,8 @@ export async function run(boot) {
     ctx.log("loader started", { what: `loader v${VERSION}` });
     const m = await boot.manifest();
     manifest = JSON.parse(new TextDecoder().decode(m.bytes));
+    // Each package's VERSION (its sha256, as the manifest names it): what a record of a critical action carries.
+    ctx.shaOf = n => manifest?.packages?.[n]?.sha256 ?? null;
     ctx.app = manifest.app;
     // The site's APPS, as its manifest lists them ({ name, icon, route }): what a desktop shows.
     ctx.apps = appsOf(manifest);
