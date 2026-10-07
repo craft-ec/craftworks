@@ -434,6 +434,9 @@ export async function start(ctx) {
       }
       const tried = `${it.space}|${it.welcome.slice(0, 64)}`;
       if (had && welcomesTried.has(tried)) continue;
+      // DEAD: a welcome made for a key package this account never held opens nowhere, ever (its sender was asked once
+      // to welcome again: a NEW welcome). Skipped from then on — measured 10-07: 33 of them tried every 30 s, ~2 s each.
+      if (done(`dead:${tried}`)) continue;
       welcomesTried.add(tried);
       const v = { kind: it.spaceKind, name: it.name, owner: it.owner ?? it.from, nonce: it.nonce ?? null, ...(it.spaceKind === "direct" ? { with: it.from } : {}), ...(it.circle ? { circle: it.circle } : {}), ...(typeof it.group === "string" ? { group: it.group.slice(0, 200) } : {}) };
       try {
@@ -449,6 +452,7 @@ export async function start(ctx) {
         ctx.log("conversation", { what: it.repair ? `${it.name ?? it.space.slice(0, 8)}: caught up onto the owner's keys — welcomed by ${short(it.from)}, ${Array.isArray(it.history) ? it.history.length : 0} earlier key(s) with it` : `joined a ${it.spaceKind} conversation with ${short(it.from)}` });
       } catch (e) {
         const held = it.kp ? await keys.holdsTag(it.kp).catch(() => null) : null;
+        if (!held && /WelcomeKeyPackageNotFound/.test(e?.message ?? "")) await once.put(`dead:${tried}`, String(Date.now())).catch(() => {});
         // Made for a key package this account does not hold (its card from before): its sender asked — once — to
         // welcome again from the card as it is now (renewed below). A REPAIR's too (this account on another branch of
         // a space it has): asked again AS a repair — else it stays on that branch for good.

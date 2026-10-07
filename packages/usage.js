@@ -50,8 +50,25 @@ export async function start(ctx) {
     r.b += bytes;
     pending.set(rk, r);
     // WHAT IT PLAYED, kept for others (rewards step 2): a file of an item that brought bytes here, never one's own.
-    if (o?.file && !o.mine) ctx.require("keep").then(k => k.watched(o.file, o.ref, { title: o.title }), () => {});
+    if (o?.file && !o.mine) ctx.require("keep").then(k => k.watched(o.file, o.ref, { title: o.title, kind: o.kind }), () => {});
   });
+  // AN ITEM's FILES, from wherever they are opened (a post's attachment, an inline image, Drive's Open, a picture, a
+  // book): counted for the item, and KEPT for others once they bring bytes here (owner 10-07: books, Drive and Board
+  // too) — not one's own (its author read from the ref, else the item read once).
+  const byItem = new Map();
+  async function trackItem(itemRef, fileRefs, info = {}) {
+    if (!itemRef || !fileRefs?.length) return;
+    const ref = String(itemRef);
+    let by = info.by ?? (ref.startsWith("did:") ? ref.slice(0, ref.lastIndexOf("/")) : null);
+    let it = null;
+    if (!by || !info.kind || !info.title) {
+      if (!byItem.has(ref)) byItem.set(ref, ctx.require("items").then(i => i.get(ref), () => null).catch(() => null));
+      it = await byItem.get(ref);
+      by = by ?? it?.by ?? null;
+    }
+    const me = (await (await ctx.require("space")).account())?.id;
+    track(ref, { kind: info.kind ?? it?.kind ?? null, title: info.title ?? it?.title ?? null, mine: !!by && by === me }, fileRefs.filter(f => f && !f.inline && f.root));
+  }
   const track = (ref, info, roots) =>
     roots.filter(Boolean).forEach(r => (typeof r === "string" ? owners.set(r, { ref, ...info }) : r.root && owners.set(r.root, { ref, ...info, file: r })));
   // WATCH TIME: while it plays, the time it moved (a seek or a stall is not watching: at most 2 s a tick, at its speed).
@@ -207,7 +224,9 @@ export async function start(ctx) {
     await t.settled;
     const rows = p => t.rows().filter(r => r.key.startsWith(p) && r.value).map(r => ({ key: r.key.slice(p.length), ...parse(r.value) }));
     const out = { month: m, amount: 0, days: 0, creators: {}, carriers: {}, unclaimed: {}, network: 0, at: Date.now() };
-    const give = (to, who, n) => (to[who] = Math.round(((to[who] ?? 0) + n) * 1e8) / 1e8);
+    // Added up EXACTLY (no rounding along the way); each share rounded once at the end, to the token's 8 decimals, and
+    // the network takes what is left — so the rows always add up to the amount, to the last 0.00000001.
+    const give = (to, who, n) => (to[who] = (to[who] ?? 0) + n);
     const bys = new Map();
     const byOf = ref => {
       if (!bys.has(ref)) bys.set(ref, String(ref).startsWith("did:") ? Promise.resolve(String(ref).slice(0, String(ref).lastIndexOf("/"))) : items.get(ref).then(it => it?.by ?? null, () => null));
@@ -250,8 +269,18 @@ export async function start(ctx) {
       if (!data) await toCreators(fee * SPLIT.carriers, null);
       out.network += fee * SPLIT.network + unpaid;
     }
-    out.amount = Math.round(out.amount * 1e8) / 1e8;
-    out.network = Math.round(out.network * 1e8) / 1e8;
+    const unit = 10 ** DECIMALS;
+    const units = n => Math.round(n * unit);
+    const total = units(out.amount);
+    let given = 0;
+    for (const to of [out.creators, out.carriers, out.unclaimed])
+      for (const k of Object.keys(to)) {
+        const u = units(to[k]);
+        given += u;
+        to[k] = u / unit;
+      }
+    out.amount = total / unit;
+    out.network = (total - given) / unit;
     return out;
   }
   // THE LEVEL AHEAD: each level and its LAST day, from today, as the contributions run out — [{ id, name, until }].
@@ -277,5 +306,5 @@ export async function start(ctx) {
     if (by && by === (await (await ctx.require("space")).account())?.id) return true;
     return RANK[(await level()).id] >= RANK[lv];
   }
-  return { track, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions, level, levelFrom, levelPlan, mayOpen, LEVELS };
+  return { track, trackItem, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions, level, levelFrom, levelPlan, mayOpen, LEVELS };
 }

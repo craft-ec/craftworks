@@ -61,7 +61,9 @@ export async function mount(ctx, el) {
   // carriers by the data their kept files brought you, the network the rest. Nothing is charged or paid yet.
   const directory = await ctx.require("directory");
   const fh = Object.assign(document.createElement("h3"), { textContent: "Your contributions (preview)" });
-  const amount = Object.assign(document.createElement("input"), { type: "number", min: "0", step: "1", value: "10", title: "Tokens", className: "amount" });
+  const amount = Object.assign(document.createElement("input"), { type: "number", min: "0", step: "0.00000001", value: "10", title: "Tokens (8 decimals)", className: "amount" });
+  // The token's 8 decimals, trailing zeros dropped: 0.33333333, 1, 4.2.
+  const tok = n => Number(n).toFixed(8).replace(/\.?0+$/, "");
   // OVER: a week or a month (owner 10-07), a month unless chosen.
   const days = Object.assign(document.createElement("select"), { title: "Spread over" });
   days.append(...[["7", "a week (7 days)"], ["30", "a month (30 days)"]].map(([v, t]) => Object.assign(document.createElement("option"), { value: v, textContent: t, selected: v === "30" })));
@@ -91,16 +93,16 @@ export async function mount(ctx, el) {
       const tr = body.insertRow();
       const w = document.createElement("td");
       w.append(who);
-      tr.append(w, td(why), td(n.toFixed(2), "num"));
+      tr.append(w, td(why), td(tok(n), "num"));
     };
     for (const did of [...new Set([...Object.keys(st.creators), ...Object.keys(st.unclaimed)])].sort((a, b) => (st.creators[b] ?? 0) + (st.unclaimed[b] ?? 0) - (st.creators[a] ?? 0) - (st.unclaimed[a] ?? 0))) {
       const u = st.unclaimed[did] ?? 0;
-      row(directory.nameEl(did), u ? `creator (incl. ${u.toFixed(2)} keepers' share: no keeper yet)` : "creator", (st.creators[did] ?? 0) + u);
+      row(directory.nameEl(did), u ? `creator (incl. ${tok(u)} keepers' share: no keeper yet)` : "creator", (st.creators[did] ?? 0) + u);
     }
     for (const [did, n] of Object.entries(st.carriers).sort((a, b) => b[1] - a[1])) row(directory.nameEl(did), "keeper", n);
     row("Network", "network share (10%)", st.network);
     const foot = t.createTFoot().insertRow();
-    foot.append(td("Total"), td(`${st.days} day(s) so far this month`), td(st.amount.toFixed(2), "num"));
+    foot.append(td("Total"), td(`${st.days} day(s) so far this month`), td(tok(st.amount), "num"));
     fout.replaceChildren(t);
   };
   pick.addEventListener("change", drawFee);
@@ -142,7 +144,7 @@ export async function mount(ctx, el) {
     for (const f of k.files) {
       const tr = body.insertRow();
       const what = document.createElement("td");
-      what.append(f.item ? Object.assign(document.createElement("a"), { href: items.pageOf(f.item, "video"), textContent: f.title || "an item" }) : `${f.root.slice(0, 8)}…`);
+      what.append(f.item ? Object.assign(document.createElement("a"), { href: items.pageOf(f.item, f.kind ?? "video"), textContent: f.title || "an item" }) : `${f.root.slice(0, 8)}…`);
       const health = f.error ? f.error : f.gens ? `${f.whole}/${f.gens} whole${f.missing ? `, ${f.missing} unanswered` : ""}` : "—";
       const who = td("…", "num");
       tr.append(what, td(size(f.size), "num"), td(ago(f.used)), td(ago(f.at)), td(health), who);
