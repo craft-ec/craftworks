@@ -332,6 +332,7 @@ export async function start(ctx) {
     for (const did of to) await index.send(did, { kind: "history-ask", space: sp.id, from: me.id, below, at: Date.now() }).catch(() => {});
     ctx.log("conversation", { what: `${sp.name}: its history (epochs below ${below}) asked of ${to.length} member(s)` });
   });
+  const saidAgain = new Set();
   // The DIDs in this node's group of a space (its MLS members' credentials).
   async function groupDids(sp) {
     const { glue } = await ctx.require("node");
@@ -350,6 +351,11 @@ export async function start(ctx) {
     const r = await (await ctx.require("roles")).of(sp).catch(() => null);
     const to = [...new Set([...(r?.members() ?? []).map(m => m.did), ...(detail.dids ?? [])].filter(d => d && d !== me.id))].slice(0, 12);
     for (const did of to) await index.send(did, { kind: "welcome-again", space: sp.id, from: me.id, stuck: true, epoch: detail.epoch, branch: detail.branch, at: Date.now() }).catch(() => {});
+    // And in the space's STUCK bag: any member's NODE that may invite answers it, with no page open (`delegate upkeep`).
+    await index
+      .openRequests(`stuck ${sp.id}`)
+      .then(() => index.request(`stuck ${sp.id}`, { kind: "stuck", did: me.id, epoch: detail.epoch, at: Date.now() }))
+      .catch(e => ctx.log("conversation", { what: `${sp.name}: the stuck ask for members' nodes: ${e?.message ?? e}` }));
     ctx.log("conversation", { what: `${sp.name}: stuck behind its own change at epoch ${detail.epoch} — ${to.length} member(s) asked to welcome it again` });
   });
   let renewedForWelcomes = false;
@@ -463,7 +469,8 @@ export async function start(ctx) {
           await once.put(k, String(Date.now()));
           ctx.log("conversation", { what: `${short(it.from)} could not open a ${own ? "repair " : ""}welcome into ${sp.name ?? "a conversation"}: welcomed again` });
         } catch (e) {
-          ctx.log("conversation", { what: `welcoming ${short(it.from)} again: ${e.message}` });
+          // Said once a page per ask (a node stuck itself fails every pass until it is welcomed again).
+          if (!saidAgain.has(k)) saidAgain.add(k), ctx.log("conversation", { what: `welcoming ${short(it.from)} again: ${e.message}` });
         }
         continue;
       }
