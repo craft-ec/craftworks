@@ -1369,3 +1369,14 @@ then joined at 35 with 35 earlier epochs kept; epoch 33's row "prev+8 back".
       → added at epoch 39, then 0 to add.
 - Next (not built): commits as pure reconciliation of the group to the acts (drop redo/snaps intent tracking);
   witnessed ordering when a claimed time must not be trusted.
+
+## Owner's spaces lost after the identity change (10-07) — measured cause and fixes
+- Cause (owner node log): a spacekeys tree block (3tE9PKK…) PUT 10-06 08:03 reached no peer ("could not take the
+  stream … reporting success"), evicted 19:30; NotFound since. Our code then: (1) core tail_group errored when every
+  group member was already held → page took "no group" → declared lost, never rebuilt; (2) a rebuilt block was never
+  put back (tail_keep_put looked the contract id up as a cid); (3) one failed read marked the table "never made"
+  forever; (4) tables kept only weekly. All four fixed (076680d, 222da0c); owner's old table reads whole again (187
+  rows; 2ad6db93 + cd856115 rebuilt and put back). Owner moved to spacekeys-2 (mark, e59e66b) before the real cause was
+  found; Craftworks via a re-welcome, RedFox by copying its row from the old table.
+- Upstream: service report VT2SJW from the owner's node (PUT reported success with no downstream copy, then evicted;
+  counts 68 / 1091 / 1067 per day 10-05..07). Share the code with the Freenet team on Matrix.
