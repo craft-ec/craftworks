@@ -94,6 +94,8 @@ export async function start(ctx) {
     const history = sp.idBytes && at > 0 ? await (await ctx.require("auth")).identity.epochSecrets(sp.idBytes, at).catch(() => []) : [];
     // `kp`: the TAG of the key package it is made for (what the person's page names when it does not open).
     await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, kp: tags[card.keyPackages.indexOf(kp)], made: Date.now(), ...(history.length ? { history } : {}), ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(sp.group ? { group: sp.group } : {}), ...(repair ? { repair } : {}) });
+    // Their NEWEST welcome here (its key package's tag): an ask to welcome again about an older one is stale.
+    await used.put(`newest:${sp.id}|${did}`, tags[card.keyPackages.indexOf(kp)]).catch(() => {});
     ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind} (welcome ${await fingerprint(welcome)}, aimed at ${made.aimed.join(", ")}, tag ${tags[card.keyPackages.indexOf(kp)].slice(0, 8)})` });
     return card;
   }
@@ -111,13 +113,14 @@ export async function start(ctx) {
   }
 
   // INVITE a person into a space this node is in (a server): their nodes join its group from the welcome.
-  // (Recorded as `added`: someone removed before is back by this.)
+  // (Recorded as `added`: someone removed before is back by this.) THE ACT FIRST, then the group: the acts decide, MLS
+  // carries out (welcomed first, a removed member is in the group while the acts still say out — `moderation.enforce`
+  // takes such a one out).
   async function invite(sp, did) {
     const r = await (await ctx.require("roles")).of(sp);
     if (r.banned(did)) throw new Error("they are banned from this server");
-    const card = await welcome(sp, did, sp.name);
-    await r.act({ act: "added", did }).catch(e => ctx.log("conversation", { what: `recording the invite: ${e.message}` }));
-    return card;
+    await r.act({ act: "added", did });
+    return welcome(sp, did, sp.name);
   }
 
   const people = () => ctx.require("edge").then(e => e.people());
@@ -350,6 +353,15 @@ export async function start(ctx) {
         const k = `again:${it.space}|${it.from}|${String(it.kp ?? "").slice(0, 32)}|${it.at ?? ""}`;
         const sp = mine.find(s => s.id === it.space);
         if (!sp || done(k)) continue;
+        // STALE: about a welcome older than the newest this account sent them here (10-07, measured on fx/fy: asks about
+        // welcomes from before a removal waited while they were out, and once they were added back each was answered —
+        // a remove and an add each, making more dead welcomes and more asks: epochs 12 → 17 in two minutes).
+        const newest = once.rows().find(r => r.key === `newest:${it.space}|${it.from}`)?.value;
+        if (newest && it.kp && it.kp !== newest) {
+          await once.put(k, `stale ${Date.now()}`).catch(() => {});
+          ctx.log("conversation", { what: `${short(it.from)} asked again about an older welcome into ${sp.name ?? "a space"}: their newest stands, not answered` });
+          continue;
+        }
         try {
           let belongs = sp.kind === "direct" ? sp.with === it.from : false;
           if (sp.kind !== "direct") {

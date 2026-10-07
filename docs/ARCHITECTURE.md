@@ -75,7 +75,7 @@ a domain: Board shows posts, Videos the video kinds, Subtitles the subtitles.
 | `membership` | who belongs: joining, leaving, inviting, removing. Your account's members are its nodes = its MLS group's roster (one list; each credential names its node key) |
 | `administration` | an object's settings and policies |
 | `moderation` | acts on objects (hide, remove, label) and on actors (mute, ban) |
-| `ordering` | one agreed order of entries on an object: positions 0, 1, 2 …; one entry per position; a lost tie is told, re-reads, retries. A position is an MLS epoch, a snapshot number, a membership version. Several TYPES by who writes and how a tie is decided: `tail` (writers sharing one key — your account's nodes; built), `log` (a space's members, each with their own key; lowest hash wins), `witnessed` (k of a known witness set co-sign) |
+| `ordering` | one agreed order of entries on an object: positions 0, 1, 2 …; one entry per position; a lost tie is told, re-reads, retries. A position is an MLS epoch, a snapshot number, a membership version. Several TYPES by who writes and how a tie is decided, composed per object: `tail` (one line, lowest entry wins a tie — your account's nodes, and every group's MLS epochs, which admit no forks; built), `dag` (a space's members, each in their own feed, at once: each entry names the entries its writer had seen and is timed after them, so the time order is causal and a missing entry is known; nobody loses a tie — the space's acts; built), `witnessed` (k of a known witness set co-sign; later) |
 
 ### Underneath
 
@@ -117,8 +117,14 @@ uses the tokens, never its own colours or sizes — so a new look, or a second t
   credentials (signed by an owner key of its key log), so readers gather every member's devices and attribute what
   they wrote to the DID. (Measured 2026-09-29: one DID-wide feed written by two devices lost writes both ways.)
 - **Ordering.** Shared state changes by acts in an ordered log; an act counts only if its signer's role allowed it at
-  that point. First: one log per object/space with a deterministic tie-break. Later, when needed: witnessed snapshots
-  (a known witness set, quorums that intersect).
+  that point. MLS + a DAG, composed (owner 10-07): the space's ACTS are a DAG (`ordering`'s `dag`) — each names what
+  its writer had seen and is timed past it, so a member whose clock is behind never has an act replayed before the
+  grant it rested on, and a reader that lacks an act another names knows it; the replay (`gov`) is unchanged, its
+  time order now causal. The GROUP's commits stay one line per epoch (`tail`): MLS carries out what the acts decide.
+  HISTORY has more than one way back: each epoch's log names the epoch before (`prev`) and the eight before that
+  (`back`, from the epoch before's own row: on its branch), so one broken row no longer cuts a space's history. Limits:
+  a writer can still claim an early time or name nothing (honour, as before); a clock more than an hour ahead is not
+  followed. Later, when needed: witnessed snapshots (a known witness set, quorums that intersect).
 - **Roles are per space** (holding a role never crosses spaces); definitions are built-in, published templates, or local.
 - **Confidentiality.** Every private table is sealed; its key is **MLS export(epoch secret, table)**, the epoch being its
   generation. MLS is the one key manager: a space's members (one per DID), or your account's nodes. Epoch secrets are also escrowed

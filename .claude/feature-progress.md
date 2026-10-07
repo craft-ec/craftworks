@@ -1329,3 +1329,26 @@ Reuse groups (circles) + ask/admit + delegate upkeep; any member admits; honor s
 - [ ] L5 Admission checks the asker's card level — page upkeep (JS) and the identity delegate (Rust `delegate/`, no page).
 - [ ] L6 Lapsed members removed by any member (page + delegate), the group moving to a new key.
 - [ ] Remove the page-only gate's "not encrypted yet" note once L3-L5 are live.
+
+## MLS + DAG, composed (owner 10-07: "evaluate the design and make it work") — ARCHITECTURE §3 `ordering`, §5 Ordering
+Evaluation (from the code): acts were sorted by the writer's claimed time (gov replay), so a member whose clock is
+behind had an act replayed before the grant it rested on (gov test `a_clock_behind_drops_an_act_a_causal_time_keeps_it`
+shows the drop); a missing act was invisible; history was one `prev` per epoch (Ivvor's space: one row cut all of it);
+and the add path committed BEFORE recording its act (against "acts decide, MLS carries out"). gov and the delegate are
+untouched (identity stays 5dea06e6).
+MEASURED on fx/fy (DAG test 06:43): re-adding a removed member churned the group (epochs 12 → 17 in two minutes): asks
+to "welcome again" about welcomes from before the removal waited while the member was out, then each was answered once
+they were back (a remove + an add each, making more dead welcomes and asks). Fixed: the inviter keeps the tag of its
+newest welcome per person and space; an ask about an older one is marked answered and not acted on. After it: one dead
+welcome (a key package on fx's card offered by its other device muxrky2j, not held by this one — fx renewed its card),
+then joined at 35 with 35 earlier epochs kept; epoch 33's row "prev+8 back".
+- [x] `ordering` type `dag` (replaces the planned `log`): deps = heads seen (≤8), at = max(now, latest counted + 1),
+      a clock >1 h ahead not followed; only COUNTED acts move the clock (review: a refused row could push it).
+- [x] roles: every act / published member act stamped; `r.missing()`; trace "acts N (M naming what they saw)".
+- [x] keys: open rows carry `back` (e-2…e-9, from the epoch before's own row: on its branch); history walks every link,
+      nearest wins, crosses broken rows, reports the highest gap; mend adds `back` to rows that lack it.
+- [x] conversation.invite: the `added` act first, then the welcome; stale welcome-again asks dropped (newest tag kept).
+- [ ] Open: a card listing key packages offered by another device of the account that this one does not hold (fx /
+      muxrky2j) — costs one dead welcome per add until the card is renewed.
+- Next (not built): commits as pure reconciliation of the group to the acts (drop redo/snaps intent tracking);
+  witnessed ordering when a claimed time must not be trusted.

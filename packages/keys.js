@@ -118,6 +118,21 @@ export async function start(ctx) {
     // This epoch's LOG exists: made now by the node that made the epoch (`made`: known new, nothing to ask), else found —
     // or, where that node never made it, made the first time it is looked for. `prev`: the epoch before's secret
     // (a space's HISTORY: whoever holds this epoch opens every earlier one, walking back — the account has escrow).
+    // MORE THAN ONE WAY BACK (owner 10-07: one row without its prev cut a space's whole history): beside `prev` (the
+    // epoch before), an epoch's open row carries `back` — the secrets of the BACK epochs before that (e-2 … e-1-BACK),
+    // taken from the epoch before's own row (its prev and its back): on this branch by construction (never the
+    // identity's keys, which may hold a lost fork's for the same epoch). A walk then crosses up to BACK broken rows.
+    const BACK = 8;
+    const isSecret = x => typeof x === "string" && x.length >= 32 && x.length % 2 === 0 && /^[0-9a-f]+$/i.test(x);
+    async function backFor(e, prev) {
+      if (!g.space || !prev || e < 2) return null;
+      const before = await storage.log(g.channel, glue.epoch_log_public(bytes(prev)), { sealWith: glue.epoch_table_key(bytes(prev), g.channel), space: g.space });
+      await before.answer?.();
+      const v = parse(before.rows().find(r => r.key === "open")?.value ?? "{}");
+      const links = { ...(v.back ?? {}), ...(v.prev ? { [e - 2]: v.prev } : {}) };
+      const out = Object.fromEntries(Object.entries(links).filter(([k, x]) => Number(k) >= Math.max(0, e - 1 - BACK) && Number(k) <= e - 2 && isSecret(x)));
+      return Object.keys(out).length ? out : null;
+    }
     async function ensure(st, made, prev = null, why = made ? "made" : "looked-for") {
       const log = await storage.log(g.channel, glue.epoch_log_public(st.secret), { known: made ? false : null, sealWith: await g.seal(st.epoch), space: g.space });
       await log.answer?.();
@@ -127,7 +142,8 @@ export async function start(ctx) {
       // member's who caught up from the epoch before.
       // (A SPACE's only: the account's history is its escrow — its logs open as they always did.)
       if (log.absent && (prev || st.epoch === 0 || !g.space)) {
-        await log.put("open", JSON.stringify({ info: hexOf(st.info), ...(prev ? { prev } : {}), ...(await provOf(why)) }));
+        const back = await backFor(st.epoch, prev).catch(() => null);
+        await log.put("open", JSON.stringify({ info: hexOf(st.info), ...(prev ? { prev } : {}), ...(back ? { back } : {}), ...(await provOf(why)) }));
         if (g.space) keyEvent("log-open-written", { space: hexOf(g.space), epoch: st.epoch, prev: !!prev, made: !!made, reason: why });
       } else if (log.absent && g.space) keyEvent("log-open-left", { space: hexOf(g.space), epoch: st.epoch, reason: why });
       return log;
@@ -141,25 +157,38 @@ export async function start(ctx) {
     // branch's keys for those epochs, not this one's.
     async function history(st, { whole = false } = {}) {
       if (!whole && st.epoch > 0 && (await held(st.epoch - 1)) && (await held(0))) return 0;
-      let [e, secret, n] = [st.epoch, st.secret, 0];
-      while (e > 0) {
-        const log = await storage.log(g.channel, glue.epoch_log_public(secret), { sealWith: await g.seal(e), space: g.space });
+      // Every epoch whose secret is known, from the top down: its log's open row names the epoch before (`prev`) and
+      // those before that (`back`) — an epoch no row above names is a GAP, the walk going on below it where it can.
+      // The NEAREST row naming an epoch decides its secret (its own epoch after's `prev` over a `back` from higher up):
+      // walking down, a later link overwrites — an epoch is kept only when the walk reaches it.
+      const known = new Map([[st.epoch, st.secret]]);
+      let n = 0;
+      let gap = null;
+      for (let e = st.epoch; e >= 0; e--) {
+        const secret = known.get(e);
+        if (!secret) {
+          gap ??= e;
+          continue;
+        }
+        if (e < st.epoch) {
+          await auth.identity.epochKeep(e, secret, g.space);
+          n += 1;
+        }
+        if (e === 0) break;
+        // Sealed with ITS key, derived here (the identity may hold a lost fork's key for the same epoch).
+        const log = await storage.log(g.channel, glue.epoch_log_public(secret), { sealWith: g.space ? glue.epoch_table_key(secret, g.channel) : await g.seal(e), space: g.space });
         // Its ANSWER, not what is shown before it (a log shown empty while the node is still asked ends the walk there:
         // a member who joined late never reached epoch 0 — the writers bag's — and read none of the space).
         await log.answer?.();
-        const prev = parse(log.rows().find(r => r.key === "open")?.value ?? "{}").prev;
-        if (!prev) {
-          if (e > 0) {
-            ctx.log(`${g.name ?? "space"} keys`, { what: `its history stops at epoch ${e}: that epoch's log names no epoch before it — asking its admins for the rest` });
-            // A member who holds it hands it over (`conversation`: a history ask to the space's admins).
-            if (g.space) dispatchEvent(new CustomEvent("craftworks:history-gap", { detail: { space: hexOf(g.space), below: e } }));
-          }
-          break;
-        }
-        e -= 1;
-        secret = bytes(prev);
-        await auth.identity.epochKeep(e, secret, g.space);
-        n += 1;
+        const v = parse(log.rows().find(r => r.key === "open")?.value ?? "{}");
+        // Farthest first, `prev` last: the nearer link wins.
+        const links = [...Object.entries(v.back ?? {}).map(([k, x]) => [Number(k), x]).sort((a, b) => a[0] - b[0]), [e - 1, v.prev]];
+        for (const [k, x] of links) if (Number.isInteger(k) && k >= 0 && k < e && isSecret(x)) known.set(k, bytes(x));
+      }
+      if (gap !== null) {
+        ctx.log(`${g.name ?? "space"} keys`, { what: `its history stops at epoch ${gap}: no epoch above names it — asking its admins for the rest` });
+        // A member who holds it hands it over (`conversation`: a history ask to the space's admins).
+        if (g.space) dispatchEvent(new CustomEvent("craftworks:history-gap", { detail: { space: hexOf(g.space), below: gap + 1 } }));
       }
       return n;
     }
@@ -226,7 +255,7 @@ export async function start(ctx) {
       // Gone back (a lost commit undone) counts as a change: the group as it is now is saved.
       return n || (healed ? 1 : 0);
     }
-    return { commitFrom, commitAt, ensure, catchUp, history, heal, branch };
+    return { commitFrom, commitAt, ensure, catchUp, history, heal, branch, backFor };
   }
 
   // THE ACCOUNT's group.
@@ -850,13 +879,23 @@ export async function start(ctx) {
           } catch {
             return "open row unreadable";
           }
-          if (v?.prev) return "whole";
+          // WHOLE, or whole but for its other ways back (written before them, or while the epoch before's log had not
+          // answered): those added now.
+          if (v?.prev) {
+            if (v.back || s.epoch < 2) return "whole";
+            const back = await logs.backFor(s.epoch, v.prev).catch(() => null);
+            if (!back) return "whole (no way back further to add yet)";
+            await lg.put("open", JSON.stringify({ ...v, back, ...(await provOf("mend")) }));
+            keyEvent("log-back-added", { space: hexOf(sp.idBytes), epoch: s.epoch, back: Object.keys(back).length });
+            return `back added (${Object.keys(back).length})`;
+          }
           const before = (await auth.identity.epochSecrets(sp.idBytes, s.epoch).catch(() => [])).find(([e]) => e === s.epoch - 1)?.[1];
           if (!before) {
             keyEvent("log-mend-cannot", { space: hexOf(sp.idBytes), epoch: s.epoch });
             return "cannot: the epoch before is not held here";
           }
-          await lg.put("open", JSON.stringify({ ...v, prev: before, ...(await provOf("mend")) }));
+          const back = await logs.backFor(s.epoch, before).catch(() => null);
+          await lg.put("open", JSON.stringify({ ...v, prev: before, ...(back ? { back } : {}), ...(await provOf("mend")) }));
           keyEvent("log-mended", { space: hexOf(sp.idBytes), epoch: s.epoch });
           ctx.log(`${sp.name ?? "space"} keys`, { what: `its epoch ${s.epoch} log had no way back: mended (its prev put back)` });
           return "mended";
@@ -872,7 +911,7 @@ export async function start(ctx) {
           try {
             const lg = await storage.log(ch, glue.epoch_log_public(s.secret), { known: null, sealWith: k?.tableKey, space: sp.idBytes });
             await lg.answer?.();
-            opens = lg.absent ? "log absent" : lg.rows().filter(r => r.key === "open").map(r => { try { const v = JSON.parse(r.value); return `${v.prev ? "prev" : "NO prev"}${v.by ? ` by ${v.by.slice(0, 8)} (${v.why}) v${v.v} ${new Date(v.at).toISOString().slice(0, 16)}` : " (no provenance: written before 10-07)"}`; } catch { return "?"; } }).join(",") || "no open row";
+            opens = lg.absent ? "log absent" : lg.rows().filter(r => r.key === "open").map(r => { try { const v = JSON.parse(r.value); return `${v.prev ? "prev" : "NO prev"}${v.back ? `+${Object.keys(v.back).length} back` : ""}${v.by ? ` by ${v.by.slice(0, 8)} (${v.why}) v${v.v} ${new Date(v.at).toISOString().slice(0, 16)}` : " (no provenance: written before 10-07)"}`; } catch { return "?"; } }).join(",") || "no open row";
           } catch (e) {
             opens = `error ${e?.message ?? e}`;
           }
@@ -931,7 +970,10 @@ export async function start(ctx) {
       if (sp.kind === "account") continue;
       const d = await group(sp).diag().catch(e => ({ state: `error ${e?.message ?? e}` }));
       const broken = d.state === "held" && d.epoch > 0 && /NO prev/.test(String(d.opens));
-      const mended = broken ? await group(sp).mend().catch(e => `mend failed: ${e?.message ?? e}`) : null;
+      // THIN: a way back but none further (`back`): mended quietly too.
+      const thin = d.state === "held" && d.epoch > 1 && /(^|,)prev(?!\+)/.test(String(d.opens));
+      const mended = broken || thin ? await group(sp).mend().catch(e => `mend failed: ${e?.message ?? e}`) : null;
+      if (thin && mended && !/^whole/.test(mended)) ctx.log("account keys", { what: `${sp.name ?? sp.id.slice(0, 8)}: its epoch ${d.epoch} log — ${mended}` });
       const evs = broken ? (await keyEvents(sp.id).catch(() => [])).slice(-5).map(e => `${new Date(e.at).toISOString().slice(5, 16)} ${e.what}${e.epoch != null ? ` @${e.epoch}` : ""}${e.reason ? ` (${e.reason})` : ""} by ${String(e.by).slice(0, 8)} v${e.v}`).join("; ") : "";
       ctx.log("account keys", { what: `AUDIT space ${broken ? "BROKEN CHAIN — " : ""}${sp.name ?? sp.id.slice(0, 8)}${broken ? ` [mend: ${mended}; its key events: ${evs || "none recorded"}]` : ""}: group ${d.state}${d.state === "held" ? ` at epoch ${d.epoch}, ${d.members} member(s)${d.removed ? ", REMOVED" : ""}, its epoch key ${d.keyHeld ? "HELD" : `NOT held${d.why ? ` (${d.why})` : ""}`}, its log's open: ${d.opens}` : ""}` });
     }

@@ -354,3 +354,15 @@ fn every_interaction_the_pages_catalog_names_is_an_action_here() {
         assert!(*a == "read" || ACTIONS.contains(a), "the catalog names `{a}`, which is not a policy action here");
     }
 }
+
+#[test]
+fn a_clock_behind_drops_an_act_a_causal_time_keeps_it() {
+    // The owner makes A an admin at 1000 (the owner's clock). A saw it, then removed M — but A's clock is 300 behind.
+    let grant = act("g", "no", 1000, json!({"act":"grant","did":A,"role":"admin"}));
+    // Timed by A's own clock (700): replayed BEFORE the grant, when A was a plain member — dropped.
+    let g = gov(&[grant.clone(), act("r", "na", 700, json!({"act":"remove","did":M}))]);
+    assert_eq!(g.role(M, true).as_deref(), Some("member"), "the wall-clock time puts the removal before the grant");
+    // Timed past what A had seen (`ordering`'s dag: max(now, latest seen + 1) = 1001), naming it: counted.
+    let g = gov(&[grant, act("r", "na", 1001, json!({"act":"remove","did":M,"deps":["g"]}))]);
+    assert_eq!(g.role(M, true), None);
+}

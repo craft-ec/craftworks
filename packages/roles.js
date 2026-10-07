@@ -5,7 +5,8 @@
 //   member  post, invite (by id or code)
 // Authority changes by ACTS in the space's table `acts` (each member's own feed). An act counts only if its signer's
 // role allowed it at that point: every reader replays the acts in one order (when made, then id) from the owner — the
-// same answer on every node. The signer of an act, or of any row, is the WRITER of the feed it is in (a feed's rows
+// same answer on every node. The acts are a DAG (`ordering`'s `dag`): each names the acts its writer had seen and is
+// timed after them, so the order is causal whoever's clock is behind, and a reader knows when it lacks one. The signer of an act, or of any row, is the WRITER of the feed it is in (a feed's rows
 // carry their writer, which nobody else can write as); a writer is a node, and the space's group says whose.
 //
 //   const r = await roles.of(sp)
@@ -20,6 +21,7 @@
 //   r.members()              // [{ did, role }], this space's people as its group has them now
 //   r.left                   // this node was removed from the space
 //   r.acts("hide")           // the acts of a kind that COUNTED, in order (`r.acts()`: all of them — the space's log)
+//   r.missing()              // acts other acts name that this reader does not have (its view of the space is short)
 //   r.owner                  // who owns it now (a `transfer` act hands it on)
 //   r.invites()              // the invite codes in force: [{ code, by, at, expires, uses, admitted }]
 //   r.apps()                 // the APPS the space uses (chat, board, note): an `app` act ({ app, on }) adds or
@@ -44,7 +46,7 @@
 //                            // its writers found from its owner (the id proves them) and the roster, each DID's devices
 //                            // from its card; the same `r` to read by (role, author, config, allows, members, acts)
 export async function start(ctx) {
-  const [space, storage, keys, node, directory, K, S] = await Promise.all(["space", "storage", "keys", "node", "directory", "kinds", "signals"].map(n => ctx.require(n)));
+  const [space, storage, keys, node, directory, K, S, ordering] = await Promise.all(["space", "storage", "keys", "node", "directory", "kinds", "signals", "ordering"].map(n => ctx.require(n)));
 
   // THE REPLAY and its rules are the core's (`Governance`, the one implementation: the identity delegate reads a
   // space by it too). What is gathered here: the acts' rows, the group's members, each member's devices.
@@ -92,6 +94,8 @@ export async function start(ctx) {
       settled: Promise.all([sealedActs?.settled, pubActs.settled]),
     };
     const g = out ? null : keys.group(sp);
+    // THE ACTS' DAG: what a new act names and when it is timed; which named acts are not here.
+    const dag = await ordering.open({ type: "dag", source: () => counted });
     // MEMBERS: each member of the group (one per DID), where its credential is really that DID's: signed by the data
     // key its key log names (a credential names any DID it likes; the key log says whose it is). WRITERS: each of their
     // devices → the DID. Members who left stay known (what they wrote is still theirs): learned from the group as it
@@ -136,7 +140,17 @@ export async function start(ctx) {
       roster = new Set(gv.roster());
       bans = new Set(gv.bans());
       gone = new Set(gv.gone());
+      // SHORT: an act names one this reader has not got (a feed not read yet, or lost) — said when it changes. From
+      // outside, public acts may name sealed ones: not counted.
+      if (!out) {
+        const miss = dag.missing(new Set(rows.map(([k]) => k)));
+        const causal = rows.filter(([, v]) => /"deps":\[/.test(v ?? "")).length;
+        const said = `acts ${rows.length} (${causal} naming what they saw), ${counted.length} counted; ${miss.length ? `${miss.length} named by others NOT HERE yet (${miss.slice(0, 3).join(", ")})` : "none missing"}`;
+        if (said !== missSaid) ctx.log("roles", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${said}` });
+        missSaid = said;
+      }
     }
+    let missSaid = null;
     replay();
     // FROM OUTSIDE: the members are the roster; each one's devices are writers, whose public acts are read too — until
     // no new member turns up.
@@ -248,6 +262,7 @@ export async function start(ctx) {
       can,
       author,
       acts: kind => (kind ? counted.filter(a => a.act === kind) : [...counted]),
+      missing: () => (out ? [] : dag.missing(new Set(t.rows().map(x => x.key)))),
       invites: () => JSON.parse(gv.invites(Date.now())),
       apps: () => gv.apps(),
       // LISTS of named people (`{ id: { by, people } }`): audiences by name (`list:<id>`), any member's to make.
@@ -303,7 +318,7 @@ export async function start(ctx) {
         const ids = new Set(counted.map(a => a.id));
         for (const row of sealedActs.rows()) if (ids.has(row.key) && !have.has(row.key)) await pubActs.put(row.key, row.value);
         const listed = new Set(counted.filter(a => ["member", "added", "admitted"].includes(a.act)).map(a => a.did));
-        for (const m of r.members()) if (m.did !== owner && !listed.has(m.did)) await pubActs.put(newId(), JSON.stringify({ act: "member", did: m.did, at: Date.now() }));
+        for (const m of r.members()) if (m.did !== owner && !listed.has(m.did)) await pubActs.put(newId(), JSON.stringify(dag.stamp({ act: "member", did: m.did })));
         await listActWriter();
       },
       async act(a) {
@@ -317,8 +332,9 @@ export async function start(ctx) {
         if (!leaving && !listing && (!need || !can(me.id, need))) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
         // A public space's acts are public (readers outside must know them); a private one's sealed.
         const toPublic = isPublic() || (a.act === "policy" && (a.action === "read" || a.action === "join") && a.who === "anyone");
-        // Its time: now — or when it happened (upkeep let someone in while no page ran: the act says when).
-        await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify({ at: Date.now(), ...a }));
+        // Its time: after every act seen (`dag`: now, or just past the latest) — or when it happened (upkeep let someone
+        // in while no page ran: the act says when); and the acts it builds on.
+        await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify(dag.stamp(a)));
         if (toPublic) await listActWriter();
       },
       grant: (did, to) => r.act({ act: "grant", did, role: to }),
