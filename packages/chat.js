@@ -368,5 +368,5 @@ async function openSpaces(ctx, el, { space, roles, conversation, theme }) {
     const act = await joins.control(d, { open: `#/s/${d.id}/chat` });
     cards.push(h("div", { className: "card" }, h("b", { textContent: space.shown(d) }), h("span", { textContent: `${n} member${n === 1 ? "" : "s"} · ${r.apps().join(", ")}` }), act));
   }
-  grid.replaceChildren(...(cards.length ? cards : [h("p", { className: "note", textContent: "No open spaces yet: a space's owner or admins open it (its Home → Permissions → Who may join: Anyone)." })]));
+  grid.replaceChildren(...(cards.length ? cards : [h("p", { className: "note", textContent: "No open spaces" })]));
 }

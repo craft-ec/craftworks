@@ -114,6 +114,6 @@ ${ps.length} public post${ps.length === 1 ? "" : "s"}
 }`), () => {});
           return h("div", { className: "card", onclick: e => person.open(e.currentTarget, d) }, name, about);
         })
-      : [h("p", { className: "note", textContent: "Nobody listed yet: show yourself from your Contacts (Show me in Discover)." })]),
+      : [h("p", { className: "note", textContent: "Nobody listed" })]),
   );
 }

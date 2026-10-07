@@ -75,12 +75,12 @@ export async function mount(ctx, el) {
             if (list === "removed") {
               dev.querySelector(".note")?.remove();
               at.replaceWith(Object.assign(document.createElement("p"), { className: "line",
-                textContent: "This node was removed from your account: it keeps what it could already read, and gets nothing written since. Log out; to use it again, log in with your recovery words." }));
+                textContent: "Node removed from account · log out · recovery words to re-add" }));
               return;
             }
             if (list === null) {
               at.replaceWith(Object.assign(document.createElement("p"), { className: "line",
-                textContent: "This node is not in your account's group yet: log out and log in once with your recovery words (and a new PIN)." }));
+                textContent: "Node not in account group · log out · log in with recovery words" }));
               return;
             }
             const ul = document.createElement("ul");
@@ -421,23 +421,23 @@ This page read ${b.read} tree block${b.read === 1 ? "" : "s"}; ${b.rebuilt} came
       const who = lists.followed();
       const entries = lists.entries();
       sec.replaceChildren(
-        el("p", { className: "note", textContent: "Hide is yours alone and applies everywhere. Flags go on your public list, which filters Discover for you and for anyone who applies it." }),
+        el("p", { className: "note", textContent: "Hide: private, everywhere · Flag: your public list" }),
         el("h3", { textContent: `Flagged — your public list (${entries.length})` }),
         entries.length
           ? el("ul", {}, ...entries.map(x => el("li", {}, `${x.kind}: ${x.ref.slice(0, 48)}${x.ref.length > 48 ? "…" : ""} `, el("button", { type: "button", textContent: "Remove", onclick: () => lists.unflag(x.kind, x.ref).then(draw) }))))
-          : el("p", { className: "note", textContent: "Nothing flagged. Flag a post, its author or its space from ⋯ on any item." }),
+          : el("p", { className: "note", textContent: "None · flag from ⋯" }),
         // HIDDEN BY YOU (private): each post, person or space hidden, shown again from here.
         el("h3", { textContent: `Hidden by you (${lists.hiddenList().length})` }),
         lists.hiddenList().length
           ? el("ul", {}, ...lists.hiddenList().map(x => el("li", {}, `${x.kind}: `, x.kind === "person" ? directory.nameEl(x.ref) : `${x.ref.slice(0, 48)}${x.ref.length > 48 ? "…" : ""}`, " ", el("button", { type: "button", textContent: "Show again", onclick: () => lists.setHidden(x.kind === "person" ? { person: x.ref } : x.kind === "space" ? { space: x.ref } : { by: x.ref.slice(0, x.ref.lastIndexOf("/")), id: x.ref.slice(x.ref.lastIndexOf("/") + 1) }, false).then(draw) }))))
-          : el("p", { className: "note", textContent: "Nothing hidden. Hide a post, its author or its space from ⋯ on any item." }),
+          : el("p", { className: "note", textContent: "None · hide from ⋯" }),
         el("h3", { textContent: "Lists you apply" }),
         who.length
           ? el("ul", {}, ...who.map(did => {
               const n = directory.nameEl(did);
               return el("li", {}, n, " ", el("button", { type: "button", textContent: "Stop applying", onclick: async () => ((await (await (await ctx.require("edge")).people()).set("modlist", did, false)), draw()) }));
             }))
-          : el("p", { className: "note", textContent: "None. Apply someone's list from their name: Use their moderation list." }),
+          : el("p", { className: "note", textContent: "None · apply from a person's name" }),
       );
     };
     draw();
@@ -457,8 +457,8 @@ This page read ${b.read} tree block${b.read === 1 ? "" : "s"}; ${b.rebuilt} came
       box_.disabled = false;
     };
     const label = document.createElement("label");
-    label.append(box_, " Show adult content (items tagged NSFW) in lists and feeds", said);
-    const note = Object.assign(document.createElement("p"), { className: "note", textContent: "Off: NSFW items are left out of every list, and opening one asks first. Your own are always shown. Kept with your account, on every device." });
+    label.append(box_, " Show NSFW", said);
+    const note = Object.assign(document.createElement("p"), { className: "note", textContent: "Off: hidden in lists, asks on open · yours always shown" });
     // DIAGNOSTICS (debugging only): each space's members' keys and what their pages cannot read, on Members & roles.
     const dbg = Object.assign(document.createElement("input"), { type: "checkbox", checked: !!prefs.get("diagnostics") });
     const dsaid = Object.assign(document.createElement("span"), { className: "note" });
@@ -468,8 +468,8 @@ This page read ${b.read} tree block${b.read === 1 ? "" : "s"}; ${b.rebuilt} came
       dbg.disabled = false;
     };
     const dlabel = document.createElement("label");
-    dlabel.append(dbg, " Show diagnostics (for debugging)", dsaid);
-    const dnote = Object.assign(document.createElement("p"), { className: "note", textContent: "On: a space's Members & roles shows each member's keys and anything their page could not read there." });
+    dlabel.append(dbg, " Diagnostics", dsaid);
+    const dnote = Object.assign(document.createElement("p"), { className: "note", textContent: "On: keys + read failures on Members & roles" });
     sec.append(label, note, dlabel, dnote);
     box.append(sec);
   };

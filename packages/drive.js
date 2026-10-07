@@ -158,7 +158,7 @@ export async function mount(ctx, el) {
       crumbs,
       ups,
       said,
-      tiles.length ? h("div", { className: "grid" }, ...tiles) : h("p", { className: "none", textContent: at === "/" ? "Nothing here yet: files you upload, or attach to a message, a post or a mail, are kept here." : "This folder is empty." }),
+      tiles.length ? h("div", { className: "grid" }, ...tiles) : h("p", { className: "none", textContent: at === "/" ? "No files yet" : "This folder is empty." }),
     );
   }
 

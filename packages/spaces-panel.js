@@ -113,11 +113,11 @@ export async function start(ctx) {
     const waiting = h("ul", { className: "waiting" });
     const drawWaiting = () =>
       conversation.askedCodes().then(
-        list => waiting.replaceChildren(...list.map(a => h("li", { textContent: `Requested with ${a.code} · ${new Date(a.at).toLocaleString()} — waiting to be let in` }))),
+        list => waiting.replaceChildren(...list.map(a => h("li", { textContent: `Requested with ${a.code} · ${new Date(a.at).toLocaleString()} · waiting` }))),
         () => {},
       );
     drawWaiting();
-    d.append(h("h3", { textContent: "Make a space" }), h("p", { textContent: "Its members and roles are its own; add its apps (Chat, Board, Notes) on its Home." }), make, h("h3", { textContent: "Join a space" }), join, said, waiting);
+    d.append(h("h3", { textContent: "Make a space" }), make, h("h3", { textContent: "Join a space" }), join, said, waiting);
     d.addEventListener("click", e => e.target === d && d.close());
     d.addEventListener("close", () => d.remove());
     document.body.append(d);

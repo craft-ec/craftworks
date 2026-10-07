@@ -62,7 +62,7 @@ export async function start(ctx) {
 
   async function show(ref, { outside = null, app = null, back = null, discover = false, item = null, shown = false } = {}) {
     const it = item ?? (await items.get(ref, { outside }));
-    if (!it) return h("p", { className: "none", textContent: "This is not here (removed, or not shared with you)." });
+    if (!it) return h("p", { className: "none", textContent: "Not found" });
     // ADULT CONTENT (tagged NSFW) for someone who did not choose to see it: said, and shown only on asking.
     if (!shown && items.isNsfw(it) && !(await items.nsfwShown())) {
       const space = await ctx.require("space");
@@ -70,7 +70,7 @@ export async function start(ctx) {
         const gate = h(
           "div",
           { className: "cw-page" },
-          h("div", { className: "about" }, h("p", { textContent: "🔞 Adult content (NSFW). You chose not to see it: Settings → Content shows it everywhere." }), h("button", { type: "button", textContent: "Show anyway", onclick: async () => gate.replaceWith(await show(ref, { outside, app, back, discover, item: it, shown: true })) })),
+          h("div", { className: "about" }, h("p", { textContent: "🔞 NSFW · hidden by your setting" }), h("button", { type: "button", textContent: "Show anyway", onclick: async () => gate.replaceWith(await show(ref, { outside, app, back, discover, item: it, shown: true })) })),
         );
         return gate;
       }
@@ -90,8 +90,8 @@ export async function start(ctx) {
         const conversation = await ctx.require("conversation");
         const asked = (await conversation.askedCodes().catch(() => [])).some(a => a.key === `code:${conversation.levelCode(gate.space)}`);
         if (!asked) await conversation.joinLevel(gate.space, gate.name ?? null).catch(e => ctx.log("item", { what: `asking into ${gate.space.slice(0, 8)}: ${e.message}` }));
-        about.append(h("p", { textContent: `🔒 For ${name} contributors — you are ${mine.name}: asked to be let in. It opens here once a member (or its creator's node) lets you in, usually within minutes.` }));
-      } else about.append(h("p", { textContent: `🔒 For ${name} contributors. Your level: ${mine.name}.` }), h("a", { href: "#/usage", textContent: "Contribute (Usage)" }));
+        about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name} · asked, waiting` }));
+      } else about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name}` }), h("a", { href: "#/usage", textContent: "Contribute (Usage)" }));
       return h("div", { className: "cw-page" }, h("h1", { textContent: it.title || "" }), about);
     }
     // A LEVEL'S ITEM from before sealing (rewards §5a) for someone below it: said, with where to contribute — its
@@ -105,7 +105,7 @@ export async function start(ctx) {
           "div",
           { className: "cw-page" },
           h("h1", { textContent: it.title || "" }),
-          h("div", { className: "about" }, h("p", { textContent: `🔒 For ${lv === "vip" ? "VIP" : "PRO and VIP"} contributors. Your level: ${mine.name}.` }), h("a", { href: "#/usage", textContent: "Contribute (Usage)" })),
+          h("div", { className: "about" }, h("p", { textContent: `🔒 ${lv === "vip" ? "VIP" : "PRO · VIP"} · you: ${mine.name}` }), h("a", { href: "#/usage", textContent: "Contribute (Usage)" })),
         );
       }
     }

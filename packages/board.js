@@ -139,7 +139,7 @@ export async function mount(ctx, el) {
       { className: "panel" },
       h("h3", { textContent: `b/${space.shown(d)}` }),
       // Who takes part, as its policy says (`roles`: each of post, comment, vote — anyone, or its members).
-      h("p", { textContent: `🌐 A public board: anyone reads it. ${["post", "comment", "vote"].map(a => `${a[0].toUpperCase()}${a.slice(1)}: ${pr.policyIn("text", a) === "anyone" ? "anyone" : "its members"}`).join(" · ")}.` }),
+      h("p", { textContent: `🌐 Public · ${["post", "comment", "vote"].map(a => `${a[0].toUpperCase()}${a.slice(1)}: ${pr.policyIn("text", a) === "anyone" ? "anyone" : "its members"}`).join(" · ")}` }),
       !mine && pr.policyIn("text", "post") === "anyone" ? h("a", { className: "go", href: `#/discover/board/b/${d.id}/submit`, textContent: "Create post" }) : null,
       mine ? h("a", { className: "go", href: `#/s/${d.id}/board`, textContent: "Open in your space" }) : join ?? h("p", { textContent: "Joining is by invite." }),
     );
@@ -157,7 +157,7 @@ export async function mount(ctx, el) {
       ].filter(Boolean);
     }
     const create = h("a", { className: "go", href: `${base()}/submit`, textContent: "Create post" });
-    if (w.feed) return [h("div", { className: "panel" }, h("h3", { textContent: "Feed" }), h("p", { textContent: "The boards of every space you are in, the people you follow, and your friends." }), create)];
+    if (w.feed) return [h("div", { className: "panel" }, h("h3", { textContent: "Feed" }), h("p", { textContent: "Your spaces · following · friends" }), create)];
     if (w.board) {
       const sp = await posts.boardOf(w.board);
       if (!sp) return [];

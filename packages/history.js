@@ -57,7 +57,7 @@ export async function start(ctx) {
       said.textContent = `Its history did not read: ${e?.message ?? e}`;
     }
     if (!vs.length) {
-      list.replaceChildren(h("p", { className: "none", textContent: "No earlier versions yet. Each saved change is kept for 7 days (the last 20)." }));
+      list.replaceChildren(h("p", { className: "none", textContent: "No earlier versions" }));
       return;
     }
     list.replaceChildren(
