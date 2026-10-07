@@ -461,7 +461,10 @@ export async function start(ctx) {
       // this is its REPAIR: taken only onto the branch the OWNER announced (read here, never the message's word).
       const had = mine.find(s => s.id === it.space);
       let expect = null;
-      if (had && !(await keys.group(had).ready().catch(() => null))?.removed) {
+      // Joined already: a group here, not removed. LISTED BUT NO GROUP (its keys lost — owner 10-07: a lost key table):
+      // not joined, the welcome taken.
+      const st = had ? await keys.group(had).ready().catch(() => null) : null;
+      if (had && st && !st.removed) {
         if (!it.repair) continue;
         // The branch it names must be one the owner announced (at any epoch: the repair itself moves the owner on).
         const own = (await ownerBranches(had).catch(() => [])).find(a => a.epoch === it.repair.epoch && a.branch === it.repair.branch);
