@@ -159,10 +159,38 @@ export async function start(ctx) {
     }
 
     const changed = [];
+    // A MEMBER's group learned AGAIN (owner 10-07: a fresh load opened a space before its group had caught up — 0
+    // members, no apps, no channels, until a reload, and a reload raced the same way): on every change of its acts and
+    // every key handed over, and — while it still has no members — every few seconds (3 s, doubling, to a minute, for
+    // ten minutes). A changed group: the acts replayed (their writers known now) and everyone told.
+    const sig = () => group.map(m => m.key).sort().join(",");
+    let relearning = null;
+    const relearn = () =>
+      (relearning ??= (async () => {
+        try {
+          if (out) return;
+          const before = sig();
+          await learn(await g.ready().catch(() => null));
+          if (sig() !== before) {
+            replay();
+            for (const f of changed) f();
+          }
+        } finally {
+          relearning = null;
+        }
+      })());
+    if (!out) {
+      addEventListener("craftworks:keys", () => relearn().catch(() => {}));
+      let wait = 3000;
+      const until = Date.now() + 600000;
+      const again = () => !group.length && Date.now() < until && setTimeout(() => relearn().finally(again), (wait = Math.min(wait * 2, 60000)));
+      if (!group.length) setTimeout(() => relearn().finally(again), wait);
+    }
     t.onChange(() => {
       replay();
       if (out) widen().then(() => ((group = [...roster].map(did => ({ did }))), changed.forEach(f => f())));
       for (const f of changed) f();
+      if (!out) relearn().catch(() => {});
     });
     // PUBLIC: something of the space is anyone's — an app read by anyone, or joining open to anyone (an open space is
     // listed in Discover: whoever looks must see who is in it and how to join).
