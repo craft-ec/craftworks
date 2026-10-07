@@ -244,13 +244,24 @@ export async function start(ctx) {
           const note = p => (cat && ours ? notePlace(cat, app, p).catch(e => ctx.log("storage", { what: `${app}: noting its place: ${e?.message ?? e}` })) : Promise.resolve());
           // Its first write here makes it at its blinded name, listed so first.
           const made = { ...rest, beforeCreate: cat && ours ? () => notePlace(cat, app, "blinded") : rest.beforeCreate };
-          // Not looked for: not listed, never made.
-          if (place === "unlisted" || place === "none") return tailAt(owner, app, label, { ...made, known: false });
-          // READ WHERE ITS CATALOG SAYS — its blinded name, the ONE place a table is read: never by its old name, nothing
-          // decided on a page's path. Its writer's "never made" noted once the node answers so.
-          const t = await tailAt(owner, app, label, { ...made, wait: ours && cat ? WAIT.answer : WAIT.ask });
-          if (place === "blinded") t.answer().then(() => t.absent && t.answered() && note("none"));
-          return t;
+          // Not looked for: not listed.
+          if (place === "unlisted") return tailAt(owner, app, label, { ...made, known: false });
+          // MARKED NEVER MADE — one of this account's own: looked for ONCE at its blinded name, and listed again where it
+          // is there (owner 10-07: a made table, `spacekeys`, was marked "none" by one failed read — its tree missing a
+          // block its group could rebuild — and was never read again). Another's: not looked for.
+          if (place === "none") {
+            if (!(ours && cat)) return tailAt(owner, app, label, { ...made, known: false });
+            const t = await tailAt(owner, app, label, { ...made, wait: WAIT.answer });
+            await t.answer?.();
+            if (!t.absent) {
+              await note("blinded");
+              ctx.log("storage", { what: `${app}: marked never made, but it is there — listed again` });
+            }
+            return t;
+          }
+          // READ WHERE ITS CATALOG SAYS — its blinded name, the ONE place a table is read. A table its catalog says was
+          // MADE is never marked "never made": a failed read means not read NOW (a block, the node, the network).
+          return tailAt(owner, app, label, { ...made, wait: ours && cat ? WAIT.answer : WAIT.ask });
         })().catch(e => (opening.delete(k), Promise.reject(e))),
       );
     const p = opening.get(k);

@@ -50,4 +50,5 @@ wasm-bindgen = "=0.2.128"
 js-sys = "0.3"
 
 [dev-dependencies]
+contract-keys = { workspace = true }
 craftec-register-contract = { workspace = true, features = ["testing"] }

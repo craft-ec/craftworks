@@ -133,6 +133,9 @@ pub struct Core {
     held: std::collections::HashMap<[u8; 32], Vec<u8>>,
     /// Repairs under way: the lost block's contract id -> (its tail, its group).
     repairs: std::collections::HashMap<[u8; 32], ([u8; 32], engine::repair::Group)>,
+    /// A block REBUILT, by the contract it was lost at → its cid: what a read puts back (`tail_keep_put`) is named by
+    /// that contract (owner 10-07: named so, the put found nothing and was never made — rebuilt blocks never went back).
+    rebuilt: std::collections::HashMap<[u8; 32], freenet_prolly::Cid>,
 }
 
 impl Core {
@@ -150,6 +153,7 @@ impl Core {
             wanted: Default::default(),
             held: Default::default(),
             repairs: Default::default(),
+            rebuilt: Default::default(),
             assets: Default::default(),
         }
     }
@@ -475,6 +479,8 @@ impl Core {
         cid: &[u8; 32],
     ) -> Result<Option<(String, Vec<Vec<u8>>)>, String> {
         let groups = self.assets.get(id).cloned().unwrap_or_default();
+        // A rebuilt block is named by the contract it was lost at: its cid from the rebuild.
+        let cid = &self.rebuilt.get(cid).copied().unwrap_or(*cid);
         let o = self.tails.get(id).ok_or("that tail is not open")?;
         let Some((sealed, state)) = o.stored(cid, &groups) else {
             return Ok(None);
@@ -592,6 +598,11 @@ impl Core {
             .copied()
             .collect();
         self.repairs.insert(*lost_contract, (*id, group));
+        // EVERY MEMBER HELD already: nothing to ask — the block rebuilds from what is here (`tail_rebuild`). Never an
+        // error: an empty ask taken for "no group" declared a rebuildable block lost (owner 10-07, `spacekeys`).
+        if missing.is_empty() {
+            return Ok(Vec::new());
+        }
         self.want(id, &missing)
     }
 
@@ -606,6 +617,7 @@ impl Core {
         let o = self.tail(&id)?;
         let held = o.blocks.0.contains_key(&group.missing) || o.rebuild(&group).is_ok();
         if held {
+            self.rebuilt.insert(*lost_contract, group.missing);
             self.repairs.remove(lost_contract);
             self.wanted.remove(lost_contract);
         }
@@ -2594,6 +2606,62 @@ mod tests {
         );
         assert!(c.frames_handover("no-colon", "1".into()).is_err());
         assert!(c.frames_handover("abc:def", "1".into()).is_err());
+    }
+
+    /// A LOST block whose whole group is ALREADY HELD (owner 10-07: one block of `spacekeys` was not on the network; the
+    /// page held every other member of its group, so nothing was left to fetch — and that empty fetch was taken for
+    /// "no group": the block was declared lost, never rebuilt). The group is named, nothing asked, and it rebuilds.
+    #[test]
+    fn a_lost_block_whose_group_is_all_held_is_rebuilt_not_declared_lost() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let code: &[u8] = b"\0asm\x01\0\0\0";
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        let sign = |o: &data::Open, seq: u64, h: [u8; 32]| {
+            let p = craftec_register_contract::wire::Params::parse(&o.params).unwrap();
+            key.sign(&p.signed_message(false, seq, &h)).to_bytes()
+        };
+        // A WRITER makes a tree of several leaves (as the data crate's own repair test).
+        let mut w = data::Open::new(code, &member, "notes");
+        w.set_table_key([7; 32]);
+        for round in 0..6 {
+            for i in 0..data::FLUSH_AT {
+                let (seq, h) = w.prepare_row(format!("{round:02}-{i:03}").as_bytes(), "x".repeat(200).as_bytes()).unwrap();
+                let s = sign(&w, seq, h);
+                w.commit(s).unwrap();
+            }
+            let Ok(data::Step::Ready(f)) = w.flush() else { panic!("ready") };
+            let s = sign(&w, f.seq, f.hash);
+            w.commit(s).unwrap();
+        }
+        let root = w.writer.body().root.unwrap();
+        let node = freenet_prolly::store::load(&w.blocks, &root).unwrap();
+        let lost = node.child(1).0;
+        let by = w.writes.unwrap();
+        let net = |c: &freenet_prolly::Cid| data::seal_block(&[7; 32], by, c, &contract_keys::block::block_state(c, w.blocks.0.get(c).unwrap()).unwrap());
+        // A READER in the core: every block of the tree held but the lost one — its whole group with it.
+        let mut c = Core::new(code);
+        let mut r = data::Open::new(code, &member, "notes");
+        r.set_table_key([7; 32]);
+        assert!(r.absorb(&w.writer.state()));
+        for b in w.blocks.0.keys().copied().collect::<Vec<_>>() {
+            if b != lost {
+                assert!(r.absorb_block(&b, &net(&b)), "a block absorbs");
+            }
+        }
+        let group = r.repair_group(&lost);
+        let id = [0x11; 32];
+        c.tails.insert(id, r);
+        let asked = c.want(&id, &[lost]).expect("the lost block is asked for");
+        let lost_contract = bytes32("contract", &asked[0]).unwrap();
+        assert!(group.is_some(), "the writer's tree names a group for it");
+        let g = c.tail_group(&id, &lost_contract).expect("its group is named, though nothing of it is left to fetch");
+        assert!(g.is_empty(), "every member held: nothing asked");
+        assert_eq!(c.tail_rebuild(&lost_contract), Ok(true), "rebuilt from what is held");
+        // …and PUT BACK: the read names it by the contract it was asked at (the network's address), never its cid.
+        let put = c.tail_keep_put(&id, &lost_contract).expect("a put back is made");
+        assert!(put.is_some(), "the rebuilt block is put back, under the address it was lost at");
+        assert_eq!(put.unwrap().0, bs58::encode(lost_contract).into_string(), "at the very contract that was not there");
     }
 
     #[test]

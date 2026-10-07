@@ -65,8 +65,12 @@ export async function start(ctx) {
     const at = lost.get(b);
     if (at && Date.now() - at < LOST_FOR) return Promise.reject(new Error(`${what}: block ${b.slice(0, 12)}… is not on the network (found lost ${Math.round((Date.now() - at) / 1000)} s ago: not asked again yet)`));
     let group = [];
+    // NAMED: a group holds it — perhaps with nothing of it left to ask (every member held here already: owner 10-07,
+    // such a block was declared lost, never rebuilt). Not named: asked alone.
+    let named = false;
     try {
       group = Array.from(core.tail_group(bytes(tail), b));
+      named = true;
     } catch {
       // No group names it: asked alone.
     }
@@ -93,7 +97,7 @@ export async function start(ctx) {
         if (done) return;
         let held = false;
         try {
-          held = group.length ? core.tail_rebuild(b) : false;
+          held = named ? core.tail_rebuild(b) : false;
         } catch {}
         if (held) {
           done = true;
@@ -105,7 +109,7 @@ export async function start(ctx) {
           lost.set(b, Date.now());
           rec.end = "lost";
           // In FULL — the node's address (base58) too — and its group: what can be followed in the node's log.
-          ctx.log("block lost", { what: `${what}: block ${b} (node: ${base58(b)}) — its group of ${group.length}: ${answered} answered; asked ${group.map(g => base58(g)).join(", ") || "(none: asked alone)"}` });
+          ctx.log("block lost", { what: `${what}: block ${b} (node: ${base58(b)}) — ${named ? `its group: ${group.length} asked, ${answered} answered` : "no group names it (asked alone)"}; ${group.map(g => base58(g)).join(", ")}` });
           reject(new Error(`${what}: block ${b.slice(0, 12)}… is not on the network, and too little of its group is to rebuild it`));
         }
       };
