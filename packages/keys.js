@@ -829,6 +829,38 @@ export async function start(ctx) {
         );
         return p;
       },
+      // MEND (owner 10-07: "don't let it happen in the first place" — and heal what already did): this epoch's log
+      // opened WITHOUT its prev (written before the rule above) has it put back by a member who holds the epoch before —
+      // the same row, its prev added, for every member at once (not a handover to one asker at a time). One that does
+      // not hold it writes nothing: "cannot".
+      mend: () =>
+        (queue = queue.catch(() => {}).then(async () => {
+          if (!m && !(await load())) return "no group";
+          const s = m.status();
+          if (s.removed || s.epoch === 0) return "nothing to mend";
+          const k = await auth.identity.tableKeyAt(ch, s.epoch, sp.idBytes).catch(() => null);
+          if (!k?.tableKey) return "its key not held";
+          const lg = await storage.log(ch, glue.epoch_log_public(s.secret), { known: null, sealWith: k.tableKey, space: sp.idBytes });
+          await lg.answer?.();
+          const row = lg.absent ? null : lg.rows().find(r => r.key === "open");
+          if (!row?.value) return "no open row";
+          let v = null;
+          try {
+            v = JSON.parse(row.value);
+          } catch {
+            return "open row unreadable";
+          }
+          if (v?.prev) return "whole";
+          const before = (await auth.identity.epochSecrets(sp.idBytes, s.epoch).catch(() => [])).find(([e]) => e === s.epoch - 1)?.[1];
+          if (!before) {
+            keyEvent("log-mend-cannot", { space: hexOf(sp.idBytes), epoch: s.epoch });
+            return "cannot: the epoch before is not held here";
+          }
+          await lg.put("open", JSON.stringify({ ...v, prev: before, ...(await provOf("mend")) }));
+          keyEvent("log-mended", { space: hexOf(sp.idBytes), epoch: s.epoch });
+          ctx.log(`${sp.name ?? "space"} keys`, { what: `its epoch ${s.epoch} log had no way back: mended (its prev put back)` });
+          return "mended";
+        })),
       // AUDIT (log only): the epoch this node's group state is at, and whether its identity holds that epoch's key.
       diag: () =>
         (queue = queue.catch(() => {}).then(async () => {
@@ -899,8 +931,9 @@ export async function start(ctx) {
       if (sp.kind === "account") continue;
       const d = await group(sp).diag().catch(e => ({ state: `error ${e?.message ?? e}` }));
       const broken = d.state === "held" && d.epoch > 0 && /NO prev/.test(String(d.opens));
+      const mended = broken ? await group(sp).mend().catch(e => `mend failed: ${e?.message ?? e}`) : null;
       const evs = broken ? (await keyEvents(sp.id).catch(() => [])).slice(-5).map(e => `${new Date(e.at).toISOString().slice(5, 16)} ${e.what}${e.epoch != null ? ` @${e.epoch}` : ""}${e.reason ? ` (${e.reason})` : ""} by ${String(e.by).slice(0, 8)} v${e.v}`).join("; ") : "";
-      ctx.log("account keys", { what: `AUDIT space ${broken ? "BROKEN CHAIN — " : ""}${sp.name ?? sp.id.slice(0, 8)}${broken ? ` [its key events: ${evs || "none recorded"}]` : ""}: group ${d.state}${d.state === "held" ? ` at epoch ${d.epoch}, ${d.members} member(s)${d.removed ? ", REMOVED" : ""}, its epoch key ${d.keyHeld ? "HELD" : `NOT held${d.why ? ` (${d.why})` : ""}`}, its log's open: ${d.opens}` : ""}` });
+      ctx.log("account keys", { what: `AUDIT space ${broken ? "BROKEN CHAIN — " : ""}${sp.name ?? sp.id.slice(0, 8)}${broken ? ` [mend: ${mended}; its key events: ${evs || "none recorded"}]` : ""}: group ${d.state}${d.state === "held" ? ` at epoch ${d.epoch}, ${d.members} member(s)${d.removed ? ", REMOVED" : ""}, its epoch key ${d.keyHeld ? "HELD" : `NOT held${d.why ? ` (${d.why})` : ""}`}, its log's open: ${d.opens}` : ""}` });
     }
     const allEv = await keyEvents().catch(() => []);
     ctx.log("account keys", { what: `AUDIT key events — ${allEv.length} kept; last: ${allEv.slice(-3).map(e => `${e.what}${e.epoch != null ? ` @${e.epoch}` : ""}${e.reason ? ` (${e.reason})` : ""} by ${String(e.by).slice(0, 8)} v${e.v}`).join("; ") || "none"}` });
