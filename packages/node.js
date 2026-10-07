@@ -131,13 +131,20 @@ export async function start(ctx) {
 
   // IDLE: nothing asked of the node for WAIT.hint (the one wait policy's) — what BACKGROUND work waits for before each
   // step (unread counts, upkeep, keeping), so a page's own reads never queue behind it.
-  const idle = (quiet = WAIT.hint) =>
+  // At most `cap` (10-07, measured on Wren's page on B: never 1.5 s with nothing asked — upkeep never started, so its node
+  // never learned which spaces to keep): background work then goes ahead, and says so.
+  const idle = (quiet = WAIT.hint, cap = 30000) =>
     new Promise(resolve => {
+      const t0 = performance.now();
       let since = waiters.length ? 0 : performance.now();
       const check = () => {
         if (waiters.length) since = 0;
         else if (!since) since = performance.now();
         else if (performance.now() - since >= quiet) return resolve();
+        if (performance.now() - t0 >= cap) {
+          ctx.log("node", { what: `never idle for ${Math.round(cap / 1000)} s (${waiters.length} asked, the oldest ${inFlight()[0]?.what ?? "?"}): background work goes ahead` });
+          return resolve();
+        }
         setTimeout(check, 100);
       };
       check();

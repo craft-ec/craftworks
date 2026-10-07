@@ -34,6 +34,8 @@ export async function start(ctx) {
       }
       const joined = await conversation.accept().catch(e => (ctx.log("upkeep", { what: `the inbox: ${e.message}` }), []));
       if (joined.length) ctx.log("upkeep", { what: `joined ${joined.length} space(s) from the inbox` });
+      // THE NODE's list first (before each space's slower work): what it keeps with no page open.
+      await mandate(me).catch(e => ctx.log("upkeep", { what: `the mandate: ${e.message}` }));
       // One space at a time, each once the node is idle (BACKGROUND: a page's reads first).
       const node = await ctx.require("node");
       const servers = (await space.mine()).filter(s => s.kind === "server");
@@ -74,7 +76,6 @@ export async function start(ctx) {
         const let_in = await conversation.admit(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: ${e.message}` }), []));
         if (let_in.length) ctx.log("upkeep", { what: `${let_in.length} let into ${sp.name}` });
       }
-      await mandate(me).catch(e => ctx.log("upkeep", { what: `the mandate: ${e.message}` }));
       // AUDIENCES: each circle's members as they should be (friends; followers, from their notices).
       await (await ctx.require("circles")).sync().catch(e => ctx.log("upkeep", { what: `circles: ${e?.message ?? (typeof e === "object" ? JSON.stringify(e) : String(e))}${e?.stack ? ` (${String(e.stack).split("\n")[1]?.trim() ?? ""})` : ""}` }));
       // Boards: what this person wrote is public exactly while its board reads in public (a board made public shows
@@ -118,32 +119,40 @@ export async function start(ctx) {
     return outs.length > 0 && outs.at(-1).act === "lapsed";
   };
   const stuckBags = new Set();
-  // THE MANDATE: every shared space where this person may invite, as this page knows it now.
+  let lastMandate = null;
+  // THE MANDATE: every shared space this person is in, as this page knows it now. Admitting anyone NEW (codes, the
+  // open door, a level) only where they may invite; letting a STUCK member in again (no one new) wherever they are a
+  // member — its members by the acts, or, where the acts do not read here, by the group's own.
   async function mandate(me) {
     const spaces = [];
+    const { glue } = await ctx.require("node");
     for (const sp of (await space.mine()).filter(s => s.kind === "server")) {
       const r = await roles.of(sp).catch(() => null);
-      if (!r?.can(me.id, "invite")) continue;
       const g = await keys.group(sp).snapshot().catch(() => null);
       if (!g) continue;
+      const mayInvite = !!r?.can(me.id, "invite");
+      const inGroup = ((await keys.group(sp).ready().catch(() => null))?.members ?? []).filter(m => m.cred).map(m => glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16)))));
+      const members = [...new Set([...(r?.members() ?? []).map(m => m.did), ...inGroup])];
       // Its STUCK bag made (once a page): the delegate reads it every round, and never asks for one not made.
       if (!stuckBags.has(sp.id)) await index.openRequests(`stuck ${sp.id}`).then(() => stuckBags.add(sp.id), () => {});
       spaces.push({
         space: sp.id, name: sp.name, kind: sp.kind, owner: sp.governance.owner, nonce: sp.governance.nonce ?? null, channel: sp.tables.channel,
-        open: r.policy("", "join") === "anyone",
+        open: mayInvite && r.policy("", "join") === "anyone",
         // A level group's level: the delegate lets in askers at `level <id>` whose card reaches it.
-        level: /^level:(pro|vip)$/.exec(r.policy("", "join") ?? "")?.[1] ?? null,
-        codes: r.invites().map(i => [i.code, i.expires || 0, i.uses ? i.uses - i.admitted.length : 0]),
+        level: mayInvite ? (/^level:(pro|vip)$/.exec(r.policy("", "join") ?? "")?.[1] ?? null) : null,
+        codes: mayInvite ? r.invites().map(i => [i.code, i.expires || 0, i.uses ? i.uses - i.admitted.length : 0]) : [],
         // Never let in again: the banned AND whoever the acts put out (removed, left) — an old request of theirs still
         // sits in a bag upkeep reads.
         // (One out only by a LAPSE may come back: they ask again when they give again.)
-        bans: [...new Set([...r.bannedList(), ...r.goneList().filter(d => !lapsedOnly(r, d))])], members: r.members().map(m => m.did), epoch: g.epoch, state: g.state,
+        bans: r ? [...new Set([...r.bannedList(), ...r.goneList().filter(d => !lapsedOnly(r, d))])] : [], members, epoch: g.epoch, state: g.state,
       });
     }
     // With it, the key packages this account used already: upkeep never uses one again.
     const used = await storage().catch(() => null);
     const spent = used ? used.rows().filter(r => r.value && /^[0-9a-f]{32}$/.test(r.key)).map(r => r.key) : [];
     const r = await auth.identity.upkeepMandate(me.id, spaces, spent);
+    const said = spaces.map(x => `${x.name}${x.codes.length || x.open || x.level ? "" : " (re-add only)"}`).join(", ");
+    if (said !== lastMandate) (lastMandate = said), ctx.log("upkeep", { what: `the node upkeeps ${spaces.length} space(s): ${said}` });
     if (r.upkeep?.stale?.length) ctx.log("upkeep", { what: `${r.upkeep.stale.length} space(s): the delegate's group is newer (loaded next tick)` });
   }
   // THE DELEGATE's upkeep (no page open: the node wakes it — node ≥ 0.2.139, with the Background grant): told which
