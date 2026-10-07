@@ -9,7 +9,7 @@
 // in, and its MLS group. What it did meanwhile is taken first on every tick: the groups it moved, loaded; the people it
 // let in, written as `admitted` acts (when it happened). A page that ticks keeps the delegate out of its way.
 export async function start(ctx) {
-  const [space, conversation, roles, keys, auth] = await Promise.all(["space", "conversation", "roles", "keys", "auth"].map(n => ctx.require(n)));
+  const [space, conversation, roles, keys, auth, index] = await Promise.all(["space", "conversation", "roles", "keys", "auth", "index"].map(n => ctx.require(n)));
   // The account's record of key packages used (`conversation.welcome` writes it too).
   const storage = async () => {
     const t = await (await ctx.require("storage")).table("keypacks");
@@ -99,10 +99,15 @@ export async function start(ctx) {
     for (const a of st.admitted ?? []) {
       const sp = of(a.space);
       if (!sp) continue;
+      written.push([a.space, a.did]);
+      // Let in AGAIN (a member stuck behind its own commit): a member already — no act.
+      if (a.code === "stuck") {
+        ctx.log("upkeep", { what: `the delegate let ${a.did.slice(12, 20)}… into ${sp.name} again (stuck behind its own change) while no page ran` });
+        continue;
+      }
       const r = await roles.of(sp);
       await r.refresh();
       await r.act({ act: "admitted", code: a.code, did: a.did, at: a.at });
-      written.push([a.space, a.did]);
       ctx.log("upkeep", { what: `the delegate let ${a.did.slice(12, 20)}… into ${sp.name} while no page ran` });
     }
     if (written.length) await auth.identity.upkeepAck(written);
@@ -112,6 +117,7 @@ export async function start(ctx) {
     const outs = r.acts().filter(a => (a.did ?? a.by) === did && ["lapsed", "remove", "ban", "leave"].includes(a.act));
     return outs.length > 0 && outs.at(-1).act === "lapsed";
   };
+  const stuckBags = new Set();
   // THE MANDATE: every shared space where this person may invite, as this page knows it now.
   async function mandate(me) {
     const spaces = [];
@@ -120,6 +126,8 @@ export async function start(ctx) {
       if (!r?.can(me.id, "invite")) continue;
       const g = await keys.group(sp).snapshot().catch(() => null);
       if (!g) continue;
+      // Its STUCK bag made (once a page): the delegate reads it every round, and never asks for one not made.
+      if (!stuckBags.has(sp.id)) await index.openRequests(`stuck ${sp.id}`).then(() => stuckBags.add(sp.id), () => {});
       spaces.push({
         space: sp.id, name: sp.name, kind: sp.kind, owner: sp.governance.owner, nonce: sp.governance.nonce ?? null, channel: sp.tables.channel,
         open: r.policy("", "join") === "anyone",

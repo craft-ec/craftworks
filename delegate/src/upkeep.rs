@@ -188,6 +188,8 @@ pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
             if m.level.as_deref().is_some_and(|l| craftworks_gov::LEVELS.iter().any(|(id, _)| *id == l)) {
                 bags.push("level".into());
             }
+            // STUCK members (a device stuck behind its own commit, never saved there): asked into `stuck <space>`.
+            bags.push("stuck".into());
             for code in bags {
                 let name = bag_name(&code, &m.space);
                 waiting.push((id_of(&c.bag_hash, &identity::invite_address(&name)), m.space, code));
@@ -229,12 +231,25 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
                 let name = bag_name(&code, &space);
                 for p in craftworks_bag_contract::read(&identity::invite_address(&name), &st).unwrap_or_default() {
                     let Ok(q) = serde_json::from_slice::<serde_json::Value>(craftworks_bag_contract::payload(&p)) else { continue };
-                    let (Some("join"), Some(did)) = (q["kind"].as_str(), q["did"].as_str()) else { continue };
+                    let Some(did) = q["did"].as_str() else { continue };
                     let Some(did_bytes) = craftworks_account::did_bytes(did) else { continue };
                     let known = r.asks.iter().any(|a| a.space == space && a.did == did);
-                    let admitted = identity::upkeep_admitted(h, &member).iter().any(|a| a.space == space && a.did == did);
-                    if did == me || known || admitted || m.members.iter().any(|x| x == did) || m.bans.iter().any(|x| x == did) {
+                    if did == me || known || m.bans.iter().any(|x| x == did) {
                         continue;
+                    }
+                    let member_already = m.members.iter().any(|x| x == did);
+                    if code == "stuck" {
+                        // A MEMBER stuck at an epoch this group is past, asking since it was last let in again here.
+                        let (Some("stuck"), Some(at_epoch), Some(at)) = (q["kind"].as_str(), q["epoch"].as_u64(), q["at"].as_u64()) else { continue };
+                        let again = identity::upkeep_admitted(h, &member).iter().any(|a| a.space == space && a.did == did && a.at >= at);
+                        if !member_already || again || at_epoch >= m.epoch {
+                            continue;
+                        }
+                    } else {
+                        let admitted = identity::upkeep_admitted(h, &member).iter().any(|a| a.space == space && a.did == did);
+                        if q["kind"].as_str() != Some("join") || admitted || member_already {
+                            continue;
+                        }
                     }
                     r.asks.push(Ask { space, did: did.to_string(), did_bytes, code: code.clone() });
                 }
@@ -417,7 +432,9 @@ fn moved<H: Host>(h: &mut H, member: &[u8; 32], me: &str, spaces: &[Mandate], as
             if m.space == ask.space {
                 m.epoch = add.epoch;
                 m.state = add.state.clone();
-                m.members.push(ask.did.clone());
+                if !m.members.contains(&ask.did) {
+                    m.members.push(ask.did.clone());
+                }
                 if let Some(i) = m.codes.iter().position(|(code, _, _)| *code == ask.code) {
                     match m.codes[i].2 {
                         1 => {
@@ -463,7 +480,9 @@ fn add<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, m: &Mandate, data: &[u8
     if g.epoch() != m.epoch {
         return Err(format!("the mandate's group is at epoch {}, not {}", g.epoch(), m.epoch));
     }
-    let (commit, welcome) = g.add(kp)?;
+    // Their entries the group holds still (a member let in again): out in the same commit.
+    let stale: Vec<u32> = g.members().into_iter().filter(|(_, _, cred)| cred.get(4..36) == Some(ask.did_bytes.as_slice())).map(|(i, _, _)| i).collect();
+    let (commit, welcome) = if stale.is_empty() { g.add(kp)? } else { g.readd(&stale, kp)? };
     Ok(Add {
         from_epoch: m.epoch,
         from_secret,
@@ -481,7 +500,7 @@ fn add<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, m: &Mandate, data: &[u8
 /// A request bag's NAME: a code's own; the open door `open <space>`; a level group's `level <space>`.
 fn bag_name(code: &str, space: &[u8; 32]) -> String {
     match code {
-        "open" | "level" => format!("{code} {}", hex(space)),
+        "open" | "level" | "stuck" => format!("{code} {}", hex(space)),
         _ => code.to_string(),
     }
 }

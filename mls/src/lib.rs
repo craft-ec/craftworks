@@ -388,6 +388,21 @@ impl Account {
         Ok((out.commit_message.to_bytes().map_err(e)?, welcome))
     }
 
+    /// ADD AGAIN a member whose entries the group still holds (a device stuck behind its own commit, never saved
+    /// there): those entries out and the new key package in, ONE commit — `(commit, welcome)`.
+    pub fn readd(&mut self, stale: &[u32], key_package: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
+        let kp = MlsMessage::from_bytes(key_package).map_err(e)?;
+        let mut b = self.group.commit_builder();
+        for i in stale {
+            b = b.remove_member(*i).map_err(e)?;
+        }
+        let out = b.add_member(kp).map_err(e)?.build().map_err(e)?;
+        self.group.apply_pending_commit().map_err(e)?;
+        self.group.write_to_storage().map_err(e)?;
+        let welcome = out.welcome_messages.first().ok_or("no welcome for the member")?.to_bytes().map_err(e)?;
+        Ok((out.commit_message.to_bytes().map_err(e)?, welcome))
+    }
+
     pub fn epoch(&self) -> u64 {
         self.group.current_epoch()
     }

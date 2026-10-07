@@ -217,14 +217,17 @@ fn nobody_is_admitted_while_a_page_ticks_nor_the_banned_nor_the_members() {
     let w2 = world_clone(&w);
     let reqs = vec![join(&w.asker)];
     let asked = run(&mut w, &mut network(&w2, reqs));
-    assert_eq!(asked.len(), 1, "only the bag read: {asked:?}");
+    assert_eq!(asked.len(), 2, "only the bags read (the code's and the space's stuck bag): {asked:?}");
     assert!(identity::upkeep_admitted(&w.h, &MEMBER).is_empty());
-    // An expired code's bag is not even read.
+    // An expired code's bag is not even read (the space's stuck bag only).
     let mut w = world();
     let (me, mut spaces) = identity::upkeep_mandate(&w.h, &MEMBER).unwrap();
     spaces[0].codes[0].1 = NOW - 1;
     identity::upkeep_set_mandate(&mut w.h, &MEMBER, &me, &spaces);
-    assert!(upkeep::woke(&mut w.h, NOW).is_empty());
+    let code_bag = id(BAG, &identity::invite_address(CODE));
+    let gets = upkeep::woke(&mut w.h, NOW);
+    assert_eq!(gets.len(), 1, "{gets:?}");
+    assert!(!gets.iter().any(|x| matches!(x, Io::Get { id, .. } if *id == code_bag)));
 }
 
 #[test]
@@ -329,4 +332,76 @@ fn a_level_group_lets_in_only_whom_their_card_shows_at_its_level() {
     let (asked, admitted) = run_with(&format!(r#"[{{"at":{NOW},"amount":6,"days":30}}]"#));
     assert_eq!(asked.iter().filter(|x| !matches!(x, Io::Get { .. })).count(), 3, "commit, next log, welcome: {asked:?}");
     assert_eq!((admitted.len(), admitted[0].code.as_str()), (1, "level"));
+}
+
+/// A MEMBER STUCK behind its own commit (its state after it never saved): it asks into the space's `stuck` bag, and
+/// upkeep — no page open — takes its old entry out and adds it again in ONE commit; the new welcome joins it. Control:
+/// an ask from an epoch the group is not past writes nothing.
+#[test]
+fn a_member_stuck_behind_its_own_commit_is_let_in_again_with_no_page_open() {
+    let mut w = world();
+    let asker_did = craftworks_account::did(&w.asker.did);
+    // Let in first, the usual way.
+    {
+        let w2 = &world_clone(&w);
+        let mut net = network(w2, vec![join(&w.asker)]);
+        run(&mut w, &mut net);
+    }
+    let (_, spaces) = identity::upkeep_mandate(&w.h, &MEMBER).unwrap();
+    let in_at = spaces[0].epoch;
+    assert_eq!(in_at, w.epoch + 1);
+    // Its card now offers a fresh key package (the used one is spent); its device is stuck at `w.epoch`.
+    let kp2 = w.asker_member.key_package().unwrap();
+    let stuck_bag = format!("stuck {}", SPACE.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    let ask = |epoch: u64| serde_json::json!({ "kind": "stuck", "did": asker_did, "epoch": epoch, "at": NOW + 1 });
+    let net_for = |w: &World, item: serde_json::Value| {
+        let bag_id = id(BAG, &identity::invite_address(&stuck_bag));
+        let bag_state = bag(identity::invite_address(&stuck_bag), &[item]);
+        let log = id(IDLOG, &w.asker.did);
+        let card_key = SigningKey::from_bytes(&w.asker.data).verifying_key().to_bytes();
+        let card_id = data::Open::new(TAIL, &card_key, "card").id_bytes();
+        let card_state = card(&w.asker, &kp2);
+        let log_state = w.asker.log.clone();
+        move |io: &Io| match io {
+            Io::Get { id, .. } if *id == bag_id => Reply::Got { id: *id, state: Some(bag_state.clone()) },
+            Io::Get { id, .. } if *id == log => Reply::Got { id: *id, state: Some(log_state.clone()) },
+            Io::Get { id, .. } if *id == card_id => Reply::Got { id: *id, state: Some(card_state.clone()) },
+            Io::Get { id, .. } => Reply::Got { id: *id, state: None },
+            Io::Put { code: Code::Tail, params, .. } => Reply::Put { id: id(TAIL, params), ok: true },
+            Io::Put { code: Code::Bag, params, .. } => Reply::Put { id: id(BAG, params), ok: true },
+            Io::Put { code: Code::Sealed | Code::Piece, params, .. } => Reply::Put { id: id(b"sealed", params), ok: true },
+            Io::Update { id, .. } => Reply::Updated { id: *id, ok: true },
+        }
+    };
+    // CONTROL: an ask from the group's own epoch (not behind): nothing written.
+    identity::Host::set_secret(&mut w.h, identity::UPKEEP_WAKEUPS, &20u64.to_le_bytes());
+    let mut net = net_for(&w, ask(in_at));
+    let asked = run(&mut w, &mut net);
+    assert!(asked.iter().all(|x| matches!(x, Io::Get { .. })), "not behind: nothing written {asked:?}");
+    // STUCK at the epoch before: let in again.
+    identity::Host::set_secret(&mut w.h, identity::UPKEEP_WAKEUPS, &30u64.to_le_bytes());
+    let mut net = net_for(&w, ask(w.epoch));
+    let asked = run(&mut w, &mut net);
+    let puts: Vec<&Io> = asked.iter().filter(|x| matches!(x, Io::Put { .. } | Io::Update { .. })).collect();
+    assert_eq!(puts.len(), 3, "commit, next log, welcome: {asked:?}");
+    let Io::Put { code: Code::Bag, params, state } = puts[2] else { panic!("the welcome is last") };
+    let items = craftworks_bag_contract::read(params, state).unwrap();
+    let opened = identity::open_with(&identity::inbox_seed(&w.asker.data), craftworks_bag_contract::payload(&items[0])).unwrap();
+    let item: serde_json::Value = serde_json::from_slice(&opened).unwrap();
+    assert_eq!(item["code"].as_str(), Some("stuck"));
+    let unhex = |s: &str| (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect::<Vec<u8>>();
+    let joined = w.asker_member.join_space(SPACE, &unhex(item["welcome"].as_str().unwrap())).unwrap();
+    assert_eq!(joined.epoch(), in_at + 1, "one commit: out and in together");
+    // In the group ONCE (its old entry out), and once in the mandate's members.
+    let did_bytes = craftworks_account::did_bytes(&asker_did).unwrap();
+    let entries = joined.members().into_iter().filter(|(_, _, c)| c.get(4..36) == Some(did_bytes.as_slice())).count();
+    println!("entries for the member after: {entries}");
+    assert_eq!(entries, 1);
+    let (_, spaces) = identity::upkeep_mandate(&w.h, &MEMBER).unwrap();
+    assert_eq!(spaces[0].members.iter().filter(|d| **d == asker_did).count(), 1);
+    // Asked again with the same ask: answered already, nothing written.
+    identity::Host::set_secret(&mut w.h, identity::UPKEEP_WAKEUPS, &40u64.to_le_bytes());
+    let mut net = net_for(&w, ask(w.epoch));
+    let again = run(&mut w, &mut net);
+    assert!(again.iter().all(|x| matches!(x, Io::Get { .. })), "{again:?}");
 }
