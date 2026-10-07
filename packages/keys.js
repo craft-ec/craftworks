@@ -110,10 +110,14 @@ export async function start(ctx) {
       return log.from(e)[0]?.entry ?? null;
     }
     // COMMIT from epoch e: into e's log, with the group info after it (and, for the account, the next secret in escrow).
-    async function commitAt(e, secret, commit) {
+    // (Its entry made from the group AFTER the commit applied here — and published apart, so a space can keep it first.)
+    async function entryOf(commit) {
       const st = g.mls().status();
-      const entry = JSON.stringify({ commit: hexOf(commit), info: hexOf(st.info), ...(st.escrow ? { next: hexOf(st.escrow) } : {}), ...(await provOf("commit")) });
-      return { ...(await (await open(e, secret)).append(e, entry)), entry };
+      return JSON.stringify({ commit: hexOf(commit), info: hexOf(st.info), ...(st.escrow ? { next: hexOf(st.escrow) } : {}), ...(await provOf("commit")) });
+    }
+    const publish = async (e, secret, entry) => ({ ...(await (await open(e, secret)).append(e, entry)), entry });
+    async function commitAt(e, secret, commit) {
+      return publish(e, secret, await entryOf(commit));
     }
     // This epoch's LOG exists: made now by the node that made the epoch (`made`: known new, nothing to ask), else found —
     // or, where that node never made it, made the first time it is looked for. `prev`: the epoch before's secret
@@ -255,7 +259,7 @@ export async function start(ctx) {
       // Gone back (a lost commit undone) counts as a change: the group as it is now is saved.
       return n || (healed ? 1 : 0);
     }
-    return { commitFrom, commitAt, ensure, catchUp, history, heal, branch, backFor };
+    return { commitFrom, commitAt, entryOf, publish, ensure, catchUp, history, heal, branch, backFor };
   }
 
   // THE ACCOUNT's group.
@@ -660,9 +664,36 @@ export async function start(ctx) {
       status(s);
       return true;
     }
+    // A COMMIT KEPT BUT NOT KNOWN TO BE IN THE LOG (`change`'s write-ahead; the page died between): the log's entry
+    // for its epoch read again — none: published now; this one: done; another's: this one lost — the group before it
+    // taken back (`logs.heal`) and the winner applied.
+    async function finishPending() {
+      const t = await spacekeys();
+      const v = t.rows().find(r => r.key === `${at}~pending`)?.value;
+      if (!v || !m) return;
+      const p = JSON.parse(v);
+      const snap = t.rows().find(r => r.key === snapKey(p.epoch))?.value;
+      const before = snap ? JSON.parse(snap) : null;
+      if (!before?.secret) return void (await t.remove(`${at}~pending`));
+      const won = await logs.commitFrom(p.epoch, bytes(before.secret), true).catch(() => undefined);
+      if (won === undefined) return; // not read: asked again next time
+      if (won === null) {
+        const r = await logs.publish(p.epoch, bytes(before.secret), p.entry);
+        if (!r.ok) return void (await logs.heal());
+        ctx.log(`${sp.name ?? "space"} keys`, { what: `epoch ${p.epoch}: this device's change, kept but not sent when the page closed, sent now` });
+        keyEvent("pending-published", { space: hexOf(sp.idBytes), epoch: p.epoch });
+      } else if (won !== p.entry) {
+        await logs.heal();
+        await t.remove(`${at}~pending`);
+        return;
+      }
+      if (m.status().epoch === p.epoch + 1) await save(true, before.secret, "commit");
+      await t.remove(`${at}~pending`);
+    }
     // A commit that did not apply here (this DID's own, from another device): its state, when that device has saved it.
     let stuckSaid = false;
     async function current(fresh = false) {
+      await finishPending().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `finishing a kept change: ${e?.message ?? e}` }));
       for (let tries = 0; ; tries++) {
         try {
           // CAUGHT UP one epoch: the epoch before's secret held here is the new log's PREV (owner 10-07: an open row with no
@@ -699,19 +730,32 @@ export async function start(ctx) {
     }
     // A change of the group (add, remove): its commit in the log of the epoch it moves from, then saved. Lost to
     // another change first: this device takes the newer group and says so.
+    // WRITE-AHEAD (10-07, Ivvor: a commit reached the log and the state after it was never saved — the tab closed —
+    // and MLS never applies a member's own commit, so that device could never catch up): BEFORE the commit goes out,
+    // the state after it, the group before it (`keepSnap`) and the commit itself (`~pending`) are kept; the pending
+    // mark goes once it is in the log. A page that dies between finishes it on its next load (`finishPending`).
     async function change(make, intent = null) {
       if (!m) throw new Error("this account is not in the space's group");
       const from = m.status();
       const [commit, out] = make();
-      const r = await logs.commitAt(from.epoch, from.secret, commit);
-      if (r.ok) await keepSnap(from, r.entry, intent);
+      const entry = await logs.entryOf(commit);
+      const t = await spacekeys();
+      await keepSnap(from, entry, intent);
+      await t.put(`${at}~pending`, JSON.stringify({ epoch: from.epoch, entry }));
+      await t.put(at, JSON.stringify({ epoch: m.status().epoch, state: hexOf(m.status().state) }));
+      const r = await logs.publish(from.epoch, from.secret, entry);
       if (!r.ok) {
+        // Lost the race for the epoch: back to the group before it, saved as it was.
+        await t.put(at, JSON.stringify({ epoch: from.epoch, state: hexOf(from.state) }));
+        await t.remove(`${at}~pending`);
+        await t.remove(snapKey(from.epoch));
         m = null;
         await load();
         await current().catch(() => {});
         throw new Error("the group moved meanwhile: try again");
       }
       await save(true, hexOf(from.secret), "commit");
+      await t.remove(`${at}~pending`);
       keyEvent("commit", { space: hexOf(sp.idBytes), from: from.epoch, to: m.status().epoch, intent: intent?.kind ?? "add" });
       return out;
     }
