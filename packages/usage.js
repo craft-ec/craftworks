@@ -142,23 +142,48 @@ export async function start(ctx) {
   // (default 30) and SPLIT PER DAY by that day's use; contributions that overlap add up on the days they share.
   // SHADOW MODE: a contribution here is a preview (table `contrib`), nothing is given or paid.
   const DAYS = 30;
+  // THE TOKEN has 8 DECIMALS (owner 10-07): 0.00000001 is its smallest amount; every share is rounded to it.
+  const DECIMALS = 8;
   const SPLIT = { creators: 0.6, carriers: 0.3, network: 0.1 };
   async function contribute(amount, days = DAYS) {
     const t = await storage.table("contrib");
     await t.settled;
     const at = Date.now();
     await t.put(`c:${at}`, JSON.stringify({ at, amount: Math.max(0, Number(amount) || 0), days: Math.max(1, Math.round(Number(days) || DAYS)) }));
+    // PUBLIC (owner 10-07): the ones still running, on this person's card — anyone computes their level (a badge).
+    const running = (await contributions()).filter(c => c.at + c.days * 86400000 > Date.now());
+    await (await ctx.require("directory")).setContributions(running);
   }
   async function contributions() {
     const t = await storage.table("contrib");
     await t.settled;
     return t.rows().filter(r => r.key.startsWith("c:") && r.value).map(r => parse(r.value)).filter(c => c?.amount > 0).sort((a, b) => a.at - b.at);
   }
+  // ON THE CARD, kept in step (contributions made before they were public, or on another device): the running ones
+  // written there when they differ — once, a little after the page is up.
+  setTimeout(async () => {
+    try {
+      const space = await ctx.require("space");
+      const me = (await space.account())?.id;
+      if (!me) return;
+      const directory = await ctx.require("directory");
+      const running = (await contributions()).filter(c => c.at + c.days * 86400000 > Date.now());
+      const on = (await directory.card(me))?.contrib ?? [];
+      const key = l => JSON.stringify(l.map(c => [c.at, c.amount, c.days]).sort());
+      if (running.length && key(running) !== key(on)) await directory.setContributions(running);
+    } catch (e) {
+      ctx.log("usage", { what: `contributions not on the card: ${e?.message ?? e}` });
+    }
+  }, 15000);
   // THE LEVEL (rewards §5a): FREE, PRO or VIP by what this person gives NOW — today's share of their active
   // contributions, as a month. Thresholds in one place (placeholders, owner 10-07).
   const LEVELS = [["vip", "VIP", 20], ["pro", "PRO", 5]];
   async function level(day = dayOf()) {
-    const perMonth = Math.round(shareOn(await contributions(), day) * 30 * 100) / 100;
+    return levelFrom(await contributions(), day);
+  }
+  // ANYONE's level from their (public) contributions — what a name's badge shows (`directory.levelOf`).
+  function levelFrom(cs, day = dayOf()) {
+    const perMonth = Math.round(shareOn(cs, day) * 30 * 100) / 100;
     const hit = LEVELS.find(([, , min]) => perMonth >= min);
     return { id: hit?.[0] ?? "free", name: hit?.[1] ?? "Free", perMonth, next: LEVELS.slice().reverse().find(([, , min]) => perMonth < min) ?? null };
   }
@@ -182,7 +207,7 @@ export async function start(ctx) {
     await t.settled;
     const rows = p => t.rows().filter(r => r.key.startsWith(p) && r.value).map(r => ({ key: r.key.slice(p.length), ...parse(r.value) }));
     const out = { month: m, amount: 0, days: 0, creators: {}, carriers: {}, unclaimed: {}, network: 0, at: Date.now() };
-    const give = (to, who, n) => (to[who] = Math.round(((to[who] ?? 0) + n) * 1e6) / 1e6);
+    const give = (to, who, n) => (to[who] = Math.round(((to[who] ?? 0) + n) * 1e8) / 1e8);
     const bys = new Map();
     const byOf = ref => {
       if (!bys.has(ref)) bys.set(ref, String(ref).startsWith("did:") ? Promise.resolve(String(ref).slice(0, String(ref).lastIndexOf("/"))) : items.get(ref).then(it => it?.by ?? null, () => null));
@@ -225,8 +250,8 @@ export async function start(ctx) {
       if (!data) await toCreators(fee * SPLIT.carriers, null);
       out.network += fee * SPLIT.network + unpaid;
     }
-    out.amount = Math.round(out.amount * 1e6) / 1e6;
-    out.network = Math.round(out.network * 1e6) / 1e6;
+    out.amount = Math.round(out.amount * 1e8) / 1e8;
+    out.network = Math.round(out.network * 1e8) / 1e8;
     return out;
   }
   // THE LEVEL AHEAD: each level and its LAST day, from today, as the contributions run out — [{ id, name, until }].
@@ -252,5 +277,5 @@ export async function start(ctx) {
     if (by && by === (await (await ctx.require("space")).account())?.id) return true;
     return RANK[(await level()).id] >= RANK[lv];
   }
-  return { track, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions, level, levelPlan, mayOpen, LEVELS };
+  return { track, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions, level, levelFrom, levelPlan, mayOpen, LEVELS };
 }

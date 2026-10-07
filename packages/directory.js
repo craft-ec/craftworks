@@ -9,6 +9,8 @@
 //   const directory = await ctx.require("directory");
 //   await directory.card(did)                 // { did, handle, inbox, keyPackage, keyPackages }, or null (keyPackage: one, at random)
 //   await directory.publish({ handle })       // this person's handle, and their key packages
+//   await directory.setContributions(list)    // this person's contributions, PUBLIC on their card (rewards §5a)
+//   await directory.levelOf(did)              // their level now, from their card: { id, name } ("free"|"pro"|"vip")
 //   await directory.handle(did)               // their handle, or null (each card read once per page)
 //   directory.shown(did, handle)              // how a person is SHOWN everywhere: `pat#8r4orC`
 //   await directory.name(did)                 // the same, their handle looked up
@@ -39,6 +41,15 @@ export async function start(ctx) {
     return {
       handle: rows.find(r => r.key === "handle")?.value ?? null,
       inbox: rows.find(r => r.key === "inbox")?.value ?? null,
+      // Their CONTRIBUTIONS (rewards §5a, PUBLIC — owner 10-07): [{ at, amount, days }], what their level is made of.
+      contrib: (() => {
+        try {
+          const list = JSON.parse(rows.find(r => r.key === "contrib")?.value ?? "[]");
+          return Array.isArray(list) ? list.filter(c => c && Number(c.amount) > 0 && Number(c.days) > 0 && Number(c.at) > 0) : [];
+        } catch {
+          return [];
+        }
+      })(),
       // The account's devices' credentials (hex), as its key group has them.
       nodes: (() => {
         try {
@@ -112,6 +123,21 @@ export async function start(ctx) {
     return { did: sp.id, ...read(t) };
   }
 
+  // THIS person's CONTRIBUTIONS on their card (PUBLIC: anyone computes their level from them — `usage.levelFrom`).
+  async function setContributions(list) {
+    const sp = await space.account();
+    if (!sp?.shared) throw new Error("this node does not hold the account's data key");
+    const t = await storage.publicTail(CARD, sp.shared);
+    await t.put("contrib", JSON.stringify(list.map(c => ({ at: c.at, amount: c.amount, days: c.days }))));
+    levels.delete(sp.id);
+  }
+  // A person's LEVEL now, from their card's contributions (once per page per person).
+  const levels = new Map();
+  function levelOf(did) {
+    if (!levels.has(did)) levels.set(did, Promise.all([card(did), ctx.require("usage")]).then(([c, u]) => u.levelFrom(c?.contrib ?? []), () => ({ id: "free", name: "Free" })));
+    return levels.get(did);
+  }
+
   // The account's DEVICES on the card: the credentials its key group holds now (rewritten when they change: a device
   // joined or was removed).
   async function putNodes(t) {
@@ -159,9 +185,11 @@ export async function start(ctx) {
   const name = async did => shown(did, await handle(did));
   // A person's NAME ON A PAGE — the one way one is drawn: an element showing what is known now (never waited on),
   // its text replaced when their card is read.
+  // With their BADGE (rewards §5a): ⭐ PRO, 💎 VIP — their level now, from their public contributions.
+  const BADGE = { pro: " ⭐ PRO", vip: " 💎 VIP" };
   const nameEl = (did, tag = "span", props = {}) => {
     const e = Object.assign(document.createElement(tag), props, { textContent: shown(did, knownHandles.get(did)) });
-    name(did).then(t => (e.textContent = t), () => {});
+    Promise.all([name(did), levelOf(did).catch(() => null)]).then(([t, lv]) => (e.textContent = t + (BADGE[lv?.id] ?? "")), () => {});
     return e;
   };
 
@@ -226,5 +254,5 @@ export async function start(ctx) {
     return dids.filter((_, i) => ok[i]);
   }
 
-  return { credTable, card, publish, renew, handle, shown, name, nameEl, publicOf, dataKey, devices, onDevices, listMe, isListed, listed };
+  return { credTable, card, publish, setContributions, levelOf, renew, handle, shown, name, nameEl, publicOf, dataKey, devices, onDevices, listMe, isListed, listed };
 }

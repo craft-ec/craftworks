@@ -5,6 +5,8 @@ is shared among the people whose content they used and the people whose machines
 month. Nothing is paid out of thin air: every reward is someone's contribution. (First written 2026-10-06 as a
 monthly subscription; the split, statements, ledger and payout are the same — only the amount is the giver's.)
 
+**The token has 8 decimals (owner, 2026-10-07):** 0.00000001 is its smallest amount; every share is rounded to it.
+
 **Split PER DAY (owner, 2026-10-07).** A contribution is spread evenly over a WEEK (7 days) or a MONTH (30
 days, the default) — the giver's choice and each day's slice is split by what the giver used THAT day. Contributions that overlap add up on the
 days they share (10 over a month and 7 over a week: 1.33 a day for the week, then 0.33). A day with no use sends
@@ -150,6 +152,9 @@ A contributor's claims only steer their own contribution (§1): misreporting can
   lasts while its contributions run (a week or a month each), and ends with them: nothing to renew or cancel. Public,
   computed from the contributions' record by anyone — no tier table, no admin (Handcraft's tiers live in a database and
   its pass "signature" anyone can recompute: not repeated here).
+- **Contributions are PUBLIC and a level is a BADGE (owner, 2026-10-07):** each person's running contributions are on
+  their public card (`directory`: only their account writes it, anyone reads it), so anyone computes their level; every
+  name drawn shows it — ⭐ PRO, 💎 VIP. (Self-stated until the token: the token contract's record replaces the card's.)
 - **An item's minimum level** (creator's choice: everyone, PRO, VIP): the item ENCRYPTED, its key sealed to the people at
   that level — never one server secret that decrypts everything (Handcraft's `CONTENT_ENCRYPTION_SECRET`).
 - **Paying for one item:** in the token, to its creator; the buyer gets the item's key sealed to them.
