@@ -491,7 +491,7 @@ export async function start(ctx) {
         await space.record(it.space, v);
         // Its request answered: no longer waiting — the space's, and the code the welcome names.
         const t = await asks().catch(() => null);
-        const answered = x => x.key === it.space || (it.code && x.key === `code:${it.code}`);
+        const answered = x => x.key === it.space || (it.code && x.key === `code:${it.code}`) || (it.code === "level" && x.key === `code:${levelCode(it.space)}`);
         if (t) for (const r of t.rows().filter(x => x.value && answered(x))) await t.remove(r.key).catch(() => {});
         out.push(sp);
         ctx.log("conversation", { what: it.repair ? `${it.name ?? it.space.slice(0, 8)}: caught up onto the owner's keys — welcomed by ${short(it.from)}, ${Array.isArray(it.history) ? it.history.length : 0} earlier key(s) with it` : `joined a ${it.spaceKind} conversation with ${short(it.from)}` });
@@ -605,6 +605,57 @@ export async function start(ctx) {
   // OPEN SPACES: who may join without a code (the space's `config` space/join: "open"). The asker drops a request in
   // the bag the space's id names; a member who may invite welcomes them, recorded `admitted` (code "open").
   const openCode = id => `open ${id}`;
+  // LEVEL GROUPS (rewards §5a: a creator's PRO, VIP): who asks drops a request in the bag `level <id>`; any member lets
+  // them in while their public card's contributions reach its level (here, and the identity delegate with no page open).
+  const levelCode = id => `level ${id}`;
+  const levelOfGroup = r => /^level:(pro|vip)$/.exec(r.policy("", "join") ?? "")?.[1] ?? null;
+  // A person's level NOW from their card read again (the one rule: gov's, through `usage`) — kept TEN MINUTES (every
+  // member's page asks of every member each tick); null where the card did not read (unknown, never "free": a failed
+  // read must not put a giver out).
+  const levelsRead = new Map(); // did → { at, id }
+  async function levelNow(did) {
+    const had = levelsRead.get(did);
+    if (had && Date.now() - had.at < 600000) return had.id;
+    const card = await directory.card(did, { fresh: true }).catch(() => null);
+    if (!card) return null;
+    const id = (await ctx.require("usage")).levelFrom(card.contrib ?? []).id;
+    levelsRead.set(did, { at: Date.now(), id });
+    return id;
+  }
+  async function joinLevel(gid, name = null) {
+    const me = await space.account();
+    if (!me) throw new Error("nobody is logged in");
+    await directory.publish().catch(() => {});
+    await index.request(levelCode(gid), { kind: "join", did: me.id, at: Date.now() });
+    await noteAsk(`code:${levelCode(gid)}`, { code: "level", name });
+    ctx.log("conversation", { what: `asked to join ${name ?? gid.slice(0, 8)} (a level group)` });
+  }
+  // LAPSED: in a level group, any member (in turn) takes out another whose card no longer reaches its level — a
+  // `lapsed` act (not a ban: they ask again when they give again); `moderation.enforce` takes their entry out. Who.
+  async function lapse(sp) {
+    const me = await space.account();
+    const r = await (await ctx.require("roles")).of(sp);
+    const lv = levelOfGroup(r);
+    if (!me || !lv || r.left || !r.role(me.id)) return [];
+    const usage = await ctx.require("usage");
+    const ordering = await ctx.require("ordering");
+    const members = r.members().map(m => m.did);
+    const out = [];
+    for (const did of members) {
+      if (did === me.id || did === r.owner) continue;
+      const have = await levelNow(did);
+      if (have === null || usage.reaches(have, lv)) continue;
+      const k = `lapse|${sp.id}|${did}`;
+      if (!pendingSince.has(k)) pendingSince.set(k, Date.now());
+      const turn = ordering.turn(k, members, me.id);
+      if (turn < 0 || Date.now() - pendingSince.get(k) < (turn + 1) * ordering.TAKEOVER) continue;
+      await r.act({ act: "lapsed", did }).then(
+        () => (pendingSince.delete(k), out.push(did), ctx.log("conversation", { what: `${sp.name}: ${short(did)}'s level ran out — taken out (they ask again when they give again)` })),
+        e => ctx.log("conversation", { what: `${sp.name}: lapsing ${short(did)}: ${e.message}` }),
+      );
+    }
+    return out;
+  }
   async function joinOpen(desc) {
     const me = await space.account();
     if (!me) throw new Error("nobody is logged in");
@@ -811,6 +862,17 @@ export async function start(ctx) {
     for (const a of r.acts("admitted")) if (a.did && (a.at ?? 0) > (admittedAt.get(a.did) ?? 0)) admittedAt.set(a.did, a.at ?? 0);
     const asks = [];
     if (r.policy("", "join") === "anyone") for (const q of await index.requests(openCode(sp.id)).catch(() => [])) asks.push({ ...q, code: "open" });
+    // A LEVEL GROUP: its bag's askers whose card reaches its level now (checked as each is read).
+    const lv = levelOfGroup(r);
+    if (lv) {
+      const usage = await ctx.require("usage");
+      const inGroup = new Set(r.members().map(m => m.did));
+      for (const q of await index.requests(levelCode(sp.id)).catch(() => [])) {
+        if (!q?.did || inGroup.has(q.did)) continue;
+        const have = await levelNow(q.did);
+        if (have !== null && usage.reaches(have, lv)) asks.push({ ...q, code: "level" });
+      }
+    }
     for (const inv of r.invites()) for (const q of await index.requests(inv.code).catch(() => [])) asks.push({ ...q, code: inv.code });
     // OUT BY THE ACTS: a REMOVED member never comes back by a request (Settings says so); one who LEFT only by a request
     // made after they left (an old one still sits in the bag).
@@ -1242,5 +1304,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, reconcile, repair, catchUp, keyStatus, reportReads, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
+  return { direct, group, invite, accept, reconcile, joinLevel, lapse, levelCode, repair, catchUp, keyStatus, reportReads, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
 }

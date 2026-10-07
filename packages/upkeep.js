@@ -57,6 +57,8 @@ export async function start(ctx) {
         if (r && !r.left && r.role(me.id)) {
           const n = await (await ctx.require("moderation")).of(sp).then(m => m.enforce()).catch(e => (ctx.log("upkeep", { what: `${sp.name}: bans: ${e.message}` }), 0));
           if (n) ctx.log("upkeep", { what: `${sp.name}: ${n} banned device(s) taken out of the group` });
+          // A LEVEL GROUP: whoever's card no longer reaches its level, taken out (in turn).
+          await conversation.lapse(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: lapses: ${e.message}` }));
           // A FORK's heal: members on another branch of the group's keys welcomed back onto the owner's (by any member
           // on it — nothing new is let in: only who is a member already).
           const fixed = await conversation.repair(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: repair: ${e.message}` }), []));
@@ -105,6 +107,11 @@ export async function start(ctx) {
     }
     if (written.length) await auth.identity.upkeepAck(written);
   }
+  // Out of a level group by a lapse alone (no removal, ban or leave since): may be let in again.
+  const lapsedOnly = (r, did) => {
+    const outs = r.acts().filter(a => (a.did ?? a.by) === did && ["lapsed", "remove", "ban", "leave"].includes(a.act));
+    return outs.length > 0 && outs.at(-1).act === "lapsed";
+  };
   // THE MANDATE: every shared space where this person may invite, as this page knows it now.
   async function mandate(me) {
     const spaces = [];
@@ -116,10 +123,13 @@ export async function start(ctx) {
       spaces.push({
         space: sp.id, name: sp.name, kind: sp.kind, owner: sp.governance.owner, nonce: sp.governance.nonce ?? null, channel: sp.tables.channel,
         open: r.policy("", "join") === "anyone",
+        // A level group's level: the delegate lets in askers at `level <id>` whose card reaches it.
+        level: /^level:(pro|vip)$/.exec(r.policy("", "join") ?? "")?.[1] ?? null,
         codes: r.invites().map(i => [i.code, i.expires || 0, i.uses ? i.uses - i.admitted.length : 0]),
         // Never let in again: the banned AND whoever the acts put out (removed, left) — an old request of theirs still
         // sits in a bag upkeep reads.
-        bans: [...new Set([...r.bannedList(), ...r.goneList()])], members: r.members().map(m => m.did), epoch: g.epoch, state: g.state,
+        // (One out only by a LAPSE may come back: they ask again when they give again.)
+        bans: [...new Set([...r.bannedList(), ...r.goneList().filter(d => !lapsedOnly(r, d))])], members: r.members().map(m => m.did), epoch: g.epoch, state: g.state,
       });
     }
     // With it, the key packages this account used already: upkeep never uses one again.

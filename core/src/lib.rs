@@ -1056,6 +1056,7 @@ mod js {
                         nonce: s("nonce"),
                         channel: s("channel")?,
                         open: m.get("open").and_then(|x| x.as_bool()).unwrap_or(false),
+                        level: s("level").filter(|l| matches!(l.as_str(), "pro" | "vip")),
                         codes: m
                             .get("codes")?
                             .as_array()?
@@ -2379,6 +2380,26 @@ mod js {
             &craftworks_files::read_chunk(&b32(key)?, &plan, &listed_of(listed)?, i as u64, state)
                 .map_err(file_err)?[..],
         ))
+    }
+
+    /// A person's LEVEL now from their card's contributions (`craftworks_gov::level_from`, the one rule: the identity
+    /// delegate admits into a level group by it too): JSON `{ id, perMonth }`.
+    #[wasm_bindgen]
+    pub fn level_from(contrib: &str, now: f64) -> String {
+        let (id, per_month) = craftworks_gov::level_from(contrib, now);
+        serde_json::json!({ "id": id, "perMonth": per_month }).to_string()
+    }
+
+    /// Whether level `have` reaches `need` (`craftworks_gov::level_reaches`).
+    #[wasm_bindgen]
+    pub fn level_reaches(have: &str, need: &str) -> bool {
+        craftworks_gov::level_reaches(have, need)
+    }
+
+    /// THE LEVELS' thresholds (`craftworks_gov::LEVELS`): JSON `[[id, per month at least]]`, highest first.
+    #[wasm_bindgen]
+    pub fn levels() -> String {
+        serde_json::to_string(&craftworks_gov::LEVELS).unwrap_or_default()
     }
 
     /// A space's GOVERNANCE (`craftworks_gov`, the one replay: the identity delegate reads a space by it too).

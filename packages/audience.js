@@ -76,7 +76,7 @@ export async function start(ctx) {
     const custom = h("details", {}, h("summary", { textContent: `Customize each (${ACTS.map(([a]) => a).join(", ")})` }), ...ACTS.map(([a, label]) => h("label", {}, label, each[a])));
     // WHO CAN OPEN IT: a contribution LEVEL (rewards §5a), on top of who sees it.
     const lsel = h("select", { className: "field", name: "level" }, ...[["", "Anyone who sees it"], ["pro", "🔒 PRO and VIP"], ["vip", "🔒 VIP only"]].map(([value, textContent]) => h("option", { value, textContent })));
-    const lnote = h("small", { textContent: "Shown only to that level in Craftworks — not encrypted yet, so another app could still read it." });
+    const lnote = h("small", { textContent: "Sealed to your PRO or VIP group: only those who give at that level read it (a teaser shows it exists)." });
     const el = h("div", { className: "cw-aud", style: "display:grid;gap:6px" }, h("label", {}, "Who sees it", sel), h("label", {}, "Who can open it", lsel), lnote, h("label", {}, "Who may interact", wsel), custom);
     return {
       el,

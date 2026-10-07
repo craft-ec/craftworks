@@ -45,6 +45,24 @@ export async function start(ctx) {
     return sp;
   }
 
+  // A creator's LEVEL GROUP (rewards §5a): PRO or VIP — a group like a circle, joined by ASKING (its bag `level <id>`)
+  // and let in by any member while the asker's card reaches the level (`conversation`, and the identity delegate with
+  // no page open); a gated item of theirs is sealed to it.
+  const LEVEL_NAMES = { pro: "PRO", vip: "VIP" };
+  async function level(lv) {
+    if (!LEVEL_NAMES[lv]) throw new Error(`no such level: ${lv}`);
+    const handle = await (await ctx.require("directory")).name((await space.account()).id).catch(() => "");
+    return groups.of(`level:${lv}`, {
+      name: `${LEVEL_NAMES[lv]} of ${handle || "me"}`,
+      setup: async (sp, r) => {
+        await index.openRequests((await ctx.require("conversation")).levelCode(sp.id));
+        await r.act({ act: "policy", path: "", action: "join", who: `level:${lv}` });
+        await r.act({ act: "app", app: "board", on: true });
+        await r.act({ act: "policy", path: "", action: "post", who: "admins" });
+      },
+    });
+  }
+
   // FOLLOW NOTICES in the inbox: each follower as `follower` (the newest notice of each person counts).
   // A follower COUNTS by this person's rule (`roles.followable`: anyone · friends · nobody — `mayWrite`, the check a
   // comment passes, its credential cited): asked every pass, so a rule made narrower drops who no longer meets it.
@@ -102,5 +120,5 @@ export async function start(ctx) {
       await groups.keep(sp, new Set(people.list(a.relation).filter(d => d !== me.id && !people.is("block", d))));
     }
   }
-  return { of, sync };
+  return { of, sync , level };
 }

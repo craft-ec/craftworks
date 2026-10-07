@@ -194,15 +194,19 @@ export async function start(ctx) {
   }, 15000);
   // THE LEVEL (rewards §5a): FREE, PRO or VIP by what this person gives NOW — today's share of their active
   // contributions, as a month. Thresholds in one place (placeholders, owner 10-07).
-  const LEVELS = [["vip", "VIP", 20], ["pro", "PRO", 5]];
+  // ONE RULE (`craftworks_gov::level_from`, through the core): the identity delegate admits into a level group by the
+  // same. Its thresholds too; only the names shown are here.
+  const { glue } = await ctx.require("node");
+  const NAMES = { vip: "VIP", pro: "PRO", free: "Free" };
+  const LEVELS = JSON.parse(glue.levels()).map(([id, min]) => [id, NAMES[id] ?? id, min]);
+  const noon = day => Date.parse(`${day}T12:00:00Z`);
   async function level(day = dayOf()) {
     return levelFrom(await contributions(), day);
   }
   // ANYONE's level from their (public) contributions — what a name's badge shows (`directory.levelOf`).
   function levelFrom(cs, day = dayOf()) {
-    const perMonth = Math.round(shareOn(cs, day) * 30 * 100) / 100;
-    const hit = LEVELS.find(([, , min]) => perMonth >= min);
-    return { id: hit?.[0] ?? "free", name: hit?.[1] ?? "Free", perMonth, next: LEVELS.slice().reverse().find(([, , min]) => perMonth < min) ?? null };
+    const { id, perMonth } = JSON.parse(glue.level_from(JSON.stringify(cs ?? []), noon(day)));
+    return { id, name: NAMES[id] ?? id, perMonth, next: LEVELS.slice().reverse().find(([, , min]) => perMonth < min) ?? null };
   }
   // A DAY's share of every contribution active on it (from its day, for its days).
   const shareOn = (cs, day) =>
@@ -289,22 +293,20 @@ export async function start(ctx) {
     const out = [];
     for (let i = 0; i < 400; i++) {
       const day = dayOf(Date.now() + i * 86400000);
-      const perMonth = shareOn(cs, day) * 30;
-      const hit = LEVELS.find(([, , min]) => perMonth >= min);
-      const id = hit?.[0] ?? "free";
+      const { id, name } = levelFrom(cs, day);
       if (out.length && out.at(-1).id === id) out.at(-1).until = day;
       else if (id === "free" && out.length) break;
-      else if (id !== "free") out.push({ id, name: hit[1], until: day });
+      else if (id !== "free") out.push({ id, name, until: day });
       else break;
     }
     return out;
   }
   // May this person open an item of LEVEL `lv` ("" / "pro" / "vip")? Its author always may.
-  const RANK = { free: 0, pro: 1, vip: 2 };
+  const reaches = (have, need) => glue.level_reaches(have, need);
   async function mayOpen(lv, by = null) {
-    if (!lv || !RANK[lv]) return true;
+    if (!lv || !LEVELS.some(([id]) => id === lv)) return true;
     if (by && by === (await (await ctx.require("space")).account())?.id) return true;
-    return RANK[(await level()).id] >= RANK[lv];
+    return reaches((await level()).id, lv);
   }
-  return { track, trackItem, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions, level, levelFrom, levelPlan, mayOpen, LEVELS };
+  return { track, trackItem, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions, level, levelFrom, levelPlan, mayOpen, reaches, LEVELS };
 }

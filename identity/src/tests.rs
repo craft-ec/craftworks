@@ -732,7 +732,7 @@ fn an_invite_address_is_the_one_pages_named_before_it_moved_here() {
 fn a_mandate_older_than_upkeep_s_own_group_is_not_taken() {
     let mut m = provisioned(APP);
     let space = [0x5A; 32];
-    let mandate = |epoch: u64| Mandate { space, name: "s".into(), kind: "server".into(), owner: "did:o".into(), nonce: None, channel: "c".into(), open: true, codes: vec![], bans: vec![], members: vec![], epoch, state: vec![epoch as u8] };
+    let mandate = |epoch: u64| Mandate { space, name: "s".into(), kind: "server".into(), owner: "did:o".into(), nonce: None, channel: "c".into(), open: true, codes: vec![], level: None, bans: vec![], members: vec![], epoch, state: vec![epoch as u8] };
     let Answer::Unlocked { public: me, .. } = who(&mut m, APP) else { panic!("a session") };
     let ask = |m: &mut Map, spaces: Vec<Mandate>| serve(m, Request::UpkeepMandate { me: "did:me".into(), spaces, spent: vec![kp_tag("aa"), kp_tag("bb")] }, APP);
     ask(&mut m, vec![mandate(3)]);

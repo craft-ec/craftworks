@@ -626,7 +626,7 @@ fn round_after_a_removal(creates: bool) -> AfterRound {
     assert!(identity::keep_epoch(&mut h, &member, Some(SPACE), epoch, &s0));
     let m = Mandate {
         space: SPACE, name: "Makers".into(), kind: "server".into(), owner: me_did.clone(), nonce: None, channel: "ch".into(),
-        open: false, codes: vec![], bans: vec![], members: vec![me_did.clone()], epoch, state: g.save().unwrap(),
+        open: false, codes: vec![], level: None, bans: vec![], members: vec![me_did.clone()], epoch, state: g.save().unwrap(),
     };
     identity::upkeep_set_mandate(&mut h, &member, &me_did, &[m]);
     identity::upkeep_set_tick(&mut h, &member);

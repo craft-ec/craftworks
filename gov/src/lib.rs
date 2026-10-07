@@ -47,7 +47,42 @@ pub fn role_of(who: &str) -> Option<&str> {
 }
 /// A valid `who`: one of the built-in ones, or a composed role.
 pub fn valid_who(who: &str) -> bool {
-    WHO.contains(&who) || role_of(who).is_some() || list_of(who).is_some()
+    WHO.contains(&who) || role_of(who).is_some() || list_of(who).is_some() || level_of(who).is_some()
+}
+/// A contribution LEVEL (`level:pro`, `level:vip`: rewards §5a) — a level group's JOIN policy: who asks with that level
+/// on their public card is admitted by any member (the honor system: members check the card, not this replay).
+pub fn level_of(who: &str) -> Option<&str> {
+    who.strip_prefix("level:").filter(|l| matches!(*l, "pro" | "vip"))
+}
+/// THE LEVELS (rewards §5a) — the ONE rule, for pages (the core's `level_from`) and the identity delegate (admitting
+/// into a level group with no page open): what a person gives NOW, as a month — each running contribution's daily
+/// share (its amount over its days, from the UTC day it was made, for its days) on today, times 30, to the cent.
+/// `(id, at least per month)`, highest first; below the last: "free".
+pub const LEVELS: [(&str, f64); 2] = [("vip", 20.0), ("pro", 5.0)];
+const DAY_MS: f64 = 86_400_000.0;
+/// A person's level now from their card's `contrib` (JSON `[{ at, amount, days }]`): `(id, per month)`.
+pub fn level_from(contrib: &str, now_ms: f64) -> (&'static str, f64) {
+    let cs: Vec<Value> = serde_json::from_str(contrib).unwrap_or_default();
+    let today = (now_ms / DAY_MS).floor();
+    let share: f64 = cs
+        .iter()
+        .filter_map(|c| {
+            let (at, amount, days) = (c.get("at")?.as_f64()?, c.get("amount")?.as_f64()?, c.get("days")?.as_f64()?.round());
+            let from = (at / DAY_MS).floor();
+            (amount > 0.0 && days >= 1.0 && today >= from && today <= from + days - 1.0).then_some(amount / days)
+        })
+        .sum();
+    let per_month = (share * 30.0 * 100.0).round() / 100.0;
+    (LEVELS.iter().find(|(_, min)| per_month >= *min).map(|(id, _)| *id).unwrap_or("free"), per_month)
+}
+/// Whether level `have` reaches `need` (free < pro < vip).
+/// An unknown `need` is reached by nobody.
+pub fn level_reaches(have: &str, need: &str) -> bool {
+    let rank = |l: &str| LEVELS.iter().rev().position(|(id, _)| *id == l).map(|i| i + 1);
+    match (rank(have), rank(need)) {
+        (_, None) => false,
+        (h, Some(n)) => h.unwrap_or(0) >= n,
+    }
 }
 /// A LIST of named people (`list:<id>`): an audience by name, not by role — any member makes one.
 pub fn list_of(who: &str) -> Option<&str> {
@@ -303,6 +338,17 @@ impl Gov {
                     did.is_some_and(|d| d != by && g.standing(&by, r) > g.standing(d, role_at(&g, &removed, d).as_deref().or(Some("member")))) && g.may(&by, r, "remove")
                 }
                 "unban" => g.may(&by, r, "remove") && banned_did,
+                // LAPSED (a level group, rewards §5a): any member takes out another whose level ran out — never the owner,
+                // never a ban: they ask again and are admitted when they contribute again. Honor system.
+                // Only in a LEVEL GROUP (its join policy a level), and never the owner or an admin (review 10-07: anywhere,
+                // a plain member could have put an admin out).
+                "lapsed" => {
+                    g.policy_at("", "join", f64::INFINITY).is_some_and(|w| level_of(w).is_some())
+                        && g.roster.contains(&by)
+                        && did.is_some_and(|d| {
+                            d != by && Some(d) != g.owner.as_deref() && !removed.contains(d) && g.roster.contains(d) && rank(role_at(&g, &removed, d).as_deref()) < 2
+                        })
+                }
                 // LEAVING: a member's own act (the owner hands the space on first).
                 "leave" => r.is_some() && r != Some("owner") && did.is_none_or(|d| d == by),
                 "added" | "member" => invite_ok && did.is_some() && !banned_did,
@@ -313,7 +359,11 @@ impl Gov {
                 "admitted" => {
                     // In force when admitted (an act with no time: now).
                     let by_code = inv_exists && g.invites[code.unwrap()].live(at_or(&a, now));
-                    invite_ok && did.is_some() && !banned_did && (by_code || (code == Some("open") && g.policy_at("", "join", f64::INFINITY) == Some("anyone")))
+                    let join = g.policy_at("", "join", f64::INFINITY);
+                    invite_ok
+                        && did.is_some()
+                        && !banned_did
+                        && (by_code || (code == Some("open") && join == Some("anyone")) || (code == Some("level") && join.is_some_and(|w| level_of(w).is_some())))
                 }
                 "app" => g.may(&by, r, "apps") && s(&a, "app").is_some_and(app_name),
                 "config" => {
@@ -374,6 +424,12 @@ impl Gov {
                 }
                 "unban" => {
                     g.bans.remove(did.unwrap());
+                }
+                "lapsed" => {
+                    let d = did.unwrap().to_string();
+                    removed.insert(d.clone());
+                    g.roles.remove(&d);
+                    g.held.remove(&d);
                 }
                 "leave" => {
                     removed.insert(by.clone());

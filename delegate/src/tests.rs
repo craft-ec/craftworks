@@ -48,6 +48,10 @@ fn member_of(p: &Person) -> craftworks_mls::SpaceMember {
 }
 /// A person's CARD (a public tail under their data key): their inbox key and a key package.
 fn card(p: &Person, kp: &[u8]) -> Vec<u8> {
+    card_with(p, kp, None)
+}
+/// …with running contributions (`contrib`, JSON): what a level group checks.
+fn card_with(p: &Person, kp: &[u8], contrib: Option<&str>) -> Vec<u8> {
     let key = SigningKey::from_bytes(&p.data);
     let mut o = data::Open::new(TAIL, &key.verifying_key().to_bytes(), "card");
     o.public = true;
@@ -56,7 +60,10 @@ fn card(p: &Person, kp: &[u8]) -> Vec<u8> {
         .prepare(vec![
             tail::Op::Set { key: b"inbox".to_vec(), value: hex(&identity::inbox_public(&p.data)).into_bytes() },
             tail::Op::Set { key: b"kp".to_vec(), value: serde_json::to_vec(&vec![hex(kp)]).unwrap() },
-        ])
+        ]
+        .into_iter()
+        .chain(contrib.map(|c| tail::Op::Set { key: b"contrib".to_vec(), value: c.as_bytes().to_vec() }))
+        .collect())
         .unwrap();
     let p = craftec_register_contract::wire::Params::parse(&o.params).unwrap();
     let Some(data::Send::Put(state)) = o.commit(key.sign(&p.signed_message(false, seq, &h)).to_bytes()) else { panic!("a first write") };
@@ -103,6 +110,7 @@ fn world() -> World {
         channel: "space-channel".into(),
         open: false,
         codes: vec![(CODE.into(), 0, 1)],
+        level: None,
         bans: vec![],
         members: vec![me.clone()],
         epoch,
@@ -281,4 +289,44 @@ fn on_a_shared_node_each_person_is_upkept_by_their_own_mandate() {
     assert_eq!(identity::upkeep_mandate(&w.h, &other).unwrap().1[0].epoch, w.epoch, "their group untouched");
     // Only their page being open keeps upkeep away: the owner's absence alone does not stop them being served later.
     assert_eq!(identity::upkeep_members(&w.h), vec![MEMBER, other]);
+}
+
+/// A LEVEL GROUP (rewards §5a): the asker at `level <space>` is let in only while their card's contributions reach its
+/// level — gov's one rule; a free asker is not, a PRO one is, and the admission says `level`.
+#[test]
+fn a_level_group_lets_in_only_whom_their_card_shows_at_its_level() {
+    let run_with = |contrib: &str| {
+        let mut w = world();
+        let (me, mut spaces) = identity::upkeep_mandate(&w.h, &MEMBER).unwrap();
+        spaces[0].codes.clear();
+        spaces[0].level = Some("pro".into());
+        identity::upkeep_set_mandate(&mut w.h, &MEMBER, &me, &spaces);
+        let w2 = world_clone(&w);
+        let level_bag = id(BAG, &identity::invite_address(&format!("level {}", SPACE.iter().map(|x| format!("{x:02x}")).collect::<String>())));
+        let log = id(IDLOG, &w2.asker.did);
+        let card_id = data::Open::new(TAIL, &SigningKey::from_bytes(&w2.asker.data).verifying_key().to_bytes(), "card").id_bytes();
+        let card_state = card_with(&w2.asker, &w2.kp, Some(contrib));
+        let name = format!("level {}", SPACE.iter().map(|x| format!("{x:02x}")).collect::<String>());
+        let bag_state = bag(identity::invite_address(&name), &[join(&w2.asker)]);
+        let mut net = move |io: &Io| match io {
+            Io::Get { id, .. } if *id == level_bag => Reply::Got { id: *id, state: Some(bag_state.clone()) },
+            Io::Get { id, .. } if *id == log => Reply::Got { id: *id, state: Some(w2.asker.log.clone()) },
+            Io::Get { id, .. } if *id == card_id => Reply::Got { id: *id, state: Some(card_state.clone()) },
+            Io::Get { id, .. } => Reply::Got { id: *id, state: None },
+            Io::Put { code: Code::Tail, params, .. } => Reply::Put { id: id(TAIL, params), ok: true },
+            Io::Put { code: Code::Bag, params, .. } => Reply::Put { id: id(BAG, params), ok: true },
+            Io::Put { code: Code::Sealed | Code::Piece, params, .. } => Reply::Put { id: id(b"sealed", params), ok: true },
+            Io::Update { id, .. } => Reply::Updated { id: *id, ok: true },
+        };
+        let asked = run(&mut w, &mut net);
+        (asked, identity::upkeep_admitted(&w.h, &MEMBER))
+    };
+    // FREE (1 a month): asked, card read, nothing written.
+    let (asked, admitted) = run_with(&format!(r#"[{{"at":{NOW},"amount":1,"days":30}}]"#));
+    assert!(asked.iter().all(|x| matches!(x, Io::Get { .. })), "a free asker is not let in: {asked:?}");
+    assert!(admitted.is_empty());
+    // PRO (6 a month): let in, by `level`.
+    let (asked, admitted) = run_with(&format!(r#"[{{"at":{NOW},"amount":6,"days":30}}]"#));
+    assert_eq!(asked.iter().filter(|x| !matches!(x, Io::Get { .. })).count(), 3, "commit, next log, welcome: {asked:?}");
+    assert_eq!((admitted.len(), admitted[0].code.as_str()), (1, "level"));
 }

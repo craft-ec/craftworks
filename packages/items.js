@@ -657,6 +657,17 @@ export async function start(ctx) {
     if (!TOP.has(kind)) throw new Error(`not something to post: ${kind}`);
     if (!title && kinds.titled(kind)) throw new Error(`a ${kind} needs a title`);
     if (title.length > 300) throw new Error("a title of at most 300 characters");
+    // A LEVEL'S ITEM of yours (rewards §5a, PRO or VIP): SEALED in your level group (`circles.level`: only its members —
+    // who give at that level — read it), and a public TEASER where it would have been (its title, its level, where
+    // it is sealed): anyone sees it exists; one at the level asks in on opening it.
+    if (!board && audience === "public" && !meta?.gate && (meta?.level === "pro" || meta?.level === "vip")) {
+      const g = await (await ctx.require("circles")).level(meta.level);
+      // Its files PRIVATE first (made public with a public post: the teaser carries none; the group re-keys them for
+      // its members, as any file brought into a space).
+      await (await ctx.require("files")).publicity(files, null, false).catch(e => ctx.log("posts", { what: `its files kept private: ${e.message}` }));
+      const sealed = await submit({ board: g.id, title, body, kind, files, meta, at, write, audience: "members" });
+      return submit({ title, body: "", kind, meta: { level: meta.level, gate: { space: g.id, ref: sealed, name: g.name } }, at });
+    }
     // YOUR FRIENDS or YOUR FOLLOWERS: an item of that CIRCLE's place (`circles`: sealed to its members).
     if (!board && (audience === "friends" || audience === "followers")) {
       board = (await (await ctx.require("circles")).of(audience)).id;

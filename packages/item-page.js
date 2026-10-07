@@ -75,8 +75,27 @@ export async function start(ctx) {
         return gate;
       }
     }
-    // A LEVEL'S ITEM (rewards §5a) for someone below it: said, with where to contribute — its author always opens it.
-    // Enforced here, in Craftworks' pages (not encrypted yet).
+    // A SEALED LEVEL'S ITEM (rewards §5a: a teaser naming where it is sealed): a member of its level group reads it
+    // there; one at the level ASKS in (once: any member, or the creator's node with no page open, lets them in); one
+    // below it is told where to give.
+    const gate = it.meta?.gate;
+    if (gate?.space && gate?.ref && (it.meta.level === "pro" || it.meta.level === "vip")) {
+      const space = await ctx.require("space");
+      if ((await space.mine()).some(s => s.id === gate.space)) return show(gate.ref, { app, back, discover });
+      const usage = await ctx.require("usage");
+      const mine = await usage.level().catch(() => ({ id: "free", name: "Free" }));
+      const name = it.meta.level === "vip" ? "VIP" : "PRO and VIP";
+      const about = h("div", { className: "about" });
+      if (usage.reaches(mine.id, it.meta.level)) {
+        const conversation = await ctx.require("conversation");
+        const asked = (await conversation.askedCodes().catch(() => [])).some(a => a.key === `code:${conversation.levelCode(gate.space)}`);
+        if (!asked) await conversation.joinLevel(gate.space, gate.name ?? null).catch(e => ctx.log("item", { what: `asking into ${gate.space.slice(0, 8)}: ${e.message}` }));
+        about.append(h("p", { textContent: `🔒 For ${name} contributors — you are ${mine.name}: asked to be let in. It opens here once a member (or its creator's node) lets you in, usually within minutes.` }));
+      } else about.append(h("p", { textContent: `🔒 For ${name} contributors. Your level: ${mine.name}.` }), h("a", { href: "#/usage", textContent: "Contribute (Usage)" }));
+      return h("div", { className: "cw-page" }, h("h1", { textContent: it.title || "" }), about);
+    }
+    // A LEVEL'S ITEM from before sealing (rewards §5a) for someone below it: said, with where to contribute — its
+    // author always opens it. Enforced here, in Craftworks' pages only.
     const lv = it.meta?.level;
     if (lv === "pro" || lv === "vip") {
       const usage = await ctx.require("usage");

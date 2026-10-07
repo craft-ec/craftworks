@@ -165,6 +165,12 @@ A contributor's claims only steer their own contribution (§1): misreporting can
   — the creator need never be online. A lapsed level: removed by any member (anyone verifies it from the card), the
   group moving to a new key. Honor system, accepted: a malicious member could admit a non-contributor, but honest
   members' nodes remove whoever's card does not show the level on their next tick.
+- **Built (2026-10-07; the identity build changed for it once, owner's say):** the level rule is ONE function
+  (`craftworks_gov::level_from`: the page through the core, the identity delegate directly). A creator's gated post is
+  SEALED in their level group (`circles.level`: join policy `level:pro|vip`) with a public TEASER (`meta.gate`); a
+  reader at the level who opens it asks in (bag `level <group>`); any member's page — or the creator's node with no
+  page open (the delegate reads the asker's card) — lets them in (`admitted`, code `level`); a member whose card falls
+  below is taken out by any member (`lapsed`: not a ban). Posts gated before this are still the page-only gate.
 
 ## 6. What is open, and the proposal for each
 

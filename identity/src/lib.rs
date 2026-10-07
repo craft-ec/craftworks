@@ -161,6 +161,10 @@ pub struct Mandate {
     pub open: bool,
     /// Invite codes in force: `(code, expires ms or 0, uses left or 0 for no limit)`.
     pub codes: Vec<(String, u64, u32)>,
+    /// A LEVEL GROUP's level (`pro`, `vip`: its join policy `level:<id>`, rewards §5a): who asks at `level <space id>`
+    /// is let in when their public card's contributions reach it (`craftworks_gov::level_from`).
+    #[serde(default)]
+    pub level: Option<String>,
     pub bans: Vec<String>,
     pub members: Vec<String>,
     /// The group: its epoch and its MLS state.

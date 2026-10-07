@@ -184,8 +184,12 @@ pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
             if m.open {
                 bags.push("open".into());
             }
+            // A LEVEL GROUP: who asks at `level <space>` (their card's level checked when it is read).
+            if m.level.as_deref().is_some_and(|l| craftworks_gov::LEVELS.iter().any(|(id, _)| *id == l)) {
+                bags.push("level".into());
+            }
             for code in bags {
-                let name = if code == "open" { format!("open {}", hex(&m.space)) } else { code.clone() };
+                let name = bag_name(&code, &m.space);
                 waiting.push((id_of(&c.bag_hash, &identity::invite_address(&name)), m.space, code));
             }
         }
@@ -222,7 +226,7 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             let Some(i) = waiting.iter().position(|(w, _, _)| *w == id) else { return Vec::new() };
             let (_, space, code) = waiting.remove(i);
             if let (Some(st), Some(m)) = (state, space_of(&space)) {
-                let name = if code == "open" { format!("open {}", hex(&space)) } else { code.clone() };
+                let name = bag_name(&code, &space);
                 for p in craftworks_bag_contract::read(&identity::invite_address(&name), &st).unwrap_or_default() {
                     let Ok(q) = serde_json::from_slice::<serde_json::Value>(craftworks_bag_contract::payload(&p)) else { continue };
                     let (Some("join"), Some(did)) = (q["kind"].as_str(), q["did"].as_str()) else { continue };
@@ -243,9 +247,12 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             next_ask(h, r, &c)
         }
         (Step::KeyLog { ask }, Reply::Got { state, .. }) => {
+            // Said WHICH (10-07: "no key log" on fx/fy while a page read it): none answered, or a state that did not read.
+            let size = state.as_ref().map(Vec::len);
             let log = state.and_then(|st| craftworks_idlog_contract::read(&ask.did_bytes, &st));
             let Some(log) = log else {
-                identity::upkeep_say(h, &member, &format!("{}: no key log", ask.did));
+                let why = size.map_or("the network answered none".to_string(), |n| format!("its state ({n} bytes) did not read"));
+                identity::upkeep_say(h, &member, &format!("{}: no key log — {why}", ask.did));
                 return next_ask(h, r, &c);
             };
             let data = log.head().data;
@@ -256,7 +263,7 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
         }
         (Step::Card { ask, data }, Reply::Got { state, .. }) => {
             let Some(m) = space_of(&ask.space) else { return next_ask(h, r, &c) };
-            match add(h, &member, &c, &m, &data, state) {
+            match add(h, &member, &c, &m, &data, state, &ask, now_ms) {
                 Ok(add) => {
                     // The commit goes into the log of the epoch it moves FROM: read it first (taken: stop).
                     let log = epoch_log(&c, &m.channel, &add.from_secret);
@@ -430,10 +437,19 @@ fn moved<H: Host>(h: &mut H, member: &[u8; 32], me: &str, spaces: &[Mandate], as
 
 /// The ADDITION: the asker's card read (a key package, the inbox key), the group loaded from the mandate, the asker
 /// added. Randomness is upkeep's pool (armed here, ratcheted); the clock upkeep's.
-fn add<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, m: &Mandate, data: &[u8; 32], card: Option<Vec<u8>>) -> Result<Add, String> {
+#[allow(clippy::too_many_arguments)]
+fn add<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, m: &Mandate, data: &[u8; 32], card: Option<Vec<u8>>, ask: &Ask, now_ms: u64) -> Result<Add, String> {
     let from_secret = identity::epoch_secret(h, member, m.space, m.epoch).ok_or(format!("no secret of epoch {} here", m.epoch))?;
     let card = card.ok_or("they have no card")?;
-    let (packages, inbox) = read_card(c, data, &card).ok_or("their card has no key package or no inbox")?;
+    let (packages, inbox, contrib) = read_card(c, data, &card).ok_or("their card has no key package or no inbox")?;
+    // A LEVEL GROUP's asker: let in only while their card's contributions reach its level (the one rule, gov's).
+    if ask.code == "level" {
+        let need = m.level.as_deref().ok_or("not a level group")?;
+        let (have, _) = craftworks_gov::level_from(contrib.as_deref().unwrap_or("[]"), now_ms as f64);
+        if !craftworks_gov::level_reaches(have, need) {
+            return Err(format!("their card shows {have}, not {need}"));
+        }
+    }
     // A key package works ONCE: never one the account used (the page's record) or upkeep used since (not yet recorded).
     let used: Vec<[u8; 16]> = identity::upkeep_spent(h, member).into_iter().chain(identity::upkeep_admitted(h, member).into_iter().map(|a| a.kp)).collect();
     let unused: Vec<&(Vec<u8>, [u8; 16])> = packages.iter().filter(|(_, t)| !used.contains(t)).collect();
@@ -462,8 +478,17 @@ fn add<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, m: &Mandate, data: &[u8
     })
 }
 
-/// A card's key packages (hex list at `kp`) and inbox key (hex at `inbox`).
-fn read_card(c: &Codes, data: &[u8; 32], state: &[u8]) -> Option<(Vec<(Vec<u8>, [u8; 16])>, [u8; 32])> {
+/// A request bag's NAME: a code's own; the open door `open <space>`; a level group's `level <space>`.
+fn bag_name(code: &str, space: &[u8; 32]) -> String {
+    match code {
+        "open" | "level" => format!("{code} {}", hex(space)),
+        _ => code.to_string(),
+    }
+}
+
+/// A card's key packages (hex list at `kp`), inbox key (hex at `inbox`) and running contributions (JSON at `contrib`).
+type CardRead = (Vec<(Vec<u8>, [u8; 16])>, [u8; 32], Option<String>);
+fn read_card(c: &Codes, data: &[u8; 32], state: &[u8]) -> Option<CardRead> {
     // A PUBLIC tail under their data key: the state verifies against the params that key gives, or is not taken.
     let mut o = data::Open::new(&c.tail, data, "card");
     o.public = true;
@@ -475,5 +500,6 @@ fn read_card(c: &Codes, data: &[u8; 32], state: &[u8]) -> Option<(Vec<(Vec<u8>, 
     let inbox: [u8; 32] = unhex(std::str::from_utf8(rows.get(b"inbox".as_slice())?).ok()?)?.try_into().ok()?;
     let list: Vec<String> = serde_json::from_slice(rows.get(b"kp".as_slice())?).ok()?;
     let packages: Vec<(Vec<u8>, [u8; 16])> = list.iter().filter_map(|x| Some((unhex(x)?, identity::kp_tag(x)))).collect();
-    (!packages.is_empty()).then_some((packages, inbox))
+    let contrib = rows.get(b"contrib".as_slice()).and_then(|v| String::from_utf8(v.clone()).ok());
+    (!packages.is_empty()).then_some((packages, inbox, contrib))
 }

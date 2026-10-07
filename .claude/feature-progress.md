@@ -1321,14 +1321,22 @@ old key's addresses.
 
 ## Level groups — real encryption for PRO / VIP (owner 10-07; REWARDS §5a "Who hands over a key")
 Reuse groups (circles) + ask/admit + delegate upkeep; any member admits; honor system; lapsed removed by any member.
-- [ ] L1 Contributors list: a public bag the contributor joins (with their card's contributions) — what admitters read.
-- [ ] L2 Per-creator PRO / VIP groups (`groups.of("level:pro")`), policy "members may invite"; made when a creator first
+- Identity changed for this (owner 10-07: "do both"): 5dea06e6 → 3c186609 (44f170bf went to fx/fy only, before the
+  review's fix: `lapsed` counted in ANY space against anyone but the owner — now level groups only, never an admin;
+  an unknown level reaches nobody). On fx/fy a PIN login handed the member over (earlier builds' upkeep retired, keys
+  gathered). Published to the 3 sites + B: everyone logs in once with their PIN.
+- DELEGATE path measured: a new account at PRO asked with fy's page closed → fy's delegate admitted it (code `level`,
+  epoch 2) and it read the sealed post in 41 s. Earlier, fx's ask failed at the delegate's key-log read ("no key log")
+  while fy's page read fx's card — cause unknown; the delegate now says which (none answered / N bytes unread).
+- [x] L1 not needed: admitters read the asker's card (contributions are on it).
+- [x] L2 Per-creator PRO / VIP groups (`groups.of("level:pro")`), policy "members may invite"; made when a creator first
       gates an item.
-- [ ] L3 A gated item SEALED into its creator's level group (audience `level:pro` / `level:vip`, as role:/list:/circles).
-- [ ] L4 A reader at the level ASKS to join the creator's group (existing request bag) on opening a gated item.
-- [ ] L5 Admission checks the asker's card level — page upkeep (JS) and the identity delegate (Rust `delegate/`, no page).
-- [ ] L6 Lapsed members removed by any member (page + delegate), the group moving to a new key.
-- [ ] Remove the page-only gate's "not encrypted yet" note once L3-L5 are live.
+- [x] L3 A gated item SEALED into its creator's level group (audience `level:pro` / `level:vip`, as role:/list:/circles).
+- [x] L4 A reader at the level ASKS to join the creator's group (existing request bag) on opening a gated item.
+- [x] L5 Admission checks the asker's card level — page upkeep (JS) and the identity delegate (Rust `delegate/`, no page).
+- [x] L6 Lapsed members removed by any member (page + delegate), the group moving to a new key.
+- [x] The picker's note says sealed now. Tested on fx/fy: fy's VIP post → teaser + sealed in "VIP of #34kdzZ"; fx (VIP)
+      opened it → asked → fy's page let fx in → fx read the sealed body. Lapse: gov tests only (not run live).
 
 ## MLS + DAG, composed (owner 10-07: "evaluate the design and make it work") — ARCHITECTURE §3 `ordering`, §5 Ordering
 Evaluation (from the code): acts were sorted by the writer's claimed time (gov replay), so a member whose clock is

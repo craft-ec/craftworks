@@ -366,3 +366,65 @@ fn a_clock_behind_drops_an_act_a_causal_time_keeps_it() {
     let g = gov(&[grant, act("r", "na", 1001, json!({"act":"remove","did":M,"deps":["g"]}))]);
     assert_eq!(g.role(M, true), None);
 }
+
+#[test]
+fn a_level_group_admits_by_level_and_stays_private() {
+    let pol = act("1", "no", 1, json!({"act":"policy","path":"","action":"join","who":"level:pro"}));
+    let join = act("2", "no", 2, json!({"act":"admitted","code":"level","did":X}));
+    let g = gov(&[pol.clone(), join.clone()]);
+    assert!(g.roster.contains(X), "a level admission counts under a level join policy");
+    assert!(!g.is_public(), "a level group is not public");
+    // Without the level policy, "level" admits no one; an unknown level is no policy at all.
+    assert!(!gov(&[join.clone()]).roster.contains(X));
+    let bad = act("1", "no", 1, json!({"act":"policy","path":"","action":"join","who":"level:gold"}));
+    assert!(!gov(&[bad, join]).roster.contains(X));
+}
+
+#[test]
+fn any_member_takes_out_a_lapsed_member_who_may_come_back() {
+    let pol = act("1", "no", 1, json!({"act":"policy","path":"","action":"join","who":"level:vip"}));
+    let a_in = act("2", "no", 2, json!({"act":"admitted","code":"level","did":A}));
+    let x_in = act("3", "no", 3, json!({"act":"admitted","code":"level","did":X}));
+    let lapse = act("4", "na", 4, json!({"act":"lapsed","did":X}));
+    let g = gov(&[pol.clone(), a_in.clone(), x_in.clone(), lapse.clone()]);
+    assert!(!g.roster.contains(X), "a member (A) took X out");
+    assert!(!g.bans.contains(X), "a lapse is not a ban");
+    // X contributes again: admitted again.
+    let back = act("5", "no", 5, json!({"act":"admitted","code":"level","did":X}));
+    assert!(gov(&[pol.clone(), a_in.clone(), x_in.clone(), lapse.clone(), back]).roster.contains(X));
+    // Not a member (M was never admitted): refused. Nobody lapses the owner.
+    let m_lapse = act("4", "nm", 4, json!({"act":"lapsed","did":X}));
+    assert!(gov(&[pol.clone(), a_in.clone(), x_in.clone(), m_lapse]).roster.contains(X));
+    let o_lapse = act("4", "na", 4, json!({"act":"lapsed","did":O}));
+    assert!(gov(&[pol, a_in, x_in, o_lapse]).roster.contains(O));
+}
+
+#[test]
+fn a_level_is_what_runs_today_as_a_month() {
+    let d = 86_400_000.0;
+    let now = 100.0 * d + 5.0;
+    // 6 over 30 days from today: 6/month — PRO. 10 over 7 days, two days ago: 42.86/month — VIP.
+    assert_eq!(level_from(r#"[{"at":8640000000,"amount":6,"days":30}]"#, now), ("pro", 6.0));
+    assert_eq!(level_from(&format!(r#"[{{"at":{},"amount":10,"days":7}}]"#, 98.0 * d), now).0, "vip");
+    // Ran out yesterday (one day from 99): free. Nothing: free. Two that add up (3 + 3 a month): PRO.
+    assert_eq!(level_from(&format!(r#"[{{"at":{},"amount":30,"days":1}}]"#, 99.0 * d), now).0, "free");
+    assert_eq!(level_from("[]", now).0, "free");
+    assert_eq!(level_from(&format!(r#"[{{"at":{0},"amount":3,"days":30}},{{"at":{0},"amount":3,"days":30}}]"#, 90.0 * d), now).0, "pro");
+    assert!(level_reaches("vip", "pro") && level_reaches("pro", "pro") && !level_reaches("pro", "vip") && !level_reaches("free", "pro"));
+}
+
+#[test]
+fn a_lapse_counts_only_in_a_level_group_and_never_against_an_admin() {
+    // An ORDINARY space: a member's `lapsed` against another member, or an admin, counts for nothing.
+    let a_in = act("1", "no", 1, json!({"act":"added","did":A}));
+    let m_in = act("2", "no", 2, json!({"act":"added","did":M}));
+    let lapse = act("3", "nm", 3, json!({"act":"lapsed","did":A}));
+    assert!(gov(&[a_in.clone(), m_in.clone(), lapse.clone()]).roster.contains(A), "not a level group: refused");
+    // A LEVEL GROUP: an admin is never lapsed; a member is.
+    let pol = act("0", "no", 0, json!({"act":"policy","path":"","action":"join","who":"level:pro"}));
+    let admin = act("2b", "no", 2, json!({"act":"grant","did":A,"role":"admin"}));
+    assert!(gov(&[pol.clone(), a_in.clone(), m_in.clone(), admin, lapse]).roster.contains(A), "an admin: refused");
+    let lapse_m = act("3", "na", 3, json!({"act":"lapsed","did":M}));
+    assert!(!gov(&[pol, a_in, m_in, lapse_m]).roster.contains(M));
+    assert!(!level_reaches("vip", "gold") && !level_reaches("free", "gold"), "an unknown level is reached by nobody");
+}
