@@ -374,8 +374,15 @@ export async function start(ctx) {
     const [index, directory] = await Promise.all(["index", "directory"].map(n => ctx.require(n)));
     const dids = [...new Set((await index.pointers(bagOf(m)).catch(() => [])).map(x => x?.did).filter(d => typeof d === "string" && d.startsWith("did:")))];
     const by = {};
-    const out = { month: m, contributors: 0, days: 0, final: 0, refused: 0, total: 0, network: 0, by };
-    const add = (did, k, n) => ((by[did] ??= { creator: 0, carrier: 0 })[k] += units(n));
+    // PER DAY too (the cutoff): { day: { final, statements, total, creators, carriers, network, by: { did: {creator, carrier} } } }
+    const perDay = {};
+    const out = { month: m, contributors: 0, days: 0, final: 0, refused: 0, total: 0, network: 0, by, perDay };
+    const add = (did, k, n, day) => {
+      (by[did] ??= { creator: 0, carrier: 0 })[k] += units(n);
+      const d = perDay[day];
+      (d.by[did] ??= { creator: 0, carrier: 0 })[k] += units(n);
+      d[k === "creator" ? "creators" : "carriers"] += units(n);
+    };
     await Promise.all(
       dids.map(async did => {
         const t = await directory.publicOf(did, STATEMENTS).catch(() => null);
@@ -394,9 +401,14 @@ export async function start(ctx) {
           if (v.final) out.final += 1;
           out.total += units(v.amount);
           out.network += units(v.network);
-          for (const [d, n] of Object.entries(v.creators ?? {})) add(d, "creator", n);
-          for (const [d, n] of Object.entries(v.unclaimed ?? {})) add(d, "creator", n);
-          for (const [d, n] of Object.entries(v.carriers ?? {})) add(d, "carrier", n);
+          const day = (perDay[r.key] ??= { final: true, statements: 0, total: 0, creators: 0, carriers: 0, network: 0, by: {} });
+          day.statements += 1;
+          day.final &&= !!v.final;
+          day.total += units(v.amount);
+          day.network += units(v.network);
+          for (const [d, n] of Object.entries(v.creators ?? {})) add(d, "creator", n, r.key);
+          for (const [d, n] of Object.entries(v.unclaimed ?? {})) add(d, "creator", n, r.key);
+          for (const [d, n] of Object.entries(v.carriers ?? {})) add(d, "carrier", n, r.key);
         }
         if (counted) out.contributors += 1;
       }),
@@ -404,6 +416,10 @@ export async function start(ctx) {
     out.total /= UNIT;
     out.network /= UNIT;
     for (const d of Object.keys(by)) (by[d].creator /= UNIT), (by[d].carrier /= UNIT);
+    for (const day of Object.values(perDay)) {
+      for (const k of ["total", "creators", "carriers", "network"]) day[k] /= UNIT;
+      for (const v of Object.values(day.by)) (v.creator /= UNIT), (v.carrier /= UNIT);
+    }
     return out;
   }
   // THIS person's earnings for the month: their line of the ledger (finished days final, today running).

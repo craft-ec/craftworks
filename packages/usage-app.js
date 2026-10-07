@@ -21,6 +21,12 @@ export async function mount(ctx, el) {
   const root = el.querySelector(".us");
   const usage = await ctx.require("usage");
   const items = await ctx.require("items");
+  // FIVE PAGES (owner 10-07), the header's tabs: Summary, Usage, Kept, Contribution, Reward.
+  const PAGES = [["", "Summary"], ["use", "Usage"], ["kept", "Kept"], ["give", "Contribution"], ["reward", "Reward"]];
+  const page = PAGES.some(([k]) => k === (ctx.sub ?? "")) ? (ctx.sub ?? "") : "";
+  ctx.actions[ctx.route] = PAGES.map(([k, label]) => ({ label, href: k ? `#/usage/${k}` : "#/usage", on: k === page }));
+  dispatchEvent(new CustomEvent("craftworks:actions"));
+  root.querySelector("h2").textContent = `📊 ${PAGES.find(([k]) => k === page)[1]}`;
   const months = [0, 1, 2].map(n => {
     const d = new Date();
     d.setUTCDate(1);
@@ -54,7 +60,6 @@ export async function mount(ctx, el) {
     foot.append(td("Total"), td(clock(sum("s")), "num"), td(size(sum("b")), "num"), td(String(sum("n")), "num"));
     out.replaceChildren(t);
   };
-  pick.onchange = draw;
   const note = Object.assign(document.createElement("p"), { className: "note", textContent: "Time: what played, for a video or an audio; the time its page was in front of you, for everything else. Data: what its files brought over the network. Kept in your own table — only you see it." });
   // YOUR CONTRIBUTION (rewards §2-§3, SHADOW MODE): where an amount you give this month would go — any amount (owner
   // 10-07: contribution, not subscription); creators by your time on their items,
@@ -105,7 +110,6 @@ export async function mount(ctx, el) {
     foot.append(td("Total"), td(`${st.days} day(s) so far this month`), td(tok(st.amount), "num"));
     fout.replaceChildren(t);
   };
-  pick.addEventListener("change", drawFee);
   giveBtn.onclick = async () => {
     giveBtn.disabled = true;
     await usage.contribute(amount.value, days.value).catch(e => (given.textContent = `Not saved: ${e?.message ?? e}`));
@@ -114,24 +118,67 @@ export async function mount(ctx, el) {
   };
   // YOUR EARNINGS (pending) and THE LEDGER (rewards §5, shadow mode): every contributor's public statement for the
   // month, summed here — the same sum anyone gets; yours is your line of it. Nothing is paid yet.
-  const eh = Object.assign(document.createElement("h3"), { textContent: "Your earnings (pending, preview)" });
-  const eout = Object.assign(document.createElement("div"), { className: "note" });
+  const eh = Object.assign(document.createElement("h3"), { textContent: "Earnings (preview)" });
+  const eout = document.createElement("div");
+  // ONE ROW PER DAY (the cutoff: today running, earlier days final), newest first.
   const drawEarnings = async () => {
-    eout.textContent = "Adding up this month's statements…";
+    eout.textContent = "…";
     const e = await usage.earnings(pick.value).catch(err => ((eout.textContent = `Could not: ${err?.message ?? err}`), null));
     if (!e) return;
-    const l = e.ledger;
-    const lines = [
-      `From ${e.from} contributor(s): ${tok(e.total)} tokens — ${tok(e.creator)} as a creator, ${tok(e.carrier)} as a keeper.`,
-      `The month's public ledger: ${l.contributors} contributor(s), ${l.days} daily statement(s) (${l.final} final, the rest today's, still running), ${tok(l.total)} tokens in all, ${tok(l.network)} to the network${l.refused ? `; ${l.refused} day(s) left out (not adding up)` : ""}. Anyone gets the same sum.`,
-    ];
-    eout.replaceChildren(...lines.map(t => Object.assign(document.createElement("p"), { textContent: t })));
+    const me = (await (await ctx.require("space")).account())?.id;
+    const t = document.createElement("table");
+    const head = t.createTHead().insertRow();
+    for (const x of ["Day", "", "You: creator", "You: keeper", "Ledger total", "To creators", "To keepers", "To network"]) head.append(Object.assign(document.createElement("th"), { textContent: x }));
+    const b = t.createTBody();
+    const days = Object.entries(e.ledger.perDay).sort((x, y) => (x[0] < y[0] ? 1 : -1));
+    for (const [day, d] of days) {
+      const mine = d.by[me] ?? { creator: 0, carrier: 0 };
+      b.insertRow().append(td(day), td(d.final ? "final" : "running"), td(tok(mine.creator), "num"), td(tok(mine.carrier), "num"), td(tok(d.total), "num"), td(tok(d.creators), "num"), td(tok(d.carriers), "num"), td(tok(d.network), "num"));
+    }
+    if (!days.length) b.insertRow().append(td("—"), td(""), td("0", "num"), td("0", "num"), td("0", "num"), td("0", "num"), td("0", "num"), td("0", "num"));
+    eout.replaceChildren(t);
   };
-  pick.addEventListener("change", drawEarnings);
-  root.append(pick, note, out, fh, levelLine, fnote, amountLine, given, fout, eh, eout);
-  await draw();
-  drawFee();
-  drawEarnings();
+  // SUMMARY: the month in numbers — what was used, the level, what was given, what was earned, what is kept.
+  const summary = async () => {
+    const m = pick.value;
+    const [rows, lv, cs, st, e, k] = await Promise.all([
+      usage.month(m).catch(() => []),
+      usage.level().catch(() => null),
+      usage.contributions().catch(() => []),
+      usage.statement(m).catch(() => null),
+      usage.earnings(m).catch(() => null),
+      (await ctx.require("keep")).kept().catch(() => null),
+    ]);
+    const sum = key => rows.reduce((n, r) => n + (r[key] ?? 0), 0);
+    const t = document.createElement("table");
+    const b = t.createTBody();
+    for (const [x, v] of [
+      ["Time", clock(sum("s"))],
+      ["Data", size(sum("b"))],
+      ["Opened", String(sum("n"))],
+      ["Level", lv ? `${lv.name} (${lv.perMonth} a month now)` : "—"],
+      ["Contributions running", String(cs.filter(c => c.at + c.days * 86400000 > Date.now()).length)],
+      ["Given this month (split)", st ? tok(st.amount) : "0"],
+      ["Earned this month (pending)", e ? tok(e.total) : "0"],
+      ["Kept for others", k ? `${size(k.total)} of ${size(k.limit)}` : "—"],
+    ])
+      b.insertRow().append(td(x), td(v, "num"));
+    const box = document.createElement("div");
+    box.append(t);
+    return box;
+  };
+  root.append(pick);
+  pick.onchange = () => show();
+  const body = document.createElement("div");
+  root.append(body);
+  const show = async () => {
+    if (page === "kept") return; // its own, below (no month)
+    if (page === "use") (body.replaceChildren(note, out), await draw());
+    else if (page === "give") (body.replaceChildren(fh, levelLine, fnote, amountLine, given, fout), await drawFee());
+    else if (page === "reward") (body.replaceChildren(eh, eout), await drawEarnings());
+    else body.replaceChildren(await summary());
+  };
+  await show();
   // KEPT FOR OTHERS (rewards step 2, `keep`): what this node keeps of what you played — re-read a day apart so the
   // node does not drop it — within the limit chosen here (oldest played dropped past it).
   const keep = await ctx.require("keep");
@@ -173,6 +220,9 @@ export async function mount(ctx, el) {
     klist.replaceChildren(t);
   };
   limit.onchange = async () => (await keep.setLimit(Number(limit.value)), drawKept());
-  root.append(kh, knote, limit, klist);
-  await drawKept();
+  if (page === "kept") {
+    pick.hidden = true;
+    body.replaceChildren(kh, knote, limit, klist);
+    await drawKept();
+  }
 }
