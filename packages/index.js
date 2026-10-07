@@ -151,12 +151,16 @@ export async function start(ctx) {
   // to whoever knows the space's id, never what is in it.
   const sealedAddress = async (sp, name) => refAddress(`space ${glue.space_table_key(sp.idBytes, `bag-${name}`)}`);
   const aes = async keyHex => crypto.subtle.importKey("raw", bytes(keyHex), "AES-GCM", false, ["encrypt", "decrypt"]);
-  // Sealed with the space's newest epoch — or, for its WRITERS list, with EPOCH 0: the one key every branch of the
-  // group shares (a member on another branch of a fork must read who writes and which branch each is on — `keys`'
-  // announcements, `conversation.repair`); it names devices and branches only.
-  async function spacePoint(sp, name, item, { epoch = name === "writers" ? 0 : -1 } = {}) {
+  // Sealed with the space's newest epoch — or, for its WRITERS list, with the SPACE's OWN key (from its id: `OPEN`):
+  // every member reads it whatever epochs they hold — behind, ahead, on another branch of a fork, or missing the
+  // early epochs (10-07: sealed with epoch 0, a member whose history stopped above it read 0 writers, so no acts and
+  // an empty space; one without epoch 0 sealed with its newest and listed itself again on every load). It names
+  // devices and branches only. Entries sealed with an epoch (before) are still read by whoever holds that epoch.
+  const OPEN = 0xffffffff;
+  const openKey = sp => aes(glue.space_table_key(sp.idBytes, "bag-writers-open"));
+  async function spacePoint(sp, name, item, { epoch = -1 } = {}) {
     const access = await ctx.require("access");
-    const k = await access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes });
+    const k = name === "writers" ? { epoch: OPEN, key: glue.space_table_key(sp.idBytes, "bag-writers-open") } : await access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes });
     if (!k.key) throw new Error(`no key of the space here (${k.why})`);
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aes(k.key), enc.encode(JSON.stringify(item))));
@@ -170,18 +174,29 @@ export async function start(ctx) {
     const access = await ctx.require("access");
     const keys = new Map();
     const out = [];
+    // What could not be opened, by the epoch it was sealed with (said: a bag read empty because no key opens it looks
+    // the same as an empty bag).
+    const unread = new Map();
+    let raw = 0;
     for (const p of await read(await sealedAddress(sp, name), `the space's ${name}`, { follow: name === "writers" })) {
       if (p.length < 17) continue;
+      raw += 1;
       const epoch = new DataView(p.buffer, p.byteOffset).getUint32(0);
-      if (!keys.has(epoch)) keys.set(epoch, await access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes }).then(k => (k.key ? aes(k.key) : null), () => null));
+      if (!keys.has(epoch)) keys.set(epoch, epoch === OPEN ? await openKey(sp) : await access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes }).then(k => (k.key ? aes(k.key) : null), () => null));
       const key = await keys.get(epoch);
-      if (!key) continue;
+      if (!key) {
+        unread.set(epoch, (unread.get(epoch) ?? 0) + 1);
+        continue;
+      }
       try {
-        // `sealedAt`: the epoch it was sealed with (an entry only this branch reads, or one every branch does: 0).
+        // `sealedAt`: the epoch it was sealed with (an entry only this branch reads, or one every member does: `OPEN`).
         const v = JSON.parse(dec.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: p.subarray(4, 16) }, key, p.subarray(16))));
         out.push(v && typeof v === "object" ? { ...v, sealedAt: epoch } : v);
-      } catch {}
+      } catch {
+        unread.set(epoch, (unread.get(epoch) ?? 0) + 1);
+      }
     }
+    if (unread.size) ctx.log("index", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${name} bag — ${raw} item(s), ${out.length} read; no key opens ${[...unread].map(([e, n]) => `${n} sealed at epoch ${e}`).join(", ")}` });
     return out;
   }
 
@@ -210,5 +225,5 @@ export async function start(ctx) {
   const listSpace = desc => point(SPACES, { id: desc.id, name: desc.name, kind: desc.kind, governance: { owner: desc.governance.owner, nonce: desc.governance.nonce } });
   const spaces = () => pointers(SPACES);
 
-  return { onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince };
+  return { onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, OPEN };
 }

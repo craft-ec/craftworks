@@ -576,8 +576,8 @@ export async function start(ctx) {
       announced = s.epoch;
       const branch = glue.epoch_log_public(s.secret);
       const index = await ctx.require("index");
-      // (Only an entry every branch reads counts: one sealed with a later epoch is this branch's alone.)
-      const had = (await index.spacePointers(sp, "writers").catch(() => [])).some(p => p?.w === sp.self && p.epoch === s.epoch && p.branch === branch && p.sealedAt === 0);
+      // (Only an entry every member reads counts: one sealed with an epoch is read by those who hold it alone.)
+      const had = (await index.spacePointers(sp, "writers").catch(() => [])).some(p => p?.w === sp.self && p.epoch === s.epoch && p.branch === branch && p.sealedAt === index.OPEN);
       if (!had) await index.spacePoint(sp, "writers", { w: sp.self, epoch: s.epoch, branch }).catch(e => ((announced = -1), Promise.reject(e)));
     }
     // EVERY SWITCH of the group keeps the branch it leaves: its epoch secrets that the group now on does not share

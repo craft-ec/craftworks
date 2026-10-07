@@ -857,6 +857,7 @@ export async function start(ctx) {
   // its catalog is made (`catalogOf`), so it is the whole list: nobody's catalog is asked for before they have one.
   // Read once per space (again when asked).
   const bags = new Map(); // space id → Promise<{ set }>
+  const copied = new Set(); // `space|writer` listed again with the space's own key
   // A FRESH read shared: one in flight, or one done in the last few seconds, answers every table that asks (each open
   // table asked on every key or device change: a dozen identical reads at once).
   const freshAt = new Map(); // space id → when its last fresh read began
@@ -868,9 +869,17 @@ export async function start(ctx) {
         sp.id,
         (async () => {
           const t0 = performance.now();
-          const items = await (await ctx.require("index")).spacePointers(sp, "writers");
+          const index = await ctx.require("index");
+          const items = await index.spacePointers(sp, "writers");
           const b = { set: new Set(items.map(i => i?.w).filter(w => typeof w === "string")) };
           ctx.log("storage", { what: `${sp.name ?? sp.id.slice(0, 8)}: writers bag — ${b.set.size} writer(s)`, ms: Math.round(performance.now() - t0) });
+          // A writer listed only under an EPOCH (before the list was sealed with the space's own key): listed again as
+          // every member reads it, by whoever reads it now — once per page and writer.
+          for (const w of b.set)
+            if (!copied.has(`${sp.id}|${w}`) && !items.some(i => i?.w === w && i.sealedAt === index.OPEN)) {
+              copied.add(`${sp.id}|${w}`);
+              index.spacePoint(sp, "writers", { w }).catch(e => (copied.delete(`${sp.id}|${w}`), ctx.log("storage", { what: `${sp.name ?? sp.id.slice(0, 8)}: listing ${w.slice(0, 8)} for every member: ${e?.message ?? e}` })));
+            }
           return b;
         })().catch(e => (bags.delete(sp.id), Promise.reject(e))),
       );
