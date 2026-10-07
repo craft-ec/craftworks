@@ -63,7 +63,7 @@ export async function start(ctx) {
       "select",
       { ariaLabel: `${action} at ${path || "the space"}` },
       // Inherit, from where; or the built-in default (the space itself has nothing above it — a tenant, later, will).
-      h("option", { value: "", textContent: from == null ? `Default (${parent ? `as who may ${parent}: ` : ""}${named(inherited)})` : `Inherit from ${LEVEL(from)} (${named(inherited)})` }),
+      h("option", { value: "", textContent: from == null ? `Default: ${named(inherited)}` : `As ${LEVEL(from)}: ${named(inherited)}` }),
       ...options.map(w => h("option", { value: w, textContent: named(w) })),
     );
     sel.value = own;
@@ -85,18 +85,18 @@ export async function start(ctx) {
   const madePublic = async (r, sp) => (await r.publish().catch(() => {}), await (await ctx.require("index")).listSpace(sp));
   // A SIGNAL's own rule at a path (`signals`: react, save, share, tag — each, unset, as its parent): every settings
   // section lists them, so a new signal shows up here by itself.
-  const SIGNAL_FIELDS = path => S.interactions().map(a => ({ action: a.action, path, label: a.label }));
+  const SIGNAL_FIELDS = path => S.interactions().map(a => ({ action: a.action, path, label: a.label.replace(/^Who may /, "").replace(/^./, c => c.toUpperCase()) }));
   const SECTIONS = {
     "": {
       title: "The space",
       fields: [
-        { key: "about", app: "space", label: "About (what this space is: on its card and its Home, also from outside)" },
-        { key: "history", app: "space", label: "Keep earlier versions of what is changed (History)", choices: [["", "7 days, the last 20 (the most this plan keeps)"], ["3", "3 days"], ["1", "1 day"], ["0", "Off: no earlier versions"]] },
-        { action: "join", path: "", label: "Who may join (Anyone: whoever asks is let in; Members: by an invite)" },
-        { action: "invite", path: "", label: "Who may invite (make invite codes, add people, let askers in)" },
-        { action: "post", path: "", label: "Who may post (every app, unless it says otherwise)" },
+        { key: "about", app: "space", label: "About" },
+        { key: "history", app: "space", label: "History", choices: [["", "7 days · 20 versions"], ["3", "3 days"], ["1", "1 day"], ["0", "Off"]] },
+        { action: "join", path: "", label: "Join" },
+        { action: "invite", path: "", label: "Invite" },
+        { action: "post", path: "", label: "Post" },
         ...SIGNAL_FIELDS(""),
-        { action: "edit", path: "", label: "Who may edit (shared notes and files)" },
+        { action: "edit", path: "", label: "Edit" },
       ],
       saved: async (changed, r, sp) => {
         if (changed["|join"] !== "anyone") return;
@@ -108,21 +108,21 @@ export async function start(ctx) {
     board: {
       title: "Board",
       fields: [
-        { action: "read", path: "text", label: "Who may read (Anyone: public — its members and moderation too; posts made before stay as they were)" },
-        { action: "post", path: "text", label: "Who may post" },
+        { action: "read", path: "text", label: "Read" },
+        { action: "post", path: "text", label: "Post" },
         ...SIGNAL_FIELDS("text"),
-        { key: "rules", app: "board", label: "Rules (shown beside the board)" },
+        { key: "rules", app: "board", label: "Rules" },
       ],
       saved: async (changed, r, sp) => changed["text|read"] === "anyone" && madePublic(r, sp),
     },
-    video: { title: "Video", fields: [...["read", "post"].map(action => ({ action, path: "video", label: `Who may ${action}` })), ...SIGNAL_FIELDS("video")], saved: async (c, r, sp) => c["video|read"] === "anyone" && madePublic(r, sp) },
-    audio: { title: "Audio", fields: [...["read", "post"].map(action => ({ action, path: "audio", label: `Who may ${action}` })), ...SIGNAL_FIELDS("audio")], saved: async (c, r, sp) => c["audio|read"] === "anyone" && madePublic(r, sp) },
-    image: { title: "Image", fields: [...["read", "post"].map(action => ({ action, path: "image", label: `Who may ${action}` })), ...SIGNAL_FIELDS("image")], saved: async (c, r, sp) => c["image|read"] === "anyone" && madePublic(r, sp) },
-    book: { title: "Book", fields: [...["read", "post"].map(action => ({ action, path: "book", label: `Who may ${action}` })), ...SIGNAL_FIELDS("book")], saved: async (c, r, sp) => c["book|read"] === "anyone" && madePublic(r, sp) },
-    chat: { title: "Chat", fields: [{ action: "post", path: "chat", label: "Who may post (in every channel that does not say otherwise)" }], extra: chatChannels },
-    note: { title: "Note", fields: [{ action: "post", path: "note", label: "Who may add notes" }, { action: "edit", path: "note", label: "Who may edit notes" }] },
+    video: { title: "Video", fields: [...["read", "post"].map(action => ({ action, path: "video", label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS("video")], saved: async (c, r, sp) => c["video|read"] === "anyone" && madePublic(r, sp) },
+    audio: { title: "Audio", fields: [...["read", "post"].map(action => ({ action, path: "audio", label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS("audio")], saved: async (c, r, sp) => c["audio|read"] === "anyone" && madePublic(r, sp) },
+    image: { title: "Image", fields: [...["read", "post"].map(action => ({ action, path: "image", label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS("image")], saved: async (c, r, sp) => c["image|read"] === "anyone" && madePublic(r, sp) },
+    book: { title: "Book", fields: [...["read", "post"].map(action => ({ action, path: "book", label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS("book")], saved: async (c, r, sp) => c["book|read"] === "anyone" && madePublic(r, sp) },
+    chat: { title: "Chat", fields: [{ action: "post", path: "chat", label: "Post" }], extra: chatChannels },
+    note: { title: "Note", fields: [{ action: "post", path: "note", label: "Add" }, { action: "edit", path: "note", label: "Edit" }] },
     // Drive shows the FILE domain: its rules are the domain's (`kinds.policyDomain`), as Board's are the text domain's.
-    drive: { title: "Drive", fields: [{ action: "read", path: "file", label: "Who may read" }, { action: "post", path: "file", label: "Who may upload" }, { action: "edit", path: "file", label: "Who may move files" }] },
+    drive: { title: "Drive", fields: [{ action: "read", path: "file", label: "Read" }, { action: "post", path: "file", label: "Upload" }, { action: "edit", path: "file", label: "Move" }] },
   };
   // CHAT's own rows: its channels, each with who may post in it.
   async function chatChannels(host, r, sp) {
@@ -133,22 +133,21 @@ export async function start(ctx) {
       const add = h("input", { placeholder: "New channel", ariaLabel: "New channel" });
       host.replaceChildren(
         h("h4", { textContent: "Channels" }),
-        ...channels.list().map(c => {
+        h("div", { style: "display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:var(--cw-space-2);align-items:center;overflow-x:auto" }, ...["Channel", "Post", "Read", ""].map(t => h("b", { textContent: t })), ...channels.list().flatMap(c => {
           const name = h("input", { value: c.name, ariaLabel: "Channel name" });
-          const row = h("div", { className: "row" }, name, h("button", { type: "button", textContent: "Rename", onclick: () => channels.rename(c, name.value.trim()).then(draw, e => say(e.message)) }), h("button", { type: "button", textContent: "Delete", onclick: () => channels.remove(c).then(draw, e => say(e.message)) }));
+          const acts = h("span", { className: "row" }, h("button", { type: "button", textContent: "Rename", onclick: () => channels.rename(c, name.value.trim()).then(draw, e => say(e.message)) }), h("button", { type: "button", textContent: "Delete", onclick: () => channels.remove(c).then(draw, e => say(e.message)) }));
           // WHO MAY POST in it: the channel item's own rule (none: as Chat's), saved as chosen.
           const own = c.item?.meta?.write?.post ?? "";
-          const sel = h("select", { ariaLabel: `Who may post in ${c.name}` }, h("option", { value: "", textContent: `As Chat (${NAMES[r.policyIn("chat", "post")] ?? r.policyIn("chat", "post")})` }), ...["anyone", "members", "admins", "owner"].map(w => h("option", { value: w, textContent: NAMES[w] })));
+          const sel = h("select", { ariaLabel: `Who may post in ${c.name}` }, h("option", { value: "", textContent: `As Chat: ${NAMES[r.policyIn("chat", "post")] ?? r.policyIn("chat", "post")}` }), ...["anyone", "members", "admins", "owner"].map(w => h("option", { value: w, textContent: NAMES[w] })));
           sel.value = own;
           sel.onchange = () => channels.setPost(c, sel.value || null).then(draw, e => say(e.message));
           // WHO MAY READ it: its space's members, or fewer (a role, the admins, the owner) — then it is sealed to them
           // alone (its own group, kept in step).
-          const readSel = h("select", { ariaLabel: `Who may read ${c.name}` }, h("option", { value: "", textContent: "Read: the space's members" }), ...["admins", "owner", ...(r.roles?.() ?? []).map(ro => `role:${ro.id}`), ...Object.keys(r.lists?.() ?? {}).map(id => `list:${id}`)].map(w => h("option", { value: w, textContent: `Read: ${w.startsWith("role:") ? `Role: ${(r.roles?.() ?? []).find(ro => `role:${ro.id}` === w)?.name}` : w.startsWith("list:") ? `${(r.lists?.()[w.slice(5)]?.people ?? []).length} chosen people` : NAMES[w]}` })));
+          const readSel = h("select", { ariaLabel: `Who may read ${c.name}` }, h("option", { value: "", textContent: "Members" }), ...["admins", "owner", ...(r.roles?.() ?? []).map(ro => `role:${ro.id}`), ...Object.keys(r.lists?.() ?? {}).map(id => `list:${id}`)].map(w => h("option", { value: w, textContent: `${w.startsWith("role:") ? `Role: ${(r.roles?.() ?? []).find(ro => `role:${ro.id}` === w)?.name}` : w.startsWith("list:") ? `${(r.lists?.()[w.slice(5)]?.people ?? []).length} chosen people` : NAMES[w]}` })));
           readSel.value = c.item?.meta?.read ?? "";
           readSel.onchange = () => channels.setRead(c, readSel.value || null).then(draw, e => say(e.message));
-          row.append(sel, readSel);
-          return row;
-        }),
+          return [name, sel, readSel, acts];
+        })),
         h("div", { className: "row" }, add, h("button", { type: "button", textContent: "Add", onclick: () => add.value.trim() && channels.add(add.value.trim()).then(draw, e => say(e.message)) })),
       );
     };
@@ -166,8 +165,9 @@ export async function start(ctx) {
       return { f, input: h("textarea", { value: now ?? "", maxLength: 2000 }), now };
     });
     const btn = h("button", { type: "submit", className: "main", textContent: "Save" });
+    const f0 = S.fields.some(f => f.action) ? "Who" : "Setting";
     const more = S.extra ? h("div", {}) : null;
-    const form = h("form", { className: "cw-appset", id: `settings-${(key || "space").replace("me:", "") || "everything"}` }, h("h3", { textContent: S.title }), ...inputs.map(({ f, input }) => h("label", {}, f.label, input)), more, h("div", { className: "row" }, said, btn));
+    const form = h("form", { className: "cw-appset", id: `settings-${(key || "space").replace("me:", "") || "everything"}` }, h("h3", { textContent: S.title }), h("div", { className: "set-grid", style: "display:grid;grid-template-columns:max-content minmax(0,24rem);gap:var(--cw-space-2) var(--cw-space-3);align-items:center" }, h("b", { textContent: "Action" }), h("b", { textContent: f0 }), ...inputs.flatMap(({ f, input }) => [h("label", { textContent: f.label, style: "margin:0", htmlFor: (input.id ||= `set-${key || "space"}-${f.action ?? f.key}-${f.path ?? ""}`) }), input])), more, h("div", { className: "row" }, said, btn));
     form.onsubmit = async e => {
       e.preventDefault();
       btn.disabled = true;
@@ -215,7 +215,7 @@ export async function start(ctx) {
     const r = roles.personal(me);
     await r.ready;
     // You, as followed: the same rule and credential as a comment on your post (`roles.followable`).
-    SECTIONS["me:profile"] ??= { title: "You", fields: [{ action: "follow", path: "profile", label: "Who may follow you" }] };
+    SECTIONS["me:profile"] ??= { title: "You", fields: [{ action: "follow", path: "profile", label: "Follow you" }] };
     // EVERYTHING you post (the space's own level: every app inherits it unless it says otherwise).
     SECTIONS["me:"] ??= { title: "Everything you post", fields: SIGNAL_FIELDS("") };
     const forms = await Promise.all([

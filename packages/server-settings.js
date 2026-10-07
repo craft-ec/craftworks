@@ -135,16 +135,16 @@ export async function start(ctx) {
             el("dt", { textContent: "Members" }),
             el("dd", { textContent: String(r.members().length) }),
           ),
-          el("p", { className: "note", textContent: "Owner: everything, and hands the server on. Admins: invite, channels, remove messages and members. Members: post and invite." }),
+          el("div", { style: "display:grid;grid-template-columns:max-content minmax(0,1fr);gap:var(--cw-space-1) var(--cw-space-3);margin-bottom:var(--cw-space-3)" }, ...[["Role", "Can"], ["Owner", "everything · hand on"], ["Admin", "invite · channels · remove messages, members"], ["Member", "post · invite"]].flatMap(([a, b], i) => [el(i ? "span" : "b", { textContent: a }), el(i ? "span" : "b", { textContent: b })])),
         );
         // LEAVE: out of this person's list. An owner with others still in hands it on first.
         const others = r.members().filter(m => m.did !== me.id);
         main.append(el("h3", { textContent: "Leave" }));
         if (mine() === "owner" && others.length)
-          main.append(el("p", { className: "note", textContent: "You own this server: hand it to someone below before you leave." }));
+          main.append(el("p", { className: "note", textContent: "Hand ownership on first (below)." }));
         else
           main.append(
-            el("p", { className: "note", textContent: "Takes the server out of your list, on every device of your account." }),
+            el("p", { className: "note", textContent: "Off your list, on every device." }),
             el("div", { className: "row" }, act("Leave server", async () => {
               await (await ctx.require("space")).leave(server);
               close();
@@ -155,7 +155,7 @@ export async function start(ctx) {
           const pick = el("select", {}, el("option", { value: "", textContent: "Hand ownership to…" }), ...r.members().filter(m => m.did !== me.id).map(m => el("option", { value: m.did, textContent: nameOf(m.did) })));
           main.append(
             el("h3", { textContent: "Ownership" }),
-            el("p", { className: "note", textContent: "The new owner gets everything; you become an admin." }),
+            el("p", { className: "note", textContent: "New owner: everything. You: admin." }),
             el(
               "div",
               { className: "row" },
@@ -177,7 +177,7 @@ export async function start(ctx) {
       members() {
         main.append(
           el("h3", { textContent: "Members & roles" }),
-          el("p", { className: "note", textContent: `${may("roles") ? "Tick each person's roles (Admin: the owner's to give; the rest are made on Roles)." : "Each person's roles."} Removing someone takes them out: they read nothing new, and cannot rejoin by a code.` }),
+          el("p", { className: "note", textContent: "Removed: reads nothing new, cannot rejoin by code." }),
         );
         const slot = el("div");
         main.append(slot);
@@ -189,7 +189,7 @@ export async function start(ctx) {
         const mayCompose = may("roles");
         main.append(
           el("h3", { textContent: "Roles" }),
-          el("p", { className: "note", textContent: mayCompose ? "Make roles and say what each may. Give them to members on Members & roles; any app's rules (who may read, post, comment…) can name them." : "The roles of this space. The owner and admins make them." }),
+          el("p", { className: "note", textContent: mayCompose ? "Given on Members & roles; usable in any app's rules." : "Made by the owner and admins." }),
         );
         const form = (ro = null) => {
           const name = el("input", { value: ro?.name ?? "", placeholder: "Role name (e.g. Moderators)", maxLength: 40, disabled: !mayCompose });
@@ -230,7 +230,7 @@ export async function start(ctx) {
         main.append(el("h3", { textContent: "Channels" }));
         if (!channels) return main.append(el("p", { className: "note", textContent: "Open the server in Chat to manage its channels." }));
         const can = may("channels");
-        main.append(el("p", { className: "note", textContent: can ? "Rename or delete a channel, or add one." : "Only the owner and admins change channels." }));
+        if (!can) main.append(el("p", { className: "note", textContent: "Owner and admins only." }));
         const rows = channels.list().map(c => {
           const name = el("input", { value: c.name, disabled: !can });
           return el(
@@ -261,7 +261,7 @@ export async function start(ctx) {
         main.append(
           el("p", {
             className: "note",
-            textContent: "Anyone with a code asks to join (the space's name at the top → Make or join a space). A member who may invite lets them in — their app when it is open, else their node on its own (it takes a moment).",
+            textContent: "Code → asks to join → a member who may invite lets them in (automatic).",
           }),
         );
         // WHO IS WAITING (asked under the open door or a code, not let in yet) — each let in here, or by any page or node
@@ -345,7 +345,7 @@ export async function start(ctx) {
         ctx.require("app-settings").then(a => a.page(server)).then(p => (slot.replaceWith(p), focus && p.querySelector(`#settings-${focus}`)?.scrollIntoView({ block: "start" })), err => say(err?.message ?? err));
       },
       log() {
-        main.append(el("h3", { textContent: "Moderation log" }), el("p", { className: "note", textContent: "Every act that counted, newest first. Acts nobody was allowed to make are never shown: they do not count." }));
+        main.append(el("h3", { textContent: "Moderation log" }), el("p", { className: "note", textContent: "Counted acts, newest first." }));
         const say = a => {
           const who = nameOf(a.by);
           const whom = a.did ? nameOf(a.did) : "";
