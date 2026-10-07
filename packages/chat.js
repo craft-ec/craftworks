@@ -49,9 +49,18 @@ export async function mount(ctx, el) {
       .dc dialog.ask form, .dc dialog.start form { display: grid; gap: var(--cw-space-3); }
       .dc dialog.ask .row, .dc dialog.start .row { display: flex; gap: var(--cw-space-2); justify-content: flex-end; }
       @media (max-width: 800px) { .dc { grid-template-columns: 180px 1fr; } .dc .people { display: none; } }
+      /* A PHONE: one pane — the list, or what is open (with a way back). */
+      .dc .back { display: none; justify-self: start; margin: var(--cw-space-1) var(--cw-space-2) 0; }
+      @media (max-width: 640px) {
+        .dc { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+        .dc.open .side { display: none; }
+        .dc:not(.open) .room { display: none; }
+        .dc.open .back { display: block; }
+      }
     }</style>
     <div class="dc">
       <aside class="side"><h2>—</h2><div class="chans"></div><p class="said" hidden></p></aside>
+      <button type="button" class="back cw-flat">‹ Back</button>
       <section class="room"></section>
       <aside class="people"><h3>MEMBERS</h3><ul></ul></aside>
       <dialog class="start"><form method="dialog"><label>Who? One person, or several separated by commas for a group — name#abc123 or did:craftec:… <input name="who" autocomplete="off" required></label>
@@ -64,6 +73,10 @@ export async function mount(ctx, el) {
   // A click outside a question (on its backdrop) cancels it, as Esc does.
   $(".ask").addEventListener("click", e => e.target === e.currentTarget && e.currentTarget.close("cancel"));
   const sideName = $(".side h2"), chans = $(".chans"), roomEl = $(".room"), people = $(".people ul"), said = $(".said");
+  // (A phone shows one pane: what is open, or the list — `open` on the layout.)
+  const dc = $(".dc");
+  const showOpen = on => dc.classList.toggle("open", !!on);
+  $(".back").onclick = () => (ctx.space ? showOpen(false) : (location.hash = "#/chat"));
   const say = m => ((said.textContent = m), (said.hidden = !m));
   // One question, in the page's own dialog: the answer, or null.
   const ask = (question, button = "Create") =>
@@ -206,6 +219,7 @@ export async function mount(ctx, el) {
 
   async function openChannel(c) {
     channel = c;
+    showOpen(true);
     // Its readers in the side panel (a channel kept to a role shows that role's people).
     if (server) drawMembers(server).catch(() => {});
     // A RESTRICTED channel (who may read: a role, admins…): its messages are its GROUP's (`groups`) — open to its
@@ -270,6 +284,7 @@ export async function mount(ctx, el) {
     accepted ??= conversation.accept().catch(e => ctx.log("conversation", { what: e?.message ?? String(e) })).then(() => el.isConnected && !ctx.space && draw().then(openAt));
     const openAt = async (l = list) => {
       const sp = (ctx.sub && (await conversation.list()).find(c => c.id === ctx.sub)) || null;
+      showOpen(!!sp);
       if (!sp) return shownConv ? null : roomEl.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: l.length ? "Pick a conversation, or start one." : "No conversations yet: start one." }));
       if (shownConv?.id === sp.id) return;
       shownConv = sp;

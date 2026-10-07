@@ -105,6 +105,10 @@ export async function start() {
     .cw-btn.danger { color: var(--cw-danger); }
     .cw-btn.chip { border-radius: var(--cw-radius-pill); padding: 2px 10px; font-size: var(--cw-text-xs); }
     .cw-btn:disabled { opacity: .5; cursor: default; }
+    /* A FLAT button: no border or fill until hovered (a header's, a toolbar's, a row's quiet action) — pressed shows. */
+    .cw-flat { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; padding: 2px var(--cw-space-1); border-radius: var(--cw-radius-sm); }
+    .cw-flat:hover:not(:disabled) { background: var(--cw-hover); }
+    .cw-flat[aria-pressed="true"] { background: var(--cw-pressed); }
     /* THE SHELL, like an app on a phone: the window and the canvas never scroll. The header on top and the footer at
        the bottom stay; between them, each component of the page is a PANEL that scrolls itself. The whole window, edge
        to edge. A page with panes of its own (each scrolling) marks its component .cw-fill: it gets the canvas bare. */

@@ -21,16 +21,12 @@ export function mount(ctx, el) {
       .bar .space-name .cw-badge { margin-left: 4px; }
       .bar .name { font-weight: 600; }
       .bar .name .drop > button { border: 0; background: none; font-weight: 700; padding: 2px var(--cw-space-2); }
-      .bar .name .drop > button:hover { background: var(--cw-hover); }
       .bar .actions { display: flex; gap: 10px; align-items: center; }
-      .bar .actions button { border: 0; background: none; padding: 2px var(--cw-space-1); cursor: pointer; border-radius: var(--cw-radius-sm); }
-      .bar .actions button:hover { background: var(--cw-hover); }
-      .bar .actions button[aria-pressed="true"], .bar .actions a[aria-current="page"] { background: var(--cw-pressed); }
+      .bar .actions a[aria-current="page"] { background: var(--cw-pressed); }
       .bar .actions a { color: inherit; text-decoration: none; padding: 2px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
       .bar .actions a:hover { background: var(--cw-hover); }
       .bar .end { display: flex; gap: 10px; margin-left: auto; }
-      .bar .end button { border: 0; background: none; padding: 2px var(--cw-space-1); cursor: pointer; border-radius: var(--cw-radius-sm); }
-      .bar .end button:hover, .bar .end a:hover { background: var(--cw-hover); }
+      .bar .end a:hover { background: var(--cw-hover); }
       .bar .end { align-items: center; }
       .bar .end a { color: inherit; text-decoration: none; padding: 2px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
       .bar .end a[aria-current="page"] { background: var(--cw-pressed); }
@@ -54,10 +50,16 @@ export function mount(ctx, el) {
         padding: 5px var(--cw-space-2); border-radius: var(--cw-radius-sm); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .bar .find .results a:hover, .bar .find .results button:hover, .bar .find .results .sel { background: var(--cw-hover); }
       .bar .find .results .none { color: var(--cw-muted); padding: 6px var(--cw-space-2); margin: 0; }
-      @media (max-width: 640px) { .bar .find > input { width: 7em; } }
+      /* A PHONE: the search box shrinks to its icon and opens out while typed in; the header's buttons never wrap. */
+      @media (max-width: 640px) { .bar .find > input { width: 2.4em; padding: 2px 6px; transition: width .15s; } .bar .find > input:focus { width: 11em; }
+        .bar { gap: 8px; } .bar .space-name { min-width: 3em; max-width: 8em; padding-inline: 4px; }
+        /* The app's own actions on a second row of their own, the whole width (the theme's --cw-bar is two rows here). */
+        .bar { flex-wrap: wrap; align-content: center; row-gap: 2px; height: auto; min-height: 48px; padding-block: 4px; }
+        .bar::after { content: ""; order: 9; flex-basis: 100%; height: 0; }
+        .bar .actions { order: 10; flex: 1 1 0; } .bar .find { order: 11; } }
+      .bar .inbox > button, .bar .end > *, .bar .actions > * { white-space: nowrap; }
+      .bar .find, .bar .inbox, .bar .end { flex: 0 0 auto; }
       .bar .inbox { position: relative; }
-      .bar .inbox > button { border: 0; background: none; cursor: pointer; padding: 2px var(--cw-space-1); border-radius: var(--cw-radius-sm); font: inherit; }
-      .bar .inbox > button:hover { background: var(--cw-hover); }
       .bar .inbox .results { position: absolute; top: calc(100% + 4px); right: 0; z-index: 60; display: grid; padding: var(--cw-space-1); width: min(26em, calc(100vw - 32px));
         max-height: 70vh; overflow-y: auto; background: var(--cw-surface); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); box-shadow: var(--cw-shadow-lg); }
       .bar .inbox .results[hidden] { display: none; }
@@ -75,9 +77,9 @@ export function mount(ctx, el) {
       <span class="name"></span>
       <span class="actions"></span>
       <span class="end"></span>
-      <span class="inbox" data-of="recent"><button type="button" title="Notifications">🔔</button><div class="results" hidden></div></span>
-      <span class="inbox" data-of="mentions"><button type="button" title="Mentions">@</button><div class="results" hidden></div></span>
-      <span class="inbox tasks" hidden><button type="button" title="Background work: uploads and videos still being made">⏳</button><div class="results" hidden></div></span>
+      <span class="inbox" data-of="recent"><button type="button" class="cw-flat" title="Notifications">🔔</button><div class="results" hidden></div></span>
+      <span class="inbox" data-of="mentions"><button type="button" class="cw-flat" title="Mentions">@</button><div class="results" hidden></div></span>
+      <span class="inbox tasks" hidden><button type="button" class="cw-flat" title="Background work: uploads and videos still being made">⏳</button><div class="results" hidden></div></span>
       <span class="find"><input type="search" placeholder="🔍 Search or paste a link" aria-label="Search everything" autocomplete="off"><div class="results" hidden></div></span>
     </nav>`;
   // NOTIFICATIONS (🔔: each place with something unread, newest first — opened there) and MENTIONS (@: every message,
@@ -257,7 +259,7 @@ export function mount(ctx, el) {
     );
     // What is new in its entries (their `count`s): a badge on the closed menu too.
     const total = entries.reduce((t, m) => t + (m.count || 0), 0);
-    const b = Object.assign(document.createElement("button"), { type: "button", textContent: `${label} ▾` });
+    const b = Object.assign(document.createElement("button"), { type: "button", className: "cw-flat", textContent: `${label} ▾` });
     if (total) b.append(Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(total) }));
     b.setAttribute("aria-haspopup", "menu");
     const wrap = Object.assign(document.createElement("span"), { className: "drop" });
@@ -336,6 +338,9 @@ export function mount(ctx, el) {
   }
 
   // THE SPACE you are in: its name (logged in); a click opens the spaces panel. What is unread in your other spaces on it.
+  // THE HEADER's HEIGHT, as it is (two rows on a phone when the app has actions): what panels below it place by.
+  const barEl = el.querySelector(".bar");
+  if (barEl && typeof ResizeObserver === "function") new ResizeObserver(() => document.documentElement.style.setProperty("--cw-bar", `${barEl.offsetHeight}px`)).observe(barEl);
   const spaceB = el.querySelector(".space-name");
   spaceB.onclick = () => ctx.require("spaces-panel").then(p => p.open());
   let naming = 0;
@@ -361,7 +366,7 @@ export function mount(ctx, el) {
     const item = link;
     el.querySelector(".end").replaceChildren(
       // At the END (right): a link (a create page) or a button (Log out, Compose).
-      ...all.filter(a => a.end).map(a => item(a) ?? Object.assign(document.createElement("button"), { type: "button", textContent: a.label, onclick: () => a.run() })),
+      ...all.filter(a => a.end).map(a => item(a) ?? Object.assign(document.createElement("button"), { type: "button", className: "cw-flat", textContent: a.label, onclick: () => a.run() })),
     );
     actions.replaceChildren(
       ...all.filter(a => !a.end).map(a => {
@@ -381,6 +386,7 @@ export function mount(ctx, el) {
         }
         const b = document.createElement("button");
         b.type = "button";
+        b.className = "cw-flat";
         b.textContent = a.label;
         if (a.on) b.setAttribute("aria-pressed", "true");
         b.onclick = () => a.run();

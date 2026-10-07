@@ -1095,13 +1095,13 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
 - Test account on fy (17692, site EckhKsQW…): PIN 731731; words juice bulk shy trend need book heavy curtain old network arrange disagree (made 2026-10-03, outsider tests).
 
 ## CHAT AS A REGULAR APP (owner 10-03: "items them"; personal space gets its own Chat; Message/Mail/Contact stay global)
-- [ ] 1. CHANNELS ARE ITEMS (kind `channel`, domain `chat`) in shared spaces — `conversation.channels(server)` the one
+- [x] 1. CHANNELS ARE ITEMS (kind `channel`, domain `chat`) in shared spaces — `conversation.channels(server)` the one
       place: lists channel items (title = name, `meta.cid` = its message table's id, so no message moves), add/rename/
       remove = items submit/edit/remove; made only by who may make channels (as before). A channel's WHO MAY POST = its
       own rule (`meta.write.post`, via `roles.mayWrite`) else the space's Chat policy (path `chat`). Owner/admin node
       MIGRATES the old `channels` table (with each `chat/<cid>` policy → `meta.write.post`), then sets the act
       `config chat.channels = "items"`: readers stop opening the old table once that act is read.
-- [ ] 2. SETTINGS: Chat section's channel rows edit the items (name, who may post) — no `chat/<id>` path policies.
+- [x] 2. SETTINGS: Chat section's channel rows edit the items (name, who may post) — no `chat/<id>` path policies.
 - [ ] 3. PERSONAL CHAT: channels as items in the personal space; others' messages kept in their own profiles, pointed,
       read through the outsider source (generalized from a space to a place); your Home's Chat section: who may post.
 
@@ -1249,7 +1249,7 @@ Today a tail row is replaced in place and a flush replaces the root: old version
 - [x] H3 KEEP also keeps the blocks every logged root reaches, until it ages out.
 - [x] H4 items.history(ref): each member's feed walked root by root → [{ at, by (the feed's writer), value }],
       consecutive duplicates folded, newest 20; History view (item page, note) with Restore.
-- [ ] H5 Retention a space setting (≤ the plan's ceiling: baseline 7 d / 20 v); premium ceiling with payments.
+- [x] H5 Retention a space setting (5d49af7) (≤ the plan's ceiling: baseline 7 d / 20 v); premium ceiling with payments.
 Known limit: a table RESEALED (an epoch moved after a removal) starts its history again — older trees sit under the
 old key's addresses.
 
@@ -1258,7 +1258,7 @@ old key's addresses.
 - [x] Key catch-up on load: a member behind the owner's branch asks every member; any member on the branch answers (5e8eccb, 8198d25). Awaiting TinyIvvor's test.
 - [x] Publisher confirms pieces served (re-put if not); loader never replays a failed cached piece (d2fe15c). Test nodes run with their own HOME (shared webapp_cache clobbering).
 - [x] Mentions one way (person:DID links → card; inbox notices checked against the item), shared links open from any address/custom domain, header search + 🔔 + @ (9a663d8).
-- [ ] Untested: chat mention opens AT the message; 🔔 with real unread; History live.
+- [x] Live 10-07 22:30 (fx→fy): a mention notices fy (🔔 1, @ 1), the notice opens the conversation at the message, highlighted; a note's History shows the version before the edit with Restore. (Typed `[..](person:..)` is escaped by the composer — mentions come from the @ list.)
 - [ ] F5b R4 delegate re-keys: BUILT (R4a–d); R4e BLOCKED BY THE NODE (freenet #5542: a delegate's PUT of a new contract stays local). Nothing to build until the node fixes it; flip `upkeep::NEW_CONTRACTS_REACH_THE_NETWORK` then.
 - [ ] Your node log: contracts HQk7zGRQ…/J4bh5TcQ… reject updates every few minutes — not identified.
 
@@ -1275,9 +1275,9 @@ old key's addresses.
 - [x] 3 Cascade layers (10-06): `@layer base, apps, components, templates` declared once in the theme; every package's CSS
       in its layer (28 style blocks + 13 in-template <style>); `body` prefixes dropped. The boot page (wrapper/index.html)
       in a lowest `boot` layer — unlayered, its `body { max-width: 900px }` had capped the whole app.
-- [ ] 4 Strip each app's own buttons/headings/widths → theme parts; screenshot each app at phone width
-- [ ] 5 Remaining live checks
-- [ ] 6 Identify node-log contracts HQk7…/J4bh…
+- [~] 4 Strip each app's own buttons/headings/widths → theme parts; screenshot each app at phone width — 10-07: theme part `.cw-flat`, used by the header (19 other packages' flat-button rules still their own: each tuned); PHONE (390 px) checked: Home, Board, Chat, Note, Drive, Mail, Settings, Video. Fixed: header on two rows (app actions + search below, the header sets --cw-bar to its height), nothing wraps or runs off; Chat one pane with Back. Not yet seen: Usage, Contact, Image, Audio, Book, Paste, Caption.
+- [x] 5 Remaining live checks (10-07, see the 10-05 session's list)
+- [x] 6 Identify node-log contracts HQk7…/J4bh… (10-07: J4bh gone; HQk7 is a public contract the owner's node relays to ~40 peers — not ours; 68 'Invalid update' deltas from other peers in 12 h, each answered by the node's own ResyncRequest)
 - [x] Catch-up made SAFE and back on (10-06, 241d8df): asked after 10 min behind in a page (page memory: the app frame
       has no localStorage), the ask carries epoch+branch; answered only when confirmed behind (ask + device announcements).
 - [x] Drive files as items (already items in drive-store); 10-06: feed tiles open the file's page (bar + Open/Move…).
@@ -1314,7 +1314,7 @@ old key's addresses.
       pass + statements + shadow ledger (REWARDS §7 item 4).
 - Decisions recorded in REWARDS: carriers = holders weighted by demand; users are the keepers; never paid to own
   account/nodes; a pass buys the private (public stays free); §4a what is signed vs provable.
-- Nodes: all on freenet 0.2.142; 7509 + B `--hosting-mem-share 0.5`; node settings otherwise unchanged (owner 10-07).
+- Nodes: all on freenet 0.2.142; 7509 + B `--hosting-mem-share 0.5`; B also `--max-hosting-storage 8589934592` (owner 10-07 22:40: the default 512 MiB was full at ~3,070 contracts, a publish evicted 440/h and accepted pieces went unserved; drop-in zz-hosting-storage.conf).
 - Upstream: #5750 updated (head c5f584be) + reply; #5828 opened for #5785; both await maintainer CI approval (owner:
   do not ask). Unanswered-GET report uploaded from B: code 6YRSRD (9 unanswered + 9 NotFound of 100 small, listed in
   the report message).
