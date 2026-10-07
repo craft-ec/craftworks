@@ -578,7 +578,7 @@ export async function start(ctx) {
       const index = await ctx.require("index");
       // (Only an entry every member reads counts: one sealed with an epoch is read by those who hold it alone.)
       const had = (await index.spacePointers(sp, "writers").catch(() => [])).some(p => p?.w === sp.self && p.epoch === s.epoch && p.branch === branch && p.sealedAt === index.OPEN);
-      if (!had) await index.spacePoint(sp, "writers", { w: sp.self, epoch: s.epoch, branch }).catch(e => ((announced = -1), Promise.reject(e)));
+      if (!had) await index.spacePoint(sp, "writers", { w: sp.self, epoch: s.epoch, branch, at: Date.now() }).catch(e => ((announced = -1), Promise.reject(e)));
     }
     // EVERY SWITCH of the group keeps the branch it leaves: its epoch secrets that the group now on does not share
     // (the epochs where the two differ) — kept as lost, read with as alternates. Nothing is ever sealed under a key
@@ -661,6 +661,7 @@ export async function start(ctx) {
       return true;
     }
     // A commit that did not apply here (this DID's own, from another device): its state, when that device has saved it.
+    let stuckSaid = false;
     async function current(fresh = false) {
       for (let tries = 0; ; tries++) {
         try {
@@ -673,6 +674,22 @@ export async function start(ctx) {
           }
           return status(m.status());
         } catch (e) {
+          // STUCK behind its OWN commit (10-07, Ivvor: a commit this device wrote reached the log, its state after it was
+          // never saved — the tab closed, or the save failed): MLS never applies a member's own message, so no reload
+          // helps. Said once, and the members asked to welcome it again (`conversation`); a welcome is taken meanwhile
+          // (the space reads as one with no group here).
+          if (/CantProcessMessageFromSelf/.test(String(e?.message ?? e))) {
+            const st = m.status();
+            const branch = glue.epoch_log_public(st.secret);
+            const dids = [...new Set(st.members.filter(x => x.cred).map(x => glue.did_of(new Uint8Array(x.cred.match(/../g).slice(4, 36).map(h => parseInt(h, 16))))))];
+            if (!stuckSaid) {
+              stuckSaid = true;
+              ctx.log(`${sp.name ?? "space"} keys`, { what: `stuck at epoch ${st.epoch}: the next change in its log is this device's own, never saved here — asking the members to welcome it again` });
+              keyEvent("stuck-own-commit", { space: hexOf(sp.idBytes), epoch: st.epoch });
+              dispatchEvent(new CustomEvent("craftworks:keys-stuck", { detail: { space: hexOf(sp.idBytes), epoch: st.epoch, branch, dids } }));
+            }
+            throw new Error(`this device is one change behind its own in ${sp.name ?? "this space"}: the members were asked to welcome it again`);
+          }
           if (await load()) continue;
           if (tries >= 3) throw e;
           await new Promise(r => setTimeout(r, 1500));

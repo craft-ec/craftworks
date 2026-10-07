@@ -332,6 +332,26 @@ export async function start(ctx) {
     for (const did of to) await index.send(did, { kind: "history-ask", space: sp.id, from: me.id, below, at: Date.now() }).catch(() => {});
     ctx.log("conversation", { what: `${sp.name}: its history (epochs below ${below}) asked of ${to.length} member(s)` });
   });
+  // The DIDs in this node's group of a space (its MLS members' credentials).
+  async function groupDids(sp) {
+    const { glue } = await ctx.require("node");
+    const st = await keys.group(sp).ready().catch(() => null);
+    return [...new Set((st?.members ?? []).filter(m => m.cred).map(m => glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16))))))];
+  }
+  // STUCK behind its own commit (`keys`): its members asked — once a page — to welcome this device again. Its group's
+  // own members (who to ask when the acts are unread here) and the space's by its acts.
+  const askedStuck = new Set();
+  addEventListener("craftworks:keys-stuck", async ({ detail }) => {
+    if (askedStuck.has(detail.space)) return;
+    askedStuck.add(detail.space);
+    const me = await space.account();
+    const sp = (await space.mine()).find(s => s.id === detail.space);
+    if (!me || !sp) return;
+    const r = await (await ctx.require("roles")).of(sp).catch(() => null);
+    const to = [...new Set([...(r?.members() ?? []).map(m => m.did), ...(detail.dids ?? [])].filter(d => d && d !== me.id))].slice(0, 12);
+    for (const did of to) await index.send(did, { kind: "welcome-again", space: sp.id, from: me.id, stuck: true, epoch: detail.epoch, branch: detail.branch, at: Date.now() }).catch(() => {});
+    ctx.log("conversation", { what: `${sp.name}: stuck behind its own change at epoch ${detail.epoch} — ${to.length} member(s) asked to welcome it again` });
+  });
   let renewedForWelcomes = false;
   // ONE AT A TIME (the chat page and upkeep both ask): two passes taking the same welcome at once — one joins, spending
   // its key package; the other finds it not held and asks for another, a remove and an add more.
@@ -389,10 +409,38 @@ export async function start(ctx) {
             const r = await (await ctx.require("roles")).of(sp);
             await r.settled;
             // A REPAIR lets nobody new in: any member answers it (from the owner's branch, checked below).
-            belongs = r.members().some(m => m.did === it.from) && (sp.kind === "group" || it.repair || r.can(me.id, "invite"));
+            belongs = r.members().some(m => m.did === it.from) && (sp.kind === "group" || it.repair || it.stuck || r.can(me.id, "invite"));
+            // STUCK: in this node's own group is enough (its acts may be unread here).
+            if (!belongs && it.stuck) belongs = (await groupDids(sp)).includes(it.from);
           }
           if (!belongs) continue;
           const name = sp.kind === "direct" ? ((await directory.card(me.id))?.handle ?? short(me.id)) : sp.name;
+          // STUCK behind its own change (`keys`): answered by a member who has gone PAST that epoch on the SAME branch
+          // (this node's key at their epoch is theirs: they are behind it, not elsewhere) — whoever owns the space.
+          if (it.stuck) {
+            const skip = why => (ctx.log("conversation", { what: `${short(it.from)} stuck in ${sp.name} at epoch ${it.epoch}: not answered here (${why})` }), true);
+            const mineSt = await keys.group(sp).ready().catch(() => null);
+            if (!mineSt || mineSt.removed || !(Number(it.epoch) < mineSt.epoch)) { skip(`this node is at ${mineSt?.epoch ?? "no group"}`); continue; }
+            if ((await keys.group(sp).fingerprint(Number(it.epoch)).catch(() => null)) !== it.branch) { skip("another branch"); continue; }
+            // ONE answers: the members take turns (`ordering.turn`), a later one after (turn) × TAKEOVER — and not if
+            // the asker has announced a newer epoch since (welcomed by an earlier turn).
+            const ordering = await ctx.require("ordering");
+            const turn = ordering.turn(`stuck:${it.space}|${it.from}|${it.epoch}`, (await groupDids(sp)).filter(d => d !== it.from), me.id);
+            if (turn < 0 || Date.now() - (Number(it.at) || 0) < turn * ordering.TAKEOVER) continue;
+            // Welcomed already by an earlier turn: its device announced a newer epoch SINCE the ask (one announced before
+            // it is the change it lost).
+            const devs = await directory.devices(it.from).catch(() => []);
+            if ((await index.spacePointers(sp, "writers").catch(() => [])).some(x => devs.includes(x?.w) && Number(x.epoch) > Number(it.epoch) && Number(x.at) > Number(it.at))) {
+              skip("welcomed since");
+              await once.put(k, `answered ${Date.now()}`);
+              continue;
+            }
+            await welcome(sp, it.from, name);
+            keys.event("welcome-again-sent", { space: sp.id, to: it.from, stuck: true, theirEpoch: it.epoch, ownEpoch: mineSt.epoch });
+            await once.put(k, String(Date.now()));
+            ctx.log("conversation", { what: `${short(it.from)} was stuck behind its own change in ${sp.name} (epoch ${it.epoch}; here ${mineSt.epoch}): welcomed again` });
+            continue;
+          }
           // A REPAIR that did not open: made again (onto the owner's branch, from their card as it is now) — whatever
           // the space's record says was repaired already.
           const own = it.repair ? await ownerBranch(sp).catch(() => null) : null;
