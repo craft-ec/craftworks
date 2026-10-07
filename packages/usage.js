@@ -14,6 +14,9 @@
 //   await usage.flush()
 //   await usage.contribute(amount, days = 30)                // a contribution (SHADOW: a preview, nothing given)
 //   await usage.contributions()                              // [{ at, amount, days }]
+//   await usage.level()                                      // { id: "free"|"pro"|"vip", name, perMonth, next }
+//   await usage.levelPlan()                                  // [{ id, name, until: "YYYY-MM-DD" }] — the level ahead
+//   await usage.mayOpen(level, by)                           // this person may open an item of that level
 //   await usage.statement("2026-10")                         // the month so far, each day's share of the
 //                                                            // contributions split by that day's use: { month, amount,
 //                                                            // days, creators, carriers, unclaimed, network } ({did: n})
@@ -151,6 +154,14 @@ export async function start(ctx) {
     await t.settled;
     return t.rows().filter(r => r.key.startsWith("c:") && r.value).map(r => parse(r.value)).filter(c => c?.amount > 0).sort((a, b) => a.at - b.at);
   }
+  // THE LEVEL (rewards §5a): FREE, PRO or VIP by what this person gives NOW — today's share of their active
+  // contributions, as a month. Thresholds in one place (placeholders, owner 10-07).
+  const LEVELS = [["vip", "VIP", 20], ["pro", "PRO", 5]];
+  async function level(day = dayOf()) {
+    const perMonth = Math.round(shareOn(await contributions(), day) * 30 * 100) / 100;
+    const hit = LEVELS.find(([, , min]) => perMonth >= min);
+    return { id: hit?.[0] ?? "free", name: hit?.[1] ?? "Free", perMonth, next: LEVELS.slice().reverse().find(([, , min]) => perMonth < min) ?? null };
+  }
   // A DAY's share of every contribution active on it (from its day, for its days).
   const shareOn = (cs, day) =>
     cs.reduce((n, c) => {
@@ -218,5 +229,28 @@ export async function start(ctx) {
     out.network = Math.round(out.network * 1e6) / 1e6;
     return out;
   }
-  return { track, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions };
+  // THE LEVEL AHEAD: each level and its LAST day, from today, as the contributions run out — [{ id, name, until }].
+  async function levelPlan() {
+    const cs = await contributions();
+    const out = [];
+    for (let i = 0; i < 400; i++) {
+      const day = dayOf(Date.now() + i * 86400000);
+      const perMonth = shareOn(cs, day) * 30;
+      const hit = LEVELS.find(([, , min]) => perMonth >= min);
+      const id = hit?.[0] ?? "free";
+      if (out.length && out.at(-1).id === id) out.at(-1).until = day;
+      else if (id === "free" && out.length) break;
+      else if (id !== "free") out.push({ id, name: hit[1], until: day });
+      else break;
+    }
+    return out;
+  }
+  // May this person open an item of LEVEL `lv` ("" / "pro" / "vip")? Its author always may.
+  const RANK = { free: 0, pro: 1, vip: 2 };
+  async function mayOpen(lv, by = null) {
+    if (!lv || !RANK[lv]) return true;
+    if (by && by === (await (await ctx.require("space")).account())?.id) return true;
+    return RANK[(await level()).id] >= RANK[lv];
+  }
+  return { track, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions, level, levelPlan, mayOpen, LEVELS };
 }

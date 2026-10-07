@@ -16,6 +16,7 @@ export async function mount(ctx, el) {
     .us td.num { text-align: right; font-variant-numeric: tabular-nums; }
     .us tfoot td { font-weight: 600; border-bottom: 0; }
     .us input.amount { width: 6em; margin: 0 4px; }
+    .us .level { margin: 0; font-weight: 600; }
   }</style><div class="us"><h2>📊 Usage</h2></div>`;
   const root = el.querySelector(".us");
   const usage = await ctx.require("usage");
@@ -68,12 +69,17 @@ export async function mount(ctx, el) {
   const amountLine = Object.assign(document.createElement("div"), { className: "note" });
   amountLine.append("Give ", amount, " tokens over ", days, " ", giveBtn);
   const given = Object.assign(document.createElement("p"), { className: "note" });
+  const levelLine = Object.assign(document.createElement("p"), { className: "level" });
   const fnote = Object.assign(document.createElement("p"), { className: "note", textContent: "Nothing is given yet (a preview). Any amount, any time: spread over its days, each day's share split by what you used that day — contributions that overlap add up. Creators by your time on their items (60%), keepers by the data their copies brought you (30%; with no keeper yet, to the creator), the network 10%. Never to you." });
   const fout = document.createElement("div");
   const drawFee = async () => {
     fout.textContent = "Working it out…";
     const cs = await usage.contributions().catch(() => []);
-    given.textContent = cs.length ? `Given: ${cs.map(c => `${c.amount} over ${c.days} days from ${usage.dayOf(c.at)}`).join("; ")}` : "Nothing given yet.";
+    const lv = await usage.level().catch(() => null);
+    const plan = await usage.levelPlan().catch(() => []);
+    const ahead = plan.length ? ` ${plan.map(p => `${p.name} until ${p.until}`).join(", then ")}, then Free.` : "";
+    levelLine.textContent = lv ? `Your level: ${lv.name} — giving ${lv.perMonth} a month now${lv.next ? ` (${lv.next[1]} from ${lv.next[2]})` : ""}.${ahead}` : "";
+    given.textContent = cs.length ? `Given: ${cs.map(c => `${c.amount} over ${c.days} days, ${usage.dayOf(c.at)} to ${usage.dayOf(c.at + (c.days - 1) * 86400000)}`).join("; ")}` : "Nothing given yet.";
     const st = await usage.statement(pick.value).catch(e => ((fout.textContent = `Could not: ${e?.message ?? e}`), null));
     if (!st) return;
     if (!st.amount) return (fout.textContent = "Nothing to share this month: give something above (a preview).");
@@ -104,7 +110,7 @@ export async function mount(ctx, el) {
     giveBtn.disabled = false;
     drawFee();
   };
-  root.append(pick, note, out, fh, fnote, amountLine, given, fout);
+  root.append(pick, note, out, fh, levelLine, fnote, amountLine, given, fout);
   await draw();
   drawFee();
   // KEPT FOR OTHERS (rewards step 2, `keep`): what this node keeps of what you played — re-read a day apart so the

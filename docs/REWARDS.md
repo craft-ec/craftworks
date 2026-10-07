@@ -143,6 +143,20 @@ A contributor's claims only steer their own contribution (§1): misreporting can
 - **Free tier:** no contribution, no statement; usage is carried by the network share and by keepers' goodwill. A reader who
   bypasses our pages costs no one their pay (no contribution, nothing to split) — only unpaid load, as any free use.
 
+## 5a. Levels, gated items, paying for one item (owner, 2026-10-07)
+
+- **Levels: FREE, PRO, VIP**, by what a person is giving NOW — the sum of their active contributions' daily shares
+  (§ Split per day), as a month: PRO from 5 tokens a month, VIP from 20 (placeholders, one place to change). A level
+  lasts while its contributions run (a week or a month each), and ends with them: nothing to renew or cancel. Public,
+  computed from the contributions' record by anyone — no tier table, no admin (Handcraft's tiers live in a database and
+  its pass "signature" anyone can recompute: not repeated here).
+- **An item's minimum level** (creator's choice: everyone, PRO, VIP): the item ENCRYPTED, its key sealed to the people at
+  that level — never one server secret that decrypts everything (Handcraft's `CONTENT_ENCRYPTION_SECRET`).
+- **Paying for one item:** in the token, to its creator; the buyer gets the item's key sealed to them.
+- **Open — who hands over a key** when a level or a payment is seen: the creator's pages do nothing while the creator is
+  offline. Options: the creator's always-open keeper page; a k-of-n group of keepers holding the keys between them; the
+  confidential version (§5). To decide before gated items are built.
+
 ## 6. What is open, and the proposal for each
 
 - *Central trust:* none (§5) — the token contract only checks arithmetic; statements are public now, encrypted to
