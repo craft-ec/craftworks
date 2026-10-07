@@ -448,11 +448,12 @@ export async function start(ctx) {
       throw e;
     });
   // THE TABLE IN USE: `spacekeys`, or the one the account's catalog NAMES (`upkeep` mark `spacekeys`) — set by hand
-  // only, never by a reading (owner 10-07: the owner's `spacekeys` lost a tree block; a fresh table for that account,
+  // only, never by a reading; `spacekeys-2` … `-9` (the site declares them all: a move needs no site change) (owner
+  // 10-07: the owner's `spacekeys` lost a tree block; a fresh table for that account,
   // filled again by a member's welcome and the card's renewal). Read once per page.
   let keysName = null;
   const spacekeys = async () => {
-    keysName ??= storage.upkeepMark("spacekeys").then(n => (typeof n === "string" && /^spacekeys(-\d+)?$/.test(n) ? n : SPACEKEYS), () => SPACEKEYS);
+    keysName ??= storage.upkeepMark("spacekeys").then(n => (typeof n === "string" && /^spacekeys(-[2-9])?$/.test(n) ? n : SPACEKEYS), () => SPACEKEYS);
     const t = await storage.table(await keysName);
     await t.settled;
     return t;
