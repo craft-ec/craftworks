@@ -52,21 +52,25 @@ One contract CODE (the standard). Its instances differ by their parameters — o
 
 | Piece | Params | State | Who writes |
 |---|---|---|---|
-| **Definition** | `{ name, symbol, decimals, supply rule, authorities, nonce }` | none beyond its params (it is its id) | made once; never changes |
-| **Account chain** | `{ definition id, owner key }` | the owner's entries, in sequence | the owner — and anyone appending what the chain's own rules PROVE (§3) |
+| **Definition** | `{ name, symbol, decimals, supply rule, authorities, code hash, nonce }` | ITS PARAMS again (a related read returns state, not params: a reader checks `blake3(code hash ‖ state) == id`) | made once; never changes |
+| **Account chain** | `{ definition id, owner key, code hash }` | the owner's entries, in sequence, and its CARRIED STATE (§2) | the owner — and anyone appending what the chain's own rules PROVE (§3) |
 | **Registry** | a public bag | pointers to definitions | anyone (discovery only, like Discover) |
 
 - A token's id is its definition's address. Two tokens never share a chain: an owner has one chain per token.
+- **One writer key per chain — a DEVICE's, never an account key shared by several devices** (two devices signing the
+  same `seq` would be an equivocation, §3b). An account with several devices has a chain per device (its balance is
+  the sum), or names one device its writer; a lost device's chain is moved by an entry signed with the account's
+  recovery (the identity's words), never by a second live writer.
 - **Authorities** (optional, per definition): a MINT key (or none: supply fixed by the rule), a FREEZE key (or none).
   A multisig authority is a k-of-n key set (as the attestation substrate's named quorum).
 - **Supply rule** — a fixed menu, never arbitrary code, so every instance stays checkable (§6).
 
 ## 1a. Supply, events, authorities
 
-- **Supply bag** (`supply <definition>`): every `mint` and `burn` pointed there by whoever appends it. `totalSupply` =
+- **Supply bag** (`supply <definition> <epoch>`, one per beacon epoch so none grows without bound): every `mint` and `burn` pointed there by whoever appends it. `totalSupply` =
   genesis + Σ mints − Σ burns, each pointer checked against its chain (a pointer to nothing counts nothing). Anyone
   recomputes it; it is final as the entries it counts are (§3). **A `mint` is valid only if its pointer is ALREADY in
-  the supply bag** (validation reads the bag: a related contract) — so no token comes into being where nobody can find
+  its epoch's supply bag** (validation reads that one shard: a related contract) — so no token comes into being where nobody can find
   it.
 - **Traceable without one ledger.** Every token starts at the definition's GENESIS entries or at a `mint` (all in the
   supply bag); every `send` NAMES its recipient and every credit CITES its debit. So, from genesis and the supply bag,
@@ -76,7 +80,7 @@ One contract CODE (the standard). Its instances differ by their parameters — o
 - **History kept.** A long chain's older entries are flushed into a tree (as tables are: carried balance at the cut,
   the entries readable); every chain and tree is kept alive by its readers and keepers (`keep`), as files and tables
   are — Freenet drops what nobody reads, where a blockchain's full nodes keep everything.
-- **Activity bag** (`activity <definition> <month>`): every entry pointed there — the EVENT log a wallet or explorer
+- **Activity bag** (`activity <definition> <day>`, a shard per day): every entry pointed there — the EVENT log a wallet or explorer
   reads; a holder's own chain, subscribed, pushes its own changes.
 - **Authority chain** (params `{ definition id, "authority" }`): the definition names the FIRST mint and freeze key
   sets; each later entry, signed by the current set, names the next (or none: dropped for good). Validation reads it
@@ -91,9 +95,13 @@ the same send/receive. Per-id metadata is a Craftworks item named by the id.
 
 ## 2. A chain's entries
 
-An account chain is a sequence `seq 0, 1, 2, …`, each entry naming the one before (its hash) and CARRYING the balance
-after it (per id, for a multi-token) — checked by validation (the previous balance ± this entry), so a balance is one
-read of the head. **A debit is valid only if the balance covers it** at its place. An owner may be a k-of-n key set:
+An account chain is a sequence `seq 0, 1, 2, …`, each entry naming the one before (its hash) and CARRYING the state
+after it — checked by validation (the previous state changed by this entry), so every check is a read of the head,
+never a scan of history (which may be flushed): the BALANCE (per id), the open ALLOWANCES and what is left of each, the
+open OFFERS and what is left of each, the open LOCKS, and an ACCUMULATOR (a Merkle root) of every send already
+received here and every lock already filled — a `receive` or `fill` carries the proof that its name is NOT yet in it,
+and the entry adds it. A PRUNE CUT (older entries flushed into a tree, §1a) is an owner-signed entry naming the tree's
+root and carrying the state at the cut: the contract takes it as the chain's start; wallets verify across it (§3a). **A debit is valid only if the balance covers it** at its place. An owner may be a k-of-n key set:
 an entry it signs carries k signatures.
 
 | Entry | Effect | Written by | Valid when |
@@ -114,6 +122,10 @@ an entry it signs carries k signatures.
 **Anyone may append what the chain's own rules prove** — so a receiver, a maker, a lender need never be online: their
 chain takes the credit, the fill, the claim by itself. The owner's key is needed only for what spends or permits.
 
+**Spam costs work.** There is no gas, so: an entry appended by someone OTHER than the owner carries a small PROOF OF
+WORK (as bags already admit their items), a `send` has a MINIMUM amount (the definition's), and a chain is made only by
+a receive of at least that amount.
+
 ## 3. Concurrency without a sequencer
 
 Two writers may append at the same `seq` at once (the owner sends while a taker fills). Freenet's copies merge them by
@@ -133,6 +145,30 @@ than its predecessor's, and a beacon that exists); an entry that CITES another c
 old. By then every copy of the cited chain holds the same winner, so a send that lost its race (and failed its
 re-check) is never received. A cited entry is named by `(chain, nonce)`, not its `seq`, so a loser re-appended at a
 later `seq` keeps its name.
+
+## 3b. Equivocation is fatal (owner, 2026-10-08: strict, "else it can be double spend")
+
+Two entries signed by a chain's writer at the SAME `seq` are an EQUIVOCATION — the chain's own proof of a double spend.
+Since one writer key belongs to one device (§1), an honest owner never makes one.
+
+- Anyone publishes the two entries as an EQUIVOCATION PROOF in the token's fraud bag; any chain holding both (the merge
+  keeps BOTH, never picks a winner between two writer-signed entries) is marked by its contract.
+- **Strict:** everything BEFORE the fork stays valid; EVERY DEBIT AFTER IT, on both branches, is VOID — credits citing
+  them are void too. The forger cannot choose which victim keeps the money, and neither branch is spendable. The chain
+  is dead for its owner; the proof stays in the fraud bag for good.
+- So a wallet accepts a credit only after the margin AND finding no conflicting entry known for the sender's `seq`.
+- The lowest-hash merge (§3) settles only races between DIFFERENT writers (the owner and a taker, two takers) — never
+  two entries of the owner's own key.
+
+**No backdating.** An entry names the beacon it was written at; when APPENDED it must name one no older than the
+latest the validating node knows, less a small skew. A whole chain handed over from scratch cannot be checked for that,
+so nothing TIMED trusts a writer's own stamp: a timeout, an epoch's membership (§5) and a margin are judged by the
+beacon at which the cited entry became FINAL — the first beacon at which the copies agree on it, which anyone reading
+the beacon contract and the chain recomputes.
+
+**A partition longer than the margin** (copies not agreeing in time) could let a fill and a refund both pass: the
+margin is set generously from measurement (step 4), and the two entries, both citing one lock, are themselves the
+proof — the lock's later entries voided as an equivocation's are.
 
 ## 3a. Who checks what (owner, 2026-10-08)
 
@@ -206,9 +242,18 @@ An AMM's pool needs one shared value changed in a global order. Instead, a POOL 
 3. **Settle** — each participant's chain takes its result: `fill`/`claim`/`refund` entries citing the batch's result
    hash, appended by anyone.
 
-What is in a batch is settled like a day of statements (REWARDS §3): FINAL once the epoch and its grace are over, the
-orders whose locks every copy holds by then. A late order is in the next batch. Liquidity is pooled; prices are per
+What is in a batch is settled like a day of statements (REWARDS §3), from CHAIN DATA ONLY so every clearer computes the
+same batch: an order is in epoch `e` if its lock names the pool's epoch `e` and became FINAL (§3b) within `e`'s window;
+the batch is final once `e` and its grace are over. A later lock is in the next batch. Liquidity is pooled; prices are per
 epoch, not per trade.
+
+## 5a. The beacon (the clock) — to design
+
+Every `until`, epoch, grace and margin, and keeper assignment, read the BEACON. "The newest Discover head" (REWARDS §4)
+is not enough: it has no height, anyone appending to Discover nudges it, and each validation reading it spends one of
+its 10 related contracts. So: a DEDICATED BEACON CONTRACT — a HEIGHT that only grows and RANDOMNESS nobody knows
+ahead, advanced by a rule anyone checks (candidates: a hash chain each step of which costs a bounded proof of work;
+time-boxed commit-reveal by many). Its cadence is the owner's choice (§8). Designed before step 4.
 
 ## 6. Supply rules (the menu)
 
@@ -239,17 +284,18 @@ The standard's first instance. What it changes in REWARDS:
 1. The supply rule and size (`fixed` + `burnable`, with or without a `keepers` launch phase).
 2. Who holds the genesis (a sale, a distribution to early contributors, keepers only).
 3. The network share: burned (deflation) or kept for upkeep.
-4. The beacon's cadence — it is the clock of every `until`, epoch and grace.
+4. The beacon's cadence — it is the clock of every `until`, epoch and grace (and its mechanism, §5a).
 
 ## 9. Build order
 
 1. Related-contract validation — MEASURED (step 1, above).
 2. This design, reviewed.
-3. The contract (§3a's local rules): definition + account chain with `send`/`receive`/`burn`, carried balances, the
-   lowest-hash merge, cited entries checked on append,
+3. The contract (§3a's local rules): definition (state = params) + account chain (one device key) with
+   `send`/`receive`/`burn`, CARRIED STATE and the accumulator, the lowest-hash merge between different writers,
+   EQUIVOCATION kept and marked (§3b), proof of work on others' appends, cited entries checked on append,
    unit tests with mutations for every rule (a debit over balance, a double receive, a fork, a wrong carried balance);
    the supply and activity bags; the authority chain.
-4. The real network: finality margin, related fetch latency across the ring.
+4. The beacon contract (§5a), then the real network: finality margin, related fetch latency across the ring.
 5. `allow`/`spend`, `offer`/`fill`/`lock`/`claim`/`refund`, multisig owners, ids (NFT, multi-token), vesting.
 6. The Craftworks token: contributions as locks, payouts as claims.
 7. Batch-auction pools.
