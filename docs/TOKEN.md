@@ -146,7 +146,12 @@ therefore cannot prove every `receive` in a long chain against its sender. So:
 - **Value is checked by whoever RECEIVES it.** Before treating a payment as theirs, a wallet walks its citations back
   (§1a: traceable) — the sender's chain, where that money came from — until it reaches genesis or a checkpoint it
   accepts. A chain whose past does not check out is worthless to everyone who checks, and provably so.
-- **SHARED CHECKPOINTS** keep the walk short, with no one trusted. Anyone may publish, signed, "chain X is honest up to
+- **YOUR OWN CHECKPOINTS first** (owner, 10-08): a wallet remembers every chain it has verified, and up to which entry —
+  trusting only itself, it re-checks only what is new. Its order: its own checkpoints, then shared ones (below), then a
+  full walk for what neither covers. A chain owner's checkpoint of THEIR OWN chain counts for nothing (they are the
+  one who could forge it).
+- **SHARED CHECKPOINTS** keep the walk short for chains a wallet has never seen, with no one trusted — published at no
+  extra cost by whoever just verified a chain for a payment of their own. Anyone may publish, signed, "chain X is honest up to
   entry N, balance B" (pointed in the token's checkpoint bag). A wallet may take it as a hint (stopping its walk there),
   spot-check it, or verify fully.
 - **A FALSE CHECKPOINT IS RECORDED** — its FRAUD PROOF (the checkpoint and the entries that contradict it: a citation
