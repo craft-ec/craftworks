@@ -134,6 +134,31 @@ old. By then every copy of the cited chain holds the same winner, so a send that
 re-check) is never received. A cited entry is named by `(chain, nonce)`, not its `seq`, so a loser re-appended at a
 later `seq` keeps its name.
 
+## 3a. Who checks what (owner, 2026-10-08)
+
+**The limit.** Freenet validates any copy of a contract's state from scratch (a peer may hand a node a whole chain),
+and a validation may read at most 10 related contracts, in one round (measured limits, step 1). A chain's own contract
+therefore cannot prove every `receive` in a long chain against its sender. So:
+
+- **The contract enforces the LOCAL rules** — signatures, sequence and links, carried balances, no fork, a debit within
+  the balance, no receive twice, the code hash in its params — and, when an entry is APPENDED, checks what it cites
+  (≤ 10 related, one round). A chain is always well-formed; it is not, by its contract alone, proven honest.
+- **Value is checked by whoever RECEIVES it.** Before treating a payment as theirs, a wallet walks its citations back
+  (§1a: traceable) — the sender's chain, where that money came from — until it reaches genesis or a checkpoint it
+  accepts. A chain whose past does not check out is worthless to everyone who checks, and provably so.
+- **SHARED CHECKPOINTS** keep the walk short, with no one trusted. Anyone may publish, signed, "chain X is honest up to
+  entry N, balance B" (pointed in the token's checkpoint bag). A wallet may take it as a hint (stopping its walk there),
+  spot-check it, or verify fully.
+- **A FALSE CHECKPOINT IS RECORDED** — its FRAUD PROOF (the checkpoint and the entries that contradict it: a citation
+  that is not there, a balance that does not add up) published in the token's fraud bag, checkable by anyone. Wallets
+  skip every checkpoint of a publisher with a proven fraud, and the publisher's card shows it — so a wrong checkpoint
+  costs its publisher their standing for good. (Stronger, if ever needed: a checkpoint backed by a `lock`, claimable by
+  whoever publishes its fraud proof.)
+
+Chains also refuse what can be refused cheaply: a receive whose cited send is not there when it is appended, a code
+hash that is not the standard's — a chain's params name the standard's code hash (an id is `blake3(code hash ‖ params)`,
+so a chain recomputes every chain it cites), and readers check a chain's params against the definition's.
+
 ## 4. Swaps and fills with the maker offline
 
 A maker posts a standing `offer` (in their chain, pointed in the token pair's offers bag). A taker fills it with
@@ -216,10 +241,12 @@ The standard's first instance. What it changes in REWARDS:
 
 1. Related-contract validation — MEASURED (step 1, above).
 2. This design, reviewed.
-3. The contract: definition + account chain with `send`/`receive`/`burn`, carried balances, the lowest-hash merge,
+3. The contract (§3a's local rules): definition + account chain with `send`/`receive`/`burn`, carried balances, the
+   lowest-hash merge, cited entries checked on append,
    unit tests with mutations for every rule (a debit over balance, a double receive, a fork, a wrong carried balance);
    the supply and activity bags; the authority chain.
 4. The real network: finality margin, related fetch latency across the ring.
 5. `allow`/`spend`, `offer`/`fill`/`lock`/`claim`/`refund`, multisig owners, ids (NFT, multi-token), vesting.
 6. The Craftworks token: contributions as locks, payouts as claims.
 7. Batch-auction pools.
+8. Wallet verification: the citation walk, shared checkpoints, fraud proofs and the fraud bag (§3a).
