@@ -199,6 +199,24 @@ Chains also refuse what can be refused cheaply: a receive whose cited send is no
 hash that is not the standard's — a chain's params name the standard's code hash (an id is `blake3(code hash ‖ params)`,
 so a chain recomputes every chain it cites), and readers check a chain's params against the definition's.
 
+## 3c. Shape rules and append rules (10-08, before step 5b)
+
+A rule about TIME cannot be a rule of the state: Freenet re-validates a whole chain from scratch whenever any peer hands
+it over, at any later time — a fill appended before its deadline, re-checked against "now" a year later, would fail and
+make the whole chain invalid for good. So the contract keeps two kinds of rules:
+
+- **SHAPE rules** (`validate_state`, any time, from scratch): signatures, links, carried balances, allowances, no
+  receive twice, the recent citations (§3a) — and an entry's BEACON STAMP never lower than its predecessor's. True of a
+  chain forever once true.
+- **APPEND rules** (`update_state`: a node that already HOLDS the chain taking in entries it did not have — the only
+  moment that knows what is new): each new entry's stamp is within a small skew of the beacon the node reads now (one
+  related contract); a `fill` lands before its lock's deadline less the margin; a `refund` lands after the deadline,
+  with no fill citing the lock in the maker's chain (a related contract); a `claim` cites a fill final by the margin.
+
+A forged stamp can only pass where the chain was never held (a fresh PUT is checked by its shape alone) — and dies at
+every node that did hold it, which applies the append rules before it merges. A chain's time is its stamps; its stamps
+were checked against the beacon by every node that held the chain when they arrived.
+
 ## 4. Swaps and fills with the maker offline
 
 A maker posts a standing `offer` (in their chain, pointed in the token pair's offers bag). A taker fills it with
