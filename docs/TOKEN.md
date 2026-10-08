@@ -13,6 +13,38 @@ decides by it — a fill accepted when the lock it cites says so, refused when i
 exist, and the lock FETCHED over the network by a node that never held it (100 ms on a private 2-node network). The
 node's limits: one round of related contracts per validation, at most 10, 10 s. Everything below rests on this.
 
+## 0. Behaviour covered (owner 10-08: "design by the standard behaviour")
+
+Every behaviour of the blockchain token standards, and how this standard gives it. Section numbers point below.
+
+| Behaviour (standard) | Here | How |
+|---|---|---|
+| Fungible token — name, symbol, decimals (ERC-20 / SPL) | ✅ | definition params (§1) |
+| `balanceOf` | ✅ one read | every entry carries the BALANCE after it: the chain's head is the balance (§2) |
+| `transfer` | ✅ | `send` + `receive` — the receive appended by anyone (§2) |
+| `approve` / `allowance` / `transferFrom` | ✅ | `allow` / read the owner's chain / `spend` (§2) |
+| `totalSupply` | ✅ recomputed by anyone | genesis + mints − burns: every mint and burn POINTED in the token's supply bag; anyone sums them (§1a) |
+| Transfer / Approval EVENTS | ✅ | a chain is subscribable (each change pushed); every entry also pointed in the token's ACTIVITY bag for wallets and explorers (§1a) |
+| Permit / gasless transfers (EIP-2612) | ✅ native | every entry is a signed message; there is no gas — anyone may carry it to the network |
+| Mint / burn authority (SPL) | ✅ | supply rule + the authority's `mint`; `burn` by the owner (§2, §6) |
+| Freeze / thaw (SPL) | ✅ optional | the freeze authority's `freeze` / `thaw` (§2) |
+| Set / drop an authority (SPL `SetAuthority`) | ✅ | the definition's AUTHORITY CHAIN: rotations signed by the current authority; dropping one is final (§1a) |
+| Close an empty account (SPL) | ✅ | a zero-balance chain may be dropped; it is made again by its next receive |
+| Multisig accounts / authorities | ✅ | an owner or authority key is a k-of-n KEY SET (as the attestation substrate's named quorum): an entry carries k signatures (§1) |
+| NFTs — `ownerOf`, transfer, per-item approve, `setApprovalForAll` (ERC-721) | ✅ | a definition with `ids: unique`; a chain per (id, owner) whose head says held or not; `allow` per id or for all (§1b) |
+| Multi-token, batch transfer (ERC-1155) | ✅ | one definition, many ids; a chain per (definition, owner) holds an amount per id; a batch = several debits in ONE entry (atomic within the sender's chain) (§1b) |
+| Metadata (token and per item) | ✅ | the definition's metadata; per id, an ITEM of Craftworks (its page, its files) named by the id |
+| History | ✅ | the chains ARE the history; each entry signed and linked |
+| Atomic swap between two tokens | ✅ two-phase | lock → fill → claim, or refund; the race closed by time (§4) |
+| Vesting, time locks | ✅ | `lock(beneficiary, amount, until)`: claimable by the beneficiary after the beacon passes `until`, or in steps (§4a) |
+| Staking | ✅ | `lock` to a staking definition; its rewards a supply rule of that definition (§4a, §6) |
+| Escrow, two-party loans | ✅ | locks with release conditions (§4) |
+| Order book | ✅ | standing `offer`s in the pair's offers bag, filled with the maker offline (§4) |
+| AMM / pooled liquidity | ✅ per epoch | batch auctions: one uniform price per epoch, LPs as curve orders (§5) |
+| Pooled lending | ⚠️ per epoch | lenders' and borrowers' offers matched per epoch by the same batch clearing; liquidation by beacon-timed conditions — designed after pools work |
+| Composability (contracts calling contracts) | ✅ by reading | a contract validates against OTHER contracts' state (measured, step 1) and anyone appends what those states prove; logic beyond that runs in pure functions anyone recomputes, or delegates. Not: one transaction changing many contracts atomically — two-phase (§4) or batches (§5) instead |
+| Global transaction order | ✗ by choice | not needed by any row above; it is the expensive central part |
+
 ## 1. The pieces
 
 One contract CODE (the standard). Its instances differ by their parameters — on Freenet a contract's address is
@@ -29,10 +61,30 @@ One contract CODE (the standard). Its instances differ by their parameters — o
   A multisig authority is a k-of-n key set (as the attestation substrate's named quorum).
 - **Supply rule** — a fixed menu, never arbitrary code, so every instance stays checkable (§6).
 
+## 1a. Supply, events, authorities
+
+- **Supply bag** (`supply <definition>`): every `mint` and `burn` pointed there by whoever appends it. `totalSupply` =
+  genesis + Σ mints − Σ burns, each pointer checked against its chain (a pointer to nothing counts nothing). Anyone
+  recomputes it; it is final as the entries it counts are (§3).
+- **Activity bag** (`activity <definition> <month>`): every entry pointed there — the EVENT log a wallet or explorer
+  reads; a holder's own chain, subscribed, pushes its own changes.
+- **Authority chain** (params `{ definition id, "authority" }`): the definition names the FIRST mint and freeze key
+  sets; each later entry, signed by the current set, names the next (or none: dropped for good). Validation reads it
+  (a related contract) to know who may `mint` or `freeze` at that beacon.
+
+## 1b. Many ids: NFTs and multi-tokens
+
+A definition may say `ids: none` (fungible), `ids: unique` (ERC-721: each id's supply is 1) or `ids: many` (ERC-1155).
+An account chain then holds an amount PER ID; every entry names its id(s); a `send` may move several ids at once (one
+entry: atomic in the sender's chain). For `unique`, the chain of the id's holder is the `ownerOf` answer; a transfer is
+the same send/receive. Per-id metadata is a Craftworks item named by the id.
+
 ## 2. A chain's entries
 
-An account chain is a sequence `seq 0, 1, 2, …`, each entry naming the one before (its hash). The BALANCE after an entry
-is the sum of the credits before it minus the debits; **a debit is valid only if the balance covers it** at its place.
+An account chain is a sequence `seq 0, 1, 2, …`, each entry naming the one before (its hash) and CARRYING the balance
+after it (per id, for a multi-token) — checked by validation (the previous balance ± this entry), so a balance is one
+read of the head. **A debit is valid only if the balance covers it** at its place. An owner may be a k-of-n key set:
+an entry it signs carries k signatures.
 
 | Entry | Effect | Written by | Valid when |
 |---|---|---|---|
@@ -94,6 +146,15 @@ Two-phase, never half done: either the fill and the claim, or the refund. The sa
 (collateral locked by the borrower, released by repayment or kept after the term) and atomic swaps between any two
 tokens of the standard.
 
+## 4a. Vesting, time locks, staking
+
+- **Time lock / vesting:** `lock(beneficiary, amount, until)` — or `until` as a SCHEDULE (amounts released at beacon
+  heights). The beneficiary (or anyone for them) appends `claim(lock, step)` once the beacon has passed that step; the
+  locker cannot take it back (no `refund` on a vesting lock).
+- **Staking:** a `lock` to a STAKING definition (its params name the staked token and its rule). Its rewards are that
+  definition's supply rule (§6) — e.g. a fixed amount per beacon per staked unit, minted by proof of the lock — and the
+  stake returns by `claim` after its term.
+
 ## 5. Pools, by batch auction
 
 An AMM's pool needs one shared value changed in a global order. Instead, a POOL is a definition of its own
@@ -145,9 +206,10 @@ The standard's first instance. What it changes in REWARDS:
 
 1. Related-contract validation — MEASURED (step 1, above).
 2. This design, reviewed.
-3. The contract: definition + account chain with `send`/`receive`/`burn`, the lowest-hash merge, unit tests with
-   mutations for every rule (a debit over balance, a double receive, a fork).
+3. The contract: definition + account chain with `send`/`receive`/`burn`, carried balances, the lowest-hash merge,
+   unit tests with mutations for every rule (a debit over balance, a double receive, a fork, a wrong carried balance);
+   the supply and activity bags; the authority chain.
 4. The real network: finality margin, related fetch latency across the ring.
-5. `allow`/`spend`, `offer`/`fill`/`lock`/`claim`/`refund`.
+5. `allow`/`spend`, `offer`/`fill`/`lock`/`claim`/`refund`, multisig owners, ids (NFT, multi-token), vesting.
 6. The Craftworks token: contributions as locks, payouts as claims.
 7. Batch-auction pools.
