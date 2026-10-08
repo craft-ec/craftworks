@@ -146,19 +146,18 @@ therefore cannot prove every `receive` in a long chain against its sender. So:
 - **Value is checked by whoever RECEIVES it.** Before treating a payment as theirs, a wallet walks its citations back
   (§1a: traceable) — the sender's chain, where that money came from — until it reaches genesis or a checkpoint it
   accepts. A chain whose past does not check out is worthless to everyone who checks, and provably so.
-- **YOUR OWN CHECKPOINTS first** (owner, 10-08): a wallet remembers every chain it has verified, and up to which entry —
-  trusting only itself, it re-checks only what is new. Its order: its own checkpoints, then shared ones (below), then a
-  full walk for what neither covers. A chain owner's checkpoint of THEIR OWN chain counts for nothing (they are the
-  one who could forge it).
-- **SHARED CHECKPOINTS** keep the walk short for chains a wallet has never seen, with no one trusted — published at no
-  extra cost by whoever just verified a chain for a payment of their own. Anyone may publish, signed, "chain X is honest up to
-  entry N, balance B" (pointed in the token's checkpoint bag). A wallet may take it as a hint (stopping its walk there),
-  spot-check it, or verify fully.
-- **A FALSE CHECKPOINT IS RECORDED** — its FRAUD PROOF (the checkpoint and the entries that contradict it: a citation
-  that is not there, a balance that does not add up) published in the token's fraud bag, checkable by anyone. Wallets
-  skip every checkpoint of a publisher with a proven fraud, and the publisher's card shows it — so a wrong checkpoint
-  costs its publisher their standing for good. (Stronger, if ever needed: a checkpoint backed by a `lock`, claimable by
-  whoever publishes its fraud proof.)
+- **CHECKPOINTS, one kind, public** (owner, 10-08): whoever verifies a chain publishes what they now trust — signed,
+  "chain X is honest up to entry N, balance B" — in the token's checkpoint bag. Nothing private, nothing made twice.
+- **VOUCHES**: someone who checked the same thing does not make another checkpoint — they VOUCH for the existing one (a
+  signed reference to it). Vouches gather on one checkpoint.
+- **A wallet decides by who stands behind it**: stopping its walk at its own checkpoints, at ones vouched for by people
+  it trusts, or at ones with enough vouches; anything else it spot-checks or walks. A chain owner's checkpoint or vouch
+  for THEIR OWN chain counts for nothing (they are the one who could forge it).
+- **A FALSE CHECKPOINT IS RECORDED against everyone behind it** — its FRAUD PROOF (the checkpoint and the entries that
+  contradict it: a citation that is not there, a balance that does not add up), checkable by anyone, in the token's
+  fraud bag, naming the maker AND every voucher. Wallets then skip all their checkpoints and vouches, and their cards
+  show it — so vouching carelessly costs what a false checkpoint costs. (Stronger, if ever needed: checkpoints and
+  vouches backed by a `lock`, claimable by whoever publishes the fraud proof.)
 
 Chains also refuse what can be refused cheaply: a receive whose cited send is not there when it is appended, a code
 hash that is not the standard's — a chain's params name the standard's code hash (an id is `blake3(code hash ‖ params)`,
@@ -254,4 +253,4 @@ The standard's first instance. What it changes in REWARDS:
 5. `allow`/`spend`, `offer`/`fill`/`lock`/`claim`/`refund`, multisig owners, ids (NFT, multi-token), vesting.
 6. The Craftworks token: contributions as locks, payouts as claims.
 7. Batch-auction pools.
-8. Wallet verification: the citation walk, shared checkpoints, fraud proofs and the fraud bag (§3a).
+8. Wallet verification: the citation walk, public checkpoints and vouches, fraud proofs naming maker and vouchers (§3a).
