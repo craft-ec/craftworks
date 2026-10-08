@@ -790,8 +790,9 @@ come with keepers as a new codec version.
       for audio; speed for podcasts/audiobooks. 17573: tagged MP3 → prefilled, AAC 160 streamed, cover, lyrics lit at
       3 s and 8 s, click seeks; chips filter. ACCESS measured fx/fy: A sees both tracks, B (follows A, not in the private
       space) sees only the public one.
-- [ ] F4 video (old plan line): CMAF segments, renditions (AV1+Opus, H.264+AAC), remux (mp4box) or WebCodecs encode, MediaSource ABR,
-      poster + scrub strip, subtitles.
+- [x] F4 video (old plan line): CMAF segments, renditions (AV1+Opus, H.264+AAC), remux (mp4box) or WebCodecs encode, MediaSource ABR,
+      poster + scrub strip, subtitles. — 10-08: SUPERSEDED by "F4 VIDEO PIPELINE" above (built: fMP4 + manifest, lean
+      ladder AV1|HEVC + H.264 720/360, WebCodecs/Mediabunny, adaptive player, poster + scrub, subtitles as data).
 - [x] F5a DRIVE (owner 09-30: every uploaded file is in Drive; attach from Drive; choose any space's Drive):
       `drive-store` (a `drive` table per space, the account's included: rows = references + when, folder, from; every
       upload lists in yours and in its space's), the Drive app (personal + shared views, a chooser of every Drive,
