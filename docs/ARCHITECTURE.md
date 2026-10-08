@@ -123,8 +123,13 @@ uses the tokens, never its own colours or sizes — so a new look, or a second t
   time order now causal. The GROUP's commits stay one line per epoch (`tail`): MLS carries out what the acts decide —
   by RECONCILING, any member in turn (`ordering.turn`): whoever the acts say is in and the group does not hold is added
   (`conversation.reconcile`), whoever they put out is removed (`moderation.enforce`); an act is always written BEFORE
-  its commit, so a page that closes between leaves work any member finishes, and a lost race needs no redo. With no
-  page open, the identity delegate admits askers the same way (its own rules, frozen with the identity).
+  its commit, so a page that closes between leaves work any member finishes, and a lost race needs no redo. A commit
+  is WRITE-AHEAD: the state after it, the group before it and the commit itself are kept before it is sent, so a page
+  that closes in between sends it on its next load (or, lost to another's commit, takes the group back) — never a
+  device left behind its own commit (10-07, Ivvor). A key REFRESH (an account's device removed) is a target too: its
+  mark stays until a refresh commit is in the log. A device stuck behind its own commit from before is let in again by
+  any member past it — a page, or with no page open a member's node (its `stuck <space>` bag). With no page open, the
+  identity delegate admits askers the same way (its own rules, frozen with the identity).
   HISTORY has more than one way back: each epoch's log names the epoch before (`prev`) and the eight before that
   (`back`, from the epoch before's own row: on its branch), so one broken row no longer cuts a space's history. Limits:
   a writer can still claim an early time or name nothing (honour, as before); a clock more than an hour ahead is not

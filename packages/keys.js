@@ -223,7 +223,7 @@ export async function start(ctx) {
     // them (`g.snaps`) — never a commit it received: a member who held an old epoch's key and writes into its log
     // later rolls nobody back. Lost (the log's entry is another): the branch's secrets kept (`g.keepLost`: what was
     // sealed on it stays readable, sealed over to the winner's), the group as it was before, the winner applied
-    // next, and the change made again where it still applies (`g.redo`). True when it went back.
+    // next. Nothing is redone: what the change was for is reconciled (the acts; a refresh's mark). True when it went back.
     async function heal() {
       if (!g.snaps) return false;
       for (const s of await g.snaps()) {
@@ -551,11 +551,10 @@ export async function start(ctx) {
     // last few kept (a commit that lost the race for its epoch is undone from one: `logs.heal`).
     const KEEP = 6;
     const snapKey = e => `${at}@${String(e).padStart(12, "0")}`;
-    // A change of this node's to make again after a heal (`{ kind: "remove", creds } | { kind: "refresh" }`).
-    let redo = null;
-    const keepSnap = async (from, entry, intent = null) => {
+    let refreshTried = false; // a refresh owed: tried once a page (it may fail until the group is current)
+    const keepSnap = async (from, entry) => {
       const t = await spacekeys();
-      await t.put(snapKey(from.epoch), JSON.stringify({ epoch: from.epoch, secret: hexOf(from.secret), state: hexOf(from.state), entry, ...(intent ? { intent } : {}) }));
+      await t.put(snapKey(from.epoch), JSON.stringify({ epoch: from.epoch, secret: hexOf(from.secret), state: hexOf(from.state), entry }));
       for (const k of t.rows().filter(r => r.key.startsWith(`${at}@`) && r.value).map(r => r.key).sort().slice(0, -KEEP)) await t.remove(k);
     };
     // The LOST branches' epoch secrets (`<at>~lost`): read with, as alternates (`storage`), never written with.
@@ -615,9 +614,8 @@ export async function start(ctx) {
           .map(r => JSON.parse(r.value))
           .sort((a, b) => a.epoch - b.epoch),
       // Back to the group before epoch `s.epoch`'s commit; every snapshot after it dropped (that branch lost). Its
-      // change, made again once the group is current (`redo`).
+      // change not redone (reconciled: the acts, a refresh's mark).
       restore: async s => {
-        if (s.intent) redo = s.intent;
         m = mlsGlue.Mls.load_space(sp.idBytes, bytes(s.state));
         const t = await spacekeys();
         for (const r of t.rows().filter(r => r.key.startsWith(`${at}@`) && r.value)) if (JSON.parse(r.value).epoch >= s.epoch) await t.remove(r.key);
@@ -740,7 +738,7 @@ export async function start(ctx) {
       const [commit, out] = make();
       const entry = await logs.entryOf(commit);
       const t = await spacekeys();
-      await keepSnap(from, entry, intent);
+      await keepSnap(from, entry);
       await t.put(`${at}~pending`, JSON.stringify({ epoch: from.epoch, entry }));
       await t.put(at, JSON.stringify({ epoch: m.status().epoch, state: hexOf(m.status().state) }));
       const r = await logs.publish(from.epoch, from.secret, entry);
@@ -780,9 +778,14 @@ export async function start(ctx) {
         })),
       // REFRESH this DID's own keys in the space (a device of the account was removed: what it held follows nothing
       // after this commit).
+      // A TARGET, not a one-off (ARCHITECTURE §5, reconciling): the mark `~refresh` stays until a refresh commit is in
+      // the log — one that lost its race, or a page closed first, is made again on the next load (`ready`).
       refresh: () =>
         (queue = queue.catch(() => {}).then(async () => {
+          const t = await spacekeys();
+          if (!t.rows().some(r => r.key === `${at}~refresh` && r.value)) await t.put(`${at}~refresh`, String(Date.now()));
           await change(() => [m.update(), null], { kind: "refresh" });
+          await t.remove(`${at}~refresh`);
           ctx.log(`${sp.name ?? "space"} keys`, { what: `this account's keys refreshed: epoch ${m.status().epoch}` });
           return st;
         })),
@@ -900,19 +903,10 @@ export async function start(ctx) {
           const log = await logs.ensure(m.status(), false, null, "ready");
           if (log && followed !== log) (followed = log), log.onChange?.(() => followed === log && (shared = null));
           announce().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `announcing its branch: ${e.message}` }));
-          // A change of this node's lost a race: made again, where it still applies — a removal of whoever is still a
-          // member, a refresh. (An admission is made again by upkeep itself: whoever asked and is not in yet.)
-          if (redo) {
-            const r = redo;
-            redo = null;
-            queueMicrotask(() => {
-              if (r.kind === "refresh") g.refresh().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `refresh again: ${e.message}` }));
-              else if (r.kind === "remove") {
-                const idx = (m?.status().members ?? []).filter(x => r.creds.includes(x.cred)).map(x => x.index);
-                if (idx.length) g.remove(idx).catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `remove again: ${e.message}` }));
-              }
-            });
-          }
+          // RECONCILED, never redone: removals follow the acts (`moderation.enforce`, every pass), admissions too
+          // (`conversation.reconcile`); a REFRESH still owed (its mark: a lost race, a page closed first) made now.
+          if (!refreshTried && (await spacekeys()).rows().some(r => r.key === `${at}~refresh` && r.value) && (refreshTried = true))
+            queueMicrotask(() => g.refresh().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `refresh owed: ${e.message}` })));
           return s;
         }));
         shared = p;
