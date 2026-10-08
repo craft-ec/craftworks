@@ -77,6 +77,8 @@ pub struct Definition {
     pub beacon: [u8; 32],
     /// The FINALITY MARGIN, in beacon steps (TOKEN §3: 10 for real; tests use less).
     pub margin: u64,
+    /// The KEY LOG's code hash: every owner is a DID, its keys in its key log (TOKEN §1).
+    pub idlog: [u8; 32],
 }
 
 impl Definition {
@@ -92,6 +94,7 @@ impl Definition {
         v.extend_from_slice(&self.nonce);
         v.extend_from_slice(&self.beacon);
         v.extend_from_slice(&self.margin.to_le_bytes());
+        v.extend_from_slice(&self.idlog);
         v
     }
     pub fn decode(b: &[u8]) -> Option<Self> {
@@ -107,33 +110,41 @@ impl Definition {
         let nonce = r.arr()?;
         let beacon = r.arr()?;
         let margin = r.u64()?;
-        (r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1).then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin })
+        let idlog = r.arr()?;
+        (r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1).then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog })
     }
 }
 
-/// An ACCOUNT CHAIN's params: one token, one writer (a device's key: TOKEN §1).
+/// An ACCOUNT CHAIN's params: one token, one OWNER — a DID, written by one device of it (TOKEN §1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChainParams {
     pub code_hash: [u8; 32],
     pub definition: [u8; 32],
+    /// The owner's DID.
     pub owner: [u8; 32],
     /// The network's ONE beacon (TOKEN §5a) — in every chain's params, so a chain's id is computable for any token and
     /// `update_state` reads its definition and the beacon in one round.
     pub beacon: [u8; 32],
+    /// The KEY LOG's code hash: the owner's key log is the contract at `id(idlog, owner)`, read in the same round.
+    pub idlog: [u8; 32],
 }
 
 impl ChainParams {
     pub fn encode(&self) -> Vec<u8> {
-        [&[CHAIN][..], &self.code_hash, &self.definition, &self.owner, &self.beacon].concat()
+        [&[CHAIN][..], &self.code_hash, &self.definition, &self.owner, &self.beacon, &self.idlog].concat()
     }
     pub fn decode(b: &[u8]) -> Option<Self> {
         let mut r = R(b);
         (r.u8()? == CHAIN).then_some(())?;
-        let p = Self { code_hash: r.arr()?, definition: r.arr()?, owner: r.arr()?, beacon: r.arr()? };
+        let p = Self { code_hash: r.arr()?, definition: r.arr()?, owner: r.arr()?, beacon: r.arr()?, idlog: r.arr()? };
         r.done().then_some(p)
     }
     pub fn id(&self) -> [u8; 32] {
         id(&self.code_hash, &self.encode())
+    }
+    /// The OWNER's key log: its contract id.
+    pub fn keys_id(&self) -> [u8; 32] {
+        id(&self.idlog, &self.owner)
     }
     /// The chain of `owner` for the same token (whose sends this chain cites).
     pub fn of(&self, owner: [u8; 32]) -> Self {
@@ -173,6 +184,8 @@ pub const CLAIMED: u8 = b'c';
 /// The most related contracts one validation or update asks for in its one round (the node's limit, measured 10-08:
 /// depth 1, at most 10). A holder taking in new entries asks for the definition, the beacon and every chain they cite.
 pub const MAX_RELATED: usize = 10;
+/// The longest writer credential (`CWMB ‖ did ‖ owner ‖ node ‖ MLS key ‖ signature`, with room).
+pub const CRED_MAX: usize = 512;
 /// The history key of an entry: its seq, big-endian (the tree's order is the chain's). Its value: the entry's bytes.
 pub fn history_key(seq: u64) -> [u8; 8] {
     seq.to_be_bytes()
@@ -206,6 +219,10 @@ pub enum Body {
     Claim { taker: [u8; 32], lock: [u8; 16], amount: u128, cited: u64, token: [u8; 32], ev: Evidence },
     /// This chain's own lock `lock`, never filled and past its deadline: its amount back — appended by anyone.
     Refund { lock: [u8; 16], ev: Evidence },
+    /// The chain's WRITER (TOKEN §1): one device of the owner DID — its CREDENTIAL (`identity::credential`: the DID,
+    /// the device's node key, signed by an owner key of the DID's key log) and the seq of the key-log event whose key
+    /// signed it. Signed by that node key (it holds it). From then on the node key signs the owner's entries.
+    Writer { cred: Vec<u8>, key_seq: u32 },
     /// A PRUNE CUT (owner-signed): everything before it may be dropped. It carries their result — the allowances, the
     /// open offers and locks (the balance is its own carried balance) — and the roots of two prolly trees: the
     /// HISTORY (every entry before it, by seq — its blocks published, so the chain stays walkable) and the RECEIVED SET (every name received, filled or claimed so far).
@@ -219,6 +236,8 @@ pub enum Body {
         allowances: Vec<([u8; 32], u128)>,
         offers: Vec<OfferState>,
         locks: Vec<LockState>,
+        /// The chain's writer at the cut: (node key, key seq).
+        writer: Option<([u8; 32], u32)>,
     },
 }
 
@@ -369,7 +388,13 @@ impl Entry {
                 v.extend_from_slice(lock);
                 put_ev(&mut v, ev);
             }
-            Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks } => {
+            Body::Writer { cred, key_seq } => {
+                v.push(12);
+                v.extend_from_slice(&(cred.len() as u16).to_le_bytes());
+                v.extend_from_slice(cred);
+                v.extend_from_slice(&key_seq.to_le_bytes());
+            }
+            Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer } => {
                 v.push(11);
                 v.extend_from_slice(history);
                 v.extend_from_slice(received);
@@ -402,6 +427,14 @@ impl Entry {
                     v.extend_from_slice(token);
                     v.extend_from_slice(offer);
                     v.push(*open as u8);
+                }
+                match writer {
+                    None => v.push(0),
+                    Some((node, key_seq)) => {
+                        v.push(1);
+                        v.extend_from_slice(node);
+                        v.extend_from_slice(&key_seq.to_le_bytes());
+                    }
                 }
             }
         }
@@ -469,7 +502,19 @@ impl Entry {
                 for _ in 0..n {
                     locks.push((r.arr()?, r.arr()?, r.u128()?, r.u64()?, r.arr()?, r.arr()?, r.u8()? == 1));
                 }
-                Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks }
+                let writer = match r.u8()? {
+                    0 => None,
+                    1 => Some((r.arr()?, r.u32()?)),
+                    _ => return None,
+                };
+                Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer }
+            }
+            12 => {
+                let n = u16::from_le_bytes(r.arr()?) as usize;
+                if n > CRED_MAX {
+                    return None;
+                }
+                Body::Writer { cred: r.take(n)?.to_vec(), key_seq: r.u32()? }
             }
             _ => return None,
         };
@@ -686,14 +731,14 @@ pub type Why = &'static str;
 
 /// THE SHAPE RULES (TOKEN §3a, §3c) of chain `p` for definition `d` — true any time, from scratch. `chain(definition,
 /// owner)` gives a chain the citations among the last [`RECENT`] entries cite (`None`: it does not exist).
-pub fn check(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>) -> Result<(), Why> {
-    check_window(p, d, s, chain, RECENT).map_err(|(_, why)| why)
+pub fn check(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, keys: Option<&craftworks_idlog_contract::Log>) -> Result<(), Why> {
+    check_window(p, d, s, chain, keys, RECENT).map_err(|(_, why)| why)
 }
 
 /// The shape rules with the citations of the last `window` entries checked — the contract's [`RECENT`]; a WALLET's
 /// every one (`usize::MAX`, TOKEN §3a). Refused: the entry where (its seq) and why.
-pub fn check_window(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, window: usize) -> Result<(), (u64, Why)> {
-    walk(p, d, s, chain, window, usize::MAX).map(|_| ())
+pub fn check_window(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, keys: Option<&craftworks_idlog_contract::Log>, window: usize) -> Result<(), (u64, Why)> {
+    walk(p, d, s, chain, keys, window, usize::MAX).map(|_| ())
 }
 
 /// What a chain carries at its end — what a cut after it must carry.
@@ -703,13 +748,15 @@ pub struct Carried {
     pub allowances: Vec<([u8; 32], u128)>,
     pub offers: Vec<OfferState>,
     pub locks: Vec<LockState>,
+    pub writer: Option<([u8; 32], u32)>,
 }
 
 /// The shape rules, walked: what the chain carries at its end, or where and why it is refused. The citations of the last
 /// `window` entries are checked; those of entries from index `strict_from` on (the NEW ones, as they are appended) must
 /// SHOW what they cite — live, or by their evidence. An older one whose cited entry its chain's cut has since hidden is
 /// taken as it was shown when appended (the wallet walks it whole).
-pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, window: usize, strict_from: usize) -> Result<Carried, (u64, Why)> {
+/// `keys`: the OWNER's key log (the DID's), read and verified — needed where a `Writer` entry is checked.
+pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, keys: Option<&craftworks_idlog_contract::Log>, window: usize, strict_from: usize) -> Result<Carried, (u64, Why)> {
     let mut failed_at = s.entries.first().map_or(0, |e| e.seq);
     let r = (|| -> Result<Carried, Why> {
         if d.code_hash != p.code_hash {
@@ -718,7 +765,13 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
         if d.beacon != p.beacon {
             return Err("a chain on another beacon than its token's");
         }
+        if d.idlog != p.idlog {
+            return Err("a chain on another key log than its token's");
+        }
         let mut balance: u128 = 0;
+        // The WRITER (node key, key seq): one device of the owner DID; and whether anything but a writer came yet.
+        let mut writer: Option<([u8; 32], u32)> = None;
+        let mut begun = false;
         let mut prev = [0u8; 32];
         let mut stamp: u64 = 0;
         // The names received, filled and claimed SINCE the last cut (before it: the cut's received set).
@@ -733,7 +786,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
         let mut cut: Option<(u64, [u8; 32])> = None;
         let first = s.entries.first().map_or(0, |e| e.seq);
         let recent_from = s.entries.len().saturating_sub(window);
-        let owner_signed = |e: &Entry| if e.signed_by(&p.owner) { Ok(()) } else { Err("an entry not signed by the chain's writer") };
+        let owner_signed = |e: &Entry, w: &Option<([u8; 32], u32)>| if w.is_some_and(|(node, _)| e.signed_by(&node)) { Ok(()) } else { Err("an entry not signed by the chain's writer") };
         // Before a cut, a name stamped at or before it needs proof it is not in the cut's received set.
         let fresh = |cut: &Option<(u64, [u8; 32])>, cited: u64, key: Vec<u8>, ev: &Evidence| match cut {
             Some((at, root)) if cited <= *at => absent(root, &key, &ev.mine),
@@ -767,14 +820,15 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
             let shown = |c: &State, cid: &[u8; 32], ev: &Evidence, at: u64, pick: &dyn Fn(&Entry) -> bool| find_cited(c, cid, ev, pick) || hidden_since(c, at);
             balance = match &e.body {
                 Body::Genesis { amount } => {
-                    if e.seq != 0 || p.owner != d.genesis_owner || *amount != d.genesis_amount {
+                    // The chain's first entry after its writer (from nothing: nothing before it but who writes).
+                    if begun || first > 0 || p.owner != d.genesis_owner || *amount != d.genesis_amount {
                         return Err("a genesis that is not the definition's");
                     }
-                    owner_signed(e)?;
+                    owner_signed(e, &writer)?;
                     *amount
                 }
                 Body::Send { to, amount } => {
-                    owner_signed(e)?;
+                    owner_signed(e, &writer)?;
                     if *to == p.owner {
                         return Err("a send to itself");
                     }
@@ -784,15 +838,15 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
                     balance.checked_sub(*amount).ok_or("a debit over the balance")?
                 }
                 Body::Burn { amount } => {
-                    owner_signed(e)?;
+                    owner_signed(e, &writer)?;
                     if *amount == 0 {
                         return Err("an empty burn");
                     }
                     balance.checked_sub(*amount).ok_or("a debit over the balance")?
                 }
                 Body::Allow { spender, limit } => {
-                    owner_signed(e)?;
-                    if *spender == p.owner {
+                    owner_signed(e, &writer)?;
+                    if writer.is_some_and(|(node, _)| *spender == node) {
                         return Err("an allowance to itself");
                     }
                     allowed.retain(|(k, _)| k != spender);
@@ -845,7 +899,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
                     balance.checked_add(*amount).ok_or("a balance overflow")?
                 }
                 Body::Lock { to, amount, until, token, offer } => {
-                    owner_signed(e)?;
+                    owner_signed(e, &writer)?;
                     if *to == p.owner {
                         return Err("a lock for itself");
                     }
@@ -859,7 +913,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
                     balance.checked_sub(*amount).ok_or("a debit over the balance")?
                 }
                 Body::Offer { get, give, per, max, until } => {
-                    owner_signed(e)?;
+                    owner_signed(e, &writer)?;
                     if *give == 0 || *per == 0 || *max == 0 || *get == p.definition {
                         return Err("an offer that offers nothing");
                     }
@@ -952,8 +1006,41 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
                     }
                     balance.checked_add(amount).ok_or("a balance overflow")?
                 }
-                Body::Cut { received: root, allowances, offers: o, locks: l, .. } => {
-                    owner_signed(e)?;
+                Body::Writer { cred, key_seq } => {
+                    let (did, owner_key, node, _) = craftworks_identity::read_credential(cred).ok_or("a writer credential that does not hold")?;
+                    if did != p.owner {
+                        return Err("a writer credential for another account");
+                    }
+                    // HELD already (an update: entries before what is new were taken by this holder, their writers
+                    // checked then): its key log is not asked for again. Anything new, and any check from scratch,
+                    // checks the credential against the log.
+                    let held = strict_from <= s.entries.len() && i < strict_from;
+                    match keys {
+                        Some(log) => {
+                            if log.events.get(*key_seq as usize).is_none_or(|ev| ev.key != owner_key) {
+                                return Err("a writer credential not signed by the account's key at that seq");
+                            }
+                        }
+                        None if held => {}
+                        None => return Err("the owner's key log is not there"),
+                    }
+                    if writer.is_some_and(|(_, k)| *key_seq < k) {
+                        return Err("a writer on an older key than the one before");
+                    }
+                    if !e.signed_by(&node) {
+                        return Err("a writer entry not signed by its device");
+                    }
+                    writer = Some((node, *key_seq));
+                    balance
+                }
+                Body::Cut { received: root, allowances, offers: o, locks: l, writer: w, .. } => {
+                    if starts_at_cut {
+                        // The chain's writer as the cut carries it (who signs from here — and the cut itself).
+                        writer = *w;
+                    } else if writer != *w {
+                        return Err("a cut that is not what came before it");
+                    }
+                    owner_signed(e, &writer)?;
                     if starts_at_cut {
                         // The chain's start: what came before is pruned — the cut's state is taken (checked by the
                         // nodes that held the prefix when it was written, and by wallets walking its history).
@@ -977,6 +1064,9 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
             if e.balance != balance {
                 return Err("a carried balance that does not add up");
             }
+            if !matches!(e.body, Body::Writer { .. }) {
+                begun = true;
+            }
             prev = e.hash();
             stamp = e.stamp;
         }
@@ -986,11 +1076,11 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
             if a.seq != n || b.seq != n || a.prev != prev || b.prev != prev || a == b || a.hash() >= b.hash() {
                 return Err("a fork that is not two writer entries at the next seq, in order");
             }
-            if !a.signed_by(&p.owner) || !b.signed_by(&p.owner) {
+            if !writer.is_some_and(|(node, _)| a.signed_by(&node) && b.signed_by(&node)) {
                 return Err("a fork not signed twice by the chain's writer");
             }
         }
-        Ok(Carried { balance, allowances: allowed, offers, locks })
+        Ok(Carried { balance, allowances: allowed, offers, locks, writer })
     })();
     r.map_err(|why| (failed_at, why))
 }
@@ -1014,12 +1104,27 @@ impl<T> Tap for T {}
 /// (`held` → `merged`), against the beacon's height NOW: each new entry's stamp within a margin of now; anything citing
 /// another entry no sooner than a margin after it (final everywhere); a fill a margin before its lock's deadline; a
 /// refund at or after it.
-pub fn append_check(d: &Definition, now: u64, held: &State, merged: &State) -> Result<(), Why> {
+/// And (TOKEN §1) every new OWNER entry stands on the owner's CURRENT key (`keys`: the DID's key log): a new writer is
+/// credentialed under it, and what a writer signs is signed under one credentialed under it — a rotation revokes every
+/// older device for new writes.
+pub fn append_check(d: &Definition, now: u64, held: &State, merged: &State, keys: Option<&craftworks_idlog_contract::Log>) -> Result<(), Why> {
     let had: Vec<[u8; 32]> = held.entries.iter().map(Entry::hash).collect();
     let m = d.margin;
-    for e in merged.entries.iter().filter(|e| !had.contains(&e.hash())) {
+    for (i, e) in merged.entries.iter().enumerate().filter(|(_, e)| !had.contains(&e.hash())) {
         if e.stamp > now || e.stamp.saturating_add(m) < now {
             return Err("a stamp far from the beacon");
+        }
+        if e.by_owner() {
+            let current = keys.ok_or("the owner's key log is not there")?.head().seq;
+            let on = match &e.body {
+                Body::Writer { key_seq, .. } => Some(*key_seq),
+                // (A cut is signed by the writer it carries.)
+                Body::Cut { writer, .. } => writer.map(|(_, k)| k),
+                _ => writer_at(merged, i).map(|(_, k)| k),
+            };
+            if on != Some(current) {
+                return Err("an owner entry not on the account's current key");
+            }
         }
         match &e.body {
             Body::Receive { cited, .. } | Body::Claim { cited, .. } => {
@@ -1052,11 +1157,22 @@ pub fn append_check(d: &Definition, now: u64, held: &State, merged: &State) -> R
 /// shape rules with every NEW citation shown (live, or by its evidence — `chain` gives the cited chains) and a new cut
 /// checked against what it summarises here (it must carry exactly what that computes); then what comes before the last
 /// cut dropped.
-pub fn accept(p: &ChainParams, d: &Definition, now: u64, held: &State, merged: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>) -> Result<State, Why> {
-    append_check(d, now, held, merged)?;
+pub fn accept(p: &ChainParams, d: &Definition, now: u64, held: &State, merged: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, keys: Option<&craftworks_idlog_contract::Log>) -> Result<State, Why> {
+    append_check(d, now, held, merged, keys)?;
     let from = new_from(held, merged);
-    walk(p, d, merged, chain, merged.entries.len() - from, from).map_err(|(_, w)| w)?;
+    walk(p, d, merged, chain, keys, merged.entries.len() - from, from).map_err(|(_, w)| w)?;
     Ok(prune(merged))
+}
+
+/// The WRITER that governs entry `i` of `s` (its node key, its key seq): the last `Writer` entry before it, or the
+/// writer the cut it rests on carries.
+pub fn writer_at(s: &State, i: usize) -> Option<([u8; 32], u32)> {
+    s.entries[..i].iter().rev().find_map(|e| match &e.body {
+        Body::Writer { cred, key_seq } => Some(craftworks_identity::read_credential(cred).map(|(_, _, node, _)| (node, *key_seq))),
+        Body::Cut { writer, .. } => Some(*writer),
+        _ => None,
+    })
+    .flatten()
 }
 
 /// Where what is NEW in `merged` (not in `held`) begins: an index into it.
@@ -1097,7 +1213,7 @@ pub fn merge(a: &State, b: &State) -> State {
     let h = if fa <= fb { a } else { b };
     let pre = &h.entries[..(f - first(h)) as usize];
     let trim = |s: &State| State { entries: s.entries[(f - first(s)) as usize..].to_vec(), fork: s.fork.clone() };
-    let r = merge_aligned(&trim(a), &trim(b));
+    let r = merge_aligned(pre, &trim(a), &trim(b));
     State { entries: pre.iter().chain(&r.entries).cloned().collect(), fork: r.fork }
 }
 
@@ -1109,8 +1225,10 @@ pub fn prune(s: &State) -> State {
     }
 }
 
-/// Merge two copies that start at the same seq, cell by cell.
-fn merge_aligned(a: &State, b: &State) -> State {
+/// Merge two copies that start at the same seq, cell by cell (`pre`: what one copy still holds before them).
+/// Two OWNER entries at one seq: the one whose writer stands on the HIGHER key seq wins (an account's recovery outranks
+/// a lost device); on the SAME key seq they are an equivocation — the chain freezes (TOKEN §1, §3b).
+fn merge_aligned(pre: &[Entry], a: &State, b: &State) -> State {
     enum Cell<'a> {
         E(&'a Entry),
         F(&'a Entry, &'a Entry),
@@ -1132,6 +1250,13 @@ fn merge_aligned(a: &State, b: &State) -> State {
         _ => false,
     };
     let Some(i) = (0..len(a).max(len(b))).find(|&i| !same(&cell(a, i), &cell(b, i))) else { return a.clone() };
+    // An owner entry's RANK at cell `i`: a writer entry's own key seq, else the key seq of the writer governing it.
+    let governing = |i: usize| writer_at(&State { entries: pre.iter().chain(&a.entries[..i]).cloned().collect(), fork: None }, pre.len() + i).map(|(_, k)| k);
+    let rank = |e: &Entry, i: usize| match &e.body {
+        Body::Writer { key_seq, .. } => Some(*key_seq),
+        Body::Cut { writer, .. } => writer.map(|(_, k)| k),
+        _ => governing(i),
+    };
     let frozen = |prefix: &[Entry], mut writers: Vec<Entry>| {
         writers.sort_by_key(Entry::hash);
         writers.dedup();
@@ -1140,10 +1265,25 @@ fn merge_aligned(a: &State, b: &State) -> State {
     match (cell(a, i), cell(b, i)) {
         (Some(_), None) => a.clone(),
         (None, Some(_)) => b.clone(),
-        (Some(Cell::E(x)), Some(Cell::E(y))) if x.by_owner() && y.by_owner() => frozen(&a.entries[..i], vec![x.clone(), y.clone()]),
+        (Some(Cell::E(x)), Some(Cell::E(y))) if x.by_owner() && y.by_owner() => match rank(x, i).cmp(&rank(y, i)) {
+            std::cmp::Ordering::Greater => a.clone(),
+            std::cmp::Ordering::Less => b.clone(),
+            std::cmp::Ordering::Equal => frozen(&a.entries[..i], vec![x.clone(), y.clone()]),
+        },
         (Some(Cell::E(x)), Some(Cell::E(y))) => if x.hash() < y.hash() { a.clone() } else { b.clone() },
         (Some(Cell::F(x1, x2)), Some(Cell::F(y1, y2))) => frozen(&a.entries[..i], vec![x1.clone(), x2.clone(), y1.clone(), y2.clone()]),
         (Some(Cell::F(x1, x2)), Some(Cell::E(e))) | (Some(Cell::E(e)), Some(Cell::F(x1, x2))) => {
+            // A fork on a lower key than an owner entry here (a lost device's, against the recovered account's): the
+            // owner entry's copy wins, the fork with it gone. On the same key: one more of the equivocation.
+            let (fr, er) = (rank(x1, i).max(rank(x2, i)), rank(e, i));
+            let e_side = if matches!(cell(a, i), Some(Cell::E(_))) { a } else { b };
+            let f_side = if std::ptr::eq(e_side, a) { b } else { a };
+            if e.by_owner() && er > fr {
+                return e_side.clone();
+            }
+            if e.by_owner() && er < fr {
+                return f_side.clone();
+            }
             let mut w = vec![x1.clone(), x2.clone()];
             if e.by_owner() {
                 w.push(e.clone());
@@ -1186,7 +1326,12 @@ mod contract {
             if cited.contains(&p.id()) {
                 return Ok(ValidateResult::Invalid);
             }
+            // Its definition, its OWNER's key log (whose keys its writers stand on — asked only if it names a writer) and
+            // every chain it cites.
             let mut want = vec![p.definition];
+            if s.entries.iter().any(|e| matches!(e.body, super::Body::Writer { .. })) {
+                want.push(p.keys_id());
+            }
             want.extend(cited);
             let missing: Vec<ContractInstanceId> = want.iter().filter(|w| related_state(&related, w).is_none()).map(|w| ContractInstanceId::new(*w)).collect();
             if !missing.is_empty() {
@@ -1198,7 +1343,8 @@ mod contract {
             }
             let Some(d) = Definition::decode(&db) else { return Ok(ValidateResult::Invalid) };
             let chain = |def: &[u8; 32], owner: &[u8; 32]| related_state(&related, &p.at(*def, *owner).id()).flatten().and_then(|b| super::State::decode(&b));
-            Ok(if check(&p, &d, &s, &chain).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
+            let keys = related_state(&related, &p.keys_id()).flatten().and_then(|b| craftworks_idlog_contract::read(&p.owner, &b));
+            Ok(if check(&p, &d, &s, &chain, keys.as_ref()).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
         }
 
         fn update_state(parameters: Parameters<'static>, state: State<'static>, data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
@@ -1233,7 +1379,11 @@ mod contract {
                 if cited.contains(&p.id()) {
                     return Err(ContractError::InvalidUpdate);
                 }
+                // (The owner's key log only where a new entry is the owner's: a receive alone never waits on it.)
                 let mut want = vec![p.definition, p.beacon];
+                if merged.entries[from..].iter().any(super::Entry::by_owner) {
+                    want.push(p.keys_id());
+                }
                 want.extend(cited);
                 // ONE round holds at most MAX_RELATED (measured, the node's limit): more new citations than that are
                 // refused here, plainly — the writer sends them in smaller batches.
@@ -1251,7 +1401,8 @@ mod contract {
                 let d = Definition::decode(&db).ok_or(ContractError::InvalidUpdate)?;
                 let now = beacon_height(&bb).ok_or(ContractError::InvalidUpdate)?;
                 let chain = |def: &[u8; 32], owner: &[u8; 32]| got(&p.at(*def, *owner).id()).and_then(|b| super::State::decode(&b));
-                return Ok(UpdateModification::valid(State::from(accept(&p, &d, now, &held, &merged, &chain).map_err(|_| ContractError::InvalidUpdate)?.encode())));
+                let keys = got(&p.keys_id()).and_then(|b| craftworks_idlog_contract::read(&p.owner, &b));
+                return Ok(UpdateModification::valid(State::from(accept(&p, &d, now, &held, &merged, &chain, keys.as_ref()).map_err(|_| ContractError::InvalidUpdate)?.encode())));
             }
             Ok(UpdateModification::valid(State::from(prune(&merged).encode())))
         }

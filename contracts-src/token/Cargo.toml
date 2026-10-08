@@ -20,6 +20,10 @@ ed25519-dalek = { version = "=2.2.0", default-features = false }
 craftworks-beacon-contract = { path = "../beacon", default-features = false }
 # The prolly tree (the same as every table's): a cut's history and received set, and the proofs entries carry about them.
 freenet-prolly = { git = "https://github.com/craft-ec/freenet-prolly", rev = "17d67d8" }
+# The account's KEY LOG (a chain's owner is a DID: its keys) and the one CREDENTIAL format naming a device's node key
+# (foundation 2).
+craftworks-idlog-contract = { path = "../idlog", default-features = false }
+craftworks-identity = { path = "../../identity" }
 # The SDK engine: a tree root's own parity (`repair::root_parity`), as tables code it — the writer's, never the contract's.
 engine = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
 

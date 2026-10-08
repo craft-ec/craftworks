@@ -71,6 +71,8 @@ pub struct Source<'a> {
     pub chain: &'a dyn Fn(&ChainParams) -> Option<State>,
     pub definition: &'a dyn Fn(&[u8; 32]) -> Option<Definition>,
     pub block: &'a dyn Fn(&[u8; 32]) -> Option<Vec<u8>>,
+    /// A DID's KEY LOG, read and verified (`craftworks_idlog_contract::read`): whose keys the chain's writers stand on.
+    pub keys: &'a dyn Fn(&[u8; 32]) -> Option<craftworks_idlog_contract::Log>,
 }
 
 /// Why a verification did not end in value: FRAUD (its proof), or blocks of a history NOT HELD yet (fetch, run again
@@ -79,6 +81,22 @@ pub struct Source<'a> {
 pub enum Fail {
     Fraud(FraudProof),
     Need(Vec<[u8; 32]>),
+}
+
+/// The chain OWNER's keys (a DID's): every key of its key log, and every device its chain names as writer — none of
+/// them stands behind a checkpoint of its own chain (they are the ones who could forge it).
+pub fn owner_keys(src: &Source, chain: &ChainParams) -> Vec<[u8; 32]> {
+    let mut k: Vec<[u8; 32]> = (src.keys)(&chain.owner).map(|l| l.events.iter().map(|e| e.key).collect()).unwrap_or_default();
+    if let Some(s) = (src.chain)(chain) {
+        for e in &s.entries {
+            match &e.body {
+                crate::Body::Writer { cred, .. } => k.extend(craftworks_identity::read_credential(cred).map(|(_, _, node, _)| node)),
+                crate::Body::Cut { writer: Some((node, _)), .. } => k.push(*node),
+                _ => {}
+            }
+        }
+    }
+    k
 }
 
 /// A chain as a wallet walks it: WHOLE, seq 0 on — across its cut, from the held blocks of its history.
@@ -120,9 +138,9 @@ impl Wallet {
     }
 
     /// The vouches for a checkpoint that count: signed, not by its chain's owner, not by anyone distrusted.
-    fn vouchers_of(&self, c: &Checkpoint) -> Vec<[u8; 32]> {
+    fn vouchers_of(&self, c: &Checkpoint, owners: &[[u8; 32]]) -> Vec<[u8; 32]> {
         let h = c.hash();
-        let mut v: Vec<[u8; 32]> = self.vouches.iter().filter(|x| x.checkpoint == h && x.signed() && x.by != c.chain.owner && !self.distrusted(&x.by)).map(|x| x.by).collect();
+        let mut v: Vec<[u8; 32]> = self.vouches.iter().filter(|x| x.checkpoint == h && x.signed() && !owners.contains(&x.by) && !self.distrusted(&x.by)).map(|x| x.by).collect();
         v.sort();
         v.dedup();
         v
@@ -131,9 +149,10 @@ impl Wallet {
     /// A checkpoint this wallet stops its walk at, covering `chain` up to `seq`: signed, not by the chain's own owner
     /// (they are the one who could forge it), by no one distrusted — and made by this wallet, or by or vouched for by a
     /// key it trusts, or vouched for by enough keys.
-    pub fn accepted(&self, chain: &ChainParams, seq: u64) -> Option<&Checkpoint> {
-        self.checkpoints.iter().filter(|c| c.chain == *chain && c.seq >= seq && c.signed() && c.by != chain.owner && !self.distrusted(&c.by)).find(|c| {
-            let v = self.vouchers_of(c);
+    /// (`owners`: the chain owner's keys — [`owner_keys`] — whose checkpoints and vouches count for nothing.)
+    pub fn accepted(&self, chain: &ChainParams, seq: u64, owners: &[[u8; 32]]) -> Option<&Checkpoint> {
+        self.checkpoints.iter().filter(|c| c.chain == *chain && c.seq >= seq && c.signed() && !owners.contains(&c.by) && !self.distrusted(&c.by)).find(|c| {
+            let v = self.vouchers_of(c, owners);
             c.by == self.me || self.trusted.contains(&c.by) || v.iter().any(|k| *k == self.me || self.trusted.contains(k)) || (self.min_vouches > 0 && v.len() >= self.min_vouches)
         })
     }
@@ -181,7 +200,7 @@ impl Wallet {
             };
             // An accepted checkpoint covering it: the chain is the one checkpointed (that entry's hash) — no walk (and
             // no history read, when that entry is still live).
-            if let Some(c) = self.accepted(&chain, upto) {
+            if let Some(c) = self.accepted(&chain, upto, &owner_keys(src, &chain)) {
                 let live = (src.chain)(&chain);
                 if live.as_ref().is_some_and(|s| s.entries.iter().any(|e| e.seq == c.seq && e.hash() == c.head && e.balance == c.balance)) {
                     let (seq, head) = (c.seq, c.head);
@@ -193,7 +212,7 @@ impl Wallet {
             if s.entries.len() as u64 <= upto {
                 return Err(proof(&chain, upto, "an entry that is not in its chain"));
             }
-            if let Some(c) = self.accepted(&chain, upto) {
+            if let Some(c) = self.accepted(&chain, upto, &owner_keys(src, &chain)) {
                 if s.entries.get(c.seq as usize).is_some_and(|e| e.hash() == c.head && e.balance == c.balance) {
                     let (seq, head) = (c.seq, c.head);
                     self.verified.insert(id, (seq, head));
@@ -210,7 +229,8 @@ impl Wallet {
                 let p = chain.at(*def, *owner);
                 cache.borrow_mut().entry(p.id()).or_insert_with(|| read(&p)).clone().ok()
             };
-            let checked = check_window(&chain, &d, &prefix, &cited, usize::MAX);
+            let keys = (src.keys)(&chain.owner);
+            let checked = check_window(&chain, &d, &prefix, &cited, keys.as_ref(), usize::MAX);
             // A cited chain's history NOT HELD: those blocks needed first — never a verdict on what was not read.
             let need: Vec<[u8; 32]> = cache.borrow().values().filter_map(|r| match r {
                 Err(crate::cut::Read::Need(n)) => Some(n.clone()),
@@ -323,7 +343,7 @@ pub mod bytes {
         [&c.chain.encode()[..], &c.seq.to_le_bytes(), &c.head, &c.balance.to_le_bytes(), &c.by, &c.sig].concat()
     }
     fn read_checkpoint(b: &mut &[u8]) -> Option<Checkpoint> {
-        let chain = ChainParams::decode(take(b, 1 + 32 * 4)?)?;
+        let chain = ChainParams::decode(take(b, 1 + 32 * 5)?)?;
         Some(Checkpoint { chain, seq: u64::from_le_bytes(arr(b)?), head: arr(b)?, balance: u128::from_le_bytes(arr(b)?), by: arr(b)?, sig: arr(b)? })
     }
     pub fn read_checkpoint_exact(mut b: &[u8]) -> Option<Checkpoint> {
@@ -357,7 +377,7 @@ pub mod bytes {
         v
     }
     pub fn read_fraud(mut b: &[u8]) -> Option<FraudProof> {
-        let chain = ChainParams::decode(take(&mut b, 1 + 32 * 4)?)?;
+        let chain = ChainParams::decode(take(&mut b, 1 + 32 * 5)?)?;
         let seq = u64::from_le_bytes(arr(&mut b)?);
         let checkpoint = match take(&mut b, 1)?[0] {
             0 => None,

@@ -56,20 +56,20 @@ pub fn trees(entries: &[Entry], blocks: &mut Blocks) -> Result<(Rooted, Rooted),
 
 /// The body of a cut after `whole` (the writer's whole chain from seq 0) and the blocks of its trees: what the chain
 /// carries there (checked: the walk of the shape rules, no citations — those were checked as each came), the roots.
-pub fn make(p: &ChainParams, d: &Definition, whole: &State) -> Result<(Body, Blocks), Why> {
+pub fn make(p: &ChainParams, d: &Definition, whole: &State, keys: Option<&craftworks_idlog_contract::Log>) -> Result<(Body, Blocks), Why> {
     if whole.entries.first().is_some_and(|e| e.seq != 0) {
         return Err("a cut made from a chain that is not whole");
     }
     if whole.fork.is_some() {
         return Err("a frozen chain is never cut");
     }
-    let c = walk(p, d, whole, &|_, _| None, 0, usize::MAX).map_err(|(_, w)| w)?;
+    let c = walk(p, d, whole, &|_, _| None, keys, 0, usize::MAX).map_err(|(_, w)| w)?;
     if c.allowances.len() > 1024 || c.offers.len() > 1024 || c.locks.len() > 1024 {
         return Err("more to carry than a cut holds");
     }
     let mut blocks = Blocks::new();
     let ((history, history_parity), (received, received_parity)) = trees(&whole.entries, &mut blocks)?;
-    Ok((Body::Cut { history, received, history_parity, received_parity, allowances: c.allowances, offers: c.offers, locks: c.locks }, blocks))
+    Ok((Body::Cut { history, received, history_parity, received_parity, allowances: c.allowances, offers: c.offers, locks: c.locks, writer: c.writer }, blocks))
 }
 
 /// A tree's blocks, to prove from.

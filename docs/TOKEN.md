@@ -53,14 +53,24 @@ One contract CODE (the standard). Its instances differ by their parameters — o
 | Piece | Params | State | Who writes |
 |---|---|---|---|
 | **Definition** | `{ name, symbol, decimals, supply rule, authorities, code hash, nonce }` | ITS PARAMS again (a related read returns state, not params: a reader checks `blake3(code hash ‖ state) == id`) | made once; never changes |
-| **Account chain** | `{ definition id, owner key, code hash }` | the owner's entries, in sequence, and its CARRIED STATE (§2) | the owner — and anyone appending what the chain's own rules PROVE (§3) |
+| **Account chain** | `{ definition id, owner DID, code hash, beacon, key log code hash }` | the owner's entries, in sequence, and its CARRIED STATE (§2) | the owner — and anyone appending what the chain's own rules PROVE (§3) |
 | **Registry** | a public bag | pointers to definitions | anyone (discovery only, like Discover) |
 
 - A token's id is its definition's address. Two tokens never share a chain: an owner has one chain per token.
-- **One writer key per chain — a DEVICE's, never an account key shared by several devices** (two devices signing the
-  same `seq` would be an equivocation, §3b). An account with several devices has a chain per device (its balance is
-  the sum), or names one device its writer; a lost device's chain is moved by an entry signed with the account's
-  recovery (the identity's words), never by a second live writer.
+- **The OWNER is a DID; ONE DEVICE writes** (foundation 2, 10-09 — ARCHITECTURE "a DID is the member; a device is
+  a way to sign in"). A chain's owner (`ChainParams.owner`, a send's `to`, a genesis owner) is a DID; its WRITER is
+  one device, named by a `Writer { credential, key_seq }` entry — the account's existing node CREDENTIAL
+  (`identity::credential`: the DID, the device's node key, signed by an owner key of the DID's KEY LOG) and the seq
+  of the log event whose key signed it — the entry itself signed by that node key. The writer's key signs the
+  chain's owner entries (one writer key per chain: two devices signing one `seq` would be an equivocation, §3b).
+  - The DID's key log is a related read (`ChainParams.idlog`: the key log's code hash, named by the definition too,
+    as the beacon is): a `Writer` entry's credential must be signed by the key of the log event at its `key_seq`.
+  - APPEND: a new entry's writer must be credentialed under the log's CURRENT key — a ROTATION of the account's key
+    (words, KERI's pre-committed next key) revokes every older device for new writes.
+  - RECOVERY outranks a lost device: at one seq, an entry whose writer stands on a HIGHER key seq wins (a `Writer`
+    entry of the recovered account beats what a stolen device signs at that seq); two entries on the SAME key seq
+    are an equivocation (§3b). A cut carries its chain's writer.
+  - A SPENDER (`allow`) is a key, not a DID: an allowance grants a session key or a program.
 - **Authorities** (optional, per definition): a MINT key (or none: supply fixed by the rule), a FREEZE key (or none).
   A multisig authority is a k-of-n key set (as the attestation substrate's named quorum).
 - **Supply rule** — a fixed menu, never arbitrary code, so every instance stays checkable (§6).
@@ -498,8 +508,20 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    its presence proof and with none; A cuts, its history (2 blocks) published on X; C's receive of A's send behind the
    cut refused with no evidence and ACCEPTED with the proof; C's wallet verified it across A's cut — first run naming
    the 1 history block not held, fetched, second run value (58 ms; history and received set 18 blocks with parity). The swap run again after (`swap`): the same results and balances as step 5.
-8. The Craftworks token: contributions as locks, payouts as claims.
-9. Batch-auction pools.
+8. FOUNDATION 2, THE OWNER IS A DID — BUILT 10-09 (§1): `ChainParams.owner` a DID, `ChainParams.idlog` / the
+   definition's `idlog` the key log's code; one device writes, named by a `Writer` entry carrying the account's own
+   node credential (`identity::credential`, read by `identity::read_credential`) and its key seq; the DID's key log
+   read in the same round when a writer must be checked (validation: if the chain names one; an update: if a new
+   entry is the owner's — a receive never waits on it, held writers are not checked again); the append rule: new
+   owner entries on the log's CURRENT key; at one seq a higher key seq wins, only the same key freezes; a cut carries
+   its writer; a wallet counts none of the owner's keys (log and devices) behind its checkpoints. 67 tests; 15
+   mutants killed (one survivor — a cut naming another writer — killed by a test added for it). token.wasm 202,062 B.
+   LIVE fx/fy (`token-live did`, every run with fresh people): the account rotated its key → the old device's send
+   REFUSED by the holder; the recovered account's new writer (key 1) at that seq ACCEPTED; the old device's copy
+   offered to the other node; after ~6 s both nodes held the recovery at that seq, nothing frozen, balance intact.
+   basic / allow / swap / wallet / cut ran again: unchanged.
+9. The Craftworks token: contributions as locks, payouts as claims.
+10. Batch-auction pools.
 
 **Before the token carries real value, step 6 must exist** (code review, 10-08): the contract checks only the receives
 among a chain's last 9 entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under 9
