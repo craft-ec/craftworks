@@ -1380,3 +1380,8 @@ then joined at 35 with 35 earlier epochs kept; epoch 33's row "prev+8 back".
   found; Craftworks via a re-welcome, RedFox by copying its row from the old table.
 - Upstream: service report VT2SJW from the owner's node (PUT reported success with no downstream copy, then evicted;
   counts 68 / 1091 / 1067 per day 10-05..07). Share the code with the Freenet team on Matrix.
+
+## 10-08 01:41 UTC — daily statement turned final (measured on fy)
+- 2026-10-07: final once fx and fy pages republished after midnight (creator 3.5, keeper 1.75, ledger 7.83333333 — the
+  same numbers as while running); 2026-10-08 running. A day is final in the ledger only when EVERY contributor's
+  statement for it is (each page republishes a minute after load, then hourly).
