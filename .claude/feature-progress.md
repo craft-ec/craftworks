@@ -1269,7 +1269,7 @@ old key's addresses.
 - [x] Mentions one way (person:DID links → card; inbox notices checked against the item), shared links open from any address/custom domain, header search + 🔔 + @ (9a663d8).
 - [x] Live 10-07 22:30 (fx→fy): a mention notices fy (🔔 1, @ 1), the notice opens the conversation at the message, highlighted; a note's History shows the version before the edit with Restore. (Typed `[..](person:..)` is escaped by the composer — mentions come from the @ list.)
 - [ ] F5b R4 delegate re-keys: BUILT (R4a–d); R4e BLOCKED BY THE NODE (freenet #5542: a delegate's PUT of a new contract stays local). Nothing to build until the node fixes it; flip `upkeep::NEW_CONTRACTS_REACH_THE_NETWORK` then.
-- [ ] Your node log: contracts HQk7zGRQ…/J4bh5TcQ… reject updates every few minutes — not identified.
+- [x] Your node log: contracts HQk7zGRQ…/J4bh5TcQ… (10-07, measured): J4bh gone; HQk7 a public contract relayed by the node, NOT ours (68 "Invalid update" deltas from peers in 12 h, resynced) — nothing of ours to fix.
 
 ## Owner decisions 2026-10-06
 - Notes votable: YES. Every kind the same capabilities (votes, comments…): DONE in kinds PARTS (uncommitted with this batch).
