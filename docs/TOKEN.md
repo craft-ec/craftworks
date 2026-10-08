@@ -93,6 +93,13 @@ An account chain then holds an amount PER ID; every entry names its id(s); a `se
 entry: atomic in the sender's chain). For `unique`, the chain of the id's holder is the `ownerOf` answer; a transfer is
 the same send/receive. Per-id metadata is a Craftworks item named by the id.
 
+**Ownership, metadata and royalties in ONE standard** (owner 10-08): a definition may carry a ROYALTY (a share, and
+the creator it goes to); the FILL rule — the one rule every sale passes through (§4) — then refuses a sale of an id
+whose lock does not also pay the creator's share. Ownership (ids), the sale (offer → lock → fill) and the royalty are
+checked together by one code, the metadata a Craftworks item the id names — where Solana binds three programs (SPL
+Token, Metaplex metadata, rule sets / Core plugins for enforced royalties). The limit is everyone's: a plain transfer
+(a gift) can hide a payment made elsewhere — royalties hold on sales through the market, not on private deals.
+
 ## 2. A chain's entries
 
 An account chain is a sequence `seq 0, 1, 2, …`, each entry naming the one before (its hash) and CARRYING the state
