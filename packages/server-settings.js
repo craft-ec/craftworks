@@ -133,7 +133,7 @@ export async function start(ctx) {
             el("dt", { textContent: "Your role" }),
             el("dd", { textContent: mine() ?? "not a member" }),
             el("dt", { textContent: "Members" }),
-            el("dd", { textContent: String(r.members().length) }),
+            el("dd", { textContent: r.membersText() }),
           ),
           el("div", { style: "display:grid;grid-template-columns:max-content minmax(0,1fr);gap:var(--cw-space-1) var(--cw-space-3);margin-bottom:var(--cw-space-3)" }, ...[["Role", "Can"], ["Owner", "everything · hand on"], ["Admin", "invite · channels · remove messages, members"], ["Member", "post · invite"]].flatMap(([a, b], i) => [el(i ? "span" : "b", { textContent: a }), el(i ? "span" : "b", { textContent: b })])),
         );

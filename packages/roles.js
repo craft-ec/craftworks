@@ -104,7 +104,10 @@ export async function start(ctx) {
     let group = [];
     let left = false;
     let lastSaid = null;
+    // The group READ at least once (owner 10-08: a space showed "0 members" while its keys were still arriving).
+    let groupRead = false;
     const learn = async st => {
+      if (st) groupRead = true;
       left = !!st?.removed;
       const all = (st?.members ?? []).filter(m => m.cred).map(m => ({ key: m.key, index: m.index, did: node.glue.did_of(didOf(m.cred)), signer: signerOf(m.cred) }));
       const real = await Promise.all(all.map(async m => (await directory.dataKey(m.did)) === m.signer));
@@ -297,6 +300,16 @@ export async function start(ctx) {
       // This node was removed from the space's group: it reads nothing newer.
       get left() {
         return left;
+      },
+      // Whether its members are KNOWN yet (its group read once — or, from outside, its roster).
+      get membersKnown() {
+        return groupRead || !!out;
+      },
+      // Its member count as every view says it: "Loading members…" until the group is read, never a false 0.
+      membersText: () => {
+        if (!(groupRead || out)) return "Loading members…";
+        const n = [...new Set(group.map(m => m.did))].filter(did => role(did)).length;
+        return `${n} member${n === 1 ? "" : "s"}`;
       },
       // The people of the space now: its group's accounts, with their roles.
       members: () => [...new Set(group.map(m => m.did))].map(did => ({ did, role: role(did) })).filter(m => m.role),

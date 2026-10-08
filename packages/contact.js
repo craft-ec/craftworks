@@ -70,9 +70,7 @@ async function spacePeople(ctx, el, sp) {
     <div class="ct"><div class="top"><h2></h2><span class="s"></span></div></div>`;
   const root = el.querySelector(".ct");
   root.querySelector("h2").textContent = `${space.shown(sp)} · people`;
-  const count = () => (root.querySelector(".top .s").textContent = `@layer apps {
-${r.members().length} member${r.members().length === 1 ? "" : "s"} · you: ${r.role(me.id) ?? "member"}
-}`);
+  const count = () => (root.querySelector(".top .s").textContent = `${r.membersText()} · you: ${r.role(me.id) ?? "member"}`);
   count();
   r.onChange(() => root.isConnected && count());
   if (r.can(me.id, "invite"))

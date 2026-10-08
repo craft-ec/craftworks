@@ -78,7 +78,6 @@ export async function mount(ctx, el) {
     const on = r.apps();
     const may = r.can(me, "apps");
     const said = h("p", { className: "said", hidden: true });
-    const members = r.members();
     // Its SETTINGS: the Settings app (`settings`), at a tab.
     const openSettings = tab => (location.hash = `#/s/${sp.id}/settings${tab && tab !== "overview" ? `/${tab}` : ""}`);
     // Its apps, as every Home shows them (`app-icons`): a pill with what is new (Chat: its unread), and — for who may —
@@ -122,7 +121,7 @@ export async function mount(ctx, el) {
         r.can(me, "invite") ? h("button", { type: "button", className: "btn main", textContent: "Invite", onclick: () => openSettings("invites") }) : null,
 
         // Its PEOPLE: the space's Contact (`members-list`: the one list, its roles).
-        h("p", {}, h("a", { href: `#/s/${sp.id}/contact`, textContent: `${members.length} member${members.length === 1 ? "" : "s"}` }), ` · you: ${r.role(me) ?? "member"}`),
+        h("p", {}, h("a", { href: `#/s/${sp.id}/contact`, textContent: r.membersText() }), ` · you: ${r.role(me) ?? "member"}`),
       ),
       appGrid,
       removable.length
