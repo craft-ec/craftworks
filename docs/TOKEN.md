@@ -34,7 +34,7 @@ Every behaviour of the blockchain token standards, and how this standard gives i
 | NFTs — `ownerOf`, transfer, per-item approve, `setApprovalForAll` (ERC-721) | ✅ | a definition with `ids: unique`; a chain per (id, owner) whose head says held or not; `allow` per id or for all (§1b) |
 | Multi-token, batch transfer (ERC-1155) | ✅ | one definition, many ids; a chain per (definition, owner) holds an amount per id; a batch = several debits in ONE entry (atomic within the sender's chain) (§1b) |
 | Metadata (token and per item) | ✅ | the definition's metadata; per id, an ITEM of Craftworks (its page, its files) named by the id |
-| History | ✅ | the chains ARE the history; each entry signed and linked |
+| History, traceable by anyone (an explorer) | ✅ | no one ledger: from genesis and the supply bag, sends followed FORWARD reach every chain; credits cite their debits BACKWARD; kept alive by readers and keepers (§1a) |
 | Atomic swap between two tokens | ✅ two-phase | lock → fill → claim, or refund; the race closed by time (§4) |
 | Vesting, time locks | ✅ | `lock(beneficiary, amount, until)`: claimable by the beneficiary after the beacon passes `until`, or in steps (§4a) |
 | Staking | ✅ | `lock` to a staking definition; its rewards a supply rule of that definition (§4a, §6) |
@@ -65,7 +65,17 @@ One contract CODE (the standard). Its instances differ by their parameters — o
 
 - **Supply bag** (`supply <definition>`): every `mint` and `burn` pointed there by whoever appends it. `totalSupply` =
   genesis + Σ mints − Σ burns, each pointer checked against its chain (a pointer to nothing counts nothing). Anyone
-  recomputes it; it is final as the entries it counts are (§3).
+  recomputes it; it is final as the entries it counts are (§3). **A `mint` is valid only if its pointer is ALREADY in
+  the supply bag** (validation reads the bag: a related contract) — so no token comes into being where nobody can find
+  it.
+- **Traceable without one ledger.** Every token starts at the definition's GENESIS entries or at a `mint` (all in the
+  supply bag); every `send` NAMES its recipient and every credit CITES its debit. So, from genesis and the supply bag,
+  anyone follows sends FORWARD to every chain that ever held the token, and any credit BACKWARD to where it came from
+  — the whole history, each entry signed and checked, readable by anyone: an explorer's walk over many contracts
+  instead of one. The bags only make it faster (an entry missing from the activity bag is still reached by the walk).
+- **History kept.** A long chain's older entries are flushed into a tree (as tables are: carried balance at the cut,
+  the entries readable); every chain and tree is kept alive by its readers and keepers (`keep`), as files and tables
+  are — Freenet drops what nobody reads, where a blockchain's full nodes keep everything.
 - **Activity bag** (`activity <definition> <month>`): every entry pointed there — the EVENT log a wallet or explorer
   reads; a holder's own chain, subscribed, pushes its own changes.
 - **Authority chain** (params `{ definition id, "authority" }`): the definition names the FIRST mint and freeze key
