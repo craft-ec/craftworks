@@ -1351,6 +1351,10 @@ old key's addresses.
   loses honest steps built on a fake's true output → kept. 12 tests, 7 mutants killed. Live fx/fy: extension ✓,
   fake past the sample ✓ (first try), proof → both nodes back to the honest chain in ≤5 s; REAL step K=1.07e9:
   61.5 s, 65 KB, accepted in 1.2 s. Not yet: entropy mix. Next: real network (finality margin) — or step 5.
+- TOKEN REAL NETWORK (10-08): second node started temporarily on B (lock held, removed after); 5 rounds: related
+  fetch + accept 4.4/62.3/11.3/8.1/8.6 s (62 s unexplained), equivocation converged on both nodes 4.9–5.8 s. Margin
+  set to 10 beacon steps. A fresh node on this Mac (phone hotspot, 172.20.10.x) made no connection in 3 min while the
+  owner's node held 37 — cause not measured. Next: step 5 (allow/spend, offer/fill/lock/claim/refund).
 - [ ] Proofs: DEFERRED until rewards pay (owner 10-07); low-cost plan in REWARDS §7 item 5. Next on the track: treasury
       pass + statements + shadow ledger (REWARDS §7 item 4).
 - Decisions recorded in REWARDS: carriers = holders weighted by demand; users are the keepers; never paid to own

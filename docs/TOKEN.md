@@ -351,7 +351,7 @@ The standard's first instance. What it changes in REWARDS:
 
 1. The BEACON's cadence (§5a) — mechanism designed, `K`/`S`/`s` calibrated from measurement; special hardware's
    speed-up unmeasured.
-2. The finality MARGIN — measured on the real network (step 4), set generously.
+2. The finality MARGIN — 10 beacon steps (measured: copies agreed in ≤ 6 s, n = 5; step 4).
 3. Pooled lending (§0) — after pools work.
 
 (A token's own ISSUANCE — its supply rule and size, who holds its genesis, what it does with fees — is that token's
@@ -370,8 +370,15 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    EQUIVOCATION kept and marked (§3b), proof of work on others' appends, cited entries checked on append,
    unit tests with mutations for every rule (a debit over balance, a double receive, a fork, a wrong carried balance);
    the supply and activity bags; the authority chain.
-4. The beacon contract (§5a) — BUILT (above); then the real network: finality margin, related fetch latency across
-   the ring.
+4. The beacon contract (§5a) — BUILT (above); then the real network — MEASURED 10-08 (`tools/token-live net`, two
+   nodes on the public network, both on B's server; n = 5): a receive written on one node, the definition and the
+   sender's chain fetched across the network: accepted in 4.4 / 62.3 / 11.3 / 8.1 / 8.6 s (the 62 s one unexplained:
+   the node's own limit for that fetch is 10 s — measure before relying on fetch times); two writer sends at one seq
+   through the two nodes → both holding the SAME frozen chain after 5.8 / 5.6 / 5.0 / 5.3 / 4.9 s (polled every 2 s).
+   The FINALITY MARGIN is set from this with room: copies agreed within ~6 s every time, so a margin of 10 beacon
+   steps (≥ 10 minutes, ×1.6 for the pace spread) is ~100× what was seen. Not measured: a sender far away on the
+   ring (both nodes shared one host), and a node behind carrier-grade NAT (a fresh node on a phone hotspot made no
+   connection in 3 minutes).
 5. `allow`/`spend`, `offer`/`fill`/`lock`/`claim`/`refund`, multisig owners, ids (NFT, multi-token), vesting.
 6. Wallet verification: the citation walk, public checkpoints and vouches, fraud proofs naming maker and vouchers (§3a)
    — BEFORE any token carries value (below).
