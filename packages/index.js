@@ -15,13 +15,14 @@
 //   await index.openPointers(ref)                    // a THING's public bag, made (by its author, when it is made)
 //   await index.point(ref, { from })                 // a pointer (plain) to where something about `ref` is: its bag
 //   await index.pointers(ref)                        // the pointers in it (claims: the reader resolves each)
+//   await index.watch(ref, fn)                       // fn() whenever its bag changes (the node pushes it)
 //   await index.listSpace(desc)   await index.spaces()   // DISCOVER's list of public spaces: a space's description
 //                                                    // ({ id, name, governance }) in one public bag; each a claim
 //                                                    // (the id proves its owner: `space.owner`)
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const space = await ctx.require("space");
-  const { core, glue, ask, WAIT } = await ctx.require("node");
+  const { core, glue, ask, WAIT, listen } = await ctx.require("node");
   const bagCode = await ctx.require("bag-wasm");
   const Core = glue.CraftworksCore;
   const enc = new TextEncoder();
@@ -145,6 +146,17 @@ export async function start(ctx) {
   const openPointers = async ref => drop(await refAddress(ref), new Uint8Array(0), "making a pointer bag");
   const point = async (ref, item) => drop(await refAddress(ref), enc.encode(JSON.stringify(item)), "pointing");
   const pointers = async (ref, { show = false } = {}) => parse(await read(await refAddress(ref), `the bag of ${ref}`, { show }));
+  // A THING's BAG WATCHED: followed (this node subscribed: its copy kept current), `fn` run each time the node says it
+  // changed (its `changed`: what a followed contract that is not a tail pushes) — never read again on a timer.
+  const watchers = new Map(); // the bag's address as the node names it → [fn]
+  listen(said => said.kind === "changed" && watchers.get(said.key)?.forEach(f => f()));
+  async function watch(ref, fn) {
+    const address = await refAddress(ref);
+    const key = (await ctx.require("blocks")).address(Core.bag_id(bagCode, address));
+    if (!watchers.has(key)) watchers.set(key, []);
+    watchers.get(key).push(fn);
+    await read(address, `the bag of ${ref}`, { follow: true }).catch(() => {});
+  }
 
   // A SPACE's SEALED bag (`name`): at an address the space's id gives, each item sealed with the space's newest EPOCH
   // key (`epoch ‖ nonce ‖ AES-GCM`) — only members read it; a member removed reads nothing added after. Its size shows
@@ -227,5 +239,5 @@ export async function start(ctx) {
   const listSpace = desc => point(SPACES, { id: desc.id, name: desc.name, kind: desc.kind, governance: { owner: desc.governance.owner, nonce: desc.governance.nonce } });
   const spaces = () => pointers(SPACES);
 
-  return { onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, listSpace, spaces, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, OPEN };
+  return { onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, watch, listSpace, spaces, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, OPEN };
 }

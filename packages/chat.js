@@ -76,7 +76,7 @@ export async function mount(ctx, el) {
   // (A phone shows one pane: what is open, or the list — `open` on the layout.)
   const dc = $(".dc");
   const showOpen = on => dc.classList.toggle("open", !!on);
-  $(".back").onclick = () => (ctx.space ? showOpen(false) : (location.hash = "#/chat"));
+  $(".back").onclick = () => (ctx.space ? showOpen(false) : (location.hash = /^u\/did:craftec:[^/]+\//.test(ctx.sub ?? "") && !ctx.sub.startsWith(`u/${account.id}/`) ? `#/chat/${ctx.sub.slice(0, ctx.sub.lastIndexOf("/"))}` : "#/chat"));
   const say = m => ((said.textContent = m), (said.hidden = !m));
   // One question, in the page's own dialog: the answer, or null.
   const ask = (question, button = "Create") =>
@@ -162,28 +162,31 @@ export async function mount(ctx, el) {
         ? (rs?.lists?.()[w.slice(5)]?.people ?? []).map(d => directory.shown(d)).join(", ") || "chosen people"
         : ({ admins: "the admins", owner: "the owner" }[w] ?? w);
 
+  // ONE CHANNEL in a list (a space's, a person's): its name, unread count, open or not.
+  const channelRow = (c, current, open) => {
+    const row = Object.assign(document.createElement("div"), { className: "ch" });
+    const b = Object.assign(document.createElement("button"), { type: "button", textContent: `${c.item?.meta?.group ? "🔒" : "#"} ${c.name}` });
+    b.setAttribute("aria-current", String(current));
+    b.onclick = open;
+    const n = activity.unread(c.id);
+    if (n) b.append(Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(n) }));
+    row.append(b);
+    return row;
+  };
   function drawChannels() {
     if (!chs) return;
     // A server's channels come from its members' feeds: none yet is not "none" until every one has been tried.
     if (!list().length && !chs.done) return chans.replaceChildren(theme.loading("Loading channels…"));
     chans.replaceChildren(
-      ...list().map(c => {
-        const row = Object.assign(document.createElement("div"), { className: "ch" });
-        const b = Object.assign(document.createElement("button"), { type: "button", textContent: `${c.item?.meta?.group ? "🔒" : "#"} ${c.name}` });
-        b.setAttribute("aria-current", String(channel?.id === c.id));
-        b.onclick = () => openChannel(c);
-        const n = activity.unread(c.id);
-        if (n) b.append(Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(n) }));
-        row.append(b);
-        return row;
-      }),
-      ...(may("channels") ? [Object.assign(document.createElement("button"), { type: "button", className: "new", textContent: "+ Add a channel", onclick: addChannel })] : []),
+      ...list().map(c => channelRow(c, channel?.id === c.id, () => openChannel(c))),
+      ...(may("channels") ? [Object.assign(document.createElement("button"), { type: "button", className: "new", textContent: "+ Add a channel", onclick: () => addChannel() })] : []),
     );
   }
 
-  async function addChannel() {
+  // A channel added (a space's; `to`: a person's — yours).
+  async function addChannel(to = channelOps) {
     const name = await ask("Channel name");
-    if (name) await channelOps.add(name).catch(e => say(`Could not add it: ${e?.message ?? e}`));
+    if (name) await to.add(name).catch(e => say(`Could not add it: ${e?.message ?? e}`));
   }
 
   // The server's members: the accounts in its group, with their roles. A click: what can be done with that person.
@@ -256,16 +259,39 @@ export async function mount(ctx, el) {
   // members — as the channels of your space; one opened in the same room as any channel (`#/chat/<conversation>`).
   // Conversations begun with you while you were away: joined when it opens.
   let accepted = null;
+  // A PERSON's CHANNELS (`#/chat/u/<did>[/<channel>]`; yours listed above your conversations): channel items of their
+  // personal space (`conversation.channels` of the person), each opened in the same room (its owner's tail; whoever
+  // their rule lets post writing in their own).
+  const heard = new Set();
+  const personSub = () => /^u\/(did:craftec:[1-9A-HJ-NP-Za-km-z]+)(?:\/([0-9a-z]+))?$/.exec(ctx.sub ?? "");
+  const heading = t => Object.assign(document.createElement("h3"), { textContent: t, style: "font-size:var(--cw-text-xs);letter-spacing:.08em;color:var(--cw-muted);margin:var(--cw-space-2) var(--cw-space-2) 2px" });
   async function personal() {
     // (Run again on every route event: the conversation open stays open — only another one replaces it.)
     server = shownConv;
     rs = null;
     channel = null;
-    sideName.textContent = "Your conversations";
+    const pm = personSub();
+    const owner = pm?.[1] ?? account.id;
+    const pcs = await conversation.channels({ kind: "person", id: owner }).catch(e => (say(`Their channels: ${e?.message ?? e}`), null));
+    if (pcs && !heard.has(pcs)) heard.add(pcs), pcs.onChange(() => el.isConnected && !ctx.space && personalDraw?.());
+    const chButtons = () => (pcs?.list() ?? []).map(c => channelRow(c, shownConv?.id === c.id, () => (location.hash = `#/chat/u/${owner}/${c.cid}`)));
+    if (owner !== account.id) {
+      // SOMEONE ELSE's: their channels alone.
+      sideName.replaceChildren(directory.nameEl(owner), "'s channels");
+      const draw = async () => (chans.replaceChildren(...chButtons(), ...(pcs?.list().length ? [] : [Object.assign(document.createElement("p"), { className: "empty", textContent: "No channels." })])), []);
+      personalDraw = draw;
+      await draw();
+      return openChannelOf(pcs, owner, pm[2], draw);
+    }
+    sideName.textContent = "Your chat";
     const draw = async () => {
       const list = await conversation.list();
       const name = sp => (sp.kind === "group" ? `👥 ${sp.name}` : sp.with ? directory.nameEl(sp.with) : sp.name);
       chans.replaceChildren(
+        heading("CHANNELS"),
+        ...chButtons(),
+        Object.assign(document.createElement("button"), { type: "button", className: "new", textContent: "+ New channel", onclick: () => addChannel(pcs) }),
+        heading("CONVERSATIONS"),
         ...list.map(sp => {
           const b = Object.assign(document.createElement("button"), { type: "button", title: sp.with ?? "" });
           b.append(name(sp));
@@ -280,9 +306,15 @@ export async function mount(ctx, el) {
       );
       return list;
     };
+    if (pm) {
+      personalDraw = draw;
+      await draw();
+      return openChannelOf(pcs, owner, pm[2], draw);
+    }
     const list = await draw();
     accepted ??= conversation.accept().catch(e => ctx.log("conversation", { what: e?.message ?? String(e) })).then(() => el.isConnected && !ctx.space && draw().then(openAt));
     const openAt = async (l = list) => {
+      if (personSub()) return;
       const sp = (ctx.sub && (await conversation.list()).find(c => c.id === ctx.sub)) || null;
       showOpen(!!sp);
       if (!sp) return shownConv ? null : roomEl.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: l.length ? "Pick a conversation, or start one." : "No conversations yet: start one." }));
@@ -298,6 +330,23 @@ export async function mount(ctx, el) {
     };
     personalDraw = draw;
     await openAt();
+  }
+  // One of a person's channels open (`cid`; none: their first), its owner the one person listed beside it.
+  async function openChannelOf(pcs, owner, cid, draw) {
+    if (!pcs) return;
+    await pcs.settled;
+    const c = pcs.list().find(x => x.cid === cid) ?? (cid ? null : pcs.list()[0]) ?? null;
+    showOpen(!!cid && !!c);
+    if (!c) return shownConv ? null : roomEl.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: cid ? "That channel is gone." : owner === account.id ? "No channels yet: add one." : "No channels." }));
+    if (shownConv?.id === c.id) return;
+    shownConv = c;
+    server = c;
+    draw();
+    const li = Object.assign(document.createElement("li"), { className: "who" });
+    li.append(directory.nameEl(owner), Object.assign(document.createElement("span"), { className: "r", textContent: " owner" }));
+    people.replaceChildren(li);
+    shown?.close();
+    shown = await roomUI.show(roomEl, c, `# ${c.name}`);
   }
   let shownConv = null, personalDraw = null;
   // A NEW conversation: one person (direct) or several (a group), each welcomed.

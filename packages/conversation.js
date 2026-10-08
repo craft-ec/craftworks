@@ -1036,44 +1036,52 @@ export async function start(ctx) {
       await groups.keep(g, want);
     }
   }
+  // A PLACE's channels: a shared space's — or a PERSON's (`{ kind: "person", id: <did> }`: channel items of their
+  // personal space, public, made by them alone; each a room of its own: their tail of it, and whoever their rule lets
+  // post writing from their own — `items.outsideSource` / `outsidePart`).
+  const personChannel = (owner, cid, name, it, items) => {
+    const place = { key: `${owner}/chat/${cid}`, bag: `chat:${owner}/${cid}`, base: `${owner}/chat/${cid}/`, tail: `ch-${cid}-${owner.slice(-8).toLowerCase()}`, name }; // (a table name: lowercase, at most 32)
+    return { kind: "public", did: owner, tail: place.tail, id: place.key, name, cid, scope: null, item: it, extra: items.outsideSource(place), part: items.outsidePart(place, { rule: it }) };
+  };
   function channels(server) {
+    const person = server.kind === "person" ? server.id : null;
     if (!channelSets.has(server.id))
       channelSets.set(
         server.id,
         (async () => {
           const [roles, items] = await Promise.all(["roles", "items"].map(n => ctx.require(n)));
           // Its acts and its channel items read AT ONCE: who may make channels is checked as the list is drawn.
-          const r = await roles.of(server);
+          const r = person ? roles.personal(person) : await roles.of(server);
           const changed = [];
           const fire = () => changed.forEach(f => f());
           let its = [];
           let reading = null;
           const read = () =>
             (reading ??= items
-              .inPlaces({ spaces: [server] }, "channel", { withVotes: false })
+              .inPlaces(person ? { people: [person] } : { spaces: [server] }, "channel", { withVotes: false })
               .then(x => ((its = x), fire()), () => {})
               .finally(() => (reading = null)));
           const first = read();
           items.onChange(() => read());
-          r.onChange(fire);
+          r.onChange?.(fire);
           const list = () => {
             const out = new Map();
             for (const it of its) {
               if (!r.can(it.by, "channels")) continue;
               const cid = it.meta?.cid ?? it.id;
-              out.set(cid, space.channel(server, cid, it.title || cid, it));
+              out.set(cid, person ? personChannel(person, cid, it.title || cid, it, items) : space.channel(server, cid, it.title || cid, it));
             }
             return [...out.values()].sort((a, b) => a.name.localeCompare(b.name));
           };
           let done = false;
-          const settled = Promise.all([first, r.settled]).finally(() => (done = true));
+          const settled = Promise.all([first, r.settled ?? r.ready]).finally(() => (done = true));
           const me = async () => (await space.account()).id;
           const mayMake = async () => {
             if (!r.can(await me(), "channels")) throw new Error("only who may make channels here changes them");
           };
           // A channel ITEM: public where the space lets anyone read its chat, else its members'.
           const make = async (name, cid, meta = {}) =>
-            items.submit({ board: server.id, title: channelName(name), body: "", kind: "channel", meta: { ...meta, cid }, audience: (await items.publicIn(server, "channel").catch(() => false)) ? "public" : "members" });
+            person ? items.submit({ title: channelName(name), body: "", kind: "channel", meta: { ...meta, cid }, audience: "public" }) : items.submit({ board: server.id, title: channelName(name), body: "", kind: "channel", meta: { ...meta, cid }, audience: (await items.publicIn(server, "channel").catch(() => false)) ? "public" : "members" });
           return {
             list,
             settled,
@@ -1090,6 +1098,7 @@ export async function start(ctx) {
             // in step by its maker (`keepReaders`, every upkeep pass).
             setRead: async (c, who) => {
               await mayMake();
+              if (person) throw new Error("a person's channels are read by whoever reads them");
               const it = c.item;
               const narrow = who && who !== "members" && who !== "anyone";
               const meta = { ...(it.meta ?? {}) };
@@ -1121,7 +1130,6 @@ export async function start(ctx) {
       );
     return channelSets.get(server.id);
   }
-
   // MAIL.
   const MAIL = "mail";
   const MONTH = 30 * 24 * 3600 * 1000;
@@ -1363,5 +1371,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, reconcile, joinLevel, lapse, levelCode, repair, catchUp, keyStatus, reportReads, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
+  return { direct, group, invite, accept, reconcile, joinLevel, lapse, levelCode, repair, catchUp, keyStatus, reportReads, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels, keepReaders, audience};
 }

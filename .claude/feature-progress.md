@@ -1367,8 +1367,11 @@ then joined at 35 with 35 earlier epochs kept; epoch 33's row "prev+8 back".
       Craftworks 5/5, Ivvor's New Space acts 1 / group 5, Ivvor's Space 1 / 7 — 0 to add (Wren reads few of Ivvor's
       acts: hypothesis, the history gap). Control: invite faulted after its act → reconcile "2 in, holds 1, 1 to add"
       → added at epoch 39, then 0 to add.
-- Next (not built): commits as pure reconciliation of the group to the acts (drop redo/snaps intent tracking);
-  witnessed ordering when a claimed time must not be trusted.
+- [x] Commits as pure reconciliation (10-08, 8ba49e6): redo removed; a lost change is not replayed: removals come
+      back by `moderation.enforce` from the acts, adds by `conversation.reconcile`; a refresh owed is a `${at}~refresh`
+      mark, tried once per page until its commit lands. Snapshots kept for heal, no intent. fy WA test: Remove #2dk5VD →
+      "1 member(s) removed: epoch 4", group 1 member at epoch 4, every table writing at epoch 4. B published (971 served).
+- Next (not built): witnessed ordering when a claimed time must not be trusted.
 
 ## Owner's spaces lost after the identity change (10-07) — measured cause and fixes
 - Cause (owner node log): a spacekeys tree block (3tE9PKK…) PUT 10-06 08:03 reached no peer ("could not take the

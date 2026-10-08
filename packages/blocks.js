@@ -11,6 +11,7 @@
 //   await blocks.fetch(tailIdHex, [blockContractHex, …], "notes")   // all held, or throws
 //   await blocks.put([[name, frames], …], "notes")                   // all accepted, or throws
 //   await blocks.probe(contractHex, "notes")                          // on the network? (keeping counts them)
+//   blocks.address(contractHex)                                        // its address as the node names it (base58)
 // A contract's address as the NODE's log writes it (base58 of its 32 bytes): a failure here found there, one to one.
 const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const base58 = hex => {
@@ -181,5 +182,5 @@ export async function start(ctx) {
     return a.kind !== "get-failed";
   }
 
-  return { fetch, put, probe, stats: () => ({ ...stats }) , calls: () => calls.slice(), sends: () => new Map(sends), races: () => races.map(r => ({ ...r, open: performance.now() - r.at })), pending: () => [...inflight.entries()].map(([b, g]) => ({ b: b.slice(0, 12), what: g.what, ms: Math.round(performance.now() - g.at) }))};
+  return { fetch, put, probe, address: base58, stats: () => ({ ...stats }) , calls: () => calls.slice(), sends: () => new Map(sends), races: () => races.map(r => ({ ...r, open: performance.now() - r.at })), pending: () => [...inflight.entries()].map(([b, g]) => ({ b: b.slice(0, 12), what: g.what, ms: Math.round(performance.now() - g.at) }))};
 }
