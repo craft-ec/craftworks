@@ -1375,7 +1375,10 @@ old key's addresses.
   rule. Later, separate programs: distribution, staking, pools, keeper issuance.
   Found while building 1: a sender's cut broke the receiver's recent receives (re-validated from scratch, no evidence
   in them) → new citations strict at update, old ones lenient (TOKEN §2). Open: a fresh PUT can carry an unshown
-  receive hidden by a cut — the wallet refuses it (TOKEN §8 item 4).
+  receive hidden by a cut — the wallet refuses it (TOKEN §8 item 5).
+  Owner 10-09: "prolly trees are traversable; if not available, never make a network request" (a 60 s wait is what
+  we built to avoid) → history + received set built WITH PARITY, the cut carries root parity; the wallet never fetches
+  (`Fail::Need`). Next with the page wallet: the core's tree-by-root session for `blocks.fetch` (TOKEN §8 item 4).
 - [ ] Proofs: DEFERRED until rewards pay (owner 10-07); low-cost plan in REWARDS §7 item 5. Next on the track: treasury
       pass + statements + shadow ledger (REWARDS §7 item 4).
 - Decisions recorded in REWARDS: carriers = holders weighted by demand; users are the keepers; never paid to own

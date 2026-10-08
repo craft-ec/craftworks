@@ -162,6 +162,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "core-types"
+version = "0.1.0"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -193,6 +201,7 @@ dependencies = [
  "blake3",
  "craftworks-beacon-contract",
  "ed25519-dalek",
+ "engine",
  "freenet-prolly",
  "freenet-stdlib",
 ]
@@ -371,6 +380,18 @@ dependencies = [
  "ed25519",
  "sha2",
  "subtle",
+]
+
+[[package]]
+name = "engine"
+version = "0.1.0"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
+dependencies = [
+ "bincode",
+ "blake3",
+ "core-types",
+ "freenet-prolly",
+ "serde",
 ]
 
 [[package]]

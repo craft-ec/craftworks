@@ -123,6 +123,12 @@ As BUILT (10-08, `contracts-src/token/src/cut.rs`, step 7 below):
 - The HISTORY holds each entry's own BYTES at its seq (inline up to 1 KB, a value block beyond) — every entry before
   the cut, the earlier cuts' included — so the chain stays WALKABLE: its blocks are published as Block contracts and a
   wallet reads the whole chain back from them.
+- Both trees are built WITH PARITY (every group coded, as tables are) and the cut carries each ROOT's parity ids
+  (its group of one, as a table's tail does): any lost block — the root too — is rebuilt from its group, so a reader
+  racing a block against its group never waits on a lost one (owner 10-09: "if it is not available, never make a
+  network request"). The WALLET NEVER FETCHES: it reads only blocks HELD and answers `Need(blocks)` for the rest —
+  fetched by the caller through the blocks door (`packages/blocks.js`: one GET per block, raced against its group,
+  rebuilt from parity, a loss remembered and never waited on twice) — and runs again; "not held" is never a verdict.
 - CITING ACROSS ANOTHER CHAIN'S CUT: an entry whose cited entry its chain has pruned carries, in its evidence, that
   chain's id, the cited seq, a PRESENCE proof against the cut's history root and the entry's bytes (≤ 4 such items).
 - WHO CHECKS A CUT: the node that holds what it summarises (`update_state`: the shape rules over the old entries and
@@ -413,7 +419,13 @@ The standard's first instance. What it changes in REWARDS:
    speed-up unmeasured.
 2. The finality MARGIN — 10 beacon steps (measured: copies agreed in ≤ 6 s, n = 5; step 4).
 3. Pooled lending (§0) — after pools work.
-4. A FRESH PUT after a cut: a node that never held a chain checks it from scratch only, and takes a citation hidden by
+4. The blocks door for a TREE BY ROOT: `blocks.fetch` races and rebuilds a table's blocks (the core knows their groups
+   from the table's tail). A token history has a root, not a tail: the core gains a read-only tree session by root
+   (`engine::repair::find_group` / `root_group` / `rebuild`, as tables use) when the wallet moves into the page — the
+   wallet already reads only what is held and says what it needs. COST measured 10-09: a 3-entry history and its
+   received set are 18 blocks, 16 of them PARITY (each root's own group coded at full width, as tables' are) — a
+   small history pays ~9× its data in contracts, and nodes evict by contract count.
+5. A FRESH PUT after a cut: a node that never held a chain checks it from scratch only, and takes a citation hidden by
    its cited chain's cut as shown — so a brand-new copy can carry a receive that was never shown. Holders refuse it
    (strict on update) and the wallet refuses it (it walks the whole); a node that first meets the chain this way
    holds the claim until its holders' copy merges. The receiving wallet stays the gate (§3a).
@@ -472,16 +484,18 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    review is NOT a launch blocker (owner 10-08: Bitcoin was reviewed as it was used).
 7. FOUNDATION 1, the PRUNE CUT (§2) — BUILT 10-08: the cut entry, evidence on every citing entry, the writer's trees
    (`cut::make`) and proofs, the seq-aligned merge and prune, strict new / lenient old citations, the wallet across
-   cuts (`cut::whole`, `cut::audit`). 60 tests; 22 mutants, all killed (3 after tests were added for them).
-   token.wasm 191,892 B (was 154,638: the prolly verifier). Found in review and fixed: a fill of an offer a cut
+   cuts (`cut::whole`, `cut::audit`). 61 tests; 27 mutants, all killed (3 after tests were added for them).
+   token.wasm 193,446 B (was 154,638: the prolly verifier). Trees with parity, the root's carried; the wallet reads
+   only what is held (`Need` otherwise) — a lost root and a lost inner node each rebuilt from its group (CONTROL: the
+   same history built without parity names the group but cannot rebuild). Found in review and fixed: a fill of an offer a cut
    carries, and a refund of a lock it carries, were refused (the cited chain and the refund's deadline were looked
    for in live entries only); offers now carry their time and a fill at or after it is refused; an update citing more
    chains than one round holds (MAX_RELATED, 10) is refused plainly — the writer sends smaller batches. LIVE fx/fy
    (`tools/token-live cut`): B cuts and Y — which held B whole — takes the cut alone in 137 ms and keeps 1 entry (seq
    1, balance 300); a cut dropping its allowance refused by its holder; B receiving the same send again refused with
    its presence proof and with none; A cuts, its history (2 blocks) published on X; C's receive of A's send behind the
-   cut refused with no evidence and ACCEPTED with the proof; C's wallet verified it across A's cut reading the history
-   from X (3 chain reads, 12 ms). The swap run again after (`swap`): the same results and balances as step 5.
+   cut refused with no evidence and ACCEPTED with the proof; C's wallet verified it across A's cut — first run naming
+   the 1 history block not held, fetched, second run value (58 ms; history and received set 18 blocks with parity). The swap run again after (`swap`): the same results and balances as step 5.
 8. The Craftworks token: contributions as locks, payouts as claims.
 9. Batch-auction pools.
 

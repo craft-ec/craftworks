@@ -679,7 +679,15 @@ fn a_fill_lands_a_margin_before_its_deadline_and_a_refund_after_it() {
 }
 
 // ---- step 6: wallet verification ----
-use crate::wallet::{Checkpoint, Source, Vouch, Wallet};
+use crate::wallet::{Checkpoint, Fail, FraudProof, Source, Vouch, Wallet};
+
+/// A verification's verdict on what is HELD: value, or its fraud proof (a test hands over every block: never `Need`).
+fn fraud(r: Result<(), Fail>) -> Result<(), FraudProof> {
+    r.map_err(|f| match f {
+        Fail::Fraud(p) => p,
+        Fail::Need(n) => panic!("blocks needed: {}", n.len()),
+    })
+}
 
 fn defs(t: &[u8; 32]) -> Option<Definition> {
     if *t == id_a() {
@@ -690,11 +698,11 @@ fn defs(t: &[u8; 32]) -> Option<Definition> {
         None
     }
 }
-fn verify(w: &Two, wallet: &mut Wallet, owner: u8) -> Result<(), crate::wallet::FraudProof> {
+fn verify(w: &Two, wallet: &mut Wallet, owner: u8) -> Result<(), FraudProof> {
     let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
     let src = Source { chain: &chain, definition: &defs, block: &|_| None };
     let last = w.get(id_a(), owner).entries.len() as u64 - 1;
-    wallet.verify(&src, &at(id_a(), owner), last)
+    fraud(wallet.verify(&src, &at(id_a(), owner), last))
 }
 fn checkpoint(w: &Two, owner: u8, by: u8) -> Checkpoint {
     let s = w.get(id_a(), owner);
@@ -859,7 +867,7 @@ fn a_false_checkpoint_is_proven_and_its_maker_and_vouchers_are_skipped() {
     // Anyone AUDITS it: the proof names the maker and the voucher.
     let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
     let src = Source { chain: &chain, definition: &defs, block: &|_| None };
-    let proof = trusting.audit(&src, &c).unwrap_err();
+    let proof = fraud(trusting.audit(&src, &c)).unwrap_err();
     assert_eq!(proof.checkpoint.as_ref().map(|c| c.by), Some(pk(9)));
     assert_eq!(proof.vouchers, vec![pk(8)]);
     // Knowing the proof, a wallet skips both: the payment is refused.
@@ -929,7 +937,7 @@ fn the_shared_records_round_trip_exactly() {
     let src = Source { chain: &chain, definition: &defs, block: &|_| None };
     let mut wallet = Wallet::new(pk(1));
     wallet.vouches = vec![v];
-    let proof = wallet.audit(&src, &c).unwrap_err();
+    let proof = fraud(wallet.audit(&src, &c)).unwrap_err();
     let back = bytes::read_fraud(&bytes::fraud(&proof)).unwrap();
     assert_eq!((back.chain, back.seq, back.checkpoint.clone(), back.vouchers.clone()), (proof.chain, proof.seq, proof.checkpoint.clone(), proof.vouchers.clone()));
     // A claimed proof is CHECKED, not trusted: re-auditing its checkpoint gives the same verdict.
@@ -1102,7 +1110,7 @@ fn a_send_behind_its_senders_cut_is_received_with_the_proof() {
     let mut forged = whole1.clone();
     forged.entries[3].body = Body::Send { to: pk(3), amount: 150 };
     let mut fb = cut::Blocks::new();
-    let (fh, _) = cut::trees(&forged.entries[..4], &mut fb).unwrap();
+    let ((fh, _), _) = cut::trees(&forged.entries[..4], &mut fb).unwrap();
     let fproof = cut::proof(&fb, &fh, &history_key(3)).unwrap();
     assert_eq!(recv(vec![(id, 3, fproof, forged.entries[3].encode())]), Err("a receive whose send is not in its sender's chain"));
     // The forged entry's bytes beside the REAL proof: the proof holds other bytes at that seq.
@@ -1185,13 +1193,13 @@ fn a_holder_checks_a_new_cut_against_what_it_summarises_then_drops_it() {
     assert_eq!(merge(&sent, &frozen), frozen);
 }
 
-fn verify_with(w: &Two, blocks: &cut::Blocks, wallet: &mut Wallet, owner: u8) -> Result<(), crate::wallet::FraudProof> {
+fn verify_with(w: &Two, blocks: &cut::Blocks, wallet: &mut Wallet, owner: u8) -> Result<(), FraudProof> {
     let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
     let block = |c: &[u8; 32]| blocks.get(c).cloned();
     let src = Source { chain: &chain, definition: &defs, block: &block };
     let s = w.get(id_a(), owner);
     let last = s.entries.last().unwrap().seq;
-    wallet.verify(&src, &at(id_a(), owner), last)
+    fraud(wallet.verify(&src, &at(id_a(), owner), last))
 }
 
 #[test]
@@ -1201,9 +1209,13 @@ fn a_wallet_walks_across_a_cut_from_its_published_history() {
     let p1 = at(id_a(), 1);
     put_at(w.chain(id_a(), 3), 4, Body::Receive { from: pk(1), nonce: nonce(4), amount: 100, cited: 0, ev: Evidence { mine: vec![], theirs: vec![behind(&blocks, &live1, &p1, &whole1, 3)] } }, None, 6);
     assert_eq!(verify_with(&w, &blocks, &mut Wallet::new(pk(9)), 3), Ok(()));
-    // Without the history's blocks the walk cannot cross: refused, not trusted.
-    let f = verify_with(&w, &cut::Blocks::new(), &mut Wallet::new(pk(9)), 3).unwrap_err();
-    assert_eq!(f.why, "a history whose blocks are not there");
+    // Without the history's blocks HELD the walk cannot cross: it says which it NEEDS (fetched by the caller through the
+    // blocks door), never a verdict — and nothing is asked of any network here.
+    let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
+    let src = Source { chain: &chain, definition: &defs, block: &|_| None };
+    let need = Wallet::new(pk(9)).verify(&src, &at(id_a(), 3), 0);
+    let Err(Fail::Need(n)) = need else { panic!("{need:?}") };
+    assert!(n.contains(&roots(&live1).0), "the history's root first");
     // A block that is not the one its id names.
     let mut forged = blocks.clone();
     let k = roots(&live1).0;
@@ -1260,6 +1272,17 @@ fn a_lying_cut_passes_the_contract_and_is_proven_by_the_wallet() {
     assert_eq!(carried.check(id_a(), 2), Ok(()));
     let f = verify_with(&carried, &blocks, &mut Wallet::new(pk(9)), 2).unwrap_err();
     assert_eq!((f.seq, f.why), (1, "a cut that is not what came before it"));
+    // A cut naming parity its history does not have (a root no reader could rebuild): the audit finds it too.
+    let mut s = honest.clone();
+    let mut e = s.entries.pop().unwrap();
+    if let Body::Cut { history_parity, .. } = &mut e.body {
+        history_parity[0] = [7; 32];
+    }
+    s.entries.push(sign(e, 2));
+    let mut parity = Two(w.0.clone());
+    *parity.chain(id_a(), 2) = prune(&s);
+    let f = verify_with(&parity, &blocks, &mut Wallet::new(pk(9)), 2).unwrap_err();
+    assert_eq!((f.seq, f.why), (1, "a cut whose trees are not what came before it"));
 }
 
 #[test]
@@ -1293,7 +1316,7 @@ fn an_entry_over_1kb_behind_a_cut_is_proven_by_its_value_block() {
     assert_eq!(other.encode().len(), bytes.len());
     assert_eq!(recv(other.encode()), Err("a receive whose send is not in its sender's chain"));
     // The wallet reads it back across the cut.
-    assert!(cut::whole(&livem, &|c| blocks.get(c).cloned(), 1000).unwrap() == cutm);
+    assert!(cut::whole(&livem, &|c| blocks.get(c).cloned()).unwrap() == cutm);
 }
 
 #[test]
@@ -1343,15 +1366,15 @@ fn a_history_read_back_is_every_seq_in_order_and_all_before_the_cut() {
         }
         s
     };
-    assert_eq!(cut::whole(&with_root(shuffled), &|c| blocks.get(c).cloned(), 100).err(), Some("a history that is not every seq in order"));
+    assert_eq!(cut::whole(&with_root(shuffled), &|c| blocks.get(c).cloned()).err(), Some(cut::Read::Refused("a history that is not every seq in order")));
     // A history that stops short of the cut (seq 0 to 2 of 0 to 3).
     let mut short = cut::Blocks::new();
-    let (h3, _) = cut::trees(&whole.entries[..n - 1], &mut short).unwrap();
-    assert_eq!(cut::whole(&with_root(h3), &|c| short.get(c).cloned(), 100).err(), Some("a cut whose history is not everything before it"));
+    let ((h3, _), _) = cut::trees(&whole.entries[..n - 1], &mut short).unwrap();
+    assert_eq!(cut::whole(&with_root(h3), &|c| short.get(c).cloned()).err(), Some(cut::Read::Refused("a cut whose history is not everything before it")));
     // CONTROL: the cut's own history reads back whole.
     let mut fine = cut::Blocks::new();
-    let (h, _) = cut::trees(&whole.entries[..n], &mut fine).unwrap();
-    assert_eq!(cut::whole(&with_root(h), &|c| fine.get(c).cloned(), 100).map(|s| s.entries.len()), Ok(n + 1));
+    let ((h, _), _) = cut::trees(&whole.entries[..n], &mut fine).unwrap();
+    assert_eq!(cut::whole(&with_root(h), &|c| fine.get(c).cloned()).map(|s| s.entries.len()), Ok(n + 1));
 }
 
 #[test]
@@ -1389,4 +1412,56 @@ fn an_offer_is_filled_only_before_its_time() {
     };
     assert_eq!(fill(999), Ok(()));
     assert_eq!(fill(1000), Err("a fill of an offer past its time"));
+}
+
+#[test]
+fn a_lost_history_block_is_rebuilt_from_its_group_never_waited_on() {
+    // A history big enough to branch (300 entries): its root and an inner node each lost in turn.
+    let mut s = State::default();
+    put_at(&mut s, 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    for i in 0..299u32 {
+        let mut e = entry(&s, nonce((i % 250) as u8), Body::Allow { spender: pk(5), limit: 10 + i as u128 });
+        e.nonce[0] = (i / 250) as u8;
+        s.entries.push(sign(e, 1));
+    }
+    let mut blocks = cut::Blocks::new();
+    let ((root, parity), _) = cut::trees(&s.entries, &mut blocks).unwrap();
+    struct Held<'a>(&'a cut::Blocks);
+    impl freenet_prolly::store::Blocks for Held<'_> {
+        fn get(&self, c: &[u8; 32]) -> Option<&[u8]> {
+            self.0.get(c).map(Vec::as_slice)
+        }
+    }
+    let rebuild = |held: &cut::Blocks, g: &engine::repair::Group| {
+        let have: Vec<Option<Vec<u8>>> = g.slots.iter().enumerate().map(|(i, c)| held.get(c).map(|b| g.stored(i, b))).collect();
+        engine::repair::rebuild(g, &have)
+    };
+    // THE ROOT lost: its group of one (the parity ids the cut carries) rebuilds it.
+    assert!(!parity.is_empty());
+    let mut held = blocks.clone();
+    let lost = held.remove(&root).unwrap();
+    assert_eq!(rebuild(&held, &engine::repair::root_group(root, &parity)).as_deref(), Ok(&lost[..]));
+    // AN INNER NODE lost (a child the root lists): its group, found in the root, rebuilds it.
+    let root_node = freenet_prolly::node::Node::parse(&blocks[&root]).unwrap();
+    assert!(root_node.level() > 0, "a branching history");
+    let child = root_node.child(0).0;
+    let mut held = blocks.clone();
+    let lost = held.remove(&child).unwrap();
+    let g = engine::repair::find_group(&Held(&held), root, child).expect("a held node names its group");
+    assert_eq!(rebuild(&held, &g).as_deref(), Ok(&lost[..]));
+    // CONTROL: the same history built WITHOUT parity (`finish`, as the first cut code did).
+    let mut bare = cut::Blocks::new();
+    let mut tb = freenet_prolly::build::TreeBuilder::new(|c, b: &[u8]| {
+        bare.insert(c, b.to_vec());
+    });
+    for e in &s.entries {
+        tb.push_bytes(&history_key(e.seq), &e.encode()).unwrap();
+    }
+    let broot = tb.finish().unwrap();
+    let bnode = freenet_prolly::node::Node::parse(&bare[&broot]).unwrap();
+    let bchild = bnode.child(0).0;
+    bare.remove(&bchild);
+    // (Its nodes still NAME the group; its parity blocks were never made — nothing to rebuild from.)
+    let g = engine::repair::find_group(&Held(&bare), broot, bchild).expect("the group is named");
+    assert!(rebuild(&bare, &g).is_err(), "without its parity blocks a lost node stays lost");
 }

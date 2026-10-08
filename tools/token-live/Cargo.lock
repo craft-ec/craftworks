@@ -235,6 +235,7 @@ dependencies = [
  "blake3",
  "craftworks-beacon-contract",
  "ed25519-dalek",
+ "engine",
  "freenet-prolly",
 ]
 
@@ -418,6 +419,18 @@ dependencies = [
  "ed25519",
  "sha2",
  "subtle",
+]
+
+[[package]]
+name = "engine"
+version = "0.1.0"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
+dependencies = [
+ "bincode",
+ "blake3",
+ "core-types",
+ "freenet-prolly",
+ "serde",
 ]
 
 [[package]]

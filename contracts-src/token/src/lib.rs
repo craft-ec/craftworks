@@ -209,7 +209,17 @@ pub enum Body {
     /// A PRUNE CUT (owner-signed): everything before it may be dropped. It carries their result — the allowances, the
     /// open offers and locks (the balance is its own carried balance) — and the roots of two prolly trees: the
     /// HISTORY (every entry before it, by seq — its blocks published, so the chain stays walkable) and the RECEIVED SET (every name received, filled or claimed so far).
-    Cut { history: [u8; 32], received: [u8; 32], allowances: Vec<([u8; 32], u128)>, offers: Vec<OfferState>, locks: Vec<LockState> },
+    /// Each root's PARITY ids too (its group of one, as a table's root carries them): a reader rebuilds a root that
+    /// does not arrive from its parity, never waiting on it (the blocks door races a block against its group).
+    Cut {
+        history: [u8; 32],
+        received: [u8; 32],
+        history_parity: Vec<[u8; 32]>,
+        received_parity: Vec<[u8; 32]>,
+        allowances: Vec<([u8; 32], u128)>,
+        offers: Vec<OfferState>,
+        locks: Vec<LockState>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -359,10 +369,16 @@ impl Entry {
                 v.extend_from_slice(lock);
                 put_ev(&mut v, ev);
             }
-            Body::Cut { history, received, allowances, offers, locks } => {
+            Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks } => {
                 v.push(11);
                 v.extend_from_slice(history);
                 v.extend_from_slice(received);
+                for ids in [history_parity, received_parity] {
+                    v.push(ids.len() as u8);
+                    for id in ids {
+                        v.extend_from_slice(id);
+                    }
+                }
                 v.extend_from_slice(&(allowances.len() as u32).to_le_bytes());
                 for (k, l) in allowances {
                     v.extend_from_slice(k);
@@ -431,6 +447,12 @@ impl Entry {
             11 => {
                 let history = r.arr()?;
                 let received = r.arr()?;
+                let mut parity = || -> Option<Vec<[u8; 32]>> {
+                    let n = r.u8()? as usize;
+                    (n <= 8).then_some(())?;
+                    (0..n).map(|_| r.arr()).collect()
+                };
+                let (history_parity, received_parity) = (parity()?, parity()?);
                 let count = |r: &mut R| -> Option<usize> { let n = r.u32()? as usize; (n <= 1024).then_some(n) };
                 let n = count(r)?;
                 let mut allowances = Vec::with_capacity(n);
@@ -447,7 +469,7 @@ impl Entry {
                 for _ in 0..n {
                     locks.push((r.arr()?, r.arr()?, r.u128()?, r.u64()?, r.arr()?, r.arr()?, r.u8()? == 1));
                 }
-                Body::Cut { history, received, allowances, offers, locks }
+                Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks }
             }
             _ => return None,
         };
