@@ -130,6 +130,20 @@ export async function mount(ctx, el) {
         roomEl.replaceChildren(Object.assign(document.createElement("p"), { className: "empty", textContent: gone }));
         return;
       }
+      // CHAT NOT ON in it (a space has no apps until one is added): said, with where it is added (its Home) — never a
+      // channel offered that has nowhere to live.
+      await rs.settled;
+      if (server !== s) return;
+      if (!rs.apps().includes("chat")) {
+        chans.replaceChildren();
+        const p = Object.assign(document.createElement("p"), { className: "empty", textContent: `Chat is not on in ${s.name}. ` });
+        if (may("apps")) p.append(Object.assign(document.createElement("a"), { href: `#/s/${s.id}`, textContent: "Add it on its Home" }));
+        else p.append("Its owner or an admin adds it.");
+        roomEl.replaceChildren(p);
+        drawMembers(s);
+        rs.onChange(() => server === s && rs.apps().includes("chat") && openServer(s, want));
+        return;
+      }
       rs.onChange(() => {
         if (server !== s) return;
         drawChannels();

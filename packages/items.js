@@ -119,6 +119,16 @@ export async function start(ctx) {
     const id = String(x).startsWith("space:") ? String(x).slice(6, String(x).indexOf("/")) : x;
     return (await boards()).find(s => s.id === id) ?? null;
   };
+  // WHY a space is not a place here — said, never a bare "not in it": not among this person's spaces, or its apps show
+  // none that keeps items.
+  const notInBoard = async x => {
+    const id = String(x).startsWith("space:") ? String(x).slice(6, String(x).indexOf("/")) : x;
+    const sp = (await space.mine()).find(s => s.id === id);
+    if (!sp) return new Error("you are not in that board's space");
+    const r = await roles.of(sp);
+    await r.settled;
+    return new Error(`${space.shown(sp)} shows ${r.apps().join(", ") || "no apps"}: none keeps items here`);
+  };
   // A BOARD's room: its two tables as one — the SEALED board (members read) and the PUBLIC board (anyone reads). What
   // is public follows the board's setting NOW, not when something was written: each person's items (posts, comments,
   // votes) live in the sealed table, and while the board reads in public their copy is in the public table too — put
@@ -715,7 +725,7 @@ export async function start(ctx) {
     // audience's GROUP (`conversation.audience`: sealed to them alone), whatever its kind.
     if (board && (String(audience).startsWith("role:") || String(audience).startsWith("list:") || audience === "admins" || audience === "owner")) {
       const parent = await boardOf(board);
-      if (!parent) throw new Error("you are not in that board's space");
+      if (!parent) throw await notInBoard(board);
       board = (await (await ctx.require("conversation")).audience(parent, audience)).id;
       meta = { ...meta, space: parent.id, aud: audience };
       audience = "members";
@@ -733,7 +743,7 @@ export async function start(ctx) {
         await pointToSpace(outside);
         return `space:${outside.id}/~${self}~${id}`;
       }
-      if (!sp) throw new Error("you are not in that board's space");
+      if (!sp) throw await notInBoard(board);
       if (audience === "public" && !(await publicIn(sp, kind))) throw new Error(`${space.shown(sp)} keeps this to its members: it cannot be public`);
       return `space:${sp.id}/${await (await boardRoom(sp)).post(kind, body, { title, files, meta, at, aud: audience === "members" ? "members" : null })}`;
     }
@@ -930,7 +940,7 @@ export async function start(ctx) {
   async function remove(ref) {
     if (ref.startsWith("space:")) {
       const sp = await boardOf(ref);
-      if (!sp) throw new Error("you are not in that board's space");
+      if (!sp) throw await notInBoard(ref);
       return (await boardRoom(sp)).remove(idOf(ref));
     }
     const self = await me();
@@ -967,7 +977,7 @@ export async function start(ctx) {
     }
     if (post.startsWith("space:")) {
       const sp = await boardOf(post);
-      if (!sp) throw new Error("you are not in that board's space");
+      if (!sp) throw await notInBoard(post);
       return `space:${sp.id}/${await (await boardRoom(sp)).post(kind, body, { in: idOf(post), meta, files })}`;
     }
     const mine = await profileRoom(await me());
@@ -1007,7 +1017,7 @@ export async function start(ctx) {
       if (sp) return (await boardRoom(sp)).editFull(idOf(ref), body, { files, meta, title });
       // NOT IN IT (public participation): what this person wrote there lives in their own profile (`~<did>~<id>`).
       const m = /^~(did:craftec:[^~]+)~(.+)$/.exec(idOf(ref));
-      if (!m || m[1] !== (await me())) throw new Error("you are not in that board's space");
+      if (!m || m[1] !== (await me())) throw await notInBoard(ref);
       return (await profileRoom(m[1])).editFull(m[2], body, { files, meta, title });
     }
     return (await profileRoom(await me())).editFull(idOf(ref), body, { files, meta, title });
@@ -1031,7 +1041,7 @@ export async function start(ctx) {
   async function setFiles(ref, files) {
     if (ref.startsWith("space:")) {
       const sp = await boardOf(ref);
-      if (!sp) throw new Error("you are not in that board's space");
+      if (!sp) throw await notInBoard(ref);
       return (await boardRoom(sp)).setFiles(idOf(ref), files);
     }
     return (await profileRoom(await me())).setFiles(idOf(ref), files);
