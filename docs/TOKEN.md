@@ -108,7 +108,17 @@ never a scan of history (which may be flushed): the BALANCE (per id), the open A
 open OFFERS and what is left of each, the open LOCKS, and an ACCUMULATOR (a Merkle root) of every send already
 received here and every lock already filled — a `receive` or `fill` carries the proof that its name is NOT yet in it,
 and the entry adds it. A PRUNE CUT (older entries flushed into a tree, §1a) is an owner-signed entry naming the tree's
-root and carrying the state at the cut: the contract takes it as the chain's start; wallets verify across it (§3a). **A debit is valid only if the balance covers it** at its place. An owner may be a k-of-n key set:
+root and carrying the state at the cut: the contract takes it as the chain's start; wallets verify across it (§3a).
+
+**The cut uses the PROLLY TREE we already have — no second structure** (owner 10-08). At a cut the owner flushes the
+pruned entries into a prolly tree (the HISTORY, read by wallets and explorers) and writes, as a second prolly tree, the
+RECEIVED SET as of the cut (every send received, every lock filled or claimed). The cut entry carries both ROOTS and
+the carried state (balance, allowances, offers, open locks). After it: a citation of something that could predate the
+cut (a receive of an older send) CARRIES a prolly ABSENCE PROOF against the cut's received-set root — built by the
+WRITER on their own device (they fetch the blocks as any reader does), checked by the contract from the proof alone
+(`freenet_prolly::proof::verify`: no fetch, no related slot, nothing to be unavailable). Entries after the cut are
+checked against the live entries, as before. The set changes only at the next cut, so no insertion proofs. The library
+has these proofs (tested); Craftworks has not needed one until now — the token is their first use. **A debit is valid only if the balance covers it** at its place. An owner may be a k-of-n key set:
 an entry it signs carries k signatures.
 
 | Entry | Effect | Written by | Valid when |
