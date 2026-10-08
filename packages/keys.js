@@ -766,6 +766,19 @@ export async function start(ctx) {
             return [commit, hexOf(welcome)];
           }),
         )),
+      // WELCOMED AGAIN in ONE commit: the person's `stale` entries (indexes) out, their key package in — the WELCOME
+      // (hex). One epoch, not a removal's and an add's: each epoch leaves whoever is behind further behind.
+      readd: (stale, keyPackage) =>
+        (queue = queue.catch(() => {}).then(() => {
+          const creds = [...stale].map(i => m.status().members.find(x => x.index === i)?.cred).filter(Boolean);
+          return change(
+            () => {
+              const [commit, welcome] = m.readd(Uint32Array.from(stale), bytes(keyPackage));
+              return [commit, hexOf(welcome)];
+            },
+            { kind: "readd", creds },
+          );
+        })),
       // REMOVE members (their indexes in the group): one commit each, a new epoch each, which they cannot read.
       remove: indexes =>
         (queue = queue.catch(() => {}).then(async () => {

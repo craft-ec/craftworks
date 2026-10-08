@@ -758,6 +758,13 @@ mod js {
             Ok([js_sys::Uint8Array::from(&c[..]), js_sys::Uint8Array::from(&w[..])].into_iter().map(JsValue::from).collect())
         }
 
+        /// WELCOME AGAIN in ONE commit: the member's `stale` entries out and its fresh key package in — `[commit, welcome]`
+        /// (a remove then an add cost two epochs, and every epoch leaves whoever is behind further behind).
+        pub fn readd(&mut self, stale: &[u32], key_package: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let (c, w) = self.member()?.readd(stale, key_package).map_err(err)?;
+            Ok([js_sys::Uint8Array::from(&c[..]), js_sys::Uint8Array::from(&w[..])].into_iter().map(JsValue::from).collect())
+        }
+
         /// A space's group, as the identity delegate kept it.
         pub fn load_space(space: &[u8], state: &[u8]) -> Result<Mls, JsValue> {
             Ok(Mls(Some(Account::load(Rule::Space(did32(space)?), state).map_err(err)?), [0; 32]))

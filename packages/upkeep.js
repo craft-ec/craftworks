@@ -70,6 +70,10 @@ export async function start(ctx) {
           await conversation.keepReaders(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: readers: ${e.message}` }));
         }
         if (!r?.can(me.id, "invite")) continue;
+        // A member's ask from behind (the space's STUCK bag): answered here while this page is open — its node stands
+        // aside meanwhile.
+        const again = await conversation.answerStuck(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: stuck asks: ${e.message}` }), []));
+        if (again.length) ctx.log("upkeep", { what: `${sp.name}: ${again.length} member(s) welcomed again from behind` });
         // In by the acts, not in the group: added (in turn).
         const added = await conversation.reconcile(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: reconcile: ${e.message}` }), []));
         if (added.length) ctx.log("upkeep", { what: `${added.length} added to ${sp.name} as its acts say` });
