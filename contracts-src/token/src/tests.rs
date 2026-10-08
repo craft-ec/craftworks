@@ -1465,3 +1465,36 @@ fn a_lost_history_block_is_rebuilt_from_its_group_never_waited_on() {
     let g = engine::repair::find_group(&Held(&bare), broot, bchild).expect("the group is named");
     assert!(rebuild(&bare, &g).is_err(), "without its parity blocks a lost node stays lost");
 }
+
+#[test]
+fn a_citation_appended_after_its_chains_cut_must_show_its_evidence_even_from_scratch() {
+    // M cuts at stamp 5 (margin 2): the fill T's receive cites is behind it.
+    let mut w = swapped();
+    let wholem = w.get(id_a(), M).clone();
+    let mut blocks = cut::Blocks::new();
+    cut_at(&mut w, &wholem, id_a(), M, 5, &mut blocks);
+    let receive = |stamp: u64| {
+        let mut x = Two(w.0.clone());
+        let t = x.chain(id_a(), T);
+        t.entries.clear();
+        put_at(t, 30, Body::Receive { from: pk(M), nonce: nonce(30), amount: 200, cited: 0, ev: Evidence::default() }, None, stamp);
+        x.check(id_a(), T)
+    };
+    // Appended before the cut (stamped within its margin): taken as shown then.
+    assert_eq!(receive(7), Ok(()));
+    // Stamped after the cut and its margin, with no evidence — a fresh copy checked from scratch refuses it.
+    assert_eq!(receive(8), Err("a receive whose send is not in its sender's chain"));
+    // A REFUND of T's lock, the maker cut since: appended before the cut it is taken; after it, it must show the
+    // fill's absence (here: none shown).
+    let mut w2 = swapped();
+    put_at(w2.chain(id_b(), T), 21, Body::Lock { to: pk(M), amount: 50, until: 6, token: id_a(), offer: nonce(10) }, Some(T), 0);
+    let wm = w2.get(id_a(), M).clone();
+    cut_at(&mut w2, &wm, id_a(), M, 5, &mut cut::Blocks::new());
+    let refund = |stamp: u64| {
+        let mut x = Two(w2.0.clone());
+        put_at(x.chain(id_b(), T), 60, Body::Refund { lock: nonce(21), ev: Evidence::default() }, None, stamp);
+        x.check(id_b(), T)
+    };
+    assert_eq!(refund(7), Ok(()));
+    assert_eq!(refund(8), Err("a refund of a lock the maker's history may have filled"));
+}

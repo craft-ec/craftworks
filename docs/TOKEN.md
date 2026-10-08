@@ -137,8 +137,10 @@ As BUILT (10-08, `contracts-src/token/src/cut.rs`, step 7 below):
   a lying cut is a fraud proof at the cut's seq.
 - NEW citations are STRICT, old ones are not: what a holder takes in (`update_state`, the cited chains asked for in
   the same round as the definition and the beacon) must SHOW what it cites — live, or by its evidence. Checked from
-  scratch (`validate_state`), a citation whose cited chain has since cut past it is taken as shown when appended
-  (otherwise a sender's cut would break every recent receive of its sends; found by a test, 10-08).
+  scratch (`validate_state`), a citation whose cited chain has since cut past it is taken as shown when appended —
+  ONLY if the citing entry is stamped no later than that cut (within the margin): it was appended before the cut
+  existed (otherwise a sender's cut would break every recent receive of its sends; found by a test, 10-08). One
+  stamped after must carry its evidence even from scratch, so a fresh copy cannot slip an unshown one in (10-09).
 - MERGE by seq: two copies compared from the later start; the prefix one copy still holds kept so the cut is checked
   against it; a fork below the other copy's start kept (strict, §3b).
 
@@ -425,10 +427,10 @@ The standard's first instance. What it changes in REWARDS:
    wallet already reads only what is held and says what it needs. COST measured 10-09: a 3-entry history and its
    received set are 18 blocks, 16 of them PARITY (each root's own group coded at full width, as tables' are) — a
    small history pays ~9× its data in contracts, and nodes evict by contract count.
-5. A FRESH PUT after a cut: a node that never held a chain checks it from scratch only, and takes a citation hidden by
-   its cited chain's cut as shown — so a brand-new copy can carry a receive that was never shown. Holders refuse it
-   (strict on update) and the wallet refuses it (it walks the whole); a node that first meets the chain this way
-   holds the claim until its holders' copy merges. The receiving wallet stays the gate (§3a).
+5. A FRESH PUT after a cut — CLOSED 10-09: the leniency is only for an entry stamped before the cut it is hidden by
+   (§2); a fresh copy carrying a later one without its evidence is refused from scratch. What stays: an entry can
+   claim an old stamp only where a node takes it without the append rules (a first copy) — the receiving wallet
+   walks it whole (§3a).
 
 (A token's own ISSUANCE — its supply rule and size, who holds its genesis, what it does with fees — is that token's
 choice, made in its definition from the menu (§6), not the standard's: the Craftworks token's are in §7.)

@@ -757,11 +757,14 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
             }
             let recent = i >= recent_from;
             let strict = i >= strict_from;
-            // Shown: found live or by the evidence — or (not new) hidden by the cited chain's cut since (its cut at or
-            // after the stamp cited).
-            let shown = |c: &State, cid: &[u8; 32], ev: &Evidence, at: u64, pick: &dyn Fn(&Entry) -> bool| {
-                find_cited(c, cid, ev, pick) || (!strict && matches!(c.entries.first(), Some(x) if matches!(x.body, Body::Cut { .. }) && x.seq > 0 && x.stamp >= at))
+            // HIDDEN SINCE by a chain's cut: the cited chain cut at or after the stamp cited, and THIS entry was appended
+            // before that cut (stamped no later than it, within the margin) — so it was shown when appended. One stamped
+            // after must carry its evidence, even checked from scratch (a fresh copy cannot slip an unshown one in).
+            let hidden_since = |c: &State, at: u64| {
+                !strict && matches!(c.entries.first(), Some(x) if matches!(x.body, Body::Cut { .. }) && x.seq > 0 && x.stamp >= at && e.stamp <= x.stamp.saturating_add(d.margin))
             };
+            // Shown: found live or by the evidence — or hidden since.
+            let shown = |c: &State, cid: &[u8; 32], ev: &Evidence, at: u64, pick: &dyn Fn(&Entry) -> bool| find_cited(c, cid, ev, pick) || hidden_since(c, at);
             balance = match &e.body {
                 Body::Genesis { amount } => {
                     if e.seq != 0 || p.owner != d.genesis_owner || *amount != d.genesis_amount {
@@ -938,7 +941,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
                             if mc.entries.iter().any(|x| matches!(x.body, Body::Fill { taker, lock: fl, .. } if taker == p.owner && fl == *lock)) {
                                 return Err("a refund of a filled lock");
                             }
-                            if let Some(Entry { body: Body::Cut { received: root, .. }, .. }) = mc.entries.first().filter(|_| strict) {
+                            if let Some(Entry { body: Body::Cut { received: root, .. }, .. }) = mc.entries.first().filter(|_| !hidden_since(&mc, 0)) {
                                 let mid = p.at(token, maker).id();
                                 let key = received_key(FILLED, &p.owner, lock);
                                 if !ev.theirs.iter().any(|t| t.0 == mid && absent(root, &key, &t.2)) {
