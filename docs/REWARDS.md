@@ -44,7 +44,12 @@ contributor's own pages sum it into weights and SPLIT THEIR OWN CONTRIBUTION by 
 only its payer's use, so nobody needs anyone else's record), signed by the contributor's account and published as a
 **statement** — one per DAY (owner 2026-10-07: each contribution starts and ends on its own day, so the cutoff is the
 day, never a month): today's RUNNING, every earlier day's FINAL (written once, never again); a month or any span is
-just the sum of its days.
+just the sum of its days. **FINAL BY THE DATE, for everyone (owner 2026-10-08: "everyone must be able to finalize"):**
+a day is final once it has been over for a GRACE day, whether or not its contributor ever comes back — their last row
+for it stands as written (a page that closed used nothing after it), and a day their contribution covers with NO row
+had no use, so its share went to the network (§2). Within the grace only the contributor's own page may finalize it,
+from its whole record; after it, nobody writes it again. No usage record is made public for this: the card's
+contributions and the rows already published are enough.
 
 - Unfakeable by others: only the contributor's account signs its statement; nobody can add usage to someone else's.
 - Self-dealing is zero-sum (§1). A creator buying contributions to watch their own work gets back less than they paid
@@ -125,8 +130,10 @@ A contributor's claims only steer their own contribution (§1): misreporting can
   - **Contribution:** any amount, in the token, to a token contract, which itself records it (account → month,
     amount) — no one signs it.
   - **Split:** each contributor's own pages split that contributor's contribution (§2, §3) into signed, PUBLIC DAILY
-    statements (their account's public tail `statements`, a row per day; listed in the month's bag `statements <month>`):
-    today's running, earlier days final.
+    statements (their account's public tail `statements`, a row per day): today's running, earlier days final — by
+    the contributor, or by the date for everyone (§3). A contributor is listed in the bag `statements <month>` of every
+    month a contribution spans WHEN IT IS MADE, and their card keeps every contribution not yet settled (running, or
+    ended since the start of last month), so anyone settles their days with no page of theirs ever open again.
   - **Ledger:** anyone sums the statements (and the keepers' claims, later proofs) — the same result for everyone; a
     creator or keeper sees their PENDING earnings at any time from the running statements.
   - **Payout:** the token contract pays each contributor's contribution out as their final statement says, IN THE TOKEN — any

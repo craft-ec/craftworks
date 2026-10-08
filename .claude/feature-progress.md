@@ -1320,6 +1320,12 @@ old key's addresses.
       5/5 whole within 4 min. 3e826cb. Measured basis: re-read piece survives 94 evictions, control evicted (6c618c7);
       subscriptions ruled out (2-minute renewal per piece).
 - [x] Step 3 keepers bag (claims, monthly, public) + read-only keeper pass. 2379ad9.
+- [x] FINAL BY THE DATE, by anyone (owner 10-08: "only the contributor can finalize its own account … we need everyone
+      to be able to finalize"): a day final once over + a grace day — the contributor's last row stands; a covered day with
+      no row → its share to the network; the contributor's page writes only within the grace. Contributors listed in every
+      month's bag their contribution spans when it is MADE; the card keeps contributions not yet settled. No usage made
+      public. fy, page clock set to 10-11 06:00 (fx untouched since today): 10-08 "final" (its running row as written),
+      10-09 "final" 7.83333333 all to network, 10-10 still open. CONTROL (HEAD, same clock): 10-08 "running", 10-09 absent.
 - [ ] Proofs: DEFERRED until rewards pay (owner 10-07); low-cost plan in REWARDS §7 item 5. Next on the track: treasury
       pass + statements + shadow ledger (REWARDS §7 item 4).
 - Decisions recorded in REWARDS: carriers = holders weighted by demand; users are the keepers; never paid to own

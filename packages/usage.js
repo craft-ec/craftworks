@@ -169,9 +169,21 @@ export async function start(ctx) {
     await t.settled;
     const at = Date.now();
     await t.put(`c:${at}`, JSON.stringify({ at, amount: Math.max(0, Number(amount) || 0), days: Math.max(1, Math.round(Number(days) || DAYS)) }));
-    // PUBLIC (owner 10-07): the ones still running, on this person's card — anyone computes their level (a badge).
-    const running = (await contributions()).filter(c => c.at + c.days * 86400000 > Date.now());
-    await (await ctx.require("directory")).setContributions(running);
+    // PUBLIC (owner 10-07): on this person's card — anyone computes their level (a badge) and settles their days.
+    await (await ctx.require("directory")).setContributions(onCard(await contributions()));
+    await listIn(onCard(await contributions()));
+  }
+  // ON THE CARD: every contribution not yet settled — running, or ended since the start of last month (anyone settles
+  // a day from the card; a level counts only what runs that day, so the ended ones never raise it).
+  const onCard = cs => cs.filter(c => c.at + c.days * 86400000 > Date.parse(`${prevMonth()}-01T00:00:00Z`));
+  // LISTED in the statements bag of every month a contribution spans — WHEN IT IS MADE, so the ledger finds its
+  // contributor whether or not their page ever runs again (settled by anyone: `ledger`).
+  async function listIn(cs) {
+    const me = (await (await ctx.require("space")).account())?.id;
+    if (!me) return;
+    const index = await ctx.require("index");
+    const months = new Set(cs.flatMap(c => [monthOf(c.at), monthOf(c.at + (c.days - 1) * 86400000)]));
+    for (const m of months) if (!(await index.pointers(bagOf(m)).catch(() => [])).some(x => x?.did === me)) await index.point(bagOf(m), { did: me });
   }
   async function contributions() {
     const t = await storage.table("contrib");
@@ -186,10 +198,11 @@ export async function start(ctx) {
       const me = (await space.account())?.id;
       if (!me) return;
       const directory = await ctx.require("directory");
-      const running = (await contributions()).filter(c => c.at + c.days * 86400000 > Date.now());
+      const kept = onCard(await contributions());
       const on = (await directory.card(me))?.contrib ?? [];
       const key = l => JSON.stringify(l.map(c => [c.at, c.amount, c.days]).sort());
-      if (running.length && key(running) !== key(on)) await directory.setContributions(running);
+      if (kept.length && key(kept) !== key(on)) await directory.setContributions(kept);
+      if (kept.length) await listIn(kept);
     } catch (e) {
       ctx.log("usage", { what: `contributions not on the card: ${e?.message ?? e}` });
     }
@@ -325,6 +338,11 @@ export async function start(ctx) {
   // anyone finds them. The LEDGER is anyone's sum of the days they ask for (the same result for everyone); a creator's
   // or keeper's EARNINGS are their line of it.
   const STATEMENTS = "statements";
+  // SETTLED BY THE DATE, by anyone (owner 10-08: "everyone must be able to finalize"): a day is FINAL once it has been
+  // over for a GRACE day — its contributor's last row stands as written (their page closed: nothing they used after it
+  // exists to count), and a day with a running contribution and no row went to the network (no use). Within the grace,
+  // only the contributor's own page may finalize it, from its whole record.
+  const settledDay = (day, now = Date.now()) => day < dayOf(now - 86400000);
   const bagOf = m => `statements ${m}`;
   const prevMonth = (m = monthOf()) => {
     const [y, mo] = m.split("-").map(Number);
@@ -346,9 +364,9 @@ export async function start(ctx) {
       let any = false;
       for (const day of daysOfMonth(m).filter(d => d >= first)) {
         const was = parse(t.rows().find(r => r.key === day)?.value ?? "null");
-        if (was?.final) {
-          any = true;
-          continue; // a day over is final: never written again
+        if (was?.final || settledDay(day)) {
+          any ||= !!was;
+          continue; // final (by its contributor, or by the date for everyone): never written again
         }
         const d = await dayStatement(day, l);
         if (!d.amount) continue;
@@ -385,30 +403,49 @@ export async function start(ctx) {
     };
     await Promise.all(
       dids.map(async did => {
-        const t = await directory.publicOf(did, STATEMENTS).catch(() => null);
+        const [t, card] = await Promise.all([directory.publicOf(did, STATEMENTS).catch(() => null), directory.card(did).catch(() => null)]);
         await t?.answer?.();
+        const rows = new Map((t?.rows() ?? []).filter(r => r.key.startsWith(`${m}-`) && days(r.key)).map(r => [r.key, parse(r.value)]));
+        // Every day of this month their card's contributions give a share — with a row of theirs or without.
+        const cs = card?.contrib ?? [];
+        const all = new Set([...rows.keys(), ...daysOfMonth(m).filter(d => days(d) && shareOn(cs, d) > 0)]);
         let counted = false;
-        for (const r of t?.rows() ?? []) {
-          if (!r.key.startsWith(`${m}-`) || !days(r.key)) continue;
-          const v = parse(r.value);
-          if (!v || v.day !== r.key) continue;
+        for (const key of [...all].sort()) {
+          const v0 = rows.get(key);
+          const v = v0 && v0.day === key ? v0 : null;
+          const final = !!v?.final || settledDay(key);
+          // NO ROW: no use that day, and none can come once it is settled — its share to the network (§2). Not yet
+          // settled: still theirs to write.
+          if (!v) {
+            if (!settledDay(key)) continue;
+            const share = units(shareOn(cs, key));
+            counted = true;
+            out.days += 1;
+            out.final += 1;
+            out.total += share;
+            out.network += share;
+            const day = (perDay[key] ??= { final: true, statements: 0, total: 0, creators: 0, carriers: 0, network: 0, by: {} });
+            day.total += share;
+            day.network += share;
+            continue;
+          }
           if (!addsUp(v)) {
             out.refused += 1;
             continue;
           }
           counted = true;
           out.days += 1;
-          if (v.final) out.final += 1;
+          if (final) out.final += 1;
           out.total += units(v.amount);
           out.network += units(v.network);
-          const day = (perDay[r.key] ??= { final: true, statements: 0, total: 0, creators: 0, carriers: 0, network: 0, by: {} });
+          const day = (perDay[key] ??= { final: true, statements: 0, total: 0, creators: 0, carriers: 0, network: 0, by: {} });
           day.statements += 1;
-          day.final &&= !!v.final;
+          day.final &&= final;
           day.total += units(v.amount);
           day.network += units(v.network);
-          for (const [d, n] of Object.entries(v.creators ?? {})) add(d, "creator", n, r.key);
-          for (const [d, n] of Object.entries(v.unclaimed ?? {})) add(d, "creator", n, r.key);
-          for (const [d, n] of Object.entries(v.carriers ?? {})) add(d, "carrier", n, r.key);
+          for (const [d, n] of Object.entries(v.creators ?? {})) add(d, "creator", n, key);
+          for (const [d, n] of Object.entries(v.unclaimed ?? {})) add(d, "creator", n, key);
+          for (const [d, n] of Object.entries(v.carriers ?? {})) add(d, "carrier", n, key);
         }
         if (counted) out.contributors += 1;
       }),
