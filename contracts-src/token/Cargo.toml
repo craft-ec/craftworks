@@ -18,6 +18,8 @@ blake3 = { version = "1", default-features = false }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 # The beacon's state format (its height is every append rule's "now").
 craftworks-beacon-contract = { path = "../beacon", default-features = false }
+# The prolly tree (the same as every table's): a cut's history and received set, and the proofs entries carry about them.
+freenet-prolly = { git = "https://github.com/craft-ec/freenet-prolly", rev = "17d67d8" }
 
 [features]
 default = ["freenet-main-contract"]

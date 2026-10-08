@@ -117,8 +117,24 @@ the carried state (balance, allowances, offers, open locks). After it: a citatio
 cut (a receive of an older send) CARRIES a prolly ABSENCE PROOF against the cut's received-set root — built by the
 WRITER on their own device (they fetch the blocks as any reader does), checked by the contract from the proof alone
 (`freenet_prolly::proof::verify`: no fetch, no related slot, nothing to be unavailable). Entries after the cut are
-checked against the live entries, as before. The set changes only at the next cut, so no insertion proofs. The library
-has these proofs (tested); Craftworks has not needed one until now — the token is their first use.
+checked against the live entries, as before. The set changes only at the next cut, so no insertion proofs.
+
+As BUILT (10-08, `contracts-src/token/src/cut.rs`, step 7 below):
+- The HISTORY holds each entry's own BYTES at its seq (inline up to 1 KB, a value block beyond) — every entry before
+  the cut, the earlier cuts' included — so the chain stays WALKABLE: its blocks are published as Block contracts and a
+  wallet reads the whole chain back from them.
+- CITING ACROSS ANOTHER CHAIN'S CUT: an entry whose cited entry its chain has pruned carries, in its evidence, that
+  chain's id, the cited seq, a PRESENCE proof against the cut's history root and the entry's bytes (≤ 4 such items).
+- WHO CHECKS A CUT: the node that holds what it summarises (`update_state`: the shape rules over the old entries and
+  the cut together) — the carried state must be exactly what they compute; then it PRUNES. A node that never held them
+  takes the cut as the chain's start; the WALLET rebuilds both trees from the history it reads and walks the whole —
+  a lying cut is a fraud proof at the cut's seq.
+- NEW citations are STRICT, old ones are not: what a holder takes in (`update_state`, the cited chains asked for in
+  the same round as the definition and the beacon) must SHOW what it cites — live, or by its evidence. Checked from
+  scratch (`validate_state`), a citation whose cited chain has since cut past it is taken as shown when appended
+  (otherwise a sender's cut would break every recent receive of its sends; found by a test, 10-08).
+- MERGE by seq: two copies compared from the later start; the prefix one copy still holds kept so the cut is checked
+  against it; a fork below the other copy's start kept (strict, §3b).
 
 MEASURED (10-08, `tools/prolly-spike`, fx): a contract whose validation runs `verify_bytes` on a carried absence proof
 — received sets of 1,000 / 100,000 / 1,000,000 names: proofs 5.8 / 14.7 / 17.1 KB, verified natively in 11 / 17 /
@@ -397,6 +413,10 @@ The standard's first instance. What it changes in REWARDS:
    speed-up unmeasured.
 2. The finality MARGIN — 10 beacon steps (measured: copies agreed in ≤ 6 s, n = 5; step 4).
 3. Pooled lending (§0) — after pools work.
+4. A FRESH PUT after a cut: a node that never held a chain checks it from scratch only, and takes a citation hidden by
+   its cited chain's cut as shown — so a brand-new copy can carry a receive that was never shown. Holders refuse it
+   (strict on update) and the wallet refuses it (it walks the whole); a node that first meets the chain this way
+   holds the claim until its holders' copy merges. The receiving wallet stays the gate (§3a).
 
 (A token's own ISSUANCE — its supply rule and size, who holds its genesis, what it does with fees — is that token's
 choice, made in its definition from the menu (§6), not the standard's: the Craftworks token's are in §7.)
@@ -450,8 +470,20 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    256 KB stack; CONTROL: the recursive walk overflowed it), and a cap of 100,000 chain reads per verification (a
    wallet never spins forever); (c) checkpoints, vouches and fraud proofs in public bags on the network. An outside
    review is NOT a launch blocker (owner 10-08: Bitcoin was reviewed as it was used).
-7. The Craftworks token: contributions as locks, payouts as claims.
-8. Batch-auction pools.
+7. FOUNDATION 1, the PRUNE CUT (§2) — BUILT 10-08: the cut entry, evidence on every citing entry, the writer's trees
+   (`cut::make`) and proofs, the seq-aligned merge and prune, strict new / lenient old citations, the wallet across
+   cuts (`cut::whole`, `cut::audit`). 60 tests; 22 mutants, all killed (3 after tests were added for them).
+   token.wasm 191,892 B (was 154,638: the prolly verifier). Found in review and fixed: a fill of an offer a cut
+   carries, and a refund of a lock it carries, were refused (the cited chain and the refund's deadline were looked
+   for in live entries only); offers now carry their time and a fill at or after it is refused; an update citing more
+   chains than one round holds (MAX_RELATED, 10) is refused plainly — the writer sends smaller batches. LIVE fx/fy
+   (`tools/token-live cut`): B cuts and Y — which held B whole — takes the cut alone in 137 ms and keeps 1 entry (seq
+   1, balance 300); a cut dropping its allowance refused by its holder; B receiving the same send again refused with
+   its presence proof and with none; A cuts, its history (2 blocks) published on X; C's receive of A's send behind the
+   cut refused with no evidence and ACCEPTED with the proof; C's wallet verified it across A's cut reading the history
+   from X (3 chain reads, 12 ms). The swap run again after (`swap`): the same results and balances as step 5.
+8. The Craftworks token: contributions as locks, payouts as claims.
+9. Batch-auction pools.
 
 **Before the token carries real value, step 6 must exist** (code review, 10-08): the contract checks only the receives
 among a chain's last 9 entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under 9

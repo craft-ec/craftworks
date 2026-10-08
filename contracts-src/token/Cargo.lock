@@ -193,6 +193,7 @@ dependencies = [
  "blake3",
  "craftworks-beacon-contract",
  "ed25519-dalek",
+ "freenet-prolly",
  "freenet-stdlib",
 ]
 
@@ -409,6 +410,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "freenet-prolly"
+version = "0.1.0"
+source = "git+https://github.com/craft-ec/freenet-prolly?rev=17d67d8#17d67d84f29b346bee8e2795d874a5ac0c3b5ebe"
+dependencies = [
+ "blake3",
 ]
 
 [[package]]

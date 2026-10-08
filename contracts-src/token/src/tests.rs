@@ -28,10 +28,10 @@ fn after(s: &State, body: &Body) -> u128 {
         Body::Genesis { amount } => *amount,
         Body::Send { amount, .. } | Body::Burn { amount } => b.wrapping_sub(*amount),
         Body::Receive { amount, .. } => b + amount,
-        Body::Allow { .. } | Body::Offer { .. } => b,
+        Body::Allow { .. } | Body::Offer { .. } | Body::Cut { .. } => b,
         Body::Spend { amount, .. } | Body::Lock { amount, .. } | Body::Fill { amount, .. } => b.wrapping_sub(*amount),
         Body::Claim { amount, .. } => b + amount,
-        Body::Refund { lock } => {
+        Body::Refund { lock, .. } => {
             b + s.entries.iter().find_map(|x| match &x.body {
                 Body::Lock { amount, .. } if &x.nonce == lock => Some(*amount),
                 _ => None,
@@ -50,7 +50,7 @@ fn spent(s: &mut State, by: u8, n: u8, to: u8, amount: u128) {
 fn entry(s: &State, n: [u8; 16], body: Body) -> Entry {
     let balance = after(s, &body);
     let stamp = s.entries.last().map_or(0, |e| e.stamp);
-    Entry { seq: s.entries.len() as u64, prev: s.head(), nonce: n, stamp, body, balance, auth: Auth::Work(0) }
+    Entry { seq: s.entries.last().map_or(0, |e| e.seq + 1), prev: s.head(), nonce: n, stamp, body, balance, auth: Auth::Work(0) }
 }
 fn sign(mut e: Entry, by: u8) -> Entry {
     e.auth = Auth::Sig(key(by).sign(&e.message()).to_bytes());
@@ -67,7 +67,7 @@ fn signed(s: &mut State, by: u8, n: u8, body: Body) {
     s.entries.push(e);
 }
 fn received(s: &mut State, from: u8, n: u8, amount: u128) {
-    let e = work(entry(s, nonce(n), Body::Receive { from: pk(from), nonce: nonce(n), amount, cited: 0 }));
+    let e = work(entry(s, nonce(n), Body::Receive { from: pk(from), nonce: nonce(n), amount, cited: 0, ev: Evidence::default() }));
     s.entries.push(e);
 }
 
@@ -493,6 +493,12 @@ impl Two {
         let d = if token == id_a() { def() } else { def_b() };
         check(&at(token, owner), &d, self.get(token, owner), &|t, o| self.0.get(&(*t, *o)).cloned())
     }
+    /// As a holder takes in the last `new` entries: their citations must be SHOWN (live, or by their evidence).
+    fn strict(&self, token: [u8; 32], owner: u8, new: usize) -> Result<(), Why> {
+        let d = if token == id_a() { def() } else { def_b() };
+        let s = self.get(token, owner);
+        walk(&at(token, owner), &d, s, &|t, o| self.0.get(&(*t, *o)).cloned(), new, s.entries.len() - new).map(|_| ()).map_err(|x| x.1)
+    }
 }
 
 const M: u8 = 1; // the maker: holds A, offers 2 A for every 1 B
@@ -505,9 +511,9 @@ fn swapped() -> Two {
     put_at(w.chain(id_a(), M), 10, Body::Offer { get: id_b(), give: 2, per: 1, max: 400, until: 1000 }, Some(M), 0);
     put_at(w.chain(id_b(), T), 1, Body::Genesis { amount: 1000 }, Some(T), 0);
     put_at(w.chain(id_b(), T), 20, Body::Lock { to: pk(M), amount: 100, until: 50, token: id_a(), offer: nonce(10) }, Some(T), 0);
-    put_at(w.chain(id_a(), M), 30, Body::Fill { offer: nonce(10), taker: pk(T), lock: nonce(20), amount: 200, cited: 0, until: 50 }, None, 0);
-    put_at(w.chain(id_a(), T), 30, Body::Receive { from: pk(M), nonce: nonce(30), amount: 200, cited: 0 }, None, 0);
-    put_at(w.chain(id_b(), M), 40, Body::Claim { taker: pk(T), lock: nonce(20), amount: 100, cited: 0, token: id_a() }, None, 0);
+    put_at(w.chain(id_a(), M), 30, Body::Fill { offer: nonce(10), taker: pk(T), lock: nonce(20), amount: 200, cited: 0, until: 50, ev: Evidence::default() }, None, 0);
+    put_at(w.chain(id_a(), T), 30, Body::Receive { from: pk(M), nonce: nonce(30), amount: 200, cited: 0, ev: Evidence::default() }, None, 0);
+    put_at(w.chain(id_b(), M), 40, Body::Claim { taker: pk(T), lock: nonce(20), amount: 100, cited: 0, token: id_a(), ev: Evidence::default() }, None, 0);
     w
 }
 
@@ -553,11 +559,11 @@ fn a_fill_is_bounded_by_its_offer_and_fills_a_lock_once() {
     // Another lock of T's for 150 B → 300 A; only 200 are left of the offer.
     put_at(w.chain(id_b(), T), 21, Body::Lock { to: pk(M), amount: 150, until: 50, token: id_a(), offer: nonce(10) }, Some(T), 0);
     let mut over = w.chain(id_a(), M).clone();
-    put_at(&mut over, 31, Body::Fill { offer: nonce(10), taker: pk(T), lock: nonce(21), amount: 300, cited: 0, until: 50 }, None, 0);
+    put_at(&mut over, 31, Body::Fill { offer: nonce(10), taker: pk(T), lock: nonce(21), amount: 300, cited: 0, until: 50, ev: Evidence::default() }, None, 0);
     *w.chain(id_a(), M) = over;
     assert_eq!(w.check(id_a(), M), Err("a fill past what is left of its offer"));
     let mut w = swapped();
-    put_at(w.chain(id_a(), M), 31, Body::Fill { offer: nonce(10), taker: pk(T), lock: nonce(20), amount: 10, cited: 0, until: 50 }, None, 0);
+    put_at(w.chain(id_a(), M), 31, Body::Fill { offer: nonce(10), taker: pk(T), lock: nonce(20), amount: 10, cited: 0, until: 50, ev: Evidence::default() }, None, 0);
     assert_eq!(w.check(id_a(), M), Err("a lock filled twice"));
 }
 
@@ -569,13 +575,13 @@ fn a_claim_needs_the_fill_and_happens_once() {
     ma.entries.truncate(2);
     assert_eq!(w.check(id_b(), M), Err("a claim of a lock that is not filled"));
     let mut w = swapped();
-    put_at(w.chain(id_b(), M), 41, Body::Claim { taker: pk(T), lock: nonce(20), amount: 100, cited: 0, token: id_a() }, None, 0);
+    put_at(w.chain(id_b(), M), 41, Body::Claim { taker: pk(T), lock: nonce(20), amount: 100, cited: 0, token: id_a(), ev: Evidence::default() }, None, 0);
     assert_eq!(w.check(id_b(), M), Err("a lock claimed twice"));
     // A claim of more than the lock held.
     let mut w = swapped();
     let mb = w.chain(id_b(), M);
     mb.entries.clear();
-    put_at(mb, 40, Body::Claim { taker: pk(T), lock: nonce(20), amount: 101, cited: 0, token: id_a() }, None, 0);
+    put_at(mb, 40, Body::Claim { taker: pk(T), lock: nonce(20), amount: 101, cited: 0, token: id_a(), ev: Evidence::default() }, None, 0);
     assert_eq!(w.check(id_b(), M), Err("a claim of a lock that is not filled"));
 }
 
@@ -584,14 +590,14 @@ fn an_unfilled_lock_is_refunded_once_and_a_filled_one_never() {
     // A second lock nobody fills: refunded.
     let mut w = swapped();
     put_at(w.chain(id_b(), T), 21, Body::Lock { to: pk(M), amount: 50, until: 50, token: id_a(), offer: nonce(10) }, Some(T), 0);
-    put_at(w.chain(id_b(), T), 22, Body::Refund { lock: nonce(21) }, None, 0);
+    put_at(w.chain(id_b(), T), 22, Body::Refund { lock: nonce(21), ev: Evidence::default() }, None, 0);
     assert_eq!(w.check(id_b(), T), Ok(()));
     assert_eq!(w.get(id_b(), T).balance(), 900, "the 50 back");
-    put_at(w.chain(id_b(), T), 23, Body::Refund { lock: nonce(21) }, None, 0);
+    put_at(w.chain(id_b(), T), 23, Body::Refund { lock: nonce(21), ev: Evidence::default() }, None, 0);
     assert_eq!(w.check(id_b(), T), Err("a lock refunded twice"));
     // The filled one.
     let mut w = swapped();
-    put_at(w.chain(id_b(), T), 22, Body::Refund { lock: nonce(20) }, None, 0);
+    put_at(w.chain(id_b(), T), 22, Body::Refund { lock: nonce(20), ev: Evidence::default() }, None, 0);
     assert_eq!(w.check(id_b(), T), Err("a refund of a filled lock"));
 }
 
@@ -600,7 +606,7 @@ fn a_receive_of_a_fill_names_its_stamp() {
     let mut w = swapped();
     let ta = w.chain(id_a(), T);
     ta.entries.clear();
-    put_at(ta, 30, Body::Receive { from: pk(M), nonce: nonce(30), amount: 200, cited: 1 }, None, 0);
+    put_at(ta, 30, Body::Receive { from: pk(M), nonce: nonce(30), amount: 200, cited: 1, ev: Evidence::default() }, None, 0);
     assert_eq!(w.check(id_a(), T), Err("a receive whose send is not in its sender's chain"));
 }
 
@@ -643,10 +649,10 @@ fn a_new_entry_is_stamped_near_the_beacon() {
 fn a_citation_waits_a_margin_after_what_it_cites() {
     let held = base(0);
     let mut merged = held.clone();
-    put_at(&mut merged, 2, Body::Receive { from: pk(9), nonce: nonce(2), amount: 50, cited: 10 }, None, 11);
+    put_at(&mut merged, 2, Body::Receive { from: pk(9), nonce: nonce(2), amount: 50, cited: 10, ev: Evidence::default() }, None, 11);
     assert_eq!(append_check(&def(), 11, &held, &merged), Err("an entry citing one not yet final"));
     let mut merged = held.clone();
-    put_at(&mut merged, 2, Body::Receive { from: pk(9), nonce: nonce(2), amount: 50, cited: 10 }, None, 12);
+    put_at(&mut merged, 2, Body::Receive { from: pk(9), nonce: nonce(2), amount: 50, cited: 10, ev: Evidence::default() }, None, 12);
     assert_eq!(append_check(&def(), 12, &held, &merged), Ok(()));
 }
 
@@ -655,7 +661,7 @@ fn a_fill_lands_a_margin_before_its_deadline_and_a_refund_after_it() {
     let held = base(0);
     let fill = |stamp| {
         let mut m = held.clone();
-        put_at(&mut m, 2, Body::Fill { offer: nonce(1), taker: pk(T), lock: nonce(9), amount: 10, cited: 5, until: 20 }, None, stamp);
+        put_at(&mut m, 2, Body::Fill { offer: nonce(1), taker: pk(T), lock: nonce(9), amount: 10, cited: 5, until: 20, ev: Evidence::default() }, None, stamp);
         m
     };
     assert_eq!(append_check(&def(), 18, &held, &fill(18)), Err("a fill too close to its lock's deadline"));
@@ -665,7 +671,7 @@ fn a_fill_lands_a_margin_before_its_deadline_and_a_refund_after_it() {
     put_at(&mut locked, 3, Body::Lock { to: pk(9), amount: 50, until: 20, token: [5; 32], offer: nonce(1) }, Some(M), 0);
     let refund = |stamp| {
         let mut m = locked.clone();
-        put_at(&mut m, 4, Body::Refund { lock: nonce(3) }, None, stamp);
+        put_at(&mut m, 4, Body::Refund { lock: nonce(3), ev: Evidence::default() }, None, stamp);
         m
     };
     assert_eq!(append_check(&def(), 19, &locked, &refund(19)), Err("a refund before its lock's deadline"));
@@ -686,7 +692,7 @@ fn defs(t: &[u8; 32]) -> Option<Definition> {
 }
 fn verify(w: &Two, wallet: &mut Wallet, owner: u8) -> Result<(), crate::wallet::FraudProof> {
     let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
-    let src = Source { chain: &chain, definition: &defs };
+    let src = Source { chain: &chain, definition: &defs, block: &|_| None };
     let last = w.get(id_a(), owner).entries.len() as u64 - 1;
     wallet.verify(&src, &at(id_a(), owner), last)
 }
@@ -706,9 +712,9 @@ fn three_hops() -> Two {
     let mut w = Two(HashMap::new());
     put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
     put_at(w.chain(id_a(), 1), 2, Body::Send { to: pk(2), amount: 300 }, Some(1), 0);
-    put_at(w.chain(id_a(), 2), 2, Body::Receive { from: pk(1), nonce: nonce(2), amount: 300, cited: 0 }, None, 0);
+    put_at(w.chain(id_a(), 2), 2, Body::Receive { from: pk(1), nonce: nonce(2), amount: 300, cited: 0, ev: Evidence::default() }, None, 0);
     put_at(w.chain(id_a(), 2), 3, Body::Send { to: pk(3), amount: 100 }, Some(2), 0);
-    put_at(w.chain(id_a(), 3), 3, Body::Receive { from: pk(2), nonce: nonce(3), amount: 100, cited: 0 }, None, 0);
+    put_at(w.chain(id_a(), 3), 3, Body::Receive { from: pk(2), nonce: nonce(3), amount: 100, cited: 0, ev: Evidence::default() }, None, 0);
     w
 }
 
@@ -717,13 +723,13 @@ fn three_hops() -> Two {
 fn buried() -> Two {
     let mut w = Two(HashMap::new());
     put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
-    put_at(w.chain(id_a(), 2), 9, Body::Receive { from: pk(1), nonce: nonce(9), amount: 5000, cited: 0 }, None, 0);
+    put_at(w.chain(id_a(), 2), 9, Body::Receive { from: pk(1), nonce: nonce(9), amount: 5000, cited: 0, ev: Evidence::default() }, None, 0);
     for k in 0..RECENT as u8 {
         put_at(w.chain(id_a(), 1), 20 + k, Body::Send { to: pk(2), amount: 10 }, Some(1), 0);
-        put_at(w.chain(id_a(), 2), 20 + k, Body::Receive { from: pk(1), nonce: nonce(20 + k), amount: 10, cited: 0 }, None, 0);
+        put_at(w.chain(id_a(), 2), 20 + k, Body::Receive { from: pk(1), nonce: nonce(20 + k), amount: 10, cited: 0, ev: Evidence::default() }, None, 0);
     }
     put_at(w.chain(id_a(), 2), 40, Body::Send { to: pk(3), amount: 3000 }, Some(2), 0);
-    put_at(w.chain(id_a(), 3), 40, Body::Receive { from: pk(2), nonce: nonce(40), amount: 3000, cited: 0 }, None, 0);
+    put_at(w.chain(id_a(), 3), 40, Body::Receive { from: pk(2), nonce: nonce(40), amount: 3000, cited: 0, ev: Evidence::default() }, None, 0);
     w
 }
 
@@ -771,9 +777,9 @@ fn a_payment_out_of_fake_money_is_refused_downstream_with_the_upstream_proof() {
 fn a_citation_loop_is_money_from_nothing() {
     // 4 receives 50 from 5's send; 5 receives 50 from 4's send — each send made out of the other's receive.
     let mut w = Two(HashMap::new());
-    put_at(w.chain(id_a(), 4), 51, Body::Receive { from: pk(5), nonce: nonce(52), amount: 50, cited: 0 }, None, 0);
+    put_at(w.chain(id_a(), 4), 51, Body::Receive { from: pk(5), nonce: nonce(52), amount: 50, cited: 0, ev: Evidence::default() }, None, 0);
     put_at(w.chain(id_a(), 4), 53, Body::Send { to: pk(5), amount: 50 }, Some(4), 0);
-    put_at(w.chain(id_a(), 5), 54, Body::Receive { from: pk(4), nonce: nonce(53), amount: 50, cited: 0 }, None, 0);
+    put_at(w.chain(id_a(), 5), 54, Body::Receive { from: pk(4), nonce: nonce(53), amount: 50, cited: 0, ev: Evidence::default() }, None, 0);
     put_at(w.chain(id_a(), 5), 52, Body::Send { to: pk(4), amount: 50 }, Some(5), 0);
     assert_eq!(w.check(id_a(), 4), Ok(()));
     assert_eq!(w.check(id_a(), 5), Ok(()));
@@ -787,9 +793,9 @@ fn money_back_and_forth_is_not_a_loop() {
     // walks 2, which walks 1 again — to an EARLIER entry: no loop.
     let mut w = three_hops();
     put_at(w.chain(id_a(), 2), 4, Body::Send { to: pk(1), amount: 50 }, Some(2), 0);
-    put_at(w.chain(id_a(), 1), 4, Body::Receive { from: pk(2), nonce: nonce(4), amount: 50, cited: 0 }, None, 0);
+    put_at(w.chain(id_a(), 1), 4, Body::Receive { from: pk(2), nonce: nonce(4), amount: 50, cited: 0, ev: Evidence::default() }, None, 0);
     put_at(w.chain(id_a(), 1), 5, Body::Send { to: pk(6), amount: 100 }, Some(1), 0);
-    put_at(w.chain(id_a(), 6), 5, Body::Receive { from: pk(1), nonce: nonce(5), amount: 100, cited: 0 }, None, 0);
+    put_at(w.chain(id_a(), 6), 5, Body::Receive { from: pk(1), nonce: nonce(5), amount: 100, cited: 0, ev: Evidence::default() }, None, 0);
     assert_eq!(verify(&w, &mut Wallet::new(pk(6)), 6), Ok(()));
 }
 
@@ -852,7 +858,7 @@ fn a_false_checkpoint_is_proven_and_its_maker_and_vouchers_are_skipped() {
     assert_eq!(verify(&w, &mut trusting, 3), Ok(()));
     // Anyone AUDITS it: the proof names the maker and the voucher.
     let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
-    let src = Source { chain: &chain, definition: &defs };
+    let src = Source { chain: &chain, definition: &defs, block: &|_| None };
     let proof = trusting.audit(&src, &c).unwrap_err();
     assert_eq!(proof.checkpoint.as_ref().map(|c| c.by), Some(pk(9)));
     assert_eq!(proof.vouchers, vec![pk(8)]);
@@ -867,7 +873,7 @@ fn a_false_checkpoint_is_proven_and_its_maker_and_vouchers_are_skipped() {
     // An honest checkpoint survives its audit.
     let h = three_hops();
     let chain = |p: &ChainParams| h.0.get(&(p.definition, p.owner)).cloned();
-    let src = Source { chain: &chain, definition: &defs };
+    let src = Source { chain: &chain, definition: &defs, block: &|_| None };
     assert_eq!(Wallet::new(pk(1)).audit(&src, &checkpoint(&h, 2, 9)), Ok(()));
 }
 
@@ -899,11 +905,11 @@ fn a_long_history_is_walked_without_deepening_the_stack() {
         put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
         put_at(w.chain(id_a(), 1), 2, Body::Send { to: pk(2), amount: 900 }, Some(1), 0);
         for k in 2..n {
-            put_at(w.chain(id_a(), k), k, Body::Receive { from: pk(k - 1), nonce: nonce(k), amount: 900 - (k as u128 - 2), cited: 0 }, None, 0);
+            put_at(w.chain(id_a(), k), k, Body::Receive { from: pk(k - 1), nonce: nonce(k), amount: 900 - (k as u128 - 2), cited: 0, ev: Evidence::default() }, None, 0);
             put_at(w.chain(id_a(), k), k + 1, Body::Send { to: pk(k + 1), amount: 900 - (k as u128 - 1) }, Some(k), 0);
         }
         let last = n;
-        put_at(w.chain(id_a(), last), last, Body::Receive { from: pk(last - 1), nonce: nonce(last), amount: 900 - (last as u128 - 2), cited: 0 }, None, 0);
+        put_at(w.chain(id_a(), last), last, Body::Receive { from: pk(last - 1), nonce: nonce(last), amount: 900 - (last as u128 - 2), cited: 0, ev: Evidence::default() }, None, 0);
         let mut wallet = Wallet::new(pk(last));
         (verify(&w, &mut wallet, last), wallet.reads.get())
     }).unwrap().join().unwrap();
@@ -920,7 +926,7 @@ fn the_shared_records_round_trip_exactly() {
     assert_eq!(bytes::read_checkpoint_exact(&bytes::checkpoint(&c)), Some(c.clone()));
     assert_eq!(bytes::read_vouch(&bytes::vouch(&v)), Some(v.clone()));
     let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
-    let src = Source { chain: &chain, definition: &defs };
+    let src = Source { chain: &chain, definition: &defs, block: &|_| None };
     let mut wallet = Wallet::new(pk(1));
     wallet.vouches = vec![v];
     let proof = wallet.audit(&src, &c).unwrap_err();
@@ -934,4 +940,453 @@ fn the_shared_records_round_trip_exactly() {
         assert!(bytes::read_checkpoint_exact(&longer).is_none() && bytes::read_vouch(&longer).is_none() && bytes::read_fraud(&longer).is_none());
     }
     assert!(crate::wallet::bag_name("checkpoints", &id_a()).starts_with("token checkpoints "));
+}
+
+// ---- foundation 1: the prune cut ----
+use crate::cut;
+
+/// `owner` cuts its chain of `token` at `stamp`: from its whole record (returned, the cut on it), the cut's tree blocks
+/// added to `blocks`; the live chain is the cut on.
+fn cut_at(w: &mut Two, whole: &State, token: [u8; 32], owner: u8, stamp: u64, blocks: &mut cut::Blocks) -> State {
+    let d = if token == id_a() { def() } else { def_b() };
+    let (body, b) = cut::make(&at(token, owner), &d, whole).unwrap();
+    blocks.extend(b);
+    let mut s = whole.clone();
+    put_at(&mut s, 99, body, Some(owner), stamp);
+    *w.chain(token, owner) = prune(&s);
+    s
+}
+fn roots(s: &State) -> ([u8; 32], [u8; 32]) {
+    match &s.entries[0].body {
+        Body::Cut { history, received, .. } => (*history, *received),
+        _ => panic!("not a cut"),
+    }
+}
+/// The evidence that `whole`'s entry `seq` (of chain `p`) is behind its live copy's cut.
+fn behind(blocks: &cut::Blocks, live: &State, p: &ChainParams, whole: &State, seq: u64) -> ([u8; 32], u64, Vec<u8>, Vec<u8>) {
+    let (h, _) = roots(live);
+    (p.id(), seq, cut::proof(blocks, &h, &history_key(seq)).unwrap(), whole.entries[seq as usize].encode())
+}
+fn mine(blocks: &cut::Blocks, live: &State, kind: u8, who: u8, n: u8) -> Vec<u8> {
+    cut::proof(blocks, &roots(live).1, &received_key(kind, &pk(who), &nonce(n))).unwrap()
+}
+
+/// Token A: 1 (genesis) sends 300 to 2 (received), allows 5 up to 50; then 1 CUTS at stamp 5. Returns the world, 1's
+/// whole record, the blocks.
+fn cut_world() -> (Two, State, cut::Blocks) {
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 2, Body::Send { to: pk(2), amount: 300 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 3, Body::Allow { spender: pk(5), limit: 50 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 4, Body::Send { to: pk(3), amount: 100 }, Some(1), 0);
+    put_at(w.chain(id_a(), 2), 2, Body::Receive { from: pk(1), nonce: nonce(2), amount: 300, cited: 0, ev: Evidence::default() }, None, 0);
+    let mut blocks = cut::Blocks::new();
+    let whole = w.get(id_a(), 1).clone();
+    let whole = cut_at(&mut w, &whole, id_a(), 1, 5, &mut blocks);
+    (w, whole, blocks)
+}
+
+#[test]
+fn a_cut_carries_what_came_before_and_the_chain_lives_on_from_it() {
+    let (mut w, whole, _) = cut_world();
+    let live = w.get(id_a(), 1).clone();
+    assert_eq!(live.entries.len(), 1, "only the cut is live");
+    assert_eq!(live.entries[0].seq, 4);
+    assert_eq!(check(&at(id_a(), 1), &def(), &whole, &|_, _| None), Ok(()), "with what it summarises");
+    assert_eq!(w.check(id_a(), 1), Ok(()), "from the cut alone");
+    assert_eq!(live.balance(), 600);
+    let Body::Cut { allowances, .. } = &live.entries[0].body else { panic!() };
+    assert_eq!(allowances, &vec![(pk(5), 50)]);
+    // The carried allowance is spent after the cut, and the chain goes on.
+    spent(w.chain(id_a(), 1), 5, 6, 3, 40);
+    assert_eq!(w.check(id_a(), 1), Ok(()));
+    spent(w.chain(id_a(), 1), 5, 7, 3, 11);
+    assert_eq!(w.check(id_a(), 1), Err("a spend over its allowance"));
+}
+
+#[test]
+fn a_cut_must_carry_exactly_what_came_before_it() {
+    let (_, whole, _) = cut_world();
+    let n = whole.entries.len() - 1;
+    let lie = |f: &dyn Fn(&mut Body)| {
+        let mut s = whole.clone();
+        let mut e = s.entries.pop().unwrap();
+        f(&mut e.body);
+        s.entries.push(sign(e, 1));
+        check(&at(id_a(), 1), &def(), &s, &|_, _| None)
+    };
+    assert_eq!(lie(&|_| {}), Ok(()), "control: the honest cut");
+    assert_eq!(lie(&|b| if let Body::Cut { allowances, .. } = b { allowances[0].1 = 51 }), Err("a cut that is not what came before it"));
+    assert_eq!(lie(&|b| if let Body::Cut { allowances, .. } = b { allowances.clear() }), Err("a cut that is not what came before it"));
+    assert_eq!(lie(&|b| if let Body::Cut { offers, .. } = b { offers.push((nonce(9), id_b(), 1, 1, 1, 9)) }), Err("a cut that is not what came before it"));
+    assert_eq!(lie(&|b| if let Body::Cut { locks, .. } = b { locks.push((nonce(9), pk(2), 10, 9, id_b(), nonce(9), true)) }), Err("a cut that is not what came before it"));
+    let mut s = whole.clone();
+    let mut e = s.entries.pop().unwrap();
+    e.balance += 1;
+    s.entries.push(sign(e, 1));
+    assert_eq!(check(&at(id_a(), 1), &def(), &s, &|_, _| None), Err("a carried balance that does not add up"));
+    // Only the writer cuts.
+    let mut s = whole.clone();
+    let e = s.entries.pop().unwrap();
+    s.entries.push(sign(e, 5));
+    assert_eq!(check(&at(id_a(), 1), &def(), &s, &|_, _| None), Err("an entry not signed by the chain's writer"));
+    assert_eq!(n, 4);
+}
+
+#[test]
+fn a_chain_starts_at_genesis_or_at_its_cut() {
+    let (_, whole, _) = cut_world();
+    let mid = State { entries: whole.entries[2..].to_vec(), fork: None };
+    assert_eq!(check(&at(id_a(), 1), &def(), &mid, &|_, _| None), Err("a chain that starts mid-way without its cut"));
+    assert_eq!(check(&at(id_a(), 1), &def(), &prune(&whole), &|_, _| None), Ok(()));
+}
+
+#[test]
+fn a_send_received_before_a_cut_is_never_received_again() {
+    // 2 has received 1's send (nonce 2); 2 CUTS at stamp 5.
+    let (mut w, _, mut blocks) = cut_world();
+    let whole2 = w.get(id_a(), 2).clone();
+    cut_at(&mut w, &whole2, id_a(), 2, 5, &mut blocks);
+    let live2 = w.get(id_a(), 2).clone();
+    // 1's chain shows the send as LIVE here (1's cut is undone for this test: only 2's received set is under test).
+    let mut ww = Two(w.0.clone());
+    ww.0.insert((id_a(), pk(1)), State { entries: cut_world().1.entries[..4].to_vec(), fork: None });
+    let again = |ev: Evidence| {
+        let mut x = Two(ww.0.clone());
+        put_at(x.chain(id_a(), 2), 2, Body::Receive { from: pk(1), nonce: nonce(2), amount: 300, cited: 0, ev }, None, 6);
+        x.strict(id_a(), 2, 1)
+    };
+    // The proof the writer CAN make is of presence: refused, as is none.
+    let present = mine(&blocks, &live2, RECEIVED, 1, 2);
+    assert_eq!(again(Evidence { mine: present, theirs: vec![] }), Err("a send received twice"));
+    assert_eq!(again(Evidence::default()), Err("a send received twice"));
+    // CONTROL: 1's other send (nonce 4, to 3) received by 3 after 3 cuts — not in 3's set: its absence proof passes.
+    let mut x = Two(ww.0.clone());
+    put_at(x.chain(id_a(), 3), 1, Body::Burn { amount: 0 }, Some(3), 0);
+    x.chain(id_a(), 3).entries.clear();
+    let mut whole3 = State::default();
+    put_at(&mut whole3, 8, Body::Allow { spender: pk(5), limit: 1 }, Some(3), 0);
+    *x.chain(id_a(), 3) = whole3.clone();
+    let mut b3 = cut::Blocks::new();
+    cut_at(&mut x, &whole3, id_a(), 3, 5, &mut b3);
+    let live3 = x.get(id_a(), 3).clone();
+    let absent = mine(&b3, &live3, RECEIVED, 1, 4);
+    let mut ok = Two(x.0.clone());
+    put_at(ok.chain(id_a(), 3), 4, Body::Receive { from: pk(1), nonce: nonce(4), amount: 100, cited: 0, ev: Evidence { mine: absent, theirs: vec![] } }, None, 6);
+    assert_eq!(ok.strict(id_a(), 3, 1), Ok(()));
+    let mut no = Two(x.0.clone());
+    put_at(no.chain(id_a(), 3), 4, Body::Receive { from: pk(1), nonce: nonce(4), amount: 100, cited: 0, ev: Evidence::default() }, None, 6);
+    assert_eq!(no.strict(id_a(), 3, 1), Err("a send received twice"), "stamped before the cut: the proof is required");
+}
+
+#[test]
+fn a_send_behind_its_senders_cut_is_received_with_the_proof() {
+    // 1 sent 100 to 3 (seq 3), then cut: the send is not live.
+    let (w, whole1, blocks) = cut_world();
+    let live1 = w.get(id_a(), 1).clone();
+    let p1 = at(id_a(), 1);
+    let recv = |theirs| {
+        let mut x = Two(w.0.clone());
+        put_at(x.chain(id_a(), 3), 4, Body::Receive { from: pk(1), nonce: nonce(4), amount: 100, cited: 0, ev: Evidence { mine: vec![], theirs } }, None, 6);
+        x.strict(id_a(), 3, 1)
+    };
+    assert_eq!(recv(vec![behind(&blocks, &live1, &p1, &whole1, 3)]), Ok(()));
+    assert_eq!(recv(vec![]), Err("a receive whose send is not in its sender's chain"));
+    // Another entry's bytes; a proof of another seq; another chain's id.
+    let (id, seq, proof, _) = behind(&blocks, &live1, &p1, &whole1, 3);
+    assert_eq!(recv(vec![(id, seq, proof.clone(), whole1.entries[1].encode())]), Err("a receive whose send is not in its sender's chain"));
+    let bytes1 = whole1.entries[1].encode();
+    assert_eq!(recv(vec![(id, 1, proof.clone(), bytes1)]), Err("a receive whose send is not in its sender's chain"));
+    assert_eq!(recv(vec![(id, 3, proof[..proof.len() - 1].to_vec(), whole1.entries[3].encode())]), Err("a receive whose send is not in its sender's chain"));
+    // A history that is not the cut's: entry 3 forged (to 3 for 150), proven against its own root.
+    let mut forged = whole1.clone();
+    forged.entries[3].body = Body::Send { to: pk(3), amount: 150 };
+    let mut fb = cut::Blocks::new();
+    let (fh, _) = cut::trees(&forged.entries[..4], &mut fb).unwrap();
+    let fproof = cut::proof(&fb, &fh, &history_key(3)).unwrap();
+    assert_eq!(recv(vec![(id, 3, fproof, forged.entries[3].encode())]), Err("a receive whose send is not in its sender's chain"));
+    // The forged entry's bytes beside the REAL proof: the proof holds other bytes at that seq.
+    assert_eq!(recv(vec![(id, 3, proof.clone(), forged.entries[3].encode())]), Err("a receive whose send is not in its sender's chain"));
+    let mut also = whole1.entries[3].clone();
+    also.body = Body::Send { to: pk(3), amount: 100 };
+    also.stamp = 0;
+    assert_eq!(recv(vec![(id, 3, proof.clone(), also.encode())]), Ok(()), "control: the bytes the proof holds");
+    // The same send with another carried balance: what the receive looks for, but not the bytes the history holds.
+    let mut other = whole1.entries[3].clone();
+    other.balance += 1;
+    assert_eq!(recv(vec![(id, 3, proof.clone(), other.encode())]), Err("a receive whose send is not in its sender's chain"));
+    assert_eq!(recv(vec![(at(id_a(), 2).id(), 3, proof, whole1.entries[3].encode())]), Err("a receive whose send is not in its sender's chain"));
+}
+
+#[test]
+fn a_lock_filled_behind_the_makers_cut_is_never_refunded_or_filled_again() {
+    let mut w = swapped();
+    // T locks a second time (21), never filled; M then CUTS its chain of A at stamp 5 (the fill of 20 behind it).
+    put_at(w.chain(id_b(), T), 21, Body::Lock { to: pk(M), amount: 50, until: 50, token: id_a(), offer: nonce(10) }, Some(T), 0);
+    let wholem = w.get(id_a(), M).clone();
+    let mut blocks = cut::Blocks::new();
+    cut_at(&mut w, &wholem, id_a(), M, 5, &mut blocks);
+    let livem = w.get(id_a(), M).clone();
+    assert_eq!(w.check(id_a(), M), Ok(()));
+    let Body::Cut { offers, .. } = &livem.entries[0].body else { panic!() };
+    assert_eq!(offers, &vec![(nonce(10), id_b(), 2, 1, 200, 1000)], "the open offer carried, what is left of it, its time");
+    let mid = at(id_a(), M).id();
+    let refund = |lock: u8, ev: Evidence| {
+        let mut x = Two(w.0.clone());
+        put_at(x.chain(id_b(), T), 60, Body::Refund { lock: nonce(lock), ev }, None, 60);
+        x.strict(id_b(), T, 1)
+    };
+    let fill_proof = |lock: u8| cut::proof(&blocks, &roots(&livem).1, &received_key(FILLED, &pk(T), &nonce(lock))).unwrap();
+    // 20 was filled: its proof is of presence — refused, as is none.
+    assert_eq!(refund(20, Evidence { mine: vec![], theirs: vec![(mid, 0, fill_proof(20), vec![])] }), Err("a refund of a lock the maker's history may have filled"));
+    assert_eq!(refund(20, Evidence::default()), Err("a refund of a lock the maker's history may have filled"));
+    // 21 was not: its absence proof refunds it.
+    assert_eq!(refund(21, Evidence { mine: vec![], theirs: vec![(mid, 0, fill_proof(21), vec![])] }), Ok(()));
+    assert_eq!(refund(21, Evidence::default()), Err("a refund of a lock the maker's history may have filled"));
+    // Filling 20 again after the cut: the maker's own set shows it filled.
+    let mut x = Two(w.0.clone());
+    put_at(x.chain(id_a(), M), 31, Body::Fill { offer: nonce(10), taker: pk(T), lock: nonce(20), amount: 10, cited: 0, until: 50, ev: Evidence { mine: fill_proof(20), theirs: vec![] } }, None, 6);
+    assert_eq!(x.strict(id_a(), M, 1), Err("a lock filled twice"));
+}
+
+#[test]
+fn a_holder_checks_a_new_cut_against_what_it_summarises_then_drops_it() {
+    let (_, whole, _) = cut_world();
+    let held = State { entries: whole.entries[..4].to_vec(), fork: None };
+    let sent = prune(&whole);
+    // The holder's merge keeps the prefix: the cut is checked against it.
+    let m = merge(&held, &sent);
+    assert_eq!(m, whole);
+    assert_eq!(merge(&sent, &held), whole);
+    assert_eq!(accept(&at(id_a(), 1), &def(), 6, &held, &m, &|_, _| None), Ok(sent.clone()), "kept: from the cut");
+    // A lying cut sent the same way is refused there.
+    let mut bad = sent.clone();
+    let mut e = bad.entries.pop().unwrap();
+    if let Body::Cut { allowances, .. } = &mut e.body {
+        allowances.clear();
+    }
+    bad.entries.push(sign(e, 1));
+    assert_eq!(accept(&at(id_a(), 1), &def(), 6, &held, &merge(&held, &bad), &|_, _| None), Err("a cut that is not what came before it"));
+    // CONTROL: a holder that never had the prefix cannot check it (the wallet does).
+    assert_eq!(accept(&at(id_a(), 1), &def(), 6, &State::default(), &bad, &|_, _| None), Ok(bad.clone()));
+    // Copies settle the same in every order (pruned).
+    let r = all_orders(&[held.clone(), sent.clone(), whole.clone()]);
+    assert!(r.iter().all(|x| prune(x) == sent));
+    // A copy that ends well before the cut: the cut wins. A FORK below the cut: the fork stays.
+    let early = State { entries: whole.entries[..2].to_vec(), fork: None };
+    assert_eq!(merge(&early, &sent), sent);
+    let mut f1 = early.clone();
+    signed(&mut f1, 1, 50, Body::Burn { amount: 1 });
+    let mut f2 = early.clone();
+    signed(&mut f2, 1, 51, Body::Burn { amount: 2 });
+    let frozen = merge(&f1, &f2);
+    assert!(frozen.fork.is_some());
+    assert_eq!(merge(&frozen, &sent), frozen);
+    assert_eq!(merge(&sent, &frozen), frozen);
+}
+
+fn verify_with(w: &Two, blocks: &cut::Blocks, wallet: &mut Wallet, owner: u8) -> Result<(), crate::wallet::FraudProof> {
+    let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
+    let block = |c: &[u8; 32]| blocks.get(c).cloned();
+    let src = Source { chain: &chain, definition: &defs, block: &block };
+    let s = w.get(id_a(), owner);
+    let last = s.entries.last().unwrap().seq;
+    wallet.verify(&src, &at(id_a(), owner), last)
+}
+
+#[test]
+fn a_wallet_walks_across_a_cut_from_its_published_history() {
+    let (mut w, whole1, blocks) = cut_world();
+    let live1 = w.get(id_a(), 1).clone();
+    let p1 = at(id_a(), 1);
+    put_at(w.chain(id_a(), 3), 4, Body::Receive { from: pk(1), nonce: nonce(4), amount: 100, cited: 0, ev: Evidence { mine: vec![], theirs: vec![behind(&blocks, &live1, &p1, &whole1, 3)] } }, None, 6);
+    assert_eq!(verify_with(&w, &blocks, &mut Wallet::new(pk(9)), 3), Ok(()));
+    // Without the history's blocks the walk cannot cross: refused, not trusted.
+    let f = verify_with(&w, &cut::Blocks::new(), &mut Wallet::new(pk(9)), 3).unwrap_err();
+    assert_eq!(f.why, "a history whose blocks are not there");
+    // A block that is not the one its id names.
+    let mut forged = blocks.clone();
+    let k = roots(&live1).0;
+    forged.insert(k, b"not it".to_vec());
+    let f = verify_with(&w, &forged, &mut Wallet::new(pk(9)), 3).unwrap_err();
+    assert_eq!(f.why, "a history block that is not the one named");
+}
+
+#[test]
+fn a_lying_cut_passes_the_contract_and_is_proven_by_the_wallet() {
+    // 2 received 1's send, then cuts with a received set that LEAVES IT OUT — and receives it again.
+    let (mut w, _, mut blocks) = cut_world();
+    let mut ww = Two(w.0.clone());
+    ww.0.insert((id_a(), pk(1)), State { entries: cut_world().1.entries[..4].to_vec(), fork: None });
+    w = ww;
+    let whole2 = w.get(id_a(), 2).clone();
+    let honest = cut_at(&mut Two(w.0.clone()), &whole2, id_a(), 2, 5, &mut blocks);
+    let lie = |honest: &State, blocks: &mut cut::Blocks| {
+        let mut s = honest.clone();
+        let mut e = s.entries.pop().unwrap();
+        let empty = freenet_prolly::build::build(std::iter::empty(), |c, b| {
+            blocks.insert(c, b.to_vec());
+        })
+        .unwrap();
+        if let Body::Cut { received, .. } = &mut e.body {
+            *received = empty;
+        }
+        s.entries.push(sign(e, 2));
+        s
+    };
+    let lying_whole = lie(&honest, &mut blocks);
+    let live = prune(&lying_whole);
+    let again = mine(&blocks, &live, RECEIVED, 1, 2);
+    let mut lying = Two(w.0.clone());
+    *lying.chain(id_a(), 2) = live.clone();
+    put_at(lying.chain(id_a(), 2), 2, Body::Receive { from: pk(1), nonce: nonce(2), amount: 300, cited: 0, ev: Evidence { mine: again, theirs: vec![] } }, None, 6);
+    assert_eq!(lying.strict(id_a(), 2, 1), Ok(()), "the contract cannot see it: the received set is the cut's word");
+    assert_eq!(lying.get(id_a(), 2).balance(), 600, "300 received twice");
+    let f = verify_with(&lying, &blocks, &mut Wallet::new(pk(9)), 2).unwrap_err();
+    assert_eq!((f.seq, f.why), (1, "a cut whose trees are not what came before it"));
+    // CONTROL: the honest cut, walked the same way, is value.
+    let mut fine = Two(w.0.clone());
+    *fine.chain(id_a(), 2) = prune(&honest);
+    assert_eq!(verify_with(&fine, &blocks, &mut Wallet::new(pk(9)), 2), Ok(()));
+    // A lie about what is CARRIED (pruned: the contract cannot see it either) — the wallet's walk of the whole does.
+    let mut s = honest.clone();
+    let mut e = s.entries.pop().unwrap();
+    if let Body::Cut { allowances, .. } = &mut e.body {
+        allowances.push((pk(5), 1_000));
+    }
+    s.entries.push(sign(e, 2));
+    let mut carried = Two(w.0.clone());
+    *carried.chain(id_a(), 2) = prune(&s);
+    assert_eq!(carried.check(id_a(), 2), Ok(()));
+    let f = verify_with(&carried, &blocks, &mut Wallet::new(pk(9)), 2).unwrap_err();
+    assert_eq!((f.seq, f.why), (1, "a cut that is not what came before it"));
+}
+
+#[test]
+fn an_entry_over_1kb_behind_a_cut_is_proven_by_its_value_block() {
+    // M fills T's second lock (21: 50 B → 100 A) carrying 2 KB of evidence, then CUTS: the fill is behind the cut, its
+    // bytes over 1 KB — stored as a value block, proven by id and length.
+    let mut w = swapped();
+    put_at(w.chain(id_b(), T), 21, Body::Lock { to: pk(M), amount: 50, until: 50, token: id_a(), offer: nonce(10) }, Some(T), 0);
+    let pad = Evidence { mine: vec![], theirs: vec![([1; 32], 0, vec![7; 2048], vec![])] };
+    put_at(w.chain(id_a(), M), 31, Body::Fill { offer: nonce(10), taker: pk(T), lock: nonce(21), amount: 100, cited: 0, until: 50, ev: pad }, None, 0);
+    assert_eq!(w.check(id_a(), M), Ok(()));
+    let wholem = w.get(id_a(), M).clone();
+    let seq = wholem.entries.len() as u64 - 1;
+    assert!(wholem.entries[seq as usize].encode().len() > 1024);
+    let mut blocks = cut::Blocks::new();
+    let cutm = cut_at(&mut w, &wholem, id_a(), M, 5, &mut blocks);
+    let livem = w.get(id_a(), M).clone();
+    let (id, s1, proof, bytes) = behind(&blocks, &livem, &at(id_a(), M), &wholem, seq);
+    assert!(matches!(freenet_prolly::proof::verify_bytes(&roots(&livem).0, &history_key(seq), &proof), Ok(freenet_prolly::proof::ProvenOwned::Present(freenet_prolly::proof::ProvenValue::Ref { .. }))));
+    let recv = |bytes: Vec<u8>| {
+        let mut x = Two(w.0.clone());
+        put_at(x.chain(id_a(), T), 32, Body::Receive { from: pk(M), nonce: nonce(31), amount: 100, cited: 0, ev: Evidence { mine: vec![], theirs: vec![(id, s1, proof.clone(), bytes)] } }, None, 6);
+        x.strict(id_a(), T, 1)
+    };
+    assert_eq!(recv(bytes.clone()), Ok(()));
+    // The same entry with other evidence (same length): another block.
+    let mut other = wholem.entries[seq as usize].clone();
+    if let Body::Fill { ev, .. } = &mut other.body {
+        ev.theirs[0].2 = vec![8; 2048];
+    }
+    assert_eq!(other.encode().len(), bytes.len());
+    assert_eq!(recv(other.encode()), Err("a receive whose send is not in its sender's chain"));
+    // The wallet reads it back across the cut.
+    assert!(cut::whole(&livem, &|c| blocks.get(c).cloned(), 1000).unwrap() == cutm);
+}
+
+#[test]
+fn a_citation_shown_when_appended_stays_valid_after_its_chain_cuts() {
+    // T received M's fill (30) — shown live then. M CUTS: the fill is no longer live.
+    let mut w = swapped();
+    let wholem = w.get(id_a(), M).clone();
+    let mut blocks = cut::Blocks::new();
+    cut_at(&mut w, &wholem, id_a(), M, 5, &mut blocks);
+    // T's chain, checked from scratch, still holds: the citation is one the cut hid, not one never shown.
+    assert_eq!(w.check(id_a(), T), Ok(()));
+    // CONTROL: the same receive taken in as NEW must show it — refused without its evidence, taken with it.
+    assert_eq!(w.strict(id_a(), T, 1), Err("a receive whose send is not in its sender's chain"));
+    let livem = w.get(id_a(), M).clone();
+    let mut x = Two(w.0.clone());
+    let t = x.chain(id_a(), T);
+    let mut e = t.entries.pop().unwrap();
+    if let Body::Receive { ev, .. } = &mut e.body {
+        ev.theirs = vec![behind(&blocks, &livem, &at(id_a(), M), &wholem, 2)];
+    }
+    t.entries.push(work(e));
+    assert_eq!(x.strict(id_a(), T, 1), Ok(()));
+    // A citation of a stamp AFTER the cut is never taken as hidden by it.
+    let mut y = Two(w.0.clone());
+    put_at(y.chain(id_a(), T), 77, Body::Receive { from: pk(M), nonce: nonce(77), amount: 50, cited: 9, ev: Evidence::default() }, None, 12);
+    assert_eq!(y.check(id_a(), T), Err("a receive whose send is not in its sender's chain"));
+}
+
+#[test]
+fn a_history_read_back_is_every_seq_in_order_and_all_before_the_cut() {
+    let (w, whole, _) = cut_world();
+    let live = w.get(id_a(), 1).clone();
+    let n = live.entries[0].seq as usize;
+    // A history (its own root) whose leaves are not seq 0, 1, 2…: the key of seq 1 holding the entry of seq 2.
+    let mut blocks = cut::Blocks::new();
+    let mut b = freenet_prolly::build::TreeBuilder::new(|c, x: &[u8]| {
+        blocks.insert(c, x.to_vec());
+    });
+    for (k, e) in [(0u64, 0usize), (1, 2), (2, 1), (3, 3)] {
+        b.push_bytes(&history_key(k), &whole.entries[e].encode()).unwrap();
+    }
+    let shuffled = b.finish().unwrap();
+    let with_root = |root: [u8; 32]| {
+        let mut s = live.clone();
+        if let Body::Cut { history, .. } = &mut s.entries[0].body {
+            *history = root;
+        }
+        s
+    };
+    assert_eq!(cut::whole(&with_root(shuffled), &|c| blocks.get(c).cloned(), 100).err(), Some("a history that is not every seq in order"));
+    // A history that stops short of the cut (seq 0 to 2 of 0 to 3).
+    let mut short = cut::Blocks::new();
+    let (h3, _) = cut::trees(&whole.entries[..n - 1], &mut short).unwrap();
+    assert_eq!(cut::whole(&with_root(h3), &|c| short.get(c).cloned(), 100).err(), Some("a cut whose history is not everything before it"));
+    // CONTROL: the cut's own history reads back whole.
+    let mut fine = cut::Blocks::new();
+    let (h, _) = cut::trees(&whole.entries[..n], &mut fine).unwrap();
+    assert_eq!(cut::whole(&with_root(h), &|c| fine.get(c).cloned(), 100).map(|s| s.entries.len()), Ok(n + 1));
+}
+
+#[test]
+fn after_a_cut_a_fill_and_a_refund_still_name_and_find_what_they_need() {
+    // M's offer and T's lock live on only in their chains' CUTS.
+    let mut w = swapped();
+    put_at(w.chain(id_b(), T), 21, Body::Lock { to: pk(M), amount: 50, until: 50, token: id_a(), offer: nonce(10) }, Some(T), 0);
+    let mut blocks = cut::Blocks::new();
+    let (wm, wt) = (w.get(id_a(), M).clone(), w.get(id_b(), T).clone());
+    cut_at(&mut w, &wm, id_a(), M, 5, &mut blocks);
+    cut_at(&mut w, &wt, id_b(), T, 5, &mut blocks);
+    // A FILL of the carried offer names the taker's chain (what validation asks the node for) …
+    let mut m = w.get(id_a(), M).clone();
+    put_at(&mut m, 32, Body::Fill { offer: nonce(10), taker: pk(T), lock: nonce(21), amount: 100, cited: 0, until: 50, ev: Evidence::default() }, None, 6);
+    assert!(cited_chains(&at(id_a(), M), &m).contains(&(id_b(), pk(T))), "the taker's chain of the offer's token");
+    // … and a REFUND of the carried lock names the maker's chain, and its deadline is found for the append rules.
+    let held = w.get(id_b(), T).clone();
+    let mut t = held.clone();
+    put_at(&mut t, 60, Body::Refund { lock: nonce(21), ev: Evidence::default() }, None, 50);
+    assert!(cited_chains(&at(id_b(), T), &t).contains(&(id_a(), pk(M))));
+    assert_eq!(append_check(&def_b(), 50, &held, &t), Ok(()), "at its deadline");
+    let mut early = held.clone();
+    put_at(&mut early, 60, Body::Refund { lock: nonce(21), ev: Evidence::default() }, None, 49);
+    assert_eq!(append_check(&def_b(), 49, &held, &early), Err("a refund before its lock's deadline"));
+}
+
+#[test]
+fn an_offer_is_filled_only_before_its_time() {
+    // swapped(): M's offer runs until 1000.
+    let fill = |stamp: u64| {
+        let mut w = swapped();
+        put_at(w.chain(id_b(), T), 21, Body::Lock { to: pk(M), amount: 50, until: 2000, token: id_a(), offer: nonce(10) }, Some(T), 0);
+        put_at(w.chain(id_a(), M), 31, Body::Fill { offer: nonce(10), taker: pk(T), lock: nonce(21), amount: 100, cited: 0, until: 2000, ev: Evidence::default() }, None, stamp);
+        w.check(id_a(), M)
+    };
+    assert_eq!(fill(999), Ok(()));
+    assert_eq!(fill(1000), Err("a fill of an offer past its time"));
 }

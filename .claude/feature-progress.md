@@ -1368,6 +1368,14 @@ old key's addresses.
 - TOKEN STEP 6 (10-08): wallet verification built + live (TOKEN §9 step 6). Owner: "if zk can solve it, why a half
   measure?" → the fix belongs in the contract: recursive validity proofs. Next: zk spike (prove + verify one transfer
   on our rules; proving time native/laptop, proof size, verify time in contract WASM under the 5 s budget).
+  zk then SHELVED on cost (TOKEN §9 step 6): the receiving wallet is the gate.
+- TOKEN FOUNDATION list (owner 10-08): [x] 1 prune cut on prolly (writer + contract + wallet across cuts) — BUILT +
+  LIVE 10-09 (TOKEN §2, §9 step 7); [ ] 2 chain owner = DID via idlog (rotation/recovery; entries name the key seq);
+  [ ] 3 mint + supply bag + authority chain + freeze; [ ] 4 multisig; [ ] 5 ids (NFT/1155) with royalties by the fill
+  rule. Later, separate programs: distribution, staking, pools, keeper issuance.
+  Found while building 1: a sender's cut broke the receiver's recent receives (re-validated from scratch, no evidence
+  in them) → new citations strict at update, old ones lenient (TOKEN §2). Open: a fresh PUT can carry an unshown
+  receive hidden by a cut — the wallet refuses it (TOKEN §8 item 4).
 - [ ] Proofs: DEFERRED until rewards pay (owner 10-07); low-cost plan in REWARDS §7 item 5. Next on the track: treasury
       pass + statements + shadow ledger (REWARDS §7 item 4).
 - Decisions recorded in REWARDS: carriers = holders weighted by demand; users are the keepers; never paid to own

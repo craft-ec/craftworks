@@ -64,10 +64,20 @@ pub struct FraudProof {
     pub vouchers: Vec<[u8; 32]>,
 }
 
-/// Where a wallet reads chains and definitions from (the network, through a node).
+/// Where a wallet reads chains, definitions and the blocks of cut histories from (the network, through a node).
 pub struct Source<'a> {
     pub chain: &'a dyn Fn(&ChainParams) -> Option<State>,
     pub definition: &'a dyn Fn(&[u8; 32]) -> Option<Definition>,
+    pub block: &'a dyn Fn(&[u8; 32]) -> Option<Vec<u8>>,
+}
+
+/// The most blocks one chain's history read takes.
+pub const MAX_BLOCKS: usize = 100_000;
+
+/// A chain as a wallet walks it: WHOLE, seq 0 on — across its cut, from the cut's published history.
+fn whole(src: &Source, p: &ChainParams) -> Result<State, Why> {
+    let s = (src.chain)(p).ok_or("a chain that is not there")?;
+    crate::cut::whole(&s, src.block, MAX_BLOCKS)
 }
 
 /// A WALLET's verifier: whom it trusts for checkpoints, what it has verified (its memory), what fraud it knows.
@@ -156,13 +166,22 @@ impl Wallet {
             }
             let read = |p: &ChainParams| {
                 self.reads.set(self.reads.get() + 1);
-                (src.chain)(p)
+                whole(src, p)
             };
-            let s = read(&chain).ok_or_else(|| proof(&chain, upto, "a chain that is not there"))?;
+            // An accepted checkpoint covering it: the chain is the one checkpointed (that entry's hash) — no walk (and
+            // no history read, when that entry is still live).
+            if let Some(c) = self.accepted(&chain, upto) {
+                let live = (src.chain)(&chain);
+                if live.as_ref().is_some_and(|s| s.entries.iter().any(|e| e.seq == c.seq && e.hash() == c.head && e.balance == c.balance)) {
+                    let (seq, head) = (c.seq, c.head);
+                    self.verified.insert(id, (seq, head));
+                    continue;
+                }
+            }
+            let s = read(&chain).map_err(|why| proof(&chain, upto, why))?;
             if s.entries.len() as u64 <= upto {
                 return Err(proof(&chain, upto, "an entry that is not in its chain"));
             }
-            // An accepted checkpoint covering it: the chain is the one checkpointed (that entry's hash) — no walk.
             if let Some(c) = self.accepted(&chain, upto) {
                 if s.entries.get(c.seq as usize).is_some_and(|e| e.hash() == c.head && e.balance == c.balance) {
                     let (seq, head) = (c.seq, c.head);
@@ -175,12 +194,19 @@ impl Wallet {
             prefix.entries.truncate(upto as usize + 1);
             prefix.fork = None;
             // EVERY citation checked (the shape rules, the window the whole chain) — each cited chain read once.
-            let cache: RefCell<HashMap<[u8; 32], Option<State>>> = RefCell::new(HashMap::new());
+            let cache: RefCell<HashMap<[u8; 32], Result<State, Why>>> = RefCell::new(HashMap::new());
             let cited = |def: &[u8; 32], owner: &[u8; 32]| {
                 let p = chain.at(*def, *owner);
-                cache.borrow_mut().entry(p.id()).or_insert_with(|| read(&p)).clone()
+                cache.borrow_mut().entry(p.id()).or_insert_with(|| read(&p)).clone().ok()
             };
-            check_window(&chain, &d, &prefix, &cited, usize::MAX).map_err(|(seq, why)| proof(&chain, seq, why))?;
+            check_window(&chain, &d, &prefix, &cited, usize::MAX).map_err(|(seq, why)| {
+                // A cited chain that could not be read: say why (a history not there is not the chain not there).
+                let unread = cache.borrow().values().find_map(|r| r.as_ref().err().copied()).filter(|w| *w != "a chain that is not there");
+                proof(&chain, seq, unread.unwrap_or(why))
+            })?;
+            // Every cut up to it: its trees are what came before it (a received set that left a name out would let it
+            // be received twice; a history that is not the chain would hide what it cites).
+            crate::cut::audit(&prefix).map_err(|(seq, why)| proof(&chain, seq, why))?;
             // What it rests on: each cited entry's own chain, up to it.
             let mut needs: Vec<(ChainParams, u64)> = Vec::new();
             let seq_of = |p: &ChainParams, pick: &dyn Fn(&super::Entry) -> bool| cited(&p.definition, &p.owner).and_then(|c| c.entries.iter().find(|e| pick(e)).map(|e| e.seq));
@@ -233,7 +259,7 @@ impl Wallet {
         let mut fresh = Wallet::new([0; 32]);
         let false_ = |why: Why, seq: u64| FraudProof { chain: c.chain, seq, why, checkpoint: Some(c.clone()), vouchers: self.vouches.iter().filter(|v| v.checkpoint == c.hash() && v.signed()).map(|v| v.by).collect() };
         fresh.verify(src, &c.chain, c.seq).map_err(|f| false_(f.why, f.seq))?;
-        let s = (src.chain)(&c.chain).ok_or_else(|| false_("a chain that is not there", c.seq))?;
+        let s = whole(src, &c.chain).map_err(|why| false_(why, c.seq))?;
         let e = s.entries.get(c.seq as usize).ok_or_else(|| false_("an entry that is not in its chain", c.seq))?;
         if e.hash() != c.head || e.balance != c.balance {
             return Err(false_("a checkpoint that is not what the chain says", c.seq));
