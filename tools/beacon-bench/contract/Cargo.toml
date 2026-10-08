@@ -1,0 +1,21 @@
+[package]
+name = "beacon-bench-contract"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "MEASURE (TOKEN §5a): validation runs N sequential blake3 iterations (N = params, u64 LE) over the state."
+[workspace]
+[lib]
+crate-type = ["cdylib", "rlib"]
+[dependencies]
+freenet-stdlib = { version = "0.10.0", features = ["contract"] }
+blake3 = { version = "1", default-features = false }
+[features]
+default = ["freenet-main-contract"]
+freenet-main-contract = []
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

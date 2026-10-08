@@ -289,8 +289,23 @@ own. So:
 **Reading it:** a contract reads the beacon as one related contract (one of its 10). Its state keeps only recent steps
 (a day: older ones flushed to a tree, kept, as any history) — enough to judge "final at step n" and `until`s near now.
 
-**To measure before building** (step 4): blake3 per second in a contract's WASM and natively (calibrates `K` and the
-sampled check's cost inside a validation); the pace spread across ordinary machines (the ratio above).
+**MEASURED (10-08, `tools/beacon-bench`)** — sequential blake3, each iteration hashing the last 32-byte output:
+
+| Where | Iterations per second | How |
+|---|---|---|
+| Apple M4 Max, one core, native | 17.9 M | 10 M and 30 M iterations, steady |
+| AMD EPYC-Rome (B), one core, native | 11.0 M | 20 M twice, under B's usual load |
+| Inside the node's WASM (wasmtime, 0.2.142, on the M4) | 13.0–13.5 M (~75% of native) | the largest N one validation completes within the node's 5 s budget: 66 M passes, 68 M times out at 5.16 s |
+
+- A PUT runs a contract's validation about THREE times (66 M took 15.5 s end to end): every check's cost counts ×3.
+- **Pace spread:** 1.6× between these two cores (more with special hardware: unmeasured).
+- **Calibration this gives:** `K` ≈ 1.07 × 10⁹ for a one-minute step on the fastest core measured — the beacon runs
+  at its fastest extender's pace, so a step takes 60 s with an M4 extending, ~100 s with only an EPYC. Windows and
+  margins in steps allow ≥ 1.6×.
+- **The sampled check fits:** `S = 2048`, `s = 8` → 4.2 M iterations ≈ 0.32 s per validation (≈ 1 s per PUT), well
+  under 5 s.
+- **Full verification is parallel:** the `S` intermediate points let a verifier check segments on all its cores at
+  once — about 7.5 s per step on 8 cores; only EXTENDING is sequential.
 
 ## 6. Supply rules (the menu)
 
@@ -321,7 +336,8 @@ The standard's first instance. What it changes in REWARDS:
 
 ## 8. Open in the architecture
 
-1. The BEACON's cadence and `K`, `S`, `s` (§5a) — from measurement; its mechanism is designed (sequential work).
+1. The BEACON's cadence (§5a) — mechanism designed, `K`/`S`/`s` calibrated from measurement; special hardware's
+   speed-up unmeasured.
 2. The finality MARGIN — measured on the real network (step 4), set generously.
 3. Pooled lending (§0) — after pools work.
 
