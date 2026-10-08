@@ -278,13 +278,18 @@ The standard's first instance. What it changes in REWARDS:
   entries to its creators and keepers, appended by anyone, citing the statement row; the network share burned or kept
   for upkeep (the owner's choice, below).
 - Paying for one item: a `send` to its creator, its key sealed to the payer on seeing the receive.
+- ITS OWN ISSUANCE, still to choose (the Craftworks token's, not the standard's): its supply rule and size (e.g.
+  `fixed` + `burnable`, with or without a `keepers` launch phase), who holds its genesis (a sale, early contributors,
+  keepers only), and the network share (burned, or kept for upkeep).
 
-## 8. Open for the owner
+## 8. Open in the architecture
 
-1. The supply rule and size (`fixed` + `burnable`, with or without a `keepers` launch phase).
-2. Who holds the genesis (a sale, a distribution to early contributors, keepers only).
-3. The network share: burned (deflation) or kept for upkeep.
-4. The beacon's cadence — it is the clock of every `until`, epoch and grace (and its mechanism, §5a).
+1. The BEACON's mechanism and cadence (§5a) — the clock of every `until`, epoch, grace and margin.
+2. The finality MARGIN — measured on the real network (step 4), set generously.
+3. Pooled lending (§0) — after pools work.
+
+(A token's own ISSUANCE — its supply rule and size, who holds its genesis, what it does with fees — is that token's
+choice, made in its definition from the menu (§6), not the standard's: the Craftworks token's are in §7.)
 
 ## 9. Build order
 
