@@ -446,15 +446,22 @@ export async function start(ctx) {
     if (writer === item.by) return true;
     // A personal item's author's policy not read yet: not checked yet (`onChecked` fires once it is).
     if (!r && !item?.meta?.write?.[action] && item?.by && !personal(item.by).loaded()) return null;
-    const rule = ruleOf(item, action, r, at);
-    if (rule === "anyone") return true;
-    if (rule === "author" || rule === "nobody") return false;
-    if (CIRCLES_OF[rule]) {
-      if (!cred || !/^[0-9a-f]{32}$/.test(cred)) return false;
-      const v = credFor(item.by, cred);
-      return v === undefined ? null : !!v && v.did === writer && CIRCLES_OF[rule].includes(v.circle);
-    }
-    return r ? rule === "anyone" || (r.passes ? r.passes(rule, writer) : G.passes(rule, r.role(writer))) : false;
+    const judge = rule => {
+      if (rule === "anyone") return true;
+      if (rule === "author" || rule === "nobody") return false;
+      if (CIRCLES_OF[rule]) {
+        if (!cred || !/^[0-9a-f]{32}$/.test(cred)) return false;
+        const v = credFor(item.by, cred);
+        return v === undefined ? null : !!v && v.did === writer && CIRCLES_OF[rule].includes(v.circle);
+      }
+      return r ? r.passes ? r.passes(rule, writer) : G.passes(rule, r.role(writer)) : false;
+    };
+    const v = judge(ruleOf(item, action, r, at));
+    // A SPACE item's own rule is WITHIN its space's (the ceiling): its writer passes both — an item narrows who may,
+    // never widens it (a public post with members-only comments; never anyone's comments where the space keeps them).
+    const own = item?.meta?.write?.[action] ?? (S.parentOf(action) && S.parentOf(action) !== "read" ? item?.meta?.write?.[S.parentOf(action)] : undefined);
+    if (v !== true || own === undefined || !r?.policyIn || r.personal) return v;
+    return judge(r.policyIn(K.policyDomain(item.kind), action, at));
   }
   // The credential a writer cites on an item whose rule is its author's friends or followers (null: none needed / held).
   async function credToCite(item, action, r = null) {

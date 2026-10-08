@@ -64,8 +64,10 @@ export async function start(ctx) {
     // WHO MAY COMMENT AND VOTE — its own rule (`roles.mayWrite`, the one check), apart from who sees it, as a
     // database's read and write: in your space anyone · your followers · your friends · only you; in a space its
     // members (as its policy allows) · only you.
+    // A SPACE's post: as the space allows (its own rule none), or NARROWER — its members, admins, owner, only you (a
+    // public post with members-only comments). Never wider: `roles.mayWrite` holds a post's rule within the space's.
     const writes = sp
-      ? [["members", "👥 Who the space allows"], ["author", "🔒 Only you"]]
+      ? [["", "👥 Who the space allows"], ["members", "👥 Its members"], ["admins", "🛡 Its admins"], ["owner", "👑 Its owner"], ["author", "🔒 Only you"]]
       : [["anyone", "🌐 Anyone who sees it"], ["followers", "👣 Your followers"], ["friends", "🤝 Your friends"], ["author", "🔒 Only you"]];
     // ONE choice for every interaction (comment, vote, and each signal's own: react, save, share, tag — `signals`);
     // CUSTOMIZE sets one apart ("" : as the one choice).
@@ -86,7 +88,8 @@ export async function start(ctx) {
       // The write rule ({ comment, vote, react, … }): each action's own choice, else the one choice — only what differs
       // from the space's own (nothing to set on the item: null).
       write: () => {
-        const w = Object.fromEntries(ACTS.map(([a]) => [a, each[a].value || wsel.value]).filter(([, v]) => v !== "anyone" && v !== "members"));
+        // (Yours: "anyone" is your space's own default — nothing to set.)
+        const w = Object.fromEntries(ACTS.map(([a]) => [a, each[a].value || wsel.value]).filter(([, v]) => v && !(v === "anyone" && !sp)));
         return Object.keys(w).length ? w : null;
       },
     };

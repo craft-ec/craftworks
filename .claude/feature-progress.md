@@ -1081,7 +1081,7 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       (pictures as data: URLs, styles inline), A−/A+, full screen, place kept per book on the device. A PDF is a book
       only when made one in Books (a PDF attached elsewhere stays a document). fx: A uploaded PDF/CBZ/EPUB, B read all
       three from Discover (PDF fits the screen; spread 1–2/3–4/5; EPUB ch 2 at 120%).
-- [ ] 2  PUBLIC PARTICIPATION: policy `anyone` for post/comment/vote per app; an outsider's comment/vote lives in their
+- [x] 2  PUBLIC PARTICIPATION: policy `anyone` for post/comment/vote per app; an outsider's comment/vote lives in their
       own public tail + a pointer in the post's bag; readers accept it only if the policy at its time allowed it.
       PER-POST AUDIENCE (owner): the author picks public / members for each post, the space+app policy the ceiling
       (path `board/p/<id>`); comments and votes follow the post's audience. PER-POST COMMENT/VOTE (owner): the author also
@@ -1090,6 +1090,12 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       ONE IMPLEMENTATION (owner: every app inherits it): policies by path in `roles` (item path `<app>/p/<id>`), enforced
       in `content` (Board, Videos, Audio, Chat, Messages) — Notes and Drive call the same `roles.allows` for their items;
       Chat keeps per-channel policy (`chat/<channel>`).
+      10-08 CHECKED in code and LIVE (fy owner, fx outsider, new public space "PP test" #51d676, board read/comment/
+      vote = anyone): fx finds the public post in Discover, comments + votes (kept in fx's profile, pointed) → fy sees
+      ▲1 💬1. GAP FIXED: a space's post could only say "as the space allows" or "only you" — now also its members /
+      admins / owner (audience picker); and an item's own rule is now held WITHIN its space's (`roles.mayWrite`: the
+      writer passes both — a post narrows who may, never widens). Live: post with "Its members" → fx sees "Only the
+      space's members comment here", no composer, ▲ disabled ("Not yours to vote on").
 - [x] 3  SETTINGS: a Settings app in every space (575130b, a4e8c5a); apps' own settings links removed (d0e6aa5).
 
 - Test account on fy (17692, site EckhKsQW…): PIN 731731; words juice bulk shy trend need book heavy curtain old network arrange disagree (made 2026-10-03, outsider tests).
