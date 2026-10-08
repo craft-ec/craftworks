@@ -1370,7 +1370,7 @@ old key's addresses.
   on our rules; proving time native/laptop, proof size, verify time in contract WASM under the 5 s budget).
   zk then SHELVED on cost (TOKEN §9 step 6): the receiving wallet is the gate.
 - TOKEN FOUNDATION list (owner 10-08): [x] 1 prune cut on prolly (writer + contract + wallet across cuts) — BUILT +
-  LIVE 10-09 (TOKEN §2, §9 step 7); [ ] 2 chain owner = DID via idlog (rotation/recovery; entries name the key seq);
+  LIVE 10-09 (TOKEN §2, §9 step 7); [x] 2 chain owner = DID via idlog — BUILT + LIVE 10-09 (TOKEN §1, §9 step 8: Writer entries with the account's node credential, rotation revokes, recovery outranks a stolen device); entries name the key seq);
   [ ] 3 mint + supply bag + authority chain + freeze; [ ] 4 multisig; [ ] 5 ids (NFT/1155) with royalties by the fill
   rule. Later, separate programs: distribution, staking, pools, keeper issuance.
   Found while building 1: a sender's cut broke the receiver's recent receives (re-validated from scratch, no evidence
