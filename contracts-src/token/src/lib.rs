@@ -19,6 +19,8 @@ pub const CHAIN: u8 = 2;
 pub const RECENT: usize = 9;
 /// Work on an entry anyone may append (a receive): this many leading zero bits of `blake3(message ‖ work)`.
 pub const WORK_BITS: u32 = 16;
+/// A token's name, at most (its length is one byte on the wire).
+pub const NAME_MAX: usize = 64;
 
 pub fn id(code_hash: &[u8; 32], params: &[u8]) -> [u8; 32] {
     let mut h = blake3::Hasher::new();
@@ -96,7 +98,7 @@ impl Definition {
         let n = r.u8()? as usize;
         let name = r.take(n)?.to_vec();
         let nonce = r.arr()?;
-        (r.done() && decimals <= 18 && min_send > 0).then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce })
+        (r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX).then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce })
     }
 }
 
@@ -377,6 +379,11 @@ pub fn check(p: &ChainParams, d: &Definition, s: &State, sender: &dyn Fn(&[u8; 3
                 balance.checked_sub(*amount).ok_or("a debit over the balance")?
             }
             Body::Receive { from, nonce, amount } => {
+                // (Never from itself: a send to itself is refused — and asking for its own chain as a related
+                // contract is an error at the node, not a refusal.)
+                if *from == p.owner {
+                    return Err("a receive from itself");
+                }
                 if !e.worked() {
                     return Err("a receive without its work");
                 }
@@ -488,6 +495,9 @@ mod contract {
             let Some(s) = super::State::decode(state.as_ref()) else { return Ok(ValidateResult::Invalid) };
             // What it must be shown: its definition and the chains of its recent receives' senders — asked ALL AT ONCE
             // (one round only).
+            if super::senders(&s).contains(&p.owner) {
+                return Ok(ValidateResult::Invalid);
+            }
             let mut want = vec![p.definition];
             want.extend(senders(&s).into_iter().map(|o| p.of(o).id()));
             let missing: Vec<ContractInstanceId> = want.iter().filter(|w| related_state(&related, w).is_none()).map(|w| ContractInstanceId::new(*w)).collect();

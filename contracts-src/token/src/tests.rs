@@ -339,3 +339,19 @@ fn a_copy_that_extends_another_wins_and_merging_is_idempotent() {
     assert_eq!(merge(&longer, &a), longer);
     assert_eq!(merge(&longer, &longer), longer);
 }
+
+#[test]
+fn a_receive_from_itself_is_refused_without_asking_for_itself() {
+    let mut w = paid();
+    received(w.0.get_mut(&pk(2)).unwrap(), 2, 7, 20);
+    assert_eq!(w.check(2), Err("a receive from itself"));
+}
+
+#[test]
+fn a_definition_name_is_bounded() {
+    let mut d = def();
+    d.name = vec![b'x'; NAME_MAX];
+    assert_eq!(Definition::decode(&d.encode()), Some(d.clone()));
+    d.name = vec![b'x'; NAME_MAX + 1];
+    assert_eq!(Definition::decode(&d.encode()), None);
+}
