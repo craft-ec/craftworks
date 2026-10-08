@@ -265,9 +265,12 @@ are checked):
   choose), so there is nothing to race for.
 - **Checked cheaply, proven wrong by anyone.** A step carries its `S` intermediate points (a Merkle root, and the
   sampled ones opened). The contract recomputes `s` segments chosen from the step's own points (cost `K·s/S`: with
-  `S = 1024`, `s = 8`, under 1% of the work). Anyone may recompute a step fully; a wrong segment is a FRAUD PROOF —
-  that step and every one after it lose to any chain without it (the merge: the longest chain with no proven-bad
-  step; equal length, the lowest output).
+  `S = 1024`, `s = 8`, under 1% of the work). That sample is only a SPEED BUMP: chosen from the step's own points, a
+  cheater can regenerate fake points until the sampled segments happen to be honest (half faked: ~1 in 256 tries). The
+  SAFETY is the FRAUD PROOF: anyone recomputing a step fully and finding a wrong segment publishes it — that step and
+  every one after it lose to any chain without it (the merge: the longest chain with no proven-bad step; equal length,
+  the lowest output). So **every extender fully verifies the step it builds on** (twice the work of extending alone),
+  and wallets may verify the steps their `until`s depend on.
 - **MIX = entropy nobody controls.** `mix(n)` = the hash of EVERY contribution to the beacon's entropy bag that became
   final in step `n` (chain data only: an extender cannot leave one out). A contributor cannot steer the result:
   what their contribution does is unknown until `K` sequential iterations later, after the window has closed.
