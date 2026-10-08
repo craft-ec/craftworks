@@ -1343,6 +1343,14 @@ old key's addresses.
   fetched def + A), double receive REFUSED, receive of a missing send REFUSED, two writer sends at seq 2 via fx and
   fy → both nodes the SAME frozen chain in ≤5 s. Deviation: no accumulator yet (whole chain scanned; needed once
   pruning exists). Next: step 4 — the beacon contract, then the real network.
+- TOKEN STEP 4 (10-08): BEACON BUILT — `contracts-src/beacon`: sequential blake3 steps, points published in the
+  fraud window (F steps), sampled re-run of the newest step, fraud proofs (one segment re-run), merge from the UNION
+  of known steps with bounded candidates (lowest heights first; orphans wait). Found while testing: a merge that
+  discards the losing step is order-dependent (a proof later removes the fake AND the honest step it beat) → union;
+  a window-based candidate drop lets a racing fake push the honest step out → lowest heights; dropping orphans
+  loses honest steps built on a fake's true output → kept. 12 tests, 7 mutants killed. Live fx/fy: extension ✓,
+  fake past the sample ✓ (first try), proof → both nodes back to the honest chain in ≤5 s; REAL step K=1.07e9:
+  61.5 s, 65 KB, accepted in 1.2 s. Not yet: entropy mix. Next: real network (finality margin) — or step 5.
 - [ ] Proofs: DEFERRED until rewards pay (owner 10-07); low-cost plan in REWARDS §7 item 5. Next on the track: treasury
       pass + statements + shadow ledger (REWARDS §7 item 4).
 - Decisions recorded in REWARDS: carriers = holders weighted by demand; users are the keepers; never paid to own

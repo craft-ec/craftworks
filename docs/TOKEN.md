@@ -263,14 +263,20 @@ are checked):
 - **Anyone extends it** — any node or delegate that needs time to pass (a wallet waiting out a margin, a pool clearing).
   One honest extender keeps it alive; two extending the same step compute the SAME output (nothing in it is theirs to
   choose), so there is nothing to race for.
-- **Checked cheaply, proven wrong by anyone.** A step carries its `S` intermediate points (a Merkle root, and the
-  sampled ones opened). The contract recomputes `s` segments chosen from the step's own points (cost `K·s/S`: with
+- **Checked cheaply, proven wrong by anyone.** A step carries ALL its `S` intermediate points while it is among the
+  newest `F` steps (the FRAUD WINDOW: 2048 × 32 B = 64 KB a step), then only their Merkle root — without the points a
+  verifier who finds a different result could not say WHICH segment is wrong. After the window a step is final. The contract recomputes `s` segments chosen from the step's own points (cost `K·s/S`: with
   `S = 1024`, `s = 8`, under 1% of the work). That sample is only a SPEED BUMP: chosen from the step's own points, a
   cheater can regenerate fake points until the sampled segments happen to be honest (half faked: ~1 in 256 tries). The
   SAFETY is the FRAUD PROOF: anyone recomputing a step fully and finding a wrong segment publishes it — that step and
   every one after it lose to any chain without it (the merge: the longest chain with no proven-bad step; equal length,
   the lowest output). So **every extender fully verifies the step it builds on** (twice the work of extending alone),
   and wallets may verify the steps their `until`s depend on.
+- **The merge is computed from the UNION of every step known** (built 10-08): a fake that wins by output is kept
+  beside the honest step it hides, never instead of it — a CANDIDATE (bounded, the lowest heights first, so a fake
+  racing ahead cannot push it out; above the chain's top too, a step whose parent is not known yet waits for it) — so
+  a fraud proof arriving in any order brings the honest step back. A fake that kept the true OUTPUT (forged inside)
+  loses only itself: what was built on it is honest and stays.
 - **MIX = entropy nobody controls.** `mix(n)` = the hash of EVERY contribution to the beacon's entropy bag that became
   final in step `n` (chain data only: an extender cannot leave one out). A contributor cannot steer the result:
   what their contribution does is unknown until `K` sequential iterations later, after the window has closed.
@@ -288,6 +294,13 @@ own. So:
 
 **Reading it:** a contract reads the beacon as one related contract (one of its 10). Its state keeps only recent steps
 (a day: older ones flushed to a tree, kept, as any history) — enough to judge "final at step n" and `until`s near now.
+
+**BUILT (10-08, `contracts-src/beacon`, `contracts/beacon.wasm`; 12 tests, 7 mutants all killed; live on fx/fy via
+`tools/beacon-live`):** small steps (K = 2²⁴) extended through both nodes alike; a FAKE step (output forged — it
+passed the 8-of-2048 sample on the FIRST try) plus a step on it accepted and leading at height 5; its fraud proof
+(found by recomputing in 0.97 s) with the honest step: both nodes at the honest height 4 within 5 s. ONE REAL STEP
+(K = 1.07 × 10⁹, 2048 segments, 8 sampled): computed in 61.5 s on the M4; 65 KB; the node accepted it in 1.2 s. Not
+yet: the entropy MIX (outputs are a clock, not yet unpredictable randomness).
 
 **MEASURED (10-08, `tools/beacon-bench`)** — sequential blake3, each iteration hashing the last 32-byte output:
 
@@ -357,7 +370,8 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    EQUIVOCATION kept and marked (§3b), proof of work on others' appends, cited entries checked on append,
    unit tests with mutations for every rule (a debit over balance, a double receive, a fork, a wrong carried balance);
    the supply and activity bags; the authority chain.
-4. The beacon contract (§5a), then the real network: finality margin, related fetch latency across the ring.
+4. The beacon contract (§5a) — BUILT (above); then the real network: finality margin, related fetch latency across
+   the ring.
 5. `allow`/`spend`, `offer`/`fill`/`lock`/`claim`/`refund`, multisig owners, ids (NFT, multi-token), vesting.
 6. Wallet verification: the citation walk, public checkpoints and vouches, fraud proofs naming maker and vouchers (§3a)
    — BEFORE any token carries value (below).

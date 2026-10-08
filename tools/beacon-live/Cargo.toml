@@ -1,0 +1,18 @@
+[package]
+name = "beacon-live"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "TOKEN step 4, live: the beacon on two nodes — extension, a fake past the sample, its fraud proof; one real calibrated step."
+[workspace]
+[dependencies]
+craftworks-beacon-contract = { path = "../../contracts-src/beacon", default-features = false }
+blake3 = "1"
+wire = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
+freenet-stdlib = { version = "0.10.0", features = ["net"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.27"
+futures = "0.3"
+anyhow = "1"
+[profile.release]
+opt-level = 3
