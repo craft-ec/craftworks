@@ -1326,6 +1326,13 @@ old key's addresses.
       month's bag their contribution spans when it is MADE; the card keeps contributions not yet settled. No usage made
       public. fy, page clock set to 10-11 06:00 (fx untouched since today): 10-08 "final" (its running row as written),
       10-09 "final" 7.83333333 all to network, 10-10 still open. CONTROL (HEAD, same clock): 10-08 "running", 10-09 absent.
+- TOKEN STANDARD (owner 10-08: own token on Freenet, blockchain BEHAVIOUR not its method; no authority/sequencer —
+  memory craftworks-token-behavior-not-blockchain). Step 1 SPIKE `tools/related-spike` (a lock and a fill, one code):
+  fx/fy private 2-node net, freenet 0.2.142 — A fill citing a missing lock: REFUSED "missing related contract" (60 ms);
+  B lock LOCK on fx → fill on fy: ACCEPTED (72 ms); C lock NOPE → fill: REFUSED "invalid put" (15 ms); D both on fy:
+  ACCEPTED (60 ms). So validation reads another contract's state and decides by it. NOT shown: the node FETCHING the
+  related contract over the network (fx relayed the lock's PUT to fy first) — measure on the real net via B. Source
+  limits (0.2.135): depth 1, ≤10 related, 10 s. Next: docs/TOKEN.md for review.
 - [ ] Proofs: DEFERRED until rewards pay (owner 10-07); low-cost plan in REWARDS §7 item 5. Next on the track: treasury
       pass + statements + shadow ledger (REWARDS §7 item 4).
 - Decisions recorded in REWARDS: carriers = holders weighted by demand; users are the keepers; never paid to own

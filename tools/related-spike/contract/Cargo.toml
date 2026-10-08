@@ -1,0 +1,25 @@
+[package]
+name = "related-spike-contract"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "SPIKE (10-08, token standard step 1): does a contract's validation read ANOTHER contract's state? Params [0] = a LOCK (any state); [1, id(32)] = a FILL, valid only if that lock's state starts with LOCK."
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+freenet-stdlib = { version = "0.10.0", features = ["contract"] }
+
+[features]
+default = ["freenet-main-contract"]
+freenet-main-contract = []
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
