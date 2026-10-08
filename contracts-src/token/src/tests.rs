@@ -887,3 +887,26 @@ fn a_checkpoint_that_is_not_the_chain_is_not_used() {
     wallet.checkpoints = vec![c];
     assert!(verify(&w, &mut wallet, 3).is_err());
 }
+
+#[test]
+fn a_long_history_is_walked_without_deepening_the_stack() {
+    // 400 accounts, each paying the next: verifying the last walks 400 chains — iteratively. (Run on a small thread
+    // stack, as a browser wallet's: a recursive walk overflows it.)
+    let r = std::thread::Builder::new().stack_size(256 * 1024).spawn(|| {
+        let n: u8 = 200;
+        // Owners 1..=n: 1 holds the genesis; k receives from k-1 and pays k+1.
+        let mut w = Two(HashMap::new());
+        put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+        put_at(w.chain(id_a(), 1), 2, Body::Send { to: pk(2), amount: 900 }, Some(1), 0);
+        for k in 2..n {
+            put_at(w.chain(id_a(), k), k, Body::Receive { from: pk(k - 1), nonce: nonce(k), amount: 900 - (k as u128 - 2), cited: 0 }, None, 0);
+            put_at(w.chain(id_a(), k), k + 1, Body::Send { to: pk(k + 1), amount: 900 - (k as u128 - 1) }, Some(k), 0);
+        }
+        let last = n;
+        put_at(w.chain(id_a(), last), last, Body::Receive { from: pk(last - 1), nonce: nonce(last), amount: 900 - (last as u128 - 2), cited: 0 }, None, 0);
+        let mut wallet = Wallet::new(pk(last));
+        (verify(&w, &mut wallet, last), wallet.reads.get())
+    }).unwrap().join().unwrap();
+    assert_eq!(r.0, Ok(()));
+    assert!(r.1 >= 199, "{} reads", r.1);
+}

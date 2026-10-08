@@ -424,7 +424,10 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    ~276 ms a step) is unreleased and unaudited; Nova/Sonobe do not merge proofs across chains yet. Revisit when a
    PCD library matures. To make the gate solid: (a) the app VERIFIES BEFORE IT DISPLAYS — never shows or spends
    unverified value ("verifying…" → "received" / "refused: forged, with its proof"); (b) the walk ITERATIVE (no
-   recursion depth in a browser wallet); (c) checkpoints, vouches and fraud proofs in public bags on the network.
+   recursion depth in a browser wallet) — DONE 10-08: an explicit task stack (a 200-account payment line verified on a
+   256 KB stack; CONTROL: the recursive walk overflowed it), and a cap of 100,000 chain reads per verification (a
+   wallet never spins forever); (c) checkpoints, vouches and fraud proofs in public bags on the network. An outside
+   review is NOT a launch blocker (owner 10-08: Bitcoin was reviewed as it was used).
 7. The Craftworks token: contributions as locks, payouts as claims.
 8. Batch-auction pools.
 

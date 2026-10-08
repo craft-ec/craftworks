@@ -9,6 +9,10 @@ use super::{check_window, sig_ok, Body, ChainParams, Definition, State, Why};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+/// The most chains one verification reads: past it, the payment is refused as too long to verify (a wallet never
+/// spins forever, whatever graph it is handed). Checkpoints keep honest walks far below it.
+pub const MAX_READS: usize = 100_000;
+
 /// "Chain `chain` is honest up to entry `seq`, whose hash is `head`, its balance after it `balance`" — signed by `by`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Checkpoint {
@@ -118,91 +122,108 @@ impl Wallet {
     }
 
     /// VERIFY `chain` up to entry `upto`: every citation, every cited chain up to the entry cited — to genesis or an
-    /// accepted checkpoint. `Err`: the proof of where it fails (in this chain or one it rests on).
+    /// accepted checkpoint. `Err`: the proof of where it fails (in this chain or one it rests on). ITERATIVE: an
+    /// explicit stack of tasks (a chain VISITED — read, checked, its cited chains queued — then EXITED once they are
+    /// verified), so a long history never deepens the call stack (a browser wallet's is small).
     pub fn verify(&mut self, src: &Source, chain: &ChainParams, upto: u64) -> Result<(), FraudProof> {
-        let id = chain.id();
-        if self.verified.get(&id).is_some_and(|(s, _)| *s >= upto) {
-            return Ok(());
+        enum Task {
+            Visit(ChainParams, u64),
+            Exit([u8; 32], u64, [u8; 32]),
         }
-        // A citation LOOP: this chain is being walked already, and now something needs it further than that.
-        if self.walking.borrow().iter().any(|(w, at)| *w == id && upto >= *at) {
-            return Err(FraudProof { chain: *chain, seq: upto, why: "a citation loop: money from nothing", checkpoint: None, vouchers: vec![] });
-        }
-        let read = |p: &ChainParams| {
-            self.reads.set(self.reads.get() + 1);
-            (src.chain)(p)
-        };
-        let s = read(chain).ok_or(FraudProof { chain: *chain, seq: upto, why: "a chain that is not there", checkpoint: None, vouchers: vec![] })?;
-        if s.entries.len() as u64 <= upto {
-            return Err(FraudProof { chain: *chain, seq: upto, why: "an entry that is not in its chain", checkpoint: None, vouchers: vec![] });
-        }
-        // An accepted checkpoint covering it: the chain is the one checkpointed (that entry's hash) — no walk.
-        if let Some(c) = self.accepted(chain, upto) {
-            if s.entries.get(c.seq as usize).is_some_and(|e| e.hash() == c.head && e.balance == c.balance) {
-                let head = c.head;
-                let seq = c.seq;
-                self.verified.insert(id, (seq, head));
-                return Ok(());
+        let mut tasks = vec![Task::Visit(*chain, upto)];
+        let proof = |c: &ChainParams, seq: u64, why: Why| FraudProof { chain: *c, seq, why, checkpoint: None, vouchers: vec![] };
+        let start = self.reads.get();
+        while let Some(t) = tasks.pop() {
+            if self.reads.get() - start > MAX_READS {
+                return Err(proof(chain, upto, "a history too long to verify"));
             }
-        }
-        let d = (src.definition)(&chain.definition).ok_or(FraudProof { chain: *chain, seq: 0, why: "a token whose definition is not there", checkpoint: None, vouchers: vec![] })?;
-        let mut prefix = s.clone();
-        prefix.entries.truncate(upto as usize + 1);
-        prefix.fork = None;
-        // EVERY citation checked (the shape rules, the window the whole chain) — each cited chain read once.
-        let cache: RefCell<HashMap<[u8; 32], Option<State>>> = RefCell::new(HashMap::new());
-        let cited = |def: &[u8; 32], owner: &[u8; 32]| {
-            let p = chain.at(*def, *owner);
-            cache.borrow_mut().entry(p.id()).or_insert_with(|| read(&p)).clone()
-        };
-        check_window(chain, &d, &prefix, &cited, usize::MAX).map_err(|(seq, why)| FraudProof { chain: *chain, seq, why, checkpoint: None, vouchers: vec![] })?;
-        // Then WALK: each cited entry's own chain, up to it.
-        self.walking.borrow_mut().push((id, upto));
-        let mut needs: Vec<(ChainParams, u64)> = Vec::new();
-        let seq_of = |p: &ChainParams, pick: &dyn Fn(&super::Entry) -> bool| cited(&p.definition, &p.owner).and_then(|c| c.entries.iter().find(|e| pick(e)).map(|e| e.seq));
-        for e in &prefix.entries {
-            match &e.body {
-                Body::Receive { from, nonce, .. } => {
-                    let p = chain.at(chain.definition, *from);
-                    if let Some(q) = seq_of(&p, &|x| x.nonce == *nonce) {
-                        needs.push((p, q));
-                    }
+            let (chain, upto) = match t {
+                Task::Exit(id, upto, head) => {
+                    self.walking.borrow_mut().pop();
+                    self.verified.insert(id, (upto, head));
+                    continue;
                 }
-                Body::Fill { offer, taker, lock, .. } => {
-                    let get = prefix.entries.iter().find_map(|x| match &x.body {
-                        Body::Offer { get, .. } if &x.nonce == offer => Some(*get),
-                        _ => None,
-                    });
-                    if let Some(get) = get {
-                        let p = chain.at(get, *taker);
-                        if let Some(q) = seq_of(&p, &|x| x.nonce == *lock) {
+                Task::Visit(c, u) => (c, u),
+            };
+            let id = chain.id();
+            if self.verified.get(&id).is_some_and(|(s, _)| *s >= upto) {
+                continue;
+            }
+            // A citation LOOP: this chain is on the path being walked, and now something needs it at or past where
+            // its walk began.
+            if self.walking.borrow().iter().any(|(w, at)| *w == id && upto >= *at) {
+                return Err(proof(&chain, upto, "a citation loop: money from nothing"));
+            }
+            let read = |p: &ChainParams| {
+                self.reads.set(self.reads.get() + 1);
+                (src.chain)(p)
+            };
+            let s = read(&chain).ok_or_else(|| proof(&chain, upto, "a chain that is not there"))?;
+            if s.entries.len() as u64 <= upto {
+                return Err(proof(&chain, upto, "an entry that is not in its chain"));
+            }
+            // An accepted checkpoint covering it: the chain is the one checkpointed (that entry's hash) — no walk.
+            if let Some(c) = self.accepted(&chain, upto) {
+                if s.entries.get(c.seq as usize).is_some_and(|e| e.hash() == c.head && e.balance == c.balance) {
+                    let (seq, head) = (c.seq, c.head);
+                    self.verified.insert(id, (seq, head));
+                    continue;
+                }
+            }
+            let d = (src.definition)(&chain.definition).ok_or_else(|| proof(&chain, 0, "a token whose definition is not there"))?;
+            let mut prefix = s.clone();
+            prefix.entries.truncate(upto as usize + 1);
+            prefix.fork = None;
+            // EVERY citation checked (the shape rules, the window the whole chain) — each cited chain read once.
+            let cache: RefCell<HashMap<[u8; 32], Option<State>>> = RefCell::new(HashMap::new());
+            let cited = |def: &[u8; 32], owner: &[u8; 32]| {
+                let p = chain.at(*def, *owner);
+                cache.borrow_mut().entry(p.id()).or_insert_with(|| read(&p)).clone()
+            };
+            check_window(&chain, &d, &prefix, &cited, usize::MAX).map_err(|(seq, why)| proof(&chain, seq, why))?;
+            // What it rests on: each cited entry's own chain, up to it.
+            let mut needs: Vec<(ChainParams, u64)> = Vec::new();
+            let seq_of = |p: &ChainParams, pick: &dyn Fn(&super::Entry) -> bool| cited(&p.definition, &p.owner).and_then(|c| c.entries.iter().find(|e| pick(e)).map(|e| e.seq));
+            for e in &prefix.entries {
+                match &e.body {
+                    Body::Receive { from, nonce, .. } => {
+                        let p = chain.at(chain.definition, *from);
+                        if let Some(q) = seq_of(&p, &|x| x.nonce == *nonce) {
                             needs.push((p, q));
                         }
                     }
-                }
-                Body::Claim { taker, lock, token, cited: at, .. } => {
-                    let pl = chain.at(chain.definition, *taker);
-                    if let Some(q) = seq_of(&pl, &|x| x.nonce == *lock) {
-                        needs.push((pl, q));
+                    Body::Fill { offer, taker, lock, .. } => {
+                        let get = prefix.entries.iter().find_map(|x| match &x.body {
+                            Body::Offer { get, .. } if &x.nonce == offer => Some(*get),
+                            _ => None,
+                        });
+                        if let Some(get) = get {
+                            let p = chain.at(get, *taker);
+                            if let Some(q) = seq_of(&p, &|x| x.nonce == *lock) {
+                                needs.push((p, q));
+                            }
+                        }
                     }
-                    let pf = chain.at(*token, chain.owner);
-                    if let Some(q) = seq_of(&pf, &|x| x.stamp == *at && matches!(x.body, Body::Fill { taker: t, lock: l, .. } if t == *taker && l == *lock)) {
-                        needs.push((pf, q));
+                    Body::Claim { taker, lock, token, cited: at, .. } => {
+                        let pl = chain.at(chain.definition, *taker);
+                        if let Some(q) = seq_of(&pl, &|x| x.nonce == *lock) {
+                            needs.push((pl, q));
+                        }
+                        let pf = chain.at(*token, chain.owner);
+                        if let Some(q) = seq_of(&pf, &|x| x.stamp == *at && matches!(x.body, Body::Fill { taker: t, lock: l, .. } if t == *taker && l == *lock)) {
+                            needs.push((pf, q));
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
+            }
+            // Exit after everything it rests on (a stack: pushed first, popped last).
+            self.walking.borrow_mut().push((id, upto));
+            tasks.push(Task::Exit(id, upto, prefix.entries[upto as usize].hash()));
+            for (p, q) in needs.into_iter().rev() {
+                tasks.push(Task::Visit(p, q));
             }
         }
-        let mut result = Ok(());
-        for (p, q) in needs {
-            if let Err(f) = self.verify(src, &p, q) {
-                result = Err(f);
-                break;
-            }
-        }
-        self.walking.borrow_mut().pop();
-        result?;
-        self.verified.insert(id, (upto, prefix.entries[upto as usize].hash()));
         Ok(())
     }
 
