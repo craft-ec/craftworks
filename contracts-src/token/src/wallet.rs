@@ -241,3 +241,79 @@ impl Wallet {
         Ok(())
     }
 }
+
+/// THE BAGS (TOKEN §3a) a token's wallets share: one per kind, named by the token, each item one record below.
+pub fn bag_name(kind: &str, definition: &[u8; 32]) -> String {
+    format!("token {kind} {}", definition.iter().map(|b| format!("{b:02x}")).collect::<String>())
+}
+
+/// The records' BYTES — exact: trailing bytes refused.
+pub mod bytes {
+    use super::{Checkpoint, FraudProof, Vouch};
+    use crate::ChainParams;
+
+    fn take<'a>(b: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
+        if b.len() < n {
+            return None;
+        }
+        let (x, rest) = b.split_at(n);
+        *b = rest;
+        Some(x)
+    }
+    fn arr<const N: usize>(b: &mut &[u8]) -> Option<[u8; N]> {
+        take(b, N)?.try_into().ok()
+    }
+
+    pub fn checkpoint(c: &Checkpoint) -> Vec<u8> {
+        [&c.chain.encode()[..], &c.seq.to_le_bytes(), &c.head, &c.balance.to_le_bytes(), &c.by, &c.sig].concat()
+    }
+    fn read_checkpoint(b: &mut &[u8]) -> Option<Checkpoint> {
+        let chain = ChainParams::decode(take(b, 1 + 32 * 4)?)?;
+        Some(Checkpoint { chain, seq: u64::from_le_bytes(arr(b)?), head: arr(b)?, balance: u128::from_le_bytes(arr(b)?), by: arr(b)?, sig: arr(b)? })
+    }
+    pub fn read_checkpoint_exact(mut b: &[u8]) -> Option<Checkpoint> {
+        let c = read_checkpoint(&mut b)?;
+        b.is_empty().then_some(c)
+    }
+
+    pub fn vouch(v: &Vouch) -> Vec<u8> {
+        [&v.checkpoint[..], &v.by, &v.sig].concat()
+    }
+    pub fn read_vouch(mut b: &[u8]) -> Option<Vouch> {
+        let v = Vouch { checkpoint: arr(&mut b)?, by: arr(&mut b)?, sig: arr(&mut b)? };
+        b.is_empty().then_some(v)
+    }
+
+    /// A fraud proof travels as its CLAIM — the chain, the entry, and (a false checkpoint) the checkpoint and its
+    /// vouchers; its WHY is re-derived by whoever checks it (they verify the chain themselves), never trusted.
+    pub fn fraud(f: &FraudProof) -> Vec<u8> {
+        let mut v = [&f.chain.encode()[..], &f.seq.to_le_bytes()].concat();
+        match &f.checkpoint {
+            None => v.push(0),
+            Some(c) => {
+                v.push(1);
+                v.extend_from_slice(&checkpoint(c));
+            }
+        }
+        v.extend_from_slice(&(f.vouchers.len() as u32).to_le_bytes());
+        for k in &f.vouchers {
+            v.extend_from_slice(k);
+        }
+        v
+    }
+    pub fn read_fraud(mut b: &[u8]) -> Option<FraudProof> {
+        let chain = ChainParams::decode(take(&mut b, 1 + 32 * 4)?)?;
+        let seq = u64::from_le_bytes(arr(&mut b)?);
+        let checkpoint = match take(&mut b, 1)?[0] {
+            0 => None,
+            1 => Some(read_checkpoint(&mut b)?),
+            _ => return None,
+        };
+        let n = u32::from_le_bytes(arr(&mut b)?) as usize;
+        if n > 1024 {
+            return None;
+        }
+        let vouchers = (0..n).map(|_| arr(&mut b)).collect::<Option<Vec<[u8; 32]>>>()?;
+        b.is_empty().then_some(FraudProof { chain, seq, why: "claimed: re-check it", checkpoint, vouchers })
+    }
+}

@@ -910,3 +910,28 @@ fn a_long_history_is_walked_without_deepening_the_stack() {
     assert_eq!(r.0, Ok(()));
     assert!(r.1 >= 199, "{} reads", r.1);
 }
+
+#[test]
+fn the_shared_records_round_trip_exactly() {
+    use crate::wallet::bytes;
+    let w = buried();
+    let c = checkpoint(&w, 2, 9);
+    let v = vouch(&c, 8);
+    assert_eq!(bytes::read_checkpoint_exact(&bytes::checkpoint(&c)), Some(c.clone()));
+    assert_eq!(bytes::read_vouch(&bytes::vouch(&v)), Some(v.clone()));
+    let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
+    let src = Source { chain: &chain, definition: &defs };
+    let mut wallet = Wallet::new(pk(1));
+    wallet.vouches = vec![v];
+    let proof = wallet.audit(&src, &c).unwrap_err();
+    let back = bytes::read_fraud(&bytes::fraud(&proof)).unwrap();
+    assert_eq!((back.chain, back.seq, back.checkpoint.clone(), back.vouchers.clone()), (proof.chain, proof.seq, proof.checkpoint.clone(), proof.vouchers.clone()));
+    // A claimed proof is CHECKED, not trusted: re-auditing its checkpoint gives the same verdict.
+    assert!(wallet.audit(&src, back.checkpoint.as_ref().unwrap()).is_err());
+    for b in [bytes::checkpoint(&c), bytes::vouch(&vouch(&c, 8)), bytes::fraud(&proof)] {
+        let mut longer = b.clone();
+        longer.push(0);
+        assert!(bytes::read_checkpoint_exact(&longer).is_none() && bytes::read_vouch(&longer).is_none() && bytes::read_fraud(&longer).is_none());
+    }
+    assert!(crate::wallet::bag_name("checkpoints", &id_a()).starts_with("token checkpoints "));
+}
