@@ -1,0 +1,29 @@
+[package]
+name = "craftworks-token-contract"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "TOKEN (docs/TOKEN.md): the standard's DEFINITION and ACCOUNT CHAIN — one code, two kinds by params. Step 3, the core: genesis, send, receive, burn; carried balances; merge; strict equivocation; work on others' appends."
+
+# Own workspace: own lockfile, so the wasm hash (= part of every token's and chain's id) is stable.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+freenet-stdlib = { version = "0.10.0", features = ["contract"], optional = true }
+blake3 = { version = "1", default-features = false }
+ed25519-dalek = { version = "=2.2.0", default-features = false }
+
+[features]
+default = ["freenet-main-contract"]
+freenet-main-contract = ["dep:freenet-stdlib"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

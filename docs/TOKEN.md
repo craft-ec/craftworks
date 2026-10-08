@@ -348,7 +348,11 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
 
 1. Related-contract validation — MEASURED (step 1, above).
 2. This design, reviewed.
-3. The contract (§3a's local rules): definition (state = params) + account chain (one device key) with
+3. BUILT (10-08, `contracts-src/token`, `contracts/token.wasm`; 18 tests, 9 mutants all killed or shown structural;
+   live on fx/fy via `tools/token-live`: a payment received on the other node — the definition and the sender fetched
+   — a double receive and a receive of a send that does not exist refused, two writer sends at one seq frozen to the
+   SAME fork on both nodes within 5 s). Not yet: the accumulator (needed with pruning), the supply and activity bags,
+   the authority chain. The contract (§3a's local rules): definition (state = params) + account chain (one device key) with
    `send`/`receive`/`burn`, CARRIED STATE and the accumulator, the lowest-hash merge between different writers,
    EQUIVOCATION kept and marked (§3b), proof of work on others' appends, cited entries checked on append,
    unit tests with mutations for every rule (a debit over balance, a double receive, a fork, a wrong carried balance);

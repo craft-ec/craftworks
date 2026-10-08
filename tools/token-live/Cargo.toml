@@ -1,0 +1,17 @@
+[package]
+name = "token-live"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "TOKEN step 3, live: the standard's contract on two nodes — a payment, a double receive, a missing send, an equivocation."
+[workspace]
+[dependencies]
+craftworks-token-contract = { path = "../../contracts-src/token", default-features = false }
+ed25519-dalek = { version = "=2.2.0", default-features = false }
+blake3 = "1"
+wire = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
+freenet-stdlib = { version = "0.10.0", features = ["net"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.27"
+futures = "0.3"
+anyhow = "1"

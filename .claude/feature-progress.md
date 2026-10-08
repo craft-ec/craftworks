@@ -1335,6 +1335,14 @@ old key's addresses.
   then the fill on fy: the lock "initial state installed" at 10:28:52.544 — the fill's validation fetched it from fx —
   and the fill ACCEPTED, 100 ms end to end. Still to measure: the same on the real network (latency, a far lock). Source
   limits (0.2.135): depth 1, ≤10 related, 10 s. Next: docs/TOKEN.md for review.
+- TOKEN STEP 3 (10-08): contract core BUILT — `contracts-src/token` (one code: definition + account chain), `genesis`/
+  `send`/`receive`/`burn`, carried balances, cell-wise merge (lowest hash between different writers; two writer entries
+  freeze the chain, earliest fork wins), receives among the last 9 entries checked against their senders (+ the
+  definition = 10 related), work (16 bits) on receives. 18 tests; mutants: 8 killed, 1 showed a dead check (post-fork
+  sends are structurally absent) → removed. Live fx/fy: definition ✓, A genesis+send ✓, B's receive on fy ✓ (75 ms,
+  fetched def + A), double receive REFUSED, receive of a missing send REFUSED, two writer sends at seq 2 via fx and
+  fy → both nodes the SAME frozen chain in ≤5 s. Deviation: no accumulator yet (whole chain scanned; needed once
+  pruning exists). Next: step 4 — the beacon contract, then the real network.
 - [ ] Proofs: DEFERRED until rewards pay (owner 10-07); low-cost plan in REWARDS §7 item 5. Next on the track: treasury
       pass + statements + shadow ledger (REWARDS §7 item 4).
 - Decisions recorded in REWARDS: carriers = holders weighted by demand; users are the keepers; never paid to own
