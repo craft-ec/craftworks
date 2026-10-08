@@ -56,7 +56,11 @@ export function mount(ctx, el) {
         /* The app's own actions on a second row of their own, the whole width (the theme's --cw-bar is two rows here). */
         .bar { flex-wrap: wrap; align-content: center; row-gap: 2px; height: auto; min-height: 48px; padding-block: 4px; }
         .bar::after { content: ""; order: 9; flex-basis: 100%; height: 0; }
-        .bar .actions { order: 10; flex: 1 1 0; } .bar .find { order: 11; } }
+        .bar .actions { order: 10; flex: 1 1 0; } .bar .find { order: 11; }
+        /* Its own action ("+ Upload", "+ New paste") on that row too: the first row (home, space, app, the inbox) fits.
+           The tabs scroll in what is left, their edge faded while more are past it. */
+        .bar .end { order: 10; }
+        .bar .actions.more { mask-image: linear-gradient(to right, #000 80%, transparent); } }
       .bar .inbox > button, .bar .end > *, .bar .actions > * { white-space: nowrap; }
       .bar .find, .bar .inbox, .bar .end { flex: 0 0 auto; }
       .bar .inbox { position: relative; }
@@ -341,6 +345,12 @@ export function mount(ctx, el) {
   // THE HEADER's HEIGHT, as it is (two rows on a phone when the app has actions): what panels below it place by.
   const barEl = el.querySelector(".bar");
   if (barEl && typeof ResizeObserver === "function") new ResizeObserver(() => document.documentElement.style.setProperty("--cw-bar", `${barEl.offsetHeight}px`)).observe(barEl);
+  // The app's tabs: `more` while some are past the right edge (faded there, on a phone: there is more to scroll to).
+  const tabsEl = el.querySelector(".actions");
+  const more = () => tabsEl.classList.toggle("more", tabsEl.scrollLeft + tabsEl.clientWidth < tabsEl.scrollWidth - 1);
+  tabsEl.addEventListener("scroll", more, { passive: true });
+  if (typeof ResizeObserver === "function") new ResizeObserver(more).observe(tabsEl);
+  new MutationObserver(more).observe(tabsEl, { childList: true, subtree: true });
   const spaceB = el.querySelector(".space-name");
   spaceB.onclick = () => ctx.require("spaces-panel").then(p => p.open());
   let naming = 0;
