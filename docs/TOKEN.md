@@ -247,13 +247,47 @@ same batch: an order is in epoch `e` if its lock names the pool's epoch `e` and 
 the batch is final once `e` and its grace are over. A later lock is in the next batch. Liquidity is pooled; prices are per
 epoch, not per trade.
 
-## 5a. The beacon (the clock) — to design
+## 5a. The beacon (the clock)
 
-Every `until`, epoch, grace and margin, and keeper assignment, read the BEACON. "The newest Discover head" (REWARDS §4)
-is not enough: it has no height, anyone appending to Discover nudges it, and each validation reading it spends one of
-its 10 related contracts. So: a DEDICATED BEACON CONTRACT — a HEIGHT that only grows and RANDOMNESS nobody knows
-ahead, advanced by a rule anyone checks (candidates: a hash chain each step of which costs a bounded proof of work;
-time-boxed commit-reveal by many). Its cadence is the owner's choice (§8). Designed before step 4.
+Every `until`, epoch, grace and margin — and keeper assignment, and any reward paid per unit of time — reads the
+BEACON: a HEIGHT that only grows, at a steady pace, and RANDOMNESS nobody knows ahead. "The newest Discover head"
+(REWARDS §4) is not one (no height; anyone appending to Discover nudges it). A Freenet contract has NO CLOCK — its
+validation is deterministic, so it cannot refuse a step "from the future". Without consensus, the one honest source of
+time is **SEQUENTIAL WORK**: a computation more machines cannot speed up (the idea of Solana's proof of history).
+
+**The beacon contract** (one instance per network; params: `K`, the work per step; `S`, its segments; `s`, how many
+are checked):
+
+- **A step** `n+1` = `out(n+1) = H^K(out(n) ‖ mix(n))` — `K` blake3 iterations, each on the last's output: they can only
+  be done one after another. `K` is set so a typical machine takes the CADENCE (e.g. a minute) per step.
+- **Anyone extends it** — any node or delegate that needs time to pass (a wallet waiting out a margin, a pool clearing).
+  One honest extender keeps it alive; two extending the same step compute the SAME output (nothing in it is theirs to
+  choose), so there is nothing to race for.
+- **Checked cheaply, proven wrong by anyone.** A step carries its `S` intermediate points (a Merkle root, and the
+  sampled ones opened). The contract recomputes `s` segments chosen from the step's own points (cost `K·s/S`: with
+  `S = 1024`, `s = 8`, under 1% of the work). Anyone may recompute a step fully; a wrong segment is a FRAUD PROOF —
+  that step and every one after it lose to any chain without it (the merge: the longest chain with no proven-bad
+  step; equal length, the lowest output).
+- **MIX = entropy nobody controls.** `mix(n)` = the hash of EVERY contribution to the beacon's entropy bag that became
+  final in step `n` (chain data only: an extender cannot leave one out). A contributor cannot steer the result:
+  what their contribution does is unknown until `K` sequential iterations later, after the window has closed.
+- **Randomness is used one step late.** `random(n) = out(n+1)`: a faster machine learns `out(n+1)` a little before
+  everyone else, but anything drawn from it was fixed a whole step earlier.
+
+**Its pace, honestly:** height grows with sequential speed, not wall time. One extender with a faster single core (or,
+later, special hardware for blake3) moves it faster for everyone — by that speed ratio, not by how many machines they
+own. So:
+- timeouts, margins and windows are counted in steps and set with room for that ratio;
+- anything that PAYS per step (staking, keeper issuance) caps its total by HEIGHT reached, never by elapsed steps
+  alone, and a token may pin such rewards to a schedule of heights;
+- every wallet compares the beacon's pace with its own clock and SHOWS when it runs fast — a pace far off wall time is
+  visible to everyone.
+
+**Reading it:** a contract reads the beacon as one related contract (one of its 10). Its state keeps only recent steps
+(a day: older ones flushed to a tree, kept, as any history) — enough to judge "final at step n" and `until`s near now.
+
+**To measure before building** (step 4): blake3 per second in a contract's WASM and natively (calibrates `K` and the
+sampled check's cost inside a validation); the pace spread across ordinary machines (the ratio above).
 
 ## 6. Supply rules (the menu)
 
@@ -284,7 +318,7 @@ The standard's first instance. What it changes in REWARDS:
 
 ## 8. Open in the architecture
 
-1. The BEACON's mechanism and cadence (§5a) — the clock of every `until`, epoch, grace and margin.
+1. The BEACON's cadence and `K`, `S`, `s` (§5a) — from measurement; its mechanism is designed (sequential work).
 2. The finality MARGIN — measured on the real network (step 4), set generously.
 3. Pooled lending (§0) — after pools work.
 
