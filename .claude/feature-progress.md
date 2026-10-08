@@ -1102,12 +1102,11 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       MIGRATES the old `channels` table (with each `chat/<cid>` policy → `meta.write.post`), then sets the act
       `config chat.channels = "items"`: readers stop opening the old table once that act is read.
 - [x] 2. SETTINGS: Chat section's channel rows edit the items (name, who may post) — no `chat/<id>` path policies.
-- [x] 3. PERSONAL CHAT (10-08, e9c344b): channel items in the personal space (`conversation.channels({kind:"person"})`);
-      each writer's messages in their own tail `ch-<cid>-<owner>`, pointed in `chat:<owner>/<cid>`; read by
-      `items.outsideSource(place)`, written by `items.outsidePart(place)` (generalized from a space to a place); a new
-      writer shown live by `index.watch` (the node's push of a followed bag). Settings → Permissions → Chat: who may
-      post/react, each channel's own rule. fx/fy: owner posts, fx reads+posts, fy sees fx live in 3 s, 🎉 crosses.
-      Found on the way (da9de36): Chat in a space without Chat on offered channels with nowhere to live — now says so.
+- [-] 3. PERSONAL CHAT: REMOVED (owner 10-08: "no such need" — a profile shows no chat, nobody to join). Built as
+      channel items in the personal space (e9c344b), reverted. Kept from that work: `index.watch` (a bag followed, new
+      writers by the node's push) — the spaces' outsiders read by it. Open question to the owner: conversations (direct,
+      group) as items of the personal space, as a space's channels are — not built.
+      Found on the way (da9de36, kept): Chat in a space without Chat on offered channels with nowhere to live.
 
 ## SPACE GROUP FORKS (owner 10-03: "detect and heal"; no single committer — owners are often offline)
 Cause (measured on 7509): two nodes committed from the same epoch at once (auto-admission on every owner/admin page

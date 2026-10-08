@@ -413,21 +413,19 @@ export async function start(ctx) {
       .filter(it => kinds.includes(it.kind))
       .map(it => ({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), pub: it.pub, comments: counts.get(it.id) ?? 0, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it), mayEdit: !!r.mayEdit?.(it) }));
   }
-  // OUTSIDERS' PART in a PLACE (public participation): what people not in it write there — kept in their own tails
-  // (only they write there), each writer pointed ONCE in the place's bag. Counted where its rule lets them (the room's
-  // one filter: `roles.mayWrite`) and not banned there. Members' (a person's channel: its owner's) are its room's.
-  // A PLACE: a SPACE (`{ id }`: its bag `space:<id>`, its items `space:<id>/…`, outsiders' part in their profiles) or
-  // a PERSON's CHANNEL (`{ key, bag, base, tail }`: outsiders' part in their own tail `tail` of it).
+  // OUTSIDERS' PART in a space (public participation): comments and votes by people not in it — kept in their own
+  // profiles (only they write there), each pointed ONCE in the space's bag (`space:<id>`). Counted where the space's
+  // policy lets them (`roles.mayWrite`, the one check: "anyone") and its acts have not banned them. Members' are its room's.
+  // `room`: the room's items as read; returns the outsiders' comments (`post`: the room post's id) and reactions (`item`:
+  // a room item's id, or an outsider's comment's ref).
   const spaceBag = sp => `space:${sp.id}`;
-  const placeOf = p => (p.bag ? p : { key: p.id, bag: spaceBag(p), base: `space:${p.id}/`, space: p.id, name: p.name ?? p.id.slice(0, 8) });
-  // A PLACE's OUTSIDERS' items, for its room (`content`'s `extra`: one more source beside its own — the room's one
-  // filter then applies: its rule, bans, hides). Each from its writer's own tail (theirs, whatever it claims), named in
-  // the room by `~<did>~<id>`; what it answers named as the room does.
+  // A SPACE's OUTSIDERS' items, for its public board room (`content`'s `extra`: one more source beside its members'
+  // feeds — the room's one filter then applies: its policy, bans, hides). Each from its writer's own PROFILE (only they
+  // write there: theirs, whatever it claims), named in the room by `~<did>~<id>`; what it answers named as the room does.
   const sources = new Map();
-  function outsideSource(place) {
-    const P = placeOf(place);
-    if (sources.has(P.key)) return sources.get(P.key);
-    const base = P.base;
+  function outsideSource(sp) {
+    if (sources.has(sp.id)) return sources.get(sp.id);
+    const base = `space:${sp.id}/`;
     const local = ref => {
       const s = String(ref ?? "");
       if (s.startsWith(base)) return s.slice(base.length);
@@ -439,74 +437,40 @@ export async function start(ctx) {
     const fire = () => fns.forEach(f => f());
     const seen = new Set();
     let loads = 0;
-    const tails = dids => Promise.all(dids.map(did => content.in({ kind: "public", did, name: P.tail }).catch(() => null))).then(rs => rs.filter(Boolean));
     const load = async () => {
-      const dids = (await index.pointers(P.bag, { show: true }).catch(() => [])).map(p => p?.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
-      ctx.log("posts", { what: `${P.name ?? P.key}: outsiders read (${++loads}) — ${dids.length} writer(s)` });
-      rooms = await (P.tail ? tails(dids) : profiles(dids));
+      const dids = (await index.pointers(spaceBag(sp), { show: true }).catch(() => [])).map(p => p?.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
+      ctx.log("posts", { what: `${sp.name ?? sp.id.slice(0, 8)}: outsiders read (${++loads}) — ${dids.length} writer(s)` });
+      rooms = await profiles(dids);
       for (const r of rooms) if (!seen.has(r)) seen.add(r), r.onChange(fire);
       fire();
     };
     load();
     index.onChange?.(() => load().catch(() => {}));
     // A writer new since: read when the node says the bag changed.
-    index.watch(P.bag, () => load().catch(() => {})).catch(() => {});
+    index.watch(spaceBag(sp), () => load().catch(() => {})).catch(() => {});
     const src = {
       items: () =>
         rooms.flatMap(r => [
           ...r
             .list()
-            .filter(it => !it.private && ((P.space && it.meta?.space === P.space) || String(it.in ?? "").startsWith(base)))
+            .filter(it => !it.private && (it.meta?.space === sp.id || String(it.in ?? "").startsWith(base)))
             .map(it => ({ ...it, id: `~${it.by}~${it.id}`, in: it.in ? local(it.in) : null, re: it.re ? local(it.re) : null, outsider: true })),
           ...r
             .reactions()
-            // (A channel's own tail holds nothing else: a reaction there may name another outsider's message.)
-            .filter(x => P.tail || String(x.item).startsWith(base))
+            .filter(x => String(x.item).startsWith(base))
             .map(x => ({ kind: "reaction", id: `~${x.by}~r~${x.item}~${x.emoji}`, item: local(x.item), emoji: x.emoji, by: x.by, at: x.at, ...(x.cred ? { meta: { cred: x.cred } } : {}), outsider: true })),
         ]),
       onChange: f => fns.push(f),
     };
-    sources.set(P.key, src);
+    sources.set(sp.id, src);
     return src;
   }
-  // This person's part in a place they are not in: pointed in its bag, once per page.
-  async function pointToSpace(place) {
-    const { bag } = placeOf(place);
-    if (pointed.has(bag)) return;
-    await index.point(bag, { from: await me() });
-    pointed.add(bag);
-  }
-  // THIS PERSON WRITING in a place whose room is another's (a person's channel: `content`'s `part`): in their own tail
-  // of it, what it answers by its ref the same for every reader (`<base><id>`, `<did>/<id>`), pointed in its bag.
-  // `rule`: the item whose rule says who may (`roles.mayWrite`), its credential cited where it names friends or followers.
-  function outsidePart(place, { rule = null } = {}) {
-    const P = placeOf(place);
-    const OUT = /^~(did:craftec:[^~]+)~(.+)$/;
-    const ref = id => (OUT.test(id) ? String(id).replace(OUT, "$1/$2") : `${P.base}${id}`);
-    const own = async () => content.in({ kind: "public", did: await me(), name: P.tail });
-    const mine = async id => {
-      const m = OUT.exec(String(id));
-      if (!m || m[1] !== (await me())) throw new Error("only its author changes an item");
-      return m[2];
-    };
-    const cred = action => (rule ? roles.credToCite(rule, action).catch(() => null) : null);
-    return {
-      async post(kind, body, { re = null, files = [] } = {}) {
-        const k = await cred("post");
-        if (rule && roles.mayWrite({ action: "post", item: rule, writer: await me(), cred: k }) === false) throw new Error("its rule does not let you post here");
-        // Its files PUBLIC: whoever reads the place reads them.
-        if (files.length) await (await ctx.require("files")).publicity(files, null, true).catch(e => ctx.log("posts", { what: `its files kept private: ${e.message}` }));
-        const id = await (await own()).post(kind, body, { re: re ? ref(re) : null, in: P.base, files, meta: k ? { cred: k } : null });
-        await pointToSpace(P);
-        return `~${await me()}~${id}`;
-      },
-      async react(id, emoji, on) {
-        await (await own()).react(ref(id), emoji, on, { cred: await cred(signals.byMark(emoji)?.action ?? "vote") });
-        if (on) await pointToSpace(P);
-      },
-      edit: async (id, body, opts) => (await own()).edit(await mine(id), body, opts),
-      remove: async id => (await own()).remove(await mine(id)),
-    };
+  // This person's part in a space they are not in: pointed in its bag, once per page.
+  async function pointToSpace(sp) {
+    const self = await me();
+    if (pointed.has(spaceBag(sp))) return;
+    await index.point(spaceBag(sp), { from: self });
+    pointed.add(spaceBag(sp));
   }
 
   // PROFILE posts: from their authors' tails; comments and votes from the tails known here (the reader's, whom they
@@ -1110,8 +1074,6 @@ export async function start(ctx) {
   };
   const told = (p, ref, kind, body) => (ref && mentionsTold(ref, kind, body).catch(() => {}), p);
   return {
-    outsideSource,
-    outsidePart,
     submit: async o => {
       const ref = await submit(o);
       if (o?.audience !== "private") told(null, ref, o?.kind ?? "post", o?.body);

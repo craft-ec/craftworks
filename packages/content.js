@@ -53,8 +53,7 @@ export async function start(ctx) {
       return t;
     }
     if (container?.kind === "public") {
-      // (`tail`: its name, where `name` is what it is shown as — a person's channel.)
-      const t = await (await ctx.require("directory")).publicOf(container.did, container.tail ?? container.name);
+      const t = await (await ctx.require("directory")).publicOf(container.did, container.name);
       if (!t) throw new Error("that person has no key log yet");
       return t;
     }
@@ -63,11 +62,7 @@ export async function start(ctx) {
   }
 
   // `extra`: more items, already attributed ({ items(), onChange }: a space's outsiders, `items`) — through the same filter.
-  // A container may carry its own: `extra` (as above), `item` (its RULE: a channel item — who may post, react — whatever
-  // place it is in) and `part` (`items.outsidePart`: how this person writes there from their own tail, where the
-  // table is another's: a person's channel).
   async function in_(container, { paged = false, extra = null } = {}) {
-    extra ??= container?.extra ?? null;
     // PAGED (phase 3, Reads): the table opened LAZY — only the newest page read (`older()` for the next), never the
     // whole history. (A table read from outside or a person's public tail: read whole, as before.)
     paged = paged && !container?.outside && container?.kind !== "public";
@@ -203,7 +198,7 @@ export async function start(ctx) {
         // signal's policy action (`signals`: a view, a save, a share by who may read; a vote by who may vote).
         .filter((it, _, all) => {
           const action = it.kind === "reaction" ? (S.byMark(it.emoji)?.action ?? ACTION.reaction) : ACTION[it.kind];
-          return !(((governed && app) || container.item) && action && !allowed(action, it.by, it, all, it.at));
+          return !(governed && app && action && !allowed(action, it.by, it, all, it.at));
         });
     };
     // WHICH RULE: a channel's (its path); on a board, THE ONE CHECK (`roles.mayWrite`, the same for a personal item):
@@ -219,8 +214,8 @@ export async function start(ctx) {
     };
     const R = await ctx.require("roles");
     const allowed = (action, did, it, all, at) => {
-      // A CHANNEL with its item: by that item's rule (its own, else its place's Chat policy — `roles.mayWrite`).
-      if (container.item) return R.mayWrite({ action, item: container.item, writer: did, cred: it?.meta?.cred ?? it?.cred ?? null, r, at }) === true;
+      // A CHANNEL with its item: by that item's rule (its own, else the space's Chat policy — `roles.mayWrite`).
+      if (container.kind === "channel" && container.item) return R.mayWrite({ action, item: container.item, writer: did, r, at }) === true;
       if (app !== "board") return r.allows(action, did, app, at);
       const root = action === "post" ? { kind: it.kind, by: null, meta: {} } : rootOf(it, all) ?? { kind: "post", by: null, meta: {} };
       return R.mayWrite({ action, item: root, writer: did, cred: it.meta?.cred ?? it.cred ?? null, r, at }) === true;
@@ -266,7 +261,7 @@ export async function start(ctx) {
     // A credential read (a friend's or a follower's): what it lets count, counted.
     R.onChecked(() => changed.forEach(f => f()));
     lists.onChange(() => changed.forEach(f => f()));
-    const room = {
+    return {
       list,
       // PAGED: the next older page (how many items it brought); whether any are left.
       older,
@@ -280,8 +275,8 @@ export async function start(ctx) {
       onChange: f => changed.push(f),
       mayRemove: it => it.by === me || (governed && !!r?.can(me, "moderate")),
       // May this person post here now (the app's setting; a conversation: always).
-      mayPost: (kind = "post") => !((governed && app) || container.item) || allowed("post", me, { kind }, [], Infinity),
-      may: (action, kind = "post") => !((governed && app) || container.item) || allowed(action, me, { kind }, [], Infinity),
+      mayPost: (kind = "post") => !(governed && app) || allowed("post", me, { kind }, [], Infinity),
+      may: (action, kind = "post") => !(governed && app) || allowed(action, me, { kind }, [], Infinity),
       // The rule of writing about ITEM `id` (a comment, a vote): may this person, and the credential they cite.
       mayAbout: async (id, action) => {
         const it = list().find(x => x.id === id);
@@ -353,8 +348,6 @@ export async function start(ctx) {
         await m.hide(container.messages, id);
       },
     };
-    // ANOTHER's table this person writes about from their own (`part`): its writes theirs.
-    return container.part && open && container.did !== me ? { ...room, ...container.part } : room;
   }
 
   return { in: in_ };
