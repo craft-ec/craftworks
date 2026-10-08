@@ -1,5 +1,7 @@
-//! TOKEN step 3, LIVE: the standard's contract on two nodes.
+//! TOKEN, LIVE on two nodes, with a beacon ticking: the core (step 3), allowances (5a), swaps with the append rules
+//! (5b).
 use anyhow::{bail, Context, Result};
+use craftworks_beacon_contract as B;
 use craftworks_token_contract as T;
 use ed25519_dalek::{Signer, SigningKey};
 use freenet_stdlib::prelude::*;
@@ -64,174 +66,269 @@ async fn get(ws: &str, id: [u8; 32]) -> Result<Option<Vec<u8>>> {
     }
 }
 
+
 fn key(n: u8) -> SigningKey {
     SigningKey::from_bytes(&[n; 32])
 }
 fn pk(n: u8) -> [u8; 32] {
     key(n).verifying_key().to_bytes()
 }
-fn push(s: &mut T::State, body: T::Body, n: [u8; 16], by: Option<u8>) {
+
+/// The world of one run: the token code, the two nodes, the beacon (kept ticking by a task), a salt for fresh ids.
+struct W {
+    code: Vec<u8>,
+    ch: [u8; 32],
+    x: String,
+    y: String,
+    beacon: [u8; 32],
+    salt: [u8; 16],
+}
+
+impl W {
+    async fn now(&self) -> Result<u64> {
+        Ok(get(&self.x, self.beacon).await?.and_then(|b| B::wire::decode(&b)).map_or(0, |s| s.height()))
+    }
+    /// Wait until the beacon reaches `h`.
+    async fn until(&self, h: u64) -> Result<u64> {
+        let t0 = Instant::now();
+        loop {
+            let n = self.now().await?;
+            if n >= h {
+                return Ok(n);
+            }
+            if t0.elapsed() > Duration::from_secs(300) {
+                bail!("the beacon did not reach {h} (at {n})");
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+    fn n(&self, k: u8) -> [u8; 16] {
+        let mut v = self.salt;
+        v[15] ^= k;
+        v[14] ^= 0x5a;
+        v
+    }
+    fn def(&self, genesis: u8, name: &[u8], k: u8) -> T::Definition {
+        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: pk(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2 }
+    }
+    fn chain(&self, token: [u8; 32], o: u8) -> T::ChainParams {
+        T::ChainParams { code_hash: self.ch, definition: token, owner: pk(o), beacon: self.beacon }
+    }
+    async fn put_def(&self, d: &T::Definition) -> Result<[u8; 32]> {
+        put(&self.x, container(&self.code, d.encode()), d.encode()).await?;
+        Ok(T::id(&self.ch, &d.encode()))
+    }
+    async fn put_chain(&self, ws: &str, token: [u8; 32], o: u8, s: &T::State) -> Result<(String, u128)> {
+        put(ws, container(&self.code, self.chain(token, o).encode()), s.encode()).await
+    }
+    async fn get_chain(&self, ws: &str, token: [u8; 32], o: u8) -> Result<Option<T::State>> {
+        Ok(get(ws, self.chain(token, o).id()).await?.and_then(|b| T::State::decode(&b)))
+    }
+}
+
+/// Append an entry at `stamp`: signed by `by`, a spender (`spender`), or with work.
+fn push(s: &mut T::State, body: T::Body, n: [u8; 16], by: Option<u8>, stamp: u64) {
+    push_as(s, body, n, by.map(Signer_::Owner).unwrap_or(Signer_::Work), stamp)
+}
+enum Signer_ {
+    Owner(u8),
+    Spender(u8),
+    Work,
+}
+fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u64) {
     let bal = s.balance();
     let balance = match &body {
         T::Body::Genesis { amount } => *amount,
-        T::Body::Send { amount, .. } | T::Body::Burn { amount } => bal - amount,
-        T::Body::Receive { amount, .. } => bal + amount,
-        T::Body::Allow { .. } => bal,
-        T::Body::Spend { amount, .. } => bal - amount,
+        T::Body::Send { amount, .. } | T::Body::Burn { amount } | T::Body::Spend { amount, .. } | T::Body::Lock { amount, .. } | T::Body::Fill { amount, .. } => bal - amount,
+        T::Body::Receive { amount, .. } | T::Body::Claim { amount, .. } => bal + amount,
+        T::Body::Allow { .. } | T::Body::Offer { .. } => bal,
+        T::Body::Refund { lock } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Lock { amount, .. } if &x.nonce == lock => Some(*amount), _ => None }).unwrap_or(0),
     };
-    let mut e = T::Entry { seq: s.entries.len() as u64, prev: s.head(), nonce: n, body, balance, auth: T::Auth::Work(0) };
-    e.auth = match by {
-        Some(k) => T::Auth::Sig(key(k).sign(&e.message()).to_bytes()),
-        None => {
-            let m = e.message();
-            T::Auth::Work((0u64..).find(|w| T::work_ok(&m, *w)).unwrap())
-        }
+    let mut e = T::Entry { seq: s.entries.len() as u64, prev: s.head(), nonce: n, stamp, body, balance, auth: T::Auth::Work(0) };
+    let m = e.message();
+    e.auth = match who {
+        Signer_::Owner(k) => T::Auth::Sig(key(k).sign(&m).to_bytes()),
+        Signer_::Spender(k) => T::Auth::Delegated { by: pk(k), sig: key(k).sign(&m).to_bytes() },
+        Signer_::Work => T::Auth::Work((0u64..).find(|w| T::work_ok(&m, *w)).unwrap()),
     };
     s.entries.push(e);
+}
+fn stamp_of(s: &T::State, n: [u8; 16]) -> u64 {
+    s.entries.iter().find(|e| e.nonce == n).map_or(0, |e| e.stamp)
+}
+
+/// A beacon on X, extended in the background (a small step: ~4 a second at most; one a second here).
+async fn start_beacon(code: &[u8], x: &str, salt: [u8; 16]) -> Result<[u8; 32]> {
+    let p = B::Params { k: 1 << 20, segs: 256, sample: 8, window: 2, keep: 600, seed: *blake3::hash(&salt).as_bytes() };
+    let c = || container(code, p.encode());
+    let id: [u8; 32] = c().key().id().as_bytes().try_into().unwrap();
+    let first = B::State::default().extend(&p);
+    put(x, c(), B::wire::encode(&first)).await?;
+    let (code, x) = (code.to_vec(), x.to_string());
+    tokio::spawn(async move {
+        let mut s = first;
+        loop {
+            tokio::time::sleep(Duration::from_millis(1000)).await;
+            s = s.extend(&p);
+            let _ = put(&x, container(&code, p.encode()), B::wire::encode(&s)).await;
+        }
+    });
+    Ok(id)
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // token-live <token.wasm> <ws X> <ws Y> [net <rounds>]
+    // token-live <token.wasm> <beacon.wasm> <ws X> <ws Y> [basic|allow|swap]
     let a: Vec<String> = std::env::args().collect();
     let code = std::fs::read(&a[1])?;
-    let (x, y) = (a[2].as_str(), a[3].as_str());
-    if a.get(4).map(String::as_str) == Some("allow") {
-        return allow(&code, x, y).await;
-    }
-    if a.get(4).map(String::as_str) == Some("net") {
-        return net(&code, x, y, a.get(5).and_then(|n| n.parse().ok()).unwrap_or(3)).await;
-    }
-    let ch = *blake3::hash(&code).as_bytes();
+    let bcode = std::fs::read(&a[2])?;
+    let (x, y) = (a[3].clone(), a[4].clone());
     let salt: [u8; 16] = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_nanos().to_le_bytes();
-    let def = T::Definition { code_hash: ch, decimals: 8, min_send: 10, genesis_owner: pk(1), genesis_amount: 1000, name: b"Live".to_vec(), nonce: salt };
-    let did = T::id(&ch, &def.encode());
-    let chain = |o: u8| T::ChainParams { code_hash: ch, definition: did, owner: pk(o) };
-    let cp = |o: u8| container(&code, chain(o).encode());
-    let n = |k: u8| { let mut v = salt; v[15] ^= k; v };
+    let beacon = start_beacon(&bcode, &x, salt).await?;
+    let w = W { ch: *blake3::hash(&code).as_bytes(), code, x, y, beacon, salt };
+    w.until(2).await?;
+    println!("beacon {} on X, ticking; height {}", hex(&beacon[..4]), w.now().await?);
+    for mode in a.get(5).map_or(vec!["basic", "allow", "swap"], |m| vec![m.as_str()]) {
+        match mode {
+            "basic" => basic(&w).await?,
+            "allow" => allow(&w).await?,
+            "swap" => swap(&w).await?,
+            m => bail!("no mode {m}"),
+        }
+    }
+    Ok(())
+}
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
 
-    let (s, ms) = put(x, container(&code, def.encode()), def.encode()).await?;
-    println!("1  definition on X: {s} ({ms} ms)");
-
+/// A payment; a double receive; a receive of a send that does not exist; two writer sends at one seq.
+async fn basic(w: &W) -> Result<()> {
+    println!("— basic");
+    let ta = w.put_def(&w.def(1, b"Basic", 1)).await?;
+    let h = w.now().await?;
     let mut ca = T::State::default();
-    push(&mut ca, T::Body::Genesis { amount: 1000 }, n(1), Some(1));
-    push(&mut ca, T::Body::Send { to: pk(2), amount: 300 }, n(2), Some(1));
-    let (s, ms) = put(x, cp(1), ca.encode()).await?;
-    println!("2  A: genesis 1000, send 300 to B, on X: {s} ({ms} ms)");
-
+    push(&mut ca, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h);
+    push(&mut ca, T::Body::Send { to: pk(2), amount: 300 }, w.n(2), Some(1), h);
+    println!("1  A: genesis, send 300 to B, on X: {}", w.put_chain(&w.x, ta, 1, &ca).await?.0);
+    let r = w.until(h + 2).await?;
     let mut cb = T::State::default();
-    push(&mut cb, T::Body::Receive { from: pk(1), nonce: n(2), amount: 300 }, n(2), None);
-    let (s, ms) = put(y, cp(2), cb.encode()).await?;
-    println!("3  B: receive it, on Y (fetches the definition and A): {s} ({ms} ms)");
-
+    push(&mut cb, T::Body::Receive { from: pk(1), nonce: w.n(2), amount: 300, cited: h }, w.n(2), None, r);
+    println!("2  B receives it a margin later, on Y: {}", w.put_chain(&w.y, ta, 2, &cb).await?.0);
+    let r = w.now().await?;
     let mut twice = cb.clone();
-    push(&mut twice, T::Body::Receive { from: pk(1), nonce: n(2), amount: 300 }, n(3), None);
-    let (s, ms) = put(y, cp(2), twice.encode()).await?;
-    let held = get(y, chain(2).id()).await?.and_then(|b| T::State::decode(&b));
-    println!("4  B: receive it AGAIN, on Y: {s} ({ms} ms) — Y holds B with {} entr(ies), balance {}", held.as_ref().map_or(0, |h| h.entries.len()), held.as_ref().map_or(0, |h| h.balance()));
-
+    push(&mut twice, T::Body::Receive { from: pk(1), nonce: w.n(2), amount: 300, cited: h }, w.n(3), None, r);
+    let (s, _) = w.put_chain(&w.y, ta, 2, &twice).await?;
+    println!("3  B receives it AGAIN, on Y: {s} — Y holds balance {}", w.get_chain(&w.y, ta, 2).await?.map_or(0, |s| s.balance()));
     let mut cc = T::State::default();
-    push(&mut cc, T::Body::Receive { from: pk(1), nonce: n(9), amount: 50 }, n(9), None);
-    let (s, ms) = put(y, cp(3), cc.encode()).await?;
-    println!("5  C: receive a send that does not exist, on Y: {s} ({ms} ms)");
-
-    let mut ax = ca.clone();
-    push(&mut ax, T::Body::Send { to: pk(2), amount: 600 }, n(4), Some(1));
-    let mut ay = ca.clone();
-    push(&mut ay, T::Body::Send { to: pk(3), amount: 600 }, n(5), Some(1));
-    let (s1, _) = put(x, cp(1), ax.encode()).await?;
-    let (s2, _) = put(y, cp(1), ay.encode()).await?;
-    println!("6  A signs two sends at seq 2: via X {s1}, via Y {s2}");
-    for t in [5u64, 15, 30] {
-        tokio::time::sleep(Duration::from_secs(if t == 5 { 5 } else { 10 })).await;
-        let gx = get(x, chain(1).id()).await?.and_then(|b| T::State::decode(&b));
-        let gy = get(y, chain(1).id()).await?.and_then(|b| T::State::decode(&b));
-        let desc = |g: &Option<T::State>| g.as_ref().map_or("none".to_string(), |s| format!("{} entries, fork {}", s.entries.len(), if s.fork.is_some() { "YES" } else { "no" }));
-        println!("   after ~{t} s: X holds {} · Y holds {} · same: {}", desc(&gx), desc(&gy), gx.is_some() && gx == gy);
-    }
+    push(&mut cc, T::Body::Receive { from: pk(1), nonce: w.n(9), amount: 50, cited: h }, w.n(9), None, r);
+    println!("4  C receives a send that does not exist, on Y: {}", w.put_chain(&w.y, ta, 3, &cc).await?.0);
+    let r = w.now().await?;
+    let (mut ax, mut ay) = (ca.clone(), ca.clone());
+    push(&mut ax, T::Body::Send { to: pk(2), amount: 600 }, w.n(4), Some(1), r);
+    push(&mut ay, T::Body::Send { to: pk(3), amount: 600 }, w.n(5), Some(1), r);
+    let (s1, s2) = tokio::join!(w.put_chain(&w.x, ta, 1, &ax), w.put_chain(&w.y, ta, 1, &ay));
+    println!("5  A signs two sends at one seq: via X {}, via Y {}", s1?.0, s2?.0);
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let (gx, gy) = (w.get_chain(&w.x, ta, 1).await?, w.get_chain(&w.y, ta, 1).await?);
+    println!("   after ~5 s: X fork {}, Y fork {}, same {}", gx.as_ref().is_some_and(|s| s.fork.is_some()), gy.as_ref().is_some_and(|s| s.fork.is_some()), gx.is_some() && gx == gy);
     Ok(())
 }
 
-/// THE REAL NETWORK (TOKEN step 4): per round, a fresh token — (1) A's chain on X, B's receive on Y: how long Y takes
-/// to fetch A across the network and accept; (2) A signs two sends at one seq, one via X and one via Y at once: how
-/// long until both nodes hold the same frozen chain (the finality margin's raw number).
-async fn net(code: &[u8], x: &str, y: &str, rounds: u32) -> Result<()> {
-    let ch = *blake3::hash(code).as_bytes();
-    for r in 0..rounds {
-        let salt: [u8; 16] = (SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_nanos() ^ r as u128).to_le_bytes();
-        let def = T::Definition { code_hash: ch, decimals: 8, min_send: 10, genesis_owner: pk(1), genesis_amount: 1000, name: b"Net".to_vec(), nonce: salt };
-        let did = T::id(&ch, &def.encode());
-        let chain = |o: u8| T::ChainParams { code_hash: ch, definition: did, owner: pk(o) };
-        let cp = |o: u8| container(code, chain(o).encode());
-        let n = |k: u8| { let mut v = salt; v[15] ^= k; v };
-        let (d, _) = put(x, container(code, def.encode()), def.encode()).await?;
-        let mut ca = T::State::default();
-        push(&mut ca, T::Body::Genesis { amount: 1000 }, n(1), Some(1));
-        push(&mut ca, T::Body::Send { to: pk(2), amount: 300 }, n(2), Some(1));
-        let (sa, msa) = put(x, cp(1), ca.encode()).await?;
-        let mut cb = T::State::default();
-        push(&mut cb, T::Body::Receive { from: pk(1), nonce: n(2), amount: 300 }, n(2), None);
-        let (sb, msb) = put(y, cp(2), cb.encode()).await?;
-        println!("round {r}: definition on X {d}; A on X {sa} ({msa} ms); B's receive on Y {sb} in {msb} ms (Y fetching the definition and A across the network)");
-        // Two writer sends at seq 2, at once, through the two nodes.
-        let mut ax = ca.clone();
-        push(&mut ax, T::Body::Send { to: pk(2), amount: 600 }, n(4), Some(1));
-        let mut ay = ca.clone();
-        push(&mut ay, T::Body::Send { to: pk(3), amount: 600 }, n(5), Some(1));
-        let t0 = Instant::now();
-        let (rx, ry) = tokio::join!(put(x, cp(1), ax.encode()), put(y, cp(1), ay.encode()));
-        let (rx, ry) = (rx?.0, ry?.0);
-        let mut agreed = None;
-        while t0.elapsed() < Duration::from_secs(240) {
-            let (gx, gy) = tokio::join!(get(x, chain(1).id()), get(y, chain(1).id()));
-            let (gx, gy) = (gx?.and_then(|b| T::State::decode(&b)), gy?.and_then(|b| T::State::decode(&b)));
-            if gx.as_ref().is_some_and(|s| s.fork.is_some()) && gx == gy {
-                agreed = Some(t0.elapsed().as_millis());
-                break;
-            }
-            tokio::time::sleep(Duration::from_secs(2)).await;
-        }
-        match agreed {
-            Some(ms) => println!("         two sends at seq 2 (via X {rx}, via Y {ry}): both nodes the SAME frozen chain after {ms} ms"),
-            None => println!("         two sends at seq 2 (via X {rx}, via Y {ry}): NOT agreed within 240 s"),
-        }
-    }
-    Ok(())
-}
-
-/// STEP 5a, LIVE: A allows S 200; S's spend of 150 to C through Y; C receives it through X; a spend past what is left
-/// is refused.
-async fn allow(code: &[u8], x: &str, y: &str) -> Result<()> {
-    let ch = *blake3::hash(code).as_bytes();
-    let salt: [u8; 16] = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_nanos().to_le_bytes();
-    let def = T::Definition { code_hash: ch, decimals: 8, min_send: 10, genesis_owner: pk(1), genesis_amount: 1000, name: b"Allow".to_vec(), nonce: salt };
-    let did = T::id(&ch, &def.encode());
-    let chain = |o: u8| T::ChainParams { code_hash: ch, definition: did, owner: pk(o) };
-    let cp = |o: u8| container(code, chain(o).encode());
-    let n = |k: u8| { let mut v = salt; v[15] ^= k; v };
-    put(x, container(code, def.encode()), def.encode()).await?;
+/// S spends A's within an allowance; past it, refused.
+async fn allow(w: &W) -> Result<()> {
+    println!("— allow");
+    let ta = w.put_def(&w.def(1, b"Allow", 2)).await?;
+    let h = w.now().await?;
     let mut ca = T::State::default();
-    push(&mut ca, T::Body::Genesis { amount: 1000 }, n(1), Some(1));
-    push(&mut ca, T::Body::Allow { spender: pk(5), limit: 200 }, n(2), Some(1));
-    let (s, ms) = put(x, cp(1), ca.encode()).await?;
-    println!("1  A: genesis, allow S 200, on X: {s} ({ms} ms)");
-    let spend = |st: &mut T::State, k: u8, amount: u128| {
-        let mut e = T::Entry { seq: st.entries.len() as u64, prev: st.head(), nonce: n(k), body: T::Body::Spend { to: pk(3), amount }, balance: st.balance() - amount, auth: T::Auth::Work(0) };
-        e.auth = T::Auth::Delegated { by: pk(5), sig: key(5).sign(&e.message()).to_bytes() };
-        st.entries.push(e);
-    };
+    push(&mut ca, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h);
+    push(&mut ca, T::Body::Allow { spender: pk(5), limit: 200 }, w.n(2), Some(1), h);
+    println!("1  A: genesis, allow S 200, on X: {}", w.put_chain(&w.x, ta, 1, &ca).await?.0);
+    let r = w.now().await?;
     let mut cs = ca.clone();
-    spend(&mut cs, 3, 150);
-    let (s, ms) = put(y, cp(1), cs.encode()).await?;
-    println!("2  S spends 150 of A's to C, written through Y: {s} ({ms} ms)");
+    push_as(&mut cs, T::Body::Spend { to: pk(3), amount: 150 }, w.n(3), Signer_::Spender(5), r);
+    println!("2  S spends 150 to C, through Y: {}", w.put_chain(&w.y, ta, 1, &cs).await?.0);
+    let r2 = w.until(r + 2).await?;
     let mut cc = T::State::default();
-    push(&mut cc, T::Body::Receive { from: pk(1), nonce: n(3), amount: 150 }, n(3), None);
-    let (s, ms) = put(x, cp(3), cc.encode()).await?;
-    println!("3  C receives it, through X (fetching A): {s} ({ms} ms)");
+    push(&mut cc, T::Body::Receive { from: pk(1), nonce: w.n(3), amount: 150, cited: r }, w.n(3), None, r2);
+    println!("3  C receives it, through X: {}", w.put_chain(&w.x, ta, 3, &cc).await?.0);
+    let r3 = w.now().await?;
     let mut over = cs.clone();
-    spend(&mut over, 4, 51);
-    let (s, ms) = put(y, cp(1), over.encode()).await?;
-    let held = get(y, chain(1).id()).await?.and_then(|b| T::State::decode(&b));
-    println!("4  S spends 51 more (50 left), through Y: {s} ({ms} ms) — Y holds A with balance {}", held.map_or(0, |h| h.balance()));
+    push_as(&mut over, T::Body::Spend { to: pk(3), amount: 51 }, w.n(4), Signer_::Spender(5), r3);
+    println!("4  S spends 51 more (50 left), through Y: {}", w.put_chain(&w.y, ta, 1, &over).await?.0);
+    Ok(())
+}
+
+/// THE SWAP (step 5b): M offers 2 A per 1 B; T locks 100 B; once final, the fill through Y; T receives; anyone claims
+/// for M. And what the append rules refuse: a fill before its lock is final, a refund before its deadline, a refund
+/// of a filled lock.
+async fn swap(w: &W) -> Result<()> {
+    println!("— swap");
+    let (m, t) = (1u8, 2u8);
+    let ta = w.put_def(&w.def(m, b"SwapA", 3)).await?;
+    let tb = w.put_def(&w.def(t, b"SwapB", 4)).await?;
+    let h = w.now().await?;
+    let mut ma = T::State::default();
+    push(&mut ma, T::Body::Genesis { amount: 1000 }, w.n(1), Some(m), h);
+    w.put_chain(&w.x, ta, m, &ma).await?;
+    let h = w.now().await?;
+    push(&mut ma, T::Body::Offer { get: tb, give: 2, per: 1, max: 400, until: h + 1000 }, w.n(10), Some(m), h);
+    println!("1  M offers 2 A per 1 B (an append, on X): {}", w.put_chain(&w.x, ta, m, &ma).await?.0);
+    let mut tbc = T::State::default();
+    push(&mut tbc, T::Body::Genesis { amount: 1000 }, w.n(1), Some(t), h);
+    w.put_chain(&w.y, tb, t, &tbc).await?;
+    let h = w.now().await?;
+    let deadline = h + 40;
+    push(&mut tbc, T::Body::Lock { to: pk(m), amount: 100, until: deadline, token: ta, offer: w.n(10) }, w.n(20), Some(t), h);
+    println!("2  T locks 100 B for it, deadline {deadline} (now {h}), on Y: {}", w.put_chain(&w.y, tb, t, &tbc).await?.0);
+    let lock_at = stamp_of(&tbc, w.n(20));
+    // Too soon: the lock not final yet.
+    let r = w.now().await?;
+    let mut early = ma.clone();
+    push(&mut early, T::Body::Fill { offer: w.n(10), taker: pk(t), lock: w.n(20), amount: 200, cited: lock_at, until: deadline }, w.n(30), None, r);
+    if r < lock_at + 2 {
+        println!("3  the fill BEFORE the lock is final (now {r}), through Y: {}", w.put_chain(&w.y, ta, m, &early).await?.0);
+    }
+    let r = w.until(lock_at + 2).await?;
+    let mut filled = ma.clone();
+    push(&mut filled, T::Body::Fill { offer: w.n(10), taker: pk(t), lock: w.n(20), amount: 200, cited: lock_at, until: deadline }, w.n(30), None, r);
+    println!("4  the fill once final (now {r}), through Y: {}", w.put_chain(&w.y, ta, m, &filled).await?.0);
+    let fill_at = r;
+    let r = w.until(fill_at + 2).await?;
+    let mut tac = T::State::default();
+    push(&mut tac, T::Body::Receive { from: pk(m), nonce: w.n(30), amount: 200, cited: fill_at }, w.n(30), None, r);
+    println!("5  T receives the 200 A, through X: {}", w.put_chain(&w.x, ta, t, &tac).await?.0);
+    let mut mbc = T::State::default();
+    push(&mut mbc, T::Body::Claim { taker: pk(t), lock: w.n(20), amount: 100, cited: fill_at, token: ta }, w.n(40), None, r);
+    println!("6  anyone claims the 100 B for M, through X: {}", w.put_chain(&w.x, tb, m, &mbc).await?.0);
+    // A refund of the FILLED lock.
+    let mut bad = tbc.clone();
+    let r = w.now().await?;
+    push(&mut bad, T::Body::Refund { lock: w.n(20) }, w.n(21), None, r);
+    println!("7  a refund of the filled lock, through Y: {}", w.put_chain(&w.y, tb, t, &bad).await?.0);
+    // A second lock nobody fills: refund too soon, then on time.
+    let r = w.now().await?;
+    let d2 = r + 6;
+    push(&mut tbc, T::Body::Lock { to: pk(m), amount: 50, until: d2, token: ta, offer: w.n(10) }, w.n(22), Some(t), r);
+    w.put_chain(&w.y, tb, t, &tbc).await?;
+    let r = w.now().await?;
+    let mut soon = tbc.clone();
+    push(&mut soon, T::Body::Refund { lock: w.n(22) }, w.n(23), None, r);
+    if r < d2 {
+        println!("8  a refund BEFORE its deadline {d2} (now {r}), through Y: {}", w.put_chain(&w.y, tb, t, &soon).await?.0);
+    }
+    let r = w.until(d2).await?;
+    let mut ontime = tbc.clone();
+    push(&mut ontime, T::Body::Refund { lock: w.n(22) }, w.n(23), None, r);
+    println!("9  the refund at its deadline (now {r}), through Y: {}", w.put_chain(&w.y, tb, t, &ontime).await?.0);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let bal = |s: Option<T::State>| s.map_or(0, |s| s.balance());
+    println!(
+        "   balances: M A {} · T A {} · T B {} · M B {}",
+        bal(w.get_chain(&w.x, ta, m).await?),
+        bal(w.get_chain(&w.x, ta, t).await?),
+        bal(w.get_chain(&w.y, tb, t).await?),
+        bal(w.get_chain(&w.x, tb, m).await?)
+    );
     Ok(())
 }

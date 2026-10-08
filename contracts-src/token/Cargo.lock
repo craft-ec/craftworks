@@ -180,10 +180,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-beacon-contract"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+]
+
+[[package]]
 name = "craftworks-token-contract"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "craftworks-beacon-contract",
  "ed25519-dalek",
  "freenet-stdlib",
 ]

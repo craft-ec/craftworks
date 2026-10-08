@@ -1360,6 +1360,11 @@ old key's addresses.
   entry at one seq settle by lowest hash (never a freeze). 25 tests; 5 mutants killed. Live fx/fy: allow 200 → spend
   150 via fy → received via fx; spend 51 (50 left) REFUSED. Allowances scanned from the chain (with the accumulator:
   carried once pruning exists). Next 5b: locks/offers/fills/claims/refunds — needs APPEND rules (time vs the beacon).
+- TOKEN STEP 5b (10-08): SWAPS + APPEND RULES built and live (see TOKEN §9 step 5). Found while building: a claim
+  needs its fill's token carried (one related round: the lock and the fill read at once); update_state needs the
+  definition and the beacon in one round → the network's one beacon in every chain's params. Spike first: update_state
+  related round trip measured (guard: LOCK taken, NOPE refused). Next: multisig, ids, vesting — or wallet verification
+  (step 6, required before value).
 - [ ] Proofs: DEFERRED until rewards pay (owner 10-07); low-cost plan in REWARDS §7 item 5. Next on the track: treasury
       pass + statements + shadow ledger (REWARDS §7 item 4).
 - Decisions recorded in REWARDS: carriers = holders weighted by demand; users are the keepers; never paid to own

@@ -401,7 +401,16 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    steps (≥ 10 minutes, ×1.6 for the pace spread) is ~100× what was seen. Not measured: a sender far away on the
    ring (both nodes shared one host), and a node behind carrier-grade NAT (a fresh node on a phone hotspot made no
    connection in 3 minutes).
-5. `allow`/`spend`, `offer`/`fill`/`lock`/`claim`/`refund`, multisig owners, ids (NFT, multi-token), vesting.
+5. `allow`/`spend`, `offer`/`fill`/`lock`/`claim`/`refund` — BUILT 10-08: allowances (5a); swaps with the APPEND
+   RULES (5b, §3c): every entry stamped by the beacon; a citation carries the stamp it cites; the shape rules check
+   offers, locks, fills (paid at the offer's rate, within what is left, once per lock), claims (lock + fill, read in
+   ONE round — a claim carries its fill's token), refunds (no fill in the maker's chain); the append rules (in
+   `update_state`, the definition and the beacon read in one round — so every chain's params name the network's ONE
+   beacon) check stamps near the beacon, a margin after anything cited, a fill a margin before its deadline, a refund
+   at or after it. RECENT is 4 (a claim reads two chains). 35 tests, 11 more mutants killed. Live fx/fy with a ticking
+   beacon (margin 2): offer → lock → fill refused before the lock was final, taken once final → received → claimed;
+   refund of the filled lock refused; a refund before its deadline refused, at it taken; balances M 800 A / 100 B, T
+   200 A / 900 B. Still to do: multisig owners, ids (NFT, multi-token), vesting.
 6. Wallet verification: the citation walk, public checkpoints and vouches, fraud proofs naming maker and vouchers (§3a)
    — BEFORE any token carries value (below).
 7. The Craftworks token: contributions as locks, payouts as claims.

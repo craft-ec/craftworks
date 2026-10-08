@@ -15,8 +15,9 @@ use ed25519_dalek::{Signature, VerifyingKey};
 
 pub const DEFINITION: u8 = 1;
 pub const CHAIN: u8 = 2;
-/// The receives among this many newest entries are checked against their senders (+ the definition: 10 related).
-pub const RECENT: usize = 9;
+/// The citations among this many newest entries are checked against the chains they cite — a claim cites two (its
+/// lock's and its fill's), so 4 × 2 + the definition stays within Freenet's 10 related contracts.
+pub const RECENT: usize = 4;
 /// Work on an entry anyone may append (a receive): this many leading zero bits of `blake3(message ‖ work)`.
 pub const WORK_BITS: u32 = 16;
 /// A token's name, at most (its length is one byte on the wire).
@@ -72,6 +73,10 @@ pub struct Definition {
     pub genesis_amount: u128,
     pub name: Vec<u8>,
     pub nonce: [u8; 16],
+    /// Its CLOCK: the beacon contract whose height stamps every entry (TOKEN §5a).
+    pub beacon: [u8; 32],
+    /// The FINALITY MARGIN, in beacon steps (TOKEN §3: 10 for real; tests use less).
+    pub margin: u64,
 }
 
 impl Definition {
@@ -85,6 +90,8 @@ impl Definition {
         v.push(self.name.len() as u8);
         v.extend_from_slice(&self.name);
         v.extend_from_slice(&self.nonce);
+        v.extend_from_slice(&self.beacon);
+        v.extend_from_slice(&self.margin.to_le_bytes());
         v
     }
     pub fn decode(b: &[u8]) -> Option<Self> {
@@ -98,7 +105,9 @@ impl Definition {
         let n = r.u8()? as usize;
         let name = r.take(n)?.to_vec();
         let nonce = r.arr()?;
-        (r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX).then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce })
+        let beacon = r.arr()?;
+        let margin = r.u64()?;
+        (r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1).then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin })
     }
 }
 
@@ -108,16 +117,19 @@ pub struct ChainParams {
     pub code_hash: [u8; 32],
     pub definition: [u8; 32],
     pub owner: [u8; 32],
+    /// The network's ONE beacon (TOKEN §5a) — in every chain's params, so a chain's id is computable for any token and
+    /// `update_state` reads its definition and the beacon in one round.
+    pub beacon: [u8; 32],
 }
 
 impl ChainParams {
     pub fn encode(&self) -> Vec<u8> {
-        [&[CHAIN][..], &self.code_hash, &self.definition, &self.owner].concat()
+        [&[CHAIN][..], &self.code_hash, &self.definition, &self.owner, &self.beacon].concat()
     }
     pub fn decode(b: &[u8]) -> Option<Self> {
         let mut r = R(b);
         (r.u8()? == CHAIN).then_some(())?;
-        let p = Self { code_hash: r.arr()?, definition: r.arr()?, owner: r.arr()? };
+        let p = Self { code_hash: r.arr()?, definition: r.arr()?, owner: r.arr()?, beacon: r.arr()? };
         r.done().then_some(p)
     }
     pub fn id(&self) -> [u8; 32] {
@@ -127,6 +139,10 @@ impl ChainParams {
     pub fn of(&self, owner: [u8; 32]) -> Self {
         Self { owner, ..*self }
     }
+    /// The chain of `owner` for token `definition` (same code, same beacon).
+    pub fn at(&self, definition: [u8; 32], owner: [u8; 32]) -> Self {
+        Self { definition, owner, ..*self }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -135,14 +151,28 @@ pub enum Body {
     Genesis { amount: u128 },
     /// A debit to `to`'s chain (named by its owner key).
     Send { to: [u8; 32], amount: u128 },
-    /// A credit citing the send `nonce` in `from`'s chain — appended by ANYONE (with work).
-    Receive { from: [u8; 32], nonce: [u8; 16], amount: u128 },
+    /// A credit citing the send (or spend, or fill) `nonce` in `from`'s chain — appended by ANYONE (with work);
+    /// `cited`: that entry's stamp (appended no sooner than a margin after it: TOKEN §3).
+    Receive { from: [u8; 32], nonce: [u8; 16], amount: u128, cited: u64 },
     /// A debit with no credit anywhere.
     Burn { amount: u128 },
     /// The owner lets `spender` debit up to `limit` (replacing any earlier allowance; 0 revokes) — ERC-20 `approve`.
     Allow { spender: [u8; 32], limit: u128 },
     /// A debit to `to`'s chain written and signed by a SPENDER within their allowance — ERC-20 `transferFrom`.
     Spend { to: [u8; 32], amount: u128 },
+    /// A debit HELD for `to` until beacon `until` — for the offer `offer` of token `token` (a swap's taker side).
+    Lock { to: [u8; 32], amount: u128, until: u64, token: [u8; 32], offer: [u8; 16] },
+    /// A STANDING OFFER: `give` of this token for every `per` of token `get`, up to `max`, until beacon `until`.
+    Offer { get: [u8; 32], give: u128, per: u128, max: u128, until: u64 },
+    /// The offer `offer` FILLED by `taker`'s lock `lock` (in their chain of the offer's `get` token): a debit of
+    /// `amount` to the taker — appended by anyone; `cited`/`until`: the lock's stamp and deadline.
+    Fill { offer: [u8; 16], taker: [u8; 32], lock: [u8; 16], amount: u128, cited: u64, until: u64 },
+    /// `taker`'s lock `lock`, filled: its amount credited here (the maker's chain of the lock's token) — appended by
+    /// anyone; `cited`: the fill's stamp; `token`: the token of the fill's chain (the lock names it too — carried
+    /// here because a validation reads related contracts in ONE round: the lock and the fill at once).
+    Claim { taker: [u8; 32], lock: [u8; 16], amount: u128, cited: u64, token: [u8; 32] },
+    /// This chain's own lock `lock`, never filled and past its deadline: its amount back — appended by anyone.
+    Refund { lock: [u8; 16] },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +192,8 @@ pub struct Entry {
     pub prev: [u8; 32],
     /// Its NAME, kept if it is re-appended at another seq (TOKEN §3).
     pub nonce: [u8; 16],
+    /// The BEACON HEIGHT it was written at: never below its predecessor's; near the beacon when appended (TOKEN §3c).
+    pub stamp: u64,
     pub body: Body,
     pub balance: u128,
     pub auth: Auth,
@@ -174,6 +206,7 @@ impl Entry {
         v.extend_from_slice(&self.seq.to_le_bytes());
         v.extend_from_slice(&self.prev);
         v.extend_from_slice(&self.nonce);
+        v.extend_from_slice(&self.stamp.to_le_bytes());
         match &self.body {
             Body::Genesis { amount } => {
                 v.push(0);
@@ -184,11 +217,12 @@ impl Entry {
                 v.extend_from_slice(to);
                 v.extend_from_slice(&amount.to_le_bytes());
             }
-            Body::Receive { from, nonce, amount } => {
+            Body::Receive { from, nonce, amount, cited } => {
                 v.push(2);
                 v.extend_from_slice(from);
                 v.extend_from_slice(nonce);
                 v.extend_from_slice(&amount.to_le_bytes());
+                v.extend_from_slice(&cited.to_le_bytes());
             }
             Body::Burn { amount } => {
                 v.push(3);
@@ -203,6 +237,43 @@ impl Entry {
                 v.push(5);
                 v.extend_from_slice(to);
                 v.extend_from_slice(&amount.to_le_bytes());
+            }
+            Body::Lock { to, amount, until, token, offer } => {
+                v.push(6);
+                v.extend_from_slice(to);
+                v.extend_from_slice(&amount.to_le_bytes());
+                v.extend_from_slice(&until.to_le_bytes());
+                v.extend_from_slice(token);
+                v.extend_from_slice(offer);
+            }
+            Body::Offer { get, give, per, max, until } => {
+                v.push(7);
+                v.extend_from_slice(get);
+                v.extend_from_slice(&give.to_le_bytes());
+                v.extend_from_slice(&per.to_le_bytes());
+                v.extend_from_slice(&max.to_le_bytes());
+                v.extend_from_slice(&until.to_le_bytes());
+            }
+            Body::Fill { offer, taker, lock, amount, cited, until } => {
+                v.push(8);
+                v.extend_from_slice(offer);
+                v.extend_from_slice(taker);
+                v.extend_from_slice(lock);
+                v.extend_from_slice(&amount.to_le_bytes());
+                v.extend_from_slice(&cited.to_le_bytes());
+                v.extend_from_slice(&until.to_le_bytes());
+            }
+            Body::Claim { taker, lock, amount, cited, token } => {
+                v.push(9);
+                v.extend_from_slice(taker);
+                v.extend_from_slice(lock);
+                v.extend_from_slice(&amount.to_le_bytes());
+                v.extend_from_slice(&cited.to_le_bytes());
+                v.extend_from_slice(token);
+            }
+            Body::Refund { lock } => {
+                v.push(10);
+                v.extend_from_slice(lock);
             }
         }
         v.extend_from_slice(&self.balance.to_le_bytes());
@@ -231,13 +302,19 @@ impl Entry {
         let seq = r.u64()?;
         let prev = r.arr()?;
         let nonce = r.arr()?;
+        let stamp = r.u64()?;
         let body = match r.u8()? {
             0 => Body::Genesis { amount: r.u128()? },
             1 => Body::Send { to: r.arr()?, amount: r.u128()? },
-            2 => Body::Receive { from: r.arr()?, nonce: r.arr()?, amount: r.u128()? },
+            2 => Body::Receive { from: r.arr()?, nonce: r.arr()?, amount: r.u128()?, cited: r.u64()? },
             3 => Body::Burn { amount: r.u128()? },
             4 => Body::Allow { spender: r.arr()?, limit: r.u128()? },
             5 => Body::Spend { to: r.arr()?, amount: r.u128()? },
+            6 => Body::Lock { to: r.arr()?, amount: r.u128()?, until: r.u64()?, token: r.arr()?, offer: r.arr()? },
+            7 => Body::Offer { get: r.arr()?, give: r.u128()?, per: r.u128()?, max: r.u128()?, until: r.u64()? },
+            8 => Body::Fill { offer: r.arr()?, taker: r.arr()?, lock: r.arr()?, amount: r.u128()?, cited: r.u64()?, until: r.u64()? },
+            9 => Body::Claim { taker: r.arr()?, lock: r.arr()?, amount: r.u128()?, cited: r.u64()?, token: r.arr()? },
+            10 => Body::Refund { lock: r.arr()? },
             _ => return None,
         };
         let balance = r.u128()?;
@@ -247,7 +324,7 @@ impl Entry {
             2 => Auth::Delegated { by: r.arr()?, sig: r.arr()? },
             _ => return None,
         };
-        Some(Self { seq, prev, nonce, body, balance, auth })
+        Some(Self { seq, prev, nonce, stamp, body, balance, auth })
     }
     pub fn hash(&self) -> [u8; 32] {
         *blake3::hash(&self.encode()).as_bytes()
@@ -347,34 +424,77 @@ impl State {
     }
 }
 
-/// The sender chains this chain must be shown (the receives among its last [`RECENT`] entries), as their owners.
-pub fn senders(s: &State) -> Vec<[u8; 32]> {
-    let mut out: Vec<[u8; 32]> = Vec::new();
+/// The chains this chain must be shown — what the citations among its last [`RECENT`] entries cite — as
+/// (definition, owner): a receive its sender's; a fill the taker's chain of the offer's token; a claim the taker's
+/// chain (the lock) and this owner's chain of the lock's token (the fill); a refund the maker's chain of its lock's
+/// token (no fill there).
+pub fn cited_chains(p: &ChainParams, s: &State) -> Vec<([u8; 32], [u8; 32])> {
+    let mut out: Vec<([u8; 32], [u8; 32])> = Vec::new();
+    let mut add = |x: ([u8; 32], [u8; 32])| {
+        if !out.contains(&x) {
+            out.push(x);
+        }
+    };
+    let offers = offers_of(s);
+    let locks = locks_of(s);
     for e in s.entries.iter().rev().take(RECENT) {
-        if let Body::Receive { from, .. } = e.body {
-            if !out.contains(&from) {
-                out.push(from);
+        match &e.body {
+            Body::Receive { from, .. } => add((p.definition, *from)),
+            Body::Fill { offer, taker, .. } => {
+                if let Some(o) = offers.iter().find(|o| &o.0 == offer) {
+                    add((o.1, *taker));
+                }
             }
+            Body::Claim { taker, token, .. } => {
+                add((p.definition, *taker));
+                add((*token, p.owner));
+            }
+            Body::Refund { lock } => {
+                if let Some(l) = locks.iter().find(|l| &l.0 == lock) {
+                    add((l.4, l.1));
+                }
+            }
+            _ => {}
         }
     }
     out
 }
 
+/// The offers in a chain: (nonce, get token, give, per, max, until, stamp).
+fn offers_of(s: &State) -> Vec<([u8; 16], [u8; 32], u128, u128, u128, u64, u64)> {
+    s.entries.iter().filter_map(|e| if let Body::Offer { get, give, per, max, until } = &e.body { Some((e.nonce, *get, *give, *per, *max, *until, e.stamp)) } else { None }).collect()
+}
+/// The locks in a chain: (nonce, to, amount, until, token, offer, stamp).
+fn locks_of(s: &State) -> Vec<([u8; 16], [u8; 32], u128, u64, [u8; 32], [u8; 16], u64)> {
+    s.entries.iter().filter_map(|e| if let Body::Lock { to, amount, until, token, offer } = &e.body { Some((e.nonce, *to, *amount, *until, *token, *offer, e.stamp)) } else { None }).collect()
+}
+
 /// Why a chain is refused (named, for the tests and the node's log).
 pub type Why = &'static str;
 
-/// THE LOCAL RULES (TOKEN §3a) of chain `p` for definition `d`; `sender` gives the chain of a sender named in a recent
-/// receive (`None`: it does not exist).
-pub fn check(p: &ChainParams, d: &Definition, s: &State, sender: &dyn Fn(&[u8; 32]) -> Option<State>) -> Result<(), Why> {
+/// THE SHAPE RULES (TOKEN §3a, §3c) of chain `p` for definition `d` — true any time, from scratch. `chain(definition,
+/// owner)` gives a chain the citations among the last [`RECENT`] entries cite (`None`: it does not exist).
+pub fn check(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>) -> Result<(), Why> {
     if d.code_hash != p.code_hash {
         return Err("the definition is not this standard's");
     }
+    if d.beacon != p.beacon {
+        return Err("a chain on another beacon than its token's");
+    }
     let mut balance: u128 = 0;
     let mut prev = [0u8; 32];
+    let mut stamp: u64 = 0;
     let mut received: Vec<([u8; 32], [u8; 16])> = Vec::new();
     // The ALLOWANCES as they stand (spender → what is left), from the entries so far.
     let mut allowed: Vec<([u8; 32], u128)> = Vec::new();
+    // OFFERS (nonce, get, give, per, what is left), LOCKS (nonce, to, amount, until, token, offer, open), and the
+    // locks already FILLED and CLAIMED here, by (taker, lock).
+    let mut offers: Vec<([u8; 16], [u8; 32], u128, u128, u128)> = Vec::new();
+    let mut locks: Vec<([u8; 16], [u8; 32], u128, u64, [u8; 32], [u8; 16], bool)> = Vec::new();
+    let mut filled: Vec<([u8; 32], [u8; 16])> = Vec::new();
+    let mut claimed: Vec<([u8; 32], [u8; 16])> = Vec::new();
     let recent_from = s.entries.len().saturating_sub(RECENT);
+    let owner_signed = |e: &Entry| if e.signed_by(&p.owner) { Ok(()) } else { Err("an entry not signed by the chain's writer") };
     for (i, e) in s.entries.iter().enumerate() {
         if e.seq != i as u64 {
             return Err("a seq out of place");
@@ -382,20 +502,20 @@ pub fn check(p: &ChainParams, d: &Definition, s: &State, sender: &dyn Fn(&[u8; 3
         if e.prev != prev {
             return Err("a broken link");
         }
+        if e.stamp < stamp {
+            return Err("a stamp below its predecessor's");
+        }
+        let recent = i >= recent_from;
         balance = match &e.body {
             Body::Genesis { amount } => {
                 if i != 0 || p.owner != d.genesis_owner || *amount != d.genesis_amount {
                     return Err("a genesis that is not the definition's");
                 }
-                if !e.signed_by(&p.owner) {
-                    return Err("an entry not signed by the chain's writer");
-                }
+                owner_signed(e)?;
                 *amount
             }
             Body::Send { to, amount } => {
-                if !e.signed_by(&p.owner) {
-                    return Err("an entry not signed by the chain's writer");
-                }
+                owner_signed(e)?;
                 if *to == p.owner {
                     return Err("a send to itself");
                 }
@@ -405,18 +525,14 @@ pub fn check(p: &ChainParams, d: &Definition, s: &State, sender: &dyn Fn(&[u8; 3
                 balance.checked_sub(*amount).ok_or("a debit over the balance")?
             }
             Body::Burn { amount } => {
-                if !e.signed_by(&p.owner) {
-                    return Err("an entry not signed by the chain's writer");
-                }
+                owner_signed(e)?;
                 if *amount == 0 {
                     return Err("an empty burn");
                 }
                 balance.checked_sub(*amount).ok_or("a debit over the balance")?
             }
             Body::Allow { spender, limit } => {
-                if !e.signed_by(&p.owner) {
-                    return Err("an entry not signed by the chain's writer");
-                }
+                owner_signed(e)?;
                 if *spender == p.owner {
                     return Err("an allowance to itself");
                 }
@@ -441,7 +557,7 @@ pub fn check(p: &ChainParams, d: &Definition, s: &State, sender: &dyn Fn(&[u8; 3
                 }
                 balance.checked_sub(*amount).ok_or("a debit over the balance")?
             }
-            Body::Receive { from, nonce, amount } => {
+            Body::Receive { from, nonce, amount, cited } => {
                 // (Never from itself: a send to itself is refused — and asking for its own chain as a related
                 // contract is an error at the node, not a refusal.)
                 if *from == p.owner {
@@ -457,12 +573,14 @@ pub fn check(p: &ChainParams, d: &Definition, s: &State, sender: &dyn Fn(&[u8; 3
                     return Err("a send received twice");
                 }
                 received.push((*from, *nonce));
-                if i >= recent_from {
-                    let chain = sender(from).ok_or("the sender's chain is not there")?;
+                if recent {
+                    let c = chain(&p.definition, from).ok_or("the sender's chain is not there")?;
                     // (A frozen sender's entries stop at its fork: a send after it — in the fork — is never found
                     // here, so every debit after an equivocation is void, TOKEN §3b.)
-                    let found = chain.entries.iter().any(|x| {
-                        x.nonce == *nonce && matches!(x.body, Body::Send { to, amount: a } | Body::Spend { to, amount: a } if to == p.owner && a == *amount)
+                    let found = c.entries.iter().any(|x| {
+                        x.nonce == *nonce
+                            && x.stamp == *cited
+                            && matches!(x.body, Body::Send { to, amount: a } | Body::Spend { to, amount: a } | Body::Fill { taker: to, amount: a, .. } if to == p.owner && a == *amount)
                     });
                     if !found {
                         return Err("a receive whose send is not in its sender's chain");
@@ -470,11 +588,106 @@ pub fn check(p: &ChainParams, d: &Definition, s: &State, sender: &dyn Fn(&[u8; 3
                 }
                 balance.checked_add(*amount).ok_or("a balance overflow")?
             }
+            Body::Lock { to, amount, until, token, offer } => {
+                owner_signed(e)?;
+                if *to == p.owner {
+                    return Err("a lock for itself");
+                }
+                if *amount < d.min_send {
+                    return Err("a send under the minimum");
+                }
+                if locks.iter().any(|l| l.0 == e.nonce) {
+                    return Err("a lock named twice");
+                }
+                locks.push((e.nonce, *to, *amount, *until, *token, *offer, true));
+                balance.checked_sub(*amount).ok_or("a debit over the balance")?
+            }
+            Body::Offer { get, give, per, max, .. } => {
+                owner_signed(e)?;
+                if *give == 0 || *per == 0 || *max == 0 || *get == p.definition {
+                    return Err("an offer that offers nothing");
+                }
+                if offers.iter().any(|o| o.0 == e.nonce) {
+                    return Err("an offer named twice");
+                }
+                offers.push((e.nonce, *get, *give, *per, *max));
+                balance
+            }
+            Body::Fill { offer, taker, lock, amount, cited, until } => {
+                if !e.worked() {
+                    return Err("a fill without its work");
+                }
+                let o = offers.iter_mut().find(|o| &o.0 == offer).ok_or("a fill of an offer that is not here")?;
+                if *amount == 0 {
+                    return Err("an empty fill");
+                }
+                o.4 = o.4.checked_sub(*amount).ok_or("a fill past what is left of its offer")?;
+                if filled.contains(&(*taker, *lock)) {
+                    return Err("a lock filled twice");
+                }
+                filled.push((*taker, *lock));
+                if recent {
+                    let (get, give, per) = (o.1, o.2, o.3);
+                    let c = chain(&get, taker).ok_or("the taker's chain is not there")?;
+                    let pays = c.entries.iter().any(|x| {
+                        x.nonce == *lock
+                            && x.stamp == *cited
+                            && matches!(x.body, Body::Lock { to, amount: la, until: lu, token, offer: of }
+                                if to == p.owner && token == p.definition && of == *offer && lu == *until
+                                && la.checked_mul(give).zip(amount.checked_mul(per)).is_some_and(|(paid, owed)| paid >= owed))
+                    });
+                    if !pays {
+                        return Err("a fill its lock does not pay for");
+                    }
+                }
+                balance.checked_sub(*amount).ok_or("a debit over the balance")?
+            }
+            Body::Claim { taker, lock, amount, cited, token } => {
+                if !e.worked() {
+                    return Err("a claim without its work");
+                }
+                if claimed.contains(&(*taker, *lock)) {
+                    return Err("a lock claimed twice");
+                }
+                claimed.push((*taker, *lock));
+                if recent {
+                    let lc = chain(&p.definition, taker).ok_or("the taker's chain is not there")?;
+                    let locked = lc.entries.iter().any(|x| x.nonce == *lock && matches!(x.body, Body::Lock { to, amount: a, token: t, .. } if to == p.owner && a == *amount && t == *token));
+                    let fc = chain(token, &p.owner).ok_or("the fill's chain is not there")?;
+                    let fill = fc.entries.iter().any(|x| x.stamp == *cited && matches!(x.body, Body::Fill { taker: t, lock: l, .. } if t == *taker && l == *lock));
+                    if !locked || !fill {
+                        return Err("a claim of a lock that is not filled");
+                    }
+                }
+                balance.checked_add(*amount).ok_or("a balance overflow")?
+            }
+            Body::Refund { lock } => {
+                if !e.worked() {
+                    return Err("a refund without its work");
+                }
+                let l = locks.iter_mut().find(|l| &l.0 == lock).ok_or("a refund of a lock that is not here")?;
+                if !l.6 {
+                    return Err("a lock refunded twice");
+                }
+                l.6 = false;
+                let (amount, token, maker) = (l.2, l.4, l.1);
+                if recent {
+                    // The maker's chain of the token the lock was for: a fill citing this lock means no refund.
+                    // (None: the maker's chain does not exist — nothing was filled.)
+                    if let Some(mc) = chain(&token, &maker) {
+                        if mc.entries.iter().any(|x| matches!(x.body, Body::Fill { taker, lock: fl, .. } if taker == p.owner && fl == *lock)) {
+                            return Err("a refund of a filled lock");
+                        }
+                    }
+                }
+                balance.checked_add(amount).ok_or("a balance overflow")?
+            }
         };
         if e.balance != balance {
             return Err("a carried balance that does not add up");
         }
         prev = e.hash();
+        stamp = e.stamp;
     }
     if let Some((a, b)) = &s.fork {
         let n = s.entries.len() as u64;
@@ -483,6 +696,46 @@ pub fn check(p: &ChainParams, d: &Definition, s: &State, sender: &dyn Fn(&[u8; 3
         }
         if !a.signed_by(&p.owner) || !b.signed_by(&p.owner) {
             return Err("a fork not signed twice by the chain's writer");
+        }
+    }
+    Ok(())
+}
+
+/// THE APPEND RULES (TOKEN §3c), checked by a node that already HOLDS the chain as it takes in what it did not have
+/// (`held` → `merged`), against the beacon's height NOW: each new entry's stamp within a margin of now; anything citing
+/// another entry no sooner than a margin after it (final everywhere); a fill a margin before its lock's deadline; a
+/// refund at or after it.
+pub fn append_check(d: &Definition, now: u64, held: &State, merged: &State) -> Result<(), Why> {
+    let had: Vec<[u8; 32]> = held.entries.iter().map(Entry::hash).collect();
+    let m = d.margin;
+    for e in merged.entries.iter().filter(|e| !had.contains(&e.hash())) {
+        if e.stamp > now || e.stamp.saturating_add(m) < now {
+            return Err("a stamp far from the beacon");
+        }
+        match &e.body {
+            Body::Receive { cited, .. } | Body::Claim { cited, .. } => {
+                if e.stamp < cited.saturating_add(m) {
+                    return Err("an entry citing one not yet final");
+                }
+            }
+            Body::Fill { cited, until, .. } => {
+                if e.stamp < cited.saturating_add(m) {
+                    return Err("an entry citing one not yet final");
+                }
+                if e.stamp.saturating_add(m) >= *until {
+                    return Err("a fill too close to its lock's deadline");
+                }
+            }
+            Body::Refund { lock } => {
+                let until = merged.entries.iter().find_map(|x| match &x.body {
+                    Body::Lock { until, .. } if &x.nonce == lock => Some(*until),
+                    _ => None,
+                });
+                if until.is_none_or(|u| e.stamp < u) {
+                    return Err("a refund before its lock's deadline");
+                }
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -537,9 +790,14 @@ pub fn merge(a: &State, b: &State) -> State {
     }
 }
 
+/// The beacon's height in its state's bytes (`None`: not a beacon state).
+pub fn beacon_height(b: &[u8]) -> Option<u64> {
+    craftworks_beacon_contract::wire::decode(b).map(|s| s.height())
+}
+
 #[cfg(feature = "freenet-main-contract")]
 mod contract {
-    use super::{check, id, merge, senders, ChainParams, Definition, DEFINITION};
+    use super::{append_check, beacon_height, check, cited_chains, id, merge, ChainParams, Definition, DEFINITION};
     use freenet_stdlib::prelude::*;
 
     pub struct Token;
@@ -558,13 +816,14 @@ mod contract {
             }
             let Some(p) = ChainParams::decode(params) else { return Ok(ValidateResult::Invalid) };
             let Some(s) = super::State::decode(state.as_ref()) else { return Ok(ValidateResult::Invalid) };
-            // What it must be shown: its definition and the chains of its recent receives' senders — asked ALL AT ONCE
-            // (one round only).
-            if super::senders(&s).contains(&p.owner) {
+            // What it must be shown: its definition and every chain its recent citations name — asked ALL AT ONCE
+            // (one round only). Never itself (asking for itself is the node's error, not a refusal).
+            let cited: Vec<[u8; 32]> = cited_chains(&p, &s).into_iter().map(|(d, o)| p.at(d, o).id()).collect();
+            if cited.contains(&p.id()) {
                 return Ok(ValidateResult::Invalid);
             }
             let mut want = vec![p.definition];
-            want.extend(senders(&s).into_iter().map(|o| p.of(o).id()));
+            want.extend(cited);
             let missing: Vec<ContractInstanceId> = want.iter().filter(|w| related_state(&related, w).is_none()).map(|w| ContractInstanceId::new(*w)).collect();
             if !missing.is_empty() {
                 return Ok(ValidateResult::RequestRelated(missing));
@@ -574,26 +833,54 @@ mod contract {
                 return Ok(ValidateResult::Invalid);
             }
             let Some(d) = Definition::decode(&db) else { return Ok(ValidateResult::Invalid) };
-            let sender = |owner: &[u8; 32]| related_state(&related, &p.of(*owner).id()).flatten().and_then(|b| super::State::decode(&b));
-            Ok(if check(&p, &d, &s, &sender).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
+            let chain = |def: &[u8; 32], owner: &[u8; 32]| related_state(&related, &p.at(*def, *owner).id()).flatten().and_then(|b| super::State::decode(&b));
+            Ok(if check(&p, &d, &s, &chain).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
         }
 
         fn update_state(parameters: Parameters<'static>, state: State<'static>, data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
             if parameters.as_ref().first() == Some(&DEFINITION) {
                 return Ok(UpdateModification::valid(state));
             }
-            let mut held = super::State::decode(state.as_ref()).ok_or(ContractError::InvalidState)?;
+            let p = ChainParams::decode(parameters.as_ref()).ok_or(ContractError::InvalidState)?;
+            let held = super::State::decode(state.as_ref()).ok_or(ContractError::InvalidState)?;
+            let mut merged = held.clone();
+            let (mut def, mut beacon): (Option<Vec<u8>>, Option<Vec<u8>>) = (None, None);
             for d in data {
                 let b: &[u8] = match &d {
                     UpdateData::State(s) => s.as_ref(),
                     UpdateData::Delta(x) => x.as_ref(),
                     UpdateData::StateAndDelta { state, .. } => state.as_ref(),
+                    UpdateData::RelatedState { related_to, state } => {
+                        if related_to.as_bytes() == p.definition {
+                            def = Some(state.as_ref().to_vec());
+                        } else if related_to.as_bytes() == p.beacon {
+                            beacon = Some(state.as_ref().to_vec());
+                        }
+                        continue;
+                    }
                     _ => continue,
                 };
                 let given = super::State::decode(b).ok_or(ContractError::InvalidUpdate)?;
-                held = merge(&held, &given);
+                merged = merge(&merged, &given);
             }
-            Ok(UpdateModification::valid(State::from(held.encode())))
+            // THE APPEND RULES (TOKEN §3c): only for what is NEW here — against the definition and the beacon NOW,
+            // both asked for in one round.
+            let had: Vec<[u8; 32]> = held.entries.iter().map(super::Entry::hash).collect();
+            if merged.entries.iter().any(|e| !had.contains(&e.hash())) {
+                let (Some(db), Some(bb)) = (def, beacon) else {
+                    return UpdateModification::requires(vec![
+                        RelatedContract { contract_instance_id: ContractInstanceId::new(p.definition), mode: RelatedMode::StateOnce },
+                        RelatedContract { contract_instance_id: ContractInstanceId::new(p.beacon), mode: RelatedMode::StateOnce },
+                    ]);
+                };
+                if id(&p.code_hash, &db) != p.definition {
+                    return Err(ContractError::InvalidUpdate);
+                }
+                let d = Definition::decode(&db).ok_or(ContractError::InvalidUpdate)?;
+                let now = beacon_height(&bb).ok_or(ContractError::InvalidUpdate)?;
+                append_check(&d, now, &held, &merged).map_err(|_| ContractError::InvalidUpdate)?;
+            }
+            Ok(UpdateModification::valid(State::from(merged.encode())))
         }
 
         fn summarize_state(_parameters: Parameters<'static>, state: State<'static>) -> Result<StateSummary<'static>, ContractError> {
