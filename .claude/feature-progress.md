@@ -1102,8 +1102,12 @@ Design source: ARCHITECTURE §1 (Discover = the public index: bags public spaces
       MIGRATES the old `channels` table (with each `chat/<cid>` policy → `meta.write.post`), then sets the act
       `config chat.channels = "items"`: readers stop opening the old table once that act is read.
 - [x] 2. SETTINGS: Chat section's channel rows edit the items (name, who may post) — no `chat/<id>` path policies.
-- [ ] 3. PERSONAL CHAT: channels as items in the personal space; others' messages kept in their own profiles, pointed,
-      read through the outsider source (generalized from a space to a place); your Home's Chat section: who may post.
+- [x] 3. PERSONAL CHAT (10-08, e9c344b): channel items in the personal space (`conversation.channels({kind:"person"})`);
+      each writer's messages in their own tail `ch-<cid>-<owner>`, pointed in `chat:<owner>/<cid>`; read by
+      `items.outsideSource(place)`, written by `items.outsidePart(place)` (generalized from a space to a place); a new
+      writer shown live by `index.watch` (the node's push of a followed bag). Settings → Permissions → Chat: who may
+      post/react, each channel's own rule. fx/fy: owner posts, fx reads+posts, fy sees fx live in 3 s, 🎉 crosses.
+      Found on the way (da9de36): Chat in a space without Chat on offered channels with nowhere to live — now says so.
 
 ## SPACE GROUP FORKS (owner 10-03: "detect and heal"; no single committer — owners are often offline)
 Cause (measured on 7509): two nodes committed from the same epoch at once (auto-admission on every owner/admin page
