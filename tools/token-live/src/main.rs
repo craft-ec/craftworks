@@ -193,6 +193,7 @@ async fn main() -> Result<()> {
             "basic" => basic(&w).await?,
             "allow" => allow(&w).await?,
             "swap" => swap(&w).await?,
+            "wallet" => wallet(&w).await?,
             m => bail!("no mode {m}"),
         }
     }
@@ -330,5 +331,58 @@ async fn swap(w: &W) -> Result<()> {
         bal(w.get_chain(&w.y, tb, t).await?),
         bal(w.get_chain(&w.x, tb, m).await?)
     );
+    Ok(())
+}
+
+/// STEP 6, LIVE: the minting-by-burying attack accepted by the contracts on the nodes — and refused by a WALLET reading
+/// the same chains from a node; an honest payment verified.
+async fn wallet(w: &W) -> Result<()> {
+    use craftworks_token_contract::wallet::{Source, Wallet};
+    println!("— wallet");
+    let d = w.def(1, b"Wallet", 5);
+    let ta = w.put_def(&d).await?;
+    let h = w.now().await?;
+    let mut c1 = T::State::default();
+    push(&mut c1, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h);
+    for k in 0..T::RECENT as u8 {
+        push(&mut c1, T::Body::Send { to: pk(2), amount: 10 }, w.n(20 + k), Some(1), h);
+    }
+    push(&mut c1, T::Body::Send { to: pk(4), amount: 50 }, w.n(30), Some(1), h);
+    println!("1  1: genesis, {} real sends of 10 to 2, 50 to 4, on X: {}", T::RECENT, w.put_chain(&w.x, ta, 1, &c1).await?.0);
+    let r = w.until(h + 2).await?;
+    let mut c2 = T::State::default();
+    push(&mut c2, T::Body::Receive { from: pk(1), nonce: w.n(9), amount: 5000, cited: h }, w.n(9), None, r);
+    for k in 0..T::RECENT as u8 {
+        push(&mut c2, T::Body::Receive { from: pk(1), nonce: w.n(20 + k), amount: 10, cited: h }, w.n(20 + k), None, r);
+    }
+    push(&mut c2, T::Body::Send { to: pk(3), amount: 3000 }, w.n(40), Some(2), r);
+    println!("2  2: a FAKE receive of 5000 buried under {} real ones, then 3000 to 3 — written fresh on Y: {}", T::RECENT, w.put_chain(&w.y, ta, 2, &c2).await?.0);
+    let r2 = w.until(r + 2).await?;
+    let mut c3 = T::State::default();
+    push(&mut c3, T::Body::Receive { from: pk(2), nonce: w.n(40), amount: 3000, cited: r }, w.n(40), None, r2);
+    println!("3  3 receives the 3000, on Y: {}", w.put_chain(&w.y, ta, 3, &c3).await?.0);
+    let mut c4 = T::State::default();
+    push(&mut c4, T::Body::Receive { from: pk(1), nonce: w.n(30), amount: 50, cited: h }, w.n(30), None, r2);
+    println!("4  4 receives an honest 50 from 1, on Y: {}", w.put_chain(&w.y, ta, 4, &c4).await?.0);
+    // A wallet reading the chains back from the node (through blocking reads of a runtime of its own).
+    let (y, code) = (w.y.clone(), w.code.clone());
+    let ch = w.ch;
+    let beacon = w.beacon;
+    let verdicts = tokio::task::spawn_blocking(move || {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _ = code;
+        let chain = |p: &T::ChainParams| rt.block_on(get(&y, p.id())).ok().flatten().and_then(|b| T::State::decode(&b));
+        let defs = |t: &[u8; 32]| if *t == ta { Some(d.clone()) } else { None };
+        let src = Source { chain: &chain, definition: &defs };
+        let p = |o: u8| T::ChainParams { code_hash: ch, definition: ta, owner: pk(o), beacon };
+        let mut wallet3 = Wallet::new(pk(3));
+        let v3 = wallet3.verify(&src, &p(3), 0);
+        let mut wallet4 = Wallet::new(pk(4));
+        let v4 = wallet4.verify(&src, &p(4), 0);
+        (v3.map_err(|f| (f.chain.owner == pk(2), f.seq, f.why)), wallet3.reads.get(), v4.map_err(|f| f.why), wallet4.reads.get())
+    })
+    .await?;
+    println!("5  3's wallet verifies its 3000 (reading from Y): {:?} after {} chain reads", verdicts.0.map_err(|(is2, seq, why)| format!("REFUSED — chain {} seq {seq}: {why}", if is2 { "2" } else { "?" })), verdicts.1);
+    println!("6  4's wallet verifies its honest 50: {:?} after {} chain reads", verdicts.2, verdicts.3);
     Ok(())
 }

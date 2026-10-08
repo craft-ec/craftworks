@@ -412,7 +412,15 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    refund of the filled lock refused; a refund before its deadline refused, at it taken; balances M 800 A / 100 B, T
    200 A / 900 B. Still to do: multisig owners, ids (NFT, multi-token), vesting.
 6. Wallet verification: the citation walk, public checkpoints and vouches, fraud proofs naming maker and vouchers (§3a)
-   — BEFORE any token carries value (below).
+   — BUILT 10-08 (`contracts-src/token/src/wallet.rs`): every citation checked and every cited chain walked back to
+   genesis or an accepted checkpoint; citation loops caught; checkpoints signed, vouched, audited into fraud proofs
+   naming maker and vouchers, who are skipped after. 44 tests, 8 mutants (7 killed by assertion, 1 by a stack
+   overflow — the walk is recursive: make it iterative for browser wallets). LIVE fx/fy: the minting-by-burying
+   attack ACCEPTED by every contract, REFUSED by the receiver's wallet reading the same chains ("chain 2 seq 0: a
+   receive whose send is not in its sender's chain", 4 reads); an honest payment verified (3 reads).
+   OWNER 10-08: a wallet-side check is a half measure — the network says "accepted", only a wallet says "fake". The
+   real fix is IN THE CONTRACT: RECURSIVE VALIDITY PROOFS (zk), each chain update proving its whole history valid,
+   verified by the contract in constant time. Next: measure a zk route on our rules before building it.
 7. The Craftworks token: contributions as locks, payouts as claims.
 8. Batch-auction pools.
 

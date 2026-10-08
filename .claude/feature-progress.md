@@ -1365,6 +1365,9 @@ old key's addresses.
   definition and the beacon in one round → the network's one beacon in every chain's params. Spike first: update_state
   related round trip measured (guard: LOCK taken, NOPE refused). Next: multisig, ids, vesting — or wallet verification
   (step 6, required before value).
+- TOKEN STEP 6 (10-08): wallet verification built + live (TOKEN §9 step 6). Owner: "if zk can solve it, why a half
+  measure?" → the fix belongs in the contract: recursive validity proofs. Next: zk spike (prove + verify one transfer
+  on our rules; proving time native/laptop, proof size, verify time in contract WASM under the 5 s budget).
 - [ ] Proofs: DEFERRED until rewards pay (owner 10-07); low-cost plan in REWARDS §7 item 5. Next on the track: treasury
       pass + statements + shadow ledger (REWARDS §7 item 4).
 - Decisions recorded in REWARDS: carriers = holders weighted by demand; users are the keepers; never paid to own

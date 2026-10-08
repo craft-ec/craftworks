@@ -671,3 +671,219 @@ fn a_fill_lands_a_margin_before_its_deadline_and_a_refund_after_it() {
     assert_eq!(append_check(&def(), 19, &locked, &refund(19)), Err("a refund before its lock's deadline"));
     assert_eq!(append_check(&def(), 20, &locked, &refund(20)), Ok(()));
 }
+
+// ---- step 6: wallet verification ----
+use crate::wallet::{Checkpoint, Source, Vouch, Wallet};
+
+fn defs(t: &[u8; 32]) -> Option<Definition> {
+    if *t == id_a() {
+        Some(def())
+    } else if *t == id_b() {
+        Some(def_b())
+    } else {
+        None
+    }
+}
+fn verify(w: &Two, wallet: &mut Wallet, owner: u8) -> Result<(), crate::wallet::FraudProof> {
+    let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
+    let src = Source { chain: &chain, definition: &defs };
+    let last = w.get(id_a(), owner).entries.len() as u64 - 1;
+    wallet.verify(&src, &at(id_a(), owner), last)
+}
+fn checkpoint(w: &Two, owner: u8, by: u8) -> Checkpoint {
+    let s = w.get(id_a(), owner);
+    let e = s.entries.last().unwrap();
+    let chain = at(id_a(), owner);
+    let m = Checkpoint::message(&chain, e.seq, &e.hash(), e.balance);
+    Checkpoint { chain, seq: e.seq, head: e.hash(), balance: e.balance, by: pk(by), sig: key(by).sign(&m).to_bytes() }
+}
+fn vouch(c: &Checkpoint, by: u8) -> Vouch {
+    Vouch { checkpoint: c.hash(), by: pk(by), sig: key(by).sign(&Vouch::message(&c.hash())).to_bytes() }
+}
+
+/// Token A: 1 (genesis) → 300 to 2 → 100 to 3.
+fn three_hops() -> Two {
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 2, Body::Send { to: pk(2), amount: 300 }, Some(1), 0);
+    put_at(w.chain(id_a(), 2), 2, Body::Receive { from: pk(1), nonce: nonce(2), amount: 300, cited: 0 }, None, 0);
+    put_at(w.chain(id_a(), 2), 3, Body::Send { to: pk(3), amount: 100 }, Some(2), 0);
+    put_at(w.chain(id_a(), 3), 3, Body::Receive { from: pk(2), nonce: nonce(3), amount: 100, cited: 0 }, None, 0);
+    w
+}
+
+/// 2 credits itself 5000 from a send that does not exist, buried under RECENT real receives (1 sends them), then pays
+/// 3 out of it.
+fn buried() -> Two {
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 2), 9, Body::Receive { from: pk(1), nonce: nonce(9), amount: 5000, cited: 0 }, None, 0);
+    for k in 0..RECENT as u8 {
+        put_at(w.chain(id_a(), 1), 20 + k, Body::Send { to: pk(2), amount: 10 }, Some(1), 0);
+        put_at(w.chain(id_a(), 2), 20 + k, Body::Receive { from: pk(1), nonce: nonce(20 + k), amount: 10, cited: 0 }, None, 0);
+    }
+    put_at(w.chain(id_a(), 2), 40, Body::Send { to: pk(3), amount: 3000 }, Some(2), 0);
+    put_at(w.chain(id_a(), 3), 40, Body::Receive { from: pk(2), nonce: nonce(40), amount: 3000, cited: 0 }, None, 0);
+    w
+}
+
+#[test]
+fn a_wallet_verifies_an_honest_payment_back_to_genesis() {
+    let w = three_hops();
+    let mut wallet = Wallet::new(pk(3));
+    assert_eq!(verify(&w, &mut wallet, 3), Ok(()));
+    assert!(wallet.reads.get() >= 3, "it read the chains back to genesis");
+}
+
+#[test]
+fn minting_by_burying_passes_the_contract_and_is_refused_by_the_wallet() {
+    let w = buried();
+    // The contract alone accepts the chain: the fake receive is past its window…
+    assert_eq!(w.check(id_a(), 2), Ok(()));
+    // …the wallet refuses it, naming the entry.
+    let f = verify(&w, &mut Wallet::new(pk(5)), 2).unwrap_err();
+    assert_eq!((f.chain, f.seq, f.why), (at(id_a(), 2), 0, "a receive whose send is not in its sender's chain"));
+    // CONTROL: the same chain without the fake receive verifies.
+    let mut honest = buried();
+    let c2 = honest.chain(id_a(), 2);
+    let rest: Vec<Entry> = c2.entries.drain(1..).collect();
+    c2.entries.clear();
+    let mut rebuilt = State::default();
+    for e in rest {
+        let body = e.body.clone();
+        put_at(&mut rebuilt, e.nonce[0], body, if matches!(e.auth, Auth::Sig(_)) { Some(2) } else { None }, 0);
+    }
+    let last = rebuilt.entries.len() - 1;
+    rebuilt.entries.truncate(last); // (the 3000 send is more than the honest balance: drop it)
+    *honest.chain(id_a(), 2) = rebuilt;
+    assert_eq!(verify(&honest, &mut Wallet::new(pk(5)), 2), Ok(()));
+}
+
+#[test]
+fn a_payment_out_of_fake_money_is_refused_downstream_with_the_upstream_proof() {
+    let w = buried();
+    assert_eq!(w.check(id_a(), 3), Ok(()), "3's own chain is well-formed");
+    let f = verify(&w, &mut Wallet::new(pk(3)), 3).unwrap_err();
+    assert_eq!((f.chain, f.seq), (at(id_a(), 2), 0), "the root cause: 2's fake receive");
+}
+
+#[test]
+fn a_citation_loop_is_money_from_nothing() {
+    // 4 receives 50 from 5's send; 5 receives 50 from 4's send — each send made out of the other's receive.
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 4), 51, Body::Receive { from: pk(5), nonce: nonce(52), amount: 50, cited: 0 }, None, 0);
+    put_at(w.chain(id_a(), 4), 53, Body::Send { to: pk(5), amount: 50 }, Some(4), 0);
+    put_at(w.chain(id_a(), 5), 54, Body::Receive { from: pk(4), nonce: nonce(53), amount: 50, cited: 0 }, None, 0);
+    put_at(w.chain(id_a(), 5), 52, Body::Send { to: pk(4), amount: 50 }, Some(5), 0);
+    assert_eq!(w.check(id_a(), 4), Ok(()));
+    assert_eq!(w.check(id_a(), 5), Ok(()));
+    let f = verify(&w, &mut Wallet::new(pk(9)), 4).unwrap_err();
+    assert_eq!(f.why, "a citation loop: money from nothing");
+}
+
+#[test]
+fn money_back_and_forth_is_not_a_loop() {
+    // 1 → 300 to 2; 2 → 50 back to 1; 1 receives it; 1 → 100 to 3. Verifying 3 walks 1 (to its last send), which
+    // walks 2, which walks 1 again — to an EARLIER entry: no loop.
+    let mut w = three_hops();
+    put_at(w.chain(id_a(), 2), 4, Body::Send { to: pk(1), amount: 50 }, Some(2), 0);
+    put_at(w.chain(id_a(), 1), 4, Body::Receive { from: pk(2), nonce: nonce(4), amount: 50, cited: 0 }, None, 0);
+    put_at(w.chain(id_a(), 1), 5, Body::Send { to: pk(6), amount: 100 }, Some(1), 0);
+    put_at(w.chain(id_a(), 6), 5, Body::Receive { from: pk(1), nonce: nonce(5), amount: 100, cited: 0 }, None, 0);
+    assert_eq!(verify(&w, &mut Wallet::new(pk(6)), 6), Ok(()));
+}
+
+#[test]
+fn a_trusted_checkpoint_saves_the_walk() {
+    let w = three_hops();
+    let mut plain = Wallet::new(pk(3));
+    verify(&w, &mut plain, 3).unwrap();
+    let mut with = Wallet::new(pk(3));
+    with.trusted = vec![pk(9)];
+    with.checkpoints = vec![checkpoint(&w, 2, 9)];
+    verify(&w, &mut with, 3).unwrap();
+    assert!(with.reads.get() < plain.reads.get(), "{} reads with the checkpoint, {} without", with.reads.get(), plain.reads.get());
+    // The owner's own checkpoint counts for nothing, trusted or not.
+    let mut own = Wallet::new(pk(3));
+    own.trusted = vec![pk(2)];
+    own.checkpoints = vec![checkpoint(&w, 2, 2)];
+    verify(&w, &mut own, 3).unwrap();
+    assert_eq!(own.reads.get(), plain.reads.get(), "walked as if there were none");
+}
+
+#[test]
+fn vouches_count_and_an_owners_vouch_does_not() {
+    let w = three_hops();
+    let c = checkpoint(&w, 2, 7); // 7: unknown to the wallet
+    let reads = |wallet: &mut Wallet| {
+        verify(&w, wallet, 3).unwrap();
+        wallet.reads.get()
+    };
+    let mut none = Wallet::new(pk(3));
+    none.checkpoints = vec![c.clone()];
+    let walked = reads(&mut none);
+    let mut by_trusted = Wallet::new(pk(3));
+    by_trusted.trusted = vec![pk(8)];
+    by_trusted.checkpoints = vec![c.clone()];
+    by_trusted.vouches = vec![vouch(&c, 8)];
+    assert!(reads(&mut by_trusted) < walked, "a trusted key's vouch");
+    let mut by_count = Wallet::new(pk(3));
+    by_count.min_vouches = 2;
+    by_count.checkpoints = vec![c.clone()];
+    by_count.vouches = vec![vouch(&c, 5), vouch(&c, 6)];
+    assert!(reads(&mut by_count) < walked, "two vouches");
+    let mut short = Wallet::new(pk(3));
+    short.min_vouches = 2;
+    short.checkpoints = vec![c.clone()];
+    short.vouches = vec![vouch(&c, 5), vouch(&c, 2)]; // 2 owns the chain: does not count
+    assert_eq!(reads(&mut short), walked, "the owner's vouch is not one");
+}
+
+#[test]
+fn a_false_checkpoint_is_proven_and_its_maker_and_vouchers_are_skipped() {
+    let w = buried();
+    let c = checkpoint(&w, 2, 9);
+    let v = vouch(&c, 8);
+    // Trusting 9, a wallet accepts the payment — that is what trust is.
+    let mut trusting = Wallet::new(pk(3));
+    trusting.trusted = vec![pk(9)];
+    trusting.checkpoints = vec![c.clone()];
+    trusting.vouches = vec![v.clone()];
+    assert_eq!(verify(&w, &mut trusting, 3), Ok(()));
+    // Anyone AUDITS it: the proof names the maker and the voucher.
+    let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
+    let src = Source { chain: &chain, definition: &defs };
+    let proof = trusting.audit(&src, &c).unwrap_err();
+    assert_eq!(proof.checkpoint.as_ref().map(|c| c.by), Some(pk(9)));
+    assert_eq!(proof.vouchers, vec![pk(8)]);
+    // Knowing the proof, a wallet skips both: the payment is refused.
+    let mut wary = Wallet::new(pk(3));
+    wary.trusted = vec![pk(9), pk(8)];
+    wary.checkpoints = vec![c.clone()];
+    wary.vouches = vec![v];
+    wary.frauds = vec![proof];
+    assert!(wary.distrusted(&pk(9)) && wary.distrusted(&pk(8)));
+    assert!(verify(&w, &mut wary, 3).is_err());
+    // An honest checkpoint survives its audit.
+    let h = three_hops();
+    let chain = |p: &ChainParams| h.0.get(&(p.definition, p.owner)).cloned();
+    let src = Source { chain: &chain, definition: &defs };
+    assert_eq!(Wallet::new(pk(1)).audit(&src, &checkpoint(&h, 2, 9)), Ok(()));
+}
+
+#[test]
+fn a_checkpoint_that_is_not_the_chain_is_not_used() {
+    // A trusted key's signed checkpoint of the fake-funded chain — but naming a head the chain does not have (another
+    // copy, an older story): the wallet does not stop there, it walks, and finds the fake receive.
+    let w = buried();
+    let s = w.get(id_a(), 2);
+    let e = s.entries.last().unwrap();
+    let chain = at(id_a(), 2);
+    let wrong = [7u8; 32];
+    let m = Checkpoint::message(&chain, e.seq, &wrong, e.balance);
+    let c = Checkpoint { chain, seq: e.seq, head: wrong, balance: e.balance, by: pk(9), sig: key(9).sign(&m).to_bytes() };
+    let mut wallet = Wallet::new(pk(3));
+    wallet.trusted = vec![pk(9)];
+    wallet.checkpoints = vec![c];
+    assert!(verify(&w, &mut wallet, 3).is_err());
+}

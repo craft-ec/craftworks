@@ -348,7 +348,7 @@ impl Entry {
     }
 }
 
-fn sig_ok(key: &[u8; 32], message: &[u8], sig: &[u8; 64]) -> bool {
+pub(crate) fn sig_ok(key: &[u8; 32], message: &[u8], sig: &[u8; 64]) -> bool {
     VerifyingKey::from_bytes(key).is_ok_and(|k| k.verify_strict(message, &Signature::from_bytes(sig)).is_ok())
 }
 
@@ -475,6 +475,16 @@ pub type Why = &'static str;
 /// THE SHAPE RULES (TOKEN §3a, §3c) of chain `p` for definition `d` — true any time, from scratch. `chain(definition,
 /// owner)` gives a chain the citations among the last [`RECENT`] entries cite (`None`: it does not exist).
 pub fn check(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>) -> Result<(), Why> {
+    check_window(p, d, s, chain, RECENT).map_err(|(_, why)| why)
+}
+
+/// The shape rules with the citations of the last `window` entries checked — the contract's [`RECENT`]; a WALLET's
+/// every one (`usize::MAX`, TOKEN §3a). Refused: the entry where (its seq) and why.
+pub fn check_window(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, window: usize) -> Result<(), (u64, Why)> {
+    let at = |i: usize| i as u64;
+    let mut failed_at = 0usize;
+    let r = (|| -> Result<(), Why> {
+
     if d.code_hash != p.code_hash {
         return Err("the definition is not this standard's");
     }
@@ -493,9 +503,10 @@ pub fn check(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32
     let mut locks: Vec<([u8; 16], [u8; 32], u128, u64, [u8; 32], [u8; 16], bool)> = Vec::new();
     let mut filled: Vec<([u8; 32], [u8; 16])> = Vec::new();
     let mut claimed: Vec<([u8; 32], [u8; 16])> = Vec::new();
-    let recent_from = s.entries.len().saturating_sub(RECENT);
+    let recent_from = s.entries.len().saturating_sub(window);
     let owner_signed = |e: &Entry| if e.signed_by(&p.owner) { Ok(()) } else { Err("an entry not signed by the chain's writer") };
     for (i, e) in s.entries.iter().enumerate() {
+        failed_at = i;
         if e.seq != i as u64 {
             return Err("a seq out of place");
         }
@@ -689,6 +700,7 @@ pub fn check(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32
         prev = e.hash();
         stamp = e.stamp;
     }
+    failed_at = s.entries.len();
     if let Some((a, b)) = &s.fork {
         let n = s.entries.len() as u64;
         if a.seq != n || b.seq != n || a.prev != prev || b.prev != prev || a == b || a.hash() >= b.hash() {
@@ -699,6 +711,8 @@ pub fn check(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32
         }
     }
     Ok(())
+    })();
+    r.map_err(|why| (at(failed_at), why))
 }
 
 /// THE APPEND RULES (TOKEN §3c), checked by a node that already HOLDS the chain as it takes in what it did not have
@@ -893,6 +907,8 @@ mod contract {
         }
     }
 }
+
+pub mod wallet;
 
 #[cfg(test)]
 mod tests;
