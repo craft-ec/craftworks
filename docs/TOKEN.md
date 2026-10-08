@@ -213,6 +213,10 @@ make the whole chain invalid for good. So the contract keeps two kinds of rules:
   related contract); a `fill` lands before its lock's deadline less the margin; a `refund` lands after the deadline,
   with no fill citing the lock in the maker's chain (a related contract); a `claim` cites a fill final by the margin.
 
+MEASURED (10-08, `tools/related-spike guard`, fx/fy): `update_state` asking for a related contract completes — the
+node fetches it and calls `update_state` again with its state — and the contract decides by it: a guard whose lock says
+LOCK took its update (v0 → v1); one whose lock says NOPE refused it ("invalid contract update"), staying at v0.
+
 A forged stamp can only pass where the chain was never held (a fresh PUT is checked by its shape alone) — and dies at
 every node that did hold it, which applies the append rules before it merges. A chain's time is its stamps; its stamps
 were checked against the beacon by every node that held the chain when they arrived.
