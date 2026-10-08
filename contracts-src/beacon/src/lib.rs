@@ -367,23 +367,32 @@ pub fn merge(p: &Params, a: &State, b: &State) -> State {
     // The longest path through the pool (heights in a row, each step's prev the last's out); ties: the lower output
     // at the first difference. Paths start at the lowest height known.
     let start = pool.first().map_or(0, |x| x.height);
-    fn best(pool: &[Step], from: &Step) -> Vec<Step> {
-        let mut out = vec![from.clone()];
-        let mut tail: Vec<Step> = Vec::new();
-        for next in pool.iter().filter(|x| x.height == from.height + 1 && x.prev == from.out) {
-            let t = best(pool, next);
-            if t.len() > tail.len() {
-                tail = t;
+    // Iteratively (a beacon keeps 1440 steps: no recursion that deep in a contract): from the highest height down,
+    // each step's longest path onward = 1 + its longest child's (pool sorted by height, then output, so on equal
+    // length the first — lowest output — child is kept).
+    let n = pool.len();
+    let mut len = vec![1usize; n];
+    let mut next: Vec<Option<usize>> = vec![None; n];
+    for i in (0..n).rev() {
+        for j in (i + 1)..n {
+            if pool[j].height > pool[i].height + 1 {
+                break;
+            }
+            if pool[j].height == pool[i].height + 1 && pool[j].prev == pool[i].out && 1 + len[j] > len[i] {
+                len[i] = 1 + len[j];
+                next[i] = Some(j);
             }
         }
-        out.extend(tail);
-        out
     }
     let mut steps: Vec<Step> = Vec::new();
-    for first in pool.iter().filter(|x| x.height == start) {
-        let path = best(&pool, first);
-        if path.len() > steps.len() {
-            steps = path;
+    if let Some(first) = (0..n).filter(|&i| pool[i].height == start).fold(None, |best: Option<usize>, i| match best {
+        Some(b) if len[b] >= len[i] => Some(b),
+        _ => Some(i),
+    }) {
+        let mut at = Some(first);
+        while let Some(i) = at {
+            steps.push(pool[i].clone());
+            at = next[i];
         }
     }
     let alts: Vec<Step> = pool.into_iter().filter(|x| !steps.iter().any(|c| c.height == x.height && c.root == x.root)).collect();

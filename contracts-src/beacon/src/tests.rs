@@ -218,3 +218,18 @@ fn bytes_round_trip_exactly() {
     }
 }
 
+
+#[test]
+fn a_full_length_beacon_merges() {
+    // As kept for real (1440 steps): merging long copies stays linear and shallow.
+    let q = Params { keep: 1440, ..p() };
+    let mut s = State::default();
+    for _ in 0..1500 {
+        s = s.extend(&q);
+    }
+    assert_eq!(s.steps.len(), 1440);
+    let longer = s.extend(&q);
+    assert_eq!(merge(&q, &s, &longer), longer);
+    assert_eq!(merge(&q, &longer, &s), longer);
+    assert_eq!(check(&q, &longer), Ok(()));
+}
