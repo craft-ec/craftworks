@@ -1355,6 +1355,11 @@ old key's addresses.
   fetch + accept 4.4/62.3/11.3/8.1/8.6 s (62 s unexplained), equivocation converged on both nodes 4.9–5.8 s. Margin
   set to 10 beacon steps. A fresh node on this Mac (phone hotspot, 172.20.10.x) made no connection in 3 min while the
   owner's node held 37 — cause not measured. Next: step 5 (allow/spend, offer/fill/lock/claim/refund).
+- TOKEN STEP 5a (10-08): ALLOWANCES — `allow(spender, limit)` (owner; replaces, 0 revokes), `spend(to, amount)` signed by
+  the SPENDER (Auth::Delegated), within allowance and balance; receivable like a send; an owner entry and a spender
+  entry at one seq settle by lowest hash (never a freeze). 25 tests; 5 mutants killed. Live fx/fy: allow 200 → spend
+  150 via fy → received via fx; spend 51 (50 left) REFUSED. Allowances scanned from the chain (with the accumulator:
+  carried once pruning exists). Next 5b: locks/offers/fills/claims/refunds — needs APPEND rules (time vs the beacon).
 - [ ] Proofs: DEFERRED until rewards pay (owner 10-07); low-cost plan in REWARDS §7 item 5. Next on the track: treasury
       pass + statements + shadow ledger (REWARDS §7 item 4).
 - Decisions recorded in REWARDS: carriers = holders weighted by demand; users are the keepers; never paid to own

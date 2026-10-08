@@ -76,6 +76,8 @@ fn push(s: &mut T::State, body: T::Body, n: [u8; 16], by: Option<u8>) {
         T::Body::Genesis { amount } => *amount,
         T::Body::Send { amount, .. } | T::Body::Burn { amount } => bal - amount,
         T::Body::Receive { amount, .. } => bal + amount,
+        T::Body::Allow { .. } => bal,
+        T::Body::Spend { amount, .. } => bal - amount,
     };
     let mut e = T::Entry { seq: s.entries.len() as u64, prev: s.head(), nonce: n, body, balance, auth: T::Auth::Work(0) };
     e.auth = match by {
@@ -94,6 +96,9 @@ async fn main() -> Result<()> {
     let a: Vec<String> = std::env::args().collect();
     let code = std::fs::read(&a[1])?;
     let (x, y) = (a[2].as_str(), a[3].as_str());
+    if a.get(4).map(String::as_str) == Some("allow") {
+        return allow(&code, x, y).await;
+    }
     if a.get(4).map(String::as_str) == Some("net") {
         return net(&code, x, y, a.get(5).and_then(|n| n.parse().ok()).unwrap_or(3)).await;
     }
@@ -191,5 +196,42 @@ async fn net(code: &[u8], x: &str, y: &str, rounds: u32) -> Result<()> {
             None => println!("         two sends at seq 2 (via X {rx}, via Y {ry}): NOT agreed within 240 s"),
         }
     }
+    Ok(())
+}
+
+/// STEP 5a, LIVE: A allows S 200; S's spend of 150 to C through Y; C receives it through X; a spend past what is left
+/// is refused.
+async fn allow(code: &[u8], x: &str, y: &str) -> Result<()> {
+    let ch = *blake3::hash(code).as_bytes();
+    let salt: [u8; 16] = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_nanos().to_le_bytes();
+    let def = T::Definition { code_hash: ch, decimals: 8, min_send: 10, genesis_owner: pk(1), genesis_amount: 1000, name: b"Allow".to_vec(), nonce: salt };
+    let did = T::id(&ch, &def.encode());
+    let chain = |o: u8| T::ChainParams { code_hash: ch, definition: did, owner: pk(o) };
+    let cp = |o: u8| container(code, chain(o).encode());
+    let n = |k: u8| { let mut v = salt; v[15] ^= k; v };
+    put(x, container(code, def.encode()), def.encode()).await?;
+    let mut ca = T::State::default();
+    push(&mut ca, T::Body::Genesis { amount: 1000 }, n(1), Some(1));
+    push(&mut ca, T::Body::Allow { spender: pk(5), limit: 200 }, n(2), Some(1));
+    let (s, ms) = put(x, cp(1), ca.encode()).await?;
+    println!("1  A: genesis, allow S 200, on X: {s} ({ms} ms)");
+    let spend = |st: &mut T::State, k: u8, amount: u128| {
+        let mut e = T::Entry { seq: st.entries.len() as u64, prev: st.head(), nonce: n(k), body: T::Body::Spend { to: pk(3), amount }, balance: st.balance() - amount, auth: T::Auth::Work(0) };
+        e.auth = T::Auth::Delegated { by: pk(5), sig: key(5).sign(&e.message()).to_bytes() };
+        st.entries.push(e);
+    };
+    let mut cs = ca.clone();
+    spend(&mut cs, 3, 150);
+    let (s, ms) = put(y, cp(1), cs.encode()).await?;
+    println!("2  S spends 150 of A's to C, written through Y: {s} ({ms} ms)");
+    let mut cc = T::State::default();
+    push(&mut cc, T::Body::Receive { from: pk(1), nonce: n(3), amount: 150 }, n(3), None);
+    let (s, ms) = put(x, cp(3), cc.encode()).await?;
+    println!("3  C receives it, through X (fetching A): {s} ({ms} ms)");
+    let mut over = cs.clone();
+    spend(&mut over, 4, 51);
+    let (s, ms) = put(y, cp(1), over.encode()).await?;
+    let held = get(y, chain(1).id()).await?.and_then(|b| T::State::decode(&b));
+    println!("4  S spends 51 more (50 left), through Y: {s} ({ms} ms) — Y holds A with balance {}", held.map_or(0, |h| h.balance()));
     Ok(())
 }

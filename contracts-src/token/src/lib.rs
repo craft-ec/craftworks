@@ -139,12 +139,18 @@ pub enum Body {
     Receive { from: [u8; 32], nonce: [u8; 16], amount: u128 },
     /// A debit with no credit anywhere.
     Burn { amount: u128 },
+    /// The owner lets `spender` debit up to `limit` (replacing any earlier allowance; 0 revokes) — ERC-20 `approve`.
+    Allow { spender: [u8; 32], limit: u128 },
+    /// A debit to `to`'s chain written and signed by a SPENDER within their allowance — ERC-20 `transferFrom`.
+    Spend { to: [u8; 32], amount: u128 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Auth {
     /// The chain owner's signature over the entry's message.
     Sig([u8; 64]),
+    /// Another key's signature (a spender's, within their allowance): `by` signed it.
+    Delegated { by: [u8; 32], sig: [u8; 64] },
     /// Work: `blake3(message ‖ work)` has [`WORK_BITS`] leading zero bits.
     Work(u64),
 }
@@ -188,6 +194,16 @@ impl Entry {
                 v.push(3);
                 v.extend_from_slice(&amount.to_le_bytes());
             }
+            Body::Allow { spender, limit } => {
+                v.push(4);
+                v.extend_from_slice(spender);
+                v.extend_from_slice(&limit.to_le_bytes());
+            }
+            Body::Spend { to, amount } => {
+                v.push(5);
+                v.extend_from_slice(to);
+                v.extend_from_slice(&amount.to_le_bytes());
+            }
         }
         v.extend_from_slice(&self.balance.to_le_bytes());
         v
@@ -203,6 +219,11 @@ impl Entry {
                 v.push(1);
                 v.extend_from_slice(&w.to_le_bytes());
             }
+            Auth::Delegated { by, sig } => {
+                v.push(2);
+                v.extend_from_slice(by);
+                v.extend_from_slice(sig);
+            }
         }
         v
     }
@@ -215,12 +236,15 @@ impl Entry {
             1 => Body::Send { to: r.arr()?, amount: r.u128()? },
             2 => Body::Receive { from: r.arr()?, nonce: r.arr()?, amount: r.u128()? },
             3 => Body::Burn { amount: r.u128()? },
+            4 => Body::Allow { spender: r.arr()?, limit: r.u128()? },
+            5 => Body::Spend { to: r.arr()?, amount: r.u128()? },
             _ => return None,
         };
         let balance = r.u128()?;
         let auth = match r.u8()? {
             0 => Auth::Sig(r.arr()?),
             1 => Auth::Work(r.u64()?),
+            2 => Auth::Delegated { by: r.arr()?, sig: r.arr()? },
             _ => return None,
         };
         Some(Self { seq, prev, nonce, body, balance, auth })
@@ -234,12 +258,21 @@ impl Entry {
     }
     fn signed_by(&self, owner: &[u8; 32]) -> bool {
         let Auth::Sig(s) = &self.auth else { return false };
-        VerifyingKey::from_bytes(owner).is_ok_and(|k| k.verify_strict(&self.message(), &Signature::from_bytes(s)).is_ok())
+        sig_ok(owner, &self.message(), s)
+    }
+    /// Signed by `key` as a delegate (a spender): its signature, and its key named.
+    fn delegated_by(&self, key: &[u8; 32]) -> bool {
+        let Auth::Delegated { by, sig } = &self.auth else { return false };
+        by == key && sig_ok(by, &self.message(), sig)
     }
     fn worked(&self) -> bool {
         let Auth::Work(w) = self.auth else { return false };
         work_ok(&self.message(), w)
     }
+}
+
+fn sig_ok(key: &[u8; 32], message: &[u8], sig: &[u8; 64]) -> bool {
+    VerifyingKey::from_bytes(key).is_ok_and(|k| k.verify_strict(message, &Signature::from_bytes(sig)).is_ok())
 }
 
 pub fn work_ok(message: &[u8], work: u64) -> bool {
@@ -339,6 +372,8 @@ pub fn check(p: &ChainParams, d: &Definition, s: &State, sender: &dyn Fn(&[u8; 3
     let mut balance: u128 = 0;
     let mut prev = [0u8; 32];
     let mut received: Vec<([u8; 32], [u8; 16])> = Vec::new();
+    // The ALLOWANCES as they stand (spender → what is left), from the entries so far.
+    let mut allowed: Vec<([u8; 32], u128)> = Vec::new();
     let recent_from = s.entries.len().saturating_sub(RECENT);
     for (i, e) in s.entries.iter().enumerate() {
         if e.seq != i as u64 {
@@ -378,6 +413,34 @@ pub fn check(p: &ChainParams, d: &Definition, s: &State, sender: &dyn Fn(&[u8; 3
                 }
                 balance.checked_sub(*amount).ok_or("a debit over the balance")?
             }
+            Body::Allow { spender, limit } => {
+                if !e.signed_by(&p.owner) {
+                    return Err("an entry not signed by the chain's writer");
+                }
+                if *spender == p.owner {
+                    return Err("an allowance to itself");
+                }
+                allowed.retain(|(k, _)| k != spender);
+                if *limit > 0 {
+                    allowed.push((*spender, *limit));
+                }
+                balance
+            }
+            Body::Spend { to, amount } => {
+                let Auth::Delegated { by, .. } = &e.auth else { return Err("a spend not signed by a spender") };
+                if !e.delegated_by(by) {
+                    return Err("a spend not signed by a spender");
+                }
+                let left = allowed.iter_mut().find(|(k, _)| k == by).ok_or("a spend with no allowance")?;
+                left.1 = left.1.checked_sub(*amount).ok_or("a spend over its allowance")?;
+                if *to == p.owner {
+                    return Err("a send to itself");
+                }
+                if *amount < d.min_send {
+                    return Err("a send under the minimum");
+                }
+                balance.checked_sub(*amount).ok_or("a debit over the balance")?
+            }
             Body::Receive { from, nonce, amount } => {
                 // (Never from itself: a send to itself is refused — and asking for its own chain as a related
                 // contract is an error at the node, not a refusal.)
@@ -398,7 +461,9 @@ pub fn check(p: &ChainParams, d: &Definition, s: &State, sender: &dyn Fn(&[u8; 3
                     let chain = sender(from).ok_or("the sender's chain is not there")?;
                     // (A frozen sender's entries stop at its fork: a send after it — in the fork — is never found
                     // here, so every debit after an equivocation is void, TOKEN §3b.)
-                    let found = chain.entries.iter().any(|x| x.nonce == *nonce && matches!(x.body, Body::Send { to, amount: a } if to == p.owner && a == *amount));
+                    let found = chain.entries.iter().any(|x| {
+                        x.nonce == *nonce && matches!(x.body, Body::Send { to, amount: a } | Body::Spend { to, amount: a } if to == p.owner && a == *amount)
+                    });
                     if !found {
                         return Err("a receive whose send is not in its sender's chain");
                     }

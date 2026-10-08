@@ -27,7 +27,17 @@ fn after(s: &State, body: &Body) -> u128 {
         Body::Genesis { amount } => *amount,
         Body::Send { amount, .. } | Body::Burn { amount } => b.wrapping_sub(*amount),
         Body::Receive { amount, .. } => b + amount,
+        Body::Allow { .. } => b,
+        Body::Spend { amount, .. } => b.wrapping_sub(*amount),
     }
+}
+fn delegate(mut e: Entry, by: u8) -> Entry {
+    e.auth = Auth::Delegated { by: pk(by), sig: key(by).sign(&e.message()).to_bytes() };
+    e
+}
+fn spent(s: &mut State, by: u8, n: u8, to: u8, amount: u128) {
+    let e = delegate(entry(s, nonce(n), Body::Spend { to: pk(to), amount }), by);
+    s.entries.push(e);
 }
 fn entry(s: &State, n: [u8; 16], body: Body) -> Entry {
     let balance = after(s, &body);
@@ -354,4 +364,83 @@ fn a_definition_name_is_bounded() {
     assert_eq!(Definition::decode(&d.encode()), Some(d.clone()));
     d.name = vec![b'x'; NAME_MAX + 1];
     assert_eq!(Definition::decode(&d.encode()), None);
+}
+
+/// A (1) allows S (5) to spend 200; S spends 150 to C (3); C receives it.
+fn allowed() -> World {
+    let mut w = paid();
+    signed(w.0.get_mut(&pk(1)).unwrap(), 1, 3, Body::Allow { spender: pk(5), limit: 200 });
+    spent(w.0.get_mut(&pk(1)).unwrap(), 5, 4, 3, 150);
+    let mut c = State::default();
+    received(&mut c, 1, 4, 150);
+    w.0.insert(pk(3), c);
+    w
+}
+
+#[test]
+fn a_spender_spends_within_its_allowance_and_it_is_received() {
+    let w = allowed();
+    assert_eq!(w.check(1), Ok(()));
+    assert_eq!(w.check(3), Ok(()));
+    assert_eq!(w.0[&pk(1)].balance(), 550);
+    assert_eq!(w.0[&pk(3)].balance(), 150);
+}
+
+#[test]
+fn a_spend_over_what_is_left_of_its_allowance_is_refused() {
+    let mut w = allowed();
+    spent(w.0.get_mut(&pk(1)).unwrap(), 5, 5, 3, 51);
+    assert_eq!(w.check(1), Err("a spend over its allowance"));
+    let mut w = allowed();
+    spent(w.0.get_mut(&pk(1)).unwrap(), 5, 5, 3, 50);
+    assert_eq!(w.check(1), Ok(()), "exactly what is left");
+}
+
+#[test]
+fn only_an_allowed_key_spends_and_only_by_its_own_signature() {
+    let mut w = allowed();
+    spent(w.0.get_mut(&pk(1)).unwrap(), 6, 5, 3, 20);
+    assert_eq!(w.check(1), Err("a spend with no allowance"));
+    // A spend signed as the owner is not a spend.
+    let mut w = allowed();
+    signed(w.0.get_mut(&pk(1)).unwrap(), 1, 5, Body::Spend { to: pk(3), amount: 20 });
+    assert_eq!(w.check(1), Err("a spend not signed by a spender"));
+    // Naming the spender but signed by someone else.
+    let mut w = allowed();
+    let a = w.0.get_mut(&pk(1)).unwrap();
+    let mut e = entry(a, nonce(5), Body::Spend { to: pk(3), amount: 20 });
+    e.auth = Auth::Delegated { by: pk(5), sig: key(6).sign(&e.message()).to_bytes() };
+    a.entries.push(e);
+    assert_eq!(w.check(1), Err("a spend not signed by a spender"));
+}
+
+#[test]
+fn a_new_allowance_replaces_the_old_and_zero_revokes() {
+    let mut w = allowed();
+    signed(w.0.get_mut(&pk(1)).unwrap(), 1, 5, Body::Allow { spender: pk(5), limit: 10 });
+    spent(w.0.get_mut(&pk(1)).unwrap(), 5, 6, 3, 11);
+    assert_eq!(w.check(1), Err("a spend over its allowance"), "replaced, not added");
+    let mut w = allowed();
+    signed(w.0.get_mut(&pk(1)).unwrap(), 1, 5, Body::Allow { spender: pk(5), limit: 0 });
+    spent(w.0.get_mut(&pk(1)).unwrap(), 5, 6, 3, 10);
+    assert_eq!(w.check(1), Err("a spend with no allowance"), "revoked");
+    let mut w = allowed();
+    signed(w.0.get_mut(&pk(1)).unwrap(), 1, 5, Body::Allow { spender: pk(1), limit: 10 });
+    assert_eq!(w.check(1), Err("an allowance to itself"));
+}
+
+#[test]
+fn an_owner_entry_and_a_spender_entry_at_one_seq_do_not_freeze_the_chain() {
+    let w = allowed();
+    let base = w.0[&pk(1)].clone();
+    let mut by_owner = base.clone();
+    signed(&mut by_owner, 1, 7, Body::Send { to: pk(2), amount: 20 });
+    let mut by_spender = base.clone();
+    spent(&mut by_spender, 5, 8, 3, 20);
+    let r = all_orders(&[by_owner.clone(), by_spender.clone()]);
+    assert!(r.windows(2).all(|x| x[0] == x[1]));
+    assert!(r[0].fork.is_none(), "two writers, not an equivocation");
+    let n = base.entries.len();
+    let lowest = if by_owner.entries[n].hash() < by_spender.entries[n].hash() { by_owner } else { by_spender };
+    assert_eq!(r[0], lowest);
 }
