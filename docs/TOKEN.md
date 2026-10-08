@@ -359,11 +359,12 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    the supply and activity bags; the authority chain.
 4. The beacon contract (§5a), then the real network: finality margin, related fetch latency across the ring.
 5. `allow`/`spend`, `offer`/`fill`/`lock`/`claim`/`refund`, multisig owners, ids (NFT, multi-token), vesting.
-6. The Craftworks token: contributions as locks, payouts as claims.
-7. Batch-auction pools.
-8. Wallet verification: the citation walk, public checkpoints and vouches, fraud proofs naming maker and vouchers (§3a).
+6. Wallet verification: the citation walk, public checkpoints and vouches, fraud proofs naming maker and vouchers (§3a)
+   — BEFORE any token carries value (below).
+7. The Craftworks token: contributions as locks, payouts as claims.
+8. Batch-auction pools.
 
-**Before the token carries real value, step 8 must exist** (code review, 10-08): the contract checks only the receives
+**Before the token carries real value, step 6 must exist** (code review, 10-08): the contract checks only the receives
 among a chain's last 9 entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under 9
 real receives from accounts they control — at the cost of 9 minimum sends, which return to them. The chain is
 well-formed and its money is from nothing; only a wallet walking its citations (§3a) refuses it. Until wallets verify,
