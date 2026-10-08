@@ -418,9 +418,13 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    overflow — the walk is recursive: make it iterative for browser wallets). LIVE fx/fy: the minting-by-burying
    attack ACCEPTED by every contract, REFUSED by the receiver's wallet reading the same chains ("chain 2 seq 0: a
    receive whose send is not in its sender's chain", 4 reads); an honest payment verified (3 reads).
-   OWNER 10-08: a wallet-side check is a half measure — the network says "accepted", only a wallet says "fake". The
-   real fix is IN THE CONTRACT: RECURSIVE VALIDITY PROOFS (zk), each chain update proving its whole history valid,
-   verified by the contract in constant time. Next: measure a zk route on our rules before building it.
+   DECIDED (owner 10-08): THE RECEIVING WALLET IS THE GATE. Recursive validity proofs (zk) would put the check in the
+   contract, but were surveyed (10-08) and are too costly now: SP1 (the one released PCD-capable stack keeping ed25519
+   and blake3) documents 16 GB+ RAM to prove and points to a paid prover network — a central party; Ragu (PCD-native,
+   ~276 ms a step) is unreleased and unaudited; Nova/Sonobe do not merge proofs across chains yet. Revisit when a
+   PCD library matures. To make the gate solid: (a) the app VERIFIES BEFORE IT DISPLAYS — never shows or spends
+   unverified value ("verifying…" → "received" / "refused: forged, with its proof"); (b) the walk ITERATIVE (no
+   recursion depth in a browser wallet); (c) checkpoints, vouches and fraud proofs in public bags on the network.
 7. The Craftworks token: contributions as locks, payouts as claims.
 8. Batch-auction pools.
 
