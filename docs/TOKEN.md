@@ -118,7 +118,12 @@ cut (a receive of an older send) CARRIES a prolly ABSENCE PROOF against the cut'
 WRITER on their own device (they fetch the blocks as any reader does), checked by the contract from the proof alone
 (`freenet_prolly::proof::verify`: no fetch, no related slot, nothing to be unavailable). Entries after the cut are
 checked against the live entries, as before. The set changes only at the next cut, so no insertion proofs. The library
-has these proofs (tested); Craftworks has not needed one until now — the token is their first use. **A debit is valid only if the balance covers it** at its place. An owner may be a k-of-n key set:
+has these proofs (tested); Craftworks has not needed one until now — the token is their first use.
+
+MEASURED (10-08, `tools/prolly-spike`, fx): a contract whose validation runs `verify_bytes` on a carried absence proof
+— received sets of 1,000 / 100,000 / 1,000,000 names: proofs 5.8 / 14.7 / 17.1 KB, verified natively in 11 / 17 /
+21 µs; the contract ACCEPTED each absence proof and REFUSED the presence proof and a tampered one at every size. The
+verifier adds ~130 KB to a contract's wasm. A receive pays a proof only when it cites a send older than the last cut. **A debit is valid only if the balance covers it** at its place. An owner may be a k-of-n key set:
 an entry it signs carries k signatures.
 
 | Entry | Effect | Written by | Valid when |

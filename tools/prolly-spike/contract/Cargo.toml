@@ -1,0 +1,21 @@
+[package]
+name = "prolly-spike-contract"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "SPIKE (TOKEN prune cut): does freenet-prolly's absence-proof verifier fit in a contract's validation? state = root ‖ key_len u16 ‖ key ‖ proof; valid iff the proof shows the key ABSENT."
+[workspace]
+[lib]
+crate-type = ["cdylib", "rlib"]
+[dependencies]
+freenet-stdlib = { version = "0.10.0", features = ["contract"] }
+freenet-prolly = { git = "https://github.com/craft-ec/freenet-prolly", rev = "17d67d8" }
+[features]
+default = ["freenet-main-contract"]
+freenet-main-contract = []
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
