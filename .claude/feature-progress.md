@@ -1330,8 +1330,10 @@ old key's addresses.
   memory craftworks-token-behavior-not-blockchain). Step 1 SPIKE `tools/related-spike` (a lock and a fill, one code):
   fx/fy private 2-node net, freenet 0.2.142 — A fill citing a missing lock: REFUSED "missing related contract" (60 ms);
   B lock LOCK on fx → fill on fy: ACCEPTED (72 ms); C lock NOPE → fill: REFUSED "invalid put" (15 ms); D both on fy:
-  ACCEPTED (60 ms). So validation reads another contract's state and decides by it. NOT shown: the node FETCHING the
-  related contract over the network (fx relayed the lock's PUT to fy first) — measure on the real net via B. Source
+  ACCEPTED (60 ms). So validation reads another contract's state and decides by it. FETCH over the network, shown too:
+  fy STOPPED, lock written on fx alone (a lone gateway never acked its PUT: 90 s), fy restarted (no trace of the lock),
+  then the fill on fy: the lock "initial state installed" at 10:28:52.544 — the fill's validation fetched it from fx —
+  and the fill ACCEPTED, 100 ms end to end. Still to measure: the same on the real network (latency, a far lock). Source
   limits (0.2.135): depth 1, ≤10 related, 10 s. Next: docs/TOKEN.md for review.
 - [ ] Proofs: DEFERRED until rewards pay (owner 10-07); low-cost plan in REWARDS §7 item 5. Next on the track: treasury
       pass + statements + shadow ledger (REWARDS §7 item 4).

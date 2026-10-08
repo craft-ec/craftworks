@@ -45,6 +45,20 @@ async fn put(ws: &str, c: ContractContainer, state: Vec<u8>) -> Result<(String, 
 async fn main() -> Result<()> {
     let a: Vec<String> = std::env::args().collect();
     let code = std::fs::read(&a[1])?;
+    // SINGLE STEPS (a lock on one node while the other is down; its fill later): `lock <ws> <tag>` / `fill <ws> <lock id>`.
+    if a[2] == "lock" {
+        let lc = container(&code, [&[0u8][..], a[4].as_bytes()].concat());
+        let id = *lc.key().id();
+        let (s, ms) = put(&a[3], lc, b"LOCK solo".to_vec()).await?;
+        println!("lock {}: {s} ({ms} ms)", id.encode());
+        return Ok(());
+    }
+    if a[2] == "fill" {
+        let lock = ContractInstanceId::from_bytes(&a[4]).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let (s, ms) = put(&a[3], container(&code, [&[1u8][..], lock.as_bytes()].concat()), b"fill solo".to_vec()).await?;
+        println!("fill citing {}: {s} ({ms} ms)", a[4]);
+        return Ok(());
+    }
     let (x, y) = (a[2].as_str(), a[3].as_str());
     let n = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_nanos().to_le_bytes();
     let id_of = |c: &ContractContainer| *c.key().id();
