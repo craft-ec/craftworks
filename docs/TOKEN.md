@@ -335,20 +335,25 @@ tokens of the standard.
 
 ## 5. Pools, by batch auction
 
-An AMM's pool needs one shared value changed in a global order. Instead, a POOL is a definition of its own
-(`{ token A, token B, epoch length }`) and a bag per epoch:
+An AMM's pool needs one shared value changed in a global order. Instead, a POOL is a definition of its own and a batch
+per epoch (built 10-09: `pool.rs`, `clear.rs`):
 
-1. **Collect** — during epoch `e` (beacon heights), traders post orders and liquidity providers post CURVE ORDERS
-   (constant product over a price range), each backed by a `lock` to the pool's epoch.
-2. **Clear** — after `e` + grace, a PURE FUNCTION over the epoch's orders gives ONE uniform price and every fill.
-   Anyone computes it; order within the batch does not matter (and nobody can front-run).
-3. **Settle** — each participant's chain takes its result: `fill`/`claim`/`refund` entries citing the batch's result
-   hash, appended by anyone.
-
-What is in a batch is settled like a day of statements (REWARDS §3), from CHAIN DATA ONLY so every clearer computes the
-same batch: an order is in epoch `e` if its lock names the pool's epoch `e` and became FINAL (§3b) within `e`'s window;
-the batch is final once `e` and its grace are over. A later lock is in the next batch. Liquidity is pooled; prices are per
-epoch, not per trade.
+1. **The pool** (`pool::Pool`): tokens A and B (prices B per A), its epoch length and grace — a contract whose state
+   is its params.
+2. **Collect** — during epoch `e`, a trader appends an `Order` to its own chain of the token it gives: a SELL of A or
+   a BUY of A with B, at a LIMIT price — a debit now, held for the batch, stamped before the batch's close. A liquidity
+   provider's curve is a LADDER of limit orders, built by its client: one primitive in the contract. Each order's
+   pointer goes into the batch's ORDER REGISTRY (one contract per pool and epoch), which takes nothing from the batch's
+   settle height (close + grace) on — so every clearer clears the same set.
+3. **Clear** — a PURE FUNCTION (`clear::clear`) over the registry's orders, in its canonical (sorted) order: ONE
+   uniform price — the one matching the most A, ties to the smaller imbalance, then the lower price; the short side
+   fills whole, the long side pro rata (rounded down, the rest to the earliest). Buyers pay the ceiling, sellers get
+   the floor: nothing is created (the rounding's dust stays in the batch). Order within the batch does not matter:
+   nobody can front-run.
+4. **Settle** — from the settle height, anyone appends to each order's chain a `Settle` (what it did not spend, back —
+   once), and to the same owner's chain of the other token a `Bought` (what it got — once). That those amounts ARE the
+   batch's clearing is the WITNESSES' to check (they recompute it from the registry): a contract cannot read a whole
+   batch in one round. A chain is not cut while it holds an order not settled.
 
 ## 5a. The beacon (the clock)
 

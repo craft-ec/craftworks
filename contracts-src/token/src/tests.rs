@@ -66,6 +66,9 @@ fn after(s: &State, body: &Body) -> u128 {
         Body::Send { amount, .. } | Body::Burn { amount } => b.wrapping_sub(*amount),
         Body::Receive { amount, .. } | Body::Mint { amount, .. } | Body::Vested { amount, .. } => b + amount,
         Body::Vest { schedule, .. } => b.wrapping_sub(schedule.iter().map(|x| x.1).sum::<u128>()),
+        Body::Order { amount, .. } => b.wrapping_sub(*amount),
+        Body::Settle { refund, .. } => b + refund,
+        Body::Bought { got, .. } => b + got,
         Body::Stake { amount } => b.wrapping_sub(*amount),
         Body::Unstake { .. } | Body::Slash { .. } | Body::Misdeed { .. } => b,
         Body::Release { unstake } => b + unbonding_of(s).into_iter().find(|u| &u.0 == unstake).map_or(0, |u| u.1),
@@ -2628,4 +2631,110 @@ fn the_watch_finds_who_signed_two_entries_at_one_place() {
     let Body::Slash { key: k, a, b } = &found[0].1 else { panic!("a burn") };
     assert!(witness::equivocation(k, a, b), "the burn it builds is one the chain takes");
     assert!(wallet::equivocations(&bag[1..4], &lot.claims).is_empty(), "control: no one signed two");
+}
+
+// ---- POOLS (TOKEN §5): orders locked to a batch, settled once, a cut only after ----
+
+fn a_pool() -> pool::Pool {
+    pool::Pool { code_hash: CODE, a: id_a().into(), b: id_b().into(), epoch: 10, grace: 4, beacon: BEACON }
+}
+/// 1 (token A: genesis 1000) sells 300 A at ≥ 2 in batch 0 of the pool (closes 10, settles 14), stamped 3.
+fn ordered() -> Two {
+    let p = a_pool();
+    let (close, settle) = p.window(0);
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 7, Body::Order { pool: p.id(), epoch: 0, close, settle, side: 0, amount: 300, limit: 2 * clear::PRICE_ONE }, Some(1), 3);
+    w
+}
+
+#[test]
+fn an_order_is_a_debit_held_for_its_batch() {
+    let w = ordered();
+    assert_eq!(w.check(id_a(), 1), Ok(()));
+    assert_eq!(w.get(id_a(), 1).balance(), 700);
+    let p = a_pool();
+    let (close, settle) = p.window(0);
+    let try_order = |body: Body, stamp: u64| {
+        let mut x = Two(HashMap::new());
+        put_at(x.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+        put_at(x.chain(id_a(), 1), 7, body, Some(1), stamp);
+        x.check(id_a(), 1)
+    };
+    let order = |side: u8, amount: u128, limit: u128, close: u64, settle: u64| Body::Order { pool: p.id(), epoch: 0, close, settle, side, amount, limit };
+    assert_eq!(try_order(order(0, 300, 1, close, settle), 10), Err("an order after its batch closed"), "stamped at its close");
+    assert_eq!(try_order(order(0, 300, 1, close, settle), 9), Ok(()));
+    assert_eq!(try_order(order(2, 300, 1, close, settle), 3), Err("an order that is not a sell or a buy at a price"));
+    assert_eq!(try_order(order(0, 300, 0, close, settle), 3), Err("an order that is not a sell or a buy at a price"));
+    assert_eq!(try_order(order(0, 9, 1, close, settle), 3), Err("a send under the minimum"));
+    assert_eq!(try_order(order(0, 1001, 1, close, settle), 3), Err("a debit over the balance"));
+    assert_eq!(try_order(order(0, 300, 1, close, close - 1), 3), Err("an order after its batch closed"), "settling before it closes");
+    assert_eq!(Entry::decode(&w.get(id_a(), 1).entries.last().unwrap().encode()).as_ref(), w.get(id_a(), 1).entries.last());
+}
+
+#[test]
+fn an_order_settles_once_after_its_batch_and_its_purchase_lands_once() {
+    let w = ordered();
+    let settle = a_pool().window(0).1;
+    // Its refund in its own chain: from the settle height, once, never past what it held.
+    let refund = |stamp: u64, refund: u128, n: u8| {
+        let mut x = Two(w.0.clone());
+        put_at(x.chain(id_a(), 1), n, Body::Settle { order: nonce(7), refund }, None, stamp);
+        x
+    };
+    assert_eq!(refund(settle - 1, 150, 8).check(id_a(), 1), Err("a settlement before its batch settles"));
+    assert_eq!(refund(settle, 301, 8).check(id_a(), 1), Err("a refund past what the order held"));
+    let done = refund(settle, 150, 8);
+    assert_eq!(done.check(id_a(), 1), Ok(()));
+    assert_eq!(done.get(id_a(), 1).balance(), 850);
+    let mut twice = Two(done.0.clone());
+    put_at(twice.chain(id_a(), 1), 9, Body::Settle { order: nonce(7), refund: 1 }, None, settle);
+    assert_eq!(twice.check(id_a(), 1), Err("a settlement of no open order"));
+    // What it bought, in its chain of token B: once, from the settle height, of an order that is there.
+    let bought = |x: &Two, stamp: u64, order: u8, n: u8| {
+        let mut y = Two(x.0.clone());
+        put_at(y.chain(id_b(), 1), n, Body::Bought { tok: id_a().into(), order: nonce(order), settle, got: 300, ev: Evidence::default() }, None, stamp);
+        y
+    };
+    assert_eq!(bought(&w, settle, 7, 20).check(id_b(), 1), Ok(()));
+    assert_eq!(bought(&w, settle, 7, 20).get(id_b(), 1).balance(), 300);
+    assert_eq!(bought(&w, settle - 1, 7, 20).check(id_b(), 1), Err("a settlement before its batch settles"));
+    assert_eq!(bought(&w, settle, 6, 20).check(id_b(), 1), Err("a purchase of no such order"));
+    let once = bought(&w, settle, 7, 20);
+    assert_eq!(bought(&once, settle, 7, 21).check(id_b(), 1), Err("an order's purchase received twice"));
+    // In the chain of the token it paid in: refused.
+    let mut same = Two(w.0.clone());
+    put_at(same.chain(id_a(), 1), 22, Body::Bought { tok: id_a().into(), order: nonce(7), settle, got: 1, ev: Evidence::default() }, None, settle);
+    assert_eq!(same.check(id_a(), 1), Err("a purchase of the token it was paid in"));
+    // Not cut over an open order; after its settlement, it is.
+    let (body, _) = cut::make(&at(id_a(), 1), &def(), w.get(id_a(), 1), Some(&log(1))).unwrap();
+    let mut over = Two(w.0.clone());
+    put_at(over.chain(id_a(), 1), 30, body, Some(1), 5);
+    assert_eq!(over.check(id_a(), 1), Err("a cut over an order not settled"));
+    let (body, _) = cut::make(&at(id_a(), 1), &def(), done.get(id_a(), 1), Some(&log(1))).unwrap();
+    let mut after = Two(done.0.clone());
+    put_at(after.chain(id_a(), 1), 30, body, Some(1), settle);
+    assert_eq!(after.check(id_a(), 1), Ok(()));
+}
+
+#[test]
+fn a_batch_registry_freezes_at_its_settle_height() {
+    let p = a_pool();
+    assert_eq!(pool::Pool::decode(&p.encode()), Some(p));
+    assert_eq!(pool::Pool::decode(&pool::Pool { b: p.a, ..p }.encode()), None, "a pool of one token");
+    assert_eq!(pool::Pool::decode(&pool::Pool { epoch: 0, ..p }.encode()), None);
+    assert_eq!(p.window(3), (40, 44));
+    assert_eq!(p.batch(39), 3);
+    let rp = pool::Params::of(&p, 0);
+    assert_eq!(rp.frozen_at, 14);
+    assert_eq!(pool::Params::decode(&rp.encode()), Some(rp));
+    let r1 = pool::Registry { orders: vec![(id_a().into(), did(1), nonce(7))] };
+    let r2 = pool::Registry { orders: vec![(id_b().into(), did(2), nonce(3))] };
+    assert_eq!(pool::Registry::decode(&r1.encode()), Some(r1.clone()));
+    assert_eq!(pool::take(&rp, &r1, &r2, 13).unwrap().orders.len(), 2, "taken before it freezes");
+    assert_eq!(pool::take(&rp, &r1, &r2, 14), Ok(r1.clone()), "ignored from its settle height");
+    assert_eq!(pool::merge(&r1, &r2), pool::merge(&r2, &r1));
+    let unsorted = pool::Registry { orders: vec![r2.orders[0], r1.orders[0]] };
+    let bytes = unsorted.encode();
+    assert_eq!(pool::Registry::decode(&bytes).is_some(), r2.orders[0] < r1.orders[0], "kept only in its canonical order");
 }

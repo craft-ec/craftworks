@@ -277,6 +277,14 @@ pub const RECEIVED: u8 = b'r';
 pub const FILLED: u8 = b'f';
 pub const CLAIMED: u8 = b'c';
 pub const MINTED: u8 = b'm';
+/// A pool order's purchase received (its key: [`bought_key`]).
+pub const BOUGHT: u8 = b'b';
+/// The received-set key of what the order `nonce` in this owner's chain of token `tok` bought.
+pub fn bought_key(tok: &Tok, nonce: &[u8; 16]) -> Vec<u8> {
+    let mut t = Vec::new();
+    tok.put(&mut t);
+    received_key(BOUGHT, blake3::hash(&t).as_bytes(), nonce)
+}
 /// A vesting step received (its key also carries the step: [`vested_key`]).
 pub const VESTED: u8 = b'v';
 /// The received-set key of step `step` of the vest `nonce` in `from`'s chain.
@@ -352,6 +360,17 @@ pub enum Body {
     /// contract), only where it can say: whole back to the debit's stamp and not frozen by a fork (a debit an honest
     /// witness saw cannot have vanished otherwise). Every stake and unbonding amount BURNED. Appended by anyone.
     Misdeed { key: [u8; 32], sig: witness::WitnessSig, tok: Tok, owner: [u8; 32], entry: Box<Entry> },
+    /// A POOL ORDER (TOKEN §5): `amount` of this chain's token offered in pool `pool`'s batch `epoch` — a SELL of the
+    /// pool's A (`side` 0), or a BUY of A with B (`side` 1) — at `limit` (B per A, `clear::PRICE_ONE` = 1). A debit now,
+    /// held until the batch settles; stamped before the batch's `close`; settled from `settle` (its close and grace) on.
+    Order { pool: [u8; 32], epoch: u64, close: u64, settle: u64, side: u8, amount: u128, limit: u128 },
+    /// The order `order`'s SETTLEMENT in its own chain: what it did not spend (`refund`) back. Appended by anyone (with
+    /// work), once, from its `settle` height on.
+    Settle { order: [u8; 16], refund: u128 },
+    /// What the order `order` (in this owner's chain of token `tok`, its batch settling from `settle`) BOUGHT: `got` of
+    /// this chain's token, credited. Appended by anyone (with work), once. (That `got` and `refund` are the batch's
+    /// clearing is the witnesses' to check: a contract cannot read a whole batch in one round.)
+    Bought { tok: Tok, order: [u8; 16], settle: u64, got: u128, ev: Evidence },
     /// A MULTISIG owner's MEMBERS (TOKEN §1): the key set that signs from here, on set seq `set_seq`. The first (seq 0)
     /// is the set the owner id names, signed by k of it; each later one, by k of the set before.
     Members { set: authority::KeySet, set_seq: u32 },
@@ -553,6 +572,29 @@ impl Entry {
                 v.extend_from_slice(&(cred.len() as u16).to_le_bytes());
                 v.extend_from_slice(cred);
                 v.extend_from_slice(&key_seq.to_le_bytes());
+            }
+            Body::Order { pool, epoch, close, settle, side, amount, limit } => {
+                v.push(22);
+                v.extend_from_slice(pool);
+                v.extend_from_slice(&epoch.to_le_bytes());
+                v.extend_from_slice(&close.to_le_bytes());
+                v.extend_from_slice(&settle.to_le_bytes());
+                v.push(*side);
+                v.extend_from_slice(&amount.to_le_bytes());
+                v.extend_from_slice(&limit.to_le_bytes());
+            }
+            Body::Settle { order, refund } => {
+                v.push(23);
+                v.extend_from_slice(order);
+                v.extend_from_slice(&refund.to_le_bytes());
+            }
+            Body::Bought { tok, order, settle, got, ev } => {
+                v.push(24);
+                tok.put(&mut v);
+                v.extend_from_slice(order);
+                v.extend_from_slice(&settle.to_le_bytes());
+                v.extend_from_slice(&got.to_le_bytes());
+                put_ev(&mut v, ev);
             }
             Body::Vest { to, schedule } => {
                 v.push(19);
@@ -780,6 +822,9 @@ impl Entry {
                 }
                 Body::Misdeed { key, sig, tok, owner, entry: Box::new(Entry::decode(r.take(n)?)?) }
             }
+            22 => Body::Order { pool: r.arr()?, epoch: r.u64()?, close: r.u64()?, settle: r.u64()?, side: r.u8()?, amount: r.u128()?, limit: r.u128()? },
+            23 => Body::Settle { order: r.arr()?, refund: r.u128()? },
+            24 => Body::Bought { tok: Tok::read(r)?, order: r.arr()?, settle: r.u64()?, got: r.u128()?, ev: read_ev(r)? },
             20 => Body::Vested { from: r.arr()?, vest: r.arr()?, step: r.u32()?, amount: r.u128()?, at: r.u64()?, cited: r.u64()?, ev: read_ev(r)? },
             _ => return None,
         };
@@ -987,6 +1032,7 @@ pub fn cited_chains_from(p: &ChainParams, s: &State, from: usize) -> Vec<(Tok, [
                 add((p.tok(), *taker));
                 add((*token, *maker));
             }
+            Body::Bought { tok, .. } => add((*tok, p.owner)),
             Body::Misdeed { tok, entry, .. } => {
                 if let Some((from, _)) = misdeed_cites(entry) {
                     add((*tok, from));
@@ -1131,6 +1177,9 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
         let mut filled: Vec<([u8; 32], [u8; 16])> = Vec::new();
         let mut claimed: Vec<([u8; 32], [u8; 16])> = Vec::new();
         let mut minted: Vec<[u8; 16]> = Vec::new();
+        // POOL ORDERS not settled yet (nonce, amount, settle height), and what this chain bought (token, order).
+        let mut open_orders: Vec<([u8; 16], u128, u64)> = Vec::new();
+        let mut bought: Vec<(Tok, [u8; 16])> = Vec::new();
         // ALLOWANCES (spender → what is left), OFFERS, LOCKS: carried across a cut by the cut itself.
         let mut allowed: Vec<([u8; 32], u128)> = Vec::new();
         let mut offers: Vec<OfferState> = Vec::new();
@@ -1260,6 +1309,60 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         }
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
+                }
+                Body::Order { pool: _, epoch: _, close, settle, side, amount, limit } => {
+                    owner_signed(e, &writer)?;
+                    if *side > 1 || *limit == 0 {
+                        return Err("an order that is not a sell or a buy at a price");
+                    }
+                    if *amount < d.min_send {
+                        return Err("a send under the minimum");
+                    }
+                    if e.stamp >= *close || close > settle {
+                        return Err("an order after its batch closed");
+                    }
+                    if open_orders.iter().any(|o| o.0 == e.nonce) {
+                        return Err("an order named twice");
+                    }
+                    open_orders.push((e.nonce, *amount, *settle));
+                    balance.checked_sub(*amount).ok_or("a debit over the balance")?
+                }
+                Body::Settle { order, refund } => {
+                    if !e.worked() {
+                        return Err("a settlement without its work");
+                    }
+                    let i = open_orders.iter().position(|o| &o.0 == order).ok_or("a settlement of no open order")?;
+                    if e.stamp < open_orders[i].2 {
+                        return Err("a settlement before its batch settles");
+                    }
+                    if *refund > open_orders[i].1 {
+                        return Err("a refund past what the order held");
+                    }
+                    open_orders.remove(i);
+                    balance.checked_add(*refund).ok_or("a balance overflow")?
+                }
+                Body::Bought { tok, order, settle, got, ev } => {
+                    if !e.worked() {
+                        return Err("a settlement without its work");
+                    }
+                    if *tok == p.tok() {
+                        return Err("a purchase of the token it was paid in");
+                    }
+                    if e.stamp < *settle {
+                        return Err("a settlement before its batch settles");
+                    }
+                    if bought.contains(&(*tok, *order)) || !fresh(&cut, *settle, bought_key(tok, order), ev) {
+                        return Err("an order's purchase received twice");
+                    }
+                    bought.push((*tok, *order));
+                    if recent {
+                        // The order: in this owner's chain of the token it was paid in, with that settle height.
+                        let c = chain(tok, &p.owner).ok_or("the order's chain is not there")?;
+                        if !c.entries.iter().any(|x| &x.nonce == order && matches!(x.body, Body::Order { settle: s, .. } if s == *settle)) {
+                            return Err("a purchase of no such order");
+                        }
+                    }
+                    balance.checked_add(*got).ok_or("a balance overflow")?
                 }
                 Body::Vest { to, schedule } => {
                     owner_signed(e, &writer)?;
@@ -1574,6 +1677,10 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     balance
                 }
                 Body::Cut { received: root, allowances, offers: o, locks: l, writer: w, staked: st, unbonding: ub, retired: rt, .. } => {
+                    // (A pool order is settled before its chain is cut: a cut carries none.)
+                    if !open_orders.is_empty() {
+                        return Err("a cut over an order not settled");
+                    }
                     if starts_at_cut {
                         // The chain's writer as the cut carries it (who signs from here — and the cut itself).
                         writer = w.clone();
@@ -1947,7 +2054,7 @@ pub fn beacon_height(b: &[u8]) -> Option<u64> {
 
 #[cfg(feature = "freenet-main-contract")]
 mod contract {
-    use super::{accept, authority, beacon_height, claims, freeze, operators, supply, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
+    use super::{accept, authority, beacon_height, claims, freeze, operators, pool, supply, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
     use freenet_stdlib::prelude::*;
 
     pub struct Token;
@@ -2180,6 +2287,38 @@ mod contract {
         Ok(UpdateModification::valid(State::from(out.encode())))
     }
 
+    /// A batch's ORDER REGISTRY's update: merged while the beacon (read in the same round) is below its freeze; after,
+    /// kept.
+    fn orders_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
+        let p = pool::Params::decode(params).ok_or(ContractError::InvalidState)?;
+        let held = pool::Registry::decode(state).ok_or(ContractError::InvalidState)?;
+        let mut given = pool::Registry::default();
+        let mut beacon: Option<Vec<u8>> = None;
+        for d in data {
+            let b: &[u8] = match &d {
+                UpdateData::State(s) => s.as_ref(),
+                UpdateData::Delta(x) => x.as_ref(),
+                UpdateData::StateAndDelta { state, .. } => state.as_ref(),
+                UpdateData::RelatedState { related_to, state } => {
+                    if related_to.as_bytes() == p.beacon {
+                        beacon = Some(state.as_ref().to_vec());
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
+            given = pool::merge(&given, &pool::Registry::decode(b).ok_or(ContractError::InvalidUpdate)?);
+        }
+        if pool::merge(&held, &given) == held {
+            return Ok(UpdateModification::valid(State::from(held.encode())));
+        }
+        let Some(bb) = beacon else {
+            return UpdateModification::requires(vec![RelatedContract { contract_instance_id: ContractInstanceId::new(p.beacon), mode: RelatedMode::StateOnce }]);
+        };
+        let now = beacon_height(&bb).ok_or(ContractError::InvalidUpdate)?;
+        Ok(UpdateModification::valid(State::from(pool::take(&p, &held, &given, now).map_err(why)?.encode())))
+    }
+
     #[contract]
     impl ContractInterface for Token {
         fn validate_state(parameters: Parameters<'static>, state: State<'static>, related: RelatedContracts<'static>) -> Result<ValidateResult, ContractError> {
@@ -2198,6 +2337,13 @@ mod contract {
             }
             if params.first() == Some(&claims::CLAIMS) {
                 return claims_valid(params, state.as_ref());
+            }
+            // A POOL: its state is its params. A batch's ORDER REGISTRY: well formed (the freeze is its update's).
+            if params.first() == Some(&pool::POOL) {
+                return Ok(if state.as_ref() == params && pool::Pool::decode(params).is_some() { ValidateResult::Valid } else { ValidateResult::Invalid });
+            }
+            if params.first() == Some(&pool::ORDERS) {
+                return Ok(if pool::Params::decode(params).is_some() && pool::Registry::decode(state.as_ref()).is_some() { ValidateResult::Valid } else { ValidateResult::Invalid });
             }
             // A DEFINITION: its state is its params, and they read as one.
             if params.first() == Some(&DEFINITION) {
@@ -2257,6 +2403,12 @@ mod contract {
             }
             if parameters.as_ref().first() == Some(&claims::CLAIMS) {
                 return claims_update(parameters.as_ref(), state.as_ref(), data);
+            }
+            if parameters.as_ref().first() == Some(&pool::POOL) {
+                return Ok(UpdateModification::valid(state));
+            }
+            if parameters.as_ref().first() == Some(&pool::ORDERS) {
+                return orders_update(parameters.as_ref(), state.as_ref(), data);
             }
             let p = ChainParams::decode(parameters.as_ref()).ok_or(ContractError::InvalidState)?;
             let held = super::State::decode(state.as_ref()).ok_or(ContractError::InvalidState)?;
@@ -2345,6 +2497,7 @@ pub mod claims;
 pub mod clear;
 pub mod freeze;
 pub mod operators;
+pub mod pool;
 pub mod witness;
 pub mod draw;
 pub mod supply;

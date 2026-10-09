@@ -1424,8 +1424,9 @@ old key's addresses.
               uniform price maximising matched A, ties → smaller imbalance → lower price; short side whole, long side
               pro rata (rounded down, the rest to the earliest); buyers pay ceil, sellers get floor (B dust stays in the
               batch). 6 tests; 10 mutants killed (2 after tie cases, one found by search).
-          [ ] 17b the POOL definition + ORDER entry (a debit locked to (pool, epoch)) + the ORDER REGISTRY per
-              (pool, epoch), frozen after the epoch and its grace
+          [x] 17b the POOL (kind 8, state = params) + ORDER entry (a debit held for (pool, epoch), stamped before close)
+              + SETTLE (refund, once, from settle) + BOUGHT (credit in the other token's chain, once, cites the order)
+              + the ORDER REGISTRY (kind 9) frozen at settle; no cut over an open order. 108 tests; 13 mutants killed.
           [ ] 17c SETTLE entries (credit the bought token, refund the unfilled) + the witness rule recomputing the
               clearing from the registry
           [ ] 17d live fx/fy
