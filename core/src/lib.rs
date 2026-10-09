@@ -100,6 +100,15 @@ pub fn describe(incoming: Incoming) -> Value {
         }
         Incoming::Refused(r) => json!({ "kind": "refused", "said": format!("{r:?}") }),
         Incoming::Unusable(u) => json!({ "kind": "unusable", "why": format!("{u:?}") }),
+        // The node about itself (storage proofs, TOKEN §7a): its peer id, its ring location (millionths) and every
+        // contract it hosts, `[id hex, size]`.
+        Incoming::NodeSelf { peer_id, location, hosted } => json!({
+            "kind": "node-self",
+            "peer": peer_id,
+            "location": location,
+            "hosted": hosted.iter().map(|(id, n)| json!([hex(id), n])).collect::<Vec<_>>(),
+        }),
+        Incoming::Peers(p) => json!({ "kind": "peers", "peers": p.iter().map(|(id, a)| json!([id, a])).collect::<Vec<_>>() }),
         other => {
             json!({ "kind": "other", "what": format!("{other:?}").chars().take(200).collect::<String>() })
         }
@@ -242,6 +251,18 @@ impl Core {
     pub fn frames_put(&mut self, p: &account::Put) -> Result<Vec<Vec<u8>>, String> {
         let s = self.stream();
         wire::frame_put(p.contract.clone(), p.state.clone(), s)
+    }
+
+    /// Frames asking the node about ITSELF (`wire::frame_node_self`): answered `{ kind: "node-self" }`.
+    pub fn frames_node_self(&mut self) -> Result<Vec<Vec<u8>>, String> {
+        let s = self.stream();
+        wire::frame_node_self(s)
+    }
+
+    /// Frames asking the node for its connected peers (`wire::frame_connected_peers`): answered `{ kind: "peers" }`.
+    pub fn frames_peers(&mut self) -> Result<Vec<Vec<u8>>, String> {
+        let s = self.stream();
+        wire::frame_connected_peers(s)
     }
 
     /// Frames of a GET of contract `id` (`wire::frame_get`, no subscription).
@@ -1504,6 +1525,16 @@ mod js {
             account::entropy(words)
                 .map(|e| js_sys::Uint8Array::from(&e[..]))
                 .ok_or_else(|| err("these are not 12 or 24 recovery words (a word is misspelled, or one is missing)".into()))
+        }
+
+        /// Frames asking the node about itself: its peer id, ring location and hosted contracts.
+        pub fn frames_node_self(&mut self) -> Result<js_sys::Array, JsValue> {
+            Ok(frames(self.0.frames_node_self().map_err(err)?))
+        }
+
+        /// Frames asking the node for its connected peers.
+        pub fn frames_peers(&mut self) -> Result<js_sys::Array, JsValue> {
+            Ok(frames(self.0.frames_peers().map_err(err)?))
         }
 
         /// `[id hex, frames]` of a GET of contract `id` (32 bytes).

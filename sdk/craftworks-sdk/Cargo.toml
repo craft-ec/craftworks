@@ -61,7 +61,7 @@ bincode = "1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 
 [workspace]
-members = ["contract-keys", "core-types", "engine", "page", "page-io", "pieces", "probe", "protocol", "signer", "signer-proto", "tail", "wire"]
+members = ["contract-keys", "core-types", "engine", "page", "page-io", "pieces", "probe", "protocol", "signer", "signer-proto", "tail", "testkit", "wire"]
 
 # The decoder a published app's starter carries (sdk#347): its size is per-app storage, so it is built for size
 # alone, and apart from the SDK's own release build (whose wasm hash must not move with it).

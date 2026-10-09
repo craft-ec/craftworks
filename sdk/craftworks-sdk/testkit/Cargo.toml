@@ -1,0 +1,26 @@
+[package]
+name = "testkit"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "The probed fixtures. The only supported way to build the thing under test."
+
+[dependencies]
+engine = { path = "../engine" }
+protocol = { path = "../protocol" }
+craftworks-sdk = { path = ".." }
+freenet-prolly = { path = "../../freenet-prolly" }
+# THE PAGE PATH'S NODE (`page_node`): the in-page engine's Server, over a
+# scripted client API that runs the REAL signer and the REAL Register merge.
+page = { path = "../page" }
+signer = { path = "../signer" }
+signer-proto = { path = "../signer-proto" }
+contract-keys = { path = "../contract-keys" }
+wire = { path = "../wire" }
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
+# The head Register's REAL merge (its `update_state`, natively), at the rev the
+# page's own tests pin. `default-features = false`: no wasm entry points.
+craftec-register-contract = { workspace = true, features = ["freenet-main-contract"] }
+freenet-stdlib = { version = "0.10.0", features = ["contract"] }
+
+[dev-dependencies]

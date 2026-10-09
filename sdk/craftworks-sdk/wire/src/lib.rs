@@ -215,6 +215,13 @@ pub enum Incoming {
     Refused(Refused),
     /// Not something this build can use. Counted, never silently dropped.
     Unusable(Unusable),
+    /// The node's answer about ITSELF ([`frame_node_self`]): its peer id, its ring LOCATION in millionths of the ring
+    /// (the node reports six decimals; set by the core from its observed address) and every contract it HOSTS, with
+    /// its state's size — what the core placed on it.
+    NodeSelf { peer_id: String, location: Option<u32>, hosted: Vec<([u8; 32], u64)> },
+    /// The node's CONNECTED PEERS ([`frame_connected_peers`]): each peer's id and the address this node sees for it
+    /// (what its ring location is computed from).
+    Peers(Vec<(String, String)>),
     /// A chunk of a larger message; nothing to hand on yet.
     Partial,
 }
@@ -415,6 +422,40 @@ pub fn frame_put(
         blocking_subscribe: false,
     });
     frames(&req, stream_id)
+}
+
+/// Frame a question about the node ITSELF: its peer id, its location and every contract it hosts
+/// ([`Incoming::NodeSelf`]). Native bincode only (no flatbuffers form exists), as every frame here.
+pub fn frame_node_self(stream_id: u32) -> Result<Vec<Vec<u8>>, String> {
+    use freenet_stdlib::client_api::{NodeDiagnosticsConfig, NodeQuery};
+    let config = NodeDiagnosticsConfig {
+        include_node_info: true,
+        include_network_info: false,
+        include_subscriptions: false,
+        // Empty: every contract the node hosts.
+        contract_keys: vec![],
+        include_system_metrics: false,
+        include_detailed_peer_info: false,
+        include_subscriber_peer_ids: false,
+    };
+    frames(&ClientRequest::NodeQueries(NodeQuery::NodeDiagnostics { config }), stream_id)
+}
+
+/// A ring location as the node writes it ("0.596280") in millionths of the ring, exactly (no float): `None` for
+/// anything but `0.` or `1.` and up to six digits.
+pub fn millionths(s: &str) -> Option<u32> {
+    let (whole, frac) = s.split_once('.')?;
+    if !(whole == "0" || whole == "1") || frac.is_empty() || frac.len() > 6 || !frac.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let f: u32 = format!("{frac:0<6}").parse().ok()?;
+    let v = if whole == "1" { 1_000_000 + f } else { f };
+    (v <= 1_000_000).then_some(v)
+}
+
+/// Frame a question for the node's connected peers ([`Incoming::Peers`]).
+pub fn frame_connected_peers(stream_id: u32) -> Result<Vec<Vec<u8>>, String> {
+    frames(&ClientRequest::NodeQueries(freenet_stdlib::client_api::NodeQuery::ConnectedPeers), stream_id)
 }
 
 /// Frame a contract GET (the page reads blocks and the head itself: ENGINE-SHAPE
@@ -652,8 +693,27 @@ fn decode_one(bytes: &[u8]) -> Result<HostResponse, Incoming> {
 }
 
 fn classify(r: HostResponse) -> Incoming {
-    use freenet_stdlib::client_api::ContractResponse;
+    use freenet_stdlib::client_api::{ContractResponse, QueryResponse};
     match r {
+        HostResponse::QueryResponse(QueryResponse::NodeDiagnostics(d)) => {
+            let Some(info) = d.node_info else { return Incoming::Unusable(Unusable::UnknownKind("NodeDiagnostics (no node info)")) };
+            // The node names a contract by its base58 instance id; one that does not read as 32 bytes is left out.
+            let mut hosted: Vec<([u8; 32], u64)> = d
+                .contract_states
+                .iter()
+                .filter_map(|(k, st)| {
+                    let id = ContractInstanceId::try_from(k.clone()).ok()?;
+                    let mut b = [0u8; 32];
+                    b.copy_from_slice(&id.as_bytes()[..32]);
+                    Some((b, st.size_bytes))
+                })
+                .collect();
+            hosted.sort();
+            Incoming::NodeSelf { peer_id: info.peer_id, location: info.location.as_deref().and_then(millionths), hosted }
+        }
+        HostResponse::QueryResponse(QueryResponse::ConnectedPeers { peers }) => {
+            Incoming::Peers(peers.into_iter().map(|(p, a)| (p.to_string(), a.to_string())).collect())
+        }
         HostResponse::DelegateResponse { key, values } => {
             let mut out: Vec<Vec<u8>> = Vec::new();
             for v in values {
