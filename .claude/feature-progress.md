@@ -1401,6 +1401,14 @@ old key's addresses.
               time, burned on equivocation; storage proofs pay keepers (weak guarantee fine there). Order: keeper
               payouts (REWARDS) → reward locks as stake → witness lot by stake.
           [ ] standing per location (ramp), read by witnesses
+      FOUNDATION COMPLETE 10-09 (owner: "we just need the foundation build"). ROLLOUT items, not foundation — build
+      when the token rolls out: witnesses run by page/delegate (drawn, re-check, sign); the app showing and verifying
+      payments; the network beacon extended by open pages; the beacon's ENTROPY MIX (outputs are a hash chain from a
+      fixed seed — computable ahead by a fast machine, so committees could be known early; must land before value moves);
+      equivocation watchers appending Slash; a record of past beacon outputs (old lots, >600 steps); the keeper loop,
+      standing contract and reward payouts; refusing far back-dated entries; setApprovalForAll; pools, lending.
+      ECONOMICS (owner decides, later): supply, initial allocation and its vesting, keeper reward size and source,
+      reward→stake lock, fees.
       [x] 7 VESTING (TOKEN §4a) — BUILT + LIVE 10-09: Vest (debit of the schedule now) / Vested (anyone appends a step
           once the beacon reaches it, once, exactly as scheduled; never taken back). Found live: a first copy skipped the
           time rule (an early claim ACCEPTED on a fresh chain) → time rule from scratch + the witness applies all timed
