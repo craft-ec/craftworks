@@ -33,7 +33,8 @@ Every behaviour of the blockchain token standards, and how this standard gives i
 | Multisig accounts / authorities | ✅ | an owner or authority key is a k-of-n KEY SET (as the attestation substrate's named quorum): an entry carries k signatures (§1) |
 | NFTs — `ownerOf`, transfer, per-item approve, `setApprovalForAll` (ERC-721) | ✅ | a definition with `ids: unique`; a chain per (item, owner) whose head says held or not; `allow` per item; an OPERATORS list per (token, owner) for all items at once (§1b) |
 | Multi-token, batch transfer (ERC-1155) | ✅ batch not atomic | one definition, many ids; a chain per (item, owner); a batch = one send per item, each final on its own; an all-or-nothing bundle trade goes through a program over escrow (§1b, §4) |
-| Metadata (token and per item) | ✅ | the definition's metadata; per id, an ITEM of Craftworks (its page, its files) named by the id |
+| Metadata (token and per item) | ✅ | the definition names the Craftworks ITEM it is of (and a version pin); the item's own kind schema is its metadata (§1c) |
+| Editions, numbered copies, max supply | ✅ | an EDITION is a definition with a CAP; numbered (#n of cap) or plain (semi-fungible) copies; editions grouped by a COLLECTION; each its own royalty (§1c) |
 | History, traceable by anyone (an explorer) | ✅ | no one ledger: from genesis and the supply bag, sends followed FORWARD reach every chain; credits cite their debits BACKWARD; kept alive by readers and keepers (§1a) |
 | Atomic swap between two tokens | ✅ an app | the SWAP contract over escrow: both escrow, the deal crosses or refunds; the race closed by time (§4) |
 | Vesting, time locks | ✅ | `vest(beneficiary, schedule)`: a debit now; each step claimable by the beneficiary once the beacon reaches it, once; never taken back (§4a) |
@@ -141,6 +142,31 @@ and the royalty are checked by the token's one code, the metadata a Craftworks i
 three programs (SPL Token, Metaplex metadata, rule sets / Core plugins for enforced royalties). The limit is
 everyone's: a plain transfer (a gift) can hide a payment made elsewhere — royalties hold on sales through programs,
 not on private deals.
+
+## 1c. Editions, copies, collections (owner 10-10)
+
+A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has COPIES. Built 10-10:
+
+- **An edition is a definition.** It carries everything an edition has — its own ROYALTY (so every app already pays
+  it: the swap and the pool read definitions, §1b), its mint authority (the creator), and three fields: `cap` (the most
+  there will ever be; 0: none), `collection` (the id it is grouped under) and `item` + `version` (the Craftworks item it
+  is of, and the item's version it pins; zero: the item as it is). The item's kind schema (video, book, image …) is its
+  metadata — the token does not copy it.
+- **Copies, two kinds.** NUMBERED (`ids: numbered`): copy `n` is its own item (`numbered_item(edition, n)`), one of
+  each, `n` from 1 up to the cap. PLAIN: the edition is fungible within itself (`ids: none`, decimals 0) — "3 Silver".
+- **A capped edition mints into ONE supply shard for all time** (`supply::WHOLE`), so its cap and its numbers are
+  checked in one place; every mint-authority change seals it. A mint of a numbered edition names a RANGE (its nonce the
+  first number), so one mint can make many copies (one shard holds 1,024 mints). A chain credits a capped mint with
+  `CappedMint` (for a numbered copy: its number and amount 1).
+- **ADMITTED, not refused.** Two copies of a shard must merge the same everywhere, so a mint past the cap or onto a
+  taken number is kept in the shard but never ADMITTED (`supply::admitted`: in stamp order — a mint new to a copy is
+  stamped near now, so it comes after what was taken before it — each while the total and its numbers fit). Only an
+  admitted mint is credited. A mint authority signing over its own cap only wastes its signature.
+- **Who may mint an item's edition.** The token checks the mint authority; that the edition's creator (its
+  `genesis_owner`) is the Craftworks item's author is checked by the app where it shows the edition — it already proves
+  an item's author from its feed's credentials; a contract cannot read that cheaply.
+- **Not built:** a royalty shared by an edition's HOLDERS (a pool program the royalty pays into — escrow already does the
+  holding); fractional ownership of one item (an app over escrow).
 
 ## 2. A chain's entries
 
@@ -703,6 +729,13 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    crossed WITHOUT the fee REFUSED; crossed by the contract with it; the item paid to T, 95 B to M, 5 B to the
    creator, an outsider's claim of the 5 REFUSED (item M 0 · T 1; B M 95 · creator 5 · outsider 0). `deal` and `pool`
    re-run on the rebuilt wasms: the same verdicts and balances as before.
+
+16. EDITIONS — BUILT 10-10 (§1c): `Definition.cap / collection / item / version`, `Ids::Numbered`, the one shard for
+   all time, admission in stamp order (cap and numbers), `CappedMint`. Token 94 tests; 14 mutants on the new rules,
+   all killed (3 after boundary cases: exactly the cap, a range touching another at one number, stamp vs nonce order).
+   LIVE fx/fy (`token-live editions`): Gold (numbered, cap 3, 10%) and Silver (plain, cap 5, 5%) of one collection
+   and item; Gold #4 past the cap and 2 Silver past 5 kept in their shards, not admitted, their credits REFUSED; M
+   claiming T's #3 REFUSED; Gold #1 resold through a deal: 90 B to M, 10 B to the creator, the copy to T.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under
