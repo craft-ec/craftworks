@@ -460,10 +460,14 @@ Closes what the chains alone leave open — a double spend detected but not PREV
 receiving wallet (§3a), a fill and a refund both passing across a partition longer than the margin (§3b). Owner:
 "the most decentralized and open protocol" — no nominated witnesses, no list, no per-token setup: one open pool.
 
-- **Drawn by lot, per entry.** For each (chain, seq) every candidate computes its own draw over (beacon output, chain,
-  seq) with its key (a VRF); its chance grows with its WEIGHT. A drawn witness re-runs the chain's checks and signs with
-  its draw's proof; an entry counts once it carries enough drawn signatures — checkable by anyone from the beacon and
-  the weights. The committee is fresh per entry and unknown in advance.
+- **Drawn by lot, per entry** (built 6b). There is no global ledger to know the total stake a secret lottery needs, so
+  the lot is PUBLIC: each staker signs a STAKE CLAIM ("I stake N", once an epoch) into the token's stakers bag; for an
+  entry (chain, seq) every claimer's TICKET is a hash of (the beacon output after the entry's stamp, chain, seq,
+  claimer) weighted by its claim — an exponential race (−ln u / stake, in fixed-point integers: the same on every
+  machine), an exactly stake-proportional draw in which splitting stake across identities gains nothing. The
+  COMMITTEE is the k lowest tickets; anyone computes it, and nobody before the beacon output exists. A drawn witness
+  re-runs the chain's checks and signs ([`witness::WitnessSig`]); an entry counts once enough of its committee signed.
+  A claim is checked only when its claimer is drawn (its chain read): one over its real stake does not count.
 - **Weight = EARNED STAKE** (owner: "stake come from reward from storage… cumulative, grows over time; the longer in
   the game, the higher the stake"). No upfront cost: a node earns KEEPER REWARDS for holding what real users read
   (REWARDS §4, paid by held DEMAND, never self-claimed) and each reward lands LOCKED as witness stake. Two signatures at
