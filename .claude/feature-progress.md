@@ -1392,7 +1392,9 @@ old key's addresses.
           [x] sdk/ in repo (d8daf2f): outside code as path deps; devices + token re-keyed, identity new hash
           [x] wire: node-self (location, hosted ids+sizes) + connected peers (a58d81f); live fx/fy ~210 ms
           [x] the core's location hash ported and matched live (fx 0.596280, fy 0.487930)
-          [ ] standing crate: location_of(addr), attestation / binding / proof records, challenge selection
+          [x] standing crate (2ee3673): ring_of_addr (core's own, live-matched), arc, Attest/located/Bind, Holdings,
+              challenge, Answer, check — 6 tests, mutants killed (2 equivalent)
+          [x] page-io build fix (5376efd) — a58d81f broke the workspace build (lesson: build --workspace before commit)
           [ ] keeper loop in the page (keep.js): attest peers, bind, answer challenges each beacon tick
           [ ] standing per location (ramp), read by witnesses
       [ ] 6 WITNESSES BY LOT, backed by PROVED STORAGE (owner 10-09; TOKEN §7a): needs the storage proofs
