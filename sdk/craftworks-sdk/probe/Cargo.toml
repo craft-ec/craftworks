@@ -1,0 +1,50 @@
+[package]
+name = "probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Platform probes against a pinned Freenet: the import gate, and the delegate experiments."
+
+[dependencies]
+# live-tail: the Tail's client side and contract, and a writer key to sign with.
+tail = { path = "../tail" }
+craftec-tail-contract = { workspace = true }
+craftec-register-contract = { workspace = true }
+core-types = { path = "../core-types" }
+# node-forget opens a STOPPED private node's store: freenet-core v0.2.138's own redb (4.2), so the file format matches.
+redb = "=4.2.0"
+anyhow = "1"
+freenet-stdlib = { version = "0.10.0", features = ["net"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.27"
+bincode = "1"
+# classify-frames reads the harness's captured frames, base64 as CDP hands them over.
+base64 = "0.23"
+serde_json = "1"
+futures = "0.3"
+getrandom = "0.2"
+blake3 = "1"
+serde = { version = "1", features = ["derive"] }
+# The Register record and the Block contract's id, as the signer and the page
+# derive them. A dependency of the DRIVER only: nothing here reaches a wasm.
+contract-keys = { path = "../contract-keys" }
+# ws-lose reads the head's ledger (the root's parity, sdk#335) with the one head codec.
+signer-proto = { path = "../signer-proto" }
+protocol = { path = "../protocol" }
+# The PAGE PATH live run (ruling B): the in-page engine and its client-API I/O.
+page = { path = "../page" }
+page-io = { path = "../page-io" }
+# The live round trip sends the EXACT bytes the browser will send, which is
+# the whole reason the framing lives in a crate instead of in JavaScript.
+wire = { path = "../wire" }
+engine = { path = "../engine" }
+# live-signer drives the signer delegate (sdk#209) with its own request/answer types.
+signer = { path = "../signer" }
+# live-signer PUTs real blocks (kind + block_id): the SAME rev as every other freenet-prolly pin here.
+freenet-prolly = { path = "../../freenet-prolly" }
+# ws-lose names its keys by the SDK's ONE record-key encoder
+# (`craftworks_sdk::db::record_prefix` / `record_key`), never a copy of it.
+craftworks-sdk = { path = ".." }
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
+# live-cold-read derives a throwaway X25519 transport key for a second private node.
+curve25519-dalek = "4"

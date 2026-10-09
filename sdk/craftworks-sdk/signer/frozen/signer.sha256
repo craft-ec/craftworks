@@ -1,0 +1,14 @@
+# THE SIGNER IS FROZEN: this is the sha256 of the ONE signer.wasm the SDK ships (signer/frozen/signer.wasm), and
+# build.sh refuses any other (tools/signer-frozen.mjs). A delegate's identity is its CODE HASH plus its params: a
+# different signer.wasm is a DIFFERENT delegate -- empty secrets, a fresh key minted at provisioning -- so every user
+# silently becomes a new identity with new addresses (2026-09-27: the builder republished from f3ede53 landed at a
+# new address, because core-types changed and so did the signer's bytes).
+#
+# These bytes are the signer the owner's identity was made with: the build 0afe53e, named by sha256 in the live
+# builder site YKhA2WSTcjBwv9eDPNTu1F1XYPTaeoSvpQquc8f3Ndb's artefacts.json, whose pointer.json carries that
+# identity's register_params (5247303100c0f67831c237ac52004ed37c930f8092c5120fb47f6dd4cbc3c94fd105c75cd168656164).
+#
+# BUMPING THIS PIN IS AN IDENTITY CHANGE: it needs the OWNER's say (rule 15) until sdk#14's migration (moving the key
+# into a new delegate) exists. The signer crate still builds and tests from source; it is no longer shipped from a
+# rebuild.
+f9fc78b06c25a159a959ca540bcfb708f3bce6371a8a2083effa49167dfa65c4

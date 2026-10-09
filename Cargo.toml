@@ -1,25 +1,26 @@
 [workspace]
 members = ["core", "identity", "publish", "account", "mls", "feed", "gov", "data", "delegate", "files"]
 # This repo's own contracts: each its own workspace and lockfile (the wasm hash is part of every instance's key).
-exclude = ["contracts-src"]
+exclude = ["contracts-src", "sdk"]
 resolver = "2"
 
-# THE SDK, pinned: only its proven parts are used — wire (the node's message format), page / page-io / engine (a
+# THE SDK, in this repo (sdk/: copied 10-09 from craftworks-sdk f079914, freenet-prolly 17d67d8, freenet-contracts
+# 689ca61, craftworks-instrument 3ad6f3d — only the crates used): only its proven parts are used — wire (the node's message format), page / page-io / engine (a
 # site's publication through the node's signer), probe (a private node for a rehearsal). One revision for all.
 [workspace.dependencies]
-wire = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
-page = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
-page-io = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
-engine = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
-probe = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
-core-types = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
-pieces = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
-tail = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
-contract-keys = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
+wire = { path = "sdk/craftworks-sdk/wire" }
+page = { path = "sdk/craftworks-sdk/page" }
+page-io = { path = "sdk/craftworks-sdk/page-io" }
+engine = { path = "sdk/craftworks-sdk/engine" }
+probe = { path = "sdk/craftworks-sdk/probe" }
+core-types = { path = "sdk/craftworks-sdk/core-types" }
+pieces = { path = "sdk/craftworks-sdk/pieces" }
+tail = { path = "sdk/craftworks-sdk/tail" }
+contract-keys = { path = "sdk/craftworks-sdk/contract-keys" }
 # The tree library at the revision the SDK pins (one crate source): a table's tree after a flush.
-freenet-prolly = { git = "https://github.com/craft-ec/freenet-prolly", rev = "17d67d8" }
+freenet-prolly = { path = "sdk/freenet-prolly" }
 # The Register crate at the revision the SDK pins (one crate source).
-craftec-register-contract = { git = "https://github.com/craft-ec/freenet-contracts", rev = "689ca61", default-features = false, features = ["library"] }
+craftec-register-contract = { path = "sdk/freenet-contracts/register", default-features = false, features = ["library"] }
 
 # CRAFTWORKS PATCHES (vendor/): mls-rs without forced browser randomness, mls-rs-core with a host clock — so MLS
 # runs inside the identity delegate (no browser there: freenet-core #5747's wake-ups), and the page as before.

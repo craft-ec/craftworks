@@ -1,0 +1,13 @@
+[package]
+name = "core-types"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "The SDK's layer 0: the basic facts every crate uses (hex, names). One dependency: serde, for words that cross the wire."
+
+[dependencies]
+# A word that crosses the wire (`FailWhy`, sdk#500) is serialized where it is
+# declared, so the engine's context and the protocol carry the ONE list. No
+# default features: the same serde protocol already carries into both wasm builds.
+serde = { version = "1", default-features = false, features = ["derive"] }

@@ -1,0 +1,20 @@
+[package]
+name = "engine"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "The write pipeline as a pure state machine: no I/O, no clock, no randomness."
+
+[dependencies]
+core-types = { path = "../core-types" }
+freenet-prolly = { path = "../../freenet-prolly" }
+# The context is a wire format: it leaves this process and comes back. serde
+# gives it a decoder that REFUSES malformed bytes instead of trusting them,
+# which a hand-rolled one would have to earn test by test.
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+# Already in the closure via freenet-prolly (the tree's own ids are BLAKE3).
+# Used for the context's checksum, so a damaged context is refused rather
+# than decoded into a plausible engine.
+blake3 = "1"

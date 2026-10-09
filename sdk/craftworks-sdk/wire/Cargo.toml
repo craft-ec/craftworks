@@ -1,0 +1,45 @@
+[package]
+name = "wire"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "The one place allowed to know freenet's client API. Pure framing, no I/O."
+
+[dependencies]
+# The ONLY crate in this workspace that may depend on this, besides the
+# delegates and the probe. The boundary gate states that as an allowlist over
+# every workspace crate, so a new sibling is protected by default rather than
+# by having been remembered.
+freenet-stdlib = { version = "0.10.0", features = ["net"] }
+bincode = "1"
+# Only to read a GET answer's KEY from its head (`get_key_prefix`): mirror types of the stdlib's first variants.
+serde = { version = "1", features = ["derive"] }
+# A block's contract and state (`block.rs`): the tree's own ids, so the page
+# and the delegate name a block's contract the same way.
+freenet-prolly = { path = "../../freenet-prolly" }
+blake3 = "1"
+# The one list of block kinds (core_types::kind): `block_state` recovers a kind from it, never from a list of its own.
+core-types = { path = "../core-types" }
+# The signer's wire types (serde only): `wire::signer` frames them.
+signer-proto = { path = "../signer-proto" }
+# The ONE restatement of the node's contract-id derivation (sdk#334):
+# `block::contract_deriver` is it. And the web framing's ONE statement (`contract_keys::site::frame`, builder#117).
+contract-keys = { path = "../contract-keys" }
+# The SDK's load pieces (sdk#347): the `load-pieces` tool cuts a bundle with the ONE implementation of the format.
+pieces = { path = "../pieces" }
+# The Register crate as a LIBRARY (sdk#364): its MAGIC, for the one params writer.
+craftec-register-contract = { workspace = true }
+
+[dev-dependencies]
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
+core-types = { path = "../core-types" }
+# THE ORACLE for `webapp::params` and the framing (builder#104): the webapp
+# contract's own check, at its released rev (epoch 2). Our params agreeing
+# with our own address derivation proves nothing; the contract refusing a
+# wrong one is what every real PUT would meet.
+craftec-webapp-contract = { git = "https://github.com/craft-ec/freenet-contracts", rev = "9ff9d22", default-features = false }
+bincode = "1"
+# The tests assert against stdlib's OWN caps rather than restating them: a
+# number copied here would agree with itself while the real bound moved.
+freenet-stdlib = { version = "0.10.0", features = ["net"] }

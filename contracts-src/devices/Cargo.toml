@@ -19,7 +19,7 @@ blake3 = { version = "1", default-features = false }
 craftworks-idlog-contract = { path = "../idlog", default-features = false }
 craftworks-identity = { path = "../../identity" }
 # Freenet's instance id (code hash + params): its one restatement.
-contract-keys = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
+contract-keys = { path = "../../sdk/craftworks-sdk/contract-keys" }
 
 [dev-dependencies]
 ed25519-dalek = { version = "=2.2.0", default-features = false }

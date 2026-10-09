@@ -1,0 +1,99 @@
+[package]
+name = "craftworks-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "App-facing SDK. Every substrate capability is exposed here the phase it lands."
+
+[lib]
+# rlib ONLY. The cdylib is the `web` crate, which links this to `wire`; the
+# core stays a library the boundary gate checks rather than one it excuses.
+crate-type = ["rlib"]
+
+[dependencies]
+core-types = { path = "core-types" }
+# Pinned by revision, not by path: this repo must build for anyone who checks
+# it out, and the tree's format decides what an app's data looks like.
+freenet-prolly = { path = "../freenet-prolly" }
+blake3 = { version = "1", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+getrandom = "0.2"
+protocol = { path = "protocol" }
+# READ-STATE (design B): the page's store reads by WALKING the in-page engine's
+# tree over its blocks (`page_store`), so the store that `Db` reads through is
+# the engine's own host, not a copy of its rows. Neither depends on this crate.
+page = { path = "page" }
+engine = { path = "engine" }
+instrument = { workspace = true }
+
+# The JS surface exists only in the wasm build. The version is pinned to the
+# wasm-bindgen CLI: the two must match exactly.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.128"
+js-sys = "0.3"
+getrandom = { version = "0.2", features = ["js"] }
+
+# The engine is a separate crate, not a module, because its whole claim is that
+# it has no I/O, no clock and no randomness — and the way to KEEP that true is
+# for it to be unable to reach them. It does not depend on this crate; a core
+# that can call the SDK is a core that will.
+# A wasm interpreter, for the ARTEFACT gate only.
+#
+# The gate validates blocks this SDK's prolly WRITES through the contract's
+# real `block.wasm` — the same bytes the network runs, not a Rust copy of its
+# rules. A pure-Rust interpreter rather than a JIT: this runs a few hundred
+# small validations, where speed is worth nothing and not needing a C
+# toolchain to run a gate is worth a lot.
+[dev-dependencies]
+# A dev-dependency cycle, and a legitimate one: testkit depends on this crate
+# for the types it wraps, and this crate's TESTS depend on testkit for the
+# fixtures. Cargo allows exactly this for test-support crates, because the
+# cycle exists only in the test build, never in the library's own graph.
+testkit = { path = "testkit" }
+freenet-prolly = { path = "../freenet-prolly" }
+wasmi = "0.32"
+bincode = "1"
+# Signing Register records, for the corpus the artefact gate freezes. A
+# dev-dependency: `--edges normal` is what the boundary gate walks, so this
+# never reaches the SDK's own tree.
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
+
+[workspace]
+members = ["contract-keys", "core-types", "engine", "page", "page-io", "pieces", "probe", "protocol", "signer", "signer-proto", "tail", "wire"]
+
+# The decoder a published app's starter carries (sdk#347): its size is per-app storage, so it is built for size
+# alone, and apart from the SDK's own release build (whose wasm hash must not move with it).
+[profile.decoder]
+inherits = "release"
+opt-level = "z"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# THE REGISTER CRATE, pinned ONCE (sdk#364): the Register's own read/parse/verify/encode, the code every node
+# validates with -- every RG01 read in this workspace goes through it. `default-features = false` + `library` is the
+# LIBRARY: it links no freenet-stdlib (freenet-contracts#53), so the sans-IO crates may use it, and `library` adds
+# `wire::record_head`, the params-free read (freenet-contracts#55), compiled out of the contract. A member that
+# needs the CONTRACT (a test driving the real merge) adds `features = ["freenet-main-contract"]`, in a test-only
+# place (signer-proto/tests/rg01_one_home.rs checks both).
+[workspace.dependencies]
+# THE RECORDING SPINE, pinned ONCE: the SDK core records its engine calls, the page its ops (sdk#386's instrument
+# work). Never in a delegate's closure (probe/src/lib.rs `no_delegate_reaches_the_instrument`).
+instrument = { path = "../craftworks-instrument" }
+craftec-register-contract = { path = "../freenet-contracts/register", default-features = false, features = ["library"] }
+# THE TAIL (ARCHITECTURE §1, Tail), pinned with the Register it is built on: the same repo revision, so both are one
+# crate source and a tail's Signed/Params are the Register's own types.
+craftec-tail-contract = { path = "../freenet-contracts/tail", default-features = false }
+
+[profile.release]
+opt-level = "s"
+lto = true
+
+# THE BATCH-ONLY TESTS' profile (gate.sh): release speed WITH debug assertions, so the page model's seeds run every
+# `debug_assert!` the unit tests do -- the clock-origin guard (sdk#397) first: compiled out of plain release, it would
+# watch nothing exactly where the model drives every path at an epoch origin.
+[profile.model]
+inherits = "release"
+debug-assertions = true

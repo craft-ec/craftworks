@@ -1,0 +1,22 @@
+[package]
+name = "instrument"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "A frozen four-event spine, a unit-returning trait, a bounded recorder that drops, and a failure dump. No user content by vocabulary."
+
+# NOTHING, and this is load-bearing rather than tidy.
+#
+# Five components depend on this crate, and the contract crates must be able to
+# prove it is ABSENT from their wasm closure (freenet-contracts#40) — a
+# dependency's IDENTITY alone moves a contract's hash (F37), so a transitive
+# edge from here would be an accidental epoch. A leaf cannot create one.
+#
+# It also means the block-source middleware does NOT live here: wrapping
+# `freenet_prolly::Blocks` would make this crate depend on prolly. That wrapper
+# belongs in prolly's own test support, holding a `&dyn Probe` from here.
+[dependencies]
+
+[features]
+default = []

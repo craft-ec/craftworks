@@ -1,0 +1,40 @@
+[package]
+name = "page"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "The engine library IN THE PAGE: the real engine, and a sans-IO executor that turns its effects into client-API operations (ENGINE-SHAPE §6, sdk#213)."
+
+[dependencies]
+engine = { path = "../engine" }
+freenet-prolly = { path = "../../freenet-prolly" }
+# The signer's answers, the merged type (sdk#214): serde + bincode only.
+signer-proto = { path = "../signer-proto" }
+# The page ↔ engine protocol page::Server answers (ruling B).
+protocol = { path = "../protocol" }
+# F56's equal-seq tie-break is the lower BLAKE3 of the head's value (sdk#225).
+blake3 = { version = "1", default-features = false }
+# The page's own recording (sdk#386's instrument work): every op it sends, answered, timed out or withdrawn, with the
+# retry clock it used. Never an input: the trait returns unit and has no read-back.
+instrument = { workspace = true }
+
+[dev-dependencies]
+# The OLD side of the differential: the Shell over a scripted node.
+testkit = { path = "../testkit" }
+# The client a page::Server answers: `Db` over `PageStore`, driven end to end (M2).
+craftworks-sdk = { path = ".." }
+serde_json = "1"
+# The far side of the scripted client API runs the REAL signer rule and the
+# REAL Register record format, never a model of them.
+signer = { path = "../signer" }
+contract-keys = { path = "../contract-keys" }
+wire = { path = "../wire" }
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
+bincode = "1"
+# The head Register's REAL merge (its `update_state`, natively): the lower
+# BLAKE3(value) at an equal seq, and F56's sticky fork evidence. A model kinder
+# than the contract would hide exactly the forks the signer exists to prevent.
+# `default-features = false`: no wasm entry points, the same code.
+craftec-register-contract = { workspace = true, features = ["freenet-main-contract"] }
+freenet-stdlib = { version = "0.10.0", features = ["contract"] }

@@ -1,0 +1,25 @@
+[package]
+name = "contract-keys"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "A Block contract's instance id and the head's Register record: shared by the page, the signer and the probes."
+
+[dependencies]
+# The head value's ONE format (root ‖ ledger) and the record parser.
+signer-proto = { path = "../signer-proto" }
+# The Register crate as a LIBRARY (sdk#364): the head record is built with its types and encoded by its encode.
+craftec-register-contract = { workspace = true }
+# The ONE app-id rule, for a site label (builder#117).
+core-types = { path = "../core-types" }
+freenet-prolly = { path = "../../freenet-prolly" }
+# Signing a Register record. Pinned exactly and default-features off for the
+# same reason the Register contract pins it: `default-features = false`
+# selects the full `S < L` scalar check over the legacy three-bit one, and a
+# signature made here has to verify under the contract that will check it.
+ed25519-dalek = { version = "=2.2.0", default-features = false }
+blake3 = { version = "1", default-features = false }
+
+[dev-dependencies]
+# Only to pin `block::contract_for` to the node's own derivation.
+freenet-stdlib = { version = "0.10.0", features = ["contract"] }

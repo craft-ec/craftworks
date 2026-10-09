@@ -1,0 +1,13 @@
+[package]
+name = "signer-proto"
+version = "0.1.0"
+edition = "2021"
+description = "The signer's wire types (sdk#209): what the page sends the signer delegate and what it answers. serde only."
+
+[dependencies]
+# serde, and the Register crate as a LIBRARY (sdk#364: every RG01 read goes through it). The page's SDK core depends
+# on this, and the client-API boundary gate keeps freenet-stdlib out of it: the library links none (blake3 and
+# ed25519-dalek only, both already in the page's closure).
+serde = { version = "1", features = ["derive"] }
+craftec-register-contract = { workspace = true }
+bincode = "1"

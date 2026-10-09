@@ -1,0 +1,27 @@
+[package]
+name = "freenet-prolly"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "History-independent authenticated sorted map (prolly tree). Pure library: no network, no clock."
+
+[dependencies]
+blake3 = "1"
+
+[profile.test]
+opt-level = 2
+
+[features]
+# The grouping counter and the pack walk's work counters, for the tests and for
+# wasm-check. Off by default, so no contract pays a counter tick per member.
+testing = []
+
+[dev-dependencies]
+freenet-prolly = { path = ".", features = ["testing"] }
+# A DEV-dependency, pinned by rev. Never a normal one: a dependency's identity
+# reaches a contract's wasm hash even when nothing calls it (F37), and the
+# contracts depend on this crate — so a normal edge here would put `instrument`
+# in every contract's closure and re-key them all. freenet-contracts'
+# closure-gate.sh is what proves this stays a dev edge.
+instrument = { git = "https://github.com/craft-ec/craftworks-instrument", rev = "d765891" }

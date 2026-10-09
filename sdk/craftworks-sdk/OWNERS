@@ -1,0 +1,21 @@
+# WHO OWNS WHAT (craftworks-sdk#320): `path owner`, longest prefix wins, `*` is
+# the default. `tools/owners.mjs` prints the owner of every file a branch
+# changes and FAILS when they are more than one owner's, unless a commit
+# message on the branch or the PR body has a line starting `shared:`.
+# Owners follow the CURRENT queues; core dev moves a path when work moves.
+*                        craftworks-main
+engine/                  craftworks-engineer3
+page/                    craftworks-engineer2
+page-io/                 craftworks-engineer1
+web/src/session.rs       craftworks-engineer2
+probe/                   craftworks-engineer1
+signer/                  craftworks-engineer4
+signer-proto/            craftworks-engineer4
+js/artefacts.js          craftworks-engineer4
+js/served.js             craftworks-engineer4
+examples/notes/          craftworks-engineer4
+tools/dup-gate.mjs       craftworks-engineer4
+tools/owners.mjs         craftworks-engineer4
+dup-gate.json            craftworks-engineer4
+dup-baseline.json        craftworks-engineer4
+OWNERS                   craftworks-main

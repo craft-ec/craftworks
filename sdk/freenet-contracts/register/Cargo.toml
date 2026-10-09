@@ -1,0 +1,51 @@
+[package]
+name = "craftec-register-contract"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Register: one signed value per writer, key or k-of-n keyset. ARCHITECTURE.md §1."
+
+# Own workspace: own lockfile, so the wasm hash (= part of every register's key) is stable.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# OPTIONAL, and enabled only by the contract feature (on by default, so the wasm build is unchanged): a crate using
+# this one as a LIBRARY (`default-features = false`: read/parse/verify, craftworks-sdk#364) links none of the client
+# stack. closure-gate.sh checks it.
+freenet-stdlib = { version = "0.10.0", features = ["contract"], optional = true }
+blake3 = { version = "1", default-features = false }
+# Pinned exactly, not by range: the wasm hash depends on this crate, and
+# `default-features = false` is what selects the full `S < L` scalar check over
+# the three-bit legacy one. A lockfile regeneration must not be able to move
+# strict-verification behaviour underneath a published contract key.
+ed25519-dalek = { version = "=2.2.0", default-features = false }
+
+# Test-only: building a SECOND valid signature of one message by hand. Ed25519
+# signing is deterministic per RFC 8032, so a stock signer cannot demonstrate
+# the freedom a key holder actually has. Dev-dependencies never reach the wasm.
+[dev-dependencies]
+curve25519-dalek = "4"
+sha2 = "0.10"
+
+[features]
+default = ["freenet-main-contract"]
+freenet-main-contract = ["dep:freenet-stdlib"]
+# The LIBRARY's extras (craftworks-sdk#364): functions a client needs and the contract never calls, e.g.
+# `wire::record_head`. NEVER enabled by the contract build, because adding a function to the wasm moves its hash
+# and re-keys every Register; closure-gate.sh checks the hash with this OFF.
+library = []
+# Fixtures for the tests and for wasm-check. Off by default, so none of it is in
+# the contract's wasm.
+testing = []
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false

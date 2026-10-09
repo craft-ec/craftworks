@@ -12,7 +12,7 @@ craftworks-idlog-contract = { path = "../../contracts-src/idlog", default-featur
 craftworks-identity = { path = "../../identity" }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = "1"
-wire = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
+wire = { path = "../../sdk/craftworks-sdk/wire" }
 freenet-stdlib = { version = "0.10.0", features = ["net"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.27"

@@ -1,0 +1,29 @@
+[package]
+name = "page-io"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "The page executor's I/O over Freenet's client API: page::Server's ops framed with wire / wire::signer, the node's answers decoded back (ruling B, part 2)."
+
+[dependencies]
+core-types = { path = "../core-types" }
+page = { path = "../page" }
+# The PieceSet type an app publish walks (sdk#516): plain data, from the one owner of "a piece set".
+pieces = { path = "../pieces" }
+engine = { path = "../engine" }
+wire = { path = "../wire" }
+signer-proto = { path = "../signer-proto" }
+protocol = { path = "../protocol" }
+# A site's params (the ONE relabelling) and its web framing (builder#117).
+contract-keys = { path = "../contract-keys" }
+blake3 = { version = "1", default-features = false }
+freenet-prolly = { path = "../../freenet-prolly" }
+freenet-stdlib = { version = "0.10.0", features = ["net"] }
+
+[dev-dependencies]
+bincode = "1"
+# The far side of the wire-level node: the REAL signer and Register contract.
+signer = { path = "../signer" }
+craftec-register-contract = { workspace = true, features = ["freenet-main-contract"] }
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }

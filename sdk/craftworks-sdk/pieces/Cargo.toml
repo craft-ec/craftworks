@@ -1,0 +1,14 @@
+[package]
+name = "pieces"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "The SDK's LOAD PIECES (sdk#347): the bundle format and its k + m Reed-Solomon pieces. One home, linked by the decoder wasm, the SDK wasm and the tools alike."
+
+[dependencies]
+# ONLY the tree library's RS codec (freenet_prolly::rs), at the SDK's one pin: the decoder wasm links this crate, so
+# nothing heavier may come in (no freenet-stdlib, no serde).
+freenet-prolly = { path = "../../freenet-prolly" }
+# Hex has one home (the vectors file is hex).
+core-types = { path = "../core-types" }

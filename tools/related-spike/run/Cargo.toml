@@ -7,7 +7,7 @@ publish = false
 [workspace]
 
 [dependencies]
-wire = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
+wire = { path = "../../../sdk/craftworks-sdk/wire" }
 freenet-stdlib = { version = "0.10.0", features = ["net"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.27"

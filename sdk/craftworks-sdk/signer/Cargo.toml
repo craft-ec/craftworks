@@ -1,0 +1,40 @@
+[package]
+name = "signer"
+version = "0.1.0"
+edition = "2021"
+description = "The SIGNER: a delegate that signs the head only if the named prev is current (sdk#209, ENGINE-SHAPE)."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# The `#[delegate]` macro emits the exported entry point only behind this, and it must be declared HERE.
+# OFF by default: a native build (the rule, `serve`, their tests) exports nothing; `build.sh` turns it on for the wasm
+# the node runs, and the import gate runs on THAT artefact.
+default = []
+freenet-main-delegate = []
+trace = ["freenet-stdlib/trace"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+signer-proto = { path = "../signer-proto" }
+bincode = "1"
+freenet-stdlib = { version = "0.10.0", features = ["contract"] }
+# The Register record format and the Block contract's id, from their ONE implementation (pinned by known-answer
+# vectors in contract-keys/tests/register.rs), never a second copy: the small crate the signer and the page share
+# (sdk#209's Q8), so the signer no longer links the engine delegate at all.
+contract-keys = { path = "../contract-keys" }
+# The root check hashes the root block the way the tree does (kind + block_id): the SAME rev as every other
+# freenet-prolly pin in this repo.
+freenet-prolly = { path = "../../freenet-prolly" }
+# The Register state format's ONE owner (builder#117, sdk#364): records are read and verified by its `read`, the
+# library the contracts themselves link -- never a second parser. The workspace's one pin (the LIBRARY: no contract).
+craftec-register-contract = { workspace = true }
+
+[dev-dependencies]
+# The CONTRACT, for the tests that drive the real Register merge (never in the signer's wasm).
+craftec-register-contract = { workspace = true, features = ["freenet-main-contract"] }
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
+wire = { path = "../wire" }
+blake3 = { version = "1", default-features = false }
+contract-keys = { path = "../contract-keys" }
