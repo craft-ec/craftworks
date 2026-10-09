@@ -806,7 +806,7 @@ export async function start(ctx) {
       // package; that batch kept without it (a key package works once).
       // `expect` ({ epoch, branch }: a REPAIR, `conversation`): taken only if it leads onto that branch — checked before
       // anything is kept (a member who made a group of their own under this space's id pulls nobody into it).
-      join: (welcome, { expect = null } = {}) =>
+      join: (welcome, { expect = null, above = null } = {}) =>
         (queue = queue.catch(() => {}).then(async () => {
           const t = await spacekeys();
           await t.reread?.();
@@ -835,6 +835,12 @@ export async function start(ctx) {
               } catch {}
               failed.push({ batch: row.key.slice("packages/".length, "packages/".length + 8), size: String(row.value ?? "").length, holds, why: String(e?.message ?? e) });
               continue;
+            }
+            // A RE-ADD for a node BEHIND (`above`: its epoch): taken only if it leads past where this node is — an old
+            // welcome never takes a node back.
+            if (above != null && m.status().epoch <= above) {
+              m = before;
+              throw new Error(`that welcome leads to epoch ${m?.status().epoch ?? "?"} at most, not past this node's ${above}: not taken`);
             }
             if (expect) {
               const fp = await fingerprint(expect.epoch).catch(() => null);

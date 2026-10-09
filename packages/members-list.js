@@ -73,8 +73,12 @@ export async function start(ctx) {
       const by = k.repairedBy.length ? ` · caught up by ${[...new Set(k.repairedBy)].join(", ")}` : "";
       const chip = h("span", { className: `chip key ${k.state === "current" ? "ok" : "warn"}`, textContent: text + by });
       // What their page reported it cannot read here — shown in full (no hover on a touch screen).
-      if (!k.unread?.length) return chip;
-      return h("span", { className: "reads" }, chip, h("span", { className: "chip key warn", textContent: `⚠ can't read: ${k.unread.join(" · ")}` }));
+      const warns = [
+        ...(k.unread?.length ? [h("span", { className: "chip key warn", textContent: `⚠ can't read: ${k.unread.join(" · ")}` })] : []),
+        ...(k.state !== "current" && k.welcomeFailed?.length ? [h("span", { className: "chip key warn", textContent: `⚠ welcome failed: ${k.welcomeFailed.join(" · ")}` })] : []),
+      ];
+      if (!warns.length) return chip;
+      return h("span", { className: "reads" }, chip, ...warns);
     };
     const draw = () => {
       const people = r.members().filter(m => !who || r.passes(who, m.did));

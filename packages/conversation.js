@@ -206,7 +206,10 @@ export async function start(ctx) {
       // What their page REPORTED it cannot read here (`reportReads`): the newest report of each of their devices.
       const reports = devs.map(w => ptrs.filter(p => p?.reads && p.w === w).sort((x, y) => (y.reads.at ?? 0) - (x.reads.at ?? 0))[0]).filter(Boolean);
       const unread = [...new Set(reports.flatMap(p => (Array.isArray(p.reads.unread) ? p.reads.unread : []).map(String)))].slice(0, 6);
-      out.set(m.did, { state, epoch: a?.epoch ?? null, branch: a?.branch ?? null, devices: anns.length, repairedBy: by, unread, reported: Math.max(0, ...reports.map(p => p.reads.at ?? 0)) || null });
+      // Why a welcome did not open on their device (`welcomeFailed`): the newest of each device's.
+      const fails = devs.map(w => ptrs.filter(p => p?.welcomeFailed && p.w === w).sort((x, y) => (y.welcomeFailed.at ?? 0) - (x.welcomeFailed.at ?? 0))[0]).filter(Boolean);
+      const welcomeFailed = fails.map(p => String(p.welcomeFailed.why)).slice(0, 2);
+      out.set(m.did, { state, epoch: a?.epoch ?? null, branch: a?.branch ?? null, devices: anns.length, repairedBy: by, unread, welcomeFailed, reported: Math.max(0, ...reports.map(p => p.reads.at ?? 0)) || null });
     }
     return { owner: own ? { epoch: own.epoch, branch: own.branch } : null, members: out };
   }
@@ -592,8 +595,13 @@ export async function start(ctx) {
       // Joined already: a group here, not removed. LISTED BUT NO GROUP (its keys lost — owner 10-07: a lost key table):
       // not joined, the welcome taken.
       const st = had ? await keys.group(had).ready().catch(() => null) : null;
-      if (had && st && !st.removed) {
-        if (!it.repair) continue;
+      let above = null;
+      if (had && st && !st.removed && !it.repair) {
+        // LET IN AGAIN while held here (10-09: #HLt27K behind at 46 — every re-add took its old entry out and sent a
+        // plain welcome, which a node holding the group skipped; with its entry gone no later commit reached it, so it
+        // stayed behind for good): taken if it leads past this node's epoch (`keys.join`'s `above`), else not.
+        above = st.epoch;
+      } else if (had && st && !st.removed) {
         // The branch it names must be one the owner announced (at any epoch: the repair itself moves the owner on).
         const own = (await ownerBranches(had).catch(() => [])).find(a => a.epoch === it.repair.epoch && a.branch === it.repair.branch);
         if (!own) continue;
@@ -615,7 +623,7 @@ export async function start(ctx) {
       const v = { kind: it.spaceKind, name: it.name, owner: it.owner ?? it.from, nonce: it.nonce ?? null, ...(it.spaceKind === "direct" ? { with: it.from } : {}), ...(it.circle ? { circle: it.circle } : {}), ...(typeof it.group === "string" ? { group: it.group.slice(0, 200) } : {}) };
       try {
         const sp = await space.describe(it.space, v);
-        await keys.group(sp).join(it.welcome, { expect });
+        await keys.group(sp).join(it.welcome, { expect, above });
         // JOINED by it: never tried again (its key package is spent — after a removal it would only fail and ask).
         await once.put(`dead:${tried}`, `joined ${Date.now()}`).catch(() => {});
         await keepHistory(sp, it.history);
@@ -627,6 +635,13 @@ export async function start(ctx) {
         out.push(sp);
         ctx.log("conversation", { what: it.repair ? `${it.name ?? it.space.slice(0, 8)}: caught up onto the owner's keys — welcomed by ${short(it.from)}, ${Array.isArray(it.history) ? it.history.length : 0} earlier key(s) with it` : `joined a ${it.spaceKind} conversation with ${short(it.from)}` });
       } catch (e) {
+        // NOT PAST this node's epoch (an older re-add): done with for good — never a reason to ask anyone again.
+        if (/not past this node's/.test(e?.message ?? "")) {
+          await once.put(`dead:${tried}`, `not past ${Date.now()}`).catch(() => {});
+          continue;
+        }
+        // SAID in the space (its writers record: the members list shows it), so a member stuck behind is seen WHY.
+        if (had) await index.spacePoint(had, "writers", { w: had.self, welcomeFailed: { why: String(e?.message ?? e).slice(0, 200), from: it.from, at: Date.now() } }).catch(() => {});
         const held = it.kp ? await keys.holdsTag(it.kp).catch(() => null) : null;
         if (!held && /WelcomeKeyPackageNotFound/.test(e?.message ?? "")) await once.put(`dead:${tried}`, String(Date.now())).catch(() => {});
         // Not dead (a passing failure): tried again on the next pass.
