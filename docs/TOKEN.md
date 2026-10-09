@@ -496,6 +496,15 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   answer's hash is checked by whoever holds the challenged piece: a wrong one is a FRAUD PROOF that voids that
   holdings commitment. A node's place and arc come from its attesters (each says where the peer is and where IT is —
   its connected peers are its ring neighbours). Standing = what it proved held within the window.
+- **SEALED UNIQUE COPIES — what makes standing real disk** (10-09, decided: core dev's call): attestations are
+  sybil-able (any keys can sign "peer P is at R, I am beside it" — nothing proves they saw P), so location cannot be
+  the guard. Instead each identity holds, for every piece it counts, a SEALED REPLICA encoded under its own key: made by
+  slow sequential work (seconds a piece), read back instantly. The beacon's checks ask for a part of the replica within a
+  window too short to seal again, so only an identity that keeps its copy answers — ten identities on one machine need
+  ten copies, ten times the disk. A checked piece must be fetchable from the network (how anyone verifies the answer),
+  so data a node makes for itself counts only as the disk it costs. LOCATION stays a soft rule (hold what Freenet placed
+  near you), not the guard. Cost: a counted piece is kept twice (Freenet's copy and the replica); sealing is a one-time
+  background cost. (Proof of replication, as Filecoin and Arweave.)
 - **What is at stake: STANDING, earned over time.** A node's weight is its assigned storage PROVED over time
   (GB-days, ramping up), not the disk it shows today; two signatures at one place reset it to zero and forfeit its
   unclaimed keeper rewards (rewards claimable only after a delay, so some are always at stake). A disk cannot be
