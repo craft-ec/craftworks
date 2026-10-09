@@ -1406,9 +1406,16 @@ old key's addresses.
       payments; the network beacon extended by open pages; the beacon's ENTROPY MIX (outputs are a hash chain from a
       fixed seed — computable ahead by a fast machine, so committees could be known early; must land before value moves);
       equivocation watchers appending Slash; a record of past beacon outputs (old lots, >600 steps); the keeper loop,
-      standing contract and reward payouts; refusing far back-dated entries; setApprovalForAll; pools, lending.
+      standing contract and reward payouts; refusing far back-dated entries; pools, lending (these and the entropy mix / output history / equivocation
+      detection / standing contract are contract work to build now — owner 10-09; only the page/delegate RUNNING them is
+      rollout).
       ECONOMICS (owner decides, later): supply, initial allocation and its vesting, keeper reward size and source,
       reward→stake lock, fees.
+      [x] 8 OPERATORS / setApprovalForAll (TOKEN §1b) — BUILT + LIVE 10-09: operators list per (token, owner), spans
+          kept, append only extends the past; spends by an operator on at their stamp; read only when needed. 94 tests,
+          20 mutants killed. token.wasm 6f0d1dca. NEXT (contract/mechanism, buildable now): beacon entropy mix → beacon
+          output history → refuse far back-dated entries → equivocation detection → standing contract → batch-auction
+          pools → pooled lending.
       [x] 7 VESTING (TOKEN §4a) — BUILT + LIVE 10-09: Vest (debit of the schedule now) / Vested (anyone appends a step
           once the beacon reaches it, once, exactly as scheduled; never taken back). Found live: a first copy skipped the
           time rule (an early claim ACCEPTED on a fresh chain) → time rule from scratch + the witness applies all timed

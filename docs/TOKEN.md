@@ -31,7 +31,7 @@ Every behaviour of the blockchain token standards, and how this standard gives i
 | Set / drop an authority (SPL `SetAuthority`) | ✅ | the definition's AUTHORITY CHAIN: rotations signed by the current authority; dropping one is final (§1a) |
 | Close an empty account (SPL) | ✅ | a zero-balance chain may be dropped; it is made again by its next receive |
 | Multisig accounts / authorities | ✅ | an owner or authority key is a k-of-n KEY SET (as the attestation substrate's named quorum): an entry carries k signatures (§1) |
-| NFTs — `ownerOf`, transfer, per-item approve, `setApprovalForAll` (ERC-721) | ✅ but `setApprovalForAll` | a definition with `ids: unique`; a chain per (item, owner) whose head says held or not; `allow` per item. Not yet: one approval for ALL of an owner's items, which would need an allowance kept per token rather than per chain (§1b) |
+| NFTs — `ownerOf`, transfer, per-item approve, `setApprovalForAll` (ERC-721) | ✅ | a definition with `ids: unique`; a chain per (item, owner) whose head says held or not; `allow` per item; an OPERATORS list per (token, owner) for all items at once (§1b) |
 | Multi-token, batch transfer (ERC-1155) | ✅ batch not atomic | one definition, many ids; a chain per (item, owner); a batch = one send per item, each final on its own; an all-or-nothing bundle trade is two-phase (§1b, §4) |
 | Metadata (token and per item) | ✅ | the definition's metadata; per id, an ITEM of Craftworks (its page, its files) named by the id |
 | History, traceable by anyone (an explorer) | ✅ | no one ledger: from genesis and the supply bag, sends followed FORWARD reach every chain; credits cite their debits BACKWARD; kept alive by readers and keepers (§1a) |
@@ -625,6 +625,15 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    drawn 16 / signed 16; a buried fake receive and the payment out of it refused by every member; the honest payment
    accepted by its receiver's wallet from the bags alone (16 signatures, 30 ms); an equivocating staker's stake burned.
    Stake comes from keeper rewards — with the Craftworks token (next).
+11a. OPERATORS (`setApprovalForAll`) — BUILT 10-09 (§1b): one contract per (token, owner) (`operators.rs`, kind 6),
+   a record per operator key signed by the owner's key-log key, keeping its SPANS (the intervals it was on) so a spend
+   made while on stays valid after it is turned off; its update only EXTENDS the past, on the owner's current key, with
+   every new stamp near the beacon (no back-dated approval or revocation). A spend past (or without) a chain's own
+   allowance is valid if the owner's list has its signer on at its stamp; a chain reads the list only when a spend
+   needs it (`needs_operators`: most owners never make one). 94 tests; 20 mutants, all killed (2 after same-seq tests
+   were added). LIVE fx/fy (`token-live operators`): three items minted to M; M approved operator 5 once; 5 sent
+   items 1 and 2 from their own chains (ACCEPTED); operator 6, never approved, REFUSED; a turn-off dated 5 steps back
+   (margin 2) REFUSED; turned off now ACCEPTED; 5's send of item 3 after it REFUSED.
 12a. VESTING — BUILT 10-09 (§4a): `Vest` / `Vested`; the time rule from scratch; the witness applies every timed
    rule at the entry's own stamp and refuses stamps ahead of the beacon (found live: an early vesting claim on a fresh
    chain was ACCEPTED by its node, the first copy skipping the append rules). 91 tests; 20 mutants, all killed. LIVE

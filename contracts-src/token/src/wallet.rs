@@ -49,7 +49,7 @@ pub fn stake_at(p: &ChainParams, d: &Definition, s: &State, at: u64) -> Result<w
         return Err("a stake before what is held");
     }
     let prefix = State { entries: s.entries[..n].to_vec(), fork: None };
-    let c = walk(p, d, &prefix, &|_, _| None, &|_| None, None, 0, n).map_err(|(_, w)| w)?;
+    let c = walk(p, d, &prefix, &|_, _| None, &|_| None, None, 0, n, None).map_err(|(_, w)| w)?;
     let mut keys = c.retired;
     if let Some(Signer::Device(node, _)) = c.writer {
         keys.push(node);

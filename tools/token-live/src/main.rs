@@ -278,6 +278,7 @@ async fn main() -> Result<()> {
             "multisig" => multisig(&w).await?,
             "nft" => nft(&w).await?,
             "vest" => vest(&w).await?,
+            "operators" => operators_mode(&w).await?,
             "witness" => witness_mode(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("bag.wasm"))?).await?,
             "cut" => cut(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("block.wasm"))?).await?,
             m => bail!("no mode {m}"),
@@ -935,7 +936,7 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
                 return false;
             };
             let members = draw::committee(&pool, &o_, &p.id(), seq, ep, &claims, wallet::COMMITTEE);
-            let holds = |st: &T::State| T::check(&p, &td2, st, &cited, &|_| None, Some(&log(o)));
+            let holds = |st: &T::State| T::check(&p, &td2, st, &cited, &|_| None, Some(&log(o)), None);
             let now = rt.block_on(get(&x, beacon)).ok().flatten().and_then(|b| B::wire::decode(&b)).map_or(0, |b| b.height());
             match wallet::may_witness(&src, &p, &td2, &s, seq, now, &holds, &cited) {
                 Err(why) => {
@@ -1032,5 +1033,72 @@ async fn vest(w: &W) -> Result<()> {
     println!("6  step 1 as scheduled, on Y: {}", w.put_chain(&w.y, ta, 3, &c1).await?.0);
     let held = w.get_chain(&w.y, ta, 3).await?.context("3's chain")?;
     println!("   3's balance on Y: {}; 2's: {}", held.balance(), g.balance());
+    Ok(())
+}
+
+/// OPERATORS, LIVE (TOKEN §1b): M approves operator 5 for ALL its items of a token at once (`setApprovalForAll`); 5
+/// moves two different items from their own chains; an operator never approved is refused; M turns 5 off and 5 is
+/// refused from then on — the spends made while on stay valid; a turn-off dated in the past is refused.
+async fn operators_mode(w: &W) -> Result<()> {
+    use T::operators as O;
+    println!("— operators");
+    let (m, t) = (1u8, 2u8);
+    let du = T::Definition { ids: T::Ids::Unique, mint: Some(one(60)), min_send: 1, ..w.def(m, b"Ops", 14) };
+    let tu = w.put_def(&du).await?;
+    let h = w.now().await?;
+    let e = T::supply::epoch(h);
+    let items: Vec<[u8; 32]> = (1..=3u8).map(|k| T::unique_item(&tu, e, &w.n(k))).collect();
+    let mints: Vec<T::supply::Mint> = (1..=3u8)
+        .map(|k| {
+            let mut mm = T::supply::Mint { to: did(m), item: items[k as usize - 1], amount: 1, nonce: w.n(k), stamp: h, sigs: vec![] };
+            mm.sigs = vec![(0, key(60).sign(&mm.message(&tu)).to_bytes())];
+            mm
+        })
+        .collect();
+    let shard = T::supply::Params { code_hash: w.ch, definition: tu, beacon: w.beacon, epoch: e };
+    println!("1  three items minted to M, on X: {}", put(&w.x, container(&w.code, shard.encode()), T::supply::Shard { mints: mints.clone() }.encode()).await?.0);
+    let ip = |k: usize, o: u8| T::ChainParams { item: items[k], ..w.chain(tu, o) };
+    let r = w.now().await?;
+    let mut chains = Vec::new();
+    for k in 0..3 {
+        let mut c = T::State::default();
+        push(&mut c, T::Body::Mint { nonce: w.n(k as u8 + 1), amount: 1, minted: h, ev: T::Evidence::default() }, w.n(k as u8 + 1), None, r);
+        let said = put(&w.x, container(&w.code, ip(k, m).encode()), c.encode()).await?.0;
+        println!("2  M's chain of item {}: its mint, on X: {said}", k + 1);
+        chains.push(c);
+    }
+    let op = O::Params { code_hash: w.ch, definition: tu, owner: did(m), beacon: w.beacon, idlog: w.idlog };
+    let record = |operator: u8, spans: Vec<(u64, Option<u64>)>, seq: u32| {
+        let mut rc = O::Record { operator: pk(operator), spans, seq, key_seq: 0, sig: [0; 64] };
+        rc.sig = SigningKey::from_bytes(&owner_seed(m)).sign(&rc.message(&op)).to_bytes();
+        rc
+    };
+    let on_at = w.now().await?;
+    let list = O::List { records: vec![record(5, vec![(on_at, None)], 1)] };
+    println!("3  M approves operator 5 for ALL its items of the token (at {on_at}), on X: {}", put(&w.x, container(&w.code, op.encode()), list.encode()).await?.0);
+    let spend = |c: &T::State, k: u8, by: u8, stamp: u64| {
+        let mut c = c.clone();
+        push_as(&mut c, T::Body::Spend { to: did(t), amount: 1 }, w.n(20 + k), Signer_::Spender(by), stamp);
+        c
+    };
+    let now = w.now().await?;
+    println!("4  operator 5 sends item 1 to T, through Y: {}", put(&w.y, container(&w.code, ip(0, m).encode()), spend(&chains[0], 1, 5, now).encode()).await?.0);
+    println!("5  operator 5 sends item 2 to T, through Y: {}", put(&w.y, container(&w.code, ip(1, m).encode()), spend(&chains[1], 2, 5, now).encode()).await?.0);
+    println!("6  operator 6 (never approved) sends item 3, through Y: {}", put(&w.y, container(&w.code, ip(2, m).encode()), spend(&chains[2], 3, 6, now).encode()).await?.0);
+    let now = w.until(on_at + 6).await?;
+    let back = O::List { records: vec![record(5, vec![(on_at, Some(on_at + 1))], 2)] };
+    println!("7  M turns 5 off DATED IN THE PAST (at {}; now {now}, margin {}), on X: {}", on_at + 1, du.margin, put(&w.x, container(&w.code, op.encode()), back.encode()).await?.0);
+    let off = O::List { records: vec![record(5, vec![(on_at, Some(now))], 2)] };
+    println!("8  M turns 5 off now ({now}), on X: {}", put(&w.x, container(&w.code, op.encode()), off.encode()).await?.0);
+    let after = w.until(now + 1).await?;
+    println!("9  operator 5 sends item 3 after it, through Y: {}", put(&w.y, container(&w.code, ip(2, m).encode()), spend(&chains[2], 4, 5, after).encode()).await?.0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let held = |b: Option<Vec<u8>>| b.and_then(|b| T::State::decode(&b)).map(|s| s.balance());
+    println!(
+        "   M holds item 1: {:?} · item 2: {:?} · item 3: {:?} (on Y)",
+        held(get(&w.y, ip(0, m).id()).await?),
+        held(get(&w.y, ip(1, m).id()).await?),
+        held(get(&w.y, ip(2, m).id()).await?)
+    );
     Ok(())
 }

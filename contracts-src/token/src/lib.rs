@@ -1044,14 +1044,14 @@ pub type Why = &'static str;
 
 /// THE SHAPE RULES (TOKEN §3a, §3c) of chain `p` for definition `d` — true any time, from scratch. `chain(definition,
 /// owner)` gives a chain the citations among the last [`RECENT`] entries cite (`None`: it does not exist).
-pub fn check(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>) -> Result<(), Why> {
-    check_window(p, d, s, chain, supply, keys, RECENT).map_err(|(_, why)| why)
+pub fn check(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, ops: Option<&operators::List>) -> Result<(), Why> {
+    check_window(p, d, s, chain, supply, keys, RECENT, ops).map_err(|(_, why)| why)
 }
 
 /// The shape rules with the citations of the last `window` entries checked — the contract's [`RECENT`]; a WALLET's
 /// every one (`usize::MAX`, TOKEN §3a). Refused: the entry where (its seq) and why.
-pub fn check_window(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, window: usize) -> Result<(), (u64, Why)> {
-    walk(p, d, s, chain, supply, keys, window, usize::MAX).map(|_| ())
+pub fn check_window(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, window: usize, ops: Option<&operators::List>) -> Result<(), (u64, Why)> {
+    walk(p, d, s, chain, supply, keys, window, usize::MAX, ops).map(|_| ())
 }
 
 /// What a chain carries at its end — what a cut after it must carry.
@@ -1073,7 +1073,8 @@ pub struct Carried {
 /// SHOW what they cite — live, or by their evidence. An older one whose cited entry its chain's cut has since hidden is
 /// taken as it was shown when appended (the wallet walks it whole).
 /// `keys`: the OWNER's key log (the DID's), read and verified — needed where a `Writer` entry is checked.
-pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, window: usize, strict_from: usize) -> Result<Carried, (u64, Why)> {
+#[allow(clippy::too_many_arguments)]
+pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, window: usize, strict_from: usize, ops: Option<&operators::List>) -> Result<Carried, (u64, Why)> {
     let mut failed_at = s.entries.first().map_or(0, |e| e.seq);
     let r = (|| -> Result<Carried, Why> {
         if d.code_hash != p.code_hash {
@@ -1186,8 +1187,14 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     if !e.delegated_by(by) {
                         return Err("a spend not signed by a spender");
                     }
-                    let left = allowed.iter_mut().find(|(k, _)| k == by).ok_or("a spend with no allowance")?;
-                    left.1 = left.1.checked_sub(*amount).ok_or("a spend over its allowance")?;
+                    // Within an allowance of this chain; past it (or with none), by an OPERATOR of the owner for the
+                    // whole token whose span covers this stamp (`ops`: the owner's operators list).
+                    match allowed.iter_mut().find(|(k, _)| k == by) {
+                        Some(left) if left.1 >= *amount => left.1 -= *amount,
+                        _ if ops.is_some_and(|l| l.approved(by, e.stamp)) => {}
+                        Some(_) => return Err("a spend over its allowance"),
+                        None => return Err("a spend with no allowance"),
+                    }
                     if *to == p.owner {
                         return Err("a send to itself");
                     }
@@ -1621,10 +1628,11 @@ pub fn append_check(d: &Definition, now: u64, held: &State, merged: &State, keys
 /// shape rules with every NEW citation shown (live, or by its evidence — `chain` gives the cited chains) and a new cut
 /// checked against what it summarises here (it must carry exactly what that computes); then what comes before the last
 /// cut dropped.
-pub fn accept(p: &ChainParams, d: &Definition, now: u64, held: &State, merged: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>) -> Result<State, Why> {
+#[allow(clippy::too_many_arguments)]
+pub fn accept(p: &ChainParams, d: &Definition, now: u64, held: &State, merged: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, ops: Option<&operators::List>) -> Result<State, Why> {
     append_check(d, now, held, merged, keys)?;
     let from = new_from(held, merged);
-    walk(p, d, merged, chain, supply, keys, merged.entries.len() - from, from).map_err(|(_, w)| w)?;
+    walk(p, d, merged, chain, supply, keys, merged.entries.len() - from, from, ops).map_err(|(_, w)| w)?;
     Ok(prune(merged))
 }
 
@@ -1670,6 +1678,33 @@ pub fn timed(d: &Definition, now: u64, merged: &State, e: &Entry) -> Result<(), 
         _ => {}
     }
     Ok(())
+}
+
+/// Does `s` hold a spend its own allowances do not cover — one only an OPERATOR of the owner can stand behind? Only
+/// then is the owner's operators list read (most owners never make one; asking for a contract that is not there costs
+/// the node a lookup).
+pub fn needs_operators(s: &State) -> bool {
+    let mut allowed: Vec<([u8; 32], u128)> = Vec::new();
+    for e in &s.entries {
+        match &e.body {
+            Body::Allow { spender, limit } => {
+                allowed.retain(|(k, _)| k != spender);
+                if *limit > 0 {
+                    allowed.push((*spender, *limit));
+                }
+            }
+            Body::Cut { allowances, .. } => allowed = allowances.clone(),
+            Body::Spend { amount, .. } => {
+                let Auth::Delegated { by, .. } = &e.auth else { continue };
+                match allowed.iter_mut().find(|(k, _)| k == by) {
+                    Some(left) if left.1 >= *amount => left.1 -= *amount,
+                    _ => return true,
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// THE FREEZE RULE (an append rule, TOKEN §2): a token with a freeze authority appends no new DEBIT of an owner its
@@ -1835,7 +1870,7 @@ pub fn beacon_height(b: &[u8]) -> Option<u64> {
 
 #[cfg(feature = "freenet-main-contract")]
 mod contract {
-    use super::{accept, authority, beacon_height, freeze, supply, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
+    use super::{accept, authority, beacon_height, freeze, operators, supply, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
     use freenet_stdlib::prelude::*;
 
     pub struct Token;
@@ -1975,6 +2010,56 @@ mod contract {
         })
     }
 
+    /// An OPERATORS list holds: every record well formed and signed by the owner's key (its key log read in the same
+    /// round).
+    fn operators_valid(params: &[u8], state: &[u8], related: &RelatedContracts<'static>) -> Result<ValidateResult, ContractError> {
+        let (Some(p), Some(l)) = (operators::Params::decode(params), operators::List::decode(state)) else { return Ok(ValidateResult::Invalid) };
+        let Some(lb) = related_state(related, &p.keys_id()) else { return Ok(ValidateResult::RequestRelated(vec![ContractInstanceId::new(p.keys_id())])) };
+        let Some(log) = lb.and_then(|b| craftworks_idlog_contract::read(&p.owner, &b)) else { return Ok(ValidateResult::Invalid) };
+        Ok(if operators::holds(&p, &log, &l).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
+    }
+
+    /// An operators list's UPDATE: merged; what is new on the owner's current key, only extending the past, near the
+    /// beacon now (the definition — its margin —, the beacon and the key log in one round).
+    fn operators_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
+        let p = operators::Params::decode(params).ok_or(ContractError::InvalidState)?;
+        let held = operators::List::decode(state).ok_or(ContractError::InvalidState)?;
+        let mut merged = held.clone();
+        let mut related: Vec<([u8; 32], Vec<u8>)> = Vec::new();
+        for d in data {
+            let b: &[u8] = match &d {
+                UpdateData::State(s) => s.as_ref(),
+                UpdateData::Delta(x) => x.as_ref(),
+                UpdateData::StateAndDelta { state, .. } => state.as_ref(),
+                UpdateData::RelatedState { related_to, state } => {
+                    let mut k = [0u8; 32];
+                    k.copy_from_slice(related_to.as_bytes());
+                    related.push((k, state.as_ref().to_vec()));
+                    continue;
+                }
+                _ => continue,
+            };
+            merged = operators::merge(&merged, &operators::List::decode(b).ok_or(ContractError::InvalidUpdate)?);
+        }
+        if merged == held {
+            return Ok(UpdateModification::valid(State::from(held.encode())));
+        }
+        if merged.records.len() > operators::RECORDS_MAX {
+            return Err(why("more operators than a list keeps"));
+        }
+        let want = [p.definition, p.beacon, p.keys_id()];
+        let got = |w: &[u8; 32]| related.iter().find(|(k, _)| k == w).map(|(_, b)| b.clone());
+        if want.iter().any(|w| got(w).is_none()) {
+            return UpdateModification::requires(want.iter().map(|w| RelatedContract { contract_instance_id: ContractInstanceId::new(*w), mode: RelatedMode::StateOnce }).collect());
+        }
+        let d = got(&p.definition).filter(|db| id(&p.code_hash, db) == p.definition).and_then(|db| Definition::decode(&db)).ok_or(ContractError::InvalidUpdate)?;
+        let now = got(&p.beacon).and_then(|b| beacon_height(&b)).ok_or(ContractError::InvalidUpdate)?;
+        let log = got(&p.keys_id()).and_then(|b| craftworks_idlog_contract::read(&p.owner, &b)).ok_or(ContractError::InvalidUpdate)?;
+        operators::holds(&p, &log, &merged).map_err(why)?;
+        operators::fresh(&held, &merged, now, d.margin, log.head().seq).map_err(why)?;
+        Ok(UpdateModification::valid(State::from(merged.encode())))
+    }
+
     #[contract]
     impl ContractInterface for Token {
         fn validate_state(parameters: Parameters<'static>, state: State<'static>, related: RelatedContracts<'static>) -> Result<ValidateResult, ContractError> {
@@ -1987,6 +2072,9 @@ mod contract {
             }
             if params.first() == Some(&freeze::FROZEN) {
                 return freeze_valid(params, state.as_ref(), &related);
+            }
+            if params.first() == Some(&operators::OPERATORS) {
+                return operators_valid(params, state.as_ref(), &related);
             }
             // A DEFINITION: its state is its params, and they read as one.
             if params.first() == Some(&DEFINITION) {
@@ -2009,6 +2097,9 @@ mod contract {
             want.extend(cited);
             let shard_id = |e: u64| supply::Params { code_hash: p.code_hash, definition: p.definition, beacon: p.beacon, epoch: e }.id();
             want.extend(super::minted_epochs_from(&s, s.entries.len().saturating_sub(super::RECENT)).into_iter().map(shard_id));
+            // The owner's OPERATORS list, only if a spend needs it.
+            let ops_id = super::needs_operators(&s).then(|| operators::Params::of(&p).id());
+            want.extend(ops_id);
             let missing: Vec<ContractInstanceId> = want.iter().filter(|w| related_state(&related, w).is_none()).map(|w| ContractInstanceId::new(*w)).collect();
             if !missing.is_empty() {
                 return Ok(ValidateResult::RequestRelated(missing));
@@ -2021,7 +2112,8 @@ mod contract {
             let chain = |t: &super::Tok, owner: &[u8; 32]| related_state(&related, &p.at(*t, *owner).id()).flatten().and_then(|b| super::State::decode(&b));
             let keys = related_state(&related, &p.keys_id()).flatten().and_then(|b| craftworks_idlog_contract::read(&p.owner, &b));
             let shard = |e: u64| related_state(&related, &shard_id(e)).flatten().and_then(|b| supply::Shard::decode(&b));
-            Ok(if check(&p, &d, &s, &chain, &shard, keys.as_ref()).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
+            let ops = ops_id.and_then(|o| related_state(&related, &o)).flatten().and_then(|b| operators::List::decode(&b));
+            Ok(if check(&p, &d, &s, &chain, &shard, keys.as_ref(), ops.as_ref()).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
         }
 
         fn update_state(parameters: Parameters<'static>, state: State<'static>, data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
@@ -2036,6 +2128,9 @@ mod contract {
             }
             if parameters.as_ref().first() == Some(&freeze::FROZEN) {
                 return freeze_update(parameters.as_ref(), state.as_ref(), data);
+            }
+            if parameters.as_ref().first() == Some(&operators::OPERATORS) {
+                return operators_update(parameters.as_ref(), state.as_ref(), data);
             }
             let p = ChainParams::decode(parameters.as_ref()).ok_or(ContractError::InvalidState)?;
             let held = super::State::decode(state.as_ref()).ok_or(ContractError::InvalidState)?;
@@ -2077,6 +2172,9 @@ mod contract {
                 // only: the node takes no second, so it is asked for before the definition says whether it freezes).
                 let freeze_id = super::debits_from(&merged, from).then(|| super::freeze::Params { code_hash: p.code_hash, definition: p.definition, beacon: p.beacon }.id());
                 want.extend(freeze_id);
+                // The owner's OPERATORS list, only if a spend needs it (the whole chain is walked: an old one too).
+                let ops_id = super::needs_operators(&merged).then(|| operators::Params::of(&p).id());
+                want.extend(ops_id);
                 // ONE round holds at most MAX_RELATED (measured, the node's limit): more new citations than that are
                 // refused here, plainly — the writer sends them in smaller batches.
                 if want.len() > super::MAX_RELATED {
@@ -2098,7 +2196,8 @@ mod contract {
                     let list = got(&fl).and_then(|b| super::freeze::List::decode(&b)).ok_or(ContractError::InvalidUpdate)?;
                     super::freeze_check(&p, &d, &held, &merged, &list).map_err(why)?;
                 }
-                return Ok(UpdateModification::valid(State::from(accept(&p, &d, now, &held, &merged, &chain, &|e| got(&shard_id(e)).and_then(|b| supply::Shard::decode(&b)), keys.as_ref()).map_err(why)?.encode())));
+                let ops = ops_id.and_then(|o| got(&o)).and_then(|b| operators::List::decode(&b));
+                return Ok(UpdateModification::valid(State::from(accept(&p, &d, now, &held, &merged, &chain, &|e| got(&shard_id(e)).and_then(|b| supply::Shard::decode(&b)), keys.as_ref(), ops.as_ref()).map_err(why)?.encode())));
             }
             Ok(UpdateModification::valid(State::from(prune(&merged).encode())))
         }
@@ -2117,6 +2216,7 @@ mod contract {
 pub mod authority;
 pub mod cut;
 pub mod freeze;
+pub mod operators;
 pub mod witness;
 pub mod draw;
 pub mod supply;

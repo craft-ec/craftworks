@@ -119,7 +119,7 @@ impl World {
     fn check(&self, owner: u8) -> Result<(), Why> {
         let s = &self.0[&did(owner)];
         let tok = params(1).definition;
-        check(&params(owner), &def(), s, &|d, o| if *d == tok.into() { self.0.get(o).cloned() } else { None }, &|_| None, Some(&log(owner)))
+        check(&params(owner), &def(), s, &|d, o| if *d == tok.into() { self.0.get(o).cloned() } else { None }, &|_| None, Some(&log(owner)), None)
     }
 }
 
@@ -272,7 +272,7 @@ fn the_definition_must_be_this_standards() {
     let w = paid();
     let mut d = def();
     d.code_hash = [8; 32];
-    assert_eq!(check(&params(1), &d, &w.0[&did(1)], &|_, o| w.0.get(o).cloned(), &|_| None, Some(&log(1))), Err("the definition is not this standard's"));
+    assert_eq!(check(&params(1), &d, &w.0[&did(1)], &|_, o| w.0.get(o).cloned(), &|_| None, Some(&log(1)), None), Err("the definition is not this standard's"));
 }
 
 #[test]
@@ -540,13 +540,13 @@ impl Two {
     }
     fn check(&self, token: [u8; 32], owner: u8) -> Result<(), Why> {
         let d = if token == id_a() { def() } else { def_b() };
-        check(&at(token, owner), &d, self.get(token, owner), &|t, o| self.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(owner)))
+        check(&at(token, owner), &d, self.get(token, owner), &|t, o| self.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(owner)), None)
     }
     /// As a holder takes in the last `new` entries: their citations must be SHOWN (live, or by their evidence).
     fn strict(&self, token: [u8; 32], owner: u8, new: usize) -> Result<(), Why> {
         let d = if token == id_a() { def() } else { def_b() };
         let s = self.get(token, owner);
-        walk(&at(token, owner), &d, s, &|t, o| self.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(owner)), new, s.entries.len() - new).map(|_| ()).map_err(|x| x.1)
+        walk(&at(token, owner), &d, s, &|t, o| self.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(owner)), new, s.entries.len() - new, None).map(|_| ()).map_err(|x| x.1)
     }
 }
 
@@ -672,7 +672,7 @@ fn stamps_never_go_down() {
     let g = sign(Entry { auth: Auth::Work(0), ..s.entries[0].clone() }, T);
     s.entries[0] = g;
     put_at(&mut s, 21, Body::Burn { amount: 10 }, Some(T), 4);
-    assert_eq!(check(&at(id_b(), T), &def_b(), &s, &|_, _| None, &|_| None, Some(&log(T))), Err("a stamp below its predecessor's"));
+    assert_eq!(check(&at(id_b(), T), &def_b(), &s, &|_, _| None, &|_| None, Some(&log(T)), None), Err("a stamp below its predecessor's"));
 }
 
 // The append rules: `held` → `merged`, now = the beacon's height. Margin 2.
@@ -830,7 +830,7 @@ fn a_cut_carries_what_came_before_and_the_chain_lives_on_from_it() {
     let live = w.get(id_a(), 1).clone();
     assert_eq!(live.entries.len(), 1, "only the cut is live");
     assert_eq!(live.entries[0].seq, 5);
-    assert_eq!(check(&at(id_a(), 1), &def(), &whole, &|_, _| None, &|_| None, Some(&log(1))), Ok(()), "with what it summarises");
+    assert_eq!(check(&at(id_a(), 1), &def(), &whole, &|_, _| None, &|_| None, Some(&log(1)), None), Ok(()), "with what it summarises");
     assert_eq!(w.check(id_a(), 1), Ok(()), "from the cut alone");
     assert_eq!(live.balance(), 600);
     let Body::Cut { allowances, .. } = &live.entries[0].body else { panic!() };
@@ -851,7 +851,7 @@ fn a_cut_must_carry_exactly_what_came_before_it() {
         let mut e = s.entries.pop().unwrap();
         f(&mut e.body);
         s.entries.push(sign(e, 1));
-        check(&at(id_a(), 1), &def(), &s, &|_, _| None, &|_| None, Some(&log(1)))
+        check(&at(id_a(), 1), &def(), &s, &|_, _| None, &|_| None, Some(&log(1)), None)
     };
     assert_eq!(lie(&|_| {}), Ok(()), "control: the honest cut");
     assert_eq!(lie(&|b| if let Body::Cut { allowances, .. } = b { allowances[0].1 = 51 }), Err("a cut that is not what came before it"));
@@ -864,12 +864,12 @@ fn a_cut_must_carry_exactly_what_came_before_it() {
     let mut e = s.entries.pop().unwrap();
     e.balance += 1;
     s.entries.push(sign(e, 1));
-    assert_eq!(check(&at(id_a(), 1), &def(), &s, &|_, _| None, &|_| None, Some(&log(1))), Err("a carried balance that does not add up"));
+    assert_eq!(check(&at(id_a(), 1), &def(), &s, &|_, _| None, &|_| None, Some(&log(1)), None), Err("a carried balance that does not add up"));
     // Only the writer cuts.
     let mut s = whole.clone();
     let e = s.entries.pop().unwrap();
     s.entries.push(sign(e, 5));
-    assert_eq!(check(&at(id_a(), 1), &def(), &s, &|_, _| None, &|_| None, Some(&log(1))), Err("an entry not signed by the chain's writer"));
+    assert_eq!(check(&at(id_a(), 1), &def(), &s, &|_, _| None, &|_| None, Some(&log(1)), None), Err("an entry not signed by the chain's writer"));
     assert_eq!(n, 5);
 }
 
@@ -877,8 +877,8 @@ fn a_cut_must_carry_exactly_what_came_before_it() {
 fn a_chain_starts_at_genesis_or_at_its_cut() {
     let (_, whole, _) = cut_world();
     let mid = State { entries: whole.entries[2..].to_vec(), fork: None };
-    assert_eq!(check(&at(id_a(), 1), &def(), &mid, &|_, _| None, &|_| None, Some(&log(1))), Err("a chain that starts mid-way without its cut"));
-    assert_eq!(check(&at(id_a(), 1), &def(), &prune(&whole), &|_, _| None, &|_| None, Some(&log(1))), Ok(()));
+    assert_eq!(check(&at(id_a(), 1), &def(), &mid, &|_, _| None, &|_| None, Some(&log(1)), None), Err("a chain that starts mid-way without its cut"));
+    assert_eq!(check(&at(id_a(), 1), &def(), &prune(&whole), &|_, _| None, &|_| None, Some(&log(1)), None), Ok(()));
 }
 
 #[test]
@@ -998,7 +998,7 @@ fn a_holder_checks_a_new_cut_against_what_it_summarises_then_drops_it() {
     let m = merge(&held, &sent);
     assert_eq!(m, whole);
     assert_eq!(merge(&sent, &held), whole);
-    assert_eq!(accept(&at(id_a(), 1), &def(), 6, &held, &m, &|_, _| None, &|_| None, Some(&log(1))), Ok(sent.clone()), "kept: from the cut");
+    assert_eq!(accept(&at(id_a(), 1), &def(), 6, &held, &m, &|_, _| None, &|_| None, Some(&log(1)), None), Ok(sent.clone()), "kept: from the cut");
     // A lying cut sent the same way is refused there.
     let mut bad = sent.clone();
     let mut e = bad.entries.pop().unwrap();
@@ -1006,9 +1006,9 @@ fn a_holder_checks_a_new_cut_against_what_it_summarises_then_drops_it() {
         allowances.clear();
     }
     bad.entries.push(sign(e, 1));
-    assert_eq!(accept(&at(id_a(), 1), &def(), 6, &held, &merge(&held, &bad), &|_, _| None, &|_| None, Some(&log(1))), Err("a cut that is not what came before it"));
+    assert_eq!(accept(&at(id_a(), 1), &def(), 6, &held, &merge(&held, &bad), &|_, _| None, &|_| None, Some(&log(1)), None), Err("a cut that is not what came before it"));
     // CONTROL: a holder that never had the prefix cannot check it (the wallet does).
-    assert_eq!(accept(&at(id_a(), 1), &def(), 6, &State::default(), &bad, &|_, _| None, &|_| None, Some(&log(1))), Ok(bad.clone()));
+    assert_eq!(accept(&at(id_a(), 1), &def(), 6, &State::default(), &bad, &|_, _| None, &|_| None, Some(&log(1)), None), Ok(bad.clone()));
     // Copies settle the same in every order (pruned).
     let r = all_orders(&[held.clone(), sent.clone(), whole.clone()]);
     assert!(r.iter().all(|x| prune(x) == sent));
@@ -1259,7 +1259,7 @@ fn a_writer_is_a_device_of_the_owner_credentialed_by_its_key_log() {
     let try_writer = |e: Entry| {
         let mut s = State::default();
         s.entries.push(e);
-        check(&p, &def(), &s, &|_, _| None, &|_| None, Some(&log(1)))
+        check(&p, &def(), &s, &|_, _| None, &|_| None, Some(&log(1)), None)
     };
     let s0 = State::default();
     assert_eq!(try_writer(writer_entry(&s0, 1, 1, &owner_seed(1), 0, 1)), Ok(()), "control: its own device, its key at seq 0");
@@ -1269,19 +1269,19 @@ fn a_writer_is_a_device_of_the_owner_credentialed_by_its_key_log() {
     assert_eq!(try_writer(writer_entry(&s0, 1, 1, &owner_seed(1), 0, 7)), Err("a writer entry not signed by its device"));
     let mut s = State::default();
     s.entries.push(writer_entry(&s, 1, 1, &owner_seed(1), 0, 1));
-    assert_eq!(check(&p, &def(), &s, &|_, _| None, &|_| None, None), Err("the owner's key log is not there"), "the key log is required");
+    assert_eq!(check(&p, &def(), &s, &|_, _| None, &|_| None, None, None), Err("the owner's key log is not there"), "the key log is required");
     // Genesis comes right after the writer — not after anything else.
     signed(&mut s, 1, 1, Body::Genesis { amount: 1000 });
-    assert_eq!(check(&p, &def(), &s, &|_, _| None, &|_| None, Some(&log(1))), Ok(()));
+    assert_eq!(check(&p, &def(), &s, &|_, _| None, &|_| None, Some(&log(1)), None), Ok(()));
     let mut late = State::default();
     signed(&mut late, 1, 2, Body::Allow { spender: pk(5), limit: 1 });
     signed(&mut late, 1, 1, Body::Genesis { amount: 1000 });
-    assert_eq!(check(&p, &def(), &late, &|_, _| None, &|_| None, Some(&log(1))), Err("a genesis that is not the definition's"));
+    assert_eq!(check(&p, &def(), &late, &|_, _| None, &|_| None, Some(&log(1)), None), Err("a genesis that is not the definition's"));
     // Another device of the same account, never named writer, does not sign.
     let mut other = s.clone();
     let e = sign(entry(&other, nonce(3), Body::Burn { amount: 1 }), 30);
     other.entries.push(e);
-    assert_eq!(check(&p, &def(), &other, &|_, _| None, &|_| None, Some(&log(1))), Err("an entry not signed by the chain's writer"));
+    assert_eq!(check(&p, &def(), &other, &|_, _| None, &|_| None, Some(&log(1)), None), Err("an entry not signed by the chain's writer"));
 }
 
 #[test]
@@ -1295,7 +1295,7 @@ fn a_rotation_revokes_older_devices_and_a_new_writer_stands_on_the_new_key() {
     let mut old = held.clone();
     signed(&mut old, 1, 2, Body::Burn { amount: 1 });
     assert_eq!(append_check(&def(), 0, &held, &old, Some(&keys)), Err("an owner entry not on the account's current key"));
-    assert_eq!(check(&p, &def(), &old, &|_, _| None, &|_| None, Some(&keys)), Ok(()));
+    assert_eq!(check(&p, &def(), &old, &|_, _| None, &|_| None, Some(&keys), None), Ok(()));
     // A NEW writer (device 31) credentialed by the rotated key at seq 1: taken; it writes on.
     let mut new = held.clone();
     let e = writer_entry(&new, 1, 31, &next_seed(1), 1, 31);
@@ -1303,17 +1303,17 @@ fn a_rotation_revokes_older_devices_and_a_new_writer_stands_on_the_new_key() {
     let e = sign(entry(&new, nonce(4), Body::Burn { amount: 1 }), 31);
     new.entries.push(e);
     assert_eq!(append_check(&def(), 0, &held, &new, Some(&keys)), Ok(()));
-    assert_eq!(check(&p, &def(), &new, &|_, _| None, &|_| None, Some(&keys)), Ok(()));
+    assert_eq!(check(&p, &def(), &new, &|_, _| None, &|_| None, Some(&keys), None), Ok(()));
     // …and the revoked device's entries after it are not its writer's.
     let mut after = new.clone();
     let e = sign(entry(&after, nonce(5), Body::Burn { amount: 1 }), 1);
     after.entries.push(e);
-    assert_eq!(check(&p, &def(), &after, &|_, _| None, &|_| None, Some(&keys)), Err("an entry not signed by the chain's writer"));
+    assert_eq!(check(&p, &def(), &after, &|_, _| None, &|_| None, Some(&keys), None), Err("an entry not signed by the chain's writer"));
     // A writer stepping back to the older key: refused.
     let mut back = new.clone();
     let e = writer_entry(&back, 1, 1, &owner_seed(1), 0, 1);
     back.entries.push(e);
-    assert_eq!(check(&p, &def(), &back, &|_, _| None, &|_| None, Some(&keys)), Err("a writer on an older key than the one before"));
+    assert_eq!(check(&p, &def(), &back, &|_, _| None, &|_| None, Some(&keys), None), Err("a writer on an older key than the one before"));
 }
 
 #[test]
@@ -1336,7 +1336,7 @@ fn the_recovered_account_outranks_a_stolen_device_and_one_key_signing_twice_stil
     let r = all_orders(&[thief, thief2, rescue.clone()]);
     assert!(r.windows(2).all(|x| x[0] == x[1]), "one result in every order");
     assert_eq!(r[0], rescue, "the recovery outranks the thief's fork too");
-    assert_eq!(check(&at(id_a(), 1), &def(), &r[0], &|_, _| None, &|_| None, Some(&rotated(1))), Ok(()));
+    assert_eq!(check(&at(id_a(), 1), &def(), &r[0], &|_, _| None, &|_| None, Some(&rotated(1)), None), Ok(()));
 }
 
 
@@ -1350,15 +1350,15 @@ fn a_holder_takes_a_receive_without_the_owners_key_log_but_never_a_new_writer() 
     let mut merged = held.clone();
     put_at(&mut merged, 2, Body::Receive { from: did(9), nonce: nonce(2), amount: 50, cited: 0, ev: Evidence::default() }, None, 0);
     let from = new_from(&held, &merged);
-    let r = walk(&at(id_a(), 1), &def(), &merged, &|_, _| None, &|_| None, None, 0, from).map(|_| ()).map_err(|x| x.1);
+    let r = walk(&at(id_a(), 1), &def(), &merged, &|_, _| None, &|_| None, None, 0, from, None).map(|_| ()).map_err(|x| x.1);
     assert_eq!(r, Ok(()), "the held writer is not checked again");
     // A NEW writer without its key log: refused. From scratch without it: refused too.
     let mut neww = held.clone();
     let e = writer_entry(&neww, 1, 31, &owner_seed(1), 0, 31);
     neww.entries.push(e);
     let from = new_from(&held, &neww);
-    assert_eq!(walk(&at(id_a(), 1), &def(), &neww, &|_, _| None, &|_| None, None, 0, from).map(|_| ()).map_err(|x| x.1), Err("the owner's key log is not there"));
-    assert_eq!(check(&at(id_a(), 1), &def(), &held, &|_, _| None, &|_| None, None), Err("the owner's key log is not there"));
+    assert_eq!(walk(&at(id_a(), 1), &def(), &neww, &|_, _| None, &|_| None, None, 0, from, None).map(|_| ()).map_err(|x| x.1), Err("the owner's key log is not there"));
+    assert_eq!(check(&at(id_a(), 1), &def(), &held, &|_, _| None, &|_| None, None, None), Err("the owner's key log is not there"));
 }
 
 // ---- FOUNDATION 3: the mint authority, the supply shard, the Mint entry ----
@@ -1383,13 +1383,13 @@ fn minted(s: &mut State, n: u8, amount: u128, at: u64) {
 fn a_mint_is_credited_only_if_its_supply_shard_already_holds_it() {
     let shard = supply::Shard { mints: vec![a_mint(2, 1, 500, 3, 60)] };
     let p = params(2);
-    let ok = |s: &State, sh: &supply::Shard| check(&p, &def(), s, &|_, _| None, &|e| (e == 0).then(|| sh.clone()), Some(&log(2)));
+    let ok = |s: &State, sh: &supply::Shard| check(&p, &def(), s, &|_, _| None, &|e| (e == 0).then(|| sh.clone()), Some(&log(2)), None);
     let mut b = State::default();
     minted(&mut b, 1, 500, 3);
     assert_eq!(b.balance(), 500);
     assert_eq!(ok(&b, &shard), Ok(()));
     assert_eq!(ok(&b, &supply::Shard::default()), Err("a mint that is not in its supply shard"));
-    assert_eq!(check(&p, &def(), &b, &|_, _| None, &|_| None, Some(&log(2))), Err("the mint's supply shard is not there"));
+    assert_eq!(check(&p, &def(), &b, &|_, _| None, &|_| None, Some(&log(2)), None), Err("the mint's supply shard is not there"));
     let other = supply::Shard { mints: vec![a_mint(3, 1, 500, 3, 60)] };
     assert_eq!(ok(&b, &other), Err("a mint that is not in its supply shard"), "minted to another");
     let more = supply::Shard { mints: vec![a_mint(2, 1, 501, 3, 60)] };
@@ -1411,8 +1411,8 @@ fn a_mint_is_credited_only_if_its_supply_shard_already_holds_it() {
     let mut c = State::default();
     minted(&mut c, 4, 70, at);
     let later = supply::Shard { mints: vec![a_mint(2, 4, 70, at, 60)] };
-    assert_eq!(check(&p, &def(), &c, &|_, _| None, &|e| (e == 1).then(|| later.clone()), Some(&log(2))), Ok(()));
-    assert_eq!(check(&p, &def(), &c, &|_, _| None, &|e| (e == 0).then(|| later.clone()), Some(&log(2))), Err("the mint's supply shard is not there"));
+    assert_eq!(check(&p, &def(), &c, &|_, _| None, &|e| (e == 1).then(|| later.clone()), Some(&log(2)), None), Ok(()));
+    assert_eq!(check(&p, &def(), &c, &|_, _| None, &|e| (e == 0).then(|| later.clone()), Some(&log(2)), None), Err("the mint's supply shard is not there"));
     // And it spends as any balance does.
     signed(&mut b, 2, 9, Body::Send { to: did(3), amount: 200 });
     assert_eq!(ok(&b, &shard), Ok(()));
@@ -1424,7 +1424,7 @@ fn an_update_reads_the_shard_of_each_new_mint() {
     let held = State::default();
     let mut b = State::default();
     minted(&mut b, 1, 500, 3);
-    let take = |sh: Option<supply::Shard>| accept(&params(2), &def(), 4, &held, &b, &|_, _| None, &|e| if e == 0 { sh.clone() } else { None }, Some(&log(2)));
+    let take = |sh: Option<supply::Shard>| accept(&params(2), &def(), 4, &held, &b, &|_, _| None, &|e| if e == 0 { sh.clone() } else { None }, Some(&log(2)), None);
     assert!(take(Some(shard)).is_ok());
     assert_eq!(take(None), Err("the mint's supply shard is not there"));
     assert_eq!(minted_epochs_from(&b, 0), vec![0]);
@@ -1497,7 +1497,7 @@ fn set_world() -> (State, State) {
 fn a_key_set_owns_a_chain_and_k_of_it_sign_its_spends() {
     let (a, m) = set_world();
     let p = set_params();
-    let ck = |s: &State| check(&p, &def(), s, &|_, o| (*o == did(1)).then(|| a.clone()), &|_| None, None);
+    let ck = |s: &State| check(&p, &def(), s, &|_, o| (*o == did(1)).then(|| a.clone()), &|_| None, None, None);
     assert_eq!(ck(&m), Ok(()), "no key log asked for: the set names its own signers");
     assert_eq!(m.balance(), 300);
     let mut two = m.clone();
@@ -1531,23 +1531,23 @@ fn a_key_set_owns_a_chain_and_k_of_it_sign_its_spends() {
     let c = craftworks_identity::credential(&p.owner, &pk(2), &[], &owner_seed(2));
     let e = sign(entry(&forced, [0xee; 16], Body::Writer { cred: c, key_seq: 0 }), 2);
     forced.entries.push(e);
-    assert_eq!(check(&p, &def(), &forced, &|_, o| (*o == did(1)).then(|| a.clone()), &|_| None, Some(&log(2))), Err("a device writer on a key set's chain"));
+    assert_eq!(check(&p, &def(), &forced, &|_, o| (*o == did(1)).then(|| a.clone()), &|_| None, Some(&log(2)), None), Err("a device writer on a key set's chain"));
     let mut b = paid().0[&did(2)].clone();
     let e = msign(entry(&b, nonce(41), Body::Members { set: set_of(2, &TRIO), set_seq: 0 }), &TRIO, &[0, 1]);
     let mut first = b.clone();
     first.entries.push(e);
-    assert_eq!(check(&params(2), &def(), &first, &|_, o| paid().0.get(o).cloned(), &|_| None, Some(&log(2))), Err("a key set that is not the chain's owner"), "a DID's chain names no set");
+    assert_eq!(check(&params(2), &def(), &first, &|_, o| paid().0.get(o).cloned(), &|_| None, Some(&log(2)), None), Err("a key set that is not the chain's owner"), "a DID's chain names no set");
     ensure_writer(&mut b, 2);
     let e = msign(entry(&b, nonce(41), Body::Members { set: set_of(2, &TRIO), set_seq: 1 }), &TRIO, &[0, 1]);
     b.entries.push(e);
-    assert_eq!(check(&params(2), &def(), &b, &|_, o| paid().0.get(o).cloned(), &|_| None, Some(&log(2))), Err("a key set on a device's chain"));
+    assert_eq!(check(&params(2), &def(), &b, &|_, o| paid().0.get(o).cloned(), &|_| None, Some(&log(2)), None), Err("a key set on a device's chain"));
 }
 
 #[test]
 fn the_members_change_by_k_of_the_set_before_and_the_change_outranks_the_old_set() {
     let (a, m) = set_world();
     let p = set_params();
-    let ck = |s: &State| check(&p, &def(), s, &|_, o| (*o == did(1)).then(|| a.clone()), &|_| None, None);
+    let ck = |s: &State| check(&p, &def(), s, &|_, o| (*o == did(1)).then(|| a.clone()), &|_| None, None, None);
     const NEXT: [u8; 2] = [73, 74];
     let mut moved = m.clone();
     let e = msign(entry(&moved, nonce(41), Body::Members { set: set_of(2, &NEXT), set_seq: 1 }), &TRIO, &[0, 1]);
@@ -1623,7 +1623,7 @@ fn a_set_chain_cuts_and_carries_its_set() {
     let e = msign(entry(&s, nonce(99), body), &TRIO, &[0, 1]);
     s.entries.push(e);
     let pruned = prune(&s);
-    let ck = |s: &State| check(&p, &def(), s, &|_, o| (*o == did(1)).then(|| a.clone()), &|_| None, None);
+    let ck = |s: &State| check(&p, &def(), s, &|_, o| (*o == did(1)).then(|| a.clone()), &|_| None, None, None);
     assert_eq!(ck(&pruned), Ok(()));
     let mut after = pruned.clone();
     let e = msign(entry(&after, nonce(3), Body::Send { to: did(3), amount: 100 }), &TRIO, &[0, 2]);
@@ -1656,7 +1656,7 @@ impl Ids5 {
     fn check(&self, t: Tok, owner: u8) -> Result<(), Why> {
         let d = if t.definition == id_u() { def_u() } else if t.definition == id_a() { def() } else { def_b() };
         let shard = supply::Shard { mints: vec![u_mint(M, 1)] };
-        check(&at_t(t, owner), &d, &self.0[&(t, did(owner))], &|c, o| self.0.get(&(*c, *o)).cloned(), &|e| (e == 0).then(|| shard.clone()), Some(&log(owner)))
+        check(&at_t(t, owner), &d, &self.0[&(t, did(owner))], &|c, o| self.0.get(&(*c, *o)).cloned(), &|e| (e == 0).then(|| shard.clone()), Some(&log(owner)), None)
     }
 }
 /// The mint of U's item (nonce `n`, epoch 0) to `to`.
@@ -1688,10 +1688,10 @@ fn an_item_is_its_own_chain_of_its_tokens_kind() {
     // A fungible token holds no item; a token of ids holds nothing but items; no genesis for a token of ids.
     let mut a = State::default();
     signed(&mut a, 1, 1, Body::Genesis { amount: 1000 });
-    assert_eq!(check(&at_t(Tok { definition: id_a(), item: [1; 32] }, 1), &def(), &a, &|_, _| None, &|_| None, Some(&log(1))), Err("an item that is not its token's kind"));
-    assert_eq!(check(&at(id_u(), 1), &def_u(), &a, &|_, _| None, &|_| None, Some(&log(1))), Err("an item that is not its token's kind"));
+    assert_eq!(check(&at_t(Tok { definition: id_a(), item: [1; 32] }, 1), &def(), &a, &|_, _| None, &|_| None, Some(&log(1)), None), Err("an item that is not its token's kind"));
+    assert_eq!(check(&at(id_u(), 1), &def_u(), &a, &|_, _| None, &|_| None, Some(&log(1)), None), Err("an item that is not its token's kind"));
     let g = Definition { genesis_owner: did(M), ..def_u() };
-    assert_eq!(check(&at_t(it, M), &g, &a, &|_, _| None, &|_| None, Some(&log(1))), Err("a genesis that is not the definition's"));
+    assert_eq!(check(&at_t(it, M), &g, &a, &|_, _| None, &|_| None, Some(&log(1)), None), Err("a genesis that is not the definition's"));
     // A mint credited to another item's chain is not its mint.
     let other = Tok { item: [9; 32], ..it };
     let mut x = State::default();
@@ -1741,7 +1741,7 @@ fn a_sale_of_a_royalty_token_pays_its_creator_who_claims_it() {
     let mut bad = State::default();
     put_at(&mut bad, 1, Body::Genesis { amount: 1000 }, Some(T), 0);
     put_at(&mut bad, 20, Body::Lock { to: did(M), amount: 100, until: 50, token: it, offer: nonce(10), fee: Some((did(M), 5)) }, Some(T), 0);
-    assert_eq!(check(&at(id_b(), T), &def_b(), &bad, &|_, _| None, &|_| None, Some(&log(T))), Err("a lock's fee to no one else"));
+    assert_eq!(check(&at(id_b(), T), &def_b(), &bad, &|_, _| None, &|_| None, Some(&log(T)), None), Err("a lock's fee to no one else"));
     // The share exactly: 1 bp of 10,001 is owed as 1.0001 — 1 is short, 2 pays.
     let tiny = Definition { royalty: Some((1, did(7))), ..def_u() };
     assert!(!royalty_paid(&tiny, &did(M), 10_001, Some((did(7), 1))) && royalty_paid(&tiny, &did(M), 10_001, Some((did(7), 2))));
@@ -1752,7 +1752,7 @@ fn a_sale_of_a_royalty_token_pays_its_creator_who_claims_it() {
     put_at(&mut back, 20, Body::Lock { to: did(M), amount: 100, until: 5, token: it, offer: nonce(10), fee: Some((did(7), 5)) }, Some(T), 0);
     put_at(&mut back, 21, Body::Refund { lock: nonce(20), ev: Evidence::default() }, None, 6);
     assert_eq!(back.balance(), 1000);
-    assert_eq!(check(&at(id_b(), T), &def_b(), &back, &|_, _| None, &|_| None, Some(&log(T))), Ok(()), "100 + 5 back");
+    assert_eq!(check(&at(id_b(), T), &def_b(), &back, &|_, _| None, &|_| None, Some(&log(T)), None), Ok(()), "100 + 5 back");
     let own = Definition { royalty: Some((500, did(M))), ..def_u() };
     assert!(royalty_paid(&own, &did(M), 100, None) && !royalty_paid(&def_u(), &did(M), 100, None));
 }
@@ -1781,7 +1781,7 @@ fn at_stamp(s: &mut State, n: u8, body: Body, by: Option<u8>, stamp: u64) {
 
 #[test]
 fn stake_is_locked_out_of_the_balance_and_comes_back_only_after_its_delay() {
-    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)));
+    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)), None);
     let mut a = staker();
     signed(&mut a, 1, 2, Body::Stake { amount: 600 });
     assert_eq!(ck(&a), Ok(()));
@@ -1819,7 +1819,7 @@ fn stake_is_locked_out_of_the_balance_and_comes_back_only_after_its_delay() {
 
 #[test]
 fn a_witness_equivocation_burns_its_stake_and_its_unbonding() {
-    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)));
+    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)), None);
     let mut a = staker();
     signed(&mut a, 1, 2, Body::Stake { amount: 600 });
     at_stamp(&mut a, 3, Body::Unstake { amount: 100 }, Some(1), 0);
@@ -1865,7 +1865,7 @@ fn a_cut_carries_the_stake_and_the_unbonding() {
     let mut s = a.clone();
     at_stamp(&mut s, 99, body.clone(), Some(1), 7);
     let pruned = prune(&s);
-    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)));
+    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)), None);
     assert_eq!(ck(&pruned), Ok(()));
     let mut back = pruned.clone();
     at_stamp(&mut back, 4, Body::Release { unstake: nonce(3) }, None, 7 + UNBOND);
@@ -1987,7 +1987,7 @@ impl Lot {
     }
     fn may(&self, w: &Two, owner: u8, seq: u64) -> Result<[u8; 32], Why> {
         let p = at(id_a(), owner);
-        let holds = |s: &State| check(&p, &def(), s, &|t, o| w.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(owner)));
+        let holds = |s: &State| check(&p, &def(), s, &|t, o| w.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(owner)), None);
         wallet::may_witness(&self.src(), &p, &def(), w.get(id_a(), owner), seq, self.now, &holds, &|t, o| w.0.get(&(t.definition, *o)).cloned())
     }
     fn accept(&self, w: &Two, owner: u8, seq: u64) -> Result<usize, Why> {
@@ -2108,7 +2108,7 @@ fn a_buried_receive_of_a_real_send_to_someone_else_is_never_witnessed() {
 
 #[test]
 fn a_writer_key_retired_while_staked_stays_burnable_across_a_cut() {
-    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)));
+    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)), None);
     let slash = |s: &State, k: u8| {
         let mut x = s.clone();
         let last = x.entries.last().map_or(0, |e| e.stamp);
@@ -2170,7 +2170,7 @@ fn stake_counts_as_held_before_a_height_with_the_keys_it_burns_for() {
         s
     };
     let a = fix(a);
-    assert_eq!(check(&p, &d, &a, &|_, _| None, &|_| None, Some(&log(1))), Ok(()));
+    assert_eq!(check(&p, &d, &a, &|_, _| None, &|_| None, Some(&log(1)), None), Ok(()));
     assert_eq!(wallet::stake_at(&p, &d, &a, 10), Ok((0, vec![pk(1)])), "the stake at 10 is not before 10");
     assert_eq!(wallet::stake_at(&p, &d, &a, 11), Ok((600, vec![pk(1)])));
     assert_eq!(wallet::stake_at(&p, &d, &a, 21), Ok((400, vec![pk(1)])), "unbonding is not counted");
@@ -2186,7 +2186,7 @@ fn stake_counts_as_held_before_a_height_with_the_keys_it_burns_for() {
 
 #[test]
 fn stake_counted_for_an_epoch_stays_burnable_a_full_epoch_after_it_ends() {
-    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)));
+    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)), None);
     let e1 = supply::EPOCH; // epoch 1 starts here; claims of epoch 1 count the stake held before it
     let mut a = staker();
     at_stamp(&mut a, 2, Body::Stake { amount: 600 }, Some(1), e1 - 1);
@@ -2352,4 +2352,103 @@ fn a_witness_applies_the_timed_rules_at_the_entrys_own_stamp() {
     let mayp = |s: &State| wallet::may_witness(&lot.src(), &pp, &def(), s, s.entries.last().unwrap().seq, u64::MAX, &ok, &|_, _| None);
     assert_eq!(mayp(&rel(10 + UNBOND - 1)), Err("a release before its delay"));
     assert_eq!(mayp(&rel(10 + UNBOND)).err(), Some("an entry its committee has not witnessed"));
+}
+
+// ---- OPERATORS (TOKEN §1b): approval for ALL of an owner's chains of a token ----
+
+fn op_record(owner: u8, operator: u8, spans: &[(u64, Option<u64>)], seq: u32) -> operators::Record {
+    let p = operators::Params::of(&params(owner));
+    let mut r = operators::Record { operator: pk(operator), spans: spans.to_vec(), seq, key_seq: 0, sig: [0; 64] };
+    r.sig = SigningKey::from_bytes(&owner_seed(owner)).sign(&r.message(&p)).to_bytes();
+    r
+}
+fn ops_of(rs: Vec<operators::Record>) -> operators::List {
+    let mut records = rs;
+    records.sort_by_key(|a| a.operator);
+    operators::List { records }
+}
+
+#[test]
+fn an_operators_list_is_signed_by_the_owner_and_its_spans_follow_each_other() {
+    let p = operators::Params::of(&params(1));
+    let ok = ops_of(vec![op_record(1, 5, &[(10, Some(20)), (30, None)], 2)]);
+    assert_eq!(operators::holds(&p, &log(1), &ok), Ok(()));
+    assert_eq!(operators::List::decode(&ok.encode()), Some(ok.clone()));
+    assert!(operators::List::decode(&[&ok.encode()[..], &[0]].concat()).is_none());
+    let by_other = ops_of(vec![op_record(2, 5, &[(10, None)], 1)]);
+    assert_eq!(operators::holds(&p, &log(1), &by_other), Err("an operator record not signed by the owner"));
+    let mut forged = op_record(1, 5, &[(10, None)], 1);
+    forged.spans = vec![(0, None)];
+    assert_eq!(operators::holds(&p, &log(1), &ops_of(vec![forged])), Err("an operator record not signed by the owner"));
+    for bad in [vec![], vec![(10, Some(10))], vec![(10, None), (20, None)], vec![(10, Some(20)), (15, None)], (0..=operators::SPANS_MAX as u64).map(|i| (2 * i, Some(2 * i + 1))).collect()] {
+        assert_eq!(operators::holds(&p, &log(1), &ops_of(vec![op_record(1, 5, &bad, 1)])), Err("an operator's spans that do not follow each other"), "{bad:?}");
+    }
+    let mut far = op_record(1, 5, &[(10, None)], 1);
+    far.key_seq = 3;
+    assert_eq!(operators::holds(&p, &log(1), &ops_of(vec![far])), Err("an operator record on a key the owner never had"));
+    // On at a stamp: from a span's start, up to (not at) its end.
+    let r = op_record(1, 5, &[(10, Some(20)), (30, None)], 2);
+    assert_eq!([9, 10, 19, 20, 29, 30, 1000].map(|t| r.on_at(t)), [false, true, true, false, false, true, true]);
+}
+
+#[test]
+fn an_operator_spends_from_any_chain_of_the_owner_while_approved() {
+    let ck = |s: &State, ops: Option<&operators::List>| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)), ops);
+    let mut a = staker(); // genesis 1000 at stamp 0, writer device 1
+    let e = delegate(Entry { stamp: 15, ..entry(&a, nonce(4), Body::Spend { to: did(3), amount: 150 }) }, 5);
+    a.entries.push(e);
+    assert!(needs_operators(&a));
+    assert_eq!(ck(&a, None), Err("a spend with no allowance"));
+    let on = ops_of(vec![op_record(1, 5, &[(10, None)], 1)]);
+    assert_eq!(ck(&a, Some(&on)), Ok(()));
+    // Turned off later: the spend made while on stays valid.
+    let was = ops_of(vec![op_record(1, 5, &[(10, Some(16))], 2)]);
+    assert_eq!(ck(&a, Some(&was)), Ok(()));
+    // Not on at its stamp: refused.
+    assert_eq!(ck(&a, Some(&ops_of(vec![op_record(1, 5, &[(10, Some(15))], 2)]))), Err("a spend with no allowance"));
+    assert_eq!(ck(&a, Some(&ops_of(vec![op_record(1, 5, &[(16, None)], 1)]))), Err("a spend with no allowance"));
+    // Another operator approved, not this one: refused.
+    assert_eq!(ck(&a, Some(&ops_of(vec![op_record(1, 6, &[(0, None)], 1)]))), Err("a spend with no allowance"));
+    // Past an allowance of the chain itself, the operator approval covers it; without it, over the allowance.
+    let mut b = staker();
+    signed(&mut b, 1, 3, Body::Allow { spender: pk(5), limit: 100 });
+    let e = delegate(Entry { stamp: 15, ..entry(&b, nonce(4), Body::Spend { to: did(3), amount: 150 }) }, 5);
+    b.entries.push(e);
+    assert_eq!(ck(&b, None), Err("a spend over its allowance"));
+    assert_eq!(ck(&b, Some(&on)), Ok(()));
+    // Within the allowance: no operators list needed (none is read).
+    let mut c = staker();
+    signed(&mut c, 1, 3, Body::Allow { spender: pk(5), limit: 200 });
+    spent(&mut c, 5, 4, 3, 150);
+    assert!(!needs_operators(&c));
+    assert_eq!(ck(&c, None), Ok(()));
+}
+
+#[test]
+fn an_operators_list_only_extends_its_past_on_the_owners_current_key() {
+    let m = 2;
+    let held = ops_of(vec![op_record(1, 5, &[(10, None)], 1)]);
+    let fresh = |r: operators::Record, now: u64| operators::fresh(&held, &operators::merge(&held, &ops_of(vec![r])), now, m, 0);
+    assert_eq!(fresh(op_record(1, 6, &[(50, None)], 1), 51), Ok(()), "a new operator, near now");
+    assert_eq!(fresh(op_record(1, 6, &[(40, None)], 1), 51), Err("an operator span away from the beacon"), "back-dated");
+    assert_eq!(fresh(op_record(1, 6, &[(52, None)], 1), 51), Err("an operator span away from the beacon"), "ahead");
+    assert_eq!(fresh(op_record(1, 5, &[(10, Some(50))], 2), 51), Ok(()), "turned off now");
+    assert_eq!(fresh(op_record(1, 5, &[(10, Some(30))], 2), 51), Err("an operator record that takes back its past"), "turned off in the past");
+    assert_eq!(fresh(op_record(1, 5, &[(12, None)], 2), 51), Err("an operator record that takes back its past"));
+    assert_eq!(fresh(op_record(1, 5, &[(10, Some(50)), (51, None)], 2), 51), Ok(()), "off and on again");
+    let mut stale = op_record(1, 5, &[(10, Some(50))], 2);
+    stale.key_seq = 1;
+    assert_eq!(operators::fresh(&held, &operators::merge(&held, &ops_of(vec![stale])), 51, m, 0), Err("an operator record not on the owner's current key"));
+    // Copies settle the same in every order: the higher seq.
+    let a = ops_of(vec![op_record(1, 5, &[(10, Some(50))], 2)]);
+    assert_eq!(operators::merge(&held, &a), operators::merge(&a, &held));
+    assert_eq!(operators::merge(&held, &a), a);
+    // A lower seq never replaces a higher one.
+    assert_eq!(operators::fresh(&a, &operators::merge(&a, &held), 51, m, 0), Ok(()), "nothing new");
+    // At ONE seq, two different records: either order settles on the same one; and a holder takes no other record
+    // at the seq it holds.
+    let (x, y) = (ops_of(vec![op_record(1, 5, &[(10, Some(50))], 2)]), ops_of(vec![op_record(1, 5, &[(10, Some(51))], 2)]));
+    assert_ne!(x, y);
+    assert_eq!(operators::merge(&x, &y), operators::merge(&y, &x));
+    assert_eq!(operators::fresh(&x, &y, 51, m, 0), Err("an operator record that is not newer"));
 }
