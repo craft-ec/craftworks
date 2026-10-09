@@ -80,19 +80,22 @@ pub fn encode(s: &State) -> Vec<u8> {
             v.extend_from_slice(&a.key);
             peer(&mut v, &a.peer);
             v.extend_from_slice(&a.height.to_le_bytes());
-            v.extend_from_slice(&a.index.to_le_bytes());
-            v.extend_from_slice(&a.id);
-            v.push(a.path.len() as u8);
-            for p in &a.path {
-                match p {
-                    None => v.push(0),
-                    Some(s) => {
-                        v.push(1);
-                        v.extend_from_slice(s);
+            v.push(a.picks.len() as u8);
+            for p in &a.picks {
+                v.extend_from_slice(&p.index.to_le_bytes());
+                v.extend_from_slice(&p.id);
+                v.push(p.path.len() as u8);
+                for s in &p.path {
+                    match s {
+                        None => v.push(0),
+                        Some(s) => {
+                            v.push(1);
+                            v.extend_from_slice(s);
+                        }
                     }
                 }
+                v.extend_from_slice(&p.hash);
             }
-            v.extend_from_slice(&a.hash);
             v.extend_from_slice(&a.sig);
         }
     }
@@ -113,11 +116,19 @@ pub fn decode(b: &[u8]) -> Option<State> {
             .collect::<Option<Vec<_>>>()?;
         let answers = (0..r.count(ANSWERS_MAX)?)
             .map(|_| {
-                let (key, peer, height, index, id) = (r.arr()?, r.peer()?, r.u64()?, r.u32()?, r.arr()?);
-                let n = r.u8()? as usize;
-                (n <= 64).then_some(())?;
-                let path = (0..n).map(|_| match r.u8()? { 0 => Some(None), 1 => Some(Some(r.arr()?)), _ => None }).collect::<Option<Vec<_>>>()?;
-                Some(Answer { key, peer, height, index, id, path, hash: r.arr()?, sig: r.arr()? })
+                let (key, peer, height) = (r.arr()?, r.peer()?, r.u64()?);
+                let k = r.u8()? as usize;
+                (k <= crate::PICKS).then_some(())?;
+                let picks = (0..k)
+                    .map(|_| {
+                        let (index, id) = (r.u32()?, r.arr()?);
+                        let n = r.u8()? as usize;
+                        (n <= 64).then_some(())?;
+                        let path = (0..n).map(|_| match r.u8()? { 0 => Some(None), 1 => Some(Some(r.arr()?)), _ => None }).collect::<Option<Vec<_>>>()?;
+                        Some(crate::Pick { index, id, path, hash: r.arr()? })
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(Answer { key, peer, height, picks, sig: r.arr()? })
             })
             .collect::<Option<Vec<_>>>()?;
         epochs.push(Epoch { epoch, attests, binds, holdings, answers });

@@ -76,38 +76,62 @@ fn every_entry_proves_under_its_root() {
 }
 
 #[test]
-fn an_answer_holds_only_for_the_challenged_contract_in_the_arc_with_its_state() {
+fn an_answer_holds_only_from_the_replicas_of_the_challenged_contracts() {
     let k = key(7);
+    let kb = k.verifying_key().to_bytes();
     let whole = (0, u64::MAX);
     let hosted: Vec<([u8; 32], u64)> = (0..50).map(|n| (id(n), 100 + n as u64)).collect();
     let (h, ids) = Holdings::new(&k, "5cCFQqQwLPNKX4zwK", epoch(5000), &hosted, whole);
     assert_eq!((h.count, h.bytes), (50, (0..50).map(|n| 100 + n).sum::<u64>()));
-    let state = |i: &[u8; 32]| Some(i.repeat(3));
+    let state = |i: &[u8; 32]| i.repeat(3);
+    let replica = |i: &[u8; 32]| Some(seal(&kb, i, &state(i)));
     let out = [42u8; 32];
-    let a = Answer::new(&k, &h, &ids, 5000, &out, &state).unwrap();
-    let s = state(&a.id).unwrap();
-    assert_eq!(check(&h, &a, &out, whole, Some(&s)), Ok(()));
-    assert_eq!(check(&h, &a, &out, whole, None), Ok(()), "everything but the hash, without the state");
-    assert_eq!(check(&h, &a, &out, whole, Some(b"another state")), Err("an answer that is not the contract's state"));
-    assert_eq!(check(&h, &a, &[43; 32], whole, Some(&s)).is_err(), true, "another beacon output");
+    let a = Answer::new(&k, &h, &ids, 5000, &out, &replica).unwrap();
+    assert_eq!(a.picks.len(), PICKS);
+    for j in [0, PICKS - 1] {
+        let s = state(&a.picks[j].id);
+        assert_eq!(check(&h, &a, &out, Some(whole), Some((j, &s))), Ok(()), "pick {j}, the verifier sealing it itself");
+    }
+    assert_eq!(check(&h, &a, &out, None, None), Ok(()), "everything but the hash, without the piece");
+    assert_eq!(check(&h, &a, &out, None, Some((0, b"another state"))), Err("an answer that is not the piece's replica"));
+    assert!(check(&h, &a, &[43; 32], None, None).is_err(), "another beacon output");
+    // From the PLAIN pieces, not the replicas: refused (holding Freenet's copy alone answers nothing).
+    let plain = Answer::new(&k, &h, &ids, 5000, &out, &|i| Some(state(i))).unwrap();
+    assert_eq!(check(&h, &plain, &out, None, Some((0, &state(&plain.picks[0].id)))), Err("an answer that is not the piece's replica"));
+    // ANOTHER key's replica of the same pieces: refused (one disk cannot answer for two identities).
+    let theirs = Answer::new(&k, &h, &ids, 5000, &out, &|i| Some(seal(&key(8).verifying_key().to_bytes(), i, &state(i)))).unwrap();
+    assert_eq!(check(&h, &theirs, &out, None, Some((0, &state(&theirs.picks[0].id)))), Err("an answer that is not the piece's replica"));
     // Another entry than the one asked for, re-signed: refused.
-    let j = (a.index as usize + 1) % ids.len();
-    let mut other = Answer { index: j as u32, id: ids[j], path: path(&ids, j), ..a.clone() };
+    let mut other = a.clone();
+    let j = (other.picks[0].index as usize + 1) % ids.len();
+    other.picks[0] = Pick { index: j as u32, id: ids[j], path: path(&ids, j), hash: other.picks[0].hash };
     other.sig = k.sign(&other.message()).to_bytes();
-    assert_eq!(check(&h, &other, &out, whole, None), Err("an answer to another challenge"));
-    // The arc: an answer about a contract outside the node's place.
-    let r = ring_of_contract(&a.id);
-    let elsewhere = (r.wrapping_add(1), 1 << 40);
-    assert_eq!(check(&h, &a, &out, elsewhere, None), Err("a holding outside the node's arc"));
+    assert_eq!(check(&h, &other, &out, None, None), Err("an answer to another challenge"));
+    // The arc, when the node is placed: a pick outside it.
+    let r = ring_of_contract(&a.picks[0].id);
+    assert_eq!(check(&h, &a, &out, Some((r.wrapping_add(1), 1 << 40)), None), Err("a holding outside the node's arc"));
     // Holdings built for an arc leave out what lies outside it.
     let (half, _) = Holdings::new(&k, "5cCFQqQwLPNKX4zwK", epoch(5000), &hosted, (0, 1 << 63));
     assert_eq!(half.count as usize, hosted.iter().filter(|(i, _)| ring_of_contract(i) < 1 << 63).count());
     // Another epoch's holdings; another key's answer.
-    assert_eq!(check(&h, &Answer { height: 5000 + EPOCH, ..a.clone() }, &out, whole, None), Err("an answer for other holdings"));
+    assert_eq!(check(&h, &Answer { height: 5000 + EPOCH, ..a.clone() }, &out, None, None), Err("an answer for other holdings"));
     let mut stolen = a.clone();
     stolen.key = key(8).verifying_key().to_bytes();
-    assert_eq!(check(&h, &stolen, &out, whole, None), Err("an answer for other holdings"));
-    assert_eq!(Answer::new(&k, &h, &ids, 5000, &out, &|_| None), None, "the state not here: no answer");
+    assert_eq!(check(&h, &stolen, &out, None, None), Err("an answer for other holdings"));
+    assert_eq!(Answer::new(&k, &h, &ids, 5000, &out, &|_| None), None, "a replica not here: no answer");
+}
+
+#[test]
+fn a_seal_is_unique_to_its_key_and_unseals_and_takes_sequential_work() {
+    let piece: Vec<u8> = (0..256 * 1024u32).map(|i| (i % 251) as u8).collect();
+    let (a, b) = (key(1).verifying_key().to_bytes(), key(2).verifying_key().to_bytes());
+    let t = std::time::Instant::now();
+    let r = seal(&a, &id(1), &piece);
+    println!("sealing 256 KiB at {ROUNDS} rounds/block: {} ms (debug build)", t.elapsed().as_millis());
+    assert_ne!(r, piece);
+    assert_ne!(r, seal(&b, &id(1), &piece), "another key, another replica");
+    assert_ne!(r, seal(&a, &id(2), &piece), "another contract, another replica");
+    assert_eq!(seal(&a, &id(1), &r), piece, "the same call unseals");
 }
 
 #[test]
@@ -153,8 +177,9 @@ mod record_tests {
         let hosted: Vec<([u8; 32], u64)> = (0..40).map(|n| (id(n), 1000)).collect();
         let (h, ids) = Holdings::new(&k, P, e, &hosted, arc_);
         assert!(h.count > 0, "THE SETUP: something held in the arc");
-        let state_of = |i: &[u8; 32]| Some(i.to_vec());
-        let answers: Vec<Answer> = (e * EPOCH..=upto).filter(|x| sampled(&out(*x), P)).filter_map(|x| Answer::new(&k, &h, &ids, x, &out(x), &state_of)).collect();
+        let kb = k.verifying_key().to_bytes();
+        let replica_of = |i: &[u8; 32]| Some(seal(&kb, i, &i.to_vec()));
+        let answers: Vec<Answer> = (e * EPOCH..=upto).filter(|x| sampled(&out(*x), P)).filter_map(|x| Answer::new(&k, &h, &ids, x, &out(x), &replica_of)).collect();
         (State { epochs: vec![Epoch { epoch: e, attests, binds, holdings: vec![h], answers }] }, ids)
     }
     fn beacon(upto: u64) -> impl Fn(u64) -> Option<[u8; 32]> {
@@ -192,22 +217,18 @@ mod record_tests {
         let mut unbound = s.clone();
         unbound.epochs[0].binds.clear();
         assert_eq!(holds(P, &unbound, &beacon(top)), Err("holdings not by a key bound to the peer"));
-        // Short of a quorum of attesters: no place, so no answer counts.
+        // Short of a quorum of attesters: no place, so no arc — location is a soft rule; the answers still hold.
         let mut alone = s.clone();
         alone.epochs[0].attests.truncate(2);
-        assert_eq!(holds(P, &alone, &beacon(top)), Err("answers with no place for the peer"));
-        // The peer's own bound key cannot be one of its attesters.
-        let mut selfish = s.clone();
+        assert_eq!(holds(P, &alone, &beacon(top)), Ok(()));
         let addr: SocketAddr = "86.38.75.1:1".parse().unwrap();
-        selfish.epochs[0].attests[2] = Attest::new(&key(7), P, &addr, 1, 2);
-        assert_eq!(holds(P, &selfish, &beacon(top)), Err("answers with no place for the peer"));
         let _ = h;
         // An answer for another entry than the one the beacon asked for, re-signed by the bound key: refused by its check.
         let mut wrong = s.clone();
         let ids = world(top).1;
-        let a0 = wrong.epochs[0].answers[0].clone();
-        let j = (a0.index as usize + 1) % ids.len();
-        let mut other = Answer { index: j as u32, id: ids[j], path: path(&ids, j), ..a0 };
+        let mut other = wrong.epochs[0].answers[0].clone();
+        let j = (other.picks[0].index as usize + 1) % ids.len();
+        other.picks[0] = Pick { index: j as u32, id: ids[j], path: path(&ids, j), hash: other.picks[0].hash };
         other.sig = key(7).sign(&other.message()).to_bytes();
         wrong.epochs[0].answers[0] = other;
         assert_eq!(holds(P, &wrong, &beacon(top)), Err("an answer to another challenge"));

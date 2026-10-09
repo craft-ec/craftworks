@@ -1396,6 +1396,10 @@ old key's addresses.
               challenge, Answer, check — 6 tests, mutants killed (2 equivalent)
           [x] page-io build fix (5376efd) — a58d81f broke the workspace build (lesson: build --workspace before commit)
           [ ] keeper loop in the page (keep.js): attest peers, bind, answer challenges each beacon tick
+          [x] standing records (594fc06) + seal/16-pick replica answers (sealing measured 243 ms/256 KiB native)
+          DECIDED 10-09 (owner): witness weight = EARNED STAKE — keeper rewards land locked as witness stake, grow with
+              time, burned on equivocation; storage proofs pay keepers (weak guarantee fine there). Order: keeper
+              payouts (REWARDS) → reward locks as stake → witness lot by stake.
           [ ] standing per location (ramp), read by witnesses
       [ ] 6 WITNESSES BY LOT, backed by PROVED STORAGE (owner 10-09; TOKEN §7a): needs the storage proofs
           first; closes prevention of double spends, receiver-only history checks, partition fill/refund

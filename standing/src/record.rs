@@ -10,7 +10,7 @@ pub const ATTESTS_MAX: usize = 32;
 pub const BINDS_MAX: usize = 4;
 pub const HOLDINGS_MAX: usize = 4;
 /// Answers kept per epoch (each holdings' sampled heights: ~EPOCH / SAMPLE of them).
-pub const ANSWERS_MAX: usize = 4 * 64;
+pub const ANSWERS_MAX: usize = 4 * 16;
 /// Epochs kept (the beacon keeps at most 4096 steps: 4 epochs, and the one running).
 pub const EPOCHS_MAX: usize = 5;
 
@@ -54,7 +54,8 @@ pub fn holds(peer: &str, s: &State, out: &dyn Fn(u64) -> Option<[u8; 32]>) -> Re
         if e.answers.is_empty() {
             continue;
         }
-        let (_, arc) = place(peer, e.epoch, &e.attests, &bound, QUORUM).ok_or("answers with no place for the peer")?;
+        // LOCATION a soft rule (attestations are sybil-able; the seal is the guard): the arc applies when the peer is placed.
+        let arc = place(peer, e.epoch, &e.attests, &bound, QUORUM).map(|(_, arc)| arc);
         for a in &e.answers {
             let h = e.holdings.iter().find(|h| h.key == a.key).ok_or("an answer for no holdings")?;
             let o = out(a.height).ok_or("an answer outside the beacon's window")?;

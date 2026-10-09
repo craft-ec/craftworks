@@ -511,6 +511,13 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   never a contract, never on the network. A sampled height challenges 16 pieces at once, answered from the replicas
   within the beacon step — re-sealing 16 takes far longer — and a verifier re-derives ONE of the 16 (picked by the
   next output), so checking costs one piece's seal, rarely. A node commits what it chooses (its "storage for standing").
+- **WITNESS WEIGHT = EARNED STAKE** (owner 10-09: "stake come from reward from storage… cumulative, grows over time;
+  the longer in the game, the higher the stake"): no upfront cost — a node earns KEEPER REWARDS for holding what real
+  users read (REWARDS §4: paid by held demand, not self-claimed), and each reward lands LOCKED as witness stake; the lot
+  is weighted by locked stake; two signatures at one place burn it all. Measured why storage alone cannot weigh
+  witnesses: checks are rare, so a node keeping only Freenet's plain copy re-seals the ~16 challenged pieces on demand
+  (~4 s of CPU at a 243 ms seal) — CPU stands in for disk, a sybil's weight is cheap and rebuilt after a cheat. Storage
+  proofs stay what pays keepers (where a fake only shifts small rewards); earned stake is what a cheat loses.
 - **What is at stake: STANDING, earned over time.** A node's weight is its assigned storage PROVED over time
   (GB-days, ramping up), not the disk it shows today; two signatures at one place reset it to zero and forfeit its
   unclaimed keeper rewards (rewards claimable only after a delay, so some are always at stake). A disk cannot be

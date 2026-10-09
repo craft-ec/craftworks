@@ -186,8 +186,9 @@ pub fn place(peer: &str, epoch: u64, attests: &[Attest], own_keys: &[[u8; 32]], 
     Some((ring, arc(ring, &neighbours)?))
 }
 
-/// One height in [`SAMPLE`] is a peer's to answer (picked by the beacon's output there and the peer): the answers kept.
-pub const SAMPLE: u64 = 32;
+/// One height in [`SAMPLE`] is a peer's to answer (picked by the beacon's output there and the peer): the answers kept
+/// (an answer is [`PICKS`] proofs — ~9 KB — so ~8 an epoch).
+pub const SAMPLE: u64 = 128;
 pub fn sampled(out: &[u8; 32], peer: &str) -> bool {
     let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-09 standing sample");
     h.update(out);
@@ -300,36 +301,73 @@ impl Holdings {
     }
 }
 
-/// Which of `count` holdings the beacon's output `out` at a height asks `peer` for.
-pub fn challenge(out: &[u8; 32], peer: &str, count: u32) -> Option<usize> {
+/// The SEAL's work: hash rounds per 32-byte block of a piece, each block's chain continuing the last (sequential —
+/// no block can be made before the one before it). ~2-4 s for a 256 KiB piece on one core.
+pub const ROUNDS: u32 = 512;
+
+/// A SEALED REPLICA of contract `id`'s state `piece`, unique to `key` (the holdings key): the piece XOR a keystream
+/// from a sequential hash chain over (key, id). The same call unseals.
+pub fn seal(key: &[u8; 32], id: &[u8; 32], piece: &[u8]) -> Vec<u8> {
+    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-09 standing seal");
+    h.update(key);
+    h.update(id);
+    let mut st = *h.finalize().as_bytes();
+    let mut out = piece.to_vec();
+    for block in out.chunks_mut(32) {
+        for _ in 0..ROUNDS {
+            st = *blake3::hash(&st).as_bytes();
+        }
+        for (b, k) in block.iter_mut().zip(st) {
+            *b ^= k;
+        }
+    }
+    out
+}
+
+/// Pieces a sampled height challenges at once: re-sealing them all takes far longer than the beacon step.
+pub const PICKS: usize = 16;
+
+/// The `PICKS` entries of `count` holdings the beacon's output `out` asks `peer` for (with repeats on a small set).
+pub fn challenge(out: &[u8; 32], peer: &str, count: u32) -> Option<Vec<usize>> {
     if count == 0 {
         return None;
     }
     let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-09 standing challenge");
     h.update(out);
     h.update(peer.as_bytes());
-    Some((u64::from_le_bytes(h.finalize().as_bytes()[..8].try_into().unwrap()) % count as u64) as usize)
+    let mut x = h.finalize_xof();
+    Some((0..PICKS).map(|_| {
+        let mut b = [0u8; 8];
+        x.fill(&mut b);
+        (u64::from_le_bytes(b) % count as u64) as usize
+    }).collect())
 }
 
-/// The answer: the contract's state, bound to that beacon output and to this peer (no node's answer is another's).
-pub fn answer_hash(state: &[u8], out: &[u8; 32], peer: &str) -> [u8; 32] {
+/// The answer for one pick: the SEALED REPLICA, bound to that beacon output and this peer.
+pub fn answer_hash(replica: &[u8], out: &[u8; 32], peer: &str) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-09 standing answer");
     h.update(out);
     h.update(peer.as_bytes());
-    h.update(state);
+    h.update(replica);
     *h.finalize().as_bytes()
 }
 
-/// A node's ANSWER at beacon height `height`: the challenged entry of its holdings, the path proving it, its hash.
+/// One challenged entry, answered: its place in the holdings, its id, the path proving it, the replica's hash.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pick {
+    pub index: u32,
+    pub id: [u8; 32],
+    pub path: Vec<Option<[u8; 32]>>,
+    pub hash: [u8; 32],
+}
+
+/// A node's ANSWER at beacon height `height`: each challenged entry of its holdings, answered from its replicas.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Answer {
     pub key: [u8; 32],
     pub peer: String,
     pub height: u64,
-    pub index: u32,
-    pub id: [u8; 32],
-    pub path: Vec<Option<[u8; 32]>>,
-    pub hash: [u8; 32],
+    pub picks: Vec<Pick>,
     pub sig: [u8; 64],
 }
 
@@ -339,35 +377,44 @@ impl Answer {
         v.extend_from_slice(&self.key);
         put_peer(&mut v, &self.peer);
         v.extend_from_slice(&self.height.to_le_bytes());
-        v.extend_from_slice(&self.index.to_le_bytes());
-        v.extend_from_slice(&self.id);
-        for p in &self.path {
-            match p {
-                None => v.push(0),
-                Some(s) => {
-                    v.push(1);
-                    v.extend_from_slice(s);
+        for p in &self.picks {
+            v.extend_from_slice(&p.index.to_le_bytes());
+            v.extend_from_slice(&p.id);
+            v.push(p.path.len() as u8);
+            for s in &p.path {
+                match s {
+                    None => v.push(0),
+                    Some(s) => {
+                        v.push(1);
+                        v.extend_from_slice(s);
+                    }
                 }
             }
+            v.extend_from_slice(&p.hash);
         }
-        v.extend_from_slice(&self.hash);
         v
     }
-    /// The answer to the beacon's `out` at `height`: `None` if nothing is held, or the challenged state is not here.
-    pub fn new(key: &SigningKey, h: &Holdings, ids: &[[u8; 32]], height: u64, out: &[u8; 32], state: &dyn Fn(&[u8; 32]) -> Option<Vec<u8>>) -> Option<Answer> {
-        let i = challenge(out, &h.peer, h.count)?;
-        let id = *ids.get(i)?;
-        let s = state(&id)?;
-        let mut a = Answer { key: key.verifying_key().to_bytes(), peer: h.peer.clone(), height, index: i as u32, id, path: path(ids, i), hash: answer_hash(&s, out, &h.peer), sig: [0; 64] };
+    /// The answer to the beacon's `out` at `height`, from the node's REPLICAS (`replica`: a sealed copy by id): `None` if
+    /// nothing is held, or a challenged replica is not here.
+    pub fn new(key: &SigningKey, h: &Holdings, ids: &[[u8; 32]], height: u64, out: &[u8; 32], replica: &dyn Fn(&[u8; 32]) -> Option<Vec<u8>>) -> Option<Answer> {
+        let picks = challenge(out, &h.peer, h.count)?
+            .into_iter()
+            .map(|i| {
+                let id = *ids.get(i)?;
+                Some(Pick { index: i as u32, id, path: path(ids, i), hash: answer_hash(&replica(&id)?, out, &h.peer) })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let mut a = Answer { key: key.verifying_key().to_bytes(), peer: h.peer.clone(), height, picks, sig: [0; 64] };
         a.sig = sign(key, &a.message());
         Some(a)
     }
 }
 
-/// CHECK an answer against the holdings it answers for, the beacon's output at its height and the node's arc: signed,
-/// the entry the beacon asked for, under the committed root, in the arc — and, given the contract's state (whoever
-/// holds it), the right hash. `state`: `None` checks everything but the hash.
-pub fn check(h: &Holdings, a: &Answer, out: &[u8; 32], arc_: (u64, u64), state: Option<&[u8]>) -> Result<(), Why> {
+/// CHECK an answer against the holdings it answers for and the beacon's output at its height: signed, every pick the
+/// one the beacon asked for and under the committed root, in the node's arc if one is given (location: a soft rule) —
+/// and, given one pick's PIECE (`piece`: the pick and the contract's state, fetched from the network by whoever
+/// checks), its replica's hash: the verifier seals it itself. `piece: None` checks everything but that hash.
+pub fn check(h: &Holdings, a: &Answer, out: &[u8; 32], arc_: Option<(u64, u64)>, piece: Option<(usize, &[u8])>) -> Result<(), Why> {
     if !h.holds() {
         return Err("holdings not signed by their key");
     }
@@ -377,17 +424,23 @@ pub fn check(h: &Holdings, a: &Answer, out: &[u8; 32], arc_: (u64, u64), state: 
     if !sig_ok(&a.key, &a.message(), &a.sig) {
         return Err("an answer not signed by its key");
     }
-    if challenge(out, &h.peer, h.count) != Some(a.index as usize) {
+    let asked = challenge(out, &h.peer, h.count).ok_or("an answer for empty holdings")?;
+    if a.picks.len() != asked.len() || a.picks.iter().zip(&asked).any(|(p, i)| p.index as usize != *i) {
         return Err("an answer to another challenge");
     }
-    if !verify(&h.root, h.count, a.index as usize, &a.id, &a.path) {
-        return Err("an answer not under its holdings");
+    for p in &a.picks {
+        if !verify(&h.root, h.count, p.index as usize, &p.id, &p.path) {
+            return Err("an answer not under its holdings");
+        }
+        if arc_.is_some_and(|arc_| !in_arc(ring_of_contract(&p.id), arc_)) {
+            return Err("a holding outside the node's arc");
+        }
     }
-    if !in_arc(ring_of_contract(&a.id), arc_) {
-        return Err("a holding outside the node's arc");
-    }
-    if state.is_some_and(|s| answer_hash(s, out, &h.peer) != a.hash) {
-        return Err("an answer that is not the contract's state");
+    if let Some((j, state)) = piece {
+        let p = a.picks.get(j).ok_or("no such pick")?;
+        if answer_hash(&seal(&h.key, &p.id, state), out, &h.peer) != p.hash {
+            return Err("an answer that is not the piece's replica");
+        }
     }
     Ok(())
 }
