@@ -384,7 +384,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 101] = [
+    let packages: [(&str, &str, PathBuf); 102] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -495,6 +495,8 @@ async fn main() -> Result<()> {
         ("sealed-wasm", "bytes", contracts.join("sealed.wasm")),
         // The Piece contract: a file's pieces since burning.
         ("piece-wasm", "bytes", contracts.join("piece.wasm")),
+        // The Devices contract: an account's device credentials (one per DID, grow-only).
+        ("devices-wasm", "bytes", contracts.join("devices.wasm")),
         // mp4box.js (vendor/mp4box): run by `video-player` to stream an MP4 by range.
         ("mp4box", "bytes", app.join("vendor/mp4box/mp4box.all.min.js")),
         // Mediabunny (vendor/mediabunny, MPL-2.0): run by `video-studio` to make a video's renditions.

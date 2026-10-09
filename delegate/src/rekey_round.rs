@@ -124,6 +124,7 @@ pub struct Held {
     block: [u8; 32],
     piece: [u8; 32],
     idlog: [u8; 32],
+    devices: [u8; 32],
 }
 impl Held {
     pub fn of<H: Host>(h: &H) -> Option<Held> {
@@ -134,10 +135,11 @@ impl Held {
             block: h.get_secret(identity::UPKEEP_BLOCK)?.try_into().ok()?,
             piece: contract_keys::code_hash(&h.get_secret(identity::UPKEEP_PIECE)?),
             idlog: h.get_secret(identity::UPKEEP_IDLOG)?.try_into().ok()?,
+            devices: h.get_secret(identity::UPKEEP_DEVICES)?.try_into().ok()?,
         })
     }
     fn codes(&self) -> Codes<'_> {
-        Codes { tail: &self.tail, bag_hash: self.bag, sealed_hash: self.sealed, block_hash: self.block, idlog_hash: self.idlog }
+        Codes { tail: &self.tail, bag_hash: self.bag, sealed_hash: self.sealed, block_hash: self.block, idlog_hash: self.idlog, devices_hash: self.devices }
     }
 }
 

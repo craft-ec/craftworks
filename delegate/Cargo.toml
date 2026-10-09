@@ -27,6 +27,7 @@ craftworks-data = { path = "../data" }
 craftworks-mls = { path = "../mls", default-features = false }
 craftworks-bag-contract = { path = "../contracts-src/bag", default-features = false }
 craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
+craftworks-devices-contract = { path = "../contracts-src/devices", default-features = false }
 contract-keys = { workspace = true }
 mls-rs-core = "=0.27.0"
 craftworks-account = { path = "../account", default-features = false }

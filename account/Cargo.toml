@@ -19,6 +19,8 @@ contract-keys = { workspace = true }
 craftworks-identity = { path = "../identity" }
 craftec-register-contract = { workspace = true }
 craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
+# The account's DEVICES contract (its device credentials: a grow-only set).
+craftworks-devices-contract = { path = "../contracts-src/devices", default-features = false }
 freenet-stdlib = { version = "0.10.0", features = ["contract"], optional = true }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = { version = "1", default-features = false }

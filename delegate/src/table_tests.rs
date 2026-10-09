@@ -13,10 +13,11 @@ const BAG: &[u8] = b"the bag contract's code";
 const SEALED: &[u8] = b"the sealed contract's code";
 const BLOCK: &[u8] = b"the block contract's code";
 const IDLOG: &[u8] = b"the key log contract's code";
+const DEVICES: &[u8] = b"the devices contract's code";
 const SPACE: [u8; 32] = [0x5A; 32];
 
 fn codes() -> Codes<'static> {
-    Codes { tail: TAIL, bag_hash: contract_keys::code_hash(BAG), sealed_hash: contract_keys::code_hash(SEALED), block_hash: contract_keys::code_hash(BLOCK), idlog_hash: contract_keys::code_hash(IDLOG) }
+    Codes { tail: TAIL, bag_hash: contract_keys::code_hash(BAG), sealed_hash: contract_keys::code_hash(SEALED), block_hash: contract_keys::code_hash(BLOCK), idlog_hash: contract_keys::code_hash(IDLOG), devices_hash: contract_keys::code_hash(DEVICES) }
 }
 
 /// The network: contract id → state.
@@ -636,6 +637,7 @@ fn round_after_a_removal(creates: bool) -> AfterRound {
         h.set_secret(k, v);
     }
     h.set_secret(identity::UPKEEP_BLOCK, &contract_keys::code_hash(BLOCK));
+    h.set_secret(identity::UPKEEP_DEVICES, &contract_keys::code_hash(DEVICES));
 
     // The space as the network holds it: written by this member's own feeds (its space writer).
     // A page writes a space under its member (device) key: upkeep the same.
@@ -740,4 +742,33 @@ fn where_a_delegates_new_contracts_stay_on_its_node_the_salt_rotates_and_the_fil
     assert_eq!(row["key"].as_str(), Some(table::hex(&a.old_key).as_str()), "the row untouched: {said:?}");
     assert_eq!(read_file(&a.net, &a.old_key, &a.root0).as_deref(), Some(a.content.as_slice()), "the file still reads: nothing burned");
     assert!(said.iter().any(|l| l.contains("left to a page")), "it says so: {said:?}");
+}
+
+#[test]
+fn a_members_devices_are_read_from_their_devices_contract_on_the_current_key() {
+    // An account with two devices, A and B; B REMOVED with the words: the key rotated, A credentialed again.
+    let words = [0x21u8; 16];
+    let log0 = craftworks_idlog_contract::Log { events: vec![craftworks_account::inception(&words).unwrap()] };
+    let did = log0.events[0].id();
+    let (a, b) = ([0xA1; 32], [0xB1; 32]);
+    let creds0 = vec![identity::credential(&did, &a, &[1], &craftworks_account::owner_seed(&words).unwrap()), identity::credential(&did, &b, &[2], &craftworks_account::owner_seed(&words).unwrap())];
+    let rotated = craftworks_account::rotate(&log0, &words).unwrap();
+    let again = craftworks_account::reissue(&did, &rotated, &words, &creds0[..1]).unwrap();
+    let writers = |log: &craftworks_idlog_contract::Log, creds: &[Vec<u8>]| {
+        let mut net = Net::default();
+        net.0.insert(upkeep::id_of(&contract_keys::code_hash(IDLOG), &did), log.encode());
+        let dev = upkeep::id_of(&contract_keys::code_hash(DEVICES), &craftworks_devices_contract::params(&did, &contract_keys::code_hash(IDLOG)));
+        net.0.insert(dev, craftworks_devices_contract::encode(creds));
+        let (mut r, first) = Reading::of_members(&codes(), SPACE, BTreeMap::new(), &[did], &["files"]);
+        run(&mut r, first, &net);
+        let mut w: Vec<[u8; 32]> = r.writer_dids().iter().map(|(k, _)| *k).collect();
+        w.sort();
+        w
+    };
+    let all: Vec<Vec<u8>> = creds0.iter().chain(&again).cloned().collect();
+    assert_eq!(writers(&rotated, &all), vec![a], "only the device credentialed again");
+    // CONTROL: before the rotation, both.
+    assert_eq!(writers(&log0, &creds0), vec![a, b]);
+    // The removed device's old credential alone, after the rotation: no writer.
+    assert_eq!(writers(&rotated, &creds0[1..]), Vec::<[u8; 32]>::new());
 }

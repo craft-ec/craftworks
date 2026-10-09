@@ -143,6 +143,9 @@ export async function start(ctx) {
   async function putNodes(t) {
     const st = await (await ctx.require("keys")).ready().catch(() => null);
     const creds = (st?.members ?? []).map(m => m.cred).filter(Boolean).sort();
+    // And into the account's DEVICES contract (a grow-only set: the union is kept) — where readers count them.
+    const me = await auth.check().catch(() => null);
+    if (me && creds.length) await auth.identity.addDevices(me.didBytes, creds.map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))))).catch(e => ctx.log("card", { what: `the account's devices: ${e.message}` }));
     if (!creds.length || JSON.stringify(creds) === JSON.stringify(read(t).nodes.slice().sort())) return;
     await t.put("nodes", JSON.stringify(creds));
   }
@@ -226,8 +229,16 @@ export async function start(ctx) {
       deviceSets.set(
         did,
         (async () => {
+          if (!(await keysOf(did))) return [];
+          // Their DEVICES contract (owner 10-09): the devices on the key log's CURRENT key. Its card only until the
+          // account has one (the card is the data key's: any of its devices could rewrite it).
+          const devicesCode = await ctx.require("devices-wasm");
+          if (await auth.identity.readDevices(didBytes(did))) {
+            const now = core.account_devices(devicesCode, idlogCode, didBytes(did));
+            if (now) return Array.from(now);
+          }
           const c = await card(did, { fresh });
-          if (!c?.nodes.length || !(await keysOf(did))) return [];
+          if (!c?.nodes.length) return [];
           const creds = c.nodes.map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))));
           return Array.from(core.account_members(idlogCode, didBytes(did), creds, []));
         })().catch(() => []),

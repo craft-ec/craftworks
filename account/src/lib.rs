@@ -271,6 +271,14 @@ pub fn idlog_put(code: &[u8], did: &[u8; 32], log: Option<&Log>) -> Put {
     put(code, did, &log.map(Log::encode).unwrap_or_default())
 }
 
+/// The account's DEVICES contract (`craftworks_devices_contract`): its PUT with these credentials (the node keeps the
+/// union with what it holds), or its address with none. Its params name the key log's code by its hash.
+#[cfg(feature = "puts")]
+pub fn devices_put(devices_code: &[u8], idlog_code: &[u8], did: &[u8; 32], creds: &[Vec<u8>]) -> Put {
+    let params = craftworks_devices_contract::params(did, blake3::hash(idlog_code).as_bytes());
+    put(devices_code, &params, &craftworks_devices_contract::encode(creds))
+}
+
 /// The `whoami` Register of words W: under W's first key, it names the DID W were rotated into.
 pub fn whoami_params(entropy: &[u8]) -> Option<Vec<u8>> {
     Some(contract_keys::register_params(&public_of(&owner_seed_at(entropy, 0)?), WHOAMI_LABEL))

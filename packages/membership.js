@@ -91,12 +91,24 @@ export async function start(ctx) {
     return st.members.map(m => ({ index: m.index, key: m.key, me: m.index === st.me }));
   }
 
-  // REMOVE a node (by its index in the group): out of the group (a new epoch: it reads nothing written after), its
-  // current rows adopted into this node's feeds, then its removal told — from then on its feed counts for nobody.
-  async function remove(index) {
+  // The account's devices' CREDENTIALS (bytes), as its group holds them — but `except` (a group index).
+  async function credentials(except = null) {
+    const st = await keys.ready();
+    const hex = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+    return (st?.members ?? []).filter(m => m.cred && m.index !== except).map(m => hex(m.cred));
+  }
+
+  // REMOVE a node (by its index in the group) — with the account's recovery WORDS (owner 10-09: a removed or stolen
+  // device cut off for real): the key ROTATES and the devices that stay are credentialed again (the removed one stops
+  // counting everywhere, and nothing it holds credentials it again); then out of the group (a new epoch: it reads
+  // nothing written after), its current rows adopted into this node's feeds, its removal told.
+  async function remove(index, words) {
     const before = await keys.ready();
     const node = before?.members.find(m => m.index === index)?.key;
     if (!node) throw new Error("no such node in the account's group");
+    if (!words) throw new Error("removing a device needs the account's recovery words");
+    const me = await auth.check();
+    await auth.identity.removeDevice(me.didBytes, words, await credentials(index));
     const st = await keys.remove(index);
     await storage.adopt(node).catch(e => ctx.log("members", { what: `adopting ${node.slice(0, 12)}…'s rows: ${e.message}` }));
     await (await storage.table(MEMBERS)).put(`x/${node}`, JSON.stringify({ epoch: st.epoch, at: Date.now() }));
@@ -105,5 +117,5 @@ export async function start(ctx) {
     return st;
   }
 
-  return { nodes, remove, writers };
+  return { nodes, remove, writers, credentials };
 }

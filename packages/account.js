@@ -93,16 +93,47 @@ export async function mount(ctx, el) {
               if (m.me) li.append(" (this node)");
               else {
                 const rm = Object.assign(document.createElement("button"), { type: "button", textContent: "Remove", className: "remove" });
-                rm.onclick = async () => {
-                  if (!confirm(`Remove node ${m.key.slice(0, 16)}…? It will not be able to read anything written after this.`)) return;
-                  rm.disabled = true;
-                  rm.textContent = "Removing…";
-                  try {
-                    await membership.remove(m.index);
-                  } catch (e) {
-                    alert(`Could not remove it: ${e?.message ?? e}`);
-                  }
-                  drawNodes();
+                // WITH THE WORDS (owner 10-09): removing rotates the account's key, so a removed — or stolen — device
+                // is cut off for real, and nothing it holds can put it back.
+                rm.onclick = () => {
+                  rm.hidden = true;
+                  const words = Object.assign(document.createElement("textarea"), { rows: 2, placeholder: "Your recovery words", autocomplete: "off", spellcheck: false });
+                  const go = Object.assign(document.createElement("button"), { type: "button", textContent: "Remove this device", className: "remove" });
+                  const back = Object.assign(document.createElement("button"), { type: "button", textContent: "Cancel" });
+                  const said = Object.assign(document.createElement("p"), { className: "said", textContent: "Removing a device needs your recovery words. It will be cut off: it reads nothing written after, and can no longer act as you." });
+                  const form = document.createElement("div");
+                  form.append(said, words, " ", go, " ", back);
+                  li.append(form);
+                  back.onclick = () => (form.remove(), (rm.hidden = false));
+                  go.onclick = async () => {
+                    const glue = (await ctx.require("node")).glue.CraftworksCore;
+                    let entropy = null;
+                    try {
+                      entropy = glue.entropy_of(words.value);
+                    } catch {
+                      said.textContent = "Those are not recovery words (12 or 24 words).";
+                      return;
+                    }
+                    const me = await auth.check();
+                    if (!(await auth.identity.wordsOpen(me.didBytes, entropy).catch(() => false))) {
+                      entropy.fill(0);
+                      said.textContent = "Those are not this account's current recovery words.";
+                      return;
+                    }
+                    go.disabled = back.disabled = true;
+                    said.textContent = "Removing…";
+                    try {
+                      await membership.remove(m.index, entropy);
+                      words.value = "";
+                    } catch (e) {
+                      said.textContent = `Could not remove it: ${e?.message ?? e}`;
+                      go.disabled = back.disabled = false;
+                      return;
+                    } finally {
+                      entropy.fill(0);
+                    }
+                    drawNodes();
+                  };
                 };
                 li.append(" ", rm);
               }
@@ -353,7 +384,7 @@ This page read ${b.read} tree block${b.read === 1 ? "" : "s"}; ${b.rebuilt} came
           }
           said.textContent = "Changing your recovery words…";
           try {
-            await auth.identity.changeWords(s.didBytes, old, fresh);
+            await auth.identity.changeWords(s.didBytes, old, fresh, await membership.credentials());
             // DONE only when the network's key log says so: the new words open the account, the old ones do not.
             const [now, before] = [await auth.identity.wordsOpen(s.didBytes, fresh), await auth.identity.wordsOpen(s.didBytes, old)];
             if (!now || before) throw new Error("the account's key log did not take the change: try again");

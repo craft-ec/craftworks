@@ -387,6 +387,7 @@ dependencies = [
  "chacha20poly1305",
  "contract-keys",
  "craftec-register-contract",
+ "craftworks-devices-contract",
  "craftworks-identity",
  "craftworks-idlog-contract",
  "ed25519-dalek",
@@ -417,6 +418,7 @@ dependencies = [
  "craftworks-account",
  "craftworks-bag-contract",
  "craftworks-data",
+ "craftworks-devices-contract",
  "craftworks-files",
  "craftworks-gov",
  "craftworks-identity",
@@ -465,6 +467,7 @@ dependencies = [
  "craftworks-account",
  "craftworks-bag-contract",
  "craftworks-data",
+ "craftworks-devices-contract",
  "craftworks-feed",
  "craftworks-files",
  "craftworks-gov",
@@ -479,6 +482,16 @@ dependencies = [
  "serde_json",
  "sha2",
  "tail",
+]
+
+[[package]]
+name = "craftworks-devices-contract"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "contract-keys",
+ "craftworks-identity",
+ "craftworks-idlog-contract",
 ]
 
 [[package]]

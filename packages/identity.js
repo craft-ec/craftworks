@@ -38,7 +38,7 @@ export async function start(ctx) {
     const said = await ask(frames, s => (s.kind === "got" || s.kind === "get-failed") && s.id === hexId, what, 30000);
     return said.kind === "got";
   }
-  const codes = () => Promise.all(["idlog-wasm", "register-wasm"].map(n => ctx.require(n)));
+  const codes = () => Promise.all(["idlog-wasm", "register-wasm", "devices-wasm"].map(n => ctx.require(n)));
   const logOf = async did => glue.CraftworksCore.idlog_id((await codes())[0], did);
 
   // The account's key log, read so the core holds it: true if the network has it.
@@ -85,15 +85,41 @@ export async function start(ctx) {
   // once). The log gets its two rotations, the new words their whoami. Whoever holds something sealed for the old words
   // seals it again for the new ones first (`onWordsChanged`: the `keys` capability's escrows). Afterwards the old words
   // open nothing; the account's nodes stay its members.
+  // The account's DEVICES (`creds`: the credentials of the devices it has now) are credentialed again under the new
+  // words, into its devices contract: on the new key they alone count (owner 10-09).
   const wordsChanged = [];
-  async function changeWords(did, old, fresh) {
-    const [idlogCode, registerCode] = await codes();
+  async function changeWords(did, old, fresh, creds) {
+    const [idlogCode, registerCode, devicesCode] = await codes();
     if (!(await readKeyLog(did))) throw new Error("this account has no key log yet: log in once with its recovery words first");
-    const c = core.change_words(idlogCode, registerCode, did, old, fresh);
+    const c = core.change_words(idlogCode, registerCode, devicesCode, did, old, fresh, creds);
     for (const f of wordsChanged) await f({ old, fresh });
+    // The LOG first: the re-issued credentials are signed by its new key, which the devices contract checks them
+    // against (put before it, they would not validate). Then the devices: from then on only they count.
     await put(c.log, "the account's key log");
+    await put(c.devices, "the account's devices");
     await put(c.whoami, "the new words' account");
     ctx.log("recovery words changed", {});
+  }
+
+  // DEVICES (`craftworks-devices`: one contract per DID, a grow-only set of its device credentials — a removed or
+  // stolen device cannot delete one, nor credential itself again without the words).
+  const devicesOf = async did => core.devices_put((await codes())[2], (await codes())[0], did, []).idBytes;
+  const readDevices = async did => get(await devicesOf(did), "reading the account's devices");
+  // Each device adds the account's credentials it holds (the node keeps the union).
+  async function addDevices(did, creds) {
+    const [idlogCode, , devicesCode] = await codes();
+    await put(core.devices_put(devicesCode, idlogCode, did, creds), "the account's devices");
+  }
+  // REMOVE A DEVICE with the WORDS (owner 10-09): the key rotates and the devices that stay (`keep`: their
+  // credentials) are credentialed again — the removed one stops counting everywhere.
+  async function removeDevice(did, words, keep) {
+    const [idlogCode, , devicesCode] = await codes();
+    if (!(await readKeyLog(did))) throw new Error("the account's key log is not on the network");
+    const c = core.remove_device(idlogCode, devicesCode, did, words, keep);
+    // The LOG first (the re-issued credentials are signed by its new key), then the devices.
+    await put(c.log, "the account's key log");
+    await put(c.devices, "the account's devices");
+    ctx.log("device removed", { what: "the account's key rotated; the devices that stay credentialed again" });
   }
 
   // An epoch's key kept here (the account's group or a space's): `craftworks:keys`, so what was sealed with it and
@@ -111,6 +137,9 @@ export async function start(ctx) {
     readKeyLog,
     keyLogInfo,
     changeWords,
+    readDevices,
+    addDevices,
+    removeDevice,
     // Whether these are the account's CURRENT words; whether any account has these words.
     wordsOpen: async (did, entropy) => (await readKeyLog(did)) && core.words_open((await codes())[0], did, entropy),
     wordsTaken: async entropy => !!(await heldBy(entropy)),
@@ -149,7 +178,7 @@ export async function start(ctx) {
     // With it, the page's randomness and time: the delegate has neither of its own.
     upkeepWatch: inbox => call(core.frames_upkeep_watch(inbox, crypto.getRandomValues(new Uint8Array(32)), Date.now()), "handing upkeep the inbox"),
     upkeepStatus: () => call(core.frames_upkeep_status(), "upkeep's status"),
-    upkeepCodes: (bag, tail, idlog, sealed, piece, block) => call(core.frames_upkeep_codes(bag, tail, idlog, sealed, piece, block), "handing upkeep the contracts"),
+    upkeepCodes: (bag, tail, idlog, sealed, piece, block, devices) => call(core.frames_upkeep_codes(bag, tail, idlog, sealed, piece, block, devices), "handing upkeep the contracts"),
     upkeepMandate: (me, spaces, spent = []) => call(core.frames_upkeep_mandate(me, JSON.stringify(spaces), JSON.stringify(spent)), "handing upkeep the mandate"),
     upkeepAck: admitted => call(core.frames_upkeep_ack(JSON.stringify(admitted)), "telling upkeep what was written"),
     inboxOpen: items => call(core.frames_inbox_open(items), "opening the inbox"),

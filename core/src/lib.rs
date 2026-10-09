@@ -810,6 +810,10 @@ mod js {
         }
     }
 
+    /// A list of byte arrays from the page.
+    fn bytes_list(a: &js_sys::Array) -> Vec<Vec<u8>> {
+        a.iter().map(|c| js_sys::Uint8Array::new(&c).to_vec()).collect()
+    }
     fn b32(v: &[u8]) -> Result<[u8; 32], JsValue> {
         v.try_into().map_err(|_| err("expected 32 bytes".into()))
     }
@@ -1018,6 +1022,7 @@ mod js {
             sealed: &[u8],
             piece: &[u8],
             block: &[u8],
+            devices: &[u8],
         ) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::UpkeepCodes {
                 bag: bag.to_vec(),
@@ -1026,10 +1031,11 @@ mod js {
                 sealed: sealed.to_vec(),
                 piece: piece.to_vec(),
                 block: *blake3::hash(block).as_bytes(),
+                devices: *blake3::hash(devices).as_bytes(),
             })
         }
         /// The codes' hash upkeep would hold for these (to hand them over only when they changed).
-        pub fn upkeep_codes_hash(bag: &[u8], tail: &[u8], idlog: &[u8], sealed: &[u8], piece: &[u8], block: &[u8]) -> String {
+        pub fn upkeep_codes_hash(bag: &[u8], tail: &[u8], idlog: &[u8], sealed: &[u8], piece: &[u8], block: &[u8], devices: &[u8]) -> String {
             hex(&craftworks_identity::upkeep_codes_hash(
                 bag,
                 tail,
@@ -1037,6 +1043,7 @@ mod js {
                 sealed,
                 piece,
                 blake3::hash(block).as_bytes(),
+                blake3::hash(devices).as_bytes(),
             ))
         }
         /// The MANDATE: `me` (the account's DID) and, per space, JSON `{ space, name, kind, owner, nonce, channel, open,
@@ -1270,10 +1277,7 @@ mod js {
                 .ok_or_else(|| err("the account's key log has not been read".into()))?;
             let log = craftworks_idlog_contract::read(&did, st)
                 .ok_or_else(|| err("the account's key log does not verify".into()))?;
-            let creds: Vec<Vec<u8>> = creds
-                .iter()
-                .map(|c| js_sys::Uint8Array::new(&c).to_vec())
-                .collect();
+            let creds = bytes_list(&creds);
             let mut rs = Vec::new();
             for r in removals.iter() {
                 let r = js_sys::Array::from(&r);
@@ -1380,13 +1384,18 @@ mod js {
         /// CHANGE THE RECOVERY WORDS from `old` to `new` (both entered on this page): the log with its two rotations and
         /// the new words' `whoami`, to PUT. (The account's nodes stay its MLS group's members: every owner key the log
         /// ever had signs for them.)
+        /// CHANGE THE WORDS: the key log's two rotations, the new words' whoami — and the account's devices (`creds`: the
+        /// credentials of the devices it has now) credentialed AGAIN under the new words, into its devices contract: on
+        /// the new key they alone count (owner 10-09).
         pub fn change_words(
             &mut self,
             idlog_code: &[u8],
             register_code: &[u8],
+            devices_code: &[u8],
             did: &[u8],
             old: &[u8],
             new: &[u8],
+            creds: js_sys::Array,
         ) -> Result<js_sys::Object, JsValue> {
             let did = b32(did)?;
             let log = self.log_of(idlog_code, &did, old)?;
@@ -1400,7 +1409,51 @@ mod js {
             let who = account::whoami_put(register_code, new, &did)
                 .ok_or_else(|| err("whoami".into()))?;
             set("whoami", self.put_obj(&who)?)?;
+            let creds = bytes_list(&creds);
+            let again = account::reissue(&did, &next, new, &creds).ok_or_else(|| err("a device's credential is not this account's".into()))?;
+            set("devices", self.put_obj(&account::devices_put(devices_code, idlog_code, &did, &again))?)?;
             Ok(o)
+        }
+
+        /// REMOVE A DEVICE (owner 10-09: with the words): the key ROTATES (the same words' next key) and the devices that
+        /// STAY (`keep`: their credentials) are credentialed again — the removed one, on the old key, stops counting
+        /// everywhere, and cannot be credentialed again without the words.
+        pub fn remove_device(
+            &mut self,
+            idlog_code: &[u8],
+            devices_code: &[u8],
+            did: &[u8],
+            words: &[u8],
+            keep: js_sys::Array,
+        ) -> Result<js_sys::Object, JsValue> {
+            let did = b32(did)?;
+            let log = self.log_of(idlog_code, &did, words)?;
+            let next = account::rotate(&log, words).ok_or_else(|| err("these are not this account's current recovery words".into()))?;
+            let again = account::reissue(&did, &next, words, &bytes_list(&keep)).ok_or_else(|| err("a device's credential is not this account's".into()))?;
+            let o = js_sys::Object::new();
+            let set = |k: &str, v: JsValue| js_sys::Reflect::set(&o, &k.into(), &v).map(|_| ());
+            set("log", self.put_obj(&account::idlog_put(idlog_code, &did, Some(&next)))?)?;
+            set("devices", self.put_obj(&account::devices_put(devices_code, idlog_code, &did, &again))?)?;
+            Ok(o)
+        }
+
+        /// The account's DEVICES contract with these credentials (each device puts its own: the node keeps the union).
+        pub fn devices_put(&mut self, devices_code: &[u8], idlog_code: &[u8], did: &[u8], creds: js_sys::Array) -> Result<JsValue, JsValue> {
+            let did = b32(did)?;
+            self.put_obj(&account::devices_put(devices_code, idlog_code, &did, &bytes_list(&creds)))
+        }
+
+        /// The account's devices NOW, from its devices contract (read: `got`) and its key log: the node keys (hex) on the
+        /// log's current key. `undefined` when the devices contract was not read — the caller reads the card instead.
+        pub fn account_devices(&self, devices_code: &[u8], idlog_code: &[u8], did: &[u8]) -> Result<JsValue, JsValue> {
+            let did = b32(did)?;
+            let dev = account::devices_put(devices_code, idlog_code, &did, &[]).id_bytes;
+            let Some(st) = self.0.got(&dev) else { return Ok(JsValue::UNDEFINED) };
+            let creds = craftworks_devices_contract::decode(st).ok_or_else(|| err("the account's devices do not read".into()))?;
+            let id = account::idlog_put(idlog_code, &did, None).id_bytes;
+            let st = self.0.got(&id).ok_or_else(|| err("the account's key log has not been read".into()))?;
+            let log = craftworks_idlog_contract::read(&did, st).ok_or_else(|| err("the account's key log does not verify".into()))?;
+            Ok(craftworks_devices_contract::current(&did, &log, &creds).iter().map(|(n, _)| JsValue::from(hex(n))).collect::<js_sys::Array>().into())
         }
 
         /// The account's data key seed from the words' entropy (handed once to the identity delegate, never kept).

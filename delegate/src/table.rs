@@ -29,8 +29,11 @@ pub struct Codes<'a> {
     pub bag_hash: [u8; 32],
     pub sealed_hash: [u8; 32],
     pub block_hash: [u8; 32],
-    /// The key log's code hash: a member's DEVICES are read from their card, checked against their key log.
+    /// The key log's code hash: a member's devices are checked against their key log.
     pub idlog_hash: [u8; 32],
+    /// The Devices contract's code hash: a member's DEVICES are read there (owner 10-09: on their key log's current
+    /// key) — their card only until they have one.
+    pub devices_hash: [u8; 32],
 }
 
 /// What a tail is read for.
@@ -180,14 +183,32 @@ impl Reading {
                     self.resolving.remove(at);
                     return self.members_done(c);
                 };
-                let data = craftworks_idlog_contract::read(&did, &st).expect("checked").head().data;
-                let card = data::Open::new(c.tail, &data, "card").id_bytes();
-                self.resolving[at] = (did, Some(st), card);
-                vec![Io::Get { id: card, subscribe: false }]
+                // Their DEVICES contract first.
+                let dev = crate::upkeep::id_of(&c.devices_hash, &craftworks_devices_contract::params(&did, &c.idlog_hash));
+                self.resolving[at] = (did, Some(st), dev);
+                vec![Io::Get { id: dev, subscribe: false }]
             }
             Some(log_state) => {
-                // Their CARD: its `nodes`, each credential checked against the key log.
                 let log = craftworks_idlog_contract::read(&did, &log_state).expect("checked when got");
+                let card = data::Open::new(c.tail, &log.head().data, "card").id_bytes();
+                if self.resolving[at].2 != card {
+                    // Their DEVICES contract: the devices on the key log's current key.
+                    if let Some(creds) = state.as_deref().and_then(craftworks_devices_contract::decode) {
+                        let name = craftworks_account::did(&did);
+                        for (node, _) in craftworks_devices_contract::current(&did, &log, &creds) {
+                            if !self.writers.contains(&node) {
+                                self.writers.push(node);
+                                self.writer_dids.push((node, name.clone()));
+                            }
+                        }
+                        self.resolving.remove(at);
+                        return self.members_done(c);
+                    }
+                    // None yet: their CARD (as before the devices contract).
+                    self.resolving[at].2 = card;
+                    return vec![Io::Get { id: card, subscribe: false }];
+                }
+                // Their CARD: its `nodes`, each credential checked against the key log.
                 let mut o = data::Open::new(c.tail, &log.head().data, "card");
                 o.public = true;
                 let creds: Vec<Vec<u8>> = state
@@ -488,6 +509,10 @@ impl Reading {
         self.jobs.iter().any(|j| j.owner == *owner && j.table == t && j.state.is_some() && matches!(j.rows, Some(None)))
     }
 
+    /// The members' devices found (writer key, the DID's text).
+    pub fn writer_dids(&self) -> &[([u8; 32], String)] {
+        &self.writer_dids
+    }
     pub fn space(&self) -> [u8; 32] {
         self.space
     }

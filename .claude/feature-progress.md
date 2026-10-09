@@ -1467,8 +1467,14 @@ re-issues too; the device list lives in a DEVICES contract per DID (grow-only se
 of the DID's log; merge = union; nobody can delete one) — readers count those on the current key.
 - [x] A devices contract (contracts-src/devices) + 4 tests, 5 mutants killed; devices.wasm 133,863 B
 - [x] B account: `rotate` (same words), `reissue`, members on the current key only (the measured gap now refused)
-- [ ] C core: devices contract put/read; credentials re-issued for given node keys
-- [ ] D pages: readers on the devices contract (card as fallback until it exists); each device seeds its own
-      credential; remove-device asks the words (rotate + re-issue); change-words re-issues
-- [ ] E live fx/fy: one account on two devices; remove one with the words; it rewrites the card → not counted
+- [x] C core: devices_put / account_devices / remove_device; change_words re-issues
+- [x] D pages + delegate: readers (directory.devices, the delegate's re-key rounds) on the devices contract, the card
+      only until one exists; each device adds its credentials; remove-device asks the words (rotate + re-issue: the
+      LOG first, then the devices — put the other way the new-key credentials do not validate); change-words re-issues.
+      Identity f73ea7d3 → 94190d1e (everyone enters their PIN once).
+- [x] E LIVE fx/fy 10-09: one account on two devices (both see 2); fx removed fy with the words (341 ms) → devices:
+      fx only; fy then put its old credential into the devices contract and rewrote the card → still fx only.
+      (On the way: a two-device account works on fx/fy only when a test logs in as the UI does — logged out, join,
+      accept, staying on the page; tests that skipped that made two groups or a locked first device. A catalog-sealing
+      change made then was measured unneeded with the right flow, and dropped.)
 - [ ] F token writers use the device's credential from the devices contract
