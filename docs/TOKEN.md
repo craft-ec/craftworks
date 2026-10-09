@@ -405,7 +405,11 @@ own. So:
   visible to everyone.
 
 **Reading it:** a contract reads the beacon as one related contract (one of its 10). Its state keeps only recent steps
-(a day: older ones flushed to a tree, kept, as any history) — enough to judge "final at step n" and `until`s near now.
+— enough to judge "final at step n" and `until`s near now. Older OUTPUTS live on in the **OUTPUTS LOG** (built 10-09,
+`contracts-src/beacon/src/log.rs`): one contract per 4096 heights (same code, params: the beacon's id and the span),
+filled by anyone — extenders record each step once it is FINAL — taking a height only as the beacon holds it final,
+and never changing one it holds. Readers (witnesses checking that an old entry was accepted, wallets) read the beacon
+for recent heights and the log for older ones — an account idle for days stays witnessable.
 
 **BUILT (10-08, `contracts-src/beacon`, `contracts/beacon.wasm`; 12 tests, 7 mutants all killed; live on fx/fy via
 `tools/beacon-live`):** small steps (K = 2²⁴) extended through both nodes alike; a FAKE step (output forged — it

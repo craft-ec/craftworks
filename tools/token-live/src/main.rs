@@ -220,6 +220,9 @@ fn stamp_of(s: &T::State, n: [u8; 16]) -> u64 {
     s.entries.iter().find(|e| e.nonce == n).map_or(0, |e| e.stamp)
 }
 
+/// Every output this run's ticker computed (height → output): the truth the outputs log is checked against.
+static OUTS: std::sync::Mutex<Vec<(u64, [u8; 32])>> = std::sync::Mutex::new(Vec::new());
+
 /// FAST-FORWARD: the beacon extended as fast as its steps compute (to reach an epoch's start), not once a second.
 static FAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -229,6 +232,7 @@ async fn start_beacon(code: &[u8], x: &str, salt: [u8; 16]) -> Result<[u8; 32]> 
     let c = || container(code, p.encode());
     let id: [u8; 32] = c().key().id().as_bytes().try_into().unwrap();
     let first = B::State::default().extend(&p, fresh_mix());
+    OUTS.lock().unwrap().push((first.height(), first.out(&p)));
     put(x, c(), B::wire::encode(&first)).await?;
     let (code, x) = (code.to_vec(), x.to_string());
     tokio::spawn(async move {
@@ -238,7 +242,18 @@ async fn start_beacon(code: &[u8], x: &str, salt: [u8; 16]) -> Result<[u8; 32]> 
                 tokio::time::sleep(Duration::from_millis(1000)).await;
             }
             s = s.extend(&p, fresh_mix());
+            OUTS.lock().unwrap().push((s.height(), s.out(&p)));
             let _ = put(&x, container(&code, p.encode()), B::wire::encode(&s)).await;
+            // Its FINAL outputs into the outputs log (the span of the newest final height, and the one before it at a
+            // span's start), so a lot drawn long ago stays checkable.
+            let fin = s.height().saturating_sub(p.window as u64);
+            for idx in [fin.saturating_sub(1) / B::log::SPAN, fin / B::log::SPAN] {
+                let lp = B::log::Params { beacon: id, index: idx };
+                let rec = B::log::record(&lp, &s);
+                if !rec.entries.is_empty() && (idx == fin / B::log::SPAN || fin % B::log::SPAN < 2) {
+                    let _ = put(&x, container(&code, lp.encode()), rec.encode()).await;
+                }
+            }
         }
     });
     Ok(id)
@@ -280,6 +295,7 @@ async fn main() -> Result<()> {
             "vest" => vest(&w).await?,
             "operators" => operators_mode(&w).await?,
             "misdeed" => misdeed_mode(&w).await?,
+            "outputs" => outputs_mode(&w, &bcode).await?,
             "witness" => witness_mode(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("bag.wasm"))?).await?,
             "cut" => cut(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("block.wasm"))?).await?,
             m => bail!("no mode {m}"),
@@ -1157,5 +1173,60 @@ async fn misdeed_mode(w: &W) -> Result<()> {
     let held = w.get_chain(&w.y, tp, 2).await?.context("2's chain")?;
     let staked = T::walk(&w.chain(tp, 2), &dp, &held, &|_, _| None, &|_| None, None, 0, held.entries.len(), None).map(|c| c.staked);
     println!("   2's stake on Y now: {:?} (was 600)", staked.map_err(|e| e.1));
+    Ok(())
+}
+
+/// The beacon's output at height `h` as the network holds it: from the beacon while it keeps that step, from the
+/// OUTPUTS LOG after.
+async fn out_at(ws: &str, beacon: [u8; 32], bcode: &[u8], h: u64) -> Result<Option<[u8; 32]>> {
+    let b = get(ws, beacon).await?.and_then(|b| B::wire::decode(&b));
+    if let Some(o) = b.as_ref().and_then(|b| b.steps.iter().find(|s| s.height == h)).map(|s| s.out) {
+        return Ok(Some(o));
+    }
+    let lp = B::log::Params::of(beacon, h);
+    Ok(get(ws, *container(bcode, lp.encode()).key().id().as_bytes().first_chunk::<32>().unwrap()).await?.and_then(|l| B::log::Log::decode(&l)).and_then(|l| l.get(h)))
+}
+
+/// THE OUTPUTS LOG, LIVE (TOKEN §5a): the beacon run past what it keeps (600 steps); its oldest outputs are gone from
+/// it and still read — from the log — exactly as computed; a forged output for a recorded height changes nothing; one
+/// for a height the beacon never held final is refused.
+async fn outputs_mode(w: &W, bcode: &[u8]) -> Result<()> {
+    println!("— outputs");
+    let t = Instant::now();
+    FAST.store(true, std::sync::atomic::Ordering::Relaxed);
+    let reached = loop {
+        let n = w.now().await?;
+        if n >= 700 {
+            break n;
+        }
+        if t.elapsed() > Duration::from_secs(20 * 60) {
+            FAST.store(false, std::sync::atomic::Ordering::Relaxed);
+            bail!("the beacon did not reach 700 (at {n})");
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+    FAST.store(false, std::sync::atomic::Ordering::Relaxed);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let b = get(&w.x, w.beacon).await?.and_then(|b| B::wire::decode(&b)).context("the beacon")?;
+    println!("1  beacon fast-forwarded to {reached} in {} s; it keeps heights {}..={}", t.elapsed().as_secs(), b.steps.first().map_or(0, |s| s.height), b.height());
+    let truth: Vec<(u64, [u8; 32])> = OUTS.lock().unwrap().clone();
+    let mut same = 0;
+    let probes = [1u64, 2, 50, 99, 300, 650];
+    for &h in &probes {
+        let got = out_at(&w.y, w.beacon, bcode, h).await?;
+        let want = truth.iter().find(|x| x.0 == h).map(|x| x.1);
+        same += (got.is_some() && got == want) as usize;
+        println!("   height {h}: {} — {}", if b.steps.iter().any(|s| s.height == h) { "in the beacon" } else { "from the log" }, if got.is_none() { "MISSING".to_string() } else if got == want { "as computed".to_string() } else { "DIFFERENT".to_string() });
+    }
+    println!("2  {same} of {} probed outputs read back exactly (from Y)", probes.len());
+    let lp = B::log::Params::of(w.beacon, 50);
+    let lid = *container(bcode, lp.encode()).key().id().as_bytes().first_chunk::<32>().unwrap();
+    let forged = B::log::Log { entries: vec![(50, [7; 32])] };
+    println!("3  a FORGED output for height 50, on X: {}", put(&w.x, container(bcode, lp.encode()), forged.encode()).await?.0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let after = get(&w.x, lid).await?.and_then(|l| B::log::Log::decode(&l)).and_then(|l| l.get(50));
+    println!("   height 50 now: {}", if after == truth.iter().find(|x| x.0 == 50).map(|x| x.1) { "as computed" } else { "CHANGED" });
+    let future = B::log::Log { entries: vec![(4000, [7; 32])] };
+    println!("4  an output for height 4000 (never held final), on X: {}", put(&w.x, container(bcode, lp.encode()), future.encode()).await?.0);
     Ok(())
 }

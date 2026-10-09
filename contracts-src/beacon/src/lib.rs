@@ -8,8 +8,9 @@
 //! who recomputes a step and finds segment `j` wrong publishes (step, j) with the two points and their proofs; the
 //! contract re-runs that one segment, and the step and all after it are gone — and stay gone (the proof is kept).
 //!
-//! Not yet (TOKEN §5a): the entropy MIX. This chain is deterministic from its seed, so its height is a clock but its
-//! outputs are not yet randomness nobody can predict (a faster machine can compute ahead).
+//! Each step carries its extender's MIX (fresh entropy, TOKEN §5a), so a chain run ahead of time is void once an honest
+//! step lands. Its state keeps the newest `keep` steps; older OUTPUTS live on in the OUTPUTS LOG ([`log`]), one contract
+//! per span of heights, filled from the beacon while it still holds them.
 
 pub const BEACON: u8 = 0x42;
 /// The most iterations one segment may hold: the cost of one sampled segment or one fraud proof inside a validation.
@@ -406,22 +407,67 @@ pub fn merge(p: &Params, a: &State, b: &State) -> State {
     normalize(p, State { steps, alts, frauds })
 }
 
+pub mod log;
+
 #[cfg(feature = "freenet-main-contract")]
 mod contract {
-    use super::{check, merge, Params};
+    use super::{check, log, merge, Params};
     use freenet_stdlib::prelude::*;
 
     pub struct Beacon;
 
+    /// An OUTPUTS LOG's update: what it does not hold yet is taken only as the beacon (read in the same round) holds it,
+    /// final; what it holds is never changed.
+    fn log_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
+        let lp = log::Params::decode(params).ok_or(ContractError::InvalidState)?;
+        let held = log::Log::decode(state).ok_or(ContractError::InvalidState)?;
+        let mut given: Vec<log::Log> = Vec::new();
+        let mut beacon: Option<Vec<u8>> = None;
+        for d in data {
+            let b: &[u8] = match &d {
+                UpdateData::State(s) => s.as_ref(),
+                UpdateData::Delta(x) => x.as_ref(),
+                UpdateData::StateAndDelta { state, .. } => state.as_ref(),
+                UpdateData::RelatedState { related_to, state } => {
+                    if related_to.as_bytes() == lp.beacon {
+                        beacon = Some(state.as_ref().to_vec());
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
+            given.push(log::Log::decode(b).ok_or(ContractError::InvalidUpdate)?);
+        }
+        if given.iter().all(|g| g.entries.iter().all(|e| held.get(e.0).is_some())) {
+            return Ok(UpdateModification::valid(State::from(held.encode())));
+        }
+        let Some(bb) = beacon else {
+            return UpdateModification::requires(vec![RelatedContract { contract_instance_id: ContractInstanceId::new(lp.beacon), mode: RelatedMode::StateOnce }]);
+        };
+        let b = super::wire::decode(&bb).ok_or(ContractError::InvalidUpdate)?;
+        let mut out = held;
+        for g in &given {
+            out = log::take(&lp, &out, g, &b).map_err(|w| ContractError::InvalidUpdateWithInfo { reason: w.into() })?;
+        }
+        Ok(UpdateModification::valid(State::from(out.encode())))
+    }
+
     #[contract]
     impl ContractInterface for Beacon {
         fn validate_state(parameters: Parameters<'static>, state: State<'static>, _related: RelatedContracts<'static>) -> Result<ValidateResult, ContractError> {
+            if parameters.as_ref().first() == Some(&log::LOG) {
+                let (Some(lp), Some(l)) = (log::Params::decode(parameters.as_ref()), log::Log::decode(state.as_ref())) else { return Ok(ValidateResult::Invalid) };
+                return Ok(if l.holds(&lp) { ValidateResult::Valid } else { ValidateResult::Invalid });
+            }
             let Some(p) = Params::decode(parameters.as_ref()) else { return Ok(ValidateResult::Invalid) };
             let Some(s) = super::wire::decode(state.as_ref()) else { return Ok(ValidateResult::Invalid) };
             Ok(if check(&p, &s).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
         }
 
         fn update_state(parameters: Parameters<'static>, state: State<'static>, data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
+            if parameters.as_ref().first() == Some(&log::LOG) {
+                return log_update(parameters.as_ref(), state.as_ref(), data);
+            }
             let p = Params::decode(parameters.as_ref()).ok_or(ContractError::InvalidState)?;
             let mut held = super::wire::decode(state.as_ref()).ok_or(ContractError::InvalidState)?;
             for d in data {

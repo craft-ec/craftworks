@@ -1419,6 +1419,14 @@ old key's addresses.
           grinding by an extender, a faster core's lead. beacon.wasm 92300b2a, token.wasm 65f67643.
           LIVE fx/fy: beacon-live fake caught + honest step back on both nodes; token-live witness on these contracts:
           every honest entry 16/16, the buried fake and its payment refused by all, 3's wallet Ok(16) in 34 ms, burn ACCEPTED.
+      [x] 11 BEACON OUTPUTS LOG — BUILT + LIVE 10-09: one contract per 4096 heights (beacon wasm, kind
+          LOG 0x4c), filled from the beacon's FINAL steps, a held height never changed; token-live's ticker records it;
+          readers fall back to it past the beacon's keep. Found: without it an account idle past the beacon's keep could
+          never be witnessed again (the predecessor's lot unverifiable). Beacon 14 tests; 6 mutants killed (1 after a
+          duplicate-height case was added).
+          LIVE fx/fy (`token-live outputs`): beacon fast-forwarded to 700 (keeps 102..=701); heights 1, 2, 50, 99 read
+          from the log and 300, 650 from the beacon — 6 of 6 exactly as computed; a forged output for 50 changed nothing;
+          one for 4000 (never held final) REFUSED. beacon.wasm c7b91ff4.
       [x] 10 WITNESS MISDEED BURN — BUILT + LIVE 10-09: `Body::Misdeed` (key, its signature, the signed credit): the node
           reads the cited chain and, where it can say (unfrozen, held back to the debit's stamp), finds no debit → stake
           and unbonding burned. One home for "the debit a credit cites": `debit_for` (contract, wallet, misdeed). 96
