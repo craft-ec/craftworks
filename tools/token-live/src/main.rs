@@ -219,6 +219,9 @@ fn stamp_of(s: &T::State, n: [u8; 16]) -> u64 {
     s.entries.iter().find(|e| e.nonce == n).map_or(0, |e| e.stamp)
 }
 
+/// FAST-FORWARD: the beacon extended as fast as its steps compute (to reach an epoch's start), not once a second.
+static FAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// A beacon on X, extended in the background (a small step: ~4 a second at most; one a second here).
 async fn start_beacon(code: &[u8], x: &str, salt: [u8; 16]) -> Result<[u8; 32]> {
     let p = B::Params { k: 1 << 20, segs: 256, sample: 8, window: 2, keep: 600, seed: *blake3::hash(&salt).as_bytes() };
@@ -230,7 +233,9 @@ async fn start_beacon(code: &[u8], x: &str, salt: [u8; 16]) -> Result<[u8; 32]> 
     tokio::spawn(async move {
         let mut s = first;
         loop {
-            tokio::time::sleep(Duration::from_millis(1000)).await;
+            if !FAST.load(std::sync::atomic::Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+            }
             s = s.extend(&p);
             let _ = put(&x, container(&code, p.encode()), B::wire::encode(&s)).await;
         }
@@ -271,6 +276,7 @@ async fn main() -> Result<()> {
             "mint" => mint_mode(&w).await?,
             "multisig" => multisig(&w).await?,
             "nft" => nft(&w).await?,
+            "witness" => witness_mode(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("bag.wasm"))?).await?,
             "cut" => cut(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("block.wasm"))?).await?,
             m => bail!("no mode {m}"),
         }
@@ -786,5 +792,208 @@ async fn nft(w: &W) -> Result<()> {
         w.get_chain(&w.x, tb, m).await?.map_or(0, |s| s.balance()),
         w.get_chain(&w.x, tb, c).await?.map_or(0, |s| s.balance())
     );
+    Ok(())
+}
+
+/// FOUNDATION 6, LIVE: WITNESSES BY LOT, weighted by stake. 16 stakers earn and stake 50 each in a POOL token; at the
+/// next epoch they post their stake claims to the pool's stakers bag. In another token A pays B; C credits itself 5000
+/// from a send that does not exist, buried under real receives, and pays D out of it. Each entry's committee — drawn
+/// from the claims by the beacon output after it — re-checks it by the witness rule and signs into its witness bag. B's
+/// wallet accepts its payment from the bags alone; D's is never witnessed. A witness signing twice at one place is
+/// burned.
+async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
+    use craftworks_bag_contract as bag;
+    use T::{draw, supply, wallet};
+    println!("— witness");
+    let stakers: Vec<u8> = (20..36).collect();
+    let t = Instant::now();
+    for &n in &stakers {
+        let l = log(n);
+        let (sx, sy) = tokio::join!(w.put_log(&w.x, &l), w.put_log(&w.y, &l));
+        if sx?.0 != "ACCEPTED" || sy?.0 != "ACCEPTED" {
+            bail!("staker {n}'s key log was not taken");
+        }
+    }
+    println!("1  key logs of {} stakers on X and Y in {} ms", stakers.len(), t.elapsed().as_millis());
+    let pd = w.def(1, b"Pool", 11);
+    let pool = w.put_def(&pd).await?;
+    let h = w.now().await?;
+    let mut g = T::State::default();
+    push(&mut g, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h);
+    for &n in &stakers {
+        push(&mut g, T::Body::Send { to: did(n), amount: 50 }, w.n(n), Some(1), h);
+    }
+    println!("2  the pool token: genesis, 50 to each staker, on X: {}", w.put_chain(&w.x, pool, 1, &g).await?.0);
+    let r = w.until(h + 2).await?;
+    let mut took = 0;
+    for &n in &stakers {
+        let mut s = T::State::default();
+        push(&mut s, T::Body::Receive { from: did(1), nonce: w.n(n), amount: 50, cited: h, ev: T::Evidence::default() }, w.n(n), None, r);
+        push(&mut s, T::Body::Stake { amount: 50 }, w.n(100 + n), Some(n), r);
+        took += (w.put_chain(&w.y, pool, n, &s).await?.0 == "ACCEPTED") as usize;
+    }
+    println!("3  each staker receives its 50 and stakes it (at {r}), on Y: {took} of {} ACCEPTED", stakers.len());
+    // Stake counts for an epoch as held at its start: to the next one.
+    let epoch = supply::epoch(r) + 1;
+    let start = epoch * supply::EPOCH;
+    let t = Instant::now();
+    FAST.store(true, std::sync::atomic::Ordering::Relaxed);
+    let reached = loop {
+        let n = w.now().await?;
+        if n >= start + 2 {
+            break n;
+        }
+        if t.elapsed() > Duration::from_secs(40 * 60) {
+            FAST.store(false, std::sync::atomic::Ordering::Relaxed);
+            bail!("the beacon did not reach epoch {epoch} ({start}); at {n}");
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+    FAST.store(false, std::sync::atomic::Ordering::Relaxed);
+    println!("4  beacon fast-forwarded to epoch {epoch} (height {reached}) in {} s", t.elapsed().as_secs());
+    let claims: Vec<draw::StakeClaim> = stakers
+        .iter()
+        .map(|&n| draw::StakeClaim { owner: did(n), amount: 50, epoch, key: pk(n), sig: key(n).sign(&draw::StakeClaim::message(&pool, &did(n), 50, epoch, &pk(n))).to_bytes() })
+        .collect();
+    let caddr = wallet::stakers_bag(&pool, epoch);
+    let items: Vec<Vec<u8>> = claims.iter().map(|c| bag::grind(&caddr, &wallet::bytes::stake_claim(c))).collect();
+    println!("5  {} stake claims for epoch {epoch} in the stakers bag, on X: {}", claims.len(), put(&w.x, container(bag_code, caddr.to_vec()), bag::encode(&caddr, &items)).await?.0);
+    // Token A: 2 pays 3; 4 buries a fake receive and pays 5 out of it.
+    let td = w.def(2, b"Paid", 12);
+    let ta = w.put_def(&td).await?;
+    let h2 = w.now().await?;
+    let mut a = T::State::default();
+    push(&mut a, T::Body::Genesis { amount: 1000 }, w.n(2), Some(2), h2);
+    push(&mut a, T::Body::Send { to: did(3), amount: 300 }, w.n(30), Some(2), h2);
+    for k in 0..T::RECENT as u8 {
+        push(&mut a, T::Body::Send { to: did(4), amount: 10 }, w.n(40 + k), Some(2), h2);
+    }
+    println!("6  2: genesis, 300 to 3, {} sends of 10 to 4, on X: {}", T::RECENT, w.put_chain(&w.x, ta, 2, &a).await?.0);
+    let r2 = w.until(h2 + 2).await?;
+    let mut b = T::State::default();
+    push(&mut b, T::Body::Receive { from: did(2), nonce: w.n(30), amount: 300, cited: h2, ev: T::Evidence::default() }, w.n(30), None, r2);
+    println!("7  3 receives the 300, on Y: {}", w.put_chain(&w.y, ta, 3, &b).await?.0);
+    let mut c = T::State::default();
+    push(&mut c, T::Body::Receive { from: did(2), nonce: w.n(99), amount: 5000, cited: h2, ev: T::Evidence::default() }, w.n(99), None, r2);
+    for k in 0..T::RECENT as u8 {
+        push(&mut c, T::Body::Receive { from: did(2), nonce: w.n(40 + k), amount: 10, cited: h2, ev: T::Evidence::default() }, w.n(40 + k), None, r2);
+    }
+    push(&mut c, T::Body::Send { to: did(5), amount: 3000 }, w.n(50), Some(4), r2);
+    println!("8  4: a FAKE receive of 5000 buried under {} real ones, then 3000 to 5, on Y: {}", T::RECENT, w.put_chain(&w.y, ta, 4, &c).await?.0);
+    let r3 = w.until(r2 + 2).await?;
+    let mut d = T::State::default();
+    push(&mut d, T::Body::Receive { from: did(4), nonce: w.n(50), amount: 3000, cited: r2, ev: T::Evidence::default() }, w.n(50), None, r3);
+    println!("9  5 receives the 3000, on Y: {}", w.put_chain(&w.y, ta, 5, &d).await?.0);
+    // Let the lot of the last entry be drawn (the beacon output one step after it).
+    w.until(r3 + 2).await?;
+
+    // THE WITNESSES and THE WALLETS: everything read from the nodes (blocking reads on a runtime of their own).
+    let (x, y, beacon, bc, ch, bid, idlog) = (w.x.clone(), w.y.clone(), w.beacon, bag_code.to_vec(), w.ch, w.beacon, w.idlog);
+    let (pd2, td2) = (pd.clone(), td.clone());
+    let lines = tokio::task::spawn_blocking(move || -> Vec<String> {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let out = std::cell::RefCell::new(Vec::<String>::new());
+        let params = |t: [u8; 32], o: u8| T::ChainParams { code_hash: ch, definition: t, owner: did(o), beacon: bid, idlog, item: [0; 32] };
+        let read = |p: &T::ChainParams| rt.block_on(get(&y, p.id())).ok().flatten().and_then(|b| T::State::decode(&b));
+        let bag_items = |addr: [u8; 32]| -> Vec<Vec<u8>> { rt.block_on(get(&x, *container(&bc, addr.to_vec()).key().id().as_bytes().first_chunk::<32>().unwrap())).ok().flatten().and_then(|s| bag::read(&addr, &s)).unwrap_or_default() };
+        let beacon_state = std::cell::RefCell::new(None::<B::State>);
+        let out_at = |hh: u64| -> Option<[u8; 32]> {
+            let find = |s: &B::State| s.steps.iter().find(|st| st.height == hh).map(|st| st.out);
+            if let Some(o) = beacon_state.borrow().as_ref().and_then(find) {
+                return Some(o);
+            }
+            let s = rt.block_on(get(&x, beacon)).ok().flatten().and_then(|b| B::wire::decode(&b))?;
+            let o = find(&s);
+            *beacon_state.borrow_mut() = Some(s);
+            o
+        };
+        let claims_of = |e: u64| bag_items(wallet::stakers_bag(&pool, e)).iter().filter_map(|i| wallet::bytes::read_stake_claim(bag::payload(i))).collect::<Vec<_>>();
+        let sigs_of = |cid: &[u8; 32], seq: u64| bag_items(wallet::witness_bag(cid, seq)).iter().filter_map(|i| wallet::bytes::read_witness_sig(bag::payload(i))).collect::<Vec<_>>();
+        let stake_reads = std::cell::Cell::new(0usize);
+        let stake_of = |o: &[u8; 32], at: u64| {
+            stake_reads.set(stake_reads.get() + 1);
+            let n = (20..36u8).find(|n| did(*n) == *o)?;
+            let p = params(pool, n);
+            wallet::stake_at(&p, &pd2, &read(&p)?, at).ok()
+        };
+        let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of };
+        let cited = |t: &T::Tok, o: &[u8; 32]| rt.block_on(get(&y, T::ChainParams { code_hash: ch, definition: t.definition, owner: *o, beacon: bid, idlog, item: t.item }.id())).ok().flatten().and_then(|b| T::State::decode(&b));
+        // Witness one entry: its committee drawn, each member re-checks it by the rule and signs into its bag on X.
+        let witness = |o: u8, seq: u64, who: &str| -> bool {
+            let p = params(ta, o);
+            let Some(s) = read(&p) else {
+                out.borrow_mut().push(format!("   {who} seq {seq}: chain not on Y"));
+                return false;
+            };
+            let e = s.entries.iter().find(|e| e.seq == seq).unwrap().clone();
+            let (ep, hh) = wallet::lot_of(e.stamp);
+            let claims = claims_of(ep);
+            let Some(o_) = out_at(hh) else {
+                out.borrow_mut().push(format!("   {who} seq {seq}: its lot is not drawn"));
+                return false;
+            };
+            let members = draw::committee(&pool, &o_, &p.id(), seq, ep, &claims, wallet::COMMITTEE);
+            let holds = |st: &T::State| T::check(&p, &td2, st, &cited, &|_| None, Some(&log(o)));
+            match wallet::may_witness(&src, &p, &s, seq, &holds, &cited) {
+                Err(why) => {
+                    out.borrow_mut().push(format!("   {who} seq {seq}: drawn {} — REFUSED by every one: {why}", members.len()));
+                    false
+                }
+                Ok(hash) => {
+                    let addr = wallet::witness_bag(&p.id(), seq);
+                    let items: Vec<Vec<u8>> = members
+                        .iter()
+                        .map(|&m| {
+                            let n = (20..36u8).find(|n| pk(*n) == claims[m].key).unwrap(); // the member's own key
+                            let sig = key(n).sign(&T::witness::WitnessSig::message(&p.id(), seq, &hash)).to_bytes();
+                            bag::grind(&addr, &wallet::bytes::witness_sig(&T::witness::WitnessSig { chain: p.id(), seq, entry: hash, sig }))
+                        })
+                        .collect();
+                    let said = rt.block_on(put(&x, container(&bc, addr.to_vec()), bag::encode(&addr, &items))).map(|r| r.0).unwrap_or_else(|e| e.to_string());
+                    out.borrow_mut().push(format!("   {who} seq {seq}: drawn {}, each re-checked it and signed — bag on X: {said}", members.len()));
+                    true
+                }
+            }
+        };
+        out.borrow_mut().push("10 the committees witness, in order:".into());
+        let len = |o: u8| read(&params(ta, o)).map_or(0, |s| s.entries.len() as u64);
+        for seq in 0..len(2) {
+            witness(2, seq, "2");
+        }
+        witness(3, 0, "3");
+        for seq in 0..len(4) {
+            if !witness(4, seq, "4") {
+                break;
+            }
+        }
+        witness(5, 0, "5");
+        // THE WALLETS: an entry accepted from its bags alone.
+        let accept = |o: u8, seq: u64| {
+            let p = params(ta, o);
+            let e = read(&p)?.entries.into_iter().find(|e| e.seq == seq)?;
+            Some(wallet::accept(&src, &p, &e))
+        };
+        let t = Instant::now();
+        stake_reads.set(0);
+        out.borrow_mut().push(format!("11 3's wallet: its 300 — {:?} ({} stake chains read, {} ms)", accept(3, 0), stake_reads.get(), t.elapsed().as_millis()));
+        out.borrow_mut().push(format!("12 5's wallet: its 3000 — {:?}", accept(5, 0)));
+        out.into_inner()
+    })
+    .await?;
+    for l in lines {
+        println!("{l}");
+    }
+    // AN EQUIVOCATION: staker 20 signs two entries at one place; anyone appends the burn to its pool chain.
+    let other = |e: u8| *blake3::hash(&[e]).as_bytes();
+    let place = w.chain(ta, 2).id();
+    let sa = T::witness::WitnessSig { chain: place, seq: 1, entry: other(1), sig: key(20).sign(&T::witness::WitnessSig::message(&place, 1, &other(1))).to_bytes() };
+    let sb = T::witness::WitnessSig { chain: place, seq: 1, entry: other(2), sig: key(20).sign(&T::witness::WitnessSig::message(&place, 1, &other(2))).to_bytes() };
+    let mut s20 = w.get_chain(&w.y, pool, 20).await?.context("staker 20's chain")?;
+    let now = w.now().await?;
+    push(&mut s20, T::Body::Slash { key: pk(20), a: sa, b: sb }, w.n(120), None, now);
+    println!("13 staker 20 signed two entries at one place: its burn, on Y: {}", w.put_chain(&w.y, pool, 20, &s20).await?.0);
+    let held = w.get_chain(&w.y, pool, 20).await?.context("staker 20's chain")?;
+    let p20 = w.chain(pool, 20);
+    println!("   its stake now: {:?}; as counted for epoch {epoch}: {:?}", T::wallet::stake_at(&p20, &pd, &held, u64::MAX).map(|x| x.0), T::wallet::stake_at(&p20, &pd, &held, start).map(|x| x.0));
     Ok(())
 }

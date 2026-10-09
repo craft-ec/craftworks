@@ -104,10 +104,14 @@ pub fn may_witness(src: &Source, p: &ChainParams, s: &State, seq: u64, holds: &d
     Ok(e.hash())
 }
 
-/// THE BAGS (TOKEN §7a) a token's wallets and witnesses share — stake claims, witness signatures — one per kind, named
-/// by the token, each item one record below.
-pub fn bag_name(kind: &str, definition: &[u8; 32]) -> String {
-    format!("token {kind} {}", definition.iter().map(|b| format!("{b:02x}")).collect::<String>())
+/// THE BAGS (TOKEN §7a) the lot is read from — open sets anyone adds to (`bag` contracts, their params these addresses):
+/// a pool's STAKE CLAIMS of one epoch, and the WITNESS SIGNATURES of one entry (chain id, seq) — what a wallet reads to
+/// accept that entry, one small bag per payment. Each item one record below.
+pub fn stakers_bag(pool: &[u8; 32], epoch: u64) -> [u8; 32] {
+    *blake3::Hasher::new_derive_key("craftworks token stakers bag").update(pool).update(&epoch.to_le_bytes()).finalize().as_bytes()
+}
+pub fn witness_bag(chain: &[u8; 32], seq: u64) -> [u8; 32] {
+    *blake3::Hasher::new_derive_key("craftworks token witness bag").update(chain).update(&seq.to_le_bytes()).finalize().as_bytes()
 }
 
 /// The records' BYTES — exact: trailing bytes refused.

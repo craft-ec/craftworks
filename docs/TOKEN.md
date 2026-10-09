@@ -611,8 +611,16 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    (`token-live nft`): an item minted to M; a mint of TWO of a unique item REFUSED; M's item chain (mint + offer for
    100 B) ACCEPTED; T's lock without the creator's fee: its fill REFUSED; with a 5 fee: ACCEPTED; T received the item
    (M 0, T 1); M claimed 100 B and the creator 5; an outsider claiming the maker's 100 REFUSED.
-12. The Craftworks token: contributions as locks, payouts as claims.
-13. Batch-auction pools.
+12. FOUNDATION 6, WITNESSES BY LOT, weighted by stake — BUILT 10-09 (§7a): stake entries (release after two epochs,
+   burned on an equivocation, writer keys retired while staked still burnable); the public lot (stake claims,
+   exponential-race tickets, the k lowest); acceptance (enough of the committee, each signer's stake as held at its
+   epoch's start answering for its key); the wallet (`wallet::accept`) and the witness rule (`wallet::may_witness`);
+   checkpoints, vouches and fraud proofs removed. LIVE fx/fy (`token-live witness`): 16 stakers; every honest entry
+   drawn 16 / signed 16; a buried fake receive and the payment out of it refused by every member; the honest payment
+   accepted by its receiver's wallet from the bags alone (16 signatures, 30 ms); an equivocating staker's stake burned.
+   Stake comes from keeper rewards — with the Craftworks token (next).
+13. The Craftworks token: contributions as locks, payouts as claims.
+14. Batch-auction pools.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under

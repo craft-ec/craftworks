@@ -1401,7 +1401,7 @@ old key's addresses.
               time, burned on equivocation; storage proofs pay keepers (weak guarantee fine there). Order: keeper
               payouts (REWARDS) → reward locks as stake → witness lot by stake.
           [ ] standing per location (ramp), read by witnesses
-      [ ] 6 WITNESSES BY LOT, weighted by EARNED STAKE (TOKEN §7a) — owner 10-09: "foundation first", the token's
+      [x] 6 WITNESSES BY LOT, weighted by EARNED STAKE (TOKEN §7a) — owner 10-09: "foundation first", the token's
           issuance designed later; built generic (any locked stake), keeper rewards plug in as its source later:
           [x] 6a STAKE entry (6219feb) (part of a chain's balance locked as witness stake; released after a delay) + burn on a
               fraud proof (one key, two witness signatures at one place)
@@ -1426,7 +1426,17 @@ old key's addresses.
               stake read as held before the claims' epoch (`wallet::stake_at`), so acceptance never changes later;
               UNBOND = 2 epochs. 86 tests; 12 mutants + 3 re-runs, all killed (retire-always showed a redundant
               condition: removed). token.wasm 5a32b9ea.
-          [ ] 6e live fx/fy
+          [x] 6e LIVE fx/fy (`token-live witness`, 10-09): 16 stakers received and staked 50 each in a pool token (16/16
+              ACCEPTED); beacon fast-forwarded to epoch 1 (height 4098) in 1347 s (~3 steps/s); 16 stake claims in the
+              stakers bag; in token A every entry of 2's chain (7) and 3's receive drawn 16 / signed 16 into its witness
+              bag; 4's buried fake receive REFUSED by every member ("a receive whose send is not in its sender's chain"),
+              5's receive of its 3000 refused too ("not witnessed"); 3's wallet accepted its 300 from the bags alone —
+              Ok(16), 16 stake chains read, 30 ms; 5's wallet refused; staker 20's double signature burned on Y (stake now
+              0, still 50 as counted for epoch 1). Run on token.wasm 5a32b9ea; the commit's 9f0b0919 adds only the bag
+              address helpers (`wallet::stakers_bag` / `witness_bag`), no contract rule.
+              Notes: the epoch wait (4096 steps) dominates any live test — start a test beacon near a boundary if it
+              matters; claims bag cap 1024 items per epoch (enough now); beacon keeps 600 steps, so an OLD entry's lot
+              output needs a record of past outputs before wallets verify old entries.
       (was: backed by PROVED STORAGE — superseded by earned stake, see TOKEN §7a)
           first; closes prevention of double spends, receiver-only history checks, partition fill/refund
           — and REMOVES checkpoints + vouches outright (owner 10-09: no token is live, no old history to keep)

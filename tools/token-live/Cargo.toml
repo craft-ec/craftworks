@@ -9,6 +9,7 @@ description = "TOKEN step 3, live: the standard's contract on two nodes — a pa
 craftworks-token-contract = { path = "../../contracts-src/token", default-features = false }
 craftworks-beacon-contract = { path = "../../contracts-src/beacon", default-features = false }
 craftworks-idlog-contract = { path = "../../contracts-src/idlog", default-features = false }
+craftworks-bag-contract = { path = "../../contracts-src/bag", default-features = false }
 craftworks-identity = { path = "../../identity" }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = "1"
