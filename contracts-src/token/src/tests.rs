@@ -2847,7 +2847,7 @@ fn eref(t: [u8; 32], owner: u8, n: u8) -> escrow::EscrowRef {
 #[test]
 fn a_programs_section_never_pays_out_more_than_was_escrowed() {
     let s = escrow::Section {
-        escrows: vec![(eref(id_a(), 1, 7), 300), (eref(id_b(), 2, 8), 500)],
+        escrows: vec![(eref(id_a(), 1, 7), 300, [0; 32]), (eref(id_b(), 2, 8), 500, [0; 32])],
         refunds: vec![(eref(id_a(), 1, 7), 50)],
         pays: vec![([1; 16], id_a().into(), did(2), 250), ([2; 16], id_b().into(), did(1), 500)],
     };
@@ -2866,7 +2866,7 @@ fn a_programs_section_never_pays_out_more_than_was_escrowed() {
     assert_eq!(with(&|x| x.refunds[0].1 = 301), Err("a refund past its escrow"));
     assert_eq!(with(&|x| x.refunds.push((eref(id_a(), 1, 7), 1))), Err("a refund past its escrow"), "refunded twice");
     assert_eq!(with(&|x| x.refunds.push((eref(id_a(), 3, 9), 1))), Err("a refund of an escrow not held"));
-    assert_eq!(with(&|x| x.escrows.push((eref(id_a(), 1, 7), 1))), Err("an escrow listed twice"));
+    assert_eq!(with(&|x| x.escrows.push((eref(id_a(), 1, 7), 1, [0; 32]))), Err("an escrow listed twice"));
     assert_eq!(with(&|x| x.pays.push(([4; 16], Tok::from([9; 32]), did(3), 1))), Err("a program paying out more than was escrowed with it"), "a token nobody escrowed");
 }
 
@@ -2875,7 +2875,7 @@ fn escrowed() -> (Two, Vec<u8>) {
     let mut w = Two(HashMap::new());
     put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
     put_at(w.chain(id_a(), 1), 7, Body::Escrow { program: PROG, terms: b"sell at 2".to_vec(), amount: 300 }, Some(1), 3);
-    let sec = escrow::Section { escrows: vec![(eref(id_a(), 1, 7), 300)], refunds: vec![(eref(id_a(), 1, 7), 50)], pays: vec![([1; 16], id_a().into(), did(2), 250)] };
+    let sec = escrow::Section { escrows: vec![(eref(id_a(), 1, 7), 300, escrow::terms_hash(b"sell at 2"))], refunds: vec![(eref(id_a(), 1, 7), 50)], pays: vec![([1; 16], id_a().into(), did(2), 250)] };
     (w, [sec.encode(), b"the program's own".to_vec()].concat())
 }
 
@@ -2937,7 +2937,7 @@ fn a_witness_signs_a_payout_only_from_a_program_backed_by_real_escrows() {
     // A program listing an escrow that is not there (to pay out of thin air): no witness signs its payouts.
     let (sec, rest) = escrow::Section::decode_prefix(&prog).unwrap();
     let mut fake = sec.clone();
-    fake.escrows.push((eref(id_a(), 3, 9), 1000));
+    fake.escrows.push((eref(id_a(), 3, 9), 1000, [0; 32]));
     fake.pays.push(([2; 16], id_a().into(), did(2), 1000));
     lot.progs[0].1 = [fake.encode(), rest.to_vec()].concat();
     assert_eq!(lot.may(&x, 2, 0), Err("an escrow's chain not read"));
@@ -2947,13 +2947,18 @@ fn a_witness_signs_a_payout_only_from_a_program_backed_by_real_escrows() {
     wrong.pays.push(([2; 16], id_a().into(), did(4), 100));
     lot.progs[0].1 = [wrong.encode(), rest.to_vec()].concat();
     assert_eq!(lot.may(&x, 2, 0), Err("a program listing an escrow that is not there"));
+    // One listing a real escrow on terms its owner did not sign: the same.
+    let mut lie = sec.clone();
+    lie.escrows[0].2 = escrow::terms_hash(b"sell at 0");
+    lot.progs[0].1 = [lie.encode(), rest.to_vec()].concat();
+    assert_eq!(lot.may(&x, 2, 0), Err("a program listing an escrow that is not there"));
     // One listing a REAL, accepted escrow that was made to ANOTHER program (to spend it here): the same.
     let mut w2 = Two(w.0.clone());
     put_at(w2.chain(id_a(), 1), 8, Body::Escrow { program: [88; 32], terms: vec![], amount: 300 }, Some(1), 3);
     let mut lot2 = Lot::new();
     lot2.witness(&w2, 1).unwrap();
     let mut other = sec.clone();
-    other.escrows.push((eref(id_a(), 1, 8), 300));
+    other.escrows.push((eref(id_a(), 1, 8), 300, escrow::terms_hash(&[])));
     other.pays.push(([3; 16], id_a().into(), did(2), 300));
     lot2.progs.push((PROG, [other.encode(), rest.to_vec()].concat()));
     let mut x2 = Two(w2.0.clone());

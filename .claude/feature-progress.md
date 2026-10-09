@@ -1429,8 +1429,16 @@ old key's addresses.
               payouts within what was escrowed — any reader checks; witnesses also check every listed escrow is a real,
               ACCEPTED escrow to THAT program of that amount (`wallet::program_backed`). No cut over an open escrow.
               113 tests; 16 mutants killed (1 after an other-program case). Live with 18b (the first program).
-          [ ] 18b POOLS as their own contract (pool.wasm): orders = escrows; clearing + verdicts in the pool's state;
-              witnesses check every listed order is a real, accepted escrow
+          [x] 18b POOLS as their own contract (`contracts-src/pool`, pool.wasm f289a5b7): one contract per batch; state =
+              the standard section (orders as escrows, listed with their TERMS hash) + the orders; no verdict before the
+              settle height (beacon read), exactly the clearing after; orders merge until settle, nothing after; two
+              settled copies → more orders. The section now carries each escrow's terms hash, and witnesses check it
+              against the escrow's own terms (a program cannot list anyone's escrow on terms they did not sign). Pool 2
+              tests, 10 mutants killed; token 113. LIVE fx/fy (`token-live pool`): escrows 300 A / 500 B; batch listed;
+              a verdict before settle REFUSED, at settle ACCEPTED (250 A for 500 B at 2); a release claiming 10 more
+              REFUSED; all four releases/payouts ACCEPTED; a second payout REFUSED; 1: 750 A / 500 B, 2: 250 A / 500 B.
+              (First live run refused everything: I had deployed a token wasm built before the terms-hash change —
+              the local check on the node's bytes passed, which pointed at the deployed code. Rebuild before every run.)
           [ ] 18c SWAPS (offer/lock/fill/claim/refund) moved out the same way
           [ ] 18d the app-specific bodies removed from the token (Order/Settle/Bought, Offer/Lock/Fill/Claim/Refund)
           NOT building lending (owner).

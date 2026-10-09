@@ -18,6 +18,7 @@ case $1 in
   devices) crate=craftworks-devices-contract ;;
   beacon) crate=craftworks-beacon-contract ;;
   standing) crate=craftworks-standing-contract ;;
+  pool) crate=craftworks-pool-contract ;;
   *) echo "unknown contract: $1" >&2; exit 1 ;;
 esac
 # FROM ONE FIXED PATH (measured 10-09): Cargo's metadata for a PATH dependency (identity, standing, sdk — crates at

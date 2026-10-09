@@ -205,11 +205,11 @@ pub fn program_backed(src: &Source, base: &ChainParams, prog: &[u8; 32], chain: 
     let b = (src.program)(prog).ok_or("the program is not read")?;
     let (sec, _) = crate::escrow::Section::decode_prefix(&b).ok_or("a program with no escrow section")?;
     sec.holds()?;
-    for ((tok, owner, nonce), amount) in &sec.escrows {
+    for ((tok, owner, nonce), amount, th) in &sec.escrows {
         let c = chain(tok, owner).ok_or("an escrow's chain not read")?;
         let i = c.entries.iter().position(|x| &x.nonce == nonce).ok_or("a program listing an escrow that is not there")?;
         let x = &c.entries[i];
-        if !matches!(&x.body, Body::Escrow { program, amount: a, .. } if program == prog && a == amount) {
+        if !matches!(&x.body, Body::Escrow { program, amount: a, terms } if program == prog && a == amount && crate::escrow::terms_hash(terms) == *th) {
             return Err("a program listing an escrow that is not there");
         }
         accept(src, &base.at(*tok, *owner), x, i.checked_sub(1).map(|j| &c.entries[j]))?;

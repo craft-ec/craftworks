@@ -301,6 +301,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-pool-contract"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "craftworks-beacon-contract",
+ "craftworks-token-contract",
+]
+
+[[package]]
 name = "craftworks-standing"
 version = "0.1.0"
 dependencies = [
@@ -1500,6 +1509,7 @@ dependencies = [
  "craftworks-beacon-contract",
  "craftworks-identity",
  "craftworks-idlog-contract",
+ "craftworks-pool-contract",
  "craftworks-standing",
  "craftworks-standing-contract",
  "craftworks-token-contract",

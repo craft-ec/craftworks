@@ -18,11 +18,17 @@ pub type EscrowRef = (Tok, [u8; 32], [u8; 16]);
 pub const LIST_MAX: usize = 4096;
 pub const TERMS_MAX: usize = 256;
 
+/// The hash of an escrow's TERMS (what a program lists it by).
+pub fn terms_hash(terms: &[u8]) -> [u8; 32] {
+    *blake3::Hasher::new_derive_key("craftworks token escrow terms").update(terms).finalize().as_bytes()
+}
+
 /// A program's standard SECTION.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Section {
-    /// The escrows it holds, each with its amount (as its `Escrow` entry says).
-    pub escrows: Vec<(EscrowRef, u128)>,
+    /// The escrows it holds, each with its amount and the hash of its TERMS ([`terms_hash`]) — both as its `Escrow` entry
+    /// says (witnesses check it): a program cannot list anyone's escrow on terms they did not sign.
+    pub escrows: Vec<(EscrowRef, u128, [u8; 32])>,
     /// What goes back to an escrow's owner (in the escrow's own chain).
     pub refunds: Vec<(EscrowRef, u128)>,
     /// What is paid out: (its key — once each —, the token, the recipient, the amount).
@@ -42,9 +48,10 @@ impl Section {
     pub fn encode(&self) -> Vec<u8> {
         let mut v = b"CWPG".to_vec();
         v.extend_from_slice(&(self.escrows.len() as u32).to_le_bytes());
-        for (r, a) in &self.escrows {
+        for (r, a, t) in &self.escrows {
             put_ref(&mut v, r);
             v.extend_from_slice(&a.to_le_bytes());
+            v.extend_from_slice(t);
         }
         v.extend_from_slice(&(self.refunds.len() as u32).to_le_bytes());
         for (r, a) in &self.refunds {
@@ -65,7 +72,7 @@ impl Section {
         let mut r = crate::R(b.strip_prefix(b"CWPG")?);
         let count = |r: &mut crate::R| r.u32().map(|n| n as usize).filter(|n| *n <= LIST_MAX);
         let n = count(&mut r)?;
-        let escrows = (0..n).map(|_| Some((read_ref(&mut r)?, r.u128()?))).collect::<Option<Vec<_>>>()?;
+        let escrows = (0..n).map(|_| Some((read_ref(&mut r)?, r.u128()?, r.arr()?))).collect::<Option<Vec<_>>>()?;
         let n = count(&mut r)?;
         let refunds = (0..n).map(|_| Some((read_ref(&mut r)?, r.u128()?))).collect::<Option<Vec<_>>>()?;
         let n = count(&mut r)?;
@@ -76,7 +83,7 @@ impl Section {
     /// each payout key once; and per token, refunds and payouts within what was escrowed.
     pub fn holds(&self) -> Result<(), Why> {
         let mut seen: Vec<&EscrowRef> = Vec::new();
-        for (r, _) in &self.escrows {
+        for (r, ..) in &self.escrows {
             if seen.contains(&r) {
                 return Err("an escrow listed twice");
             }
@@ -84,7 +91,7 @@ impl Section {
         }
         let mut refunded: Vec<&EscrowRef> = Vec::new();
         for (r, a) in &self.refunds {
-            let held = self.escrows.iter().find(|(x, _)| x == r).ok_or("a refund of an escrow not held")?.1;
+            let held = self.escrows.iter().find(|(x, ..)| x == r).ok_or("a refund of an escrow not held")?.1;
             if *a > held || refunded.contains(&r) {
                 return Err("a refund past its escrow");
             }
@@ -97,7 +104,7 @@ impl Section {
             }
             keys.push(k);
         }
-        let mut toks: Vec<Tok> = self.escrows.iter().map(|((t, ..), _)| *t).chain(self.pays.iter().map(|(_, t, ..)| *t)).collect();
+        let mut toks: Vec<Tok> = self.escrows.iter().map(|((t, ..), ..)| *t).chain(self.pays.iter().map(|(_, t, ..)| *t)).collect();
         toks.sort();
         toks.dedup();
         for t in toks {
@@ -108,7 +115,7 @@ impl Section {
                 }
                 Some(s)
             };
-            let held = sum(&mut self.escrows.iter().filter(|((x, ..), _)| *x == t).map(|(_, a)| *a)).ok_or("an overflow")?;
+            let held = sum(&mut self.escrows.iter().filter(|((x, ..), ..)| *x == t).map(|(_, a, _)| *a)).ok_or("an overflow")?;
             let back = sum(&mut self.refunds.iter().filter(|((x, ..), _)| *x == t).map(|(_, a)| *a)).ok_or("an overflow")?;
             let out = sum(&mut self.pays.iter().filter(|(_, x, ..)| *x == t).map(|(.., a)| *a)).ok_or("an overflow")?;
             if back.checked_add(out).is_none_or(|x| x > held) {
