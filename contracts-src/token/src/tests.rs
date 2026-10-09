@@ -49,7 +49,7 @@ fn ensure_writer(s: &mut State, by: u8) {
     }
 }
 fn def() -> Definition {
-    Definition { code_hash: CODE, decimals: 8, min_send: 10, genesis_owner: did(1), genesis_amount: 1000, name: b"T".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32] }
+    Definition { code_hash: CODE, decimals: 8, min_send: 10, genesis_owner: did(1), genesis_amount: 1000, name: b"T".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false }
 }
 fn params(owner: u8) -> ChainParams {
     ChainParams { code_hash: CODE, definition: id(&CODE, &def().encode()), owner: did(owner), beacon: BEACON, idlog: IDLOG, item: [0; 32] }
@@ -2839,4 +2839,40 @@ fn an_escrow_its_program_never_took_is_reclaimed_after_its_time() {
     put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 300, ev: Evidence::default() }, None, 25);
     lot.progs[0].1 = pays.encode();
     assert_eq!(lot.may(&x, 2, 0), Err("a program listing an escrow reclaimed"));
+}
+
+#[test]
+fn a_non_transferable_token_never_leaves_its_chain() {
+    let badge = Definition { soulbound: true, name: b"Badge".to_vec(), ..def() };
+    assert_eq!(Definition::decode(&badge.encode()), Some(badge.clone()));
+    let try_ = |b: Body| {
+        let mut s = State::default();
+        put_at(&mut s, 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+        put_at(&mut s, 2, b, Some(1), 1);
+        check(&at(id(&CODE, &badge.encode()), 1), &badge, &s, &|_, _| None, &|_| None, Some(&log(1)), &Extra::NONE)
+    };
+    let no = Err("a transfer of a token that cannot be transferred");
+    assert_eq!(try_(Body::Send { to: did(2), amount: 10 }), no);
+    assert_eq!(try_(Body::Allow { spender: pk(2), limit: 10 }), no);
+    assert_eq!(try_(Body::Escrow { program: PROG, terms: vec![], amount: 10, until: 0 }), no);
+    assert_eq!(try_(Body::Vest { to: did(2), schedule: vec![(10, 10)] }), no);
+    assert_eq!(try_(Body::Burn { amount: 10 }), Ok(()), "burned: still its owner's to do");
+    // An approved OPERATOR's spend (no allowance needed — and none could be made): refused the same.
+    let mut a = staker();
+    let e = delegate(Entry { stamp: 15, ..entry(&a, nonce(4), Body::Spend { to: did(3), amount: 150 }) }, 5);
+    a.entries.push(e);
+    let on = ops_of(vec![op_record(1, 5, &[(10, None)], 1)]);
+    let ck = |d: &Definition| check(&params(1), d, &a, &|_, _| None, &|_| None, Some(&log(1)), &Extra { ops: Some(&on), program: None });
+    assert_eq!(ck(&def()), Ok(()), "control: transferable");
+    assert_eq!(ck(&Definition { soulbound: true, ..def() }), no);
+    // The same entries on a transferable token: taken (control).
+    let plain = |b: Body| {
+        let mut s = State::default();
+        put_at(&mut s, 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+        put_at(&mut s, 2, b, Some(1), 1);
+        check(&params(1), &def(), &s, &|_, _| None, &|_| None, Some(&log(1)), &Extra::NONE)
+    };
+    assert_eq!(plain(Body::Send { to: did(2), amount: 10 }), Ok(()));
+    assert_eq!(plain(Body::Escrow { program: PROG, terms: vec![], amount: 10, until: 0 }), Ok(()));
+    assert_eq!(plain(Body::Vest { to: did(2), schedule: vec![(10, 10)] }), Ok(()));
 }

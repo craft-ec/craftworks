@@ -118,6 +118,9 @@ pub struct Definition {
     /// The Craftworks ITEM it is of (§1c; zero: none) and the item's VERSION it pins (zero: the item as it is).
     pub item: [u8; 32],
     pub version: [u8; 32],
+    /// NON-TRANSFERABLE (soulbound, TOKEN §1d): held where it is minted — no send, spend, allowance, escrow or vest of
+    /// it; it can still be burned (and staked, which stays its owner's).
+    pub soulbound: bool,
 }
 
 /// A token's ids (TOKEN §1b).
@@ -176,6 +179,7 @@ impl Definition {
         v.extend_from_slice(&self.collection);
         v.extend_from_slice(&self.item);
         v.extend_from_slice(&self.version);
+        v.push(self.soulbound as u8);
         v
     }
     pub fn decode(b: &[u8]) -> Option<Self> {
@@ -207,9 +211,14 @@ impl Definition {
             _ => return None,
         };
         let (cap, collection, item, version) = (r.u128()?, r.arr()?, r.arr()?, r.arr()?);
+        let soulbound = match r.u8()? {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
         let ok = r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1 && royalty.is_none_or(|(b, _)| b > 0 && b <= 10_000) && (cap == 0 || genesis_amount <= cap) && (cap == 0 || matches!(ids, Ids::None | Ids::Numbered))
             && royalty.is_none_or(|(_, to)| to != HOLDERS || (ids == Ids::Numbered && cap >= 2));
-        ok.then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog, mint, freeze, ids, royalty, cap, collection, item, version })
+        ok.then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog, mint, freeze, ids, royalty, cap, collection, item, version, soulbound })
     }
     /// Minted by NUMBER into records ([`supply::RECORD`]): a cap, or numbered copies (each number once, ever).
     pub fn capped(&self) -> bool {
@@ -1161,6 +1170,10 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
             };
             // Shown: found live or by the evidence — or hidden since.
             let shown = |c: &State, cid: &[u8; 32], ev: &Evidence, at: u64, pick: &dyn Fn(&Entry) -> bool| find_cited(c, cid, ev, pick) || hidden_since(c, at);
+            // A NON-TRANSFERABLE token never leaves the chain it is minted in.
+            if d.soulbound && matches!(e.body, Body::Send { .. } | Body::Spend { .. } | Body::Allow { .. } | Body::Escrow { .. } | Body::Vest { .. }) {
+                return Err("a transfer of a token that cannot be transferred");
+            }
             balance = match &e.body {
                 Body::Genesis { amount } => {
                     // The chain's first entry after its writer (from nothing: nothing before it but who writes).

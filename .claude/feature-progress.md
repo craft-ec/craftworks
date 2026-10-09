@@ -1478,7 +1478,8 @@ old key's addresses.
           escrow (a node refuses updates naming a missing related contract — measured). token 413edcab, pool 15905a43,
           swap fcce67fa. 96 tests. Collections: NO verified-collection mechanism (owner 10-10: the collection is a
           Craftworks item, its metadata inherited, ownership checked app-side) — documented in §1c.
-      [ ] 22 NON-TRANSFERABLE (soulbound) tokens.
+      [x] 22 NON-TRANSFERABLE (soulbound) — DONE 10-10: Definition.soulbound; no send/spend/allow/escrow/vest; burn ok.
+          token d9fc2478, pool 880cdd3a, swap add7796e. 97 tests; 5 mutants killed. LIVE fx/fy `soulbound`.
       [ ] 23 TRANSFER FEES (an option the token's owner may enforce).
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).

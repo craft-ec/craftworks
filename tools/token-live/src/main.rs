@@ -142,7 +142,7 @@ impl W {
         v
     }
     fn def(&self, genesis: u8, name: &[u8], k: u8) -> T::Definition {
-        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog, mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32] }
+        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog, mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false }
     }
     fn chain(&self, token: [u8; 32], o: u8) -> T::ChainParams {
         T::ChainParams { code_hash: self.ch, definition: token, owner: did(o), beacon: self.beacon, idlog: self.idlog, item: [0; 32] }
@@ -295,6 +295,7 @@ async fn main() -> Result<()> {
             "multisig" => multisig(&w).await?,
             "nft" => nft(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "editions" => editions(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
+            "soulbound" => soulbound(&w).await?,
             "reclaim" => reclaim(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "holders" => holders(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "vest" => vest(&w).await?,
@@ -1588,5 +1589,37 @@ async fn reclaim(w: &W, scode: &[u8]) -> Result<()> {
     println!("   the program for the first: fetched {fetched} (none) — a witness signs its reclaim: {}; the deal's: {}", !took(w.n(7)), !took(w.n(8)));
     tokio::time::sleep(Duration::from_secs(2)).await;
     println!("   1's A: {}", w.get_chain(&w.x, ta, 1).await?.map_or(0, |s| s.balance()));
+    Ok(())
+}
+
+/// NON-TRANSFERABLE (TOKEN §1d), LIVE: a soulbound BADGE minted to 2 — credited, never sent, escrowed or vested; burned.
+async fn soulbound(w: &W) -> Result<()> {
+    println!("— soulbound (a token that never leaves its chain)");
+    let d = T::Definition { soulbound: true, mint: Some(one(60)), genesis_amount: 0, ..w.def(1, b"Badge", 30) };
+    let t = w.put_def(&d).await?;
+    let h = w.now().await?;
+    let mut m = T::supply::Mint { to: did(2), item: [0; 32], amount: 100, nonce: w.n(1), stamp: h, sigs: vec![] };
+    m.sigs = vec![(0, key(60).sign(&m.message(&t)).to_bytes())];
+    let sp = T::supply::Params { code_hash: w.ch, definition: t, beacon: w.beacon, epoch: T::supply::epoch(h) };
+    println!("1  100 badge minted to 2, on X: {}", put(&w.x, container(&w.code, sp.encode()), T::supply::Shard { mints: vec![m] }.encode()).await?.0);
+    let r = w.now().await?;
+    let mut c = T::State::default();
+    push(&mut c, T::Body::Mint { nonce: w.n(1), amount: 100, minted: h, ev: T::Evidence::default() }, w.n(1), None, r);
+    println!("2  2 credits it, on Y: {}", w.put_chain(&w.y, t, 2, &c).await?.0);
+    for (i, (what, b)) in [
+        ("sends 10 to 3", T::Body::Send { to: did(3), amount: 10 }),
+        ("allows 3 to spend 10", T::Body::Allow { spender: pk(3), limit: 10 }),
+        ("escrows 10", T::Body::Escrow { program: [7; 32], terms: vec![], amount: 10, until: 0 }),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut x = c.clone();
+        push(&mut x, b, w.n(10 + i as u8), Some(2), r);
+        println!("3  2 {what}, on Y: {}", w.put_chain(&w.y, t, 2, &x).await?.0);
+    }
+    let mut x = c.clone();
+    push(&mut x, T::Body::Burn { amount: 10 }, w.n(20), Some(2), r);
+    println!("4  2 burns 10, on Y: {} — holds {}", w.put_chain(&w.y, t, 2, &x).await?.0, x.balance());
     Ok(())
 }

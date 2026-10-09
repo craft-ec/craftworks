@@ -34,6 +34,7 @@ Every behaviour of the blockchain token standards, and how this standard gives i
 | NFTs — `ownerOf`, transfer, per-item approve, `setApprovalForAll` (ERC-721) | ✅ | a definition with `ids: unique`; a chain per (item, owner) whose head says held or not; `allow` per item; an OPERATORS list per (token, owner) for all items at once (§1b) |
 | Multi-token, batch transfer (ERC-1155) | ✅ batch not atomic | one definition, many ids; a chain per (item, owner); a batch = one send per item, each final on its own; an all-or-nothing bundle trade goes through a program over escrow (§1b, §4) |
 | Metadata (token and per item) | ✅ | the definition names the Craftworks ITEM it is of (and a version pin); the item's own kind schema is its metadata (§1c) |
+| Non-transferable (soulbound) | ✅ | a definition flag: nothing leaves the chain it is minted into; burn allowed (§1d) |
 | Editions, numbered copies, max supply | ✅ | an EDITION is a definition with a CAP; numbered (#n of cap) or plain (semi-fungible) copies; editions grouped by a COLLECTION; each its own royalty (§1c) |
 | History, traceable by anyone (an explorer) | ✅ | no one ledger: from genesis and the supply bag, sends followed FORWARD reach every chain; credits cite their debits BACKWARD; kept alive by readers and keepers (§1a) |
 | Atomic swap between two tokens | ✅ an app | the SWAP contract over escrow: both escrow, the deal crosses or refunds; the race closed by time (§4) |
@@ -186,6 +187,12 @@ A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has CO
   chain's last entry accepted. Numbered only: a plain copy has no number, so its share could be claimed again from
   each chain it moves to.
 - **Not built:** fractional ownership of one item (an app over escrow).
+
+## 1d. Non-transferable tokens (soulbound, 10-10)
+
+A definition may be `soulbound`: its tokens stay in the chain they are minted (or given at genesis) into — no send,
+spend (an operator's neither), allowance, escrow or vest of them; they can be burned, and staked (which stays the
+owner's). For badges, certificates, standing. (Token-2022's non-transferable extension.)
 
 ## 2. A chain's entries
 
@@ -780,6 +787,11 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    (`token-live reclaim`): 300 A to no program and 300 A to a deal that took it; reclaim before its time REFUSED; at
    it, both ACCEPTED by the chain; read from the network, a witness signs the first (its program not there) and not the
    deal's.
+
+19. NON-TRANSFERABLE — BUILT 10-10 (§1d): `Definition.soulbound`; send, spend, allow, escrow, vest refused. Token
+   97 tests; 5 mutants (one per entry kind) killed — the spend one after an operator's spend was tested (no
+   allowance can exist, an operator needs none). LIVE fx/fy (`token-live soulbound`): 100 badge minted to 2 and
+   credited; its send, allowance and escrow REFUSED; its burn ACCEPTED (holds 90).
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under
