@@ -1,0 +1,37 @@
+[package]
+name = "craftworks-devices-contract"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "DEVICES: an account's device credentials, one contract per DID — a grow-only set nobody can delete from."
+
+# Own workspace: own lockfile, so the wasm hash (part of every DID's devices address) is stable.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+freenet-stdlib = { version = "0.10.0", features = ["contract"], optional = true }
+blake3 = { version = "1", default-features = false }
+# The DID's KEY LOG (whose keys sign the credentials) and the ONE credential format.
+craftworks-idlog-contract = { path = "../idlog", default-features = false }
+craftworks-identity = { path = "../../identity" }
+# Freenet's instance id (code hash + params): its one restatement.
+contract-keys = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
+
+[dev-dependencies]
+ed25519-dalek = { version = "=2.2.0", default-features = false }
+
+[features]
+default = ["freenet-main-contract"]
+freenet-main-contract = ["dep:freenet-stdlib"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false

@@ -1457,3 +1457,18 @@ then joined at 35 with 35 earlier epochs kept; epoch 33's row "prev+8 back".
 - 2026-10-07: final once fx and fy pages republished after midnight (creator 3.5, keeper 1.75, ledger 7.83333333 — the
   same numbers as while running); 2026-10-08 running. A day is final in the ledger only when EVERY contributor's
   statement for it is (each page republishes a minute after load, then hourly).
+
+## Devices: a stolen device cut off for real (owner 10-09: "first" — removal asks the words)
+Measured 10-09: (1) a credential under the OLD key still counts after a word change (account::members: true);
+(2) the card's device list is the data key's — any device rewrites it (fx: devices 1 → 0 by one put).
+Design (no prompt for existing users): devices count only on the key log's CURRENT key; removing a device asks the
+words and ROTATES the key (same words' next key), re-issuing credentials for the devices that stay; changing words
+re-issues too; the device list lives in a DEVICES contract per DID (grow-only set of credentials, each signed by a key
+of the DID's log; merge = union; nobody can delete one) — readers count those on the current key.
+- [x] A devices contract (contracts-src/devices) + 4 tests, 5 mutants killed; devices.wasm 133,863 B
+- [x] B account: `rotate` (same words), `reissue`, members on the current key only (the measured gap now refused)
+- [ ] C core: devices contract put/read; credentials re-issued for given node keys
+- [ ] D pages: readers on the devices contract (card as fallback until it exists); each device seeds its own
+      credential; remove-device asks the words (rotate + re-issue); change-words re-issues
+- [ ] E live fx/fy: one account on two devices; remove one with the words; it rewrites the card → not counted
+- [ ] F token writers use the device's credential from the devices contract

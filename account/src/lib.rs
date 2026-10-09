@@ -245,6 +245,26 @@ pub fn change_words(log: &Log, old: &[u8], new: &[u8]) -> Option<Log> {
     Some(out)
 }
 
+/// ROTATE with the same words (removing a device, owner 10-09): the words' committed key j+1 takes over, committing to
+/// j+2; the data and encryption keys and the vault stay (the words did not change). Every credential on key j stops
+/// counting ([`members`]): the devices that stay are credentialed again ([`reissue`]).
+pub fn rotate(log: &Log, words: &[u8]) -> Option<Log> {
+    let j = position(words, log)?;
+    let head = log.head();
+    let e = Event::signed(head.seq + 1, head.id(), &owner_seed_at(words, j + 1)?, commit(&public_of(&owner_seed_at(words, j + 2)?)), head.data, head.enc, head.vault.clone())?;
+    let mut out = log.clone();
+    out.events.push(e);
+    Some(out)
+}
+
+/// CREDENTIALS AGAIN, on the log's current key (`words` hold it): each device that stays keeps its node and MLS keys,
+/// signed now by the current owner key — after a rotation, they alone count.
+pub fn reissue(did: &[u8; 32], log: &Log, words: &[u8], creds: &[Vec<u8>]) -> Option<Vec<Vec<u8>>> {
+    let j = position(words, log)?;
+    let owner = owner_seed_at(words, j)?;
+    creds.iter().map(|c| read_credential(c).filter(|(d, ..)| d == did).map(|(_, _, node, mls)| credential(did, &node, &mls, &owner))).collect()
+}
+
 /// The key event log's contract for a DID: its PUT (with a state) or its address (without).
 #[cfg(feature = "puts")]
 pub fn idlog_put(code: &[u8], did: &[u8; 32], log: Option<&Log>) -> Put {
@@ -321,11 +341,12 @@ pub fn did_bytes(text: &str) -> Option<[u8; 32]> {
 // member in a space.
 pub use craftworks_identity::{credential, read_credential};
 
-/// The node a credential makes a member of the account `did` whose key log is `log`: signed by an owner key the log
-/// ever had (rotating the words does not orphan the nodes already in).
+/// The node a credential makes a member of the account `did` whose key log is `log`: signed by the log's CURRENT owner
+/// key (owner 10-09: a rotation — changing the words, removing a device — leaves out every device not credentialed
+/// again; the devices that stay are, by [`reissue`], so nobody is orphaned — and a removed or stolen one is cut off).
 pub fn member_node(did: &[u8; 32], log: &Log, cred: &[u8]) -> Option<[u8; 32]> {
     let (d, owner, node, _) = read_credential(cred)?;
-    (d == *did && log.events.iter().any(|e| e.key == owner)).then_some(node)
+    (d == *did && log.head().key == owner).then_some(node)
 }
 
 /// WHO BELONGS (ARCHITECTURE: membership is self-certifying and gossiped): the account's nodes from every credential
@@ -493,6 +514,31 @@ mod tests {
         let x = members(&did, &log, &creds, &[(a, b, 4), (b, a, 4)]);
         assert_eq!(x, members(&did, &log, &creds, &[(b, a, 4), (a, b, 4)]));
         assert_eq!(x, vec![a, c]);
+    }
+
+    #[test]
+    fn removing_a_device_rotates_the_key_and_only_reissued_devices_count() {
+        let words = [3u8; 16];
+        let log = Log { events: vec![inception(&words).unwrap()] };
+        let did = log.events[0].id();
+        let (a, b) = ([0xA; 32], [0xB; 32]);
+        let creds = vec![credential(&did, &a, &[1; 32], &owner_seed(&words).unwrap()), credential(&did, &b, &[2; 32], &owner_seed(&words).unwrap())];
+        assert_eq!(members(&did, &log, &creds, &[]), vec![a, b]);
+        // B REMOVED: the key rotates (same words), A credentialed again — B is not.
+        let rotated = rotate(&log, &words).unwrap();
+        assert!(rotated.verify(&did), "a rotation the log takes");
+        assert_eq!(position(&words, &rotated), Some(1));
+        let again = reissue(&did, &rotated, &words, &creds[..1]).unwrap();
+        let all: Vec<Vec<u8>> = creds.iter().chain(&again).cloned().collect();
+        assert_eq!(members(&did, &rotated, &all, &[]), vec![a], "only the re-issued device");
+        assert_eq!(read_credential(&again[0]).unwrap().3, vec![1; 32], "its MLS key kept");
+        // MEASURED before (10-09): an old-key credential counted after the words changed. Now it does not.
+        let changed = change_words(&log, &words, &[4u8; 16]).unwrap();
+        assert_eq!(members(&did, &changed, &creds, &[]), Vec::<[u8; 32]>::new(), "old-key credentials do not count");
+        let renewed = reissue(&did, &changed, &[4u8; 16], &creds).unwrap();
+        assert_eq!(members(&did, &changed, &renewed, &[]), vec![a, b], "re-issued under the new words: both again");
+        // Words that are not current re-issue nothing.
+        assert!(reissue(&did, &changed, &words, &creds).is_none());
     }
 
 }

@@ -16,6 +16,7 @@ case $1 in
   bag) crate=craftworks-bag-contract ;;
   piece) crate=craftworks-piece-contract ;;
   token) crate=craftworks-token-contract ;;
+  devices) crate=craftworks-devices-contract ;;
   beacon) crate=craftworks-beacon-contract ;;
   *) echo "unknown contract: $1" >&2; exit 1 ;;
 esac
