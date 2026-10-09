@@ -73,6 +73,10 @@ pub struct Source<'a> {
     pub block: &'a dyn Fn(&[u8; 32]) -> Option<Vec<u8>>,
     /// A DID's KEY LOG, read and verified (`craftworks_idlog_contract::read`): whose keys the chain's writers stand on.
     pub keys: &'a dyn Fn(&[u8; 32]) -> Option<craftworks_idlog_contract::Log>,
+    /// A token's SUPPLY SHARD and its AUTHORITY CHAIN (every token has one, made with its definition), as held — the
+    /// wallet checks the shard itself against them before a mint counts; either not held, the mint does not count.
+    pub supply: &'a dyn Fn(&crate::supply::Params) -> Option<crate::supply::Shard>,
+    pub authority: &'a dyn Fn(&crate::authority::Params) -> Option<crate::authority::Chain>,
 }
 
 /// Why a verification did not end in value: FRAUD (its proof), or blocks of a history NOT HELD yet (fetch, run again
@@ -230,7 +234,14 @@ impl Wallet {
                 cache.borrow_mut().entry(p.id()).or_insert_with(|| read(&p)).clone().ok()
             };
             let keys = (src.keys)(&chain.owner);
-            let checked = check_window(&chain, &d, &prefix, &cited, keys.as_ref(), usize::MAX);
+            // Its mints: each in a shard that HOLDS (every mint signed by the authority of its stamp), checked here.
+            let shard = |e: u64| {
+                let sp = crate::supply::Params { code_hash: chain.code_hash, definition: chain.definition, beacon: chain.beacon, epoch: e };
+                let sh = (src.supply)(&sp)?;
+                let ac = (src.authority)(&sp.authority())?;
+                crate::supply::holds(&sp, (&d.mint, &d.freeze), &ac, &sh).ok().map(|_| sh)
+            };
+            let checked = check_window(&chain, &d, &prefix, &cited, &shard, keys.as_ref(), usize::MAX);
             // A cited chain's history NOT HELD: those blocks needed first — never a verdict on what was not read.
             let need: Vec<[u8; 32]> = cache.borrow().values().filter_map(|r| match r {
                 Err(crate::cut::Read::Need(n)) => Some(n.clone()),

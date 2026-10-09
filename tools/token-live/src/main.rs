@@ -145,7 +145,7 @@ impl W {
         v
     }
     fn def(&self, genesis: u8, name: &[u8], k: u8) -> T::Definition {
-        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog }
+        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog, mint: None, freeze: None }
     }
     fn chain(&self, token: [u8; 32], o: u8) -> T::ChainParams {
         T::ChainParams { code_hash: self.ch, definition: token, owner: did(o), beacon: self.beacon, idlog: self.idlog }
@@ -154,9 +154,19 @@ impl W {
     async fn put_log(&self, ws: &str, l: &craftworks_idlog_contract::Log) -> Result<(String, u128)> {
         put(ws, container(&self.idlog_code, l.events[0].id().to_vec()), l.encode()).await
     }
+    /// A token: its definition, then its AUTHORITY CHAIN and FREEZE LIST (every token has both, made with it — a
+    /// debit's update reads the freeze list).
     async fn put_def(&self, d: &T::Definition) -> Result<[u8; 32]> {
-        put(&self.x, container(&self.code, d.encode()), d.encode()).await?;
-        Ok(T::id(&self.ch, &d.encode()))
+        let id = T::id(&self.ch, &d.encode());
+        let a = d.authority();
+        let f = T::freeze::Params { code_hash: self.ch, definition: id, beacon: self.beacon };
+        for (params, state) in [(d.encode(), d.encode()), (a.encode(), T::authority::Chain::default().encode()), (f.encode(), T::freeze::List::default().encode())] {
+            let (said, _) = put(&self.x, container(&self.code, params), state).await?;
+            if said != "ACCEPTED" {
+                bail!("a token's definition, authority chain or freeze list: {said}");
+            }
+        }
+        Ok(id)
     }
     async fn put_chain(&self, ws: &str, token: [u8; 32], o: u8, s: &T::State) -> Result<(String, u128)> {
         put(ws, container(&self.code, self.chain(token, o).encode()), s.encode()).await
@@ -191,7 +201,7 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
     let balance = match &body {
         T::Body::Genesis { amount } => *amount,
         T::Body::Send { amount, .. } | T::Body::Burn { amount } | T::Body::Spend { amount, .. } | T::Body::Lock { amount, .. } | T::Body::Fill { amount, .. } => bal - amount,
-        T::Body::Receive { amount, .. } | T::Body::Claim { amount, .. } => bal + amount,
+        T::Body::Receive { amount, .. } | T::Body::Claim { amount, .. } | T::Body::Mint { amount, .. } => bal + amount,
         T::Body::Allow { .. } | T::Body::Offer { .. } | T::Body::Cut { .. } | T::Body::Writer { .. } => bal,
         T::Body::Refund { lock, .. } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Lock { amount, .. } if &x.nonce == lock => Some(*amount), _ => None }).unwrap_or(0),
     };
@@ -258,6 +268,7 @@ async fn main() -> Result<()> {
             "swap" => swap(&w).await?,
             "wallet" => wallet(&w).await?,
             "did" => did_mode(&w).await?,
+            "mint" => mint_mode(&w).await?,
             "cut" => cut(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("block.wasm"))?).await?,
             m => bail!("no mode {m}"),
         }
@@ -439,7 +450,7 @@ async fn wallet(w: &W) -> Result<()> {
         let _ = code;
         let chain = |p: &T::ChainParams| rt.block_on(get(&y, p.id())).ok().flatten().and_then(|b| T::State::decode(&b));
         let defs = |t: &[u8; 32]| if *t == ta { Some(d.clone()) } else { None };
-        let src = Source { chain: &chain, definition: &defs, block: &|_| None, keys: &keys_of };
+        let src = Source { chain: &chain, definition: &defs, block: &|_| None, keys: &keys_of, supply: &|_| None, authority: &|_| None };
         let p = |o: u8| T::ChainParams { code_hash: ch, definition: ta, owner: did(o), beacon, idlog };
         let fraud = |r: Result<(), Fail>| r.map_err(|f| match f {
             Fail::Fraud(f) => f,
@@ -551,7 +562,7 @@ async fn cut(w: &W, block_code: &[u8]) -> Result<()> {
         let r = loop {
             rounds += 1;
             let block = |c: &[u8; 32]| held.borrow().get(c).cloned();
-            let src = Source { chain: &chain, definition: &defs, block: &block, keys: &keys_of };
+            let src = Source { chain: &chain, definition: &defs, block: &block, keys: &keys_of, supply: &|_| None, authority: &|_| None };
             match Wallet::new(pk(3)).verify(&src, &p(3), 0) {
                 Ok(()) => break Ok(()),
                 Err(Fail::Fraud(f)) => break Err(format!("REFUSED — seq {}: {}", f.seq, f.why)),
@@ -621,5 +632,95 @@ async fn did_mode(w: &W) -> Result<()> {
         gx.is_some() && gx == gy,
         gx.as_ref().map_or(0, |s| s.balance())
     );
+    Ok(())
+}
+
+/// k-of-1 set of key `n`.
+fn one(n: u8) -> T::authority::KeySet {
+    T::authority::KeySet { k: 1, keys: vec![pk(n)] }
+}
+fn a_mint(def: &[u8; 32], to: u8, amount: u128, nonce: [u8; 16], stamp: u64, by: u8) -> T::supply::Mint {
+    let mut m = T::supply::Mint { to: did(to), amount, nonce, stamp, sigs: vec![] };
+    m.sigs = vec![(0, key(by).sign(&m.message(def)).to_bytes())];
+    m
+}
+fn a_word(def: &[u8; 32], owner: u8, frozen: bool, seq: u32, stamp: u64, by: u8) -> T::freeze::List {
+    let mut r = T::freeze::Record { owner: did(owner), frozen, seq, stamp, sigs: vec![] };
+    r.sigs = vec![(0, key(by).sign(&r.message(def)).to_bytes())];
+    T::freeze::List { records: vec![r] }
+}
+
+/// FOUNDATION 3: a token with a MINT authority (key 60) and a FREEZE authority (key 61). Mints listed in the epoch's
+/// supply shard, credited to B; a mint not listed refused; the mint set moved (sealing the supply); the old key's
+/// mint after it and into its past refused; B frozen — its send refused, a credit taken — then thawed.
+async fn mint_mode(w: &W) -> Result<()> {
+    println!("— mint");
+    let d = T::Definition { mint: Some(one(60)), freeze: Some(one(61)), ..w.def(1, b"Mint", 8) };
+    let ta = w.put_def(&d).await?;
+    let ap = d.authority();
+    let fp = T::freeze::Params { code_hash: w.ch, definition: ta, beacon: w.beacon };
+    let shard = |e: u64| T::supply::Params { code_hash: w.ch, definition: ta, beacon: w.beacon, epoch: e };
+    println!("1  definition (mint 60, freeze 61), its authority chain and freeze list, on X: ACCEPTED");
+    let h = w.now().await?;
+    let e = T::supply::epoch(h);
+    let m1 = a_mint(&ta, 2, 500, w.n(1), h, 60);
+    let sh = T::supply::Shard { mints: vec![m1.clone()] };
+    println!("2  mint 500 to B (key 60) into shard {e}, on X: {}", put(&w.x, container(&w.code, shard(e).encode()), sh.encode()).await?.0);
+    let forged = T::supply::Shard { mints: vec![m1.clone(), a_mint(&ta, 9, 900, w.n(2), h, 62)] };
+    println!("3  a shard with a mint signed by key 62 (not the authority), on Y: {}", put(&w.y, container(&w.code, shard(e).encode()), forged.encode()).await?.0);
+    let r = w.now().await?;
+    let mut cb = T::State::default();
+    push(&mut cb, T::Body::Mint { nonce: w.n(1), amount: 500, minted: h, ev: T::Evidence::default() }, w.n(1), None, r);
+    println!("4  B's chain credits the mint, on Y: {} — balance {}", w.put_chain(&w.y, ta, 2, &cb).await?.0, w.get_chain(&w.y, ta, 2).await?.map_or(0, |s| s.balance()));
+    let mut cc = T::State::default();
+    push(&mut cc, T::Body::Mint { nonce: w.n(3), amount: 700, minted: h, ev: T::Evidence::default() }, w.n(3), None, r);
+    println!("5  C's chain credits a mint not in the shard, on Y: {}", w.put_chain(&w.y, ta, 3, &cc).await?.0);
+    // The mint set moves 60 → 63, sealing every epoch so far as it holds.
+    let r = w.now().await?;
+    let closed: Vec<(u64, [u8; 32])> = (0..=T::supply::epoch(r)).filter_map(|x| (x == e).then(|| T::supply::seal(&sh, r)).flatten().map(|h| (x, h))).collect();
+    let mut c = T::authority::Change { seq: 0, role: T::authority::Role::Mint, next: Some(one(63)), stamp: r, closed, cap: 0, sigs: vec![] };
+    c.sigs = vec![(0, key(60).sign(&c.message(&ta)).to_bytes())];
+    let moved = T::authority::Chain { changes: vec![c] };
+    println!("6  the mint set moves 60 → 63 at {r} (sealing {:?}), on X: {}", moved.changes[0].closed.iter().map(|c| c.0).collect::<Vec<_>>(), put(&w.x, container(&w.code, ap.encode()), moved.encode()).await?.0);
+    let r2 = w.until(r + 1).await?;
+    let e2 = T::supply::epoch(r2);
+    let mut late = sh.clone();
+    if e2 != e {
+        late = T::supply::Shard::default();
+    }
+    let old = T::supply::merge(&late, &T::supply::Shard { mints: vec![a_mint(&ta, 2, 50, w.n(4), r2, 60)] }).unwrap();
+    println!("7  key 60 mints after the move, on X: {}", put(&w.x, container(&w.code, shard(e2).encode()), old.encode()).await?.0);
+    w.until(h + 2 * d.margin + 1).await?;
+    let back = T::supply::merge(&sh, &T::supply::Shard { mints: vec![a_mint(&ta, 2, 50, w.n(5), h, 60)] }).unwrap();
+    println!("8  key 60 mints into its past (stamp {h}, now {}), on X: {}", w.now().await?, put(&w.x, container(&w.code, shard(e).encode()), back.encode()).await?.0);
+    let r3 = w.now().await?;
+    let e3 = T::supply::epoch(r3);
+    let base = if e3 == e { sh.clone() } else { T::supply::Shard::default() };
+    let new = T::supply::merge(&base, &T::supply::Shard { mints: vec![a_mint(&ta, 2, 50, w.n(6), r3, 63)] }).unwrap();
+    println!("9  key 63 mints, on X: {}", put(&w.x, container(&w.code, shard(e3).encode()), new.encode()).await?.0);
+    // A send BEFORE any freeze (the control: B's debits append).
+    let mut pre = cb.clone();
+    push(&mut pre, T::Body::Send { to: did(3), amount: 10 }, w.n(9), Some(2), w.now().await?);
+    println!("10a B sends 10 to C, nothing frozen, on Y: {}", w.put_chain(&w.y, ta, 2, &pre).await?.0);
+    let cb = pre;
+    // FREEZE B.
+    let r = w.now().await?;
+    println!("10 B frozen (key 61), on Y: {}", put(&w.y, container(&w.code, fp.encode()), a_word(&ta, 2, true, 0, r, 61).encode()).await?.0);
+    let mut sent = cb.clone();
+    push(&mut sent, T::Body::Send { to: did(3), amount: 100 }, w.n(7), Some(2), w.now().await?);
+    println!("11 B (frozen) sends 100 to C, on Y: {}", w.put_chain(&w.y, ta, 2, &sent).await?.0);
+    let r = w.now().await?;
+    println!("12 B thawed (key 61), on Y: {}", put(&w.y, container(&w.code, fp.encode()), a_word(&ta, 2, false, 1, r, 61).encode()).await?.0);
+    let mut sent = cb.clone();
+    push(&mut sent, T::Body::Send { to: did(3), amount: 100 }, w.n(8), Some(2), w.now().await?);
+    println!("13 B (thawed) sends 100 to C, on Y: {} — balance {}", w.put_chain(&w.y, ta, 2, &sent).await?.0, w.get_chain(&w.y, ta, 2).await?.map_or(0, |s| s.balance()));
+    let mut shards: Vec<T::supply::Shard> = Vec::new();
+    let mut es = vec![e, e2, e3];
+    es.sort();
+    es.dedup();
+    for x in es {
+        shards.extend(get(&w.x, shard(x).id()).await?.and_then(|b| T::supply::Shard::decode(&b)));
+    }
+    println!("14 totalSupply (mints in the shards, from X): {:?}", T::supply::minted(&shards));
     Ok(())
 }

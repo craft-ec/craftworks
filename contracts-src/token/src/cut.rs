@@ -2,7 +2,7 @@
 //! with the blocks of its two trees — to publish, so the history stays walkable — and the evidence an entry citing
 //! something behind a cut carries. Never in the contract: it builds; the contract only verifies.
 
-use crate::{received_key, walk, Body, ChainParams, Definition, Entry, State, Why, CLAIMED, FILLED, RECEIVED};
+use crate::{received_key, walk, Body, ChainParams, Definition, Entry, State, Why, CLAIMED, FILLED, MINTED, MINTER, RECEIVED};
 use freenet_prolly::{build::TreeBuilder, proof::prove, Cid};
 use std::collections::BTreeMap;
 
@@ -17,6 +17,7 @@ pub fn received_keys(entries: &[Entry]) -> Vec<Vec<u8>> {
             Body::Receive { from, nonce, .. } => Some(received_key(RECEIVED, from, nonce)),
             Body::Fill { taker, lock, .. } => Some(received_key(FILLED, taker, lock)),
             Body::Claim { taker, lock, .. } => Some(received_key(CLAIMED, taker, lock)),
+            Body::Mint { nonce, .. } => Some(received_key(MINTED, &MINTER, nonce)),
             _ => None,
         })
         .collect();
@@ -63,7 +64,7 @@ pub fn make(p: &ChainParams, d: &Definition, whole: &State, keys: Option<&craftw
     if whole.fork.is_some() {
         return Err("a frozen chain is never cut");
     }
-    let c = walk(p, d, whole, &|_, _| None, keys, 0, usize::MAX).map_err(|(_, w)| w)?;
+    let c = walk(p, d, whole, &|_, _| None, &|_| None, keys, 0, usize::MAX).map_err(|(_, w)| w)?;
     if c.allowances.len() > 1024 || c.offers.len() > 1024 || c.locks.len() > 1024 {
         return Err("more to carry than a cut holds");
     }

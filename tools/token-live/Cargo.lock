@@ -301,6 +301,7 @@ name = "craftworks-token-contract"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "contract-keys",
  "craftworks-beacon-contract",
  "craftworks-identity",
  "craftworks-idlog-contract",

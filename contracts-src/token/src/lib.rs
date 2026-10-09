@@ -29,7 +29,7 @@ pub fn id(code_hash: &[u8; 32], params: &[u8]) -> [u8; 32] {
 }
 
 // ---- reading bytes, exactly ----
-struct R<'a>(&'a [u8]);
+pub(crate) struct R<'a>(pub(crate) &'a [u8]);
 impl<'a> R<'a> {
     fn take(&mut self, n: usize) -> Option<&'a [u8]> {
         if self.0.len() < n {
@@ -77,6 +77,10 @@ pub struct Definition {
     pub margin: u64,
     /// The KEY LOG's code hash: every owner is a DID, its keys in its key log (TOKEN §1).
     pub idlog: [u8; 32],
+    /// Its first MINT authority (TOKEN §1a): none — the supply is fixed at its genesis.
+    pub mint: Option<authority::KeySet>,
+    /// Its first FREEZE authority: none — no chain of it is ever frozen.
+    pub freeze: Option<authority::KeySet>,
 }
 
 impl Definition {
@@ -93,6 +97,8 @@ impl Definition {
         v.extend_from_slice(&self.beacon);
         v.extend_from_slice(&self.margin.to_le_bytes());
         v.extend_from_slice(&self.idlog);
+        authority::put_opt(&mut v, &self.mint);
+        authority::put_opt(&mut v, &self.freeze);
         v
     }
     pub fn decode(b: &[u8]) -> Option<Self> {
@@ -109,7 +115,13 @@ impl Definition {
         let beacon = r.arr()?;
         let margin = r.u64()?;
         let idlog = r.arr()?;
-        (r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1).then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog })
+        let mint = authority::read_opt(&mut r)?;
+        let freeze = authority::read_opt(&mut r)?;
+        (r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1).then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog, mint, freeze })
+    }
+    /// Its authority chain's params.
+    pub fn authority(&self) -> authority::Params {
+        authority::Params { code_hash: self.code_hash, definition: id(&self.code_hash, &self.encode()), beacon: self.beacon }
     }
 }
 
@@ -179,6 +191,9 @@ pub fn received_key(kind: u8, who: &[u8; 32], nonce: &[u8; 16]) -> Vec<u8> {
 pub const RECEIVED: u8 = b'r';
 pub const FILLED: u8 = b'f';
 pub const CLAIMED: u8 = b'c';
+pub const MINTED: u8 = b'm';
+/// The name a mint is received under (a mint has no sender chain).
+pub const MINTER: [u8; 32] = [0; 32];
 /// The most related contracts one validation or update asks for in its one round (the node's limit, measured 10-08:
 /// depth 1, at most 10). A holder taking in new entries asks for the definition, the beacon and every chain they cite.
 pub const MAX_RELATED: usize = 10;
@@ -221,6 +236,9 @@ pub enum Body {
     /// the device's node key, signed by an owner key of the DID's key log) and the seq of the key-log event whose key
     /// signed it. Signed by that node key (it holds it). From then on the node key signs the owner's entries.
     Writer { cred: Vec<u8>, key_seq: u32 },
+    /// A MINT (TOKEN §1a): the mint `nonce` of the token's supply shard of beacon `minted`'s epoch, naming this owner
+    /// and `amount` — credited here; appended by anyone (with work), once.
+    Mint { nonce: [u8; 16], amount: u128, minted: u64, ev: Evidence },
     /// A PRUNE CUT (owner-signed): everything before it may be dropped. It carries their result — the allowances, the
     /// open offers and locks (the balance is its own carried balance) — and the roots of two prolly trees: the
     /// HISTORY (every entry before it, by seq — its blocks published, so the chain stays walkable) and the RECEIVED SET (every name received, filled or claimed so far).
@@ -386,6 +404,13 @@ impl Entry {
                 v.extend_from_slice(lock);
                 put_ev(&mut v, ev);
             }
+            Body::Mint { nonce, amount, minted, ev } => {
+                v.push(13);
+                v.extend_from_slice(nonce);
+                v.extend_from_slice(&amount.to_le_bytes());
+                v.extend_from_slice(&minted.to_le_bytes());
+                put_ev(&mut v, ev);
+            }
             Body::Writer { cred, key_seq } => {
                 v.push(12);
                 v.extend_from_slice(&(cred.len() as u16).to_le_bytes());
@@ -514,6 +539,7 @@ impl Entry {
                 }
                 Body::Writer { cred: r.take(n)?.to_vec(), key_seq: r.u32()? }
             }
+            13 => Body::Mint { nonce: r.arr()?, amount: r.u128()?, minted: r.u64()?, ev: read_ev(r)? },
             _ => return None,
         };
         let balance = r.u128()?;
@@ -637,6 +663,19 @@ pub fn cited_chains(p: &ChainParams, s: &State) -> Vec<([u8; 32], [u8; 32])> {
     cited_chains_from(p, s, s.entries.len().saturating_sub(RECENT))
 }
 
+/// The SUPPLY SHARDS the mints among the entries from index `from` on are in (their epochs; each once).
+pub fn minted_epochs_from(s: &State, from: usize) -> Vec<u64> {
+    let mut out: Vec<u64> = Vec::new();
+    for e in s.entries.iter().skip(from) {
+        if let Body::Mint { minted, .. } = &e.body {
+            if !out.contains(&supply::epoch(*minted)) {
+                out.push(supply::epoch(*minted));
+            }
+        }
+    }
+    out
+}
+
 /// The chains the citations of the entries from index `from` on name.
 pub fn cited_chains_from(p: &ChainParams, s: &State, from: usize) -> Vec<([u8; 32], [u8; 32])> {
     let mut out: Vec<([u8; 32], [u8; 32])> = Vec::new();
@@ -729,14 +768,14 @@ pub type Why = &'static str;
 
 /// THE SHAPE RULES (TOKEN §3a, §3c) of chain `p` for definition `d` — true any time, from scratch. `chain(definition,
 /// owner)` gives a chain the citations among the last [`RECENT`] entries cite (`None`: it does not exist).
-pub fn check(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, keys: Option<&craftworks_idlog_contract::Log>) -> Result<(), Why> {
-    check_window(p, d, s, chain, keys, RECENT).map_err(|(_, why)| why)
+pub fn check(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>) -> Result<(), Why> {
+    check_window(p, d, s, chain, supply, keys, RECENT).map_err(|(_, why)| why)
 }
 
 /// The shape rules with the citations of the last `window` entries checked — the contract's [`RECENT`]; a WALLET's
 /// every one (`usize::MAX`, TOKEN §3a). Refused: the entry where (its seq) and why.
-pub fn check_window(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, keys: Option<&craftworks_idlog_contract::Log>, window: usize) -> Result<(), (u64, Why)> {
-    walk(p, d, s, chain, keys, window, usize::MAX).map(|_| ())
+pub fn check_window(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, window: usize) -> Result<(), (u64, Why)> {
+    walk(p, d, s, chain, supply, keys, window, usize::MAX).map(|_| ())
 }
 
 /// What a chain carries at its end — what a cut after it must carry.
@@ -754,7 +793,7 @@ pub struct Carried {
 /// SHOW what they cite — live, or by their evidence. An older one whose cited entry its chain's cut has since hidden is
 /// taken as it was shown when appended (the wallet walks it whole).
 /// `keys`: the OWNER's key log (the DID's), read and verified — needed where a `Writer` entry is checked.
-pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, keys: Option<&craftworks_idlog_contract::Log>, window: usize, strict_from: usize) -> Result<Carried, (u64, Why)> {
+pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, window: usize, strict_from: usize) -> Result<Carried, (u64, Why)> {
     let mut failed_at = s.entries.first().map_or(0, |e| e.seq);
     let r = (|| -> Result<Carried, Why> {
         if d.code_hash != p.code_hash {
@@ -776,6 +815,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
         let mut received: Vec<([u8; 32], [u8; 16])> = Vec::new();
         let mut filled: Vec<([u8; 32], [u8; 16])> = Vec::new();
         let mut claimed: Vec<([u8; 32], [u8; 16])> = Vec::new();
+        let mut minted: Vec<[u8; 16]> = Vec::new();
         // ALLOWANCES (spender → what is left), OFFERS, LOCKS: carried across a cut by the cut itself.
         let mut allowed: Vec<([u8; 32], u128)> = Vec::new();
         let mut offers: Vec<OfferState> = Vec::new();
@@ -1004,6 +1044,26 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
                     }
                     balance.checked_add(amount).ok_or("a balance overflow")?
                 }
+                Body::Mint { nonce, amount, minted: at, ev } => {
+                    if !e.worked() {
+                        return Err("a mint without its work");
+                    }
+                    if *at > e.stamp {
+                        return Err("a mint credited before it was minted");
+                    }
+                    if minted.contains(nonce) || !fresh(&cut, *at, received_key(MINTED, &MINTER, nonce), ev) {
+                        return Err("a mint credited twice");
+                    }
+                    minted.push(*nonce);
+                    // In its epoch's supply shard ALREADY (the shard holds only the mint authority's signed mints).
+                    if recent {
+                        let shard = supply(supply::epoch(*at)).ok_or("the mint's supply shard is not there")?;
+                        if shard.find(nonce).is_none_or(|m| m.to != p.owner || m.amount != *amount || m.stamp != *at) {
+                            return Err("a mint that is not in its supply shard");
+                        }
+                    }
+                    balance.checked_add(*amount).ok_or("a balance overflow")?
+                }
                 Body::Writer { cred, key_seq } => {
                     let (did, owner_key, node, _) = craftworks_identity::read_credential(cred).ok_or("a writer credential that does not hold")?;
                     if did != p.owner {
@@ -1155,11 +1215,25 @@ pub fn append_check(d: &Definition, now: u64, held: &State, merged: &State, keys
 /// shape rules with every NEW citation shown (live, or by its evidence — `chain` gives the cited chains) and a new cut
 /// checked against what it summarises here (it must carry exactly what that computes); then what comes before the last
 /// cut dropped.
-pub fn accept(p: &ChainParams, d: &Definition, now: u64, held: &State, merged: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, keys: Option<&craftworks_idlog_contract::Log>) -> Result<State, Why> {
+pub fn accept(p: &ChainParams, d: &Definition, now: u64, held: &State, merged: &State, chain: &dyn Fn(&[u8; 32], &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>) -> Result<State, Why> {
     append_check(d, now, held, merged, keys)?;
     let from = new_from(held, merged);
-    walk(p, d, merged, chain, keys, merged.entries.len() - from, from).map_err(|(_, w)| w)?;
+    walk(p, d, merged, chain, supply, keys, merged.entries.len() - from, from).map_err(|(_, w)| w)?;
     Ok(prune(merged))
+}
+
+/// Does anything new in `merged` (from index `from`) DEBIT the chain?
+pub fn debits_from(merged: &State, from: usize) -> bool {
+    (from..merged.entries.len()).any(|i| merged.entries[i].balance < if i == 0 { 0 } else { merged.entries[i - 1].balance })
+}
+
+/// THE FREEZE RULE (an append rule, TOKEN §2): a token with a freeze authority appends no new DEBIT of an owner its
+/// freeze list (as held) says is frozen.
+pub fn freeze_check(p: &ChainParams, d: &Definition, held: &State, merged: &State, list: &freeze::List) -> Result<(), Why> {
+    if d.freeze.is_some() && debits_from(merged, new_from(held, merged)) && list.frozen(&p.owner) {
+        return Err("a debit of a frozen account");
+    }
+    Ok(())
 }
 
 /// The WRITER that governs entry `i` of `s` (its node key, its key seq): the last `Writer` entry before it, or the
@@ -1299,19 +1373,159 @@ pub fn beacon_height(b: &[u8]) -> Option<u64> {
 
 #[cfg(feature = "freenet-main-contract")]
 mod contract {
-    use super::{accept, beacon_height, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
+    use super::{accept, authority, beacon_height, freeze, supply, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
     use freenet_stdlib::prelude::*;
 
     pub struct Token;
 
+    /// A refusal that says why (the node logs it).
+    fn why(w: super::Why) -> ContractError {
+        ContractError::InvalidUpdateWithInfo { reason: w.into() }
+    }
+
     fn related_state(related: &RelatedContracts<'static>, want: &[u8; 32]) -> Option<Option<Vec<u8>>> {
         related.states().find(|(id, _)| id.as_bytes() == want).map(|(_, s)| s.as_ref().map(|s| s.as_ref().to_vec()))
+    }
+
+    /// The definition named by an authority chain's params, checked to be the one its id names.
+    fn authority_definition(p: &authority::Params, db: &[u8]) -> Option<Definition> {
+        (id(&p.code_hash, db) == p.definition).then_some(())?;
+        Definition::decode(db)
+    }
+
+    /// An AUTHORITY CHAIN holds: every change signed by the set it replaces, from the definition's first sets.
+    fn authority_valid(params: &[u8], state: &[u8], related: &RelatedContracts<'static>) -> Result<ValidateResult, ContractError> {
+        let (Some(p), Some(c)) = (authority::Params::decode(params), authority::Chain::decode(state)) else { return Ok(ValidateResult::Invalid) };
+        let Some(db) = related_state(related, &p.definition) else { return Ok(ValidateResult::RequestRelated(vec![ContractInstanceId::new(p.definition)])) };
+        let Some(d) = db.and_then(|db| authority_definition(&p, &db)) else { return Ok(ValidateResult::Invalid) };
+        Ok(if authority::sets_at(&p.definition, (&d.mint, &d.freeze), &c, u64::MAX).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
+    }
+
+    /// An authority chain's UPDATE: merged; any change it did not hold checked against the definition and stamped
+    /// within the margin of the beacon now (both asked for in one round).
+    fn authority_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
+        let p = authority::Params::decode(params).ok_or(ContractError::InvalidState)?;
+        let held = authority::Chain::decode(state).ok_or(ContractError::InvalidState)?;
+        let mut merged = held.clone();
+        let mut related: Vec<([u8; 32], Vec<u8>)> = Vec::new();
+        for d in data {
+            let b: &[u8] = match &d {
+                UpdateData::State(s) => s.as_ref(),
+                UpdateData::Delta(x) => x.as_ref(),
+                UpdateData::StateAndDelta { state, .. } => state.as_ref(),
+                UpdateData::RelatedState { related_to, state } => {
+                    let mut k = [0u8; 32];
+                    k.copy_from_slice(related_to.as_bytes());
+                    related.push((k, state.as_ref().to_vec()));
+                    continue;
+                }
+                _ => continue,
+            };
+            merged = authority::merge(&merged, &authority::Chain::decode(b).ok_or(ContractError::InvalidUpdate)?);
+        }
+        if merged == held {
+            return Ok(UpdateModification::valid(State::from(held.encode())));
+        }
+        let got = |w: &[u8; 32]| related.iter().find(|(k, _)| k == w).map(|(_, b)| b.clone());
+        let (Some(db), Some(bb)) = (got(&p.definition), got(&p.beacon)) else {
+            return UpdateModification::requires([p.definition, p.beacon].iter().map(|w| RelatedContract { contract_instance_id: ContractInstanceId::new(*w), mode: RelatedMode::StateOnce }).collect());
+        };
+        let d = authority_definition(&p, &db).ok_or(ContractError::InvalidUpdate)?;
+        let now = beacon_height(&bb).ok_or(ContractError::InvalidUpdate)?;
+        authority::sets_at(&p.definition, (&d.mint, &d.freeze), &merged, u64::MAX).map_err(why)?;
+        authority::fresh(&held, &merged, now, d.margin).map_err(why)?;
+        Ok(UpdateModification::valid(State::from(merged.encode())))
+    }
+
+    /// A SET SIGNED BY AN AUTHORITY (a supply shard, a freeze list) holds: read with its token's definition and
+    /// authority chain, asked for together. `holds`: the set's own rule over them.
+    fn signed_set_valid(a: authority::Params, related: &RelatedContracts<'static>, holds: &dyn Fn(&Definition, &authority::Chain) -> bool) -> Result<ValidateResult, ContractError> {
+        let want = [a.definition, a.id()];
+        let missing: Vec<ContractInstanceId> = want.iter().filter(|w| related_state(related, w).is_none()).map(|w| ContractInstanceId::new(*w)).collect();
+        if !missing.is_empty() {
+            return Ok(ValidateResult::RequestRelated(missing));
+        }
+        let Some(d) = related_state(related, &a.definition).flatten().and_then(|db| authority_definition(&a, &db)) else { return Ok(ValidateResult::Invalid) };
+        let Some(chain) = related_state(related, &a.id()).flatten().and_then(|b| authority::Chain::decode(&b)) else { return Ok(ValidateResult::Invalid) };
+        Ok(if holds(&d, &chain) { ValidateResult::Valid } else { ValidateResult::Invalid })
+    }
+
+    /// Its UPDATE: `merge` folds every given state into the held one (refusing what it cannot hold); anything new is
+    /// checked by `check` against the definition, the authority chain and the beacon NOW (asked for in one round).
+    fn signed_set_update<T: PartialEq>(a: authority::Params, held: T, data: Vec<UpdateData<'static>>, merge: &dyn Fn(&T, &[u8]) -> Option<T>, encode: &dyn Fn(&T) -> Vec<u8>, check: &dyn Fn(&Definition, &authority::Chain, &T, &T, u64) -> Result<(), super::Why>) -> Result<UpdateModification<'static>, ContractError> {
+        let mut merged = None::<T>;
+        let mut related: Vec<([u8; 32], Vec<u8>)> = Vec::new();
+        for d in data {
+            let b: &[u8] = match &d {
+                UpdateData::State(s) => s.as_ref(),
+                UpdateData::Delta(x) => x.as_ref(),
+                UpdateData::StateAndDelta { state, .. } => state.as_ref(),
+                UpdateData::RelatedState { related_to, state } => {
+                    let mut k = [0u8; 32];
+                    k.copy_from_slice(related_to.as_bytes());
+                    related.push((k, state.as_ref().to_vec()));
+                    continue;
+                }
+                _ => continue,
+            };
+            merged = Some(merge(merged.as_ref().unwrap_or(&held), b).ok_or(ContractError::InvalidUpdate)?);
+        }
+        let Some(merged) = merged.filter(|m| *m != held) else {
+            return Ok(UpdateModification::valid(State::from(encode(&held))));
+        };
+        let want = [a.definition, a.id(), a.beacon];
+        let got = |w: &[u8; 32]| related.iter().find(|(k, _)| k == w).map(|(_, b)| b.clone());
+        if want.iter().any(|w| got(w).is_none()) {
+            return UpdateModification::requires(want.iter().map(|w| RelatedContract { contract_instance_id: ContractInstanceId::new(*w), mode: RelatedMode::StateOnce }).collect());
+        }
+        let d = got(&a.definition).and_then(|db| authority_definition(&a, &db)).ok_or(ContractError::InvalidUpdate)?;
+        let chain = got(&a.id()).and_then(|b| authority::Chain::decode(&b)).ok_or(ContractError::InvalidUpdate)?;
+        let now = got(&a.beacon).and_then(|b| beacon_height(&b)).ok_or(ContractError::InvalidUpdate)?;
+        check(&d, &chain, &held, &merged, now).map_err(why)?;
+        Ok(UpdateModification::valid(State::from(encode(&merged))))
+    }
+
+    fn supply_valid(params: &[u8], state: &[u8], related: &RelatedContracts<'static>) -> Result<ValidateResult, ContractError> {
+        let (Some(p), Some(sh)) = (supply::Params::decode(params), supply::Shard::decode(state)) else { return Ok(ValidateResult::Invalid) };
+        signed_set_valid(p.authority(), related, &|d, c| supply::holds(&p, (&d.mint, &d.freeze), c, &sh).is_ok())
+    }
+
+    fn supply_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
+        let p = supply::Params::decode(params).ok_or(ContractError::InvalidState)?;
+        let held = supply::Shard::decode(state).ok_or(ContractError::InvalidState)?;
+        signed_set_update(p.authority(), held, data, &|h, b| supply::merge(h, &supply::Shard::decode(b)?), &supply::Shard::encode, &|d, c, h, m, now| {
+            supply::holds(&p, (&d.mint, &d.freeze), c, m)?;
+            supply::fresh(h, m, now, d.margin)
+        })
+    }
+
+    fn freeze_valid(params: &[u8], state: &[u8], related: &RelatedContracts<'static>) -> Result<ValidateResult, ContractError> {
+        let (Some(p), Some(l)) = (freeze::Params::decode(params), freeze::List::decode(state)) else { return Ok(ValidateResult::Invalid) };
+        signed_set_valid(p.authority(), related, &|d, c| freeze::holds(&p, (&d.mint, &d.freeze), c, &l).is_ok())
+    }
+
+    fn freeze_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
+        let p = freeze::Params::decode(params).ok_or(ContractError::InvalidState)?;
+        let held = freeze::List::decode(state).ok_or(ContractError::InvalidState)?;
+        signed_set_update(p.authority(), held, data, &|h, b| freeze::merge(h, &freeze::List::decode(b)?), &freeze::List::encode, &|d, c, h, m, now| {
+            freeze::holds(&p, (&d.mint, &d.freeze), c, m)?;
+            freeze::fresh(h, m, now, d.margin)
+        })
     }
 
     #[contract]
     impl ContractInterface for Token {
         fn validate_state(parameters: Parameters<'static>, state: State<'static>, related: RelatedContracts<'static>) -> Result<ValidateResult, ContractError> {
             let params = parameters.as_ref();
+            if params.first() == Some(&super::authority::AUTHORITY) {
+                return authority_valid(params, state.as_ref(), &related);
+            }
+            if params.first() == Some(&supply::SUPPLY) {
+                return supply_valid(params, state.as_ref(), &related);
+            }
+            if params.first() == Some(&freeze::FROZEN) {
+                return freeze_valid(params, state.as_ref(), &related);
+            }
             // A DEFINITION: its state is its params, and they read as one.
             if params.first() == Some(&DEFINITION) {
                 return Ok(if state.as_ref() == params && Definition::decode(params).is_some() { ValidateResult::Valid } else { ValidateResult::Invalid });
@@ -1331,6 +1545,8 @@ mod contract {
                 want.push(p.keys_id());
             }
             want.extend(cited);
+            let shard_id = |e: u64| supply::Params { code_hash: p.code_hash, definition: p.definition, beacon: p.beacon, epoch: e }.id();
+            want.extend(super::minted_epochs_from(&s, s.entries.len().saturating_sub(super::RECENT)).into_iter().map(shard_id));
             let missing: Vec<ContractInstanceId> = want.iter().filter(|w| related_state(&related, w).is_none()).map(|w| ContractInstanceId::new(*w)).collect();
             if !missing.is_empty() {
                 return Ok(ValidateResult::RequestRelated(missing));
@@ -1342,12 +1558,22 @@ mod contract {
             let Some(d) = Definition::decode(&db) else { return Ok(ValidateResult::Invalid) };
             let chain = |def: &[u8; 32], owner: &[u8; 32]| related_state(&related, &p.at(*def, *owner).id()).flatten().and_then(|b| super::State::decode(&b));
             let keys = related_state(&related, &p.keys_id()).flatten().and_then(|b| craftworks_idlog_contract::read(&p.owner, &b));
-            Ok(if check(&p, &d, &s, &chain, keys.as_ref()).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
+            let shard = |e: u64| related_state(&related, &shard_id(e)).flatten().and_then(|b| supply::Shard::decode(&b));
+            Ok(if check(&p, &d, &s, &chain, &shard, keys.as_ref()).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
         }
 
         fn update_state(parameters: Parameters<'static>, state: State<'static>, data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
             if parameters.as_ref().first() == Some(&DEFINITION) {
                 return Ok(UpdateModification::valid(state));
+            }
+            if parameters.as_ref().first() == Some(&super::authority::AUTHORITY) {
+                return authority_update(parameters.as_ref(), state.as_ref(), data);
+            }
+            if parameters.as_ref().first() == Some(&supply::SUPPLY) {
+                return supply_update(parameters.as_ref(), state.as_ref(), data);
+            }
+            if parameters.as_ref().first() == Some(&freeze::FROZEN) {
+                return freeze_update(parameters.as_ref(), state.as_ref(), data);
             }
             let p = ChainParams::decode(parameters.as_ref()).ok_or(ContractError::InvalidState)?;
             let held = super::State::decode(state.as_ref()).ok_or(ContractError::InvalidState)?;
@@ -1383,6 +1609,12 @@ mod contract {
                     want.push(p.keys_id());
                 }
                 want.extend(cited);
+                let shard_id = |e: u64| supply::Params { code_hash: p.code_hash, definition: p.definition, beacon: p.beacon, epoch: e }.id();
+                want.extend(super::minted_epochs_from(&merged, from).into_iter().map(shard_id));
+                // A new DEBIT: the token's freeze list too (every token has one, made with its definition — one round
+                // only: the node takes no second, so it is asked for before the definition says whether it freezes).
+                let freeze_id = super::debits_from(&merged, from).then(|| super::freeze::Params { code_hash: p.code_hash, definition: p.definition, beacon: p.beacon }.id());
+                want.extend(freeze_id);
                 // ONE round holds at most MAX_RELATED (measured, the node's limit): more new citations than that are
                 // refused here, plainly — the writer sends them in smaller batches.
                 if want.len() > super::MAX_RELATED {
@@ -1400,7 +1632,11 @@ mod contract {
                 let now = beacon_height(&bb).ok_or(ContractError::InvalidUpdate)?;
                 let chain = |def: &[u8; 32], owner: &[u8; 32]| got(&p.at(*def, *owner).id()).and_then(|b| super::State::decode(&b));
                 let keys = got(&p.keys_id()).and_then(|b| craftworks_idlog_contract::read(&p.owner, &b));
-                return Ok(UpdateModification::valid(State::from(accept(&p, &d, now, &held, &merged, &chain, keys.as_ref()).map_err(|_| ContractError::InvalidUpdate)?.encode())));
+                if let Some(fl) = freeze_id {
+                    let list = got(&fl).and_then(|b| super::freeze::List::decode(&b)).ok_or(ContractError::InvalidUpdate)?;
+                    super::freeze_check(&p, &d, &held, &merged, &list).map_err(why)?;
+                }
+                return Ok(UpdateModification::valid(State::from(accept(&p, &d, now, &held, &merged, &chain, &|e| got(&shard_id(e)).and_then(|b| supply::Shard::decode(&b)), keys.as_ref()).map_err(why)?.encode())));
             }
             Ok(UpdateModification::valid(State::from(prune(&merged).encode())))
         }
@@ -1416,7 +1652,10 @@ mod contract {
     }
 }
 
+pub mod authority;
 pub mod cut;
+pub mod freeze;
+pub mod supply;
 pub mod wallet;
 
 #[cfg(test)]

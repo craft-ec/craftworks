@@ -71,17 +71,22 @@ One contract CODE (the standard). Its instances differ by their parameters — o
     entry of the recovered account beats what a stolen device signs at that seq); two entries on the SAME key seq
     are an equivocation (§3b). A cut carries its chain's writer.
   - A SPENDER (`allow`) is a key, not a DID: an allowance grants a session key or a program.
-- **Authorities** (optional, per definition): a MINT key (or none: supply fixed by the rule), a FREEZE key (or none).
+- **Authorities** (optional, per definition): a MINT key set (or none: supply fixed by the rule), a FREEZE key set (or none) — §1a.
   A multisig authority is a k-of-n key set (as the attestation substrate's named quorum).
 - **Supply rule** — a fixed menu, never arbitrary code, so every instance stays checkable (§6).
 
 ## 1a. Supply, events, authorities
 
-- **Supply bag** (`supply <definition> <epoch>`, one per beacon epoch so none grows without bound): every `mint` and `burn` pointed there by whoever appends it. `totalSupply` =
-  genesis + Σ mints − Σ burns, each pointer checked against its chain (a pointer to nothing counts nothing). Anyone
-  recomputes it; it is final as the entries it counts are (§3). **A `mint` is valid only if its pointer is ALREADY in
-  its epoch's supply bag** (validation reads that one shard: a related contract) — so no token comes into being where nobody can find
-  it.
+- **Supply bag** — a SUPPLY SHARD per token per epoch (4096 beacon heights; params `supply ‖ code ‖ definition ‖
+  beacon ‖ epoch`): every `mint` of that epoch, each signed by the mint set current at its stamp (the shard's
+  validation reads the definition and the authority chain). It admits nothing else, so nothing but the authority fills
+  it; a mint past its cap (1024) goes in the next epoch. `totalSupply` = genesis + Σ the shards' mints − burns; anyone
+  recomputes it. **A `Mint` entry is valid only if its mint is ALREADY in its epoch's shard** (the chain's update reads
+  that one shard: a related contract) — so no token comes into being where nobody can find it. **Sealed:** a first
+  PUT has no "now" to check, so a replaced mint key could make a never-made PAST shard; every MINT CHANGE therefore
+  names, for each epoch since the last one up to its own, the hash of that shard's mints stamped before it (an epoch
+  not named: none) — a set once replaced adds nothing to its past. (Burns are counted from the chains: a burn is its
+  owner's entry, no shard needed for it to be found by the walk.)
 - **Traceable without one ledger.** Every token starts at the definition's GENESIS entries or at a `mint` (all in the
   supply bag); every `send` NAMES its recipient and every credit CITES its debit. So, from genesis and the supply bag,
   anyone follows sends FORWARD to every chain that ever held the token, and any credit BACKWARD to where it came from
@@ -92,9 +97,18 @@ One contract CODE (the standard). Its instances differ by their parameters — o
   are — Freenet drops what nobody reads, where a blockchain's full nodes keep everything.
 - **Activity bag** (`activity <definition> <day>`, a shard per day): every entry pointed there — the EVENT log a wallet or explorer
   reads; a holder's own chain, subscribed, pushes its own changes.
-- **Authority chain** (params `{ definition id, "authority" }`): the definition names the FIRST mint and freeze key
-  sets; each later entry, signed by the current set, names the next (or none: dropped for good). Validation reads it
-  (a related contract) to know who may `mint` or `freeze` at that beacon.
+- **Authority chain** (params `authority ‖ code ‖ definition ‖ beacon`): the definition names the FIRST mint and
+  freeze key sets (k of n keys; none: fixed supply / never frozen); each change, signed by k of the set it replaces,
+  names the next (or none: dropped for good) and, for the mint set, seals the supply (above). An update's new changes
+  are stamped within the margin of the beacon. Validation reads it (a related contract) to know who may `mint` or
+  `freeze` at a stamp.
+- **Freeze list** (params `frozen ‖ code ‖ definition ‖ beacon`): one record per frozen or thawed account — `(owner,
+  frozen, seq, stamp)`, signed by the freeze set of its stamp; a later seq replaces it. An APPEND rule: no new debit of
+  an owner it says is frozen (credits still land). **Every token has an authority chain and a freeze list, PUT with its
+  definition**: a debit's update asks for the list in its one related round (measured: the node takes no second round,
+  "depth>1 not supported"), before the definition shows whether the token freezes at all. A freeze CHANGE caps the replaced set: a
+  record stamped before it holds only up to the change's `cap` (the highest seq that set issued) — so a word a
+  replaced key back-dates onto a node that lacked the list is always outranked by the next set (`cap + 1`).
 
 ## 1b. Many ids: NFTs and multi-tokens
 
@@ -165,7 +179,7 @@ an entry it signs carries k signatures.
 | `send(to, amount, memo)` | debit | owner | balance covers it |
 | `receive(send ref)` | credit | **anyone** | the cited send names this owner and is in its chain (related contract) and not received here before |
 | `burn(amount)` | debit, no credit anywhere | owner | balance covers it |
-| `mint(amount, proof)` | credit | per the supply rule | the rule accepts the proof (§6) |
+| `mint(nonce, amount, minted)` | credit | **anyone** (with work) | the mint is in its epoch's supply shard, naming this owner and amount; once each |
 | `allow(spender, limit, until)` | none (a permission) | owner | — |
 | `spend(allow ref, to, amount)` | debit | the spender | within the allowance's limit and time, balance covers it |
 | `offer(give, get, rate, max, until)` | none (a standing offer) | owner | — |
@@ -173,7 +187,7 @@ an entry it signs carries k signatures.
 | `lock(to, amount, hash, until)` | debit, held | owner | balance covers it |
 | `claim(lock ref, fill ref)` | credit of a lock | **anyone** | the lock names this owner and the fill citing it is in this chain |
 | `refund(lock ref)` | credit of the owner's own lock | **anyone** | §4 |
-| `freeze` / `thaw` | blocks / unblocks debits | the freeze authority | the definition names one |
+| `freeze` / `thaw` | blocks / unblocks debits | the freeze authority (in the freeze list, not the chain) | the definition names one |
 
 **Anyone may append what the chain's own rules prove** — so a receiver, a maker, a lender need never be online: their
 chain takes the credit, the fill, the claim by itself. The owner's key is needed only for what spends or permits.
@@ -403,7 +417,7 @@ yet: the entropy MIX (outputs are a clock, not yet unpredictable randomness).
 | Rule | Supply | Mint checked by |
 |---|---|---|
 | `fixed(genesis)` | issued once, in the definition's genesis entries; never more | — |
-| `authority` | the mint key's `mint` entries | the mint key's signature |
+| `authority` | the mint set's mints, in the supply shards | k signatures of the mint set current at the mint's stamp |
 | `burnable` (with any) | falls by every `burn` | the owner's signature |
 | `keepers(rate, half-life, start, end)` | a decaying launch phase: per GB-day PROVED held, by beacon-ranked assignment (REWARDS §4) | the storage proof (anyone recomputes it) |
 
@@ -520,8 +534,21 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    REFUSED by the holder; the recovered account's new writer (key 1) at that seq ACCEPTED; the old device's copy
    offered to the other node; after ~6 s both nodes held the recovery at that seq, nothing frozen, balance intact.
    basic / allow / swap / wallet / cut ran again: unchanged.
-9. The Craftworks token: contributions as locks, payouts as claims.
-10. Batch-auction pools.
+9. FOUNDATION 3, MINT + SUPPLY + AUTHORITIES + FREEZE — BUILT 10-09 (§1a, §2, §6): key sets (k of n); the authority
+   chain; `Definition.mint` / `.freeze`; the supply shard (signed mints only, sealed by every mint change); the `Mint`
+   entry (credited once, only if already in its shard; a wallet checks the shard itself against the definition and
+   the authority chain); the freeze list and its append rule. 79 tests; mutants on every new rule killed (survivors
+   each got a test: the shard of the mint's own epoch, an unchanged-balance entry while frozen, the next change's
+   span, a sealing freeze change, the seal under the signature, the cap's boundary). Found in review and fixed: a
+   wallet without the authority chain took the definition's first set (a sealed-away key's back-dated mint counted)
+   — it now counts no mint without it; a replaced freeze key could back-date a word with seq u32::MAX no later word
+   outranks — the cap. LIVE fx/fy (`token-live mint`, fresh people): a mint
+   of 500 to B listed and credited (balance 500); a shard with a mint by a key not the authority REFUSED; C's chain
+   crediting a mint not listed REFUSED; the mint set moved 60 → 63 (sealing epoch 0) ACCEPTED; key 60's mint after
+   the move REFUSED and into its past REFUSED; key 63's mint ACCEPTED; B's send with nothing frozen ACCEPTED; B frozen
+   → its send REFUSED ("a debit of a frozen account"); thawed → ACCEPTED (balance 390); totalSupply 550.
+10. The Craftworks token: contributions as locks, payouts as claims.
+11. Batch-auction pools.
 
 **Before the token carries real value, step 6 must exist** (code review, 10-08): the contract checks only the receives
 among a chain's last 9 entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under 9

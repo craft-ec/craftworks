@@ -1371,7 +1371,19 @@ old key's addresses.
   zk then SHELVED on cost (TOKEN §9 step 6): the receiving wallet is the gate.
 - TOKEN FOUNDATION list (owner 10-08): [x] 1 prune cut on prolly (writer + contract + wallet across cuts) — BUILT +
   LIVE 10-09 (TOKEN §2, §9 step 7); [x] 2 chain owner = DID via idlog — BUILT + LIVE 10-09 (TOKEN §1, §9 step 8: Writer entries with the account's node credential, rotation revokes, recovery outranks a stolen device); entries name the key seq);
-  [ ] 3 mint + supply bag + authority chain + freeze; [ ] 4 multisig; [ ] 5 ids (NFT/1155) with royalties by the fill
+  [x] 3 mint + supply bag + authority chain + freeze — BUILT + LIVE 10-09 (TOKEN §1a, §9 step 9):
+      [x] 3a key sets (k-of-n) + the AUTHORITY CHAIN (contract kind 3; changes signed by the set they replace; dropped
+          for good; an update's new changes stamped within the margin)
+      [x] 3b MINT entry (anyone appends, with work; once each by its nonce, in the received set); Definition.mint /
+          .freeze (none = fixed supply / never frozen)
+      [x] 3c the SUPPLY SHARD (kind 4, per EPOCH 4096 heights; only mints signed by the mint set of their stamp; a Mint
+          entry needs its mint already there). Found building it: a replaced mint key could PUT a never-made past
+          shard from scratch (no "now" on a first PUT) → every mint change SEALS the shards since the last one
+      [x] 3d FREEZE LIST (kind 5; records per account, later seq wins); the append rule refuses a frozen owner's new
+          debits. Measured live: the node takes ONE related round only ("depth>1 not supported") → every token has
+          an authority chain and freeze list made with its definition; a debit reads the list in its one round
+      [x] 3e live fx/fy (`token-live mint`): 14 steps as designed
+      [ ] 4 multisig; [ ] 5 ids (NFT/1155) with royalties by the fill
   rule. Later, separate programs: distribution, staking, pools, keeper issuance.
   Found while building 1: a sender's cut broke the receiver's recent receives (re-validated from scratch, no evidence
   in them) → new citations strict at update, old ones lenient (TOKEN §2). Open: a fresh PUT can carry an unshown
