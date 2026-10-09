@@ -467,6 +467,18 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   what lies near them, repair as nodes come and go (Freenet's small-world rules; nothing here rebuilds or measures
   them). A node never picks what counts: a piece counts toward its standing only if it lies NEAR the node's own ring
   location, where placement puts it — data a node makes and keeps far from itself earns nothing.
+- **Location, attested by peers; standing per LOCATION** (10-09, from freenet-core `ring/location.rs`): the core sets
+  a node's ring location from its OBSERVED address — a hash of the IPv4 /24 (IPv6 /48), "for sybil mitigation" — so a
+  node cannot choose it, and every node in one /24 shares one. A node cannot prove its own address by signing; its
+  connected peers SEE it. Each epoch peers sign "peer P is at location L" (only L published, never an address); a
+  keeper's node key signs "I run peer P" (two keys claiming one P split it). Standing is counted per LOCATION: many
+  identities on one machine share one location and split its standing, and one disk cannot cover many locations —
+  each location's region holds different pieces. Measured 10-09 on fx/fy: a page's node answers `NodeDiagnostics`
+  (its peer id, location, every hosted contract with its size — 25,635 on fx) and `ConnectedPeers` (each peer's id
+  and the address the node sees) over the page's own socket; no core change needed. (The diagnostics' peer list
+  labels the peer with the node's OWN id — a node bug; `ConnectedPeers` is right.)
+- **The proof:** each beacon tick picks, among the contracts hosted near L, pieces ranked by `blake3(beacon ‖ P ‖ id)`;
+  the node answers `hash(piece ‖ beacon ‖ P)` within the tick's window — checked by anyone who holds the piece.
 - **What is at stake: STANDING, earned over time.** A node's weight is its assigned storage PROVED over time
   (GB-days, ramping up), not the disk it shows today; two signatures at one place reset it to zero and forfeit its
   unclaimed keeper rewards (rewards claimable only after a delay, so some are always at stake). A disk cannot be
