@@ -490,6 +490,13 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   disk and a sybil's weight is cheap and rebuilt after a cheat; a strong proof of replication needs Filecoin-grade
   cryptography. And peers' attestations of a node's ring place are sybil-able (any keys can sign "peer P is at R"), so
   location cannot be the guard either. Storage proofs stay what PAYS keepers — where a fake only shifts small rewards.
+- **A witness's MISDEED is burned too** (built 10-09): beyond two signatures at one place, a witness that signs a
+  CREDIT whose cited debit is not in the cited chain (a receive with no such send, a vesting step with no such vest —
+  fake money) is shown by anyone (`Body::Misdeed`, appended to the witness's stake chain with work): the node reads the
+  cited chain in the same round and finds no such debit — and burns every stake and unbonding amount. Only where the
+  cited chain can say (unfrozen, and held back to before the debit's stamp): a debit an honest witness saw cannot have
+  vanished otherwise, so no honest witness is ever burned by it. A committee captured by grinding the beacon (§5a)
+  loses its stake for the fake it signs.
 - **Keeper proofs** (what rewards pay on; the `standing` crate). Every node takes part, no opt-in (owner: "every node
   already participates on the ring and is placed pieces"; "active participation works, and users can leave their page
   open"). The PAGE, when open, once an epoch: asks its node where it is, what it hosts and who its peers are (the wire's

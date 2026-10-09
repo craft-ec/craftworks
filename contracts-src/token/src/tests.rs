@@ -67,7 +67,7 @@ fn after(s: &State, body: &Body) -> u128 {
         Body::Receive { amount, .. } | Body::Mint { amount, .. } | Body::Vested { amount, .. } => b + amount,
         Body::Vest { schedule, .. } => b.wrapping_sub(schedule.iter().map(|x| x.1).sum::<u128>()),
         Body::Stake { amount } => b.wrapping_sub(*amount),
-        Body::Unstake { .. } | Body::Slash { .. } => b,
+        Body::Unstake { .. } | Body::Slash { .. } | Body::Misdeed { .. } => b,
         Body::Release { unstake } => b + unbonding_of(s).into_iter().find(|u| &u.0 == unstake).map_or(0, |u| u.1),
         Body::Allow { .. } | Body::Offer { .. } | Body::Cut { .. } | Body::Writer { .. } | Body::Members { .. } => b,
         Body::Spend { amount, .. } | Body::Fill { amount, .. } => b.wrapping_sub(*amount),
@@ -2469,4 +2469,92 @@ fn an_entrys_lot_is_drawn_past_the_last_moment_it_could_be_written() {
     assert_eq!(lot.accept(&w, 1, 0), Err("an entry whose lot is not drawn yet"));
     lot.drawn = e.stamp + def().margin + 2;
     assert_eq!(lot.accept(&w, 1, 0), Ok(11));
+}
+
+// ---- A WITNESS'S MISDEED: signing a credit whose debit is not there burns its stake ----
+
+/// Token A: 1 genesis + RECENT sends of 10 to 3; 3: a FAKE receive of 5000 from 1 (nonce 99, no such send) buried under
+/// those real receives. And 2's chain of token B: genesis, 600 staked — its witness key device 2's.
+fn misdeed_world() -> (Two, State) {
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 3), 99, Body::Receive { from: did(1), nonce: nonce(99), amount: 5000, cited: 0, ev: Evidence::default() }, None, 2);
+    for k in 0..RECENT as u8 {
+        put_at(w.chain(id_a(), 1), 20 + k, Body::Send { to: did(3), amount: 10 }, Some(1), 0);
+        put_at(w.chain(id_a(), 3), 20 + k, Body::Receive { from: did(1), nonce: nonce(20 + k), amount: 10, cited: 0, ev: Evidence::default() }, None, 2);
+    }
+    let mut b = State::default();
+    put_at(&mut b, 1, Body::Genesis { amount: 1000 }, Some(2), 0);
+    put_at(&mut b, 2, Body::Stake { amount: 600 }, Some(2), 0);
+    (w, b)
+}
+fn misdeed(by: u8, w: &Two, owner: u8, seq: u64) -> Body {
+    let entry = w.get(id_a(), owner).entries.iter().find(|e| e.seq == seq).unwrap().clone();
+    let chain = at(id_a(), owner).id();
+    let sig = witness::WitnessSig { chain, seq, entry: entry.hash(), sig: key(by).sign(&witness::WitnessSig::message(&chain, seq, &entry.hash())).to_bytes() };
+    Body::Misdeed { key: pk(by), sig, tok: id_a().into(), owner: did(owner), entry: Box::new(entry) }
+}
+
+#[test]
+fn a_witness_that_signed_fake_money_is_burned() {
+    let (w, b) = misdeed_world();
+    assert_eq!(w.check(id_a(), 3), Ok(()), "the contract took the buried fake");
+    let ck = |s: &State, w: &Two| check(&at(id_b(), 2), &def_b(), s, &|t, o| w.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(2)), None);
+    let burn = |body: Body, w: &Two| {
+        let mut s = b.clone();
+        put_at(&mut s, 9, body, None, 2);
+        ck(&s, w).map(|_| s)
+    };
+    let s = burn(misdeed(2, &w, 3, 0), &w).expect("proven: no such send in 1's chain");
+    let staked = walk(&at(id_b(), 2), &def_b(), &s, &|t, o| w.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(2)), RECENT, usize::MAX, None).unwrap().staked;
+    assert_eq!(staked, 0, "its stake burned");
+    assert_eq!(Entry::decode(&s.entries.last().unwrap().encode()).as_ref(), s.entries.last(), "round-trips");
+    // CONTROL: signing a REAL receive (its send is there) proves nothing.
+    assert_eq!(burn(misdeed(2, &w, 3, 1), &w).err(), Some("a misdeed whose debit is there"));
+    // Another key's signature: not this chain's to burn.
+    assert_eq!(burn(misdeed(4, &w, 3, 0), &w).err(), Some("a slash of a key that is not this chain's"));
+    // The signature on another entry than the one carried.
+    let mut wrong = misdeed(2, &w, 3, 0);
+    if let Body::Misdeed { entry, .. } = &mut wrong {
+        **entry = w.get(id_a(), 3).entries[1].clone();
+    }
+    assert_eq!(burn(wrong, &w).err(), Some("a misdeed that is not this key's signature on that entry"));
+    // This chain's key named, the signature made by another key.
+    let mut forged = misdeed(2, &w, 3, 0);
+    if let Body::Misdeed { sig, .. } = &mut forged {
+        sig.sig = key(4).sign(&witness::WitnessSig::message(&sig.chain, sig.seq, &sig.entry)).to_bytes();
+    }
+    assert_eq!(burn(forged, &w).err(), Some("a misdeed that is not this key's signature on that entry"));
+    // Another entry at the SAME seq than the one signed (another amount).
+    let mut swapped = misdeed(2, &w, 3, 0);
+    if let Body::Misdeed { entry, .. } = &mut swapped {
+        if let Body::Receive { amount, .. } = &mut entry.body {
+            *amount = 6000;
+        }
+    }
+    assert_eq!(burn(swapped, &w).err(), Some("a misdeed that is not this key's signature on that entry"));
+    // The entry named in another owner's chain than the one signed.
+    let mut moved = misdeed(2, &w, 3, 0);
+    if let Body::Misdeed { owner, .. } = &mut moved {
+        *owner = did(4);
+    }
+    assert_eq!(burn(moved, &w).err(), Some("a misdeed that is not this key's signature on that entry"));
+    // An entry that cites nothing: not shown by this.
+    assert_eq!(burn(misdeed(2, &w, 1, 0), &w).err(), Some("a misdeed of an entry it cannot show"));
+    // The cited chain cannot say — frozen by a fork, or held only from past the debit's stamp: no burn.
+    let mut frozen = Two(w.0.clone());
+    let base = State { entries: w.get(id_a(), 1).entries[..1].to_vec(), fork: None };
+    let (mut f1, mut f2) = (base.clone(), base.clone());
+    put_at(&mut f1, 50, Body::Burn { amount: 1 }, Some(1), 0);
+    put_at(&mut f2, 51, Body::Burn { amount: 2 }, Some(1), 0);
+    *frozen.chain(id_a(), 1) = merge(&f1, &f2);
+    assert_eq!(burn(misdeed(2, &w, 3, 0), &frozen).err(), Some("a misdeed the cited chain cannot show"));
+    let mut cut_past = Two(w.0.clone());
+    let mut tail = w.get(id_a(), 1).clone();
+    tail.entries.remove(0);
+    for e in &mut tail.entries {
+        e.stamp = 5;
+    }
+    *cut_past.chain(id_a(), 1) = tail;
+    assert_eq!(burn(misdeed(2, &w, 3, 0), &cut_past).err(), Some("a misdeed the cited chain cannot show"));
 }

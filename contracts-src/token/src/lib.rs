@@ -26,6 +26,8 @@ pub const NAME_MAX: usize = 64;
 /// found and proved within it). TWO supply epochs: stake is counted for a lot as held at its epoch's START
 /// (`wallet::stake_at`), so whatever was counted stays burnable for at least a full epoch after that epoch ends.
 pub const UNBOND: u64 = 2 * supply::EPOCH;
+/// The longest entry a misdeed carries.
+pub const MISDEED_MAX: usize = 16 * 1024;
 /// The most steps one vesting schedule has (TOKEN §4a).
 pub const VEST_STEPS: usize = 64;
 /// Writer keys a chain retires while it holds stake, at most — each stays burnable ([`Body::Slash`]) until the stake is
@@ -345,6 +347,11 @@ pub enum Body {
     /// Step `step` of the vest `vest` in `from`'s chain — its `amount`, released at beacon `at` — credited here;
     /// appended by anyone (with work), once, at or after `at`; `cited`: the vest's stamp.
     Vested { from: [u8; 32], vest: [u8; 16], step: u32, amount: u128, at: u64, cited: u64, ev: Evidence },
+    /// A WITNESS'S MISDEED (TOKEN §7a): this chain's witness key (`key`) signed `entry` of `owner`'s chain of token `tok`
+    /// — a credit whose cited debit is NOT in the cited chain (fake money). Shown by reading that chain (one related
+    /// contract), only where it can say: whole back to the debit's stamp and not frozen by a fork (a debit an honest
+    /// witness saw cannot have vanished otherwise). Every stake and unbonding amount BURNED. Appended by anyone.
+    Misdeed { key: [u8; 32], sig: witness::WitnessSig, tok: Tok, owner: [u8; 32], entry: Box<Entry> },
     /// A MULTISIG owner's MEMBERS (TOKEN §1): the key set that signs from here, on set seq `set_seq`. The first (seq 0)
     /// is the set the owner id names, signed by k of it; each later one, by k of the set before.
     Members { set: authority::KeySet, set_seq: u32 },
@@ -584,6 +591,16 @@ impl Entry {
                 a.put(&mut v);
                 b.put(&mut v);
             }
+            Body::Misdeed { key, sig, tok, owner, entry } => {
+                v.push(21);
+                v.extend_from_slice(key);
+                sig.put(&mut v);
+                tok.put(&mut v);
+                v.extend_from_slice(owner);
+                let b = entry.encode();
+                v.extend_from_slice(&(b.len() as u32).to_le_bytes());
+                v.extend_from_slice(&b);
+            }
             Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer, staked, unbonding, retired } => {
                 v.push(11);
                 v.extend_from_slice(history);
@@ -754,6 +771,14 @@ impl Entry {
                 }
                 let schedule = (0..n).map(|_| Some((r.u64()?, r.u128()?))).collect::<Option<Vec<_>>>()?;
                 Body::Vest { to, schedule }
+            }
+            21 => {
+                let (key, sig, tok, owner) = (r.arr()?, witness::WitnessSig::read(r)?, Tok::read(r)?, r.arr()?);
+                let n = r.u32()? as usize;
+                if n > MISDEED_MAX {
+                    return None;
+                }
+                Body::Misdeed { key, sig, tok, owner, entry: Box::new(Entry::decode(r.take(n)?)?) }
             }
             20 => Body::Vested { from: r.arr()?, vest: r.arr()?, step: r.u32()?, amount: r.u128()?, at: r.u64()?, cited: r.u64()?, ev: read_ev(r)? },
             _ => return None,
@@ -961,6 +986,11 @@ pub fn cited_chains_from(p: &ChainParams, s: &State, from: usize) -> Vec<(Tok, [
             Body::Claim { taker, token, maker, .. } => {
                 add((p.tok(), *taker));
                 add((*token, *maker));
+            }
+            Body::Misdeed { tok, entry, .. } => {
+                if let Some((from, _)) = misdeed_cites(entry) {
+                    add((*tok, from));
+                }
             }
             Body::Refund { lock, .. } => {
                 if let Some(l) = locks.iter().find(|l| &l.0 == lock) {
@@ -1224,7 +1254,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         let c = chain(&p.tok(), from).ok_or("the sender's chain is not there")?;
                         // (A frozen sender's entries stop at its fork: a send after it — in the fork — is never found
                         // here, so every debit after an equivocation is void, TOKEN §3b.)
-                        let pick = |x: &Entry| x.nonce == *nonce && x.stamp == *cited && matches!(x.body, Body::Send { to, amount: a } | Body::Spend { to, amount: a } | Body::Fill { taker: to, amount: a, .. } if to == p.owner && a == *amount);
+                        let pick = |x: &Entry| debit_for(x, &p.owner, e);
                         if !shown(&c, &cp.id(), ev, *cited, &pick) {
                             return Err("a receive whose send is not in its sender's chain");
                         }
@@ -1264,7 +1294,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     if recent {
                         let cp = p.at(p.tok(), *from);
                         let c = chain(&p.tok(), from).ok_or("the sender's chain is not there")?;
-                        let pick = |x: &Entry| x.nonce == *vest && x.stamp == *cited && matches!(&x.body, Body::Vest { to, schedule } if *to == p.owner && schedule.get(*step as usize) == Some(&(*at, *amount)));
+                        let pick = |x: &Entry| debit_for(x, &p.owner, e);
                         if !shown(&c, &cp.id(), ev, *cited, &pick) {
                             return Err("a vesting step that is not in its giver's chain");
                         }
@@ -1518,6 +1548,31 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     unbonding.clear();
                     balance
                 }
+                Body::Misdeed { key, sig, tok, owner, entry } => {
+                    if !e.worked() {
+                        return Err("a slash without its work");
+                    }
+                    if !matches!(&writer, Some(Signer::Device(node, _)) if node == key) && !retired.contains(key) {
+                        return Err("a slash of a key that is not this chain's");
+                    }
+                    if !sig.signed_by(key) || sig.entry != entry.hash() || sig.seq != entry.seq || sig.chain != p.at(*tok, *owner).id() {
+                        return Err("a misdeed that is not this key's signature on that entry");
+                    }
+                    let (from, cited) = misdeed_cites(entry).ok_or("a misdeed of an entry it cannot show")?;
+                    if recent {
+                        let c = chain(tok, &from).ok_or("the sender's chain is not there")?;
+                        // Only where the cited chain can say: unfrozen, and whole back to (before) the debit's stamp.
+                        if c.fork.is_some() || !c.entries.first().is_some_and(|f| f.seq == 0 || f.stamp < cited) {
+                            return Err("a misdeed the cited chain cannot show");
+                        }
+                        if c.entries.iter().any(|x| debit_for(x, owner, entry)) {
+                            return Err("a misdeed whose debit is there");
+                        }
+                    }
+                    staked = 0;
+                    unbonding.clear();
+                    balance
+                }
                 Body::Cut { received: root, allowances, offers: o, locks: l, writer: w, staked: st, unbonding: ub, retired: rt, .. } => {
                     if starts_at_cut {
                         // The chain's writer as the cut carries it (who signs from here — and the cut itself).
@@ -1678,6 +1733,28 @@ pub fn timed(d: &Definition, now: u64, merged: &State, e: &Entry) -> Result<(), 
         _ => {}
     }
     Ok(())
+}
+
+/// The chain and stamp a credit's cited debit is in — what a MISDEED is shown against: a receive's send (spend, fill),
+/// a vesting step's vest.
+fn misdeed_cites(e: &Entry) -> Option<([u8; 32], u64)> {
+    match &e.body {
+        Body::Receive { from, cited, .. } | Body::Vested { from, cited, .. } => Some((*from, *cited)),
+        _ => None,
+    }
+}
+
+/// Is `x` (in the cited chain) the debit the credit `e` of `owner`'s chain cites — as the contract matches it?
+pub(crate) fn debit_for(x: &Entry, owner: &[u8; 32], e: &Entry) -> bool {
+    match &e.body {
+        Body::Receive { nonce, amount, cited, .. } => {
+            x.nonce == *nonce && x.stamp == *cited && matches!(x.body, Body::Send { to, amount: a } | Body::Spend { to, amount: a } | Body::Fill { taker: to, amount: a, .. } if to == *owner && a == *amount)
+        }
+        Body::Vested { vest, step, amount, at, cited, .. } => {
+            x.nonce == *vest && x.stamp == *cited && matches!(&x.body, Body::Vest { to, schedule } if to == owner && schedule.get(*step as usize) == Some(&(*at, *amount)))
+        }
+        _ => false,
+    }
 }
 
 /// Does `s` hold a spend its own allowances do not cover — one only an OPERATOR of the owner can stand behind? Only

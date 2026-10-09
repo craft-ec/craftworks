@@ -73,8 +73,7 @@ pub fn cited(p: &ChainParams, s: &State, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 3
         held.entries.into_iter().find(|x| pick(x)).map(|x| (c, x)).ok_or("a cited entry not held")
     };
     Ok(match &e.body {
-        Body::Receive { from, nonce, amount, cited, .. } => vec![find(p.tok(), *from, &|x| x.nonce == *nonce && x.stamp == *cited && matches!(x.body, Body::Send { to, amount: a } | Body::Spend { to, amount: a } | Body::Fill { taker: to, amount: a, .. } if to == p.owner && a == *amount))?],
-        Body::Vested { from, vest, step, amount, at, cited, .. } => vec![find(p.tok(), *from, &|x| x.nonce == *vest && x.stamp == *cited && matches!(&x.body, Body::Vest { to, schedule } if *to == p.owner && schedule.get(*step as usize) == Some(&(*at, *amount))))?],
+        Body::Receive { from, .. } | Body::Vested { from, .. } => vec![find(p.tok(), *from, &|x| crate::debit_for(x, &p.owner, e))?],
         Body::Fill { offer, taker, lock, .. } => {
             let o = offers_of(s).into_iter().find(|o| &o.0 == offer).ok_or("a fill of an offer not held")?;
             vec![find(o.1, *taker, &|x| x.nonce == *lock)?]

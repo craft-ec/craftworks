@@ -202,7 +202,7 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
         T::Body::Receive { amount, .. } | T::Body::Claim { amount, .. } | T::Body::Mint { amount, .. } | T::Body::Vested { amount, .. } => bal + amount,
         T::Body::Vest { schedule, .. } => bal - schedule.iter().map(|x| x.1).sum::<u128>(),
         T::Body::Stake { amount } => bal - amount,
-        T::Body::Unstake { .. } | T::Body::Slash { .. } => bal,
+        T::Body::Unstake { .. } | T::Body::Slash { .. } | T::Body::Misdeed { .. } => bal,
         T::Body::Release { unstake } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Unstake { amount } if &x.nonce == unstake => Some(*amount), _ => None }).unwrap_or(0),
         T::Body::Allow { .. } | T::Body::Offer { .. } | T::Body::Cut { .. } | T::Body::Writer { .. } | T::Body::Members { .. } => bal,
         T::Body::Refund { lock, .. } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Lock { amount, fee, .. } if &x.nonce == lock => Some(amount + fee.map_or(0, |f| f.1)), _ => None }).unwrap_or(0),
@@ -279,6 +279,7 @@ async fn main() -> Result<()> {
             "nft" => nft(&w).await?,
             "vest" => vest(&w).await?,
             "operators" => operators_mode(&w).await?,
+            "misdeed" => misdeed_mode(&w).await?,
             "witness" => witness_mode(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("bag.wasm"))?).await?,
             "cut" => cut(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("block.wasm"))?).await?,
             m => bail!("no mode {m}"),
@@ -1110,4 +1111,51 @@ fn fresh_mix() -> [u8; 32] {
     let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     *blake3::hash(&[&t.to_le_bytes()[..], &n.to_le_bytes()].concat()).as_bytes()
+}
+
+/// A WITNESS'S MISDEED, LIVE (TOKEN §7a): staker 2 (witness key device 2) signs 3's buried FAKE receive; anyone appends
+/// the proof to 2's stake chain — the node reads the sender's chain, finds no such send, and the stake is burned. A
+/// "misdeed" over a REAL receive is refused.
+async fn misdeed_mode(w: &W) -> Result<()> {
+    println!("— misdeed");
+    let da = w.def(1, b"Fake", 15);
+    let ta = w.put_def(&da).await?;
+    let dp = w.def(2, b"Stake", 16);
+    let tp = w.put_def(&dp).await?;
+    let h = w.now().await?;
+    let mut a1 = T::State::default();
+    push(&mut a1, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h);
+    for k in 0..T::RECENT as u8 {
+        push(&mut a1, T::Body::Send { to: did(3), amount: 10 }, w.n(20 + k), Some(1), h);
+    }
+    println!("1  1: genesis, {} sends of 10 to 3, on X: {}", T::RECENT, w.put_chain(&w.x, ta, 1, &a1).await?.0);
+    let mut st = T::State::default();
+    push(&mut st, T::Body::Genesis { amount: 1000 }, w.n(2), Some(2), h);
+    push(&mut st, T::Body::Stake { amount: 600 }, w.n(3), Some(2), h);
+    println!("2  2 stakes 600 (its witness key: device 2), on Y: {}", w.put_chain(&w.y, tp, 2, &st).await?.0);
+    let r = w.until(h + 2).await?;
+    let mut c3 = T::State::default();
+    push(&mut c3, T::Body::Receive { from: did(1), nonce: w.n(99), amount: 5000, cited: h, ev: T::Evidence::default() }, w.n(99), None, r);
+    for k in 0..T::RECENT as u8 {
+        push(&mut c3, T::Body::Receive { from: did(1), nonce: w.n(20 + k), amount: 10, cited: h, ev: T::Evidence::default() }, w.n(20 + k), None, r);
+    }
+    println!("3  3: a FAKE receive of 5000 buried under {} real ones, on Y: {}", T::RECENT, w.put_chain(&w.y, ta, 3, &c3).await?.0);
+    let place = w.chain(ta, 3).id();
+    let proof = |seq: usize| {
+        let e = c3.entries[seq].clone();
+        let sig = T::witness::WitnessSig { chain: place, seq: e.seq, entry: e.hash(), sig: key(2).sign(&T::witness::WitnessSig::message(&place, e.seq, &e.hash())).to_bytes() };
+        T::Body::Misdeed { key: pk(2), sig, tok: ta.into(), owner: did(3), entry: Box::new(e) }
+    };
+    let now = w.now().await?;
+    let mut real = st.clone();
+    push(&mut real, proof(1), w.n(40), None, now);
+    println!("4  a 'misdeed' over 3's REAL receive (2 signed it), on Y: {}", w.put_chain(&w.y, tp, 2, &real).await?.0);
+    let mut burn = st.clone();
+    push(&mut burn, proof(0), w.n(41), None, now);
+    println!("5  the misdeed over the FAKE receive 2 signed — appended by anyone, on Y: {}", w.put_chain(&w.y, tp, 2, &burn).await?.0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let held = w.get_chain(&w.y, tp, 2).await?.context("2's chain")?;
+    let staked = T::walk(&w.chain(tp, 2), &dp, &held, &|_, _| None, &|_| None, None, 0, held.entries.len(), None).map(|c| c.staked);
+    println!("   2's stake on Y now: {:?} (was 600)", staked.map_err(|e| e.1));
+    Ok(())
 }

@@ -1419,8 +1419,11 @@ old key's addresses.
           grinding by an extender, a faster core's lead. beacon.wasm 92300b2a, token.wasm 65f67643.
           LIVE fx/fy: beacon-live fake caught + honest step back on both nodes; token-live witness on these contracts:
           every honest entry 16/16, the buried fake and its payment refused by all, 3's wallet Ok(16) in 34 ms, burn ACCEPTED.
-          NEW ITEM (found here): BURN A WITNESS WHO SIGNS AN ENTRY THAT DOES NOT HOLD — a fraud proof anyone checks by
-          re-running the witness rule; without it a committee captured by grinding costs nothing.
+      [x] 10 WITNESS MISDEED BURN — BUILT + LIVE 10-09: `Body::Misdeed` (key, its signature, the signed credit): the node
+          reads the cited chain and, where it can say (unfrozen, held back to the debit's stamp), finds no debit → stake
+          and unbonding burned. One home for "the debit a credit cites": `debit_for` (contract, wallet, misdeed). 96
+          tests; 9 mutants + 3 re-runs after precise cases, all killed. LIVE fx/fy (`token-live misdeed`): a misdeed over a
+          REAL receive REFUSED; over the buried FAKE ACCEPTED, stake 600 → 0. token.wasm 014d49a9.
       [x] 8 OPERATORS / setApprovalForAll (TOKEN §1b) — BUILT + LIVE 10-09: operators list per (token, owner), spans
           kept, append only extends the past; spends by an operator on at their stamp; read only when needed. 94 tests,
           20 mutants killed. token.wasm 6f0d1dca. NEXT (contract/mechanism, buildable now): beacon entropy mix → beacon
