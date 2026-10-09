@@ -64,7 +64,8 @@ fn after(s: &State, body: &Body) -> u128 {
     match body {
         Body::Genesis { amount } => *amount,
         Body::Send { amount, .. } | Body::Burn { amount } => b.wrapping_sub(*amount),
-        Body::Receive { amount, .. } | Body::Mint { amount, .. } => b + amount,
+        Body::Receive { amount, .. } | Body::Mint { amount, .. } | Body::Vested { amount, .. } => b + amount,
+        Body::Vest { schedule, .. } => b.wrapping_sub(schedule.iter().map(|x| x.1).sum::<u128>()),
         Body::Stake { amount } => b.wrapping_sub(*amount),
         Body::Unstake { .. } | Body::Slash { .. } => b,
         Body::Release { unstake } => b + unbonding_of(s).into_iter().find(|u| &u.0 == unstake).map_or(0, |u| u.1),
@@ -733,9 +734,9 @@ fn three_hops() -> Two {
     let mut w = Two(HashMap::new());
     put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
     put_at(w.chain(id_a(), 1), 2, Body::Send { to: did(2), amount: 300 }, Some(1), 0);
-    put_at(w.chain(id_a(), 2), 2, Body::Receive { from: did(1), nonce: nonce(2), amount: 300, cited: 0, ev: Evidence::default() }, None, 0);
-    put_at(w.chain(id_a(), 2), 3, Body::Send { to: did(3), amount: 100 }, Some(2), 0);
-    put_at(w.chain(id_a(), 3), 3, Body::Receive { from: did(2), nonce: nonce(3), amount: 100, cited: 0, ev: Evidence::default() }, None, 0);
+    put_at(w.chain(id_a(), 2), 2, Body::Receive { from: did(1), nonce: nonce(2), amount: 300, cited: 0, ev: Evidence::default() }, None, 2);
+    put_at(w.chain(id_a(), 2), 3, Body::Send { to: did(3), amount: 100 }, Some(2), 2);
+    put_at(w.chain(id_a(), 3), 3, Body::Receive { from: did(2), nonce: nonce(3), amount: 100, cited: 2, ev: Evidence::default() }, None, 4);
     w
 }
 
@@ -744,13 +745,13 @@ fn three_hops() -> Two {
 fn buried() -> Two {
     let mut w = Two(HashMap::new());
     put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
-    put_at(w.chain(id_a(), 2), 9, Body::Receive { from: did(1), nonce: nonce(9), amount: 5000, cited: 0, ev: Evidence::default() }, None, 0);
+    put_at(w.chain(id_a(), 2), 9, Body::Receive { from: did(1), nonce: nonce(9), amount: 5000, cited: 0, ev: Evidence::default() }, None, 2);
     for k in 0..RECENT as u8 {
         put_at(w.chain(id_a(), 1), 20 + k, Body::Send { to: did(2), amount: 10 }, Some(1), 0);
-        put_at(w.chain(id_a(), 2), 20 + k, Body::Receive { from: did(1), nonce: nonce(20 + k), amount: 10, cited: 0, ev: Evidence::default() }, None, 0);
+        put_at(w.chain(id_a(), 2), 20 + k, Body::Receive { from: did(1), nonce: nonce(20 + k), amount: 10, cited: 0, ev: Evidence::default() }, None, 2);
     }
-    put_at(w.chain(id_a(), 2), 40, Body::Send { to: did(3), amount: 3000 }, Some(2), 0);
-    put_at(w.chain(id_a(), 3), 40, Body::Receive { from: did(2), nonce: nonce(40), amount: 3000, cited: 0, ev: Evidence::default() }, None, 0);
+    put_at(w.chain(id_a(), 2), 40, Body::Send { to: did(3), amount: 3000 }, Some(2), 2);
+    put_at(w.chain(id_a(), 3), 40, Body::Receive { from: did(2), nonce: nonce(40), amount: 3000, cited: 2, ev: Evidence::default() }, None, 4);
     w
 }
 
@@ -1936,6 +1937,8 @@ struct Lot {
     claims: Vec<draw::StakeClaim>,
     sigs: HashMap<([u8; 32], u64), Vec<witness::WitnessSig>>,
     drawn: u64,
+    /// The beacon's height as the witnesses read it.
+    now: u64,
 }
 impl Lot {
     fn new() -> Lot {
@@ -1946,7 +1949,7 @@ impl Lot {
                 draw::StakeClaim { owner: [n; 32], amount: 100, epoch: 0, key: kb, sig: key(n).sign(&draw::StakeClaim::message(&pool, &[n; 32], 100, 0, &kb)).to_bytes() }
             })
             .collect();
-        Lot { claims, sigs: HashMap::new(), drawn: 100 }
+        Lot { claims, sigs: HashMap::new(), drawn: 100, now: 100 }
     }
     fn out(h: u64) -> [u8; 32] {
         *blake3::hash(&h.to_le_bytes()).as_bytes()
@@ -1985,7 +1988,7 @@ impl Lot {
     fn may(&self, w: &Two, owner: u8, seq: u64) -> Result<[u8; 32], Why> {
         let p = at(id_a(), owner);
         let holds = |s: &State| check(&p, &def(), s, &|t, o| w.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(owner)));
-        wallet::may_witness(&self.src(), &p, w.get(id_a(), owner), seq, &holds, &|t, o| w.0.get(&(t.definition, *o)).cloned())
+        wallet::may_witness(&self.src(), &p, &def(), w.get(id_a(), owner), seq, self.now, &holds, &|t, o| w.0.get(&(t.definition, *o)).cloned())
     }
     fn accept(&self, w: &Two, owner: u8, seq: u64) -> Result<usize, Why> {
         let e = w.get(id_a(), owner).entries.iter().find(|e| e.seq == seq).unwrap().clone();
@@ -2056,7 +2059,7 @@ fn a_witness_refuses_a_forked_chain_and_what_it_does_not_hold() {
     let mut tail = w.get(id_a(), 1).clone();
     tail.entries.remove(0);
     let p = at(id_a(), 1);
-    assert_eq!(wallet::may_witness(&lot.src(), &p, &tail, 1, &|_| Ok(()), &|_, _| None), Err("an entry whose predecessor is not held"));
+    assert_eq!(wallet::may_witness(&lot.src(), &p, &def(), &tail, 1, 100, &|_| Ok(()), &|_, _| None), Err("an entry whose predecessor is not held"));
     // Two entries signed at one seq: frozen — nobody witnesses past the fork.
     let base = State { entries: w.get(id_a(), 1).entries[..1].to_vec(), fork: None };
     let (mut f1, mut f2) = (base.clone(), base.clone());
@@ -2087,10 +2090,10 @@ fn a_buried_receive_of_a_real_send_to_someone_else_is_never_witnessed() {
     let mut w = Two(HashMap::new());
     put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
     put_at(w.chain(id_a(), 1), 8, Body::Send { to: did(4), amount: 10 }, Some(1), 0);
-    put_at(w.chain(id_a(), 2), 9, Body::Receive { from: did(1), nonce: nonce(8), amount: 5000, cited: 0, ev: Evidence::default() }, None, 0);
+    put_at(w.chain(id_a(), 2), 9, Body::Receive { from: did(1), nonce: nonce(8), amount: 5000, cited: 0, ev: Evidence::default() }, None, 2);
     for k in 0..RECENT as u8 {
         put_at(w.chain(id_a(), 1), 20 + k, Body::Send { to: did(2), amount: 10 }, Some(1), 0);
-        put_at(w.chain(id_a(), 2), 20 + k, Body::Receive { from: did(1), nonce: nonce(20 + k), amount: 10, cited: 0, ev: Evidence::default() }, None, 0);
+        put_at(w.chain(id_a(), 2), 20 + k, Body::Receive { from: did(1), nonce: nonce(20 + k), amount: 10, cited: 0, ev: Evidence::default() }, None, 2);
     }
     assert_eq!(w.check(id_a(), 2), Ok(()), "the contract, checking only the last RECENT citations, takes it");
     let mut lot = Lot::new();
@@ -2196,4 +2199,157 @@ fn stake_counted_for_an_epoch_stays_burnable_a_full_epoch_after_it_ends() {
     let mut slashed = a.clone();
     at_stamp(&mut slashed, 4, Body::Slash { key: pk(1), a: wsig(1, 9, 5, 1), b: wsig(1, 9, 5, 2) }, None, 3 * supply::EPOCH - 1);
     assert_eq!(ck(&slashed), Ok(()), "burned for what it signed in epoch 1");
+}
+
+// ---- VESTING (TOKEN §4a): a debit now, released in steps, never taken back ----
+
+fn vest_of(steps: &[(u64, u128)]) -> Body {
+    Body::Vest { to: did(2), schedule: steps.to_vec() }
+}
+/// 1: genesis, then vests 100 at 10 and 200 at 20 to 2 (stamp 1).
+fn vesting() -> Two {
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 5, vest_of(&[(10, 100), (20, 200)]), Some(1), 1);
+    w
+}
+
+#[test]
+fn a_vest_is_a_debit_of_its_whole_schedule_now() {
+    let w = vesting();
+    assert_eq!(w.check(id_a(), 1), Ok(()));
+    assert_eq!(w.get(id_a(), 1).balance(), 700);
+    let try_vest = |b: Body| {
+        let mut x = Two(HashMap::new());
+        put_at(x.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+        put_at(x.chain(id_a(), 1), 5, b, Some(1), 1);
+        x.check(id_a(), 1)
+    };
+    assert_eq!(try_vest(vest_of(&[])), Err("a vesting schedule that is not rising steps"));
+    assert_eq!(try_vest(vest_of(&[(10, 100), (10, 100)])), Err("a vesting schedule that is not rising steps"));
+    assert_eq!(try_vest(vest_of(&[(20, 100), (10, 100)])), Err("a vesting schedule that is not rising steps"));
+    assert_eq!(try_vest(vest_of(&[(10, 100), (20, 9)])), Err("a send under the minimum"));
+    assert_eq!(try_vest(vest_of(&[(10, 600), (20, 401)])), Err("a debit over the balance"));
+    assert_eq!(try_vest(vest_of(&[(10, 600), (20, 400)])), Ok(()), "the whole balance");
+    assert_eq!(try_vest(Body::Vest { to: did(1), schedule: vec![(10, 100)] }), Err("a vest to itself"));
+    assert_eq!(try_vest(vest_of(&(0..=VEST_STEPS as u64).map(|i| (i + 1, 10)).collect::<Vec<_>>())), Err("a vesting schedule that is not rising steps"), "past the step cap");
+    assert_eq!(try_vest(vest_of(&(0..VEST_STEPS as u64).map(|i| (i + 1, 10)).collect::<Vec<_>>())), Ok(()), "at the cap");
+    // Never taken back: the giver has no entry that undoes it — a refund of it names no lock.
+    let mut back = vesting();
+    put_at(back.chain(id_a(), 1), 6, Body::Refund { lock: nonce(5), ev: Evidence::default() }, None, 30);
+    assert_eq!(back.check(id_a(), 1), Err("a refund of a lock that is not here"));
+}
+
+#[test]
+fn each_vesting_step_is_received_once_as_its_schedule_says() {
+    let mut w = vesting();
+    put_at(w.chain(id_a(), 2), 10, Body::Vested { from: did(1), vest: nonce(5), step: 0, amount: 100, at: 10, cited: 1, ev: Evidence::default() }, None, 10);
+    assert_eq!(w.check(id_a(), 2), Ok(()));
+    assert_eq!(w.get(id_a(), 2).balance(), 100);
+    let with = |b: Body| {
+        let mut x = Two(w.0.clone());
+        put_at(x.chain(id_a(), 2), 11, b, None, 20);
+        x.check(id_a(), 2)
+    };
+    let v = |step: u32, amount: u128, at: u64, vest: u8, cited: u64| Body::Vested { from: did(1), vest: nonce(vest), step, amount, at, cited, ev: Evidence::default() };
+    assert_eq!(with(v(1, 200, 20, 5, 1)), Ok(()), "the second step");
+    assert_eq!(with(v(0, 100, 10, 5, 1)), Err("a vesting step received twice"));
+    assert_eq!(with(v(1, 201, 20, 5, 1)), Err("a vesting step that is not in its giver's chain"), "another amount");
+    assert_eq!(with(v(1, 200, 19, 5, 1)), Err("a vesting step that is not in its giver's chain"), "another time");
+    assert_eq!(with(v(2, 200, 20, 5, 1)), Err("a vesting step that is not in its giver's chain"), "no such step");
+    assert_eq!(with(v(1, 200, 20, 6, 1)), Err("a vesting step that is not in its giver's chain"), "no such vest");
+    assert_eq!(with(v(1, 200, 20, 5, 0)), Err("a vesting step that is not in its giver's chain"), "another stamp");
+    // Only its beneficiary: the same step credited to 3 is not in the giver's chain.
+    let mut x = Two(w.0.clone());
+    put_at(x.chain(id_a(), 3), 10, v(1, 200, 20, 5, 1), None, 20);
+    assert_eq!(x.check(id_a(), 3), Err("a vesting step that is not in its giver's chain"));
+}
+
+#[test]
+fn a_vesting_step_counts_only_from_its_time_even_in_a_first_copy() {
+    // Checked from scratch (as a node takes a FIRST copy, with no append rules): stamped before its step, refused.
+    let w = vesting();
+    let at = |stamp: u64| {
+        let mut x = Two(w.0.clone());
+        put_at(x.chain(id_a(), 2), 10, Body::Vested { from: did(1), vest: nonce(5), step: 1, amount: 200, at: 20, cited: 1, ev: Evidence::default() }, None, stamp);
+        x.check(id_a(), 2)
+    };
+    assert_eq!(at(19), Err("a vesting step before its time"));
+    assert_eq!(at(20), Ok(()));
+    // A step stamped at its time but written BEFORE it (a stamp from the future): no witness signs it.
+    let mut x = Two(w.0.clone());
+    put_at(x.chain(id_a(), 2), 10, Body::Vested { from: did(1), vest: nonce(5), step: 1, amount: 200, at: 20, cited: 1, ev: Evidence::default() }, None, 20);
+    let mut lot = Lot::new();
+    lot.witness(&x, 1).unwrap();
+    lot.now = 19;
+    assert_eq!(lot.may(&x, 2, 0), Err("an entry stamped ahead of the beacon"));
+    lot.now = 20;
+    assert!(lot.may(&x, 2, 0).is_ok());
+    // And appended: citing a vest not yet final, refused.
+    let held = base(0);
+    let early = |stamp: u64| {
+        let mut m = held.clone();
+        put_at(&mut m, 2, Body::Vested { from: did(9), vest: nonce(5), step: 0, amount: 100, at: 0, cited: 10, ev: Evidence::default() }, None, stamp);
+        m
+    };
+    assert_eq!(append_check(&def(), 11, &held, &early(11), Some(&log(M))), Err("an entry citing one not yet final"));
+    assert_eq!(append_check(&def(), 12, &held, &early(12), Some(&log(M))), Ok(()));
+}
+
+#[test]
+fn vesting_round_trips_and_is_witnessed_on_its_vest() {
+    let w = vesting();
+    let e = &w.get(id_a(), 1).entries.last().unwrap();
+    assert_eq!(Entry::decode(&e.encode()).as_ref(), Some(*e));
+    let mut w = w;
+    put_at(w.chain(id_a(), 2), 10, Body::Vested { from: did(1), vest: nonce(5), step: 1, amount: 200, at: 20, cited: 1, ev: Evidence::default() }, None, 20);
+    let e2 = w.get(id_a(), 2).entries.last().unwrap().clone();
+    assert_eq!(Entry::decode(&e2.encode()), Some(e2));
+    // A step stands on its vest: not witnessable until the vest is accepted.
+    let mut lot = Lot::new();
+    assert_eq!(lot.may(&w, 2, 0), Err("an entry its committee has not witnessed"));
+    lot.witness(&w, 1).unwrap();
+    assert!(lot.may(&w, 2, 0).is_ok());
+    // In a cut's received set: a cut chain refuses the same step again without its absence proof.
+    assert!(cut::received_keys(&w.get(id_a(), 2).entries).contains(&vested_key(&did(1), &nonce(5), 1)));
+}
+
+#[test]
+fn a_witness_applies_the_timed_rules_at_the_entrys_own_stamp() {
+    // A chain taken as a FIRST copy (no append rules): its refund stamped before its lock's deadline, its fill too close
+    // to its deadline, its receive before what it cites is final — the contract from scratch takes all three; no
+    // witness signs them.
+    let lot = Lot::new();
+    let p = at(id_a(), 1);
+    let ok = |_: &State| Ok(());
+    let may = |s: &State| wallet::may_witness(&lot.src(), &p, &def(), s, s.entries.last().unwrap().seq, 100, &ok, &|_, _| None);
+    let mut locked = base(0);
+    put_at(&mut locked, 3, Body::Lock { to: did(9), amount: 50, until: 20, token: [5; 32].into(), offer: nonce(1), fee: None }, Some(M), 0);
+    let refund = |stamp: u64| {
+        let mut m = locked.clone();
+        put_at(&mut m, 4, Body::Refund { lock: nonce(3), ev: Evidence::default() }, None, stamp);
+        m
+    };
+    assert_eq!(may(&refund(19)), Err("a refund before its lock's deadline"));
+    assert_eq!(may(&refund(20)).err(), Some("an entry its committee has not witnessed"), "past the timed rule: its predecessor");
+    let recv = |stamp: u64| {
+        let mut m = base(0);
+        put_at(&mut m, 2, Body::Receive { from: did(9), nonce: nonce(2), amount: 50, cited: 10, ev: Evidence::default() }, None, stamp);
+        m
+    };
+    assert_eq!(may(&recv(11)), Err("an entry citing one not yet final"));
+    assert_eq!(may(&recv(12)).err(), Some("an entry its committee has not witnessed"));
+    // A release before its delay, at its own stamp.
+    let mut a = staker();
+    signed(&mut a, 1, 2, Body::Stake { amount: 600 });
+    at_stamp(&mut a, 3, Body::Unstake { amount: 200 }, Some(1), 10);
+    let rel = |stamp: u64| {
+        let mut m = a.clone();
+        at_stamp(&mut m, 4, Body::Release { unstake: nonce(3) }, None, stamp);
+        m
+    };
+    let pp = params(1);
+    let mayp = |s: &State| wallet::may_witness(&lot.src(), &pp, &def(), s, s.entries.last().unwrap().seq, u64::MAX, &ok, &|_, _| None);
+    assert_eq!(mayp(&rel(10 + UNBOND - 1)), Err("a release before its delay"));
+    assert_eq!(mayp(&rel(10 + UNBOND)).err(), Some("an entry its committee has not witnessed"));
 }

@@ -1401,6 +1401,11 @@ old key's addresses.
               time, burned on equivocation; storage proofs pay keepers (weak guarantee fine there). Order: keeper
               payouts (REWARDS) → reward locks as stake → witness lot by stake.
           [ ] standing per location (ramp), read by witnesses
+      [x] 7 VESTING (TOKEN §4a) — BUILT + LIVE 10-09: Vest (debit of the schedule now) / Vested (anyone appends a step
+          once the beacon reaches it, once, exactly as scheduled; never taken back). Found live: a first copy skipped the
+          time rule (an early claim ACCEPTED on a fresh chain) → time rule from scratch + the witness applies all timed
+          rules (`timed`, shared with append_check) at the entry's own stamp and refuses stamps ahead of the beacon.
+          91 tests; 20 mutants killed. token.wasm 026fd3d2. Not built: setApprovalForAll (one approval for all items).
       [x] 6 WITNESSES BY LOT, weighted by EARNED STAKE (TOKEN §7a) — owner 10-09: "foundation first", the token's
           issuance designed later; built generic (any locked stake), keeper rewards plug in as its source later:
           [x] 6a STAKE entry (6219feb) (part of a chain's balance locked as witness stake; released after a delay) + burn on a

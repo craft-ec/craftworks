@@ -18,6 +18,7 @@ pub fn received_keys(entries: &[Entry]) -> Vec<Vec<u8>> {
             Body::Fill { taker, lock, .. } => Some(received_key(FILLED, taker, lock)),
             Body::Claim { taker, lock, .. } => Some(received_key(CLAIMED, taker, lock)),
             Body::Mint { nonce, .. } => Some(received_key(MINTED, &MINTER, nonce)),
+            Body::Vested { from, vest, step, .. } => Some(crate::vested_key(from, vest, *step)),
             _ => None,
         })
         .collect();

@@ -6,7 +6,7 @@
 
 use crate::draw::StakeClaim;
 use crate::witness::{self, WitnessSig};
-use crate::{offers_of, supply, walk, Body, ChainParams, Definition, Entry, Signer, State, Tok, Why};
+use crate::{offers_of, supply, timed, walk, Body, ChainParams, Definition, Entry, Signer, State, Tok, Why};
 
 /// The committee's size, and how many of it must sign (TOKEN §7a: open — to be set from measurement on the network).
 pub const COMMITTEE: usize = 16;
@@ -58,7 +58,7 @@ pub fn stake_at(p: &ChainParams, d: &Definition, s: &State, at: u64) -> Result<w
 }
 
 /// The entries `e` (of `p`'s chain) CITES in other chains, found in them as `chain` reads them: a receive's send; a
-/// fill's lock (the taker's chain of the offer's token); a claim's lock (the taker's chain) and fill (the maker's
+/// fill's lock (the taker's chain of the offer's token); a vesting step's vest; a claim's lock (the taker's chain) and fill (the maker's
 /// chain of the lock's token). A mint cites its supply shard (signed by the mint authority, not witnessed); a refund
 /// its own lock (accepted with its own past). `Err`: a cited entry not found.
 pub fn cited(p: &ChainParams, s: &State, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<Vec<(ChainParams, Entry)>, Why> {
@@ -69,6 +69,7 @@ pub fn cited(p: &ChainParams, s: &State, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 3
     };
     Ok(match &e.body {
         Body::Receive { from, nonce, amount, cited, .. } => vec![find(p.tok(), *from, &|x| x.nonce == *nonce && x.stamp == *cited && matches!(x.body, Body::Send { to, amount: a } | Body::Spend { to, amount: a } | Body::Fill { taker: to, amount: a, .. } if to == p.owner && a == *amount))?],
+        Body::Vested { from, vest, step, amount, at, cited, .. } => vec![find(p.tok(), *from, &|x| x.nonce == *vest && x.stamp == *cited && matches!(&x.body, Body::Vest { to, schedule } if *to == p.owner && schedule.get(*step as usize) == Some(&(*at, *amount))))?],
         Body::Fill { offer, taker, lock, .. } => {
             let o = offers_of(s).into_iter().find(|o| &o.0 == offer).ok_or("a fill of an offer not held")?;
             vec![find(o.1, *taker, &|x| x.nonce == *lock)?]
@@ -78,19 +79,29 @@ pub fn cited(p: &ChainParams, s: &State, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 3
     })
 }
 
-/// THE WITNESS RULE: may a drawn witness sign `p`'s entry at `seq`? The chain UP TO that entry holds — `holds`, the
+/// THE WITNESS RULE: may a drawn witness sign `p`'s entry at `seq` (of token `d`)? The chain UP TO that entry holds — `holds`, the
 /// contract's check from scratch, run on that prefix so the entry is among the last the contract checks in full (its
 /// citations against what they cite, not only their names); for a CUT, also the history it summarises read whole and audited (`cut::whole`,
 /// `cut::audit` — a holder that never had the prefix takes a cut as given) — and is not forked; the entry before it is
-/// accepted; every entry it cites is accepted. `Ok`: the entry's hash, what the witness signs. (Never sign two entries
+/// accepted; every entry it cites is accepted; the TIMED rules hold at its own stamp ([`timed`]: a refund, a release, a
+/// fill, a citation — append rules a first copy skips); and it is not stamped ahead of the beacon (`now`: the beacon's height as
+/// the witness reads it — a first copy is taken by a node without the append rules, so a stamp from the future, which
+/// would let a timed entry such as a vesting step or a refund come early, is refused here). `Ok`: the entry's hash, what
+/// the witness signs. (Never sign two entries
 /// at one seq: that is the equivocation that burns the witness's stake — the witness's own memory.)
-pub fn may_witness(src: &Source, p: &ChainParams, s: &State, seq: u64, holds: &dyn Fn(&State) -> Result<(), Why>, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<[u8; 32], Why> {
+#[allow(clippy::too_many_arguments)]
+pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq: u64, now: u64, holds: &dyn Fn(&State) -> Result<(), Why>, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<[u8; 32], Why> {
     if s.fork.is_some() {
         return Err("a forked chain");
     }
     let i = s.entries.iter().position(|e| e.seq == seq).ok_or("an entry not held")?;
-    holds(&State { entries: s.entries[..=i].to_vec(), fork: None })?;
+    let prefix = State { entries: s.entries[..=i].to_vec(), fork: None };
+    holds(&prefix)?;
     let e = &s.entries[i];
+    if e.stamp > now {
+        return Err("an entry stamped ahead of the beacon");
+    }
+    timed(d, e.stamp, &prefix, e)?;
     match i.checked_sub(1) {
         Some(j) => {
             accept(src, p, &s.entries[j])?;

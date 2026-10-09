@@ -36,7 +36,7 @@ Every behaviour of the blockchain token standards, and how this standard gives i
 | Metadata (token and per item) | ✅ | the definition's metadata; per id, an ITEM of Craftworks (its page, its files) named by the id |
 | History, traceable by anyone (an explorer) | ✅ | no one ledger: from genesis and the supply bag, sends followed FORWARD reach every chain; credits cite their debits BACKWARD; kept alive by readers and keepers (§1a) |
 | Atomic swap between two tokens | ✅ two-phase | lock → fill → claim, or refund; the race closed by time (§4) |
-| Vesting, time locks | designed, NOT BUILT | `lock(beneficiary, amount, until)`: claimable by the beneficiary after the beacon passes `until`, or in steps (§4a) |
+| Vesting, time locks | ✅ | `vest(beneficiary, schedule)`: a debit now; each step claimable by the beneficiary once the beacon reaches it, once; never taken back (§4a) |
 | Staking | ✅ | `lock` to a staking definition; its rewards a supply rule of that definition (§4a, §6) |
 | Escrow, two-party loans | ✅ | locks with release conditions (§4) |
 | Order book | ✅ | standing `offer`s in the pair's offers bag, filled with the maker offline (§4) |
@@ -322,9 +322,13 @@ tokens of the standard.
 
 ## 4a. Vesting, time locks, staking
 
-- **Time lock / vesting:** `lock(beneficiary, amount, until)` — or `until` as a SCHEDULE (amounts released at beacon
-  heights). The beneficiary (or anyone for them) appends `claim(lock, step)` once the beacon has passed that step; the
-  locker cannot take it back (no `refund` on a vesting lock).
+- **Time lock / vesting** — BUILT 10-09: `Vest { to, schedule }` — owner-signed, a debit of the schedule's whole total
+  now; the schedule is (beacon height, amount) steps, heights rising, up to [`VEST_STEPS`] (64), each at least the
+  minimum send; never to itself. `Vested { from, vest, step, amount, at, cited }` — appended by anyone (with work) in
+  the beneficiary's chain: credited only if the giver's chain holds that vest naming this beneficiary with exactly
+  that step (height and amount), once per step (its name in the received set, so a cut keeps it), and stamped at or
+  after its height — checked FROM SCRATCH, so a first copy cannot claim early, and no witness signs an entry stamped
+  ahead of the beacon. Nothing in the giver's chain undoes a vest. A single time lock is a one-step schedule.
 - **Staking:** a `lock` to a STAKING definition (its params name the staked token and its rule). Its rewards are that
   definition's supply rule (§6) — e.g. a fixed amount per beacon per staked unit, minted by proof of the lock — and the
   stake returns by `claim` after its term.
@@ -509,9 +513,11 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
    small history pays ~9× its data in contracts, and nodes evict by contract count.
 5. A FRESH PUT after a cut — CLOSED 10-09: the leniency is only for an entry stamped before the cut it is hidden by
    (§2); a fresh copy carrying a later one without its evidence is refused from scratch. What stays: an entry can
-   claim an old stamp only where a node takes it without the append rules (a first copy). OPEN (6e): its lot is then
-   drawn from an old beacon output, its committee known before it was written — should a witness refuse an entry
-   stamped far behind the beacon when first asked?
+   claim an old stamp only where a node takes it without the append rules (a first copy). CLOSED for value 10-09: a
+   witness applies the TIMED rules (a refund, a release, a fill, a citation, a vesting step — `timed`) at the entry's
+   own stamp and refuses an entry stamped ahead of the beacon, so a first copy's timing tricks are never witnessed.
+   OPEN: an entry back-dated far behind the beacon has its lot drawn from an old output (its committee known before
+   it was written) — refuse those when first asked, once witnesses keep a record of when they first saw an entry.
 
 (A token's own ISSUANCE — its supply rule and size, who holds its genesis, what it does with fees — is that token's
 choice, made in its definition from the menu (§6), not the standard's: the Craftworks token's are in §7.)
@@ -619,6 +625,11 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    drawn 16 / signed 16; a buried fake receive and the payment out of it refused by every member; the honest payment
    accepted by its receiver's wallet from the bags alone (16 signatures, 30 ms); an equivocating staker's stake burned.
    Stake comes from keeper rewards — with the Craftworks token (next).
+12a. VESTING — BUILT 10-09 (§4a): `Vest` / `Vested`; the time rule from scratch; the witness applies every timed
+   rule at the entry's own stamp and refuses stamps ahead of the beacon (found live: an early vesting claim on a fresh
+   chain was ACCEPTED by its node, the first copy skipping the append rules). 91 tests; 20 mutants, all killed. LIVE
+   fx/fy (`token-live vest`): 2 vests 3 100 at h+6 and 200 at h+10 (2's balance 700 at once); step 0 claimed early
+   REFUSED, at its time ACCEPTED, again REFUSED; step 1 claiming 300 REFUSED, as scheduled ACCEPTED; 3's balance 300.
 13. The Craftworks token: contributions as locks, payouts as claims.
 14. Batch-auction pools.
 

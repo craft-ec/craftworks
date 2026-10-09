@@ -199,7 +199,8 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
         T::Body::Genesis { amount } => *amount,
         T::Body::Send { amount, .. } | T::Body::Burn { amount } | T::Body::Spend { amount, .. } | T::Body::Fill { amount, .. } => bal - amount,
         T::Body::Lock { amount, fee, .. } => bal - amount - fee.map_or(0, |f| f.1),
-        T::Body::Receive { amount, .. } | T::Body::Claim { amount, .. } | T::Body::Mint { amount, .. } => bal + amount,
+        T::Body::Receive { amount, .. } | T::Body::Claim { amount, .. } | T::Body::Mint { amount, .. } | T::Body::Vested { amount, .. } => bal + amount,
+        T::Body::Vest { schedule, .. } => bal - schedule.iter().map(|x| x.1).sum::<u128>(),
         T::Body::Stake { amount } => bal - amount,
         T::Body::Unstake { .. } | T::Body::Slash { .. } => bal,
         T::Body::Release { unstake } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Unstake { amount } if &x.nonce == unstake => Some(*amount), _ => None }).unwrap_or(0),
@@ -276,6 +277,7 @@ async fn main() -> Result<()> {
             "mint" => mint_mode(&w).await?,
             "multisig" => multisig(&w).await?,
             "nft" => nft(&w).await?,
+            "vest" => vest(&w).await?,
             "witness" => witness_mode(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("bag.wasm"))?).await?,
             "cut" => cut(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("block.wasm"))?).await?,
             m => bail!("no mode {m}"),
@@ -934,7 +936,8 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
             };
             let members = draw::committee(&pool, &o_, &p.id(), seq, ep, &claims, wallet::COMMITTEE);
             let holds = |st: &T::State| T::check(&p, &td2, st, &cited, &|_| None, Some(&log(o)));
-            match wallet::may_witness(&src, &p, &s, seq, &holds, &cited) {
+            let now = rt.block_on(get(&x, beacon)).ok().flatten().and_then(|b| B::wire::decode(&b)).map_or(0, |b| b.height());
+            match wallet::may_witness(&src, &p, &td2, &s, seq, now, &holds, &cited) {
                 Err(why) => {
                     out.borrow_mut().push(format!("   {who} seq {seq}: drawn {} — REFUSED by every one: {why}", members.len()));
                     false
@@ -995,5 +998,39 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
     let held = w.get_chain(&w.y, pool, 20).await?.context("staker 20's chain")?;
     let p20 = w.chain(pool, 20);
     println!("   its stake now: {:?}; as counted for epoch {epoch}: {:?}", T::wallet::stake_at(&p20, &pd, &held, u64::MAX).map(|x| x.0), T::wallet::stake_at(&p20, &pd, &held, start).map(|x| x.0));
+    Ok(())
+}
+
+/// VESTING, LIVE (TOKEN §4a): 2 vests 3 a schedule of two steps; each step is credited only once the beacon reaches it,
+/// once; the giver's balance carries the whole debit from the start.
+async fn vest(w: &W) -> Result<()> {
+    println!("— vest");
+    let d = w.def(2, b"Vest", 13);
+    let ta = w.put_def(&d).await?;
+    let h = w.now().await?;
+    let (s0, s1) = (h + 6, h + 10);
+    let mut g = T::State::default();
+    push(&mut g, T::Body::Genesis { amount: 1000 }, w.n(2), Some(2), h);
+    push(&mut g, T::Body::Vest { to: did(3), schedule: vec![(s0, 100), (s1, 200)] }, w.n(5), Some(2), h);
+    println!("1  2: genesis, vests 3 100 at {s0} and 200 at {s1} (now {h}), on X: {} — 2's balance {}", w.put_chain(&w.x, ta, 2, &g).await?.0, g.balance());
+    let step = |c: &T::State, k: u32, amount: u128, at: u64, stamp: u64| {
+        let mut c = c.clone();
+        push(&mut c, T::Body::Vested { from: did(2), vest: w.n(5), step: k, amount, at, cited: h, ev: T::Evidence::default() }, w.n(60 + k as u8), None, stamp);
+        c
+    };
+    let r = w.until(h + 2).await?;
+    let early = step(&T::State::default(), 0, 100, s0, r);
+    println!("2  3 claims step 0 before its time (now {r}), on Y: {}", w.put_chain(&w.y, ta, 3, &early).await?.0);
+    let r0 = w.until(s0).await?;
+    let c0 = step(&T::State::default(), 0, 100, s0, r0);
+    println!("3  … at its time (now {r0}), on Y: {}", w.put_chain(&w.y, ta, 3, &c0).await?.0);
+    let more = step(&c0, 0, 100, s0, w.now().await?);
+    println!("4  step 0 again, on Y: {}", w.put_chain(&w.y, ta, 3, &more).await?.0);
+    let wrong = step(&c0, 1, 300, s1, w.until(s1).await?);
+    println!("5  step 1 claiming 300 (the schedule says 200), on Y: {}", w.put_chain(&w.y, ta, 3, &wrong).await?.0);
+    let c1 = step(&c0, 1, 200, s1, w.now().await?);
+    println!("6  step 1 as scheduled, on Y: {}", w.put_chain(&w.y, ta, 3, &c1).await?.0);
+    let held = w.get_chain(&w.y, ta, 3).await?.context("3's chain")?;
+    println!("   3's balance on Y: {}; 2's: {}", held.balance(), g.balance());
     Ok(())
 }

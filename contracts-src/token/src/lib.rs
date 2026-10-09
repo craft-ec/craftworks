@@ -26,6 +26,8 @@ pub const NAME_MAX: usize = 64;
 /// found and proved within it). TWO supply epochs: stake is counted for a lot as held at its epoch's START
 /// (`wallet::stake_at`), so whatever was counted stays burnable for at least a full epoch after that epoch ends.
 pub const UNBOND: u64 = 2 * supply::EPOCH;
+/// The most steps one vesting schedule has (TOKEN §4a).
+pub const VEST_STEPS: usize = 64;
 /// Writer keys a chain retires while it holds stake, at most — each stays burnable ([`Body::Slash`]) until the stake is
 /// all released; past the cap, a new writer waits until then.
 pub const RETIRED_MAX: usize = 16;
@@ -273,6 +275,12 @@ pub const RECEIVED: u8 = b'r';
 pub const FILLED: u8 = b'f';
 pub const CLAIMED: u8 = b'c';
 pub const MINTED: u8 = b'm';
+/// A vesting step received (its key also carries the step: [`vested_key`]).
+pub const VESTED: u8 = b'v';
+/// The received-set key of step `step` of the vest `nonce` in `from`'s chain.
+pub fn vested_key(from: &[u8; 32], nonce: &[u8; 16], step: u32) -> Vec<u8> {
+    [&received_key(VESTED, from, nonce)[..], &step.to_le_bytes()].concat()
+}
 /// The name a mint is received under (a mint has no sender chain).
 pub const MINTER: [u8; 32] = [0; 32];
 /// The most related contracts one validation or update asks for in its one round (the node's limit, measured 10-08:
@@ -331,6 +339,12 @@ pub enum Body {
     /// An EQUIVOCATION by this chain's witness key (`key`, its writer's node key): two witness signatures at one place
     /// naming different entries — every stake and unbonding amount BURNED. Appended by anyone.
     Slash { key: [u8; 32], a: witness::WitnessSig, b: witness::WitnessSig },
+    /// VESTING (TOKEN §4a): `to` is given the schedule's total, released in STEPS — (beacon height, amount), heights
+    /// rising — each claimable from its height on, never taken back. A debit of the total, now.
+    Vest { to: [u8; 32], schedule: Vec<(u64, u128)> },
+    /// Step `step` of the vest `vest` in `from`'s chain — its `amount`, released at beacon `at` — credited here;
+    /// appended by anyone (with work), once, at or after `at`; `cited`: the vest's stamp.
+    Vested { from: [u8; 32], vest: [u8; 16], step: u32, amount: u128, at: u64, cited: u64, ev: Evidence },
     /// A MULTISIG owner's MEMBERS (TOKEN §1): the key set that signs from here, on set seq `set_seq`. The first (seq 0)
     /// is the set the owner id names, signed by k of it; each later one, by k of the set before.
     Members { set: authority::KeySet, set_seq: u32 },
@@ -533,6 +547,25 @@ impl Entry {
                 v.extend_from_slice(cred);
                 v.extend_from_slice(&key_seq.to_le_bytes());
             }
+            Body::Vest { to, schedule } => {
+                v.push(19);
+                v.extend_from_slice(to);
+                v.push(schedule.len() as u8);
+                for (h, a) in schedule {
+                    v.extend_from_slice(&h.to_le_bytes());
+                    v.extend_from_slice(&a.to_le_bytes());
+                }
+            }
+            Body::Vested { from, vest, step, amount, at, cited, ev } => {
+                v.push(20);
+                v.extend_from_slice(from);
+                v.extend_from_slice(vest);
+                v.extend_from_slice(&step.to_le_bytes());
+                v.extend_from_slice(&amount.to_le_bytes());
+                v.extend_from_slice(&at.to_le_bytes());
+                v.extend_from_slice(&cited.to_le_bytes());
+                put_ev(&mut v, ev);
+            }
             Body::Stake { amount } => {
                 v.push(15);
                 v.extend_from_slice(&amount.to_le_bytes());
@@ -713,6 +746,16 @@ impl Entry {
             17 => Body::Release { unstake: r.arr()? },
             18 => Body::Slash { key: r.arr()?, a: witness::WitnessSig::read(r)?, b: witness::WitnessSig::read(r)? },
             14 => Body::Members { set: authority::KeySet::read(r)?, set_seq: r.u32()? },
+            19 => {
+                let to = r.arr()?;
+                let n = r.u8()? as usize;
+                if n > VEST_STEPS {
+                    return None;
+                }
+                let schedule = (0..n).map(|_| Some((r.u64()?, r.u128()?))).collect::<Option<Vec<_>>>()?;
+                Body::Vest { to, schedule }
+            }
+            20 => Body::Vested { from: r.arr()?, vest: r.arr()?, step: r.u32()?, amount: r.u128()?, at: r.u64()?, cited: r.u64()?, ev: read_ev(r)? },
             _ => return None,
         };
         let balance = r.u128()?;
@@ -909,7 +952,7 @@ pub fn cited_chains_from(p: &ChainParams, s: &State, from: usize) -> Vec<(Tok, [
     let locks = locks_of(s);
     for e in s.entries.iter().skip(from) {
         match &e.body {
-            Body::Receive { from, .. } => add((p.tok(), *from)),
+            Body::Receive { from, .. } | Body::Vested { from, .. } => add((p.tok(), *from)),
             Body::Fill { offer, taker, .. } => {
                 if let Some(o) = offers.iter().find(|o| &o.0 == offer) {
                     add((o.1, *taker));
@@ -1053,6 +1096,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
         let mut stamp: u64 = 0;
         // The names received, filled and claimed SINCE the last cut (before it: the cut's received set).
         let mut received: Vec<([u8; 32], [u8; 16])> = Vec::new();
+        let mut vested: Vec<([u8; 32], [u8; 16], u32)> = Vec::new();
         let mut filled: Vec<([u8; 32], [u8; 16])> = Vec::new();
         let mut claimed: Vec<([u8; 32], [u8; 16])> = Vec::new();
         let mut minted: Vec<[u8; 16]> = Vec::new();
@@ -1176,6 +1220,46 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         let pick = |x: &Entry| x.nonce == *nonce && x.stamp == *cited && matches!(x.body, Body::Send { to, amount: a } | Body::Spend { to, amount: a } | Body::Fill { taker: to, amount: a, .. } if to == p.owner && a == *amount);
                         if !shown(&c, &cp.id(), ev, *cited, &pick) {
                             return Err("a receive whose send is not in its sender's chain");
+                        }
+                    }
+                    balance.checked_add(*amount).ok_or("a balance overflow")?
+                }
+                Body::Vest { to, schedule } => {
+                    owner_signed(e, &writer)?;
+                    if *to == p.owner {
+                        return Err("a vest to itself");
+                    }
+                    if schedule.is_empty() || schedule.len() > VEST_STEPS || schedule.windows(2).any(|w| w[0].0 >= w[1].0) {
+                        return Err("a vesting schedule that is not rising steps");
+                    }
+                    if schedule.iter().any(|(_, a)| *a < d.min_send) {
+                        return Err("a send under the minimum");
+                    }
+                    let total = schedule.iter().try_fold(0u128, |t, (_, a)| t.checked_add(*a)).ok_or("a balance overflow")?;
+                    balance.checked_sub(total).ok_or("a debit over the balance")?
+                }
+                Body::Vested { from, vest, step, amount, at, cited, ev } => {
+                    if *from == p.owner {
+                        return Err("a receive from itself");
+                    }
+                    if !e.worked() {
+                        return Err("a receive without its work");
+                    }
+                    // Its time, from scratch (a first copy is taken without the append rules): stamped at or after
+                    // its step — and no witness signs an entry stamped ahead of the beacon (`wallet::may_witness`).
+                    if e.stamp < *at {
+                        return Err("a vesting step before its time");
+                    }
+                    if vested.contains(&(*from, *vest, *step)) || !fresh(&cut, *cited, vested_key(from, vest, *step), ev) {
+                        return Err("a vesting step received twice");
+                    }
+                    vested.push((*from, *vest, *step));
+                    if recent {
+                        let cp = p.at(p.tok(), *from);
+                        let c = chain(&p.tok(), from).ok_or("the sender's chain is not there")?;
+                        let pick = |x: &Entry| x.nonce == *vest && x.stamp == *cited && matches!(&x.body, Body::Vest { to, schedule } if *to == p.owner && schedule.get(*step as usize) == Some(&(*at, *amount)));
+                        if !shown(&c, &cp.id(), ev, *cited, &pick) {
+                            return Err("a vesting step that is not in its giver's chain");
                         }
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
@@ -1451,6 +1535,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                             return Err("a cut that is not what came before it");
                         }
                         received.clear();
+                        vested.clear();
                         filled.clear();
                         claimed.clear();
                         balance
@@ -1527,36 +1612,7 @@ pub fn append_check(d: &Definition, now: u64, held: &State, merged: &State, keys
                 return Err("an owner entry not on the account's current key");
             }
         }
-        match &e.body {
-            Body::Receive { cited, .. } | Body::Claim { cited, .. } => {
-                if e.stamp < cited.saturating_add(m) {
-                    return Err("an entry citing one not yet final");
-                }
-            }
-            Body::Fill { cited, until, .. } => {
-                if e.stamp < cited.saturating_add(m) {
-                    return Err("an entry citing one not yet final");
-                }
-                if e.stamp.saturating_add(m) >= *until {
-                    return Err("a fill too close to its lock's deadline");
-                }
-            }
-            Body::Release { unstake } => {
-                // (Its release height from its unstake, or from the cut that carries it: the BEACON past it, not the
-                // entry's own stamp.)
-                if unbonding_of(merged).into_iter().find(|u| &u.0 == unstake).is_none_or(|u| now < u.2) {
-                    return Err("a release before its delay");
-                }
-            }
-            Body::Refund { lock, .. } => {
-                // (The lock's deadline from its entry, or from the cut that carries it.)
-                let until = locks_of(merged).into_iter().find(|l| &l.0 == lock).map(|l| l.3);
-                if until.is_none_or(|u| e.stamp < u) {
-                    return Err("a refund before its lock's deadline");
-                }
-            }
-            _ => {}
-        }
+        timed(d, now, merged, e)?;
     }
     Ok(())
 }
@@ -1575,6 +1631,45 @@ pub fn accept(p: &ChainParams, d: &Definition, now: u64, held: &State, merged: &
 /// Does anything new in `merged` (from index `from`) DEBIT the chain?
 pub fn debits_from(merged: &State, from: usize) -> bool {
     (from..merged.entries.len()).any(|i| merged.entries[i].balance < if i == 0 { 0 } else { merged.entries[i - 1].balance })
+}
+
+/// THE TIMED RULES (TOKEN §3b, §4a), of entry `e` of `merged` with the beacon at `now`: a citation no sooner than a
+/// margin after what it cites; a fill a margin before its lock's deadline; a refund at or after it; a release once
+/// its delay is over. Appending checks them against the beacon now; a WITNESS checks them at the entry's own stamp
+/// (`wallet::may_witness`) — so a first copy, which a node takes without the append rules, gains nothing by them.
+pub fn timed(d: &Definition, now: u64, merged: &State, e: &Entry) -> Result<(), Why> {
+    let m = d.margin;
+    match &e.body {
+        Body::Receive { cited, .. } | Body::Claim { cited, .. } | Body::Vested { cited, .. } => {
+            if e.stamp < cited.saturating_add(m) {
+                return Err("an entry citing one not yet final");
+            }
+        }
+        Body::Fill { cited, until, .. } => {
+            if e.stamp < cited.saturating_add(m) {
+                return Err("an entry citing one not yet final");
+            }
+            if e.stamp.saturating_add(m) >= *until {
+                return Err("a fill too close to its lock's deadline");
+            }
+        }
+        Body::Release { unstake } => {
+            // (Its release height from its unstake, or from the cut that carries it: the BEACON past it, not the
+            // entry's own stamp.)
+            if unbonding_of(merged).into_iter().find(|u| &u.0 == unstake).is_none_or(|u| now < u.2) {
+                return Err("a release before its delay");
+            }
+        }
+        Body::Refund { lock, .. } => {
+            // (The lock's deadline from its entry, or from the cut that carries it.)
+            let until = locks_of(merged).into_iter().find(|l| &l.0 == lock).map(|l| l.3);
+            if until.is_none_or(|u| e.stamp < u) {
+                return Err("a refund before its lock's deadline");
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// THE FREEZE RULE (an append rule, TOKEN §2): a token with a freeze authority appends no new DEBIT of an owner its
