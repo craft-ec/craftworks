@@ -1906,8 +1906,9 @@ fn an_entry_counts_once_enough_of_its_committee_signed_it_with_real_stake() {
     let sig_by = |n: u8, e: [u8; 32]| witness::WitnessSig { chain, seq, entry: e, sig: key(n).sign(&witness::WitnessSig::message(&chain, seq, &e)).to_bytes() };
     let member_keys: Vec<u8> = members.iter().map(|m| claims[*m].owner[0]).collect();
     let outsiders: Vec<u8> = (60..70).filter(|n| !member_keys.contains(n)).collect();
-    let real = |_: &[u8; 32]| Some(100u128);
-    let acc = |sigs: &[witness::WitnessSig], stake: &dyn Fn(&[u8; 32]) -> Option<u128>| witness::accepted(&def_id, &chain, seq, &entry, &out, 3, &claims, sigs, k, need, stake);
+    // Each staker's chain: 100 staked, its writer key the claim's.
+    let real = |o: &[u8; 32]| Some((100u128, vec![pk(o[0])]));
+    let acc = |sigs: &[witness::WitnessSig], stake: &dyn Fn(&[u8; 32]) -> Option<witness::Stake>| witness::accepted(&def_id, &chain, seq, &entry, &out, 3, &claims, sigs, k, need, stake);
     let four: Vec<_> = member_keys[..4].iter().map(|n| sig_by(*n, entry)).collect();
     assert_eq!(acc(&four, &real), Ok(4));
     assert_eq!(acc(&four[..3], &real), Err("an entry its committee has not witnessed"), "three of four needed");
@@ -1918,10 +1919,13 @@ fn an_entry_counts_once_enough_of_its_committee_signed_it_with_real_stake() {
     padded.push(sig_by(member_keys[3], [2; 32]));
     assert_eq!(acc(&padded, &real), Err("an entry its committee has not witnessed"));
     // A member whose chain holds less stake than it claimed: not counted.
-    let short = |o: &[u8; 32]| Some(if o[0] == member_keys[0] { 99 } else { 100 });
+    let short = |o: &[u8; 32]| Some((if o[0] == member_keys[0] { 99 } else { 100 }, vec![pk(o[0])]));
     assert_eq!(acc(&four, &short), Err("an entry its committee has not witnessed"));
-    let unknown = |o: &[u8; 32]| (o[0] != member_keys[1]).then_some(100);
+    let unknown = |o: &[u8; 32]| (o[0] != member_keys[1]).then(|| (100, vec![pk(o[0])]));
     assert_eq!(acc(&four, &unknown), Err("an entry its committee has not witnessed"), "a chain not readable: not counted");
+    // A member whose claim's key is not one its chain's stake burns for (another writer): not counted.
+    let other_key = |o: &[u8; 32]| Some((100, vec![if o[0] == member_keys[2] { pk(1) } else { pk(o[0]) }]));
+    assert_eq!(acc(&four, &other_key), Err("an entry its committee has not witnessed"));
 }
 
 // ---- FOUNDATION 6d: a wallet takes an entry its committee accepted; a witness signs only on an accepted past ----
@@ -1953,7 +1957,8 @@ impl Lot {
             claims: Box::leak(Box::new(|e: u64| if e == 0 { self.claims.clone() } else { vec![] })),
             sigs: Box::leak(Box::new(|c: &[u8; 32], seq: u64| self.sigs.get(&(*c, seq)).cloned().unwrap_or_default())),
             out: Box::leak(Box::new(|h: u64| (h <= self.drawn).then(|| Lot::out(h)))),
-            stake_of: &|_| Some(100),
+            // Every staker's stake as held at epoch 0's start (height 0) — its claims' epoch.
+            stake_of: &|o, h| (h == 0).then(|| (100, vec![pk(o[0])])),
         }
     }
     /// `n` of the entry's committee sign it (`entry`: what they sign).
@@ -2094,4 +2099,101 @@ fn a_buried_receive_of_a_real_send_to_someone_else_is_never_witnessed() {
     assert_eq!(lot.may(&w, 2, 0), Err("a receive whose send is not in its sender's chain"));
     let last = w.get(id_a(), 2).entries.last().unwrap().seq;
     assert_eq!(lot.may(&w, 2, last), Err("an entry its committee has not witnessed"));
+}
+
+// ---- FOUNDATION 6d: stake answers for its keys, as held at its epoch's start ----
+
+#[test]
+fn a_writer_key_retired_while_staked_stays_burnable_across_a_cut() {
+    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)));
+    let slash = |s: &State, k: u8| {
+        let mut x = s.clone();
+        let last = x.entries.last().map_or(0, |e| e.stamp);
+        at_stamp(&mut x, 9, Body::Slash { key: pk(k), a: wsig(k, 9, 5, 1), b: wsig(k, 9, 5, 2) }, None, last);
+        ck(&x)
+    };
+    // Staked, then a new writer (device 2): device 1's key still burns the stake.
+    let mut a = staker();
+    signed(&mut a, 1, 2, Body::Stake { amount: 600 });
+    let e = writer_entry(&a, 1, 2, &owner_seed(1), 0, 2);
+    a.entries.push(e);
+    assert_eq!(ck(&a), Ok(()));
+    assert_eq!(slash(&a, 1), Ok(()), "the retired key");
+    assert_eq!(slash(&a, 2), Ok(()), "the writer's");
+    assert_eq!(slash(&a, 3), Err("a slash of a key that is not this chain's"));
+    // CONTROL: the same rotation with nothing staked retires nothing.
+    let mut b = staker();
+    let e = writer_entry(&b, 1, 2, &owner_seed(1), 0, 2);
+    b.entries.push(e);
+    assert_eq!(ck(&b), Ok(()));
+    assert_eq!(slash(&b, 1), Err("a slash of a key that is not this chain's"));
+    // A cut carries the retired key: the chain starting at it still burns for it.
+    let (body, _) = cut::make(&params(1), &def(), &a, Some(&log(1))).unwrap();
+    assert!(matches!(&body, Body::Cut { retired, .. } if retired == &vec![pk(1)]));
+    let mut s = a.clone();
+    at_stamp(&mut s, 99, body.clone(), Some(2), 0);
+    assert_eq!(ck(&s), Ok(()));
+    let pruned = prune(&s);
+    assert_eq!(slash(&pruned, 1), Ok(()), "across the cut");
+    assert_eq!(Entry::decode(&pruned.entries[0].encode()).as_ref(), Some(&pruned.entries[0]), "the cut round-trips with its retired keys");
+    // A cut dropping it is not what came before it.
+    let mut lie = a.clone();
+    let mut dropped = body.clone();
+    if let Body::Cut { retired, .. } = &mut dropped {
+        retired.clear();
+    }
+    at_stamp(&mut lie, 99, dropped, Some(2), 0);
+    assert_eq!(ck(&lie), Err("a cut that is not what came before it"));
+    // Once nothing is staked or unbonding any more, nothing is left to burn: the retired keys go.
+    let mut out = a.clone();
+    at_stamp(&mut out, 3, Body::Unstake { amount: 600 }, Some(2), 10);
+    at_stamp(&mut out, 4, Body::Release { unstake: nonce(3) }, None, 10 + UNBOND);
+    assert_eq!(ck(&out), Ok(()));
+    assert_eq!(slash(&out, 1), Err("a slash of a key that is not this chain's"));
+}
+
+#[test]
+fn stake_counts_as_held_before_a_height_with_the_keys_it_burns_for() {
+    let (p, d) = (params(1), def());
+    let mut a = staker(); // genesis at 0, writer device 1
+    at_stamp(&mut a, 2, Body::Stake { amount: 600 }, Some(1), 10);
+    at_stamp(&mut a, 3, Body::Unstake { amount: 200 }, Some(1), 20);
+    let e = writer_entry(&a, 1, 2, &owner_seed(1), 0, 2);
+    a.entries.push(Entry { stamp: 30, ..e });
+    let fix = |mut s: State| {
+        // Re-sign the writer entry after its stamp moved.
+        let i = s.entries.len() - 1;
+        s.entries[i] = sign(s.entries[i].clone(), 2);
+        s
+    };
+    let a = fix(a);
+    assert_eq!(check(&p, &d, &a, &|_, _| None, &|_| None, Some(&log(1))), Ok(()));
+    assert_eq!(wallet::stake_at(&p, &d, &a, 10), Ok((0, vec![pk(1)])), "the stake at 10 is not before 10");
+    assert_eq!(wallet::stake_at(&p, &d, &a, 11), Ok((600, vec![pk(1)])));
+    assert_eq!(wallet::stake_at(&p, &d, &a, 21), Ok((400, vec![pk(1)])), "unbonding is not counted");
+    assert_eq!(wallet::stake_at(&p, &d, &a, 31), Ok((400, vec![pk(1), pk(2)])), "the retired key and the writer's");
+    // A chain held from a cut stamped after the height cannot say: read it whole.
+    let (body, _) = cut::make(&p, &d, &a, Some(&log(1))).unwrap();
+    let mut s = a.clone();
+    at_stamp(&mut s, 99, body, Some(2), 40);
+    let pruned = prune(&s);
+    assert_eq!(wallet::stake_at(&p, &d, &pruned, 31), Err("a stake before what is held"));
+    assert_eq!(wallet::stake_at(&p, &d, &pruned, 41), Ok((400, vec![pk(1), pk(2)])));
+}
+
+#[test]
+fn stake_counted_for_an_epoch_stays_burnable_a_full_epoch_after_it_ends() {
+    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)));
+    let e1 = supply::EPOCH; // epoch 1 starts here; claims of epoch 1 count the stake held before it
+    let mut a = staker();
+    at_stamp(&mut a, 2, Body::Stake { amount: 600 }, Some(1), e1 - 1);
+    assert_eq!(wallet::stake_at(&params(1), &def(), &a, e1), Ok((600, vec![pk(1)])));
+    // Unstaked the moment epoch 1 starts: still unbonding — burnable — to the last step of epoch 2.
+    at_stamp(&mut a, 3, Body::Unstake { amount: 600 }, Some(1), e1);
+    let mut early = a.clone();
+    at_stamp(&mut early, 4, Body::Release { unstake: nonce(3) }, None, 3 * supply::EPOCH - 1);
+    assert_eq!(ck(&early), Err("a release before its delay"));
+    let mut slashed = a.clone();
+    at_stamp(&mut slashed, 4, Body::Slash { key: pk(1), a: wsig(1, 9, 5, 1), b: wsig(1, 9, 5, 2) }, None, 3 * supply::EPOCH - 1);
+    assert_eq!(ck(&slashed), Ok(()), "burned for what it signed in epoch 1");
 }

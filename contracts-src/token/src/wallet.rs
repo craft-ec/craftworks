@@ -6,7 +6,7 @@
 
 use crate::draw::StakeClaim;
 use crate::witness::{self, WitnessSig};
-use crate::{offers_of, supply, Body, ChainParams, Entry, State, Tok, Why};
+use crate::{offers_of, supply, walk, Body, ChainParams, Definition, Entry, Signer, State, Tok, Why};
 
 /// The committee's size, and how many of it must sign (TOKEN §7a: open — to be set from measurement on the network).
 pub const COMMITTEE: usize = 16;
@@ -14,13 +14,14 @@ pub const NEED: usize = 11;
 
 /// Where a wallet (or a witness) reads the lot from: the STAKE POOL's token (`pool`: whose stake weighs the draw — one
 /// open pool for every token), its stake claims by epoch, the witness signatures held for (chain id, seq), the beacon's
-/// OUTPUT at a height, and a claimer's REAL stake (its chain's staked amount — read only for those who signed).
+/// OUTPUT at a height, and a claimer's REAL stake at a height ([`stake_at`] over its chain in the pool — read only for
+/// those who signed).
 pub struct Source<'a> {
     pub pool: [u8; 32],
     pub claims: &'a dyn Fn(u64) -> Vec<StakeClaim>,
     pub sigs: &'a dyn Fn(&[u8; 32], u64) -> Vec<WitnessSig>,
     pub out: &'a dyn Fn(u64) -> Option<[u8; 32]>,
-    pub stake_of: &'a dyn Fn(&[u8; 32]) -> Option<u128>,
+    pub stake_of: &'a dyn Fn(&[u8; 32], u64) -> Option<witness::Stake>,
 }
 
 /// The lot of an entry stamped `stamp`: the claims of its stamp's epoch, under the beacon output one step after it
@@ -34,7 +35,26 @@ pub fn accept(src: &Source, chain: &ChainParams, e: &Entry) -> Result<usize, Why
     let (epoch, height) = lot_of(e.stamp);
     let out = (src.out)(height).ok_or("an entry whose lot is not drawn yet")?;
     let id = chain.id();
-    witness::accepted(&src.pool, &id, e.seq, &e.hash(), &out, epoch, &(src.claims)(epoch), &(src.sigs)(&id, e.seq), COMMITTEE, NEED, src.stake_of)
+    let at = epoch * supply::EPOCH;
+    witness::accepted(&src.pool, &id, e.seq, &e.hash(), &out, epoch, &(src.claims)(epoch), &(src.sigs)(&id, e.seq), COMMITTEE, NEED, &|o| (src.stake_of)(o, at))
+}
+
+/// A staker's STAKE at beacon height `at` — what its chain (`p`, in the pool `d`) held staked after its entries stamped
+/// before `at` — and the keys that stake burns for: its device writer's then, and those it had retired while staked.
+/// (Unbonding amounts stay burnable but are not counted.) `Err`: the chain as given starts after `at` (a cut) — read it
+/// whole first (`cut::whole`).
+pub fn stake_at(p: &ChainParams, d: &Definition, s: &State, at: u64) -> Result<witness::Stake, Why> {
+    let n = s.entries.iter().take_while(|e| e.stamp < at).count();
+    if s.entries.first().is_some_and(|e| e.seq != 0 && e.stamp >= at) {
+        return Err("a stake before what is held");
+    }
+    let prefix = State { entries: s.entries[..n].to_vec(), fork: None };
+    let c = walk(p, d, &prefix, &|_, _| None, &|_| None, None, 0, n).map_err(|(_, w)| w)?;
+    let mut keys = c.retired;
+    if let Some(Signer::Device(node, _)) = c.writer {
+        keys.push(node);
+    }
+    Ok((c.staked, keys))
 }
 
 /// The entries `e` (of `p`'s chain) CITES in other chains, found in them as `chain` reads them: a receive's send; a

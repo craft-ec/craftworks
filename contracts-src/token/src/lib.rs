@@ -23,8 +23,12 @@ pub const WORK_BITS: u32 = 16;
 /// A token's name, at most (its length is one byte on the wire).
 pub const NAME_MAX: usize = 64;
 /// Beacon steps an unstaked amount waits before its release — slashable all the while (a witness's equivocation is
-/// found and proved within it).
-pub const UNBOND: u64 = 1024;
+/// found and proved within it). TWO supply epochs: stake is counted for a lot as held at its epoch's START
+/// (`wallet::stake_at`), so whatever was counted stays burnable for at least a full epoch after that epoch ends.
+pub const UNBOND: u64 = 2 * supply::EPOCH;
+/// Writer keys a chain retires while it holds stake, at most — each stays burnable ([`Body::Slash`]) until the stake is
+/// all released; past the cap, a new writer waits until then.
+pub const RETIRED_MAX: usize = 16;
 
 /// A contract's instance id (Freenet's: the code's hash and the params) — `contract_keys::instance`, its one home.
 pub fn id(code_hash: &[u8; 32], params: &[u8]) -> [u8; 32] {
@@ -348,6 +352,8 @@ pub enum Body {
         /// Its STAKE and its UNBONDING amounts (nonce, amount, release height), as before the cut.
         staked: u128,
         unbonding: Vec<([u8; 16], u128, u64)>,
+        /// Writer keys retired while stake was held — still burnable.
+        retired: Vec<[u8; 32]>,
     },
 }
 
@@ -545,7 +551,7 @@ impl Entry {
                 a.put(&mut v);
                 b.put(&mut v);
             }
-            Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer, staked, unbonding } => {
+            Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer, staked, unbonding, retired } => {
                 v.push(11);
                 v.extend_from_slice(history);
                 v.extend_from_slice(received);
@@ -589,6 +595,10 @@ impl Entry {
                     v.extend_from_slice(n);
                     v.extend_from_slice(&a.to_le_bytes());
                     v.extend_from_slice(&at.to_le_bytes());
+                }
+                v.push(retired.len() as u8);
+                for k in retired {
+                    v.extend_from_slice(k);
                 }
             }
         }
@@ -683,7 +693,12 @@ impl Entry {
                 for _ in 0..n {
                     unbonding.push((r.arr()?, r.u128()?, r.u64()?));
                 }
-                Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer, staked, unbonding }
+                let n = r.u8()? as usize;
+                if n > RETIRED_MAX {
+                    return None;
+                }
+                let retired = (0..n).map(|_| r.arr()).collect::<Option<Vec<[u8; 32]>>>()?;
+                Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer, staked, unbonding, retired }
             }
             12 => {
                 let n = u16::from_le_bytes(r.arr()?) as usize;
@@ -1006,6 +1021,8 @@ pub struct Carried {
     pub writer: Option<Signer>,
     pub staked: u128,
     pub unbonding: Vec<([u8; 16], u128, u64)>,
+    /// Writer keys retired while stake was held (burnable until it is all released).
+    pub retired: Vec<[u8; 32]>,
 }
 
 /// The shape rules, walked: what the chain carries at its end, or where and why it is refused. The citations of the last
@@ -1046,6 +1063,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
         // STAKE (TOKEN §7a): locked as witness stake, and what is on its way back (nonce, amount, release height).
         let mut staked: u128 = 0;
         let mut unbonding: Vec<([u8; 16], u128, u64)> = Vec::new();
+        let mut retired: Vec<[u8; 32]> = Vec::new();
         // The last cut: its stamp (what is stamped at or before it may be in its received set) and that set's root.
         let mut cut: Option<(u64, [u8; 32])> = None;
         let first = s.entries.first().map_or(0, |e| e.seq);
@@ -1328,6 +1346,16 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     if !e.signed_by(&node) {
                         return Err("a writer entry not signed by its device");
                     }
+                    // A key retired while stake is held stays burnable: a witness cannot escape its burn by a new writer.
+                    // (With nothing staked or unbonding the list is emptied after every entry, below.)
+                    if let Some(Signer::Device(old, _)) = &writer {
+                        if *old != node && !retired.contains(old) {
+                            if retired.len() >= RETIRED_MAX {
+                                return Err("too many writer keys retired while staked");
+                            }
+                            retired.push(*old);
+                        }
+                    }
                     writer = Some(Signer::Device(node, *key_seq));
                     balance
                 }
@@ -1387,8 +1415,9 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     if !e.worked() {
                         return Err("a slash without its work");
                     }
-                    // The key whose witness signatures they are: this chain's writer (its node key).
-                    if !matches!(&writer, Some(Signer::Device(node, _)) if node == key) {
+                    // The key whose witness signatures they are: this chain's writer (its node key), or one it retired
+                    // while staked.
+                    if !matches!(&writer, Some(Signer::Device(node, _)) if node == key) && !retired.contains(key) {
                         return Err("a slash of a key that is not this chain's");
                     }
                     if !witness::equivocation(key, a, b) {
@@ -1398,7 +1427,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     unbonding.clear();
                     balance
                 }
-                Body::Cut { received: root, allowances, offers: o, locks: l, writer: w, staked: st, unbonding: ub, .. } => {
+                Body::Cut { received: root, allowances, offers: o, locks: l, writer: w, staked: st, unbonding: ub, retired: rt, .. } => {
                     if starts_at_cut {
                         // The chain's writer as the cut carries it (who signs from here — and the cut itself).
                         writer = w.clone();
@@ -1412,12 +1441,13 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         allowed = allowances.clone();
                         staked = *st;
                         unbonding = ub.clone();
+                        retired = rt.clone();
                         offers = o.clone();
                         locks = l.clone();
                         e.balance
                     } else {
                         // The prefix is here: the cut must carry exactly what it computes.
-                        if sorted(&allowed) != sorted(allowances) || sorted(&offers) != sorted(o) || sorted(&locks) != sorted(l) || staked != *st || sorted(&unbonding) != sorted(ub) {
+                        if sorted(&allowed) != sorted(allowances) || sorted(&offers) != sorted(o) || sorted(&locks) != sorted(l) || staked != *st || sorted(&unbonding) != sorted(ub) || sorted(&retired) != sorted(rt) {
                             return Err("a cut that is not what came before it");
                         }
                         received.clear();
@@ -1434,6 +1464,9 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
             if !matches!(e.body, Body::Writer { .. } | Body::Members { .. }) {
                 begun = true;
             }
+            if staked == 0 && unbonding.is_empty() {
+                retired.clear();
+            }
             prev = e.hash();
             stamp = e.stamp;
         }
@@ -1447,7 +1480,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                 return Err("a fork not signed twice by the chain's writer");
             }
         }
-        Ok(Carried { balance, allowances: allowed, offers, locks, writer, staked, unbonding })
+        Ok(Carried { balance, allowances: allowed, offers, locks, writer, staked, unbonding, retired })
     })();
     r.map_err(|why| (failed_at, why))
 }

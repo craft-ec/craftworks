@@ -1421,6 +1421,11 @@ old key's addresses.
               Open for 6e: should a witness refuse an entry stamped far behind the beacon (old-stamp first copies
               have a committee known in advance)? A cut's witnesses must audit its history (`cut::whole`+`audit`) in
               their `holds`.
+          [x] 6d2 stake bound to its keys and its epoch (found preparing 6e): a claim's key must be one its chain's stake
+              burns for (writer, or `Carried.retired` — writer keys retired while staked, carried by cuts, cap 16);
+              stake read as held before the claims' epoch (`wallet::stake_at`), so acceptance never changes later;
+              UNBOND = 2 epochs. 86 tests; 12 mutants + 3 re-runs, all killed (retire-always showed a redundant
+              condition: removed). token.wasm 5a32b9ea.
           [ ] 6e live fx/fy
       (was: backed by PROVED STORAGE — superseded by earned stake, see TOKEN §7a)
           first; closes prevention of double spends, receiver-only history checks, partition fill/refund

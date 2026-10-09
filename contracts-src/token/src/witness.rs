@@ -31,6 +31,9 @@ impl WitnessSig {
     }
 }
 
+/// A staker's STAKE as a lot reads it: the amount, and the keys it burns for.
+pub type Stake = (u128, Vec<[u8; 32]>);
+
 /// Two witness signatures by `key`, at one (chain, seq), naming different entries.
 pub fn equivocation(key: &[u8; 32], a: &WitnessSig, b: &WitnessSig) -> bool {
     a.chain == b.chain && a.seq == b.seq && a.entry != b.entry && a.signed_by(key) && b.signed_by(key)
@@ -38,8 +41,10 @@ pub fn equivocation(key: &[u8; 32], a: &WitnessSig, b: &WitnessSig) -> bool {
 
 /// ACCEPTED (TOKEN §7a): the entry `entry` at (`chain`, `seq`) carries at least `need` signatures from its committee —
 /// the `k` lowest tickets among the `claims` of `epoch` under the beacon output `out` — each by a member whose REAL
-/// stake (`stake_of`: its chain's staked amount, read only for those who signed) covers its claim. Returns how many
-/// counted. A signature by anyone else, for another entry, or by an over-claimer counts for nothing.
+/// stake covers its claim and whose claim's key is one its stake can be burned for (`stake_of`: its chain's staked
+/// amount and burnable keys — its writer's, and those it retired while staked — as of the epoch's start; read only for
+/// those who signed). Returns how many counted. A signature by anyone else, for another entry, by an over-claimer, or
+/// under a key its chain's stake does not answer for counts for nothing.
 #[allow(clippy::too_many_arguments)]
 pub fn accepted(
     definition: &[u8; 32],
@@ -52,7 +57,7 @@ pub fn accepted(
     sigs: &[WitnessSig],
     k: usize,
     need: usize,
-    stake_of: &dyn Fn(&[u8; 32]) -> Option<u128>,
+    stake_of: &dyn Fn(&[u8; 32]) -> Option<Stake>,
 ) -> Result<usize, crate::Why> {
     let members = crate::draw::committee(definition, out, chain, seq, epoch, claims, k);
     let mut counted: Vec<usize> = Vec::new();
@@ -61,7 +66,7 @@ pub fn accepted(
             continue;
         }
         let Some(&m) = members.iter().find(|&&m| !counted.contains(&m) && s.signed_by(&claims[m].key)) else { continue };
-        if stake_of(&claims[m].owner).is_some_and(|real| real >= claims[m].amount) {
+        if stake_of(&claims[m].owner).is_some_and(|(real, keys)| real >= claims[m].amount && keys.contains(&claims[m].key)) {
             counted.push(m);
         }
     }

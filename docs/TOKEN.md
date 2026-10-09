@@ -460,6 +460,12 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   COMMITTEE is the k lowest tickets; anyone computes it, and nobody before the beacon output exists. A drawn witness
   re-runs the chain's checks and signs ([`witness::WitnessSig`]); an entry counts once enough of its committee signed.
   A claim is checked only when its claimer is drawn (its chain read): one over its real stake does not count.
+- **Stake answers for its key, as held at its epoch's start** (6d). A signature counts only if its claim's key is one
+  the claimer's stake BURNS for — its chain's device writer, or a writer key it retired while staked (a chain carries
+  those, through cuts, until its stake is all released: a witness cannot escape the burn by naming a new writer) — and
+  only for the stake its chain held before its claims' epoch began (`wallet::stake_at`), so an entry's acceptance
+  never changes when its witnesses later unstake. Unbonding lasts TWO epochs, so whatever was counted for an epoch
+  stays burnable a full epoch after it ends. A multisig chain's stake answers for no single key: it does not witness.
 - **Weight = EARNED STAKE** (owner: "stake come from reward from storage… cumulative, grows over time; the longer in
   the game, the higher the stake"). No upfront cost: a node earns KEEPER REWARDS for holding what real users read
   (REWARDS §4, paid by held DEMAND, never self-claimed) and each reward lands LOCKED as witness stake. Two signatures at
