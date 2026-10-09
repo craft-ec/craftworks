@@ -202,7 +202,7 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
         T::Body::Vest { schedule, .. } => bal - schedule.iter().map(|x| x.1).sum::<u128>(),
         T::Body::Escrow { amount, .. } => bal - amount,
         T::Body::Unescrow { refund, .. } => bal + refund,
-        T::Body::Payout { amount, .. } => bal + amount,
+        T::Body::Payout { amount, .. } | T::Body::HolderPayout { amount, .. } => bal + amount,
         T::Body::Stake { amount } => bal - amount,
         T::Body::Unstake { .. } | T::Body::Slash { .. } | T::Body::Misdeed { .. } => bal,
         T::Body::Release { unstake } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Unstake { amount } if &x.nonce == unstake => Some(*amount), _ => None }).unwrap_or(0),
@@ -294,6 +294,7 @@ async fn main() -> Result<()> {
             "multisig" => multisig(&w).await?,
             "nft" => nft(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "editions" => editions(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
+            "holders" => holders(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "vest" => vest(&w).await?,
             "operators" => operators_mode(&w).await?,
             "misdeed" => misdeed_mode(&w).await?,
@@ -1474,5 +1475,75 @@ async fn editions(w: &W, scode: &[u8]) -> Result<()> {
     let mut ti = T::State::default();
     push(&mut ti, T::Body::Payout { program: prog, key: S::pay_key(&ey), amount: 1, ev: T::Evidence::default() }, w.n(30), None, now);
     println!("13 T paid Gold #1, on Y: {}", put(&w.y, container(&w.code, copy(t, 1).encode()), ti.encode()).await?.0);
+    Ok(())
+}
+
+/// HOLDERS' ROYALTY (TOKEN §1c), LIVE: edition H — numbered, cap 4, 10% to its HOLDERS. Copies #1 M, #2 T, #3 holder
+/// 8. M sells #1 to T for 100 B through a deal: 90 B to M, the 10 B fee to the holders — each OTHER copy claims
+/// 10 / 3 = 3 B, once; the sold copy none.
+async fn holders(w: &W, scode: &[u8]) -> Result<()> {
+    use craftworks_swap_contract as S;
+    println!("— holders (an edition whose royalty its holders share)");
+    let (m, t, h8) = (1u8, 2u8, 8u8);
+    let hd = T::Definition { ids: T::Ids::Numbered, cap: 4, decimals: 0, min_send: 1, genesis_amount: 0, mint: Some(one(60)), royalty: Some((1000, T::HOLDERS)), ..w.def(m, b"H", 26) };
+    let e = w.put_def(&hd).await?;
+    let h = w.now().await?;
+    let mint = |to: u8, n: u128| {
+        let mut x = T::supply::Mint { to: did(to), item: [0; 32], amount: 1, nonce: n.to_be_bytes(), stamp: h, sigs: vec![] };
+        x.sigs = vec![(0, key(60).sign(&x.message(&e)).to_bytes())];
+        x
+    };
+    let rec = T::supply::Shard { mints: vec![mint(m, 1), mint(t, 2), mint(h8, 3)] };
+    println!("1  H #1 to M, #2 to T, #3 to 8, on X: {}", put(&w.x, container(&w.code, T::supply::Params { code_hash: w.ch, definition: e, beacon: w.beacon, epoch: 0 }.encode()), rec.encode()).await?.0);
+    let r = w.now().await?;
+    let copy = |o: u8, n: u128| T::ChainParams { item: T::numbered_item(&e, n), ..w.chain(e, o) };
+    let credit = |n: u128| {
+        let mut s = T::State::default();
+        push(&mut s, T::Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: h, ev: T::Evidence::default() }, n.to_be_bytes(), None, r);
+        s
+    };
+    for (o, n) in [(m, 1u128), (t, 2), (h8, 3)] {
+        println!("2  {o}'s copy #{n} credited, on Y: {}", put(&w.y, container(&w.code, copy(o, n).encode()), credit(n).encode()).await?.0);
+    }
+    let tb = w.put_def(&w.def(t, b"PayH", 27)).await?;
+    let it = T::Tok { definition: e, item: T::numbered_item(&e, 1) };
+    let deal = S::Deal { x: it, party_x: did(m), amount_x: 1, y: tb.into(), party_y: did(t), amount_y: 100, deadline: r + 30, beacon: w.beacon };
+    let prog = *container(scode, deal.encode()).key().id().as_bytes().first_chunk::<32>().unwrap();
+    let mut mc = credit(1);
+    push(&mut mc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 1 }, w.n(7), Some(m), r);
+    println!("3  M escrows #1 with a deal for 100 B, on Y: {}", put(&w.y, container(&w.code, copy(m, 1).encode()), mc.encode()).await?.0);
+    let mut tbc = T::State::default();
+    push(&mut tbc, T::Body::Genesis { amount: 1000 }, w.n(1), Some(t), r);
+    push(&mut tbc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 100 }, w.n(8), Some(t), r);
+    println!("4  T escrows 100 B, on X: {}", w.put_chain(&w.x, tb, t, &tbc).await?.0);
+    let (ex, ey) = ((it, did(m), w.n(7)), (tb.into(), did(t), w.n(8)));
+    let hs = T::escrow::terms_hash(S::TERMS);
+    let alone = |x: T::escrow::EscrowRef, a: u128| T::escrow::Section { escrows: vec![(x, a, hs)], ..Default::default() };
+    put(&w.x, container(scode, deal.encode()), alone(ex, 1).encode()).await?;
+    println!("5  the deal with both (it crosses, the fee to the holders), on X: {}", put(&w.x, container(scode, deal.encode()), alone(ey, 100).encode()).await?.0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let held = get(&w.x, prog).await?.and_then(|b| T::escrow::Section::decode_prefix(&b).map(|x| x.0)).context("the deal")?;
+    let fee = held.pay(&S::fee_key(&ex));
+    println!("   the deal pays: M {:?} B, the holders {:?}", held.pay(&S::pay_key(&ex)).map(|p| p.2), fee.map(|p| (p.1 == T::HOLDERS, p.2)));
+    let now = w.now().await?;
+    let share = |n: u128, amount: u128| T::Body::HolderPayout { program: prog, key: S::fee_key(&ex), edition: e, copy: n, amount, ev: T::Evidence::default() };
+    let mut tc = tbc.clone();
+    push(&mut tc, share(2, 3), w.n(30), None, now);
+    println!("6  T's share for copy #2 (3 B), on X: {}", w.put_chain(&w.x, tb, t, &tc).await?.0);
+    let mut c8 = T::State::default();
+    push(&mut c8, share(3, 3), w.n(31), None, now);
+    println!("7  8's share for copy #3 (3 B), on X: {}", w.put_chain(&w.x, tb, h8, &c8).await?.0);
+    let mut again = c8.clone();
+    push(&mut again, share(3, 3), w.n(32), None, now);
+    println!("8  8's share again, on Y: {}", w.put_chain(&w.y, tb, h8, &again).await?.0);
+    let mut mm = T::State::default();
+    push(&mut mm, share(1, 3), w.n(33), None, now);
+    println!("9  M's share for the copy it sold (#1), on X: {}", w.put_chain(&w.x, tb, m, &mm).await?.0);
+    let mut nine = T::State::default();
+    push(&mut nine, share(3, 3), w.n(34), None, now);
+    println!("10 9 claims copy #3's share (not its copy), on X: {}", w.put_chain(&w.x, tb, 9, &nine).await?.0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let bal = |s: Option<T::State>| s.map_or(0, |s| s.balance());
+    println!("   B: T {} (900 + 3) · 8 {} · M {} · 9 {}", bal(w.get_chain(&w.x, tb, t).await?), bal(w.get_chain(&w.x, tb, h8).await?), bal(w.get_chain(&w.x, tb, m).await?), bal(w.get_chain(&w.x, tb, 9).await?));
     Ok(())
 }

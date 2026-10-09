@@ -68,7 +68,7 @@ fn after(s: &State, body: &Body) -> u128 {
         Body::Vest { schedule, .. } => b.wrapping_sub(schedule.iter().map(|x| x.1).sum::<u128>()),
         Body::Escrow { amount, .. } => b.wrapping_sub(*amount),
         Body::Unescrow { refund, .. } => b + refund,
-        Body::Payout { amount, .. } => b + amount,
+        Body::Payout { amount, .. } | Body::HolderPayout { amount, .. } => b + amount,
         Body::Stake { amount } => b.wrapping_sub(*amount),
         Body::Unstake { .. } | Body::Slash { .. } | Body::Misdeed { .. } => b,
         Body::Release { unstake } => b + unbonding_of(s).into_iter().find(|u| &u.0 == unstake).map_or(0, |u| u.1),
@@ -2694,4 +2694,93 @@ fn a_numbered_copy_is_credited_once_to_whom_its_mint_names() {
 }
 fn at_(token: [u8; 32], owner: u8) -> ChainParams {
     at(token, owner)
+}
+
+#[test]
+fn an_editions_holders_share_its_royalty_each_other_copy_once() {
+    // EDITION E: numbered, cap 4, 10% to its HOLDERS. M sells copy #1 to T for 100 B through PROG: 90 B to M, the fee
+    // 10 B to the holders — 10 / (4 − 1) = 3 for each OTHER copy. T holds #2, 8 holds #3.
+    let e = Definition { ids: Ids::Numbered, cap: 4, decimals: 0, min_send: 1, genesis_amount: 0, mint: Some(mint_set()), royalty: Some((1000, HOLDERS)), name: b"E".to_vec(), nonce: [5; 16], ..def() };
+    assert_eq!(Definition::decode(&e.encode()), Some(e.clone()));
+    assert_eq!(Definition::decode(&Definition { cap: 1, ..e.clone() }.encode()), None, "one copy: no other holder");
+    assert_eq!(Definition::decode(&Definition { ids: Ids::None, decimals: 8, ..e.clone() }.encode()), None, "plain copies: shares could move");
+    let eid = did_of(&e);
+    let copy = |n: u128| Tok { definition: eid, item: numbered_item(&eid, n) };
+    let mut copies: HashMap<(Tok, [u8; 32]), State> = HashMap::new();
+    for (n, o) in [(2u128, T), (3, 8)] {
+        let mut c = State::default();
+        put_at(&mut c, 1, Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: 5, ev: Evidence::default() }, None, 6);
+        copies.insert((copy(n), did(o)), c);
+    }
+    let h = escrow::terms_hash(b"sell");
+    let sec = escrow::Section {
+        escrows: vec![((copy(1), did(M), nonce(7)), 1, h), (eref(id_b(), T, 8), 100, h)],
+        refunds: vec![],
+        pays: vec![([1; 16], copy(1), did(T), 1), ([2; 16], id_b().into(), did(M), 90), ([3; 16], id_b().into(), HOLDERS, 10)],
+    };
+    assert_eq!(sec.holds(), Ok(()));
+    let prog = sec.encode();
+    let ebytes = e.encode();
+    let claim = |o: u8, n: u128, amount: u128, twice: bool| {
+        let mut s = State::default();
+        put_at(&mut s, 1, Body::Genesis { amount: 1000 }, Some(2), 0);
+        if o != 2 {
+            s = State::default();
+        }
+        let body = || Body::HolderPayout { program: PROG, key: [3; 16], edition: eid, copy: n, amount, ev: Evidence::default() };
+        put_at(&mut s, 30, body(), None, 10);
+        if twice {
+            put_at(&mut s, 31, body(), None, 10);
+        }
+        let f = |id: &[u8; 32]| if *id == PROG { Some(prog.clone()) } else if *id == eid { Some(ebytes.clone()) } else { None };
+        let def_b_ = if o == 2 { def_b() } else { Definition { genesis_owner: did(o), ..def_b() } };
+        check(&at(id_b(), o), &def_b_, &s, &|t, ow| copies.get(&(*t, *ow)).cloned(), &|_| None, Some(&log(o)), &Extra { ops: None, program: Some(&f) })
+    };
+    assert_eq!(claim(T, 2, 3, false), Ok(()), "T, for copy #2");
+    assert_eq!(claim(8, 3, 3, false), Ok(()), "8, for copy #3");
+    assert_eq!(claim(T, 2, 4, false), Err("a holders' share that is not its program's verdict"), "more than its share");
+    assert_eq!(claim(T, 2, 3, true), Err("a payout received twice"));
+    assert_eq!(claim(T, 3, 3, false), Err("a holders' share of a copy not held here"), "8's copy");
+    assert_eq!(claim(M, 1, 3, false), Err("a holders' share of a copy that takes none"), "the copy sold: no cut");
+    assert_eq!(claim(8, 5, 3, false), Err("a holders' share of a copy that takes none"), "past the cap");
+    // From a payout that is not the holders' (M's 90): no share. A copy sold on: its old holder takes none.
+    let mut s = State::default();
+    put_at(&mut s, 30, Body::HolderPayout { program: PROG, key: [2; 16], edition: eid, copy: 3, amount: 30, ev: Evidence::default() }, None, 10);
+    let fp = |id: &[u8; 32]| if *id == PROG { Some(prog.clone()) } else if *id == eid { Some(ebytes.clone()) } else { None };
+    let b8 = Definition { genesis_owner: did(8), ..def_b() };
+    assert_eq!(check(&at(id_b(), 8), &b8, &s, &|t, ow| copies.get(&(*t, *ow)).cloned(), &|_| None, Some(&log(8)), &Extra { ops: None, program: Some(&fp) }), Err("a holders' share that is not its program's verdict"));
+    let mut gone = copies.clone();
+    let c3 = gone.get_mut(&(copy(3), did(8))).unwrap();
+    put_at(c3, 9, Body::Send { to: did(9), amount: 1 }, Some(8), 7);
+    let mut s = State::default();
+    put_at(&mut s, 30, Body::HolderPayout { program: PROG, key: [3; 16], edition: eid, copy: 3, amount: 3, ev: Evidence::default() }, None, 10);
+    assert_eq!(check(&at(id_b(), 8), &b8, &s, &|t, ow| gone.get(&(*t, *ow)).cloned(), &|_| None, Some(&log(8)), &Extra { ops: None, program: Some(&fp) }), Err("a holders' share of a copy not held here"));
+    // Another definition handed in under the edition's id (cap 2: a share of 10): not its definition.
+    let fake = Definition { cap: 2, ..e.clone() }.encode();
+    let ff = |id: &[u8; 32]| if *id == PROG { Some(prog.clone()) } else if *id == eid { Some(fake.clone()) } else { None };
+    let mut s = State::default();
+    put_at(&mut s, 30, Body::HolderPayout { program: PROG, key: [3; 16], edition: eid, copy: 2, amount: 10, ev: Evidence::default() }, None, 10);
+    assert_eq!(check(&at(id_b(), 8), &b8, &s, &|_, _| None, &|_| None, Some(&log(8)), &Extra { ops: None, program: Some(&ff) }), Err("the edition's definition is not there"));
+    // A WITNESS of a share reads the claimant's chain of the copy: its last entry is what it accepts first.
+    let mut s = State::default();
+    put_at(&mut s, 30, Body::HolderPayout { program: PROG, key: [3; 16], edition: eid, copy: 3, amount: 3, ev: Evidence::default() }, None, 10);
+    let e30 = s.entries.last().unwrap().clone();
+    let got = wallet::cited(&at(id_b(), 8), &e30, &|t, ow| copies.get(&(*t, *ow)).cloned()).unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!((got[0].0.tok(), got[0].1.clone()), (copy(3), copies[&(copy(3), did(8))].entries.last().unwrap().clone()));
+    assert_eq!(wallet::cited(&at(id_b(), 8), &e30, &|_, _| None).err(), Some("a cited chain not held"));
+    // An edition that names its creator, not its holders: no shares.
+    let creator = Definition { royalty: Some((1000, did(7))), ..e.clone() };
+    let cb = creator.encode();
+    let cid = did_of(&creator);
+    let f = |id: &[u8; 32]| if *id == PROG { Some(prog.clone()) } else if *id == cid { Some(cb.clone()) } else { None };
+    let mut s = State::default();
+    put_at(&mut s, 30, Body::HolderPayout { program: PROG, key: [3; 16], edition: cid, copy: 3, amount: 3, ev: Evidence::default() }, None, 10);
+    assert_eq!(check(&at(id_b(), 8), &Definition { genesis_owner: did(8), ..def_b() }, &s, &|_, _| None, &|_| None, Some(&log(8)), &Extra { ops: None, program: Some(&f) }), Err("a holders' share of an edition that shares none"));
+    // The sold copy's payout to its buyer passes the royalty rule: the holders were paid their share.
+    let buyer = ChainParams { item: copy(1).item, ..at(eid, T) };
+    let mut s = State::default();
+    put_at(&mut s, 30, Body::Payout { program: PROG, key: [1; 16], amount: 1, ev: Evidence::default() }, None, 10);
+    let f = |id: &[u8; 32]| (*id == PROG).then(|| prog.clone());
+    assert_eq!(check(&buyer, &e, &s, &|_, _| None, &|_| None, Some(&log(T)), &Extra { ops: None, program: Some(&f) }), Ok(()));
 }

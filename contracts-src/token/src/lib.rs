@@ -207,7 +207,8 @@ impl Definition {
             _ => return None,
         };
         let (cap, collection, item, version) = (r.u128()?, r.arr()?, r.arr()?, r.arr()?);
-        let ok = r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1 && royalty.is_none_or(|(b, _)| b > 0 && b <= 10_000) && (cap == 0 || genesis_amount <= cap) && (cap == 0 || matches!(ids, Ids::None | Ids::Numbered));
+        let ok = r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1 && royalty.is_none_or(|(b, _)| b > 0 && b <= 10_000) && (cap == 0 || genesis_amount <= cap) && (cap == 0 || matches!(ids, Ids::None | Ids::Numbered))
+            && royalty.is_none_or(|(_, to)| to != HOLDERS || (ids == Ids::Numbered && cap >= 2));
         ok.then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog, mint, freeze, ids, royalty, cap, collection, item, version })
     }
     /// Minted by NUMBER into records ([`supply::RECORD`]): a cap, or numbered copies (each number once, ever).
@@ -317,6 +318,20 @@ pub const MINTED: u8 = b'm';
 pub const PAYOUT: u8 = b'p';
 /// A vesting step received (its key also carries the step: [`vested_key`]).
 pub const VESTED: u8 = b'v';
+/// A HOLDERS' share received (who: the program; nonce: [`holder_nonce`] of the fee's key and the copy).
+pub const HOLDERS_SHARE: u8 = b'h';
+/// The ROYALTY RECIPIENT that is an edition's HOLDERS (TOKEN §1c): the fee is shared by every OTHER copy's holder,
+/// each claiming `fee / (cap − 1)` once ([`Body::HolderPayout`]). Only a numbered edition of at least 2 names it.
+pub const HOLDERS: [u8; 32] = [0xff; 32];
+
+/// A holders' share's name in the received set: the fee's key and the copy.
+pub fn holder_nonce(key: &[u8; 16], edition: &[u8; 32], copy: u128) -> [u8; 16] {
+    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-10 token holders share");
+    h.update(key);
+    h.update(edition);
+    h.update(&copy.to_be_bytes());
+    h.finalize().as_bytes()[..16].try_into().unwrap()
+}
 /// The received-set key of step `step` of the vest `nonce` in `from`'s chain.
 pub fn vested_key(from: &[u8; 32], nonce: &[u8; 16], step: u32) -> Vec<u8> {
     [&received_key(VESTED, from, nonce)[..], &step.to_le_bytes()].concat()
@@ -389,6 +404,11 @@ pub enum Body {
     Unescrow { escrow: [u8; 16], refund: u128 },
     /// A program's PAYOUT `key` to this chain: `amount`, as its verdict says. Appended by anyone (with work), once.
     Payout { program: [u8; 32], key: [u8; 16], amount: u128, ev: Evidence },
+    /// A HOLDERS' SHARE (TOKEN §1c): from `program`'s payout `key` to [`HOLDERS`] — an edition's royalty fee — the share
+    /// of copy `copy` of `edition` (`fee / (cap − 1)`), credited here, to the copy's holder (this chain's owner, its
+    /// chain of the copy holding it), once per copy and fee; a copy sold in that program takes none. Anyone appends
+    /// it (with work).
+    HolderPayout { program: [u8; 32], key: [u8; 16], edition: [u8; 32], copy: u128, amount: u128, ev: Evidence },
     /// A MULTISIG owner's MEMBERS (TOKEN §1): the key set that signs from here, on set seq `set_seq`. The first (seq 0)
     /// is the set the owner id names, signed by k of it; each later one, by k of the set before.
     Members { set: authority::KeySet, set_seq: u32 },
@@ -556,6 +576,15 @@ impl Entry {
                 v.push(27);
                 v.extend_from_slice(program);
                 v.extend_from_slice(key);
+                v.extend_from_slice(&amount.to_le_bytes());
+                put_ev(&mut v, ev);
+            }
+            Body::HolderPayout { program, key, edition, copy, amount, ev } => {
+                v.push(29);
+                v.extend_from_slice(program);
+                v.extend_from_slice(key);
+                v.extend_from_slice(edition);
+                v.extend_from_slice(&copy.to_le_bytes());
                 v.extend_from_slice(&amount.to_le_bytes());
                 put_ev(&mut v, ev);
             }
@@ -751,6 +780,7 @@ impl Entry {
             }
             26 => Body::Unescrow { escrow: r.arr()?, refund: r.u128()? },
             27 => Body::Payout { program: r.arr()?, key: r.arr()?, amount: r.u128()?, ev: read_ev(r)? },
+            29 => Body::HolderPayout { program: r.arr()?, key: r.arr()?, edition: r.arr()?, copy: r.u128()?, amount: r.u128()?, ev: read_ev(r)? },
             20 => Body::Vested { from: r.arr()?, vest: r.arr()?, step: r.u32()?, amount: r.u128()?, at: r.u64()?, cited: r.u64()?, ev: read_ev(r)? },
             _ => return None,
         };
@@ -953,6 +983,8 @@ pub fn cited_chains_from(p: &ChainParams, s: &State, from: usize) -> Vec<(Tok, [
     for e in s.entries.iter().skip(from) {
         match &e.body {
             Body::Receive { from, .. } | Body::Vested { from, .. } => add((p.tok(), *from)),
+            // The claimant's chain of the copy it holds.
+            Body::HolderPayout { edition, copy, .. } => add((Tok { definition: *edition, item: numbered_item(edition, *copy) }, p.owner)),
             Body::Misdeed { tok, entry, .. } => {
                 if let Some((from, _)) = misdeed_cites(entry) {
                     add((*tok, from));
@@ -1068,6 +1100,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
         // ESCROWS not released yet (nonce, amount, program), and the payouts taken (program, key).
         let mut open_escrows: Vec<([u8; 16], u128, [u8; 32])> = Vec::new();
         let mut paid: Vec<([u8; 32], [u8; 16])> = Vec::new();
+        let mut shared: Vec<([u8; 32], [u8; 16])> = Vec::new();
         // A program's standard section, read (`x.program`) and checked to hold.
         let section = |prog: &[u8; 32]| -> Result<escrow::Section, Why> {
             let b = x.program.and_then(|f| f(prog)).ok_or("the escrow's program is not there")?;
@@ -1243,6 +1276,37 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         }
                         if !royalty_paid(d, p, &sec) {
                             return Err("a sale that does not pay its creator's royalty");
+                        }
+                    }
+                    balance.checked_add(*amount).ok_or("a balance overflow")?
+                }
+                Body::HolderPayout { program: prog, key, edition, copy, amount, ev } => {
+                    if !e.worked() {
+                        return Err("a payout without its work");
+                    }
+                    let name = holder_nonce(key, edition, *copy);
+                    if shared.contains(&(*prog, name)) || !fresh(&cut, e.stamp, received_key(HOLDERS_SHARE, prog, &name), ev) {
+                        return Err("a payout received twice");
+                    }
+                    shared.push((*prog, name));
+                    if recent {
+                        let sec = section(prog)?;
+                        let db = x.program.and_then(|f| f(edition)).ok_or("the edition's definition is not there")?;
+                        let de = Definition::decode(&db).filter(|_| id(&p.code_hash, &db) == *edition).ok_or("the edition's definition is not there")?;
+                        if de.ids != Ids::Numbered || de.cap < 2 || de.royalty.is_none_or(|(_, to)| to != HOLDERS) {
+                            return Err("a holders' share of an edition that shares none");
+                        }
+                        let item = numbered_item(edition, *copy);
+                        if *copy == 0 || *copy > de.cap || sec.escrows.iter().any(|((t, ..), ..)| t.definition == *edition && t.item == item) {
+                            return Err("a holders' share of a copy that takes none");
+                        }
+                        let Some((t, to, fee)) = sec.pay(key) else { return Err("a holders' share that is not its program's verdict") };
+                        if t != p.tok() || to != HOLDERS || *amount != fee / (de.cap - 1) {
+                            return Err("a holders' share that is not its program's verdict");
+                        }
+                        let held = chain(&Tok { definition: *edition, item }, &p.owner).ok_or("a holders' share of a copy not held here")?;
+                        if held.balance() != 1 {
+                            return Err("a holders' share of a copy not held here");
                         }
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
@@ -1628,6 +1692,13 @@ pub fn programs_from(s: &State, from: usize) -> Vec<[u8; 32]> {
     for (i, e) in s.entries.iter().enumerate().skip(from) {
         let prog = match &e.body {
             Body::Payout { program, .. } => Some(*program),
+            Body::HolderPayout { program, edition, .. } => {
+                // (Its edition's definition too: read by id, as a program's state is.)
+                if !out.contains(edition) {
+                    out.push(*edition);
+                }
+                Some(*program)
+            }
             Body::Unescrow { escrow, .. } => s.entries[..i].iter().find_map(|x| match &x.body {
                 Body::Escrow { program, .. } if &x.nonce == escrow => Some(*program),
                 _ => None,

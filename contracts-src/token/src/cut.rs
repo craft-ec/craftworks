@@ -18,6 +18,7 @@ pub fn received_keys(entries: &[Entry]) -> Vec<Vec<u8>> {
             Body::Mint { nonce, .. } | Body::CappedMint { nonce, .. } => Some(received_key(MINTED, &MINTER, nonce)),
             Body::Vested { from, vest, step, .. } => Some(crate::vested_key(from, vest, *step)),
             Body::Payout { program, key, .. } => Some(crate::received_key(crate::PAYOUT, program, key)),
+            Body::HolderPayout { program, key, edition, copy, .. } => Some(crate::received_key(crate::HOLDERS_SHARE, program, &crate::holder_nonce(key, edition, *copy))),
             _ => None,
         })
         .collect();

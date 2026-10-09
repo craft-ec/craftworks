@@ -1465,8 +1465,14 @@ old key's addresses.
           sealed, none past it back-dated; Body::CappedMint. Item authorship checked app-side (the
           token cannot read a feed's credentials). token.wasm 18710494, pool 8fb6d07c, swap d7ab3996 (rebuilt: they
           decode definitions). 94/9/3 tests; 16 mutants killed. LIVE fx/fy `editions` as in TOKEN step 16.
-          NOT BUILT (asked about, not ordered): royalty shared by holders (needs: royalty paid into escrow for a
-          program; owner's open choice — the seller's own copy counted or not); fractional ownership.
+          token.wasm/pool/swap rebuilt again in 20 (below).
+      [x] 20 HOLDERS' ROYALTY (TOKEN §1c) — DONE 10-10 (owner: the seller's own copy gets no cut). Royalty recipient
+          HOLDERS (numbered, cap ≥ 2); apps pay the fee unchanged; each other copy's holder claims fee/(cap−1) by
+          Body::HolderPayout (copy chain cited, edition definition read by id, once per copy+fee, sold copies none);
+          witnesses: program backed + the copy chain's last entry accepted. No escrow-to-program change was needed: the
+          fee stays in the sale program and the holders claim straight from its section. token.wasm 73f93a2c, pool
+          8220e0a2, swap fcce67fa. 95 tests; 10 mutants killed. LIVE fx/fy `holders` as in TOKEN step 17.
+          NOT BUILT: fractional ownership (not ordered).
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).
       [x] 17 BATCH-AUCTION POOLS (TOKEN §5) — in parts:

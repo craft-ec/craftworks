@@ -173,8 +173,15 @@ A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has CO
 - **Who may mint an item's edition.** The token checks the mint authority; that the edition's creator (its
   `genesis_owner`) is the Craftworks item's author is checked by the app where it shows the edition — it already proves
   an item's author from its feed's credentials; a contract cannot read that cheaply.
-- **Not built:** a royalty shared by an edition's HOLDERS (a pool program the royalty pays into — escrow already does the
-  holding); fractional ownership of one item (an app over escrow).
+- **A royalty its HOLDERS share** (owner 10-10: "seller own copy should not get a cut"). An edition's royalty may name
+  `HOLDERS` instead of a creator — only a numbered edition of at least 2 copies. Every app pays the fee as it pays a
+  creator's (to `HOLDERS`, in the payment's token); then each OTHER copy's holder appends a `HolderPayout` to its own
+  chain of that token: `fee / (cap − 1)` (rounded down; unminted copies' shares and the dust stay in the program),
+  once per copy and fee (its name in the received set), only while its chain of the copy holds it — and a copy sold
+  in that program takes none. A witness signs it only on the program backed by real escrows and the claimant's copy
+  chain's last entry accepted. Numbered only: a plain copy has no number, so its share could be claimed again from
+  each chain it moves to.
+- **Not built:** fractional ownership of one item (an app over escrow).
 
 ## 2. A chain's entries
 
@@ -746,6 +753,12 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    and item; Gold #4 and Silver 5–6 past their caps REFUSED; #2 minted again kept, not admitted; an open edition's
    #1024 in record 0 and #1025 in record 1 ACCEPTED, #1025 in record 0 REFUSED, #1025 credited; M claiming T's #3
    REFUSED; Gold #1 resold through a deal: 90 B to M, 10 B to the creator, the copy to T. `mint` re-run unchanged.
+
+17. HOLDERS' ROYALTY — BUILT 10-10 (§1c): `HOLDERS`, `Body::HolderPayout`, the copy chain cited, the witness rule.
+   Token 95 tests; 10 mutants, all killed (3 after: a payout not the holders', a copy sold on, a definition handed
+   in under another id). LIVE fx/fy (`token-live holders`): edition H (numbered, cap 4, 10% to holders), copies #1 M,
+   #2 T, #3 8; #1 sold to T for 100 B through a deal — 90 B to M, 10 B to the holders; T's and 8's shares (3 B each)
+   ACCEPTED; 8's again, M's for the sold copy, and 9's for a copy it does not hold REFUSED (T 903, 8 3, M 0, 9 0 B).
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under

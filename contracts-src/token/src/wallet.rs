@@ -92,6 +92,13 @@ pub fn cited(p: &ChainParams, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 32]) -> Opti
     };
     Ok(match &e.body {
         Body::Receive { from, .. } | Body::Vested { from, .. } => vec![find(p.tok(), *from, &|x| crate::debit_for(x, &p.owner, e))?],
+        // A holders' share: the claimant's chain of the copy — its LAST entry (what says it holds the copy) accepted.
+        Body::HolderPayout { edition, copy, .. } => {
+            let t = Tok { definition: *edition, item: crate::numbered_item(edition, *copy) };
+            let held = chain(&t, &p.owner).ok_or("a cited chain not held")?;
+            let i = held.entries.len().checked_sub(1).ok_or("a cited entry not held")?;
+            vec![(p.at(t, p.owner), held.entries[i].clone(), i.checked_sub(1).map(|j| held.entries[j].clone()))]
+        }
         _ => vec![],
     })
 }
@@ -175,6 +182,10 @@ fn program_entry(src: &Source, p: &ChainParams, s: &State, i: usize, chain: &dyn
         Body::Payout { program, key, amount, .. } => {
             let sec = program_backed(src, p, program, chain)?;
             (sec.pay(key) == Some((p.tok(), p.owner, *amount))).then_some(()).ok_or("a payout that is not its program's verdict")
+        }
+        Body::HolderPayout { program, key, .. } => {
+            let sec = program_backed(src, p, program, chain)?;
+            sec.pay(key).filter(|(t, to, _)| *t == p.tok() && *to == crate::HOLDERS).map(|_| ()).ok_or("a holders' share that is not its program's verdict")
         }
         _ => Ok(()),
     }
