@@ -69,6 +69,9 @@ fn after(s: &State, body: &Body) -> u128 {
         Body::Genesis { amount } => *amount,
         Body::Send { amount, .. } | Body::Burn { amount } => b.wrapping_sub(*amount),
         Body::Receive { amount, .. } | Body::Mint { amount, .. } => b + amount,
+        Body::Stake { amount } => b.wrapping_sub(*amount),
+        Body::Unstake { .. } | Body::Slash { .. } => b,
+        Body::Release { unstake } => b + unbonding_of(s).into_iter().find(|u| &u.0 == unstake).map_or(0, |u| u.1),
         Body::Allow { .. } | Body::Offer { .. } | Body::Cut { .. } | Body::Writer { .. } | Body::Members { .. } => b,
         Body::Spend { amount, .. } | Body::Fill { amount, .. } => b.wrapping_sub(*amount),
         Body::Lock { amount, fee, .. } => b.wrapping_sub(amount + fee.map_or(0, |f| f.1)),
@@ -2127,4 +2130,135 @@ fn a_sale_of_a_royalty_token_pays_its_creator_who_claims_it() {
     assert_eq!(check(&at(id_b(), T), &def_b(), &back, &|_, _| None, &|_| None, Some(&log(T))), Ok(()), "100 + 5 back");
     let own = Definition { royalty: Some((500, did(M))), ..def_u() };
     assert!(royalty_paid(&own, &did(M), 100, None) && !royalty_paid(&def_u(), &did(M), 100, None));
+}
+
+
+// ---- FOUNDATION 6a: STAKE, its release after a delay, and its burn on a witness's equivocation ----
+
+/// A (1) with its genesis (1000), its writer device 1.
+fn staker() -> State {
+    let mut a = State::default();
+    signed(&mut a, 1, 1, Body::Genesis { amount: 1000 });
+    a
+}
+fn wsig(by: u8, chain: u8, seq: u64, entry: u8) -> witness::WitnessSig {
+    let (c, h) = ([chain; 32], [entry; 32]);
+    witness::WitnessSig { chain: c, seq, entry: h, sig: key(by).sign(&witness::WitnessSig::message(&c, seq, &h)).to_bytes() }
+}
+fn at_stamp(s: &mut State, n: u8, body: Body, by: Option<u8>, stamp: u64) {
+    let mut e = entry(s, nonce(n), body);
+    e.stamp = stamp;
+    s.entries.push(match by {
+        Some(k) => sign(e, k),
+        None => work(e),
+    });
+}
+
+#[test]
+fn stake_is_locked_out_of_the_balance_and_comes_back_only_after_its_delay() {
+    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)));
+    let mut a = staker();
+    signed(&mut a, 1, 2, Body::Stake { amount: 600 });
+    assert_eq!(ck(&a), Ok(()));
+    assert_eq!(a.balance(), 400, "staked is not spendable");
+    let mut over = a.clone();
+    signed(&mut over, 1, 3, Body::Send { to: did(2), amount: 401 });
+    assert_eq!(ck(&over), Err("a debit over the balance"));
+    let mut zero = staker();
+    signed(&mut zero, 1, 2, Body::Stake { amount: 0 });
+    assert_eq!(ck(&zero), Err("a stake of nothing"));
+    let mut too_much = staker();
+    signed(&mut too_much, 1, 2, Body::Stake { amount: 1001 });
+    assert_eq!(ck(&too_much), Err("a debit over the balance"));
+    // Unstake 200 at stamp 10: released at 10 + UNBOND, not a step before.
+    at_stamp(&mut a, 3, Body::Unstake { amount: 200 }, Some(1), 10);
+    assert_eq!(ck(&a), Ok(()));
+    let mut early = a.clone();
+    at_stamp(&mut early, 4, Body::Release { unstake: nonce(3) }, None, 10 + UNBOND - 1);
+    assert_eq!(ck(&early), Err("a release before its delay"));
+    let mut back = a.clone();
+    at_stamp(&mut back, 4, Body::Release { unstake: nonce(3) }, None, 10 + UNBOND);
+    assert_eq!(ck(&back), Ok(()));
+    assert_eq!(back.balance(), 600, "400 + the 200 released");
+    let mut twice = back.clone();
+    at_stamp(&mut twice, 5, Body::Release { unstake: nonce(3) }, None, 10 + UNBOND);
+    assert_eq!(ck(&twice), Err("a release of nothing unbonding"));
+    let mut over_stake = a.clone();
+    at_stamp(&mut over_stake, 6, Body::Unstake { amount: 401 }, Some(1), 11);
+    assert_eq!(ck(&over_stake), Err("an unstake over the stake"), "400 left staked");
+    // The append rule: the BEACON past the release height, not the entry's stamp.
+    let held = a.clone();
+    assert_eq!(append_check(&def(), 10 + UNBOND - 1, &held, &early, Some(&log(1))).err(), Some("a release before its delay"), "stamped now, the beacon one short");
+    assert_eq!(append_check(&def(), 10 + UNBOND, &held, &back, Some(&log(1))), Ok(()));
+}
+
+#[test]
+fn a_witness_equivocation_burns_its_stake_and_its_unbonding() {
+    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)));
+    let mut a = staker();
+    signed(&mut a, 1, 2, Body::Stake { amount: 600 });
+    at_stamp(&mut a, 3, Body::Unstake { amount: 100 }, Some(1), 0);
+    // Device 1 (this chain's writer) signed two entries at one place of chain 9.
+    let mut slashed = a.clone();
+    at_stamp(&mut slashed, 4, Body::Slash { key: pk(1), a: wsig(1, 9, 5, 1), b: wsig(1, 9, 5, 2) }, None, 0);
+    assert_eq!(ck(&slashed), Ok(()));
+    let mut nothing_back = slashed.clone();
+    at_stamp(&mut nothing_back, 5, Body::Release { unstake: nonce(3) }, None, UNBOND);
+    assert_eq!(ck(&nothing_back), Err("a release of nothing unbonding"), "the unbonding burned too");
+    let mut unstake = slashed.clone();
+    at_stamp(&mut unstake, 5, Body::Unstake { amount: 1 }, Some(1), 0);
+    assert_eq!(ck(&unstake), Err("an unstake over the stake"), "the stake burned");
+    assert_eq!(slashed.balance(), 400, "the balance itself untouched");
+    // No equivocation: the same entry twice; two places; another key's signatures; a key not this chain's.
+    for (body, why) in [
+        (Body::Slash { key: pk(1), a: wsig(1, 9, 5, 1), b: wsig(1, 9, 5, 1) }, "a slash with no equivocation"),
+        (Body::Slash { key: pk(1), a: wsig(1, 9, 5, 1), b: wsig(1, 9, 6, 2) }, "a slash with no equivocation"),
+        (Body::Slash { key: pk(1), a: wsig(2, 9, 5, 1), b: wsig(2, 9, 5, 2) }, "a slash with no equivocation"),
+        (Body::Slash { key: pk(2), a: wsig(2, 9, 5, 1), b: wsig(2, 9, 5, 2) }, "a slash of a key that is not this chain's"),
+    ] {
+        let mut x = a.clone();
+        at_stamp(&mut x, 4, body, None, 0);
+        assert_eq!(ck(&x), Err(why));
+    }
+}
+
+#[test]
+fn a_cut_carries_the_stake_and_the_unbonding() {
+    let mut a = staker();
+    signed(&mut a, 1, 2, Body::Stake { amount: 600 });
+    at_stamp(&mut a, 3, Body::Unstake { amount: 100 }, Some(1), 7);
+    let mut blocks = cut::Blocks::new();
+    let (body, b) = cut::make(&params(1), &def(), &a, Some(&log(1))).unwrap();
+    blocks.extend(b);
+    match &body {
+        Body::Cut { staked, unbonding, .. } => {
+            assert_eq!(*staked, 500);
+            assert_eq!(unbonding, &vec![(nonce(3), 100, 7 + UNBOND)]);
+        }
+        _ => panic!("not a cut"),
+    }
+    let mut s = a.clone();
+    at_stamp(&mut s, 99, body.clone(), Some(1), 7);
+    let pruned = prune(&s);
+    let ck = |s: &State| check(&params(1), &def(), s, &|_, _| None, &|_| None, Some(&log(1)));
+    assert_eq!(ck(&pruned), Ok(()));
+    let mut back = pruned.clone();
+    at_stamp(&mut back, 4, Body::Release { unstake: nonce(3) }, None, 7 + UNBOND);
+    assert_eq!(ck(&back), Ok(()), "released across the cut");
+    // The stake itself across the cut: all 500 can be unstaked, not one more.
+    let mut un = pruned.clone();
+    at_stamp(&mut un, 5, Body::Unstake { amount: 500 }, Some(1), 8);
+    assert_eq!(ck(&un), Ok(()));
+    let mut over = pruned.clone();
+    at_stamp(&mut over, 5, Body::Unstake { amount: 501 }, Some(1), 8);
+    assert_eq!(ck(&over), Err("an unstake over the stake"));
+    // A cut that drops the stake is not what came before it.
+    let mut lie = s.clone();
+    if let Some(Body::Cut { staked, .. }) = lie.entries.last_mut().map(|e| &mut e.body) {
+        *staked = 0;
+    }
+    let last = lie.entries.pop().unwrap();
+    let e = sign(Entry { auth: Auth::Work(0), ..last }, 1);
+    lie.entries.push(e);
+    assert_eq!(ck(&lie), Err("a cut that is not what came before it"));
 }

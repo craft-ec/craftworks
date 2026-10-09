@@ -70,7 +70,7 @@ pub fn make(p: &ChainParams, d: &Definition, whole: &State, keys: Option<&craftw
     }
     let mut blocks = Blocks::new();
     let ((history, history_parity), (received, received_parity)) = trees(&whole.entries, &mut blocks)?;
-    Ok((Body::Cut { history, received, history_parity, received_parity, allowances: c.allowances, offers: c.offers, locks: c.locks, writer: c.writer }, blocks))
+    Ok((Body::Cut { history, received, history_parity, received_parity, allowances: c.allowances, offers: c.offers, locks: c.locks, writer: c.writer, staked: c.staked, unbonding: c.unbonding }, blocks))
 }
 
 /// A tree's blocks, to prove from.

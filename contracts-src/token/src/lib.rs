@@ -22,6 +22,9 @@ pub const RECENT: usize = 4;
 pub const WORK_BITS: u32 = 16;
 /// A token's name, at most (its length is one byte on the wire).
 pub const NAME_MAX: usize = 64;
+/// Beacon steps an unstaked amount waits before its release — slashable all the while (a witness's equivocation is
+/// found and proved within it).
+pub const UNBOND: u64 = 1024;
 
 /// A contract's instance id (Freenet's: the code's hash and the params) — `contract_keys::instance`, its one home.
 pub fn id(code_hash: &[u8; 32], params: &[u8]) -> [u8; 32] {
@@ -313,6 +316,17 @@ pub enum Body {
     /// A MINT (TOKEN §1a): the mint `nonce` of the token's supply shard of beacon `minted`'s epoch, naming this owner
     /// and `amount` — credited here; appended by anyone (with work), once.
     Mint { nonce: [u8; 16], amount: u128, minted: u64, ev: Evidence },
+    /// STAKE (TOKEN §7a): `amount` of the balance locked as witness stake — what a witness's draw weighs, and what
+    /// its equivocation burns.
+    Stake { amount: u128 },
+    /// `amount` of the stake set to come back: released ([`Body::Release`]) [`UNBOND`] beacon steps after this entry —
+    /// slashable until then.
+    Unstake { amount: u128 },
+    /// The unstake `unstake` (its entry's nonce) back into the balance, its delay over — appended by anyone.
+    Release { unstake: [u8; 16] },
+    /// An EQUIVOCATION by this chain's witness key (`key`, its writer's node key): two witness signatures at one place
+    /// naming different entries — every stake and unbonding amount BURNED. Appended by anyone.
+    Slash { key: [u8; 32], a: witness::WitnessSig, b: witness::WitnessSig },
     /// A MULTISIG owner's MEMBERS (TOKEN §1): the key set that signs from here, on set seq `set_seq`. The first (seq 0)
     /// is the set the owner id names, signed by k of it; each later one, by k of the set before.
     Members { set: authority::KeySet, set_seq: u32 },
@@ -331,6 +345,9 @@ pub enum Body {
         locks: Vec<LockState>,
         /// The chain's signer at the cut.
         writer: Option<Signer>,
+        /// Its STAKE and its UNBONDING amounts (nonce, amount, release height), as before the cut.
+        staked: u128,
+        unbonding: Vec<([u8; 16], u128, u64)>,
     },
 }
 
@@ -510,7 +527,25 @@ impl Entry {
                 v.extend_from_slice(cred);
                 v.extend_from_slice(&key_seq.to_le_bytes());
             }
-            Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer } => {
+            Body::Stake { amount } => {
+                v.push(15);
+                v.extend_from_slice(&amount.to_le_bytes());
+            }
+            Body::Unstake { amount } => {
+                v.push(16);
+                v.extend_from_slice(&amount.to_le_bytes());
+            }
+            Body::Release { unstake } => {
+                v.push(17);
+                v.extend_from_slice(unstake);
+            }
+            Body::Slash { key, a, b } => {
+                v.push(18);
+                v.extend_from_slice(key);
+                a.put(&mut v);
+                b.put(&mut v);
+            }
+            Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer, staked, unbonding } => {
                 v.push(11);
                 v.extend_from_slice(history);
                 v.extend_from_slice(received);
@@ -547,6 +582,13 @@ impl Entry {
                 match writer {
                     None => v.push(0),
                     Some(w) => w.encode(&mut v),
+                }
+                v.extend_from_slice(&staked.to_le_bytes());
+                v.extend_from_slice(&(unbonding.len() as u32).to_le_bytes());
+                for (n, a, at) in unbonding {
+                    v.extend_from_slice(n);
+                    v.extend_from_slice(&a.to_le_bytes());
+                    v.extend_from_slice(&at.to_le_bytes());
                 }
             }
         }
@@ -635,7 +677,13 @@ impl Entry {
                     2 => Some(Signer::Set(authority::KeySet::read(r)?, r.u32()?)),
                     _ => return None,
                 };
-                Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer }
+                let staked = r.u128()?;
+                let n = count(r)?;
+                let mut unbonding = Vec::with_capacity(n);
+                for _ in 0..n {
+                    unbonding.push((r.arr()?, r.u128()?, r.u64()?));
+                }
+                Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer, staked, unbonding }
             }
             12 => {
                 let n = u16::from_le_bytes(r.arr()?) as usize;
@@ -645,6 +693,10 @@ impl Entry {
                 Body::Writer { cred: r.take(n)?.to_vec(), key_seq: r.u32()? }
             }
             13 => Body::Mint { nonce: r.arr()?, amount: r.u128()?, minted: r.u64()?, ev: read_ev(r)? },
+            15 => Body::Stake { amount: r.u128()? },
+            16 => Body::Unstake { amount: r.u128()? },
+            17 => Body::Release { unstake: r.arr()? },
+            18 => Body::Slash { key: r.arr()?, a: witness::WitnessSig::read(r)?, b: witness::WitnessSig::read(r)? },
             14 => Body::Members { set: authority::KeySet::read(r)?, set_seq: r.u32()? },
             _ => return None,
         };
@@ -875,6 +927,18 @@ fn offers_of(s: &State) -> Vec<([u8; 16], Tok, u128, u128, u128, u64, u64)> {
         })
         .collect()
 }
+/// What is unbonding in a chain: (unstake nonce, amount, release height) — from its unstakes, and its cut's.
+fn unbonding_of(s: &State) -> Vec<([u8; 16], u128, u64)> {
+    s.entries
+        .iter()
+        .flat_map(|e| match &e.body {
+            Body::Unstake { amount } => vec![(e.nonce, *amount, e.stamp.saturating_add(UNBOND))],
+            Body::Cut { unbonding, .. } => unbonding.clone(),
+            _ => vec![],
+        })
+        .collect()
+}
+
 /// The locks in a chain: (nonce, to, amount, until, token, offer, stamp).
 fn locks_of(s: &State) -> Vec<([u8; 16], [u8; 32], u128, u64, Tok, [u8; 16], u64)> {
     s.entries
@@ -940,6 +1004,8 @@ pub struct Carried {
     pub offers: Vec<OfferState>,
     pub locks: Vec<LockState>,
     pub writer: Option<Signer>,
+    pub staked: u128,
+    pub unbonding: Vec<([u8; 16], u128, u64)>,
 }
 
 /// The shape rules, walked: what the chain carries at its end, or where and why it is refused. The citations of the last
@@ -977,6 +1043,9 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
         let mut allowed: Vec<([u8; 32], u128)> = Vec::new();
         let mut offers: Vec<OfferState> = Vec::new();
         let mut locks: Vec<LockState> = Vec::new();
+        // STAKE (TOKEN §7a): locked as witness stake, and what is on its way back (nonce, amount, release height).
+        let mut staked: u128 = 0;
+        let mut unbonding: Vec<([u8; 16], u128, u64)> = Vec::new();
         // The last cut: its stamp (what is stamped at or before it may be in its received set) and that set's root.
         let mut cut: Option<(u64, [u8; 32])> = None;
         let first = s.entries.first().map_or(0, |e| e.seq);
@@ -1286,7 +1355,50 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     writer = Some(Signer::Set(set.clone(), *set_seq));
                     balance
                 }
-                Body::Cut { received: root, allowances, offers: o, locks: l, writer: w, .. } => {
+                Body::Stake { amount } => {
+                    owner_signed(e, &writer)?;
+                    if *amount == 0 {
+                        return Err("a stake of nothing");
+                    }
+                    staked = staked.checked_add(*amount).ok_or("a balance overflow")?;
+                    balance.checked_sub(*amount).ok_or("a debit over the balance")?
+                }
+                Body::Unstake { amount } => {
+                    owner_signed(e, &writer)?;
+                    if *amount == 0 || unbonding.iter().any(|u| u.0 == e.nonce) {
+                        return Err("an unstake of nothing");
+                    }
+                    staked = staked.checked_sub(*amount).ok_or("an unstake over the stake")?;
+                    unbonding.push((e.nonce, *amount, e.stamp.saturating_add(UNBOND)));
+                    balance
+                }
+                Body::Release { unstake } => {
+                    if !e.worked() {
+                        return Err("a release without its work");
+                    }
+                    let i = unbonding.iter().position(|u| &u.0 == unstake).ok_or("a release of nothing unbonding")?;
+                    if e.stamp < unbonding[i].2 {
+                        return Err("a release before its delay");
+                    }
+                    let (_, amount, _) = unbonding.remove(i);
+                    balance.checked_add(amount).ok_or("a balance overflow")?
+                }
+                Body::Slash { key, a, b } => {
+                    if !e.worked() {
+                        return Err("a slash without its work");
+                    }
+                    // The key whose witness signatures they are: this chain's writer (its node key).
+                    if !matches!(&writer, Some(Signer::Device(node, _)) if node == key) {
+                        return Err("a slash of a key that is not this chain's");
+                    }
+                    if !witness::equivocation(key, a, b) {
+                        return Err("a slash with no equivocation");
+                    }
+                    staked = 0;
+                    unbonding.clear();
+                    balance
+                }
+                Body::Cut { received: root, allowances, offers: o, locks: l, writer: w, staked: st, unbonding: ub, .. } => {
                     if starts_at_cut {
                         // The chain's writer as the cut carries it (who signs from here — and the cut itself).
                         writer = w.clone();
@@ -1298,12 +1410,14 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         // The chain's start: what came before is pruned — the cut's state is taken (checked by the
                         // nodes that held the prefix when it was written, and by wallets walking its history).
                         allowed = allowances.clone();
+                        staked = *st;
+                        unbonding = ub.clone();
                         offers = o.clone();
                         locks = l.clone();
                         e.balance
                     } else {
                         // The prefix is here: the cut must carry exactly what it computes.
-                        if sorted(&allowed) != sorted(allowances) || sorted(&offers) != sorted(o) || sorted(&locks) != sorted(l) {
+                        if sorted(&allowed) != sorted(allowances) || sorted(&offers) != sorted(o) || sorted(&locks) != sorted(l) || staked != *st || sorted(&unbonding) != sorted(ub) {
                             return Err("a cut that is not what came before it");
                         }
                         received.clear();
@@ -1333,7 +1447,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                 return Err("a fork not signed twice by the chain's writer");
             }
         }
-        Ok(Carried { balance, allowances: allowed, offers, locks, writer })
+        Ok(Carried { balance, allowances: allowed, offers, locks, writer, staked, unbonding })
     })();
     r.map_err(|why| (failed_at, why))
 }
@@ -1392,6 +1506,13 @@ pub fn append_check(d: &Definition, now: u64, held: &State, merged: &State, keys
                 }
                 if e.stamp.saturating_add(m) >= *until {
                     return Err("a fill too close to its lock's deadline");
+                }
+            }
+            Body::Release { unstake } => {
+                // (Its release height from its unstake, or from the cut that carries it: the BEACON past it, not the
+                // entry's own stamp.)
+                if unbonding_of(merged).into_iter().find(|u| &u.0 == unstake).is_none_or(|u| now < u.2) {
+                    return Err("a release before its delay");
                 }
             }
             Body::Refund { lock, .. } => {
@@ -1868,6 +1989,7 @@ mod contract {
 pub mod authority;
 pub mod cut;
 pub mod freeze;
+pub mod witness;
 pub mod supply;
 pub mod wallet;
 

@@ -203,6 +203,9 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
         T::Body::Send { amount, .. } | T::Body::Burn { amount } | T::Body::Spend { amount, .. } | T::Body::Fill { amount, .. } => bal - amount,
         T::Body::Lock { amount, fee, .. } => bal - amount - fee.map_or(0, |f| f.1),
         T::Body::Receive { amount, .. } | T::Body::Claim { amount, .. } | T::Body::Mint { amount, .. } => bal + amount,
+        T::Body::Stake { amount } => bal - amount,
+        T::Body::Unstake { .. } | T::Body::Slash { .. } => bal,
+        T::Body::Release { unstake } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Unstake { amount } if &x.nonce == unstake => Some(*amount), _ => None }).unwrap_or(0),
         T::Body::Allow { .. } | T::Body::Offer { .. } | T::Body::Cut { .. } | T::Body::Writer { .. } | T::Body::Members { .. } => bal,
         T::Body::Refund { lock, .. } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Lock { amount, fee, .. } if &x.nonce == lock => Some(amount + fee.map_or(0, |f| f.1)), _ => None }).unwrap_or(0),
     };
