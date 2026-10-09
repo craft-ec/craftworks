@@ -439,6 +439,23 @@ The standard's first instance. What it changes in REWARDS:
   `fixed` + `burnable`, with or without a `keepers` launch phase), who holds its genesis (a sale, early contributors,
   keepers only), and the network share (burned, or kept for upkeep).
 
+## 7a. Witnesses by lot, backed by storage (owner 10-09: "the most decentralized and open protocol"; "the natural
+progression is storage")
+
+Closes what the chains alone leave open — a double spend detected but not PREVENTED (§3b), history checked only by the
+receiving wallet (§3a), a fill and a refund both passing across a partition longer than the margin (§3b):
+
+- **No nominated witnesses.** Any node stands by PROVING storage it holds (the keepers' proofs, REWARDS §4) — no
+  list, no approval, no per-token setup: one open pool for every token.
+- **Drawn by lot, per entry.** For each (chain, seq), every node computes its own VRF draw over (beacon, chain, seq);
+  its chance grows with its proved storage. A drawn node re-runs the chain's checks (the verification primitive) and
+  signs, with its draw's proof; an entry counts once it carries enough drawn signatures — checkable by anyone from the
+  beacon and the storage proofs. The committee is fresh per entry and unknown in advance.
+- **Two signatures at one place** by one witness are the proof against it: its storage standing is lost.
+- **Why storage:** an open lot needs a cost per ticket or a sybil wins every draw; storage is the resource the network
+  already pays for and proves (as Bitcoin uses work, Ethereum stake, Filecoin storage).
+- **Depends on** the storage proofs (deferred until money moves, §6) — they come first.
+
 ## 8. Open in the architecture
 
 1. The BEACON's cadence (§5a) — mechanism designed, `K`/`S`/`s` calibrated from measurement; special hardware's
