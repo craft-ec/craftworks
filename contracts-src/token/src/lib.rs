@@ -275,30 +275,16 @@ pub struct Evidence {
     pub theirs: Vec<([u8; 32], u64, Vec<u8>, Vec<u8>)>,
 }
 
-/// An open offer as a cut carries it: (nonce, get, give, per, what is left, until).
-pub type OfferState = ([u8; 16], Tok, u128, u128, u128, u64);
-/// A lock as a cut carries it: (nonce, to, amount, until, token, offer, still open).
-pub type LockState = ([u8; 16], [u8; 32], u128, u64, Tok, [u8; 16], bool);
 
 /// The received-set key of a name: what a cut's received set holds, what absence proofs are about.
 pub fn received_key(kind: u8, who: &[u8; 32], nonce: &[u8; 16]) -> Vec<u8> {
     [&[kind][..], who, nonce].concat()
 }
-/// Received-set kinds: a send received, a lock filled, a lock claimed.
+/// Received-set kinds: a send received, a mint credited.
 pub const RECEIVED: u8 = b'r';
-pub const FILLED: u8 = b'f';
-pub const CLAIMED: u8 = b'c';
 pub const MINTED: u8 = b'm';
-/// A pool order's purchase received (its key: [`bought_key`]).
-pub const BOUGHT: u8 = b'b';
 /// A program's payout received (who: the program, nonce: the payout's key).
 pub const PAYOUT: u8 = b'p';
-/// The received-set key of what the order `nonce` in this owner's chain of token `tok` bought.
-pub fn bought_key(tok: &Tok, nonce: &[u8; 16]) -> Vec<u8> {
-    let mut t = Vec::new();
-    tok.put(&mut t);
-    received_key(BOUGHT, blake3::hash(&t).as_bytes(), nonce)
-}
 /// A vesting step received (its key also carries the step: [`vested_key`]).
 pub const VESTED: u8 = b'v';
 /// The received-set key of step `step` of the vest `nonce` in `from`'s chain.
@@ -332,19 +318,6 @@ pub enum Body {
     Allow { spender: [u8; 32], limit: u128 },
     /// A debit to `to`'s chain written and signed by a SPENDER within their allowance — ERC-20 `transferFrom`.
     Spend { to: [u8; 32], amount: u128 },
-    /// A debit HELD for `to` until beacon `until` — for the offer `offer` of token `token` (a swap's taker side).
-    Lock { to: [u8; 32], amount: u128, until: u64, token: Tok, offer: [u8; 16], fee: Option<([u8; 32], u128)> },
-    /// A STANDING OFFER: `give` of this token for every `per` of token `get`, up to `max`, until beacon `until`.
-    Offer { get: Tok, give: u128, per: u128, max: u128, until: u64 },
-    /// The offer `offer` FILLED by `taker`'s lock `lock` (in their chain of the offer's `get` token): a debit of
-    /// `amount` to the taker — appended by anyone; `cited`/`until`: the lock's stamp and deadline.
-    Fill { offer: [u8; 16], taker: [u8; 32], lock: [u8; 16], amount: u128, cited: u64, until: u64, ev: Evidence },
-    /// `taker`'s lock `lock`, filled: its amount credited here (the maker's chain of the lock's token) — appended by
-    /// anyone; `cited`: the fill's stamp; `token`: the token of the fill's chain (the lock names it too — carried
-    /// here because a validation reads related contracts in ONE round: the lock and the fill at once).
-    Claim { taker: [u8; 32], lock: [u8; 16], amount: u128, cited: u64, token: Tok, maker: [u8; 32], ev: Evidence },
-    /// This chain's own lock `lock`, never filled and past its deadline: its amount back — appended by anyone.
-    Refund { lock: [u8; 16], ev: Evidence },
     /// The chain's WRITER (TOKEN §1): one device of the owner DID — its CREDENTIAL (`identity::credential`: the DID,
     /// the device's node key, signed by an owner key of the DID's key log) and the seq of the key-log event whose key
     /// signed it. Signed by that node key (it holds it). From then on the node key signs the owner's entries.
@@ -382,17 +355,6 @@ pub enum Body {
     Unescrow { escrow: [u8; 16], refund: u128 },
     /// A program's PAYOUT `key` to this chain: `amount`, as its verdict says. Appended by anyone (with work), once.
     Payout { program: [u8; 32], key: [u8; 16], amount: u128, ev: Evidence },
-    /// A POOL ORDER (TOKEN §5): `amount` of this chain's token offered in pool `pool`'s batch `epoch` — a SELL of the
-    /// pool's A (`side` 0), or a BUY of A with B (`side` 1) — at `limit` (B per A, `clear::PRICE_ONE` = 1). A debit now,
-    /// held until the batch settles; stamped before the batch's `close`; settled from `settle` (its close and grace) on.
-    Order { pool: [u8; 32], epoch: u64, close: u64, settle: u64, side: u8, amount: u128, limit: u128 },
-    /// The order `order`'s SETTLEMENT in its own chain: what it did not spend (`refund`) back. Appended by anyone (with
-    /// work), once, from its `settle` height on.
-    Settle { order: [u8; 16], refund: u128 },
-    /// What the order `order` (in this owner's chain of token `tok`, its batch settling from `settle`) BOUGHT: `got` of
-    /// this chain's token, credited. Appended by anyone (with work), once. (That `got` and `refund` are the batch's
-    /// clearing is the witnesses' to check: a contract cannot read a whole batch in one round.)
-    Bought { tok: Tok, order: [u8; 16], settle: u64, got: u128, ev: Evidence },
     /// A MULTISIG owner's MEMBERS (TOKEN §1): the key set that signs from here, on set seq `set_seq`. The first (seq 0)
     /// is the set the owner id names, signed by k of it; each later one, by k of the set before.
     Members { set: authority::KeySet, set_seq: u32 },
@@ -407,8 +369,6 @@ pub enum Body {
         history_parity: Vec<[u8; 32]>,
         received_parity: Vec<[u8; 32]>,
         allowances: Vec<([u8; 32], u128)>,
-        offers: Vec<OfferState>,
-        locks: Vec<LockState>,
         /// The chain's signer at the cut.
         writer: Option<Signer>,
         /// Its STAKE and its UNBONDING amounts (nonce, amount, release height), as before the cut.
@@ -528,55 +488,6 @@ impl Entry {
                 v.extend_from_slice(to);
                 v.extend_from_slice(&amount.to_le_bytes());
             }
-            Body::Lock { to, amount, until, token, offer, fee } => {
-                v.push(6);
-                v.extend_from_slice(to);
-                v.extend_from_slice(&amount.to_le_bytes());
-                v.extend_from_slice(&until.to_le_bytes());
-                token.put(&mut v);
-                v.extend_from_slice(offer);
-                match fee {
-                    None => v.push(0),
-                    Some((creator, f)) => {
-                        v.push(1);
-                        v.extend_from_slice(creator);
-                        v.extend_from_slice(&f.to_le_bytes());
-                    }
-                }
-            }
-            Body::Offer { get, give, per, max, until } => {
-                v.push(7);
-                get.put(&mut v);
-                v.extend_from_slice(&give.to_le_bytes());
-                v.extend_from_slice(&per.to_le_bytes());
-                v.extend_from_slice(&max.to_le_bytes());
-                v.extend_from_slice(&until.to_le_bytes());
-            }
-            Body::Fill { offer, taker, lock, amount, cited, until, ev } => {
-                v.push(8);
-                v.extend_from_slice(offer);
-                v.extend_from_slice(taker);
-                v.extend_from_slice(lock);
-                v.extend_from_slice(&amount.to_le_bytes());
-                v.extend_from_slice(&cited.to_le_bytes());
-                v.extend_from_slice(&until.to_le_bytes());
-                put_ev(&mut v, ev);
-            }
-            Body::Claim { taker, lock, amount, cited, token, maker, ev } => {
-                v.push(9);
-                v.extend_from_slice(taker);
-                v.extend_from_slice(lock);
-                v.extend_from_slice(&amount.to_le_bytes());
-                v.extend_from_slice(&cited.to_le_bytes());
-                token.put(&mut v);
-                v.extend_from_slice(maker);
-                put_ev(&mut v, ev);
-            }
-            Body::Refund { lock, ev } => {
-                v.push(10);
-                v.extend_from_slice(lock);
-                put_ev(&mut v, ev);
-            }
             Body::Mint { nonce, amount, minted, ev } => {
                 v.push(13);
                 v.extend_from_slice(nonce);
@@ -612,29 +523,6 @@ impl Entry {
                 v.extend_from_slice(program);
                 v.extend_from_slice(key);
                 v.extend_from_slice(&amount.to_le_bytes());
-                put_ev(&mut v, ev);
-            }
-            Body::Order { pool, epoch, close, settle, side, amount, limit } => {
-                v.push(22);
-                v.extend_from_slice(pool);
-                v.extend_from_slice(&epoch.to_le_bytes());
-                v.extend_from_slice(&close.to_le_bytes());
-                v.extend_from_slice(&settle.to_le_bytes());
-                v.push(*side);
-                v.extend_from_slice(&amount.to_le_bytes());
-                v.extend_from_slice(&limit.to_le_bytes());
-            }
-            Body::Settle { order, refund } => {
-                v.push(23);
-                v.extend_from_slice(order);
-                v.extend_from_slice(&refund.to_le_bytes());
-            }
-            Body::Bought { tok, order, settle, got, ev } => {
-                v.push(24);
-                tok.put(&mut v);
-                v.extend_from_slice(order);
-                v.extend_from_slice(&settle.to_le_bytes());
-                v.extend_from_slice(&got.to_le_bytes());
                 put_ev(&mut v, ev);
             }
             Body::Vest { to, schedule } => {
@@ -684,7 +572,7 @@ impl Entry {
                 v.extend_from_slice(&(b.len() as u32).to_le_bytes());
                 v.extend_from_slice(&b);
             }
-            Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer, staked, unbonding, retired } => {
+            Body::Cut { history, received, history_parity, received_parity, allowances, writer, staked, unbonding, retired } => {
                 v.push(11);
                 v.extend_from_slice(history);
                 v.extend_from_slice(received);
@@ -698,25 +586,6 @@ impl Entry {
                 for (k, l) in allowances {
                     v.extend_from_slice(k);
                     v.extend_from_slice(&l.to_le_bytes());
-                }
-                v.extend_from_slice(&(offers.len() as u32).to_le_bytes());
-                for (n, g, give, per, left, until) in offers {
-                    v.extend_from_slice(n);
-                    g.put(&mut v);
-                    v.extend_from_slice(&give.to_le_bytes());
-                    v.extend_from_slice(&per.to_le_bytes());
-                    v.extend_from_slice(&left.to_le_bytes());
-                    v.extend_from_slice(&until.to_le_bytes());
-                }
-                v.extend_from_slice(&(locks.len() as u32).to_le_bytes());
-                for (n, to, amount, until, token, offer, open) in locks {
-                    v.extend_from_slice(n);
-                    v.extend_from_slice(to);
-                    v.extend_from_slice(&amount.to_le_bytes());
-                    v.extend_from_slice(&until.to_le_bytes());
-                    token.put(&mut v);
-                    v.extend_from_slice(offer);
-                    v.push(*open as u8);
                 }
                 match writer {
                     None => v.push(0),
@@ -773,22 +642,6 @@ impl Entry {
             3 => Body::Burn { amount: r.u128()? },
             4 => Body::Allow { spender: r.arr()?, limit: r.u128()? },
             5 => Body::Spend { to: r.arr()?, amount: r.u128()? },
-            6 => Body::Lock {
-                to: r.arr()?,
-                amount: r.u128()?,
-                until: r.u64()?,
-                token: Tok::read(r)?,
-                offer: r.arr()?,
-                fee: match r.u8()? {
-                    0 => None,
-                    1 => Some((r.arr()?, r.u128()?)),
-                    _ => return None,
-                },
-            },
-            7 => Body::Offer { get: Tok::read(r)?, give: r.u128()?, per: r.u128()?, max: r.u128()?, until: r.u64()? },
-            8 => Body::Fill { offer: r.arr()?, taker: r.arr()?, lock: r.arr()?, amount: r.u128()?, cited: r.u64()?, until: r.u64()?, ev: read_ev(r)? },
-            9 => Body::Claim { taker: r.arr()?, lock: r.arr()?, amount: r.u128()?, cited: r.u64()?, token: Tok::read(r)?, maker: r.arr()?, ev: read_ev(r)? },
-            10 => Body::Refund { lock: r.arr()?, ev: read_ev(r)? },
             11 => {
                 let history = r.arr()?;
                 let received = r.arr()?;
@@ -803,16 +656,6 @@ impl Entry {
                 let mut allowances = Vec::with_capacity(n);
                 for _ in 0..n {
                     allowances.push((r.arr()?, r.u128()?));
-                }
-                let n = count(r)?;
-                let mut offers = Vec::with_capacity(n);
-                for _ in 0..n {
-                    offers.push((r.arr()?, Tok::read(r)?, r.u128()?, r.u128()?, r.u128()?, r.u64()?));
-                }
-                let n = count(r)?;
-                let mut locks = Vec::with_capacity(n);
-                for _ in 0..n {
-                    locks.push((r.arr()?, r.arr()?, r.u128()?, r.u64()?, Tok::read(r)?, r.arr()?, r.u8()? == 1));
                 }
                 let writer = match r.u8()? {
                     0 => None,
@@ -831,7 +674,7 @@ impl Entry {
                     return None;
                 }
                 let retired = (0..n).map(|_| r.arr()).collect::<Option<Vec<[u8; 32]>>>()?;
-                Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer, staked, unbonding, retired }
+                Body::Cut { history, received, history_parity, received_parity, allowances, writer, staked, unbonding, retired }
             }
             12 => {
                 let n = u16::from_le_bytes(r.arr()?) as usize;
@@ -873,9 +716,6 @@ impl Entry {
             }
             26 => Body::Unescrow { escrow: r.arr()?, refund: r.u128()? },
             27 => Body::Payout { program: r.arr()?, key: r.arr()?, amount: r.u128()?, ev: read_ev(r)? },
-            22 => Body::Order { pool: r.arr()?, epoch: r.u64()?, close: r.u64()?, settle: r.u64()?, side: r.u8()?, amount: r.u128()?, limit: r.u128()? },
-            23 => Body::Settle { order: r.arr()?, refund: r.u128()? },
-            24 => Body::Bought { tok: Tok::read(r)?, order: r.arr()?, settle: r.u64()?, got: r.u128()?, ev: read_ev(r)? },
             20 => Body::Vested { from: r.arr()?, vest: r.arr()?, step: r.u32()?, amount: r.u128()?, at: r.u64()?, cited: r.u64()?, ev: read_ev(r)? },
             _ => return None,
         };
@@ -1069,29 +909,12 @@ pub fn cited_chains_from(p: &ChainParams, s: &State, from: usize) -> Vec<(Tok, [
             out.push(x);
         }
     };
-    let offers = offers_of(s);
-    let locks = locks_of(s);
     for e in s.entries.iter().skip(from) {
         match &e.body {
             Body::Receive { from, .. } | Body::Vested { from, .. } => add((p.tok(), *from)),
-            Body::Fill { offer, taker, .. } => {
-                if let Some(o) = offers.iter().find(|o| &o.0 == offer) {
-                    add((o.1, *taker));
-                }
-            }
-            Body::Claim { taker, token, maker, .. } => {
-                add((p.tok(), *taker));
-                add((*token, *maker));
-            }
-            Body::Bought { tok, .. } => add((*tok, p.owner)),
             Body::Misdeed { tok, entry, .. } => {
                 if let Some((from, _)) = misdeed_cites(entry) {
                     add((*tok, from));
-                }
-            }
-            Body::Refund { lock, .. } => {
-                if let Some(l) = locks.iter().find(|l| &l.0 == lock) {
-                    add((l.4, l.1));
                 }
             }
             _ => {}
@@ -1100,18 +923,6 @@ pub fn cited_chains_from(p: &ChainParams, s: &State, from: usize) -> Vec<(Tok, [
     out
 }
 
-/// The offers in a chain: (nonce, get token, give, per, max, until, stamp).
-fn offers_of(s: &State) -> Vec<([u8; 16], Tok, u128, u128, u128, u64, u64)> {
-    s.entries
-        .iter()
-        .flat_map(|e| match &e.body {
-            Body::Offer { get, give, per, max, until } => vec![(e.nonce, *get, *give, *per, *max, *until, e.stamp)],
-            // A cut carries the open offers before it (what is left of each; their stamps pruned: 0).
-            Body::Cut { offers, .. } => offers.iter().map(|o| (o.0, o.1, o.2, o.3, o.4, o.5, 0)).collect(),
-            _ => vec![],
-        })
-        .collect()
-}
 /// What is unbonding in a chain: (unstake nonce, amount, release height) — from its unstakes, and its cut's.
 fn unbonding_of(s: &State) -> Vec<([u8; 16], u128, u64)> {
     s.entries
@@ -1124,18 +935,6 @@ fn unbonding_of(s: &State) -> Vec<([u8; 16], u128, u64)> {
         .collect()
 }
 
-/// The locks in a chain: (nonce, to, amount, until, token, offer, stamp).
-fn locks_of(s: &State) -> Vec<([u8; 16], [u8; 32], u128, u64, Tok, [u8; 16], u64)> {
-    s.entries
-        .iter()
-        .flat_map(|e| match &e.body {
-            Body::Lock { to, amount, until, token, offer, fee } => vec![(e.nonce, *to, amount + fee.map_or(0, |f| f.1), *until, *token, *offer, e.stamp)],
-            // A cut carries the locks before it (their stamps pruned: 0).
-            Body::Cut { locks, .. } => locks.iter().map(|l| (l.0, l.1, l.2, l.3, l.4, l.5, 0)).collect(),
-            _ => vec![],
-        })
-        .collect()
-}
 
 /// Is `pick`'s entry in chain `c` (id `cid`) — live, or, pruned behind its cut, shown by the evidence: a presence proof
 /// that its history holds those entry bytes at the seq named.
@@ -1187,8 +986,6 @@ pub fn check_window(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&
 pub struct Carried {
     pub balance: u128,
     pub allowances: Vec<([u8; 32], u128)>,
-    pub offers: Vec<OfferState>,
-    pub locks: Vec<LockState>,
     pub writer: Option<Signer>,
     pub staked: u128,
     pub unbonding: Vec<([u8; 16], u128, u64)>,
@@ -1226,12 +1023,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
         // The names received, filled and claimed SINCE the last cut (before it: the cut's received set).
         let mut received: Vec<([u8; 32], [u8; 16])> = Vec::new();
         let mut vested: Vec<([u8; 32], [u8; 16], u32)> = Vec::new();
-        let mut filled: Vec<([u8; 32], [u8; 16])> = Vec::new();
-        let mut claimed: Vec<([u8; 32], [u8; 16])> = Vec::new();
         let mut minted: Vec<[u8; 16]> = Vec::new();
-        // POOL ORDERS not settled yet (nonce, amount, settle height), and what this chain bought (token, order).
-        let mut open_orders: Vec<([u8; 16], u128, u64)> = Vec::new();
-        let mut bought: Vec<(Tok, [u8; 16])> = Vec::new();
         // ESCROWS not released yet (nonce, amount, program), and the payouts taken (program, key).
         let mut open_escrows: Vec<([u8; 16], u128, [u8; 32])> = Vec::new();
         let mut paid: Vec<([u8; 32], [u8; 16])> = Vec::new();
@@ -1244,8 +1036,6 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
         };
         // ALLOWANCES (spender → what is left), OFFERS, LOCKS: carried across a cut by the cut itself.
         let mut allowed: Vec<([u8; 32], u128)> = Vec::new();
-        let mut offers: Vec<OfferState> = Vec::new();
-        let mut locks: Vec<LockState> = Vec::new();
         // STAKE (TOKEN §7a): locked as witness stake, and what is on its way back (nonce, amount, release height).
         let mut staked: u128 = 0;
         let mut unbonding: Vec<([u8; 16], u128, u64)> = Vec::new();
@@ -1405,64 +1195,16 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         return Err("a payout received twice");
                     }
                     paid.push((*prog, *key));
-                    if recent && section(prog)?.pay(key) != Some((p.tok(), p.owner, *amount)) {
-                        return Err("a payout that is not its program's verdict");
-                    }
-                    balance.checked_add(*amount).ok_or("a balance overflow")?
-                }
-                Body::Order { pool: _, epoch: _, close, settle, side, amount, limit } => {
-                    owner_signed(e, &writer)?;
-                    if *side > 1 || *limit == 0 {
-                        return Err("an order that is not a sell or a buy at a price");
-                    }
-                    if *amount < d.min_send {
-                        return Err("a send under the minimum");
-                    }
-                    if e.stamp >= *close || close > settle {
-                        return Err("an order after its batch closed");
-                    }
-                    if open_orders.iter().any(|o| o.0 == e.nonce) {
-                        return Err("an order named twice");
-                    }
-                    open_orders.push((e.nonce, *amount, *settle));
-                    balance.checked_sub(*amount).ok_or("a debit over the balance")?
-                }
-                Body::Settle { order, refund } => {
-                    if !e.worked() {
-                        return Err("a settlement without its work");
-                    }
-                    let i = open_orders.iter().position(|o| &o.0 == order).ok_or("a settlement of no open order")?;
-                    if e.stamp < open_orders[i].2 {
-                        return Err("a settlement before its batch settles");
-                    }
-                    if *refund > open_orders[i].1 {
-                        return Err("a refund past what the order held");
-                    }
-                    open_orders.remove(i);
-                    balance.checked_add(*refund).ok_or("a balance overflow")?
-                }
-                Body::Bought { tok, order, settle, got, ev } => {
-                    if !e.worked() {
-                        return Err("a settlement without its work");
-                    }
-                    if *tok == p.tok() {
-                        return Err("a purchase of the token it was paid in");
-                    }
-                    if e.stamp < *settle {
-                        return Err("a settlement before its batch settles");
-                    }
-                    if bought.contains(&(*tok, *order)) || !fresh(&cut, *settle, bought_key(tok, order), ev) {
-                        return Err("an order's purchase received twice");
-                    }
-                    bought.push((*tok, *order));
                     if recent {
-                        // The order: in this owner's chain of the token it was paid in, with that settle height.
-                        let c = chain(tok, &p.owner).ok_or("the order's chain is not there")?;
-                        if !c.entries.iter().any(|x| &x.nonce == order && matches!(x.body, Body::Order { settle: s, .. } if s == *settle)) {
-                            return Err("a purchase of no such order");
+                        let sec = section(prog)?;
+                        if sec.pay(key) != Some((p.tok(), p.owner, *amount)) {
+                            return Err("a payout that is not its program's verdict");
+                        }
+                        if !royalty_paid(d, p, &sec) {
+                            return Err("a sale that does not pay its creator's royalty");
                         }
                     }
-                    balance.checked_add(*got).ok_or("a balance overflow")?
+                    balance.checked_add(*amount).ok_or("a balance overflow")?
                 }
                 Body::Vest { to, schedule } => {
                     owner_signed(e, &writer)?;
@@ -1503,126 +1245,6 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         }
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
-                }
-                Body::Lock { to, amount, until, token, offer, fee } => {
-                    owner_signed(e, &writer)?;
-                    if *to == p.owner {
-                        return Err("a lock for itself");
-                    }
-                    if *amount < d.min_send {
-                        return Err("a send under the minimum");
-                    }
-                    if locks.iter().any(|l| l.0 == e.nonce) {
-                        return Err("a lock named twice");
-                    }
-                    // A ROYALTY with it (TOKEN §1b): to a creator who is neither the maker nor itself.
-                    if fee.is_some_and(|(c, f)| f == 0 || c == *to || c == p.owner) {
-                        return Err("a lock's fee to no one else");
-                    }
-                    let total = amount.checked_add(fee.map_or(0, |f| f.1)).ok_or("a balance overflow")?;
-                    locks.push((e.nonce, *to, total, *until, *token, *offer, true));
-                    balance.checked_sub(total).ok_or("a debit over the balance")?
-                }
-                Body::Offer { get, give, per, max, until } => {
-                    owner_signed(e, &writer)?;
-                    if *give == 0 || *per == 0 || *max == 0 || *get == p.tok() {
-                        return Err("an offer that offers nothing");
-                    }
-                    if offers.iter().any(|o| o.0 == e.nonce) {
-                        return Err("an offer named twice");
-                    }
-                    offers.push((e.nonce, *get, *give, *per, *max, *until));
-                    balance
-                }
-                Body::Fill { offer, taker, lock, amount, cited, until, ev } => {
-                    if !e.worked() {
-                        return Err("a fill without its work");
-                    }
-                    let o = offers.iter_mut().find(|o| &o.0 == offer).ok_or("a fill of an offer that is not here")?;
-                    if e.stamp >= o.5 {
-                        return Err("a fill of an offer past its time");
-                    }
-                    if *amount == 0 {
-                        return Err("an empty fill");
-                    }
-                    o.4 = o.4.checked_sub(*amount).ok_or("a fill past what is left of its offer")?;
-                    if filled.contains(&(*taker, *lock)) || !fresh(&cut, *cited, received_key(FILLED, taker, lock), ev) {
-                        return Err("a lock filled twice");
-                    }
-                    filled.push((*taker, *lock));
-                    if recent {
-                        let (get, give, per) = (o.1, o.2, o.3);
-                        let cp = p.at(get, *taker);
-                        let c = chain(&get, taker).ok_or("the taker's chain is not there")?;
-                        let pick = |x: &Entry| {
-                            x.nonce == *lock
-                                && x.stamp == *cited
-                                && matches!(x.body, Body::Lock { to, amount: la, until: lu, token, offer: of, fee }
-                                    if to == p.owner && token == p.tok() && of == *offer && lu == *until
-                                    && la.checked_mul(give).zip(amount.checked_mul(per)).is_some_and(|(paid, owed)| paid >= owed)
-                                    && royalty_paid(d, &p.owner, la, fee))
-                        };
-                        if !shown(&c, &cp.id(), ev, *cited, &pick) {
-                            return Err("a fill its lock does not pay for");
-                        }
-                    }
-                    balance.checked_sub(*amount).ok_or("a debit over the balance")?
-                }
-                Body::Claim { taker, lock, amount, cited, token, maker, ev } => {
-                    if !e.worked() {
-                        return Err("a claim without its work");
-                    }
-                    if claimed.contains(&(*taker, *lock)) || !fresh(&cut, *cited, received_key(CLAIMED, taker, lock), ev) {
-                        return Err("a lock claimed twice");
-                    }
-                    claimed.push((*taker, *lock));
-                    if recent {
-                        let lp = p.at(p.tok(), *taker);
-                        let lc = chain(&p.tok(), taker).ok_or("the taker's chain is not there")?;
-                        // The lock pays this owner: as its maker, or (its royalty) as the creator — the maker's chain
-                        // holding the fill either way.
-                        let locked = shown(&lc, &lp.id(), ev, *cited, &|x: &Entry| {
-                            x.nonce == *lock
-                                && matches!(x.body, Body::Lock { to, amount: a, token: t, fee, .. } if to == *maker && t == *token
-                                    && ((to == p.owner && a == *amount) || fee == Some((p.owner, *amount))))
-                        });
-                        let fp = p.at(*token, *maker);
-                        let fc = chain(&fp.tok(), &fp.owner).ok_or("the fill's chain is not there")?;
-                        let fill = shown(&fc, &fp.id(), ev, *cited, &|x: &Entry| x.stamp == *cited && matches!(x.body, Body::Fill { taker: t, lock: l, .. } if t == *taker && l == *lock));
-                        if !locked || !fill {
-                            return Err("a claim of a lock that is not filled");
-                        }
-                    }
-                    balance.checked_add(*amount).ok_or("a balance overflow")?
-                }
-                Body::Refund { lock, ev } => {
-                    if !e.worked() {
-                        return Err("a refund without its work");
-                    }
-                    let l = locks.iter_mut().find(|l| &l.0 == lock).ok_or("a refund of a lock that is not here")?;
-                    if !l.6 {
-                        return Err("a lock refunded twice");
-                    }
-                    l.6 = false;
-                    let (amount, token, maker) = (l.2, l.4, l.1);
-                    if recent {
-                        // The maker's chain of the token the lock was for: a fill citing this lock means no refund —
-                        // live, or (pruned behind its cut) unless shown ABSENT from its received set. (None: the
-                        // maker's chain does not exist — nothing was filled.)
-                        if let Some(mc) = chain(&token, &maker) {
-                            if mc.entries.iter().any(|x| matches!(x.body, Body::Fill { taker, lock: fl, .. } if taker == p.owner && fl == *lock)) {
-                                return Err("a refund of a filled lock");
-                            }
-                            if let Some(Entry { body: Body::Cut { received: root, .. }, .. }) = mc.entries.first().filter(|_| !hidden_since(&mc, 0)) {
-                                let mid = p.at(token, maker).id();
-                                let key = received_key(FILLED, &p.owner, lock);
-                                if !ev.theirs.iter().any(|t| t.0 == mid && absent(root, &key, &t.2)) {
-                                    return Err("a refund of a lock the maker's history may have filled");
-                                }
-                            }
-                        }
-                    }
-                    balance.checked_add(amount).ok_or("a balance overflow")?
                 }
                 Body::Mint { nonce, amount, minted: at, ev } => {
                     if !e.worked() {
@@ -1776,10 +1398,10 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     unbonding.clear();
                     balance
                 }
-                Body::Cut { received: root, allowances, offers: o, locks: l, writer: w, staked: st, unbonding: ub, retired: rt, .. } => {
-                    // (A pool order is settled before its chain is cut: a cut carries none.)
-                    if !open_orders.is_empty() || !open_escrows.is_empty() {
-                        return Err("a cut over an order not settled");
+                Body::Cut { received: root, allowances, writer: w, staked: st, unbonding: ub, retired: rt, .. } => {
+                    // (An escrow comes back before its chain is cut: a cut carries none.)
+                    if !open_escrows.is_empty() {
+                        return Err("a cut over an open escrow");
                     }
                     if starts_at_cut {
                         // The chain's writer as the cut carries it (who signs from here — and the cut itself).
@@ -1795,18 +1417,14 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         staked = *st;
                         unbonding = ub.clone();
                         retired = rt.clone();
-                        offers = o.clone();
-                        locks = l.clone();
                         e.balance
                     } else {
                         // The prefix is here: the cut must carry exactly what it computes.
-                        if sorted(&allowed) != sorted(allowances) || sorted(&offers) != sorted(o) || sorted(&locks) != sorted(l) || staked != *st || sorted(&unbonding) != sorted(ub) || sorted(&retired) != sorted(rt) {
+                        if sorted(&allowed) != sorted(allowances) || staked != *st || sorted(&unbonding) != sorted(ub) || sorted(&retired) != sorted(rt) {
                             return Err("a cut that is not what came before it");
                         }
                         received.clear();
                         vested.clear();
-                        filled.clear();
-                        claimed.clear();
                         balance
                     }
                     .tap(|_| cut = Some((e.stamp, *root)))
@@ -1834,7 +1452,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                 return Err("a fork not signed twice by the chain's writer");
             }
         }
-        Ok(Carried { balance, allowances: allowed, offers, locks, writer, staked, unbonding, retired })
+        Ok(Carried { balance, allowances: allowed, writer, staked, unbonding, retired })
     })();
     r.map_err(|why| (failed_at, why))
 }
@@ -1910,17 +1528,9 @@ pub fn debits_from(merged: &State, from: usize) -> bool {
 pub fn timed(d: &Definition, now: u64, merged: &State, e: &Entry) -> Result<(), Why> {
     let m = d.margin;
     match &e.body {
-        Body::Receive { cited, .. } | Body::Claim { cited, .. } | Body::Vested { cited, .. } => {
+        Body::Receive { cited, .. } | Body::Vested { cited, .. } => {
             if e.stamp < cited.saturating_add(m) {
                 return Err("an entry citing one not yet final");
-            }
-        }
-        Body::Fill { cited, until, .. } => {
-            if e.stamp < cited.saturating_add(m) {
-                return Err("an entry citing one not yet final");
-            }
-            if e.stamp.saturating_add(m) >= *until {
-                return Err("a fill too close to its lock's deadline");
             }
         }
         Body::Release { unstake } => {
@@ -1928,13 +1538,6 @@ pub fn timed(d: &Definition, now: u64, merged: &State, e: &Entry) -> Result<(), 
             // entry's own stamp.)
             if unbonding_of(merged).into_iter().find(|u| &u.0 == unstake).is_none_or(|u| now < u.2) {
                 return Err("a release before its delay");
-            }
-        }
-        Body::Refund { lock, .. } => {
-            // (The lock's deadline from its entry, or from the cut that carries it.)
-            let until = locks_of(merged).into_iter().find(|l| &l.0 == lock).map(|l| l.3);
-            if until.is_none_or(|u| e.stamp < u) {
-                return Err("a refund before its lock's deadline");
             }
         }
         _ => {}
@@ -1955,7 +1558,7 @@ fn misdeed_cites(e: &Entry) -> Option<([u8; 32], u64)> {
 pub(crate) fn debit_for(x: &Entry, owner: &[u8; 32], e: &Entry) -> bool {
     match &e.body {
         Body::Receive { nonce, amount, cited, .. } => {
-            x.nonce == *nonce && x.stamp == *cited && matches!(x.body, Body::Send { to, amount: a } | Body::Spend { to, amount: a } | Body::Fill { taker: to, amount: a, .. } if to == *owner && a == *amount)
+            x.nonce == *nonce && x.stamp == *cited && matches!(x.body, Body::Send { to, amount: a } | Body::Spend { to, amount: a } if to == *owner && a == *amount)
         }
         Body::Vested { vest, step, amount, at, cited, .. } => {
             x.nonce == *vest && x.stamp == *cited && matches!(&x.body, Body::Vest { to, schedule } if to == owner && schedule.get(*step as usize) == Some(&(*at, *amount)))
@@ -2021,14 +1624,25 @@ pub fn freeze_check(p: &ChainParams, d: &Definition, held: &State, merged: &Stat
     Ok(())
 }
 
-/// A sale's ROYALTY (TOKEN §1b): a token with one is sold only by a lock that also pays its creator at least its share
-/// of the price (`paid`) — unless the maker IS the creator.
-fn royalty_paid(d: &Definition, maker: &[u8; 32], paid: u128, fee: Option<([u8; 32], u128)>) -> bool {
-    match d.royalty {
-        None => true,
-        Some((_, creator)) if creator == *maker => true,
-        Some((bps, creator)) => fee.is_some_and(|(c, f)| c == creator && f.checked_mul(10_000).zip(paid.checked_mul(bps as u128)).is_some_and(|(have, owe)| have >= owe)),
+/// A sale's ROYALTY (TOKEN §1b), for ANY program: an item of a token with a royalty, paid out of a program (bought),
+/// only if that program also pays its CREATOR — in every token the item's sellers are paid in — at least its share of
+/// what they are paid (a seller who IS the creator owes nothing). The sellers: the owners of the escrows of this item
+/// the program holds. Read from the program's section alone: the token knows nothing of the program.
+fn royalty_paid(d: &Definition, p: &ChainParams, sec: &escrow::Section) -> bool {
+    let Some((bps, creator)) = d.royalty else { return true };
+    let sellers: Vec<[u8; 32]> = sec.escrows.iter().filter(|((t, ..), ..)| *t == p.tok()).map(|((_, o, _), ..)| *o).filter(|o| *o != creator).collect();
+    if sellers.is_empty() {
+        return true;
     }
+    // What the sellers were paid, in each OTHER token (the sold token coming back to a seller is no proceeds).
+    let mut toks: Vec<Tok> = sec.pays.iter().filter(|(_, t, to, _)| sellers.contains(to) && *t != p.tok()).map(|(_, t, ..)| *t).collect();
+    toks.sort();
+    toks.dedup();
+    toks.iter().all(|t| {
+        let paid: u128 = sec.pays.iter().filter(|(_, x, to, _)| x == t && sellers.contains(to)).map(|(.., a)| *a).sum();
+        let fee: u128 = sec.pays.iter().filter(|(_, x, to, _)| x == t && *to == creator).map(|(.., a)| *a).sum();
+        fee.checked_mul(10_000).zip(paid.checked_mul(bps as u128)).is_some_and(|(have, owe)| have >= owe)
+    })
 }
 
 /// The SIGNER that governs entry `i` of `s`: the last `Writer` or `Members` entry before it, or the one the cut it rests
@@ -2175,7 +1789,7 @@ pub fn beacon_height(b: &[u8]) -> Option<u64> {
 
 #[cfg(feature = "freenet-main-contract")]
 mod contract {
-    use super::{accept, authority, beacon_height, claims, freeze, operators, pool, supply, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
+    use super::{accept, authority, beacon_height, claims, freeze, operators, supply, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
     use freenet_stdlib::prelude::*;
 
     pub struct Token;
@@ -2408,37 +2022,6 @@ mod contract {
         Ok(UpdateModification::valid(State::from(out.encode())))
     }
 
-    /// A batch's ORDER REGISTRY's update: merged while the beacon (read in the same round) is below its freeze; after,
-    /// kept.
-    fn orders_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
-        let p = pool::Params::decode(params).ok_or(ContractError::InvalidState)?;
-        let held = pool::Registry::decode(state).ok_or(ContractError::InvalidState)?;
-        let mut given = pool::Registry::default();
-        let mut beacon: Option<Vec<u8>> = None;
-        for d in data {
-            let b: &[u8] = match &d {
-                UpdateData::State(s) => s.as_ref(),
-                UpdateData::Delta(x) => x.as_ref(),
-                UpdateData::StateAndDelta { state, .. } => state.as_ref(),
-                UpdateData::RelatedState { related_to, state } => {
-                    if related_to.as_bytes() == p.beacon {
-                        beacon = Some(state.as_ref().to_vec());
-                    }
-                    continue;
-                }
-                _ => continue,
-            };
-            given = pool::merge(&given, &pool::Registry::decode(b).ok_or(ContractError::InvalidUpdate)?);
-        }
-        if pool::merge(&held, &given) == held {
-            return Ok(UpdateModification::valid(State::from(held.encode())));
-        }
-        let Some(bb) = beacon else {
-            return UpdateModification::requires(vec![RelatedContract { contract_instance_id: ContractInstanceId::new(p.beacon), mode: RelatedMode::StateOnce }]);
-        };
-        let now = beacon_height(&bb).ok_or(ContractError::InvalidUpdate)?;
-        Ok(UpdateModification::valid(State::from(pool::take(&p, &held, &given, now).map_err(why)?.encode())))
-    }
 
     #[contract]
     impl ContractInterface for Token {
@@ -2458,13 +2041,6 @@ mod contract {
             }
             if params.first() == Some(&claims::CLAIMS) {
                 return claims_valid(params, state.as_ref());
-            }
-            // A POOL: its state is its params. A batch's ORDER REGISTRY: well formed (the freeze is its update's).
-            if params.first() == Some(&pool::POOL) {
-                return Ok(if state.as_ref() == params && pool::Pool::decode(params).is_some() { ValidateResult::Valid } else { ValidateResult::Invalid });
-            }
-            if params.first() == Some(&pool::ORDERS) {
-                return Ok(if pool::Params::decode(params).is_some() && pool::Registry::decode(state.as_ref()).is_some() { ValidateResult::Valid } else { ValidateResult::Invalid });
             }
             // A DEFINITION: its state is its params, and they read as one.
             if params.first() == Some(&DEFINITION) {
@@ -2528,12 +2104,6 @@ mod contract {
             }
             if parameters.as_ref().first() == Some(&claims::CLAIMS) {
                 return claims_update(parameters.as_ref(), state.as_ref(), data);
-            }
-            if parameters.as_ref().first() == Some(&pool::POOL) {
-                return Ok(UpdateModification::valid(state));
-            }
-            if parameters.as_ref().first() == Some(&pool::ORDERS) {
-                return orders_update(parameters.as_ref(), state.as_ref(), data);
             }
             let p = ChainParams::decode(parameters.as_ref()).ok_or(ContractError::InvalidState)?;
             let held = super::State::decode(state.as_ref()).ok_or(ContractError::InvalidState)?;
@@ -2622,10 +2192,8 @@ pub mod authority;
 pub mod cut;
 pub mod claims;
 pub mod escrow;
-pub mod clear;
 pub mod freeze;
 pub mod operators;
-pub mod pool;
 pub mod witness;
 pub mod draw;
 pub mod supply;

@@ -23,6 +23,21 @@ pub fn terms_hash(terms: &[u8]) -> [u8; 32] {
     *blake3::Hasher::new_derive_key("craftworks token escrow terms").update(terms).finalize().as_bytes()
 }
 
+/// A token's ROYALTY, as its definition says: (basis points, creator).
+pub type Royalty = Option<(u16, [u8; 32])>;
+
+/// The creator's FEE a program pays when `seller` is paid `amount` for a token with royalty `r` — rounded UP, so it
+/// covers the royalty on what the seller keeps (the token's rule: fee × 10 000 ≥ kept × bps). None: no royalty, or the
+/// creator sells its own.
+pub fn royalty_fee(r: Royalty, seller: &[u8; 32], amount: u128) -> Option<([u8; 32], u128)> {
+    let (bps, creator) = r?;
+    if creator == *seller {
+        return None;
+    }
+    let bps = bps as u128;
+    Some((creator, amount / 10_000 * bps + (amount % 10_000 * bps).div_ceil(10_000)))
+}
+
 /// A program's standard SECTION.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Section {

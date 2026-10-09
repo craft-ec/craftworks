@@ -32,17 +32,16 @@ Every behaviour of the blockchain token standards, and how this standard gives i
 | Close an empty account (SPL) | ✅ | a zero-balance chain may be dropped; it is made again by its next receive |
 | Multisig accounts / authorities | ✅ | an owner or authority key is a k-of-n KEY SET (as the attestation substrate's named quorum): an entry carries k signatures (§1) |
 | NFTs — `ownerOf`, transfer, per-item approve, `setApprovalForAll` (ERC-721) | ✅ | a definition with `ids: unique`; a chain per (item, owner) whose head says held or not; `allow` per item; an OPERATORS list per (token, owner) for all items at once (§1b) |
-| Multi-token, batch transfer (ERC-1155) | ✅ batch not atomic | one definition, many ids; a chain per (item, owner); a batch = one send per item, each final on its own; an all-or-nothing bundle trade is two-phase (§1b, §4) |
+| Multi-token, batch transfer (ERC-1155) | ✅ batch not atomic | one definition, many ids; a chain per (item, owner); a batch = one send per item, each final on its own; an all-or-nothing bundle trade goes through a program over escrow (§1b, §4) |
 | Metadata (token and per item) | ✅ | the definition's metadata; per id, an ITEM of Craftworks (its page, its files) named by the id |
 | History, traceable by anyone (an explorer) | ✅ | no one ledger: from genesis and the supply bag, sends followed FORWARD reach every chain; credits cite their debits BACKWARD; kept alive by readers and keepers (§1a) |
-| Atomic swap between two tokens | ✅ two-phase | lock → fill → claim, or refund; the race closed by time (§4) |
+| Atomic swap between two tokens | ✅ an app | the SWAP contract over escrow: both escrow, the deal crosses or refunds; the race closed by time (§4) |
 | Vesting, time locks | ✅ | `vest(beneficiary, schedule)`: a debit now; each step claimable by the beneficiary once the beacon reaches it, once; never taken back (§4a) |
-| Staking | ✅ | `lock` to a staking definition; its rewards a supply rule of that definition (§4a, §6) |
-| Escrow, two-party loans | ✅ | locks with release conditions (§4) |
-| Order book | ✅ | standing `offer`s in the pair's offers bag, filled with the maker offline (§4) |
-| AMM / pooled liquidity | ✅ per epoch | batch auctions: one uniform price per epoch, LPs as ladders of limit orders (§5) |
-| Pooled lending | ⚠️ per epoch | lenders' and borrowers' offers matched per epoch by the same batch clearing; liquidation by beacon-timed conditions — designed after pools work |
-| Composability (contracts calling contracts) | ✅ by reading | a contract validates against OTHER contracts' state (measured, step 1) and anyone appends what those states prove; logic beyond that runs in pure functions anyone recomputes, or delegates. Not: one transaction changing many contracts atomically — two-phase (§4) or batches (§5) instead |
+| Staking | ✅ | `stake` / `unstake` / `release` after the unbonding delay; stake weights the witness lot (§4a, §7a) |
+| Escrow (the door for programs) | ✅ | `escrow` to a PROGRAM (any contract); back only as the program's verdict says — `unescrow`, `payout` (§4) |
+| Order book, AMM / pooled liquidity | ✅ an app, per epoch | the POOL contract over escrow: batch auctions, one uniform price per epoch, LPs as ladders of limit orders (§5) |
+| Lending | ✗ not built (owner 10-09) | an app over escrow if ever wanted — not part of the token |
+| Composability (contracts calling contracts) | ✅ by reading | a contract validates against OTHER contracts' state (measured, step 1) and anyone appends what those states prove; a program over escrow (§4) is any contract whose state begins with the escrow section. Not: one transaction changing many contracts atomically — escrow and a program's verdict instead (§4, §5) |
 | Global transaction order | ✗ by choice | not needed by any row above; it is the expensive central part |
 
 ## 1. The pieces
@@ -121,38 +120,42 @@ One contract CODE (the standard). Its instances differ by their parameters — o
 A definition says `ids: none` (fungible), `ids: unique` (ERC-721: each item's supply is 1) or `ids: many` (ERC-1155).
 **A chain holds one token's ONE ITEM** (built 10-09): its params name the item (`ChainParams.item`, zero for a fungible
 token), and chains name each other by a `Tok` — (definition, item). Every rule of a fungible chain (send, receive,
-allow, offer, lock, fill, claim, refund, cut, mint, freeze) holds per item unchanged; the supply shards, the authority
+allow, escrow, payout, cut, mint, freeze) holds per item unchanged; the supply shards, the authority
 chain and the freeze list stay per TOKEN, so one authority governs a whole collection. A `unique` item is MADE by its
 mint — `unique_item(definition, epoch, nonce)`, amount 1 — so each is minted once; a `many` item is any nonzero id the
 mint authority names. For `unique`, the chain of the item's holder is the `ownerOf` answer; a transfer is the same
 send/receive. Per-item metadata is a Craftworks item named by the id. A BATCH of several items is several sends (one
-per item's chain), each final on its own — not one atomic entry; an all-or-nothing trade of a bundle is two-phase (§4),
-as every cross-chain move here.
+per item's chain), each final on its own — not one atomic entry; an all-or-nothing trade of a bundle goes through a
+program over escrow (§4), as every cross-chain trade here.
 
-**Ownership, metadata and royalties in ONE standard** (owner 10-08): a definition may carry a ROYALTY (a share, and
-the creator it goes to); the FILL rule — the one rule every sale passes through (§4) — then refuses a sale of an id
-whose lock does not also pay the creator's share. Built 10-09: a `lock` may carry a FEE `(creator, amount)` beside what
-it pays the maker (never to the maker or the locker); a fill of a royalty token takes only a lock whose fee pays its
-creator at least `share × price` (none needed when the maker IS the creator); the creator CLAIMS the fee as the maker
-claims the price — each claim naming the maker, whose chain holds the fill; an unfilled lock refunds both. Ownership (ids), the sale (offer → lock → fill) and the royalty are
-checked together by one code, the metadata a Craftworks item the id names — where Solana binds three programs (SPL
-Token, Metaplex metadata, rule sets / Core plugins for enforced royalties). The limit is everyone's: a plain transfer
-(a gift) can hide a payment made elsewhere — royalties hold on sales through the market, not on private deals.
+**Ownership, metadata and royalties in ONE standard** (owner 10-08): a definition may carry a ROYALTY (a share in
+basis points, and the creator it goes to). Every sale passes through a program over escrow (§4), and the token checks
+the royalty on the one step every sale ends in — the PAYOUT of the sold token to its buyer (10-09, the generic rule):
+the token pays out of a program only if, in that program's section, what the creator is paid in each other token is at
+least the share of what the token's sellers (its escrows' owners, the creator excepted) are paid in it. The sold token
+coming back to a seller (it bought one in the same program) is not proceeds. So no program can deliver an item
+without its creator's share — and an app that ignored it would strand the item, which is why the SWAP and the POOL
+read both tokens' definitions and pay the fee themselves, out of what the seller is paid, rounded up
+(`escrow::royalty_fee`; none when the creator sells its own). Ownership (ids), the sale (escrow → verdict → payout)
+and the royalty are checked by the token's one code, the metadata a Craftworks item the id names — where Solana binds
+three programs (SPL Token, Metaplex metadata, rule sets / Core plugins for enforced royalties). The limit is
+everyone's: a plain transfer (a gift) can hide a payment made elsewhere — royalties hold on sales through programs,
+not on private deals.
 
 ## 2. A chain's entries
 
 An account chain is a sequence `seq 0, 1, 2, …`, each entry naming the one before (its hash) and CARRYING the state
 after it — checked by validation (the previous state changed by this entry), so every check is a read of the head,
 never a scan of history (which may be flushed): the BALANCE (per id), the open ALLOWANCES and what is left of each, the
-open OFFERS and what is left of each, the open LOCKS, and an ACCUMULATOR (a Merkle root) of every send already
-received here and every lock already filled — a `receive` or `fill` carries the proof that its name is NOT yet in it,
+STAKE and what is unbonding, and an ACCUMULATOR (a Merkle root) of every send already received here and every payout
+or vesting step already taken — a credit carries the proof that its name is NOT yet in it,
 and the entry adds it. A PRUNE CUT (older entries flushed into a tree, §1a) is an owner-signed entry naming the tree's
 root and carrying the state at the cut: the contract takes it as the chain's start; wallets verify across it (§3a).
 
 **The cut uses the PROLLY TREE we already have — no second structure** (owner 10-08). At a cut the owner flushes the
 pruned entries into a prolly tree (the HISTORY, read by wallets and explorers) and writes, as a second prolly tree, the
-RECEIVED SET as of the cut (every send received, every lock filled or claimed). The cut entry carries both ROOTS and
-the carried state (balance, allowances, offers, open locks). After it: a citation of something that could predate the
+RECEIVED SET as of the cut (every send received, every payout and vesting step taken). The cut entry carries both ROOTS and
+the carried state (balance, allowances, stake, unbonding, the writer). A chain is not cut over an open escrow. After it: a citation of something that could predate the
 cut (a receive of an older send) CARRIES a prolly ABSENCE PROOF against the cut's received-set root — built by the
 WRITER on their own device (they fetch the blocks as any reader does), checked by the contract from the proof alone
 (`freenet_prolly::proof::verify`: no fetch, no related slot, nothing to be unavailable). Entries after the cut are
@@ -197,15 +200,15 @@ an entry it signs carries k signatures.
 | `mint(nonce, amount, minted)` | credit | **anyone** (with work) | the mint is in its epoch's supply shard, naming this owner and amount; once each |
 | `allow(spender, limit, until)` | none (a permission) | owner | — |
 | `spend(allow ref, to, amount)` | debit | the spender | within the allowance's limit and time, balance covers it |
-| `offer(give, get, rate, max, until)` | none (a standing offer) | owner | — |
-| `fill(offer ref, lock ref, amount)` | debit to the taker | **anyone (the taker)** | §4 |
-| `lock(to, amount, hash, until)` | debit, held | owner | balance covers it |
-| `claim(lock ref, fill ref)` | credit of a lock | **anyone** | the lock names this owner and the fill citing it is in this chain |
-| `refund(lock ref)` | credit of the owner's own lock | **anyone** | §4 |
+| `escrow(program, terms, amount)` | debit, held for a program | owner | balance covers it (§4) |
+| `unescrow(escrow ref, refund)` | credit of what comes back | **anyone** | the program's section refunds exactly that, once (§4) |
+| `payout(program, key, amount)` | credit | **anyone** (with work) | the program's section pays this owner exactly that under that key, once; a royalty paid (§1b, §4) |
+| `vest(to, schedule)` / `vested(…)` | debit now / credit per step | owner / **anyone** | §4a |
+| `stake` / `unstake` / `release` | stake moved / unbonding / back | owner / owner / **anyone** | §4a |
 | `freeze` / `thaw` | blocks / unblocks debits | the freeze authority (in the freeze list, not the chain) | the definition names one |
 
-**Anyone may append what the chain's own rules prove** — so a receiver, a maker, a lender need never be online: their
-chain takes the credit, the fill, the claim by itself. The owner's key is needed only for what spends or permits.
+**Anyone may append what the chain's own rules prove** — so a receiver or a trader need never be online: their chain
+takes the credit, the payout, the refund by itself. The owner's key is needed only for what spends or permits.
 
 **Spam costs work.** There is no gas, so: an entry appended by someone OTHER than the owner carries a small PROOF OF
 WORK (as bags already admit their items), a `send` has a MINIMUM amount (the definition's), and a chain is made only by
@@ -213,20 +216,19 @@ a receive of at least that amount.
 
 ## 3. Concurrency without a sequencer
 
-Two writers may append at the same `seq` at once (the owner sends while a taker fills). Freenet's copies merge them by
+Two writers may append at the same `seq` at once (the owner sends while someone appends a payout). Freenet's copies merge them by
 the contract's own rule — **the same winner on every copy**: the entry with the lowest hash. The loser is not lost:
 
-- a `receive`, `claim` or `refund` is re-appended at the next `seq` (by anyone: they are claims on proven facts);
-- an owner's `send` / `burn` / `lock` is re-signed by the owner's page or delegate and re-checked against the new
-  balance (it may now fail: the balance was spent by the winner);
-- a taker's `fill` that loses is simply not there: the taker's lock refunds (§4).
+- a `receive`, `payout` or `unescrow` is re-appended at the next `seq` (by anyone: they are claims on proven facts);
+- an owner's `send` / `burn` / `escrow` is re-signed by the owner's page or delegate and re-checked against the new
+  balance (it may now fail: the balance was spent by the winner).
 
 **Finality:** a credit counts once the copies agree. A receiver of value waits a FINALITY margin (to be measured on
 the real network: step 4) before treating it as theirs — the one cost of having no sequencer.
 
 **Nothing is credited from an entry that may still lose.** Every entry names the beacon it was written at (no earlier
 than its predecessor's, and a beacon that exists); an entry that CITES another chain's entry — a `receive` of a
-`send`, a `claim` of a `fill`, a `fill` of a `lock` — is valid only once the cited entry is at least `margin` beacons
+`send`, a `vested` step of a `vest` — is valid only once the cited entry is at least `margin` beacons
 old. By then every copy of the cited chain holds the same winner, so a send that lost its race (and failed its
 re-check) is never received. A cited entry is named by `(chain, nonce)`, not its `seq`, so a loser re-appended at a
 later `seq` keeps its name.
@@ -242,7 +244,7 @@ Since one writer key belongs to one device (§1), an honest owner never makes on
   them are void too. The forger cannot choose which victim keeps the money, and neither branch is spendable. The chain
   is dead for its owner; the proof stays in the fraud bag for good.
 - So a wallet accepts a credit only after the margin AND finding no conflicting entry known for the sender's `seq`.
-- The lowest-hash merge (§3) settles only races between DIFFERENT writers (the owner and a taker, two takers) — never
+- The lowest-hash merge (§3) settles only races between DIFFERENT writers (the owner and anyone appending a credit) — never
   two entries of the owner's own key.
 
 **No backdating.** An entry names the beacon it was written at; when APPENDED it must name one no older than the
@@ -251,9 +253,10 @@ so nothing TIMED trusts a writer's own stamp: a timeout, an epoch's membership (
 beacon at which the cited entry became FINAL — the first beacon at which the copies agree on it, which anyone reading
 the beacon contract and the chain recomputes.
 
-**A partition longer than the margin** (copies not agreeing in time) could let a fill and a refund both pass: the
-margin is set generously from measurement (step 4), and the two entries, both citing one lock, are themselves the
-proof — the lock's later entries voided as an equivocation's are.
+**A partition longer than the margin** (copies not agreeing in time) could let a program's two copies decide
+differently: a program's own rule closes that (a swap's verdict never replaced, crossing only before its cutoff and
+refund only from it; a pool batch frozen at its settle height), and the token takes each release only as the section
+it reads says, once.
 
 ## 3a. Who checks what (owner, 2026-10-08)
 
@@ -266,7 +269,7 @@ therefore cannot prove every `receive` in a long chain against its sender. So:
   (≤ 10 related, one round). A chain is always well-formed; it is not, by its contract alone, proven honest.
 - **Value is an entry its WITNESSES accepted** (§7a; built 6d, `contracts-src/token/src/wallet.rs`). Each entry's
   committee, drawn by lot from the stakers, re-checks it and signs it only by INDUCTION: the chain holds, the entry
-  before it is accepted, and every entry it cites (the send a receive credits, a fill's lock, a claim's lock and fill)
+  before it is accepted, and every entry it cites (the send a receive credits, the vest a vesting step credits; a payout's program backed by real escrows)
   is accepted. So an accepted entry stands on an accepted past, and a receiving wallet checks ONE thing — that its
   payment carries enough of its committee's signatures — and walks nothing. A buried fake receive is never witnessed,
   nor anything after it. (Before 6d this was a citation walk by the receiving wallet plus public checkpoints, vouches
@@ -279,7 +282,7 @@ so a chain recomputes every chain it cites), and readers check a chain's params 
 ## 3c. Shape rules and append rules (10-08, before step 5b)
 
 A rule about TIME cannot be a rule of the state: Freenet re-validates a whole chain from scratch whenever any peer hands
-it over, at any later time — a fill appended before its deadline, re-checked against "now" a year later, would fail and
+it over, at any later time — an entry appended in time, re-checked against "now" a year later, would fail and
 make the whole chain invalid for good. So the contract keeps two kinds of rules:
 
 - **SHAPE rules** (`validate_state`, any time, from scratch): signatures, links, carried balances, allowances, no
@@ -287,8 +290,9 @@ make the whole chain invalid for good. So the contract keeps two kinds of rules:
   chain forever once true.
 - **APPEND rules** (`update_state`: a node that already HOLDS the chain taking in entries it did not have — the only
   moment that knows what is new): each new entry's stamp is within a small skew of the beacon the node reads now (one
-  related contract); a `fill` lands before its lock's deadline less the margin; a `refund` lands after the deadline,
-  with no fill citing the lock in the maker's chain (a related contract); a `claim` cites a fill final by the margin.
+  related contract); a credit cites an entry final by the margin; a `release` lands after its unbonding; a `vested` step
+  at or after its height. The TIMED rules are one function (`timed`), applied again by every witness at the entry's
+  own stamp, so a first copy (shape rules only) is never witnessed past them.
 
 MEASURED (10-08, `tools/related-spike guard`, fx/fy): `update_state` asking for a related contract completes — the
 node fetches it and calls `update_state` again with its state — and the contract decides by it: a guard whose lock says
@@ -298,27 +302,35 @@ A forged stamp can only pass where the chain was never held (a fresh PUT is chec
 every node that did hold it, which applies the append rules before it merges. A chain's time is its stamps; its stamps
 were checked against the beacon by every node that held the chain when they arrived.
 
-## 4. Swaps and fills with the maker offline
+## 4. Escrow: the token's one door for apps (owner 10-09: swaps, pools are apps, not the token)
 
-A maker posts a standing `offer` (in their chain, pointed in the token pair's offers bag). A taker fills it with
-nobody's help:
+The token knows nothing of swaps, pools or any other app. It has ONE door (built 10-09, `escrow.rs`):
 
-1. **Lock** — in the taker's chain: `lock(maker, 50 B, h, until = beacon T)`.
-2. **Fill** — appended to the maker's chain (by the taker): `fill(offer, lock, 100 A)`. Valid only if the offer allows
-   it (rate, what is left of `max`, before its `until`), the lock (a related contract) names the maker with enough,
-   and the beacon is still before `T − margin`. The fill debits 100 A to the taker — the taker then appends
-   `receive(fill)` to their own A chain.
-3. **Claim** — anyone appends `claim(lock, fill)` to the maker's B chain: the 50 B are the maker's.
-4. **Refund** — if no fill came: after beacon `T`, anyone appends `refund(lock)` to the taker's chain. Valid only if
-   the maker's chain (a related contract) holds no fill citing that lock.
+1. **Escrow** — in the owner's chain: `escrow(program, terms, amount)` — a debit now, held for a PROGRAM: any
+   contract, named by its id. `terms` (≤ 256 bytes) are what the owner agreed to; the program lists the escrow by
+   their hash.
+2. **The program's verdict** — a program's state BEGINS with the standard SECTION: the escrows it holds (each with its
+   amount and terms hash), then its verdict — refunds per escrow, payouts `(key, token, recipient, amount)`. The rule
+   any reader checks of ANY program (`Section::holds`): each escrow listed once, each refund within its escrow, each
+   payout key once, and per token refunds plus payouts within what was escrowed — so even a lying program only
+   redistributes what was escrowed with it.
+3. **Unescrow / Payout** — anyone appends `unescrow(escrow, refund)` to the owner's chain and `payout(program, key,
+   amount)` to each recipient's chain; the token takes each only as the program's section says, once (a payout's key
+   goes into the received set, so a cut keeps it). A chain is not cut over an open escrow.
+4. **Witnesses** check besides that every escrow a program lists is a real, ACCEPTED escrow to that program with that
+   amount and those terms (`wallet::program_backed`): a program cannot list anyone's escrow on terms they did not sign.
 
-**The race** (a fill landing as the refund is checked) is closed by TIME, not by a sequencer: a fill is valid only
-before `T − margin`, a refund only after `T`, and `margin` ≥ the finality margin (§3) — so by the time a refund may be
-written, every copy has every fill there will ever be.
+The apps, each its own contract over this door:
 
-Two-phase, never half done: either the fill and the claim, or the refund. The same shape gives two-party LOANS
-(collateral locked by the borrower, released by repayment or kept after the term) and atomic swaps between any two
-tokens of the standard.
+- **SWAP** (`contracts-src/swap`, one contract per DEAL): party X gives `amount_x` of one token, Y `amount_y` of
+  another, by a beacon deadline. Both listed before `deadline + GRACE` (4 steps): CROSSED — each paid the other's
+  amount (less a royalty's fee, §1b); from then on, one side alone: REFUNDED whole. A verdict once taken is never
+  replaced (a refund paid out, then a crossing, would pay out of an escrow already gone). The race is closed by time,
+  not by a sequencer: crossing only before the cutoff, refund only from it.
+- **POOL** (§5).
+
+Two-party LOANS and anything else with release conditions are further programs over the same door; none is built
+(lending: not built, owner 10-09).
 
 ## 4a. Vesting, time locks, staking
 
@@ -329,31 +341,28 @@ tokens of the standard.
   that step (height and amount), once per step (its name in the received set, so a cut keeps it), and stamped at or
   after its height — checked FROM SCRATCH, so a first copy cannot claim early, and no witness signs an entry stamped
   ahead of the beacon. Nothing in the giver's chain undoes a vest. A single time lock is a one-step schedule.
-- **Staking:** a `lock` to a STAKING definition (its params name the staked token and its rule). Its rewards are that
-  definition's supply rule (§6) — e.g. a fixed amount per beacon per staked unit, minted by proof of the lock — and the
-  stake returns by `claim` after its term.
+- **Staking** — BUILT 10-09: `stake(amount)` moves balance to stake; `unstake(amount)` starts its unbonding;
+  `release(unstake)` returns it after `UNBOND` (2 epochs). Stake bound at an epoch's start weights the witness lot
+  (§7a) and is burned on a proven misdeed. Rewards are economics (the owner's, later).
 
-## 5. Pools, by batch auction
+## 5. Pools, by batch auction (an app over escrow)
 
-An AMM's pool needs one shared value changed in a global order. Instead, a POOL is a definition of its own and a batch
-per epoch (built 10-09: `pool.rs`, `clear.rs`):
+An AMM's pool needs one shared value changed in a global order. Instead, a POOL is a batch per epoch — its own
+contract, one per (pair, epoch) (built 10-09: `contracts-src/pool`, `clear.rs`):
 
-1. **The pool** (`pool::Pool`): tokens A and B (prices B per A), its epoch length and grace — a contract whose state
-   is its params.
-2. **Collect** — during epoch `e`, a trader appends an `Order` to its own chain of the token it gives: a SELL of A or
-   a BUY of A with B, at a LIMIT price — a debit now, held for the batch, stamped before the batch's close. A liquidity
-   provider's curve is a LADDER of limit orders, built by its client: one primitive in the contract. Each order's
-   pointer goes into the batch's ORDER REGISTRY (one contract per pool and epoch), which takes nothing from the batch's
-   settle height (close + grace) on — so every clearer clears the same set.
-3. **Clear** — a PURE FUNCTION (`clear::clear`) over the registry's orders, in its canonical (sorted) order: ONE
-   uniform price — the one matching the most A, ties to the smaller imbalance, then the lower price; the short side
-   fills whole, the long side pro rata (rounded down, the rest to the earliest). Buyers pay the ceiling, sellers get
-   the floor: nothing is created (the rounding's dust stays in the batch). Order within the batch does not matter:
-   nobody can front-run.
-4. **Settle** — from the settle height, anyone appends to each order's chain a `Settle` (what it did not spend, back —
-   once), and to the same owner's chain of the other token a `Bought` (what it got — once). That those amounts ARE the
-   batch's clearing is the WITNESSES' to check (they recompute it from the registry): a contract cannot read a whole
-   batch in one round. A chain is not cut while it holds an order not settled.
+1. **The batch** (`Batch`): tokens A and B (prices B per A), its epoch length and grace, the beacon, its epoch.
+2. **Collect** — during the epoch, a trader escrows what it gives with the batch (§4), its terms the side (SELL of A, or
+   BUY of A with B) and a LIMIT price, and its order goes into the batch's state. A liquidity provider's curve is a
+   LADDER of limit orders, built by its client: one primitive. From the batch's settle height (close + grace) it takes
+   no new order — so every clearer clears the same set; of two settled copies the one with more orders wins (the grace
+   is for the sets to meet first).
+3. **Clear** — a PURE FUNCTION (`clear::clear`) over the orders, in their canonical (sorted) order: ONE uniform price —
+   the one matching the most A, ties to the smaller imbalance, then the lower price; the short side fills whole, the
+   long side pro rata (rounded down, the rest to the earliest). Buyers pay the ceiling, sellers get the floor: nothing
+   is created (the rounding's dust stays in the batch). Order within the batch does not matter: nobody can front-run.
+4. **Settle** — from the settle height the batch's verdict is EXACTLY the clearing: each order's unspent part back (a
+   refund), what it bought paid out in the other token — less the royalty's fee of the token it sold (§1b), paid out
+   beside it. The batch contract checks that itself (it holds every order); the token checks each release against it.
 
 ## 5a. The beacon (the clock)
 
@@ -463,11 +472,11 @@ until money moves): they move ahead of payouts if this rule is chosen.
 
 The standard's first instance. What it changes in REWARDS:
 
-- A CONTRIBUTION becomes real: `lock(contribution, amount, until = its last day)` in the contributor's chain, named on
-  their card in place of today's self-stated number — a level computed from locks anyone verifies.
-- PAYOUT: each FINAL day's statement (final by the date, REWARDS §3) releases that day's share of the lock — `claim`
-  entries to its creators and keepers, appended by anyone, citing the statement row; the network share burned or kept
-  for upkeep (the owner's choice, below).
+- A CONTRIBUTION becomes real: an `escrow` to the contribution's program in the contributor's chain, named on their
+  card in place of today's self-stated number — a level computed from escrows anyone verifies.
+- PAYOUT: each FINAL day's statement (final by the date, REWARDS §3) is that program's verdict for the day — `payout`
+  entries to its creators and keepers, appended by anyone; the network share burned or kept for upkeep (the owner's
+  choice, below).
 - Paying for one item: a `send` to its creator, its key sealed to the payer on seeing the receive.
 - ITS OWN ISSUANCE, still to choose (the Craftworks token's, not the standard's): its supply rule and size (e.g.
   `fixed` + `burnable`, with or without a `keepers` launch phase), who holds its genesis (a sale, early contributors,
@@ -531,7 +540,7 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
 - **Replaced checkpoints and vouches (§3a)** — REMOVED in 6d. A witnessed entry is already checked and signed with
   stake at risk, so a wallet verifies the witnesses' signatures and walks nothing (`wallet::accept`); a witness signs
   only by induction (`wallet::may_witness`). Committee 16, 11 signatures to accept — placeholders until measured.
-- **Order:** keeper payouts (REWARDS §5 — the Craftworks token's contributions as locks, payouts as claims, §7) → each
+- **Order:** keeper payouts (REWARDS §5 — the Craftworks token's contributions as escrows, payouts as a program's verdict, §7) → each
   keeper reward locked as witness stake → the lot weighted by locked stake. **Open:** the committee size and how many
   signatures make an entry; how fast stake counts (a ramp) — from measurement on the network.
 
@@ -540,7 +549,7 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
 1. The BEACON's cadence (§5a) — mechanism designed, `K`/`S`/`s` calibrated from measurement; special hardware's
    speed-up unmeasured.
 2. The finality MARGIN — 10 beacon steps (measured: copies agreed in ≤ 6 s, n = 5; step 4).
-3. Pooled lending (§0) — after pools work.
+3. Lending — not built (owner 10-09); an app over escrow (§4) if ever wanted.
 4. The blocks door for a TREE BY ROOT: `blocks.fetch` races and rebuilds a table's blocks (the core knows their groups
    from the table's tail). A token history has a root, not a tail: the core gains a read-only tree session by root
    (`engine::repair::find_group` / `root_group` / `rebuild`, as tables use) when the wallet moves into the page — the
@@ -581,7 +590,8 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    steps (≥ 10 minutes, ×1.6 for the pace spread) is ~100× what was seen. Not measured: a sender far away on the
    ring (both nodes shared one host), and a node behind carrier-grade NAT (a fresh node on a phone hotspot made no
    connection in 3 minutes).
-5. `allow`/`spend`, `offer`/`fill`/`lock`/`claim`/`refund` — BUILT 10-08: allowances (5a); swaps with the APPEND
+5. `allow`/`spend`, `offer`/`fill`/`lock`/`claim`/`refund` (the swap bodies REMOVED 10-09, step 15: swaps are an app
+   over escrow) — BUILT 10-08: allowances (5a); swaps with the APPEND
    RULES (5b, §3c): every entry stamped by the beacon; a citation carries the stamp it cites; the shape rules check
    offers, locks, fills (paid at the offer's rate, within what is left, once per lock), claims (lock + fill, read in
    ONE round — a claim carries its fill's token), refunds (no fill in the maker's chain); the append rules (in
@@ -648,7 +658,8 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    set's send REFUSED; the new set's ACCEPTED (balance 150).
 11. FOUNDATION 5, IDS + ROYALTIES — BUILT 10-09 (§1b): `Definition.ids` (none / unique / many) and `.royalty`; a chain
    per (token, item, owner) (`ChainParams.item`, `Tok` in every cross reference); unique items made by their mint, one
-   each; a lock's creator FEE, the fill's royalty rule, the creator's claim. 85 tests; mutants on every new rule killed
+   each; a lock's creator FEE, the fill's royalty rule, the creator's claim (replaced 10-09, step 15, by the generic
+   royalty rule on payouts, §1b). 85 tests; mutants on every new rule killed
    (survivors got tests: the share's exact boundary, the fill's chain named by the claim's maker, a `many` mint of no
    item, a refunded lock with a fee) — one equivalent left: the amount in `locks_of`, which nothing reads. LIVE fx/fy
    (`token-live nft`): an item minted to M; a mint of TWO of a unique item REFUSED; M's item chain (mint + offer for
@@ -676,11 +687,22 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    chain was ACCEPTED by its node, the first copy skipping the append rules). 91 tests; 20 mutants, all killed. LIVE
    fx/fy (`token-live vest`): 2 vests 3 100 at h+6 and 200 at h+10 (2's balance 700 at once); step 0 claimed early
    REFUSED, at its time ACCEPTED, again REFUSED; step 1 claiming 300 REFUSED, as scheduled ACCEPTED; 3's balance 300.
-13. The Craftworks token: contributions as locks, payouts as claims.
-14. BATCH-AUCTION POOLS — BUILT 10-09 (§5): `clear.rs` (one uniform price, pro rata, nothing created), `pool.rs` (the
-   pool, the frozen order registry), `Order` / `Settle` / `Bought`, and the witness rule that recomputes a batch's
-   clearing (`wallet::batch`). LIVE fx/fy (`token-live pool`): 250 A for 500 B cleared at 2 and settled; both tokens
-   conserved; late orders, early settlements and a second purchase refused.
+13. The Craftworks token: contributions as escrows, payouts as a program's verdict.
+14. BATCH-AUCTION POOLS — BUILT 10-09 (§5), first inside the token (`Order` / `Settle` / `Bought`, a frozen order
+   registry, witnesses recomputing the clearing); MOVED OUT in step 15 to the pool contract over escrow.
+15. APPS OUT OF THE TOKEN — BUILT 10-09 (owner: "are not swap and lending supposed to be separate contracts … refactor
+   and don't build lending"; §4, §5). The token keeps ONE door: `Escrow` / `Unescrow` / `Payout` and the program's
+   standard section (`escrow.rs`), witnesses checking the listed escrows are real (`wallet::program_backed`). REMOVED
+   from the token: `Offer` / `Lock` / `Fill` / `Claim` / `Refund`, `Order` / `Settle` / `Bought`, the pool and
+   order-registry kinds, `clear.rs` (now the pool's). The SWAP (`swap.wasm`) and the POOL (`pool.wasm`) are their own
+   contracts; each reads both tokens' definitions and pays a royalty's fee out of the seller's proceeds
+   (`escrow::royalty_fee`, rounded up); the token's royalty rule is generic over any program's section (the sold token
+   coming back to a seller is not proceeds). Token 92 tests (the royalty rule's boundary and the sold-token-back case
+   each killed a mutant; one survivor, equivalent: the creator excluded from the sellers, whose proceeds count as its
+   own fee); swap 3, pool 9. LIVE fx/fy: `token-live nft` — an item escrowed with a deal for 100 B (5% royalty); the deal
+   crossed WITHOUT the fee REFUSED; crossed by the contract with it; the item paid to T, 95 B to M, 5 B to the
+   creator, an outsider's claim of the 5 REFUSED (item M 0 · T 1; B M 95 · creator 5 · outsider 0). `deal` and `pool`
+   re-run on the rebuilt wasms: the same verdicts and balances as before.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under

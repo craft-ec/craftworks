@@ -6,7 +6,7 @@
 
 use crate::draw::StakeClaim;
 use crate::witness::{self, WitnessSig};
-use crate::{offers_of, supply, timed, walk, Body, ChainParams, Definition, Entry, Signer, State, Tok, Why};
+use crate::{supply, timed, walk, Body, ChainParams, Definition, Entry, Signer, State, Tok, Why};
 
 /// The committee's size, and how many of it must sign (TOKEN §7a: open — to be set from measurement on the network).
 pub const COMMITTEE: usize = 16;
@@ -28,9 +28,6 @@ pub struct Source<'a> {
     pub stake_of: &'a dyn Fn(&[u8; 32], u64) -> Option<witness::Stake>,
     /// A token's definition (its MARGIN sets when an entry's lot is drawn).
     pub definition: &'a dyn Fn(&[u8; 32]) -> Option<Definition>,
-    /// A POOL by its id, and a batch's ORDER REGISTRY (what a settlement is checked against: TOKEN §5).
-    pub pools: &'a dyn Fn(&[u8; 32]) -> Option<crate::pool::Pool>,
-    pub orders: &'a dyn Fn(&crate::pool::Params) -> Option<crate::pool::Registry>,
     /// A PROGRAM's state by its contract id (an escrow's release and payouts are checked against it).
     pub program: &'a dyn Fn(&[u8; 32]) -> Option<Vec<u8>>,
 }
@@ -82,12 +79,11 @@ pub fn stake_at(p: &ChainParams, d: &Definition, s: &State, at: u64) -> Result<w
 }
 
 /// The entries `e` (of `p`'s chain) CITES in other chains, found in them as `chain` reads them: a receive's send; a
-/// fill's lock (the taker's chain of the offer's token); a vesting step's vest; a claim's lock (the taker's chain) and fill (the maker's
-/// chain of the lock's token). A mint cites its supply shard (signed by the mint authority, not witnessed); a refund
-/// its own lock (accepted with its own past). `Err`: a cited entry not found.
+/// vesting step's vest. A mint cites its supply shard (signed by the mint authority, not witnessed); an escrow's
+/// release and payouts, its program (checked by `program_entry`). `Err`: a cited entry not found.
 /// Each with the entry before it in its chain (its lot's base; `None` if that chain is held from it).
 #[allow(clippy::type_complexity)]
-pub fn cited(p: &ChainParams, s: &State, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<Vec<(ChainParams, Entry, Option<Entry>)>, Why> {
+pub fn cited(p: &ChainParams, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<Vec<(ChainParams, Entry, Option<Entry>)>, Why> {
     let find = |t: Tok, owner: [u8; 32], pick: &dyn Fn(&Entry) -> bool| -> Result<(ChainParams, Entry, Option<Entry>), Why> {
         let c = p.at(t, owner);
         let held = chain(&t, &owner).ok_or("a cited chain not held")?;
@@ -96,11 +92,6 @@ pub fn cited(p: &ChainParams, s: &State, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 3
     };
     Ok(match &e.body {
         Body::Receive { from, .. } | Body::Vested { from, .. } => vec![find(p.tok(), *from, &|x| crate::debit_for(x, &p.owner, e))?],
-        Body::Fill { offer, taker, lock, .. } => {
-            let o = offers_of(s).into_iter().find(|o| &o.0 == offer).ok_or("a fill of an offer not held")?;
-            vec![find(o.1, *taker, &|x| x.nonce == *lock)?]
-        }
-        Body::Claim { taker, lock, token, maker, .. } => vec![find(p.tok(), *taker, &|x| x.nonce == *lock)?, find(*token, *maker, &|x| matches!(&x.body, Body::Fill { lock: l, taker: t, .. } if l == lock && t == taker))?],
         _ => vec![],
     })
 }
@@ -132,8 +123,6 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
         return Err("an entry stamped too long ago");
     }
     timed(d, e.stamp, &prefix, e)?;
-    // A SETTLEMENT: exactly its batch's clearing.
-    settled(src, p, s, e, chain)?;
     // A RELEASE or PAYOUT of a program: the program BACKED by real, accepted escrows to it.
     program_entry(src, p, s, i, chain)?;
     match i.checked_sub(1) {
@@ -143,59 +132,10 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
         None if seq != 0 => return Err("an entry whose predecessor is not held"),
         None => {}
     }
-    for (c, x, before) in cited(p, s, e, chain)? {
+    for (c, x, before) in cited(p, e, chain)? {
         accept(src, &c, &x, before.as_ref())?;
     }
     Ok(e.hash())
-}
-
-/// A BATCH, as witnesses clear it (TOKEN §5): each order its registry points to that is an `Order` of this pool and
-/// epoch, in the chain of the token its side gives, and ACCEPTED — in the registry's canonical order — cleared. A
-/// pointer to anything else (no such chain, no such order, one not accepted) is not in the batch, the same for every
-/// witness that reads it; a witness that fails a read clears otherwise and does not sign.
-#[allow(clippy::type_complexity)]
-pub fn batch(src: &Source, pl: &crate::pool::Pool, e: u64, base: &ChainParams, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<(Vec<crate::pool::OrderRef>, crate::clear::Cleared), Why> {
-    let reg = (src.orders)(&crate::pool::Params::of(pl, e)).ok_or("a batch whose registry is not read")?;
-    let mut refs = Vec::new();
-    let mut orders = Vec::new();
-    for r in &reg.orders {
-        let (tok, owner, nonce) = r;
-        let Some(c) = chain(tok, owner) else { continue };
-        let Some(i) = c.entries.iter().position(|x| &x.nonce == nonce) else { continue };
-        let x = &c.entries[i];
-        let Body::Order { pool, epoch, side, amount, limit, .. } = &x.body else { continue };
-        let gives = if *side == 0 { pl.a } else { pl.b };
-        if *pool != pl.id() || *epoch != e || *tok != gives {
-            continue;
-        }
-        if accept(src, &base.at(*tok, *owner), x, i.checked_sub(1).map(|j| &c.entries[j])).is_err() {
-            continue;
-        }
-        refs.push(*r);
-        orders.push(crate::clear::Order { side: if *side == 0 { crate::clear::Side::Sell } else { crate::clear::Side::Buy }, amount: *amount, limit: *limit });
-    }
-    Ok((refs, crate::clear::clear(&orders)))
-}
-
-/// A SETTLEMENT entry (`Settle` in the order's chain, `Bought` in the other token's) is exactly its batch's clearing for
-/// its order — its refund what the order did not spend, its purchase what it got (an order not in the batch: all back,
-/// nothing bought). Any other entry: nothing to check.
-fn settled(src: &Source, p: &ChainParams, s: &State, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<(), Why> {
-    // The order: (its token, its chain, its nonce), and what the entry says of it.
-    let (tok, held, nonce, says_refund, says_got) = match &e.body {
-        Body::Settle { order, refund } => (p.tok(), s.clone(), *order, Some(*refund), None),
-        Body::Bought { tok, order, got, .. } => (*tok, chain(tok, &p.owner).ok_or("the order's chain is not there")?, *order, None, Some(*got)),
-        _ => return Ok(()),
-    };
-    let x = held.entries.iter().find(|x| x.nonce == nonce).ok_or("a settlement of no order")?;
-    let Body::Order { pool, epoch, amount, .. } = &x.body else { return Err("a settlement of no order") };
-    let pl = (src.pools)(pool).ok_or("a settlement of an unknown pool")?;
-    let (refs, cleared) = batch(src, &pl, *epoch, p, chain)?;
-    let fill = refs.iter().position(|r| *r == (tok, p.owner, nonce)).map(|i| cleared.fills[i]).unwrap_or_default();
-    if says_refund.is_some_and(|r| r != amount - fill.paid) || says_got.is_some_and(|g| g != fill.got) {
-        return Err("a settlement that is not its batch's clearing");
-    }
-    Ok(())
 }
 
 /// A program's section BACKED (TOKEN §5): it holds (conservation per token), and every escrow it lists is an `Escrow`

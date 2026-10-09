@@ -2,7 +2,7 @@
 //! with the blocks of its two trees — to publish, so the history stays walkable — and the evidence an entry citing
 //! something behind a cut carries. Never in the contract: it builds; the contract only verifies.
 
-use crate::{received_key, walk, Body, ChainParams, Definition, Entry, State, Why, CLAIMED, FILLED, MINTED, MINTER, RECEIVED};
+use crate::{received_key, walk, Body, ChainParams, Definition, Entry, State, Why, MINTED, MINTER, RECEIVED};
 use freenet_prolly::{build::TreeBuilder, proof::prove, Cid};
 use std::collections::BTreeMap;
 
@@ -15,11 +15,8 @@ pub fn received_keys(entries: &[Entry]) -> Vec<Vec<u8>> {
         .iter()
         .filter_map(|e| match &e.body {
             Body::Receive { from, nonce, .. } => Some(received_key(RECEIVED, from, nonce)),
-            Body::Fill { taker, lock, .. } => Some(received_key(FILLED, taker, lock)),
-            Body::Claim { taker, lock, .. } => Some(received_key(CLAIMED, taker, lock)),
             Body::Mint { nonce, .. } => Some(received_key(MINTED, &MINTER, nonce)),
             Body::Vested { from, vest, step, .. } => Some(crate::vested_key(from, vest, *step)),
-            Body::Bought { tok, order, .. } => Some(crate::bought_key(tok, order)),
             Body::Payout { program, key, .. } => Some(crate::received_key(crate::PAYOUT, program, key)),
             _ => None,
         })
@@ -68,12 +65,12 @@ pub fn make(p: &ChainParams, d: &Definition, whole: &State, keys: Option<&craftw
         return Err("a frozen chain is never cut");
     }
     let c = walk(p, d, whole, &|_, _| None, &|_| None, keys, 0, usize::MAX, &crate::Extra::NONE).map_err(|(_, w)| w)?;
-    if c.allowances.len() > 1024 || c.offers.len() > 1024 || c.locks.len() > 1024 {
+    if c.allowances.len() > 1024 {
         return Err("more to carry than a cut holds");
     }
     let mut blocks = Blocks::new();
     let ((history, history_parity), (received, received_parity)) = trees(&whole.entries, &mut blocks)?;
-    Ok((Body::Cut { history, received, history_parity, received_parity, allowances: c.allowances, offers: c.offers, locks: c.locks, writer: c.writer, staked: c.staked, unbonding: c.unbonding, retired: c.retired }, blocks))
+    Ok((Body::Cut { history, received, history_parity, received_parity, allowances: c.allowances, writer: c.writer, staked: c.staked, unbonding: c.unbonding, retired: c.retired }, blocks))
 }
 
 /// A tree's blocks, to prove from.

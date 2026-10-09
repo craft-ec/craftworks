@@ -197,21 +197,16 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
     let bal = s.balance();
     let balance = match &body {
         T::Body::Genesis { amount } => *amount,
-        T::Body::Send { amount, .. } | T::Body::Burn { amount } | T::Body::Spend { amount, .. } | T::Body::Fill { amount, .. } => bal - amount,
-        T::Body::Lock { amount, fee, .. } => bal - amount - fee.map_or(0, |f| f.1),
-        T::Body::Receive { amount, .. } | T::Body::Claim { amount, .. } | T::Body::Mint { amount, .. } | T::Body::Vested { amount, .. } => bal + amount,
+        T::Body::Send { amount, .. } | T::Body::Burn { amount } | T::Body::Spend { amount, .. } => bal - amount,
+        T::Body::Receive { amount, .. } | T::Body::Mint { amount, .. } | T::Body::Vested { amount, .. } => bal + amount,
         T::Body::Vest { schedule, .. } => bal - schedule.iter().map(|x| x.1).sum::<u128>(),
-        T::Body::Order { amount, .. } => bal - amount,
         T::Body::Escrow { amount, .. } => bal - amount,
         T::Body::Unescrow { refund, .. } => bal + refund,
         T::Body::Payout { amount, .. } => bal + amount,
-        T::Body::Settle { refund, .. } => bal + refund,
-        T::Body::Bought { got, .. } => bal + got,
         T::Body::Stake { amount } => bal - amount,
         T::Body::Unstake { .. } | T::Body::Slash { .. } | T::Body::Misdeed { .. } => bal,
         T::Body::Release { unstake } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Unstake { amount } if &x.nonce == unstake => Some(*amount), _ => None }).unwrap_or(0),
-        T::Body::Allow { .. } | T::Body::Offer { .. } | T::Body::Cut { .. } | T::Body::Writer { .. } | T::Body::Members { .. } => bal,
-        T::Body::Refund { lock, .. } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Lock { amount, fee, .. } if &x.nonce == lock => Some(amount + fee.map_or(0, |f| f.1)), _ => None }).unwrap_or(0),
+        T::Body::Allow { .. } | T::Body::Cut { .. } | T::Body::Writer { .. } | T::Body::Members { .. } => bal,
     };
     let mut e = T::Entry { seq: s.entries.last().map_or(0, |e| e.seq + 1), prev: s.head(), nonce: n, stamp, body, balance, auth: T::Auth::Work(0) };
     let m = e.message();
@@ -221,9 +216,6 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
         Signer_::Work => T::Auth::Work((0u64..).find(|w| T::work_ok(&m, *w)).unwrap()),
     };
     s.entries.push(e);
-}
-fn stamp_of(s: &T::State, n: [u8; 16]) -> u64 {
-    s.entries.iter().find(|e| e.nonce == n).map_or(0, |e| e.stamp)
 }
 
 /// Every output this run's ticker computed (height → output): the truth the outputs log is checked against.
@@ -297,11 +289,10 @@ async fn main() -> Result<()> {
         match mode {
             "basic" => basic(&w).await?,
             "allow" => allow(&w).await?,
-            "swap" => swap(&w).await?,
             "did" => did_mode(&w).await?,
             "mint" => mint_mode(&w).await?,
             "multisig" => multisig(&w).await?,
-            "nft" => nft(&w).await?,
+            "nft" => nft(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "vest" => vest(&w).await?,
             "operators" => operators_mode(&w).await?,
             "misdeed" => misdeed_mode(&w).await?,
@@ -377,79 +368,6 @@ async fn allow(w: &W) -> Result<()> {
     Ok(())
 }
 
-/// THE SWAP (step 5b): M offers 2 A per 1 B; T locks 100 B; once final, the fill through Y; T receives; anyone claims
-/// for M. And what the append rules refuse: a fill before its lock is final, a refund before its deadline, a refund
-/// of a filled lock.
-async fn swap(w: &W) -> Result<()> {
-    println!("— swap");
-    let (m, t) = (1u8, 2u8);
-    let ta = w.put_def(&w.def(m, b"SwapA", 3)).await?;
-    let tb = w.put_def(&w.def(t, b"SwapB", 4)).await?;
-    let h = w.now().await?;
-    let mut ma = T::State::default();
-    push(&mut ma, T::Body::Genesis { amount: 1000 }, w.n(1), Some(m), h);
-    w.put_chain(&w.x, ta, m, &ma).await?;
-    let h = w.now().await?;
-    push(&mut ma, T::Body::Offer { get: tb.into(), give: 2, per: 1, max: 400, until: h + 1000 }, w.n(10), Some(m), h);
-    println!("1  M offers 2 A per 1 B (an append, on X): {}", w.put_chain(&w.x, ta, m, &ma).await?.0);
-    let mut tbc = T::State::default();
-    push(&mut tbc, T::Body::Genesis { amount: 1000 }, w.n(1), Some(t), h);
-    w.put_chain(&w.y, tb, t, &tbc).await?;
-    let h = w.now().await?;
-    let deadline = h + 40;
-    push(&mut tbc, T::Body::Lock { to: did(m), amount: 100, until: deadline, token: ta.into(), offer: w.n(10), fee: None }, w.n(20), Some(t), h);
-    println!("2  T locks 100 B for it, deadline {deadline} (now {h}), on Y: {}", w.put_chain(&w.y, tb, t, &tbc).await?.0);
-    let lock_at = stamp_of(&tbc, w.n(20));
-    // Too soon: the lock not final yet.
-    let r = w.now().await?;
-    let mut early = ma.clone();
-    push(&mut early, T::Body::Fill { offer: w.n(10), taker: did(t), lock: w.n(20), amount: 200, cited: lock_at, until: deadline, ev: T::Evidence::default() }, w.n(30), None, r);
-    if r < lock_at + 2 {
-        println!("3  the fill BEFORE the lock is final (now {r}), through Y: {}", w.put_chain(&w.y, ta, m, &early).await?.0);
-    }
-    let r = w.until(lock_at + 2).await?;
-    let mut filled = ma.clone();
-    push(&mut filled, T::Body::Fill { offer: w.n(10), taker: did(t), lock: w.n(20), amount: 200, cited: lock_at, until: deadline, ev: T::Evidence::default() }, w.n(30), None, r);
-    println!("4  the fill once final (now {r}), through Y: {}", w.put_chain(&w.y, ta, m, &filled).await?.0);
-    let fill_at = r;
-    let r = w.until(fill_at + 2).await?;
-    let mut tac = T::State::default();
-    push(&mut tac, T::Body::Receive { from: did(m), nonce: w.n(30), amount: 200, cited: fill_at, ev: T::Evidence::default() }, w.n(30), None, r);
-    println!("5  T receives the 200 A, through X: {}", w.put_chain(&w.x, ta, t, &tac).await?.0);
-    let mut mbc = T::State::default();
-    push(&mut mbc, T::Body::Claim { taker: did(t), lock: w.n(20), amount: 100, cited: fill_at, token: ta.into(), maker: did(m), ev: T::Evidence::default() }, w.n(40), None, r);
-    println!("6  anyone claims the 100 B for M, through X: {}", w.put_chain(&w.x, tb, m, &mbc).await?.0);
-    // A refund of the FILLED lock.
-    let mut bad = tbc.clone();
-    let r = w.now().await?;
-    push(&mut bad, T::Body::Refund { lock: w.n(20), ev: T::Evidence::default() }, w.n(21), None, r);
-    println!("7  a refund of the filled lock, through Y: {}", w.put_chain(&w.y, tb, t, &bad).await?.0);
-    // A second lock nobody fills: refund too soon, then on time.
-    let r = w.now().await?;
-    let d2 = r + 6;
-    push(&mut tbc, T::Body::Lock { to: did(m), amount: 50, until: d2, token: ta.into(), offer: w.n(10), fee: None }, w.n(22), Some(t), r);
-    w.put_chain(&w.y, tb, t, &tbc).await?;
-    let r = w.now().await?;
-    let mut soon = tbc.clone();
-    push(&mut soon, T::Body::Refund { lock: w.n(22), ev: T::Evidence::default() }, w.n(23), None, r);
-    if r < d2 {
-        println!("8  a refund BEFORE its deadline {d2} (now {r}), through Y: {}", w.put_chain(&w.y, tb, t, &soon).await?.0);
-    }
-    let r = w.until(d2).await?;
-    let mut ontime = tbc.clone();
-    push(&mut ontime, T::Body::Refund { lock: w.n(22), ev: T::Evidence::default() }, w.n(23), None, r);
-    println!("9  the refund at its deadline (now {r}), through Y: {}", w.put_chain(&w.y, tb, t, &ontime).await?.0);
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    let bal = |s: Option<T::State>| s.map_or(0, |s| s.balance());
-    println!(
-        "   balances: M A {} · T A {} · T B {} · M B {}",
-        bal(w.get_chain(&w.x, ta, m).await?),
-        bal(w.get_chain(&w.x, ta, t).await?),
-        bal(w.get_chain(&w.y, tb, t).await?),
-        bal(w.get_chain(&w.x, tb, m).await?)
-    );
-    Ok(())
-}
 
 /// FOUNDATION 1, LIVE: the PRUNE CUT. A holder checks a cut against what it summarises and keeps the chain from it; a
 /// send received before a cut is not received again; a send behind its sender's cut is received with the proof (and
@@ -761,11 +679,9 @@ async fn multisig(w: &W) -> Result<()> {
     Ok(())
 }
 
-/// FOUNDATION 5: a UNIQUE token (an NFT) with a 5% ROYALTY to its creator (7). Its item minted to M; M offers it for
-/// 100 B; T's lock without the creator's fee is not filled; with it, filled; T holds the item; M and the creator claim
-/// their B; a mint of two of a unique item refused.
-async fn nft(w: &W) -> Result<()> {
-    println!("— nft");
+async fn nft(w: &W, scode: &[u8]) -> Result<()> {
+    use craftworks_swap_contract as S;
+    println!("— nft (an item sold through a deal: its creator's royalty paid)");
     let (m, t, c) = (1u8, 2u8, 7u8);
     let du = T::Definition { ids: T::Ids::Unique, mint: Some(one(60)), royalty: Some((500, did(c))), min_send: 1, ..w.def(m, b"Nft", 11) };
     let tu = w.put_def(&du).await?;
@@ -784,46 +700,51 @@ async fn nft(w: &W) -> Result<()> {
     let both = T::supply::merge(&T::supply::Shard { mints: vec![mint.clone()] }, &T::supply::Shard { mints: vec![two] }).unwrap();
     println!("2  a mint of TWO of a unique item, on X: {}", put(&w.x, container(&w.code, shard.encode()), both.encode()).await?.0);
     let r = w.now().await?;
+    let deal = S::Deal { x: it, party_x: did(m), amount_x: 1, y: tb.into(), party_y: did(t), amount_y: 100, deadline: r + 30, beacon: w.beacon };
+    let prog = *container(scode, deal.encode()).key().id().as_bytes().first_chunk::<32>().unwrap();
     let mut mi = T::State::default();
     push(&mut mi, T::Body::Mint { nonce: w.n(1), amount: 1, minted: h, ev: T::Evidence::default() }, w.n(1), None, r);
-    push(&mut mi, T::Body::Offer { get: tb.into(), give: 1, per: 100, max: 1, until: r + 1000 }, w.n(10), Some(m), r);
-    println!("3  M's chain of the item: the mint, an offer of it for 100 B, on X: {} — holds {}", put(&w.x, container(&w.code, ip(m).encode()), mi.encode()).await?.0, mi.balance());
+    push(&mut mi, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 1 }, w.n(7), Some(m), r);
+    println!("3  M's chain of the item: the mint, the item escrowed with the deal (for 100 B), on X: {} — holds {}", put(&w.x, container(&w.code, ip(m).encode()), mi.encode()).await?.0, mi.balance());
     let mut tbc = T::State::default();
     push(&mut tbc, T::Body::Genesis { amount: 1000 }, w.n(1), Some(t), r);
-    push(&mut tbc, T::Body::Lock { to: did(m), amount: 100, until: r + 60, token: it, offer: w.n(10), fee: None }, w.n(20), Some(t), r);
-    push(&mut tbc, T::Body::Lock { to: did(m), amount: 100, until: r + 60, token: it, offer: w.n(10), fee: Some((did(c), 5)) }, w.n(21), Some(t), r);
-    println!("4  T locks 100 B twice — without the creator's fee, and with 5 — on Y: {} — T's B {}", w.put_chain(&w.y, tb, t, &tbc).await?.0, tbc.balance());
-    let lock_at = r;
-    let r = w.until(lock_at + 2).await?;
-    let mut nofee = mi.clone();
-    push(&mut nofee, T::Body::Fill { offer: w.n(10), taker: did(t), lock: w.n(20), amount: 1, cited: lock_at, until: lock_at + 60, ev: T::Evidence::default() }, w.n(30), None, r);
-    println!("5  the fill of the lock WITHOUT the fee, through Y: {}", put(&w.y, container(&w.code, ip(m).encode()), nofee.encode()).await?.0);
-    let mut sold = mi.clone();
-    push(&mut sold, T::Body::Fill { offer: w.n(10), taker: did(t), lock: w.n(21), amount: 1, cited: lock_at, until: lock_at + 60, ev: T::Evidence::default() }, w.n(31), None, r);
-    println!("6  the fill of the lock WITH it, through Y: {}", put(&w.y, container(&w.code, ip(m).encode()), sold.encode()).await?.0);
-    let fill_at = r;
-    let r = w.until(fill_at + 2).await?;
-    let mut ti = T::State::default();
-    push(&mut ti, T::Body::Receive { from: did(m), nonce: w.n(31), amount: 1, cited: fill_at, ev: T::Evidence::default() }, w.n(31), None, r);
-    println!("7  T receives the item, on X: {}", put(&w.x, container(&w.code, ip(t).encode()), ti.encode()).await?.0);
-    let claim = |amount: u128| T::Body::Claim { taker: did(t), lock: w.n(21), amount, cited: fill_at, token: it, maker: did(m), ev: T::Evidence::default() };
-    let mut mb = T::State::default();
-    push(&mut mb, claim(100), w.n(40), None, r);
-    println!("8  M claims the 100 B, through X: {}", w.put_chain(&w.x, tb, m, &mb).await?.0);
-    let mut cb = T::State::default();
-    push(&mut cb, claim(5), w.n(41), None, r);
-    println!("9  the creator claims its 5 B, through X: {}", w.put_chain(&w.x, tb, c, &cb).await?.0);
-    let mut greedy = T::State::default();
-    push(&mut greedy, claim(100), w.n(42), None, r);
-    println!("10 an outsider (8) claims the maker's 100, through X: {}", w.put_chain(&w.x, tb, 8, &greedy).await?.0);
+    push(&mut tbc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 100 }, w.n(8), Some(t), r);
+    println!("4  T escrows 100 B with the deal, on Y: {} — T's B {}", w.put_chain(&w.y, tb, t, &tbc).await?.0, tbc.balance());
+    let (ex, ey) = ((it, did(m), w.n(7)), (tb.into(), did(t), w.n(8)));
+    let hs = T::escrow::terms_hash(S::TERMS);
+    let alone = |r: T::escrow::EscrowRef, a: u128| T::escrow::Section { escrows: vec![(r, a, hs)], ..Default::default() };
+    let dc = || container(scode, deal.encode());
+    println!("5  the deal crossed WITHOUT the creator's fee, on X: {}", put(&w.x, dc(), S::crossed(&deal, (None, None), &ex, &ey).encode()).await?.0);
+    println!("6  the deal with M's escrow, on X: {}", put(&w.x, dc(), alone(ex, 1).encode()).await?.0);
+    println!("7  … and T's (it crosses, reading the item's royalty), on X: {}", put(&w.x, dc(), alone(ey, 100).encode()).await?.0);
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let held = |b: Option<Vec<u8>>| b.and_then(|b| T::State::decode(&b)).map_or(0, |s| s.balance());
+    let held = get(&w.x, prog).await?.and_then(|b| T::escrow::Section::decode_prefix(&b).map(|x| x.0)).context("the deal")?;
+    let want = S::crossed(&deal, (Some((500, did(c))), None), &ex, &ey);
+    println!("   the deal holds: crossed with the fee {} — M {:?}, creator {:?}", held == want, held.pay(&S::pay_key(&ex)).map(|p| p.2), held.pay(&S::fee_key(&ex)).map(|p| p.2));
+    let now = w.now().await?;
+    let pay = |key: [u8; 16], amount: u128, n: u8| {
+        let mut s = T::State::default();
+        push(&mut s, T::Body::Payout { program: prog, key, amount, ev: T::Evidence::default() }, w.n(n), None, now);
+        s
+    };
+    let mut ti = T::State::default();
+    push(&mut ti, T::Body::Payout { program: prog, key: S::pay_key(&ey), amount: 1, ev: T::Evidence::default() }, w.n(30), None, now);
+    println!("8  T paid the item, on X: {}", put(&w.x, container(&w.code, ip(t).encode()), ti.encode()).await?.0);
+    println!("9  M paid 95 B, through X: {}", w.put_chain(&w.x, tb, m, &pay(S::pay_key(&ex), 95, 31)).await?.0);
+    println!("10 the creator paid its 5 B, through X: {}", w.put_chain(&w.x, tb, c, &pay(S::fee_key(&ex), 5, 32)).await?.0);
+    println!("11 an outsider (8) claims the creator's 5, through X: {}", w.put_chain(&w.x, tb, 8, &pay(S::fee_key(&ex), 5, 33)).await?.0);
+    let mut back = mi.clone();
+    push(&mut back, T::Body::Unescrow { escrow: w.n(7), refund: 0 }, w.n(34), None, now);
+    println!("12 M's escrow released (nothing back), through Y: {}", put(&w.y, container(&w.code, ip(m).encode()), back.encode()).await?.0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let bal = |b: Option<Vec<u8>>| b.and_then(|b| T::State::decode(&b)).map_or(0, |s| s.balance());
     println!(
-        "   item: M {} · T {} — B: M {} · creator {}",
-        held(get(&w.y, ip(m).id()).await?),
-        held(get(&w.x, ip(t).id()).await?),
+        "   item: M {} · T {} — B: M {} · creator {} · outsider {}",
+        bal(get(&w.y, ip(m).id()).await?),
+        bal(get(&w.x, ip(t).id()).await?),
         w.get_chain(&w.x, tb, m).await?.map_or(0, |s| s.balance()),
-        w.get_chain(&w.x, tb, c).await?.map_or(0, |s| s.balance())
+        w.get_chain(&w.x, tb, c).await?.map_or(0, |s| s.balance()),
+        w.get_chain(&w.x, tb, 8).await?.map_or(0, |s| s.balance())
     );
     Ok(())
 }
@@ -960,7 +881,7 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
             wallet::stake_at(&p, &pd2, &read(&p)?, at).ok()
         };
         let defs = |t: &[u8; 32]| if *t == ta { Some(td2.clone()) } else if *t == pool { Some(pd2.clone()) } else { None };
-        let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of, definition: &defs, pools: &|_| None, orders: &|_| None, program: &|_| None };
+        let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of, definition: &defs, program: &|_| None };
         let cited = |t: &T::Tok, o: &[u8; 32]| rt.block_on(get(&y, T::ChainParams { code_hash: ch, definition: t.definition, owner: *o, beacon: bid, idlog, item: t.item }.id())).ok().flatten().and_then(|b| T::State::decode(&b));
         // Witness one entry: its committee drawn, each member re-checks it by the rule and signs into its bag on X.
         let witness = |o: u8, seq: u64, who: &str| -> bool {
@@ -1335,7 +1256,7 @@ async fn standing_mode(w: &W, bcode: &[u8], scode: &[u8]) -> Result<()> {
 /// verdict says, and only so.
 async fn pool_mode(w: &W, pcode: &[u8]) -> Result<()> {
     use craftworks_pool_contract as P;
-    use T::clear::{Side, PRICE_ONE as ONE};
+    use P::clear::{Side, PRICE_ONE as ONE};
     println!("— pool (an app over escrow)");
     let (da, db) = (w.def(1, b"PoolA", 17), w.def(2, b"PoolB", 18));
     let (ta, tb) = (w.put_def(&da).await?, w.put_def(&db).await?);
@@ -1360,7 +1281,7 @@ async fn pool_mode(w: &W, pcode: &[u8]) -> Result<()> {
     orders.sort_by_key(|o| o.escrow);
     let open = P::State { section: T::escrow::Section { escrows: orders.iter().map(|o| (o.escrow, o.amount, T::escrow::terms_hash(&P::terms(o.side, o.limit)))).collect(), ..Default::default() }, orders: orders.clone() };
     println!("3  the batch contract, both orders listed, on X: {}", put(&w.x, pc(), open.encode()).await?.0);
-    let settled = P::State { section: P::verdict(&batch, &orders), orders: orders.clone() };
+    let settled = P::State { section: P::verdict(&batch, (None, None), &orders), orders: orders.clone() };
     println!("4  its verdict before it settles (now {}), on X: {}", w.now().await?, put(&w.x, pc(), settled.encode()).await?.0);
     let now = w.until(settle).await?;
     println!("5  its verdict at its settle height ({now}), on X: {}", put(&w.x, pc(), settled.encode()).await?.0);
@@ -1442,7 +1363,7 @@ async fn deal_mode(w: &W, scode: &[u8]) -> Result<()> {
     println!("4  … and 2's (the deal crosses), on X: {}", put(&w.x, c(), alone(ey, 500).encode()).await?.0);
     tokio::time::sleep(Duration::from_secs(2)).await;
     let held = get(&w.x, id(&d1)).await?.and_then(|b| T::escrow::Section::decode_prefix(&b).map(|x| x.0)).context("deal 1")?;
-    println!("   deal 1 holds: {} escrows, crossed {}", held.escrows.len(), held == S::crossed(&d1, &ex, &ey));
+    println!("   deal 1 holds: {} escrows, crossed {}", held.escrows.len(), held == S::crossed(&d1, (None, None), &ex, &ey));
     let now = w.now().await?;
     let mut s1 = c1.clone();
     push(&mut s1, T::Body::Unescrow { escrow: w.n(7), refund: 0 }, w.n(30), None, now);

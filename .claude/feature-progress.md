@@ -1446,8 +1446,19 @@ old key's addresses.
               2 tests; 9 mutants killed (1 after a canonical-order case). LIVE fx/fy (`token-live deal`): deal 1
               crossed (1 got 500 B, 2 got 300 A), all four releases/payouts ACCEPTED; deal 2: a refund before the
               cutoff REFUSED, at it ACCEPTED, 1's 300 A back; 1: 700 A / 500 B, 2: 300 A / 500 B.
-          [ ] 18d the app-specific bodies removed from the token (Order/Settle/Bought, Offer/Lock/Fill/Claim/Refund)
+          [x] 18d the app-specific bodies REMOVED from the token (Order/Settle/Bought, Offer/Lock/Fill/Claim/Refund; the
+              pool/registry kinds; clear.rs → the pool crate). Found doing it: an app that ignored a royalty would
+              STRAND an item (the token refuses the item's payout, the seller's payment still goes) — so the swap and
+              the pool read both tokens' definitions (related) and pay the creator's fee out of the seller's proceeds
+              (`escrow::royalty_fee`, rounded up, one copy); the token's generic rule no longer counts the sold token
+              coming back to a seller as proceeds. token.wasm bc0a0ccb, pool.wasm e7552af4, swap.wasm a59005df.
+              Token 92 tests, swap 3, pool 9; mutants on the royalty rule: 4 killed, 1 equivalent survivor (the
+              creator's exclusion from sellers — its proceeds count as its own fee). LIVE fx/fy: nft (sale through a
+              deal: crossing without the fee REFUSED, with it ACCEPTED; item→T, 95 B→M, 5 B→creator; outsider REFUSED),
+              deal and pool re-run unchanged; regression modes basic/allow/vest/cut/witness re-run (see commit).
           NOT building lending (owner).
+      [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
+          pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).
       [x] 17 BATCH-AUCTION POOLS (TOKEN §5) — in parts:
           [x] 17a CLEARING (`clear.rs`): limit orders (an LP's curve = a ladder of them, built by its client), ONE
               uniform price maximising matched A, ties → smaller imbalance → lower price; short side whole, long side

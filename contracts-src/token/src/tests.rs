@@ -66,25 +66,14 @@ fn after(s: &State, body: &Body) -> u128 {
         Body::Send { amount, .. } | Body::Burn { amount } => b.wrapping_sub(*amount),
         Body::Receive { amount, .. } | Body::Mint { amount, .. } | Body::Vested { amount, .. } => b + amount,
         Body::Vest { schedule, .. } => b.wrapping_sub(schedule.iter().map(|x| x.1).sum::<u128>()),
-        Body::Order { amount, .. } => b.wrapping_sub(*amount),
         Body::Escrow { amount, .. } => b.wrapping_sub(*amount),
         Body::Unescrow { refund, .. } => b + refund,
         Body::Payout { amount, .. } => b + amount,
-        Body::Settle { refund, .. } => b + refund,
-        Body::Bought { got, .. } => b + got,
         Body::Stake { amount } => b.wrapping_sub(*amount),
         Body::Unstake { .. } | Body::Slash { .. } | Body::Misdeed { .. } => b,
         Body::Release { unstake } => b + unbonding_of(s).into_iter().find(|u| &u.0 == unstake).map_or(0, |u| u.1),
-        Body::Allow { .. } | Body::Offer { .. } | Body::Cut { .. } | Body::Writer { .. } | Body::Members { .. } => b,
-        Body::Spend { amount, .. } | Body::Fill { amount, .. } => b.wrapping_sub(*amount),
-        Body::Lock { amount, fee, .. } => b.wrapping_sub(amount + fee.map_or(0, |f| f.1)),
-        Body::Claim { amount, .. } => b + amount,
-        Body::Refund { lock, .. } => {
-            b + s.entries.iter().find_map(|x| match &x.body {
-                Body::Lock { amount, fee, .. } if &x.nonce == lock => Some(amount + fee.map_or(0, |f| f.1)),
-                _ => None,
-            }).unwrap_or(0)
-        }
+        Body::Allow { .. } | Body::Cut { .. } | Body::Writer { .. } | Body::Members { .. } => b,
+        Body::Spend { amount, .. } => b.wrapping_sub(*amount),
     }
 }
 fn delegate(mut e: Entry, by: u8) -> Entry {
@@ -556,127 +545,31 @@ impl Two {
     }
 }
 
-const M: u8 = 1; // the maker: holds A, offers 2 A for every 1 B
-const T: u8 = 2; // the taker: holds B
+const M: u8 = 1; // holds A
+const T: u8 = 2; // holds B
 
-/// M offers; T locks 100 B for it; the fill gives T 200 A; T receives it; M claims the 100 B.
+/// M (A: genesis 1000) sends T 10 A and then 200 A (its seq 3, nonce 30); T receives the 200. T holds B (genesis 1000).
 fn swapped() -> Two {
     let mut w = Two(HashMap::new());
     put_at(w.chain(id_a(), M), 1, Body::Genesis { amount: 1000 }, Some(M), 0);
-    put_at(w.chain(id_a(), M), 10, Body::Offer { get: id_b().into(), give: 2, per: 1, max: 400, until: 1000 }, Some(M), 0);
+    put_at(w.chain(id_a(), M), 11, Body::Send { to: did(T), amount: 10 }, Some(M), 0);
+    put_at(w.chain(id_a(), M), 30, Body::Send { to: did(T), amount: 200 }, Some(M), 0);
     put_at(w.chain(id_b(), T), 1, Body::Genesis { amount: 1000 }, Some(T), 0);
-    put_at(w.chain(id_b(), T), 20, Body::Lock { to: did(M), amount: 100, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
-    put_at(w.chain(id_a(), M), 30, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(20), amount: 200, cited: 0, until: 50, ev: Evidence::default() }, None, 0);
     put_at(w.chain(id_a(), T), 30, Body::Receive { from: did(M), nonce: nonce(30), amount: 200, cited: 0, ev: Evidence::default() }, None, 0);
-    put_at(w.chain(id_b(), M), 40, Body::Claim { taker: did(T), lock: nonce(20), amount: 100, cited: 0, token: id_a().into(), maker: did(M), ev: Evidence::default() }, None, 0);
     w
 }
 
-#[test]
-fn a_swap_settles_on_all_four_chains() {
-    let w = swapped();
-    for (tok, o) in [(id_a(), M), (id_a(), T), (id_b(), T), (id_b(), M)] {
-        assert_eq!(w.check(tok, o), Ok(()), "{o}");
-    }
-    assert_eq!((w.get(id_a(), M).balance(), w.get(id_a(), T).balance()), (800, 200));
-    assert_eq!((w.get(id_b(), T).balance(), w.get(id_b(), M).balance()), (900, 100));
-}
 
-/// The swap with T's lock replaced by `lock`, then the fill and the rest as before.
-fn swapped_with_lock(lock: Body) -> Two {
-    let mut w = swapped();
-    let tb = w.chain(id_b(), T);
-    tb.entries.truncate(1);
-    put_at(tb, 20, lock, Some(T), 0);
-    w
-}
 
-#[test]
-fn a_fill_must_be_paid_for_by_its_lock() {
-    // 99 B pay for 198 A, not 200.
-    let w = swapped_with_lock(Body::Lock { to: did(M), amount: 99, until: 50, token: id_a().into(), offer: nonce(10), fee: None });
-    assert_eq!(w.check(id_a(), M), Err("a fill its lock does not pay for"));
-    // A lock for another maker, another token, another offer, another deadline.
-    for lock in [
-        Body::Lock { to: did(9), amount: 100, until: 50, token: id_a().into(), offer: nonce(10), fee: None },
-        Body::Lock { to: did(M), amount: 100, until: 50, token: [5; 32].into(), offer: nonce(10), fee: None },
-        Body::Lock { to: did(M), amount: 100, until: 50, token: id_a().into(), offer: nonce(11), fee: None },
-        Body::Lock { to: did(M), amount: 100, until: 51, token: id_a().into(), offer: nonce(10), fee: None },
-    ] {
-        let w = swapped_with_lock(lock);
-        assert_eq!(w.check(id_a(), M), Err("a fill its lock does not pay for"));
-    }
-}
 
-#[test]
-fn a_fill_is_bounded_by_its_offer_and_fills_a_lock_once() {
-    let mut w = swapped();
-    // Another lock of T's for 150 B → 300 A; only 200 are left of the offer.
-    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 150, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
-    let mut over = w.chain(id_a(), M).clone();
-    put_at(&mut over, 31, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(21), amount: 300, cited: 0, until: 50, ev: Evidence::default() }, None, 0);
-    *w.chain(id_a(), M) = over;
-    assert_eq!(w.check(id_a(), M), Err("a fill past what is left of its offer"));
-    let mut w = swapped();
-    put_at(w.chain(id_a(), M), 31, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(20), amount: 10, cited: 0, until: 50, ev: Evidence::default() }, None, 0);
-    assert_eq!(w.check(id_a(), M), Err("a lock filled twice"));
-}
 
-#[test]
-fn a_claim_needs_the_fill_and_happens_once() {
-    let mut w = swapped();
-    // Remove the fill: the claim has nothing to stand on.
-    let ma = w.chain(id_a(), M);
-    ma.entries.truncate(2);
-    assert_eq!(w.check(id_b(), M), Err("a claim of a lock that is not filled"));
-    let mut w = swapped();
-    put_at(w.chain(id_b(), M), 41, Body::Claim { taker: did(T), lock: nonce(20), amount: 100, cited: 0, token: id_a().into(), maker: did(M), ev: Evidence::default() }, None, 0);
-    assert_eq!(w.check(id_b(), M), Err("a lock claimed twice"));
-    // A claim of more than the lock held.
-    let mut w = swapped();
-    let mb = w.chain(id_b(), M);
-    mb.entries.clear();
-    put_at(mb, 40, Body::Claim { taker: did(T), lock: nonce(20), amount: 101, cited: 0, token: id_a().into(), maker: did(M), ev: Evidence::default() }, None, 0);
-    assert_eq!(w.check(id_b(), M), Err("a claim of a lock that is not filled"));
-}
 
-#[test]
-fn an_unfilled_lock_is_refunded_once_and_a_filled_one_never() {
-    // A second lock nobody fills: refunded.
-    let mut w = swapped();
-    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
-    put_at(w.chain(id_b(), T), 22, Body::Refund { lock: nonce(21), ev: Evidence::default() }, None, 0);
-    assert_eq!(w.check(id_b(), T), Ok(()));
-    assert_eq!(w.get(id_b(), T).balance(), 900, "the 50 back");
-    put_at(w.chain(id_b(), T), 23, Body::Refund { lock: nonce(21), ev: Evidence::default() }, None, 0);
-    assert_eq!(w.check(id_b(), T), Err("a lock refunded twice"));
-    // The filled one.
-    let mut w = swapped();
-    put_at(w.chain(id_b(), T), 22, Body::Refund { lock: nonce(20), ev: Evidence::default() }, None, 0);
-    assert_eq!(w.check(id_b(), T), Err("a refund of a filled lock"));
-}
 
-#[test]
-fn a_receive_of_a_fill_names_its_stamp() {
-    let mut w = swapped();
-    let ta = w.chain(id_a(), T);
-    ta.entries.clear();
-    put_at(ta, 30, Body::Receive { from: did(M), nonce: nonce(30), amount: 200, cited: 1, ev: Evidence::default() }, None, 0);
-    assert_eq!(w.check(id_a(), T), Err("a receive whose send is not in its sender's chain"));
-}
 
 #[test]
 fn stamps_never_go_down() {
-    let mut w = swapped();
-    let tb = w.chain(id_b(), T);
-    let last = tb.entries.len() - 1;
-    tb.entries.truncate(last);
-    put_at(tb, 20, Body::Lock { to: did(M), amount: 100, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
-    let mut s = w.get(id_b(), T).clone();
-    s.entries.truncate(1);
-    s.entries[0].stamp = 5;
-    let g = sign(Entry { auth: Auth::Work(0), ..s.entries[0].clone() }, T);
-    s.entries[0] = g;
+    let mut s = State::default();
+    put_at(&mut s, 1, Body::Genesis { amount: 1000 }, Some(T), 5);
     put_at(&mut s, 21, Body::Burn { amount: 10 }, Some(T), 4);
     assert_eq!(check(&at(id_b(), T), &def_b(), &s, &|_, _| None, &|_| None, Some(&log(T)), &Extra::NONE), Err("a stamp below its predecessor's"));
 }
@@ -711,27 +604,6 @@ fn a_citation_waits_a_margin_after_what_it_cites() {
     assert_eq!(append_check(&def(), 12, &held, &merged, Some(&log(M))), Ok(()));
 }
 
-#[test]
-fn a_fill_lands_a_margin_before_its_deadline_and_a_refund_after_it() {
-    let held = base(0);
-    let fill = |stamp| {
-        let mut m = held.clone();
-        put_at(&mut m, 2, Body::Fill { offer: nonce(1), taker: did(T), lock: nonce(9), amount: 10, cited: 5, until: 20, ev: Evidence::default() }, None, stamp);
-        m
-    };
-    assert_eq!(append_check(&def(), 18, &held, &fill(18), Some(&log(M))), Err("a fill too close to its lock's deadline"));
-    assert_eq!(append_check(&def(), 17, &held, &fill(17), Some(&log(M))), Ok(()));
-    assert_eq!(append_check(&def(), 6, &held, &fill(6), Some(&log(M))), Err("an entry citing one not yet final"), "the lock not final yet");
-    let mut locked = base(0);
-    put_at(&mut locked, 3, Body::Lock { to: did(9), amount: 50, until: 20, token: [5; 32].into(), offer: nonce(1), fee: None }, Some(M), 0);
-    let refund = |stamp| {
-        let mut m = locked.clone();
-        put_at(&mut m, 4, Body::Refund { lock: nonce(3), ev: Evidence::default() }, None, stamp);
-        m
-    };
-    assert_eq!(append_check(&def(), 19, &locked, &refund(19), Some(&log(M))), Err("a refund before its lock's deadline"));
-    assert_eq!(append_check(&def(), 20, &locked, &refund(20), Some(&log(M))), Ok(()));
-}
 
 // ---- wallet fixtures ----
 
@@ -862,8 +734,6 @@ fn a_cut_must_carry_exactly_what_came_before_it() {
     assert_eq!(lie(&|_| {}), Ok(()), "control: the honest cut");
     assert_eq!(lie(&|b| if let Body::Cut { allowances, .. } = b { allowances[0].1 = 51 }), Err("a cut that is not what came before it"));
     assert_eq!(lie(&|b| if let Body::Cut { allowances, .. } = b { allowances.clear() }), Err("a cut that is not what came before it"));
-    assert_eq!(lie(&|b| if let Body::Cut { offers, .. } = b { offers.push((nonce(9), id_b().into(), 1, 1, 1, 9)) }), Err("a cut that is not what came before it"));
-    assert_eq!(lie(&|b| if let Body::Cut { locks, .. } = b { locks.push((nonce(9), did(2), 10, 9, id_b().into(), nonce(9), true)) }), Err("a cut that is not what came before it"));
     // A cut naming another device as the chain's writer (handing it the chain): not what came before it.
     assert_eq!(lie(&|b| if let Body::Cut { writer, .. } = b { *writer = Some(crate::Signer::Device(pk(9), 0)) }), Err("a cut that is not what came before it"));
     let mut s = whole.clone();
@@ -964,36 +834,6 @@ fn a_send_behind_its_senders_cut_is_received_with_the_proof() {
     assert_eq!(recv(vec![(at(id_a(), 2).id(), 4, proof, whole1.entries[4].encode())]), Err("a receive whose send is not in its sender's chain"));
 }
 
-#[test]
-fn a_lock_filled_behind_the_makers_cut_is_never_refunded_or_filled_again() {
-    let mut w = swapped();
-    // T locks a second time (21), never filled; M then CUTS its chain of A at stamp 5 (the fill of 20 behind it).
-    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
-    let wholem = w.get(id_a(), M).clone();
-    let mut blocks = cut::Blocks::new();
-    cut_at(&mut w, &wholem, id_a(), M, 5, &mut blocks);
-    let livem = w.get(id_a(), M).clone();
-    assert_eq!(w.check(id_a(), M), Ok(()));
-    let Body::Cut { offers, .. } = &livem.entries[0].body else { panic!() };
-    assert_eq!(offers, &vec![(nonce(10), id_b().into(), 2, 1, 200, 1000)], "the open offer carried, what is left of it, its time");
-    let mid = at(id_a(), M).id();
-    let refund = |lock: u8, ev: Evidence| {
-        let mut x = Two(w.0.clone());
-        put_at(x.chain(id_b(), T), 60, Body::Refund { lock: nonce(lock), ev }, None, 60);
-        x.strict(id_b(), T, 1)
-    };
-    let fill_proof = |lock: u8| cut::proof(&blocks, &roots(&livem).1, &received_key(FILLED, &did(T), &nonce(lock))).unwrap();
-    // 20 was filled: its proof is of presence — refused, as is none.
-    assert_eq!(refund(20, Evidence { mine: vec![], theirs: vec![(mid, 0, fill_proof(20), vec![])] }), Err("a refund of a lock the maker's history may have filled"));
-    assert_eq!(refund(20, Evidence::default()), Err("a refund of a lock the maker's history may have filled"));
-    // 21 was not: its absence proof refunds it.
-    assert_eq!(refund(21, Evidence { mine: vec![], theirs: vec![(mid, 0, fill_proof(21), vec![])] }), Ok(()));
-    assert_eq!(refund(21, Evidence::default()), Err("a refund of a lock the maker's history may have filled"));
-    // Filling 20 again after the cut: the maker's own set shows it filled.
-    let mut x = Two(w.0.clone());
-    put_at(x.chain(id_a(), M), 31, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(20), amount: 10, cited: 0, until: 50, ev: Evidence { mine: fill_proof(20), theirs: vec![] } }, None, 6);
-    assert_eq!(x.strict(id_a(), M, 1), Err("a lock filled twice"));
-}
 
 #[test]
 fn a_holder_checks_a_new_cut_against_what_it_summarises_then_drops_it() {
@@ -1038,12 +878,11 @@ fn a_holder_checks_a_new_cut_against_what_it_summarises_then_drops_it() {
 
 #[test]
 fn an_entry_over_1kb_behind_a_cut_is_proven_by_its_value_block() {
-    // M fills T's second lock (21: 50 B → 100 A) carrying 2 KB of evidence, then CUTS: the fill is behind the cut, its
-    // bytes over 1 KB — stored as a value block, proven by id and length.
+    // M vests T 50 steps of 10 (a schedule over 1 KB), then CUTS: the vest is behind the cut, its bytes over 1 KB —
+    // stored as a value block, proven by id and length.
     let mut w = swapped();
-    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
-    let pad = Evidence { mine: vec![], theirs: vec![([1; 32], 0, vec![7; 2048], vec![])] };
-    put_at(w.chain(id_a(), M), 31, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(21), amount: 100, cited: 0, until: 50, ev: pad }, None, 0);
+    let schedule: Vec<(u64, u128)> = (1..=50u64).map(|h| (h, 10)).collect();
+    put_at(w.chain(id_a(), M), 31, Body::Vest { to: did(T), schedule }, Some(M), 0);
     assert_eq!(w.check(id_a(), M), Ok(()));
     let wholem = w.get(id_a(), M).clone();
     let seq = wholem.entries.len() as u64 - 1;
@@ -1055,24 +894,24 @@ fn an_entry_over_1kb_behind_a_cut_is_proven_by_its_value_block() {
     assert!(matches!(freenet_prolly::proof::verify_bytes(&roots(&livem).0, &history_key(seq), &proof), Ok(freenet_prolly::proof::ProvenOwned::Present(freenet_prolly::proof::ProvenValue::Ref { .. }))));
     let recv = |bytes: Vec<u8>| {
         let mut x = Two(w.0.clone());
-        put_at(x.chain(id_a(), T), 32, Body::Receive { from: did(M), nonce: nonce(31), amount: 100, cited: 0, ev: Evidence { mine: vec![], theirs: vec![(id, s1, proof.clone(), bytes)] } }, None, 6);
+        put_at(x.chain(id_a(), T), 32, Body::Vested { from: did(M), vest: nonce(31), step: 0, amount: 10, at: 1, cited: 0, ev: Evidence { mine: vec![], theirs: vec![(id, s1, proof.clone(), bytes)] } }, None, 6);
         x.strict(id_a(), T, 1)
     };
     assert_eq!(recv(bytes.clone()), Ok(()));
-    // The same entry with other evidence (same length): another block.
+    // The same entry with another schedule (the same length): another block.
     let mut other = wholem.entries[seq as usize].clone();
-    if let Body::Fill { ev, .. } = &mut other.body {
-        ev.theirs[0].2 = vec![8; 2048];
+    if let Body::Vest { schedule, .. } = &mut other.body {
+        schedule[0].1 = 11;
     }
     assert_eq!(other.encode().len(), bytes.len());
-    assert_eq!(recv(other.encode()), Err("a receive whose send is not in its sender's chain"));
+    assert_eq!(recv(other.encode()), Err("a vesting step that is not in its giver's chain"));
     // The wallet reads it back across the cut.
     assert!(cut::whole(&livem, &|c| blocks.get(c).cloned()).unwrap() == cutm);
 }
 
 #[test]
 fn a_citation_shown_when_appended_stays_valid_after_its_chain_cuts() {
-    // T received M's fill (30) — shown live then. M CUTS: the fill is no longer live.
+    // T received M's send (30) — shown live then. M CUTS: the send is no longer live.
     let mut w = swapped();
     let wholem = w.get(id_a(), M).clone();
     let mut blocks = cut::Blocks::new();
@@ -1128,42 +967,7 @@ fn a_history_read_back_is_every_seq_in_order_and_all_before_the_cut() {
     assert_eq!(cut::whole(&with_root(h), &|c| fine.get(c).cloned()).map(|s| s.entries.len()), Ok(n + 1));
 }
 
-#[test]
-fn after_a_cut_a_fill_and_a_refund_still_name_and_find_what_they_need() {
-    // M's offer and T's lock live on only in their chains' CUTS.
-    let mut w = swapped();
-    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
-    let mut blocks = cut::Blocks::new();
-    let (wm, wt) = (w.get(id_a(), M).clone(), w.get(id_b(), T).clone());
-    cut_at(&mut w, &wm, id_a(), M, 5, &mut blocks);
-    cut_at(&mut w, &wt, id_b(), T, 5, &mut blocks);
-    // A FILL of the carried offer names the taker's chain (what validation asks the node for) …
-    let mut m = w.get(id_a(), M).clone();
-    put_at(&mut m, 32, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(21), amount: 100, cited: 0, until: 50, ev: Evidence::default() }, None, 6);
-    assert!(cited_chains(&at(id_a(), M), &m).contains(&(id_b().into(), did(T))), "the taker's chain of the offer's token");
-    // … and a REFUND of the carried lock names the maker's chain, and its deadline is found for the append rules.
-    let held = w.get(id_b(), T).clone();
-    let mut t = held.clone();
-    put_at(&mut t, 60, Body::Refund { lock: nonce(21), ev: Evidence::default() }, None, 50);
-    assert!(cited_chains(&at(id_b(), T), &t).contains(&(id_a().into(), did(M))));
-    assert_eq!(append_check(&def_b(), 50, &held, &t, Some(&log(T))), Ok(()), "at its deadline");
-    let mut early = held.clone();
-    put_at(&mut early, 60, Body::Refund { lock: nonce(21), ev: Evidence::default() }, None, 49);
-    assert_eq!(append_check(&def_b(), 49, &held, &early, Some(&log(T))), Err("a refund before its lock's deadline"));
-}
 
-#[test]
-fn an_offer_is_filled_only_before_its_time() {
-    // swapped(): M's offer runs until 1000.
-    let fill = |stamp: u64| {
-        let mut w = swapped();
-        put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 2000, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
-        put_at(w.chain(id_a(), M), 31, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(21), amount: 100, cited: 0, until: 2000, ev: Evidence::default() }, None, stamp);
-        w.check(id_a(), M)
-    };
-    assert_eq!(fill(999), Ok(()));
-    assert_eq!(fill(1000), Err("a fill of an offer past its time"));
-}
 
 #[test]
 fn a_lost_history_block_is_rebuilt_from_its_group_never_waited_on() {
@@ -1219,7 +1023,7 @@ fn a_lost_history_block_is_rebuilt_from_its_group_never_waited_on() {
 
 #[test]
 fn a_citation_appended_after_its_chains_cut_must_show_its_evidence_even_from_scratch() {
-    // M cuts at stamp 5 (margin 2): the fill T's receive cites is behind it.
+    // M cuts at stamp 5 (margin 2): the send T's receive cites is behind it.
     let mut w = swapped();
     let wholem = w.get(id_a(), M).clone();
     let mut blocks = cut::Blocks::new();
@@ -1235,19 +1039,6 @@ fn a_citation_appended_after_its_chains_cut_must_show_its_evidence_even_from_scr
     assert_eq!(receive(7), Ok(()));
     // Stamped after the cut and its margin, with no evidence — a fresh copy checked from scratch refuses it.
     assert_eq!(receive(8), Err("a receive whose send is not in its sender's chain"));
-    // A REFUND of T's lock, the maker cut since: appended before the cut it is taken; after it, it must show the
-    // fill's absence (here: none shown).
-    let mut w2 = swapped();
-    put_at(w2.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 6, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
-    let wm = w2.get(id_a(), M).clone();
-    cut_at(&mut w2, &wm, id_a(), M, 5, &mut cut::Blocks::new());
-    let refund = |stamp: u64| {
-        let mut x = Two(w2.0.clone());
-        put_at(x.chain(id_b(), T), 60, Body::Refund { lock: nonce(21), ev: Evidence::default() }, None, stamp);
-        x.check(id_b(), T)
-    };
-    assert_eq!(refund(7), Ok(()));
-    assert_eq!(refund(8), Err("a refund of a lock the maker's history may have filled"));
 }
 
 // ---- foundation 2: the owner is a DID, one device writes ----
@@ -1671,24 +1462,21 @@ fn u_mint(to: u8, n: u8) -> supply::Mint {
     m.sigs = vec![(0, key(60).sign(&m.message(&id_u())).to_bytes())];
     m
 }
-/// M holds U's item (minted) and offers it for 100 B; T locks 100 B (+ `fee`) for it; the fill; T receives the item.
-fn nft_sale(fee: Option<([u8; 32], u128)>) -> Ids5 {
+/// M holds U's item (minted) and sends it to T; T receives the item.
+fn nft_sale() -> Ids5 {
     let mut w = Ids5(HashMap::new());
     let it = item_u();
     put_at(w.chain(it, M), 1, Body::Mint { nonce: nonce(1), amount: 1, minted: 0, ev: Evidence::default() }, None, 0);
-    put_at(w.chain(it, M), 10, Body::Offer { get: id_b().into(), give: 1, per: 100, max: 1, until: 1000 }, Some(M), 0);
-    put_at(w.chain(id_b().into(), T), 1, Body::Genesis { amount: 1000 }, Some(T), 0);
-    put_at(w.chain(id_b().into(), T), 20, Body::Lock { to: did(M), amount: 100, until: 50, token: it, offer: nonce(10), fee }, Some(T), 0);
-    put_at(w.chain(it, M), 30, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(20), amount: 1, cited: 0, until: 50, ev: Evidence::default() }, None, 0);
+    put_at(w.chain(it, M), 30, Body::Send { to: did(T), amount: 1 }, Some(M), 0);
     put_at(w.chain(it, T), 30, Body::Receive { from: did(M), nonce: nonce(30), amount: 1, cited: 0, ev: Evidence::default() }, None, 0);
     w
 }
 
 #[test]
 fn an_item_is_its_own_chain_of_its_tokens_kind() {
-    let mut w = nft_sale(Some((did(7), 5)));
+    let mut w = nft_sale();
     let it = item_u();
-    assert_eq!(w.check(it, M), Ok(()), "minted, offered, filled");
+    assert_eq!(w.check(it, M), Ok(()), "minted, sent");
     assert_eq!(w.check(it, T), Ok(()), "the item received: T owns it");
     assert_eq!(w.0[&(it, did(T))].balance(), 1);
     // A fungible token holds no item; a token of ids holds nothing but items; no genesis for a token of ids.
@@ -1724,44 +1512,6 @@ fn a_unique_item_is_minted_once_as_one() {
     assert_ne!(unique_item(&id_u(), 0, &nonce(1)), unique_item(&id_u(), 1, &nonce(1)), "another epoch, another item");
 }
 
-#[test]
-fn a_sale_of_a_royalty_token_pays_its_creator_who_claims_it() {
-    let it = item_u();
-    assert_eq!(nft_sale(Some((did(7), 5))).check(it, M), Ok(()), "5% of 100");
-    for (fee, why) in [(None, "no fee"), (Some((did(7), 4)), "under 5%"), (Some((did(8), 5)), "to another than the creator")] {
-        assert_eq!(nft_sale(fee).check(it, M), Err("a fill its lock does not pay for"), "{why}");
-    }
-    // M claims the 100; the creator claims its 5 — each from T's lock, the fill in M's chain.
-    let mut w = nft_sale(Some((did(7), 5)));
-    put_at(w.chain(id_b().into(), M), 40, Body::Claim { taker: did(T), lock: nonce(20), amount: 100, cited: 0, token: it, maker: did(M), ev: Evidence::default() }, None, 0);
-    put_at(w.chain(id_b().into(), 7), 41, Body::Claim { taker: did(T), lock: nonce(20), amount: 5, cited: 0, token: it, maker: did(M), ev: Evidence::default() }, None, 0);
-    assert_eq!(w.check(id_b().into(), M), Ok(()));
-    assert_eq!(w.check(id_b().into(), 7), Ok(()));
-    assert_eq!(w.check(id_b().into(), T), Ok(()));
-    assert_eq!(w.0[&(id_b().into(), did(T))].balance(), 895, "100 + 5 locked");
-    let mut greedy = State::default();
-    put_at(&mut greedy, 41, Body::Claim { taker: did(T), lock: nonce(20), amount: 100, cited: 0, token: it, maker: did(M), ev: Evidence::default() }, None, 0);
-    *w.chain(id_b().into(), 7) = greedy;
-    assert_eq!(w.check(id_b().into(), 7), Err("a claim of a lock that is not filled"), "the creator claims the maker's share");
-    // A lock's fee to its maker or itself; the maker who IS the creator needs none.
-    let mut bad = State::default();
-    put_at(&mut bad, 1, Body::Genesis { amount: 1000 }, Some(T), 0);
-    put_at(&mut bad, 20, Body::Lock { to: did(M), amount: 100, until: 50, token: it, offer: nonce(10), fee: Some((did(M), 5)) }, Some(T), 0);
-    assert_eq!(check(&at(id_b(), T), &def_b(), &bad, &|_, _| None, &|_| None, Some(&log(T)), &Extra::NONE), Err("a lock's fee to no one else"));
-    // The share exactly: 1 bp of 10,001 is owed as 1.0001 — 1 is short, 2 pays.
-    let tiny = Definition { royalty: Some((1, did(7))), ..def_u() };
-    assert!(!royalty_paid(&tiny, &did(M), 10_001, Some((did(7), 1))) && royalty_paid(&tiny, &did(M), 10_001, Some((did(7), 2))));
-    assert!(royalty_paid(&tiny, &did(M), 10_000, Some((did(7), 1))), "exactly its share");
-    // A lock with a fee, never filled, refunds the whole of it.
-    let mut back = State::default();
-    put_at(&mut back, 1, Body::Genesis { amount: 1000 }, Some(T), 0);
-    put_at(&mut back, 20, Body::Lock { to: did(M), amount: 100, until: 5, token: it, offer: nonce(10), fee: Some((did(7), 5)) }, Some(T), 0);
-    put_at(&mut back, 21, Body::Refund { lock: nonce(20), ev: Evidence::default() }, None, 6);
-    assert_eq!(back.balance(), 1000);
-    assert_eq!(check(&at(id_b(), T), &def_b(), &back, &|_, _| None, &|_| None, Some(&log(T)), &Extra::NONE), Ok(()), "100 + 5 back");
-    let own = Definition { royalty: Some((500, did(M))), ..def_u() };
-    assert!(royalty_paid(&own, &did(M), 100, None) && !royalty_paid(&def_u(), &did(M), 100, None));
-}
 
 
 // ---- FOUNDATION 6a: STAKE, its release after a delay, and its burn on a witness's equivocation ----
@@ -1945,8 +1695,6 @@ struct Lot {
     drawn: u64,
     /// The beacon's height as the witnesses read it.
     now: u64,
-    /// Batches' order registries (TOKEN §5), by their params.
-    regs: Vec<(pool::Params, pool::Registry)>,
     /// Programs' states, by their contract ids (TOKEN §5: escrow).
     progs: Vec<([u8; 32], Vec<u8>)>,
 }
@@ -1959,7 +1707,7 @@ impl Lot {
                 draw::StakeClaim { owner: [n; 32], amount: 100, epoch: 0, key: kb, sig: key(n).sign(&draw::StakeClaim::message(&pool, &[n; 32], 100, 0, &kb)).to_bytes() }
             })
             .collect();
-        Lot { claims, sigs: HashMap::new(), drawn: 100, now: 100, regs: vec![], progs: vec![] }
+        Lot { claims, sigs: HashMap::new(), drawn: 100, now: 100, progs: vec![] }
     }
     fn out(h: u64) -> [u8; 32] {
         *blake3::hash(&h.to_le_bytes()).as_bytes()
@@ -1973,8 +1721,6 @@ impl Lot {
             // Every staker's stake as held at epoch 0's start (height 0) — its claims' epoch.
             stake_of: &|o, h| (h == 0).then(|| (100, vec![pk(o[0])])),
             definition: &|t| [(id_a(), def()), (id_b(), def_b())].into_iter().find(|x| x.0 == *t).map(|x| x.1),
-            pools: &|id| (*id == a_pool().id()).then(a_pool),
-            orders: Box::leak(Box::new(|rp: &pool::Params| self.regs.iter().find(|x| x.0 == *rp).map(|x| x.1.clone()))),
             program: Box::leak(Box::new(|id: &[u8; 32]| self.progs.iter().find(|x| x.0 == *id).map(|x| x.1.clone()))),
         }
     }
@@ -2258,10 +2004,6 @@ fn a_vest_is_a_debit_of_its_whole_schedule_now() {
     assert_eq!(try_vest(Body::Vest { to: did(1), schedule: vec![(10, 100)] }), Err("a vest to itself"));
     assert_eq!(try_vest(vest_of(&(0..=VEST_STEPS as u64).map(|i| (i + 1, 10)).collect::<Vec<_>>())), Err("a vesting schedule that is not rising steps"), "past the step cap");
     assert_eq!(try_vest(vest_of(&(0..VEST_STEPS as u64).map(|i| (i + 1, 10)).collect::<Vec<_>>())), Ok(()), "at the cap");
-    // Never taken back: the giver has no entry that undoes it — a refund of it names no lock.
-    let mut back = vesting();
-    put_at(back.chain(id_a(), 1), 6, Body::Refund { lock: nonce(5), ev: Evidence::default() }, None, 30);
-    assert_eq!(back.check(id_a(), 1), Err("a refund of a lock that is not here"));
 }
 
 #[test]
@@ -2340,22 +2082,12 @@ fn vesting_round_trips_and_is_witnessed_on_its_vest() {
 
 #[test]
 fn a_witness_applies_the_timed_rules_at_the_entrys_own_stamp() {
-    // A chain taken as a FIRST copy (no append rules): its refund stamped before its lock's deadline, its fill too close
-    // to its deadline, its receive before what it cites is final — the contract from scratch takes all three; no
-    // witness signs them.
+    // A chain taken as a FIRST copy (no append rules): its receive before what it cites is final, its release before
+    // its delay — the contract from scratch takes them; no witness signs them.
     let lot = Lot::new();
     let p = at(id_a(), 1);
     let ok = |_: &State| Ok(());
     let may = |s: &State| wallet::may_witness(&lot.src(), &p, &def(), s, s.entries.last().unwrap().seq, 100, &ok, &|_, _| None);
-    let mut locked = base(0);
-    put_at(&mut locked, 3, Body::Lock { to: did(9), amount: 50, until: 20, token: [5; 32].into(), offer: nonce(1), fee: None }, Some(M), 0);
-    let refund = |stamp: u64| {
-        let mut m = locked.clone();
-        put_at(&mut m, 4, Body::Refund { lock: nonce(3), ev: Evidence::default() }, None, stamp);
-        m
-    };
-    assert_eq!(may(&refund(19)), Err("a refund before its lock's deadline"));
-    assert_eq!(may(&refund(20)).err(), Some("an entry its committee has not witnessed"), "past the timed rule: its predecessor");
     let recv = |stamp: u64| {
         let mut m = base(0);
         put_at(&mut m, 2, Body::Receive { from: did(9), nonce: nonce(2), amount: 50, cited: 10, ev: Evidence::default() }, None, stamp);
@@ -2654,188 +2386,11 @@ fn the_watch_finds_who_signed_two_entries_at_one_place() {
 
 // ---- POOLS (TOKEN §5): orders locked to a batch, settled once, a cut only after ----
 
-fn a_pool() -> pool::Pool {
-    pool::Pool { code_hash: CODE, a: id_a().into(), b: id_b().into(), epoch: 10, grace: 4, beacon: BEACON }
-}
-/// 1 (token A: genesis 1000) sells 300 A at ≥ 2 in batch 0 of the pool (closes 10, settles 14), stamped 3.
-fn ordered() -> Two {
-    let p = a_pool();
-    let (close, settle) = p.window(0);
-    let mut w = Two(HashMap::new());
-    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
-    put_at(w.chain(id_a(), 1), 7, Body::Order { pool: p.id(), epoch: 0, close, settle, side: 0, amount: 300, limit: 2 * clear::PRICE_ONE }, Some(1), 3);
-    w
-}
 
-#[test]
-fn an_order_is_a_debit_held_for_its_batch() {
-    let w = ordered();
-    assert_eq!(w.check(id_a(), 1), Ok(()));
-    assert_eq!(w.get(id_a(), 1).balance(), 700);
-    let p = a_pool();
-    let (close, settle) = p.window(0);
-    let try_order = |body: Body, stamp: u64| {
-        let mut x = Two(HashMap::new());
-        put_at(x.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
-        put_at(x.chain(id_a(), 1), 7, body, Some(1), stamp);
-        x.check(id_a(), 1)
-    };
-    let order = |side: u8, amount: u128, limit: u128, close: u64, settle: u64| Body::Order { pool: p.id(), epoch: 0, close, settle, side, amount, limit };
-    assert_eq!(try_order(order(0, 300, 1, close, settle), 10), Err("an order after its batch closed"), "stamped at its close");
-    assert_eq!(try_order(order(0, 300, 1, close, settle), 9), Ok(()));
-    assert_eq!(try_order(order(2, 300, 1, close, settle), 3), Err("an order that is not a sell or a buy at a price"));
-    assert_eq!(try_order(order(0, 300, 0, close, settle), 3), Err("an order that is not a sell or a buy at a price"));
-    assert_eq!(try_order(order(0, 9, 1, close, settle), 3), Err("a send under the minimum"));
-    assert_eq!(try_order(order(0, 1001, 1, close, settle), 3), Err("a debit over the balance"));
-    assert_eq!(try_order(order(0, 300, 1, close, close - 1), 3), Err("an order after its batch closed"), "settling before it closes");
-    assert_eq!(Entry::decode(&w.get(id_a(), 1).entries.last().unwrap().encode()).as_ref(), w.get(id_a(), 1).entries.last());
-}
 
-#[test]
-fn an_order_settles_once_after_its_batch_and_its_purchase_lands_once() {
-    let w = ordered();
-    let settle = a_pool().window(0).1;
-    // Its refund in its own chain: from the settle height, once, never past what it held.
-    let refund = |stamp: u64, refund: u128, n: u8| {
-        let mut x = Two(w.0.clone());
-        put_at(x.chain(id_a(), 1), n, Body::Settle { order: nonce(7), refund }, None, stamp);
-        x
-    };
-    assert_eq!(refund(settle - 1, 150, 8).check(id_a(), 1), Err("a settlement before its batch settles"));
-    assert_eq!(refund(settle, 301, 8).check(id_a(), 1), Err("a refund past what the order held"));
-    let done = refund(settle, 150, 8);
-    assert_eq!(done.check(id_a(), 1), Ok(()));
-    assert_eq!(done.get(id_a(), 1).balance(), 850);
-    let mut twice = Two(done.0.clone());
-    put_at(twice.chain(id_a(), 1), 9, Body::Settle { order: nonce(7), refund: 1 }, None, settle);
-    assert_eq!(twice.check(id_a(), 1), Err("a settlement of no open order"));
-    // What it bought, in its chain of token B: once, from the settle height, of an order that is there.
-    let bought = |x: &Two, stamp: u64, order: u8, n: u8| {
-        let mut y = Two(x.0.clone());
-        put_at(y.chain(id_b(), 1), n, Body::Bought { tok: id_a().into(), order: nonce(order), settle, got: 300, ev: Evidence::default() }, None, stamp);
-        y
-    };
-    assert_eq!(bought(&w, settle, 7, 20).check(id_b(), 1), Ok(()));
-    assert_eq!(bought(&w, settle, 7, 20).get(id_b(), 1).balance(), 300);
-    assert_eq!(bought(&w, settle - 1, 7, 20).check(id_b(), 1), Err("a settlement before its batch settles"));
-    assert_eq!(bought(&w, settle, 6, 20).check(id_b(), 1), Err("a purchase of no such order"));
-    let once = bought(&w, settle, 7, 20);
-    assert_eq!(bought(&once, settle, 7, 21).check(id_b(), 1), Err("an order's purchase received twice"));
-    // In the chain of the token it paid in: refused.
-    let mut same = Two(w.0.clone());
-    put_at(same.chain(id_a(), 1), 22, Body::Bought { tok: id_a().into(), order: nonce(7), settle, got: 1, ev: Evidence::default() }, None, settle);
-    assert_eq!(same.check(id_a(), 1), Err("a purchase of the token it was paid in"));
-    // Not cut over an open order; after its settlement, it is.
-    let (body, _) = cut::make(&at(id_a(), 1), &def(), w.get(id_a(), 1), Some(&log(1))).unwrap();
-    let mut over = Two(w.0.clone());
-    put_at(over.chain(id_a(), 1), 30, body, Some(1), 5);
-    assert_eq!(over.check(id_a(), 1), Err("a cut over an order not settled"));
-    let (body, _) = cut::make(&at(id_a(), 1), &def(), done.get(id_a(), 1), Some(&log(1))).unwrap();
-    let mut after = Two(done.0.clone());
-    put_at(after.chain(id_a(), 1), 30, body, Some(1), settle);
-    assert_eq!(after.check(id_a(), 1), Ok(()));
-}
 
-#[test]
-fn a_batch_registry_freezes_at_its_settle_height() {
-    let p = a_pool();
-    assert_eq!(pool::Pool::decode(&p.encode()), Some(p));
-    assert_eq!(pool::Pool::decode(&pool::Pool { b: p.a, ..p }.encode()), None, "a pool of one token");
-    assert_eq!(pool::Pool::decode(&pool::Pool { epoch: 0, ..p }.encode()), None);
-    assert_eq!(p.window(3), (40, 44));
-    assert_eq!(p.batch(39), 3);
-    let rp = pool::Params::of(&p, 0);
-    assert_eq!(rp.frozen_at, 14);
-    assert_eq!(pool::Params::decode(&rp.encode()), Some(rp));
-    let r1 = pool::Registry { orders: vec![(id_a().into(), did(1), nonce(7))] };
-    let r2 = pool::Registry { orders: vec![(id_b().into(), did(2), nonce(3))] };
-    assert_eq!(pool::Registry::decode(&r1.encode()), Some(r1.clone()));
-    assert_eq!(pool::take(&rp, &r1, &r2, 13).unwrap().orders.len(), 2, "taken before it freezes");
-    assert_eq!(pool::take(&rp, &r1, &r2, 14), Ok(r1.clone()), "ignored from its settle height");
-    assert_eq!(pool::merge(&r1, &r2), pool::merge(&r2, &r1));
-    let unsorted = pool::Registry { orders: vec![r2.orders[0], r1.orders[0]] };
-    let bytes = unsorted.encode();
-    assert_eq!(pool::Registry::decode(&bytes).is_some(), r2.orders[0] < r1.orders[0], "kept only in its canonical order");
-}
 
-#[test]
-fn a_settlement_is_witnessed_only_as_its_batch_clears() {
-    let pl = a_pool();
-    let (close, settle) = pl.window(0);
-    let p2 = 2 * clear::PRICE_ONE;
-    // 1 sells 300 A at ≥ 2 (its chain of A); 2 buys A with 500 B at ≤ 3 (its chain of B).
-    let mut w = Two(HashMap::new());
-    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
-    put_at(w.chain(id_a(), 1), 7, Body::Order { pool: pl.id(), epoch: 0, close, settle, side: 0, amount: 300, limit: p2 }, Some(1), 3);
-    put_at(w.chain(id_b(), 2), 1, Body::Genesis { amount: 1000 }, Some(2), 0);
-    put_at(w.chain(id_b(), 2), 8, Body::Order { pool: pl.id(), epoch: 0, close, settle, side: 1, amount: 500, limit: 3 * clear::PRICE_ONE }, Some(2), 3);
-    let mut lot = Lot::new();
-    let refs = vec![(Tok::from(id_a()), did(1), nonce(7)), (Tok::from(id_b()), did(2), nonce(8))];
-    let mut sorted = refs.clone();
-    sorted.sort();
-    lot.regs.push((pool::Params::of(&pl, 0), pool::Registry { orders: sorted }));
-    lot.witness_t(&w, id_a(), 1).unwrap();
-    lot.witness_t(&w, id_b(), 2).unwrap();
-    // Cleared at 2: 250 A trade. 1: 50 A back, 500 B bought. 2: nothing back, 250 A bought.
-    let settle_in = |w: &Two, t: [u8; 32], owner: u8, n: u8, body: Body| {
-        let mut x = Two(w.0.clone());
-        put_at(x.chain(t, owner), n, body, None, settle);
-        x
-    };
-    let ok = settle_in(&w, id_a(), 1, 30, Body::Settle { order: nonce(7), refund: 50 });
-    assert_eq!(ok.check(id_a(), 1), Ok(()));
-    lot.now = settle;
-    assert!(lot.may_t(&ok, id_a(), 1, 3).is_ok(), "1's refund: 50");
-    let wrong = settle_in(&w, id_a(), 1, 30, Body::Settle { order: nonce(7), refund: 60 });
-    assert_eq!(lot.may_t(&wrong, id_a(), 1, 3), Err("a settlement that is not its batch's clearing"));
-    let got = |g: u128| settle_in(&w, id_b(), 1, 31, Body::Bought { tok: id_a().into(), order: nonce(7), settle, got: g, ev: Evidence::default() });
-    assert!(lot.may_t(&got(500), id_b(), 1, 0).is_ok(), "1 bought 500 B");
-    assert_eq!(lot.may_t(&got(501), id_b(), 1, 0), Err("a settlement that is not its batch's clearing"));
-    let theirs = |g: u128| settle_in(&w, id_a(), 2, 32, Body::Bought { tok: id_b().into(), order: nonce(8), settle, got: g, ev: Evidence::default() });
-    assert!(lot.may_t(&theirs(250), id_a(), 2, 0).is_ok(), "2 bought 250 A");
-    assert!(lot.may_t(&settle_in(&w, id_b(), 2, 33, Body::Settle { order: nonce(8), refund: 0 }), id_b(), 2, 3).is_ok(), "2: nothing back");
-    // An order NOT ACCEPTED is not in the batch: 2's order unwitnessed → nothing crosses → 1's whole 300 back.
-    let mut half = Lot::new();
-    half.regs = lot.regs.clone();
-    half.witness_t(&w, id_a(), 1).unwrap();
-    half.now = settle;
-    assert_eq!(half.may_t(&ok, id_a(), 1, 3), Err("a settlement that is not its batch's clearing"));
-    assert!(half.may_t(&settle_in(&w, id_a(), 1, 30, Body::Settle { order: nonce(7), refund: 300 }), id_a(), 1, 3).is_ok());
-    // A junk pointer (a chain that is not there) changes nothing.
-    let mut junk = lot.regs[0].1.clone();
-    junk.orders.push((Tok::from(id_b()), did(9), nonce(1)));
-    junk.orders.sort();
-    lot.regs[0].1 = junk;
-    assert!(lot.may_t(&ok, id_a(), 1, 3).is_ok());
-}
 
-#[test]
-fn a_batch_counts_only_its_own_orders_in_the_right_chains() {
-    let pl = a_pool();
-    let (close, settle) = pl.window(0);
-    let (close1, settle1) = pl.window(1);
-    let one = clear::PRICE_ONE;
-    // 1 (A): sells 300 at ≥ 2 in batch 0; ALSO an order for batch 1, and a "buy" in its A chain (a buy gives B).
-    let mut w = Two(HashMap::new());
-    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
-    put_at(w.chain(id_a(), 1), 7, Body::Order { pool: pl.id(), epoch: 0, close, settle, side: 0, amount: 300, limit: 2 * one }, Some(1), 3);
-    put_at(w.chain(id_a(), 1), 10, Body::Order { pool: pl.id(), epoch: 1, close: close1, settle: settle1, side: 0, amount: 300, limit: one }, Some(1), 3);
-    put_at(w.chain(id_a(), 1), 11, Body::Order { pool: pl.id(), epoch: 0, close, settle, side: 1, amount: 300, limit: 3 * one }, Some(1), 3);
-    put_at(w.chain(id_b(), 2), 1, Body::Genesis { amount: 1000 }, Some(2), 0);
-    put_at(w.chain(id_b(), 2), 8, Body::Order { pool: pl.id(), epoch: 0, close, settle, side: 1, amount: 500, limit: 3 * one }, Some(2), 3);
-    let mut lot = Lot::new();
-    let mut refs = vec![(Tok::from(id_a()), did(1), nonce(7)), (Tok::from(id_a()), did(1), nonce(10)), (Tok::from(id_a()), did(1), nonce(11)), (Tok::from(id_b()), did(2), nonce(8))];
-    refs.sort();
-    lot.regs.push((pool::Params::of(&pl, 0), pool::Registry { orders: refs }));
-    lot.witness_t(&w, id_a(), 1).unwrap();
-    lot.witness_t(&w, id_b(), 2).unwrap();
-    lot.now = settle;
-    // Only 7 and 8 are batch 0's: the same clearing as with them alone — 1's 50 A back.
-    let mut x = Two(w.0.clone());
-    put_at(x.chain(id_a(), 1), 30, Body::Settle { order: nonce(7), refund: 50 }, None, settle);
-    let seq = x.get(id_a(), 1).entries.last().unwrap().seq;
-    assert!(lot.may_t(&x, id_a(), 1, seq).is_ok());
-}
 
 // ---- ESCROW (TOKEN §5): the token's one door for apps ----
 
@@ -2921,7 +2476,7 @@ fn an_escrow_comes_back_only_as_its_programs_verdict_says() {
     let (body, _) = cut::make(&at(id_a(), 1), &def(), w.get(id_a(), 1), Some(&log(1))).unwrap();
     let mut over = Two(w.0.clone());
     put_at(over.chain(id_a(), 1), 40, body, Some(1), 5);
-    assert_eq!(ck(&over, 1, Some(&prog)), Err("a cut over an order not settled"));
+    assert_eq!(ck(&over, 1, Some(&prog)), Err("a cut over an open escrow"));
     assert_eq!(Entry::decode(&w.get(id_a(), 1).entries.last().unwrap().encode()).as_ref(), w.get(id_a(), 1).entries.last());
 }
 
@@ -2968,4 +2523,46 @@ fn a_witness_signs_a_payout_only_from_a_program_backed_by_real_escrows() {
     let mut fresh_lot = Lot::new();
     fresh_lot.progs.push((PROG, prog));
     assert_eq!(fresh_lot.may(&x, 2, 0), Err("an entry its committee has not witnessed"));
+}
+
+#[test]
+fn an_item_sold_through_a_program_pays_its_creators_royalty() {
+    // M escrows U's item (5% to its creator, person 7); T escrows 200 B. The verdict: the item to T, B to M and to 7.
+    let mut w = Ids5(HashMap::new());
+    let it = item_u();
+    put_at(w.chain(it, M), 1, Body::Mint { nonce: nonce(1), amount: 1, minted: 0, ev: Evidence::default() }, None, 0);
+    put_at(w.chain(it, M), 7, Body::Escrow { program: PROG, terms: b"sell".to_vec(), amount: 1 }, Some(M), 0);
+    put_at(w.chain(it, T), 30, Body::Payout { program: PROG, key: [1; 16], amount: 1, ev: Evidence::default() }, None, 5);
+    let h = escrow::terms_hash(b"sell");
+    let sec = |to_m: u128, to_7: u128| escrow::Section {
+        escrows: vec![((it, did(M), nonce(7)), 1, h), (eref(id_b(), T, 8), 200, h)],
+        refunds: vec![],
+        pays: vec![([1; 16], it, did(T), 1), ([2; 16], id_b().into(), did(M), to_m), ([3; 16], id_b().into(), did(7), to_7)],
+    }
+    .encode();
+    let ck = |prog: Vec<u8>| {
+        let f = move |id: &[u8; 32]| (*id == PROG).then(|| prog.clone());
+        let shard = supply::Shard { mints: vec![u_mint(M, 1)] };
+        check(&at_t(it, T), &def_u(), &w.0[&(it, did(T))], &|c, o| w.0.get(&(*c, *o)).cloned(), &|e| (e == 0).then(|| shard.clone()), Some(&log(T)), &Extra { ops: None, program: Some(&f) })
+    };
+    assert_eq!(ck(sec(95, 5)), Ok(()), "5 of 100: the royalty");
+    assert_eq!(ck(sec(100, 5)), Ok(()), "exactly 5% of what the seller got");
+    assert_eq!(ck(sec(101, 5)), Err("a sale that does not pay its creator's royalty"), "just under");
+    assert_eq!(ck(sec(80, 20)), Ok(()), "more than the royalty");
+    assert_eq!(ck(sec(96, 4)), Err("a sale that does not pay its creator's royalty"));
+    assert_eq!(ck(sec(100, 0)), Err("a sale that does not pay its creator's royalty"));
+    // A seller paid the SOLD token back as well (it bought one in the same program): no proceeds, no fee on it.
+    let back = |to_m: u128, to_7: u128| {
+        let mut x = escrow::Section::decode_prefix(&sec(to_m, to_7)).unwrap().0;
+        x.escrows.push(((it, did(9), nonce(9)), 1, h));
+        x.pays.push(([4; 16], it, did(M), 1));
+        x.encode()
+    };
+    assert_eq!(ck(back(100, 5)), Ok(()));
+    assert_eq!(ck(back(101, 5)), Err("a sale that does not pay its creator's royalty"), "the B proceeds still owe it");
+    // A token without a royalty: nothing owed.
+    let plain = Definition { royalty: None, ..def_u() };
+    let f = |id: &[u8; 32]| (*id == PROG).then(|| sec(100, 0));
+    let shard = supply::Shard { mints: vec![u_mint(M, 1)] };
+    assert_eq!(check(&at_t(it, T), &plain, &w.0[&(it, did(T))], &|c, o| w.0.get(&(*c, *o)).cloned(), &|e| (e == 0).then(|| shard.clone()), Some(&log(T)), &Extra { ops: None, program: Some(&f) }), Ok(()));
 }
