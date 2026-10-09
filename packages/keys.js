@@ -51,7 +51,12 @@ export async function start(ctx) {
     if (PROBLEMS.has(what))
       ctx
         .require("index")
-        .then(ix => ix.health({ k: what, s: String(detail.space ?? "").slice(0, 6), e: detail.epoch ?? null, why: detail.reason ? String(detail.reason).slice(0, 160) : undefined }))
+        .then(ix => {
+          // The event's whole detail goes with it (its reason under `why` or `reason`, its counts and epochs in `d`): a
+          // report support can resolve, not a bare kind (seen 10-09: a join-failed arrived with nothing but its version).
+          const { space: _s, epoch: _e, reason, why, ...d } = detail;
+          return ix.health({ k: what, s: String(detail.space ?? "").slice(0, 6), e: detail.epoch ?? null, why: String(reason ?? why ?? "").slice(0, 160) || undefined, d });
+        })
         .catch(() => {});
   }
   async function keyEvents(spaceHex = null) {
@@ -1179,5 +1184,20 @@ export async function start(ctx) {
     const asked = await refOf(kp);
     return { ok: aimed.includes(asked), aimed: aimed.map(a => a.slice(0, 8)), asked: asked.slice(0, 8) };
   };
-  return { ready, remove, escrowed, group, keyPackages, answers, holdsTag, welcomeFor, event: keyEvent, events: keyEvents, onChange: f => watchers.push(f) };
+  // This device's KEY PACKAGES, counted (for a report: what a welcome could have been made for here) — counts only.
+  async function packageCounts() {
+    const t = await spacekeys();
+    await t.settled;
+    const batches = t.rows().filter(r => r.key.startsWith("packages/") && r.value);
+    let held = 0;
+    for (const b of batches) {
+      try {
+        held += batchRefs(bytes(b.value)).length;
+      } catch {}
+    }
+    const offers = t.rows().filter(r => r.key.startsWith("offers/") && r.value).length;
+    return { batches: batches.length, offers, held };
+  }
+
+  return { ready, remove, escrowed, group, keyPackages, answers, holdsTag, welcomeFor, packageCounts, event: keyEvent, events: keyEvents, onChange: f => watchers.push(f) };
 }

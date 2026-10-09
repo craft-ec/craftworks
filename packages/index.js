@@ -248,7 +248,10 @@ export async function start(ctx) {
     reported.set(key, Date.now());
     const day = new Date().toISOString().slice(0, 10);
     const v = String(ctx.shaOf?.("conversation") ?? "").slice(0, 12);
-    await point(`health ${day}`, { ...item, v, at: Date.now() }).catch(() => {});
+    // WHO reported (the account's id, its first 8 hex: reports from one account told apart, and its other reports
+    // read together) — never more of it.
+    const r = String((await space.account().catch(() => null))?.id ?? "").slice(0, 8) || null;
+    await point(`health ${day}`, { ...item, r, v, at: Date.now() }).catch(() => {});
     return true;
   }
   const healthOf = day => pointers(`health ${day}`);

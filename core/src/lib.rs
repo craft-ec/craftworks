@@ -542,7 +542,18 @@ impl Core {
             .filter_map(|c| Some((*c, o.block_params(c)?)))
             .collect();
         if at.is_empty() || at.len() < cids.len() {
-            return Err("its tree is sealed with a key this page does not hold".into());
+            // WHICH key (the report carries it, so a support read can tell a missing epoch from another branch's key
+            // or a table key not held): the tree's own key reference, as its tail names it.
+            let named = o
+                .writer
+                .current()
+                .and_then(|t| t.body.entries.get(data::SEALED_TREE).and_then(|e| e.value.clone()))
+                .and_then(|v| data::KeyRef::of(&v).map(|x| x.0));
+            return Err(match named {
+                Some(data::KeyRef::Epoch(e)) => format!("its tree is sealed with the key of epoch {e}: not held here, or held from another branch"),
+                Some(data::KeyRef::Table) => "its tree is sealed with the table's own key: not held here".into(),
+                None => "its tree is sealed under no key this page reads".into(),
+            });
         }
         let mut fetch = Vec::new();
         for (cid, (sealed, params)) in at {

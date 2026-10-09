@@ -113,13 +113,38 @@ export async function start(ctx) {
   // member sees it on Members & roles without asking for a log. Cleared when it reads after all.
   const problems = new Map(); // space id (hex) → Map(what → when)
   const spaceKey = x => (!x ? null : typeof x === "string" ? x : [...x].map(b => b.toString(16).padStart(2, "0")).join(""));
-  const problem = (sp, what) => {
+  // What settles WHY a read fails (into the report, so it can be resolved from the report alone — never a key, never
+  // content): the epoch the failure names; whether this page holds that epoch's key for the table; the group's epoch
+  // here and whether removed; the other branches' epochs it keeps keys of.
+  async function diagnose(spObj, table, why) {
+    const e = Number((/epoch (\d+)/.exec(why) ?? [])[1]);
+    const d = { ep: Number.isFinite(e) ? e : null };
+    if (!spObj) return d;
+    const g = (await ctx.require("keys")).group(spObj);
+    const st = await g.ready().catch(() => null);
+    d.at = st?.epoch ?? null;
+    d.removed = !!st?.removed;
+    const lost = await g.lost().catch(() => []);
+    d.lost = lost.map(l => l.epoch).slice(-8);
+    if (d.ep != null && table) {
+      const k = await (await ctx.require("access")).keyAt(table, d.ep, { space: spObj.id }).catch(e => ({ why: e?.message ?? String(e) }));
+      d.held = !!k?.key;
+      if (!k?.key) d.heldWhy = String(k?.why ?? "").slice(0, 60);
+    }
+    return d;
+  }
+  const problem = (sp, what, spObj = null, table = null) => {
     const k = spaceKey(sp);
     if (!k) return;
     const m = problems.get(k) ?? new Map();
     const w = String(what).slice(0, 160);
-    // New here: also into the day's public health bag (`index.health`, once a kind per space per hour).
-    if (!m.has(w)) ctx.require("index").then(ix => ix.health({ k: "cannot-read", s: k.slice(0, 6), why: w })).catch(() => {});
+    // New here: also into the day's public health bag (`index.health`, once a kind per space per hour), with what
+    // settles its cause.
+    if (!m.has(w))
+      diagnose(spObj, table, w)
+        .catch(e => ({ diag: String(e?.message ?? e).slice(0, 60) }))
+        .then(d => ctx.require("index").then(ix => ix.health({ k: "cannot-read", s: k.slice(0, 6), why: w, d })))
+        .catch(() => {});
     m.set(w, Date.now());
     problems.set(k, m);
   };
@@ -937,7 +962,7 @@ export async function start(ctx) {
         tail(owner, name, { known, ...(cat ? { catalog: cat } : {}), ...opts, lazy }).catch(e => {
           unopened += 1;
           ctx.log("feed not read", { what: `${name}: ${owner.slice(0, 12)}…: ${e.message}` });
-          problem(sp.id, `${name}: ${owner.slice(0, 8)}…'s feed not read (${e.message})`);
+          problem(sp.id, `${name}: ${owner.slice(0, 8)}…'s feed not read (${e.message})`, sp, name);
           return null;
         });
       let rows = [];

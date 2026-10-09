@@ -100,8 +100,16 @@ async fn main() -> Result<()> {
             vs.sort_by_key(|v| std::cmp::Reverse(v["at"].as_u64().unwrap_or(0)));
             let n = vs.len();
             let last = &vs[0];
-            let detail: Vec<String> = ["e", "oe", "to", "why", "v"].iter().filter_map(|f| last.get(*f).filter(|x| !x.is_null()).map(|x| format!("{f}={}", x.as_str().map(str::to_string).unwrap_or_else(|| x.to_string())))).collect();
-            println!("  {k:15} space {s:6}  ×{n:<3} newest: {}", detail.join(" "));
+            // How many ACCOUNTS (`r`: the reporter's id prefix — none on reports from before it was sent).
+            let mut who: Vec<&str> = vs.iter().filter_map(|v| v["r"].as_str()).collect();
+            who.sort();
+            who.dedup();
+            let detail: Vec<String> = ["r", "e", "oe", "to", "why", "v"].iter().filter_map(|f| last.get(*f).filter(|x| !x.is_null()).map(|x| format!("{f}={}", x.as_str().map(str::to_string).unwrap_or_else(|| x.to_string())))).collect();
+            println!("  {k:15} space {s:6}  ×{n:<3} from {} account(s)  newest: {}", who.len(), detail.join(" "));
+            // What settles its cause (`d`), as the page measured it.
+            if let Some(d) = last.get("d").filter(|x| !x.is_null()) {
+                println!("  {:15}               detail: {d}", "");
+            }
         }
     }
     Ok(())

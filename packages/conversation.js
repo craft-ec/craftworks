@@ -644,10 +644,21 @@ export async function start(ctx) {
           await once.put(`dead:${tried}`, `not past ${Date.now()}`).catch(() => {});
           continue;
         }
-        index.health({ k: "welcome-failed", s: it.space.slice(0, 6), e: st?.epoch ?? null, why: String(e?.message ?? e).slice(0, 160) }).catch(() => {});
+        const held = it.kp ? await keys.holdsTag(it.kp).catch(() => null) : null;
+        // With what settles its cause: the package it was made for and when, who sent it, whether this account offered
+        // that package (and from which batch), whether a repair, and this device's packages counted.
+        const d = {
+          kp: it.kp ? String(it.kp).slice(0, 8) : null,
+          made: Number(it.made) || null,
+          from: String(it.from ?? "").slice(0, 8),
+          offered: held || false,
+          repair: !!it.repair,
+          joined: !!(had && st && !st.removed),
+          pk: await keys.packageCounts().catch(() => null),
+        };
+        index.health({ k: "welcome-failed", s: it.space.slice(0, 6), e: st?.epoch ?? null, why: String(e?.message ?? e).slice(0, 160), d }).catch(() => {});
         // SAID in the space (its writers record: the members list shows it), so a member stuck behind is seen WHY.
         if (had) await index.spacePoint(had, "writers", { w: had.self, welcomeFailed: { why: String(e?.message ?? e).slice(0, 200), from: it.from, at: Date.now() } }).catch(() => {});
-        const held = it.kp ? await keys.holdsTag(it.kp).catch(() => null) : null;
         if (!held && /WelcomeKeyPackageNotFound/.test(e?.message ?? "")) await once.put(`dead:${tried}`, String(Date.now())).catch(() => {});
         // Not dead (a passing failure): tried again on the next pass.
         else welcomesTried.delete(tried);
