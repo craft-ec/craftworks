@@ -10,6 +10,10 @@ use crate::{offers_of, supply, timed, walk, Body, ChainParams, Definition, Entry
 
 /// The committee's size, and how many of it must sign (TOKEN §7a: open — to be set from measurement on the network).
 pub const COMMITTEE: usize = 16;
+/// How far behind the beacon a witness still signs an entry's stamp: one epoch. Further back, a writer could pick, among
+/// past epochs whose outputs are known, one whose committee for its place suits it (a first copy is taken without the
+/// append rules); within it, a lot is one try an epoch. A witness has a whole epoch to reach an entry.
+pub const FRESH: u64 = supply::EPOCH;
 pub const NEED: usize = 11;
 
 /// Where a wallet (or a witness) reads the lot from: the STAKE POOL's token (`pool`: whose stake weighs the draw — one
@@ -101,7 +105,8 @@ pub fn cited(p: &ChainParams, s: &State, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 3
 /// citations against what they cite, not only their names); for a CUT, also the history it summarises read whole and audited (`cut::whole`,
 /// `cut::audit` — a holder that never had the prefix takes a cut as given) — and is not forked; the entry before it is
 /// accepted; every entry it cites is accepted; the TIMED rules hold at its own stamp ([`timed`]: a refund, a release, a
-/// fill, a citation — append rules a first copy skips); and it is not stamped ahead of the beacon (`now`: the beacon's height as
+/// fill, a citation — append rules a first copy skips); and it is stamped neither ahead of the beacon nor more than
+/// [`FRESH`] behind it (`now`: the beacon's height as
 /// the witness reads it — a first copy is taken by a node without the append rules, so a stamp from the future, which
 /// would let a timed entry such as a vesting step or a refund come early, is refused here). `Ok`: the entry's hash, what
 /// the witness signs. (Never sign two entries
@@ -117,6 +122,9 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
     let e = &s.entries[i];
     if e.stamp > now {
         return Err("an entry stamped ahead of the beacon");
+    }
+    if e.stamp.saturating_add(FRESH) < now {
+        return Err("an entry stamped too long ago");
     }
     timed(d, e.stamp, &prefix, e)?;
     match i.checked_sub(1) {

@@ -2351,7 +2351,7 @@ fn a_witness_applies_the_timed_rules_at_the_entrys_own_stamp() {
         m
     };
     let pp = params(1);
-    let mayp = |s: &State| wallet::may_witness(&lot.src(), &pp, &def(), s, s.entries.last().unwrap().seq, u64::MAX, &ok, &|_, _| None);
+    let mayp = |s: &State| wallet::may_witness(&lot.src(), &pp, &def(), s, s.entries.last().unwrap().seq, 10 + UNBOND, &ok, &|_, _| None);
     assert_eq!(mayp(&rel(10 + UNBOND - 1)), Err("a release before its delay"));
     assert_eq!(mayp(&rel(10 + UNBOND)).err(), Some("an entry its committee has not witnessed"));
 }
@@ -2594,4 +2594,20 @@ fn a_witness_that_signed_fake_money_is_burned() {
     }
     *cut_past.chain(id_a(), 1) = tail;
     assert_eq!(burn(misdeed(2, &w, 3, 0), &cut_past).err(), Some("a misdeed the cited chain cannot show"));
+}
+
+#[test]
+fn a_witness_signs_no_entry_stamped_more_than_an_epoch_ago() {
+    let w = three_hops();
+    let mut lot = Lot::new();
+    let e = w.get(id_a(), 1).entries[0].clone(); // stamped 0
+    lot.now = e.stamp + 4096;
+    assert!(lot.may(&w, 1, 0).is_ok(), "an epoch behind: still signed");
+    lot.now = e.stamp + 4097;
+    assert_eq!(lot.may(&w, 1, 0), Err("an entry stamped too long ago"));
+    // Already ACCEPTED stays accepted: the rule is for signing, not for reading acceptance.
+    lot.now = 100;
+    lot.witness(&w, 1).unwrap();
+    lot.now = 1_000_000;
+    assert_eq!(lot.accept(&w, 1, 0), Ok(11));
 }

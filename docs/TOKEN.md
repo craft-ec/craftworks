@@ -543,8 +543,9 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
    claim an old stamp only where a node takes it without the append rules (a first copy). CLOSED for value 10-09: a
    witness applies the TIMED rules (a refund, a release, a fill, a citation, a vesting step — `timed`) at the entry's
    own stamp and refuses an entry stamped ahead of the beacon, so a first copy's timing tricks are never witnessed.
-   OPEN: an entry back-dated far behind the beacon has its lot drawn from an old output (its committee known before
-   it was written) — refuse those when first asked, once witnesses keep a record of when they first saw an entry.
+   CLOSED 10-09: a witness signs no entry stamped more than an epoch behind the beacon (`wallet::FRESH`) — back-dating
+   into an older epoch would let a writer pick, among past epochs whose outputs are known, one whose committee for its
+   place suits it; within an epoch the lot is fixed by the place (§5a).
 
 (A token's own ISSUANCE — its supply rule and size, who holds its genesis, what it does with fees — is that token's
 choice, made in its definition from the menu (§6), not the standard's: the Craftworks token's are in §7.)

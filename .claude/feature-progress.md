@@ -1419,6 +1419,9 @@ old key's addresses.
           grinding by an extender, a faster core's lead. beacon.wasm 92300b2a, token.wasm 65f67643.
           LIVE fx/fy: beacon-live fake caught + honest step back on both nodes; token-live witness on these contracts:
           every honest entry 16/16, the buried fake and its payment refused by all, 3's wallet Ok(16) in 34 ms, burn ACCEPTED.
+      [x] 13 BACK-DATED ENTRIES — BUILT 10-09: a witness signs no entry stamped more than an epoch (FRESH) behind the
+          beacon (an older epoch's committee is known: back-dating would choose it); accepted entries stay accepted.
+          98 tests; 3 mutants killed. Witness-side only: token.wasm unchanged (caed367c).
       [x] 12 LOT HARDENING — BUILT + LIVE 10-09: CLAIMS REGISTRY per (pool, epoch) (kind 7) frozen LEAD (512)
           steps before the epoch: no selective claiming after an output is known; the lot fixed by the PLACE —
           predecessor's stamp + margin + 2, floored at the entry's epoch's first step — so two entries at one place
