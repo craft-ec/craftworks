@@ -151,7 +151,9 @@ A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has CO
   it: the swap and the pool read definitions, §1b), its mint authority (the creator), and three fields: `cap` (the most
   there will ever be; 0: none), `collection` (the id it is grouped under) and `item` + `version` (the Craftworks item it
   is of, and the item's version it pins; zero: the item as it is). The item's kind schema (video, book, image …) is its
-  metadata — the token does not copy it.
+  metadata — the token does not copy it. The COLLECTION is itself a Craftworks item or space: its name and all its
+  metadata are that item's; the token holds only its id (an edition's own `name` is just its label — "Gold" — or
+  empty for the item's title).
 - **Copies, two kinds.** NUMBERED (`ids: numbered`): copy `n` is its own item (`numbered_item(edition, n)`), one of
   each, `n` from 1 up to the cap. PLAIN: the edition is fungible within itself (`ids: none`, decimals 0) — "3 Silver".
 - **Minted on demand, without end** (owner 10-10: "how does it work with 1mil copies?"). A capped edition's mints live
@@ -170,9 +172,11 @@ A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has CO
   minted so far, with that record's seal: the frontier record must be exactly as sealed, and no record past it may
   hold a mint stamped before the change. A record below the frontier already exists, and refuses a back-dated mint
   by its update rule (a new mint stamped near now).
-- **Who may mint an item's edition.** The token checks the mint authority; that the edition's creator (its
-  `genesis_owner`) is the Craftworks item's author is checked by the app where it shows the edition — it already proves
-  an item's author from its feed's credentials; a contract cannot read that cheaply.
+- **Who may mint an item's edition, who may join a collection.** The token checks the mint authority; that the
+  edition's creator (its `genesis_owner`) is the Craftworks item's author — and the collection item's owner — is
+  checked by the app where it shows the edition: it already proves an item's author from its feed's credentials (a
+  contract cannot read that cheaply). An edition naming a collection it does not own is simply not shown in it; no
+  name can be copied, as the collection has none but its item's (owner 10-10: no Metaplex-style "verified" flag).
 - **A royalty its HOLDERS share** (owner 10-10: "seller own copy should not get a cut"). An edition's royalty may name
   `HOLDERS` instead of a creator — only a numbered edition of at least 2 copies. Every app pays the fee as it pays a
   creator's (to `HOLDERS`, in the payment's token); then each OTHER copy's holder appends a `HolderPayout` to its own
@@ -360,6 +364,14 @@ The token knows nothing of swaps, pools or any other app. It has ONE door (built
    goes into the received set, so a cut keeps it). A chain is not cut over an open escrow.
 4. **Witnesses** check besides that every escrow a program lists is a real, ACCEPTED escrow to that program with that
    amount and those terms (`wallet::program_backed`): a program cannot list anyone's escrow on terms they did not sign.
+5. **Reclaim** (10-10) — our apps always finalize by anyone, but the token cannot see a program's rules: an escrow to
+   a wrong id, or to someone's program that never decides, would be locked for good. So an escrow may carry `until`
+   (0: none): from that beacon on, anyone may append `reclaim(escrow)` — the whole amount back — and WITNESSES sign it
+   only if the program, as they read it, has not taken the escrow (not there, or not listing it); once reclaimed,
+   they sign no release or payout of a program that lists it. The CHAIN never reads the program for a reclaim: a node
+   refuses outright an update that asks for a contract that does not exist (measured 10-10: "missing related
+   contract"). A wallet sets `until` past the program's own finish (a deal's cutoff, a batch's settle) plus the
+   margin.
 
 The apps, each its own contract over this door:
 
@@ -759,6 +771,15 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    in under another id). LIVE fx/fy (`token-live holders`): edition H (numbered, cap 4, 10% to holders), copies #1 M,
    #2 T, #3 8; #1 sold to T for 100 B through a deal — 90 B to M, 10 B to the holders; T's and 8's shares (3 B each)
    ACCEPTED; 8's again, M's for the sold copy, and 9's for a copy it does not hold REFUSED (T 903, 8 3, M 0, 9 0 B).
+
+18. ESCROW RECLAIM — BUILT 10-10 (§4): `Escrow.until`, `Body::Reclaim`, the timed rule, the witness rules (not
+   taken; nothing signed on a reclaimed escrow). Found live: the chain first read the program for a reclaim — and a
+   node refuses an update asking for a contract that does not exist, so the reclaim from a wrong id (the very case)
+   was refused; the check moved to the witnesses alone. Token 96 tests; 8 mutants killed (one, the witness's
+   not-taken check, survived while the chain also checked — it is the only check now, and killed). LIVE fx/fy
+   (`token-live reclaim`): 300 A to no program and 300 A to a deal that took it; reclaim before its time REFUSED; at
+   it, both ACCEPTED by the chain; read from the network, a witness signs the first (its program not there) and not the
+   deal's.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under

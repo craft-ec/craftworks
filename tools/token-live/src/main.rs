@@ -202,6 +202,7 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
         T::Body::Vest { schedule, .. } => bal - schedule.iter().map(|x| x.1).sum::<u128>(),
         T::Body::Escrow { amount, .. } => bal - amount,
         T::Body::Unescrow { refund, .. } => bal + refund,
+        T::Body::Reclaim { escrow } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Escrow { amount, .. } if &x.nonce == escrow => Some(*amount), _ => None }).unwrap_or(0),
         T::Body::Payout { amount, .. } | T::Body::HolderPayout { amount, .. } => bal + amount,
         T::Body::Stake { amount } => bal - amount,
         T::Body::Unstake { .. } | T::Body::Slash { .. } | T::Body::Misdeed { .. } => bal,
@@ -294,6 +295,7 @@ async fn main() -> Result<()> {
             "multisig" => multisig(&w).await?,
             "nft" => nft(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "editions" => editions(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
+            "reclaim" => reclaim(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "holders" => holders(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "vest" => vest(&w).await?,
             "operators" => operators_mode(&w).await?,
@@ -706,11 +708,11 @@ async fn nft(w: &W, scode: &[u8]) -> Result<()> {
     let prog = *container(scode, deal.encode()).key().id().as_bytes().first_chunk::<32>().unwrap();
     let mut mi = T::State::default();
     push(&mut mi, T::Body::Mint { nonce: w.n(1), amount: 1, minted: h, ev: T::Evidence::default() }, w.n(1), None, r);
-    push(&mut mi, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 1 }, w.n(7), Some(m), r);
+    push(&mut mi, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 1, until: 0 }, w.n(7), Some(m), r);
     println!("3  M's chain of the item: the mint, the item escrowed with the deal (for 100 B), on X: {} — holds {}", put(&w.x, container(&w.code, ip(m).encode()), mi.encode()).await?.0, mi.balance());
     let mut tbc = T::State::default();
     push(&mut tbc, T::Body::Genesis { amount: 1000 }, w.n(1), Some(t), r);
-    push(&mut tbc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 100 }, w.n(8), Some(t), r);
+    push(&mut tbc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 100, until: 0 }, w.n(8), Some(t), r);
     println!("4  T escrows 100 B with the deal, on Y: {} — T's B {}", w.put_chain(&w.y, tb, t, &tbc).await?.0, tbc.balance());
     let (ex, ey) = ((it, did(m), w.n(7)), (tb.into(), did(t), w.n(8)));
     let hs = T::escrow::terms_hash(S::TERMS);
@@ -1270,11 +1272,11 @@ async fn pool_mode(w: &W, pcode: &[u8]) -> Result<()> {
     let prog: [u8; 32] = *pc().key().id().as_bytes().first_chunk::<32>().unwrap();
     let mut c1 = T::State::default();
     push(&mut c1, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h0);
-    push(&mut c1, T::Body::Escrow { program: prog, terms: P::terms(Side::Sell, 2 * ONE), amount: 300 }, w.n(7), Some(1), h0);
+    push(&mut c1, T::Body::Escrow { program: prog, terms: P::terms(Side::Sell, 2 * ONE), amount: 300, until: 0 }, w.n(7), Some(1), h0);
     println!("1  1 escrows 300 A with batch {} (to sell at ≥ 2; closes {close}, settles {settle}), on X: {} — balance {}", batch.epoch, w.put_chain(&w.x, ta, 1, &c1).await?.0, c1.balance());
     let mut c2 = T::State::default();
     push(&mut c2, T::Body::Genesis { amount: 1000 }, w.n(2), Some(2), h0);
-    push(&mut c2, T::Body::Escrow { program: prog, terms: P::terms(Side::Buy, 3 * ONE), amount: 500 }, w.n(8), Some(2), h0);
+    push(&mut c2, T::Body::Escrow { program: prog, terms: P::terms(Side::Buy, 3 * ONE), amount: 500, until: 0 }, w.n(8), Some(2), h0);
     println!("2  2 escrows 500 B (to buy A at ≤ 3), on Y: {} — balance {}", w.put_chain(&w.y, tb, 2, &c2).await?.0, c2.balance());
     let mut orders = vec![
         P::Order { escrow: (ta.into(), did(1), w.n(7)), amount: 300, side: Side::Sell, limit: 2 * ONE },
@@ -1351,12 +1353,12 @@ async fn deal_mode(w: &W, scode: &[u8]) -> Result<()> {
     let h = T::escrow::terms_hash(S::TERMS);
     let mut c1 = T::State::default();
     push(&mut c1, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h0);
-    push(&mut c1, T::Body::Escrow { program: id(&d1), terms: S::TERMS.to_vec(), amount: 300 }, w.n(7), Some(1), h0);
-    push(&mut c1, T::Body::Escrow { program: id(&d2), terms: S::TERMS.to_vec(), amount: 300 }, w.n(9), Some(1), h0);
+    push(&mut c1, T::Body::Escrow { program: id(&d1), terms: S::TERMS.to_vec(), amount: 300, until: 0 }, w.n(7), Some(1), h0);
+    push(&mut c1, T::Body::Escrow { program: id(&d2), terms: S::TERMS.to_vec(), amount: 300, until: 0 }, w.n(9), Some(1), h0);
     println!("1  1 escrows 300 A with deal 1 and 300 A with deal 2, on X: {} — balance {}", w.put_chain(&w.x, ta, 1, &c1).await?.0, c1.balance());
     let mut c2 = T::State::default();
     push(&mut c2, T::Body::Genesis { amount: 1000 }, w.n(2), Some(2), h0);
-    push(&mut c2, T::Body::Escrow { program: id(&d1), terms: S::TERMS.to_vec(), amount: 500 }, w.n(8), Some(2), h0);
+    push(&mut c2, T::Body::Escrow { program: id(&d1), terms: S::TERMS.to_vec(), amount: 500, until: 0 }, w.n(8), Some(2), h0);
     println!("2  2 escrows 500 B with deal 1, on Y: {} — balance {}", w.put_chain(&w.y, tb, 2, &c2).await?.0, c2.balance());
     let (ex, ey, ex2) = ((ta.into(), did(1), w.n(7)), (tb.into(), did(2), w.n(8)), (ta.into(), did(1), w.n(9)));
     let alone = |r: T::escrow::EscrowRef, a: u128| T::escrow::Section { escrows: vec![(r, a, h)], ..Default::default() };
@@ -1457,11 +1459,11 @@ async fn editions(w: &W, scode: &[u8]) -> Result<()> {
     let deal = S::Deal { x: it, party_x: did(m), amount_x: 1, y: tb.into(), party_y: did(t), amount_y: 100, deadline: r + 30, beacon: w.beacon };
     let prog = *container(scode, deal.encode()).key().id().as_bytes().first_chunk::<32>().unwrap();
     let mut mc = credit(1u128.to_be_bytes(), 1);
-    push(&mut mc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 1 }, w.n(7), Some(m), r);
+    push(&mut mc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 1, until: 0 }, w.n(7), Some(m), r);
     println!("10 M escrows Gold #1 with a deal for 100 B, on Y: {}", put(&w.y, container(&w.code, copy(m, 1).encode()), mc.encode()).await?.0);
     let mut tbc = T::State::default();
     push(&mut tbc, T::Body::Genesis { amount: 1000 }, w.n(1), Some(t), r);
-    push(&mut tbc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 100 }, w.n(8), Some(t), r);
+    push(&mut tbc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 100, until: 0 }, w.n(8), Some(t), r);
     println!("11 T escrows 100 B, on X: {}", w.put_chain(&w.x, tb, t, &tbc).await?.0);
     let (ex, ey) = ((it, did(m), w.n(7)), (tb.into(), did(t), w.n(8)));
     let hs = T::escrow::terms_hash(S::TERMS);
@@ -1510,11 +1512,11 @@ async fn holders(w: &W, scode: &[u8]) -> Result<()> {
     let deal = S::Deal { x: it, party_x: did(m), amount_x: 1, y: tb.into(), party_y: did(t), amount_y: 100, deadline: r + 30, beacon: w.beacon };
     let prog = *container(scode, deal.encode()).key().id().as_bytes().first_chunk::<32>().unwrap();
     let mut mc = credit(1);
-    push(&mut mc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 1 }, w.n(7), Some(m), r);
+    push(&mut mc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 1, until: 0 }, w.n(7), Some(m), r);
     println!("3  M escrows #1 with a deal for 100 B, on Y: {}", put(&w.y, container(&w.code, copy(m, 1).encode()), mc.encode()).await?.0);
     let mut tbc = T::State::default();
     push(&mut tbc, T::Body::Genesis { amount: 1000 }, w.n(1), Some(t), r);
-    push(&mut tbc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 100 }, w.n(8), Some(t), r);
+    push(&mut tbc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 100, until: 0 }, w.n(8), Some(t), r);
     println!("4  T escrows 100 B, on X: {}", w.put_chain(&w.x, tb, t, &tbc).await?.0);
     let (ex, ey) = ((it, did(m), w.n(7)), (tb.into(), did(t), w.n(8)));
     let hs = T::escrow::terms_hash(S::TERMS);
@@ -1545,5 +1547,46 @@ async fn holders(w: &W, scode: &[u8]) -> Result<()> {
     tokio::time::sleep(Duration::from_secs(2)).await;
     let bal = |s: Option<T::State>| s.map_or(0, |s| s.balance());
     println!("   B: T {} (900 + 3) · 8 {} · M {} · 9 {}", bal(w.get_chain(&w.x, tb, t).await?), bal(w.get_chain(&w.x, tb, h8).await?), bal(w.get_chain(&w.x, tb, m).await?), bal(w.get_chain(&w.x, tb, 9).await?));
+    Ok(())
+}
+
+/// ESCROW RECLAIM (TOKEN §4), LIVE: 1 escrows 300 A to a program that does not exist (a wrong id), reclaimable from
+/// h+4 — refused before its time, taken after; and 300 A to a real deal that took it — never reclaimed.
+async fn reclaim(w: &W, scode: &[u8]) -> Result<()> {
+    use craftworks_swap_contract as S;
+    println!("— reclaim (an escrow its program never took)");
+    let ta = w.put_def(&w.def(1, b"RecA", 28)).await?;
+    let tb = w.put_def(&w.def(2, b"RecB", 29)).await?;
+    let h0 = w.now().await?;
+    let deal = S::Deal { x: ta.into(), party_x: did(1), amount_x: 300, y: tb.into(), party_y: did(2), amount_y: 500, deadline: h0 + 30, beacon: w.beacon };
+    let prog = *container(scode, deal.encode()).key().id().as_bytes().first_chunk::<32>().unwrap();
+    let nowhere = *blake3::hash(b"no such program").as_bytes();
+    let mut c = T::State::default();
+    push(&mut c, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h0);
+    push(&mut c, T::Body::Escrow { program: nowhere, terms: vec![], amount: 300, until: h0 + 4 }, w.n(7), Some(1), h0);
+    push(&mut c, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 300, until: h0 + 4 }, w.n(8), Some(1), h0);
+    println!("1  1 escrows 300 A to no program and 300 A to a deal (both reclaimable from {}), on X: {} — balance {}", h0 + 4, w.put_chain(&w.x, ta, 1, &c).await?.0, c.balance());
+    let hs = T::escrow::terms_hash(S::TERMS);
+    let listed = T::escrow::Section { escrows: vec![((ta.into(), did(1), w.n(8)), 300, hs)], ..Default::default() };
+    println!("2  the deal takes its escrow, on X: {}", put(&w.x, container(scode, deal.encode()), listed.encode()).await?.0);
+    let early = w.now().await?;
+    let mut e1 = c.clone();
+    push(&mut e1, T::Body::Reclaim { escrow: w.n(7) }, w.n(30), None, early);
+    println!("3  reclaim before its time (now {early}), on X: {}", w.put_chain(&w.x, ta, 1, &e1).await?.0);
+    let at = w.until(h0 + 4).await?;
+    let mut r1 = c.clone();
+    push(&mut r1, T::Body::Reclaim { escrow: w.n(7) }, w.n(31), None, at);
+    println!("4  reclaim from no program at its time ({at}), on X: {}", w.put_chain(&w.x, ta, 1, &r1).await?.0);
+    let mut r2 = r1.clone();
+    push(&mut r2, T::Body::Reclaim { escrow: w.n(8) }, w.n(32), None, at);
+    println!("5  reclaim the escrow the deal took — the chain takes it (it never reads a program), on X: {}", w.put_chain(&w.x, ta, 1, &r2).await?.0);
+    // ... but no WITNESS signs it: the deal (as a witness reads it) took that escrow; the one to no program, it signs.
+    // (Read from the network, as a witness reads them.)
+    let (deal_b, none_b) = (get(&w.y, prog).await.ok().flatten(), get(&w.y, nowhere).await.ok().flatten());
+    let fetched = none_b.is_some();
+    let took = |n: [u8; 16]| if n == w.n(8) { deal_b.clone() } else { none_b.clone() }.and_then(|b| T::escrow::Section::decode_prefix(&b).map(|x| x.0)).is_some_and(|sec| sec.escrows.iter().any(|(r, ..)| *r == (ta.into(), did(1), n)));
+    println!("   the program for the first: fetched {fetched} (none) — a witness signs its reclaim: {}; the deal's: {}", !took(w.n(7)), !took(w.n(8)));
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    println!("   1's A: {}", w.get_chain(&w.x, ta, 1).await?.map_or(0, |s| s.balance()));
     Ok(())
 }

@@ -397,11 +397,16 @@ pub enum Body {
     /// witness saw cannot have vanished otherwise). Every stake and unbonding amount BURNED. Appended by anyone.
     Misdeed { key: [u8; 32], sig: witness::WitnessSig, tok: Tok, owner: [u8; 32], entry: Box<Entry> },
     /// An ESCROW (TOKEN §5): `amount` locked for the outside contract `program` (a swap, a pool — an app), on its
-    /// `terms` (the program's to read). A debit now; back only as the program's verdict says.
-    Escrow { program: [u8; 32], terms: Vec<u8>, amount: u128 },
+    /// `terms` (the program's to read). A debit now; back only as the program's verdict says — or, from beacon
+    /// `until` on (0: never), RECLAIMED whole if the program has not taken it ([`Body::Reclaim`]).
+    Escrow { program: [u8; 32], terms: Vec<u8>, amount: u128, until: u64 },
     /// The escrow `escrow`'s RELEASE (unescrow): what its program's verdict gives back (`refund`) credited. Appended by anyone (with
     /// work), once.
     Unescrow { escrow: [u8; 16], refund: u128 },
+    /// The escrow `escrow` RECLAIMED (TOKEN §4): its whole amount back, from its `until` on, because its program never
+    /// took it — the program, as its witnesses read it, lists it not, or is not there. Appended by anyone (with work),
+    /// once. Witnesses then refuse any release or payout of a program that lists it.
+    Reclaim { escrow: [u8; 16] },
     /// A program's PAYOUT `key` to this chain: `amount`, as its verdict says. Appended by anyone (with work), once.
     Payout { program: [u8; 32], key: [u8; 16], amount: u128, ev: Evidence },
     /// A HOLDERS' SHARE (TOKEN §1c): from `program`'s payout `key` to [`HOLDERS`] — an edition's royalty fee — the share
@@ -560,12 +565,17 @@ impl Entry {
                 v.extend_from_slice(cred);
                 v.extend_from_slice(&key_seq.to_le_bytes());
             }
-            Body::Escrow { program, terms, amount } => {
+            Body::Escrow { program, terms, amount, until } => {
                 v.push(25);
                 v.extend_from_slice(program);
                 v.extend_from_slice(&(terms.len() as u16).to_le_bytes());
                 v.extend_from_slice(terms);
                 v.extend_from_slice(&amount.to_le_bytes());
+                v.extend_from_slice(&until.to_le_bytes());
+            }
+            Body::Reclaim { escrow } => {
+                v.push(30);
+                v.extend_from_slice(escrow);
             }
             Body::Unescrow { escrow, refund } => {
                 v.push(26);
@@ -776,8 +786,9 @@ impl Entry {
                 if n > escrow::TERMS_MAX {
                     return None;
                 }
-                Body::Escrow { program, terms: r.take(n)?.to_vec(), amount: r.u128()? }
+                Body::Escrow { program, terms: r.take(n)?.to_vec(), amount: r.u128()?, until: r.u64()? }
             }
+            30 => Body::Reclaim { escrow: r.arr()? },
             26 => Body::Unescrow { escrow: r.arr()?, refund: r.u128()? },
             27 => Body::Payout { program: r.arr()?, key: r.arr()?, amount: r.u128()?, ev: read_ev(r)? },
             29 => Body::HolderPayout { program: r.arr()?, key: r.arr()?, edition: r.arr()?, copy: r.u128()?, amount: r.u128()?, ev: read_ev(r)? },
@@ -1098,7 +1109,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
         let mut vested: Vec<([u8; 32], [u8; 16], u32)> = Vec::new();
         let mut minted: Vec<[u8; 16]> = Vec::new();
         // ESCROWS not released yet (nonce, amount, program), and the payouts taken (program, key).
-        let mut open_escrows: Vec<([u8; 16], u128, [u8; 32])> = Vec::new();
+        let mut open_escrows: Vec<([u8; 16], u128, [u8; 32], u64)> = Vec::new();
         let mut paid: Vec<([u8; 32], [u8; 16])> = Vec::new();
         let mut shared: Vec<([u8; 32], [u8; 16])> = Vec::new();
         // A program's standard section, read (`x.program`) and checked to hold.
@@ -1236,7 +1247,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
                 }
-                Body::Escrow { program: prog, terms, amount } => {
+                Body::Escrow { program: prog, terms, amount, until } => {
                     owner_signed(e, &writer)?;
                     if *amount < d.min_send || terms.len() > escrow::TERMS_MAX {
                         return Err("a send under the minimum");
@@ -1244,7 +1255,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     if open_escrows.iter().any(|o| o.0 == e.nonce) {
                         return Err("an escrow named twice");
                     }
-                    open_escrows.push((e.nonce, *amount, *prog));
+                    open_escrows.push((e.nonce, *amount, *prog, *until));
                     balance.checked_sub(*amount).ok_or("a debit over the balance")?
                 }
                 Body::Unescrow { escrow: nonce_, refund } => {
@@ -1260,6 +1271,22 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     }
                     open_escrows.remove(i);
                     balance.checked_add(*refund).ok_or("a balance overflow")?
+                }
+                Body::Reclaim { escrow: nonce_ } => {
+                    if !e.worked() {
+                        return Err("a release without its work");
+                    }
+                    let i = open_escrows.iter().position(|o| &o.0 == nonce_).ok_or("a release of no open escrow")?;
+                    let (_, amount, _, until) = open_escrows[i];
+                    // (Its time — from `until` on — is a TIMED rule: [`timed`].)
+                    if until == 0 {
+                        return Err("a reclaim of an escrow that has none");
+                    }
+                    // That its program never took it is the WITNESSES' to check: the program may not exist (a wrong
+                    // id), and a node refuses outright an update asking for a contract that is not there (measured
+                    // 10-10: "missing related contract") — so the chain never asks for it.
+                    open_escrows.remove(i);
+                    balance.checked_add(amount).ok_or("a balance overflow")?
                 }
                 Body::Payout { program: prog, key, amount, ev } => {
                     if !e.worked() {
@@ -1650,6 +1677,15 @@ pub fn timed(d: &Definition, now: u64, merged: &State, e: &Entry) -> Result<(), 
         Body::Receive { cited, .. } | Body::Vested { cited, .. } => {
             if e.stamp < cited.saturating_add(m) {
                 return Err("an entry citing one not yet final");
+            }
+        }
+        Body::Reclaim { escrow } => {
+            let until = merged.entries.iter().find_map(|x| match &x.body {
+                Body::Escrow { until, .. } if &x.nonce == escrow => Some(*until),
+                _ => None,
+            });
+            if until.is_none_or(|u| e.stamp < u) {
+                return Err("a reclaim before its escrow's time");
             }
         }
         Body::Release { unstake } => {

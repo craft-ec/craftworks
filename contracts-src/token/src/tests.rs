@@ -68,6 +68,10 @@ fn after(s: &State, body: &Body) -> u128 {
         Body::Vest { schedule, .. } => b.wrapping_sub(schedule.iter().map(|x| x.1).sum::<u128>()),
         Body::Escrow { amount, .. } => b.wrapping_sub(*amount),
         Body::Unescrow { refund, .. } => b + refund,
+        Body::Reclaim { escrow } => b + s.entries.iter().find_map(|x| match &x.body {
+            Body::Escrow { amount, .. } if &x.nonce == escrow => Some(*amount),
+            _ => None,
+        }).unwrap_or(0),
         Body::Payout { amount, .. } | Body::HolderPayout { amount, .. } => b + amount,
         Body::Stake { amount } => b.wrapping_sub(*amount),
         Body::Unstake { .. } | Body::Slash { .. } | Body::Misdeed { .. } => b,
@@ -2429,7 +2433,7 @@ fn a_programs_section_never_pays_out_more_than_was_escrowed() {
 fn escrowed() -> (Two, Vec<u8>) {
     let mut w = Two(HashMap::new());
     put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
-    put_at(w.chain(id_a(), 1), 7, Body::Escrow { program: PROG, terms: b"sell at 2".to_vec(), amount: 300 }, Some(1), 3);
+    put_at(w.chain(id_a(), 1), 7, Body::Escrow { program: PROG, terms: b"sell at 2".to_vec(), amount: 300, until: 0 }, Some(1), 3);
     let sec = escrow::Section { escrows: vec![(eref(id_a(), 1, 7), 300, escrow::terms_hash(b"sell at 2"))], refunds: vec![(eref(id_a(), 1, 7), 50)], pays: vec![([1; 16], id_a().into(), did(2), 250)] };
     (w, [sec.encode(), b"the program's own".to_vec()].concat())
 }
@@ -2509,7 +2513,7 @@ fn a_witness_signs_a_payout_only_from_a_program_backed_by_real_escrows() {
     assert_eq!(lot.may(&x, 2, 0), Err("a program listing an escrow that is not there"));
     // One listing a REAL, accepted escrow that was made to ANOTHER program (to spend it here): the same.
     let mut w2 = Two(w.0.clone());
-    put_at(w2.chain(id_a(), 1), 8, Body::Escrow { program: [88; 32], terms: vec![], amount: 300 }, Some(1), 3);
+    put_at(w2.chain(id_a(), 1), 8, Body::Escrow { program: [88; 32], terms: vec![], amount: 300, until: 0 }, Some(1), 3);
     let mut lot2 = Lot::new();
     lot2.witness(&w2, 1).unwrap();
     let mut other = sec.clone();
@@ -2531,7 +2535,7 @@ fn an_item_sold_through_a_program_pays_its_creators_royalty() {
     let mut w = Ids5(HashMap::new());
     let it = item_u();
     put_at(w.chain(it, M), 1, Body::Mint { nonce: nonce(1), amount: 1, minted: 0, ev: Evidence::default() }, None, 0);
-    put_at(w.chain(it, M), 7, Body::Escrow { program: PROG, terms: b"sell".to_vec(), amount: 1 }, Some(M), 0);
+    put_at(w.chain(it, M), 7, Body::Escrow { program: PROG, terms: b"sell".to_vec(), amount: 1, until: 0 }, Some(M), 0);
     put_at(w.chain(it, T), 30, Body::Payout { program: PROG, key: [1; 16], amount: 1, ev: Evidence::default() }, None, 5);
     let h = escrow::terms_hash(b"sell");
     let sec = |to_m: u128, to_7: u128| escrow::Section {
@@ -2783,4 +2787,56 @@ fn an_editions_holders_share_its_royalty_each_other_copy_once() {
     put_at(&mut s, 30, Body::Payout { program: PROG, key: [1; 16], amount: 1, ev: Evidence::default() }, None, 10);
     let f = |id: &[u8; 32]| (*id == PROG).then(|| prog.clone());
     assert_eq!(check(&buyer, &e, &s, &|_, _| None, &|_| None, Some(&log(T)), &Extra { ops: None, program: Some(&f) }), Ok(()));
+}
+
+#[test]
+fn an_escrow_its_program_never_took_is_reclaimed_after_its_time() {
+    // 1 escrows 300 A with PROG, reclaimable from beacon 20.
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 7, Body::Escrow { program: PROG, terms: b"sell at 2".to_vec(), amount: 300, until: 20 }, Some(1), 3);
+    let ck = |w: &Two, prog: Option<Vec<u8>>| {
+        let f = |id: &[u8; 32]| (*id == PROG).then(|| prog.clone()).flatten();
+        check(&at(id_a(), 1), &def(), w.get(id_a(), 1), &|t, o| w.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(1)), &Extra { ops: None, program: Some(&f) })
+    };
+    let reclaim = |stamp: u64| {
+        let mut x = Two(w.0.clone());
+        put_at(x.chain(id_a(), 1), 30, Body::Reclaim { escrow: nonce(7) }, None, stamp);
+        x
+    };
+    let back = reclaim(20);
+    assert_eq!(ck(&back, None), Ok(()), "its program not there");
+    assert_eq!(back.get(id_a(), 1).balance(), 1000);
+    let empty = escrow::Section::default().encode();
+    assert_eq!(ck(&back, Some(empty)), Ok(()), "its program listing it not");
+    let took = escrow::Section { escrows: vec![(eref(id_a(), 1, 7), 300, escrow::terms_hash(b"sell at 2"))], ..Default::default() }.encode();
+    assert_eq!(ck(&back, Some(took.clone())), Ok(()), "the chain never reads its program (it may not exist): witnesses do");
+    // Its time is a TIMED rule (append, and every witness at the entry's own stamp).
+    let last = |x: &Two| x.get(id_a(), 1).entries.last().unwrap().clone();
+    assert_eq!(timed(&def(), 99, back.get(id_a(), 1), &last(&reclaim(19))), Err("a reclaim before its escrow's time"));
+    assert_eq!(timed(&def(), 99, back.get(id_a(), 1), &last(&back)), Ok(()));
+    // Twice: no open escrow. No time (0): never.
+    let mut twice = Two(back.0.clone());
+    put_at(twice.chain(id_a(), 1), 31, Body::Reclaim { escrow: nonce(7) }, None, 21);
+    assert_eq!(ck(&twice, None), Err("a release of no open escrow"));
+    let mut never = Two(HashMap::new());
+    put_at(never.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(never.chain(id_a(), 1), 7, Body::Escrow { program: PROG, terms: vec![], amount: 300, until: 0 }, Some(1), 3);
+    put_at(never.chain(id_a(), 1), 30, Body::Reclaim { escrow: nonce(7) }, None, 50);
+    assert_eq!(ck(&never, None), Err("a reclaim of an escrow that has none"));
+    assert_eq!(Entry::decode(&last(&back).encode()).as_ref(), Some(&last(&back)));
+    // WITNESSES: a reclaim only while the program (as they read it) has not taken it; and once reclaimed, nothing
+    // of a program that lists it is signed on.
+    let mut lot = Lot::new();
+    lot.witness(&w, 1).unwrap();
+    let wb = |x: &Two| x.get(id_a(), 1).entries.len() as u64 - 1;
+    let seq = wb(&back);
+    assert_eq!(lot.may(&back, 1, seq).map(|_| ()), Ok(()), "the program not there: signed");
+    lot.progs.push((PROG, took.clone()));
+    assert_eq!(lot.may(&back, 1, seq), Err("a reclaim of an escrow its program took"));
+    let pays = escrow::Section { escrows: vec![(eref(id_a(), 1, 7), 300, escrow::terms_hash(b"sell at 2"))], refunds: vec![], pays: vec![([1; 16], id_a().into(), did(2), 300)] };
+    let mut x = Two(back.0.clone());
+    put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 300, ev: Evidence::default() }, None, 25);
+    lot.progs[0].1 = pays.encode();
+    assert_eq!(lot.may(&x, 2, 0), Err("a program listing an escrow reclaimed"));
 }

@@ -1473,6 +1473,13 @@ old key's addresses.
           fee stays in the sale program and the holders claim straight from its section. token.wasm 73f93a2c, pool
           8220e0a2, swap fcce67fa. 95 tests; 10 mutants killed. LIVE fx/fy `holders` as in TOKEN step 17.
           NOT BUILT: fractional ownership (not ordered).
+      [x] 21 ESCROW RECLAIM (TOKEN §4.5) — DONE 10-10: Escrow.until + Body::Reclaim; chain checks time (timed) and
+          open escrow only; witnesses check the program did not take it, and refuse programs listing a reclaimed
+          escrow (a node refuses updates naming a missing related contract — measured). token 413edcab, pool 15905a43,
+          swap fcce67fa. 96 tests. Collections: NO verified-collection mechanism (owner 10-10: the collection is a
+          Craftworks item, its metadata inherited, ownership checked app-side) — documented in §1c.
+      [ ] 22 NON-TRANSFERABLE (soulbound) tokens.
+      [ ] 23 TRANSFER FEES (an option the token's owner may enforce).
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).
       [x] 17 BATCH-AUCTION POOLS (TOKEN §5) — in parts:

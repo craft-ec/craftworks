@@ -156,8 +156,12 @@ pub fn program_backed(src: &Source, base: &ChainParams, prog: &[u8; 32], chain: 
         let c = chain(tok, owner).ok_or("an escrow's chain not read")?;
         let i = c.entries.iter().position(|x| &x.nonce == nonce).ok_or("a program listing an escrow that is not there")?;
         let x = &c.entries[i];
-        if !matches!(&x.body, Body::Escrow { program, amount: a, terms } if program == prog && a == amount && crate::escrow::terms_hash(terms) == *th) {
+        if !matches!(&x.body, Body::Escrow { program, amount: a, terms, .. } if program == prog && a == amount && crate::escrow::terms_hash(terms) == *th) {
             return Err("a program listing an escrow that is not there");
+        }
+        // Reclaimed by its owner (the program never took it in time): nothing of this program is signed on.
+        if c.entries[i..].iter().any(|y| matches!(&y.body, Body::Reclaim { escrow } if escrow == nonce)) {
+            return Err("a program listing an escrow reclaimed");
         }
         accept(src, &base.at(*tok, *owner), x, i.checked_sub(1).map(|j| &c.entries[j]))?;
     }
@@ -182,6 +186,18 @@ fn program_entry(src: &Source, p: &ChainParams, s: &State, i: usize, chain: &dyn
         Body::Payout { program, key, amount, .. } => {
             let sec = program_backed(src, p, program, chain)?;
             (sec.pay(key) == Some((p.tok(), p.owner, *amount))).then_some(()).ok_or("a payout that is not its program's verdict")
+        }
+        // A reclaim: its program has NOT taken the escrow — as this witness reads it (not there, or not listing it).
+        Body::Reclaim { escrow } => {
+            let prog = s.entries[..i]
+                .iter()
+                .find_map(|x| match &x.body {
+                    Body::Escrow { program, .. } if &x.nonce == escrow => Some(*program),
+                    _ => None,
+                })
+                .ok_or("a release of no escrow held")?;
+            let took = (src.program)(&prog).and_then(|b| crate::escrow::Section::decode_prefix(&b).map(|x| x.0)).is_some_and(|sec| sec.escrows.iter().any(|(r, ..)| *r == (p.tok(), p.owner, *escrow)));
+            (!took).then_some(()).ok_or("a reclaim of an escrow its program took")
         }
         Body::HolderPayout { program, key, .. } => {
             let sec = program_backed(src, p, program, chain)?;
