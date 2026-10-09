@@ -479,6 +479,14 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   labels the peer with the node's OWN id — a node bug; `ConnectedPeers` is right.)
 - **The proof:** each beacon tick picks, among the contracts hosted near L, pieces ranked by `blake3(beacon ‖ P ‖ id)`;
   the node answers `hash(piece ‖ beacon ‖ P)` within the tick's window — checked by anyone who holds the piece.
+- **Who does it — every node, no opt-in** (owner 10-09: "every node already participates on the ring and is placed
+  pieces"; "active participation works, and users can leave their page open"). The PAGE, whenever open, once an
+  epoch: asks its node where it is, what it hosts and who its peers are; attests its peers' places; binds its key to
+  its peer; commits its holdings — and hands the list to its delegate. The DELEGATE, on its wake-ups, page closed:
+  reads the beacon, answers each challenge from its own node's state (local, no network). A delegate cannot ask its
+  node about itself (no node query in the delegate API, freenet-stdlib 0.10), so a node whose page never opens in an
+  epoch earns nothing that epoch. Open pages also EXTEND the beacon, in a worker (a step is ~60 s of one core; a
+  delegate wake-up cannot); one honest extender keeps it alive.
 - **What is at stake: STANDING, earned over time.** A node's weight is its assigned storage PROVED over time
   (GB-days, ramping up), not the disk it shows today; two signatures at one place reset it to zero and forfeit its
   unclaimed keeper rewards (rewards claimable only after a delay, so some are always at stake). A disk cannot be
