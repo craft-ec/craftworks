@@ -20,7 +20,17 @@ case $1 in
   standing) crate=craftworks-standing-contract ;;
   *) echo "unknown contract: $1" >&2; exit 1 ;;
 esac
-ln -sf "$ck/contract-build.sh" "$here/.contract-build.sh"
-trap 'rm -f "$here/.contract-build.sh"' EXIT
-"$here/.contract-build.sh" "$1" "$crate"
+# FROM ONE FIXED PATH (measured 10-09): Cargo's metadata for a PATH dependency (identity, standing, sdk — crates at
+# the repo root) includes its absolute path, so the same source built in two checkouts gave two hashes (the remaps do
+# not reach it: no path is in the bytes, the code layout moves). So the sources — no targets, no .git — are copied to
+# one path every machine shares and built there (its targets kept for the next build); a lock keeps two builds apart.
+fixed=/tmp/craftworks-contract-build
+until mkdir "$fixed.lock" 2>/dev/null; do sleep 1; done
+trap 'rm -rf "$fixed.lock"' EXIT
+mkdir -p "$fixed"
+rsync -a --delete --exclude target --exclude .git --exclude node_modules --exclude /contracts-src/build "$here/../" "$fixed/"
+ln -sf "$fixed/sdk/freenet-contracts/contract-build.sh" "$fixed/contracts-src/.contract-build.sh"
+(cd "$fixed/contracts-src" && ./.contract-build.sh "$1" "$crate")
+mkdir -p "$here/build"
+cp "$fixed/contracts-src/build/$1.wasm" "$here/build/$1.wasm"
 cp "$here/build/$1.wasm" "$here/../contracts/$1.wasm"

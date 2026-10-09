@@ -1419,6 +1419,15 @@ old key's addresses.
           grinding by an extender, a faster core's lead. beacon.wasm 92300b2a, token.wasm 65f67643.
           LIVE fx/fy: beacon-live fake caught + honest step back on both nodes; token-live witness on these contracts:
           every honest entry 16/16, the buried fake and its payment refused by all, 3's wallet Ok(16) in 34 ms, burn ACCEPTED.
+      [x] 16 REPRODUCIBLE CONTRACT BUILDS — FIXED 10-09: token and standing were NOT reproducible — the same commit built
+          in two checkouts gave two hashes (standing d4a58a72 / 87552c5a vs 09cfdbc8 committed; token ff19c4ca vs
+          caed367c). Measured cause: location, not content — no path is in the bytes (strings diff shows code layout
+          only), the path remaps had no effect, but two checkouts built from ONE fixed path gave identical bytes (Cargo's
+          metadata for path dependencies at the repo root carries their absolute path). Fix in contracts-src/build.sh:
+          rsync the sources to /tmp/craftworks-contract-build (a lock keeps builds apart) and build there. Verified: a
+          second checkout gives token bcc27cbf / standing 43fe3f2f, identical; beacon (no root deps) unchanged
+          c7b91ff4. Token re-keyed (dev mode). devices.wasm will change on its next rebuild — tied to the full
+          release; signer.wasm frozen, never rebuilt. vest / misdeed / operators re-run live on the new bytes: same.
       [x] 15 STANDING CONTRACT — BUILT + LIVE 10-09: `contracts-src/standing` (own workspace, standing.wasm 09cfdbc8), one
           per peer (params: the beacon's code + id, the peer); its record checked FROM SCRATCH against the beacon and,
           for heights it no longer keeps, its OUTPUTS LOG — all read in one round; copies merge record by record. 1 test
