@@ -454,86 +454,44 @@ The standard's first instance. What it changes in REWARDS:
   `fixed` + `burnable`, with or without a `keepers` launch phase), who holds its genesis (a sale, early contributors,
   keepers only), and the network share (burned, or kept for upkeep).
 
-## 7a. Witnesses by lot, backed by storage (owner 10-09: "the most decentralized and open protocol"; "the natural
-progression is storage")
+## 7a. Witnesses by lot, weighted by earned stake (owner 10-09)
 
 Closes what the chains alone leave open — a double spend detected but not PREVENTED (§3b), history checked only by the
-receiving wallet (§3a), a fill and a refund both passing across a partition longer than the margin (§3b):
+receiving wallet (§3a), a fill and a refund both passing across a partition longer than the margin (§3b). Owner:
+"the most decentralized and open protocol" — no nominated witnesses, no list, no per-token setup: one open pool.
 
-- **No nominated witnesses.** Any node stands by PROVING storage it holds (the keepers' proofs, REWARDS §4) — no
-  list, no approval, no per-token setup: one open pool for every token.
-- **All storage counts — as FREENET PLACES IT** (owner 10-09): not only what the node's user read; anything PUT to the
-  network. The assignment is the core's own placement — ring locations, links at every scale, neighbours holding
-  what lies near them, repair as nodes come and go (Freenet's small-world rules; nothing here rebuilds or measures
-  them). A node never picks what counts: a piece counts toward its standing only if it lies NEAR the node's own ring
-  location, where placement puts it — data a node makes and keeps far from itself earns nothing.
-- **Location, attested by peers; standing per LOCATION** (10-09, from freenet-core `ring/location.rs`): the core sets
-  a node's ring location from its OBSERVED address — a hash of the IPv4 /24 (IPv6 /48), "for sybil mitigation" — so a
-  node cannot choose it, and every node in one /24 shares one. A node cannot prove its own address by signing; its
-  connected peers SEE it. Each epoch peers sign "peer P is at location L" (only L published, never an address); a
-  keeper's node key signs "I run peer P" (two keys claiming one P split it). Standing is counted per LOCATION: many
-  identities on one machine share one location and split its standing, and one disk cannot cover many locations —
-  each location's region holds different pieces. Measured 10-09 on fx/fy: a page's node answers `NodeDiagnostics`
-  (its peer id, location, every hosted contract with its size — 25,635 on fx) and `ConnectedPeers` (each peer's id
-  and the address the node sees) over the page's own socket; no core change needed. (The diagnostics' peer list
-  labels the peer with the node's OWN id — a node bug; `ConnectedPeers` is right.)
-- **The proof:** each beacon tick picks, among the contracts hosted near L, pieces ranked by `blake3(beacon ‖ P ‖ id)`;
-  the node answers `hash(piece ‖ beacon ‖ P)` within the tick's window — checked by anyone who holds the piece.
-- **Who does it — every node, no opt-in** (owner 10-09: "every node already participates on the ring and is placed
-  pieces"; "active participation works, and users can leave their page open"). The PAGE, whenever open, once an
-  epoch: asks its node where it is, what it hosts and who its peers are; attests its peers' places; binds its key to
-  its peer; commits its holdings — and hands the list to its delegate. The DELEGATE, on its wake-ups, page closed:
-  reads the beacon, answers each challenge from its own node's state (local, no network). A delegate cannot ask its
-  node about itself (no node query in the delegate API, freenet-stdlib 0.10), so a node whose page never opens in an
-  epoch earns nothing that epoch. Open pages also EXTEND the beacon, in a worker (a step is ~60 s of one core; a
-  delegate wake-up cannot); one honest extender keeps it alive.
-- **Where it lives — the STANDING CONTRACT, one per peer** (params: the beacon, the peer): its attestations, bindings,
-  holdings and answers within the BEACON'S WINDOW (the steps the beacon keeps, at most 4096 — ~68 h at 60 s a step).
-  A node makes its own standing contract first, so every copy of it may be its own: nothing in it is taken on trust
-  from an earlier update — every record is checked FROM SCRATCH, against the beacon (a related read), and what falls
-  out of the beacon's window is dropped. A holdings commitment stands until the next one (the page re-commits when it
-  opens); the delegate answers at SAMPLED heights (about 1 in 32, picked by the beacon's output and the peer). An
-  answer's hash is checked by whoever holds the challenged piece: a wrong one is a FRAUD PROOF that voids that
-  holdings commitment. A node's place and arc come from its attesters (each says where the peer is and where IT is —
-  its connected peers are its ring neighbours). Standing = what it proved held within the window.
-- **SEALED UNIQUE COPIES — what makes standing real disk** (10-09, decided: core dev's call): attestations are
-  sybil-able (any keys can sign "peer P is at R, I am beside it" — nothing proves they saw P), so location cannot be
-  the guard. Instead each identity holds, for every piece it counts, a SEALED REPLICA encoded under its own key: made by
-  slow sequential work (seconds a piece), read back instantly. The beacon's checks ask for a part of the replica within a
-  window too short to seal again, so only an identity that keeps its copy answers — ten identities on one machine need
-  ten copies, ten times the disk. A checked piece must be fetchable from the network (how anyone verifies the answer),
-  so data a node makes for itself counts only as the disk it costs. LOCATION stays a soft rule (hold what Freenet placed
-  near you), not the guard. Cost: a counted piece is kept twice (Freenet's copy and the replica); sealing is a one-time
-  background cost. (Proof of replication, as Filecoin and Arweave.)
-- **The seal, concretely** (10-09): a replica is the piece XOR a keystream made by a SEQUENTIAL hash chain over
-  (node key, piece id) — slow to make (seconds a piece, in the page's background worker), nothing to read back. Kept
-  in the node's delegate store (a file per secret, written once: no snapshots, no quota for a delegate's own secrets);
-  never a contract, never on the network. A sampled height challenges 16 pieces at once, answered from the replicas
-  within the beacon step — re-sealing 16 takes far longer — and a verifier re-derives ONE of the 16 (picked by the
-  next output), so checking costs one piece's seal, rarely. A node commits what it chooses (its "storage for standing").
-- **WITNESS WEIGHT = EARNED STAKE** (owner 10-09: "stake come from reward from storage… cumulative, grows over time;
-  the longer in the game, the higher the stake"): no upfront cost — a node earns KEEPER REWARDS for holding what real
-  users read (REWARDS §4: paid by held demand, not self-claimed), and each reward lands LOCKED as witness stake; the lot
-  is weighted by locked stake; two signatures at one place burn it all. Measured why storage alone cannot weigh
-  witnesses: checks are rare, so a node keeping only Freenet's plain copy re-seals the ~16 challenged pieces on demand
-  (~4 s of CPU at a 243 ms seal) — CPU stands in for disk, a sybil's weight is cheap and rebuilt after a cheat. Storage
-  proofs stay what pays keepers (where a fake only shifts small rewards); earned stake is what a cheat loses.
-- **What is at stake: STANDING, earned over time.** A node's weight is its assigned storage PROVED over time
-  (GB-days, ramping up), not the disk it shows today; two signatures at one place reset it to zero and forfeit its
-  unclaimed keeper rewards (rewards claimable only after a delay, so some are always at stake). A disk cannot be
-  confiscated: a new key with the same disk starts from nothing. **Open:** the ramp (days or weeks to full weight) —
-  set from measurement on the network, not guessed.
-- **Drawn by lot, per entry.** For each (chain, seq), every node computes its own VRF draw over (beacon, chain, seq);
-  its chance grows with its proved storage. A drawn node re-runs the chain's checks (the verification primitive) and
-  signs, with its draw's proof; an entry counts once it carries enough drawn signatures — checkable by anyone from the
-  beacon and the storage proofs. The committee is fresh per entry and unknown in advance.
-- **Two signatures at one place** by one witness are the proof against it: its storage standing is lost.
-- **Why storage:** an open lot needs a cost per ticket or a sybil wins every draw; storage is the resource the network
-  already pays for and proves (as Bitcoin uses work, Ethereum stake, Filecoin storage).
-- **Replaces checkpoints and vouches (§3a).** A witnessed entry is already checked and signed with standing at risk, so
-  a wallet verifies the witnesses' signatures and walks nothing. No token is live, so there is no older history to
-  keep them for: foundation 6 removes checkpoints, vouches and their fraud proofs outright.
-- **Depends on** the storage proofs (deferred until money moves, §6) — they come first.
+- **Drawn by lot, per entry.** For each (chain, seq) every candidate computes its own draw over (beacon output, chain,
+  seq) with its key (a VRF); its chance grows with its WEIGHT. A drawn witness re-runs the chain's checks and signs with
+  its draw's proof; an entry counts once it carries enough drawn signatures — checkable by anyone from the beacon and
+  the weights. The committee is fresh per entry and unknown in advance.
+- **Weight = EARNED STAKE** (owner: "stake come from reward from storage… cumulative, grows over time; the longer in
+  the game, the higher the stake"). No upfront cost: a node earns KEEPER REWARDS for holding what real users read
+  (REWARDS §4, paid by held DEMAND, never self-claimed) and each reward lands LOCKED as witness stake. Two signatures at
+  one place are the proof against a witness: its stake is BURNED. An open lot needs a cost per ticket or a sybil wins
+  every draw; earned stake is that cost — time serving real users, all lost on one cheat.
+- **Why not storage itself as the weight** (measured 10-09): checks are rare, so a node keeping only Freenet's plain
+  copy can re-seal the few challenged pieces on demand (a 243 ms seal per 256 KiB piece, native) — CPU stands in for
+  disk and a sybil's weight is cheap and rebuilt after a cheat; a strong proof of replication needs Filecoin-grade
+  cryptography. And peers' attestations of a node's ring place are sybil-able (any keys can sign "peer P is at R"), so
+  location cannot be the guard either. Storage proofs stay what PAYS keepers — where a fake only shifts small rewards.
+- **Keeper proofs** (what rewards pay on; the `standing` crate). Every node takes part, no opt-in (owner: "every node
+  already participates on the ring and is placed pieces"; "active participation works, and users can leave their page
+  open"). The PAGE, when open, once an epoch: asks its node where it is, what it hosts and who its peers are (the wire's
+  node queries — measured on fx/fy: 25,635 hosted contracts in ~210 ms); commits its holdings (a merkle root over the
+  sorted ids); hands the list to its DELEGATE, which answers the beacon's sampled heights from its own node, page
+  closed (a delegate cannot query its node: no node query in the delegate API). Each answer covers 16 picks of the
+  holdings, hashed with the beacon output and the peer — checked by anyone who fetches a pick. A node's records live in
+  its STANDING CONTRACT (one per peer), every record checked FROM SCRATCH against the beacon within its window (a node
+  makes its own contract first, so nothing is taken on trust). Location is a soft rule (hold what Freenet placed near
+  you): its arc applies when peers place it. A sealed per-key replica (`standing::seal`) is built and kept as an
+  option, should reward fraud ever matter.
+- **Open pages extend the beacon** (a step is ~60 s of one core; a delegate wake-up cannot); one honest extender keeps it.
+- **Replaces checkpoints and vouches (§3a).** A witnessed entry is already checked and signed with stake at risk, so a
+  wallet verifies the witnesses' signatures and walks nothing; no token is live, so foundation 6 removes checkpoints,
+  vouches and their fraud proofs outright.
+- **Order:** keeper payouts (REWARDS §5 — the Craftworks token's contributions as locks, payouts as claims, §7) → each
+  keeper reward locked as witness stake → the lot weighted by locked stake. **Open:** the committee size and how many
+  signatures make an entry; how fast stake counts (a ramp) — from measurement on the network.
 
 ## 8. Open in the architecture
 
