@@ -87,7 +87,8 @@ pub enum Fail {
     Need(Vec<[u8; 32]>),
 }
 
-/// The chain OWNER's keys (a DID's): every key of its key log, and every device its chain names as writer — none of
+/// The chain OWNER's keys: a DID's every key of its key log and every device its chain names as writer; a key set's
+/// every member — none of
 /// them stands behind a checkpoint of its own chain (they are the ones who could forge it).
 pub fn owner_keys(src: &Source, chain: &ChainParams) -> Vec<[u8; 32]> {
     let mut k: Vec<[u8; 32]> = (src.keys)(&chain.owner).map(|l| l.events.iter().map(|e| e.key).collect()).unwrap_or_default();
@@ -95,7 +96,9 @@ pub fn owner_keys(src: &Source, chain: &ChainParams) -> Vec<[u8; 32]> {
         for e in &s.entries {
             match &e.body {
                 crate::Body::Writer { cred, .. } => k.extend(craftworks_identity::read_credential(cred).map(|(_, _, node, _)| node)),
-                crate::Body::Cut { writer: Some((node, _)), .. } => k.push(*node),
+                crate::Body::Members { set, .. } => k.extend(&set.keys),
+                crate::Body::Cut { writer: Some(crate::Signer::Device(node, _)), .. } => k.push(*node),
+                crate::Body::Cut { writer: Some(crate::Signer::Set(set, _)), .. } => k.extend(&set.keys),
                 _ => {}
             }
         }

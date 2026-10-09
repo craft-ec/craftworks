@@ -239,6 +239,9 @@ pub enum Body {
     /// A MINT (TOKEN §1a): the mint `nonce` of the token's supply shard of beacon `minted`'s epoch, naming this owner
     /// and `amount` — credited here; appended by anyone (with work), once.
     Mint { nonce: [u8; 16], amount: u128, minted: u64, ev: Evidence },
+    /// A MULTISIG owner's MEMBERS (TOKEN §1): the key set that signs from here, on set seq `set_seq`. The first (seq 0)
+    /// is the set the owner id names, signed by k of it; each later one, by k of the set before.
+    Members { set: authority::KeySet, set_seq: u32 },
     /// A PRUNE CUT (owner-signed): everything before it may be dropped. It carries their result — the allowances, the
     /// open offers and locks (the balance is its own carried balance) — and the roots of two prolly trees: the
     /// HISTORY (every entry before it, by seq — its blocks published, so the chain stays walkable) and the RECEIVED SET (every name received, filled or claimed so far).
@@ -252,8 +255,8 @@ pub enum Body {
         allowances: Vec<([u8; 32], u128)>,
         offers: Vec<OfferState>,
         locks: Vec<LockState>,
-        /// The chain's writer at the cut: (node key, key seq).
-        writer: Option<([u8; 32], u32)>,
+        /// The chain's signer at the cut.
+        writer: Option<Signer>,
     },
 }
 
@@ -265,6 +268,8 @@ pub enum Auth {
     Delegated { by: [u8; 32], sig: [u8; 64] },
     /// Work: `blake3(message ‖ work)` has [`WORK_BITS`] leading zero bits.
     Work(u64),
+    /// A MULTISIG owner's k signatures (key index in its set, signature).
+    Multi(Vec<(u8, [u8; 64])>),
 }
 
 /// One ENTRY: its place, its link, its name, what it does, the BALANCE after it, and who vouches for it.
@@ -411,6 +416,11 @@ impl Entry {
                 v.extend_from_slice(&minted.to_le_bytes());
                 put_ev(&mut v, ev);
             }
+            Body::Members { set, set_seq } => {
+                v.push(14);
+                set.encode(&mut v);
+                v.extend_from_slice(&set_seq.to_le_bytes());
+            }
             Body::Writer { cred, key_seq } => {
                 v.push(12);
                 v.extend_from_slice(&(cred.len() as u16).to_le_bytes());
@@ -453,11 +463,7 @@ impl Entry {
                 }
                 match writer {
                     None => v.push(0),
-                    Some((node, key_seq)) => {
-                        v.push(1);
-                        v.extend_from_slice(node);
-                        v.extend_from_slice(&key_seq.to_le_bytes());
-                    }
+                    Some(w) => w.encode(&mut v),
                 }
             }
         }
@@ -479,6 +485,10 @@ impl Entry {
                 v.push(2);
                 v.extend_from_slice(by);
                 v.extend_from_slice(sig);
+            }
+            Auth::Multi(sigs) => {
+                v.push(3);
+                authority::put_sigs(&mut v, sigs);
             }
         }
         v
@@ -527,7 +537,8 @@ impl Entry {
                 }
                 let writer = match r.u8()? {
                     0 => None,
-                    1 => Some((r.arr()?, r.u32()?)),
+                    1 => Some(Signer::Device(r.arr()?, r.u32()?)),
+                    2 => Some(Signer::Set(authority::KeySet::read(r)?, r.u32()?)),
                     _ => return None,
                 };
                 Body::Cut { history, received, history_parity, received_parity, allowances, offers, locks, writer }
@@ -540,6 +551,7 @@ impl Entry {
                 Body::Writer { cred: r.take(n)?.to_vec(), key_seq: r.u32()? }
             }
             13 => Body::Mint { nonce: r.arr()?, amount: r.u128()?, minted: r.u64()?, ev: read_ev(r)? },
+            14 => Body::Members { set: authority::KeySet::read(r)?, set_seq: r.u32()? },
             _ => return None,
         };
         let balance = r.u128()?;
@@ -547,6 +559,7 @@ impl Entry {
             0 => Auth::Sig(r.arr()?),
             1 => Auth::Work(r.u64()?),
             2 => Auth::Delegated { by: r.arr()?, sig: r.arr()? },
+            3 => Auth::Multi(authority::read_sigs(r)?),
             _ => return None,
         };
         Some(Self { seq, prev, nonce, stamp, body, balance, auth })
@@ -562,7 +575,7 @@ impl Entry {
     }
     /// Written by the chain's writer (signed), not by anyone (worked).
     pub fn by_owner(&self) -> bool {
-        matches!(self.auth, Auth::Sig(_))
+        matches!(self.auth, Auth::Sig(_) | Auth::Multi(_))
     }
     fn signed_by(&self, owner: &[u8; 32]) -> bool {
         let Auth::Sig(s) = &self.auth else { return false };
@@ -590,6 +603,53 @@ pub fn work_ok(message: &[u8], work: u64) -> bool {
     let d = h.finalize();
     let b = d.as_bytes();
     u128::from_be_bytes(b[..16].try_into().unwrap()).leading_zeros() >= WORK_BITS
+}
+
+/// Who signs a chain's OWNER entries (TOKEN §1): one DEVICE of the owner DID (its node key, on its key seq) — or, a
+/// MULTISIG owner, a KEY SET (k of n keys, on its set seq). At one seq the higher seq wins (§3b).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Signer {
+    Device([u8; 32], u32),
+    Set(authority::KeySet, u32),
+}
+
+impl Signer {
+    /// Its rank at a seq: the key seq of a device, the set seq of a key set.
+    pub fn rank(&self) -> u32 {
+        match self {
+            Signer::Device(_, k) | Signer::Set(_, k) => *k,
+        }
+    }
+    /// It signed `e` (a device: its signature; a set: k of its keys).
+    pub fn signs(&self, e: &Entry) -> bool {
+        match self {
+            Signer::Device(node, _) => e.signed_by(node),
+            Signer::Set(set, _) => matches!(&e.auth, Auth::Multi(sigs) if set.signed(&e.message(), sigs)),
+        }
+    }
+    fn encode(&self, v: &mut Vec<u8>) {
+        match self {
+            Signer::Device(node, k) => {
+                v.push(1);
+                v.extend_from_slice(node);
+                v.extend_from_slice(&k.to_le_bytes());
+            }
+            Signer::Set(set, k) => {
+                v.push(2);
+                set.encode(v);
+                v.extend_from_slice(&k.to_le_bytes());
+            }
+        }
+    }
+}
+
+/// A MULTISIG owner's id: its FIRST key set's hash — what the chain's params name as owner.
+pub fn set_id(set: &authority::KeySet) -> [u8; 32] {
+    let mut v = Vec::new();
+    set.encode(&mut v);
+    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-09 token key set owner");
+    h.update(&v);
+    *h.finalize().as_bytes()
 }
 
 /// A chain's STATE: its entries — or, once its writer signed two at one seq, the entries before and the two
@@ -785,7 +845,7 @@ pub struct Carried {
     pub allowances: Vec<([u8; 32], u128)>,
     pub offers: Vec<OfferState>,
     pub locks: Vec<LockState>,
-    pub writer: Option<([u8; 32], u32)>,
+    pub writer: Option<Signer>,
 }
 
 /// The shape rules, walked: what the chain carries at its end, or where and why it is refused. The citations of the last
@@ -806,8 +866,8 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
             return Err("a chain on another key log than its token's");
         }
         let mut balance: u128 = 0;
-        // The WRITER (node key, key seq): one device of the owner DID; and whether anything but a writer came yet.
-        let mut writer: Option<([u8; 32], u32)> = None;
+        // The SIGNER: one device of the owner DID, or the owner's key set; and whether anything but a signer came yet.
+        let mut writer: Option<Signer> = None;
         let mut begun = false;
         let mut prev = [0u8; 32];
         let mut stamp: u64 = 0;
@@ -824,7 +884,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
         let mut cut: Option<(u64, [u8; 32])> = None;
         let first = s.entries.first().map_or(0, |e| e.seq);
         let recent_from = s.entries.len().saturating_sub(window);
-        let owner_signed = |e: &Entry, w: &Option<([u8; 32], u32)>| if w.is_some_and(|(node, _)| e.signed_by(&node)) { Ok(()) } else { Err("an entry not signed by the chain's writer") };
+        let owner_signed = |e: &Entry, w: &Option<Signer>| if w.as_ref().is_some_and(|w| w.signs(e)) { Ok(()) } else { Err("an entry not signed by the chain's writer") };
         // Before a cut, a name stamped at or before it needs proof it is not in the cut's received set.
         let fresh = |cut: &Option<(u64, [u8; 32])>, cited: u64, key: Vec<u8>, ev: &Evidence| match cut {
             Some((at, root)) if cited <= *at => absent(root, &key, &ev.mine),
@@ -884,7 +944,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
                 }
                 Body::Allow { spender, limit } => {
                     owner_signed(e, &writer)?;
-                    if writer.is_some_and(|(node, _)| *spender == node) {
+                    if matches!(&writer, Some(Signer::Device(node, _)) if spender == node) {
                         return Err("an allowance to itself");
                     }
                     allowed.retain(|(k, _)| k != spender);
@@ -1082,19 +1142,45 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
                         None if held => {}
                         None => return Err("the owner's key log is not there"),
                     }
-                    if writer.is_some_and(|(_, k)| *key_seq < k) {
-                        return Err("a writer on an older key than the one before");
+                    match &writer {
+                        Some(Signer::Set(..)) => return Err("a device writer on a key set's chain"),
+                        Some(Signer::Device(_, k)) if key_seq < k => return Err("a writer on an older key than the one before"),
+                        _ => {}
                     }
                     if !e.signed_by(&node) {
                         return Err("a writer entry not signed by its device");
                     }
-                    writer = Some((node, *key_seq));
+                    writer = Some(Signer::Device(node, *key_seq));
+                    balance
+                }
+                Body::Members { set, set_seq } => {
+                    if !set.sound() {
+                        return Err("a key set that cannot sign");
+                    }
+                    match &writer {
+                        // The first: the set the owner id names, signed by k of it.
+                        None => {
+                            if *set_seq != 0 || set_id(set) != p.owner {
+                                return Err("a key set that is not the chain's owner");
+                            }
+                            owner_signed(e, &Some(Signer::Set(set.clone(), 0)))?;
+                        }
+                        // A change: the next set seq, signed by k of the set before.
+                        Some(Signer::Set(_, k)) => {
+                            if *set_seq != k + 1 {
+                                return Err("a key set change out of place");
+                            }
+                            owner_signed(e, &writer)?;
+                        }
+                        Some(Signer::Device(..)) => return Err("a key set on a device's chain"),
+                    }
+                    writer = Some(Signer::Set(set.clone(), *set_seq));
                     balance
                 }
                 Body::Cut { received: root, allowances, offers: o, locks: l, writer: w, .. } => {
                     if starts_at_cut {
                         // The chain's writer as the cut carries it (who signs from here — and the cut itself).
-                        writer = *w;
+                        writer = w.clone();
                     } else if writer != *w {
                         return Err("a cut that is not what came before it");
                     }
@@ -1122,7 +1208,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
             if e.balance != balance {
                 return Err("a carried balance that does not add up");
             }
-            if !matches!(e.body, Body::Writer { .. }) {
+            if !matches!(e.body, Body::Writer { .. } | Body::Members { .. }) {
                 begun = true;
             }
             prev = e.hash();
@@ -1134,7 +1220,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&[u8; 32]
             if a.seq != n || b.seq != n || a.prev != prev || b.prev != prev || a == b || a.hash() >= b.hash() {
                 return Err("a fork that is not two writer entries at the next seq, in order");
             }
-            if !writer.is_some_and(|(node, _)| a.signed_by(&node) && b.signed_by(&node)) {
+            if !writer.as_ref().is_some_and(|w| w.signs(a) && w.signs(b)) {
                 return Err("a fork not signed twice by the chain's writer");
             }
         }
@@ -1172,13 +1258,14 @@ pub fn append_check(d: &Definition, now: u64, held: &State, merged: &State, keys
         if e.stamp > now || e.stamp.saturating_add(m) < now {
             return Err("a stamp far from the beacon");
         }
-        if e.by_owner() {
+        // (A KEY SET's chain names its own signers: no key log stands behind them.)
+        if e.by_owner() && !is_set_chain(merged) {
             let current = keys.ok_or("the owner's key log is not there")?.head().seq;
             let on = match &e.body {
                 Body::Writer { key_seq, .. } => Some(*key_seq),
                 // (A cut is signed by the writer it carries.)
-                Body::Cut { writer, .. } => writer.map(|(_, k)| k),
-                _ => writer_at(merged, i).map(|(_, k)| k),
+                Body::Cut { writer, .. } => writer.as_ref().map(Signer::rank),
+                _ => writer_at(merged, i).as_ref().map(Signer::rank),
             };
             if on != Some(current) {
                 return Err("an owner entry not on the account's current key");
@@ -1236,15 +1323,21 @@ pub fn freeze_check(p: &ChainParams, d: &Definition, held: &State, merged: &Stat
     Ok(())
 }
 
-/// The WRITER that governs entry `i` of `s` (its node key, its key seq): the last `Writer` entry before it, or the
-/// writer the cut it rests on carries.
-pub fn writer_at(s: &State, i: usize) -> Option<([u8; 32], u32)> {
+/// The SIGNER that governs entry `i` of `s`: the last `Writer` or `Members` entry before it, or the one the cut it rests
+/// on carries.
+pub fn writer_at(s: &State, i: usize) -> Option<Signer> {
     s.entries[..i].iter().rev().find_map(|e| match &e.body {
-        Body::Writer { cred, key_seq } => Some(craftworks_identity::read_credential(cred).map(|(_, _, node, _)| (node, *key_seq))),
-        Body::Cut { writer, .. } => Some(*writer),
+        Body::Writer { cred, key_seq } => Some(craftworks_identity::read_credential(cred).map(|(_, _, node, _)| Signer::Device(node, *key_seq))),
+        Body::Members { set, set_seq } => Some(Some(Signer::Set(set.clone(), *set_seq))),
+        Body::Cut { writer, .. } => Some(writer.clone()),
         _ => None,
     })
     .flatten()
+}
+
+/// A MULTISIG owner's chain (its signers a key set, named in it — never a key log's).
+pub fn is_set_chain(s: &State) -> bool {
+    s.entries.iter().any(|e| matches!(&e.body, Body::Members { .. } | Body::Cut { writer: Some(Signer::Set(..)), .. }))
 }
 
 /// Where what is NEW in `merged` (not in `held`) begins: an index into it.
@@ -1323,10 +1416,11 @@ fn merge_aligned(pre: &[Entry], a: &State, b: &State) -> State {
     };
     let Some(i) = (0..len(a).max(len(b))).find(|&i| !same(&cell(a, i), &cell(b, i))) else { return a.clone() };
     // An owner entry's RANK at cell `i`: a writer entry's own key seq, else the key seq of the writer governing it.
-    let governing = |i: usize| writer_at(&State { entries: pre.iter().chain(&a.entries[..i]).cloned().collect(), fork: None }, pre.len() + i).map(|(_, k)| k);
+    let governing = |i: usize| writer_at(&State { entries: pre.iter().chain(&a.entries[..i]).cloned().collect(), fork: None }, pre.len() + i).as_ref().map(Signer::rank);
     let rank = |e: &Entry, i: usize| match &e.body {
         Body::Writer { key_seq, .. } => Some(*key_seq),
-        Body::Cut { writer, .. } => writer.map(|(_, k)| k),
+        Body::Members { set_seq, .. } => Some(*set_seq),
+        Body::Cut { writer, .. } => writer.as_ref().map(Signer::rank),
         _ => governing(i),
     };
     let frozen = |prefix: &[Entry], mut writers: Vec<Entry>| {
@@ -1605,7 +1699,7 @@ mod contract {
                 }
                 // (The owner's key log only where a new entry is the owner's: a receive alone never waits on it.)
                 let mut want = vec![p.definition, p.beacon];
-                if merged.entries[from..].iter().any(super::Entry::by_owner) {
+                if merged.entries[from..].iter().any(super::Entry::by_owner) && !super::is_set_chain(&merged) {
                     want.push(p.keys_id());
                 }
                 want.extend(cited);

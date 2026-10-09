@@ -1383,7 +1383,9 @@ old key's addresses.
           debits. Measured live: the node takes ONE related round only ("depth>1 not supported") → every token has
           an authority chain and freeze list made with its definition; a debit reads the list in its one round
       [x] 3e live fx/fy (`token-live mint`): 14 steps as designed
-      [ ] 4 multisig; [ ] 5 ids (NFT/1155) with royalties by the fill
+      [x] 4 multisig owners — BUILT + LIVE 10-09 (TOKEN §1, §9 step 10): Signer = Device | Set; Members entries;
+          Auth::Multi; no key log for a set's chain
+      [ ] 5 ids (NFT/1155) with royalties by the fill
       [ ] 6 WITNESSES BY LOT, backed by PROVED STORAGE (owner 10-09; TOKEN §7a): needs the storage proofs
           first; closes prevention of double spends, receiver-only history checks, partition fill/refund
           — and REMOVES checkpoints + vouches outright (owner 10-09: no token is live, no old history to keep)

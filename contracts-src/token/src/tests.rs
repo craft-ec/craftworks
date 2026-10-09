@@ -69,7 +69,7 @@ fn after(s: &State, body: &Body) -> u128 {
         Body::Genesis { amount } => *amount,
         Body::Send { amount, .. } | Body::Burn { amount } => b.wrapping_sub(*amount),
         Body::Receive { amount, .. } | Body::Mint { amount, .. } => b + amount,
-        Body::Allow { .. } | Body::Offer { .. } | Body::Cut { .. } | Body::Writer { .. } => b,
+        Body::Allow { .. } | Body::Offer { .. } | Body::Cut { .. } | Body::Writer { .. } | Body::Members { .. } => b,
         Body::Spend { amount, .. } | Body::Lock { amount, .. } | Body::Fill { amount, .. } => b.wrapping_sub(*amount),
         Body::Claim { amount, .. } => b + amount,
         Body::Refund { lock, .. } => {
@@ -1080,7 +1080,7 @@ fn a_cut_must_carry_exactly_what_came_before_it() {
     assert_eq!(lie(&|b| if let Body::Cut { offers, .. } = b { offers.push((nonce(9), id_b(), 1, 1, 1, 9)) }), Err("a cut that is not what came before it"));
     assert_eq!(lie(&|b| if let Body::Cut { locks, .. } = b { locks.push((nonce(9), did(2), 10, 9, id_b(), nonce(9), true)) }), Err("a cut that is not what came before it"));
     // A cut naming another device as the chain's writer (handing it the chain): not what came before it.
-    assert_eq!(lie(&|b| if let Body::Cut { writer, .. } = b { *writer = Some((pk(9), 0)) }), Err("a cut that is not what came before it"));
+    assert_eq!(lie(&|b| if let Body::Cut { writer, .. } = b { *writer = Some(crate::Signer::Device(pk(9), 0)) }), Err("a cut that is not what came before it"));
     let mut s = whole.clone();
     let mut e = s.entries.pop().unwrap();
     e.balance += 1;
@@ -1833,4 +1833,172 @@ fn a_wallet_counts_a_mint_only_against_the_shard_and_authority_chain_it_holds() 
     // Key 60, replaced, back-dates the mint into the epoch its own change sealed (empty): refused.
     assert_eq!(run(Some(honest.clone()), Some(moved(vec![]))), Err("the mint's supply shard is not there"));
     assert_eq!(run(Some(honest.clone()), Some(moved(vec![(0, supply::seal(&honest, 5).unwrap())]))), Ok(()), "sealed as it holds");
+}
+
+// ---- FOUNDATION 4: a MULTISIG owner (a k-of-n key set) ----
+
+fn set_of(k: u8, seeds: &[u8]) -> authority::KeySet {
+    authority::KeySet { k, keys: seeds.iter().map(|n| pk(*n)).collect() }
+}
+/// Entry `e` signed by the keys at indexes `by` of `seeds`.
+fn msign(mut e: Entry, seeds: &[u8], by: &[u8]) -> Entry {
+    let m = e.message();
+    e.auth = Auth::Multi(by.iter().map(|i| (*i, key(seeds[*i as usize]).sign(&m).to_bytes())).collect());
+    e
+}
+const TRIO: [u8; 3] = [70, 71, 72];
+/// The set chain's params: owner = the 2-of-3 set's id.
+fn set_params() -> ChainParams {
+    ChainParams { owner: set_id(&set_of(2, &TRIO)), ..params(1) }
+}
+/// A (1): genesis, 300 to the set; the set's chain: its members, then the receive.
+fn set_world() -> (State, State) {
+    let mut a = State::default();
+    signed(&mut a, 1, 1, Body::Genesis { amount: 1000 });
+    signed(&mut a, 1, 2, Body::Send { to: set_params().owner, amount: 300 });
+    let mut m = State::default();
+    let e = msign(entry(&m, nonce(40), Body::Members { set: set_of(2, &TRIO), set_seq: 0 }), &TRIO, &[0, 2]);
+    m.entries.push(e);
+    let e = work(entry(&m, nonce(2), Body::Receive { from: did(1), nonce: nonce(2), amount: 300, cited: 0, ev: Evidence::default() }));
+    m.entries.push(e);
+    (a, m)
+}
+
+#[test]
+fn a_key_set_owns_a_chain_and_k_of_it_sign_its_spends() {
+    let (a, m) = set_world();
+    let p = set_params();
+    let ck = |s: &State| check(&p, &def(), s, &|_, o| (*o == did(1)).then(|| a.clone()), &|_| None, None);
+    assert_eq!(ck(&m), Ok(()), "no key log asked for: the set names its own signers");
+    assert_eq!(m.balance(), 300);
+    let mut two = m.clone();
+    let e = msign(entry(&two, nonce(3), Body::Send { to: did(3), amount: 100 }), &TRIO, &[1, 2]);
+    two.entries.push(e);
+    assert_eq!(ck(&two), Ok(()), "2 of 3");
+    let mut one = m.clone();
+    let e = msign(entry(&one, nonce(3), Body::Send { to: did(3), amount: 100 }), &TRIO, &[1]);
+    one.entries.push(e);
+    assert_eq!(ck(&one), Err("an entry not signed by the chain's writer"), "1 of 3");
+    let mut device = m.clone();
+    let e = sign(entry(&device, nonce(3), Body::Send { to: did(3), amount: 100 }), 70);
+    device.entries.push(e);
+    assert_eq!(ck(&device), Err("an entry not signed by the chain's writer"), "one member's plain signature");
+    // The first members must be the set the owner id names, signed by k of it.
+    let mut other = State::default();
+    let e = msign(entry(&other, nonce(40), Body::Members { set: set_of(2, &[70, 71, 73]), set_seq: 0 }), &[70, 71, 73], &[0, 1]);
+    other.entries.push(e);
+    assert_eq!(ck(&other), Err("a key set that is not the chain's owner"));
+    let mut lone = State::default();
+    let e = msign(entry(&lone, nonce(40), Body::Members { set: set_of(2, &TRIO), set_seq: 0 }), &TRIO, &[0]);
+    lone.entries.push(e);
+    assert_eq!(ck(&lone), Err("an entry not signed by the chain's writer"), "the first members signed by 1 of 3");
+    // A device writer on a set's chain; a set on a device's chain.
+    let mut w = m.clone();
+    let e = sign(entry(&w, [0xee; 16], Body::Writer { cred: cred(2), key_seq: 0 }), 2);
+    w.entries.push(e);
+    assert_eq!(ck(&w), Err("a writer credential for another account"));
+    // A credential naming the SET as its account, under some key log handed in: still no device on a set's chain.
+    let mut forced = m.clone();
+    let c = craftworks_identity::credential(&p.owner, &pk(2), &[], &owner_seed(2));
+    let e = sign(entry(&forced, [0xee; 16], Body::Writer { cred: c, key_seq: 0 }), 2);
+    forced.entries.push(e);
+    assert_eq!(check(&p, &def(), &forced, &|_, o| (*o == did(1)).then(|| a.clone()), &|_| None, Some(&log(2))), Err("a device writer on a key set's chain"));
+    let mut b = paid().0[&did(2)].clone();
+    let e = msign(entry(&b, nonce(41), Body::Members { set: set_of(2, &TRIO), set_seq: 0 }), &TRIO, &[0, 1]);
+    let mut first = b.clone();
+    first.entries.push(e);
+    assert_eq!(check(&params(2), &def(), &first, &|_, o| paid().0.get(o).cloned(), &|_| None, Some(&log(2))), Err("a key set that is not the chain's owner"), "a DID's chain names no set");
+    ensure_writer(&mut b, 2);
+    let e = msign(entry(&b, nonce(41), Body::Members { set: set_of(2, &TRIO), set_seq: 1 }), &TRIO, &[0, 1]);
+    b.entries.push(e);
+    assert_eq!(check(&params(2), &def(), &b, &|_, o| paid().0.get(o).cloned(), &|_| None, Some(&log(2))), Err("a key set on a device's chain"));
+}
+
+#[test]
+fn the_members_change_by_k_of_the_set_before_and_the_change_outranks_the_old_set() {
+    let (a, m) = set_world();
+    let p = set_params();
+    let ck = |s: &State| check(&p, &def(), s, &|_, o| (*o == did(1)).then(|| a.clone()), &|_| None, None);
+    const NEXT: [u8; 2] = [73, 74];
+    let mut moved = m.clone();
+    let e = msign(entry(&moved, nonce(41), Body::Members { set: set_of(2, &NEXT), set_seq: 1 }), &TRIO, &[0, 1]);
+    moved.entries.push(e);
+    assert_eq!(ck(&moved), Ok(()));
+    let mut by_new = moved.clone();
+    let e = msign(entry(&by_new, nonce(3), Body::Send { to: did(3), amount: 100 }), &NEXT, &[0, 1]);
+    by_new.entries.push(e);
+    assert_eq!(ck(&by_new), Ok(()), "the new set signs");
+    const THIRD: [u8; 2] = [75, 76];
+    let mut again = moved.clone();
+    let e = msign(entry(&again, nonce(42), Body::Members { set: set_of(1, &THIRD), set_seq: 2 }), &NEXT, &[0, 1]);
+    again.entries.push(e);
+    let e = msign(entry(&again, nonce(3), Body::Send { to: did(3), amount: 100 }), &THIRD, &[1]);
+    again.entries.push(e);
+    assert_eq!(ck(&again), Ok(()), "a second change, then the third set signs");
+    let mut by_old = moved.clone();
+    let e = msign(entry(&by_old, nonce(3), Body::Send { to: did(3), amount: 100 }), &TRIO, &[0, 1]);
+    by_old.entries.push(e);
+    assert_eq!(ck(&by_old), Err("an entry not signed by the chain's writer"), "the old set no longer");
+    let mut skip = m.clone();
+    let e = msign(entry(&skip, nonce(41), Body::Members { set: set_of(2, &NEXT), set_seq: 2 }), &TRIO, &[0, 1]);
+    skip.entries.push(e);
+    assert_eq!(ck(&skip), Err("a key set change out of place"));
+    let mut by_next = m.clone();
+    let e = msign(entry(&by_next, nonce(41), Body::Members { set: set_of(2, &NEXT), set_seq: 1 }), &NEXT, &[0, 1]);
+    by_next.entries.push(e);
+    assert_eq!(ck(&by_next), Err("an entry not signed by the chain's writer"), "a change signed by the incoming set alone");
+    // At one seq: the change (set seq 1) outranks the old set's send (set seq 0); two sends by the set freeze it.
+    let mut old_send = m.clone();
+    let e = msign(entry(&old_send, nonce(5), Body::Send { to: did(4), amount: 200 }), &TRIO, &[1, 2]);
+    old_send.entries.push(e);
+    assert_eq!(merge(&old_send, &moved), moved);
+    assert_eq!(merge(&moved, &old_send), moved);
+    let mut other_send = m.clone();
+    let e = msign(entry(&other_send, nonce(6), Body::Send { to: did(5), amount: 200 }), &TRIO, &[0, 2]);
+    other_send.entries.push(e);
+    let f = merge(&old_send, &other_send);
+    assert!(f.fork.is_some(), "an equivocation by the set");
+    assert_eq!(ck(&f), Ok(()), "the frozen chain still holds its shape");
+    // An update needs no key log for a set's chain.
+    let mut fresh = by_new.clone();
+    for e in fresh.entries.iter_mut() {
+        e.stamp = 5;
+    }
+    let mut resigned = State::default();
+    for (i, e) in fresh.entries.iter().enumerate() {
+        let mut x = entry(&resigned, e.nonce, e.body.clone());
+        x.stamp = 5;
+        let x = match i {
+            0 => msign(x, &TRIO, &[0, 1]),
+            1 => work(x),
+            2 => msign(x, &TRIO, &[0, 1]),
+            _ => msign(x, &NEXT, &[0, 1]),
+        };
+        resigned.entries.push(x);
+    }
+    assert_eq!(append_check(&def(), 6, &State::default(), &resigned, None), Ok(()));
+}
+
+#[test]
+fn a_set_chain_cuts_and_carries_its_set() {
+    let (a, m) = set_world();
+    let p = set_params();
+    let mut blocks = cut::Blocks::new();
+    let (body, b) = cut::make(&p, &def(), &m, None).unwrap();
+    blocks.extend(b);
+    match &body {
+        Body::Cut { writer, .. } => assert_eq!(writer, &Some(crate::Signer::Set(set_of(2, &TRIO), 0))),
+        _ => panic!("not a cut"),
+    }
+    let mut s = m.clone();
+    let e = msign(entry(&s, nonce(99), body), &TRIO, &[0, 1]);
+    s.entries.push(e);
+    let pruned = prune(&s);
+    let ck = |s: &State| check(&p, &def(), s, &|_, o| (*o == did(1)).then(|| a.clone()), &|_| None, None);
+    assert_eq!(ck(&pruned), Ok(()));
+    let mut after = pruned.clone();
+    let e = msign(entry(&after, nonce(3), Body::Send { to: did(3), amount: 100 }), &TRIO, &[0, 2]);
+    after.entries.push(e);
+    assert_eq!(ck(&after), Ok(()), "the cut's set signs on");
+    assert!(is_set_chain(&after) && !is_set_chain(&paid().0[&did(2)]));
 }

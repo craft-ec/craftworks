@@ -73,6 +73,12 @@ One contract CODE (the standard). Its instances differ by their parameters — o
   - A SPENDER (`allow`) is a key, not a DID: an allowance grants a session key or a program.
 - **Authorities** (optional, per definition): a MINT key set (or none: supply fixed by the rule), a FREEZE key set (or none) — §1a.
   A multisig authority is a k-of-n key set (as the attestation substrate's named quorum).
+- **A MULTISIG OWNER** (foundation 4): the chain's owner id is the hash of its FIRST key set (`set_id`); its first
+  entry, `Members { set, 0 }`, names that set, signed by k of it; every owner entry after carries k signatures
+  (`Auth::Multi`); a later `Members { next, n + 1 }`, signed by k of the set before, changes who signs. No key log:
+  the set names its own signers, so neither validation nor an update asks for one. At one seq the higher set seq wins
+  (a members change outranks the old set's entry); two entries by the same set seq are an equivocation (§3b). A cut
+  carries the set. A device writer never signs a set's chain, nor a set a device's.
 - **Supply rule** — a fixed menu, never arbitrary code, so every instance stays checkable (§6).
 
 ## 1a. Supply, events, authorities
@@ -576,8 +582,15 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    crediting a mint not listed REFUSED; the mint set moved 60 → 63 (sealing epoch 0) ACCEPTED; key 60's mint after
    the move REFUSED and into its past REFUSED; key 63's mint ACCEPTED; B's send with nothing frozen ACCEPTED; B frozen
    → its send REFUSED ("a debit of a frozen account"); thawed → ACCEPTED (balance 390); totalSupply 550.
-10. The Craftworks token: contributions as locks, payouts as claims.
-11. Batch-auction pools.
+10. FOUNDATION 4, MULTISIG OWNERS — BUILT 10-09 (§1): a chain's signer is a device of a DID or a k-of-n key set
+   (`Signer`), carried by a cut and ranked at a seq by its key or set seq; `Members` entries name and change the set;
+   owner entries carry k signatures; no key log for a set's chain. 82 tests; mutants on every new rule killed (two
+   survivors got tests: a device credential naming the set as its account, two changes in a row). LIVE fx/fy
+   (`token-live multisig`, fresh keys): A pays a 2-of-3 set 300; its chain (members + receive) ACCEPTED with no key
+   log; a send by 1 of 3 REFUSED; by 2 of 3 ACCEPTED; the members changed to 2-of-2 by two of the old ACCEPTED; the old
+   set's send REFUSED; the new set's ACCEPTED (balance 150).
+11. The Craftworks token: contributions as locks, payouts as claims.
+12. Batch-auction pools.
 
 **Before the token carries real value, step 6 must exist** (code review, 10-08): the contract checks only the receives
 among a chain's last 9 entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under 9

@@ -202,7 +202,7 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
         T::Body::Genesis { amount } => *amount,
         T::Body::Send { amount, .. } | T::Body::Burn { amount } | T::Body::Spend { amount, .. } | T::Body::Lock { amount, .. } | T::Body::Fill { amount, .. } => bal - amount,
         T::Body::Receive { amount, .. } | T::Body::Claim { amount, .. } | T::Body::Mint { amount, .. } => bal + amount,
-        T::Body::Allow { .. } | T::Body::Offer { .. } | T::Body::Cut { .. } | T::Body::Writer { .. } => bal,
+        T::Body::Allow { .. } | T::Body::Offer { .. } | T::Body::Cut { .. } | T::Body::Writer { .. } | T::Body::Members { .. } => bal,
         T::Body::Refund { lock, .. } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Lock { amount, .. } if &x.nonce == lock => Some(*amount), _ => None }).unwrap_or(0),
     };
     let mut e = T::Entry { seq: s.entries.last().map_or(0, |e| e.seq + 1), prev: s.head(), nonce: n, stamp, body, balance, auth: T::Auth::Work(0) };
@@ -269,6 +269,7 @@ async fn main() -> Result<()> {
             "wallet" => wallet(&w).await?,
             "did" => did_mode(&w).await?,
             "mint" => mint_mode(&w).await?,
+            "multisig" => multisig(&w).await?,
             "cut" => cut(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("block.wasm"))?).await?,
             m => bail!("no mode {m}"),
         }
@@ -722,5 +723,59 @@ async fn mint_mode(w: &W) -> Result<()> {
         shards.extend(get(&w.x, shard(x).id()).await?.and_then(|b| T::supply::Shard::decode(&b)));
     }
     println!("14 totalSupply (mints in the shards, from X): {:?}", T::supply::minted(&shards));
+    Ok(())
+}
+
+/// Append `body` at `stamp`, signed by the keys at `by` of `seeds` (a key set's k signatures).
+fn push_multi(s: &mut T::State, body: T::Body, n: [u8; 16], seeds: &[u8], by: &[u8], stamp: u64) {
+    push(s, body, n, None, stamp);
+    let e = s.entries.last_mut().unwrap();
+    let m = e.message();
+    e.auth = T::Auth::Multi(by.iter().map(|i| (*i, key(seeds[*i as usize]).sign(&m).to_bytes())).collect());
+}
+fn set_of(k: u8, seeds: &[u8]) -> T::authority::KeySet {
+    T::authority::KeySet { k, keys: seeds.iter().map(|n| pk(*n)).collect() }
+}
+
+/// FOUNDATION 4: a chain owned by a 2-of-3 KEY SET (keys 70, 71, 72) — no key log anywhere. A pays it; one signature
+/// refused, two taken; the set changes to 2-of-2 (73, 74) by two of the old; the old set refused, the new taken.
+async fn multisig(w: &W) -> Result<()> {
+    println!("— multisig");
+    const TRIO: [u8; 3] = [70, 71, 72];
+    const NEXT: [u8; 2] = [73, 74];
+    let ta = w.put_def(&w.def(1, b"Multi", 9)).await?;
+    let owner = T::set_id(&set_of(2, &TRIO));
+    let sp = T::ChainParams { owner, ..w.chain(ta, 1) };
+    let put_set = |s: &T::State| put(&w.y, container(&w.code, sp.encode()), s.encode());
+    let h = w.now().await?;
+    let mut ca = T::State::default();
+    push(&mut ca, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h);
+    push(&mut ca, T::Body::Send { to: owner, amount: 300 }, w.n(2), Some(1), h);
+    println!("1  A: genesis, 300 to the 2-of-3 set, on X: {}", w.put_chain(&w.x, ta, 1, &ca).await?.0);
+    let r = w.until(h + 2).await?;
+    let mut cs = T::State::default();
+    push_multi(&mut cs, T::Body::Members { set: set_of(2, &TRIO), set_seq: 0 }, w.n(40), &TRIO, &[0, 2], r);
+    push(&mut cs, T::Body::Receive { from: did(1), nonce: w.n(2), amount: 300, cited: h, ev: T::Evidence::default() }, w.n(2), None, r);
+    println!("2  the set's chain: its members (2 of 3 sign), the receive, on Y: {}", put_set(&cs).await?.0);
+    let r = w.now().await?;
+    let mut one = cs.clone();
+    push_multi(&mut one, T::Body::Send { to: did(3), amount: 100 }, w.n(3), &TRIO, &[1], r);
+    println!("3  a send signed by 1 of 3, on Y: {}", put_set(&one).await?.0);
+    let mut two = cs.clone();
+    push_multi(&mut two, T::Body::Send { to: did(3), amount: 100 }, w.n(4), &TRIO, &[1, 2], r);
+    println!("4  a send signed by 2 of 3, on Y: {}", put_set(&two).await?.0);
+    let r = w.now().await?;
+    let mut moved = two.clone();
+    push_multi(&mut moved, T::Body::Members { set: set_of(2, &NEXT), set_seq: 1 }, w.n(41), &TRIO, &[0, 1], r);
+    println!("5  the members change to 2-of-2 (73, 74), signed by 2 of the old, on Y: {}", put_set(&moved).await?.0);
+    let r = w.now().await?;
+    let mut old = moved.clone();
+    push_multi(&mut old, T::Body::Send { to: did(3), amount: 50 }, w.n(5), &TRIO, &[0, 2], r);
+    println!("6  the OLD set sends, on Y: {}", put_set(&old).await?.0);
+    let mut new = moved.clone();
+    push_multi(&mut new, T::Body::Send { to: did(3), amount: 50 }, w.n(6), &NEXT, &[0, 1], r);
+    let said = put_set(&new).await?.0;
+    let held = get(&w.y, sp.id()).await?.and_then(|b| T::State::decode(&b));
+    println!("7  the NEW set sends, on Y: {said} — balance {}", held.map_or(0, |s| s.balance()));
     Ok(())
 }
