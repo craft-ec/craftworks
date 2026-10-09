@@ -117,7 +117,10 @@ export async function start(ctx) {
     const k = spaceKey(sp);
     if (!k) return;
     const m = problems.get(k) ?? new Map();
-    m.set(String(what).slice(0, 160), Date.now());
+    const w = String(what).slice(0, 160);
+    // New here: also into the day's public health bag (`index.health`, once a kind per space per hour).
+    if (!m.has(w)) ctx.require("index").then(ix => ix.health({ k: "cannot-read", s: k.slice(0, 6), why: w })).catch(() => {});
+    m.set(w, Date.now());
     problems.set(k, m);
   };
   const solved = (sp, prefix) => problems.get(spaceKey(sp))?.forEach((_, w, m) => w.startsWith(prefix) && m.delete(w));

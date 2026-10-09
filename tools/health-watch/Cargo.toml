@@ -1,0 +1,18 @@
+[package]
+name = "health-watch"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Support's read of the day's HEALTH bag (packages/index.js `health`): every page's reported problems, grouped."
+[workspace]
+[dependencies]
+craftworks-identity = { path = "../../identity" }
+craftworks-bag-contract = { path = "../../contracts-src/bag", default-features = false }
+wire = { path = "../../sdk/craftworks-sdk/wire" }
+sha2 = "0.10"
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.27"
+futures = "0.3"
+anyhow = "1"
+freenet-stdlib = { version = "0.10.0", features = ["net"] }

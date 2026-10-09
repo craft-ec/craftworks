@@ -42,10 +42,17 @@ export async function start(ctx) {
       ctx.log("account keys", { what: `key events not kept: ${e?.message ?? e}` });
     }
   }
+  // The key events that are PROBLEMS: also into the day's public health bag (`index.health`) — support sees them.
+  const PROBLEMS = new Set(["join-failed", "log-mend-cannot", "stuck-own-commit"]);
   async function keyEvent(what, detail = {}) {
     const p = await provOf(what);
     eventQueue.push({ ...p, what, ...detail });
     eventTimer ??= setTimeout(flushEvents, 3000);
+    if (PROBLEMS.has(what))
+      ctx
+        .require("index")
+        .then(ix => ix.health({ k: what, s: String(detail.space ?? "").slice(0, 6), e: detail.epoch ?? null, why: detail.reason ? String(detail.reason).slice(0, 160) : undefined }))
+        .catch(() => {});
   }
   async function keyEvents(spaceHex = null) {
     const t = await storage.table("keyevents");

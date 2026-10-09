@@ -258,6 +258,7 @@ export async function start(ctx) {
     const since = behindSince(sp.id);
     if (!since) return (setBehind(sp.id, Date.now()), false);
     if (Date.now() - since < BEHIND_FOR) return false;
+    index.health({ k: "behind", s: sp.id.slice(0, 6), e: st.epoch, oe: own.epoch }).catch(() => {});
     caughtUpAsked.add(sp.id);
     const r = await (await ctx.require("roles")).of(sp).catch(() => null);
     // Its people as the public acts list them too (this node may read none of the space's own acts yet).
@@ -344,7 +345,10 @@ export async function start(ctx) {
     if (epoch == null) return false;
     return (await index.spacePointers(sp, "writers").catch(() => [])).some(x => x?.repair === did && Number(x.epoch) >= Number(epoch));
   }
-  const markWelcomed = (sp, did, epoch, branch) => index.spacePoint(sp, "writers", { w: sp.self, repair: did, epoch: Number(epoch), ...(branch ? { for: branch } : {}) }).catch(() => {});
+  const markWelcomed = (sp, did, epoch, branch) => (
+    index.health({ k: "welcomed-again", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), e: Number(epoch) }).catch(() => {}),
+    index.spacePoint(sp, "writers", { w: sp.self, repair: did, epoch: Number(epoch), ...(branch ? { for: branch } : {}) }).catch(() => {})
+  );
   // The DIDs in this node's group of a space (its MLS members' credentials).
   async function groupDids(sp) {
     const { glue } = await ctx.require("node");
@@ -640,6 +644,7 @@ export async function start(ctx) {
           await once.put(`dead:${tried}`, `not past ${Date.now()}`).catch(() => {});
           continue;
         }
+        index.health({ k: "welcome-failed", s: it.space.slice(0, 6), e: st?.epoch ?? null, why: String(e?.message ?? e).slice(0, 160) }).catch(() => {});
         // SAID in the space (its writers record: the members list shows it), so a member stuck behind is seen WHY.
         if (had) await index.spacePoint(had, "writers", { w: had.self, welcomeFailed: { why: String(e?.message ?? e).slice(0, 200), from: it.from, at: Date.now() } }).catch(() => {});
         const held = it.kp ? await keys.holdsTag(it.kp).catch(() => null) : null;

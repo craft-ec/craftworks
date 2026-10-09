@@ -238,6 +238,20 @@ export async function start(ctx) {
   const SPACES = "discover:spaces";
   const listSpace = desc => point(SPACES, { id: desc.id, name: desc.name, kind: desc.kind, governance: { owner: desc.governance.owner, nonce: desc.governance.nonce } });
   const spaces = () => pointers(SPACES);
+  // HEALTH (10-09, owner: "auto report and you keep monitor"): a problem a page meets, written into the day's PUBLIC
+  // health bag (`health YYYY-MM-DD`, UTC) — never content: its kind, a short space id, epochs, the reason, the
+  // reporting package's version. Once a kind per space per hour from a page. Support reads it (tools/health-watch).
+  const reported = new Map();
+  async function health(item) {
+    const key = `${item.k}|${item.s ?? ""}`;
+    if (Date.now() - (reported.get(key) ?? 0) < 3600e3) return false;
+    reported.set(key, Date.now());
+    const day = new Date().toISOString().slice(0, 10);
+    const v = String(ctx.shaOf?.("conversation") ?? "").slice(0, 12);
+    await point(`health ${day}`, { ...item, v, at: Date.now() }).catch(() => {});
+    return true;
+  }
+  const healthOf = day => pointers(`health ${day}`);
 
-  return { onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, watch, listSpace, spaces, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, OPEN };
+  return { onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, watch, listSpace, spaces, health, healthOf, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, OPEN };
 }
