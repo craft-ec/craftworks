@@ -1419,6 +1419,21 @@ old key's addresses.
           grinding by an extender, a faster core's lead. beacon.wasm 92300b2a, token.wasm 65f67643.
           LIVE fx/fy: beacon-live fake caught + honest step back on both nodes; token-live witness on these contracts:
           every honest entry 16/16, the buried fake and its payment refused by all, 3's wallet Ok(16) in 34 ms, burn ACCEPTED.
+      [ ] 18 APPS OUT OF THE TOKEN (owner 10-09: "are not swap and lending supposed to be separate contracts? in
+          solana it is… it is not the underlying token foundation" → "refactor and don't build lending"). The token
+          keeps only what a token is; apps are their own contracts over ONE generic ESCROW:
+          [x] 18a ESCROW in the token (`escrow.rs`): `Escrow { program, terms, amount }` (owner-signed debit), `Unescrow`
+              (its refund, once, as the program's verdict says) and `Payout` (a verdict line, once, to its recipient),
+              both checked against the program's state read in the same round (`Extra.program`; `programs_from`). Every
+              program's state begins with a standard SECTION (escrows, refunds, pays) whose rule — per token, refunds +
+              payouts within what was escrowed — any reader checks; witnesses also check every listed escrow is a real,
+              ACCEPTED escrow to THAT program of that amount (`wallet::program_backed`). No cut over an open escrow.
+              113 tests; 16 mutants killed (1 after an other-program case). Live with 18b (the first program).
+          [ ] 18b POOLS as their own contract (pool.wasm): orders = escrows; clearing + verdicts in the pool's state;
+              witnesses check every listed order is a real, accepted escrow
+          [ ] 18c SWAPS (offer/lock/fill/claim/refund) moved out the same way
+          [ ] 18d the app-specific bodies removed from the token (Order/Settle/Bought, Offer/Lock/Fill/Claim/Refund)
+          NOT building lending (owner).
       [x] 17 BATCH-AUCTION POOLS (TOKEN §5) — in parts:
           [x] 17a CLEARING (`clear.rs`): limit orders (an LP's curve = a ladder of them, built by its client), ONE
               uniform price maximising matched A, ties → smaller imbalance → lower price; short side whole, long side

@@ -26,6 +26,18 @@ pub const NAME_MAX: usize = 64;
 /// found and proved within it). TWO supply epochs: stake is counted for a lot as held at its epoch's START
 /// (`wallet::stake_at`), so whatever was counted stays burnable for at least a full epoch after that epoch ends.
 pub const UNBOND: u64 = 2 * supply::EPOCH;
+/// What a chain's check reads beyond its chains, shard and key log: its owner's OPERATORS list (`operators`), and a
+/// PROGRAM's state by its contract id (an escrow's release is checked against its verdict: `escrow`). `Extra::NONE`:
+/// neither.
+#[derive(Clone, Copy, Default)]
+pub struct Extra<'a> {
+    pub ops: Option<&'a operators::List>,
+    pub program: Option<&'a dyn Fn(&[u8; 32]) -> Option<Vec<u8>>>,
+}
+impl Extra<'_> {
+    pub const NONE: Extra<'static> = Extra { ops: None, program: None };
+}
+
 /// The longest entry a misdeed carries.
 pub const MISDEED_MAX: usize = 16 * 1024;
 /// The most steps one vesting schedule has (TOKEN §4a).
@@ -279,6 +291,8 @@ pub const CLAIMED: u8 = b'c';
 pub const MINTED: u8 = b'm';
 /// A pool order's purchase received (its key: [`bought_key`]).
 pub const BOUGHT: u8 = b'b';
+/// A program's payout received (who: the program, nonce: the payout's key).
+pub const PAYOUT: u8 = b'p';
 /// The received-set key of what the order `nonce` in this owner's chain of token `tok` bought.
 pub fn bought_key(tok: &Tok, nonce: &[u8; 16]) -> Vec<u8> {
     let mut t = Vec::new();
@@ -360,6 +374,14 @@ pub enum Body {
     /// contract), only where it can say: whole back to the debit's stamp and not frozen by a fork (a debit an honest
     /// witness saw cannot have vanished otherwise). Every stake and unbonding amount BURNED. Appended by anyone.
     Misdeed { key: [u8; 32], sig: witness::WitnessSig, tok: Tok, owner: [u8; 32], entry: Box<Entry> },
+    /// An ESCROW (TOKEN §5): `amount` locked for the outside contract `program` (a swap, a pool — an app), on its
+    /// `terms` (the program's to read). A debit now; back only as the program's verdict says.
+    Escrow { program: [u8; 32], terms: Vec<u8>, amount: u128 },
+    /// The escrow `escrow`'s RELEASE (unescrow): what its program's verdict gives back (`refund`) credited. Appended by anyone (with
+    /// work), once.
+    Unescrow { escrow: [u8; 16], refund: u128 },
+    /// A program's PAYOUT `key` to this chain: `amount`, as its verdict says. Appended by anyone (with work), once.
+    Payout { program: [u8; 32], key: [u8; 16], amount: u128, ev: Evidence },
     /// A POOL ORDER (TOKEN §5): `amount` of this chain's token offered in pool `pool`'s batch `epoch` — a SELL of the
     /// pool's A (`side` 0), or a BUY of A with B (`side` 1) — at `limit` (B per A, `clear::PRICE_ONE` = 1). A debit now,
     /// held until the batch settles; stamped before the batch's `close`; settled from `settle` (its close and grace) on.
@@ -572,6 +594,25 @@ impl Entry {
                 v.extend_from_slice(&(cred.len() as u16).to_le_bytes());
                 v.extend_from_slice(cred);
                 v.extend_from_slice(&key_seq.to_le_bytes());
+            }
+            Body::Escrow { program, terms, amount } => {
+                v.push(25);
+                v.extend_from_slice(program);
+                v.extend_from_slice(&(terms.len() as u16).to_le_bytes());
+                v.extend_from_slice(terms);
+                v.extend_from_slice(&amount.to_le_bytes());
+            }
+            Body::Unescrow { escrow, refund } => {
+                v.push(26);
+                v.extend_from_slice(escrow);
+                v.extend_from_slice(&refund.to_le_bytes());
+            }
+            Body::Payout { program, key, amount, ev } => {
+                v.push(27);
+                v.extend_from_slice(program);
+                v.extend_from_slice(key);
+                v.extend_from_slice(&amount.to_le_bytes());
+                put_ev(&mut v, ev);
             }
             Body::Order { pool, epoch, close, settle, side, amount, limit } => {
                 v.push(22);
@@ -822,6 +863,16 @@ impl Entry {
                 }
                 Body::Misdeed { key, sig, tok, owner, entry: Box::new(Entry::decode(r.take(n)?)?) }
             }
+            25 => {
+                let program = r.arr()?;
+                let n = u16::from_le_bytes(r.arr()?) as usize;
+                if n > escrow::TERMS_MAX {
+                    return None;
+                }
+                Body::Escrow { program, terms: r.take(n)?.to_vec(), amount: r.u128()? }
+            }
+            26 => Body::Unescrow { escrow: r.arr()?, refund: r.u128()? },
+            27 => Body::Payout { program: r.arr()?, key: r.arr()?, amount: r.u128()?, ev: read_ev(r)? },
             22 => Body::Order { pool: r.arr()?, epoch: r.u64()?, close: r.u64()?, settle: r.u64()?, side: r.u8()?, amount: r.u128()?, limit: r.u128()? },
             23 => Body::Settle { order: r.arr()?, refund: r.u128()? },
             24 => Body::Bought { tok: Tok::read(r)?, order: r.arr()?, settle: r.u64()?, got: r.u128()?, ev: read_ev(r)? },
@@ -1120,14 +1171,15 @@ pub type Why = &'static str;
 
 /// THE SHAPE RULES (TOKEN §3a, §3c) of chain `p` for definition `d` — true any time, from scratch. `chain(definition,
 /// owner)` gives a chain the citations among the last [`RECENT`] entries cite (`None`: it does not exist).
-pub fn check(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, ops: Option<&operators::List>) -> Result<(), Why> {
-    check_window(p, d, s, chain, supply, keys, RECENT, ops).map_err(|(_, why)| why)
+pub fn check(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, x: &Extra) -> Result<(), Why> {
+    check_window(p, d, s, chain, supply, keys, RECENT, x).map_err(|(_, why)| why)
 }
 
 /// The shape rules with the citations of the last `window` entries checked — the contract's [`RECENT`]; a WALLET's
 /// every one (`usize::MAX`, TOKEN §3a). Refused: the entry where (its seq) and why.
-pub fn check_window(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, window: usize, ops: Option<&operators::List>) -> Result<(), (u64, Why)> {
-    walk(p, d, s, chain, supply, keys, window, usize::MAX, ops).map(|_| ())
+#[allow(clippy::too_many_arguments)]
+pub fn check_window(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, window: usize, x: &Extra) -> Result<(), (u64, Why)> {
+    walk(p, d, s, chain, supply, keys, window, usize::MAX, x).map(|_| ())
 }
 
 /// What a chain carries at its end — what a cut after it must carry.
@@ -1150,7 +1202,7 @@ pub struct Carried {
 /// taken as it was shown when appended (the wallet walks it whole).
 /// `keys`: the OWNER's key log (the DID's), read and verified — needed where a `Writer` entry is checked.
 #[allow(clippy::too_many_arguments)]
-pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, window: usize, strict_from: usize, ops: Option<&operators::List>) -> Result<Carried, (u64, Why)> {
+pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, window: usize, strict_from: usize, x: &Extra) -> Result<Carried, (u64, Why)> {
     let mut failed_at = s.entries.first().map_or(0, |e| e.seq);
     let r = (|| -> Result<Carried, Why> {
         if d.code_hash != p.code_hash {
@@ -1180,6 +1232,16 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
         // POOL ORDERS not settled yet (nonce, amount, settle height), and what this chain bought (token, order).
         let mut open_orders: Vec<([u8; 16], u128, u64)> = Vec::new();
         let mut bought: Vec<(Tok, [u8; 16])> = Vec::new();
+        // ESCROWS not released yet (nonce, amount, program), and the payouts taken (program, key).
+        let mut open_escrows: Vec<([u8; 16], u128, [u8; 32])> = Vec::new();
+        let mut paid: Vec<([u8; 32], [u8; 16])> = Vec::new();
+        // A program's standard section, read (`x.program`) and checked to hold.
+        let section = |prog: &[u8; 32]| -> Result<escrow::Section, Why> {
+            let b = x.program.and_then(|f| f(prog)).ok_or("the escrow's program is not there")?;
+            let (sec, _) = escrow::Section::decode_prefix(&b).ok_or("a program with no escrow section")?;
+            sec.holds()?;
+            Ok(sec)
+        };
         // ALLOWANCES (spender → what is left), OFFERS, LOCKS: carried across a cut by the cut itself.
         let mut allowed: Vec<([u8; 32], u128)> = Vec::new();
         let mut offers: Vec<OfferState> = Vec::new();
@@ -1270,7 +1332,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     // whole token whose span covers this stamp (`ops`: the owner's operators list).
                     match allowed.iter_mut().find(|(k, _)| k == by) {
                         Some(left) if left.1 >= *amount => left.1 -= *amount,
-                        _ if ops.is_some_and(|l| l.approved(by, e.stamp)) => {}
+                        _ if x.ops.is_some_and(|l| l.approved(by, e.stamp)) => {}
                         Some(_) => return Err("a spend over its allowance"),
                         None => return Err("a spend with no allowance"),
                     }
@@ -1307,6 +1369,44 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         if !shown(&c, &cp.id(), ev, *cited, &pick) {
                             return Err("a receive whose send is not in its sender's chain");
                         }
+                    }
+                    balance.checked_add(*amount).ok_or("a balance overflow")?
+                }
+                Body::Escrow { program: prog, terms, amount } => {
+                    owner_signed(e, &writer)?;
+                    if *amount < d.min_send || terms.len() > escrow::TERMS_MAX {
+                        return Err("a send under the minimum");
+                    }
+                    if open_escrows.iter().any(|o| o.0 == e.nonce) {
+                        return Err("an escrow named twice");
+                    }
+                    open_escrows.push((e.nonce, *amount, *prog));
+                    balance.checked_sub(*amount).ok_or("a debit over the balance")?
+                }
+                Body::Unescrow { escrow: nonce_, refund } => {
+                    if !e.worked() {
+                        return Err("a release without its work");
+                    }
+                    let i = open_escrows.iter().position(|o| &o.0 == nonce_).ok_or("a release of no open escrow")?;
+                    if *refund > open_escrows[i].1 {
+                        return Err("a refund past what the escrow held");
+                    }
+                    if recent && section(&open_escrows[i].2)?.refund_of(&(p.tok(), p.owner, *nonce_)) != Some(*refund) {
+                        return Err("a release that is not its program's verdict");
+                    }
+                    open_escrows.remove(i);
+                    balance.checked_add(*refund).ok_or("a balance overflow")?
+                }
+                Body::Payout { program: prog, key, amount, ev } => {
+                    if !e.worked() {
+                        return Err("a payout without its work");
+                    }
+                    if paid.contains(&(*prog, *key)) || !fresh(&cut, e.stamp, received_key(PAYOUT, prog, key), ev) {
+                        return Err("a payout received twice");
+                    }
+                    paid.push((*prog, *key));
+                    if recent && section(prog)?.pay(key) != Some((p.tok(), p.owner, *amount)) {
+                        return Err("a payout that is not its program's verdict");
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
                 }
@@ -1678,7 +1778,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                 }
                 Body::Cut { received: root, allowances, offers: o, locks: l, writer: w, staked: st, unbonding: ub, retired: rt, .. } => {
                     // (A pool order is settled before its chain is cut: a cut carries none.)
-                    if !open_orders.is_empty() {
+                    if !open_orders.is_empty() || !open_escrows.is_empty() {
                         return Err("a cut over an order not settled");
                     }
                     if starts_at_cut {
@@ -1791,10 +1891,10 @@ pub fn append_check(d: &Definition, now: u64, held: &State, merged: &State, keys
 /// checked against what it summarises here (it must carry exactly what that computes); then what comes before the last
 /// cut dropped.
 #[allow(clippy::too_many_arguments)]
-pub fn accept(p: &ChainParams, d: &Definition, now: u64, held: &State, merged: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, ops: Option<&operators::List>) -> Result<State, Why> {
+pub fn accept(p: &ChainParams, d: &Definition, now: u64, held: &State, merged: &State, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, supply: &dyn Fn(u64) -> Option<supply::Shard>, keys: Option<&craftworks_idlog_contract::Log>, x: &Extra) -> Result<State, Why> {
     append_check(d, now, held, merged, keys)?;
     let from = new_from(held, merged);
-    walk(p, d, merged, chain, supply, keys, merged.entries.len() - from, from, ops).map_err(|(_, w)| w)?;
+    walk(p, d, merged, chain, supply, keys, merged.entries.len() - from, from, x).map_err(|(_, w)| w)?;
     Ok(prune(merged))
 }
 
@@ -1862,6 +1962,27 @@ pub(crate) fn debit_for(x: &Entry, owner: &[u8; 32], e: &Entry) -> bool {
         }
         _ => false,
     }
+}
+
+/// The PROGRAMS the releases and payouts among the entries from index `from` on are checked against (each once).
+pub fn programs_from(s: &State, from: usize) -> Vec<[u8; 32]> {
+    let mut out: Vec<[u8; 32]> = Vec::new();
+    for (i, e) in s.entries.iter().enumerate().skip(from) {
+        let prog = match &e.body {
+            Body::Payout { program, .. } => Some(*program),
+            Body::Unescrow { escrow, .. } => s.entries[..i].iter().find_map(|x| match &x.body {
+                Body::Escrow { program, .. } if &x.nonce == escrow => Some(*program),
+                _ => None,
+            }),
+            _ => None,
+        };
+        if let Some(pr) = prog {
+            if !out.contains(&pr) {
+                out.push(pr);
+            }
+        }
+    }
+    out
 }
 
 /// Does `s` hold a spend its own allowances do not cover — one only an OPERATOR of the owner can stand behind? Only
@@ -2369,6 +2490,9 @@ mod contract {
             // The owner's OPERATORS list, only if a spend needs it.
             let ops_id = super::needs_operators(&s).then(|| operators::Params::of(&p).id());
             want.extend(ops_id);
+            // The PROGRAMS its recent releases and payouts are checked against.
+            let progs = super::programs_from(&s, s.entries.len().saturating_sub(super::RECENT));
+            want.extend(progs.iter().copied());
             let missing: Vec<ContractInstanceId> = want.iter().filter(|w| related_state(&related, w).is_none()).map(|w| ContractInstanceId::new(*w)).collect();
             if !missing.is_empty() {
                 return Ok(ValidateResult::RequestRelated(missing));
@@ -2382,7 +2506,8 @@ mod contract {
             let keys = related_state(&related, &p.keys_id()).flatten().and_then(|b| craftworks_idlog_contract::read(&p.owner, &b));
             let shard = |e: u64| related_state(&related, &shard_id(e)).flatten().and_then(|b| supply::Shard::decode(&b));
             let ops = ops_id.and_then(|o| related_state(&related, &o)).flatten().and_then(|b| operators::List::decode(&b));
-            Ok(if check(&p, &d, &s, &chain, &shard, keys.as_ref(), ops.as_ref()).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
+            let program = |id: &[u8; 32]| related_state(&related, id).flatten();
+            Ok(if check(&p, &d, &s, &chain, &shard, keys.as_ref(), &super::Extra { ops: ops.as_ref(), program: Some(&program) }).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
         }
 
         fn update_state(parameters: Parameters<'static>, state: State<'static>, data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
@@ -2453,6 +2578,8 @@ mod contract {
                 // The owner's OPERATORS list, only if a spend needs it (the whole chain is walked: an old one too).
                 let ops_id = super::needs_operators(&merged).then(|| operators::Params::of(&p).id());
                 want.extend(ops_id);
+                // The PROGRAMS its new releases and payouts are checked against.
+                want.extend(super::programs_from(&merged, from));
                 // ONE round holds at most MAX_RELATED (measured, the node's limit): more new citations than that are
                 // refused here, plainly — the writer sends them in smaller batches.
                 if want.len() > super::MAX_RELATED {
@@ -2475,7 +2602,7 @@ mod contract {
                     super::freeze_check(&p, &d, &held, &merged, &list).map_err(why)?;
                 }
                 let ops = ops_id.and_then(|o| got(&o)).and_then(|b| operators::List::decode(&b));
-                return Ok(UpdateModification::valid(State::from(accept(&p, &d, now, &held, &merged, &chain, &|e| got(&shard_id(e)).and_then(|b| supply::Shard::decode(&b)), keys.as_ref(), ops.as_ref()).map_err(why)?.encode())));
+                return Ok(UpdateModification::valid(State::from(accept(&p, &d, now, &held, &merged, &chain, &|e| got(&shard_id(e)).and_then(|b| supply::Shard::decode(&b)), keys.as_ref(), &super::Extra { ops: ops.as_ref(), program: Some(&|id: &[u8; 32]| got(id)) }).map_err(why)?.encode())));
             }
             Ok(UpdateModification::valid(State::from(prune(&merged).encode())))
         }
@@ -2494,6 +2621,7 @@ mod contract {
 pub mod authority;
 pub mod cut;
 pub mod claims;
+pub mod escrow;
 pub mod clear;
 pub mod freeze;
 pub mod operators;

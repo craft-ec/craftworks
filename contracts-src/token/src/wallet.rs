@@ -31,6 +31,8 @@ pub struct Source<'a> {
     /// A POOL by its id, and a batch's ORDER REGISTRY (what a settlement is checked against: TOKEN §5).
     pub pools: &'a dyn Fn(&[u8; 32]) -> Option<crate::pool::Pool>,
     pub orders: &'a dyn Fn(&crate::pool::Params) -> Option<crate::pool::Registry>,
+    /// A PROGRAM's state by its contract id (an escrow's release and payouts are checked against it).
+    pub program: &'a dyn Fn(&[u8; 32]) -> Option<Vec<u8>>,
 }
 
 /// The LOT of an entry: (the claims' epoch, the beacon height its output is drawn at). Fixed by the entry's PLACE —
@@ -71,7 +73,7 @@ pub fn stake_at(p: &ChainParams, d: &Definition, s: &State, at: u64) -> Result<w
         return Err("a stake before what is held");
     }
     let prefix = State { entries: s.entries[..n].to_vec(), fork: None };
-    let c = walk(p, d, &prefix, &|_, _| None, &|_| None, None, 0, n, None).map_err(|(_, w)| w)?;
+    let c = walk(p, d, &prefix, &|_, _| None, &|_| None, None, 0, n, &crate::Extra::NONE).map_err(|(_, w)| w)?;
     let mut keys = c.retired;
     if let Some(Signer::Device(node, _)) = c.writer {
         keys.push(node);
@@ -132,6 +134,8 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
     timed(d, e.stamp, &prefix, e)?;
     // A SETTLEMENT: exactly its batch's clearing.
     settled(src, p, s, e, chain)?;
+    // A RELEASE or PAYOUT of a program: the program BACKED by real, accepted escrows to it.
+    program_entry(src, p, s, i, chain)?;
     match i.checked_sub(1) {
         Some(j) => {
             accept(src, p, &s.entries[j], j.checked_sub(1).map(|k| &s.entries[k]))?;
@@ -192,6 +196,48 @@ fn settled(src: &Source, p: &ChainParams, s: &State, e: &Entry, chain: &dyn Fn(&
         return Err("a settlement that is not its batch's clearing");
     }
     Ok(())
+}
+
+/// A program's section BACKED (TOKEN §5): it holds (conservation per token), and every escrow it lists is an `Escrow`
+/// to THIS program, of that amount, in the chain it names, and ACCEPTED. What a program pays out is then only ever
+/// what real escrows put in — whatever the program does.
+pub fn program_backed(src: &Source, base: &ChainParams, prog: &[u8; 32], chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<crate::escrow::Section, Why> {
+    let b = (src.program)(prog).ok_or("the program is not read")?;
+    let (sec, _) = crate::escrow::Section::decode_prefix(&b).ok_or("a program with no escrow section")?;
+    sec.holds()?;
+    for ((tok, owner, nonce), amount) in &sec.escrows {
+        let c = chain(tok, owner).ok_or("an escrow's chain not read")?;
+        let i = c.entries.iter().position(|x| &x.nonce == nonce).ok_or("a program listing an escrow that is not there")?;
+        let x = &c.entries[i];
+        if !matches!(&x.body, Body::Escrow { program, amount: a, .. } if program == prog && a == amount) {
+            return Err("a program listing an escrow that is not there");
+        }
+        accept(src, &base.at(*tok, *owner), x, i.checked_sub(1).map(|j| &c.entries[j]))?;
+    }
+    Ok(sec)
+}
+
+/// The witness rule for an `Unescrow` / `Payout` (entry `i` of `s`): its program backed, and the entry its verdict.
+fn program_entry(src: &Source, p: &ChainParams, s: &State, i: usize, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<(), Why> {
+    let e = &s.entries[i];
+    match &e.body {
+        Body::Unescrow { escrow, refund } => {
+            let prog = s.entries[..i]
+                .iter()
+                .find_map(|x| match &x.body {
+                    Body::Escrow { program, .. } if &x.nonce == escrow => Some(*program),
+                    _ => None,
+                })
+                .ok_or("a release of no escrow held")?;
+            let sec = program_backed(src, p, &prog, chain)?;
+            (sec.refund_of(&(p.tok(), p.owner, *escrow)) == Some(*refund)).then_some(()).ok_or("a release that is not its program's verdict")
+        }
+        Body::Payout { program, key, amount, .. } => {
+            let sec = program_backed(src, p, program, chain)?;
+            (sec.pay(key) == Some((p.tok(), p.owner, *amount))).then_some(()).ok_or("a payout that is not its program's verdict")
+        }
+        _ => Ok(()),
+    }
 }
 
 /// THE WATCH (TOKEN §7a): the EQUIVOCATIONS in one place's witness signatures (`sigs`: its bag) by the stakers of

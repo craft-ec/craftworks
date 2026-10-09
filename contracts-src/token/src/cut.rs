@@ -20,6 +20,7 @@ pub fn received_keys(entries: &[Entry]) -> Vec<Vec<u8>> {
             Body::Mint { nonce, .. } => Some(received_key(MINTED, &MINTER, nonce)),
             Body::Vested { from, vest, step, .. } => Some(crate::vested_key(from, vest, *step)),
             Body::Bought { tok, order, .. } => Some(crate::bought_key(tok, order)),
+            Body::Payout { program, key, .. } => Some(crate::received_key(crate::PAYOUT, program, key)),
             _ => None,
         })
         .collect();
@@ -66,7 +67,7 @@ pub fn make(p: &ChainParams, d: &Definition, whole: &State, keys: Option<&craftw
     if whole.fork.is_some() {
         return Err("a frozen chain is never cut");
     }
-    let c = walk(p, d, whole, &|_, _| None, &|_| None, keys, 0, usize::MAX, None).map_err(|(_, w)| w)?;
+    let c = walk(p, d, whole, &|_, _| None, &|_| None, keys, 0, usize::MAX, &crate::Extra::NONE).map_err(|(_, w)| w)?;
     if c.allowances.len() > 1024 || c.offers.len() > 1024 || c.locks.len() > 1024 {
         return Err("more to carry than a cut holds");
     }

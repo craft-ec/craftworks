@@ -202,6 +202,9 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
         T::Body::Receive { amount, .. } | T::Body::Claim { amount, .. } | T::Body::Mint { amount, .. } | T::Body::Vested { amount, .. } => bal + amount,
         T::Body::Vest { schedule, .. } => bal - schedule.iter().map(|x| x.1).sum::<u128>(),
         T::Body::Order { amount, .. } => bal - amount,
+        T::Body::Escrow { amount, .. } => bal - amount,
+        T::Body::Unescrow { refund, .. } => bal + refund,
+        T::Body::Payout { amount, .. } => bal + amount,
         T::Body::Settle { refund, .. } => bal + refund,
         T::Body::Bought { got, .. } => bal + got,
         T::Body::Stake { amount } => bal - amount,
@@ -956,7 +959,7 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
             wallet::stake_at(&p, &pd2, &read(&p)?, at).ok()
         };
         let defs = |t: &[u8; 32]| if *t == ta { Some(td2.clone()) } else if *t == pool { Some(pd2.clone()) } else { None };
-        let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of, definition: &defs, pools: &|_| None, orders: &|_| None };
+        let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of, definition: &defs, pools: &|_| None, orders: &|_| None, program: &|_| None };
         let cited = |t: &T::Tok, o: &[u8; 32]| rt.block_on(get(&y, T::ChainParams { code_hash: ch, definition: t.definition, owner: *o, beacon: bid, idlog, item: t.item }.id())).ok().flatten().and_then(|b| T::State::decode(&b));
         // Witness one entry: its committee drawn, each member re-checks it by the rule and signs into its bag on X.
         let witness = |o: u8, seq: u64, who: &str| -> bool {
@@ -977,7 +980,7 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
                 return false;
             };
             let members = draw::committee(&pool, &o_, &p.id(), seq, ep, &claims, wallet::COMMITTEE);
-            let holds = |st: &T::State| T::check(&p, &td2, st, &cited, &|_| None, Some(&log(o)), None);
+            let holds = |st: &T::State| T::check(&p, &td2, st, &cited, &|_| None, Some(&log(o)), &T::Extra::NONE);
             let now = rt.block_on(get(&x, beacon)).ok().flatten().and_then(|b| B::wire::decode(&b)).map_or(0, |b| b.height());
             match wallet::may_witness(&src, &p, &td2, &s, seq, now, &holds, &cited) {
                 Err(why) => {
@@ -1206,7 +1209,7 @@ async fn misdeed_mode(w: &W) -> Result<()> {
     println!("5  the misdeed over the FAKE receive 2 signed — appended by anyone, on Y: {}", w.put_chain(&w.y, tp, 2, &burn).await?.0);
     tokio::time::sleep(Duration::from_secs(2)).await;
     let held = w.get_chain(&w.y, tp, 2).await?.context("2's chain")?;
-    let staked = T::walk(&w.chain(tp, 2), &dp, &held, &|_, _| None, &|_| None, None, 0, held.entries.len(), None).map(|c| c.staked);
+    let staked = T::walk(&w.chain(tp, 2), &dp, &held, &|_, _| None, &|_| None, None, 0, held.entries.len(), &T::Extra::NONE).map(|c| c.staked);
     println!("   2's stake on Y now: {:?} (was 600)", staked.map_err(|e| e.1));
     Ok(())
 }
