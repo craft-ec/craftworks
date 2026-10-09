@@ -1388,6 +1388,13 @@ old key's addresses.
       [x] 5 ids (NFT/1155) + royalties — BUILT + LIVE 10-09 (TOKEN §1b, §9 step 11): a chain per (token, item,
           owner), Tok refs; unique items made by their mint; lock fee + fill royalty rule + creator claim. Deviation
           from the old §1b text (one chain per owner, amounts per id): a 1155 batch is one send per item, not atomic
+      [ ] STORAGE PROOFS (before 6; TOKEN §7a) — in parts:
+          [x] sdk/ in repo (d8daf2f): outside code as path deps; devices + token re-keyed, identity new hash
+          [x] wire: node-self (location, hosted ids+sizes) + connected peers (a58d81f); live fx/fy ~210 ms
+          [x] the core's location hash ported and matched live (fx 0.596280, fy 0.487930)
+          [ ] standing crate: location_of(addr), attestation / binding / proof records, challenge selection
+          [ ] keeper loop in the page (keep.js): attest peers, bind, answer challenges each beacon tick
+          [ ] standing per location (ramp), read by witnesses
       [ ] 6 WITNESSES BY LOT, backed by PROVED STORAGE (owner 10-09; TOKEN §7a): needs the storage proofs
           first; closes prevention of double spends, receiver-only history checks, partition fill/refund
           — and REMOVES checkpoints + vouches outright (owner 10-09: no token is live, no old history to keep)
