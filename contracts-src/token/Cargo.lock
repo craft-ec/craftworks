@@ -201,6 +201,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
+name = "contract-keys"
+version = "0.1.0"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
+dependencies = [
+ "blake3",
+ "core-types",
+ "craftec-register-contract",
+ "ed25519-dalek",
+ "freenet-prolly",
+ "signer-proto",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -276,6 +289,7 @@ name = "craftworks-token-contract"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "contract-keys",
  "craftworks-beacon-contract",
  "craftworks-identity",
  "craftworks-idlog-contract",
@@ -1095,6 +1109,16 @@ name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
+
+[[package]]
+name = "signer-proto"
+version = "0.1.0"
+source = "git+https://github.com/craft-ec/craftworks-sdk?rev=f079914#f0799144423395ce2d0c7e90cf4d8cceb70af0da"
+dependencies = [
+ "bincode",
+ "craftec-register-contract",
+ "serde",
+]
 
 [[package]]
 name = "slab"

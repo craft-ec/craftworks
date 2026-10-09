@@ -23,11 +23,9 @@ pub const WORK_BITS: u32 = 16;
 /// A token's name, at most (its length is one byte on the wire).
 pub const NAME_MAX: usize = 64;
 
+/// A contract's instance id (Freenet's: the code's hash and the params) — `contract_keys::instance`, its one home.
 pub fn id(code_hash: &[u8; 32], params: &[u8]) -> [u8; 32] {
-    let mut h = blake3::Hasher::new();
-    h.update(code_hash);
-    h.update(params);
-    *h.finalize().as_bytes()
+    contract_keys::instance(code_hash, params)
 }
 
 // ---- reading bytes, exactly ----

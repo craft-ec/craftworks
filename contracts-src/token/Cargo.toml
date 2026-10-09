@@ -26,6 +26,8 @@ craftworks-idlog-contract = { path = "../idlog", default-features = false }
 craftworks-identity = { path = "../../identity" }
 # The SDK engine: a tree root's own parity (`repair::root_parity`), as tables code it — the writer's, never the contract's.
 engine = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
+# Freenet's contract instance id (code hash + params): its one restatement.
+contract-keys = { git = "https://github.com/craft-ec/craftworks-sdk", rev = "f079914" }
 
 [features]
 default = ["freenet-main-contract"]

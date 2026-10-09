@@ -1477,4 +1477,8 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       (On the way: a two-device account works on fx/fy only when a test logs in as the UI does — logged out, join,
       accept, staying on the page; tests that skipped that made two groups or a locked first device. A catalog-sealing
       change made then was measured unneeded with the right flow, and dropped.)
-- [ ] F token writers use the device's credential from the devices contract
+- [x] F token writers: a `Writer` entry already takes the account's device credential (the same format, checked
+      against the key log) — nothing new in the contract; the page wallet names its device's credential from the
+      devices contract when it moves into the app. The token's own instance-id copy replaced by contract_keys::instance.
+- LIVE 10-09, change words on fx (two-device account): 288 ms; the new words open it, the old do not; both devices
+  still count, from fx and from fy (re-issued under the new key).
