@@ -505,6 +505,12 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   so data a node makes for itself counts only as the disk it costs. LOCATION stays a soft rule (hold what Freenet placed
   near you), not the guard. Cost: a counted piece is kept twice (Freenet's copy and the replica); sealing is a one-time
   background cost. (Proof of replication, as Filecoin and Arweave.)
+- **The seal, concretely** (10-09): a replica is the piece XOR a keystream made by a SEQUENTIAL hash chain over
+  (node key, piece id) — slow to make (seconds a piece, in the page's background worker), nothing to read back. Kept
+  in the node's delegate store (a file per secret, written once: no snapshots, no quota for a delegate's own secrets);
+  never a contract, never on the network. A sampled height challenges 16 pieces at once, answered from the replicas
+  within the beacon step — re-sealing 16 takes far longer — and a verifier re-derives ONE of the 16 (picked by the
+  next output), so checking costs one piece's seal, rarely. A node commits what it chooses (its "storage for standing").
 - **What is at stake: STANDING, earned over time.** A node's weight is its assigned storage PROVED over time
   (GB-days, ramping up), not the disk it shows today; two signatures at one place reset it to zero and forfeit its
   unclaimed keeper rewards (rewards claimable only after a delay, so some are always at stake). A disk cannot be
