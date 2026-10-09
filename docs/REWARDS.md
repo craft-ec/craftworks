@@ -107,6 +107,9 @@ of cold files, §6).
   work.
 - **Everyone gets their turn:** on the global network every node eventually takes part in hosting (Freenet places data
   across the ring), so carrying pay spreads across participants over time rather than pooling at a few servers.
+- **Beyond what one used** (owner 10-09, TOKEN §7a): a node may also keep pieces ASSIGNED to it by the beacon from
+  anything PUT to the network — proved by the same queue; it earns WITNESS STANDING (TOKEN §7a), so data nobody read
+  lately is still kept. The node never chooses what counts.
 - Healing is every reader's (files heal on read: a missing fragment is made again by whoever reads it), paid or not; a keeper
   does not repair — it KEEPS, so that a reader finds enough to read and heal from.
 - Exact per-answer bandwidth pay would need the node to name the peer that delivered each piece (a node change, and

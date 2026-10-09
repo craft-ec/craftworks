@@ -447,6 +447,15 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
 
 - **No nominated witnesses.** Any node stands by PROVING storage it holds (the keepers' proofs, REWARDS §4) — no
   list, no approval, no per-token setup: one open pool for every token.
+- **All storage counts, ASSIGNED by lot** (owner 10-09): not only what the node's user read — any piece PUT to the
+  network, assigned to nodes by the beacon (rendezvous over node id and piece, as the keepers' queue). The node never
+  picks what counts, so its disk keeps the network's data alive rather than junk it made for itself — and data no one
+  reads recently is still kept, by those who earn standing holding it.
+- **What is at stake: STANDING, earned over time.** A node's weight is its assigned storage PROVED over time
+  (GB-days, ramping up), not the disk it shows today; two signatures at one place reset it to zero and forfeit its
+  unclaimed keeper rewards (rewards claimable only after a delay, so some are always at stake). A disk cannot be
+  confiscated: a new key with the same disk starts from nothing. **Open:** the ramp (days or weeks to full weight) —
+  set from measurement on the network, not guessed.
 - **Drawn by lot, per entry.** For each (chain, seq), every node computes its own VRF draw over (beacon, chain, seq);
   its chance grows with its proved storage. A drawn node re-runs the chain's checks (the verification primitive) and
   signs, with its draw's proof; an entry counts once it carries enough drawn signatures — checkable by anyone from the
