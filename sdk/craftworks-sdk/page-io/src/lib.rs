@@ -1292,6 +1292,8 @@ impl PageIo {
             // The node's delegate BACKOFF after a failure: not an answer to anything; the request it throttled is
             // re-sent on the page's clock. Never a refusal (sdk#439).
             Incoming::DelegateThrottled { .. } => {}
+            // The node about itself and its peers: asked by another reader on the socket (storage proofs), never here.
+            Incoming::NodeSelf { .. } | Incoming::Peers(_) => {}
             // A site's PUT was answered: the page reads it back (it says nothing about which record was kept).
             Incoming::Ack(wire::AckKind::Put(key)) | Incoming::Ack(wire::AckKind::Updated(key)) if self.site_by_key(&key).is_some() => {
                 let app = self.site_by_key(&key).expect("matched");
@@ -1493,6 +1495,8 @@ impl PageIo {
             // A site's change is its own (taken, and read by nobody: the page does not follow a site).
             Incoming::HeadChanged { key, .. } => *key == self.register_key || self.sites.values().any(|s| s.published_key() == Some(key.as_str())),
             Incoming::Partial => true,
+            // The node about itself and its peers: another reader's question (storage proofs), never page-io's.
+            Incoming::NodeSelf { .. } | Incoming::Peers(_) => false,
             Incoming::DelegateMissing { key } => *key == self.art.signer.to_string() || !self.read_only(),
             // A reader takes a signer message only if it answers a `Held` it asked (its HeldSigner, sdk#493): the
             // person's own page on the same socket asks the same signer, and its answers are its own.
