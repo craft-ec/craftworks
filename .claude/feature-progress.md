@@ -1403,9 +1403,10 @@ old key's addresses.
           [ ] standing per location (ramp), read by witnesses
       [ ] 6 WITNESSES BY LOT, weighted by EARNED STAKE (TOKEN §7a) — owner 10-09: "foundation first", the token's
           issuance designed later; built generic (any locked stake), keeper rewards plug in as its source later:
-          [ ] 6a STAKE entry (part of a chain's balance locked as witness stake; released after a delay) + burn on a
+          [x] 6a STAKE entry (6219feb) (part of a chain's balance locked as witness stake; released after a delay) + burn on a
               fraud proof (one key, two witness signatures at one place)
-          [ ] 6b the DRAW (a VRF from the key, the beacon output and the entry; weighted by stake; checkable)
+          [x] 6b the DRAW — public lot (no global total for a VRF): stake claims, exponential-race tickets in
+              fixed point, the k lowest; measured 100/200/700 → 9.7/20.1/70.1%, seven sybils of 100 → 69.3%
           [ ] 6c WITNESS SIGNATURES (an entry counts once enough drawn witnesses signed; each signer's stake read
               from its chain)
           [ ] 6d wallets verify by witness signatures; checkpoints + vouches removed

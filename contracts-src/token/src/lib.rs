@@ -1990,6 +1990,7 @@ pub mod authority;
 pub mod cut;
 pub mod freeze;
 pub mod witness;
+pub mod draw;
 pub mod supply;
 pub mod wallet;
 
