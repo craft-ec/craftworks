@@ -36,7 +36,7 @@ Every behaviour of the blockchain token standards, and how this standard gives i
 | Metadata (token and per item) | ✅ | the definition's metadata; per id, an ITEM of Craftworks (its page, its files) named by the id |
 | History, traceable by anyone (an explorer) | ✅ | no one ledger: from genesis and the supply bag, sends followed FORWARD reach every chain; credits cite their debits BACKWARD; kept alive by readers and keepers (§1a) |
 | Atomic swap between two tokens | ✅ two-phase | lock → fill → claim, or refund; the race closed by time (§4) |
-| Vesting, time locks | ✅ | `lock(beneficiary, amount, until)`: claimable by the beneficiary after the beacon passes `until`, or in steps (§4a) |
+| Vesting, time locks | designed, NOT BUILT | `lock(beneficiary, amount, until)`: claimable by the beneficiary after the beacon passes `until`, or in steps (§4a) |
 | Staking | ✅ | `lock` to a staking definition; its rewards a supply rule of that definition (§4a, §6) |
 | Escrow, two-party loans | ✅ | locks with release conditions (§4) |
 | Order book | ✅ | standing `offer`s in the pair's offers bag, filled with the maker offline (§4) |
