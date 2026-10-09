@@ -42,7 +42,7 @@ fn a_nodes_arc_runs_midway_to_its_nearest_peers_round_the_ring() {
 #[test]
 fn a_place_is_what_enough_other_peers_say() {
     let fy: SocketAddr = "127.0.0.1:37692".parse().unwrap();
-    let by = |n: u8| Attest::new(&key(n), "55qLzrXAazYagArUE", &fy, 3);
+    let by = |n: u8| Attest::new(&key(n), "55qLzrXAazYagArUE", &fy, n as u64 * (u64::MAX / 8), 3);
     let ring = ring_of_addr(&fy);
     let all = vec![by(1), by(2), by(3)];
     assert_eq!(located("55qLzrXAazYagArUE", 3, &all, &[], 3), Some(ring));
@@ -123,4 +123,133 @@ fn the_edges_of_an_arc_a_path_and_an_answer() {
     assert!(!verify(&root(&ids), 5, 0, &ids[0], &p));
     // No node's answer is another's: the peer is in the hash.
     assert_ne!(answer_hash(b"s", &[1; 32], "5cCFQqQwLPNKX4zwK"), answer_hash(b"s", &[1; 32], "55qLzrXAazYagArUE"));
+}
+
+// ---- the record: everything from scratch against the beacon ----
+
+mod record_tests {
+    use super::*;
+    use crate::record::{holds, merge, prune, weight, Epoch, State, EPOCHS_MAX};
+
+    const P: &str = "5cCFQqQwLPNKX4zwK";
+    /// The beacon's output at a height (a fixed stand-in: unpredictable enough for sampling).
+    fn out(h: u64) -> [u8; 32] {
+        *blake3::hash(&h.to_le_bytes()).as_bytes()
+    }
+    /// Peer P at the middle of the ring, its three attesters a quarter either side; key 7 bound; holdings over 40
+    /// contracts across the whole ring (only those in its arc kept); an answer at each sampled height of epoch 2 up to
+    /// `upto`.
+    fn world(upto: u64) -> (State, Vec<[u8; 32]>) {
+        let e = 2;
+        let mid = u64::MAX / 2;
+        let addr: SocketAddr = "86.38.75.1:1".parse().unwrap();
+        let ring = ring_of_addr(&addr);
+        let at = |n: u64| ring.wrapping_add(if n % 2 == 0 { u64::MAX / 4 } else { (u64::MAX / 4).wrapping_neg() });
+        let attests: Vec<Attest> = (1..=3u8).map(|n| Attest::new(&key(n), P, &addr, at(n as u64), e)).collect();
+        let _ = mid;
+        let k = key(7);
+        let binds = vec![Bind::new(&k, P, e)];
+        let (_, arc_) = place(P, e, &attests, &[k.verifying_key().to_bytes()], 3).unwrap();
+        let hosted: Vec<([u8; 32], u64)> = (0..40).map(|n| (id(n), 1000)).collect();
+        let (h, ids) = Holdings::new(&k, P, e, &hosted, arc_);
+        assert!(h.count > 0, "THE SETUP: something held in the arc");
+        let state_of = |i: &[u8; 32]| Some(i.to_vec());
+        let answers: Vec<Answer> = (e * EPOCH..=upto).filter(|x| sampled(&out(*x), P)).filter_map(|x| Answer::new(&k, &h, &ids, x, &out(x), &state_of)).collect();
+        (State { epochs: vec![Epoch { epoch: e, attests, binds, holdings: vec![h], answers }] }, ids)
+    }
+    fn beacon(upto: u64) -> impl Fn(u64) -> Option<[u8; 32]> {
+        move |h| (h <= upto).then(|| out(h))
+    }
+
+    #[test]
+    fn a_record_holds_from_scratch_and_reads_back_exactly() {
+        let top = 2 * EPOCH + 600;
+        let (s, _) = world(top);
+        assert!(!s.epochs[0].answers.is_empty(), "THE SETUP: some heights sampled");
+        assert_eq!(holds(P, &s, &beacon(top)), Ok(()));
+        assert_eq!(crate::codec::decode(&crate::codec::encode(&s)), Some(s.clone()));
+        assert_eq!(crate::codec::decode(&[crate::codec::encode(&s), vec![0]].concat()), None, "a trailing byte");
+        assert_eq!(holds("another", &s, &beacon(top)), Err("an attestation that does not hold here"));
+    }
+
+    #[test]
+    fn what_does_not_hold_is_refused() {
+        let top = 2 * EPOCH + 600;
+        let (s, _) = world(top);
+        // An answer at a height the beacon no longer keeps.
+        let first = s.epochs[0].answers.iter().map(|a| a.height).min().unwrap();
+        assert_eq!(holds(P, &s, &|h| (h > first).then(|| out(h))), Err("an answer outside the beacon's window"));
+        // An answer at a height not sampled for this peer.
+        let mut bad = s.clone();
+        let a = bad.epochs[0].answers[0].clone();
+        let h = bad.epochs[0].holdings[0].clone();
+        let unsampled = (2 * EPOCH..top).find(|x| !sampled(&out(*x), P)).unwrap();
+        let mut moved = Answer { height: unsampled, ..a.clone() };
+        moved.sig = key(7).sign(&moved.message()).to_bytes();
+        bad.epochs[0].answers = vec![moved];
+        assert_eq!(holds(P, &bad, &beacon(top)), Err("an answer at a height not sampled for this peer"));
+        // Holdings by a key not bound to the peer.
+        let mut unbound = s.clone();
+        unbound.epochs[0].binds.clear();
+        assert_eq!(holds(P, &unbound, &beacon(top)), Err("holdings not by a key bound to the peer"));
+        // Short of a quorum of attesters: no place, so no answer counts.
+        let mut alone = s.clone();
+        alone.epochs[0].attests.truncate(2);
+        assert_eq!(holds(P, &alone, &beacon(top)), Err("answers with no place for the peer"));
+        // The peer's own bound key cannot be one of its attesters.
+        let mut selfish = s.clone();
+        let addr: SocketAddr = "86.38.75.1:1".parse().unwrap();
+        selfish.epochs[0].attests[2] = Attest::new(&key(7), P, &addr, 1, 2);
+        assert_eq!(holds(P, &selfish, &beacon(top)), Err("answers with no place for the peer"));
+        let _ = h;
+        // An answer for another entry than the one the beacon asked for, re-signed by the bound key: refused by its check.
+        let mut wrong = s.clone();
+        let ids = world(top).1;
+        let a0 = wrong.epochs[0].answers[0].clone();
+        let j = (a0.index as usize + 1) % ids.len();
+        let mut other = Answer { index: j as u32, id: ids[j], path: path(&ids, j), ..a0 };
+        other.sig = key(7).sign(&other.message()).to_bytes();
+        wrong.epochs[0].answers[0] = other;
+        assert_eq!(holds(P, &wrong, &beacon(top)), Err("an answer to another challenge"));
+        // Epochs out of order; an attestation of another epoch inside one.
+        let two = State { epochs: vec![Epoch { epoch: 3, ..Default::default() }, Epoch { epoch: 2, ..Default::default() }] };
+        assert_eq!(holds(P, &two, &beacon(top)), Err("epochs out of order"));
+        let mut stray = s.clone();
+        stray.epochs[0].attests.push(Attest::new(&key(9), P, &addr, 1, 3));
+        assert_eq!(holds(P, &stray, &beacon(top)), Err("an attestation that does not hold here"));
+    }
+
+    #[test]
+    fn standing_is_the_bytes_held_times_the_samples_answered() {
+        let top = 2 * EPOCH + 600;
+        let (s, _) = world(top);
+        let h = &s.epochs[0].holdings[0];
+        let due = (2 * EPOCH..=top).filter(|x| sampled(&out(*x), P)).count() as u128;
+        assert_eq!(weight(P, &s, &beacon(top), top), h.bytes as u128 * s.epochs[0].answers.len() as u128 / due);
+        assert_eq!(s.epochs[0].answers.len() as u128, due, "every sampled height answered: all of its bytes");
+        // Half the answers: about half the standing.
+        let mut half = s.clone();
+        let n = half.epochs[0].answers.len() / 2;
+        half.epochs[0].answers.truncate(n);
+        assert_eq!(weight(P, &half, &beacon(top), top), h.bytes as u128 * n as u128 / due);
+        assert_eq!(weight(P, &State::default(), &beacon(top), top), 0);
+    }
+
+    #[test]
+    fn merge_unions_and_keeps_the_newest_epochs_and_prune_drops_the_old() {
+        let top = 2 * EPOCH + 600;
+        let (s, _) = world(top);
+        let mut a = s.clone();
+        let mut b = s.clone();
+        let n = a.epochs[0].answers.len();
+        a.epochs[0].answers.truncate(n / 2);
+        b.epochs[0].answers.drain(..n / 2);
+        assert_eq!(merge(&a, &b).epochs[0].answers.len(), n);
+        assert_eq!(merge(&a, &b), merge(&b, &a), "the same bytes either way");
+        let many = State { epochs: (0..9).map(|e| Epoch { epoch: e, ..Default::default() }).collect() };
+        assert_eq!(merge(&many, &State::default()).epochs.len(), EPOCHS_MAX);
+        assert_eq!(merge(&many, &State::default()).epochs[0].epoch, 9 - EPOCHS_MAX as u64);
+        assert_eq!(prune(&many, 5 * EPOCH).epochs.iter().map(|e| e.epoch).collect::<Vec<_>>(), vec![5, 6, 7, 8]);
+    }
+
 }

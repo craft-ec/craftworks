@@ -104,33 +104,36 @@ fn peer_ok(peer: &str) -> bool {
     !peer.is_empty() && peer.len() <= PEER_MAX
 }
 
-/// "Peer `peer` is at ring position `ring`" — said in epoch `epoch` by node key `by`, which is connected to it and
-/// computed `ring` from the address it sees ([`ring_of_addr`]).
+/// "Peer `peer` is at ring position `ring`, and I am at `at`" — said in epoch `epoch` by node key `by`, which is
+/// connected to it (so a ring NEIGHBOUR of it: what its arc is made from) and computed `ring` from the address it sees
+/// ([`ring_of_addr`]); `at` is its own place as its node says.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Attest {
     pub by: [u8; 32],
     pub peer: String,
     pub ring: u64,
+    pub at: u64,
     pub epoch: u64,
     pub sig: [u8; 64],
 }
 
 impl Attest {
-    pub fn message(by: &[u8; 32], peer: &str, ring: u64, epoch: u64) -> Vec<u8> {
+    pub fn message(by: &[u8; 32], peer: &str, ring: u64, at: u64, epoch: u64) -> Vec<u8> {
         let mut v = b"craftworks standing attest".to_vec();
         v.extend_from_slice(by);
         put_peer(&mut v, peer);
         v.extend_from_slice(&ring.to_le_bytes());
+        v.extend_from_slice(&at.to_le_bytes());
         v.extend_from_slice(&epoch.to_le_bytes());
         v
     }
-    pub fn new(key: &SigningKey, peer: &str, addr: &SocketAddr, epoch: u64) -> Attest {
+    pub fn new(key: &SigningKey, peer: &str, addr: &SocketAddr, at: u64, epoch: u64) -> Attest {
         let by = key.verifying_key().to_bytes();
         let ring = ring_of_addr(addr);
-        Attest { by, peer: peer.into(), ring, epoch, sig: sign(key, &Self::message(&by, peer, ring, epoch)) }
+        Attest { by, peer: peer.into(), ring, at, epoch, sig: sign(key, &Self::message(&by, peer, ring, at, epoch)) }
     }
     pub fn holds(&self) -> bool {
-        peer_ok(&self.peer) && sig_ok(&self.by, &Self::message(&self.by, &self.peer, self.ring, self.epoch), &self.sig)
+        peer_ok(&self.peer) && sig_ok(&self.by, &Self::message(&self.by, &self.peer, self.ring, self.at, self.epoch), &self.sig)
     }
 }
 
@@ -173,6 +176,23 @@ pub fn located(peer: &str, epoch: u64, attests: &[Attest], own_keys: &[[u8; 32]]
         }
     }
     by_ring.into_iter().filter(|(_, by)| by.len() >= quorum).max_by_key(|(_, by)| by.len()).map(|(r, _)| r)
+}
+
+/// Where peer `peer` is in `epoch` and its ARC: its [`located`] place, and the arc between it and the places its
+/// attesters (its connected peers: its ring neighbours) say they are. `None` short of a quorum.
+pub fn place(peer: &str, epoch: u64, attests: &[Attest], own_keys: &[[u8; 32]], quorum: usize) -> Option<(u64, (u64, u64))> {
+    let ring = located(peer, epoch, attests, own_keys, quorum)?;
+    let neighbours: Vec<u64> = attests.iter().filter(|a| a.peer == peer && a.epoch == epoch && a.ring == ring && !own_keys.contains(&a.by) && a.holds()).map(|a| a.at).collect();
+    Some((ring, arc(ring, &neighbours)?))
+}
+
+/// One height in [`SAMPLE`] is a peer's to answer (picked by the beacon's output there and the peer): the answers kept.
+pub const SAMPLE: u64 = 32;
+pub fn sampled(out: &[u8; 32], peer: &str) -> bool {
+    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-09 standing sample");
+    h.update(out);
+    h.update(peer.as_bytes());
+    u64::from_le_bytes(h.finalize().as_bytes()[..8].try_into().unwrap()) % SAMPLE == 0
 }
 
 // ---- holdings: a merkle tree over sorted ids ----
@@ -371,6 +391,9 @@ pub fn check(h: &Holdings, a: &Answer, out: &[u8; 32], arc_: (u64, u64), state: 
     }
     Ok(())
 }
+
+pub mod record;
+pub mod codec;
 
 #[cfg(test)]
 mod tests;
