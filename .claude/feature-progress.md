@@ -1510,3 +1510,12 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       devices contract when it moves into the app. The token's own instance-id copy replaced by contract_keys::instance.
 - LIVE 10-09, change words on fx (two-device account): 288 ms; the new words open it, the old do not; both devices
   still count, from fx and from fy (re-issued under the new key).
+
+- EPOCH CLIMB (10-09, owner: "Craftworks#0cce26 doesn't have changes but epoch keeps on changing"): #HLt27K behind at
+  46 of 56; its page asked up to 12 members to welcome it again on every load and EVERY member answered with a re-add
+  (one commit each); it never caught up. Fix f9fbc48: welcomed again ONCE per epoch it asks from (writers record with
+  the epoch), the repair ask answered by one member in turn, the delegate skips a stuck ask already answered past that
+  epoch. HOTFIX LIVE (site v369): the page half only (conversation.js, upkeep.js) on the live base 354c60f — identity
+  unchanged (94190d1e), no PIN; the delegate half ships with the next full release. OPEN: why #HLt27K cannot apply a
+  welcome. Also found: SHA256SUMS was stale for token/devices since 5f32f7c/d8daf2f (would refuse the next publish) —
+  updated.
