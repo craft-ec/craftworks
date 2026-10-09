@@ -1401,7 +1401,16 @@ old key's addresses.
               time, burned on equivocation; storage proofs pay keepers (weak guarantee fine there). Order: keeper
               payouts (REWARDS) → reward locks as stake → witness lot by stake.
           [ ] standing per location (ramp), read by witnesses
-      [ ] 6 WITNESSES BY LOT, backed by PROVED STORAGE (owner 10-09; TOKEN §7a): needs the storage proofs
+      [ ] 6 WITNESSES BY LOT, weighted by EARNED STAKE (TOKEN §7a) — owner 10-09: "foundation first", the token's
+          issuance designed later; built generic (any locked stake), keeper rewards plug in as its source later:
+          [ ] 6a STAKE entry (part of a chain's balance locked as witness stake; released after a delay) + burn on a
+              fraud proof (one key, two witness signatures at one place)
+          [ ] 6b the DRAW (a VRF from the key, the beacon output and the entry; weighted by stake; checkable)
+          [ ] 6c WITNESS SIGNATURES (an entry counts once enough drawn witnesses signed; each signer's stake read
+              from its chain)
+          [ ] 6d wallets verify by witness signatures; checkpoints + vouches removed
+          [ ] 6e live fx/fy
+      (was: backed by PROVED STORAGE — superseded by earned stake, see TOKEN §7a)
           first; closes prevention of double spends, receiver-only history checks, partition fill/refund
           — and REMOVES checkpoints + vouches outright (owner 10-09: no token is live, no old history to keep)
   rule. Later, separate programs: distribution, staking, pools, keeper issuance.
