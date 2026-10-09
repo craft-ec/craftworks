@@ -38,6 +38,17 @@ pub fn royalty_fee(r: Royalty, seller: &[u8; 32], amount: u128) -> Option<([u8; 
     Some((creator, amount / 10_000 * bps + (amount % 10_000 * bps).div_ceil(10_000)))
 }
 
+/// The payout key of the ROYALTY FEE out of a sale of the escrow `r` (TOKEN §1b, §1c) — the one key every program pays
+/// a royalty under, so a holders' share can name the sale it is of.
+pub fn fee_key(r: &EscrowRef) -> [u8; 16] {
+    let mut h = blake3::Hasher::new_derive_key("craftworks escrow royalty fee");
+    h.update(&r.0.definition);
+    h.update(&r.0.item);
+    h.update(&r.1);
+    h.update(&r.2);
+    h.finalize().as_bytes()[..16].try_into().unwrap()
+}
+
 /// A program's standard SECTION.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Section {
@@ -138,6 +149,11 @@ impl Section {
             }
         }
         Ok(())
+    }
+    /// The section's HASH — what a release names (its VERDICT), so payouts are signed only on the one verdict every
+    /// escrow of it was released under (`wallet::program_entry`).
+    pub fn hash(&self) -> [u8; 32] {
+        *blake3::Hasher::new_derive_key("craftworks escrow verdict").update(&self.encode()).finalize().as_bytes()
     }
     /// The refund the verdict gives an escrow (`None`: none yet).
     pub fn refund_of(&self, r: &EscrowRef) -> Option<u128> {

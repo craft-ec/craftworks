@@ -101,3 +101,18 @@ fn a_crossing_pays_each_sides_royalty_out_of_what_that_side_is_paid() {
     assert_eq!(escrow::royalty_fee(Some((500, [7; 32])), &[1; 32], 500), Some(([7; 32], 25)));
     assert_eq!(escrow::royalty_fee(Some((500, [7; 32])), &[1; 32], 501), Some(([7; 32], 26)));
 }
+
+#[test]
+fn a_deal_that_would_pay_its_seller_nothing_never_crosses() {
+    // X sells an item (5% royalty) for 1 of Y's token: the fee, rounded up, is the whole 1.
+    let d = Deal { amount_y: 1, ..deal() };
+    let roy = (Some((500, [7; 32])), None);
+    assert!(pays_nothing(&d, roy) && !pays_nothing(&d, NO));
+    let ey1 = ey();
+    let both = merge(&d, roy, &alone(ex(), 300), &alone(ey1, 1), 10);
+    assert!(both.pays.is_empty(), "listed, not crossed");
+    assert_eq!(check(&d, roy, &crossed(&d, roy, &ex(), &ey1), 10), Err("a deal whose seller would be paid nothing"));
+    assert_eq!(check(&d, roy, &refunded(&d, &ex(), true), 24), Ok(()), "refunded after its cutoff");
+    let d2 = Deal { amount_y: 2, ..d };
+    assert_eq!(check(&d2, roy, &crossed(&d2, roy, &ex(), &ey1), 10), Ok(()), "control: a price of 2 crosses (1 kept, 1 fee)");
+}

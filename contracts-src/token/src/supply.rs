@@ -130,22 +130,19 @@ pub fn seal(s: &Shard, before: u64) -> Option<[u8; 32]> {
 
 /// Every mint in the shard is of its epoch (a capped token's: within its record's numbers), for something, and signed
 /// by the mint set current at its stamp — and the mint changes SEALED it: an epoch shard, every change whose span holds
-/// its epoch, exactly; a record, every change naming it as its FRONTIER (the highest record it names) exactly, and
-/// every change whose frontier is below it (or none) found NO mint of it stamped before the change — a replaced set
-/// can never mint new numbers into its past. (A record below a frontier that already exists refuses a back-dated mint
-/// by its update rule, [`fresh`].) Overlapping numbers are NOT refused here (two copies of a record must merge the
-/// same everywhere): such a mint is simply not [`admitted`].
+/// its epoch, exactly; a record, EVERY change, exactly (named: its seal; not named: no mint from before it) — a replaced
+/// set can never mint into its past. Overlapping numbers are not refused from scratch (an update refuses adding one,
+/// [`fresh`]): such a mint is simply not [`admitted`].
 pub fn holds(p: &Params, d: &crate::Definition, chain: &authority::Chain, s: &Shard) -> Result<(), Why> {
     let ranged = d.capped();
     let mut from = 0u64;
     for c in chain.changes.iter().filter(|c| c.role == authority::Role::Mint) {
         let named = c.closed.iter().find(|(e, _)| *e == p.epoch).map(|(_, h)| *h);
         if ranged {
-            let frontier = c.closed.iter().map(|(e, _)| *e).max();
-            if frontier == Some(p.epoch) && seal(s, c.stamp) != named {
-                return Err("a shard that is not what its mint authority sealed");
-            }
-            if frontier.is_none_or(|f| p.epoch > f) && seal(s, c.stamp).is_some() {
+            // A record is sealed by EVERY change: as the change names it, exactly — or, not named, holding no mint
+            // from before it (audit 10-10: a frontier alone left lower records open to the replaced set). A change
+            // names every record that holds a mint then.
+            if seal(s, c.stamp) != named {
                 return Err("a shard that is not what its mint authority sealed");
             }
         } else {
@@ -226,31 +223,39 @@ pub fn covering<'a>(d: &crate::Definition, s: &'a Shard, n: u128) -> Option<&'a 
 /// The MERGE: the union by nonce (two mints under one nonce: the lower hash — the authority signed both, its fault).
 /// `None`: the union is past [`MINTS_MAX`] — refused; the mint goes in the next epoch.
 pub fn merge(a: &Shard, b: &Shard) -> Option<Shard> {
-    let h = |x: &Mint| {
-        let mut v = Vec::new();
-        x.encode(&mut v);
-        *blake3::hash(&v).as_bytes()
-    };
-    let mut all: Vec<Mint> = a.mints.iter().chain(&b.mints).cloned().collect();
-    all.sort_by_cached_key(|m| (m.nonce, h(m)));
-    all.dedup_by(|later, first| later.nonce == first.nonce);
+    // (`a`: the copy HELD — its mint under a nonce stands; audit 10-10: a lower hash replaced a mint already credited.)
+    let mut all: Vec<Mint> = a.mints.clone();
+    for m in &b.mints {
+        if !all.iter().any(|x| x.nonce == m.nonce) {
+            all.push(m.clone());
+        }
+    }
+    all.sort_by_key(|m| m.nonce);
     (all.len() <= MINTS_MAX).then_some(Shard { mints: all })
 }
 
 /// An UPDATE's rule: every mint the merged shard holds that the held one did not is stamped within the margin of
 /// `now` — a mint authority cannot back-date (nor a dropped one mint in its past).
-pub fn fresh(held: &Shard, merged: &Shard, now: u64, margin: u64) -> Result<(), Why> {
+pub fn fresh(held: &Shard, merged: &Shard, now: u64, margin: u64, ranged: bool) -> Result<(), Why> {
     for m in &merged.mints {
-        if !held.mints.contains(m) && (m.stamp > now || m.stamp + margin < now) {
+        if held.mints.contains(m) {
+            continue;
+        }
+        if m.stamp > now || m.stamp + margin < now {
             return Err("a mint stamped outside the margin of now");
+        }
+        // A capped token's new mint takes no number one held already has: what was credited from it stays its.
+        let span = |x: &Mint| (u128::from_be_bytes(x.nonce), u128::from_be_bytes(x.nonce).saturating_add(x.amount - 1));
+        if ranged && held.mints.iter().any(|h| span(h).0 <= span(m).1 && span(m).0 <= span(h).1) {
+            return Err("a mint of numbers already minted");
         }
     }
     Ok(())
 }
 
-/// totalSupply: the genesis plus every mint in these shards (burns: TOKEN §1a, counted from the chains).
-pub fn minted(shards: &[Shard]) -> Option<u128> {
-    shards.iter().flat_map(|s| &s.mints).try_fold(0u128, |t, m| t.checked_add(m.amount))
+/// totalSupply: the genesis plus every ADMITTED mint in these shards (burns: TOKEN §1a, counted from the chains).
+pub fn minted(d: &crate::Definition, shards: &[Shard]) -> Option<u128> {
+    shards.iter().flat_map(|s| admitted(d, s)).try_fold(0u128, |t, m| t.checked_add(m.amount))
 }
 
 #[cfg(test)]
@@ -331,17 +336,18 @@ mod tests {
     }
 
     #[test]
-    fn the_merge_is_a_union_one_answer_capped_and_no_back_dating() {
+    fn the_merge_is_a_union_the_held_mint_stands_capped_and_no_back_dating() {
         let a = Shard { mints: vec![mint(1, 10, 1)] };
         let b = Shard { mints: vec![mint(2, 10, 1), mint(1, 10, 2)] };
-        assert_eq!(merge(&a, &b), merge(&b, &a));
-        assert_eq!(merge(&a, &b).unwrap().mints.len(), 2);
+        // Two mints under one nonce (the authority signed both): the HELD one stands, whatever the hashes.
+        assert_eq!(merge(&a, &b).unwrap().mints, vec![mint(1, 10, 1), mint(2, 10, 1)]);
+        assert_eq!(merge(&b, &a).unwrap().mints, vec![mint(1, 10, 2), mint(2, 10, 1)]);
         let full = Shard { mints: (0..MINTS_MAX as u16).map(|i| { let mut m = mint(0, 10, 1); m.nonce[..2].copy_from_slice(&i.to_be_bytes()); m }).collect() };
         assert!(merge(&full, &Shard { mints: vec![mint(0xff, 10, 1)] }).is_none(), "past the cap");
-        assert!(fresh(&Shard::default(), &a, 11, 2).is_ok());
-        assert!(fresh(&Shard::default(), &a, 13, 2).is_err(), "back-dated");
-        assert!(fresh(&Shard::default(), &a, 9, 2).is_err(), "from the future");
-        assert!(fresh(&a, &a, 99, 2).is_ok());
-        assert_eq!(minted(&[a, b]), Some(150));
+        assert!(fresh(&Shard::default(), &a, 11, 2, false).is_ok());
+        assert!(fresh(&Shard::default(), &a, 13, 2, false).is_err(), "back-dated");
+        assert!(fresh(&Shard::default(), &a, 9, 2, false).is_err(), "from the future");
+        assert!(fresh(&a, &a, 99, 2, false).is_ok());
+        assert_eq!(minted(&tok(&None, crate::Ids::None, 0), &[a, b]), Some(150));
     }
 }

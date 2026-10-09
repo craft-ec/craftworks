@@ -628,7 +628,7 @@ async fn mint_mode(w: &W) -> Result<()> {
     for x in es {
         shards.extend(get(&w.x, shard(x).id()).await?.and_then(|b| T::supply::Shard::decode(&b)));
     }
-    println!("14 totalSupply (mints in the shards, from X): {:?}", T::supply::minted(&shards));
+    println!("14 totalSupply (mints in the shards, from X): {:?}", T::supply::minted(&d, &shards));
     Ok(())
 }
 
@@ -741,7 +741,7 @@ async fn nft(w: &W, scode: &[u8]) -> Result<()> {
     println!("10 the creator paid its 5 B, through X: {}", w.put_chain(&w.x, tb, c, &pay(S::fee_key(&ex), 5, 32)).await?.0);
     println!("11 an outsider (8) claims the creator's 5, through X: {}", w.put_chain(&w.x, tb, 8, &pay(S::fee_key(&ex), 5, 33)).await?.0);
     let mut back = mi.clone();
-    push(&mut back, T::Body::Unescrow { escrow: w.n(7), refund: 0 }, w.n(34), None, now);
+    push(&mut back, T::Body::Unescrow { escrow: w.n(7), refund: 0, verdict: held.hash() }, w.n(34), None, now);
     println!("12 M's escrow released (nothing back), through Y: {}", put(&w.y, container(&w.code, ip(m).encode()), back.encode()).await?.0);
     tokio::time::sleep(Duration::from_secs(2)).await;
     let bal = |b: Option<Vec<u8>>| b.and_then(|b| T::State::decode(&b)).map_or(0, |s| s.balance());
@@ -888,7 +888,7 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
             wallet::stake_at(&p, &pd2, &read(&p)?, at).ok()
         };
         let defs = |t: &[u8; 32]| if *t == ta { Some(td2.clone()) } else if *t == pool { Some(pd2.clone()) } else { None };
-        let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of, definition: &defs, program: &|_| None };
+        let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of, definition: &defs, program: &|_| None, freeze: &|_| None };
         let cited = |t: &T::Tok, o: &[u8; 32]| rt.block_on(get(&y, T::ChainParams { code_hash: ch, definition: t.definition, owner: *o, beacon: bid, idlog, item: t.item }.id())).ok().flatten().and_then(|b| T::State::decode(&b));
         // Witness one entry: its committee drawn, each member re-checks it by the rule and signs into its bag on X.
         let witness = |o: u8, seq: u64, who: &str| -> bool {
@@ -1301,16 +1301,16 @@ async fn pool_mode(w: &W, pcode: &[u8]) -> Result<()> {
     println!("   cleared: 1 back {r1} A, paid {g1} B; 2 back {r2} B, paid {g2} A");
     let wrong = {
         let mut x = c1.clone();
-        push(&mut x, T::Body::Unescrow { escrow: w.n(7), refund: r1 + 10 }, w.n(30), None, now);
+        push(&mut x, T::Body::Unescrow { escrow: w.n(7), refund: r1 + 10, verdict: v.hash() }, w.n(30), None, now);
         x
     };
     println!("6  1's release claiming 10 more than the verdict, on X: {}", w.put_chain(&w.x, ta, 1, &wrong).await?.0);
     let mut s1 = c1.clone();
-    push(&mut s1, T::Body::Unescrow { escrow: w.n(7), refund: r1 }, w.n(30), None, now);
+    push(&mut s1, T::Body::Unescrow { escrow: w.n(7), refund: r1, verdict: v.hash() }, w.n(30), None, now);
     let mut p1 = T::State::default();
     push(&mut p1, T::Body::Payout { program: prog, key: k1, amount: g1, ev: T::Evidence::default() }, w.n(31), None, now);
     let mut s2 = c2.clone();
-    push(&mut s2, T::Body::Unescrow { escrow: w.n(8), refund: r2 }, w.n(32), None, now);
+    push(&mut s2, T::Body::Unescrow { escrow: w.n(8), refund: r2, verdict: v.hash() }, w.n(32), None, now);
     let mut p2 = T::State::default();
     push(&mut p2, T::Body::Payout { program: prog, key: k2, amount: g2, ev: T::Evidence::default() }, w.n(33), None, now);
     let r = [w.put_chain(&w.x, ta, 1, &s1).await?.0, w.put_chain(&w.y, tb, 1, &p1).await?.0, w.put_chain(&w.y, tb, 2, &s2).await?.0, w.put_chain(&w.x, ta, 2, &p2).await?.0];
@@ -1373,11 +1373,11 @@ async fn deal_mode(w: &W, scode: &[u8]) -> Result<()> {
     println!("   deal 1 holds: {} escrows, crossed {}", held.escrows.len(), held == S::crossed(&d1, (None, None), &ex, &ey));
     let now = w.now().await?;
     let mut s1 = c1.clone();
-    push(&mut s1, T::Body::Unescrow { escrow: w.n(7), refund: 0 }, w.n(30), None, now);
+    push(&mut s1, T::Body::Unescrow { escrow: w.n(7), refund: 0, verdict: held.hash() }, w.n(30), None, now);
     let mut p1 = T::State::default();
     push(&mut p1, T::Body::Payout { program: id(&d1), key: S::pay_key(&ex), amount: 500, ev: T::Evidence::default() }, w.n(31), None, now);
     let mut s2 = c2.clone();
-    push(&mut s2, T::Body::Unescrow { escrow: w.n(8), refund: 0 }, w.n(32), None, now);
+    push(&mut s2, T::Body::Unescrow { escrow: w.n(8), refund: 0, verdict: held.hash() }, w.n(32), None, now);
     let mut p2 = T::State::default();
     push(&mut p2, T::Body::Payout { program: id(&d1), key: S::pay_key(&ey), amount: 300, ev: T::Evidence::default() }, w.n(33), None, now);
     let r = [w.put_chain(&w.x, ta, 1, &s1).await?.0, w.put_chain(&w.y, tb, 1, &p1).await?.0, w.put_chain(&w.y, tb, 2, &s2).await?.0, w.put_chain(&w.x, ta, 2, &p2).await?.0];
@@ -1390,7 +1390,7 @@ async fn deal_mode(w: &W, scode: &[u8]) -> Result<()> {
     let at = w.until(d2.deadline + S::GRACE).await?;
     println!("8  its refund at the cutoff ({at}), on X: {}", put(&w.x, c(), refund.encode()).await?.0);
     let mut back = s1.clone();
-    push(&mut back, T::Body::Unescrow { escrow: w.n(9), refund: 300 }, w.n(34), None, w.now().await?);
+    push(&mut back, T::Body::Unescrow { escrow: w.n(9), refund: 300, verdict: refund.hash() }, w.n(34), None, w.now().await?);
     println!("9  1's 300 A released from deal 2, on X: {}", w.put_chain(&w.x, ta, 1, &back).await?.0);
     tokio::time::sleep(Duration::from_secs(2)).await;
     let bal = |s: Option<T::State>| s.map_or(0, |s| s.balance());
@@ -1531,7 +1531,7 @@ async fn holders(w: &W, scode: &[u8]) -> Result<()> {
     let fee = held.pay(&S::fee_key(&ex));
     println!("   the deal pays: M {:?} B, the holders {:?}", held.pay(&S::pay_key(&ex)).map(|p| p.2), fee.map(|p| (p.1 == T::HOLDERS, p.2)));
     let now = w.now().await?;
-    let share = |n: u128, amount: u128| T::Body::HolderPayout { program: prog, key: S::fee_key(&ex), edition: e, copy: n, amount, ev: T::Evidence::default() };
+    let share = |n: u128, amount: u128| T::Body::HolderPayout { program: prog, sold: ex, copy: n, at: r, amount, ev: T::Evidence::default() };
     let mut tc = tbc.clone();
     push(&mut tc, share(2, 3), w.n(30), None, now);
     println!("6  T's share for copy #2 (3 B), on X: {}", w.put_chain(&w.x, tb, t, &tc).await?.0);

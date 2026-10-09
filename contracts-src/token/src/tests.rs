@@ -1701,6 +1701,9 @@ struct Lot {
     now: u64,
     /// Programs' states, by their contract ids (TOKEN §5: escrow).
     progs: Vec<([u8; 32], Vec<u8>)>,
+    /// Token A's definition as the witnesses read it, and its freeze list.
+    def_a: Definition,
+    freeze: Option<freeze::List>,
 }
 impl Lot {
     fn new() -> Lot {
@@ -1711,7 +1714,7 @@ impl Lot {
                 draw::StakeClaim { owner: [n; 32], amount: 100, epoch: 0, key: kb, sig: key(n).sign(&draw::StakeClaim::message(&pool, &[n; 32], 100, 0, &kb)).to_bytes() }
             })
             .collect();
-        Lot { claims, sigs: HashMap::new(), drawn: 100, now: 100, progs: vec![] }
+        Lot { claims, sigs: HashMap::new(), drawn: 100, now: 100, progs: vec![], def_a: def(), freeze: None }
     }
     fn out(h: u64) -> [u8; 32] {
         *blake3::hash(&h.to_le_bytes()).as_bytes()
@@ -1726,6 +1729,7 @@ impl Lot {
             stake_of: &|o, h| (h == 0).then(|| (100, vec![pk(o[0])])),
             definition: &|t| [(id_a(), def()), (id_b(), def_b())].into_iter().find(|x| x.0 == *t).map(|x| x.1),
             program: Box::leak(Box::new(|id: &[u8; 32]| self.progs.iter().find(|x| x.0 == *id).map(|x| x.1.clone()))),
+            freeze: Box::leak(Box::new(|_: &[u8; 32]| self.freeze.clone())),
         }
     }
     /// `n` of the entry's committee sign it (`entry`: what they sign).
@@ -1758,7 +1762,7 @@ impl Lot {
     }
     fn may_t(&self, w: &Two, t: [u8; 32], owner: u8, seq: u64) -> Result<[u8; 32], Why> {
         let p = at(t, owner);
-        let d = if t == id_a() { def() } else { def_b() };
+        let d = if t == id_a() { self.def_a.clone() } else { def_b() };
         let prog = |id: &[u8; 32]| self.progs.iter().find(|x| x.0 == *id).map(|x| x.1.clone());
         let holds = |s: &State| check(&p, &d, s, &|t, o| w.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(owner)), &Extra { ops: None, program: Some(&prog) });
         wallet::may_witness(&self.src(), &p, &d, w.get(t, owner), seq, self.now, &holds, &|t, o| w.0.get(&(t.definition, *o)).cloned())
@@ -2441,6 +2445,7 @@ fn escrowed() -> (Two, Vec<u8>) {
 #[test]
 fn an_escrow_comes_back_only_as_its_programs_verdict_says() {
     let (w, prog) = escrowed();
+    let vh = escrow::Section::decode_prefix(&prog).unwrap().0.hash();
     let ck = |w: &Two, o: u8, prog: Option<&Vec<u8>>| {
         let f = |id: &[u8; 32]| (*id == PROG).then(|| prog.cloned()).flatten();
         check(&at(id_a(), o), &def(), w.get(id_a(), o), &|t, o| w.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(o)), &Extra { ops: None, program: Some(&f) })
@@ -2453,15 +2458,16 @@ fn an_escrow_comes_back_only_as_its_programs_verdict_says() {
         x
     };
     // Its release: as the verdict says, once.
-    let ok = with(Body::Unescrow { escrow: nonce(7), refund: 50 }, 1);
+    let ok = with(Body::Unescrow { escrow: nonce(7), refund: 50, verdict: vh }, 1);
     assert_eq!(ck(&ok, 1, Some(&prog)), Ok(()));
     assert_eq!(ok.get(id_a(), 1).balance(), 750);
-    assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(7), refund: 60 }, 1), 1, Some(&prog)), Err("a release that is not its program's verdict"));
-    assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(7), refund: 301 }, 1), 1, Some(&prog)), Err("a refund past what the escrow held"));
-    assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(6), refund: 50 }, 1), 1, Some(&prog)), Err("a release of no open escrow"));
+    assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(7), refund: 60, verdict: vh }, 1), 1, Some(&prog)), Err("a release that is not its program's verdict"));
+    assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(7), refund: 50, verdict: [9; 32] }, 1), 1, Some(&prog)), Err("a release that is not its program's verdict"), "naming another verdict");
+    assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(7), refund: 301, verdict: vh }, 1), 1, Some(&prog)), Err("a refund past what the escrow held"));
+    assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(6), refund: 50, verdict: vh }, 1), 1, Some(&prog)), Err("a release of no open escrow"));
     assert_eq!(ck(&ok, 1, None), Err("the escrow's program is not there"));
     let mut twice = Two(ok.0.clone());
-    put_at(twice.chain(id_a(), 1), 31, Body::Unescrow { escrow: nonce(7), refund: 50 }, None, 5);
+    put_at(twice.chain(id_a(), 1), 31, Body::Unescrow { escrow: nonce(7), refund: 50, verdict: vh }, None, 5);
     assert_eq!(ck(&twice, 1, Some(&prog)), Err("a release of no open escrow"));
     // A payout: as the verdict says, to its recipient, once.
     let pay = |amount: u128, to: u8| with(Body::Payout { program: PROG, key: [1; 16], amount, ev: Evidence::default() }, to);
@@ -2492,7 +2498,20 @@ fn a_witness_signs_a_payout_only_from_a_program_backed_by_real_escrows() {
     lot.witness(&w, 1).unwrap(); // 1's escrow accepted
     let mut x = Two(w.0.clone());
     put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, ev: Evidence::default() }, None, 5);
+    // ONE VERDICT: no payout is signed before every escrow its program lists is released under THIS verdict.
+    assert_eq!(lot.may(&x, 2, 0), Err("a payout before every escrow of its verdict is released"));
+    let vh = escrow::Section::decode_prefix(&prog).unwrap().0.hash();
+    put_at(x.chain(id_a(), 1), 31, Body::Unescrow { escrow: nonce(7), refund: 50, verdict: vh }, None, 5);
+    lot.witness(&x, 1).unwrap(); // released under this verdict, accepted
     assert_eq!(lot.may(&x, 2, 0).map(|_| ()), Ok(()));
+    // Released under ANOTHER verdict (or not at all): this one's payouts never signed.
+    let mut lot2 = Lot::new();
+    lot2.progs.push((PROG, prog.clone()));
+    let mut y = Two(w.0.clone());
+    put_at(y.chain(id_a(), 1), 31, Body::Unescrow { escrow: nonce(7), refund: 50, verdict: [9; 32] }, None, 5);
+    lot2.witness_t(&y, id_a(), 1).ok();
+    put_at(y.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, ev: Evidence::default() }, None, 5);
+    assert_eq!(lot2.may(&y, 2, 0), Err("a payout before every escrow of its verdict is released"));
     // A program listing an escrow that is not there (to pay out of thin air): no witness signs its payouts.
     let (sec, rest) = escrow::Section::decode_prefix(&prog).unwrap();
     let mut fake = sec.clone();
@@ -2607,6 +2626,7 @@ fn a_capped_edition_mints_by_number_into_records_made_as_needed() {
     assert_eq!(supply::holds(&record(&g, 0), &g, &none, &s), Ok(()));
     let ad: Vec<(u128, u128)> = supply::admitted(&g, &s).iter().map(|m| (u128::from_be_bytes(m.nonce), m.amount)).collect();
     assert_eq!(ad, vec![(1, 3), (4, 2), (6, 1)]);
+    assert_eq!(supply::minted(&g, &[s.clone()]), Some(6), "totalSupply: the admitted only (3 + 2 + 1, not the 1 over a taken number)");
     assert_eq!(supply::covering(&g, &s, 2).map(|m| m.to), Some(did(M)));
     assert_eq!(supply::covering(&g, &s, 5).map(|m| m.to), Some(did(T)));
     assert_eq!(supply::covering(&g, &s, 7), None);
@@ -2632,7 +2652,8 @@ fn a_capped_edition_mints_by_number_into_records_made_as_needed() {
     let given = Definition { genesis_amount: 10, ..sv.clone() };
     assert_eq!(one(ed_mint(&given, T, 10, 1, 6), 0, &given), Err("a mint of numbers not its record's"), "the genesis's numbers");
     assert_eq!(one(ed_mint(&given, T, 11, 1, 6), 0, &given), Ok(()));
-    // A mint change seals its FRONTIER record exactly, and no record past it holds a mint from before it.
+    // EVERY record is sealed by every mint change: named, exactly; not named, no mint from before it (audit 10-10: a
+    // frontier alone let the replaced key mint into a lower record not yet made).
     let mut c = authority::Change { seq: 0, role: authority::Role::Mint, next: Some(authority::KeySet { k: 1, keys: vec![key(61).verifying_key().to_bytes()] }), stamp: 7, closed: vec![], cap: 0, sigs: vec![] };
     let sealed = |c: &mut authority::Change, closed: Vec<(u64, [u8; 32])>| {
         c.closed = closed;
@@ -2640,16 +2661,27 @@ fn a_capped_edition_mints_by_number_into_records_made_as_needed() {
         authority::Chain { changes: vec![c.clone()] }
     };
     let r0 = supply::Shard { mints: vec![ed_mint(&open, M, 1, 3, 5)] };
-    let seal0 = vec![(0, supply::seal(&r0, 7).unwrap())];
-    assert_eq!(supply::holds(&record(&open, 0), &open, &sealed(&mut c, seal0.clone()), &r0), Ok(()));
+    let r4 = supply::Shard { mints: vec![ed_mint(&open, M, 4097, 1, 5)] };
+    let both = vec![(0, supply::seal(&r0, 7).unwrap()), (4, supply::seal(&r4, 7).unwrap())];
+    assert_eq!(supply::holds(&record(&open, 0), &open, &sealed(&mut c, both.clone()), &r0), Ok(()));
+    assert_eq!(supply::holds(&record(&open, 4), &open, &sealed(&mut c, both.clone()), &r4), Ok(()));
     let back0 = supply::Shard { mints: vec![ed_mint(&open, M, 1, 3, 5), ed_mint(&open, 8, 4, 1, 6)] };
-    assert_eq!(supply::holds(&record(&open, 0), &open, &sealed(&mut c, seal0.clone()), &back0), Err("a shard that is not what its mint authority sealed"), "into the frontier, back-dated");
-    let back1 = supply::Shard { mints: vec![ed_mint(&open, 8, 1025, 1, 6)] };
-    assert_eq!(supply::holds(&record(&open, 1), &open, &sealed(&mut c, seal0.clone()), &back1), Err("a shard that is not what its mint authority sealed"), "past the frontier, back-dated");
-    assert_eq!(supply::holds(&record(&open, 0), &open, &sealed(&mut c, vec![]), &r0), Err("a shard that is not what its mint authority sealed"), "no frontier: nothing before it");
-    let mut after = supply::Mint { to: did(8), item: [0; 32], amount: 1, nonce: 1025u128.to_be_bytes(), stamp: 8, sigs: vec![] };
+    assert_eq!(supply::holds(&record(&open, 0), &open, &sealed(&mut c, both.clone()), &back0), Err("a shard that is not what its mint authority sealed"), "into a named record, back-dated");
+    let back2 = supply::Shard { mints: vec![ed_mint(&open, 8, 2049, 1, 6)] };
+    assert_eq!(supply::holds(&record(&open, 2), &open, &sealed(&mut c, both.clone()), &back2), Err("a shard that is not what its mint authority sealed"), "into a record BELOW the highest named, not yet made");
+    let back5 = supply::Shard { mints: vec![ed_mint(&open, 8, 5121, 1, 6)] };
+    assert_eq!(supply::holds(&record(&open, 5), &open, &sealed(&mut c, both.clone()), &back5), Err("a shard that is not what its mint authority sealed"), "past them, back-dated");
+    let mut after = supply::Mint { to: did(8), item: [0; 32], amount: 1, nonce: 2049u128.to_be_bytes(), stamp: 8, sigs: vec![] };
     after.sigs = vec![(0, key(61).sign(&after.message(&did_of(&open))).to_bytes())];
-    assert_eq!(supply::holds(&record(&open, 1), &open, &sealed(&mut c, seal0), &supply::Shard { mints: vec![after] }), Ok(()), "the new key, after");
+    assert_eq!(supply::holds(&record(&open, 2), &open, &sealed(&mut c, both), &supply::Shard { mints: vec![after] }), Ok(()), "the new key, after");
+    // An UPDATE adds no mint onto numbers a held mint has (what was credited from it stays its): refused, not displaced.
+    let held = supply::Shard { mints: vec![ed_mint(&open, M, 5, 3, 100)] };
+    let onto = supply::merge(&held, &supply::Shard { mints: vec![ed_mint(&open, 8, 6, 1, 99)] }).unwrap();
+    assert_eq!(supply::fresh(&held, &onto, 100, 2, true), Err("a mint of numbers already minted"));
+    let beside = supply::merge(&held, &supply::Shard { mints: vec![ed_mint(&open, 8, 8, 1, 99)] }).unwrap();
+    assert_eq!(supply::fresh(&held, &beside, 100, 2, true), Ok(()));
+    assert_eq!(supply::fresh(&held, &onto, 100, 2, false), Ok(()), "an uncapped token's mints have no numbers");
+
 }
 
 #[test]
@@ -2701,92 +2733,99 @@ fn at_(token: [u8; 32], owner: u8) -> ChainParams {
 }
 
 #[test]
-fn an_editions_holders_share_its_royalty_each_other_copy_once() {
-    // EDITION E: numbered, cap 4, 10% to its HOLDERS. M sells copy #1 to T for 100 B through PROG: 90 B to M, the fee
-    // 10 B to the holders — 10 / (4 − 1) = 3 for each OTHER copy. T holds #2, 8 holds #3.
+fn an_editions_holders_share_its_royalty_each_copy_once_by_who_held_it_at_the_sale() {
+    // EDITION E: numbered, cap 4, 10% to its HOLDERS. M escrowed copy #1 at beacon 4 and sold it to T for 100 B
+    // through PROG: 90 B to M, the 10 B fee to the holders — 10 / 3 = 3 for each OTHER copy's holder AT THE SALE.
+    // T has held #2 since 2, 8 held #3 since 3 (and sends it to 9 at 6, after the sale); 9 is credited #4 at 7.
     let e = Definition { ids: Ids::Numbered, cap: 4, decimals: 0, min_send: 1, genesis_amount: 0, mint: Some(mint_set()), royalty: Some((1000, HOLDERS)), name: b"E".to_vec(), nonce: [5; 16], ..def() };
     assert_eq!(Definition::decode(&e.encode()), Some(e.clone()));
     assert_eq!(Definition::decode(&Definition { cap: 1, ..e.clone() }.encode()), None, "one copy: no other holder");
     assert_eq!(Definition::decode(&Definition { ids: Ids::None, decimals: 8, ..e.clone() }.encode()), None, "plain copies: shares could move");
     let eid = did_of(&e);
     let copy = |n: u128| Tok { definition: eid, item: numbered_item(&eid, n) };
-    let mut copies: HashMap<(Tok, [u8; 32]), State> = HashMap::new();
-    for (n, o) in [(2u128, T), (3, 8)] {
+    let credit = |n: u128, stamp: u64| {
         let mut c = State::default();
-        put_at(&mut c, 1, Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: 5, ev: Evidence::default() }, None, 6);
-        copies.insert((copy(n), did(o)), c);
-    }
+        put_at(&mut c, 1, Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: 1, ev: Evidence::default() }, None, stamp);
+        c
+    };
+    let mut copies: HashMap<(Tok, [u8; 32]), State> = HashMap::new();
+    copies.insert((copy(2), did(T)), credit(2, 2));
+    let mut c3 = credit(3, 3);
+    put_at(&mut c3, 9, Body::Send { to: did(9), amount: 1 }, Some(8), 6);
+    copies.insert((copy(3), did(8)), c3);
+    let mut r9 = State::default();
+    put_at(&mut r9, 9, Body::Receive { from: did(8), nonce: nonce(9), amount: 1, cited: 6, ev: Evidence::default() }, None, 8);
+    copies.insert((copy(3), did(9)), r9);
+    copies.insert((copy(4), did(9)), credit(4, 7));
+    let sold: escrow::EscrowRef = (copy(1), did(M), nonce(7));
     let h = escrow::terms_hash(b"sell");
     let sec = escrow::Section {
-        escrows: vec![((copy(1), did(M), nonce(7)), 1, h), (eref(id_b(), T, 8), 100, h)],
+        escrows: vec![(sold, 1, h), (eref(id_b(), T, 8), 100, h)],
         refunds: vec![],
-        pays: vec![([1; 16], copy(1), did(T), 1), ([2; 16], id_b().into(), did(M), 90), ([3; 16], id_b().into(), HOLDERS, 10)],
+        pays: vec![([1; 16], copy(1), did(T), 1), ([2; 16], id_b().into(), did(M), 90), (escrow::fee_key(&sold), id_b().into(), HOLDERS, 10)],
     };
     assert_eq!(sec.holds(), Ok(()));
     let prog = sec.encode();
     let ebytes = e.encode();
-    let claim = |o: u8, n: u128, amount: u128, twice: bool| {
+    let claim_by = |o: u8, sold: escrow::EscrowRef, n: u128, when: u64, amount: u128, twice: bool, defs: &dyn Fn(&[u8; 32]) -> Option<Vec<u8>>| {
         let mut s = State::default();
-        put_at(&mut s, 1, Body::Genesis { amount: 1000 }, Some(2), 0);
-        if o != 2 {
-            s = State::default();
-        }
-        let body = || Body::HolderPayout { program: PROG, key: [3; 16], edition: eid, copy: n, amount, ev: Evidence::default() };
+        let body = || Body::HolderPayout { program: PROG, sold, copy: n, at: when, amount, ev: Evidence::default() };
         put_at(&mut s, 30, body(), None, 10);
         if twice {
             put_at(&mut s, 31, body(), None, 10);
         }
-        let f = |id: &[u8; 32]| if *id == PROG { Some(prog.clone()) } else if *id == eid { Some(ebytes.clone()) } else { None };
-        let def_b_ = if o == 2 { def_b() } else { Definition { genesis_owner: did(o), ..def_b() } };
-        check(&at(id_b(), o), &def_b_, &s, &|t, ow| copies.get(&(*t, *ow)).cloned(), &|_| None, Some(&log(o)), &Extra { ops: None, program: Some(&f) })
+        check(&at(id_b(), o), &Definition { genesis_owner: did(o), ..def_b() }, &s, &|t, ow| copies.get(&(*t, *ow)).cloned(), &|_| None, Some(&log(o)), &Extra { ops: None, program: Some(defs) })
     };
-    assert_eq!(claim(T, 2, 3, false), Ok(()), "T, for copy #2");
-    assert_eq!(claim(8, 3, 3, false), Ok(()), "8, for copy #3");
-    assert_eq!(claim(T, 2, 4, false), Err("a holders' share that is not its program's verdict"), "more than its share");
-    assert_eq!(claim(T, 2, 3, true), Err("a payout received twice"));
-    assert_eq!(claim(T, 3, 3, false), Err("a holders' share of a copy not held here"), "8's copy");
-    assert_eq!(claim(M, 1, 3, false), Err("a holders' share of a copy that takes none"), "the copy sold: no cut");
-    assert_eq!(claim(8, 5, 3, false), Err("a holders' share of a copy that takes none"), "past the cap");
-    // From a payout that is not the holders' (M's 90): no share. A copy sold on: its old holder takes none.
-    let mut s = State::default();
-    put_at(&mut s, 30, Body::HolderPayout { program: PROG, key: [2; 16], edition: eid, copy: 3, amount: 30, ev: Evidence::default() }, None, 10);
-    let fp = |id: &[u8; 32]| if *id == PROG { Some(prog.clone()) } else if *id == eid { Some(ebytes.clone()) } else { None };
-    let b8 = Definition { genesis_owner: did(8), ..def_b() };
-    assert_eq!(check(&at(id_b(), 8), &b8, &s, &|t, ow| copies.get(&(*t, *ow)).cloned(), &|_| None, Some(&log(8)), &Extra { ops: None, program: Some(&fp) }), Err("a holders' share that is not its program's verdict"));
-    let mut gone = copies.clone();
-    let c3 = gone.get_mut(&(copy(3), did(8))).unwrap();
-    put_at(c3, 9, Body::Send { to: did(9), amount: 1 }, Some(8), 7);
-    let mut s = State::default();
-    put_at(&mut s, 30, Body::HolderPayout { program: PROG, key: [3; 16], edition: eid, copy: 3, amount: 3, ev: Evidence::default() }, None, 10);
-    assert_eq!(check(&at(id_b(), 8), &b8, &s, &|t, ow| gone.get(&(*t, *ow)).cloned(), &|_| None, Some(&log(8)), &Extra { ops: None, program: Some(&fp) }), Err("a holders' share of a copy not held here"));
-    // Another definition handed in under the edition's id (cap 2: a share of 10): not its definition.
-    let fake = Definition { cap: 2, ..e.clone() }.encode();
-    let ff = |id: &[u8; 32]| if *id == PROG { Some(prog.clone()) } else if *id == eid { Some(fake.clone()) } else { None };
-    let mut s = State::default();
-    put_at(&mut s, 30, Body::HolderPayout { program: PROG, key: [3; 16], edition: eid, copy: 2, amount: 10, ev: Evidence::default() }, None, 10);
-    assert_eq!(check(&at(id_b(), 8), &b8, &s, &|_, _| None, &|_| None, Some(&log(8)), &Extra { ops: None, program: Some(&ff) }), Err("the edition's definition is not there"));
-    // A WITNESS of a share reads the claimant's chain of the copy: its last entry is what it accepts first.
-    let mut s = State::default();
-    put_at(&mut s, 30, Body::HolderPayout { program: PROG, key: [3; 16], edition: eid, copy: 3, amount: 3, ev: Evidence::default() }, None, 10);
-    let e30 = s.entries.last().unwrap().clone();
-    let got = wallet::cited(&at(id_b(), 8), &e30, &|t, ow| copies.get(&(*t, *ow)).cloned()).unwrap();
-    assert_eq!(got.len(), 1);
-    assert_eq!((got[0].0.tok(), got[0].1.clone()), (copy(3), copies[&(copy(3), did(8))].entries.last().unwrap().clone()));
-    assert_eq!(wallet::cited(&at(id_b(), 8), &e30, &|_, _| None).err(), Some("a cited chain not held"));
-    // An edition that names its creator, not its holders: no shares.
+    let f = |id: &[u8; 32]| if *id == PROG { Some(prog.clone()) } else if *id == eid { Some(ebytes.clone()) } else { None };
+    let claim = |o: u8, n: u128, amount: u128| claim_by(o, sold, n, 4, amount, false, &f);
+    assert_eq!(claim(T, 2, 3), Ok(()), "T, for copy #2");
+    assert_eq!(claim(8, 3, 3), Ok(()), "8 held #3 at the sale (sent on since): its share");
+    assert_eq!(claim(9, 3, 3), Err("a holders' share of a copy not held here at the sale"), "9 got #3 after the sale (audit 10-10: each holder claimed again)");
+    assert_eq!(claim(9, 4, 3), Err("a holders' share of a copy not held here at the sale"), "#4 minted after the sale");
+    assert_eq!(claim(M, 1, 3), Err("a holders' share of a copy that takes none"), "the copy sold: no cut");
+    assert_eq!(claim(T, 2, 4), Err("a holders' share that is not its program's verdict"), "more than its share");
+    assert_eq!(claim(8, 5, 3), Err("a holders' share of a copy that takes none"), "past the cap");
+    assert_eq!(claim_by(T, (copy(1), did(M), nonce(9)), 2, 4, 3, false, &f), Err("a holders' share of a sale that is not its program's"));
+    assert_eq!(claim_by(T, sold, 2, 4, 3, true, &f), Err("a payout received twice"));
+    // An edition that names its creator, not its holders: no shares (audit 10-10: a holders' edition of the claimant's own
+    // could take any fee — the share is of THE sold copy's edition now).
     let creator = Definition { royalty: Some((1000, did(7))), ..e.clone() };
-    let cb = creator.encode();
-    let cid = did_of(&creator);
-    let f = |id: &[u8; 32]| if *id == PROG { Some(prog.clone()) } else if *id == cid { Some(cb.clone()) } else { None };
+    let (cb, cid) = (creator.encode(), did_of(&creator));
+    let csold: escrow::EscrowRef = (Tok { definition: cid, item: numbered_item(&cid, 1) }, did(M), nonce(7));
+    let csec = escrow::Section { escrows: vec![(csold, 1, h), (eref(id_b(), T, 8), 100, h)], refunds: vec![], pays: vec![(escrow::fee_key(&csold), id_b().into(), HOLDERS, 1)] }.encode();
+    let fc = |id: &[u8; 32]| if *id == PROG { Some(csec.clone()) } else if *id == cid { Some(cb.clone()) } else { None };
+    assert_eq!(claim_by(8, csold, 3, 4, 0, false, &fc), Err("a holders' share of an edition that shares none"));
+    // The WITNESS's half: the share is dated by the sold copy's escrow (its stamp in its seller's chain); its claimant's
+    // holding entry is the one at that time.
+    let mut seller = credit(1, 1);
+    put_at(&mut seller, 7, Body::Escrow { program: PROG, terms: b"sell".to_vec(), amount: 1, until: 0 }, Some(M), 4);
+    assert_eq!(wallet::sale_at(&seller, &nonce(7)), Some(4));
+    assert_eq!(wallet::sale_at(&seller, &nonce(8)), None);
     let mut s = State::default();
-    put_at(&mut s, 30, Body::HolderPayout { program: PROG, key: [3; 16], edition: cid, copy: 3, amount: 3, ev: Evidence::default() }, None, 10);
-    assert_eq!(check(&at(id_b(), 8), &Definition { genesis_owner: did(8), ..def_b() }, &s, &|_, _| None, &|_| None, Some(&log(8)), &Extra { ops: None, program: Some(&f) }), Err("a holders' share of an edition that shares none"));
+    put_at(&mut s, 30, Body::HolderPayout { program: PROG, sold, copy: 3, at: 4, amount: 3, ev: Evidence::default() }, None, 10);
+    let got = wallet::cited(&at(id_b(), 8), s.entries.last().unwrap(), &|t, ow| copies.get(&(*t, *ow)).cloned()).unwrap();
+    assert!(got[0].1.stamp <= 4 && got[0].1.balance == 1 && !matches!(got[0].1.body, Body::Send { .. }), "the entry holding it at 4 — not the later send");
+    // ... and a witness signs a share only dated by that escrow (a later `at` would pick a later holder).
+    let lot = Lot::new();
+    let seller_c = seller.clone();
+    let chains = |t: &Tok, ow: &[u8; 32]| if *t == copy(1) && *ow == did(M) { Some(seller_c.clone()) } else { copies.get(&(*t, *ow)).cloned() };
+    let dated = |when: u64| {
+        let mut s = State::default();
+        put_at(&mut s, 30, Body::HolderPayout { program: PROG, sold, copy: 3, at: when, amount: 3, ev: Evidence::default() }, None, 10);
+        let i = s.entries.len() - 1;
+        wallet::program_entry(&lot.src(), &at(id_b(), 8), &s, i, &chains)
+    };
+    assert_eq!(dated(5), Err("a holders' share dated other than its sale"));
+    assert_ne!(dated(4), Err("a holders' share dated other than its sale"), "dated by its sale: on to the program's check");
     // The sold copy's payout to its buyer passes the royalty rule: the holders were paid their share.
     let buyer = ChainParams { item: copy(1).item, ..at(eid, T) };
     let mut s = State::default();
     put_at(&mut s, 30, Body::Payout { program: PROG, key: [1; 16], amount: 1, ev: Evidence::default() }, None, 10);
-    let f = |id: &[u8; 32]| (*id == PROG).then(|| prog.clone());
-    assert_eq!(check(&buyer, &e, &s, &|_, _| None, &|_| None, Some(&log(T)), &Extra { ops: None, program: Some(&f) }), Ok(()));
+    let fp = |id: &[u8; 32]| (*id == PROG).then(|| prog.clone());
+    assert_eq!(check(&buyer, &e, &s, &|_, _| None, &|_| None, Some(&log(T)), &Extra { ops: None, program: Some(&fp) }), Ok(()));
+    assert_eq!(held_at(&copies[&(copy(3), did(8))], 4), Some(1));
+    assert_eq!(held_at(&copies[&(copy(3), did(8))], 6), Some(0));
+    assert_eq!(held_at(&copies[&(copy(3), did(9))], 4), None);
 }
 
 #[test]
@@ -2834,6 +2873,12 @@ fn an_escrow_its_program_never_took_is_reclaimed_after_its_time() {
     assert_eq!(lot.may(&back, 1, seq).map(|_| ()), Ok(()), "the program not there: signed");
     lot.progs.push((PROG, took.clone()));
     assert_eq!(lot.may(&back, 1, seq), Err("a reclaim of an escrow its program took"));
+    // A program listing it beside an escrow that is not there (audit 10-10: a fake listing froze a real escrow): it
+    // took nothing — its verdict is never paid — so the escrow comes back.
+    let fake = escrow::Section { escrows: vec![(eref(id_a(), 1, 7), 300, escrow::terms_hash(b"sell at 2")), (eref(id_a(), 3, 9), 300, [0; 32])], ..Default::default() };
+    lot.progs[0].1 = fake.encode();
+    assert_eq!(lot.may(&back, 1, seq).map(|_| ()), Ok(()));
+    lot.progs[0].1 = took.clone();
     let pays = escrow::Section { escrows: vec![(eref(id_a(), 1, 7), 300, escrow::terms_hash(b"sell at 2"))], refunds: vec![], pays: vec![([1; 16], id_a().into(), did(2), 300)] };
     let mut x = Two(back.0.clone());
     put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 300, ev: Evidence::default() }, None, 25);
@@ -2976,4 +3021,120 @@ fn a_paused_token_takes_no_debit_of_anyone_and_still_takes_credits() {
     let mut credit = State::default();
     put_at(&mut credit, 30, Body::Receive { from: did(1), nonce: nonce(2), amount: 10, cited: 2, ev: Evidence::default() }, None, 5);
     assert_eq!(freeze_check(&at(id_a(), 2), &d, &State::default(), &credit, &pause(true)), Ok(()), "receiving still works");
+}
+
+#[test]
+fn a_payout_taken_before_a_cut_is_never_taken_again_after_it() {
+    // 2 is paid 250 A by PROG's verdict (key 1), then CUTS at stamp 6; the same payout again after the cut is refused —
+    // its name is in the cut's received set, and a payout has no stamp of its own to place it after the cut (audit
+    // 10-10: it was taken again, 250 → 500).
+    let (w, prog) = escrowed();
+    let mut x = Two(w.0.clone());
+    put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, ev: Evidence::default() }, None, 5);
+    let whole2 = x.get(id_a(), 2).clone();
+    let mut blocks = cut::Blocks::new();
+    cut_at(&mut x, &whole2, id_a(), 2, 6, &mut blocks);
+    let live2 = x.get(id_a(), 2).clone();
+    let f = |id: &[u8; 32]| (*id == PROG).then(|| prog.clone());
+    let ck = |s: &State| check(&at(id_a(), 2), &def(), s, &|t, o| x.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(2)), &Extra { ops: None, program: Some(&f) });
+    assert_eq!(ck(&live2), Ok(()));
+    let again = |ev: Evidence| {
+        let mut s = live2.clone();
+        put_at(&mut s, 31, Body::Payout { program: PROG, key: [1; 16], amount: 250, ev }, None, 7);
+        ck(&s)
+    };
+    assert_eq!(again(Evidence::default()), Err("a payout received twice"));
+    let present = cut::proof(&blocks, &roots(&live2).1, &received_key(PAYOUT, &PROG, &[1; 16])).unwrap();
+    assert_eq!(again(Evidence { mine: present, theirs: vec![] }), Err("a payout received twice"), "the proof the writer CAN make: of presence");
+}
+
+#[test]
+fn witnesses_sign_no_debit_while_frozen_and_no_second_entry_at_a_taken_place() {
+    // 1: genesis, then a send of 100 to 2 (stamp 0), all witnessed.
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 2, Body::Send { to: did(2), amount: 100 }, Some(1), 0);
+    let mut lot = Lot::new();
+    lot.witness(&w, 1).unwrap();
+    let send = w.get(id_a(), 1).entries.len() as u64 - 1;
+    assert!(lot.may(&w, 1, send).is_ok());
+    // PAUSED (the freeze list's EVERYONE word, stamped at or before the send): the debit is not signed — the append rule
+    // a first copy skips (audit 10-10).
+    lot.def_a = Definition { freeze: Some(mint_set()), ..def() };
+    let word = |stamp: u64| {
+        let mut r = freeze::Record { owner: freeze::EVERYONE, frozen: true, seq: 0, stamp, sigs: vec![] };
+        r.sigs = vec![(0, key(60).sign(&r.message(&id_a())).to_bytes())];
+        freeze::List { records: vec![r] }
+    };
+    lot.freeze = Some(word(0));
+    assert_eq!(lot.may(&w, 1, send), Err("a debit of a frozen account"));
+    lot.freeze = Some(word(1));
+    assert!(lot.may(&w, 1, send).is_ok(), "frozen only after it");
+    lot.freeze = None;
+    assert_eq!(lot.may(&w, 1, send), Err("the freeze list not read"));
+    lot.def_a = def();
+    // TAKEN: another entry at the send's place (an owner's override, a copy shown elsewhere) — never signed.
+    let mut alt = Two(HashMap::new());
+    alt.0.insert((id_a(), did(1)), State { entries: w.get(id_a(), 1).entries[..send as usize].to_vec(), fork: None });
+    put_at(alt.chain(id_a(), 1), 3, Body::Burn { amount: 10 }, Some(1), 0);
+    assert_eq!(lot.may(&alt, 1, send), Err("a place another entry was accepted at"));
+    let fresh_lot = Lot::new();
+    assert_ne!(fresh_lot.may(&alt, 1, send), Err("a place another entry was accepted at"), "control: nothing accepted there yet");
+}
+
+#[test]
+fn no_entry_held_past_its_finality_is_replaced() {
+    // 2 holds a receive at seq 0 (stamp 5); a copy with ANOTHER entry there (it won the merge) is taken only within the
+    // margin (2) of it.
+    let mut held = State::default();
+    put_at(&mut held, 30, Body::Receive { from: did(1), nonce: nonce(30), amount: 100, cited: 0, ev: Evidence::default() }, None, 5);
+    let mut other = State::default();
+    put_at(&mut other, 31, Body::Receive { from: did(1), nonce: nonce(31), amount: 100, cited: 0, ev: Evidence::default() }, None, 5);
+    assert_eq!(append_check(&def(), 20, &held, &other, None), Err("an entry past its finality replaced"));
+    assert_eq!(append_check(&def(), 6, &held, &other, None), Ok(()), "within the margin: a race, settled by the merge");
+    assert_eq!(append_check(&def(), 20, &held, &held, None), Ok(()), "nothing replaced");
+}
+
+#[test]
+fn the_audits_small_rules_hold() {
+    // A reclaim from scratch, before its escrow's time: refused (not only by the witnesses' timed rule).
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 7, Body::Escrow { program: PROG, terms: vec![], amount: 300, until: 20 }, Some(1), 3);
+    let ck = |w: &Two| check(&at(id_a(), 1), &def(), w.get(id_a(), 1), &|_, _| None, &|_| None, Some(&log(1)), &Extra::NONE);
+    let mut early = Two(w.0.clone());
+    put_at(early.chain(id_a(), 1), 30, Body::Reclaim { escrow: nonce(7) }, None, 19);
+    assert_eq!(ck(&early), Err("a reclaim before its escrow's time"));
+    // Definitions: a fee to no one; numbered copies with decimals, a minimum above one, or a genesis.
+    let num = Definition { ids: Ids::Numbered, cap: 10, decimals: 0, min_send: 1, genesis_amount: 0, mint: Some(mint_set()), ..def() };
+    assert!(Definition::decode(&num.encode()).is_some());
+    for (bad, why) in [
+        (Definition { transfer_fee: Some((100, 0, HOLDERS)), ..def() }, "a fee to no one"),
+        (Definition { decimals: 2, ..num.clone() }, "decimals"),
+        (Definition { min_send: 2, ..num.clone() }, "a minimum above one"),
+        (Definition { genesis_amount: 1, ..num.clone() }, "a genesis"),
+    ] {
+        assert_eq!(Definition::decode(&bad.encode()), None, "{why}");
+    }
+    // No chain of HOLDERS (no one's).
+    let mut s = State::default();
+    put_at(&mut s, 30, Body::Payout { program: PROG, key: [1; 16], amount: 1, ev: Evidence::default() }, None, 5);
+    assert_eq!(check(&ChainParams { owner: HOLDERS, ..at(id_a(), 1) }, &def(), &s, &|_, _| None, &|_| None, None, &Extra::NONE), Err("a chain of no one"));
+    // Two transfers out under one nonce: the second refused.
+    let mut two = State::default();
+    put_at(&mut two, 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(&mut two, 5, Body::Send { to: did(2), amount: 10 }, Some(1), 1);
+    let ok = two.clone();
+    put_at(&mut two, 5, Body::Send { to: did(3), amount: 10 }, Some(1), 1);
+    assert_eq!(check(&params(1), &def(), &ok, &|_, _| None, &|_| None, Some(&log(1)), &Extra::NONE), Ok(()));
+    assert_eq!(check(&params(1), &def(), &two, &|_, _| None, &|_| None, Some(&log(1)), &Extra::NONE), Err("a transfer named as an earlier one"));
+    // What a fresh copy must be shown, counted: four recent holders' shares ask for 1 + 4 × 3 — past the node's 10, so
+    // an update leaving such a chain is refused.
+    let mut hp = State::default();
+    for k in 0..4u8 {
+        let sold = (Tok { definition: [40 + k; 32], item: [1; 32] }, did(M), nonce(7));
+        put_at(&mut hp, 30 + k, Body::HolderPayout { program: [50 + k; 32], sold, copy: 2, at: 4, amount: 1, ev: Evidence::default() }, None, 10);
+    }
+    assert!(validate_wants(&at(id_b(), T), &hp).len() > MAX_RELATED);
+    assert!(validate_wants(&at(id_b(), T), &State { entries: hp.entries[..2].to_vec(), fork: None }).len() <= MAX_RELATED);
 }

@@ -106,6 +106,13 @@ impl List {
         (r.done() && records.windows(2).all(|w| w[0].owner < w[1].owner)).then_some(List { records })
     }
     /// Is `owner` frozen now?
+    /// Was `owner` frozen at beacon `stamp`, as far as this list shows — its own or the whole token's latest word
+    /// says frozen, from a stamp at or before it (a later word may have replaced an earlier one: a witness reads what
+    /// the list says now).
+    pub fn frozen_at(&self, owner: &[u8; 32], stamp: u64) -> bool {
+        let says = |o: &[u8; 32]| self.records.binary_search_by(|r| r.owner.cmp(o)).is_ok_and(|i| self.records[i].frozen && self.records[i].stamp <= stamp);
+        says(owner) || says(&EVERYONE)
+    }
     /// Is `owner` frozen — its own record, or the whole token's ([`EVERYONE`])?
     pub fn frozen(&self, owner: &[u8; 32]) -> bool {
         let says = |o: &[u8; 32]| self.records.binary_search_by(|r| r.owner.cmp(o)).is_ok_and(|i| self.records[i].frozen);

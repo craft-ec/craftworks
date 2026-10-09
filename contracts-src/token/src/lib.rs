@@ -247,7 +247,9 @@ impl Definition {
         };
         let ok = r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1 && royalty.is_none_or(|(b, _)| b > 0 && b <= 10_000) && (cap == 0 || genesis_amount <= cap) && (cap == 0 || matches!(ids, Ids::None | Ids::Numbered))
             && royalty.is_none_or(|(_, to)| to != HOLDERS || (ids == Ids::Numbered && cap >= 2))
-            && transfer_fee.is_none_or(|(b, _, _)| b > 0 && b <= 10_000);
+            && transfer_fee.is_none_or(|(b, _, c)| b > 0 && b <= 10_000 && c != HOLDERS)
+            // Numbered copies are whole, sendable one at a time, and only minted (a genesis would hold numbers no copy has).
+            && (ids != Ids::Numbered || (decimals == 0 && min_send == 1 && genesis_amount == 0));
         ok.then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog, mint, freeze, ids, royalty, cap, collection, item, version, soulbound, transfer_fee })
     }
     /// Minted by NUMBER into records ([`supply::RECORD`]): a cap, or numbered copies (each number once, ever).
@@ -365,13 +367,18 @@ pub const HOLDERS_SHARE: u8 = b'h';
 /// each claiming `fee / (cap − 1)` once ([`Body::HolderPayout`]). Only a numbered edition of at least 2 names it.
 pub const HOLDERS: [u8; 32] = [0xff; 32];
 
-/// A holders' share's name in the received set: the fee's key and the copy.
-pub fn holder_nonce(key: &[u8; 16], edition: &[u8; 32], copy: u128) -> [u8; 16] {
+/// A holders' share's name in the received set: the sale (its sold escrow) and the copy.
+pub fn holder_nonce(sold: &escrow::EscrowRef, copy: u128) -> [u8; 16] {
     let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-10 token holders share");
-    h.update(key);
-    h.update(edition);
+    h.update(&escrow::fee_key(sold));
     h.update(&copy.to_be_bytes());
     h.finalize().as_bytes()[..16].try_into().unwrap()
+}
+
+/// What a chain held as of beacon `at` (its balance after its last entry stamped at or before `at`). `None`: the chain
+/// does not show it — it starts after `at` (a cut, or no entry yet).
+pub fn held_at(s: &State, at: u64) -> Option<u128> {
+    s.entries.iter().take_while(|e| e.stamp <= at).last().map(|e| e.balance)
 }
 /// The received-set key of step `step` of the vest `nonce` in `from`'s chain.
 pub fn vested_key(from: &[u8; 32], nonce: &[u8; 16], step: u32) -> Vec<u8> {
@@ -441,9 +448,10 @@ pub enum Body {
     /// `terms` (the program's to read). A debit now; back only as the program's verdict says — or, from beacon
     /// `until` on (0: never), RECLAIMED whole if the program has not taken it ([`Body::Reclaim`]).
     Escrow { program: [u8; 32], terms: Vec<u8>, amount: u128, until: u64 },
-    /// The escrow `escrow`'s RELEASE (unescrow): what its program's verdict gives back (`refund`) credited. Appended by anyone (with
-    /// work), once.
-    Unescrow { escrow: [u8; 16], refund: u128 },
+    /// The escrow `escrow`'s RELEASE (unescrow): what its program's verdict gives back (`refund`) credited, naming
+    /// that verdict (`verdict`: its section's [`escrow::Section::hash`]) — so of two verdicts a program's copies might
+    /// hold, only the one every escrow was released under is ever paid out. Appended by anyone (with work), once.
+    Unescrow { escrow: [u8; 16], refund: u128, verdict: [u8; 32] },
     /// The escrow `escrow` RECLAIMED (TOKEN §4): its whole amount back, from its `until` on, because its program never
     /// took it — the program, as its witnesses read it, lists it not, or is not there. Appended by anyone (with work),
     /// once. Witnesses then refuse any release or payout of a program that lists it.
@@ -454,11 +462,12 @@ pub enum Body {
     FeeClaim { from: [u8; 32], nonce: [u8; 16], gross: u128, amount: u128, cited: u64, ev: Evidence },
     /// A program's PAYOUT `key` to this chain: `amount`, as its verdict says. Appended by anyone (with work), once.
     Payout { program: [u8; 32], key: [u8; 16], amount: u128, ev: Evidence },
-    /// A HOLDERS' SHARE (TOKEN §1c): from `program`'s payout `key` to [`HOLDERS`] — an edition's royalty fee — the share
-    /// of copy `copy` of `edition` (`fee / (cap − 1)`), credited here, to the copy's holder (this chain's owner, its
-    /// chain of the copy holding it), once per copy and fee; a copy sold in that program takes none. Anyone appends
-    /// it (with work).
-    HolderPayout { program: [u8; 32], key: [u8; 16], edition: [u8; 32], copy: u128, amount: u128, ev: Evidence },
+    /// A HOLDERS' SHARE (TOKEN §1c): of the SALE of the copy escrowed as `sold` in `program` — whose royalty fee the
+    /// program pays to [`HOLDERS`] under [`escrow::fee_key`]`(sold)` — the share of copy `copy` of that edition
+    /// (`fee / (cap − 1)`), credited here to who HELD that copy when the sold copy was escrowed (beacon `at`, the
+    /// escrow's stamp: one holder of each copy then; witnesses check `at`). Once per copy and sale; the sold copy takes
+    /// none; a copy minted later held nothing then. Anyone appends it (with work).
+    HolderPayout { program: [u8; 32], sold: escrow::EscrowRef, copy: u128, at: u64, amount: u128, ev: Evidence },
     /// A MULTISIG owner's MEMBERS (TOKEN §1): the key set that signs from here, on set seq `set_seq`. The first (seq 0)
     /// is the set the owner id names, signed by k of it; each later one, by k of the set before.
     Members { set: authority::KeySet, set_seq: u32 },
@@ -631,10 +640,11 @@ impl Entry {
                 v.extend_from_slice(&cited.to_le_bytes());
                 put_ev(&mut v, ev);
             }
-            Body::Unescrow { escrow, refund } => {
+            Body::Unescrow { escrow, refund, verdict } => {
                 v.push(26);
                 v.extend_from_slice(escrow);
                 v.extend_from_slice(&refund.to_le_bytes());
+                v.extend_from_slice(verdict);
             }
             Body::Payout { program, key, amount, ev } => {
                 v.push(27);
@@ -643,12 +653,14 @@ impl Entry {
                 v.extend_from_slice(&amount.to_le_bytes());
                 put_ev(&mut v, ev);
             }
-            Body::HolderPayout { program, key, edition, copy, amount, ev } => {
+            Body::HolderPayout { program, sold, copy, at, amount, ev } => {
                 v.push(29);
                 v.extend_from_slice(program);
-                v.extend_from_slice(key);
-                v.extend_from_slice(edition);
+                sold.0.put(&mut v);
+                v.extend_from_slice(&sold.1);
+                v.extend_from_slice(&sold.2);
                 v.extend_from_slice(&copy.to_le_bytes());
+                v.extend_from_slice(&at.to_le_bytes());
                 v.extend_from_slice(&amount.to_le_bytes());
                 put_ev(&mut v, ev);
             }
@@ -844,9 +856,9 @@ impl Entry {
             }
             30 => Body::Reclaim { escrow: r.arr()? },
             31 => Body::FeeClaim { from: r.arr()?, nonce: r.arr()?, gross: r.u128()?, amount: r.u128()?, cited: r.u64()?, ev: read_ev(r)? },
-            26 => Body::Unescrow { escrow: r.arr()?, refund: r.u128()? },
+            26 => Body::Unescrow { escrow: r.arr()?, refund: r.u128()?, verdict: r.arr()? },
             27 => Body::Payout { program: r.arr()?, key: r.arr()?, amount: r.u128()?, ev: read_ev(r)? },
-            29 => Body::HolderPayout { program: r.arr()?, key: r.arr()?, edition: r.arr()?, copy: r.u128()?, amount: r.u128()?, ev: read_ev(r)? },
+            29 => Body::HolderPayout { program: r.arr()?, sold: (Tok::read(r)?, r.arr()?, r.arr()?), copy: r.u128()?, at: r.u64()?, amount: r.u128()?, ev: read_ev(r)? },
             20 => Body::Vested { from: r.arr()?, vest: r.arr()?, step: r.u32()?, amount: r.u128()?, at: r.u64()?, cited: r.u64()?, ev: read_ev(r)? },
             _ => return None,
         };
@@ -1050,7 +1062,7 @@ pub fn cited_chains_from(p: &ChainParams, s: &State, from: usize) -> Vec<(Tok, [
         match &e.body {
             Body::Receive { from, .. } | Body::Vested { from, .. } | Body::FeeClaim { from, .. } => add((p.tok(), *from)),
             // The claimant's chain of the copy it holds.
-            Body::HolderPayout { edition, copy, .. } => add((Tok { definition: *edition, item: numbered_item(edition, *copy) }, p.owner)),
+            Body::HolderPayout { sold, copy, .. } => add((Tok { definition: sold.0.definition, item: numbered_item(&sold.0.definition, *copy) }, p.owner)),
             Body::Misdeed { tok, entry, .. } => {
                 if let Some((from, _)) = misdeed_cites(entry) {
                     add((*tok, from));
@@ -1144,6 +1156,11 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
         if d.code_hash != p.code_hash {
             return Err("the definition is not this standard's");
         }
+        // HOLDERS (and the freeze list's EVERYONE, the same bytes) is no one's: no chain of it (audit 10-10: a payout to it
+        // would be a fee both stranded and claimed).
+        if p.owner == HOLDERS {
+            return Err("a chain of no one");
+        }
         if d.beacon != p.beacon {
             return Err("a chain on another beacon than its token's");
         }
@@ -1168,6 +1185,8 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
         let mut paid: Vec<([u8; 32], [u8; 16])> = Vec::new();
         let mut shared: Vec<([u8; 32], [u8; 16])> = Vec::new();
         let mut fees: Vec<([u8; 32], [u8; 16])> = Vec::new();
+        // The nonces of the transfers out (what a receive, a vesting step or a fee claim names one by).
+        let mut debited: Vec<[u8; 16]> = Vec::new();
         // A program's standard section, read (`x.program`) and checked to hold.
         let section = |prog: &[u8; 32]| -> Result<escrow::Section, Why> {
             let b = x.program.and_then(|f| f(prog)).ok_or("the escrow's program is not there")?;
@@ -1222,6 +1241,13 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
             // A NON-TRANSFERABLE token never leaves the chain it is minted in.
             if d.soulbound && matches!(e.body, Body::Send { .. } | Body::Spend { .. } | Body::Allow { .. } | Body::Escrow { .. } | Body::Vest { .. }) {
                 return Err("a transfer of a token that cannot be transferred");
+            }
+            // A transfer out is named by its nonce, once (audit 10-10: two under one nonce — the second's fee unclaimable).
+            if matches!(e.body, Body::Send { .. } | Body::Spend { .. } | Body::Escrow { .. } | Body::Vest { .. }) {
+                if debited.contains(&e.nonce) {
+                    return Err("a transfer named as an earlier one");
+                }
+                debited.push(e.nonce);
             }
             balance = match &e.body {
                 Body::Genesis { amount } => {
@@ -1347,7 +1373,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     open_escrows.push((e.nonce, *amount, *prog, *until));
                     balance.checked_sub(gross(*amount)?).ok_or("a debit over the balance")?
                 }
-                Body::Unescrow { escrow: nonce_, refund } => {
+                Body::Unescrow { escrow: nonce_, refund, verdict } => {
                     if !e.worked() {
                         return Err("a release without its work");
                     }
@@ -1355,8 +1381,11 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     if *refund > open_escrows[i].1 {
                         return Err("a refund past what the escrow held");
                     }
-                    if recent && section(&open_escrows[i].2)?.refund_of(&(p.tok(), p.owner, *nonce_)) != Some(*refund) {
-                        return Err("a release that is not its program's verdict");
+                    if recent {
+                        let sec = section(&open_escrows[i].2)?;
+                        if sec.refund_of(&(p.tok(), p.owner, *nonce_)) != Some(*refund) || sec.hash() != *verdict {
+                            return Err("a release that is not its program's verdict");
+                        }
                     }
                     open_escrows.remove(i);
                     balance.checked_add(*refund).ok_or("a balance overflow")?
@@ -1367,9 +1396,12 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     }
                     let i = open_escrows.iter().position(|o| &o.0 == nonce_).ok_or("a release of no open escrow")?;
                     let (_, amount, _, until) = open_escrows[i];
-                    // (Its time — from `until` on — is a TIMED rule: [`timed`].)
                     if until == 0 {
                         return Err("a reclaim of an escrow that has none");
+                    }
+                    // Its time, from scratch too (as a vesting step's): a first copy cannot reclaim early (audit 10-10).
+                    if e.stamp < until {
+                        return Err("a reclaim before its escrow's time");
                     }
                     // That its program never took it is the WITNESSES' to check: the program may not exist (a wrong
                     // id), and a node refuses outright an update asking for a contract that is not there (measured
@@ -1381,7 +1413,8 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     if !e.worked() {
                         return Err("a payout without its work");
                     }
-                    if paid.contains(&(*prog, *key)) || !fresh(&cut, e.stamp, received_key(PAYOUT, prog, key), ev) {
+                    // (No stamp of its own to place it before or after a cut — a verdict has none: after ANY cut, its absence proof.)
+                    if paid.contains(&(*prog, *key)) || !fresh(&cut, 0, received_key(PAYOUT, prog, key), ev) {
                         return Err("a payout received twice");
                     }
                     paid.push((*prog, *key));
@@ -1396,33 +1429,39 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
                 }
-                Body::HolderPayout { program: prog, key, edition, copy, amount, ev } => {
+                Body::HolderPayout { program: prog, sold, copy, at, amount, ev } => {
                     if !e.worked() {
                         return Err("a payout without its work");
                     }
-                    let name = holder_nonce(key, edition, *copy);
-                    if shared.contains(&(*prog, name)) || !fresh(&cut, e.stamp, received_key(HOLDERS_SHARE, prog, &name), ev) {
+                    let name = holder_nonce(sold, *copy);
+                    if shared.contains(&(*prog, name)) || !fresh(&cut, 0, received_key(HOLDERS_SHARE, prog, &name), ev) {
                         return Err("a payout received twice");
                     }
                     shared.push((*prog, name));
                     if recent {
+                        let edition = &sold.0.definition;
                         let sec = section(prog)?;
                         let db = x.program.and_then(|f| f(edition)).ok_or("the edition's definition is not there")?;
                         let de = Definition::decode(&db).filter(|_| id(&p.code_hash, &db) == *edition).ok_or("the edition's definition is not there")?;
                         if de.ids != Ids::Numbered || de.cap < 2 || de.royalty.is_none_or(|(_, to)| to != HOLDERS) {
                             return Err("a holders' share of an edition that shares none");
                         }
+                        // The sale: the sold copy's escrow is the program's, and its fee is paid to the holders.
+                        if !sec.escrows.iter().any(|(r, ..)| r == sold) {
+                            return Err("a holders' share of a sale that is not its program's");
+                        }
                         let item = numbered_item(edition, *copy);
-                        if *copy == 0 || *copy > de.cap || sec.escrows.iter().any(|((t, ..), ..)| t.definition == *edition && t.item == item) {
+                        if *copy == 0 || *copy > de.cap || item == sold.0.item {
                             return Err("a holders' share of a copy that takes none");
                         }
-                        let Some((t, to, fee)) = sec.pay(key) else { return Err("a holders' share that is not its program's verdict") };
+                        let Some((t, to, fee)) = sec.pay(&escrow::fee_key(sold)) else { return Err("a holders' share that is not its program's verdict") };
                         if t != p.tok() || to != HOLDERS || *amount != fee / (de.cap - 1) {
                             return Err("a holders' share that is not its program's verdict");
                         }
+                        // Its holder WHEN THE COPY WAS SOLD (`at`): this owner's chain of the copy held it then.
                         let held = chain(&Tok { definition: *edition, item }, &p.owner).ok_or("a holders' share of a copy not held here")?;
-                        if held.balance() != 1 {
-                            return Err("a holders' share of a copy not held here");
+                        if held_at(&held, *at) != Some(1) {
+                            return Err("a holders' share of a copy not held here at the sale");
                         }
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
@@ -1717,6 +1756,13 @@ impl<T> Tap for T {}
 pub fn append_check(d: &Definition, now: u64, held: &State, merged: &State, keys: Option<&craftworks_idlog_contract::Log>) -> Result<(), Why> {
     let had: Vec<[u8; 32]> = held.entries.iter().map(Entry::hash).collect();
     let m = d.margin;
+    // No entry held PAST ITS FINALITY is replaced (an owner's recovery outranks a lost device's entry only within the
+    // margin — after it, what others credited from it stands; audit 10-10: a late override undid an accepted send).
+    for h in &held.entries {
+        if merged.entries.iter().any(|x| x.seq == h.seq && x.hash() != h.hash()) && h.stamp.saturating_add(m) < now {
+            return Err("an entry past its finality replaced");
+        }
+    }
     for (i, e) in merged.entries.iter().enumerate().filter(|(_, e)| !had.contains(&e.hash())) {
         if e.stamp > now || e.stamp.saturating_add(m) < now {
             return Err("a stamp far from the beacon");
@@ -1749,6 +1795,24 @@ pub fn accept(p: &ChainParams, d: &Definition, now: u64, held: &State, merged: &
     let from = new_from(held, merged);
     walk(p, d, merged, chain, supply, keys, merged.entries.len() - from, from, x).map_err(|(_, w)| w)?;
     Ok(prune(merged))
+}
+
+/// What a copy of `s` checked FROM SCRATCH must be shown, in one round: its definition, its owner's key log (if it
+/// names a writer), every chain its recent citations name, its recent mints' supply shards, its operators list (if a
+/// spend needs it), and the programs (and editions) of its recent releases and payouts.
+pub fn validate_wants(p: &ChainParams, s: &State) -> Vec<[u8; 32]> {
+    let mut want = vec![p.definition];
+    if s.entries.iter().any(|e| matches!(e.body, Body::Writer { .. })) {
+        want.push(p.keys_id());
+    }
+    want.extend(cited_chains(p, s).into_iter().map(|(d, o)| p.at(d, o).id()));
+    let shard_id = |e: u64| supply::Params { code_hash: p.code_hash, definition: p.definition, beacon: p.beacon, epoch: e }.id();
+    want.extend(minted_epochs_from(s, s.entries.len().saturating_sub(RECENT)).into_iter().map(shard_id));
+    want.extend(needs_operators(s).then(|| operators::Params::of(p).id()));
+    want.extend(programs_from(s, s.entries.len().saturating_sub(RECENT)));
+    want.sort();
+    want.dedup();
+    want
 }
 
 /// Does anything new in `merged` (from index `from`) DEBIT the chain?
@@ -1827,10 +1891,10 @@ pub fn programs_from(s: &State, from: usize) -> Vec<[u8; 32]> {
     for (i, e) in s.entries.iter().enumerate().skip(from) {
         let prog = match &e.body {
             Body::Payout { program, .. } => Some(*program),
-            Body::HolderPayout { program, edition, .. } => {
+            Body::HolderPayout { program, sold, .. } => {
                 // (Its edition's definition too: read by id, as a program's state is.)
-                if !out.contains(edition) {
-                    out.push(*edition);
+                if !out.contains(&sold.0.definition) {
+                    out.push(sold.0.definition);
                 }
                 Some(*program)
             }
@@ -2172,7 +2236,7 @@ mod contract {
         let held = supply::Shard::decode(state).ok_or(ContractError::InvalidState)?;
         signed_set_update(p.authority(), held, data, &|h, b| supply::merge(h, &supply::Shard::decode(b)?), &supply::Shard::encode, &|d, c, h, m, now| {
             supply::holds(&p, d, c, m)?;
-            supply::fresh(h, m, now, d.margin)
+            supply::fresh(h, m, now, d.margin, d.capped())
         })
     }
 
@@ -2315,21 +2379,9 @@ mod contract {
             if cited.contains(&p.id()) {
                 return Ok(ValidateResult::Invalid);
             }
-            // Its definition, its OWNER's key log (whose keys its writers stand on — asked only if it names a writer) and
-            // every chain it cites.
-            let mut want = vec![p.definition];
-            if s.entries.iter().any(|e| matches!(e.body, super::Body::Writer { .. })) {
-                want.push(p.keys_id());
-            }
-            want.extend(cited);
+            let want = super::validate_wants(&p, &s);
             let shard_id = |e: u64| supply::Params { code_hash: p.code_hash, definition: p.definition, beacon: p.beacon, epoch: e }.id();
-            want.extend(super::minted_epochs_from(&s, s.entries.len().saturating_sub(super::RECENT)).into_iter().map(shard_id));
-            // The owner's OPERATORS list, only if a spend needs it.
             let ops_id = super::needs_operators(&s).then(|| operators::Params::of(&p).id());
-            want.extend(ops_id);
-            // The PROGRAMS its recent releases and payouts are checked against.
-            let progs = super::programs_from(&s, s.entries.len().saturating_sub(super::RECENT));
-            want.extend(progs.iter().copied());
             let missing: Vec<ContractInstanceId> = want.iter().filter(|w| related_state(&related, w).is_none()).map(|w| ContractInstanceId::new(*w)).collect();
             if !missing.is_empty() {
                 return Ok(ValidateResult::RequestRelated(missing));
@@ -2412,8 +2464,10 @@ mod contract {
                 // The PROGRAMS its new releases and payouts are checked against.
                 want.extend(super::programs_from(&merged, from));
                 // ONE round holds at most MAX_RELATED (measured, the node's limit): more new citations than that are
-                // refused here, plainly — the writer sends them in smaller batches.
-                if want.len() > super::MAX_RELATED {
+                // refused here, plainly — the writer sends them in smaller batches. And the chain this leaves must stay
+                // checkable FROM SCRATCH in one round too (audit 10-10: recent holders' shares, each asking for three,
+                // made a chain no fresh copy could validate) — else the entry waits for a later window.
+                if want.len() > super::MAX_RELATED || super::validate_wants(&p, &merged).len() > super::MAX_RELATED {
                     return Err(ContractError::InvalidUpdate);
                 }
                 let got = |w: &[u8; 32]| related.iter().find(|(k, _)| k == w).map(|(_, b)| b.clone());

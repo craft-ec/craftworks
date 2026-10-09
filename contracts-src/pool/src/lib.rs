@@ -10,9 +10,10 @@
 //!   carries a royalty (its definition's), the creator's fee, paid out beside it.
 //!
 //! The contract checks all of that itself; the token checks each release against the verdict; witnesses check that
-//! every order is a real, accepted escrow on the terms its owner signed. Two copies settled on different order sets
-//! (an order reaching one node only after the settle height) take the one with more orders — the grace is there so
-//! the sets meet before it.
+//! every order is a real, accepted escrow on the terms its owner signed. A verdict held is never replaced: two copies
+//! settled on different order sets (an order reaching one node only after the settle height — the grace is there so
+//! the sets meet before it) each keep their own, and since every release names its verdict, only the one all its
+//! escrows are released under is ever paid out.
 
 pub mod clear;
 
@@ -125,7 +126,7 @@ pub fn pay_key(r: &EscrowRef) -> [u8; 16] {
 }
 /// The payout key of the creator's fee out of what an order bought.
 pub fn fee_key(r: &EscrowRef) -> [u8; 16] {
-    key_of("craftworks pool royalty", r)
+    escrow::fee_key(r)
 }
 fn key_of(what: &str, r: &EscrowRef) -> [u8; 16] {
     let mut h = blake3::Hasher::new_derive_key(what);
@@ -224,8 +225,7 @@ pub fn check(p: &Batch, roy: (Royalty, Royalty), s: &State, now: u64) -> Result<
 }
 
 /// THE MERGE (an update, the beacon at `now`): before the batch settles, the orders' union (no verdict); from then on,
-/// nothing new — a settled copy taken over an unsettled one, and of two settled ones the one with more orders (then the
-/// lower bytes).
+/// nothing new — a settled copy taken over an unsettled one; a settled one held, kept.
 pub fn merge(p: &Batch, held: &State, given: &State, now: u64) -> State {
     let settles = p.window().1;
     if now < settles && !held.settled() && !given.settled() {
@@ -235,9 +235,11 @@ pub fn merge(p: &Batch, held: &State, given: &State, now: u64) -> State {
         orders.truncate(ORDERS_MAX);
         return State { section: Section { escrows: listed(&orders), ..Default::default() }, orders };
     }
+    // A verdict held is KEPT (as a swap's): two settled copies are a split order set — and a release names its
+    // verdict, so only the one every escrow is released under is ever paid (audit 10-10: "more orders wins" let a
+    // late order replace a verdict already paid out).
     match (held.settled(), given.settled()) {
         (false, true) if now >= settles => given.clone(),
-        (true, true) if (given.orders.len(), std::cmp::Reverse(given.encode())) > (held.orders.len(), std::cmp::Reverse(held.encode())) => given.clone(),
         _ => held.clone(),
     }
 }

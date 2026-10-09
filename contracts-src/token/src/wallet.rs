@@ -30,6 +30,8 @@ pub struct Source<'a> {
     pub definition: &'a dyn Fn(&[u8; 32]) -> Option<Definition>,
     /// A PROGRAM's state by its contract id (an escrow's release and payouts are checked against it).
     pub program: &'a dyn Fn(&[u8; 32]) -> Option<Vec<u8>>,
+    /// A token's FREEZE LIST, by its definition (a debit of a frozen — or paused — account is never signed).
+    pub freeze: &'a dyn Fn(&[u8; 32]) -> Option<crate::freeze::List>,
 }
 
 /// The LOT of an entry: (the claims' epoch, the beacon height its output is drawn at). Fixed by the entry's PLACE —
@@ -92,11 +94,12 @@ pub fn cited(p: &ChainParams, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 32]) -> Opti
     };
     Ok(match &e.body {
         Body::Receive { from, .. } | Body::Vested { from, .. } | Body::FeeClaim { from, .. } => vec![find(p.tok(), *from, &|x| crate::debit_for(x, &p.owner, e))?],
-        // A holders' share: the claimant's chain of the copy — its LAST entry (what says it holds the copy) accepted.
-        Body::HolderPayout { edition, copy, .. } => {
-            let t = Tok { definition: *edition, item: crate::numbered_item(edition, *copy) };
+        // A holders' share: the claimant's chain of the copy — the entry that says it HELD the copy at the sale (its
+        // last stamped at or before it) accepted.
+        Body::HolderPayout { sold, copy, at, .. } => {
+            let t = Tok { definition: sold.0.definition, item: crate::numbered_item(&sold.0.definition, *copy) };
             let held = chain(&t, &p.owner).ok_or("a cited chain not held")?;
-            let i = held.entries.len().checked_sub(1).ok_or("a cited entry not held")?;
+            let i = held.entries.iter().rposition(|x| x.stamp <= *at).ok_or("a cited entry not held")?;
             vec![(p.at(t, p.owner), held.entries[i].clone(), i.checked_sub(1).map(|j| held.entries[j].clone()))]
         }
         _ => vec![],
@@ -130,6 +133,18 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
         return Err("an entry stamped too long ago");
     }
     timed(d, e.stamp, &prefix, e)?;
+    // FROZEN or PAUSED (TOKEN §2): a debit of an account its freeze list said frozen at the entry's stamp — the append
+    // rule a first copy skips (audit 10-10).
+    let debit = e.balance < i.checked_sub(1).map_or(0, |j| s.entries[j].balance);
+    if d.freeze.is_some() && debit {
+        let list = (src.freeze)(&p.definition).ok_or("the freeze list not read")?;
+        if list.frozen_at(&p.owner, e.stamp) {
+            return Err("a debit of a frozen account");
+        }
+    }
+    // A place already TAKEN: another entry at this seq accepted (an owner's later outranking entry, or a fork shown to
+    // another committee) — never a second one (audit 10-10).
+    taken(src, p, s, i)?;
     // A RELEASE or PAYOUT of a program: the program BACKED by real, accepted escrows to it.
     program_entry(src, p, s, i, chain)?;
     match i.checked_sub(1) {
@@ -169,10 +184,10 @@ pub fn program_backed(src: &Source, base: &ChainParams, prog: &[u8; 32], chain: 
 }
 
 /// The witness rule for an `Unescrow` / `Payout` (entry `i` of `s`): its program backed, and the entry its verdict.
-fn program_entry(src: &Source, p: &ChainParams, s: &State, i: usize, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<(), Why> {
+pub(crate) fn program_entry(src: &Source, p: &ChainParams, s: &State, i: usize, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<(), Why> {
     let e = &s.entries[i];
     match &e.body {
-        Body::Unescrow { escrow, refund } => {
+        Body::Unescrow { escrow, refund, verdict } => {
             let prog = s.entries[..i]
                 .iter()
                 .find_map(|x| match &x.body {
@@ -181,11 +196,12 @@ fn program_entry(src: &Source, p: &ChainParams, s: &State, i: usize, chain: &dyn
                 })
                 .ok_or("a release of no escrow held")?;
             let sec = program_backed(src, p, &prog, chain)?;
-            (sec.refund_of(&(p.tok(), p.owner, *escrow)) == Some(*refund)).then_some(()).ok_or("a release that is not its program's verdict")
+            (sec.refund_of(&(p.tok(), p.owner, *escrow)) == Some(*refund) && sec.hash() == *verdict).then_some(()).ok_or("a release that is not its program's verdict")
         }
         Body::Payout { program, key, amount, .. } => {
             let sec = program_backed(src, p, program, chain)?;
-            (sec.pay(key) == Some((p.tok(), p.owner, *amount))).then_some(()).ok_or("a payout that is not its program's verdict")
+            (sec.pay(key) == Some((p.tok(), p.owner, *amount))).then_some(()).ok_or("a payout that is not its program's verdict")?;
+            released_under(src, p, &sec, chain)
         }
         // A reclaim: its program has NOT taken the escrow — as this witness reads it (not there, or not listing it).
         Body::Reclaim { escrow } => {
@@ -196,15 +212,76 @@ fn program_entry(src: &Source, p: &ChainParams, s: &State, i: usize, chain: &dyn
                     _ => None,
                 })
                 .ok_or("a release of no escrow held")?;
-            let took = (src.program)(&prog).and_then(|b| crate::escrow::Section::decode_prefix(&b).map(|x| x.0)).is_some_and(|sec| sec.escrows.iter().any(|(r, ..)| *r == (p.tok(), p.owner, *escrow)));
+            // (A program whose listing is not backed — an escrow in it fake or reclaimed — took nothing: its verdict
+            // is never paid out, so its escrows come back.)
+            let listed = (src.program)(&prog).and_then(|b| crate::escrow::Section::decode_prefix(&b).map(|x| x.0)).is_some_and(|sec| sec.escrows.iter().any(|(r, ..)| *r == (p.tok(), p.owner, *escrow)));
+            // (Judged on this chain as it stood BEFORE the reclaim — else the reclaim itself would unback the program.)
+            let before = State { entries: s.entries[..i].to_vec(), fork: s.fork.clone() };
+            let upto = |t: &Tok, o: &[u8; 32]| if *t == p.tok() && *o == p.owner { Some(before.clone()) } else { chain(t, o) };
+            let took = listed && program_backed(src, p, &prog, &upto).is_ok();
             (!took).then_some(()).ok_or("a reclaim of an escrow its program took")
         }
-        Body::HolderPayout { program, key, .. } => {
+        Body::HolderPayout { program, sold, at, .. } => {
+            // The sale's time is the sold copy's ESCROW's stamp (one holder of each copy then): `at` must be it.
+            let c = chain(&sold.0, &sold.1).ok_or("an escrow's chain not read")?;
+            if sale_at(&c, &sold.2) != Some(*at) {
+                return Err("a holders' share dated other than its sale");
+            }
             let sec = program_backed(src, p, program, chain)?;
-            sec.pay(key).filter(|(t, to, _)| *t == p.tok() && *to == crate::HOLDERS).map(|_| ()).ok_or("a holders' share that is not its program's verdict")
+            sec.pay(&crate::escrow::fee_key(sold)).filter(|(t, to, _)| *t == p.tok() && *to == crate::HOLDERS).ok_or("a holders' share that is not its program's verdict")?;
+            released_under(src, p, &sec, chain)
         }
         _ => Ok(()),
     }
+}
+
+/// Is the place of entry `i` already TAKEN by a DIFFERENT entry its committee accepted? The lot is drawn from the
+/// predecessor's stamp (and the entry's epoch), so the committees of every epoch from the predecessor's to this
+/// entry's are asked.
+fn taken(src: &Source, p: &ChainParams, s: &State, i: usize) -> Result<(), Why> {
+    let e = &s.entries[i];
+    let id = p.id();
+    let sigs = (src.sigs)(&id, e.seq);
+    let mut others: Vec<[u8; 32]> = sigs.iter().filter(|x| x.chain == id && x.seq == e.seq && x.entry != e.hash()).map(|x| x.entry).collect();
+    others.sort();
+    others.dedup();
+    if others.is_empty() {
+        return Ok(());
+    }
+    let margin = (src.definition)(&p.definition).ok_or("an entry of a token not known")?.margin;
+    let pred = i.checked_sub(1).map(|j| &s.entries[j]);
+    let from = pred.map_or(supply::epoch(e.stamp), |x| supply::epoch(x.stamp));
+    for epoch in from..=supply::epoch(e.stamp) {
+        let start = epoch * supply::EPOCH + 1;
+        let h = pred.map_or(start, |x| (x.stamp + margin + 2).max(start));
+        let Some(out) = (src.out)(h) else { continue };
+        let at = supply::epoch(h) * supply::EPOCH;
+        for other in &others {
+            if witness::accepted(&src.pool, &id, e.seq, other, &out, supply::epoch(h), &(src.claims)(supply::epoch(h)), &sigs, COMMITTEE, NEED, &|o| (src.stake_of)(o, at)).is_ok() {
+                return Err("a place another entry was accepted at");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// ONE VERDICT PER PROGRAM (TOKEN §4): a payout is signed only once EVERY escrow its program lists was released under
+/// THIS section — an accepted `Unescrow` naming its hash in the escrow's chain. An escrow is released once, so of two
+/// verdicts a program's copies might hold (a crossing and a refund; two order sets), only one is ever paid out.
+fn released_under(src: &Source, p: &ChainParams, sec: &crate::escrow::Section, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<(), Why> {
+    let h = sec.hash();
+    for ((tok, owner, nonce), ..) in &sec.escrows {
+        let c = chain(tok, owner).ok_or("an escrow's chain not read")?;
+        let i = c.entries.iter().position(|x| matches!(&x.body, Body::Unescrow { escrow, verdict, .. } if escrow == nonce && *verdict == h)).ok_or("a payout before every escrow of its verdict is released")?;
+        accept(src, &p.at(*tok, *owner), &c.entries[i], i.checked_sub(1).map(|j| &c.entries[j]))?;
+    }
+    Ok(())
+}
+
+/// When a copy was SOLD (TOKEN §1c): the stamp of its escrow `nonce` in its seller's chain — the moment its edition's
+/// holders' shares are of.
+pub fn sale_at(seller: &State, nonce: &[u8; 16]) -> Option<u64> {
+    seller.entries.iter().find(|x| &x.nonce == nonce && matches!(x.body, Body::Escrow { .. })).map(|x| x.stamp)
 }
 
 /// THE WATCH (TOKEN §7a): the EQUIVOCATIONS in one place's witness signatures (`sigs`: its bag) by the stakers of

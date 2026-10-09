@@ -263,14 +263,13 @@ pub fn fresh(held: &Chain, merged: &Chain, now: u64, margin: u64) -> Result<(), 
     Ok(())
 }
 
-/// The authority chain's MERGE: the longer copy that holds; at the first change two copies differ, the lower hash.
+/// The authority chain's MERGE (`a`: the copy HELD): only ever EXTENDED — `b` is taken only where it holds all of
+/// `a` and more after it. A change at a seq already held is never replaced: a set's word, once taken, stands (else a
+/// replaced or dropped set whose key leaked could sign a second change at a past seq and win it — by hash — taking
+/// the authority back, audit 10-10). Two different changes at one seq are the replaced set's equivocation; each
+/// holder keeps the one it took first.
 pub fn merge(a: &Chain, b: &Chain) -> Chain {
-    for (x, y) in a.changes.iter().zip(&b.changes) {
-        if x != y {
-            return if x.hash() < y.hash() { a.clone() } else { b.clone() };
-        }
-    }
-    if b.changes.len() > a.changes.len() {
+    if b.changes.len() > a.changes.len() && b.changes.starts_with(&a.changes) {
         b.clone()
     } else {
         a.clone()
@@ -365,16 +364,21 @@ mod tests {
     }
 
     #[test]
-    fn an_update_cannot_reach_back_past_the_margin_and_merge_is_one_answer() {
+    fn an_update_cannot_reach_back_past_the_margin_and_a_held_change_stands() {
         let a = Chain { changes: vec![change(0, Role::Mint, Some(set(1, &[4])), 10, &[1, 2, 3], &[0, 1])] };
         let b = Chain { changes: vec![change(0, Role::Mint, Some(set(1, &[5])), 10, &[1, 2, 3], &[0, 1])] };
         assert!(fresh(&Chain::default(), &a, 11, 2).is_ok());
         assert!(fresh(&Chain::default(), &a, 13, 2).is_err(), "older than the margin");
         assert!(fresh(&Chain::default(), &a, 9, 2).is_err(), "from the future");
         assert!(fresh(&a, &a, 99, 2).is_ok(), "a held change is not re-stamped");
-        assert_eq!(merge(&a, &b), merge(&b, &a));
+        // Two changes at one seq (the replaced set signed both — its key leaked): whichever is HELD stands, whatever
+        // the hashes; the other never replaces it (audit 10-10: else the leaked key retakes the authority).
+        assert_eq!(merge(&a, &b), a);
+        assert_eq!(merge(&b, &a), b);
         let longer = Chain { changes: vec![a.changes[0].clone(), change(1, Role::Mint, None, 12, &[4], &[0])] };
-        assert_eq!(merge(&a, &longer), longer);
-        assert_eq!(merge(&longer, &a), longer);
+        assert_eq!(merge(&a, &longer), longer, "extended");
+        assert_eq!(merge(&longer, &a), longer, "never shortened");
+        let forked = Chain { changes: vec![b.changes[0].clone(), change(1, Role::Mint, None, 12, &[5], &[0])] };
+        assert_eq!(merge(&a, &forked), a, "a longer copy that does not hold what is held: refused");
     }
 }

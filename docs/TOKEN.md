@@ -166,15 +166,17 @@ A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has CO
   number once" are checked record by record. A mint names a RANGE of numbers inside one record (its nonce the first);
   a chain credits it with `CappedMint` (for a numbered copy: its number, amount 1). Plain copies leave the genesis's
   numbers to it (they start after `genesis_amount`).
-- **Taken numbers.** Two copies of a record must merge the same everywhere, so a mint onto numbers another took is
-  kept but never ADMITTED (`supply::admitted`: in stamp order — a mint new to a copy is stamped near now, so it comes
-  after what was taken before it); only an admitted mint is credited. Two buyers racing for one next number: one is
-  admitted, the other's mint takes the following number. A mint past the cap, outside its record or of no number is
-  refused outright.
-- **A new mint key cannot be back-dated by the old.** A mint-authority change names its FRONTIER — the highest record
-  minted so far, with that record's seal: the frontier record must be exactly as sealed, and no record past it may
-  hold a mint stamped before the change. A record below the frontier already exists, and refuses a back-dated mint
-  by its update rule (a new mint stamped near now).
+- **Taken numbers.** A record held keeps its mints: an update never replaces a held mint (two under one nonce: the
+  held one stands) and refuses a new mint onto numbers a held one has (audit 10-10: a later mint stamped earlier
+  displaced one already credited). From scratch, a mint onto numbers another took is kept but never ADMITTED
+  (`supply::admitted`, in stamp order); only an admitted mint is credited, and totalSupply counts only those. Two
+  buyers racing for one next number: one is taken, the other's mint takes the following number. A mint past the cap,
+  outside its record or of no number is refused outright.
+- **A new mint key cannot be back-dated by the old.** A mint-authority change SEALS every record that holds a mint
+  then (its seal, exactly) — and a record it does not name may hold no mint stamped before it (audit 10-10: sealing
+  only the highest record left lower ones, not yet made, open to the old key). The cost is the change's size: one
+  seal per record holding mints. The authority chain itself only ever EXTENDS: a change held at a seq is never
+  replaced (audit 10-10: a leaked old key could sign a second change at a past seq and win it by hash).
 - **Who may mint an item's edition, who may join a collection.** The token checks the mint authority; that the
   edition's creator (its `genesis_owner`) is the Craftworks item's author — and the collection item's owner — is
   checked by the app where it shows the edition: it already proves an item's author from its feed's credentials (a
@@ -182,12 +184,14 @@ A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has CO
   name can be copied, as the collection has none but its item's (owner 10-10: no Metaplex-style "verified" flag).
 - **A royalty its HOLDERS share** (owner 10-10: "seller own copy should not get a cut"). An edition's royalty may name
   `HOLDERS` instead of a creator — only a numbered edition of at least 2 copies. Every app pays the fee as it pays a
-  creator's (to `HOLDERS`, in the payment's token); then each OTHER copy's holder appends a `HolderPayout` to its own
-  chain of that token: `fee / (cap − 1)` (rounded down; unminted copies' shares and the dust stay in the program),
-  once per copy and fee (its name in the received set), only while its chain of the copy holds it — and a copy sold
-  in that program takes none. A witness signs it only on the program backed by real escrows and the claimant's copy
-  chain's last entry accepted. Numbered only: a plain copy has no number, so its share could be claimed again from
-  each chain it moves to.
+  creator's — to `HOLDERS`, under the standard `escrow::fee_key(sold escrow)`, in the payment's token. Then each OTHER
+  copy's holder AT THE SALE appends a `HolderPayout` naming the sale (the sold copy's escrow) and the time it was
+  escrowed: `fee / (cap − 1)` (rounded down; unminted copies' shares and the dust stay in the program), once per copy
+  and sale (its name in the received set). One owner held each copy then, and a copy minted later held nothing, so
+  the shares never exceed the fee (audit 10-10: "while it holds the copy" let each later holder claim again, and a
+  claimant could name an edition of its own). The sold copy takes none. A witness signs it only on the sale's time
+  being its escrow's stamp, the program backed and every escrow of its verdict released, and the claimant's holding
+  entry accepted. Numbered only: a plain copy has no number to name.
 - **Not built:** fractional ownership of one item (an app over escrow).
 
 ## 1d. Non-transferable tokens (soulbound, 10-10)
@@ -385,6 +389,12 @@ The token knows nothing of swaps, pools or any other app. It has ONE door (built
    goes into the received set, so a cut keeps it). A chain is not cut over an open escrow.
 4. **Witnesses** check besides that every escrow a program lists is a real, ACCEPTED escrow to that program with that
    amount and those terms (`wallet::program_backed`): a program cannot list anyone's escrow on terms they did not sign.
+6. **One verdict paid** (audit 10-10): a program's copies may hold two verdicts (a split order set; a deal's escrows
+   doubled), so a RELEASE names the verdict it follows (`unescrow(escrow, refund, verdict)`: the section's hash) and
+   witnesses sign a PAYOUT only once every escrow its program lists is released under THAT verdict. An escrow is
+   released once, so only one verdict is ever paid out; a split leaves the other's payouts unsigned (a stall, never a
+   double pay). A pool's or a deal's verdict, once held, is kept. A program whose listing is not backed (an escrow in
+   it fake or reclaimed) took nothing: its escrows can be reclaimed.
 5. **Reclaim** (10-10) — our apps always finalize by anyone, but the token cannot see a program's rules: an escrow to
    a wrong id, or to someone's program that never decides, would be locked for good. So an escrow may carry `until`
    (0: none): from that beacon on, anyone may append `reclaim(escrow)` — the whole amount back — and WITNESSES sign it
@@ -817,6 +827,23 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    of the token (the same signatures, cap and freshness rules as one account's); unpaused by the next word. 100
    tests; the mutant dropping it killed. LIVE fx/fy (`token-live pause`): paused — 1's and 2's sends REFUSED, 2's
    receive ACCEPTED; unpaused — 1's send ACCEPTED.
+
+22. AUDIT 10-10 (four reviewers over the whole token, swap and pool; every finding checked against the code) — FIXED:
+   the authority chain only extends (a leaked old key retook it by hash); a payout or holders' share taken before a
+   cut was taken again after it (probe: 250 → 500); holders' shares bound to the sale and its holder then (each later
+   holder claimed again; any edition could take any fee); one verdict paid per program (a split crossing or order set
+   paid twice; a fake listing froze real escrows); a pool's settled verdict kept; supply records keep their mints and
+   every record is sealed by every key change; witnesses refuse a debit of a frozen or paused account and a second
+   entry at a place already accepted; no held entry replaced past its finality (a late key-recovery override undid an
+   accepted send); a reclaim's time checked from scratch; definitions (no fee to no one; numbered copies whole, minted
+   only); no chain of HOLDERS; a transfer's nonce once; a chain stays checkable in one related round; a deal never
+   crosses paying its seller nothing. Token 104 tests, swap 4, pool 9; every fix's mutants killed (survivors got a test
+   or the code went: a redundant witness check, a redundant held-at guard).
+   OPEN (recorded, not fixed): an old device key's entry is witnessed from a first copy (witnesses do not read the key
+   log); an operator's spend can be stamped up to FRESH (one epoch) back; a MISDEED proves only a vanished debit — a
+   committee signing a fake payout or mint is burned only by equivocation; a cut's received root is checked by
+   witnesses, not the contract; a seller cutting its chain hides its escrow from the buyer's payout witnesses until
+   they read the cut's history; a freeze change's back-dated word (pause) on nodes without the list.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under

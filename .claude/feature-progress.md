@@ -1487,6 +1487,11 @@ old key's addresses.
       [x] 24 PAUSE (whole-token freeze) — DONE 10-10 (owner: "the last foundation"): freeze::EVERYONE in the freeze
           list. token 33d859a2 (pool/swap unchanged). 100 tests. LIVE fx/fy `pause`.
           Foundation COMPLETE per the 10-10 audit. Open only: confidential amounts (big, not asked).
+      [x] 25 AUDIT 10-10 — four parallel reviewers; ~25 findings verified; fixed: authority extend-only, payout re-take
+          after cut, holders share (sale-bound, holder at sale), one verdict per program (release names verdict,
+          payouts gated), pool verdict kept, supply held-mints + every record sealed, witness freeze + taken place,
+          finality on overrides, small rules (reclaim time, definition checks, HOLDERS chain, debit nonce, related cap,
+          swap pays-nothing). Open residuals listed in TOKEN step 22.
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).
       [x] 17 BATCH-AUCTION POOLS (TOKEN §5) — in parts:

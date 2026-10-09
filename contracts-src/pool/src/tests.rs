@@ -75,9 +75,9 @@ fn a_batch_takes_orders_until_it_settles_and_nothing_after() {
     assert_eq!(merge(&p, &open(orders.clone()), &settled, 13), open(orders.clone()), "not before it settles");
     assert_eq!(merge(&p, &open(orders.clone()), &settled, 14), settled);
     assert_eq!(merge(&p, &settled, &open(orders.clone()), 14), settled);
-    // Of two settled on different sets: the one with more orders, either way round.
+    // Of two settled on different sets: the one HELD is kept, either way round (a late order never replaces a verdict).
     let small = State { section: verdict(&p, NO, &orders[..1]), orders: orders[..1].to_vec() };
-    assert_eq!(merge(&p, &small, &settled, 20), settled);
+    assert_eq!(merge(&p, &small, &settled, 20), small);
     assert_eq!(merge(&p, &settled, &small, 20), settled);
 }
 

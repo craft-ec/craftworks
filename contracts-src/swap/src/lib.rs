@@ -101,7 +101,7 @@ pub type Why = &'static str;
 
 /// The payout key of a creator's fee out of what a side receives.
 pub fn fee_key(r: &EscrowRef) -> [u8; 16] {
-    key_of("craftworks swap royalty", r)
+    escrow::fee_key(r)
 }
 
 /// The deal's verdicts: CROSSED (both listed; `roy`: X's and Y's tokens' royalties) or REFUNDED (one alone).
@@ -121,6 +121,11 @@ pub fn crossed(d: &Deal, roy: (Royalty, Royalty), ex: &EscrowRef, ey: &EscrowRef
 pub fn refunded(d: &Deal, e: &EscrowRef, x_side: bool) -> Section {
     let amount = if x_side { d.amount_x } else { d.amount_y };
     Section { escrows: vec![(*e, amount, escrow::terms_hash(TERMS))], refunds: vec![(*e, amount)], pays: vec![] }
+}
+/// Would a crossing pay a side NOTHING — its whole price the creator's fee (a royalty on a price of 1)? Then the deal
+/// never crosses: it is refunded after its cutoff (audit 10-10: the seller's escrow spent for nothing).
+pub fn pays_nothing(d: &Deal, roy: (Royalty, Royalty)) -> bool {
+    escrow::royalty_fee(roy.0, &d.party_x, d.amount_y).is_some_and(|(_, f)| f >= d.amount_y) || escrow::royalty_fee(roy.1, &d.party_y, d.amount_x).is_some_and(|(_, f)| f >= d.amount_x)
 }
 fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
     v.sort();
@@ -144,6 +149,9 @@ pub fn check(d: &Deal, roy: (Royalty, Royalty), s: &Section, now: u64) -> Result
         return if *s == listed(d, &sides) { Ok(()) } else { Err("a state that is not its escrows") };
     }
     if xs == 1 && ys == 1 {
+        if pays_nothing(d, roy) {
+            return Err("a deal whose seller would be paid nothing");
+        }
         let ex = sides.iter().find(|s| s.1).unwrap().0;
         let ey = sides.iter().find(|s| !s.1).unwrap().0;
         return if *s == crossed(d, roy, &ex, &ey) { Ok(()) } else { Err("a verdict that is not the deal crossed") };
@@ -180,7 +188,7 @@ pub fn merge(d: &Deal, roy: (Royalty, Royalty), held: &Section, given: &Section,
                 }
             }
             match (all.iter().find(|s| s.1), all.iter().find(|s| !s.1)) {
-                (Some(ex), Some(ey)) if before => crossed(d, roy, &ex.0, &ey.0),
+                (Some(ex), Some(ey)) if before && !pays_nothing(d, roy) => crossed(d, roy, &ex.0, &ey.0),
                 _ => listed(d, &all),
             }
         }
