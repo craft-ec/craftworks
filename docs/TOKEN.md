@@ -462,10 +462,11 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
 
 - **No nominated witnesses.** Any node stands by PROVING storage it holds (the keepers' proofs, REWARDS §4) — no
   list, no approval, no per-token setup: one open pool for every token.
-- **All storage counts, ASSIGNED by lot** (owner 10-09): not only what the node's user read — any piece PUT to the
-  network, assigned to nodes by the beacon (rendezvous over node id and piece, as the keepers' queue). The node never
-  picks what counts, so its disk keeps the network's data alive rather than junk it made for itself — and data no one
-  reads recently is still kept, by those who earn standing holding it.
+- **All storage counts — as FREENET PLACES IT** (owner 10-09): not only what the node's user read; anything PUT to the
+  network. The assignment is the core's own placement — ring locations, links at every scale, neighbours holding
+  what lies near them, repair as nodes come and go (Freenet's small-world rules; nothing here rebuilds or measures
+  them). A node never picks what counts: a piece counts toward its standing only if it lies NEAR the node's own ring
+  location, where placement puts it — data a node makes and keeps far from itself earns nothing.
 - **What is at stake: STANDING, earned over time.** A node's weight is its assigned storage PROVED over time
   (GB-days, ramping up), not the disk it shows today; two signatures at one place reset it to zero and forfeit its
   unclaimed keeper rewards (rewards claimable only after a delay, so some are always at stake). A disk cannot be

@@ -87,8 +87,8 @@ of cold files, §6).
   keeper's page is open its contribution puts the copy last in line, and its proofs show it is still there.
 - **Proof of holding — a continuous, deterministic random queue** (as ZephCraft's HealthScan: a small slice every
   cycle, never one big daily round; `craftec/docs/CRAFTOBJ_DESIGN.md` §HealthScan, rendezvous by
-  `BLAKE3(node_id ‖ cid ‖ epoch)`). At a cadence still to be tuned (§6), a public **beacon** turns over (the newest Discover head — known
-  to nobody beforehand); each keeper's queue is its claimed pieces ranked by `BLAKE3(beacon ‖ node id ‖ piece)`, and it
+  `BLAKE3(node_id ‖ cid ‖ epoch)`). At a cadence still to be tuned (§6), the network's **beacon** (the beacon contract, TOKEN §5a) turns over —
+  known to nobody beforehand —; each keeper's queue is its claimed pieces ranked by `BLAKE3(beacon ‖ node id ‖ piece)`, and it
   answers the head of that queue — a slice sized so the queue covers a set share of its claim over time (the share and pace to be tuned, §6) — with
   `hash(piece ‖ beacon ‖ node id)`, within that beacon's window. Deterministic: anyone recomputes which pieces were due
   and checks a sample against the public pieces. Random: nobody knows the next slice before its beacon. The node id
@@ -107,9 +107,9 @@ of cold files, §6).
   work.
 - **Everyone gets their turn:** on the global network every node eventually takes part in hosting (Freenet places data
   across the ring), so carrying pay spreads across participants over time rather than pooling at a few servers.
-- **Beyond what one used** (owner 10-09, TOKEN §7a): a node may also keep pieces ASSIGNED to it by the beacon from
-  anything PUT to the network — proved by the same queue; it earns WITNESS STANDING (TOKEN §7a), so data nobody read
-  lately is still kept. The node never chooses what counts.
+- **Beyond what one used** (owner 10-09, TOKEN §7a): a node also proves what FREENET PLACED on it — anything PUT,
+  hosted near the node's ring location by the core's own placement — by the same queue; it earns WITNESS STANDING
+  (TOKEN §7a), so data nobody read lately is still kept. The node never chooses what counts.
 - Healing is every reader's (files heal on read: a missing fragment is made again by whoever reads it), paid or not; a keeper
   does not repair — it KEEPS, so that a reader finds enough to read and heal from.
 - Exact per-answer bandwidth pay would need the node to name the peer that delivered each piece (a node change, and
@@ -214,7 +214,7 @@ A contributor's claims only steer their own contribution (§1): misreporting can
 5. PROOFS, only before money moves (owner 2026-10-07: skip until rewards pay — a claim is enough to show who keeps
    what; a proof only stops paying a false one). Planned so they cost the network almost nothing: computed during the
    keeper's existing daily re-read (no extra gets), one small write per keeper per day (about 13 KB for 10 GB kept:
-   ~1% of its pieces × 32 bytes), the day's Discover head as the beacon (already read by every node), checked for free
+   ~1% of its pieces × 32 bytes), the beacon contract's height as the beacon (TOKEN §5a), checked for free
    by readers who fetch a challenged piece anyway and by a monthly sample at settlement. A receive-and-delete keeper
    pays by fetching ~1% of its claim every day; an honest one pays nothing on the network.
 6. Payouts.
