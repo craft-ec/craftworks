@@ -301,6 +301,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-standing"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "ed25519-dalek",
+]
+
+[[package]]
+name = "craftworks-standing-contract"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "contract-keys",
+ "craftworks-beacon-contract",
+ "craftworks-standing",
+]
+
+[[package]]
 name = "craftworks-token-contract"
 version = "0.1.0"
 dependencies = [
@@ -1482,6 +1500,8 @@ dependencies = [
  "craftworks-beacon-contract",
  "craftworks-identity",
  "craftworks-idlog-contract",
+ "craftworks-standing",
+ "craftworks-standing-contract",
  "craftworks-token-contract",
  "ed25519-dalek",
  "freenet-stdlib",

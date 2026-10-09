@@ -1,0 +1,35 @@
+[package]
+name = "craftworks-standing-contract"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "STANDING (TOKEN §7a): one contract per peer, its standing record — attestations, bindings, holdings and answers — checked from scratch against the beacon's outputs (the beacon, and its outputs log for older heights)."
+
+# Own workspace: own lockfile, so the wasm hash (= part of every standing contract's id) is stable.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+freenet-stdlib = { version = "0.10.0", features = ["contract"], optional = true }
+craftworks-standing = { path = "../../standing" }
+craftworks-beacon-contract = { path = "../beacon", default-features = false }
+contract-keys = { path = "../../sdk/craftworks-sdk/contract-keys" }
+blake3 = { version = "1", default-features = false }
+
+[features]
+default = ["freenet-main-contract"]
+freenet-main-contract = ["dep:freenet-stdlib"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
+
+[dev-dependencies]
+ed25519-dalek = { version = "=2.2.0", default-features = false }

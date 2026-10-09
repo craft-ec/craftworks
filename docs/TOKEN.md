@@ -517,8 +517,9 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   sorted ids); hands the list to its DELEGATE, which answers the beacon's sampled heights from its own node, page
   closed (a delegate cannot query its node: no node query in the delegate API). Each answer covers 16 picks of the
   holdings, hashed with the beacon output and the peer — checked by anyone who fetches a pick. A node's records live in
-  its STANDING CONTRACT (one per peer), every record checked FROM SCRATCH against the beacon within its window (a node
-  makes its own contract first, so nothing is taken on trust). Location is a soft rule (hold what Freenet placed near
+  its STANDING CONTRACT (one per peer; built 10-09, `contracts-src/standing`), every record checked FROM SCRATCH against
+  the beacon — and its outputs log for heights the beacon no longer keeps (a node makes its own contract first, so
+  nothing is taken on trust). Location is a soft rule (hold what Freenet placed near
   you): its arc applies when peers place it. A sealed per-key replica (`standing::seal`) is built and kept as an
   option, should reward fraud ever matter.
 - **Open pages extend the beacon** (a step is ~60 s of one core; a delegate wake-up cannot); one honest extender keeps it.

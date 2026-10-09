@@ -17,6 +17,7 @@ case $1 in
   token) crate=craftworks-token-contract ;;
   devices) crate=craftworks-devices-contract ;;
   beacon) crate=craftworks-beacon-contract ;;
+  standing) crate=craftworks-standing-contract ;;
   *) echo "unknown contract: $1" >&2; exit 1 ;;
 esac
 ln -sf "$ck/contract-build.sh" "$here/.contract-build.sh"

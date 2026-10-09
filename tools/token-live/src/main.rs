@@ -300,6 +300,7 @@ async fn main() -> Result<()> {
             "operators" => operators_mode(&w).await?,
             "misdeed" => misdeed_mode(&w).await?,
             "outputs" => outputs_mode(&w, &bcode).await?,
+            "standing" => standing_mode(&w, &bcode, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("standing.wasm"))?).await?,
             "witness" => witness_mode(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("bag.wasm"))?).await?,
             "cut" => cut(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("block.wasm"))?).await?,
             m => bail!("no mode {m}"),
@@ -1258,5 +1259,64 @@ async fn outputs_mode(w: &W, bcode: &[u8]) -> Result<()> {
     println!("   height 50 now: {}", if after == truth.iter().find(|x| x.0 == 50).map(|x| x.1) { "as computed" } else { "CHANGED" });
     let future = B::log::Log { entries: vec![(4000, [7; 32])] };
     println!("4  an output for height 4000 (never held final), on X: {}", put(&w.x, container(bcode, lp.encode()), future.encode()).await?.0);
+    Ok(())
+}
+
+/// THE STANDING CONTRACT, LIVE (TOKEN §7a): a peer's record — three attesters place it, key 7 bound, holdings over 40
+/// contracts, an answer at each beacon height of standing epoch 2 sampled for it — put on a node, which reads the beacon
+/// and its OUTPUTS LOG (the oldest answers are past what the beacon keeps) and checks it from scratch. A record with one
+/// answer moved to another height (re-signed) is refused. Run with BEACON_START a little before 2048.
+async fn standing_mode(w: &W, bcode: &[u8], scode: &[u8]) -> Result<()> {
+    use craftworks_standing as S;
+    use craftworks_standing_contract as SC;
+    println!("— standing");
+    let e = 2u64;
+    let top = e * S::EPOCH + 700;
+    let t = Instant::now();
+    FAST.store(true, std::sync::atomic::Ordering::Relaxed);
+    loop {
+        let n = w.now().await?;
+        if n >= top {
+            break;
+        }
+        if t.elapsed() > Duration::from_secs(30 * 60) {
+            FAST.store(false, std::sync::atomic::Ordering::Relaxed);
+            bail!("the beacon did not reach {top} (at {n})");
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    FAST.store(false, std::sync::atomic::Ordering::Relaxed);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let b = get(&w.x, w.beacon).await?.and_then(|b| B::wire::decode(&b)).context("the beacon")?;
+    println!("1  beacon to {} in {} s; it keeps {}..={}", b.height(), t.elapsed().as_secs(), b.steps.first().map_or(0, |s| s.height), b.height());
+    let truth: Vec<(u64, [u8; 32])> = OUTS.lock().unwrap().clone();
+    let out = |h: u64| truth.iter().find(|x| x.0 == h).map(|x| x.1);
+    let peer = "5cCFQqQwLPNKX4zwK";
+    let addr: std::net::SocketAddr = "86.38.75.1:1".parse()?;
+    let ring = S::ring_of_addr(&addr);
+    let at = |n: u64| ring.wrapping_add(if n.is_multiple_of(2) { u64::MAX / 4 } else { (u64::MAX / 4).wrapping_neg() });
+    let attests: Vec<S::Attest> = (1..=3u8).map(|n| S::Attest::new(&key(n), peer, &addr, at(n as u64), e)).collect();
+    let k = key(7);
+    let binds = vec![S::Bind::new(&k, peer, e)];
+    let (_, arc_) = S::place(peer, e, &attests, &[k.verifying_key().to_bytes()], 3).context("placed")?;
+    let hosted: Vec<([u8; 32], u64)> = (0..40u32).map(|n| (*blake3::hash(&n.to_le_bytes()).as_bytes(), 1000)).collect();
+    let (h, ids) = S::Holdings::new(&k, peer, e, &hosted, arc_);
+    let kb = k.verifying_key().to_bytes();
+    let replica = |i: &[u8; 32]| Some(S::seal(&kb, i, i));
+    let final_top = b.height().saturating_sub(2);
+    let answers: Vec<S::Answer> = (e * S::EPOCH..=final_top).filter_map(|x| out(x).filter(|o| S::sampled(o, peer)).and_then(|o| S::Answer::new(&k, &h, &ids, x, &o, &replica))).collect();
+    let oldest = b.steps.first().map_or(0, |s| s.height);
+    let past = answers.iter().filter(|a| a.height < oldest).count();
+    let rec = S::record::State { epochs: vec![S::record::Epoch { epoch: e, attests, binds, holdings: vec![h], answers }] };
+    let sp = SC::Params { beacon_code: *blake3::hash(bcode).as_bytes(), beacon: w.beacon, peer: peer.into() };
+    let c = || container(scode, sp.encode());
+    println!("2  peer {peer}'s record: {} answers ({past} older than the beacon keeps — checked from its outputs log)", rec.epochs[0].answers.len());
+    let mut bad = rec.clone();
+    if let Some(a) = bad.epochs[0].answers.last_mut() {
+        a.height += 1;
+        a.sig = k.sign(&a.message()).to_bytes();
+    }
+    println!("3  a record with one answer moved to another height (re-signed), on Y: {}", put(&w.y, c(), S::codec::encode(&bad)).await?.0);
+    println!("4  the record, on Y: {}", put(&w.y, c(), S::codec::encode(&rec)).await?.0);
     Ok(())
 }
