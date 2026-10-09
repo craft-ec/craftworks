@@ -231,7 +231,11 @@ async fn start_beacon(code: &[u8], x: &str, salt: [u8; 16]) -> Result<[u8; 32]> 
     let p = B::Params { k: 1 << 20, segs: 256, sample: 8, window: 2, keep: 600, seed: *blake3::hash(&salt).as_bytes() };
     let c = || container(code, p.encode());
     let id: [u8; 32] = c().key().id().as_bytes().try_into().unwrap();
-    let first = B::State::default().extend(&p, fresh_mix());
+    // BEACON_START (a test's choice): the first step at that height instead of 1 — a fresh test beacon placed just before
+    // an epoch boundary, so a run does not spend its time ticking towards it. (A first step above 1 links to nothing:
+    // the beacon takes it as its start, as it takes a state whose oldest steps were dropped.)
+    let at = std::env::var("BEACON_START").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(1);
+    let first = if at <= 1 { B::State::default().extend(&p, fresh_mix()) } else { B::normalize(&p, B::State { steps: vec![B::Step::compute(&p, p.genesis(), at, fresh_mix())], alts: vec![], frauds: vec![] }) };
     OUTS.lock().unwrap().push((first.height(), first.out(&p)));
     put(x, c(), B::wire::encode(&first)).await?;
     let (code, x) = (code.to_vec(), x.to_string());
@@ -856,6 +860,14 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
     // Stake counts for an epoch as held at its start: to the next one.
     let epoch = supply::epoch(r) + 1;
     let start = epoch * supply::EPOCH;
+    // Their stake CLAIMS for that epoch, in its registry — before it freezes (an eighth of an epoch before it starts).
+    let claims: Vec<draw::StakeClaim> = stakers
+        .iter()
+        .map(|&n| draw::StakeClaim { owner: did(n), amount: 50, epoch, key: pk(n), sig: key(n).sign(&draw::StakeClaim::message(&pool, &did(n), 50, epoch, &pk(n))).to_bytes() })
+        .collect();
+    let reg = T::claims::Params { code_hash: w.ch, pool, beacon: w.beacon, epoch };
+    let registry = T::claims::Registry { claims: { let mut c = claims.clone(); c.sort_by_key(|x| x.owner); c } };
+    println!("4  {} stake claims for epoch {epoch} in its registry (frozen from {}; now {}), on X: {}", claims.len(), reg.frozen_at(), w.now().await?, put(&w.x, container(&w.code, reg.encode()), registry.encode()).await?.0);
     let t = Instant::now();
     FAST.store(true, std::sync::atomic::Ordering::Relaxed);
     let reached = loop {
@@ -870,14 +882,13 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
         tokio::time::sleep(Duration::from_millis(500)).await;
     };
     FAST.store(false, std::sync::atomic::Ordering::Relaxed);
-    println!("4  beacon fast-forwarded to epoch {epoch} (height {reached}) in {} s", t.elapsed().as_secs());
-    let claims: Vec<draw::StakeClaim> = stakers
-        .iter()
-        .map(|&n| draw::StakeClaim { owner: did(n), amount: 50, epoch, key: pk(n), sig: key(n).sign(&draw::StakeClaim::message(&pool, &did(n), 50, epoch, &pk(n))).to_bytes() })
-        .collect();
-    let caddr = wallet::stakers_bag(&pool, epoch);
-    let items: Vec<Vec<u8>> = claims.iter().map(|c| bag::grind(&caddr, &wallet::bytes::stake_claim(c))).collect();
-    println!("5  {} stake claims for epoch {epoch} in the stakers bag, on X: {}", claims.len(), put(&w.x, container(bag_code, caddr.to_vec()), bag::encode(&caddr, &items)).await?.0);
+    println!("5  beacon fast-forwarded to epoch {epoch} (height {reached}) in {} s", t.elapsed().as_secs());
+    // A claim AFTER the freeze (staker 19, never claimed): the registry keeps what it held.
+    let late = draw::StakeClaim { owner: did(19), amount: 50, epoch, key: pk(19), sig: key(19).sign(&draw::StakeClaim::message(&pool, &did(19), 50, epoch, &pk(19))).to_bytes() };
+    let said = put(&w.x, container(&w.code, reg.encode()), T::claims::Registry { claims: vec![late] }.encode()).await?.0;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let held = get(&w.x, reg.id()).await?.and_then(|b| T::claims::Registry::decode(&b)).map_or(0, |r| r.claims.len());
+    println!("   a claim after the freeze, on X: {said} — the registry holds {held} claims");
     // Token A: 2 pays 3; 4 buries a fake receive and pays 5 out of it.
     let td = w.def(2, b"Paid", 12);
     let ta = w.put_def(&td).await?;
@@ -927,7 +938,10 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
             *beacon_state.borrow_mut() = Some(s);
             o
         };
-        let claims_of = |e: u64| bag_items(wallet::stakers_bag(&pool, e)).iter().filter_map(|i| wallet::bytes::read_stake_claim(bag::payload(i))).collect::<Vec<_>>();
+        let claims_of = |e: u64| {
+            let rp = T::claims::Params { code_hash: ch, pool, beacon: bid, epoch: e };
+            rt.block_on(get(&x, rp.id())).ok().flatten().and_then(|b| T::claims::Registry::decode(&b)).map_or(vec![], |r| r.claims)
+        };
         let sigs_of = |cid: &[u8; 32], seq: u64| bag_items(wallet::witness_bag(cid, seq)).iter().filter_map(|i| wallet::bytes::read_witness_sig(bag::payload(i))).collect::<Vec<_>>();
         let stake_reads = std::cell::Cell::new(0usize);
         let stake_of = |o: &[u8; 32], at: u64| {
@@ -946,8 +960,12 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
                 out.borrow_mut().push(format!("   {who} seq {seq}: chain not on Y"));
                 return false;
             };
-            let e = s.entries.iter().find(|e| e.seq == seq).unwrap().clone();
-            let (ep, hh) = wallet::lot_of(e.stamp, td2.margin);
+            let i = s.entries.iter().position(|e| e.seq == seq).unwrap();
+            let e = s.entries[i].clone();
+            let Ok((ep, hh)) = wallet::lot_of(&e, i.checked_sub(1).map(|j| &s.entries[j]), td2.margin) else {
+                out.borrow_mut().push(format!("   {who} seq {seq}: no lot (its predecessor not held)"));
+                return false;
+            };
             let claims = claims_of(ep);
             let Some(o_) = out_at(hh) else {
                 out.borrow_mut().push(format!("   {who} seq {seq}: its lot is not drawn"));
@@ -992,8 +1010,9 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
         // THE WALLETS: an entry accepted from its bags alone.
         let accept = |o: u8, seq: u64| {
             let p = params(ta, o);
-            let e = read(&p)?.entries.into_iter().find(|e| e.seq == seq)?;
-            Some(wallet::accept(&src, &p, &e))
+            let s = read(&p)?;
+            let i = s.entries.iter().position(|e| e.seq == seq)?;
+            Some(wallet::accept(&src, &p, &s.entries[i], i.checked_sub(1).map(|j| &s.entries[j])))
         };
         let t = Instant::now();
         stake_reads.set(0);

@@ -1947,7 +1947,7 @@ pub fn beacon_height(b: &[u8]) -> Option<u64> {
 
 #[cfg(feature = "freenet-main-contract")]
 mod contract {
-    use super::{accept, authority, beacon_height, freeze, operators, supply, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
+    use super::{accept, authority, beacon_height, claims, freeze, operators, supply, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
     use freenet_stdlib::prelude::*;
 
     pub struct Token;
@@ -2137,6 +2137,49 @@ mod contract {
         Ok(UpdateModification::valid(State::from(merged.encode())))
     }
 
+    /// A CLAIMS REGISTRY holds: every claim of its epoch and signed.
+    fn claims_valid(params: &[u8], state: &[u8]) -> Result<ValidateResult, ContractError> {
+        let (Some(p), Some(r)) = (claims::Params::decode(params), claims::Registry::decode(state)) else { return Ok(ValidateResult::Invalid) };
+        Ok(if claims::holds(&p, &r).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
+    }
+
+    /// A claims registry's UPDATE: merged while the beacon (read in the same round) is below its freeze; after, kept.
+    fn claims_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
+        let p = claims::Params::decode(params).ok_or(ContractError::InvalidState)?;
+        let held = claims::Registry::decode(state).ok_or(ContractError::InvalidState)?;
+        let mut given = claims::Registry::default();
+        let mut beacon: Option<Vec<u8>> = None;
+        for d in data {
+            let b: &[u8] = match &d {
+                UpdateData::State(s) => s.as_ref(),
+                UpdateData::Delta(x) => x.as_ref(),
+                UpdateData::StateAndDelta { state, .. } => state.as_ref(),
+                UpdateData::RelatedState { related_to, state } => {
+                    if related_to.as_bytes() == p.beacon {
+                        beacon = Some(state.as_ref().to_vec());
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
+            let g = claims::Registry::decode(b).ok_or(ContractError::InvalidUpdate)?;
+            claims::holds(&p, &g).map_err(why)?;
+            given = claims::merge(&given, &g);
+        }
+        if claims::merge(&held, &given) == held {
+            return Ok(UpdateModification::valid(State::from(held.encode())));
+        }
+        let Some(bb) = beacon else {
+            return UpdateModification::requires(vec![RelatedContract { contract_instance_id: ContractInstanceId::new(p.beacon), mode: RelatedMode::StateOnce }]);
+        };
+        let now = beacon_height(&bb).ok_or(ContractError::InvalidUpdate)?;
+        let out = claims::take(&p, &held, &given, now);
+        if out.claims.len() > claims::CLAIMS_MAX {
+            return Err(why("more claims than a registry holds"));
+        }
+        Ok(UpdateModification::valid(State::from(out.encode())))
+    }
+
     #[contract]
     impl ContractInterface for Token {
         fn validate_state(parameters: Parameters<'static>, state: State<'static>, related: RelatedContracts<'static>) -> Result<ValidateResult, ContractError> {
@@ -2152,6 +2195,9 @@ mod contract {
             }
             if params.first() == Some(&operators::OPERATORS) {
                 return operators_valid(params, state.as_ref(), &related);
+            }
+            if params.first() == Some(&claims::CLAIMS) {
+                return claims_valid(params, state.as_ref());
             }
             // A DEFINITION: its state is its params, and they read as one.
             if params.first() == Some(&DEFINITION) {
@@ -2208,6 +2254,9 @@ mod contract {
             }
             if parameters.as_ref().first() == Some(&operators::OPERATORS) {
                 return operators_update(parameters.as_ref(), state.as_ref(), data);
+            }
+            if parameters.as_ref().first() == Some(&claims::CLAIMS) {
+                return claims_update(parameters.as_ref(), state.as_ref(), data);
             }
             let p = ChainParams::decode(parameters.as_ref()).ok_or(ContractError::InvalidState)?;
             let held = super::State::decode(state.as_ref()).ok_or(ContractError::InvalidState)?;
@@ -2292,6 +2341,7 @@ mod contract {
 
 pub mod authority;
 pub mod cut;
+pub mod claims;
 pub mod freeze;
 pub mod operators;
 pub mod witness;

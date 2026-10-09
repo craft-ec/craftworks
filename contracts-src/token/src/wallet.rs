@@ -26,18 +26,28 @@ pub struct Source<'a> {
     pub definition: &'a dyn Fn(&[u8; 32]) -> Option<Definition>,
 }
 
-/// The lot of an entry stamped `stamp` in a token of margin `margin`: the claims of its stamp's epoch, under the beacon
-/// output TWO steps past the last height at which that stamp may still be appended (`stamp + margin`, the append rule).
-/// So whoever writes it cannot know its committee in time to choose: not by picking a stamp within the margin, nor by
-/// holding the entry back — and the step after is one a faster machine has not finished before everyone else either.
-pub fn lot_of(stamp: u64, margin: u64) -> (u64, u64) {
-    (supply::epoch(stamp), stamp + margin + 2)
+/// The LOT of an entry: (the claims' epoch, the beacon height its output is drawn at). Fixed by the entry's PLACE —
+/// never by what is written there: its base is its PREDECESSOR's stamp (two entries at one place share it, so they
+/// share one committee, and anyone signing both is burned); drawn `margin + 2` steps past the base, and never before
+/// the entry's own epoch's first step (an account idle for long is witnessed by the epoch's stakers, the claims frozen
+/// before any of its outputs existed: [`crate::claims`]). A chain's first entry, with no predecessor, at its epoch's
+/// first step. What stays choosable: writing in a LATER epoch draws again — one try an epoch.
+pub fn lot_of(e: &Entry, pred: Option<&Entry>, margin: u64) -> Result<(u64, u64), Why> {
+    // (The epoch's first STEP: its start + 1 — there is no step at height 0.)
+    let start = supply::epoch(e.stamp) * supply::EPOCH + 1;
+    let h = match pred {
+        Some(p) => (p.stamp + margin + 2).max(start),
+        None if e.seq == 0 => start,
+        None => return Err("an entry whose predecessor is not held"),
+    };
+    Ok((supply::epoch(h), h))
 }
 
-/// Is `e` of `chain` ACCEPTED? `Ok`: how many of its committee signed it.
-pub fn accept(src: &Source, chain: &ChainParams, e: &Entry) -> Result<usize, Why> {
+/// Is `e` of `chain` ACCEPTED (`pred`: the entry before it in its chain — its lot's base)? `Ok`: how many of its
+/// committee signed it.
+pub fn accept(src: &Source, chain: &ChainParams, e: &Entry, pred: Option<&Entry>) -> Result<usize, Why> {
     let margin = (src.definition)(&chain.definition).ok_or("an entry of a token not known")?.margin;
-    let (epoch, height) = lot_of(e.stamp, margin);
+    let (epoch, height) = lot_of(e, pred, margin)?;
     let out = (src.out)(height).ok_or("an entry whose lot is not drawn yet")?;
     let id = chain.id();
     let at = epoch * supply::EPOCH;
@@ -66,11 +76,14 @@ pub fn stake_at(p: &ChainParams, d: &Definition, s: &State, at: u64) -> Result<w
 /// fill's lock (the taker's chain of the offer's token); a vesting step's vest; a claim's lock (the taker's chain) and fill (the maker's
 /// chain of the lock's token). A mint cites its supply shard (signed by the mint authority, not witnessed); a refund
 /// its own lock (accepted with its own past). `Err`: a cited entry not found.
-pub fn cited(p: &ChainParams, s: &State, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<Vec<(ChainParams, Entry)>, Why> {
-    let find = |t: Tok, owner: [u8; 32], pick: &dyn Fn(&Entry) -> bool| -> Result<(ChainParams, Entry), Why> {
+/// Each with the entry before it in its chain (its lot's base; `None` if that chain is held from it).
+#[allow(clippy::type_complexity)]
+pub fn cited(p: &ChainParams, s: &State, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<Vec<(ChainParams, Entry, Option<Entry>)>, Why> {
+    let find = |t: Tok, owner: [u8; 32], pick: &dyn Fn(&Entry) -> bool| -> Result<(ChainParams, Entry, Option<Entry>), Why> {
         let c = p.at(t, owner);
         let held = chain(&t, &owner).ok_or("a cited chain not held")?;
-        held.entries.into_iter().find(|x| pick(x)).map(|x| (c, x)).ok_or("a cited entry not held")
+        let i = held.entries.iter().position(pick).ok_or("a cited entry not held")?;
+        Ok((c, held.entries[i].clone(), i.checked_sub(1).map(|j| held.entries[j].clone())))
     };
     Ok(match &e.body {
         Body::Receive { from, .. } | Body::Vested { from, .. } => vec![find(p.tok(), *from, &|x| crate::debit_for(x, &p.owner, e))?],
@@ -108,13 +121,13 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
     timed(d, e.stamp, &prefix, e)?;
     match i.checked_sub(1) {
         Some(j) => {
-            accept(src, p, &s.entries[j])?;
+            accept(src, p, &s.entries[j], j.checked_sub(1).map(|k| &s.entries[k]))?;
         }
         None if seq != 0 => return Err("an entry whose predecessor is not held"),
         None => {}
     }
-    for (c, x) in cited(p, s, e, chain)? {
-        accept(src, &c, &x)?;
+    for (c, x, before) in cited(p, s, e, chain)? {
+        accept(src, &c, &x, before.as_ref())?;
     }
     Ok(e.hash())
 }

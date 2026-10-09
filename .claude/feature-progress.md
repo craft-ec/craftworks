@@ -1419,6 +1419,16 @@ old key's addresses.
           grinding by an extender, a faster core's lead. beacon.wasm 92300b2a, token.wasm 65f67643.
           LIVE fx/fy: beacon-live fake caught + honest step back on both nodes; token-live witness on these contracts:
           every honest entry 16/16, the buried fake and its payment refused by all, 3's wallet Ok(16) in 34 ms, burn ACCEPTED.
+      [x] 12 LOT HARDENING — BUILT + LIVE 10-09: CLAIMS REGISTRY per (pool, epoch) (kind 7) frozen LEAD (512)
+          steps before the epoch: no selective claiming after an output is known; the lot fixed by the PLACE —
+          predecessor's stamp + margin + 2, floored at the entry's epoch's first step — so two entries at one place
+          share one committee (a fork gets no friendly committee); one try an epoch remains. accept takes the
+          predecessor; cited() returns each cited entry's predecessor. 97 tests; 8 mutants + 1 re-run, all killed.
+          LIVE fx/fy (`BEACON_START=3544 token-live witness`: a test beacon started just before the freeze, so the run
+          waits 110 s, not 10-40 min; the first try from height 1 ran out of its 40 min at 3470 on a loaded machine):
+          16 claims registered at 3550 (freeze 3584); a claim after the freeze changed nothing (16 held); every honest
+          entry drawn 16 / signed 16; the buried fake and its payment refused by all; 3's wallet Ok(16) in 30 ms; the
+          equivocating staker burned. token.wasm caed367c.
       [x] 11 BEACON OUTPUTS LOG — BUILT + LIVE 10-09: one contract per 4096 heights (beacon wasm, kind
           LOG 0x4c), filled from the beacon's FINAL steps, a held height never changed; token-live's ticker records it;
           readers fall back to it past the beacon's keep. Found: without it an account idle past the beacon's keep could

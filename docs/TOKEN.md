@@ -391,9 +391,13 @@ are checked):
   watches, and the burn of witnesses who sign what does not hold (§7a). (Designed first as a bag of contributions
   every step must include; dropped: an extender can omit any, so it adds nothing over its own mix.)
 - **Randomness is used late.** `random(n) = out(n+1)`: a faster machine learns `out(n+1)` a little before everyone
-  else, but anything drawn from it was fixed a whole step earlier. A WITNESS LOT goes further (`wallet::lot_of`): an
-  entry stamped `s` may still be appended while the beacon is at `s + margin`, so its committee is drawn from
-  `out(s + margin + 2)` — the writer cannot pick a stamp, or hold the entry back, to choose its committee.
+  else, but anything drawn from it was fixed a whole step earlier. A WITNESS LOT (`wallet::lot_of`) is fixed by the
+  entry's PLACE, never by what is written there: drawn at its PREDECESSOR's stamp + margin + 2, and never before its
+  own epoch's first step (a chain's first entry: that step). Two entries at one place share one committee — honest
+  members sign one, anyone signing both is burned — so a fork shown to friendly witnesses gets no committee of its own.
+  What stays choosable: writing in a LATER epoch draws again, one try an epoch (an attacker with 30% of the stake
+  needs on the order of 600 epochs for one committee of 11 of 16 of its own). (Built first at the entry's OWN stamp +
+  margin + 2: that let the writer of a fork pick its stamp, so its committee — replaced 10-09.)
 
 **Its pace, honestly:** height grows with sequential speed, not wall time. One extender with a faster single core (or,
 later, special hardware for blake3) moves it faster for everyone — by that speed ratio, not by how many machines they
@@ -471,9 +475,11 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
 "the most decentralized and open protocol" — no nominated witnesses, no list, no per-token setup: one open pool.
 
 - **Drawn by lot, per entry** (built 6b). There is no global ledger to know the total stake a secret lottery needs, so
-  the lot is PUBLIC: each staker signs a STAKE CLAIM ("I stake N", once an epoch) into the token's stakers bag; for an
-  entry (chain, seq) every claimer's TICKET is a hash of (the beacon output after the entry's stamp, chain, seq,
-  claimer) weighted by its claim — an exponential race (−ln u / stake, in fixed-point integers: the same on every
+  the lot is PUBLIC: each staker signs a STAKE CLAIM ("I stake N", once an epoch, an epoch AHEAD) into the epoch's
+  CLAIMS REGISTRY (`claims.rs`), which takes no claim from an eighth of an epoch before the epoch starts — so who
+  stands in its lots is fixed before any of its outputs exists (no waiting for an output, then claiming only with the
+  identities whose tickets are low); for an entry (chain, seq) every claimer's TICKET is a hash of (the lot's beacon
+  output, chain, seq, claimer) weighted by its claim — an exponential race (−ln u / stake, in fixed-point integers: the same on every
   machine), an exactly stake-proportional draw in which splitting stake across identities gains nothing. The
   COMMITTEE is the k lowest tickets; anyone computes it, and nobody before the beacon output exists. A drawn witness
   re-runs the chain's checks and signs ([`witness::WitnessSig`]); an entry counts once enough of its committee signed.

@@ -1966,8 +1966,8 @@ impl Lot {
         }
     }
     /// `n` of the entry's committee sign it (`entry`: what they sign).
-    fn sign(&mut self, chain: &ChainParams, e: &Entry, n: usize, entry: [u8; 32]) {
-        let (epoch, h) = wallet::lot_of(e.stamp, def().margin);
+    fn sign(&mut self, chain: &ChainParams, e: &Entry, pred: Option<&Entry>, n: usize, entry: [u8; 32]) {
+        let (epoch, h) = wallet::lot_of(e, pred, def().margin).unwrap();
         let id = chain.id();
         let members = draw::committee(&id_a(), &Lot::out(h), &id, e.seq, epoch, &self.claims, wallet::COMMITTEE);
         let v = self.sigs.entry((id, e.seq)).or_default();
@@ -1980,9 +1980,9 @@ impl Lot {
     fn witness(&mut self, w: &Two, owner: u8) -> Result<(), Why> {
         let p = at(id_a(), owner);
         let s = w.get(id_a(), owner).clone();
-        for e in &s.entries {
+        for (i, e) in s.entries.iter().enumerate() {
             let h = self.may(w, owner, e.seq)?;
-            self.sign(&p, e, wallet::NEED, h);
+            self.sign(&p, e, i.checked_sub(1).map(|j| &s.entries[j]), wallet::NEED, h);
         }
         Ok(())
     }
@@ -1992,8 +1992,9 @@ impl Lot {
         wallet::may_witness(&self.src(), &p, &def(), w.get(id_a(), owner), seq, self.now, &holds, &|t, o| w.0.get(&(t.definition, *o)).cloned())
     }
     fn accept(&self, w: &Two, owner: u8, seq: u64) -> Result<usize, Why> {
-        let e = w.get(id_a(), owner).entries.iter().find(|e| e.seq == seq).unwrap().clone();
-        wallet::accept(&self.src(), &at(id_a(), owner), &e)
+        let s = w.get(id_a(), owner);
+        let i = s.entries.iter().position(|e| e.seq == seq).unwrap();
+        wallet::accept(&self.src(), &at(id_a(), owner), &s.entries[i], i.checked_sub(1).map(|j| &s.entries[j]))
     }
 }
 
@@ -2005,9 +2006,9 @@ fn a_payment_is_value_once_enough_of_its_committee_signed_it() {
     lot.witness(&w, 2).unwrap();
     let (p, e) = (at(id_a(), 3), w.get(id_a(), 3).entries[0].clone());
     assert_eq!(lot.accept(&w, 3, 0), Err("an entry its committee has not witnessed"), "nobody signed it yet");
-    lot.sign(&p, &e, 10, e.hash());
+    lot.sign(&p, &e, None, 10, e.hash());
     assert_eq!(lot.accept(&w, 3, 0), Err("an entry its committee has not witnessed"), "10 of 16: one short of 11");
-    lot.sign(&p, &e, wallet::NEED, [9; 32]);
+    lot.sign(&p, &e, None, wallet::NEED, [9; 32]);
     assert_eq!(lot.accept(&w, 3, 0), Err("an entry its committee has not witnessed"), "signatures for another entry");
     lot.sigs.clear();
     lot.witness(&w, 1).unwrap();
@@ -2031,7 +2032,7 @@ fn a_witness_signs_only_on_an_accepted_past() {
     // 2's next entry (its send to 3): not until the receive before it is accepted.
     assert_eq!(lot.may(&w, 2, 1), Err("an entry its committee has not witnessed"), "the predecessor not accepted");
     let e = w.get(id_a(), 2).entries[0].clone();
-    lot.sign(&at(id_a(), 2), &e, wallet::NEED, h);
+    lot.sign(&at(id_a(), 2), &e, None, wallet::NEED, h);
     assert!(lot.may(&w, 2, 1).is_ok());
 }
 
@@ -2455,20 +2456,56 @@ fn an_operators_list_only_extends_its_past_on_the_owners_current_key() {
 }
 
 #[test]
-fn an_entrys_lot_is_drawn_past_the_last_moment_it_could_be_written() {
-    // Stamped s, appendable while the beacon is at most s + margin: drawn from the output at s + margin + 2.
-    assert_eq!(wallet::lot_of(10, 2), (0, 14));
-    assert_eq!(wallet::lot_of(supply::EPOCH - 1, 2).0, 0, "the claims of its stamp's epoch");
-    let w = three_hops();
-    let mut lot = Lot::new();
-    lot.witness(&w, 1).unwrap();
-    let e = w.get(id_a(), 1).entries[0].clone();
-    assert_eq!(e.stamp + def().margin + 2, wallet::lot_of(e.stamp, def().margin).1);
-    // Not drawn until that output exists.
-    lot.drawn = e.stamp + def().margin + 1;
-    assert_eq!(lot.accept(&w, 1, 0), Err("an entry whose lot is not drawn yet"));
-    lot.drawn = e.stamp + def().margin + 2;
-    assert_eq!(lot.accept(&w, 1, 0), Ok(11));
+fn an_entrys_lot_is_fixed_by_its_place_not_by_what_is_written_there() {
+    let m = def().margin;
+    let mut s = base(0);
+    put_at(&mut s, 2, Body::Burn { amount: 10 }, Some(M), 5);
+    let pred = s.entries.last().unwrap().clone();
+    let mut a = s.clone();
+    put_at(&mut a, 3, Body::Burn { amount: 20 }, Some(M), 9);
+    let mut b = s.clone();
+    put_at(&mut b, 4, Body::Send { to: did(9), amount: 30 }, Some(M), 12);
+    let (ea, eb) = (a.entries.last().unwrap(), b.entries.last().unwrap());
+    // Two entries at one place, written at other stamps: one lot — its predecessor's stamp + margin + 2.
+    assert_eq!(wallet::lot_of(ea, Some(&pred), m), Ok((0, 5 + m + 2)));
+    assert_eq!(wallet::lot_of(ea, Some(&pred), m), wallet::lot_of(eb, Some(&pred), m));
+    // An entry written in a later epoch: drawn at that epoch's start (its stakers), not from the old base.
+    let late = Entry { stamp: 3 * supply::EPOCH + 7, ..ea.clone() };
+    assert_eq!(wallet::lot_of(&late, Some(&pred), m), Ok((3, 3 * supply::EPOCH + 1)));
+    // A chain's first entry: its epoch's start; a later one with no predecessor held: no lot.
+    let first = &s.entries[0];
+    assert_eq!(wallet::lot_of(first, None, m), Ok((0, 1)));
+    assert_eq!(wallet::lot_of(ea, None, m), Err("an entry whose predecessor is not held"));
+    // A base near an epoch's end draws in the next epoch, from that epoch's claims.
+    let edge = Entry { stamp: supply::EPOCH - 1, ..pred.clone() };
+    let next = Entry { stamp: supply::EPOCH + 1, ..ea.clone() };
+    assert_eq!(wallet::lot_of(&next, Some(&edge), m), Ok((1, supply::EPOCH - 1 + m + 2)));
+}
+
+#[test]
+fn a_claims_registry_freezes_before_its_epoch() {
+    let p = claims::Params { code_hash: CODE, pool: id_a(), beacon: BEACON, epoch: 2 };
+    let claim = |n: u8, amount: u128, epoch: u64| {
+        let kb = pk(n);
+        draw::StakeClaim { owner: [n; 32], amount, epoch, key: kb, sig: key(n).sign(&draw::StakeClaim::message(&id_a(), &[n; 32], amount, epoch, &kb)).to_bytes() }
+    };
+    let one = claims::Registry { claims: vec![claim(60, 100, 2)] };
+    assert_eq!(claims::holds(&p, &one), Ok(()));
+    assert_eq!(claims::Registry::decode(&one.encode()), Some(one.clone()));
+    assert_eq!(claims::holds(&p, &claims::Registry { claims: vec![claim(60, 100, 3)] }), Err("a claim that is not this epoch's or not signed"));
+    let mut forged = claim(61, 100, 2);
+    forged.amount = 1000;
+    assert_eq!(claims::holds(&p, &claims::Registry { claims: vec![forged] }), Err("a claim that is not this epoch's or not signed"));
+    let two = claims::Registry { claims: vec![claim(61, 50, 2)] };
+    // Frozen 512 steps (an eighth of an epoch) before epoch 2 starts.
+    let frozen = 2 * 4096 - 512;
+    assert_eq!(p.frozen_at(), frozen);
+    assert_eq!(claims::take(&p, &one, &two, frozen - 1).claims.len(), 2, "taken before the freeze");
+    assert_eq!(claims::take(&p, &one, &two, frozen), one, "ignored from the freeze on");
+    // Copies settle the same in every order; one claim per staker.
+    let other = claims::Registry { claims: vec![claim(60, 90, 2)] };
+    assert_eq!(claims::merge(&one, &other), claims::merge(&other, &one));
+    assert_eq!(claims::merge(&one, &other).claims.len(), 1);
 }
 
 // ---- A WITNESS'S MISDEED: signing a credit whose debit is not there burns its stake ----
