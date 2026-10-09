@@ -1493,7 +1493,8 @@ old key's addresses.
           finality on overrides, small rules (reclaim time, definition checks, HOLDERS chain, debit nonce, related cap,
           swap pays-nothing). Open residuals listed in TOKEN step 22.
       [x] 26 AUDIT GAPS (same day): witness current-key rule, spend within margin, cut history for payout witnesses,
-          contract checks cut trees from seq 0. Still open: misdeed for fake payouts/mints; back-dated pause word.
+          contract checks cut trees from seq 0. Then payouts name their verdict + Body::FalseVerdict (owner: content
+          hash makes it unframeable). Still open: fake-mint misdeed (record propagation); back-dated pause word.
       [ ] 27 WALLET CORE (owner agreed 10-10: before the shop) — user-side token logic on the existing account and
           device keys; library + fx/fy, no release.
       [ ] 28 SHOP — sell an edition on demand over the wallet core.

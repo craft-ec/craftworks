@@ -74,7 +74,7 @@ fn after(s: &State, body: &Body) -> u128 {
         }).unwrap_or(0),
         Body::Payout { amount, .. } | Body::HolderPayout { amount, .. } => b + amount,
         Body::Stake { amount } => b.wrapping_sub(*amount),
-        Body::Unstake { .. } | Body::Slash { .. } | Body::Misdeed { .. } => b,
+        Body::Unstake { .. } | Body::Slash { .. } | Body::Misdeed { .. } | Body::FalseVerdict { .. } => b,
         Body::Release { unstake } => b + unbonding_of(s).into_iter().find(|u| &u.0 == unstake).map_or(0, |u| u.1),
         Body::Allow { .. } | Body::Cut { .. } | Body::Writer { .. } | Body::Members { .. } => b,
         Body::Spend { amount, .. } => b.wrapping_sub(*amount),
@@ -2412,6 +2412,10 @@ fn the_watch_finds_who_signed_two_entries_at_one_place() {
 // ---- ESCROW (TOKEN §5): the token's one door for apps ----
 
 const PROG: [u8; 32] = [77; 32];
+/// The verdict (section hash) a program's state names.
+fn vh(prog: &[u8]) -> [u8; 32] {
+    escrow::Section::decode_prefix(prog).unwrap().0.hash()
+}
 fn eref(t: [u8; 32], owner: u8, n: u8) -> escrow::EscrowRef {
     (Tok::from(t), did(owner), nonce(n))
 }
@@ -2454,7 +2458,7 @@ fn escrowed() -> (Two, Vec<u8>) {
 #[test]
 fn an_escrow_comes_back_only_as_its_programs_verdict_says() {
     let (w, prog) = escrowed();
-    let vh = escrow::Section::decode_prefix(&prog).unwrap().0.hash();
+    let vh_ = vh(&prog);
     let ck = |w: &Two, o: u8, prog: Option<&Vec<u8>>| {
         let f = |id: &[u8; 32]| (*id == PROG).then(|| prog.cloned()).flatten();
         check(&at(id_a(), o), &def(), w.get(id_a(), o), &|t, o| w.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(o)), &Extra { ops: None, program: Some(&f) })
@@ -2467,25 +2471,28 @@ fn an_escrow_comes_back_only_as_its_programs_verdict_says() {
         x
     };
     // Its release: as the verdict says, once.
-    let ok = with(Body::Unescrow { escrow: nonce(7), refund: 50, verdict: vh }, 1);
+    let ok = with(Body::Unescrow { escrow: nonce(7), refund: 50, verdict: vh_ }, 1);
     assert_eq!(ck(&ok, 1, Some(&prog)), Ok(()));
     assert_eq!(ok.get(id_a(), 1).balance(), 750);
-    assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(7), refund: 60, verdict: vh }, 1), 1, Some(&prog)), Err("a release that is not its program's verdict"));
+    assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(7), refund: 60, verdict: vh_ }, 1), 1, Some(&prog)), Err("a release that is not its program's verdict"));
     assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(7), refund: 50, verdict: [9; 32] }, 1), 1, Some(&prog)), Err("a release that is not its program's verdict"), "naming another verdict");
-    assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(7), refund: 301, verdict: vh }, 1), 1, Some(&prog)), Err("a refund past what the escrow held"));
-    assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(6), refund: 50, verdict: vh }, 1), 1, Some(&prog)), Err("a release of no open escrow"));
+    assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(7), refund: 301, verdict: vh_ }, 1), 1, Some(&prog)), Err("a refund past what the escrow held"));
+    assert_eq!(ck(&with(Body::Unescrow { escrow: nonce(6), refund: 50, verdict: vh_ }, 1), 1, Some(&prog)), Err("a release of no open escrow"));
     assert_eq!(ck(&ok, 1, None), Err("the escrow's program is not there"));
     let mut twice = Two(ok.0.clone());
-    put_at(twice.chain(id_a(), 1), 31, Body::Unescrow { escrow: nonce(7), refund: 50, verdict: vh }, None, 5);
+    put_at(twice.chain(id_a(), 1), 31, Body::Unescrow { escrow: nonce(7), refund: 50, verdict: vh_ }, None, 5);
     assert_eq!(ck(&twice, 1, Some(&prog)), Err("a release of no open escrow"));
     // A payout: as the verdict says, to its recipient, once.
-    let pay = |amount: u128, to: u8| with(Body::Payout { program: PROG, key: [1; 16], amount, ev: Evidence::default() }, to);
+    let pay = |amount: u128, to: u8| with(Body::Payout { program: PROG, key: [1; 16], amount, verdict: vh_, ev: Evidence::default() }, to);
     assert_eq!(ck(&pay(250, 2), 2, Some(&prog)), Ok(()));
     assert_eq!(pay(250, 2).get(id_a(), 2).balance(), 250);
     assert_eq!(ck(&pay(251, 2), 2, Some(&prog)), Err("a payout that is not its program's verdict"));
     assert_eq!(ck(&pay(250, 3), 3, Some(&prog)), Err("a payout that is not its program's verdict"), "to another recipient");
+    let mut named = Two(w.0.clone());
+    put_at(named.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, verdict: [9; 32], ev: Evidence::default() }, None, 5);
+    assert_eq!(ck(&named, 2, Some(&prog)), Err("a payout that is not its program's verdict"), "naming another verdict");
     let mut again = Two(pay(250, 2).0.clone());
-    put_at(again.chain(id_a(), 2), 32, Body::Payout { program: PROG, key: [1; 16], amount: 250, ev: Evidence::default() }, None, 5);
+    put_at(again.chain(id_a(), 2), 32, Body::Payout { program: PROG, key: [1; 16], amount: 250, verdict: vh(&prog), ev: Evidence::default() }, None, 5);
     assert_eq!(ck(&again, 2, Some(&prog)), Err("a payout received twice"));
     // A program whose section does not hold (pays out more than it holds): nothing released by it.
     let (sec, rest) = escrow::Section::decode_prefix(&prog).unwrap();
@@ -2506,11 +2513,11 @@ fn a_witness_signs_a_payout_only_from_a_program_backed_by_real_escrows() {
     lot.progs.push((PROG, prog.clone()));
     lot.witness(&w, 1).unwrap(); // 1's escrow accepted
     let mut x = Two(w.0.clone());
-    put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, ev: Evidence::default() }, None, 5);
+    put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, verdict: vh(&prog), ev: Evidence::default() }, None, 5);
     // ONE VERDICT: no payout is signed before every escrow its program lists is released under THIS verdict.
     assert_eq!(lot.may(&x, 2, 0), Err("a payout before every escrow of its verdict is released"));
-    let vh = escrow::Section::decode_prefix(&prog).unwrap().0.hash();
-    put_at(x.chain(id_a(), 1), 31, Body::Unescrow { escrow: nonce(7), refund: 50, verdict: vh }, None, 5);
+    let vh_ = vh(&prog);
+    put_at(x.chain(id_a(), 1), 31, Body::Unescrow { escrow: nonce(7), refund: 50, verdict: vh_ }, None, 5);
     lot.witness(&x, 1).unwrap(); // released under this verdict, accepted
     assert_eq!(lot.may(&x, 2, 0).map(|_| ()), Ok(()));
     // Released under ANOTHER verdict (or not at all): this one's payouts never signed.
@@ -2519,26 +2526,33 @@ fn a_witness_signs_a_payout_only_from_a_program_backed_by_real_escrows() {
     let mut y = Two(w.0.clone());
     put_at(y.chain(id_a(), 1), 31, Body::Unescrow { escrow: nonce(7), refund: 50, verdict: [9; 32] }, None, 5);
     lot2.witness_t(&y, id_a(), 1).ok();
-    put_at(y.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, ev: Evidence::default() }, None, 5);
+    put_at(y.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, verdict: vh(&prog), ev: Evidence::default() }, None, 5);
     assert_eq!(lot2.may(&y, 2, 0), Err("a payout before every escrow of its verdict is released"));
+    // (Each fake below: 2's payout names ITS verdict — the contract takes it; the witnesses must not.)
+    let naming = |state: &[u8]| {
+        let mut z = Two(x.0.clone());
+        z.chain(id_a(), 2).entries.pop();
+        put_at(z.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, verdict: vh(state), ev: Evidence::default() }, None, 5);
+        z
+    };
     // A program listing an escrow that is not there (to pay out of thin air): no witness signs its payouts.
     let (sec, rest) = escrow::Section::decode_prefix(&prog).unwrap();
     let mut fake = sec.clone();
     fake.escrows.push((eref(id_a(), 3, 9), 1000, [0; 32]));
     fake.pays.push(([2; 16], id_a().into(), did(2), 1000));
     lot.progs[0].1 = [fake.encode(), rest.to_vec()].concat();
-    assert_eq!(lot.may(&x, 2, 0), Err("an escrow's chain not read"));
+    assert_eq!(lot.may(&naming(&lot.progs[0].1), 2, 0), Err("an escrow's chain not read"));
     // One naming a REAL escrow at another amount, or one not to this program: the same.
     let mut wrong = sec.clone();
     wrong.escrows[0].1 = 400;
     wrong.pays.push(([2; 16], id_a().into(), did(4), 100));
     lot.progs[0].1 = [wrong.encode(), rest.to_vec()].concat();
-    assert_eq!(lot.may(&x, 2, 0), Err("a program listing an escrow that is not there"));
+    assert_eq!(lot.may(&naming(&lot.progs[0].1), 2, 0), Err("a program listing an escrow that is not there"));
     // One listing a real escrow on terms its owner did not sign: the same.
     let mut lie = sec.clone();
     lie.escrows[0].2 = escrow::terms_hash(b"sell at 0");
     lot.progs[0].1 = [lie.encode(), rest.to_vec()].concat();
-    assert_eq!(lot.may(&x, 2, 0), Err("a program listing an escrow that is not there"));
+    assert_eq!(lot.may(&naming(&lot.progs[0].1), 2, 0), Err("a program listing an escrow that is not there"));
     // One listing a REAL, accepted escrow that was made to ANOTHER program (to spend it here): the same.
     let mut w2 = Two(w.0.clone());
     put_at(w2.chain(id_a(), 1), 8, Body::Escrow { program: [88; 32], terms: vec![], amount: 300, until: 0 }, Some(1), 3);
@@ -2549,7 +2563,7 @@ fn a_witness_signs_a_payout_only_from_a_program_backed_by_real_escrows() {
     other.pays.push(([3; 16], id_a().into(), did(2), 300));
     lot2.progs.push((PROG, [other.encode(), rest.to_vec()].concat()));
     let mut x2 = Two(w2.0.clone());
-    put_at(x2.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [3; 16], amount: 300, ev: Evidence::default() }, None, 5);
+    put_at(x2.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [3; 16], amount: 300, verdict: other.hash(), ev: Evidence::default() }, None, 5);
     assert_eq!(lot2.may(&x2, 2, 0), Err("a program listing an escrow that is not there"));
     // An escrow that is real but NOT ACCEPTED: not signed.
     let mut fresh_lot = Lot::new();
@@ -2564,7 +2578,6 @@ fn an_item_sold_through_a_program_pays_its_creators_royalty() {
     let it = item_u();
     put_at(w.chain(it, M), 1, Body::Mint { nonce: nonce(1), amount: 1, minted: 0, ev: Evidence::default() }, None, 0);
     put_at(w.chain(it, M), 7, Body::Escrow { program: PROG, terms: b"sell".to_vec(), amount: 1, until: 0 }, Some(M), 0);
-    put_at(w.chain(it, T), 30, Body::Payout { program: PROG, key: [1; 16], amount: 1, ev: Evidence::default() }, None, 5);
     let h = escrow::terms_hash(b"sell");
     let sec = |to_m: u128, to_7: u128| escrow::Section {
         escrows: vec![((it, did(M), nonce(7)), 1, h), (eref(id_b(), T, 8), 200, h)],
@@ -2573,9 +2586,11 @@ fn an_item_sold_through_a_program_pays_its_creators_royalty() {
     }
     .encode();
     let ck = |prog: Vec<u8>| {
+        let mut t = State::default();
+        put_at(&mut t, 30, Body::Payout { program: PROG, key: [1; 16], amount: 1, verdict: vh(&prog), ev: Evidence::default() }, None, 5);
         let f = move |id: &[u8; 32]| (*id == PROG).then(|| prog.clone());
         let shard = supply::Shard { mints: vec![u_mint(M, 1)] };
-        check(&at_t(it, T), &def_u(), &w.0[&(it, did(T))], &|c, o| w.0.get(&(*c, *o)).cloned(), &|e| (e == 0).then(|| shard.clone()), Some(&log(T)), &Extra { ops: None, program: Some(&f) })
+        check(&at_t(it, T), &def_u(), &t, &|c, o| w.0.get(&(*c, *o)).cloned(), &|e| (e == 0).then(|| shard.clone()), Some(&log(T)), &Extra { ops: None, program: Some(&f) })
     };
     assert_eq!(ck(sec(95, 5)), Ok(()), "5 of 100: the royalty");
     assert_eq!(ck(sec(100, 5)), Ok(()), "exactly 5% of what the seller got");
@@ -2596,7 +2611,9 @@ fn an_item_sold_through_a_program_pays_its_creators_royalty() {
     let plain = Definition { royalty: None, ..def_u() };
     let f = |id: &[u8; 32]| (*id == PROG).then(|| sec(100, 0));
     let shard = supply::Shard { mints: vec![u_mint(M, 1)] };
-    assert_eq!(check(&at_t(it, T), &plain, &w.0[&(it, did(T))], &|c, o| w.0.get(&(*c, *o)).cloned(), &|e| (e == 0).then(|| shard.clone()), Some(&log(T)), &Extra { ops: None, program: Some(&f) }), Ok(()));
+    let mut t = State::default();
+    put_at(&mut t, 30, Body::Payout { program: PROG, key: [1; 16], amount: 1, verdict: vh(&sec(100, 0)), ev: Evidence::default() }, None, 5);
+    assert_eq!(check(&at_t(it, T), &plain, &t, &|c, o| w.0.get(&(*c, *o)).cloned(), &|e| (e == 0).then(|| shard.clone()), Some(&log(T)), &Extra { ops: None, program: Some(&f) }), Ok(()));
 }
 
 // ---- EDITIONS (TOKEN §1c): a cap, numbered copies, one shard for all time ----
@@ -2778,7 +2795,8 @@ fn an_editions_holders_share_its_royalty_each_copy_once_by_who_held_it_at_the_sa
     let ebytes = e.encode();
     let claim_by = |o: u8, sold: escrow::EscrowRef, n: u128, when: u64, amount: u128, twice: bool, defs: &dyn Fn(&[u8; 32]) -> Option<Vec<u8>>| {
         let mut s = State::default();
-        let body = || Body::HolderPayout { program: PROG, sold, copy: n, at: when, amount, ev: Evidence::default() };
+        let named = vh(&defs(&PROG).unwrap());
+        let body = || Body::HolderPayout { program: PROG, sold, copy: n, at: when, amount, verdict: named, ev: Evidence::default() };
         put_at(&mut s, 30, body(), None, 10);
         if twice {
             put_at(&mut s, 31, body(), None, 10);
@@ -2796,6 +2814,9 @@ fn an_editions_holders_share_its_royalty_each_copy_once_by_who_held_it_at_the_sa
     assert_eq!(claim(8, 5, 3), Err("a holders' share of a copy that takes none"), "past the cap");
     assert_eq!(claim_by(T, (copy(1), did(M), nonce(9)), 2, 4, 3, false, &f), Err("a holders' share of a sale that is not its program's"));
     assert_eq!(claim_by(T, sold, 2, 4, 3, true, &f), Err("a payout received twice"));
+    let mut s9 = State::default();
+    put_at(&mut s9, 30, Body::HolderPayout { program: PROG, sold, copy: 2, at: 4, amount: 3, verdict: [9; 32], ev: Evidence::default() }, None, 10);
+    assert_eq!(check(&at(id_b(), T), &Definition { genesis_owner: did(T), ..def_b() }, &s9, &|t, ow| copies.get(&(*t, *ow)).cloned(), &|_| None, Some(&log(T)), &Extra { ops: None, program: Some(&f) }), Err("a holders' share that is not its program's verdict"), "naming another verdict");
     // An edition that names its creator, not its holders: no shares (audit 10-10: a holders' edition of the claimant's own
     // could take any fee — the share is of THE sold copy's edition now).
     let creator = Definition { royalty: Some((1000, did(7))), ..e.clone() };
@@ -2811,7 +2832,7 @@ fn an_editions_holders_share_its_royalty_each_copy_once_by_who_held_it_at_the_sa
     assert_eq!(wallet::sale_at(&seller, &nonce(7)), Some(4));
     assert_eq!(wallet::sale_at(&seller, &nonce(8)), None);
     let mut s = State::default();
-    put_at(&mut s, 30, Body::HolderPayout { program: PROG, sold, copy: 3, at: 4, amount: 3, ev: Evidence::default() }, None, 10);
+    put_at(&mut s, 30, Body::HolderPayout { program: PROG, sold, copy: 3, at: 4, amount: 3, verdict: vh(&prog), ev: Evidence::default() }, None, 10);
     let got = wallet::cited(&at(id_b(), 8), s.entries.last().unwrap(), &|t, ow| copies.get(&(*t, *ow)).cloned()).unwrap();
     assert!(got[0].1.stamp <= 4 && got[0].1.balance == 1 && !matches!(got[0].1.body, Body::Send { .. }), "the entry holding it at 4 — not the later send");
     // ... and a witness signs a share only dated by that escrow (a later `at` would pick a later holder).
@@ -2820,7 +2841,7 @@ fn an_editions_holders_share_its_royalty_each_copy_once_by_who_held_it_at_the_sa
     let chains = |t: &Tok, ow: &[u8; 32]| if *t == copy(1) && *ow == did(M) { Some(seller_c.clone()) } else { copies.get(&(*t, *ow)).cloned() };
     let dated = |when: u64| {
         let mut s = State::default();
-        put_at(&mut s, 30, Body::HolderPayout { program: PROG, sold, copy: 3, at: when, amount: 3, ev: Evidence::default() }, None, 10);
+        put_at(&mut s, 30, Body::HolderPayout { program: PROG, sold, copy: 3, at: when, amount: 3, verdict: vh(&prog), ev: Evidence::default() }, None, 10);
         let i = s.entries.len() - 1;
         wallet::program_entry(&lot.src(), &at(id_b(), 8), &s, i, &chains)
     };
@@ -2829,7 +2850,7 @@ fn an_editions_holders_share_its_royalty_each_copy_once_by_who_held_it_at_the_sa
     // The sold copy's payout to its buyer passes the royalty rule: the holders were paid their share.
     let buyer = ChainParams { item: copy(1).item, ..at(eid, T) };
     let mut s = State::default();
-    put_at(&mut s, 30, Body::Payout { program: PROG, key: [1; 16], amount: 1, ev: Evidence::default() }, None, 10);
+    put_at(&mut s, 30, Body::Payout { program: PROG, key: [1; 16], amount: 1, verdict: vh(&prog), ev: Evidence::default() }, None, 10);
     let fp = |id: &[u8; 32]| (*id == PROG).then(|| prog.clone());
     assert_eq!(check(&buyer, &e, &s, &|_, _| None, &|_| None, Some(&log(T)), &Extra { ops: None, program: Some(&fp) }), Ok(()));
     assert_eq!(held_at(&copies[&(copy(3), did(8))], 4), Some(1));
@@ -2890,7 +2911,7 @@ fn an_escrow_its_program_never_took_is_reclaimed_after_its_time() {
     lot.progs[0].1 = took.clone();
     let pays = escrow::Section { escrows: vec![(eref(id_a(), 1, 7), 300, escrow::terms_hash(b"sell at 2"))], refunds: vec![], pays: vec![([1; 16], id_a().into(), did(2), 300)] };
     let mut x = Two(back.0.clone());
-    put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 300, ev: Evidence::default() }, None, 25);
+    put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 300, verdict: pays.hash(), ev: Evidence::default() }, None, 25);
     lot.progs[0].1 = pays.encode();
     assert_eq!(lot.may(&x, 2, 0), Err("a program listing an escrow reclaimed"));
 }
@@ -3039,7 +3060,7 @@ fn a_payout_taken_before_a_cut_is_never_taken_again_after_it() {
     // 10-10: it was taken again, 250 → 500).
     let (w, prog) = escrowed();
     let mut x = Two(w.0.clone());
-    put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, ev: Evidence::default() }, None, 5);
+    put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, verdict: vh(&prog), ev: Evidence::default() }, None, 5);
     let whole2 = x.get(id_a(), 2).clone();
     let mut blocks = cut::Blocks::new();
     cut_at(&mut x, &whole2, id_a(), 2, 6, &mut blocks);
@@ -3049,7 +3070,7 @@ fn a_payout_taken_before_a_cut_is_never_taken_again_after_it() {
     assert_eq!(ck(&live2), Ok(()));
     let again = |ev: Evidence| {
         let mut s = live2.clone();
-        put_at(&mut s, 31, Body::Payout { program: PROG, key: [1; 16], amount: 250, ev }, None, 7);
+        put_at(&mut s, 31, Body::Payout { program: PROG, key: [1; 16], amount: 250, verdict: vh(&prog), ev }, None, 7);
         ck(&s)
     };
     assert_eq!(again(Evidence::default()), Err("a payout received twice"));
@@ -3127,7 +3148,7 @@ fn the_audits_small_rules_hold() {
     }
     // No chain of HOLDERS (no one's).
     let mut s = State::default();
-    put_at(&mut s, 30, Body::Payout { program: PROG, key: [1; 16], amount: 1, ev: Evidence::default() }, None, 5);
+    put_at(&mut s, 30, Body::Payout { program: PROG, key: [1; 16], amount: 1, verdict: [0; 32], ev: Evidence::default() }, None, 5);
     assert_eq!(check(&ChainParams { owner: HOLDERS, ..at(id_a(), 1) }, &def(), &s, &|_, _| None, &|_| None, None, &Extra::NONE), Err("a chain of no one"));
     // Two transfers out under one nonce: the second refused.
     let mut two = State::default();
@@ -3142,7 +3163,7 @@ fn the_audits_small_rules_hold() {
     let mut hp = State::default();
     for k in 0..4u8 {
         let sold = (Tok { definition: [40 + k; 32], item: [1; 32] }, did(M), nonce(7));
-        put_at(&mut hp, 30 + k, Body::HolderPayout { program: [50 + k; 32], sold, copy: 2, at: 4, amount: 1, ev: Evidence::default() }, None, 10);
+        put_at(&mut hp, 30 + k, Body::HolderPayout { program: [50 + k; 32], sold, copy: 2, at: 4, amount: 1, verdict: [0; 32], ev: Evidence::default() }, None, 10);
     }
     assert!(validate_wants(&at(id_b(), T), &hp).len() > MAX_RELATED);
     assert!(validate_wants(&at(id_b(), T), &State { entries: hp.entries[..2].to_vec(), fork: None }).len() <= MAX_RELATED);
@@ -3191,19 +3212,52 @@ fn a_payout_is_witnessed_though_its_seller_cut_its_escrow_away() {
     // 1 escrowed 300 with PROG and released it under PROG's verdict (all witnessed), then CUT its chain: the escrow and
     // its release are now behind the cut. 2's payout of 250 is still witnessed — from 1's history read back whole.
     let (w, prog) = escrowed();
-    let vh = escrow::Section::decode_prefix(&prog).unwrap().0.hash();
+    let vh_ = vh(&prog);
     let mut x = Two(w.0.clone());
-    put_at(x.chain(id_a(), 1), 31, Body::Unescrow { escrow: nonce(7), refund: 50, verdict: vh }, None, 5);
+    put_at(x.chain(id_a(), 1), 31, Body::Unescrow { escrow: nonce(7), refund: 50, verdict: vh_ }, None, 5);
     let mut lot = Lot::new();
     lot.progs.push((PROG, prog.clone()));
     lot.witness(&x, 1).unwrap();
     let whole1 = x.get(id_a(), 1).clone();
     let mut blocks = cut::Blocks::new();
     cut_at(&mut x, &whole1, id_a(), 1, 6, &mut blocks);
-    put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, ev: Evidence::default() }, None, 7);
+    put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, verdict: vh(&prog), ev: Evidence::default() }, None, 7);
     assert_eq!(lot.may(&x, 2, 0), Err("a program listing an escrow that is not there"), "its live copy alone: the escrow is gone");
     let cutm = x.get(id_a(), 1).clone();
     let whole = cut::whole(&cutm, &|c| blocks.get(c).cloned()).unwrap();
     lot.histories.push(((id_a().into(), did(1)), whole));
     assert_eq!(lot.may(&x, 2, 0).map(|_| ()), Ok(()), "read back whole: witnessed");
+}
+
+#[test]
+fn a_witness_that_signed_a_payout_its_verdict_does_not_pay_is_burned() {
+    // PROG's verdict pays 2 250 A (key 1). A captured committee signs a payout of 900 to 2 naming THAT verdict — and
+    // the verdict itself (its hash is the one named: no other section has it) proves it: device 2's stake burned.
+    let (_, prog) = escrowed();
+    let (_, b) = misdeed_world();
+    let sec = escrow::Section::decode_prefix(&prog).unwrap().0.encode();
+    let signed_by = |by: u8, amount: u128, verdict: [u8; 32], section: Vec<u8>| {
+        let mut c = State::default();
+        put_at(&mut c, 30, Body::Payout { program: PROG, key: [1; 16], amount, verdict, ev: Evidence::default() }, None, 5);
+        let entry = c.entries[0].clone();
+        let chain = at(id_a(), 2).id();
+        let sig = witness::WitnessSig { chain, seq: entry.seq, entry: entry.hash(), sig: key(by).sign(&witness::WitnessSig::message(&chain, entry.seq, &entry.hash())).to_bytes() };
+        Body::FalseVerdict { key: pk(by), sig, tok: id_a().into(), owner: did(2), entry: Box::new(entry), section }
+    };
+    let burn = |body: Body| {
+        let mut s = b.clone();
+        put_at(&mut s, 9, body, None, 2);
+        check(&at(id_b(), 2), &def_b(), &s, &|_, _| None, &|_| None, Some(&log(2)), &Extra::NONE).map(|_| s)
+    };
+    let s = burn(signed_by(2, 900, vh(&prog), sec.clone())).expect("proven by the verdict it named");
+    let staked = walk(&at(id_b(), 2), &def_b(), &s, &|_, _| None, &|_| None, Some(&log(2)), RECENT, usize::MAX, &Extra::NONE).unwrap().staked;
+    assert_eq!(staked, 0, "its stake burned");
+    assert_eq!(Entry::decode(&s.entries.last().unwrap().encode()).as_ref(), s.entries.last(), "round-trips");
+    // CONTROL: the payout the verdict DOES pay (250) proves nothing — an honest witness cannot be framed.
+    assert_eq!(burn(signed_by(2, 250, vh(&prog), sec.clone())).err(), Some("a false verdict that pays it"));
+    // Another section than the one named (a changed program state): proves nothing.
+    let other = escrow::Section { pays: vec![], ..escrow::Section::decode_prefix(&prog).unwrap().0 }.encode();
+    assert_eq!(burn(signed_by(2, 900, vh(&prog), other)).err(), Some("a false verdict that is not the one the payout named"));
+    // Another key's signature: not this chain's to burn.
+    assert_eq!(burn(signed_by(4, 900, vh(&prog), sec)).err(), Some("a slash of a key that is not this chain's"));
 }

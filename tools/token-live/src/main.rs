@@ -205,7 +205,7 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
         T::Body::Reclaim { escrow } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Escrow { amount, .. } if &x.nonce == escrow => Some(*amount), _ => None }).unwrap_or(0),
         T::Body::Payout { amount, .. } | T::Body::HolderPayout { amount, .. } => bal + amount,
         T::Body::Stake { amount } => bal - amount,
-        T::Body::Unstake { .. } | T::Body::Slash { .. } | T::Body::Misdeed { .. } => bal,
+        T::Body::Unstake { .. } | T::Body::Slash { .. } | T::Body::Misdeed { .. } | T::Body::FalseVerdict { .. } => bal,
         T::Body::Release { unstake } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Unstake { amount } if &x.nonce == unstake => Some(*amount), _ => None }).unwrap_or(0),
         T::Body::Allow { .. } | T::Body::Cut { .. } | T::Body::Writer { .. } | T::Body::Members { .. } => bal,
     };
@@ -731,11 +731,11 @@ async fn nft(w: &W, scode: &[u8]) -> Result<()> {
     let now = w.now().await?;
     let pay = |key: [u8; 16], amount: u128, n: u8| {
         let mut s = T::State::default();
-        push(&mut s, T::Body::Payout { program: prog, key, amount, ev: T::Evidence::default() }, w.n(n), None, now);
+        push(&mut s, T::Body::Payout { program: prog, key, amount, verdict: held.hash(), ev: T::Evidence::default() }, w.n(n), None, now);
         s
     };
     let mut ti = T::State::default();
-    push(&mut ti, T::Body::Payout { program: prog, key: S::pay_key(&ey), amount: 1, ev: T::Evidence::default() }, w.n(30), None, now);
+    push(&mut ti, T::Body::Payout { program: prog, key: S::pay_key(&ey), amount: 1, verdict: held.hash(), ev: T::Evidence::default() }, w.n(30), None, now);
     println!("8  T paid the item, on X: {}", put(&w.x, container(&w.code, ip(t).encode()), ti.encode()).await?.0);
     println!("9  M paid 95 B, through X: {}", w.put_chain(&w.x, tb, m, &pay(S::pay_key(&ex), 95, 31)).await?.0);
     println!("10 the creator paid its 5 B, through X: {}", w.put_chain(&w.x, tb, c, &pay(S::fee_key(&ex), 5, 32)).await?.0);
@@ -1308,11 +1308,11 @@ async fn pool_mode(w: &W, pcode: &[u8]) -> Result<()> {
     let mut s1 = c1.clone();
     push(&mut s1, T::Body::Unescrow { escrow: w.n(7), refund: r1, verdict: v.hash() }, w.n(30), None, now);
     let mut p1 = T::State::default();
-    push(&mut p1, T::Body::Payout { program: prog, key: k1, amount: g1, ev: T::Evidence::default() }, w.n(31), None, now);
+    push(&mut p1, T::Body::Payout { program: prog, key: k1, amount: g1, verdict: v.hash(), ev: T::Evidence::default() }, w.n(31), None, now);
     let mut s2 = c2.clone();
     push(&mut s2, T::Body::Unescrow { escrow: w.n(8), refund: r2, verdict: v.hash() }, w.n(32), None, now);
     let mut p2 = T::State::default();
-    push(&mut p2, T::Body::Payout { program: prog, key: k2, amount: g2, ev: T::Evidence::default() }, w.n(33), None, now);
+    push(&mut p2, T::Body::Payout { program: prog, key: k2, amount: g2, verdict: v.hash(), ev: T::Evidence::default() }, w.n(33), None, now);
     let r = [w.put_chain(&w.x, ta, 1, &s1).await?.0, w.put_chain(&w.y, tb, 1, &p1).await?.0, w.put_chain(&w.y, tb, 2, &s2).await?.0, w.put_chain(&w.x, ta, 2, &p2).await?.0];
     println!("7  released and paid as the verdict says — 1's release {}, 1's payout {}, 2's release {}, 2's payout {}", r[0], r[1], r[2], r[3]);
     // WHY, if refused: the token contract's own check, run here on the bytes the node holds (the batch's state as read).
@@ -1328,7 +1328,7 @@ async fn pool_mode(w: &W, pcode: &[u8]) -> Result<()> {
         println!("   the batch's state on X: {} bytes, decodes: {}", pstate.as_ref().map_or(0, |b| b.len()), pstate.as_ref().and_then(|b| P::State::decode(b)).is_some());
     }
     let mut again = p1.clone();
-    push(&mut again, T::Body::Payout { program: prog, key: k1, amount: g1, ev: T::Evidence::default() }, w.n(34), None, w.now().await?);
+    push(&mut again, T::Body::Payout { program: prog, key: k1, amount: g1, verdict: v.hash(), ev: T::Evidence::default() }, w.n(34), None, w.now().await?);
     println!("8  1's payout a second time, on Y: {}", w.put_chain(&w.y, tb, 1, &again).await?.0);
     tokio::time::sleep(Duration::from_secs(2)).await;
     let bal = |s: Option<T::State>| s.map_or(0, |s| s.balance());
@@ -1375,11 +1375,11 @@ async fn deal_mode(w: &W, scode: &[u8]) -> Result<()> {
     let mut s1 = c1.clone();
     push(&mut s1, T::Body::Unescrow { escrow: w.n(7), refund: 0, verdict: held.hash() }, w.n(30), None, now);
     let mut p1 = T::State::default();
-    push(&mut p1, T::Body::Payout { program: id(&d1), key: S::pay_key(&ex), amount: 500, ev: T::Evidence::default() }, w.n(31), None, now);
+    push(&mut p1, T::Body::Payout { program: id(&d1), key: S::pay_key(&ex), amount: 500, verdict: held.hash(), ev: T::Evidence::default() }, w.n(31), None, now);
     let mut s2 = c2.clone();
     push(&mut s2, T::Body::Unescrow { escrow: w.n(8), refund: 0, verdict: held.hash() }, w.n(32), None, now);
     let mut p2 = T::State::default();
-    push(&mut p2, T::Body::Payout { program: id(&d1), key: S::pay_key(&ey), amount: 300, ev: T::Evidence::default() }, w.n(33), None, now);
+    push(&mut p2, T::Body::Payout { program: id(&d1), key: S::pay_key(&ey), amount: 300, verdict: held.hash(), ev: T::Evidence::default() }, w.n(33), None, now);
     let r = [w.put_chain(&w.x, ta, 1, &s1).await?.0, w.put_chain(&w.y, tb, 1, &p1).await?.0, w.put_chain(&w.y, tb, 2, &s2).await?.0, w.put_chain(&w.x, ta, 2, &p2).await?.0];
     println!("5  crossed — 1's release {}, 1 paid 500 B {}, 2's release {}, 2 paid 300 A {}", r[0], r[1], r[2], r[3]);
     // Deal 2: 1 alone.
@@ -1478,7 +1478,7 @@ async fn editions(w: &W, scode: &[u8]) -> Result<()> {
     println!("   the deal pays: M {:?} B, the creator {:?} B, T Gold #1 {:?}", held.pay(&S::pay_key(&ex)).map(|p| p.2), held.pay(&S::fee_key(&ex)).map(|p| p.2), held.pay(&S::pay_key(&ey)).map(|p| p.2));
     let now = w.now().await?;
     let mut ti = T::State::default();
-    push(&mut ti, T::Body::Payout { program: prog, key: S::pay_key(&ey), amount: 1, ev: T::Evidence::default() }, w.n(30), None, now);
+    push(&mut ti, T::Body::Payout { program: prog, key: S::pay_key(&ey), amount: 1, verdict: held.hash(), ev: T::Evidence::default() }, w.n(30), None, now);
     println!("13 T paid Gold #1, on Y: {}", put(&w.y, container(&w.code, copy(t, 1).encode()), ti.encode()).await?.0);
     Ok(())
 }
@@ -1531,7 +1531,7 @@ async fn holders(w: &W, scode: &[u8]) -> Result<()> {
     let fee = held.pay(&S::fee_key(&ex));
     println!("   the deal pays: M {:?} B, the holders {:?}", held.pay(&S::pay_key(&ex)).map(|p| p.2), fee.map(|p| (p.1 == T::HOLDERS, p.2)));
     let now = w.now().await?;
-    let share = |n: u128, amount: u128| T::Body::HolderPayout { program: prog, sold: ex, copy: n, at: r, amount, ev: T::Evidence::default() };
+    let share = |n: u128, amount: u128| T::Body::HolderPayout { program: prog, sold: ex, copy: n, at: r, amount, verdict: held.hash(), ev: T::Evidence::default() };
     let mut tc = tbc.clone();
     push(&mut tc, share(2, 3), w.n(30), None, now);
     println!("6  T's share for copy #2 (3 B), on X: {}", w.put_chain(&w.x, tb, t, &tc).await?.0);

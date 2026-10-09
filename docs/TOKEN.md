@@ -846,10 +846,15 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    history (`Source::history`) when its live chain was cut; the contract checks a cut's TREES (history and received
    roots) whenever it holds the chain from seq 0 (token.wasm 308 → 342 KB: the tree builder). 107 tests, each fix's
    mutants killed.
-   STILL OPEN: a MISDEED proves only a vanished debit — a committee signing a fake payout or mint is burned only by
-   equivocation (a misdeed over a program's state could be framed by a program that changes it later; over a supply
-   record it is sound — not built); a replaced freeze set's back-dated word (a pause) on nodes that never held the
-   list — the new set issues its own word at cap + 1 at once.
+   Then (owner 10-10: "all contract is hash right so can't frame honest witness"): a PAYOUT and a holders' share NAME
+   their verdict (`verdict`: the section's hash, checked by the contract and the witnesses), and `FalseVerdict` burns
+   a witness key that signed a payout its named verdict does not pay — proven by that verdict itself (its hash is the
+   one named: nobody can make another), nothing read; signing the payout the verdict does pay proves nothing. 108
+   tests; its mutants killed.
+   STILL OPEN: a fake MINT witnessed — a supply record grows and spreads over time, so "not in the record" cannot be
+   proven without framing a node that has not yet received it (witnesses check the record when they sign); a
+   replaced freeze set's back-dated word (a pause) on nodes that never held the list — the new set issues its own
+   word at cap + 1 at once.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under

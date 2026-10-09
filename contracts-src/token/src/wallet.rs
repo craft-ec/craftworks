@@ -222,9 +222,9 @@ pub(crate) fn program_entry(src: &Source, p: &ChainParams, s: &State, i: usize, 
             let sec = program_backed(src, p, &prog, chain)?;
             (sec.refund_of(&(p.tok(), p.owner, *escrow)) == Some(*refund) && sec.hash() == *verdict).then_some(()).ok_or("a release that is not its program's verdict")
         }
-        Body::Payout { program, key, amount, .. } => {
+        Body::Payout { program, key, amount, verdict, .. } => {
             let sec = program_backed(src, p, program, chain)?;
-            (sec.pay(key) == Some((p.tok(), p.owner, *amount))).then_some(()).ok_or("a payout that is not its program's verdict")?;
+            (sec.pay(key) == Some((p.tok(), p.owner, *amount)) && sec.hash() == *verdict).then_some(()).ok_or("a payout that is not its program's verdict")?;
             released_under(src, p, &sec, chain)
         }
         // A reclaim: its program has NOT taken the escrow — as this witness reads it (not there, or not listing it).
@@ -245,13 +245,16 @@ pub(crate) fn program_entry(src: &Source, p: &ChainParams, s: &State, i: usize, 
             let took = listed && program_backed(src, p, &prog, &upto).is_ok();
             (!took).then_some(()).ok_or("a reclaim of an escrow its program took")
         }
-        Body::HolderPayout { program, sold, at, .. } => {
+        Body::HolderPayout { program, sold, at, verdict, .. } => {
             // The sale's time is the sold copy's ESCROW's stamp (one holder of each copy then): `at` must be it.
             let c = holding(src, chain, &sold.0, &sold.1, &|c: &State| sale_at(c, &sold.2).is_some()).ok_or("an escrow's chain not read")?;
             if sale_at(&c, &sold.2) != Some(*at) {
                 return Err("a holders' share dated other than its sale");
             }
             let sec = program_backed(src, p, program, chain)?;
+            if sec.hash() != *verdict {
+                return Err("a holders' share that is not its program's verdict");
+            }
             sec.pay(&crate::escrow::fee_key(sold)).filter(|(t, to, _)| *t == p.tok() && *to == crate::HOLDERS).ok_or("a holders' share that is not its program's verdict")?;
             released_under(src, p, &sec, chain)
         }

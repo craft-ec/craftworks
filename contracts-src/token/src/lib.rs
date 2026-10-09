@@ -461,13 +461,17 @@ pub enum Body {
     /// Appended by anyone (with work), once, once the debit is final.
     FeeClaim { from: [u8; 32], nonce: [u8; 16], gross: u128, amount: u128, cited: u64, ev: Evidence },
     /// A program's PAYOUT `key` to this chain: `amount`, as its verdict says. Appended by anyone (with work), once.
-    Payout { program: [u8; 32], key: [u8; 16], amount: u128, ev: Evidence },
+    Payout { program: [u8; 32], key: [u8; 16], amount: u128, verdict: [u8; 32], ev: Evidence },
     /// A HOLDERS' SHARE (TOKEN §1c): of the SALE of the copy escrowed as `sold` in `program` — whose royalty fee the
     /// program pays to [`HOLDERS`] under [`escrow::fee_key`]`(sold)` — the share of copy `copy` of that edition
     /// (`fee / (cap − 1)`), credited here to who HELD that copy when the sold copy was escrowed (beacon `at`, the
     /// escrow's stamp: one holder of each copy then; witnesses check `at`). Once per copy and sale; the sold copy takes
     /// none; a copy minted later held nothing then. Anyone appends it (with work).
-    HolderPayout { program: [u8; 32], sold: escrow::EscrowRef, copy: u128, at: u64, amount: u128, ev: Evidence },
+    HolderPayout { program: [u8; 32], sold: escrow::EscrowRef, copy: u128, at: u64, amount: u128, verdict: [u8; 32], ev: Evidence },
+    /// A FALSE VERDICT (TOKEN §7a): this chain's witness key signed a payout (`entry`, of chain (`tok`, `owner`)) naming
+    /// a verdict — and here is that verdict (`section`: its hash is the one named; nobody can make another), which
+    /// does not pay it. Every stake and unbonding amount BURNED. Appended by anyone (with work); needs nothing read.
+    FalseVerdict { key: [u8; 32], sig: witness::WitnessSig, tok: Tok, owner: [u8; 32], entry: Box<Entry>, section: Vec<u8> },
     /// A MULTISIG owner's MEMBERS (TOKEN §1): the key set that signs from here, on set seq `set_seq`. The first (seq 0)
     /// is the set the owner id names, signed by k of it; each later one, by k of the set before.
     Members { set: authority::KeySet, set_seq: u32 },
@@ -646,14 +650,15 @@ impl Entry {
                 v.extend_from_slice(&refund.to_le_bytes());
                 v.extend_from_slice(verdict);
             }
-            Body::Payout { program, key, amount, ev } => {
+            Body::Payout { program, key, amount, verdict, ev } => {
                 v.push(27);
                 v.extend_from_slice(program);
                 v.extend_from_slice(key);
                 v.extend_from_slice(&amount.to_le_bytes());
+                v.extend_from_slice(verdict);
                 put_ev(&mut v, ev);
             }
-            Body::HolderPayout { program, sold, copy, at, amount, ev } => {
+            Body::HolderPayout { program, sold, copy, at, amount, verdict, ev } => {
                 v.push(29);
                 v.extend_from_slice(program);
                 sold.0.put(&mut v);
@@ -662,6 +667,7 @@ impl Entry {
                 v.extend_from_slice(&copy.to_le_bytes());
                 v.extend_from_slice(&at.to_le_bytes());
                 v.extend_from_slice(&amount.to_le_bytes());
+                v.extend_from_slice(verdict);
                 put_ev(&mut v, ev);
             }
             Body::Vest { to, schedule } => {
@@ -710,6 +716,17 @@ impl Entry {
                 let b = entry.encode();
                 v.extend_from_slice(&(b.len() as u32).to_le_bytes());
                 v.extend_from_slice(&b);
+            }
+            Body::FalseVerdict { key, sig, tok, owner, entry, section } => {
+                v.push(32);
+                v.extend_from_slice(key);
+                sig.put(&mut v);
+                tok.put(&mut v);
+                v.extend_from_slice(owner);
+                for b in [entry.encode(), section.clone()] {
+                    v.extend_from_slice(&(b.len() as u32).to_le_bytes());
+                    v.extend_from_slice(&b);
+                }
             }
             Body::Cut { history, received, history_parity, received_parity, allowances, writer, staked, unbonding, retired } => {
                 v.push(11);
@@ -846,6 +863,19 @@ impl Entry {
                 }
                 Body::Misdeed { key, sig, tok, owner, entry: Box::new(Entry::decode(r.take(n)?)?) }
             }
+            32 => {
+                let (key, sig, tok, owner) = (r.arr()?, witness::WitnessSig::read(r)?, Tok::read(r)?, r.arr()?);
+                let n = r.u32()? as usize;
+                if n > MISDEED_MAX {
+                    return None;
+                }
+                let entry = Box::new(Entry::decode(r.take(n)?)?);
+                let m = r.u32()? as usize;
+                if m > MISDEED_MAX * 64 {
+                    return None;
+                }
+                Body::FalseVerdict { key, sig, tok, owner, entry, section: r.take(m)?.to_vec() }
+            }
             25 => {
                 let program = r.arr()?;
                 let n = u16::from_le_bytes(r.arr()?) as usize;
@@ -857,8 +887,8 @@ impl Entry {
             30 => Body::Reclaim { escrow: r.arr()? },
             31 => Body::FeeClaim { from: r.arr()?, nonce: r.arr()?, gross: r.u128()?, amount: r.u128()?, cited: r.u64()?, ev: read_ev(r)? },
             26 => Body::Unescrow { escrow: r.arr()?, refund: r.u128()?, verdict: r.arr()? },
-            27 => Body::Payout { program: r.arr()?, key: r.arr()?, amount: r.u128()?, ev: read_ev(r)? },
-            29 => Body::HolderPayout { program: r.arr()?, sold: (Tok::read(r)?, r.arr()?, r.arr()?), copy: r.u128()?, at: r.u64()?, amount: r.u128()?, ev: read_ev(r)? },
+            27 => Body::Payout { program: r.arr()?, key: r.arr()?, amount: r.u128()?, verdict: r.arr()?, ev: read_ev(r)? },
+            29 => Body::HolderPayout { program: r.arr()?, sold: (Tok::read(r)?, r.arr()?, r.arr()?), copy: r.u128()?, at: r.u64()?, amount: r.u128()?, verdict: r.arr()?, ev: read_ev(r)? },
             20 => Body::Vested { from: r.arr()?, vest: r.arr()?, step: r.u32()?, amount: r.u128()?, at: r.u64()?, cited: r.u64()?, ev: read_ev(r)? },
             _ => return None,
         };
@@ -1409,7 +1439,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     open_escrows.remove(i);
                     balance.checked_add(amount).ok_or("a balance overflow")?
                 }
-                Body::Payout { program: prog, key, amount, ev } => {
+                Body::Payout { program: prog, key, amount, verdict, ev } => {
                     if !e.worked() {
                         return Err("a payout without its work");
                     }
@@ -1420,7 +1450,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     paid.push((*prog, *key));
                     if recent {
                         let sec = section(prog)?;
-                        if sec.pay(key) != Some((p.tok(), p.owner, *amount)) {
+                        if sec.pay(key) != Some((p.tok(), p.owner, *amount)) || sec.hash() != *verdict {
                             return Err("a payout that is not its program's verdict");
                         }
                         if !royalty_paid(d, p, &sec) {
@@ -1429,7 +1459,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
                 }
-                Body::HolderPayout { program: prog, sold, copy, at, amount, ev } => {
+                Body::HolderPayout { program: prog, sold, copy, at, amount, verdict, ev } => {
                     if !e.worked() {
                         return Err("a payout without its work");
                     }
@@ -1441,6 +1471,9 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     if recent {
                         let edition = &sold.0.definition;
                         let sec = section(prog)?;
+                        if sec.hash() != *verdict {
+                            return Err("a holders' share that is not its program's verdict");
+                        }
                         let db = x.program.and_then(|f| f(edition)).ok_or("the edition's definition is not there")?;
                         let de = Definition::decode(&db).filter(|_| id(&p.code_hash, &db) == *edition).ok_or("the edition's definition is not there")?;
                         if de.ids != Ids::Numbered || de.cap < 2 || de.royalty.is_none_or(|(_, to)| to != HOLDERS) {
@@ -1667,6 +1700,32 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         if c.entries.iter().any(|x| debit_for(x, owner, entry)) {
                             return Err("a misdeed whose debit is there");
                         }
+                    }
+                    staked = 0;
+                    unbonding.clear();
+                    balance
+                }
+                Body::FalseVerdict { key, sig, tok, owner, entry, section } => {
+                    if !e.worked() {
+                        return Err("a slash without its work");
+                    }
+                    if !matches!(&writer, Some(Signer::Device(node, _)) if node == key) && !retired.contains(key) {
+                        return Err("a slash of a key that is not this chain's");
+                    }
+                    if !sig.signed_by(key) || sig.entry != entry.hash() || sig.seq != entry.seq || sig.chain != p.at(*tok, *owner).id() {
+                        return Err("a misdeed that is not this key's signature on that entry");
+                    }
+                    // The verdict the payout NAMED (its hash: no other section has it) — and it does not pay it.
+                    let sec = escrow::Section::decode_prefix(section).map(|x| x.0).ok_or("a false verdict that is no section")?;
+                    let pays = match &entry.body {
+                        Body::Payout { key: k, amount, verdict, .. } if sec.hash() == *verdict => sec.pay(k) == Some((*tok, *owner, *amount)),
+                        Body::HolderPayout { sold, verdict, .. } if sec.hash() == *verdict => {
+                            sec.escrows.iter().any(|(r, ..)| r == sold) && sec.pay(&escrow::fee_key(sold)).is_some_and(|(t, to, _)| t == *tok && to == HOLDERS)
+                        }
+                        _ => return Err("a false verdict that is not the one the payout named"),
+                    };
+                    if pays {
+                        return Err("a false verdict that pays it");
                     }
                     staked = 0;
                     unbonding.clear();
