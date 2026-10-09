@@ -1386,6 +1386,7 @@ old key's addresses.
       [ ] 4 multisig; [ ] 5 ids (NFT/1155) with royalties by the fill
       [ ] 6 WITNESSES BY LOT, backed by PROVED STORAGE (owner 10-09; TOKEN §7a): needs the storage proofs
           first; closes prevention of double spends, receiver-only history checks, partition fill/refund
+          — and REMOVES checkpoints + vouches outright (owner 10-09: no token is live, no old history to keep)
   rule. Later, separate programs: distribution, staking, pools, keeper issuance.
   Found while building 1: a sender's cut broke the receiver's recent receives (re-validated from scratch, no evidence
   in them) → new citations strict at update, old ones lenient (TOKEN §2). Open: a fresh PUT can carry an unshown

@@ -454,6 +454,9 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
 - **Two signatures at one place** by one witness are the proof against it: its storage standing is lost.
 - **Why storage:** an open lot needs a cost per ticket or a sybil wins every draw; storage is the resource the network
   already pays for and proves (as Bitcoin uses work, Ethereum stake, Filecoin storage).
+- **Replaces checkpoints and vouches (§3a).** A witnessed entry is already checked and signed with standing at risk, so
+  a wallet verifies the witnesses' signatures and walks nothing. No token is live, so there is no older history to
+  keep them for: foundation 6 removes checkpoints, vouches and their fraud proofs outright.
 - **Depends on** the storage proofs (deferred until money moves, §6) — they come first.
 
 ## 8. Open in the architecture
