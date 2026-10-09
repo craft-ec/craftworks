@@ -354,13 +354,15 @@ fn a_member_stuck_behind_its_own_commit_is_let_in_again_with_no_page_open() {
     let kp2 = w.asker_member.key_package().unwrap();
     let stuck_bag = format!("stuck {}", SPACE.iter().map(|b| format!("{b:02x}")).collect::<String>());
     let ask = |epoch: u64| serde_json::json!({ "kind": "stuck", "did": asker_did, "epoch": epoch, "at": NOW + 1 });
-    let net_for = |w: &World, item: serde_json::Value| {
+    // The same member asking again LATER (its next page load) from the same epoch.
+    let ask_later = |epoch: u64| serde_json::json!({ "kind": "stuck", "did": asker_did, "epoch": epoch, "at": NOW + 86_400_000 });
+    let net_for_kp = |w: &World, item: serde_json::Value, kp: &[u8]| {
         let bag_id = id(BAG, &identity::invite_address(&stuck_bag));
         let bag_state = bag(identity::invite_address(&stuck_bag), &[item]);
         let log = id(IDLOG, &w.asker.did);
         let card_key = SigningKey::from_bytes(&w.asker.data).verifying_key().to_bytes();
         let card_id = data::Open::new(TAIL, &card_key, "card").id_bytes();
-        let card_state = card(&w.asker, &kp2);
+        let card_state = card(&w.asker, kp);
         let log_state = w.asker.log.clone();
         move |io: &Io| match io {
             Io::Get { id, .. } if *id == bag_id => Reply::Got { id: *id, state: Some(bag_state.clone()) },
@@ -373,6 +375,7 @@ fn a_member_stuck_behind_its_own_commit_is_let_in_again_with_no_page_open() {
             Io::Update { id, .. } => Reply::Updated { id: *id, ok: true },
         }
     };
+    let net_for = |w: &World, item: serde_json::Value| net_for_kp(w, item, &kp2);
     // CONTROL: an ask from the group's own epoch (not behind): nothing written.
     identity::Host::set_secret(&mut w.h, identity::UPKEEP_WAKEUPS, &20u64.to_le_bytes());
     let mut net = net_for(&w, ask(in_at));
@@ -404,4 +407,12 @@ fn a_member_stuck_behind_its_own_commit_is_let_in_again_with_no_page_open() {
     let mut net = net_for(&w, ask(w.epoch));
     let again = run(&mut w, &mut net);
     assert!(again.iter().all(|x| matches!(x, Io::Get { .. })), "{again:?}");
+    // ONCE FOR THAT EPOCH (10-09: a member stuck at 46 asked on every page load; each answer a commit, the epoch climbed
+    // with nothing changed): a new ask, later, from the same epoch — let in again past it already: nothing written.
+    identity::Host::set_secret(&mut w.h, identity::UPKEEP_WAKEUPS, &50u64.to_le_bytes());
+    // (Its card with a FRESH key package: so only the rule can keep it out.)
+    let kp3 = w.asker_member.key_package().unwrap();
+    let mut net = net_for_kp(&w, ask_later(w.epoch), &kp3);
+    let later = run(&mut w, &mut net);
+    assert!(later.iter().all(|x| matches!(x, Io::Get { .. })), "asked again from the same epoch: {later:?}");
 }

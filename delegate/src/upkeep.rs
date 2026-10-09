@@ -241,7 +241,9 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
                     if code == "stuck" {
                         // A MEMBER stuck at an epoch this group is past, asking since it was last let in again here.
                         let (Some("stuck"), Some(at_epoch), Some(at)) = (q["kind"].as_str(), q["epoch"].as_u64(), q["at"].as_u64()) else { continue };
-                        let again = identity::upkeep_admitted(h, &member).iter().any(|a| a.space == space && a.did == did && a.at >= at);
+                        // Let in again here SINCE its ask, or at an epoch past the one it asks from: ONCE for that epoch
+                        // (10-09: a member stuck at 46 asked on every page load, and each answer was a commit).
+                        let again = identity::upkeep_admitted(h, &member).iter().any(|a| a.space == space && a.did == did && (a.at >= at || (a.code == "stuck" && a.epoch > at_epoch)));
                         if !member_already || again || at_epoch >= m.epoch {
                             continue;
                         }

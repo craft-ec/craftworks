@@ -292,7 +292,7 @@ export async function start(ctx) {
       try {
         await welcome(sp, did, sp.name, null, { epoch: own.epoch, branch: own.branch });
         keys.event("repair-sent", { space: sp.id, to: did, theirEpoch: ann.epoch, theirBranch: String(ann.branch).slice(0, 8), ownerEpoch: own.epoch });
-        await index.spacePoint(sp, "writers", { w: sp.self, repair: did, for: ann.branch });
+        await markWelcomed(sp, did, ann.epoch, ann.branch);
         ctx.log("conversation", { what: `${sp.name}: ${short(did)} was on another branch of its keys — welcomed back onto the owner's` });
         out.push(did);
       } catch (e) {
@@ -333,6 +333,15 @@ export async function start(ctx) {
     ctx.log("conversation", { what: `${sp.name}: its history (epochs below ${below}) asked of ${to.length} member(s)` });
   });
   const saidAgain = new Set();
+  // WELCOMED AGAIN ALREADY, at or past `epoch`, by any member (the space's writers record — what the members list shows
+  // as "caught up by"): a member behind at an epoch is let in again ONCE for it, whoever answers and however often it
+  // asks from there. (10-09: #HLt27K behind at 46 of 56 in Craftworks — every member re-added it each time its page
+  // loaded, each re-add a commit: the epoch climbed with nothing changed.)
+  async function welcomedAgain(sp, did, epoch) {
+    if (epoch == null) return false;
+    return (await index.spacePointers(sp, "writers").catch(() => [])).some(x => x?.repair === did && Number(x.epoch) >= Number(epoch));
+  }
+  const markWelcomed = (sp, did, epoch, branch) => index.spacePoint(sp, "writers", { w: sp.self, repair: did, epoch: Number(epoch), ...(branch ? { for: branch } : {}) }).catch(() => {});
   // The DIDs in this node's group of a space (its MLS members' credentials).
   async function groupDids(sp) {
     const { glue } = await ctx.require("node");
@@ -369,6 +378,10 @@ export async function start(ctx) {
       const k = `stuck-bag:${sp.id}|${q.did}|${q.at}`;
       if (once.rows().some(x => x.key === k && x.value)) continue;
       if (!r.members().some(m => m.did === q.did) || r.banned?.(q.did)) continue;
+      if (await welcomedAgain(sp, q.did, q.epoch)) {
+        await once.put(k, `welcomed again at ${q.epoch} already`);
+        continue;
+      }
       const turn = ordering.turn(`stuck:${sp.id}|${q.did}|${q.epoch}`, (await groupDids(sp)).filter(d => d !== q.did), me.id);
       if (turn < 0 || Date.now() - (Number(q.at) || 0) < turn * ordering.TAKEOVER) continue;
       // Welcomed since (by an earlier turn, or a node): its device announced a newer epoch after the ask.
@@ -379,6 +392,7 @@ export async function start(ctx) {
       }
       try {
         await welcome(sp, q.did, sp.name);
+        await markWelcomed(sp, q.did, q.epoch);
         await once.put(k, String(Date.now()));
         keys.event("welcome-again-sent", { space: sp.id, to: q.did, stuck: true, bag: true, theirEpoch: q.epoch, ownEpoch: st.epoch });
         ctx.log("conversation", { what: `${short(q.did)} asked from epoch ${q.epoch} in ${sp.name} (here ${st.epoch}): welcomed again` });
@@ -477,6 +491,11 @@ export async function start(ctx) {
             const ordering = await ctx.require("ordering");
             const turn = ordering.turn(`stuck:${it.space}|${it.from}|${it.epoch}`, (await groupDids(sp)).filter(d => d !== it.from), me.id);
             if (turn < 0 || Date.now() - (Number(it.at) || 0) < turn * ordering.TAKEOVER) continue;
+            if (await welcomedAgain(sp, it.from, it.epoch)) {
+              skip(`welcomed again at epoch ${it.epoch} already`);
+              await once.put(k, `answered ${Date.now()}`);
+              continue;
+            }
             // Welcomed already by an earlier turn: its device announced a newer epoch SINCE the ask (one announced before
             // it is the change it lost).
             const devs = await directory.devices(it.from).catch(() => []);
@@ -486,6 +505,7 @@ export async function start(ctx) {
               continue;
             }
             await welcome(sp, it.from, name);
+            await markWelcomed(sp, it.from, it.epoch, it.branch);
             keys.event("welcome-again-sent", { space: sp.id, to: it.from, stuck: true, theirEpoch: it.epoch, ownEpoch: mineSt.epoch });
             await once.put(k, String(Date.now()));
             ctx.log("conversation", { what: `${short(it.from)} was stuck behind its own change in ${sp.name} (epoch ${it.epoch}; here ${mineSt.epoch}): welcomed again` });
@@ -505,11 +525,20 @@ export async function start(ctx) {
             const devs = await directory.devices(it.from).catch(() => []);
             const ann = (await index.spacePointers(sp, "writers").catch(() => [])).filter(x => x?.branch && devs.includes(x.w));
             if (ann.some(x => x.epoch >= own.epoch && x.branch === own.branch)) continue;
+            // ONCE for the epoch it asks from, and ONE answers (the members in turn, as a stuck ask): its ask reaches up
+            // to twelve members, and each answering re-added it — one commit each.
+            if (await welcomedAgain(sp, it.from, it.epoch)) {
+              await once.put(k, `welcomed again at ${it.epoch} already`);
+              continue;
+            }
+            const ordering = await ctx.require("ordering");
+            const turn = ordering.turn(`repair:${it.space}|${it.from}|${it.epoch}`, (await groupDids(sp)).filter(d => d !== it.from), me.id);
+            if (turn < 0 || Date.now() - (Number(it.at) || 0) < turn * ordering.TAKEOVER) continue;
           }
           await welcome(sp, it.from, name, null, own ? { epoch: own.epoch, branch: own.branch } : undefined);
           keys.event("welcome-again-sent", { space: sp.id, to: it.from, repair: !!it.repair, theirEpoch: it.epoch ?? null, ownerEpoch: own?.epoch ?? null });
           // A catch-up recorded in the space (who welcomed whom: `keyStatus`'s "caught up by").
-          if (own) await index.spacePoint(sp, "writers", { w: sp.self, repair: it.from, for: own.branch }).catch(() => {});
+          if (own) await markWelcomed(sp, it.from, it.epoch, own.branch);
           await once.put(k, String(Date.now()));
           ctx.log("conversation", { what: `${short(it.from)} could not open a ${own ? "repair " : ""}welcome into ${sp.name ?? "a conversation"}: welcomed again` });
         } catch (e) {

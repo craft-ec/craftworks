@@ -107,6 +107,8 @@ export async function start(ctx) {
       written.push([a.space, a.did]);
       // Let in AGAIN (a member stuck behind its own commit): a member already — no act.
       if (a.code === "stuck") {
+        // Recorded in the space as any member's welcome again (`conversation`'s once-per-epoch rule reads it).
+        await index.spacePoint(sp, "writers", { w: sp.self, repair: a.did, epoch: Number(a.epoch) }).catch(() => {});
         ctx.log("upkeep", { what: `the delegate let ${a.did.slice(12, 20)}… into ${sp.name} again (stuck behind its own change) while no page ran` });
         continue;
       }
