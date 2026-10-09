@@ -74,7 +74,7 @@ fn after(s: &State, body: &Body) -> u128 {
         }).unwrap_or(0),
         Body::Payout { amount, .. } | Body::HolderPayout { amount, .. } => b + amount,
         Body::Stake { amount } => b.wrapping_sub(*amount),
-        Body::Unstake { .. } | Body::Slash { .. } | Body::Misdeed { .. } | Body::FalseVerdict { .. } => b,
+        Body::Unstake { .. } | Body::Slash { .. } | Body::Misdeed { .. } | Body::FalseVerdict { .. } | Body::FalseMint { .. } => b,
         Body::Release { unstake } => b + unbonding_of(s).into_iter().find(|u| &u.0 == unstake).map_or(0, |u| u.1),
         Body::Allow { .. } | Body::Cut { .. } | Body::Writer { .. } | Body::Members { .. } => b,
         Body::Spend { amount, .. } => b.wrapping_sub(*amount),
@@ -1178,7 +1178,7 @@ fn a_mint(to: u8, n: u8, amount: u128, at: u64, by: u8) -> supply::Mint {
     m
 }
 fn minted(s: &mut State, n: u8, amount: u128, at: u64) {
-    let mut e = entry(s, nonce(n), Body::Mint { nonce: nonce(n), amount, minted: at, ev: Evidence::default() });
+    let mut e = entry(s, nonce(n), Body::Mint { nonce: nonce(n), amount, minted: at, mint: a_mint(2, n, amount, at, 60), ev: Evidence::default() });
     e.stamp = e.stamp.max(at);
     s.entries.push(work(e));
 }
@@ -1207,7 +1207,7 @@ fn a_mint_is_credited_only_if_its_supply_shard_already_holds_it() {
     early.entries[0] = work(early.entries[0].clone());
     assert_eq!(ok(&early, &shard), Err("a mint credited before it was minted"));
     let mut signed_ = State::default();
-    let e = sign(entry(&signed_, nonce(1), Body::Mint { nonce: nonce(1), amount: 500, minted: 0, ev: Evidence::default() }), 2);
+    let e = sign(entry(&signed_, nonce(1), Body::Mint { nonce: nonce(1), amount: 500, minted: 0, mint: a_mint(2, 1, 500, 0, 60), ev: Evidence::default() }), 2);
     signed_.entries.push(e);
     assert_eq!(ok(&signed_, &supply::Shard { mints: vec![a_mint(2, 1, 500, 0, 60)] }), Err("a mint without its work"));
     // The shard of ITS epoch is the one read.
@@ -1473,7 +1473,7 @@ fn u_mint(to: u8, n: u8) -> supply::Mint {
 fn nft_sale() -> Ids5 {
     let mut w = Ids5(HashMap::new());
     let it = item_u();
-    put_at(w.chain(it, M), 1, Body::Mint { nonce: nonce(1), amount: 1, minted: 0, ev: Evidence::default() }, None, 0);
+    put_at(w.chain(it, M), 1, Body::Mint { nonce: nonce(1), amount: 1, minted: 0, mint: u_mint(M, 1), ev: Evidence::default() }, None, 0);
     put_at(w.chain(it, M), 30, Body::Send { to: did(T), amount: 1 }, Some(M), 0);
     put_at(w.chain(it, T), 30, Body::Receive { from: did(M), nonce: nonce(30), amount: 1, cited: 0, ev: Evidence::default() }, None, 0);
     w
@@ -1496,9 +1496,9 @@ fn an_item_is_its_own_chain_of_its_tokens_kind() {
     // A mint credited to another item's chain is not its mint.
     let other = Tok { item: [9; 32], ..it };
     let mut x = State::default();
-    put_at(&mut x, 1, Body::Mint { nonce: nonce(1), amount: 1, minted: 0, ev: Evidence::default() }, None, 0);
+    put_at(&mut x, 1, Body::Mint { nonce: nonce(1), amount: 1, minted: 0, mint: u_mint(M, 1), ev: Evidence::default() }, None, 0);
     *w.chain(other, M) = x;
-    assert_eq!(w.check(other, M), Err("a mint that is not in its supply shard"));
+    assert_eq!(w.check(other, M), Err("a mint credit that is not its mint's"), "its mint names item 1, not 9");
 }
 
 #[test]
@@ -2576,7 +2576,7 @@ fn an_item_sold_through_a_program_pays_its_creators_royalty() {
     // M escrows U's item (5% to its creator, person 7); T escrows 200 B. The verdict: the item to T, B to M and to 7.
     let mut w = Ids5(HashMap::new());
     let it = item_u();
-    put_at(w.chain(it, M), 1, Body::Mint { nonce: nonce(1), amount: 1, minted: 0, ev: Evidence::default() }, None, 0);
+    put_at(w.chain(it, M), 1, Body::Mint { nonce: nonce(1), amount: 1, minted: 0, mint: u_mint(M, 1), ev: Evidence::default() }, None, 0);
     put_at(w.chain(it, M), 7, Body::Escrow { program: PROG, terms: b"sell".to_vec(), amount: 1, until: 0 }, Some(M), 0);
     let h = escrow::terms_hash(b"sell");
     let sec = |to_m: u128, to_7: u128| escrow::Section {
@@ -2721,26 +2721,29 @@ fn a_numbered_copy_is_credited_once_to_whom_its_mint_names() {
         1 => Some(r1.clone()),
         _ => None,
     };
-    let copy = |owner: u8, n: u128, amount: u128, at: u64, body: fn([u8; 16], u128, u64) -> Body| {
+    // A credit of copy `n` (amount, stamp) carrying `mint`, as a capped or a plain mint body.
+    let copy = |owner: u8, n: u128, amount: u128, at: u64, mint: supply::Mint, capped: bool| {
         let p = ChainParams { item: numbered_item(&gid, n), ..at_(gid, owner) };
         let mut s = State::default();
-        put_at(&mut s, 1, body(n.to_be_bytes(), amount, at), None, 10);
+        let body = if capped { Body::CappedMint { nonce: n.to_be_bytes(), amount, minted: at, mint, ev: Evidence::default() } } else { Body::Mint { nonce: n.to_be_bytes(), amount, minted: at, mint, ev: Evidence::default() } };
+        put_at(&mut s, 1, body, None, 10);
         check(&p, &g, &s, &|_, _| None, &records, Some(&log(owner)), &Extra::NONE)
     };
-    let capped: fn([u8; 16], u128, u64) -> Body = |nonce, amount, minted| Body::CappedMint { nonce, amount, minted, ev: Evidence::default() };
-    let plain: fn([u8; 16], u128, u64) -> Body = |nonce, amount, minted| Body::Mint { nonce, amount, minted, ev: Evidence::default() };
-    assert_eq!(copy(M, 2, 1, 5, capped), Ok(()), "copy #2, M's");
-    assert_eq!(copy(T, 5, 1, 6, capped), Ok(()), "copy #5, T's");
-    assert_eq!(copy(T, 1025, 1, 6, capped), Ok(()), "copy #1025, in record 1");
-    assert_eq!(copy(M, 5, 1, 6, capped), Err("a mint that is not in its supply shard"), "T's copy claimed by M");
-    assert_eq!(copy(8, 2, 1, 7, capped), Err("a mint that is not in its supply shard"), "a number taken before");
-    assert_eq!(copy(M, 2, 2, 5, capped), Err("a mint that is not in its supply shard"), "two of one copy");
-    assert_eq!(copy(8, 2049, 1, 5, capped), Err("the mint's supply shard is not there"), "a record never made");
-    assert_eq!(copy(M, 2, 1, 5, plain), Err("a mint of the other kind than its token's"));
+    let (m13, t45, e2, t1025) = (r0.mints[0].clone(), r0.mints[1].clone(), r0.mints[2].clone(), r1.mints[0].clone());
+    assert_eq!(copy(M, 2, 1, 5, m13.clone(), true), Ok(()), "copy #2, M's");
+    assert_eq!(copy(T, 5, 1, 6, t45.clone(), true), Ok(()), "copy #5, T's");
+    assert_eq!(copy(T, 1025, 1, 6, t1025, true), Ok(()), "copy #1025, in record 1");
+    assert_eq!(copy(M, 5, 1, 6, t45, true), Err("a mint credit that is not its mint's"), "T's copy claimed by M");
+    assert_eq!(copy(8, 2, 1, 7, e2, true), Err("a mint that is not in its supply shard"), "a number taken before");
+    assert_eq!(copy(M, 2, 2, 5, m13.clone(), true), Err("a mint credit that is not its mint's"), "two of one copy");
+    assert_eq!(copy(8, 2049, 1, 5, ed_mint(&g, 8, 2049, 1, 5), true), Err("the mint's supply shard is not there"), "a record never made");
+    assert_eq!(copy(M, 2, 1, 5, m13.clone(), false), Err("a mint of the other kind than its token's"));
+    assert_eq!(copy(M, 2, 1, 5, ed_mint(&g, M, 1, 3, 4), true), Err("a mint credit that is not its mint's"), "carrying a mint of another stamp");
+    assert_eq!(copy(M, 2, 1, 5, ed_mint(&g, M, 4, 2, 5), true), Err("a mint credit that is not its mint's"), "carrying a mint whose numbers do not hold it");
     // A copy's chain is its own: copy #2's mint credited in copy #3's chain is not its mint.
     let p3 = ChainParams { item: numbered_item(&gid, 3), ..at(gid, M) };
     let mut s = State::default();
-    put_at(&mut s, 1, Body::CappedMint { nonce: 2u128.to_be_bytes(), amount: 1, minted: 5, ev: Evidence::default() }, None, 10);
+    put_at(&mut s, 1, Body::CappedMint { nonce: 2u128.to_be_bytes(), amount: 1, minted: 5, mint: m13, ev: Evidence::default() }, None, 10);
     assert_eq!(check(&p3, &g, &s, &|_, _| None, &records, Some(&log(M)), &Extra::NONE), Err("a mint that is not in its supply shard"));
     // SILVER: plain copies — the admitted 60 credited; a mint whose numbers another took first, not.
     let sv = silver();
@@ -2748,7 +2751,7 @@ fn a_numbered_copy_is_credited_once_to_whom_its_mint_names() {
     let sh = supply::Shard { mints: vec![ed_mint(&sv, M, 1, 60, 5), ed_mint(&sv, T, 50, 20, 6)] };
     let take = |owner: u8, n: u128, amount: u128, at: u64| {
         let mut s = State::default();
-        put_at(&mut s, 1, Body::CappedMint { nonce: n.to_be_bytes(), amount, minted: at, ev: Evidence::default() }, None, 10);
+        put_at(&mut s, 1, Body::CappedMint { nonce: n.to_be_bytes(), amount, minted: at, mint: ed_mint(&sv, owner, n, amount, at), ev: Evidence::default() }, None, 10);
         check(&at_(sid, owner), &sv, &s, &|_, _| None, &|k| (k == 0).then(|| sh.clone()), Some(&log(owner)), &Extra::NONE)
     };
     assert_eq!(take(M, 1, 60, 5), Ok(()));
@@ -2771,7 +2774,7 @@ fn an_editions_holders_share_its_royalty_each_copy_once_by_who_held_it_at_the_sa
     let copy = |n: u128| Tok { definition: eid, item: numbered_item(&eid, n) };
     let credit = |n: u128, stamp: u64| {
         let mut c = State::default();
-        put_at(&mut c, 1, Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: 1, ev: Evidence::default() }, None, stamp);
+        put_at(&mut c, 1, Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: 1, mint: ed_mint(&e, T, n, 1, 1), ev: Evidence::default() }, None, stamp);
         c
     };
     let mut copies: HashMap<(Tok, [u8; 32]), State> = HashMap::new();
@@ -3260,4 +3263,44 @@ fn a_witness_that_signed_a_payout_its_verdict_does_not_pay_is_burned() {
     assert_eq!(burn(signed_by(2, 900, vh(&prog), other)).err(), Some("a false verdict that is not the one the payout named"));
     // Another key's signature: not this chain's to burn.
     assert_eq!(burn(signed_by(4, 900, vh(&prog), sec)).err(), Some("a slash of a key that is not this chain's"));
+}
+
+#[test]
+fn a_witness_that_signed_a_mint_its_authority_never_signed_is_burned() {
+    // Token M: minted by key 60. A captured committee signs a credit of 500 to 3 whose mint (carried in it) key 61 signed:
+    // proven against the token's definition and authority chain — device 2's stake burned.
+    let dm = Definition { mint: Some(mint_set()), name: b"Minted".to_vec(), nonce: [8; 16], ..def() };
+    let dmid = id(&CODE, &dm.encode());
+    let (_, b) = misdeed_world();
+    let credit = |by: u8| {
+        let mut m = supply::Mint { to: did(3), item: [0; 32], amount: 500, nonce: nonce(1), stamp: 3, sigs: vec![] };
+        m.sigs = vec![(0, key(by).sign(&m.message(&dmid)).to_bytes())];
+        let mut c = State::default();
+        put_at(&mut c, 1, Body::Mint { nonce: nonce(1), amount: 500, minted: 3, mint: m, ev: Evidence::default() }, None, 5);
+        c.entries[0].clone()
+    };
+    let false_mint = |by_witness: u8, entry: Entry| {
+        let chain = at(dmid, 3).id();
+        let sig = witness::WitnessSig { chain, seq: entry.seq, entry: entry.hash(), sig: key(by_witness).sign(&witness::WitnessSig::message(&chain, entry.seq, &entry.hash())).to_bytes() };
+        Body::FalseMint { key: pk(by_witness), sig, tok: dmid.into(), owner: did(3), entry: Box::new(entry) }
+    };
+    let ap = authority::Params { code_hash: CODE, definition: dmid, beacon: BEACON }.id();
+    let (dbytes, abytes) = (dm.encode(), authority::Chain::default().encode());
+    let reads = |id: &[u8; 32]| if *id == dmid { Some(dbytes.clone()) } else if *id == ap { Some(abytes.clone()) } else { None };
+    let burn = |body: Body| {
+        let mut s = b.clone();
+        put_at(&mut s, 9, body, None, 2);
+        check(&at(id_b(), 2), &def_b(), &s, &|_, _| None, &|_| None, Some(&log(2)), &Extra { ops: None, program: Some(&reads) }).map(|_| s)
+    };
+    let s = burn(false_mint(2, credit(61))).expect("a mint its authority never signed");
+    let staked = walk(&at(id_b(), 2), &def_b(), &s, &|_, _| None, &|_| None, Some(&log(2)), RECENT, usize::MAX, &Extra { ops: None, program: Some(&reads) }).unwrap().staked;
+    assert_eq!(staked, 0, "its stake burned");
+    assert_eq!(Entry::decode(&s.entries.last().unwrap().encode()).as_ref(), s.entries.last(), "round-trips");
+    // CONTROL: a credit carrying a mint the authority DID sign proves nothing — an honest witness cannot be framed.
+    assert_eq!(burn(false_mint(2, credit(60))).err(), Some("a false mint that its authority signed"));
+    assert_eq!(burn(false_mint(4, credit(61))).err(), Some("a slash of a key that is not this chain's"));
+    // The minted token's definition not read: nothing proven.
+    let mut s2 = b.clone();
+    put_at(&mut s2, 9, false_mint(2, credit(61)), None, 2);
+    assert_eq!(check(&at(id_b(), 2), &def_b(), &s2, &|_, _| None, &|_| None, Some(&log(2)), &Extra::NONE), Err("the minted token's definition is not there"));
 }

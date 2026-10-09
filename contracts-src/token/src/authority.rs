@@ -114,7 +114,8 @@ pub enum Role {
 /// mint change up to its own, the hash of that shard's mints stamped before it (an epoch not named: none) — so a set
 /// once replaced can never add a mint to its past, not even to a shard nobody created yet. A FREEZE change instead
 /// CAPS the freeze list ([`crate::freeze`]): a record stamped before it holds only up to seq `cap` (the highest the
-/// replaced set issued) — so a word the replaced set back-dates can always be outranked by the next set (cap + 1).
+/// replaced set issued) — and SEALS it: `closed` names every word stamped before it (`(seq, freeze::word_seal)`), so
+/// the replaced set can never back-date a word in, not even on a node that never held the list (audit 10-10).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Change {
     pub seq: u32,
@@ -232,9 +233,6 @@ pub fn sets_at(definition: &[u8; 32], first: (&Option<KeySet>, &Option<KeySet>),
         if c.next.as_ref().is_some_and(|s| !s.sound()) {
             return Err("an authority set that cannot sign");
         }
-        if c.role == Role::Freeze && !c.closed.is_empty() {
-            return Err("a freeze change sealing supply");
-        }
         if c.role == Role::Mint && c.cap != 0 {
             return Err("a mint change capping freezes");
         }
@@ -345,7 +343,7 @@ mod tests {
             c
         };
         let first_f = (None, Some(set(2, &[1, 2, 3])));
-        assert_eq!(sets_at(&DEF, (&first_f.0, &first_f.1), &Chain { changes: vec![resigned(sealing)] }, 99), Err("a freeze change sealing supply"));
+        assert!(sets_at(&DEF, (&first_f.0, &first_f.1), &Chain { changes: vec![resigned(sealing)] }, 99).is_ok(), "a freeze change seals its list's words (freeze::word_seal)");
         let mut capping = change(0, Role::Mint, Some(set(1, &[4])), 10, &[1, 2, 3], &[0, 1]);
         capping.cap = 3;
         assert_eq!(sets_at(&DEF, (&first.0, &first.1), &Chain { changes: vec![resigned(capping)] }, 99), Err("a mint change capping freezes"));

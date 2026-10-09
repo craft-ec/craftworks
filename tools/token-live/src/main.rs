@@ -205,7 +205,7 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
         T::Body::Reclaim { escrow } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Escrow { amount, .. } if &x.nonce == escrow => Some(*amount), _ => None }).unwrap_or(0),
         T::Body::Payout { amount, .. } | T::Body::HolderPayout { amount, .. } => bal + amount,
         T::Body::Stake { amount } => bal - amount,
-        T::Body::Unstake { .. } | T::Body::Slash { .. } | T::Body::Misdeed { .. } | T::Body::FalseVerdict { .. } => bal,
+        T::Body::Unstake { .. } | T::Body::Slash { .. } | T::Body::Misdeed { .. } | T::Body::FalseVerdict { .. } | T::Body::FalseMint { .. } => bal,
         T::Body::Release { unstake } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Unstake { amount } if &x.nonce == unstake => Some(*amount), _ => None }).unwrap_or(0),
         T::Body::Allow { .. } | T::Body::Cut { .. } | T::Body::Writer { .. } | T::Body::Members { .. } => bal,
     };
@@ -577,10 +577,10 @@ async fn mint_mode(w: &W) -> Result<()> {
     println!("3  a shard with a mint signed by key 62 (not the authority), on Y: {}", put(&w.y, container(&w.code, shard(e).encode()), forged.encode()).await?.0);
     let r = w.now().await?;
     let mut cb = T::State::default();
-    push(&mut cb, T::Body::Mint { nonce: w.n(1), amount: 500, minted: h, ev: T::Evidence::default() }, w.n(1), None, r);
+    push(&mut cb, T::Body::Mint { nonce: w.n(1), amount: 500, minted: h, mint: m1.clone(), ev: T::Evidence::default() }, w.n(1), None, r);
     println!("4  B's chain credits the mint, on Y: {} — balance {}", w.put_chain(&w.y, ta, 2, &cb).await?.0, w.get_chain(&w.y, ta, 2).await?.map_or(0, |s| s.balance()));
     let mut cc = T::State::default();
-    push(&mut cc, T::Body::Mint { nonce: w.n(3), amount: 700, minted: h, ev: T::Evidence::default() }, w.n(3), None, r);
+    push(&mut cc, T::Body::Mint { nonce: w.n(3), amount: 700, minted: h, mint: a_mint(&ta, 3, 700, w.n(3), h, 60), ev: T::Evidence::default() }, w.n(3), None, r);
     println!("5  C's chain credits a mint not in the shard, on Y: {}", w.put_chain(&w.y, ta, 3, &cc).await?.0);
     // The mint set moves 60 → 63, sealing every epoch so far as it holds.
     let r = w.now().await?;
@@ -710,7 +710,7 @@ async fn nft(w: &W, scode: &[u8]) -> Result<()> {
     let deal = S::Deal { x: it, party_x: did(m), amount_x: 1, y: tb.into(), party_y: did(t), amount_y: 100, deadline: r + 30, beacon: w.beacon };
     let prog = *container(scode, deal.encode()).key().id().as_bytes().first_chunk::<32>().unwrap();
     let mut mi = T::State::default();
-    push(&mut mi, T::Body::Mint { nonce: w.n(1), amount: 1, minted: h, ev: T::Evidence::default() }, w.n(1), None, r);
+    push(&mut mi, T::Body::Mint { nonce: w.n(1), amount: 1, minted: h, mint: mint.clone(), ev: T::Evidence::default() }, w.n(1), None, r);
     push(&mut mi, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 1, until: 0 }, w.n(7), Some(m), r);
     println!("3  M's chain of the item: the mint, the item escrowed with the deal (for 100 B), on X: {} — holds {}", put(&w.x, container(&w.code, ip(m).encode()), mi.encode()).await?.0, mi.balance());
     let mut tbc = T::State::default();
@@ -1047,7 +1047,7 @@ async fn operators_mode(w: &W) -> Result<()> {
     let mut chains = Vec::new();
     for k in 0..3 {
         let mut c = T::State::default();
-        push(&mut c, T::Body::Mint { nonce: w.n(k as u8 + 1), amount: 1, minted: h, ev: T::Evidence::default() }, w.n(k as u8 + 1), None, r);
+        push(&mut c, T::Body::Mint { nonce: w.n(k as u8 + 1), amount: 1, minted: h, mint: mints[k].clone(), ev: T::Evidence::default() }, w.n(k as u8 + 1), None, r);
         let said = put(&w.x, container(&w.code, ip(k, m).encode()), c.encode()).await?.0;
         println!("2  M's chain of item {}: its mint, on X: {said}", k + 1);
         chains.push(c);
@@ -1442,26 +1442,26 @@ async fn editions(w: &W, scode: &[u8]) -> Result<()> {
         put(&w.y, record(op, 0), T::supply::Shard { mints: vec![mint(&op, t, 1025, 1)] }.encode()).await?.0);
     let r = w.now().await?;
     let copy = |o: u8, n: u128| T::ChainParams { item: T::numbered_item(&g, n), ..w.chain(g, o) };
-    let credit = |n: [u8; 16], amount: u128| {
+    let credit = |n: [u8; 16], amount: u128, carried: T::supply::Mint| {
         let mut s = T::State::default();
-        push(&mut s, T::Body::CappedMint { nonce: n, amount, minted: h, ev: T::Evidence::default() }, n, None, r);
+        push(&mut s, T::Body::CappedMint { nonce: n, amount, minted: h, mint: carried, ev: T::Evidence::default() }, n, None, r);
         s
     };
-    println!("4  M's Gold #1 credited, on Y: {}", put(&w.y, container(&w.code, copy(m, 1).encode()), credit(1u128.to_be_bytes(), 1).encode()).await?.0);
-    println!("5  T's Gold #3 credited, on Y: {}", put(&w.y, container(&w.code, copy(t, 3).encode()), credit(3u128.to_be_bytes(), 1).encode()).await?.0);
-    println!("6  M claims T's #3, on Y: {}", put(&w.y, container(&w.code, copy(m, 3).encode()), credit(3u128.to_be_bytes(), 1).encode()).await?.0);
-    println!("7  8's #4 (past the cap), on Y: {}", put(&w.y, container(&w.code, copy(8, 4).encode()), credit(4u128.to_be_bytes(), 1).encode()).await?.0);
-    println!("8  M's 4 Silver, on Y: {}", w.put_chain(&w.y, sv, m, &credit(1u128.to_be_bytes(), 4)).await?.0);
-    println!("9  T's 2 Silver (past the cap), on Y: {}", w.put_chain(&w.y, sv, t, &credit(5u128.to_be_bytes(), 2)).await?.0);
+    println!("4  M's Gold #1 credited, on Y: {}", put(&w.y, container(&w.code, copy(m, 1).encode()), credit(1u128.to_be_bytes(), 1, mint(&g, m, 1, 2)).encode()).await?.0);
+    println!("5  T's Gold #3 credited, on Y: {}", put(&w.y, container(&w.code, copy(t, 3).encode()), credit(3u128.to_be_bytes(), 1, mint(&g, t, 3, 1)).encode()).await?.0);
+    println!("6  M claims T's #3, on Y: {}", put(&w.y, container(&w.code, copy(m, 3).encode()), credit(3u128.to_be_bytes(), 1, mint(&g, t, 3, 1)).encode()).await?.0);
+    println!("7  8's #4 (past the cap), on Y: {}", put(&w.y, container(&w.code, copy(8, 4).encode()), credit(4u128.to_be_bytes(), 1, mint(&g, 8, 4, 1)).encode()).await?.0);
+    println!("8  M's 4 Silver, on Y: {}", w.put_chain(&w.y, sv, m, &credit(1u128.to_be_bytes(), 4, mint(&sv, m, 1, 4))).await?.0);
+    println!("9  T's 2 Silver (past the cap), on Y: {}", w.put_chain(&w.y, sv, t, &credit(5u128.to_be_bytes(), 2, mint(&sv, t, 5, 2))).await?.0);
     let oc = T::ChainParams { item: T::numbered_item(&op, 1025), ..w.chain(op, t) };
-    println!("9b T's Open #1025 credited from record 1, on Y: {}", put(&w.y, container(&w.code, oc.encode()), credit(1025u128.to_be_bytes(), 1).encode()).await?.0);
+    println!("9b T's Open #1025 credited from record 1, on Y: {}", put(&w.y, container(&w.code, oc.encode()), credit(1025u128.to_be_bytes(), 1, mint(&op, t, 1025, 1)).encode()).await?.0);
     // M resells Gold #1 to T for 100 B through a deal: Gold's 10% to the creator.
     let tb = w.put_def(&w.def(t, b"PayEd", 23)).await?;
     let it = T::Tok { definition: g, item: T::numbered_item(&g, 1) };
     let r = w.now().await?;
     let deal = S::Deal { x: it, party_x: did(m), amount_x: 1, y: tb.into(), party_y: did(t), amount_y: 100, deadline: r + 30, beacon: w.beacon };
     let prog = *container(scode, deal.encode()).key().id().as_bytes().first_chunk::<32>().unwrap();
-    let mut mc = credit(1u128.to_be_bytes(), 1);
+    let mut mc = credit(1u128.to_be_bytes(), 1, mint(&g, m, 1, 2));
     push(&mut mc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 1, until: 0 }, w.n(7), Some(m), r);
     println!("10 M escrows Gold #1 with a deal for 100 B, on Y: {}", put(&w.y, container(&w.code, copy(m, 1).encode()), mc.encode()).await?.0);
     let mut tbc = T::State::default();
@@ -1502,19 +1502,19 @@ async fn holders(w: &W, scode: &[u8]) -> Result<()> {
     println!("1  H #1 to M, #2 to T, #3 to 8, on X: {}", put(&w.x, container(&w.code, T::supply::Params { code_hash: w.ch, definition: e, beacon: w.beacon, epoch: 0 }.encode()), rec.encode()).await?.0);
     let r = w.now().await?;
     let copy = |o: u8, n: u128| T::ChainParams { item: T::numbered_item(&e, n), ..w.chain(e, o) };
-    let credit = |n: u128| {
+    let credit = |o: u8, n: u128| {
         let mut s = T::State::default();
-        push(&mut s, T::Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: h, ev: T::Evidence::default() }, n.to_be_bytes(), None, r);
+        push(&mut s, T::Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: h, mint: mint(o, n), ev: T::Evidence::default() }, n.to_be_bytes(), None, r);
         s
     };
     for (o, n) in [(m, 1u128), (t, 2), (h8, 3)] {
-        println!("2  {o}'s copy #{n} credited, on Y: {}", put(&w.y, container(&w.code, copy(o, n).encode()), credit(n).encode()).await?.0);
+        println!("2  {o}'s copy #{n} credited, on Y: {}", put(&w.y, container(&w.code, copy(o, n).encode()), credit(o, n).encode()).await?.0);
     }
     let tb = w.put_def(&w.def(t, b"PayH", 27)).await?;
     let it = T::Tok { definition: e, item: T::numbered_item(&e, 1) };
     let deal = S::Deal { x: it, party_x: did(m), amount_x: 1, y: tb.into(), party_y: did(t), amount_y: 100, deadline: r + 30, beacon: w.beacon };
     let prog = *container(scode, deal.encode()).key().id().as_bytes().first_chunk::<32>().unwrap();
-    let mut mc = credit(1);
+    let mut mc = credit(m, 1);
     push(&mut mc, T::Body::Escrow { program: prog, terms: S::TERMS.to_vec(), amount: 1, until: 0 }, w.n(7), Some(m), r);
     println!("3  M escrows #1 with a deal for 100 B, on Y: {}", put(&w.y, container(&w.code, copy(m, 1).encode()), mc.encode()).await?.0);
     let mut tbc = T::State::default();
@@ -1603,10 +1603,10 @@ async fn soulbound(w: &W) -> Result<()> {
     let mut m = T::supply::Mint { to: did(2), item: [0; 32], amount: 100, nonce: w.n(1), stamp: h, sigs: vec![] };
     m.sigs = vec![(0, key(60).sign(&m.message(&t)).to_bytes())];
     let sp = T::supply::Params { code_hash: w.ch, definition: t, beacon: w.beacon, epoch: T::supply::epoch(h) };
-    println!("1  100 badge minted to 2, on X: {}", put(&w.x, container(&w.code, sp.encode()), T::supply::Shard { mints: vec![m] }.encode()).await?.0);
+    println!("1  100 badge minted to 2, on X: {}", put(&w.x, container(&w.code, sp.encode()), T::supply::Shard { mints: vec![m.clone()] }.encode()).await?.0);
     let r = w.now().await?;
     let mut c = T::State::default();
-    push(&mut c, T::Body::Mint { nonce: w.n(1), amount: 100, minted: h, ev: T::Evidence::default() }, w.n(1), None, r);
+    push(&mut c, T::Body::Mint { nonce: w.n(1), amount: 100, minted: h, mint: m.clone(), ev: T::Evidence::default() }, w.n(1), None, r);
     println!("2  2 credits it, on Y: {}", w.put_chain(&w.y, t, 2, &c).await?.0);
     for (i, (what, b)) in [
         ("sends 10 to 3", T::Body::Send { to: did(3), amount: 10 }),

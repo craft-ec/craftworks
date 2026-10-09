@@ -851,10 +851,14 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    a witness key that signed a payout its named verdict does not pay — proven by that verdict itself (its hash is the
    one named: nobody can make another), nothing read; signing the payout the verdict does pay proves nothing. 108
    tests; its mutants killed.
-   STILL OPEN: a fake MINT witnessed — a supply record grows and spreads over time, so "not in the record" cannot be
-   proven without framing a node that has not yet received it (witnesses check the record when they sign); a
-   replaced freeze set's back-dated word (a pause) on nodes that never held the list — the new set issues its own
-   word at cap + 1 at once.
+   Then (owner 10-10, the same principle — make the evidence prove itself): a MINT CREDIT CARRIES ITS MINT (the signed
+   record itself, checked to be this credit's and the very one its supply record holds), and `FalseMint` burns a
+   witness key that signed a credit whose carried mint the token's mint authority never signed — judged against the
+   definition and the authority chain (which only extends), never against a record still spreading; a FREEZE CHANGE
+   SEALS the freeze list (`closed`: each word stamped before it, by `freeze::word_seal`), so a replaced set's
+   back-dated word — a pause included — is refused even where the list was never held. 109 tests; mutants killed.
+   The 10-10 audit leaves NOTHING open in the token's rules; what remains is rollout (witnesses, keepers, wallets
+   running live).
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under

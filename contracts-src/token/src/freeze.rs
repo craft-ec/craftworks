@@ -50,7 +50,7 @@ impl Record {
         };
         Some(Record { owner, frozen, seq: r.u32()?, stamp: r.u64()?, sigs: authority::read_sigs(r)? })
     }
-    fn hash(&self) -> [u8; 32] {
+    pub fn hash(&self) -> [u8; 32] {
         let mut v = Vec::new();
         self.encode(&mut v);
         *blake3::hash(&v).as_bytes()
@@ -121,8 +121,25 @@ impl List {
 }
 
 /// Every record signed by the freeze set current at its stamp, and within the CAP of the first freeze change after it.
+/// A word's entry in a freeze change's SEAL: its seq, and the hash of its account and itself.
+pub fn word_seal(r: &Record) -> (u64, [u8; 32]) {
+    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-10 token freeze seal");
+    h.update(&r.owner);
+    h.update(&r.hash());
+    (r.seq as u64, *h.finalize().as_bytes())
+}
+
+/// The SEAL a freeze change at `stamp` carries: every word of `l` stamped before it.
+pub fn seal_words(l: &List, stamp: u64) -> Vec<(u64, [u8; 32])> {
+    l.records.iter().filter(|r| r.stamp < stamp).map(word_seal).collect()
+}
+
 pub fn holds(p: &Params, first: (&Option<KeySet>, &Option<KeySet>), chain: &authority::Chain, l: &List) -> Result<(), Why> {
     for r in &l.records {
+        // Every freeze change after it SEALED it (a word the replaced set back-dates is in no seal).
+        if chain.changes.iter().any(|c| c.role == authority::Role::Freeze && c.stamp > r.stamp && !c.closed.contains(&word_seal(r))) {
+            return Err("a freeze word that is not what its authority sealed");
+        }
         if chain.changes.iter().find(|c| c.role == authority::Role::Freeze && c.stamp > r.stamp).is_some_and(|c| r.seq > c.cap) {
             return Err("a freeze past the cap of the change after it");
         }
@@ -207,15 +224,22 @@ mod tests {
         assert!(!thawed.frozen(&[3; 32]), "the thaw, a later word");
         assert_eq!(merge(&List { records: vec![word(3, false, 1, 11, 1)] }, &l), Some(thawed.clone()), "one answer either way");
         assert!(merge(&thawed, &List { records: vec![word(3, true, 0, 12, 1)] }).unwrap().records.contains(&word(3, false, 1, 11, 1)), "an older word does not come back");
-        // The freeze set moves 1 → 2 at 20, capping key 1's words at seq 1: key 1 back-dating seq u32::MAX is refused;
-        // a word of key 1 within the cap holds, and key 2 outranks it with cap + 1.
-        let mut c = authority::Change { seq: 0, role: authority::Role::Freeze, next: Some(set(2)), stamp: 20, closed: vec![], cap: 1, sigs: vec![] };
+        // The freeze set moves 1 → 2 at 20, SEALING key 1's one word then (account 6, seq 1): key 1 back-dating any other
+        // word is refused — a pause of EVERYONE included, on a node that never held the list (audit 10-10).
+        let sealed = word(6, true, 1, 15, 1);
+        let mut c = authority::Change { seq: 0, role: authority::Role::Freeze, next: Some(set(2)), stamp: 20, closed: seal_words(&List { records: vec![sealed.clone()] }, 20), cap: 1, sigs: vec![] };
         c.sigs = vec![(0, SigningKey::from_bytes(&[1; 32]).sign(&c.message(&DEF)).to_bytes())];
         let moved = authority::Chain { changes: vec![c] };
-        assert_eq!(holds(&p(), (&first.0, &first.1), &moved, &List { records: vec![word(6, true, u32::MAX, 15, 1)] }), Err("a freeze past the cap of the change after it"));
-        assert_eq!(holds(&p(), (&first.0, &first.1), &moved, &List { records: vec![word(6, true, 1, 15, 1)] }), Ok(()));
-        assert_eq!(holds(&p(), (&first.0, &first.1), &moved, &List { records: vec![word(6, true, 2, 15, 1)] }), Err("a freeze past the cap of the change after it"), "cap + 1");
-        let over = merge(&List { records: vec![word(6, true, 1, 15, 1)] }, &List { records: vec![word(6, false, 2, 21, 2)] }).unwrap();
+        assert_eq!(holds(&p(), (&first.0, &first.1), &moved, &List { records: vec![sealed.clone()] }), Ok(()));
+        let not_sealed = Err("a freeze word that is not what its authority sealed");
+        assert_eq!(holds(&p(), (&first.0, &first.1), &moved, &List { records: vec![word(6, true, u32::MAX, 15, 1)] }), not_sealed);
+        assert_eq!(holds(&p(), (&first.0, &first.1), &moved, &List { records: vec![word(6, false, 1, 15, 1)] }), not_sealed, "same seq, another word");
+        assert_eq!(holds(&p(), (&first.0, &first.1), &moved, &List { records: vec![word(7, true, 0, 15, 1)] }), not_sealed, "another account");
+        let mut pause = Record { owner: EVERYONE, frozen: true, seq: 0, stamp: 15, sigs: vec![] };
+        pause.sigs = vec![(0, SigningKey::from_bytes(&[1; 32]).sign(&pause.message(&DEF)).to_bytes())];
+        assert_eq!(holds(&p(), (&first.0, &first.1), &moved, &List { records: vec![pause] }), not_sealed, "a back-dated pause");
+        // Key 2's word after it needs no seal, and replaces the sealed one.
+        let over = merge(&List { records: vec![sealed] }, &List { records: vec![word(6, false, 2, 21, 2)] }).unwrap();
         assert_eq!(holds(&p(), (&first.0, &first.1), &moved, &over), Ok(()));
         assert!(!over.frozen(&[6; 32]), "the next set outranks it");
         assert!(fresh(&l, &thawed, 12, 2).is_ok());

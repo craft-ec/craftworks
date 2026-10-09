@@ -53,7 +53,7 @@ impl Mint {
         v.extend_from_slice(&self.stamp.to_le_bytes());
         v
     }
-    fn encode(&self, v: &mut Vec<u8>) {
+    pub fn encode(&self, v: &mut Vec<u8>) {
         v.extend_from_slice(&self.to);
         v.extend_from_slice(&self.item);
         v.extend_from_slice(&self.amount.to_le_bytes());
@@ -61,7 +61,7 @@ impl Mint {
         v.extend_from_slice(&self.stamp.to_le_bytes());
         authority::put_sigs(v, &self.sigs);
     }
-    fn read(r: &mut crate::R) -> Option<Mint> {
+    pub(crate) fn read(r: &mut crate::R) -> Option<Mint> {
         Some(Mint { to: r.arr()?, item: r.arr()?, amount: r.u128()?, nonce: r.arr()?, stamp: r.u64()?, sigs: authority::read_sigs(r)? })
     }
 }
