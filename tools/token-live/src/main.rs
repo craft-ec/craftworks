@@ -297,6 +297,7 @@ async fn main() -> Result<()> {
             "editions" => editions(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "soulbound" => soulbound(&w).await?,
             "fees" => fees(&w).await?,
+            "pause" => pause(&w).await?,
             "reclaim" => reclaim(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "holders" => holders(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "vest" => vest(&w).await?,
@@ -1671,5 +1672,42 @@ async fn fees(w: &W) -> Result<()> {
     tokio::time::sleep(Duration::from_secs(2)).await;
     let bal = |s: Option<T::State>| s.map_or(0, |s| s.balance());
     println!("   1 {} · 2 {} · 9 {} (= 1000)", bal(w.get_chain(&w.x, t, 1).await?), bal(w.get_chain(&w.y, t, 2).await?), bal(w.get_chain(&w.y, t, 9).await?));
+    Ok(())
+}
+
+/// PAUSE (TOKEN §2), LIVE: the freeze authority (key 61) freezes EVERY account of a token with one word: no debit of
+/// anyone while paused — a credit still taken — then unpaused by the next word.
+async fn pause(w: &W) -> Result<()> {
+    println!("— pause (the whole token frozen at once)");
+    let d = T::Definition { freeze: Some(one(61)), ..w.def(1, b"Pause", 32) };
+    let t = w.put_def(&d).await?;
+    let fp = T::freeze::Params { code_hash: w.ch, definition: t, beacon: w.beacon };
+    let word = |frozen: bool, seq: u32, stamp: u64| {
+        let mut r = T::freeze::Record { owner: T::freeze::EVERYONE, frozen, seq, stamp, sigs: vec![] };
+        r.sigs = vec![(0, key(61).sign(&r.message(&t)).to_bytes())];
+        T::freeze::List { records: vec![r] }
+    };
+    let h = w.now().await?;
+    let mut a = T::State::default();
+    push(&mut a, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h);
+    push(&mut a, T::Body::Send { to: did(2), amount: 300 }, w.n(2), Some(1), h);
+    println!("1  1: genesis, sends 300 to 2, on Y: {}", w.put_chain(&w.y, t, 1, &a).await?.0);
+    let r = w.now().await?;
+    println!("2  the token PAUSED (one word, key 61), on Y: {}", put(&w.y, container(&w.code, fp.encode()), word(true, 0, r).encode()).await?.0);
+    let r = w.until(h + 3).await?;
+    let mut x = a.clone();
+    push(&mut x, T::Body::Send { to: did(3), amount: 100 }, w.n(3), Some(1), r);
+    println!("3  1 sends 100 to 3 (paused), on Y: {}", w.put_chain(&w.y, t, 1, &x).await?.0);
+    let mut b = T::State::default();
+    push(&mut b, T::Body::Receive { from: did(1), nonce: w.n(2), amount: 300, cited: h, ev: T::Evidence::default() }, w.n(2), None, r);
+    println!("4  2 receives its 300 (a credit, paused), on Y: {}", w.put_chain(&w.y, t, 2, &b).await?.0);
+    let mut y = b.clone();
+    push(&mut y, T::Body::Send { to: did(3), amount: 50 }, w.n(4), Some(2), r);
+    println!("5  2 sends 50 to 3 (paused), on Y: {}", w.put_chain(&w.y, t, 2, &y).await?.0);
+    let r = w.now().await?;
+    println!("6  UNPAUSED (the next word), on Y: {}", put(&w.y, container(&w.code, fp.encode()), word(false, 1, r).encode()).await?.0);
+    let mut z = a.clone();
+    push(&mut z, T::Body::Send { to: did(3), amount: 100 }, w.n(5), Some(1), w.now().await?);
+    println!("7  1 sends 100 to 3, on Y: {}", w.put_chain(&w.y, t, 1, &z).await?.0);
     Ok(())
 }

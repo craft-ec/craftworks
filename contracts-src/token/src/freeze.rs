@@ -7,6 +7,9 @@ use crate::authority::{self, KeySet};
 use crate::Why;
 
 pub const FROZEN: u8 = 5;
+/// The account a record names to freeze EVERY account of the token at once (TOKEN §2: pause) — a whole-token switch,
+/// the same word, signatures and rules as one account's.
+pub const EVERYONE: [u8; 32] = [0xff; 32];
 /// The most accounts one list names.
 pub const RECORDS_MAX: usize = 2048;
 
@@ -103,8 +106,10 @@ impl List {
         (r.done() && records.windows(2).all(|w| w[0].owner < w[1].owner)).then_some(List { records })
     }
     /// Is `owner` frozen now?
+    /// Is `owner` frozen — its own record, or the whole token's ([`EVERYONE`])?
     pub fn frozen(&self, owner: &[u8; 32]) -> bool {
-        self.records.binary_search_by(|r| r.owner.cmp(owner)).is_ok_and(|i| self.records[i].frozen)
+        let says = |o: &[u8; 32]| self.records.binary_search_by(|r| r.owner.cmp(o)).is_ok_and(|i| self.records[i].frozen);
+        says(owner) || says(&EVERYONE)
     }
 }
 
@@ -158,6 +163,27 @@ mod tests {
         let mut r = Record { owner: [owner; 32], frozen, seq, stamp, sigs: vec![] };
         r.sigs = vec![(0, SigningKey::from_bytes(&[by; 32]).sign(&r.message(&DEF)).to_bytes())];
         r
+    }
+
+    #[test]
+    fn the_whole_token_is_paused_by_one_word_and_unpaused_by_the_next() {
+        let first = (None, Some(set(1)));
+        let none = authority::Chain::default();
+        let mut all = Record { owner: EVERYONE, frozen: true, seq: 0, stamp: 5, sigs: vec![] };
+        all.sigs = vec![(0, SigningKey::from_bytes(&[1; 32]).sign(&all.message(&DEF)).to_bytes())];
+        let paused = merge(&List::default(), &List { records: vec![all] }).unwrap();
+        assert_eq!(holds(&p(), (&first.0, &first.1), &none, &paused), Ok(()));
+        assert!(paused.frozen(&[3; 32]) && paused.frozen(&[200; 32]), "every account");
+        assert!(!List::default().frozen(&[3; 32]));
+        let one = merge(&List::default(), &List { records: vec![word(3, true, 0, 5, 1)] }).unwrap();
+        assert!(one.frozen(&[3; 32]) && !one.frozen(&[4; 32]), "one account only");
+        let mut off = Record { owner: EVERYONE, frozen: false, seq: 1, stamp: 6, sigs: vec![] };
+        off.sigs = vec![(0, SigningKey::from_bytes(&[1; 32]).sign(&off.message(&DEF)).to_bytes())];
+        let unpaused = merge(&paused, &List { records: vec![off] }).unwrap();
+        assert!(!unpaused.frozen(&[3; 32]), "the later word stands");
+        let mut forged = Record { owner: EVERYONE, frozen: true, seq: 2, stamp: 7, sigs: vec![] };
+        forged.sigs = vec![(0, SigningKey::from_bytes(&[2; 32]).sign(&forged.message(&DEF)).to_bytes())];
+        assert_eq!(holds(&p(), (&first.0, &first.1), &none, &List { records: vec![forged] }), Err("a freeze not signed by the freeze authority"));
     }
 
     #[test]

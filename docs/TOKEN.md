@@ -28,6 +28,7 @@ Every behaviour of the blockchain token standards, and how this standard gives i
 | Permit / gasless transfers (EIP-2612) | ✅ native | every entry is a signed message; there is no gas — anyone may carry it to the network |
 | Mint / burn authority (SPL) | ✅ | supply rule + the authority's `mint`; `burn` by the owner (§2, §6) |
 | Freeze / thaw (SPL) | ✅ optional | the freeze authority's `freeze` / `thaw` (§2) |
+| Pause the whole token (ERC-20 Pausable) | ✅ optional | the freeze authority's one word naming EVERYONE: no debit of any account while paused, credits still taken (§2) |
 | Set / drop an authority (SPL `SetAuthority`) | ✅ | the definition's AUTHORITY CHAIN: rotations signed by the current authority; dropping one is final (§1a) |
 | Close an empty account (SPL) | ✅ | a zero-balance chain may be dropped; it is made again by its next receive |
 | Multisig accounts / authorities | ✅ | an owner or authority key is a k-of-n KEY SET (as the attestation substrate's named quorum): an entry carries k signatures (§1) |
@@ -811,6 +812,11 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    per debit kind). LIVE fx/fy (`token-live fees`): a send without its fee REFUSED; with it ACCEPTED (1 holds 697); 2
    received the whole 300; the collector claiming 2 REFUSED, 8 claiming REFUSED, 9 claiming 3 ACCEPTED, again
    REFUSED — 697 + 300 + 3 = 1000.
+
+21. PAUSE — BUILT 10-10 (§2): `freeze::EVERYONE` — one freeze-list word, by the freeze authority, freezes every account
+   of the token (the same signatures, cap and freshness rules as one account's); unpaused by the next word. 100
+   tests; the mutant dropping it killed. LIVE fx/fy (`token-live pause`): paused — 1's and 2's sends REFUSED, 2's
+   receive ACCEPTED; unpaused — 1's send ACCEPTED.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under

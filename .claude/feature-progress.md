@@ -1484,7 +1484,9 @@ old key's addresses.
           send/spend/escrow/vest (receivers and program payouts whole); Body::FeeClaim by the collector, once, after
           the margin. token 3f2034f1, pool 03c48c2b, swap 24f8e3f8. 98 tests; 13 mutants killed. LIVE fx/fy `fees`.
           Foundation list from the 10-10 audit now done (reclaim, soulbound, fees; collections = Craftworks items).
-          NOT asked: whole-token pause; confidential amounts.
+      [x] 24 PAUSE (whole-token freeze) — DONE 10-10 (owner: "the last foundation"): freeze::EVERYONE in the freeze
+          list. token 33d859a2 (pool/swap unchanged). 100 tests. LIVE fx/fy `pause`.
+          Foundation COMPLETE per the 10-10 audit. Open only: confidential amounts (big, not asked).
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).
       [x] 17 BATCH-AUCTION POOLS (TOKEN §5) — in parts:

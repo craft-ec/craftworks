@@ -2957,3 +2957,23 @@ fn a_transfer_fee_is_paid_on_top_and_claimed_once_by_its_collector() {
     // The cut keeps it: its name is in the received set.
     assert!(cut::received_keys(&c.entries).contains(&received_key(FEE, &did(1), &nonce(30))));
 }
+
+#[test]
+fn a_paused_token_takes_no_debit_of_anyone_and_still_takes_credits() {
+    let d = Definition { freeze: Some(mint_set()), ..def() };
+    let pause = |frozen: bool| {
+        let mut r = freeze::Record { owner: freeze::EVERYONE, frozen, seq: 0, stamp: 1, sigs: vec![] };
+        r.sigs = vec![(0, key(60).sign(&r.message(&id(&CODE, &d.encode()))).to_bytes())];
+        freeze::List { records: vec![r] }
+    };
+    let mut held = State::default();
+    put_at(&mut held, 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    let mut debit = held.clone();
+    put_at(&mut debit, 2, Body::Send { to: did(2), amount: 10 }, Some(1), 2);
+    assert_eq!(freeze_check(&params(1), &d, &held, &debit, &pause(true)), Err("a debit of a frozen account"));
+    assert_eq!(freeze_check(&params(1), &d, &held, &debit, &pause(false)), Ok(()), "unpaused");
+    assert_eq!(freeze_check(&params(1), &d, &held, &debit, &freeze::List::default()), Ok(()));
+    let mut credit = State::default();
+    put_at(&mut credit, 30, Body::Receive { from: did(1), nonce: nonce(2), amount: 10, cited: 2, ev: Evidence::default() }, None, 5);
+    assert_eq!(freeze_check(&at(id_a(), 2), &d, &State::default(), &credit, &pause(true)), Ok(()), "receiving still works");
+}
