@@ -35,3 +35,38 @@ impl WitnessSig {
 pub fn equivocation(key: &[u8; 32], a: &WitnessSig, b: &WitnessSig) -> bool {
     a.chain == b.chain && a.seq == b.seq && a.entry != b.entry && a.signed_by(key) && b.signed_by(key)
 }
+
+/// ACCEPTED (TOKEN §7a): the entry `entry` at (`chain`, `seq`) carries at least `need` signatures from its committee —
+/// the `k` lowest tickets among the `claims` of `epoch` under the beacon output `out` — each by a member whose REAL
+/// stake (`stake_of`: its chain's staked amount, read only for those who signed) covers its claim. Returns how many
+/// counted. A signature by anyone else, for another entry, or by an over-claimer counts for nothing.
+#[allow(clippy::too_many_arguments)]
+pub fn accepted(
+    definition: &[u8; 32],
+    chain: &[u8; 32],
+    seq: u64,
+    entry: &[u8; 32],
+    out: &[u8; 32],
+    epoch: u64,
+    claims: &[crate::draw::StakeClaim],
+    sigs: &[WitnessSig],
+    k: usize,
+    need: usize,
+    stake_of: &dyn Fn(&[u8; 32]) -> Option<u128>,
+) -> Result<usize, crate::Why> {
+    let members = crate::draw::committee(definition, out, chain, seq, epoch, claims, k);
+    let mut counted: Vec<usize> = Vec::new();
+    for s in sigs {
+        if s.chain != *chain || s.seq != seq || s.entry != *entry {
+            continue;
+        }
+        let Some(&m) = members.iter().find(|&&m| !counted.contains(&m) && s.signed_by(&claims[m].key)) else { continue };
+        if stake_of(&claims[m].owner).is_some_and(|real| real >= claims[m].amount) {
+            counted.push(m);
+        }
+    }
+    if counted.len() < need {
+        return Err("an entry its committee has not witnessed");
+    }
+    Ok(counted.len())
+}

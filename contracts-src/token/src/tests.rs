@@ -2262,3 +2262,40 @@ fn a_cut_carries_the_stake_and_the_unbonding() {
     lie.entries.push(e);
     assert_eq!(ck(&lie), Err("a cut that is not what came before it"));
 }
+
+// ---- FOUNDATION 6c: an entry accepted once enough of its committee witnessed it ----
+
+#[test]
+fn an_entry_counts_once_enough_of_its_committee_signed_it_with_real_stake() {
+    use draw::StakeClaim;
+    let def_id = params(1).definition;
+    // Ten stakers (keys 60..70), stake 100 each, epoch 3.
+    let claim = |n: u8, amount: u128| {
+        let k = key(n);
+        let kb = k.verifying_key().to_bytes();
+        StakeClaim { owner: [n; 32], amount, epoch: 3, key: kb, sig: k.sign(&StakeClaim::message(&def_id, &[n; 32], amount, 3, &kb)).to_bytes() }
+    };
+    let claims: Vec<StakeClaim> = (60..70).map(|n| claim(n, 100)).collect();
+    let (chain, seq, entry, out) = ([7u8; 32], 12u64, [1u8; 32], [9u8; 32]);
+    let (k, need) = (5, 4);
+    let members = draw::committee(&def_id, &out, &chain, seq, 3, &claims, k);
+    let sig_by = |n: u8, e: [u8; 32]| witness::WitnessSig { chain, seq, entry: e, sig: key(n).sign(&witness::WitnessSig::message(&chain, seq, &e)).to_bytes() };
+    let member_keys: Vec<u8> = members.iter().map(|m| claims[*m].owner[0]).collect();
+    let outsiders: Vec<u8> = (60..70).filter(|n| !member_keys.contains(n)).collect();
+    let real = |_: &[u8; 32]| Some(100u128);
+    let acc = |sigs: &[witness::WitnessSig], stake: &dyn Fn(&[u8; 32]) -> Option<u128>| witness::accepted(&def_id, &chain, seq, &entry, &out, 3, &claims, sigs, k, need, stake);
+    let four: Vec<_> = member_keys[..4].iter().map(|n| sig_by(*n, entry)).collect();
+    assert_eq!(acc(&four, &real), Ok(4));
+    assert_eq!(acc(&four[..3], &real), Err("an entry its committee has not witnessed"), "three of four needed");
+    // Outsiders' signatures, the same member twice, signatures for another entry: count for nothing.
+    let mut padded = four[..3].to_vec();
+    padded.extend(outsiders.iter().map(|n| sig_by(*n, entry)));
+    padded.push(sig_by(member_keys[0], entry));
+    padded.push(sig_by(member_keys[3], [2; 32]));
+    assert_eq!(acc(&padded, &real), Err("an entry its committee has not witnessed"));
+    // A member whose chain holds less stake than it claimed: not counted.
+    let short = |o: &[u8; 32]| Some(if o[0] == member_keys[0] { 99 } else { 100 });
+    assert_eq!(acc(&four, &short), Err("an entry its committee has not witnessed"));
+    let unknown = |o: &[u8; 32]| (o[0] != member_keys[1]).then_some(100);
+    assert_eq!(acc(&four, &unknown), Err("an entry its committee has not witnessed"), "a chain not readable: not counted");
+}
