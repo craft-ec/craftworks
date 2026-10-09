@@ -1419,6 +1419,11 @@ old key's addresses.
           grinding by an extender, a faster core's lead. beacon.wasm 92300b2a, token.wasm 65f67643.
           LIVE fx/fy: beacon-live fake caught + honest step back on both nodes; token-live witness on these contracts:
           every honest entry 16/16, the buried fake and its payment refused by all, 3's wallet Ok(16) in 34 ms, burn ACCEPTED.
+      [x] 14 THE WATCH (equivocation detection) — BUILT + LIVE 10-09: `wallet::equivocations(bag sigs, registry claims)`
+          → (staker, the Slash to append). 99 tests; 3 mutants all EQUIVALENT (the key filter is an optimisation —
+          `equivocation` checks the signatures itself; ed25519 is deterministic, so one key signing one entry twice gives
+          the same bytes). LIVE fx/fy (witness mode): the watcher read 18 signatures at a place (16 honest + 2 by staker
+          20 on other entries), found staker 20, its burn ACCEPTED, stake 50 → 0. Running it continuously = rollout.
       [x] 13 BACK-DATED ENTRIES — BUILT 10-09: a witness signs no entry stamped more than an epoch (FRESH) behind the
           beacon (an older epoch's committee is known: back-dating would choose it); accepted entries stay accepted.
           98 tests; 3 mutants killed. Witness-side only: token.wasm unchanged (caed367c).

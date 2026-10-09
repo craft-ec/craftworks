@@ -1024,15 +1024,26 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
     for l in lines {
         println!("{l}");
     }
-    // AN EQUIVOCATION: staker 20 signs two entries at one place; anyone appends the burn to its pool chain.
+    // AN EQUIVOCATION: staker 20 signs two entries at one place, into that place's witness bag; a WATCHER reads the bag
+    // and the epoch's registry, finds it (`wallet::equivocations`) and appends the burn to the staker's pool chain.
     let other = |e: u8| *blake3::hash(&[e]).as_bytes();
     let place = w.chain(ta, 2).id();
-    let sa = T::witness::WitnessSig { chain: place, seq: 1, entry: other(1), sig: key(20).sign(&T::witness::WitnessSig::message(&place, 1, &other(1))).to_bytes() };
-    let sb = T::witness::WitnessSig { chain: place, seq: 1, entry: other(2), sig: key(20).sign(&T::witness::WitnessSig::message(&place, 1, &other(2))).to_bytes() };
-    let mut s20 = w.get_chain(&w.y, pool, 20).await?.context("staker 20's chain")?;
+    let sg = |e: u8| T::witness::WitnessSig { chain: place, seq: 1, entry: other(e), sig: key(20).sign(&T::witness::WitnessSig::message(&place, 1, &other(e))).to_bytes() };
+    let waddr = wallet::witness_bag(&place, 1);
+    let said = put(&w.x, container(bag_code, waddr.to_vec()), bag::encode(&waddr, &[bag::grind(&waddr, &wallet::bytes::witness_sig(&sg(1))), bag::grind(&waddr, &wallet::bytes::witness_sig(&sg(2)))])).await?.0;
+    println!("13 staker 20 signs two other entries at 2's seq 1, into its witness bag on X: {said}");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let bag_now = get(&w.x, *container(bag_code, waddr.to_vec()).key().id().as_bytes().first_chunk::<32>().unwrap()).await?.and_then(|s| bag::read(&waddr, &s)).unwrap_or_default();
+    let sigs: Vec<T::witness::WitnessSig> = bag_now.iter().filter_map(|i| wallet::bytes::read_witness_sig(bag::payload(i))).collect();
+    let registry = get(&w.x, reg.id()).await?.and_then(|b| T::claims::Registry::decode(&b)).map_or(vec![], |r| r.claims);
+    let found = wallet::equivocations(&sigs, &registry);
+    println!("   the watcher: {} signatures at that place, {} equivocator(s): {:?}", sigs.len(), found.len(), found.iter().map(|f| stakers.iter().find(|n| did(**n) == f.0).copied()).collect::<Vec<_>>());
+    let (owner, burn) = found.into_iter().next().context("no equivocator found")?;
+    let n = stakers.iter().copied().find(|n| did(*n) == owner).context("not a staker")?;
+    let mut s20 = w.get_chain(&w.y, pool, n).await?.context("the staker's chain")?;
     let now = w.now().await?;
-    push(&mut s20, T::Body::Slash { key: pk(20), a: sa, b: sb }, w.n(120), None, now);
-    println!("13 staker 20 signed two entries at one place: its burn, on Y: {}", w.put_chain(&w.y, pool, 20, &s20).await?.0);
+    push(&mut s20, burn, w.n(120), None, now);
+    println!("   its burn, appended by the watcher, on Y: {}", w.put_chain(&w.y, pool, n, &s20).await?.0);
     let held = w.get_chain(&w.y, pool, 20).await?.context("staker 20's chain")?;
     let p20 = w.chain(pool, 20);
     println!("   its stake now: {:?}; as counted for epoch {epoch}: {:?}", T::wallet::stake_at(&p20, &pd, &held, u64::MAX).map(|x| x.0), T::wallet::stake_at(&p20, &pd, &held, start).map(|x| x.0));

@@ -2611,3 +2611,21 @@ fn a_witness_signs_no_entry_stamped_more_than_an_epoch_ago() {
     lot.now = 1_000_000;
     assert_eq!(lot.accept(&w, 1, 0), Ok(11));
 }
+
+#[test]
+fn the_watch_finds_who_signed_two_entries_at_one_place() {
+    let lot = Lot::new();
+    let (chain, seq) = ([7u8; 32], 3u64);
+    let sig = |n: u8, e: u8| {
+        let h = [e; 32];
+        witness::WitnessSig { chain, seq, entry: h, sig: key(n).sign(&witness::WitnessSig::message(&chain, seq, &h)).to_bytes() }
+    };
+    // 60 signed two entries; 61 signed one entry twice; 62 one; 99 (no claim) two.
+    let bag = vec![sig(60, 1), sig(61, 1), sig(61, 1), sig(62, 2), sig(60, 2), sig(99, 1), sig(99, 2)];
+    let found = wallet::equivocations(&bag, &lot.claims);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].0, [60; 32]);
+    let Body::Slash { key: k, a, b } = &found[0].1 else { panic!("a burn") };
+    assert!(witness::equivocation(k, a, b), "the burn it builds is one the chain takes");
+    assert!(wallet::equivocations(&bag[1..4], &lot.claims).is_empty(), "control: no one signed two");
+}

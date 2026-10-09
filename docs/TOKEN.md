@@ -500,6 +500,9 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   disk and a sybil's weight is cheap and rebuilt after a cheat; a strong proof of replication needs Filecoin-grade
   cryptography. And peers' attestations of a node's ring place are sybil-able (any keys can sign "peer P is at R"), so
   location cannot be the guard either. Storage proofs stay what PAYS keepers — where a fake only shifts small rewards.
+- **The watch** (built 10-09): anyone reading a place's witness bag and the epoch's claims registry finds every key
+  that signed two entries there (`wallet::equivocations`) and appends its burn; running a watcher continuously is
+  rollout.
 - **A witness's MISDEED is burned too** (built 10-09): beyond two signatures at one place, a witness that signs a
   CREDIT whose cited debit is not in the cited chain (a receive with no such send, a vesting step with no such vest —
   fake money) is shown by anyone (`Body::Misdeed`, appended to the witness's stake chain with work): the node reads the

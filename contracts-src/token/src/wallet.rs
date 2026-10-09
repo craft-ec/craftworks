@@ -140,6 +140,23 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
     Ok(e.hash())
 }
 
+/// THE WATCH (TOKEN §7a): the EQUIVOCATIONS in one place's witness signatures (`sigs`: its bag) by the stakers of
+/// `claims` — a key that signed two different entries at that (chain, seq). Each: (its staker, the burn to append to
+/// that staker's chain of the pool — anyone may, with work). One per staker.
+pub fn equivocations(sigs: &[WitnessSig], claims: &[StakeClaim]) -> Vec<([u8; 32], Body)> {
+    let mut out: Vec<([u8; 32], Body)> = Vec::new();
+    for c in claims {
+        if out.iter().any(|(o, _)| *o == c.owner) {
+            continue;
+        }
+        let mine: Vec<&WitnessSig> = sigs.iter().filter(|s| s.signed_by(&c.key)).collect();
+        if let Some((a, b)) = mine.iter().flat_map(|a| mine.iter().map(move |b| (*a, *b))).find(|(a, b)| witness::equivocation(&c.key, a, b)) {
+            out.push((c.owner, Body::Slash { key: c.key, a: a.clone(), b: b.clone() }));
+        }
+    }
+    out
+}
+
 /// THE BAGS (TOKEN §7a) the lot is read from — open sets anyone adds to (`bag` contracts, their params these addresses):
 /// a pool's STAKE CLAIMS of one epoch, and the WITNESS SIGNATURES of one entry (chain id, seq) — what a wallet reads to
 /// accept that entry, one small bag per payment. Each item one record below.
