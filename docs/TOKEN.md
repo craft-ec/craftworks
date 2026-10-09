@@ -172,8 +172,8 @@ As BUILT (10-08, `contracts-src/token/src/cut.rs`, step 7 below):
   chain's id, the cited seq, a PRESENCE proof against the cut's history root and the entry's bytes (≤ 4 such items).
 - WHO CHECKS A CUT: the node that holds what it summarises (`update_state`: the shape rules over the old entries and
   the cut together) — the carried state must be exactly what they compute; then it PRUNES. A node that never held them
-  takes the cut as the chain's start; the WALLET rebuilds both trees from the history it reads and walks the whole —
-  a lying cut is a fraud proof at the cut's seq.
+  takes the cut as the chain's start; a cut's WITNESSES read the history whole, rebuild both trees and audit it
+  (`cut::whole`, `cut::audit`) before signing — a lying cut is never witnessed.
 - NEW citations are STRICT, old ones are not: what a holder takes in (`update_state`, the cited chains asked for in
   the same round as the definition and the beacon) must SHOW what it cites — live, or by its evidence. Checked from
   scratch (`validate_state`), a citation whose cited chain has since cut past it is taken as shown when appended —
@@ -264,21 +264,13 @@ therefore cannot prove every `receive` in a long chain against its sender. So:
 - **The contract enforces the LOCAL rules** — signatures, sequence and links, carried balances, no fork, a debit within
   the balance, no receive twice, the code hash in its params — and, when an entry is APPENDED, checks what it cites
   (≤ 10 related, one round). A chain is always well-formed; it is not, by its contract alone, proven honest.
-- **Value is checked by whoever RECEIVES it.** Before treating a payment as theirs, a wallet walks its citations back
-  (§1a: traceable) — the sender's chain, where that money came from — until it reaches genesis or a checkpoint it
-  accepts. A chain whose past does not check out is worthless to everyone who checks, and provably so.
-- **CHECKPOINTS, one kind, public** (owner, 10-08): whoever verifies a chain publishes what they now trust — signed,
-  "chain X is honest up to entry N, balance B" — in the token's checkpoint bag. Nothing private, nothing made twice.
-- **VOUCHES**: someone who checked the same thing does not make another checkpoint — they VOUCH for the existing one (a
-  signed reference to it). Vouches gather on one checkpoint.
-- **A wallet decides by who stands behind it**: stopping its walk at its own checkpoints, at ones vouched for by people
-  it trusts, or at ones with enough vouches; anything else it spot-checks or walks. A chain owner's checkpoint or vouch
-  for THEIR OWN chain counts for nothing (they are the one who could forge it).
-- **A FALSE CHECKPOINT IS RECORDED against everyone behind it** — its FRAUD PROOF (the checkpoint and the entries that
-  contradict it: a citation that is not there, a balance that does not add up), checkable by anyone, in the token's
-  fraud bag, naming the maker AND every voucher. Wallets then skip all their checkpoints and vouches, and their cards
-  show it — so vouching carelessly costs what a false checkpoint costs. (Stronger, if ever needed: checkpoints and
-  vouches backed by a `lock`, claimable by whoever publishes the fraud proof.)
+- **Value is an entry its WITNESSES accepted** (§7a; built 6d, `contracts-src/token/src/wallet.rs`). Each entry's
+  committee, drawn by lot from the stakers, re-checks it and signs it only by INDUCTION: the chain holds, the entry
+  before it is accepted, and every entry it cites (the send a receive credits, a fill's lock, a claim's lock and fill)
+  is accepted. So an accepted entry stands on an accepted past, and a receiving wallet checks ONE thing — that its
+  payment carries enough of its committee's signatures — and walks nothing. A buried fake receive is never witnessed,
+  nor anything after it. (Before 6d this was a citation walk by the receiving wallet plus public checkpoints, vouches
+  and fraud proofs; removed outright — no token was live.)
 
 Chains also refuse what can be refused cheaply: a receive whose cited send is not there when it is appended, a code
 hash that is not the standard's — a chain's params name the standard's code hash (an id is `blake3(code hash ‖ params)`,
@@ -490,9 +482,9 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   you): its arc applies when peers place it. A sealed per-key replica (`standing::seal`) is built and kept as an
   option, should reward fraud ever matter.
 - **Open pages extend the beacon** (a step is ~60 s of one core; a delegate wake-up cannot); one honest extender keeps it.
-- **Replaces checkpoints and vouches (§3a).** A witnessed entry is already checked and signed with stake at risk, so a
-  wallet verifies the witnesses' signatures and walks nothing; no token is live, so foundation 6 removes checkpoints,
-  vouches and their fraud proofs outright.
+- **Replaced checkpoints and vouches (§3a)** — REMOVED in 6d. A witnessed entry is already checked and signed with
+  stake at risk, so a wallet verifies the witnesses' signatures and walks nothing (`wallet::accept`); a witness signs
+  only by induction (`wallet::may_witness`). Committee 16, 11 signatures to accept — placeholders until measured.
 - **Order:** keeper payouts (REWARDS §5 — the Craftworks token's contributions as locks, payouts as claims, §7) → each
   keeper reward locked as witness stake → the lot weighted by locked stake. **Open:** the committee size and how many
   signatures make an entry; how fast stake counts (a ramp) — from measurement on the network.
@@ -511,8 +503,9 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
    small history pays ~9× its data in contracts, and nodes evict by contract count.
 5. A FRESH PUT after a cut — CLOSED 10-09: the leniency is only for an entry stamped before the cut it is hidden by
    (§2); a fresh copy carrying a later one without its evidence is refused from scratch. What stays: an entry can
-   claim an old stamp only where a node takes it without the append rules (a first copy) — the receiving wallet
-   walks it whole (§3a).
+   claim an old stamp only where a node takes it without the append rules (a first copy). OPEN (6e): its lot is then
+   drawn from an old beacon output, its committee known before it was written — should a witness refuse an entry
+   stamped far behind the beacon when first asked?
 
 (A token's own ISSUANCE — its supply rule and size, who holds its genesis, what it does with fees — is that token's
 choice, made in its definition from the menu (§6), not the standard's: the Craftworks token's are in §7.)
@@ -549,23 +542,15 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    beacon (margin 2): offer → lock → fill refused before the lock was final, taken once final → received → claimed;
    refund of the filled lock refused; a refund before its deadline refused, at it taken; balances M 800 A / 100 B, T
    200 A / 900 B. Still to do: multisig owners, ids (NFT, multi-token), vesting.
-6. Wallet verification: the citation walk, public checkpoints and vouches, fraud proofs naming maker and vouchers (§3a)
-   — BUILT 10-08 (`contracts-src/token/src/wallet.rs`): every citation checked and every cited chain walked back to
-   genesis or an accepted checkpoint; citation loops caught; checkpoints signed, vouched, audited into fraud proofs
-   naming maker and vouchers, who are skipped after. 44 tests, 8 mutants (7 killed by assertion, 1 by a stack
-   overflow — the walk is recursive: make it iterative for browser wallets). LIVE fx/fy: the minting-by-burying
-   attack ACCEPTED by every contract, REFUSED by the receiver's wallet reading the same chains ("chain 2 seq 0: a
-   receive whose send is not in its sender's chain", 4 reads); an honest payment verified (3 reads).
-   DECIDED (owner 10-08): THE RECEIVING WALLET IS THE GATE. Recursive validity proofs (zk) would put the check in the
-   contract, but were surveyed (10-08) and are too costly now: SP1 (the one released PCD-capable stack keeping ed25519
-   and blake3) documents 16 GB+ RAM to prove and points to a paid prover network — a central party; Ragu (PCD-native,
-   ~276 ms a step) is unreleased and unaudited; Nova/Sonobe do not merge proofs across chains yet. Revisit when a
-   PCD library matures. To make the gate solid: (a) the app VERIFIES BEFORE IT DISPLAYS — never shows or spends
-   unverified value ("verifying…" → "received" / "refused: forged, with its proof"); (b) the walk ITERATIVE (no
-   recursion depth in a browser wallet) — DONE 10-08: an explicit task stack (a 200-account payment line verified on a
-   256 KB stack; CONTROL: the recursive walk overflowed it), and a cap of 100,000 chain reads per verification (a
-   wallet never spins forever); (c) checkpoints, vouches and fraud proofs in public bags on the network. An outside
-   review is NOT a launch blocker (owner 10-08: Bitcoin was reviewed as it was used).
+6. Wallet verification — BUILT 10-08 as the receiving wallet's citation walk back to genesis or a public checkpoint
+   (checkpoints vouched for, false ones proven by fraud proofs naming maker and vouchers; iterative, capped at 100,000
+   chain reads). LIVE fx/fy then: the minting-by-burying attack ACCEPTED by every contract and REFUSED by the
+   receiver's wallet (4 reads); an honest payment verified (3 reads). Recursive validity proofs (zk) were surveyed
+   (10-08) and are too costly now (SP1: 16 GB+ RAM to prove, a paid prover network; Ragu unreleased; Nova/Sonobe do not
+   merge proofs across chains) — revisit when a PCD library matures. REPLACED 10-09 by FOUNDATION 6d (§7a): value is
+   an entry its witnesses accepted; the walk, checkpoints, vouches and fraud proofs removed outright (no token was
+   live). Still holds: the app VERIFIES BEFORE IT DISPLAYS ("verifying…" → "received" / "refused"). An outside review
+   is NOT a launch blocker (owner 10-08: Bitcoin was reviewed as it was used).
 7. FOUNDATION 1, the PRUNE CUT (§2) — BUILT 10-08: the cut entry, evidence on every citing entry, the writer's trees
    (`cut::make`) and proofs, the seq-aligned merge and prune, strict new / lenient old citations, the wallet across
    cuts (`cut::whole`, `cut::audit`). 61 tests; 27 mutants, all killed (3 after tests were added for them).
@@ -586,7 +571,7 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    read in the same round when a writer must be checked (validation: if the chain names one; an update: if a new
    entry is the owner's — a receive never waits on it, held writers are not checked again); the append rule: new
    owner entries on the log's CURRENT key; at one seq a higher key seq wins, only the same key freezes; a cut carries
-   its writer; a wallet counts none of the owner's keys (log and devices) behind its checkpoints. 67 tests; 15
+   its writer. 67 tests; 15
    mutants killed (one survivor — a cut naming another writer — killed by a test added for it). token.wasm 202,062 B.
    LIVE fx/fy (`token-live did`, every run with fresh people): the account rotated its key → the old device's send
    REFUSED by the holder; the recovered account's new writer (key 1) at that seq ACCEPTED; the old device's copy
@@ -623,8 +608,8 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
 12. The Craftworks token: contributions as locks, payouts as claims.
 13. Batch-auction pools.
 
-**Before the token carries real value, step 6 must exist** (code review, 10-08): the contract checks only the receives
-among a chain's last 9 entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under 9
-real receives from accounts they control — at the cost of 9 minimum sends, which return to them. The chain is
-well-formed and its money is from nothing; only a wallet walking its citations (§3a) refuses it. Until wallets verify,
+**Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
+among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under
+real receives from accounts they control. The chain is well-formed and its money is from nothing; only the witness
+rule (§3a, §7a: nothing is witnessed on an unaccepted citation) refuses it. Until witnesses with stake run live,
 balances are not value.

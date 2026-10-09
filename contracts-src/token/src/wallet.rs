@@ -1,408 +1,118 @@
-//! WALLET VERIFICATION (docs/TOKEN.md §3a, step 6): what makes a balance VALUE. The contract checks a chain's shape and
-//! its last [`RECENT`](super::RECENT) citations; a wallet, before it treats a payment as its own, checks EVERY citation
-//! and walks each cited chain back — to genesis, or to a CHECKPOINT it accepts — so a chain whose past does not add up
-//! (a fake receive buried under real ones; a loop of chains citing each other into money from nothing) is refused,
-//! with a FRAUD PROOF naming the entry. Checkpoints are public and signed; others VOUCH for them; a false one's proof
-//! names its maker AND every voucher, and a wallet skips all of theirs from then on.
+//! WALLET VERIFICATION (docs/TOKEN.md §7a, foundation 6): what makes a balance VALUE. An entry is value once it is
+//! ACCEPTED — enough of its COMMITTEE (drawn by lot from the stake claims, [`crate::draw`]) signed it. A witness signs
+//! only by INDUCTION ([`may_witness`]): the chain holds as written, the entry before it is accepted, and every entry it
+//! cites (the send a receive credits, the lock a fill names, the lock and fill a claim names) is accepted. So an
+//! accepted entry stands on an accepted past, and a wallet checks ONE entry — the one paying it — and walks nothing.
 
-use super::{check_window, sig_ok, Body, ChainParams, Definition, State, Why};
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use crate::draw::StakeClaim;
+use crate::witness::{self, WitnessSig};
+use crate::{offers_of, supply, Body, ChainParams, Entry, State, Tok, Why};
 
-/// The most chains one verification reads: past it, the payment is refused as too long to verify (a wallet never
-/// spins forever, whatever graph it is handed). Checkpoints keep honest walks far below it.
-pub const MAX_READS: usize = 100_000;
+/// The committee's size, and how many of it must sign (TOKEN §7a: open — to be set from measurement on the network).
+pub const COMMITTEE: usize = 16;
+pub const NEED: usize = 11;
 
-/// "Chain `chain` is honest up to entry `seq`, whose hash is `head`, its balance after it `balance`" — signed by `by`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Checkpoint {
-    pub chain: ChainParams,
-    pub seq: u64,
-    pub head: [u8; 32],
-    pub balance: u128,
-    pub by: [u8; 32],
-    pub sig: [u8; 64],
-}
-
-impl Checkpoint {
-    pub fn message(chain: &ChainParams, seq: u64, head: &[u8; 32], balance: u128) -> Vec<u8> {
-        [&b"craftworks token checkpoint"[..], &chain.id(), &seq.to_le_bytes(), head, &balance.to_le_bytes()].concat()
-    }
-    pub fn signed(&self) -> bool {
-        sig_ok(&self.by, &Self::message(&self.chain, self.seq, &self.head, self.balance), &self.sig)
-    }
-    pub fn hash(&self) -> [u8; 32] {
-        *blake3::hash(&[&Self::message(&self.chain, self.seq, &self.head, self.balance)[..], &self.by, &self.sig].concat()).as_bytes()
-    }
-}
-
-/// "I checked that checkpoint too" — signed by `by`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Vouch {
-    pub checkpoint: [u8; 32],
-    pub by: [u8; 32],
-    pub sig: [u8; 64],
-}
-
-impl Vouch {
-    pub fn message(checkpoint: &[u8; 32]) -> Vec<u8> {
-        [&b"craftworks token vouch"[..], checkpoint].concat()
-    }
-    pub fn signed(&self) -> bool {
-        sig_ok(&self.by, &Self::message(&self.checkpoint), &self.sig)
-    }
-}
-
-/// Why a chain is not value: the chain and the entry where it fails, and why — or, a false CHECKPOINT: it too, and
-/// who stood behind it (its maker and every voucher).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FraudProof {
-    pub chain: ChainParams,
-    pub seq: u64,
-    pub why: Why,
-    pub checkpoint: Option<Checkpoint>,
-    pub vouchers: Vec<[u8; 32]>,
-}
-
-/// Where a wallet reads chains and definitions from, and the blocks of cut histories it HOLDS (`block`: a lookup,
-/// never a network read — what is not held comes back as [`Fail::Need`], fetched by the caller through the blocks
-/// door, raced against its group and rebuilt from parity, and the verification run again).
+/// Where a wallet (or a witness) reads the lot from: the STAKE POOL's token (`pool`: whose stake weighs the draw — one
+/// open pool for every token), its stake claims by epoch, the witness signatures held for (chain id, seq), the beacon's
+/// OUTPUT at a height, and a claimer's REAL stake (its chain's staked amount — read only for those who signed).
 pub struct Source<'a> {
-    pub chain: &'a dyn Fn(&ChainParams) -> Option<State>,
-    pub definition: &'a dyn Fn(&[u8; 32]) -> Option<Definition>,
-    pub block: &'a dyn Fn(&[u8; 32]) -> Option<Vec<u8>>,
-    /// A DID's KEY LOG, read and verified (`craftworks_idlog_contract::read`): whose keys the chain's writers stand on.
-    pub keys: &'a dyn Fn(&[u8; 32]) -> Option<craftworks_idlog_contract::Log>,
-    /// A token's SUPPLY SHARD and its AUTHORITY CHAIN (every token has one, made with its definition), as held — the
-    /// wallet checks the shard itself against them before a mint counts; either not held, the mint does not count.
-    pub supply: &'a dyn Fn(&crate::supply::Params) -> Option<crate::supply::Shard>,
-    pub authority: &'a dyn Fn(&crate::authority::Params) -> Option<crate::authority::Chain>,
+    pub pool: [u8; 32],
+    pub claims: &'a dyn Fn(u64) -> Vec<StakeClaim>,
+    pub sigs: &'a dyn Fn(&[u8; 32], u64) -> Vec<WitnessSig>,
+    pub out: &'a dyn Fn(u64) -> Option<[u8; 32]>,
+    pub stake_of: &'a dyn Fn(&[u8; 32]) -> Option<u128>,
 }
 
-/// Why a verification did not end in value: FRAUD (its proof), or blocks of a history NOT HELD yet (fetch, run again
-/// — never fraud: a block not here yet proves nothing).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Fail {
-    Fraud(FraudProof),
-    Need(Vec<[u8; 32]>),
+/// The lot of an entry stamped `stamp`: the claims of its stamp's epoch, under the beacon output one step after it
+/// (nobody knows the committee before the entry is written).
+pub fn lot_of(stamp: u64) -> (u64, u64) {
+    (supply::epoch(stamp), stamp + 1)
 }
 
-/// The chain OWNER's keys: a DID's every key of its key log and every device its chain names as writer; a key set's
-/// every member — none of
-/// them stands behind a checkpoint of its own chain (they are the ones who could forge it).
-pub fn owner_keys(src: &Source, chain: &ChainParams) -> Vec<[u8; 32]> {
-    let mut k: Vec<[u8; 32]> = (src.keys)(&chain.owner).map(|l| l.events.iter().map(|e| e.key).collect()).unwrap_or_default();
-    if let Some(s) = (src.chain)(chain) {
-        for e in &s.entries {
-            match &e.body {
-                crate::Body::Writer { cred, .. } => k.extend(craftworks_identity::read_credential(cred).map(|(_, _, node, _)| node)),
-                crate::Body::Members { set, .. } => k.extend(&set.keys),
-                crate::Body::Cut { writer: Some(crate::Signer::Device(node, _)), .. } => k.push(*node),
-                crate::Body::Cut { writer: Some(crate::Signer::Set(set, _)), .. } => k.extend(&set.keys),
-                _ => {}
-            }
+/// Is `e` of `chain` ACCEPTED? `Ok`: how many of its committee signed it.
+pub fn accept(src: &Source, chain: &ChainParams, e: &Entry) -> Result<usize, Why> {
+    let (epoch, height) = lot_of(e.stamp);
+    let out = (src.out)(height).ok_or("an entry whose lot is not drawn yet")?;
+    let id = chain.id();
+    witness::accepted(&src.pool, &id, e.seq, &e.hash(), &out, epoch, &(src.claims)(epoch), &(src.sigs)(&id, e.seq), COMMITTEE, NEED, src.stake_of)
+}
+
+/// The entries `e` (of `p`'s chain) CITES in other chains, found in them as `chain` reads them: a receive's send; a
+/// fill's lock (the taker's chain of the offer's token); a claim's lock (the taker's chain) and fill (the maker's
+/// chain of the lock's token). A mint cites its supply shard (signed by the mint authority, not witnessed); a refund
+/// its own lock (accepted with its own past). `Err`: a cited entry not found.
+pub fn cited(p: &ChainParams, s: &State, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<Vec<(ChainParams, Entry)>, Why> {
+    let find = |t: Tok, owner: [u8; 32], pick: &dyn Fn(&Entry) -> bool| -> Result<(ChainParams, Entry), Why> {
+        let c = p.at(t, owner);
+        let held = chain(&t, &owner).ok_or("a cited chain not held")?;
+        held.entries.into_iter().find(|x| pick(x)).map(|x| (c, x)).ok_or("a cited entry not held")
+    };
+    Ok(match &e.body {
+        Body::Receive { from, nonce, amount, cited, .. } => vec![find(p.tok(), *from, &|x| x.nonce == *nonce && x.stamp == *cited && matches!(x.body, Body::Send { to, amount: a } | Body::Spend { to, amount: a } | Body::Fill { taker: to, amount: a, .. } if to == p.owner && a == *amount))?],
+        Body::Fill { offer, taker, lock, .. } => {
+            let o = offers_of(s).into_iter().find(|o| &o.0 == offer).ok_or("a fill of an offer not held")?;
+            vec![find(o.1, *taker, &|x| x.nonce == *lock)?]
         }
-    }
-    k
+        Body::Claim { taker, lock, token, maker, .. } => vec![find(p.tok(), *taker, &|x| x.nonce == *lock)?, find(*token, *maker, &|x| matches!(&x.body, Body::Fill { lock: l, taker: t, .. } if l == lock && t == taker))?],
+        _ => vec![],
+    })
 }
 
-/// A chain as a wallet walks it: WHOLE, seq 0 on — across its cut, from the held blocks of its history.
-fn whole(src: &Source, p: &ChainParams) -> Result<State, crate::cut::Read> {
-    let s = (src.chain)(p).ok_or(crate::cut::Read::Refused("a chain that is not there"))?;
-    crate::cut::whole(&s, src.block)
-}
-
-/// A WALLET's verifier: whom it trusts for checkpoints, what it has verified (its memory), what fraud it knows.
-#[derive(Default)]
-pub struct Wallet {
-    /// This wallet's own key (its own checkpoints are trusted).
-    pub me: [u8; 32],
-    /// Keys whose checkpoints — or vouches — it accepts.
-    pub trusted: Vec<[u8; 32]>,
-    /// A checkpoint vouched for by this many keys (none distrusted, none the chain's owner) is accepted too (0: never
-    /// by count alone).
-    pub min_vouches: usize,
-    pub checkpoints: Vec<Checkpoint>,
-    pub vouches: Vec<Vouch>,
-    pub frauds: Vec<FraudProof>,
-    /// Chains verified: id → (up to seq, that entry's hash).
-    verified: HashMap<[u8; 32], (u64, [u8; 32])>,
-    /// Chains being verified right now, a STACK of (id, up to seq) — a chain may be walked again for an earlier
-    /// entry inside its own walk (legitimately); a citation loop needs it at or past where its walk began.
-    walking: RefCell<Vec<([u8; 32], u64)>>,
-    /// How many chains were read — what a checkpoint saves.
-    pub reads: Cell<usize>,
-}
-
-impl Wallet {
-    pub fn new(me: [u8; 32]) -> Self {
-        Self { me, ..Self::default() }
+/// THE WITNESS RULE: may a drawn witness sign `p`'s entry at `seq`? The chain UP TO that entry holds — `holds`, the
+/// contract's check from scratch, run on that prefix so the entry is among the last the contract checks in full (its
+/// citations against what they cite, not only their names); for a CUT, also the history it summarises read whole and audited (`cut::whole`,
+/// `cut::audit` — a holder that never had the prefix takes a cut as given) — and is not forked; the entry before it is
+/// accepted; every entry it cites is accepted. `Ok`: the entry's hash, what the witness signs. (Never sign two entries
+/// at one seq: that is the equivocation that burns the witness's stake — the witness's own memory.)
+pub fn may_witness(src: &Source, p: &ChainParams, s: &State, seq: u64, holds: &dyn Fn(&State) -> Result<(), Why>, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<[u8; 32], Why> {
+    if s.fork.is_some() {
+        return Err("a forked chain");
     }
-
-    /// A key behind a proven fraud — as a checkpoint's maker or one of its vouchers.
-    pub fn distrusted(&self, k: &[u8; 32]) -> bool {
-        self.frauds.iter().any(|f| f.checkpoint.as_ref().is_some_and(|c| &c.by == k) || f.vouchers.contains(k))
-    }
-
-    /// The vouches for a checkpoint that count: signed, not by its chain's owner, not by anyone distrusted.
-    fn vouchers_of(&self, c: &Checkpoint, owners: &[[u8; 32]]) -> Vec<[u8; 32]> {
-        let h = c.hash();
-        let mut v: Vec<[u8; 32]> = self.vouches.iter().filter(|x| x.checkpoint == h && x.signed() && !owners.contains(&x.by) && !self.distrusted(&x.by)).map(|x| x.by).collect();
-        v.sort();
-        v.dedup();
-        v
-    }
-
-    /// A checkpoint this wallet stops its walk at, covering `chain` up to `seq`: signed, not by the chain's own owner
-    /// (they are the one who could forge it), by no one distrusted — and made by this wallet, or by or vouched for by a
-    /// key it trusts, or vouched for by enough keys.
-    /// (`owners`: the chain owner's keys — [`owner_keys`] — whose checkpoints and vouches count for nothing.)
-    pub fn accepted(&self, chain: &ChainParams, seq: u64, owners: &[[u8; 32]]) -> Option<&Checkpoint> {
-        self.checkpoints.iter().filter(|c| c.chain == *chain && c.seq >= seq && c.signed() && !owners.contains(&c.by) && !self.distrusted(&c.by)).find(|c| {
-            let v = self.vouchers_of(c, owners);
-            c.by == self.me || self.trusted.contains(&c.by) || v.iter().any(|k| *k == self.me || self.trusted.contains(k)) || (self.min_vouches > 0 && v.len() >= self.min_vouches)
-        })
-    }
-
-    /// VERIFY `chain` up to entry `upto`: every citation, every cited chain up to the entry cited — to genesis or an
-    /// accepted checkpoint. `Err`: the proof of where it fails (in this chain or one it rests on). ITERATIVE: an
-    /// explicit stack of tasks (a chain VISITED — read, checked, its cited chains queued — then EXITED once they are
-    /// verified), so a long history never deepens the call stack (a browser wallet's is small).
-    pub fn verify(&mut self, src: &Source, chain: &ChainParams, upto: u64) -> Result<(), Fail> {
-        enum Task {
-            Visit(ChainParams, u64),
-            Exit([u8; 32], u64, [u8; 32]),
+    let i = s.entries.iter().position(|e| e.seq == seq).ok_or("an entry not held")?;
+    holds(&State { entries: s.entries[..=i].to_vec(), fork: None })?;
+    let e = &s.entries[i];
+    match i.checked_sub(1) {
+        Some(j) => {
+            accept(src, p, &s.entries[j])?;
         }
-        let mut tasks = vec![Task::Visit(*chain, upto)];
-        let proof = |c: &ChainParams, seq: u64, why: Why| Fail::Fraud(FraudProof { chain: *c, seq, why, checkpoint: None, vouchers: vec![] });
-        let read_fail = |c: &ChainParams, seq: u64, r: crate::cut::Read| match r {
-            crate::cut::Read::Need(n) => Fail::Need(n),
-            crate::cut::Read::Refused(why) => proof(c, seq, why),
-        };
-        let start = self.reads.get();
-        while let Some(t) = tasks.pop() {
-            if self.reads.get() - start > MAX_READS {
-                return Err(proof(chain, upto, "a history too long to verify"));
-            }
-            let (chain, upto) = match t {
-                Task::Exit(id, upto, head) => {
-                    self.walking.borrow_mut().pop();
-                    self.verified.insert(id, (upto, head));
-                    continue;
-                }
-                Task::Visit(c, u) => (c, u),
-            };
-            let id = chain.id();
-            if self.verified.get(&id).is_some_and(|(s, _)| *s >= upto) {
-                continue;
-            }
-            // A citation LOOP: this chain is on the path being walked, and now something needs it at or past where
-            // its walk began.
-            if self.walking.borrow().iter().any(|(w, at)| *w == id && upto >= *at) {
-                return Err(proof(&chain, upto, "a citation loop: money from nothing"));
-            }
-            let read = |p: &ChainParams| {
-                self.reads.set(self.reads.get() + 1);
-                whole(src, p)
-            };
-            // An accepted checkpoint covering it: the chain is the one checkpointed (that entry's hash) — no walk (and
-            // no history read, when that entry is still live).
-            if let Some(c) = self.accepted(&chain, upto, &owner_keys(src, &chain)) {
-                let live = (src.chain)(&chain);
-                if live.as_ref().is_some_and(|s| s.entries.iter().any(|e| e.seq == c.seq && e.hash() == c.head && e.balance == c.balance)) {
-                    let (seq, head) = (c.seq, c.head);
-                    self.verified.insert(id, (seq, head));
-                    continue;
-                }
-            }
-            let s = read(&chain).map_err(|r| read_fail(&chain, upto, r))?;
-            if s.entries.len() as u64 <= upto {
-                return Err(proof(&chain, upto, "an entry that is not in its chain"));
-            }
-            if let Some(c) = self.accepted(&chain, upto, &owner_keys(src, &chain)) {
-                if s.entries.get(c.seq as usize).is_some_and(|e| e.hash() == c.head && e.balance == c.balance) {
-                    let (seq, head) = (c.seq, c.head);
-                    self.verified.insert(id, (seq, head));
-                    continue;
-                }
-            }
-            let d = (src.definition)(&chain.definition).ok_or_else(|| proof(&chain, 0, "a token whose definition is not there"))?;
-            let mut prefix = s.clone();
-            prefix.entries.truncate(upto as usize + 1);
-            prefix.fork = None;
-            // EVERY citation checked (the shape rules, the window the whole chain) — each cited chain read once.
-            let cache: RefCell<HashMap<[u8; 32], Result<State, crate::cut::Read>>> = RefCell::new(HashMap::new());
-            let cited = |t: &crate::Tok, owner: &[u8; 32]| {
-                let p = chain.at(*t, *owner);
-                cache.borrow_mut().entry(p.id()).or_insert_with(|| read(&p)).clone().ok()
-            };
-            let keys = (src.keys)(&chain.owner);
-            // Its mints: each in a shard that HOLDS (every mint signed by the authority of its stamp), checked here.
-            let shard = |e: u64| {
-                let sp = crate::supply::Params { code_hash: chain.code_hash, definition: chain.definition, beacon: chain.beacon, epoch: e };
-                let sh = (src.supply)(&sp)?;
-                let ac = (src.authority)(&sp.authority())?;
-                crate::supply::holds(&sp, (&d.mint, &d.freeze), d.ids, &ac, &sh).ok().map(|_| sh)
-            };
-            let checked = check_window(&chain, &d, &prefix, &cited, &shard, keys.as_ref(), usize::MAX);
-            // A cited chain's history NOT HELD: those blocks needed first — never a verdict on what was not read.
-            let need: Vec<[u8; 32]> = cache.borrow().values().filter_map(|r| match r {
-                Err(crate::cut::Read::Need(n)) => Some(n.clone()),
-                _ => None,
-            }).flatten().collect();
-            if !need.is_empty() {
-                return Err(Fail::Need(need));
-            }
-            checked.map_err(|(seq, why)| {
-                // A cited chain that could not be read: say why (a refused history is not the chain not there).
-                let unread = cache.borrow().values().find_map(|r| match r {
-                    Err(crate::cut::Read::Refused(w)) if *w != "a chain that is not there" => Some(*w),
-                    _ => None,
-                });
-                proof(&chain, seq, unread.unwrap_or(why))
-            })?;
-            // Every cut up to it: its trees are what came before it (a received set that left a name out would let it
-            // be received twice; a history that is not the chain would hide what it cites).
-            crate::cut::audit(&prefix).map_err(|(seq, why)| proof(&chain, seq, why))?;
-            // What it rests on: each cited entry's own chain, up to it.
-            let mut needs: Vec<(ChainParams, u64)> = Vec::new();
-            let seq_of = |p: &ChainParams, pick: &dyn Fn(&super::Entry) -> bool| cited(&p.tok(), &p.owner).and_then(|c| c.entries.iter().find(|e| pick(e)).map(|e| e.seq));
-            for e in &prefix.entries {
-                match &e.body {
-                    Body::Receive { from, nonce, .. } => {
-                        let p = chain.at(chain.tok(), *from);
-                        if let Some(q) = seq_of(&p, &|x| x.nonce == *nonce) {
-                            needs.push((p, q));
-                        }
-                    }
-                    Body::Fill { offer, taker, lock, .. } => {
-                        let get = prefix.entries.iter().find_map(|x| match &x.body {
-                            Body::Offer { get, .. } if &x.nonce == offer => Some(*get),
-                            _ => None,
-                        });
-                        if let Some(get) = get {
-                            let p = chain.at(get, *taker);
-                            if let Some(q) = seq_of(&p, &|x| x.nonce == *lock) {
-                                needs.push((p, q));
-                            }
-                        }
-                    }
-                    Body::Claim { taker, lock, token, maker, cited: at, .. } => {
-                        let pl = chain.at(chain.tok(), *taker);
-                        if let Some(q) = seq_of(&pl, &|x| x.nonce == *lock) {
-                            needs.push((pl, q));
-                        }
-                        let pf = chain.at(*token, *maker);
-                        if let Some(q) = seq_of(&pf, &|x| x.stamp == *at && matches!(x.body, Body::Fill { taker: t, lock: l, .. } if t == *taker && l == *lock)) {
-                            needs.push((pf, q));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            // Exit after everything it rests on (a stack: pushed first, popped last).
-            self.walking.borrow_mut().push((id, upto));
-            tasks.push(Task::Exit(id, upto, prefix.entries[upto as usize].hash()));
-            for (p, q) in needs.into_iter().rev() {
-                tasks.push(Task::Visit(p, q));
-            }
-        }
-        Ok(())
+        None if seq != 0 => return Err("an entry whose predecessor is not held"),
+        None => {}
     }
-
-    /// AUDIT a checkpoint: verify its chain from scratch (trusting no checkpoint) and that it says what the chain says.
-    /// `Err`: the fraud proof naming its maker and every voucher.
-    pub fn audit(&self, src: &Source, c: &Checkpoint) -> Result<(), Fail> {
-        let mut fresh = Wallet::new([0; 32]);
-        let false_ = |why: Why, seq: u64| Fail::Fraud(FraudProof { chain: c.chain, seq, why, checkpoint: Some(c.clone()), vouchers: self.vouches.iter().filter(|v| v.checkpoint == c.hash() && v.signed()).map(|v| v.by).collect() });
-        fresh.verify(src, &c.chain, c.seq).map_err(|f| match f {
-            Fail::Fraud(f) => false_(f.why, f.seq),
-            need => need,
-        })?;
-        let s = whole(src, &c.chain).map_err(|r| match r {
-            crate::cut::Read::Need(n) => Fail::Need(n),
-            crate::cut::Read::Refused(why) => false_(why, c.seq),
-        })?;
-        let e = s.entries.get(c.seq as usize).ok_or_else(|| false_("an entry that is not in its chain", c.seq))?;
-        if e.hash() != c.head || e.balance != c.balance {
-            return Err(false_("a checkpoint that is not what the chain says", c.seq));
-        }
-        Ok(())
+    for (c, x) in cited(p, s, e, chain)? {
+        accept(src, &c, &x)?;
     }
+    Ok(e.hash())
 }
 
-/// THE BAGS (TOKEN §3a) a token's wallets share: one per kind, named by the token, each item one record below.
+/// THE BAGS (TOKEN §7a) a token's wallets and witnesses share — stake claims, witness signatures — one per kind, named
+/// by the token, each item one record below.
 pub fn bag_name(kind: &str, definition: &[u8; 32]) -> String {
     format!("token {kind} {}", definition.iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
 /// The records' BYTES — exact: trailing bytes refused.
 pub mod bytes {
-    use super::{Checkpoint, FraudProof, Vouch};
-    use crate::ChainParams;
+    use crate::draw::StakeClaim;
+    use crate::witness::WitnessSig;
+    use crate::R;
 
-    fn take<'a>(b: &mut &'a [u8], n: usize) -> Option<&'a [u8]> {
-        if b.len() < n {
-            return None;
-        }
-        let (x, rest) = b.split_at(n);
-        *b = rest;
-        Some(x)
-    }
-    fn arr<const N: usize>(b: &mut &[u8]) -> Option<[u8; N]> {
-        take(b, N)?.try_into().ok()
-    }
-
-    pub fn checkpoint(c: &Checkpoint) -> Vec<u8> {
-        [&c.chain.encode()[..], &c.seq.to_le_bytes(), &c.head, &c.balance.to_le_bytes(), &c.by, &c.sig].concat()
-    }
-    fn read_checkpoint(b: &mut &[u8]) -> Option<Checkpoint> {
-        let chain = ChainParams::decode(take(b, ChainParams::LEN)?)?;
-        Some(Checkpoint { chain, seq: u64::from_le_bytes(arr(b)?), head: arr(b)?, balance: u128::from_le_bytes(arr(b)?), by: arr(b)?, sig: arr(b)? })
-    }
-    pub fn read_checkpoint_exact(mut b: &[u8]) -> Option<Checkpoint> {
-        let c = read_checkpoint(&mut b)?;
-        b.is_empty().then_some(c)
-    }
-
-    pub fn vouch(v: &Vouch) -> Vec<u8> {
-        [&v.checkpoint[..], &v.by, &v.sig].concat()
-    }
-    pub fn read_vouch(mut b: &[u8]) -> Option<Vouch> {
-        let v = Vouch { checkpoint: arr(&mut b)?, by: arr(&mut b)?, sig: arr(&mut b)? };
-        b.is_empty().then_some(v)
-    }
-
-    /// A fraud proof travels as its CLAIM — the chain, the entry, and (a false checkpoint) the checkpoint and its
-    /// vouchers; its WHY is re-derived by whoever checks it (they verify the chain themselves), never trusted.
-    pub fn fraud(f: &FraudProof) -> Vec<u8> {
-        let mut v = [&f.chain.encode()[..], &f.seq.to_le_bytes()].concat();
-        match &f.checkpoint {
-            None => v.push(0),
-            Some(c) => {
-                v.push(1);
-                v.extend_from_slice(&checkpoint(c));
-            }
-        }
-        v.extend_from_slice(&(f.vouchers.len() as u32).to_le_bytes());
-        for k in &f.vouchers {
-            v.extend_from_slice(k);
-        }
+    pub fn witness_sig(w: &WitnessSig) -> Vec<u8> {
+        let mut v = Vec::new();
+        w.put(&mut v);
         v
     }
-    pub fn read_fraud(mut b: &[u8]) -> Option<FraudProof> {
-        let chain = ChainParams::decode(take(&mut b, ChainParams::LEN)?)?;
-        let seq = u64::from_le_bytes(arr(&mut b)?);
-        let checkpoint = match take(&mut b, 1)?[0] {
-            0 => None,
-            1 => Some(read_checkpoint(&mut b)?),
-            _ => return None,
-        };
-        let n = u32::from_le_bytes(arr(&mut b)?) as usize;
-        if n > 1024 {
-            return None;
-        }
-        let vouchers = (0..n).map(|_| arr(&mut b)).collect::<Option<Vec<[u8; 32]>>>()?;
-        b.is_empty().then_some(FraudProof { chain, seq, why: "claimed: re-check it", checkpoint, vouchers })
+    pub fn read_witness_sig(b: &[u8]) -> Option<WitnessSig> {
+        let mut r = R(b);
+        let w = WitnessSig::read(&mut r)?;
+        r.done().then_some(w)
+    }
+
+    pub fn stake_claim(c: &StakeClaim) -> Vec<u8> {
+        [&c.owner[..], &c.amount.to_le_bytes(), &c.epoch.to_le_bytes(), &c.key, &c.sig].concat()
+    }
+    pub fn read_stake_claim(b: &[u8]) -> Option<StakeClaim> {
+        let mut r = R(b);
+        let c = StakeClaim { owner: r.arr()?, amount: r.u128()?, epoch: r.u64()?, key: r.arr()?, sig: r.arr()? };
+        r.done().then_some(c)
     }
 }

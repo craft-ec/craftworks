@@ -103,9 +103,6 @@ fn did(n: u8) -> [u8; 32] {
     thread_local!(static DIDS: std::cell::RefCell<std::collections::HashMap<u8, [u8; 32]>> = Default::default());
     DIDS.with(|m| *m.borrow_mut().entry(n).or_insert_with(|| log(n).events[0].id()))
 }
-fn keys_of(d: &[u8; 32]) -> Option<craftworks_idlog_contract::Log> {
-    (0..=40u8).find(|n| did(*n) == *d).map(log)
-}
 
 /// The world of one run: the token code, the two nodes, the beacon (kept ticking by a task), a salt for fresh ids.
 struct W {
@@ -270,7 +267,6 @@ async fn main() -> Result<()> {
             "basic" => basic(&w).await?,
             "allow" => allow(&w).await?,
             "swap" => swap(&w).await?,
-            "wallet" => wallet(&w).await?,
             "did" => did_mode(&w).await?,
             "mint" => mint_mode(&w).await?,
             "multisig" => multisig(&w).await?,
@@ -416,69 +412,11 @@ async fn swap(w: &W) -> Result<()> {
     Ok(())
 }
 
-/// STEP 6, LIVE: the minting-by-burying attack accepted by the contracts on the nodes — and refused by a WALLET reading
-/// the same chains from a node; an honest payment verified.
-async fn wallet(w: &W) -> Result<()> {
-    use craftworks_token_contract::wallet::{Fail, Source, Wallet};
-    println!("— wallet");
-    let d = w.def(1, b"Wallet", 5);
-    let ta = w.put_def(&d).await?;
-    let h = w.now().await?;
-    let mut c1 = T::State::default();
-    push(&mut c1, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h);
-    for k in 0..T::RECENT as u8 {
-        push(&mut c1, T::Body::Send { to: did(2), amount: 10 }, w.n(20 + k), Some(1), h);
-    }
-    push(&mut c1, T::Body::Send { to: did(4), amount: 50 }, w.n(30), Some(1), h);
-    println!("1  1: genesis, {} real sends of 10 to 2, 50 to 4, on X: {}", T::RECENT, w.put_chain(&w.x, ta, 1, &c1).await?.0);
-    let r = w.until(h + 2).await?;
-    let mut c2 = T::State::default();
-    push(&mut c2, T::Body::Receive { from: did(1), nonce: w.n(9), amount: 5000, cited: h, ev: T::Evidence::default() }, w.n(9), None, r);
-    for k in 0..T::RECENT as u8 {
-        push(&mut c2, T::Body::Receive { from: did(1), nonce: w.n(20 + k), amount: 10, cited: h, ev: T::Evidence::default() }, w.n(20 + k), None, r);
-    }
-    push(&mut c2, T::Body::Send { to: did(3), amount: 3000 }, w.n(40), Some(2), r);
-    println!("2  2: a FAKE receive of 5000 buried under {} real ones, then 3000 to 3 — written fresh on Y: {}", T::RECENT, w.put_chain(&w.y, ta, 2, &c2).await?.0);
-    let r2 = w.until(r + 2).await?;
-    let mut c3 = T::State::default();
-    push(&mut c3, T::Body::Receive { from: did(2), nonce: w.n(40), amount: 3000, cited: r, ev: T::Evidence::default() }, w.n(40), None, r2);
-    println!("3  3 receives the 3000, on Y: {}", w.put_chain(&w.y, ta, 3, &c3).await?.0);
-    let mut c4 = T::State::default();
-    push(&mut c4, T::Body::Receive { from: did(1), nonce: w.n(30), amount: 50, cited: h, ev: T::Evidence::default() }, w.n(30), None, r2);
-    println!("4  4 receives an honest 50 from 1, on Y: {}", w.put_chain(&w.y, ta, 4, &c4).await?.0);
-    // A wallet reading the chains back from the node (through blocking reads of a runtime of its own).
-    let (y, code) = (w.y.clone(), w.code.clone());
-    let ch = w.ch;
-    let beacon = w.beacon;
-    let idlog = w.idlog;
-    let verdicts = tokio::task::spawn_blocking(move || {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let _ = code;
-        let chain = |p: &T::ChainParams| rt.block_on(get(&y, p.id())).ok().flatten().and_then(|b| T::State::decode(&b));
-        let defs = |t: &[u8; 32]| if *t == ta { Some(d.clone()) } else { None };
-        let src = Source { chain: &chain, definition: &defs, block: &|_| None, keys: &keys_of, supply: &|_| None, authority: &|_| None };
-        let p = |o: u8| T::ChainParams { code_hash: ch, definition: ta, owner: did(o), beacon, idlog, item: [0; 32] };
-        let fraud = |r: Result<(), Fail>| r.map_err(|f| match f {
-            Fail::Fraud(f) => f,
-            Fail::Need(_) => unreachable!("no cuts in this run"),
-        });
-        let mut wallet3 = Wallet::new(pk(3));
-        let v3 = fraud(wallet3.verify(&src, &p(3), 0));
-        let mut wallet4 = Wallet::new(pk(4));
-        let v4 = fraud(wallet4.verify(&src, &p(4), 0));
-        (v3.map_err(|f| (f.chain.owner == did(2), f.seq, f.why)), wallet3.reads.get(), v4.map_err(|f| f.why), wallet4.reads.get())
-    })
-    .await?;
-    println!("5  3's wallet verifies its 3000 (reading from Y): {:?} after {} chain reads", verdicts.0.map_err(|(is2, seq, why)| format!("REFUSED — chain {} seq {seq}: {why}", if is2 { "2" } else { "?" })), verdicts.1);
-    println!("6  4's wallet verifies its honest 50: {:?} after {} chain reads", verdicts.2, verdicts.3);
-    Ok(())
-}
-
 /// FOUNDATION 1, LIVE: the PRUNE CUT. A holder checks a cut against what it summarises and keeps the chain from it; a
 /// send received before a cut is not received again; a send behind its sender's cut is received with the proof (and
-/// refused without it); a wallet walks across the cut from the history's blocks, published as Block contracts.
+/// refused without it); A's chain read back WHOLE across its cut from the history's blocks, published as Block contracts.
 async fn cut(w: &W, block_code: &[u8]) -> Result<()> {
-    use craftworks_token_contract::{cut, wallet::{Fail, Source, Wallet}};
+    use craftworks_token_contract::cut;
     println!("— cut");
     let why = |e: &'static str| anyhow::anyhow!(e);
     let d = w.def(1, b"Cut", 6);
@@ -553,26 +491,25 @@ async fn cut(w: &W, block_code: &[u8]) -> Result<()> {
     let mut cc = T::State::default();
     push(&mut cc, T::Body::Receive { from: did(1), nonce: w.n(4), amount: 100, cited: h, ev: T::Evidence { mine: vec![], theirs } }, w.n(4), None, rc);
     println!("10 C receives it with the proof that A's history holds the send, on Y: {}", w.put_chain(&w.y, ta, 3, &cc).await?.0);
-    // C's WALLET: across A's cut, from the blocks on the network.
+    // A's chain read back WHOLE across its cut, from the blocks on the network.
     let (x, y, ch, beacon, bc, idlog) = (w.x.clone(), w.y.clone(), w.ch, w.beacon, block_code.to_vec(), w.idlog);
     let v = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let chain = |p: &T::ChainParams| rt.block_on(get(&y, p.id())).ok().flatten().and_then(|b| T::State::decode(&b));
-        let defs = |t: &[u8; 32]| if *t == ta { Some(d.clone()) } else { None };
-        let p = |o: u8| T::ChainParams { code_hash: ch, definition: ta, owner: did(o), beacon, idlog, item: [0; 32] };
-        // The wallet reads only what is HELD; what it NEEDS is fetched (the blocks the tree names — in a page, through
-        // the blocks door: raced against their groups, rebuilt from parity) and it runs again.
+        let p = T::ChainParams { code_hash: ch, definition: ta, owner: did(1), beacon, idlog, item: [0; 32] };
+        let live = rt.block_on(get(&y, p.id())).ok().flatten().and_then(|b| T::State::decode(&b));
+        // Only what is HELD is read; what is NEEDED is fetched (the blocks the tree names — in a page, through the
+        // blocks door: raced against their groups, rebuilt from parity) and the read runs again.
         let held: std::cell::RefCell<std::collections::HashMap<[u8; 32], Vec<u8>>> = Default::default();
         let t = Instant::now();
         let (mut rounds, mut fetched) = (0, 0);
         let r = loop {
             rounds += 1;
+            let Some(live) = &live else { break Err("A's chain not on Y".to_string()) };
             let block = |c: &[u8; 32]| held.borrow().get(c).cloned();
-            let src = Source { chain: &chain, definition: &defs, block: &block, keys: &keys_of, supply: &|_| None, authority: &|_| None };
-            match Wallet::new(pk(3)).verify(&src, &p(3), 0) {
-                Ok(()) => break Ok(()),
-                Err(Fail::Fraud(f)) => break Err(format!("REFUSED — seq {}: {}", f.seq, f.why)),
-                Err(Fail::Need(n)) if rounds <= 20 => {
+            match cut::whole(live, &block) {
+                Ok(s) => break Ok(s.entries.len()),
+                Err(cut::Read::Refused(why)) => break Err(format!("REFUSED: {why}")),
+                Err(cut::Read::Need(n)) if rounds <= 20 => {
                     for c in n {
                         let b = rt.block_on(get(&x, wire::block::contract_for(&bc, &c))).ok().flatten().and_then(|st| wire::block::block_of_state(&st).filter(|(id, _)| *id == c).map(|(_, b)| b.to_vec()));
                         if let Some(b) = b {
@@ -581,13 +518,13 @@ async fn cut(w: &W, block_code: &[u8]) -> Result<()> {
                         }
                     }
                 }
-                Err(Fail::Need(n)) => break Err(format!("still needs {} block(s)", n.len())),
+                Err(cut::Read::Need(n)) => break Err(format!("still needs {} block(s)", n.len())),
             }
         };
         (r, rounds, fetched, t.elapsed().as_millis())
     })
     .await?;
-    println!("11 C's wallet verifies its 100 across A's cut: {:?} — {} run(s), {} history block(s) fetched as needed, {} ms", v.0, v.1, v.2, v.3);
+    println!("11 A's chain read back whole across its cut: {:?} entries — {} run(s), {} history block(s) fetched as needed, {} ms", v.0, v.1, v.2, v.3);
     Ok(())
 }
 

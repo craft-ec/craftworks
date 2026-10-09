@@ -1407,9 +1407,20 @@ old key's addresses.
               fraud proof (one key, two witness signatures at one place)
           [x] 6b the DRAW — public lot (no global total for a VRF): stake claims, exponential-race tickets in
               fixed point, the k lowest; measured 100/200/700 → 9.7/20.1/70.1%, seven sybils of 100 → 69.3%
-          [ ] 6c WITNESS SIGNATURES (an entry counts once enough drawn witnesses signed; each signer's stake read
-              from its chain)
-          [ ] 6d wallets verify by witness signatures; checkpoints + vouches removed
+          [x] 6c WITNESS SIGNATURES (5b6f469) (an entry counts once enough drawn witnesses signed; each signer's stake
+              read from its chain)
+          [x] 6d wallets verify by witness signatures; checkpoints + vouches removed — `wallet::accept` (one entry's
+              committee signatures; lot = claims of its stamp's epoch, beacon output at stamp+1), `wallet::may_witness`
+              (the INDUCTION rule: the chain UP TO the entry passes the contract check — so its citations are checked in
+              full, not only the last RECENT — not forked; predecessor accepted; every cited entry accepted),
+              `wallet::cited`, bag codecs for stake claims + witness sigs. Found in self-review and fixed: checking the
+              whole chain let a buried receive of a REAL accepted send to someone else through (test added). Committee
+              16 / need 11 = placeholders. 83 tests; 7 mutants, 6 killed; 1 survivor explained (the receive-pick
+              predicate in `cited` — the prefix's contract check refuses a mismatch first). token-live: `wallet` mode
+              removed (6e adds `witness`); `cut` step 11 now reads A's chain whole across its cut. token.wasm 8008e8f9.
+              Open for 6e: should a witness refuse an entry stamped far behind the beacon (old-stamp first copies
+              have a committee known in advance)? A cut's witnesses must audit its history (`cut::whole`+`audit`) in
+              their `holds`.
           [ ] 6e live fx/fy
       (was: backed by PROVED STORAGE — superseded by earned stake, see TOKEN §7a)
           first; closes prevention of double spends, receiver-only history checks, partition fill/refund

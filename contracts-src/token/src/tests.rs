@@ -41,10 +41,6 @@ fn did(n: u8) -> [u8; 32] {
 fn cred(n: u8) -> Vec<u8> {
     craftworks_identity::credential(&did(n), &pk(n), &[], &owner_seed(n))
 }
-/// A DID's key log, as a node or a wallet reads it.
-fn keys_of(d: &[u8; 32]) -> Option<craftworks_idlog_contract::Log> {
-    (0..=255u8).find(|n| did(*n) == *d).map(log)
-}
 /// Before person `by` first signs a chain: its WRITER entry (device `by`, on key seq 0).
 fn ensure_writer(s: &mut State, by: u8) {
     if s.fork.is_none() && writer_at(s, s.entries.len()).is_none() {
@@ -730,42 +726,7 @@ fn a_fill_lands_a_margin_before_its_deadline_and_a_refund_after_it() {
     assert_eq!(append_check(&def(), 20, &locked, &refund(20), Some(&log(M))), Ok(()));
 }
 
-// ---- step 6: wallet verification ----
-use crate::wallet::{Checkpoint, Fail, FraudProof, Source, Vouch, Wallet};
-
-/// A verification's verdict on what is HELD: value, or its fraud proof (a test hands over every block: never `Need`).
-fn fraud(r: Result<(), Fail>) -> Result<(), FraudProof> {
-    r.map_err(|f| match f {
-        Fail::Fraud(p) => p,
-        Fail::Need(n) => panic!("blocks needed: {}", n.len()),
-    })
-}
-
-fn defs(t: &[u8; 32]) -> Option<Definition> {
-    if *t == id_a() {
-        Some(def())
-    } else if *t == id_b() {
-        Some(def_b())
-    } else {
-        None
-    }
-}
-fn verify(w: &Two, wallet: &mut Wallet, owner: u8) -> Result<(), FraudProof> {
-    let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
-    let src = Source { chain: &chain, definition: &defs, block: &|_| None, keys: &keys_of, supply: &|_| None, authority: &|_| None };
-    let last = w.get(id_a(), owner).entries.len() as u64 - 1;
-    fraud(wallet.verify(&src, &at(id_a(), owner), last))
-}
-fn checkpoint(w: &Two, owner: u8, by: u8) -> Checkpoint {
-    let s = w.get(id_a(), owner);
-    let e = s.entries.last().unwrap();
-    let chain = at(id_a(), owner);
-    let m = Checkpoint::message(&chain, e.seq, &e.hash(), e.balance);
-    Checkpoint { chain, seq: e.seq, head: e.hash(), balance: e.balance, by: pk(by), sig: key(by).sign(&m).to_bytes() }
-}
-fn vouch(c: &Checkpoint, by: u8) -> Vouch {
-    Vouch { checkpoint: c.hash(), by: pk(by), sig: key(by).sign(&Vouch::message(&c.hash())).to_bytes() }
-}
+// ---- wallet fixtures ----
 
 /// Token A: 1 (genesis) → 300 to 2 → 100 to 3.
 fn three_hops() -> Two {
@@ -793,214 +754,27 @@ fn buried() -> Two {
     w
 }
 
-#[test]
-fn a_wallet_verifies_an_honest_payment_back_to_genesis() {
-    let w = three_hops();
-    let mut wallet = Wallet::new(pk(3));
-    assert_eq!(verify(&w, &mut wallet, 3), Ok(()));
-    assert!(wallet.reads.get() >= 3, "it read the chains back to genesis");
-}
 
-#[test]
-fn minting_by_burying_passes_the_contract_and_is_refused_by_the_wallet() {
-    let w = buried();
-    // The contract alone accepts the chain: the fake receive is past its window…
-    assert_eq!(w.check(id_a(), 2), Ok(()));
-    // …the wallet refuses it, naming the entry.
-    let f = verify(&w, &mut Wallet::new(pk(5)), 2).unwrap_err();
-    assert_eq!((f.chain, f.seq, f.why), (at(id_a(), 2), 0, "a receive whose send is not in its sender's chain"));
-    // CONTROL: the same chain without the fake receive verifies.
-    let mut honest = buried();
-    let c2 = honest.chain(id_a(), 2);
-    let rest: Vec<Entry> = c2.entries.drain(1..).collect();
-    c2.entries.clear();
-    let mut rebuilt = State::default();
-    for e in rest {
-        let body = e.body.clone();
-        put_at(&mut rebuilt, e.nonce[0], body, if matches!(e.auth, Auth::Sig(_)) { Some(2) } else { None }, 0);
-    }
-    let last = rebuilt.entries.len() - 1;
-    rebuilt.entries.truncate(last); // (the 3000 send is more than the honest balance: drop it)
-    *honest.chain(id_a(), 2) = rebuilt;
-    assert_eq!(verify(&honest, &mut Wallet::new(pk(5)), 2), Ok(()));
-}
 
-#[test]
-fn a_payment_out_of_fake_money_is_refused_downstream_with_the_upstream_proof() {
-    let w = buried();
-    assert_eq!(w.check(id_a(), 3), Ok(()), "3's own chain is well-formed");
-    let f = verify(&w, &mut Wallet::new(pk(3)), 3).unwrap_err();
-    assert_eq!((f.chain, f.seq), (at(id_a(), 2), 0), "the root cause: 2's fake receive");
-}
 
-#[test]
-fn a_citation_loop_is_money_from_nothing() {
-    // 4 receives 50 from 5's send; 5 receives 50 from 4's send — each send made out of the other's receive.
-    let mut w = Two(HashMap::new());
-    put_at(w.chain(id_a(), 4), 51, Body::Receive { from: did(5), nonce: nonce(52), amount: 50, cited: 0, ev: Evidence::default() }, None, 0);
-    put_at(w.chain(id_a(), 4), 53, Body::Send { to: did(5), amount: 50 }, Some(4), 0);
-    put_at(w.chain(id_a(), 5), 54, Body::Receive { from: did(4), nonce: nonce(53), amount: 50, cited: 0, ev: Evidence::default() }, None, 0);
-    put_at(w.chain(id_a(), 5), 52, Body::Send { to: did(4), amount: 50 }, Some(5), 0);
-    assert_eq!(w.check(id_a(), 4), Ok(()));
-    assert_eq!(w.check(id_a(), 5), Ok(()));
-    let f = verify(&w, &mut Wallet::new(pk(9)), 4).unwrap_err();
-    assert_eq!(f.why, "a citation loop: money from nothing");
-}
 
-#[test]
-fn money_back_and_forth_is_not_a_loop() {
-    // 1 → 300 to 2; 2 → 50 back to 1; 1 receives it; 1 → 100 to 3. Verifying 3 walks 1 (to its last send), which
-    // walks 2, which walks 1 again — to an EARLIER entry: no loop.
-    let mut w = three_hops();
-    put_at(w.chain(id_a(), 2), 4, Body::Send { to: did(1), amount: 50 }, Some(2), 0);
-    put_at(w.chain(id_a(), 1), 4, Body::Receive { from: did(2), nonce: nonce(4), amount: 50, cited: 0, ev: Evidence::default() }, None, 0);
-    put_at(w.chain(id_a(), 1), 5, Body::Send { to: did(6), amount: 100 }, Some(1), 0);
-    put_at(w.chain(id_a(), 6), 5, Body::Receive { from: did(1), nonce: nonce(5), amount: 100, cited: 0, ev: Evidence::default() }, None, 0);
-    assert_eq!(verify(&w, &mut Wallet::new(pk(6)), 6), Ok(()));
-}
 
-#[test]
-fn a_trusted_checkpoint_saves_the_walk() {
-    let w = three_hops();
-    let mut plain = Wallet::new(pk(3));
-    verify(&w, &mut plain, 3).unwrap();
-    let mut with = Wallet::new(pk(3));
-    with.trusted = vec![pk(9)];
-    with.checkpoints = vec![checkpoint(&w, 2, 9)];
-    verify(&w, &mut with, 3).unwrap();
-    assert!(with.reads.get() < plain.reads.get(), "{} reads with the checkpoint, {} without", with.reads.get(), plain.reads.get());
-    // The owner's own checkpoint counts for nothing, trusted or not.
-    let mut own = Wallet::new(pk(3));
-    own.trusted = vec![pk(2)];
-    own.checkpoints = vec![checkpoint(&w, 2, 2)];
-    verify(&w, &mut own, 3).unwrap();
-    assert_eq!(own.reads.get(), plain.reads.get(), "walked as if there were none");
-}
 
-#[test]
-fn vouches_count_and_an_owners_vouch_does_not() {
-    let w = three_hops();
-    let c = checkpoint(&w, 2, 7); // 7: unknown to the wallet
-    let reads = |wallet: &mut Wallet| {
-        verify(&w, wallet, 3).unwrap();
-        wallet.reads.get()
-    };
-    let mut none = Wallet::new(pk(3));
-    none.checkpoints = vec![c.clone()];
-    let walked = reads(&mut none);
-    let mut by_trusted = Wallet::new(pk(3));
-    by_trusted.trusted = vec![pk(8)];
-    by_trusted.checkpoints = vec![c.clone()];
-    by_trusted.vouches = vec![vouch(&c, 8)];
-    assert!(reads(&mut by_trusted) < walked, "a trusted key's vouch");
-    let mut by_count = Wallet::new(pk(3));
-    by_count.min_vouches = 2;
-    by_count.checkpoints = vec![c.clone()];
-    by_count.vouches = vec![vouch(&c, 5), vouch(&c, 6)];
-    assert!(reads(&mut by_count) < walked, "two vouches");
-    let mut short = Wallet::new(pk(3));
-    short.min_vouches = 2;
-    short.checkpoints = vec![c.clone()];
-    short.vouches = vec![vouch(&c, 5), vouch(&c, 2)]; // 2 owns the chain: does not count
-    assert_eq!(reads(&mut short), walked, "the owner's vouch is not one");
-}
 
-#[test]
-fn a_false_checkpoint_is_proven_and_its_maker_and_vouchers_are_skipped() {
-    let w = buried();
-    let c = checkpoint(&w, 2, 9);
-    let v = vouch(&c, 8);
-    // Trusting 9, a wallet accepts the payment — that is what trust is.
-    let mut trusting = Wallet::new(pk(3));
-    trusting.trusted = vec![pk(9)];
-    trusting.checkpoints = vec![c.clone()];
-    trusting.vouches = vec![v.clone()];
-    assert_eq!(verify(&w, &mut trusting, 3), Ok(()));
-    // Anyone AUDITS it: the proof names the maker and the voucher.
-    let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
-    let src = Source { chain: &chain, definition: &defs, block: &|_| None, keys: &keys_of, supply: &|_| None, authority: &|_| None };
-    let proof = fraud(trusting.audit(&src, &c)).unwrap_err();
-    assert_eq!(proof.checkpoint.as_ref().map(|c| c.by), Some(pk(9)));
-    assert_eq!(proof.vouchers, vec![pk(8)]);
-    // Knowing the proof, a wallet skips both: the payment is refused.
-    let mut wary = Wallet::new(pk(3));
-    wary.trusted = vec![pk(9), pk(8)];
-    wary.checkpoints = vec![c.clone()];
-    wary.vouches = vec![v];
-    wary.frauds = vec![proof];
-    assert!(wary.distrusted(&pk(9)) && wary.distrusted(&pk(8)));
-    assert!(verify(&w, &mut wary, 3).is_err());
-    // An honest checkpoint survives its audit.
-    let h = three_hops();
-    let chain = |p: &ChainParams| h.0.get(&(p.definition, p.owner)).cloned();
-    let src = Source { chain: &chain, definition: &defs, block: &|_| None, keys: &keys_of, supply: &|_| None, authority: &|_| None };
-    assert_eq!(Wallet::new(pk(1)).audit(&src, &checkpoint(&h, 2, 9)), Ok(()));
-}
 
-#[test]
-fn a_checkpoint_that_is_not_the_chain_is_not_used() {
-    // A trusted key's signed checkpoint of the fake-funded chain — but naming a head the chain does not have (another
-    // copy, an older story): the wallet does not stop there, it walks, and finds the fake receive.
-    let w = buried();
-    let s = w.get(id_a(), 2);
-    let e = s.entries.last().unwrap();
-    let chain = at(id_a(), 2);
-    let wrong = [7u8; 32];
-    let m = Checkpoint::message(&chain, e.seq, &wrong, e.balance);
-    let c = Checkpoint { chain, seq: e.seq, head: wrong, balance: e.balance, by: did(9), sig: key(9).sign(&m).to_bytes() };
-    let mut wallet = Wallet::new(pk(3));
-    wallet.trusted = vec![pk(9)];
-    wallet.checkpoints = vec![c];
-    assert!(verify(&w, &mut wallet, 3).is_err());
-}
 
-#[test]
-fn a_long_history_is_walked_without_deepening_the_stack() {
-    // 400 accounts, each paying the next: verifying the last walks 400 chains — iteratively. (Run on a small thread
-    // stack, as a browser wallet's: a recursive walk overflows it.)
-    let r = std::thread::Builder::new().stack_size(256 * 1024).spawn(|| {
-        let n: u8 = 200;
-        // Owners 1..=n: 1 holds the genesis; k receives from k-1 and pays k+1.
-        let mut w = Two(HashMap::new());
-        put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
-        put_at(w.chain(id_a(), 1), 2, Body::Send { to: did(2), amount: 900 }, Some(1), 0);
-        for k in 2..n {
-            put_at(w.chain(id_a(), k), k, Body::Receive { from: did(k - 1), nonce: nonce(k), amount: 900 - (k as u128 - 2), cited: 0, ev: Evidence::default() }, None, 0);
-            put_at(w.chain(id_a(), k), k + 1, Body::Send { to: did(k + 1), amount: 900 - (k as u128 - 1) }, Some(k), 0);
-        }
-        let last = n;
-        put_at(w.chain(id_a(), last), last, Body::Receive { from: did(last - 1), nonce: nonce(last), amount: 900 - (last as u128 - 2), cited: 0, ev: Evidence::default() }, None, 0);
-        let mut wallet = Wallet::new(pk(last));
-        (verify(&w, &mut wallet, last), wallet.reads.get())
-    }).unwrap().join().unwrap();
-    assert_eq!(r.0, Ok(()));
-    assert!(r.1 >= 199, "{} reads", r.1);
-}
 
-#[test]
-fn the_shared_records_round_trip_exactly() {
-    use crate::wallet::bytes;
-    let w = buried();
-    let c = checkpoint(&w, 2, 9);
-    let v = vouch(&c, 8);
-    assert_eq!(bytes::read_checkpoint_exact(&bytes::checkpoint(&c)), Some(c.clone()));
-    assert_eq!(bytes::read_vouch(&bytes::vouch(&v)), Some(v.clone()));
-    let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
-    let src = Source { chain: &chain, definition: &defs, block: &|_| None, keys: &keys_of, supply: &|_| None, authority: &|_| None };
-    let mut wallet = Wallet::new(pk(1));
-    wallet.vouches = vec![v];
-    let proof = fraud(wallet.audit(&src, &c)).unwrap_err();
-    let back = bytes::read_fraud(&bytes::fraud(&proof)).unwrap();
-    assert_eq!((back.chain, back.seq, back.checkpoint.clone(), back.vouchers.clone()), (proof.chain, proof.seq, proof.checkpoint.clone(), proof.vouchers.clone()));
-    // A claimed proof is CHECKED, not trusted: re-auditing its checkpoint gives the same verdict.
-    assert!(wallet.audit(&src, back.checkpoint.as_ref().unwrap()).is_err());
-    for b in [bytes::checkpoint(&c), bytes::vouch(&vouch(&c, 8)), bytes::fraud(&proof)] {
-        let mut longer = b.clone();
-        longer.push(0);
-        assert!(bytes::read_checkpoint_exact(&longer).is_none() && bytes::read_vouch(&longer).is_none() && bytes::read_fraud(&longer).is_none());
-    }
-    assert!(crate::wallet::bag_name("checkpoints", &id_a()).starts_with("token checkpoints "));
-}
+
+
+
+
+
+
+
+
+
+
+
 
 // ---- foundation 1: the prune cut ----
 use crate::cut;
@@ -1250,97 +1024,10 @@ fn a_holder_checks_a_new_cut_against_what_it_summarises_then_drops_it() {
     assert_eq!(merge(&sent, &frozen), frozen);
 }
 
-fn verify_with(w: &Two, blocks: &cut::Blocks, wallet: &mut Wallet, owner: u8) -> Result<(), FraudProof> {
-    let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
-    let block = |c: &[u8; 32]| blocks.get(c).cloned();
-    let src = Source { chain: &chain, definition: &defs, block: &block, keys: &keys_of, supply: &|_| None, authority: &|_| None };
-    let s = w.get(id_a(), owner);
-    let last = s.entries.last().unwrap().seq;
-    fraud(wallet.verify(&src, &at(id_a(), owner), last))
-}
 
-#[test]
-fn a_wallet_walks_across_a_cut_from_its_published_history() {
-    let (mut w, whole1, blocks) = cut_world();
-    let live1 = w.get(id_a(), 1).clone();
-    let p1 = at(id_a(), 1);
-    put_at(w.chain(id_a(), 3), 4, Body::Receive { from: did(1), nonce: nonce(4), amount: 100, cited: 0, ev: Evidence { mine: vec![], theirs: vec![behind(&blocks, &live1, &p1, &whole1, 3)] } }, None, 6);
-    assert_eq!(verify_with(&w, &blocks, &mut Wallet::new(pk(9)), 3), Ok(()));
-    // Without the history's blocks HELD the walk cannot cross: it says which it NEEDS (fetched by the caller through the
-    // blocks door), never a verdict — and nothing is asked of any network here.
-    let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
-    let src = Source { chain: &chain, definition: &defs, block: &|_| None, keys: &keys_of, supply: &|_| None, authority: &|_| None };
-    let need = Wallet::new(pk(9)).verify(&src, &at(id_a(), 3), 0);
-    let Err(Fail::Need(n)) = need else { panic!("{need:?}") };
-    assert!(n.contains(&roots(&live1).0), "the history's root first");
-    // A block that is not the one its id names.
-    let mut forged = blocks.clone();
-    let k = roots(&live1).0;
-    forged.insert(k, b"not it".to_vec());
-    let f = verify_with(&w, &forged, &mut Wallet::new(pk(9)), 3).unwrap_err();
-    assert_eq!(f.why, "a history block that is not the one named");
-}
 
-#[test]
-fn a_lying_cut_passes_the_contract_and_is_proven_by_the_wallet() {
-    // 2 received 1's send, then cuts with a received set that LEAVES IT OUT — and receives it again.
-    let (mut w, _, mut blocks) = cut_world();
-    let mut ww = Two(w.0.clone());
-    ww.0.insert((id_a(), did(1)), State { entries: cut_world().1.entries[..5].to_vec(), fork: None });
-    w = ww;
-    let whole2 = w.get(id_a(), 2).clone();
-    let honest = cut_at(&mut Two(w.0.clone()), &whole2, id_a(), 2, 5, &mut blocks);
-    let lie = |honest: &State, blocks: &mut cut::Blocks| {
-        let mut s = honest.clone();
-        let mut e = s.entries.pop().unwrap();
-        let empty = freenet_prolly::build::build(std::iter::empty(), |c, b| {
-            blocks.insert(c, b.to_vec());
-        })
-        .unwrap();
-        if let Body::Cut { received, .. } = &mut e.body {
-            *received = empty;
-        }
-        s.entries.push(sign(e, 2));
-        s
-    };
-    let lying_whole = lie(&honest, &mut blocks);
-    let live = prune(&lying_whole);
-    let again = mine(&blocks, &live, RECEIVED, 1, 2);
-    let mut lying = Two(w.0.clone());
-    *lying.chain(id_a(), 2) = live.clone();
-    put_at(lying.chain(id_a(), 2), 2, Body::Receive { from: did(1), nonce: nonce(2), amount: 300, cited: 0, ev: Evidence { mine: again, theirs: vec![] } }, None, 6);
-    assert_eq!(lying.strict(id_a(), 2, 1), Ok(()), "the contract cannot see it: the received set is the cut's word");
-    assert_eq!(lying.get(id_a(), 2).balance(), 600, "300 received twice");
-    let f = verify_with(&lying, &blocks, &mut Wallet::new(pk(9)), 2).unwrap_err();
-    assert_eq!((f.seq, f.why), (2, "a cut whose trees are not what came before it"));
-    // CONTROL: the honest cut, walked the same way, is value.
-    let mut fine = Two(w.0.clone());
-    *fine.chain(id_a(), 2) = prune(&honest);
-    assert_eq!(verify_with(&fine, &blocks, &mut Wallet::new(pk(9)), 2), Ok(()));
-    // A lie about what is CARRIED (pruned: the contract cannot see it either) — the wallet's walk of the whole does.
-    let mut s = honest.clone();
-    let mut e = s.entries.pop().unwrap();
-    if let Body::Cut { allowances, .. } = &mut e.body {
-        allowances.push((did(5), 1_000));
-    }
-    s.entries.push(sign(e, 2));
-    let mut carried = Two(w.0.clone());
-    *carried.chain(id_a(), 2) = prune(&s);
-    assert_eq!(carried.check(id_a(), 2), Ok(()));
-    let f = verify_with(&carried, &blocks, &mut Wallet::new(pk(9)), 2).unwrap_err();
-    assert_eq!((f.seq, f.why), (2, "a cut that is not what came before it"));
-    // A cut naming parity its history does not have (a root no reader could rebuild): the audit finds it too.
-    let mut s = honest.clone();
-    let mut e = s.entries.pop().unwrap();
-    if let Body::Cut { history_parity, .. } = &mut e.body {
-        history_parity[0] = [7; 32];
-    }
-    s.entries.push(sign(e, 2));
-    let mut parity = Two(w.0.clone());
-    *parity.chain(id_a(), 2) = prune(&s);
-    let f = verify_with(&parity, &blocks, &mut Wallet::new(pk(9)), 2).unwrap_err();
-    assert_eq!((f.seq, f.why), (2, "a cut whose trees are not what came before it"));
-}
+
+
 
 #[test]
 fn an_entry_over_1kb_behind_a_cut_is_proven_by_its_value_block() {
@@ -1651,36 +1338,7 @@ fn the_recovered_account_outranks_a_stolen_device_and_one_key_signing_twice_stil
     assert_eq!(check(&at(id_a(), 1), &def(), &r[0], &|_, _| None, &|_| None, Some(&rotated(1))), Ok(()));
 }
 
-#[test]
-fn the_owners_own_keys_never_stand_behind_its_checkpoint() {
-    let w = three_hops();
-    let walked = {
-        let mut x = Wallet::new(pk(3));
-        verify(&w, &mut x, 3).unwrap();
-        x.reads.get()
-    };
-    let chain = |p: &ChainParams| w.0.get(&(p.definition, p.owner)).cloned();
-    let src = Source { chain: &chain, definition: &defs, block: &|_| None, keys: &keys_of, supply: &|_| None, authority: &|_| None };
-    // 2's checkpoint of its own chain, signed by its KEY LOG's key (not its device's): trusted, and still not used.
-    let s = w.get(id_a(), 2);
-    let e = s.entries.last().unwrap();
-    let chain2 = at(id_a(), 2);
-    let m = Checkpoint::message(&chain2, e.seq, &e.hash(), e.balance);
-    let ok = SigningKey::from_bytes(&owner_seed(2));
-    let own = Checkpoint { chain: chain2, seq: e.seq, head: e.hash(), balance: e.balance, by: ok.verifying_key().to_bytes(), sig: ok.sign(&m).to_bytes() };
-    assert!(crate::wallet::owner_keys(&src, &chain2).contains(&own.by));
-    let mut x = Wallet::new(pk(3));
-    x.trusted = vec![own.by];
-    x.checkpoints = vec![own];
-    verify(&w, &mut x, 3).unwrap();
-    assert_eq!(x.reads.get(), walked, "walked in full: the owner's checkpoint did not count");
-    // CONTROL: the same made by a key that is not the owner's, trusted: used.
-    let mut y = Wallet::new(pk(3));
-    y.trusted = vec![pk(9)];
-    y.checkpoints = vec![checkpoint(&w, 2, 9)];
-    verify(&w, &mut y, 3).unwrap();
-    assert!(y.reads.get() < walked);
-}
+
 
 #[test]
 fn a_holder_takes_a_receive_without_the_owners_key_log_but_never_a_new_writer() {
@@ -1803,41 +1461,7 @@ fn a_frozen_account_appends_no_debit_but_still_takes_credits() {
     assert!(debits_from(&sent, b.entries.len()) && !debits_from(&credited, b.entries.len()));
 }
 
-#[test]
-fn a_wallet_counts_a_mint_only_against_the_shard_and_authority_chain_it_holds() {
-    let md = Definition { mint: Some(mint_set()), ..def() };
-    let mid = id(&CODE, &md.encode());
-    let signed_mint = |n: u8, at_: u64, by: u8| {
-        let mut m = supply::Mint { to: did(2), item: [0; 32], amount: 500, nonce: nonce(n), stamp: at_, sigs: vec![] };
-        m.sigs = vec![(0, key(by).sign(&m.message(&mid)).to_bytes())];
-        m
-    };
-    // B's chain credits a mint by key 60 at stamp 3.
-    let mut b = State::default();
-    minted(&mut b, 1, 500, 3);
-    let chain = at(mid, 2);
-    let honest = supply::Shard { mints: vec![signed_mint(1, 3, 60)] };
-    // The mint set later moved 60 → 61 at stamp 5, sealing epoch 0 as it held nothing then.
-    let moved = |closed: Vec<(u64, [u8; 32])>| {
-        let mut c = authority::Change { seq: 0, role: authority::Role::Mint, next: Some(authority::KeySet { k: 1, keys: vec![pk(61)] }), stamp: 5, closed, cap: 0, sigs: vec![] };
-        c.sigs = vec![(0, key(60).sign(&c.message(&mid)).to_bytes())];
-        authority::Chain { changes: vec![c] }
-    };
-    let run = |shard: Option<supply::Shard>, auth: Option<authority::Chain>| {
-        let chains = |p: &ChainParams| (p.definition == mid && p.owner == did(2)).then(|| b.clone());
-        let defs = |t: &[u8; 32]| (*t == mid).then(|| md.clone());
-        let sh = |_: &supply::Params| shard.clone();
-        let au = |_: &authority::Params| auth.clone();
-        let src = Source { chain: &chains, definition: &defs, block: &|_| None, keys: &keys_of, supply: &sh, authority: &au };
-        fraud(Wallet::new([0; 32]).verify(&src, &chain, b.entries.len() as u64 - 1)).map_err(|f| f.why)
-    };
-    assert_eq!(run(Some(honest.clone()), Some(authority::Chain::default())), Ok(()));
-    assert_eq!(run(Some(honest.clone()), None), Err("the mint's supply shard is not there"), "the authority chain not held: not counted");
-    assert_eq!(run(None, Some(authority::Chain::default())), Err("the mint's supply shard is not there"));
-    // Key 60, replaced, back-dates the mint into the epoch its own change sealed (empty): refused.
-    assert_eq!(run(Some(honest.clone()), Some(moved(vec![]))), Err("the mint's supply shard is not there"));
-    assert_eq!(run(Some(honest.clone()), Some(moved(vec![(0, supply::seal(&honest, 5).unwrap())]))), Ok(()), "sealed as it holds");
-}
+
 
 // ---- FOUNDATION 4: a MULTISIG owner (a k-of-n key set) ----
 
@@ -2298,4 +1922,176 @@ fn an_entry_counts_once_enough_of_its_committee_signed_it_with_real_stake() {
     assert_eq!(acc(&four, &short), Err("an entry its committee has not witnessed"));
     let unknown = |o: &[u8; 32]| (o[0] != member_keys[1]).then_some(100);
     assert_eq!(acc(&four, &unknown), Err("an entry its committee has not witnessed"), "a chain not readable: not counted");
+}
+
+// ---- FOUNDATION 6d: a wallet takes an entry its committee accepted; a witness signs only on an accepted past ----
+
+/// The lot for the wallet tests: 20 stakers (keys 60..80), 100 each, in the pool `id_a()`, epoch 0; the beacon drawn up
+/// to height `drawn`; the witness signatures as `sigs` holds them.
+struct Lot {
+    claims: Vec<draw::StakeClaim>,
+    sigs: HashMap<([u8; 32], u64), Vec<witness::WitnessSig>>,
+    drawn: u64,
+}
+impl Lot {
+    fn new() -> Lot {
+        let pool = id_a();
+        let claims = (60..80u8)
+            .map(|n| {
+                let kb = pk(n);
+                draw::StakeClaim { owner: [n; 32], amount: 100, epoch: 0, key: kb, sig: key(n).sign(&draw::StakeClaim::message(&pool, &[n; 32], 100, 0, &kb)).to_bytes() }
+            })
+            .collect();
+        Lot { claims, sigs: HashMap::new(), drawn: 100 }
+    }
+    fn out(h: u64) -> [u8; 32] {
+        *blake3::hash(&h.to_le_bytes()).as_bytes()
+    }
+    fn src(&self) -> wallet::Source<'_> {
+        wallet::Source {
+            pool: id_a(),
+            claims: Box::leak(Box::new(|e: u64| if e == 0 { self.claims.clone() } else { vec![] })),
+            sigs: Box::leak(Box::new(|c: &[u8; 32], seq: u64| self.sigs.get(&(*c, seq)).cloned().unwrap_or_default())),
+            out: Box::leak(Box::new(|h: u64| (h <= self.drawn).then(|| Lot::out(h)))),
+            stake_of: &|_| Some(100),
+        }
+    }
+    /// `n` of the entry's committee sign it (`entry`: what they sign).
+    fn sign(&mut self, chain: &ChainParams, e: &Entry, n: usize, entry: [u8; 32]) {
+        let (epoch, h) = wallet::lot_of(e.stamp);
+        let id = chain.id();
+        let members = draw::committee(&id_a(), &Lot::out(h), &id, e.seq, epoch, &self.claims, wallet::COMMITTEE);
+        let v = self.sigs.entry((id, e.seq)).or_default();
+        for m in members.into_iter().take(n) {
+            let k = self.claims[m].owner[0];
+            v.push(witness::WitnessSig { chain: id, seq: e.seq, entry, sig: key(k).sign(&witness::WitnessSig::message(&id, e.seq, &entry)).to_bytes() });
+        }
+    }
+    /// The committee witnesses every entry of `owner`'s chain of token A, in order — each only if the rule lets it.
+    fn witness(&mut self, w: &Two, owner: u8) -> Result<(), Why> {
+        let p = at(id_a(), owner);
+        let s = w.get(id_a(), owner).clone();
+        for e in &s.entries {
+            let h = self.may(w, owner, e.seq)?;
+            self.sign(&p, e, wallet::NEED, h);
+        }
+        Ok(())
+    }
+    fn may(&self, w: &Two, owner: u8, seq: u64) -> Result<[u8; 32], Why> {
+        let p = at(id_a(), owner);
+        let holds = |s: &State| check(&p, &def(), s, &|t, o| w.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(owner)));
+        wallet::may_witness(&self.src(), &p, w.get(id_a(), owner), seq, &holds, &|t, o| w.0.get(&(t.definition, *o)).cloned())
+    }
+    fn accept(&self, w: &Two, owner: u8, seq: u64) -> Result<usize, Why> {
+        let e = w.get(id_a(), owner).entries.iter().find(|e| e.seq == seq).unwrap().clone();
+        wallet::accept(&self.src(), &at(id_a(), owner), &e)
+    }
+}
+
+#[test]
+fn a_payment_is_value_once_enough_of_its_committee_signed_it() {
+    let w = three_hops();
+    let mut lot = Lot::new();
+    lot.witness(&w, 1).unwrap();
+    lot.witness(&w, 2).unwrap();
+    let (p, e) = (at(id_a(), 3), w.get(id_a(), 3).entries[0].clone());
+    assert_eq!(lot.accept(&w, 3, 0), Err("an entry its committee has not witnessed"), "nobody signed it yet");
+    lot.sign(&p, &e, 10, e.hash());
+    assert_eq!(lot.accept(&w, 3, 0), Err("an entry its committee has not witnessed"), "10 of 16: one short of 11");
+    lot.sign(&p, &e, wallet::NEED, [9; 32]);
+    assert_eq!(lot.accept(&w, 3, 0), Err("an entry its committee has not witnessed"), "signatures for another entry");
+    lot.sigs.clear();
+    lot.witness(&w, 1).unwrap();
+    lot.witness(&w, 2).unwrap();
+    lot.witness(&w, 3).unwrap();
+    assert_eq!(lot.accept(&w, 3, 0), Ok(11));
+    // Before the beacon output after its stamp exists, nobody knows its committee.
+    lot.drawn = 0;
+    assert_eq!(lot.accept(&w, 3, 0), Err("an entry whose lot is not drawn yet"));
+}
+
+#[test]
+fn a_witness_signs_only_on_an_accepted_past() {
+    let w = three_hops();
+    let mut lot = Lot::new();
+    // 2's receive cites 1's send: not witnessable until that send is accepted.
+    assert_eq!(lot.may(&w, 2, 0), Err("an entry its committee has not witnessed"), "the cited send not accepted");
+    lot.witness(&w, 1).unwrap();
+    let h = lot.may(&w, 2, 0).unwrap();
+    assert_eq!(h, w.get(id_a(), 2).entries[0].hash());
+    // 2's next entry (its send to 3): not until the receive before it is accepted.
+    assert_eq!(lot.may(&w, 2, 1), Err("an entry its committee has not witnessed"), "the predecessor not accepted");
+    let e = w.get(id_a(), 2).entries[0].clone();
+    lot.sign(&at(id_a(), 2), &e, wallet::NEED, h);
+    assert!(lot.may(&w, 2, 1).is_ok());
+}
+
+#[test]
+fn a_fake_receive_buried_under_real_ones_is_never_witnessed_nor_anything_after_it() {
+    let w = buried();
+    // The contract takes it (it checks only the last RECENT citations)…
+    assert_eq!(w.check(id_a(), 2), Ok(()));
+    let mut lot = Lot::new();
+    lot.witness(&w, 1).unwrap();
+    // …no witness signs it: checked as the last entry of its chain, the send it cites is in no chain.
+    assert_eq!(lot.may(&w, 2, 0), Err("a receive whose send is not in its sender's chain"));
+    assert_eq!(lot.witness(&w, 2), Err("a receive whose send is not in its sender's chain"));
+    // So nothing after it is witnessable either: 3's receive of the 3000 never becomes value.
+    let last = w.get(id_a(), 2).entries.last().unwrap().seq;
+    assert_eq!(lot.may(&w, 2, last), Err("an entry its committee has not witnessed"));
+    assert_eq!(lot.may(&w, 3, 0), Err("an entry its committee has not witnessed"));
+}
+
+#[test]
+fn a_witness_refuses_a_forked_chain_and_what_it_does_not_hold() {
+    let mut w = three_hops();
+    let lot = Lot::new();
+    assert_eq!(lot.may(&w, 1, 7), Err("an entry not held"));
+    // A chain held from past its start (a cut) with no predecessor in hand.
+    let mut tail = w.get(id_a(), 1).clone();
+    tail.entries.remove(0);
+    let p = at(id_a(), 1);
+    assert_eq!(wallet::may_witness(&lot.src(), &p, &tail, 1, &|_| Ok(()), &|_, _| None), Err("an entry whose predecessor is not held"));
+    // Two entries signed at one seq: frozen — nobody witnesses past the fork.
+    let base = State { entries: w.get(id_a(), 1).entries[..1].to_vec(), fork: None };
+    let (mut f1, mut f2) = (base.clone(), base.clone());
+    put_at(&mut f1, 50, Body::Burn { amount: 1 }, Some(1), 0);
+    put_at(&mut f2, 51, Body::Burn { amount: 2 }, Some(1), 0);
+    *w.chain(id_a(), 1) = merge(&f1, &f2);
+    assert!(w.get(id_a(), 1).fork.is_some());
+    assert_eq!(lot.may(&w, 1, 0), Err("a forked chain"));
+}
+
+#[test]
+fn the_shared_lot_records_round_trip_exactly() {
+    let lot = Lot::new();
+    let c = &lot.claims[3];
+    let b = wallet::bytes::stake_claim(c);
+    assert_eq!(wallet::bytes::read_stake_claim(&b).as_ref(), Some(c));
+    assert!(wallet::bytes::read_stake_claim(&[&b[..], &[0]].concat()).is_none());
+    assert!(wallet::bytes::read_stake_claim(&b[..b.len() - 1]).is_none());
+    let s = wsig(60, 7, 3, 1);
+    let b = wallet::bytes::witness_sig(&s);
+    assert_eq!(wallet::bytes::read_witness_sig(&b).as_ref(), Some(&s));
+    assert!(wallet::bytes::read_witness_sig(&[&b[..], &[0]].concat()).is_none());
+}
+
+#[test]
+fn a_buried_receive_of_a_real_send_to_someone_else_is_never_witnessed() {
+    // 1 sends 10 to 4 (accepted). 2 credits ITSELF 5000 citing that very send, buried under RECENT real receives.
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 8, Body::Send { to: did(4), amount: 10 }, Some(1), 0);
+    put_at(w.chain(id_a(), 2), 9, Body::Receive { from: did(1), nonce: nonce(8), amount: 5000, cited: 0, ev: Evidence::default() }, None, 0);
+    for k in 0..RECENT as u8 {
+        put_at(w.chain(id_a(), 1), 20 + k, Body::Send { to: did(2), amount: 10 }, Some(1), 0);
+        put_at(w.chain(id_a(), 2), 20 + k, Body::Receive { from: did(1), nonce: nonce(20 + k), amount: 10, cited: 0, ev: Evidence::default() }, None, 0);
+    }
+    assert_eq!(w.check(id_a(), 2), Ok(()), "the contract, checking only the last RECENT citations, takes it");
+    let mut lot = Lot::new();
+    lot.witness(&w, 1).unwrap();
+    // The send it names exists and is accepted — but it is 10 to 4, not 5000 to 2.
+    assert_eq!(lot.may(&w, 2, 0), Err("a receive whose send is not in its sender's chain"));
+    let last = w.get(id_a(), 2).entries.last().unwrap().seq;
+    assert_eq!(lot.may(&w, 2, last), Err("an entry its committee has not witnessed"));
 }
