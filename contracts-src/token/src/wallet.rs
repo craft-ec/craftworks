@@ -232,8 +232,8 @@ impl Wallet {
             prefix.fork = None;
             // EVERY citation checked (the shape rules, the window the whole chain) — each cited chain read once.
             let cache: RefCell<HashMap<[u8; 32], Result<State, crate::cut::Read>>> = RefCell::new(HashMap::new());
-            let cited = |def: &[u8; 32], owner: &[u8; 32]| {
-                let p = chain.at(*def, *owner);
+            let cited = |t: &crate::Tok, owner: &[u8; 32]| {
+                let p = chain.at(*t, *owner);
                 cache.borrow_mut().entry(p.id()).or_insert_with(|| read(&p)).clone().ok()
             };
             let keys = (src.keys)(&chain.owner);
@@ -242,7 +242,7 @@ impl Wallet {
                 let sp = crate::supply::Params { code_hash: chain.code_hash, definition: chain.definition, beacon: chain.beacon, epoch: e };
                 let sh = (src.supply)(&sp)?;
                 let ac = (src.authority)(&sp.authority())?;
-                crate::supply::holds(&sp, (&d.mint, &d.freeze), &ac, &sh).ok().map(|_| sh)
+                crate::supply::holds(&sp, (&d.mint, &d.freeze), d.ids, &ac, &sh).ok().map(|_| sh)
             };
             let checked = check_window(&chain, &d, &prefix, &cited, &shard, keys.as_ref(), usize::MAX);
             // A cited chain's history NOT HELD: those blocks needed first — never a verdict on what was not read.
@@ -266,11 +266,11 @@ impl Wallet {
             crate::cut::audit(&prefix).map_err(|(seq, why)| proof(&chain, seq, why))?;
             // What it rests on: each cited entry's own chain, up to it.
             let mut needs: Vec<(ChainParams, u64)> = Vec::new();
-            let seq_of = |p: &ChainParams, pick: &dyn Fn(&super::Entry) -> bool| cited(&p.definition, &p.owner).and_then(|c| c.entries.iter().find(|e| pick(e)).map(|e| e.seq));
+            let seq_of = |p: &ChainParams, pick: &dyn Fn(&super::Entry) -> bool| cited(&p.tok(), &p.owner).and_then(|c| c.entries.iter().find(|e| pick(e)).map(|e| e.seq));
             for e in &prefix.entries {
                 match &e.body {
                     Body::Receive { from, nonce, .. } => {
-                        let p = chain.at(chain.definition, *from);
+                        let p = chain.at(chain.tok(), *from);
                         if let Some(q) = seq_of(&p, &|x| x.nonce == *nonce) {
                             needs.push((p, q));
                         }
@@ -287,12 +287,12 @@ impl Wallet {
                             }
                         }
                     }
-                    Body::Claim { taker, lock, token, cited: at, .. } => {
-                        let pl = chain.at(chain.definition, *taker);
+                    Body::Claim { taker, lock, token, maker, cited: at, .. } => {
+                        let pl = chain.at(chain.tok(), *taker);
                         if let Some(q) = seq_of(&pl, &|x| x.nonce == *lock) {
                             needs.push((pl, q));
                         }
-                        let pf = chain.at(*token, chain.owner);
+                        let pf = chain.at(*token, *maker);
                         if let Some(q) = seq_of(&pf, &|x| x.stamp == *at && matches!(x.body, Body::Fill { taker: t, lock: l, .. } if t == *taker && l == *lock)) {
                             needs.push((pf, q));
                         }
@@ -357,7 +357,7 @@ pub mod bytes {
         [&c.chain.encode()[..], &c.seq.to_le_bytes(), &c.head, &c.balance.to_le_bytes(), &c.by, &c.sig].concat()
     }
     fn read_checkpoint(b: &mut &[u8]) -> Option<Checkpoint> {
-        let chain = ChainParams::decode(take(b, 1 + 32 * 5)?)?;
+        let chain = ChainParams::decode(take(b, ChainParams::LEN)?)?;
         Some(Checkpoint { chain, seq: u64::from_le_bytes(arr(b)?), head: arr(b)?, balance: u128::from_le_bytes(arr(b)?), by: arr(b)?, sig: arr(b)? })
     }
     pub fn read_checkpoint_exact(mut b: &[u8]) -> Option<Checkpoint> {
@@ -391,7 +391,7 @@ pub mod bytes {
         v
     }
     pub fn read_fraud(mut b: &[u8]) -> Option<FraudProof> {
-        let chain = ChainParams::decode(take(&mut b, 1 + 32 * 5)?)?;
+        let chain = ChainParams::decode(take(&mut b, ChainParams::LEN)?)?;
         let seq = u64::from_le_bytes(arr(&mut b)?);
         let checkpoint = match take(&mut b, 1)?[0] {
             0 => None,

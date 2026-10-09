@@ -145,10 +145,10 @@ impl W {
         v
     }
     fn def(&self, genesis: u8, name: &[u8], k: u8) -> T::Definition {
-        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog, mint: None, freeze: None }
+        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog, mint: None, freeze: None, ids: T::Ids::None, royalty: None }
     }
     fn chain(&self, token: [u8; 32], o: u8) -> T::ChainParams {
-        T::ChainParams { code_hash: self.ch, definition: token, owner: did(o), beacon: self.beacon, idlog: self.idlog }
+        T::ChainParams { code_hash: self.ch, definition: token, owner: did(o), beacon: self.beacon, idlog: self.idlog, item: [0; 32] }
     }
     /// Person n's KEY LOG, published (its contract: the key log's code, the DID its params).
     async fn put_log(&self, ws: &str, l: &craftworks_idlog_contract::Log) -> Result<(String, u128)> {
@@ -200,10 +200,11 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
     let bal = s.balance();
     let balance = match &body {
         T::Body::Genesis { amount } => *amount,
-        T::Body::Send { amount, .. } | T::Body::Burn { amount } | T::Body::Spend { amount, .. } | T::Body::Lock { amount, .. } | T::Body::Fill { amount, .. } => bal - amount,
+        T::Body::Send { amount, .. } | T::Body::Burn { amount } | T::Body::Spend { amount, .. } | T::Body::Fill { amount, .. } => bal - amount,
+        T::Body::Lock { amount, fee, .. } => bal - amount - fee.map_or(0, |f| f.1),
         T::Body::Receive { amount, .. } | T::Body::Claim { amount, .. } | T::Body::Mint { amount, .. } => bal + amount,
         T::Body::Allow { .. } | T::Body::Offer { .. } | T::Body::Cut { .. } | T::Body::Writer { .. } | T::Body::Members { .. } => bal,
-        T::Body::Refund { lock, .. } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Lock { amount, .. } if &x.nonce == lock => Some(*amount), _ => None }).unwrap_or(0),
+        T::Body::Refund { lock, .. } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Lock { amount, fee, .. } if &x.nonce == lock => Some(amount + fee.map_or(0, |f| f.1)), _ => None }).unwrap_or(0),
     };
     let mut e = T::Entry { seq: s.entries.last().map_or(0, |e| e.seq + 1), prev: s.head(), nonce: n, stamp, body, balance, auth: T::Auth::Work(0) };
     let m = e.message();
@@ -270,6 +271,7 @@ async fn main() -> Result<()> {
             "did" => did_mode(&w).await?,
             "mint" => mint_mode(&w).await?,
             "multisig" => multisig(&w).await?,
+            "nft" => nft(&w).await?,
             "cut" => cut(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("block.wasm"))?).await?,
             m => bail!("no mode {m}"),
         }
@@ -350,14 +352,14 @@ async fn swap(w: &W) -> Result<()> {
     push(&mut ma, T::Body::Genesis { amount: 1000 }, w.n(1), Some(m), h);
     w.put_chain(&w.x, ta, m, &ma).await?;
     let h = w.now().await?;
-    push(&mut ma, T::Body::Offer { get: tb, give: 2, per: 1, max: 400, until: h + 1000 }, w.n(10), Some(m), h);
+    push(&mut ma, T::Body::Offer { get: tb.into(), give: 2, per: 1, max: 400, until: h + 1000 }, w.n(10), Some(m), h);
     println!("1  M offers 2 A per 1 B (an append, on X): {}", w.put_chain(&w.x, ta, m, &ma).await?.0);
     let mut tbc = T::State::default();
     push(&mut tbc, T::Body::Genesis { amount: 1000 }, w.n(1), Some(t), h);
     w.put_chain(&w.y, tb, t, &tbc).await?;
     let h = w.now().await?;
     let deadline = h + 40;
-    push(&mut tbc, T::Body::Lock { to: did(m), amount: 100, until: deadline, token: ta, offer: w.n(10) }, w.n(20), Some(t), h);
+    push(&mut tbc, T::Body::Lock { to: did(m), amount: 100, until: deadline, token: ta.into(), offer: w.n(10), fee: None }, w.n(20), Some(t), h);
     println!("2  T locks 100 B for it, deadline {deadline} (now {h}), on Y: {}", w.put_chain(&w.y, tb, t, &tbc).await?.0);
     let lock_at = stamp_of(&tbc, w.n(20));
     // Too soon: the lock not final yet.
@@ -377,7 +379,7 @@ async fn swap(w: &W) -> Result<()> {
     push(&mut tac, T::Body::Receive { from: did(m), nonce: w.n(30), amount: 200, cited: fill_at, ev: T::Evidence::default() }, w.n(30), None, r);
     println!("5  T receives the 200 A, through X: {}", w.put_chain(&w.x, ta, t, &tac).await?.0);
     let mut mbc = T::State::default();
-    push(&mut mbc, T::Body::Claim { taker: did(t), lock: w.n(20), amount: 100, cited: fill_at, token: ta, ev: T::Evidence::default() }, w.n(40), None, r);
+    push(&mut mbc, T::Body::Claim { taker: did(t), lock: w.n(20), amount: 100, cited: fill_at, token: ta.into(), maker: did(m), ev: T::Evidence::default() }, w.n(40), None, r);
     println!("6  anyone claims the 100 B for M, through X: {}", w.put_chain(&w.x, tb, m, &mbc).await?.0);
     // A refund of the FILLED lock.
     let mut bad = tbc.clone();
@@ -387,7 +389,7 @@ async fn swap(w: &W) -> Result<()> {
     // A second lock nobody fills: refund too soon, then on time.
     let r = w.now().await?;
     let d2 = r + 6;
-    push(&mut tbc, T::Body::Lock { to: did(m), amount: 50, until: d2, token: ta, offer: w.n(10) }, w.n(22), Some(t), r);
+    push(&mut tbc, T::Body::Lock { to: did(m), amount: 50, until: d2, token: ta.into(), offer: w.n(10), fee: None }, w.n(22), Some(t), r);
     w.put_chain(&w.y, tb, t, &tbc).await?;
     let r = w.now().await?;
     let mut soon = tbc.clone();
@@ -452,7 +454,7 @@ async fn wallet(w: &W) -> Result<()> {
         let chain = |p: &T::ChainParams| rt.block_on(get(&y, p.id())).ok().flatten().and_then(|b| T::State::decode(&b));
         let defs = |t: &[u8; 32]| if *t == ta { Some(d.clone()) } else { None };
         let src = Source { chain: &chain, definition: &defs, block: &|_| None, keys: &keys_of, supply: &|_| None, authority: &|_| None };
-        let p = |o: u8| T::ChainParams { code_hash: ch, definition: ta, owner: did(o), beacon, idlog };
+        let p = |o: u8| T::ChainParams { code_hash: ch, definition: ta, owner: did(o), beacon, idlog, item: [0; 32] };
         let fraud = |r: Result<(), Fail>| r.map_err(|f| match f {
             Fail::Fraud(f) => f,
             Fail::Need(_) => unreachable!("no cuts in this run"),
@@ -554,7 +556,7 @@ async fn cut(w: &W, block_code: &[u8]) -> Result<()> {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let chain = |p: &T::ChainParams| rt.block_on(get(&y, p.id())).ok().flatten().and_then(|b| T::State::decode(&b));
         let defs = |t: &[u8; 32]| if *t == ta { Some(d.clone()) } else { None };
-        let p = |o: u8| T::ChainParams { code_hash: ch, definition: ta, owner: did(o), beacon, idlog };
+        let p = |o: u8| T::ChainParams { code_hash: ch, definition: ta, owner: did(o), beacon, idlog, item: [0; 32] };
         // The wallet reads only what is HELD; what it NEEDS is fetched (the blocks the tree names — in a page, through
         // the blocks door: raced against their groups, rebuilt from parity) and it runs again.
         let held: std::cell::RefCell<std::collections::HashMap<[u8; 32], Vec<u8>>> = Default::default();
@@ -641,7 +643,7 @@ fn one(n: u8) -> T::authority::KeySet {
     T::authority::KeySet { k: 1, keys: vec![pk(n)] }
 }
 fn a_mint(def: &[u8; 32], to: u8, amount: u128, nonce: [u8; 16], stamp: u64, by: u8) -> T::supply::Mint {
-    let mut m = T::supply::Mint { to: did(to), amount, nonce, stamp, sigs: vec![] };
+    let mut m = T::supply::Mint { to: did(to), item: [0; 32], amount, nonce, stamp, sigs: vec![] };
     m.sigs = vec![(0, key(by).sign(&m.message(def)).to_bytes())];
     m
 }
@@ -777,5 +779,72 @@ async fn multisig(w: &W) -> Result<()> {
     let said = put_set(&new).await?.0;
     let held = get(&w.y, sp.id()).await?.and_then(|b| T::State::decode(&b));
     println!("7  the NEW set sends, on Y: {said} — balance {}", held.map_or(0, |s| s.balance()));
+    Ok(())
+}
+
+/// FOUNDATION 5: a UNIQUE token (an NFT) with a 5% ROYALTY to its creator (7). Its item minted to M; M offers it for
+/// 100 B; T's lock without the creator's fee is not filled; with it, filled; T holds the item; M and the creator claim
+/// their B; a mint of two of a unique item refused.
+async fn nft(w: &W) -> Result<()> {
+    println!("— nft");
+    let (m, t, c) = (1u8, 2u8, 7u8);
+    let du = T::Definition { ids: T::Ids::Unique, mint: Some(one(60)), royalty: Some((500, did(c))), min_send: 1, ..w.def(m, b"Nft", 11) };
+    let tu = w.put_def(&du).await?;
+    let tb = w.put_def(&w.def(t, b"Pay", 12)).await?;
+    let h = w.now().await?;
+    let e = T::supply::epoch(h);
+    let item = T::unique_item(&tu, e, &w.n(1));
+    let it = T::Tok { definition: tu, item };
+    let ip = |o: u8| T::ChainParams { item, ..w.chain(tu, o) };
+    let shard = T::supply::Params { code_hash: w.ch, definition: tu, beacon: w.beacon, epoch: e };
+    let mut mint = T::supply::Mint { to: did(m), item, amount: 1, nonce: w.n(1), stamp: h, sigs: vec![] };
+    mint.sigs = vec![(0, key(60).sign(&mint.message(&tu)).to_bytes())];
+    println!("1  the item minted to M (key 60), on X: {}", put(&w.x, container(&w.code, shard.encode()), T::supply::Shard { mints: vec![mint.clone()] }.encode()).await?.0);
+    let mut two = T::supply::Mint { amount: 2, nonce: w.n(2), item: T::unique_item(&tu, e, &w.n(2)), ..mint.clone() };
+    two.sigs = vec![(0, key(60).sign(&two.message(&tu)).to_bytes())];
+    let both = T::supply::merge(&T::supply::Shard { mints: vec![mint.clone()] }, &T::supply::Shard { mints: vec![two] }).unwrap();
+    println!("2  a mint of TWO of a unique item, on X: {}", put(&w.x, container(&w.code, shard.encode()), both.encode()).await?.0);
+    let r = w.now().await?;
+    let mut mi = T::State::default();
+    push(&mut mi, T::Body::Mint { nonce: w.n(1), amount: 1, minted: h, ev: T::Evidence::default() }, w.n(1), None, r);
+    push(&mut mi, T::Body::Offer { get: tb.into(), give: 1, per: 100, max: 1, until: r + 1000 }, w.n(10), Some(m), r);
+    println!("3  M's chain of the item: the mint, an offer of it for 100 B, on X: {} — holds {}", put(&w.x, container(&w.code, ip(m).encode()), mi.encode()).await?.0, mi.balance());
+    let mut tbc = T::State::default();
+    push(&mut tbc, T::Body::Genesis { amount: 1000 }, w.n(1), Some(t), r);
+    push(&mut tbc, T::Body::Lock { to: did(m), amount: 100, until: r + 60, token: it, offer: w.n(10), fee: None }, w.n(20), Some(t), r);
+    push(&mut tbc, T::Body::Lock { to: did(m), amount: 100, until: r + 60, token: it, offer: w.n(10), fee: Some((did(c), 5)) }, w.n(21), Some(t), r);
+    println!("4  T locks 100 B twice — without the creator's fee, and with 5 — on Y: {} — T's B {}", w.put_chain(&w.y, tb, t, &tbc).await?.0, tbc.balance());
+    let lock_at = r;
+    let r = w.until(lock_at + 2).await?;
+    let mut nofee = mi.clone();
+    push(&mut nofee, T::Body::Fill { offer: w.n(10), taker: did(t), lock: w.n(20), amount: 1, cited: lock_at, until: lock_at + 60, ev: T::Evidence::default() }, w.n(30), None, r);
+    println!("5  the fill of the lock WITHOUT the fee, through Y: {}", put(&w.y, container(&w.code, ip(m).encode()), nofee.encode()).await?.0);
+    let mut sold = mi.clone();
+    push(&mut sold, T::Body::Fill { offer: w.n(10), taker: did(t), lock: w.n(21), amount: 1, cited: lock_at, until: lock_at + 60, ev: T::Evidence::default() }, w.n(31), None, r);
+    println!("6  the fill of the lock WITH it, through Y: {}", put(&w.y, container(&w.code, ip(m).encode()), sold.encode()).await?.0);
+    let fill_at = r;
+    let r = w.until(fill_at + 2).await?;
+    let mut ti = T::State::default();
+    push(&mut ti, T::Body::Receive { from: did(m), nonce: w.n(31), amount: 1, cited: fill_at, ev: T::Evidence::default() }, w.n(31), None, r);
+    println!("7  T receives the item, on X: {}", put(&w.x, container(&w.code, ip(t).encode()), ti.encode()).await?.0);
+    let claim = |amount: u128| T::Body::Claim { taker: did(t), lock: w.n(21), amount, cited: fill_at, token: it, maker: did(m), ev: T::Evidence::default() };
+    let mut mb = T::State::default();
+    push(&mut mb, claim(100), w.n(40), None, r);
+    println!("8  M claims the 100 B, through X: {}", w.put_chain(&w.x, tb, m, &mb).await?.0);
+    let mut cb = T::State::default();
+    push(&mut cb, claim(5), w.n(41), None, r);
+    println!("9  the creator claims its 5 B, through X: {}", w.put_chain(&w.x, tb, c, &cb).await?.0);
+    let mut greedy = T::State::default();
+    push(&mut greedy, claim(100), w.n(42), None, r);
+    println!("10 an outsider (8) claims the maker's 100, through X: {}", w.put_chain(&w.x, tb, 8, &greedy).await?.0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let held = |b: Option<Vec<u8>>| b.and_then(|b| T::State::decode(&b)).map_or(0, |s| s.balance());
+    println!(
+        "   item: M {} · T {} — B: M {} · creator {}",
+        held(get(&w.y, ip(m).id()).await?),
+        held(get(&w.x, ip(t).id()).await?),
+        w.get_chain(&w.x, tb, m).await?.map_or(0, |s| s.balance()),
+        w.get_chain(&w.x, tb, c).await?.map_or(0, |s| s.balance())
+    );
     Ok(())
 }

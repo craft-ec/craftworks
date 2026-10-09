@@ -53,10 +53,10 @@ fn ensure_writer(s: &mut State, by: u8) {
     }
 }
 fn def() -> Definition {
-    Definition { code_hash: CODE, decimals: 8, min_send: 10, genesis_owner: did(1), genesis_amount: 1000, name: b"T".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None }
+    Definition { code_hash: CODE, decimals: 8, min_send: 10, genesis_owner: did(1), genesis_amount: 1000, name: b"T".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: Ids::None, royalty: None }
 }
 fn params(owner: u8) -> ChainParams {
-    ChainParams { code_hash: CODE, definition: id(&CODE, &def().encode()), owner: did(owner), beacon: BEACON, idlog: IDLOG }
+    ChainParams { code_hash: CODE, definition: id(&CODE, &def().encode()), owner: did(owner), beacon: BEACON, idlog: IDLOG, item: [0; 32] }
 }
 fn nonce(n: u8) -> [u8; 16] {
     [n; 16]
@@ -70,11 +70,12 @@ fn after(s: &State, body: &Body) -> u128 {
         Body::Send { amount, .. } | Body::Burn { amount } => b.wrapping_sub(*amount),
         Body::Receive { amount, .. } | Body::Mint { amount, .. } => b + amount,
         Body::Allow { .. } | Body::Offer { .. } | Body::Cut { .. } | Body::Writer { .. } | Body::Members { .. } => b,
-        Body::Spend { amount, .. } | Body::Lock { amount, .. } | Body::Fill { amount, .. } => b.wrapping_sub(*amount),
+        Body::Spend { amount, .. } | Body::Fill { amount, .. } => b.wrapping_sub(*amount),
+        Body::Lock { amount, fee, .. } => b.wrapping_sub(amount + fee.map_or(0, |f| f.1)),
         Body::Claim { amount, .. } => b + amount,
         Body::Refund { lock, .. } => {
             b + s.entries.iter().find_map(|x| match &x.body {
-                Body::Lock { amount, .. } if &x.nonce == lock => Some(*amount),
+                Body::Lock { amount, fee, .. } if &x.nonce == lock => Some(amount + fee.map_or(0, |f| f.1)),
                 _ => None,
             }).unwrap_or(0)
         }
@@ -118,7 +119,7 @@ impl World {
     fn check(&self, owner: u8) -> Result<(), Why> {
         let s = &self.0[&did(owner)];
         let tok = params(1).definition;
-        check(&params(owner), &def(), s, &|d, o| if *d == tok { self.0.get(o).cloned() } else { None }, &|_| None, Some(&log(owner)))
+        check(&params(owner), &def(), s, &|d, o| if *d == tok.into() { self.0.get(o).cloned() } else { None }, &|_| None, Some(&log(owner)))
     }
 }
 
@@ -512,7 +513,7 @@ fn id_b() -> [u8; 32] {
     id(&CODE, &def_b().encode())
 }
 fn at(token: [u8; 32], owner: u8) -> ChainParams {
-    ChainParams { code_hash: CODE, definition: token, owner: did(owner), beacon: BEACON, idlog: IDLOG }
+    ChainParams { code_hash: CODE, definition: token, owner: did(owner), beacon: BEACON, idlog: IDLOG, item: [0; 32] }
 }
 
 /// An entry at `stamp`, by the writer `by` (Some) or with work (None).
@@ -539,13 +540,13 @@ impl Two {
     }
     fn check(&self, token: [u8; 32], owner: u8) -> Result<(), Why> {
         let d = if token == id_a() { def() } else { def_b() };
-        check(&at(token, owner), &d, self.get(token, owner), &|t, o| self.0.get(&(*t, *o)).cloned(), &|_| None, Some(&log(owner)))
+        check(&at(token, owner), &d, self.get(token, owner), &|t, o| self.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(owner)))
     }
     /// As a holder takes in the last `new` entries: their citations must be SHOWN (live, or by their evidence).
     fn strict(&self, token: [u8; 32], owner: u8, new: usize) -> Result<(), Why> {
         let d = if token == id_a() { def() } else { def_b() };
         let s = self.get(token, owner);
-        walk(&at(token, owner), &d, s, &|t, o| self.0.get(&(*t, *o)).cloned(), &|_| None, Some(&log(owner)), new, s.entries.len() - new).map(|_| ()).map_err(|x| x.1)
+        walk(&at(token, owner), &d, s, &|t, o| self.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(owner)), new, s.entries.len() - new).map(|_| ()).map_err(|x| x.1)
     }
 }
 
@@ -556,12 +557,12 @@ const T: u8 = 2; // the taker: holds B
 fn swapped() -> Two {
     let mut w = Two(HashMap::new());
     put_at(w.chain(id_a(), M), 1, Body::Genesis { amount: 1000 }, Some(M), 0);
-    put_at(w.chain(id_a(), M), 10, Body::Offer { get: id_b(), give: 2, per: 1, max: 400, until: 1000 }, Some(M), 0);
+    put_at(w.chain(id_a(), M), 10, Body::Offer { get: id_b().into(), give: 2, per: 1, max: 400, until: 1000 }, Some(M), 0);
     put_at(w.chain(id_b(), T), 1, Body::Genesis { amount: 1000 }, Some(T), 0);
-    put_at(w.chain(id_b(), T), 20, Body::Lock { to: did(M), amount: 100, until: 50, token: id_a(), offer: nonce(10) }, Some(T), 0);
+    put_at(w.chain(id_b(), T), 20, Body::Lock { to: did(M), amount: 100, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
     put_at(w.chain(id_a(), M), 30, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(20), amount: 200, cited: 0, until: 50, ev: Evidence::default() }, None, 0);
     put_at(w.chain(id_a(), T), 30, Body::Receive { from: did(M), nonce: nonce(30), amount: 200, cited: 0, ev: Evidence::default() }, None, 0);
-    put_at(w.chain(id_b(), M), 40, Body::Claim { taker: did(T), lock: nonce(20), amount: 100, cited: 0, token: id_a(), ev: Evidence::default() }, None, 0);
+    put_at(w.chain(id_b(), M), 40, Body::Claim { taker: did(T), lock: nonce(20), amount: 100, cited: 0, token: id_a().into(), maker: did(M), ev: Evidence::default() }, None, 0);
     w
 }
 
@@ -587,14 +588,14 @@ fn swapped_with_lock(lock: Body) -> Two {
 #[test]
 fn a_fill_must_be_paid_for_by_its_lock() {
     // 99 B pay for 198 A, not 200.
-    let w = swapped_with_lock(Body::Lock { to: did(M), amount: 99, until: 50, token: id_a(), offer: nonce(10) });
+    let w = swapped_with_lock(Body::Lock { to: did(M), amount: 99, until: 50, token: id_a().into(), offer: nonce(10), fee: None });
     assert_eq!(w.check(id_a(), M), Err("a fill its lock does not pay for"));
     // A lock for another maker, another token, another offer, another deadline.
     for lock in [
-        Body::Lock { to: did(9), amount: 100, until: 50, token: id_a(), offer: nonce(10) },
-        Body::Lock { to: did(M), amount: 100, until: 50, token: [5; 32], offer: nonce(10) },
-        Body::Lock { to: did(M), amount: 100, until: 50, token: id_a(), offer: nonce(11) },
-        Body::Lock { to: did(M), amount: 100, until: 51, token: id_a(), offer: nonce(10) },
+        Body::Lock { to: did(9), amount: 100, until: 50, token: id_a().into(), offer: nonce(10), fee: None },
+        Body::Lock { to: did(M), amount: 100, until: 50, token: [5; 32].into(), offer: nonce(10), fee: None },
+        Body::Lock { to: did(M), amount: 100, until: 50, token: id_a().into(), offer: nonce(11), fee: None },
+        Body::Lock { to: did(M), amount: 100, until: 51, token: id_a().into(), offer: nonce(10), fee: None },
     ] {
         let w = swapped_with_lock(lock);
         assert_eq!(w.check(id_a(), M), Err("a fill its lock does not pay for"));
@@ -605,7 +606,7 @@ fn a_fill_must_be_paid_for_by_its_lock() {
 fn a_fill_is_bounded_by_its_offer_and_fills_a_lock_once() {
     let mut w = swapped();
     // Another lock of T's for 150 B → 300 A; only 200 are left of the offer.
-    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 150, until: 50, token: id_a(), offer: nonce(10) }, Some(T), 0);
+    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 150, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
     let mut over = w.chain(id_a(), M).clone();
     put_at(&mut over, 31, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(21), amount: 300, cited: 0, until: 50, ev: Evidence::default() }, None, 0);
     *w.chain(id_a(), M) = over;
@@ -623,13 +624,13 @@ fn a_claim_needs_the_fill_and_happens_once() {
     ma.entries.truncate(2);
     assert_eq!(w.check(id_b(), M), Err("a claim of a lock that is not filled"));
     let mut w = swapped();
-    put_at(w.chain(id_b(), M), 41, Body::Claim { taker: did(T), lock: nonce(20), amount: 100, cited: 0, token: id_a(), ev: Evidence::default() }, None, 0);
+    put_at(w.chain(id_b(), M), 41, Body::Claim { taker: did(T), lock: nonce(20), amount: 100, cited: 0, token: id_a().into(), maker: did(M), ev: Evidence::default() }, None, 0);
     assert_eq!(w.check(id_b(), M), Err("a lock claimed twice"));
     // A claim of more than the lock held.
     let mut w = swapped();
     let mb = w.chain(id_b(), M);
     mb.entries.clear();
-    put_at(mb, 40, Body::Claim { taker: did(T), lock: nonce(20), amount: 101, cited: 0, token: id_a(), ev: Evidence::default() }, None, 0);
+    put_at(mb, 40, Body::Claim { taker: did(T), lock: nonce(20), amount: 101, cited: 0, token: id_a().into(), maker: did(M), ev: Evidence::default() }, None, 0);
     assert_eq!(w.check(id_b(), M), Err("a claim of a lock that is not filled"));
 }
 
@@ -637,7 +638,7 @@ fn a_claim_needs_the_fill_and_happens_once() {
 fn an_unfilled_lock_is_refunded_once_and_a_filled_one_never() {
     // A second lock nobody fills: refunded.
     let mut w = swapped();
-    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 50, token: id_a(), offer: nonce(10) }, Some(T), 0);
+    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
     put_at(w.chain(id_b(), T), 22, Body::Refund { lock: nonce(21), ev: Evidence::default() }, None, 0);
     assert_eq!(w.check(id_b(), T), Ok(()));
     assert_eq!(w.get(id_b(), T).balance(), 900, "the 50 back");
@@ -664,7 +665,7 @@ fn stamps_never_go_down() {
     let tb = w.chain(id_b(), T);
     let last = tb.entries.len() - 1;
     tb.entries.truncate(last);
-    put_at(tb, 20, Body::Lock { to: did(M), amount: 100, until: 50, token: id_a(), offer: nonce(10) }, Some(T), 0);
+    put_at(tb, 20, Body::Lock { to: did(M), amount: 100, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
     let mut s = w.get(id_b(), T).clone();
     s.entries.truncate(1);
     s.entries[0].stamp = 5;
@@ -716,7 +717,7 @@ fn a_fill_lands_a_margin_before_its_deadline_and_a_refund_after_it() {
     assert_eq!(append_check(&def(), 17, &held, &fill(17), Some(&log(M))), Ok(()));
     assert_eq!(append_check(&def(), 6, &held, &fill(6), Some(&log(M))), Err("an entry citing one not yet final"), "the lock not final yet");
     let mut locked = base(0);
-    put_at(&mut locked, 3, Body::Lock { to: did(9), amount: 50, until: 20, token: [5; 32], offer: nonce(1) }, Some(M), 0);
+    put_at(&mut locked, 3, Body::Lock { to: did(9), amount: 50, until: 20, token: [5; 32].into(), offer: nonce(1), fee: None }, Some(M), 0);
     let refund = |stamp| {
         let mut m = locked.clone();
         put_at(&mut m, 4, Body::Refund { lock: nonce(3), ev: Evidence::default() }, None, stamp);
@@ -1077,8 +1078,8 @@ fn a_cut_must_carry_exactly_what_came_before_it() {
     assert_eq!(lie(&|_| {}), Ok(()), "control: the honest cut");
     assert_eq!(lie(&|b| if let Body::Cut { allowances, .. } = b { allowances[0].1 = 51 }), Err("a cut that is not what came before it"));
     assert_eq!(lie(&|b| if let Body::Cut { allowances, .. } = b { allowances.clear() }), Err("a cut that is not what came before it"));
-    assert_eq!(lie(&|b| if let Body::Cut { offers, .. } = b { offers.push((nonce(9), id_b(), 1, 1, 1, 9)) }), Err("a cut that is not what came before it"));
-    assert_eq!(lie(&|b| if let Body::Cut { locks, .. } = b { locks.push((nonce(9), did(2), 10, 9, id_b(), nonce(9), true)) }), Err("a cut that is not what came before it"));
+    assert_eq!(lie(&|b| if let Body::Cut { offers, .. } = b { offers.push((nonce(9), id_b().into(), 1, 1, 1, 9)) }), Err("a cut that is not what came before it"));
+    assert_eq!(lie(&|b| if let Body::Cut { locks, .. } = b { locks.push((nonce(9), did(2), 10, 9, id_b().into(), nonce(9), true)) }), Err("a cut that is not what came before it"));
     // A cut naming another device as the chain's writer (handing it the chain): not what came before it.
     assert_eq!(lie(&|b| if let Body::Cut { writer, .. } = b { *writer = Some(crate::Signer::Device(pk(9), 0)) }), Err("a cut that is not what came before it"));
     let mut s = whole.clone();
@@ -1183,14 +1184,14 @@ fn a_send_behind_its_senders_cut_is_received_with_the_proof() {
 fn a_lock_filled_behind_the_makers_cut_is_never_refunded_or_filled_again() {
     let mut w = swapped();
     // T locks a second time (21), never filled; M then CUTS its chain of A at stamp 5 (the fill of 20 behind it).
-    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 50, token: id_a(), offer: nonce(10) }, Some(T), 0);
+    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
     let wholem = w.get(id_a(), M).clone();
     let mut blocks = cut::Blocks::new();
     cut_at(&mut w, &wholem, id_a(), M, 5, &mut blocks);
     let livem = w.get(id_a(), M).clone();
     assert_eq!(w.check(id_a(), M), Ok(()));
     let Body::Cut { offers, .. } = &livem.entries[0].body else { panic!() };
-    assert_eq!(offers, &vec![(nonce(10), id_b(), 2, 1, 200, 1000)], "the open offer carried, what is left of it, its time");
+    assert_eq!(offers, &vec![(nonce(10), id_b().into(), 2, 1, 200, 1000)], "the open offer carried, what is left of it, its time");
     let mid = at(id_a(), M).id();
     let refund = |lock: u8, ev: Evidence| {
         let mut x = Two(w.0.clone());
@@ -1343,7 +1344,7 @@ fn an_entry_over_1kb_behind_a_cut_is_proven_by_its_value_block() {
     // M fills T's second lock (21: 50 B → 100 A) carrying 2 KB of evidence, then CUTS: the fill is behind the cut, its
     // bytes over 1 KB — stored as a value block, proven by id and length.
     let mut w = swapped();
-    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 50, token: id_a(), offer: nonce(10) }, Some(T), 0);
+    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
     let pad = Evidence { mine: vec![], theirs: vec![([1; 32], 0, vec![7; 2048], vec![])] };
     put_at(w.chain(id_a(), M), 31, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(21), amount: 100, cited: 0, until: 50, ev: pad }, None, 0);
     assert_eq!(w.check(id_a(), M), Ok(()));
@@ -1434,7 +1435,7 @@ fn a_history_read_back_is_every_seq_in_order_and_all_before_the_cut() {
 fn after_a_cut_a_fill_and_a_refund_still_name_and_find_what_they_need() {
     // M's offer and T's lock live on only in their chains' CUTS.
     let mut w = swapped();
-    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 50, token: id_a(), offer: nonce(10) }, Some(T), 0);
+    put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 50, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
     let mut blocks = cut::Blocks::new();
     let (wm, wt) = (w.get(id_a(), M).clone(), w.get(id_b(), T).clone());
     cut_at(&mut w, &wm, id_a(), M, 5, &mut blocks);
@@ -1442,12 +1443,12 @@ fn after_a_cut_a_fill_and_a_refund_still_name_and_find_what_they_need() {
     // A FILL of the carried offer names the taker's chain (what validation asks the node for) …
     let mut m = w.get(id_a(), M).clone();
     put_at(&mut m, 32, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(21), amount: 100, cited: 0, until: 50, ev: Evidence::default() }, None, 6);
-    assert!(cited_chains(&at(id_a(), M), &m).contains(&(id_b(), did(T))), "the taker's chain of the offer's token");
+    assert!(cited_chains(&at(id_a(), M), &m).contains(&(id_b().into(), did(T))), "the taker's chain of the offer's token");
     // … and a REFUND of the carried lock names the maker's chain, and its deadline is found for the append rules.
     let held = w.get(id_b(), T).clone();
     let mut t = held.clone();
     put_at(&mut t, 60, Body::Refund { lock: nonce(21), ev: Evidence::default() }, None, 50);
-    assert!(cited_chains(&at(id_b(), T), &t).contains(&(id_a(), did(M))));
+    assert!(cited_chains(&at(id_b(), T), &t).contains(&(id_a().into(), did(M))));
     assert_eq!(append_check(&def_b(), 50, &held, &t, Some(&log(T))), Ok(()), "at its deadline");
     let mut early = held.clone();
     put_at(&mut early, 60, Body::Refund { lock: nonce(21), ev: Evidence::default() }, None, 49);
@@ -1459,7 +1460,7 @@ fn an_offer_is_filled_only_before_its_time() {
     // swapped(): M's offer runs until 1000.
     let fill = |stamp: u64| {
         let mut w = swapped();
-        put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 2000, token: id_a(), offer: nonce(10) }, Some(T), 0);
+        put_at(w.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 2000, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
         put_at(w.chain(id_a(), M), 31, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(21), amount: 100, cited: 0, until: 2000, ev: Evidence::default() }, None, stamp);
         w.check(id_a(), M)
     };
@@ -1540,7 +1541,7 @@ fn a_citation_appended_after_its_chains_cut_must_show_its_evidence_even_from_scr
     // A REFUND of T's lock, the maker cut since: appended before the cut it is taken; after it, it must show the
     // fill's absence (here: none shown).
     let mut w2 = swapped();
-    put_at(w2.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 6, token: id_a(), offer: nonce(10) }, Some(T), 0);
+    put_at(w2.chain(id_b(), T), 21, Body::Lock { to: did(M), amount: 50, until: 6, token: id_a().into(), offer: nonce(10), fee: None }, Some(T), 0);
     let wm = w2.get(id_a(), M).clone();
     cut_at(&mut w2, &wm, id_a(), M, 5, &mut cut::Blocks::new());
     let refund = |stamp: u64| {
@@ -1706,7 +1707,7 @@ fn mint_set() -> authority::KeySet {
 }
 /// A mint of `amount` to person `to`, nonce `n`, at beacon `at`, signed by key `by`.
 fn a_mint(to: u8, n: u8, amount: u128, at: u64, by: u8) -> supply::Mint {
-    let mut m = supply::Mint { to: did(to), amount, nonce: nonce(n), stamp: at, sigs: vec![] };
+    let mut m = supply::Mint { to: did(to), item: [0; 32], amount, nonce: nonce(n), stamp: at, sigs: vec![] };
     m.sigs = vec![(0, key(by).sign(&m.message(&params(1).definition)).to_bytes())];
     m
 }
@@ -1804,7 +1805,7 @@ fn a_wallet_counts_a_mint_only_against_the_shard_and_authority_chain_it_holds() 
     let md = Definition { mint: Some(mint_set()), ..def() };
     let mid = id(&CODE, &md.encode());
     let signed_mint = |n: u8, at_: u64, by: u8| {
-        let mut m = supply::Mint { to: did(2), amount: 500, nonce: nonce(n), stamp: at_, sigs: vec![] };
+        let mut m = supply::Mint { to: did(2), item: [0; 32], amount: 500, nonce: nonce(n), stamp: at_, sigs: vec![] };
         m.sigs = vec![(0, key(by).sign(&m.message(&mid)).to_bytes())];
         m
     };
@@ -2001,4 +2002,129 @@ fn a_set_chain_cuts_and_carries_its_set() {
     after.entries.push(e);
     assert_eq!(ck(&after), Ok(()), "the cut's set signs on");
     assert!(is_set_chain(&after) && !is_set_chain(&paid().0[&did(2)]));
+}
+
+// ---- FOUNDATION 5: ids (unique / many) and royalties ----
+
+/// U: a UNIQUE token (NFTs) minted by key 60, a 5% royalty to its creator (person 7); one of an item is a send.
+fn def_u() -> Definition {
+    Definition { ids: Ids::Unique, mint: Some(mint_set()), royalty: Some((500, did(7))), min_send: 1, name: b"U".to_vec(), nonce: [2; 16], ..def() }
+}
+fn id_u() -> [u8; 32] {
+    id(&CODE, &def_u().encode())
+}
+/// The item minted at epoch 0 under nonce 1.
+fn item_u() -> Tok {
+    Tok { definition: id_u(), item: unique_item(&id_u(), 0, &nonce(1)) }
+}
+fn at_t(t: Tok, owner: u8) -> ChainParams {
+    ChainParams { item: t.item, ..at(t.definition, owner) }
+}
+struct Ids5(HashMap<(Tok, [u8; 32]), State>);
+impl Ids5 {
+    fn chain(&mut self, t: Tok, owner: u8) -> &mut State {
+        self.0.entry((t, did(owner))).or_default()
+    }
+    fn check(&self, t: Tok, owner: u8) -> Result<(), Why> {
+        let d = if t.definition == id_u() { def_u() } else if t.definition == id_a() { def() } else { def_b() };
+        let shard = supply::Shard { mints: vec![u_mint(M, 1)] };
+        check(&at_t(t, owner), &d, &self.0[&(t, did(owner))], &|c, o| self.0.get(&(*c, *o)).cloned(), &|e| (e == 0).then(|| shard.clone()), Some(&log(owner)))
+    }
+}
+/// The mint of U's item (nonce `n`, epoch 0) to `to`.
+fn u_mint(to: u8, n: u8) -> supply::Mint {
+    let mut m = supply::Mint { to: did(to), item: unique_item(&id_u(), 0, &nonce(n)), amount: 1, nonce: nonce(n), stamp: 0, sigs: vec![] };
+    m.sigs = vec![(0, key(60).sign(&m.message(&id_u())).to_bytes())];
+    m
+}
+/// M holds U's item (minted) and offers it for 100 B; T locks 100 B (+ `fee`) for it; the fill; T receives the item.
+fn nft_sale(fee: Option<([u8; 32], u128)>) -> Ids5 {
+    let mut w = Ids5(HashMap::new());
+    let it = item_u();
+    put_at(w.chain(it, M), 1, Body::Mint { nonce: nonce(1), amount: 1, minted: 0, ev: Evidence::default() }, None, 0);
+    put_at(w.chain(it, M), 10, Body::Offer { get: id_b().into(), give: 1, per: 100, max: 1, until: 1000 }, Some(M), 0);
+    put_at(w.chain(id_b().into(), T), 1, Body::Genesis { amount: 1000 }, Some(T), 0);
+    put_at(w.chain(id_b().into(), T), 20, Body::Lock { to: did(M), amount: 100, until: 50, token: it, offer: nonce(10), fee }, Some(T), 0);
+    put_at(w.chain(it, M), 30, Body::Fill { offer: nonce(10), taker: did(T), lock: nonce(20), amount: 1, cited: 0, until: 50, ev: Evidence::default() }, None, 0);
+    put_at(w.chain(it, T), 30, Body::Receive { from: did(M), nonce: nonce(30), amount: 1, cited: 0, ev: Evidence::default() }, None, 0);
+    w
+}
+
+#[test]
+fn an_item_is_its_own_chain_of_its_tokens_kind() {
+    let mut w = nft_sale(Some((did(7), 5)));
+    let it = item_u();
+    assert_eq!(w.check(it, M), Ok(()), "minted, offered, filled");
+    assert_eq!(w.check(it, T), Ok(()), "the item received: T owns it");
+    assert_eq!(w.0[&(it, did(T))].balance(), 1);
+    // A fungible token holds no item; a token of ids holds nothing but items; no genesis for a token of ids.
+    let mut a = State::default();
+    signed(&mut a, 1, 1, Body::Genesis { amount: 1000 });
+    assert_eq!(check(&at_t(Tok { definition: id_a(), item: [1; 32] }, 1), &def(), &a, &|_, _| None, &|_| None, Some(&log(1))), Err("an item that is not its token's kind"));
+    assert_eq!(check(&at(id_u(), 1), &def_u(), &a, &|_, _| None, &|_| None, Some(&log(1))), Err("an item that is not its token's kind"));
+    let g = Definition { genesis_owner: did(M), ..def_u() };
+    assert_eq!(check(&at_t(it, M), &g, &a, &|_, _| None, &|_| None, Some(&log(1))), Err("a genesis that is not the definition's"));
+    // A mint credited to another item's chain is not its mint.
+    let other = Tok { item: [9; 32], ..it };
+    let mut x = State::default();
+    put_at(&mut x, 1, Body::Mint { nonce: nonce(1), amount: 1, minted: 0, ev: Evidence::default() }, None, 0);
+    *w.chain(other, M) = x;
+    assert_eq!(w.check(other, M), Err("a mint that is not in its supply shard"));
+}
+
+#[test]
+fn a_unique_item_is_minted_once_as_one() {
+    let sp = supply::Params { code_hash: CODE, definition: id_u(), beacon: BEACON, epoch: 0 };
+    let first = (Some(mint_set()), None);
+    let holds = |m: supply::Mint| supply::holds(&sp, (&first.0, &first.1), Ids::Unique, &authority::Chain::default(), &supply::Shard { mints: vec![m] });
+    assert_eq!(holds(u_mint(M, 1)), Ok(()));
+    let resign = |mut m: supply::Mint| {
+        m.sigs = vec![(0, key(60).sign(&m.message(&id_u())).to_bytes())];
+        m
+    };
+    assert_eq!(holds(resign(supply::Mint { amount: 2, ..u_mint(M, 1) })), Err("a mint of an item not its token's kind"), "two of a unique item");
+    assert_eq!(holds(resign(supply::Mint { item: [5; 32], ..u_mint(M, 1) })), Err("a mint of an item not its token's kind"), "an item it did not make");
+    assert_eq!(supply::holds(&sp, (&first.0, &first.1), Ids::None, &authority::Chain::default(), &supply::Shard { mints: vec![u_mint(M, 1)] }), Err("a mint of an item not its token's kind"), "an item of a fungible token");
+    assert_eq!(supply::holds(&sp, (&first.0, &first.1), Ids::Many, &authority::Chain::default(), &supply::Shard { mints: vec![resign(supply::Mint { item: [5; 32], amount: 30, ..u_mint(M, 1) })] }), Ok(()), "many: any item, any amount");
+    assert_eq!(supply::holds(&sp, (&first.0, &first.1), Ids::Many, &authority::Chain::default(), &supply::Shard { mints: vec![resign(supply::Mint { item: [0; 32], amount: 30, ..u_mint(M, 1) })] }), Err("a mint of an item not its token's kind"), "many: never no item");
+    assert_ne!(unique_item(&id_u(), 0, &nonce(1)), unique_item(&id_u(), 1, &nonce(1)), "another epoch, another item");
+}
+
+#[test]
+fn a_sale_of_a_royalty_token_pays_its_creator_who_claims_it() {
+    let it = item_u();
+    assert_eq!(nft_sale(Some((did(7), 5))).check(it, M), Ok(()), "5% of 100");
+    for (fee, why) in [(None, "no fee"), (Some((did(7), 4)), "under 5%"), (Some((did(8), 5)), "to another than the creator")] {
+        assert_eq!(nft_sale(fee).check(it, M), Err("a fill its lock does not pay for"), "{why}");
+    }
+    // M claims the 100; the creator claims its 5 — each from T's lock, the fill in M's chain.
+    let mut w = nft_sale(Some((did(7), 5)));
+    put_at(w.chain(id_b().into(), M), 40, Body::Claim { taker: did(T), lock: nonce(20), amount: 100, cited: 0, token: it, maker: did(M), ev: Evidence::default() }, None, 0);
+    put_at(w.chain(id_b().into(), 7), 41, Body::Claim { taker: did(T), lock: nonce(20), amount: 5, cited: 0, token: it, maker: did(M), ev: Evidence::default() }, None, 0);
+    assert_eq!(w.check(id_b().into(), M), Ok(()));
+    assert_eq!(w.check(id_b().into(), 7), Ok(()));
+    assert_eq!(w.check(id_b().into(), T), Ok(()));
+    assert_eq!(w.0[&(id_b().into(), did(T))].balance(), 895, "100 + 5 locked");
+    let mut greedy = State::default();
+    put_at(&mut greedy, 41, Body::Claim { taker: did(T), lock: nonce(20), amount: 100, cited: 0, token: it, maker: did(M), ev: Evidence::default() }, None, 0);
+    *w.chain(id_b().into(), 7) = greedy;
+    assert_eq!(w.check(id_b().into(), 7), Err("a claim of a lock that is not filled"), "the creator claims the maker's share");
+    // A lock's fee to its maker or itself; the maker who IS the creator needs none.
+    let mut bad = State::default();
+    put_at(&mut bad, 1, Body::Genesis { amount: 1000 }, Some(T), 0);
+    put_at(&mut bad, 20, Body::Lock { to: did(M), amount: 100, until: 50, token: it, offer: nonce(10), fee: Some((did(M), 5)) }, Some(T), 0);
+    assert_eq!(check(&at(id_b(), T), &def_b(), &bad, &|_, _| None, &|_| None, Some(&log(T))), Err("a lock's fee to no one else"));
+    // The share exactly: 1 bp of 10,001 is owed as 1.0001 — 1 is short, 2 pays.
+    let tiny = Definition { royalty: Some((1, did(7))), ..def_u() };
+    assert!(!royalty_paid(&tiny, &did(M), 10_001, Some((did(7), 1))) && royalty_paid(&tiny, &did(M), 10_001, Some((did(7), 2))));
+    assert!(royalty_paid(&tiny, &did(M), 10_000, Some((did(7), 1))), "exactly its share");
+    // A lock with a fee, never filled, refunds the whole of it.
+    let mut back = State::default();
+    put_at(&mut back, 1, Body::Genesis { amount: 1000 }, Some(T), 0);
+    put_at(&mut back, 20, Body::Lock { to: did(M), amount: 100, until: 5, token: it, offer: nonce(10), fee: Some((did(7), 5)) }, Some(T), 0);
+    put_at(&mut back, 21, Body::Refund { lock: nonce(20), ev: Evidence::default() }, None, 6);
+    assert_eq!(back.balance(), 1000);
+    assert_eq!(check(&at(id_b(), T), &def_b(), &back, &|_, _| None, &|_| None, Some(&log(T))), Ok(()), "100 + 5 back");
+    let own = Definition { royalty: Some((500, did(M))), ..def_u() };
+    assert!(royalty_paid(&own, &did(M), 100, None) && !royalty_paid(&def_u(), &did(M), 100, None));
 }

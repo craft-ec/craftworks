@@ -22,6 +22,8 @@ pub fn epoch(stamp: u64) -> u64 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mint {
     pub to: [u8; 32],
+    /// The ITEM minted (TOKEN §1b): zero for a fungible token; a unique token's is [`crate::unique_item`].
+    pub item: [u8; 32],
     pub amount: u128,
     pub nonce: [u8; 16],
     pub stamp: u64,
@@ -34,6 +36,7 @@ impl Mint {
         let mut v = b"craftworks token mint".to_vec();
         v.extend_from_slice(definition);
         v.extend_from_slice(&self.to);
+        v.extend_from_slice(&self.item);
         v.extend_from_slice(&self.amount.to_le_bytes());
         v.extend_from_slice(&self.nonce);
         v.extend_from_slice(&self.stamp.to_le_bytes());
@@ -41,13 +44,14 @@ impl Mint {
     }
     fn encode(&self, v: &mut Vec<u8>) {
         v.extend_from_slice(&self.to);
+        v.extend_from_slice(&self.item);
         v.extend_from_slice(&self.amount.to_le_bytes());
         v.extend_from_slice(&self.nonce);
         v.extend_from_slice(&self.stamp.to_le_bytes());
         authority::put_sigs(v, &self.sigs);
     }
     fn read(r: &mut crate::R) -> Option<Mint> {
-        Some(Mint { to: r.arr()?, amount: r.u128()?, nonce: r.arr()?, stamp: r.u64()?, sigs: authority::read_sigs(r)? })
+        Some(Mint { to: r.arr()?, item: r.arr()?, amount: r.u128()?, nonce: r.arr()?, stamp: r.u64()?, sigs: authority::read_sigs(r)? })
     }
 }
 
@@ -115,7 +119,7 @@ pub fn seal(s: &Shard, before: u64) -> Option<[u8; 32]> {
 
 /// Every mint in the shard is of its epoch, for something, and signed by the mint set current at its stamp — and
 /// every MINT CHANGE whose span holds this epoch sealed what it holds before that change, exactly.
-pub fn holds(p: &Params, first: (&Option<KeySet>, &Option<KeySet>), chain: &authority::Chain, s: &Shard) -> Result<(), Why> {
+pub fn holds(p: &Params, first: (&Option<KeySet>, &Option<KeySet>), ids: crate::Ids, chain: &authority::Chain, s: &Shard) -> Result<(), Why> {
     let mut from = 0u64;
     for c in chain.changes.iter().filter(|c| c.role == authority::Role::Mint) {
         let upto = epoch(c.stamp);
@@ -130,6 +134,15 @@ pub fn holds(p: &Params, first: (&Option<KeySet>, &Option<KeySet>), chain: &auth
         }
         if m.amount == 0 {
             return Err("a mint of nothing");
+        }
+        // Its item as its token's kind: none for a fungible one; a unique one's made by this mint, and one of it.
+        let item_ok = match ids {
+            crate::Ids::None => m.item == [0; 32],
+            crate::Ids::Unique => m.amount == 1 && m.item == crate::unique_item(&p.definition, p.epoch, &m.nonce),
+            crate::Ids::Many => m.item != [0; 32],
+        };
+        if !item_ok {
+            return Err("a mint of an item not its token's kind");
         }
         let (mint, _) = authority::sets_at(&p.definition, first, chain, m.stamp)?;
         let set = mint.ok_or("a mint with no mint authority")?;
@@ -189,7 +202,7 @@ mod tests {
         authority::Chain { changes: vec![c] }
     }
     fn mint(n: u8, stamp: u64, by: u8) -> Mint {
-        let mut m = Mint { to: [3; 32], amount: 50, nonce: [n; 16], stamp, sigs: vec![] };
+        let mut m = Mint { to: [3; 32], item: [0; 32], amount: 50, nonce: [n; 16], stamp, sigs: vec![] };
         m.sigs = vec![(0, SigningKey::from_bytes(&[by; 32]).sign(&m.message(&DEF)).to_bytes())];
         m
     }
@@ -200,25 +213,25 @@ mod tests {
         let none = authority::Chain::default();
         let s = Shard { mints: vec![mint(1, 10, 1), mint(2, 11, 1)] };
         assert_eq!(Shard::decode(&s.encode()).as_ref(), Some(&s));
-        assert_eq!(holds(&p(0), (&first.0, &first.1), &none, &s), Ok(()));
-        assert_eq!(holds(&p(1), (&first.0, &first.1), &none, &s), Err("a mint of another epoch"));
+        assert_eq!(holds(&p(0), (&first.0, &first.1), crate::Ids::None, &none, &s), Ok(()));
+        assert_eq!(holds(&p(1), (&first.0, &first.1), crate::Ids::None, &none, &s), Err("a mint of another epoch"));
         let mut zero = mint(3, 10, 1);
         zero.amount = 0;
         zero.sigs = vec![(0, SigningKey::from_bytes(&[1; 32]).sign(&zero.message(&DEF)).to_bytes())];
-        assert_eq!(holds(&p(0), (&first.0, &first.1), &none, &Shard { mints: vec![zero] }), Err("a mint of nothing"));
+        assert_eq!(holds(&p(0), (&first.0, &first.1), crate::Ids::None, &none, &Shard { mints: vec![zero] }), Err("a mint of nothing"));
         let forged = Shard { mints: vec![mint(1, 10, 2)] };
-        assert_eq!(holds(&p(0), (&first.0, &first.1), &none, &forged), Err("a mint not signed by the mint authority"));
-        assert_eq!(holds(&p(0), (&None, &None), &none, &s), Err("a mint with no mint authority"), "fixed supply");
+        assert_eq!(holds(&p(0), (&first.0, &first.1), crate::Ids::None, &none, &forged), Err("a mint not signed by the mint authority"));
+        assert_eq!(holds(&p(0), (&None, &None), crate::Ids::None, &none, &s), Err("a mint with no mint authority"), "fixed supply");
         // The set moves to key 2 at stamp 11, sealing epoch 0 as it holds key 1's mint at 10.
         let sealed = Shard { mints: vec![mint(1, 10, 1)] };
         let moved = change(11, vec![(0, seal(&sealed, 11).unwrap())]);
-        assert_eq!(holds(&p(0), (&first.0, &first.1), &moved, &sealed), Ok(()));
+        assert_eq!(holds(&p(0), (&first.0, &first.1), crate::Ids::None, &moved, &sealed), Ok(()));
         let after = merge(&sealed, &Shard { mints: vec![mint(2, 11, 2)] }).unwrap();
-        assert_eq!(holds(&p(0), (&first.0, &first.1), &moved, &after), Ok(()), "the new set mints on");
+        assert_eq!(holds(&p(0), (&first.0, &first.1), crate::Ids::None, &moved, &after), Ok(()), "the new set mints on");
         let stale = merge(&sealed, &Shard { mints: vec![mint(5, 11, 1)] }).unwrap();
-        assert_eq!(holds(&p(0), (&first.0, &first.1), &moved, &stale), Err("a mint not signed by the mint authority"), "the old set, after");
+        assert_eq!(holds(&p(0), (&first.0, &first.1), crate::Ids::None, &moved, &stale), Err("a mint not signed by the mint authority"), "the old set, after");
         let backdated = merge(&sealed, &Shard { mints: vec![mint(3, 9, 1)] }).unwrap();
-        assert_eq!(holds(&p(0), (&first.0, &first.1), &moved, &backdated), Err("a shard that is not what its mint authority sealed"), "the old set, into its past");
+        assert_eq!(holds(&p(0), (&first.0, &first.1), crate::Ids::None, &moved, &backdated), Err("a shard that is not what its mint authority sealed"), "the old set, into its past");
     }
 
     #[test]
@@ -227,18 +240,18 @@ mod tests {
         let at = 2 * EPOCH + 5;
         let e1 = Shard { mints: vec![mint(1, EPOCH + 3, 1)] };
         let moved = change(at, vec![(1, seal(&e1, at).unwrap())]);
-        assert_eq!(holds(&p(1), (&first.0, &first.1), &moved, &e1), Ok(()));
-        assert_eq!(holds(&p(0), (&first.0, &first.1), &moved, &Shard::default()), Ok(()), "epoch 0: sealed empty");
-        assert_eq!(holds(&p(0), (&first.0, &first.1), &moved, &Shard { mints: vec![mint(2, 7, 1)] }), Err("a shard that is not what its mint authority sealed"), "a shard first put after the seal");
-        assert_eq!(holds(&p(2), (&first.0, &first.1), &moved, &Shard { mints: vec![mint(2, 2 * EPOCH, 1)] }), Err("a shard that is not what its mint authority sealed"), "its own epoch, before it");
-        assert_eq!(holds(&p(2), (&first.0, &first.1), &moved, &Shard { mints: vec![mint(2, at, 2)] }), Ok(()), "its own epoch, after it");
-        assert_eq!(holds(&p(3), (&first.0, &first.1), &moved, &Shard { mints: vec![mint(2, 3 * EPOCH, 2)] }), Ok(()), "beyond it: open");
+        assert_eq!(holds(&p(1), (&first.0, &first.1), crate::Ids::None, &moved, &e1), Ok(()));
+        assert_eq!(holds(&p(0), (&first.0, &first.1), crate::Ids::None, &moved, &Shard::default()), Ok(()), "epoch 0: sealed empty");
+        assert_eq!(holds(&p(0), (&first.0, &first.1), crate::Ids::None, &moved, &Shard { mints: vec![mint(2, 7, 1)] }), Err("a shard that is not what its mint authority sealed"), "a shard first put after the seal");
+        assert_eq!(holds(&p(2), (&first.0, &first.1), crate::Ids::None, &moved, &Shard { mints: vec![mint(2, 2 * EPOCH, 1)] }), Err("a shard that is not what its mint authority sealed"), "its own epoch, before it");
+        assert_eq!(holds(&p(2), (&first.0, &first.1), crate::Ids::None, &moved, &Shard { mints: vec![mint(2, at, 2)] }), Ok(()), "its own epoch, after it");
+        assert_eq!(holds(&p(3), (&first.0, &first.1), crate::Ids::None, &moved, &Shard { mints: vec![mint(2, 3 * EPOCH, 2)] }), Ok(()), "beyond it: open");
         // The NEXT change (key 2 → 3, epoch 3) seals from the epoch of the one before: key 2's mint after it in epoch 2.
         let mut two = moved.clone();
         let mut c = authority::Change { seq: 1, role: authority::Role::Mint, next: Some(set(&[3])), stamp: 3 * EPOCH, closed: vec![], cap: 0, sigs: vec![] };
         c.sigs = vec![(0, SigningKey::from_bytes(&[2; 32]).sign(&c.message(&DEF)).to_bytes())];
         two.changes.push(c);
-        assert_eq!(holds(&p(2), (&first.0, &first.1), &two, &Shard { mints: vec![mint(2, at, 2)] }), Err("a shard that is not what its mint authority sealed"), "left out by the next seal");
+        assert_eq!(holds(&p(2), (&first.0, &first.1), crate::Ids::None, &two, &Shard { mints: vec![mint(2, at, 2)] }), Err("a shard that is not what its mint authority sealed"), "left out by the next seal");
     }
 
     #[test]

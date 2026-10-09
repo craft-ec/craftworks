@@ -31,8 +31,8 @@ Every behaviour of the blockchain token standards, and how this standard gives i
 | Set / drop an authority (SPL `SetAuthority`) | ✅ | the definition's AUTHORITY CHAIN: rotations signed by the current authority; dropping one is final (§1a) |
 | Close an empty account (SPL) | ✅ | a zero-balance chain may be dropped; it is made again by its next receive |
 | Multisig accounts / authorities | ✅ | an owner or authority key is a k-of-n KEY SET (as the attestation substrate's named quorum): an entry carries k signatures (§1) |
-| NFTs — `ownerOf`, transfer, per-item approve, `setApprovalForAll` (ERC-721) | ✅ | a definition with `ids: unique`; a chain per (id, owner) whose head says held or not; `allow` per id or for all (§1b) |
-| Multi-token, batch transfer (ERC-1155) | ✅ | one definition, many ids; a chain per (definition, owner) holds an amount per id; a batch = several debits in ONE entry (atomic within the sender's chain) (§1b) |
+| NFTs — `ownerOf`, transfer, per-item approve, `setApprovalForAll` (ERC-721) | ✅ but `setApprovalForAll` | a definition with `ids: unique`; a chain per (item, owner) whose head says held or not; `allow` per item. Not yet: one approval for ALL of an owner's items, which would need an allowance kept per token rather than per chain (§1b) |
+| Multi-token, batch transfer (ERC-1155) | ✅ batch not atomic | one definition, many ids; a chain per (item, owner); a batch = one send per item, each final on its own; an all-or-nothing bundle trade is two-phase (§1b, §4) |
 | Metadata (token and per item) | ✅ | the definition's metadata; per id, an ITEM of Craftworks (its page, its files) named by the id |
 | History, traceable by anyone (an explorer) | ✅ | no one ledger: from genesis and the supply bag, sends followed FORWARD reach every chain; credits cite their debits BACKWARD; kept alive by readers and keepers (§1a) |
 | Atomic swap between two tokens | ✅ two-phase | lock → fill → claim, or refund; the race closed by time (§4) |
@@ -118,14 +118,23 @@ One contract CODE (the standard). Its instances differ by their parameters — o
 
 ## 1b. Many ids: NFTs and multi-tokens
 
-A definition may say `ids: none` (fungible), `ids: unique` (ERC-721: each id's supply is 1) or `ids: many` (ERC-1155).
-An account chain then holds an amount PER ID; every entry names its id(s); a `send` may move several ids at once (one
-entry: atomic in the sender's chain). For `unique`, the chain of the id's holder is the `ownerOf` answer; a transfer is
-the same send/receive. Per-id metadata is a Craftworks item named by the id.
+A definition says `ids: none` (fungible), `ids: unique` (ERC-721: each item's supply is 1) or `ids: many` (ERC-1155).
+**A chain holds one token's ONE ITEM** (built 10-09): its params name the item (`ChainParams.item`, zero for a fungible
+token), and chains name each other by a `Tok` — (definition, item). Every rule of a fungible chain (send, receive,
+allow, offer, lock, fill, claim, refund, cut, mint, freeze) holds per item unchanged; the supply shards, the authority
+chain and the freeze list stay per TOKEN, so one authority governs a whole collection. A `unique` item is MADE by its
+mint — `unique_item(definition, epoch, nonce)`, amount 1 — so each is minted once; a `many` item is any nonzero id the
+mint authority names. For `unique`, the chain of the item's holder is the `ownerOf` answer; a transfer is the same
+send/receive. Per-item metadata is a Craftworks item named by the id. A BATCH of several items is several sends (one
+per item's chain), each final on its own — not one atomic entry; an all-or-nothing trade of a bundle is two-phase (§4),
+as every cross-chain move here.
 
 **Ownership, metadata and royalties in ONE standard** (owner 10-08): a definition may carry a ROYALTY (a share, and
 the creator it goes to); the FILL rule — the one rule every sale passes through (§4) — then refuses a sale of an id
-whose lock does not also pay the creator's share. Ownership (ids), the sale (offer → lock → fill) and the royalty are
+whose lock does not also pay the creator's share. Built 10-09: a `lock` may carry a FEE `(creator, amount)` beside what
+it pays the maker (never to the maker or the locker); a fill of a royalty token takes only a lock whose fee pays its
+creator at least `share × price` (none needed when the maker IS the creator); the creator CLAIMS the fee as the maker
+claims the price — each claim naming the maker, whose chain holds the fill; an unfilled lock refunds both. Ownership (ids), the sale (offer → lock → fill) and the royalty are
 checked together by one code, the metadata a Craftworks item the id names — where Solana binds three programs (SPL
 Token, Metaplex metadata, rule sets / Core plugins for enforced royalties). The limit is everyone's: a plain transfer
 (a gift) can hide a payment made elsewhere — royalties hold on sales through the market, not on private deals.
@@ -589,8 +598,16 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    (`token-live multisig`, fresh keys): A pays a 2-of-3 set 300; its chain (members + receive) ACCEPTED with no key
    log; a send by 1 of 3 REFUSED; by 2 of 3 ACCEPTED; the members changed to 2-of-2 by two of the old ACCEPTED; the old
    set's send REFUSED; the new set's ACCEPTED (balance 150).
-11. The Craftworks token: contributions as locks, payouts as claims.
-12. Batch-auction pools.
+11. FOUNDATION 5, IDS + ROYALTIES — BUILT 10-09 (§1b): `Definition.ids` (none / unique / many) and `.royalty`; a chain
+   per (token, item, owner) (`ChainParams.item`, `Tok` in every cross reference); unique items made by their mint, one
+   each; a lock's creator FEE, the fill's royalty rule, the creator's claim. 85 tests; mutants on every new rule killed
+   (survivors got tests: the share's exact boundary, the fill's chain named by the claim's maker, a `many` mint of no
+   item, a refunded lock with a fee) — one equivalent left: the amount in `locks_of`, which nothing reads. LIVE fx/fy
+   (`token-live nft`): an item minted to M; a mint of TWO of a unique item REFUSED; M's item chain (mint + offer for
+   100 B) ACCEPTED; T's lock without the creator's fee: its fill REFUSED; with a 5 fee: ACCEPTED; T received the item
+   (M 0, T 1); M claimed 100 B and the creator 5; an outsider claiming the maker's 100 REFUSED.
+12. The Craftworks token: contributions as locks, payouts as claims.
+13. Batch-auction pools.
 
 **Before the token carries real value, step 6 must exist** (code review, 10-08): the contract checks only the receives
 among a chain's last 9 entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under 9
