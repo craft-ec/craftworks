@@ -2342,6 +2342,7 @@ mod contract {
 pub mod authority;
 pub mod cut;
 pub mod claims;
+pub mod clear;
 pub mod freeze;
 pub mod operators;
 pub mod witness;
