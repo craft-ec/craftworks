@@ -32,6 +32,22 @@ pub struct Source<'a> {
     pub program: &'a dyn Fn(&[u8; 32]) -> Option<Vec<u8>>,
     /// A token's FREEZE LIST, by its definition (a debit of a frozen — or paused — account is never signed).
     pub freeze: &'a dyn Fn(&[u8; 32]) -> Option<crate::freeze::List>,
+    /// An account's KEY LOG, by its DID (an owner entry is signed only on the account's current key).
+    pub keys: &'a dyn Fn(&[u8; 32]) -> Option<craftworks_idlog_contract::Log>,
+    /// A chain WHOLE — its history read back from its cut's blocks (`cut::whole`), where its live copy starts at a cut:
+    /// an escrow, its release or a sale behind a cut is still found (audit 10-10: a seller's cut hid its escrow from
+    /// the buyer's payout).
+    pub history: &'a dyn Fn(&Tok, &[u8; 32]) -> Option<State>,
+}
+
+/// A chain to find an entry `nonce` in: its live copy, or — the entry not there and the copy starting at a cut — its
+/// whole history.
+fn holding(src: &Source, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>, t: &Tok, o: &[u8; 32], has: &dyn Fn(&State) -> bool) -> Option<State> {
+    let live = chain(t, o)?;
+    if has(&live) || !live.entries.first().is_some_and(|e| matches!(e.body, Body::Cut { .. })) {
+        return Some(live);
+    }
+    (src.history)(t, o).filter(|h| has(h)).or(Some(live))
 }
 
 /// The LOT of an entry: (the claims' epoch, the beacon height its output is drawn at). Fixed by the entry's PLACE —
@@ -132,6 +148,11 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
     if e.stamp.saturating_add(FRESH) < now {
         return Err("an entry stamped too long ago");
     }
+    // A SPEND (an allowance's or an operator's) is witnessed within the margin of its stamp, as an append takes it — a
+    // spender whose permission was turned off cannot date one back to before (audit 10-10: up to an epoch back).
+    if matches!(e.body, Body::Spend { .. }) && e.stamp.saturating_add(d.margin) < now {
+        return Err("a spend stamped too long ago");
+    }
     timed(d, e.stamp, &prefix, e)?;
     // FROZEN or PAUSED (TOKEN §2): a debit of an account its freeze list said frozen at the entry's stamp — the append
     // rule a first copy skips (audit 10-10).
@@ -154,6 +175,9 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
         None if seq != 0 => return Err("an entry whose predecessor is not held"),
         None => {}
     }
+    // On the account's CURRENT key (the append rule a first copy skips): a device stolen before a rotation signs
+    // nothing a witness takes.
+    crate::on_current_key(s, i, (src.keys)(&p.owner).as_ref())?;
     for (c, x, before) in cited(p, e, chain)? {
         accept(src, &c, &x, before.as_ref())?;
     }
@@ -168,7 +192,7 @@ pub fn program_backed(src: &Source, base: &ChainParams, prog: &[u8; 32], chain: 
     let (sec, _) = crate::escrow::Section::decode_prefix(&b).ok_or("a program with no escrow section")?;
     sec.holds()?;
     for ((tok, owner, nonce), amount, th) in &sec.escrows {
-        let c = chain(tok, owner).ok_or("an escrow's chain not read")?;
+        let c = holding(src, chain, tok, owner, &|c: &State| c.entries.iter().any(|x| &x.nonce == nonce)).ok_or("an escrow's chain not read")?;
         let i = c.entries.iter().position(|x| &x.nonce == nonce).ok_or("a program listing an escrow that is not there")?;
         let x = &c.entries[i];
         if !matches!(&x.body, Body::Escrow { program, amount: a, terms, .. } if program == prog && a == amount && crate::escrow::terms_hash(terms) == *th) {
@@ -223,7 +247,7 @@ pub(crate) fn program_entry(src: &Source, p: &ChainParams, s: &State, i: usize, 
         }
         Body::HolderPayout { program, sold, at, .. } => {
             // The sale's time is the sold copy's ESCROW's stamp (one holder of each copy then): `at` must be it.
-            let c = chain(&sold.0, &sold.1).ok_or("an escrow's chain not read")?;
+            let c = holding(src, chain, &sold.0, &sold.1, &|c: &State| sale_at(c, &sold.2).is_some()).ok_or("an escrow's chain not read")?;
             if sale_at(&c, &sold.2) != Some(*at) {
                 return Err("a holders' share dated other than its sale");
             }
@@ -271,7 +295,8 @@ fn taken(src: &Source, p: &ChainParams, s: &State, i: usize) -> Result<(), Why> 
 fn released_under(src: &Source, p: &ChainParams, sec: &crate::escrow::Section, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<(), Why> {
     let h = sec.hash();
     for ((tok, owner, nonce), ..) in &sec.escrows {
-        let c = chain(tok, owner).ok_or("an escrow's chain not read")?;
+        let released = |c: &State| c.entries.iter().any(|x| matches!(&x.body, Body::Unescrow { escrow, verdict, .. } if escrow == nonce && *verdict == h));
+        let c = holding(src, chain, tok, owner, &released).ok_or("an escrow's chain not read")?;
         let i = c.entries.iter().position(|x| matches!(&x.body, Body::Unescrow { escrow, verdict, .. } if escrow == nonce && *verdict == h)).ok_or("a payout before every escrow of its verdict is released")?;
         accept(src, &p.at(*tok, *owner), &c.entries[i], i.checked_sub(1).map(|j| &c.entries[j]))?;
     }

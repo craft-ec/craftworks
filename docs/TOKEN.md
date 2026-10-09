@@ -839,11 +839,17 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    only); no chain of HOLDERS; a transfer's nonce once; a chain stays checkable in one related round; a deal never
    crosses paying its seller nothing. Token 104 tests, swap 4, pool 9; every fix's mutants killed (survivors got a test
    or the code went: a redundant witness check, a redundant held-at guard).
-   OPEN (recorded, not fixed): an old device key's entry is witnessed from a first copy (witnesses do not read the key
-   log); an operator's spend can be stamped up to FRESH (one epoch) back; a MISDEED proves only a vanished debit — a
-   committee signing a fake payout or mint is burned only by equivocation; a cut's received root is checked by
-   witnesses, not the contract; a seller cutting its chain hides its escrow from the buyer's payout witnesses until
-   they read the cut's history; a freeze change's back-dated word (pause) on nodes without the list.
+   Then CLOSED (same day): a witness signs an owner entry only on the account's CURRENT key (a device stolen before a
+   rotation signs nothing witnessed — the key log has no stamps, so this is the append rule at witnessing time; an
+   entry signed just before a rotation is re-signed on the new key); a spend is witnessed only within the margin of
+   its stamp (not an epoch back); payout witnesses read an escrow, its release or its sale from the seller's cut
+   history (`Source::history`) when its live chain was cut; the contract checks a cut's TREES (history and received
+   roots) whenever it holds the chain from seq 0 (token.wasm 308 → 342 KB: the tree builder). 107 tests, each fix's
+   mutants killed.
+   STILL OPEN: a MISDEED proves only a vanished debit — a committee signing a fake payout or mint is burned only by
+   equivocation (a misdeed over a program's state could be framed by a program that changes it later; over a supply
+   record it is sound — not built); a replaced freeze set's back-dated word (a pause) on nodes that never held the
+   list — the new set issues its own word at cap + 1 at once.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under

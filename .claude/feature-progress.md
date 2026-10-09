@@ -1492,6 +1492,11 @@ old key's addresses.
           payouts gated), pool verdict kept, supply held-mints + every record sealed, witness freeze + taken place,
           finality on overrides, small rules (reclaim time, definition checks, HOLDERS chain, debit nonce, related cap,
           swap pays-nothing). Open residuals listed in TOKEN step 22.
+      [x] 26 AUDIT GAPS (same day): witness current-key rule, spend within margin, cut history for payout witnesses,
+          contract checks cut trees from seq 0. Still open: misdeed for fake payouts/mints; back-dated pause word.
+      [ ] 27 WALLET CORE (owner agreed 10-10: before the shop) — user-side token logic on the existing account and
+          device keys; library + fx/fy, no release.
+      [ ] 28 SHOP — sell an edition on demand over the wallet core.
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).
       [x] 17 BATCH-AUCTION POOLS (TOKEN §5) — in parts:

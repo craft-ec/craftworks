@@ -738,6 +738,9 @@ fn a_cut_must_carry_exactly_what_came_before_it() {
     assert_eq!(lie(&|_| {}), Ok(()), "control: the honest cut");
     assert_eq!(lie(&|b| if let Body::Cut { allowances, .. } = b { allowances[0].1 = 51 }), Err("a cut that is not what came before it"));
     assert_eq!(lie(&|b| if let Body::Cut { allowances, .. } = b { allowances.clear() }), Err("a cut that is not what came before it"));
+    // Its TREES (audit 10-10): a received set it does not hold, another history.
+    assert_eq!(lie(&|b| if let Body::Cut { received, .. } = b { received[0] ^= 1 }), Err("a cut that is not what came before it"));
+    assert_eq!(lie(&|b| if let Body::Cut { history, .. } = b { history[0] ^= 1 }), Err("a cut that is not what came before it"));
     // A cut naming another device as the chain's writer (handing it the chain): not what came before it.
     assert_eq!(lie(&|b| if let Body::Cut { writer, .. } = b { *writer = Some(crate::Signer::Device(pk(9), 0)) }), Err("a cut that is not what came before it"));
     let mut s = whole.clone();
@@ -1704,6 +1707,10 @@ struct Lot {
     /// Token A's definition as the witnesses read it, and its freeze list.
     def_a: Definition,
     freeze: Option<freeze::List>,
+    /// The people whose account key the witnesses read as ROTATED (one key on).
+    rotated: Vec<u8>,
+    /// Chains read back WHOLE (from their cut's history), by (token, owner).
+    histories: Vec<((Tok, [u8; 32]), State)>,
 }
 impl Lot {
     fn new() -> Lot {
@@ -1714,7 +1721,7 @@ impl Lot {
                 draw::StakeClaim { owner: [n; 32], amount: 100, epoch: 0, key: kb, sig: key(n).sign(&draw::StakeClaim::message(&pool, &[n; 32], 100, 0, &kb)).to_bytes() }
             })
             .collect();
-        Lot { claims, sigs: HashMap::new(), drawn: 100, now: 100, progs: vec![], def_a: def(), freeze: None }
+        Lot { claims, sigs: HashMap::new(), drawn: 100, now: 100, progs: vec![], def_a: def(), freeze: None, rotated: vec![], histories: vec![] }
     }
     fn out(h: u64) -> [u8; 32] {
         *blake3::hash(&h.to_le_bytes()).as_bytes()
@@ -1730,6 +1737,8 @@ impl Lot {
             definition: &|t| [(id_a(), def()), (id_b(), def_b())].into_iter().find(|x| x.0 == *t).map(|x| x.1),
             program: Box::leak(Box::new(|id: &[u8; 32]| self.progs.iter().find(|x| x.0 == *id).map(|x| x.1.clone()))),
             freeze: Box::leak(Box::new(|_: &[u8; 32]| self.freeze.clone())),
+            history: Box::leak(Box::new(|t: &Tok, o: &[u8; 32]| self.histories.iter().find(|x| x.0 == (*t, *o)).map(|x| x.1.clone()))),
+            keys: Box::leak(Box::new(|o: &[u8; 32]| (1..=99u8).find(|n| did(*n) == *o).map(|n| self.rotated.contains(&n).then(|| rotated(n)).unwrap_or_else(|| log(n))))),
         }
     }
     /// `n` of the entry's committee sign it (`entry`: what they sign).
@@ -3137,4 +3146,64 @@ fn the_audits_small_rules_hold() {
     }
     assert!(validate_wants(&at(id_b(), T), &hp).len() > MAX_RELATED);
     assert!(validate_wants(&at(id_b(), T), &State { entries: hp.entries[..2].to_vec(), fork: None }).len() <= MAX_RELATED);
+}
+
+#[test]
+fn a_witness_signs_an_owner_entry_only_on_the_accounts_current_key() {
+    // 1's send, signed by its device credentialed on key seq 0 — witnessed while that is 1's current key.
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 2, Body::Send { to: did(2), amount: 100 }, Some(1), 0);
+    let mut lot = Lot::new();
+    lot.witness(&w, 1).unwrap();
+    let send = w.get(id_a(), 1).entries.len() as u64 - 1;
+    assert!(lot.may(&w, 1, send).is_ok());
+    // 1 ROTATED its account key (a device stolen before it): a first copy carrying that device's send is held from
+    // scratch, but no witness signs it (audit 10-10).
+    lot.rotated = vec![1];
+    assert_eq!(lot.may(&w, 1, send), Err("an owner entry not on the account's current key"));
+    // A receive (not the owner's) is unaffected by the owner's key.
+    let mut r = Two(w.0.clone());
+    put_at(r.chain(id_a(), 2), 2, Body::Receive { from: did(1), nonce: nonce(2), amount: 100, cited: 0, ev: Evidence::default() }, None, 2);
+    lot.rotated = vec![2];
+    assert_ne!(lot.may(&r, 2, 0), Err("an owner entry not on the account's current key"));
+}
+
+#[test]
+fn a_spend_is_witnessed_only_within_the_margin_of_its_stamp() {
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 2, Body::Allow { spender: pk(5), limit: 200 }, Some(1), 0);
+    let mut lot = Lot::new();
+    lot.witness(&w, 1).unwrap();
+    let s1 = w.chain(id_a(), 1);
+    let e = delegate(Entry { stamp: 95, ..entry(s1, nonce(3), Body::Spend { to: did(3), amount: 150 }) }, 5);
+    s1.entries.push(e);
+    let seq = w.get(id_a(), 1).entries.len() as u64 - 1;
+    lot.now = 97;
+    assert!(lot.may(&w, 1, seq).is_ok(), "within the margin (2)");
+    lot.now = 98;
+    assert_eq!(lot.may(&w, 1, seq), Err("a spend stamped too long ago"));
+}
+
+#[test]
+fn a_payout_is_witnessed_though_its_seller_cut_its_escrow_away() {
+    // 1 escrowed 300 with PROG and released it under PROG's verdict (all witnessed), then CUT its chain: the escrow and
+    // its release are now behind the cut. 2's payout of 250 is still witnessed — from 1's history read back whole.
+    let (w, prog) = escrowed();
+    let vh = escrow::Section::decode_prefix(&prog).unwrap().0.hash();
+    let mut x = Two(w.0.clone());
+    put_at(x.chain(id_a(), 1), 31, Body::Unescrow { escrow: nonce(7), refund: 50, verdict: vh }, None, 5);
+    let mut lot = Lot::new();
+    lot.progs.push((PROG, prog.clone()));
+    lot.witness(&x, 1).unwrap();
+    let whole1 = x.get(id_a(), 1).clone();
+    let mut blocks = cut::Blocks::new();
+    cut_at(&mut x, &whole1, id_a(), 1, 6, &mut blocks);
+    put_at(x.chain(id_a(), 2), 30, Body::Payout { program: PROG, key: [1; 16], amount: 250, ev: Evidence::default() }, None, 7);
+    assert_eq!(lot.may(&x, 2, 0), Err("a program listing an escrow that is not there"), "its live copy alone: the escrow is gone");
+    let cutm = x.get(id_a(), 1).clone();
+    let whole = cut::whole(&cutm, &|c| blocks.get(c).cloned()).unwrap();
+    lot.histories.push(((id_a().into(), did(1)), whole));
+    assert_eq!(lot.may(&x, 2, 0).map(|_| ()), Ok(()), "read back whole: witnessed");
 }

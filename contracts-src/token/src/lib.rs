@@ -1672,7 +1672,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     unbonding.clear();
                     balance
                 }
-                Body::Cut { received: root, allowances, writer: w, staked: st, unbonding: ub, retired: rt, .. } => {
+                Body::Cut { received: root, history: hroot, allowances, writer: w, staked: st, unbonding: ub, retired: rt, .. } => {
                     // (An escrow comes back before its chain is cut: a cut carries none.)
                     if !open_escrows.is_empty() {
                         return Err("a cut over an open escrow");
@@ -1696,6 +1696,14 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         // The prefix is here: the cut must carry exactly what it computes.
                         if sorted(&allowed) != sorted(allowances) || staked != *st || sorted(&unbonding) != sorted(ub) || sorted(&retired) != sorted(rt) {
                             return Err("a cut that is not what came before it");
+                        }
+                        // Held from seq 0: its TREES too — the history and the received set it names must be the ones
+                        // what came before builds (audit 10-10: an empty received root let a send be received again).
+                        if first == 0 {
+                            let (h, r) = cut::trees(&s.entries[..i], &mut cut::Blocks::new())?;
+                            if h.0 != *hroot || r.0 != *root {
+                                return Err("a cut that is not what came before it");
+                            }
                         }
                         received.clear();
                         vested.clear();
@@ -1767,20 +1775,29 @@ pub fn append_check(d: &Definition, now: u64, held: &State, merged: &State, keys
         if e.stamp > now || e.stamp.saturating_add(m) < now {
             return Err("a stamp far from the beacon");
         }
-        // (A KEY SET's chain names its own signers: no key log stands behind them.)
-        if e.by_owner() && !is_set_chain(merged) {
-            let current = keys.ok_or("the owner's key log is not there")?.head().seq;
-            let on = match &e.body {
-                Body::Writer { key_seq, .. } => Some(*key_seq),
-                // (A cut is signed by the writer it carries.)
-                Body::Cut { writer, .. } => writer.as_ref().map(Signer::rank),
-                _ => writer_at(merged, i).as_ref().map(Signer::rank),
-            };
-            if on != Some(current) {
-                return Err("an owner entry not on the account's current key");
-            }
-        }
+        on_current_key(merged, i, keys)?;
         timed(d, now, merged, e)?;
+    }
+    Ok(())
+}
+
+/// An OWNER entry (entry `i` of `s`) is on the account's CURRENT key (its key log's head) — the append rule, and a
+/// witness's (audit 10-10: from scratch a writer on any past key holds, so a device stolen before a rotation could have
+/// its entries witnessed). A KEY SET's chain names its own signers: no key log stands behind them.
+pub fn on_current_key(s: &State, i: usize, keys: Option<&craftworks_idlog_contract::Log>) -> Result<(), Why> {
+    let e = &s.entries[i];
+    if !e.by_owner() || is_set_chain(s) {
+        return Ok(());
+    }
+    let current = keys.ok_or("the owner's key log is not there")?.head().seq;
+    let on = match &e.body {
+        Body::Writer { key_seq, .. } => Some(*key_seq),
+        // (A cut is signed by the writer it carries.)
+        Body::Cut { writer, .. } => writer.as_ref().map(Signer::rank),
+        _ => writer_at(s, i).as_ref().map(Signer::rank),
+    };
+    if on != Some(current) {
+        return Err("an owner entry not on the account's current key");
     }
     Ok(())
 }
