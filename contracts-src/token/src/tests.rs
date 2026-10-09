@@ -49,7 +49,7 @@ fn ensure_writer(s: &mut State, by: u8) {
     }
 }
 fn def() -> Definition {
-    Definition { code_hash: CODE, decimals: 8, min_send: 10, genesis_owner: did(1), genesis_amount: 1000, name: b"T".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false }
+    Definition { code_hash: CODE, decimals: 8, min_send: 10, genesis_owner: did(1), genesis_amount: 1000, name: b"T".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None }
 }
 fn params(owner: u8) -> ChainParams {
     ChainParams { code_hash: CODE, definition: id(&CODE, &def().encode()), owner: did(owner), beacon: BEACON, idlog: IDLOG, item: [0; 32] }
@@ -64,7 +64,7 @@ fn after(s: &State, body: &Body) -> u128 {
     match body {
         Body::Genesis { amount } => *amount,
         Body::Send { amount, .. } | Body::Burn { amount } => b.wrapping_sub(*amount),
-        Body::Receive { amount, .. } | Body::Mint { amount, .. } | Body::CappedMint { amount, .. } | Body::Vested { amount, .. } => b + amount,
+        Body::Receive { amount, .. } | Body::Mint { amount, .. } | Body::CappedMint { amount, .. } | Body::Vested { amount, .. } | Body::FeeClaim { amount, .. } => b + amount,
         Body::Vest { schedule, .. } => b.wrapping_sub(schedule.iter().map(|x| x.1).sum::<u128>()),
         Body::Escrow { amount, .. } => b.wrapping_sub(*amount),
         Body::Unescrow { refund, .. } => b + refund,
@@ -2875,4 +2875,85 @@ fn a_non_transferable_token_never_leaves_its_chain() {
     assert_eq!(plain(Body::Send { to: did(2), amount: 10 }), Ok(()));
     assert_eq!(plain(Body::Escrow { program: PROG, terms: vec![], amount: 10, until: 0 }), Ok(()));
     assert_eq!(plain(Body::Vest { to: did(2), schedule: vec![(10, 10)] }), Ok(()));
+}
+
+#[test]
+fn a_transfer_fee_is_paid_on_top_and_claimed_once_by_its_collector() {
+    // F: 1% per transfer, at most 5, to collector 9. A (1) holds the genesis 1000.
+    let f = Definition { transfer_fee: Some((100, 5, did(9))), name: b"F".to_vec(), ..def() };
+    assert_eq!(Definition::decode(&f.encode()), Some(f.clone()));
+    assert_eq!(Definition::decode(&Definition { transfer_fee: Some((0, 5, did(9))), ..f.clone() }.encode()), None, "a fee of nothing");
+    assert_eq!((transfer_fee(&f, &did(1), 300), transfer_fee(&f, &did(1), 301), transfer_fee(&f, &did(1), 900), transfer_fee(&f, &did(9), 300)), (3, 4, 5, 0), "rounded up, at most 5, none for the collector");
+    let fid = id(&CODE, &f.encode());
+    // An entry whose carried balance pays `fee` on top.
+    let put = |s: &mut State, n: u8, body: Body, by: Option<u8>, stamp: u64, fee: u128| {
+        if let Some(k) = by {
+            ensure_writer(s, k);
+        }
+        let mut e = entry(s, nonce(n), body);
+        e.stamp = stamp;
+        e.balance -= fee;
+        let e = match by {
+            Some(k) => sign(e, k),
+            None => work(e),
+        };
+        s.entries.push(e);
+    };
+    let ck = |o: u8, s: &State, others: &HashMap<[u8; 32], State>| check(&at(fid, o), &f, s, &|_, w| others.get(w).cloned(), &|_| None, Some(&log(o)), &Extra::NONE);
+    let none = HashMap::new();
+    let mut a = State::default();
+    put(&mut a, 1, Body::Genesis { amount: 1000 }, Some(1), 0, 0);
+    let mut paid = a.clone();
+    put(&mut paid, 30, Body::Send { to: did(2), amount: 300 }, Some(1), 5, 3);
+    assert_eq!(ck(1, &paid, &none), Ok(()));
+    assert_eq!(paid.balance(), 697);
+    let mut unpaid = a.clone();
+    put(&mut unpaid, 30, Body::Send { to: did(2), amount: 300 }, Some(1), 5, 0);
+    assert!(ck(1, &unpaid, &none).is_err(), "the fee not taken");
+    for (body, fee) in [(Body::Escrow { program: PROG, terms: vec![], amount: 900, until: 0 }, 5), (Body::Vest { to: did(2), schedule: vec![(10, 100)] }, 1)] {
+        let mut x = a.clone();
+        put(&mut x, 31, body.clone(), Some(1), 5, fee);
+        assert_eq!(ck(1, &x, &none), Ok(()), "{body:?}");
+        let mut y = a.clone();
+        put(&mut y, 31, body, Some(1), 5, 0);
+        assert!(ck(1, &y, &none).is_err());
+    }
+    // A SPEND (by an allowance) pays it too.
+    let spend = |fee: u128| {
+        let mut x = a.clone();
+        put(&mut x, 32, Body::Allow { spender: pk(5), limit: 200 }, Some(1), 5, 0);
+        let mut e = entry(&x, nonce(33), Body::Spend { to: did(3), amount: 150 });
+        e.stamp = 6;
+        e.balance -= fee;
+        x.entries.push(delegate(e, 5));
+        ck(1, &x, &none)
+    };
+    assert_eq!(spend(2), Ok(()));
+    assert!(spend(0).is_err());
+    // The receiver gets the whole 300.
+    let others: HashMap<[u8; 32], State> = [(did(1), paid.clone())].into_iter().collect();
+    let mut r = State::default();
+    put(&mut r, 30, Body::Receive { from: did(1), nonce: nonce(30), amount: 300, cited: 5, ev: Evidence::default() }, None, 8, 0);
+    assert_eq!(ck(2, &r, &others), Ok(()));
+    // The COLLECTOR claims the 3, once.
+    let claim = |o: u8, gross: u128, amount: u128, twice: bool| {
+        let mut c = State::default();
+        let body = || Body::FeeClaim { from: did(1), nonce: nonce(30), gross, amount, cited: 5, ev: Evidence::default() };
+        put(&mut c, 40, body(), None, 8, 0);
+        if twice {
+            put(&mut c, 41, body(), None, 8, 0);
+        }
+        ck(o, &c, &others)
+    };
+    assert_eq!(claim(9, 300, 3, false), Ok(()));
+    assert_eq!(claim(9, 300, 2, false), Err("a fee that is not the definition's"));
+    assert_eq!(claim(9, 300, 3, true), Err("a fee claimed twice"));
+    assert_eq!(claim(8, 300, 3, false), Err("a fee claimed by other than its collector"));
+    assert_eq!(claim(9, 301, 4, false), Err("a fee whose transfer is not in its payer's chain"), "another amount than moved");
+    // Its time: once the transfer is final (the margin), as a receive.
+    let mut c = State::default();
+    put(&mut c, 40, Body::FeeClaim { from: did(1), nonce: nonce(30), gross: 300, amount: 3, cited: 5, ev: Evidence::default() }, None, 6, 0);
+    assert_eq!(timed(&f, 99, &c, c.entries.last().unwrap()), Err("an entry citing one not yet final"));
+    // The cut keeps it: its name is in the received set.
+    assert!(cut::received_keys(&c.entries).contains(&received_key(FEE, &did(1), &nonce(30))));
 }

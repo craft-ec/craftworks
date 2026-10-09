@@ -1480,7 +1480,11 @@ old key's addresses.
           Craftworks item, its metadata inherited, ownership checked app-side) — documented in §1c.
       [x] 22 NON-TRANSFERABLE (soulbound) — DONE 10-10: Definition.soulbound; no send/spend/allow/escrow/vest; burn ok.
           token d9fc2478, pool 880cdd3a, swap add7796e. 97 tests; 5 mutants killed. LIVE fx/fy `soulbound`.
-      [ ] 23 TRANSFER FEES (an option the token's owner may enforce).
+      [x] 23 TRANSFER FEES — DONE 10-10: Definition.transfer_fee (bps, most, collector); paid ON TOP by the sender on
+          send/spend/escrow/vest (receivers and program payouts whole); Body::FeeClaim by the collector, once, after
+          the margin. token 3f2034f1, pool 03c48c2b, swap 24f8e3f8. 98 tests; 13 mutants killed. LIVE fx/fy `fees`.
+          Foundation list from the 10-10 audit now done (reclaim, soulbound, fees; collections = Craftworks items).
+          NOT asked: whole-token pause; confidential amounts.
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).
       [x] 17 BATCH-AUCTION POOLS (TOKEN §5) — in parts:

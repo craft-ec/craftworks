@@ -121,6 +121,21 @@ pub struct Definition {
     /// NON-TRANSFERABLE (soulbound, TOKEN §1d): held where it is minted — no send, spend, allowance, escrow or vest of
     /// it; it can still be burned (and staked, which stays its owner's).
     pub soulbound: bool,
+    /// Its TRANSFER FEE (TOKEN §1e, optional): (basis points, the most one transfer pays — 0: no most, the collector)
+    /// — charged ON TOP of every send, spend, escrow and vest (the receiver gets the whole amount), claimed by its
+    /// collector with a [`Body::FeeClaim`]. None when the collector itself transfers.
+    pub transfer_fee: Option<(u16, u128, [u8; 32])>,
+}
+
+/// The transfer fee `from` pays for moving `amount` of a token (TOKEN §1e): its share rounded up, at most its most.
+pub fn transfer_fee(d: &Definition, from: &[u8; 32], amount: u128) -> u128 {
+    let Some((bps, most, collector)) = d.transfer_fee else { return 0 };
+    if *from == collector {
+        return 0;
+    }
+    let bps = bps as u128;
+    let fee = amount / 10_000 * bps + (amount % 10_000 * bps).div_ceil(10_000);
+    if most > 0 { fee.min(most) } else { fee }
 }
 
 /// A token's ids (TOKEN §1b).
@@ -180,6 +195,15 @@ impl Definition {
         v.extend_from_slice(&self.item);
         v.extend_from_slice(&self.version);
         v.push(self.soulbound as u8);
+        match self.transfer_fee {
+            None => v.push(0),
+            Some((bps, most, collector)) => {
+                v.push(1);
+                v.extend_from_slice(&bps.to_le_bytes());
+                v.extend_from_slice(&most.to_le_bytes());
+                v.extend_from_slice(&collector);
+            }
+        }
         v
     }
     pub fn decode(b: &[u8]) -> Option<Self> {
@@ -216,9 +240,15 @@ impl Definition {
             1 => true,
             _ => return None,
         };
+        let transfer_fee = match r.u8()? {
+            0 => None,
+            1 => Some((u16::from_le_bytes(r.arr()?), r.u128()?, r.arr()?)),
+            _ => return None,
+        };
         let ok = r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1 && royalty.is_none_or(|(b, _)| b > 0 && b <= 10_000) && (cap == 0 || genesis_amount <= cap) && (cap == 0 || matches!(ids, Ids::None | Ids::Numbered))
-            && royalty.is_none_or(|(_, to)| to != HOLDERS || (ids == Ids::Numbered && cap >= 2));
-        ok.then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog, mint, freeze, ids, royalty, cap, collection, item, version, soulbound })
+            && royalty.is_none_or(|(_, to)| to != HOLDERS || (ids == Ids::Numbered && cap >= 2))
+            && transfer_fee.is_none_or(|(b, _, _)| b > 0 && b <= 10_000);
+        ok.then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog, mint, freeze, ids, royalty, cap, collection, item, version, soulbound, transfer_fee })
     }
     /// Minted by NUMBER into records ([`supply::RECORD`]): a cap, or numbered copies (each number once, ever).
     pub fn capped(&self) -> bool {
@@ -327,6 +357,8 @@ pub const MINTED: u8 = b'm';
 pub const PAYOUT: u8 = b'p';
 /// A vesting step received (its key also carries the step: [`vested_key`]).
 pub const VESTED: u8 = b'v';
+/// A transfer fee claimed (who: the payer; nonce: its debit's).
+pub const FEE: u8 = b'f';
 /// A HOLDERS' share received (who: the program; nonce: [`holder_nonce`] of the fee's key and the copy).
 pub const HOLDERS_SHARE: u8 = b'h';
 /// The ROYALTY RECIPIENT that is an edition's HOLDERS (TOKEN §1c): the fee is shared by every OTHER copy's holder,
@@ -416,6 +448,10 @@ pub enum Body {
     /// took it — the program, as its witnesses read it, lists it not, or is not there. Appended by anyone (with work),
     /// once. Witnesses then refuse any release or payout of a program that lists it.
     Reclaim { escrow: [u8; 16] },
+    /// A TRANSFER FEE claimed (TOKEN §1e) by the token's fee collector (this chain's owner): the fee `from`'s debit
+    /// `nonce` (stamped `cited`; it moved `gross`) paid on top — `amount`, as the definition's fee of `gross`.
+    /// Appended by anyone (with work), once, once the debit is final.
+    FeeClaim { from: [u8; 32], nonce: [u8; 16], gross: u128, amount: u128, cited: u64, ev: Evidence },
     /// A program's PAYOUT `key` to this chain: `amount`, as its verdict says. Appended by anyone (with work), once.
     Payout { program: [u8; 32], key: [u8; 16], amount: u128, ev: Evidence },
     /// A HOLDERS' SHARE (TOKEN §1c): from `program`'s payout `key` to [`HOLDERS`] — an edition's royalty fee — the share
@@ -585,6 +621,15 @@ impl Entry {
             Body::Reclaim { escrow } => {
                 v.push(30);
                 v.extend_from_slice(escrow);
+            }
+            Body::FeeClaim { from, nonce, gross, amount, cited, ev } => {
+                v.push(31);
+                v.extend_from_slice(from);
+                v.extend_from_slice(nonce);
+                v.extend_from_slice(&gross.to_le_bytes());
+                v.extend_from_slice(&amount.to_le_bytes());
+                v.extend_from_slice(&cited.to_le_bytes());
+                put_ev(&mut v, ev);
             }
             Body::Unescrow { escrow, refund } => {
                 v.push(26);
@@ -798,6 +843,7 @@ impl Entry {
                 Body::Escrow { program, terms: r.take(n)?.to_vec(), amount: r.u128()?, until: r.u64()? }
             }
             30 => Body::Reclaim { escrow: r.arr()? },
+            31 => Body::FeeClaim { from: r.arr()?, nonce: r.arr()?, gross: r.u128()?, amount: r.u128()?, cited: r.u64()?, ev: read_ev(r)? },
             26 => Body::Unescrow { escrow: r.arr()?, refund: r.u128()? },
             27 => Body::Payout { program: r.arr()?, key: r.arr()?, amount: r.u128()?, ev: read_ev(r)? },
             29 => Body::HolderPayout { program: r.arr()?, key: r.arr()?, edition: r.arr()?, copy: r.u128()?, amount: r.u128()?, ev: read_ev(r)? },
@@ -1002,7 +1048,7 @@ pub fn cited_chains_from(p: &ChainParams, s: &State, from: usize) -> Vec<(Tok, [
     };
     for e in s.entries.iter().skip(from) {
         match &e.body {
-            Body::Receive { from, .. } | Body::Vested { from, .. } => add((p.tok(), *from)),
+            Body::Receive { from, .. } | Body::Vested { from, .. } | Body::FeeClaim { from, .. } => add((p.tok(), *from)),
             // The claimant's chain of the copy it holds.
             Body::HolderPayout { edition, copy, .. } => add((Tok { definition: *edition, item: numbered_item(edition, *copy) }, p.owner)),
             Body::Misdeed { tok, entry, .. } => {
@@ -1121,6 +1167,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
         let mut open_escrows: Vec<([u8; 16], u128, [u8; 32], u64)> = Vec::new();
         let mut paid: Vec<([u8; 32], [u8; 16])> = Vec::new();
         let mut shared: Vec<([u8; 32], [u8; 16])> = Vec::new();
+        let mut fees: Vec<([u8; 32], [u8; 16])> = Vec::new();
         // A program's standard section, read (`x.program`) and checked to hold.
         let section = |prog: &[u8; 32]| -> Result<escrow::Section, Why> {
             let b = x.program.and_then(|f| f(prog)).ok_or("the escrow's program is not there")?;
@@ -1170,6 +1217,8 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
             };
             // Shown: found live or by the evidence — or hidden since.
             let shown = |c: &State, cid: &[u8; 32], ev: &Evidence, at: u64, pick: &dyn Fn(&Entry) -> bool| find_cited(c, cid, ev, pick) || hidden_since(c, at);
+            // What a transfer of `x` takes from the balance: `x` and its transfer fee (TOKEN §1e).
+            let gross = |x: u128| x.checked_add(transfer_fee(d, &p.owner, x)).ok_or("a balance overflow");
             // A NON-TRANSFERABLE token never leaves the chain it is minted in.
             if d.soulbound && matches!(e.body, Body::Send { .. } | Body::Spend { .. } | Body::Allow { .. } | Body::Escrow { .. } | Body::Vest { .. }) {
                 return Err("a transfer of a token that cannot be transferred");
@@ -1191,7 +1240,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     if *amount < d.min_send {
                         return Err("a send under the minimum");
                     }
-                    balance.checked_sub(*amount).ok_or("a debit over the balance")?
+                    balance.checked_sub(gross(*amount)?).ok_or("a debit over the balance")?
                 }
                 Body::Burn { amount } => {
                     owner_signed(e, &writer)?;
@@ -1230,7 +1279,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     if *amount < d.min_send {
                         return Err("a send under the minimum");
                     }
-                    balance.checked_sub(*amount).ok_or("a debit over the balance")?
+                    balance.checked_sub(gross(*amount)?).ok_or("a debit over the balance")?
                 }
                 Body::Receive { from, nonce, amount, cited, ev } => {
                     // (Never from itself: a send to itself is refused — and asking for its own chain as a related
@@ -1260,6 +1309,33 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
                 }
+                Body::FeeClaim { from, nonce, gross: moved, amount, cited, ev } => {
+                    if d.transfer_fee.is_none_or(|(_, _, c)| c != p.owner) {
+                        return Err("a fee claimed by other than its collector");
+                    }
+                    if *from == p.owner {
+                        return Err("a receive from itself");
+                    }
+                    if !e.worked() {
+                        return Err("a receive without its work");
+                    }
+                    if *amount == 0 || *amount != transfer_fee(d, from, *moved) {
+                        return Err("a fee that is not the definition's");
+                    }
+                    if fees.contains(&(*from, *nonce)) || !fresh(&cut, *cited, received_key(FEE, from, nonce), ev) {
+                        return Err("a fee claimed twice");
+                    }
+                    fees.push((*from, *nonce));
+                    if recent {
+                        let cp = p.at(p.tok(), *from);
+                        let c = chain(&p.tok(), from).ok_or("the sender's chain is not there")?;
+                        let pick = |x: &Entry| debit_for(x, &p.owner, e);
+                        if !shown(&c, &cp.id(), ev, *cited, &pick) {
+                            return Err("a fee whose transfer is not in its payer's chain");
+                        }
+                    }
+                    balance.checked_add(*amount).ok_or("a balance overflow")?
+                }
                 Body::Escrow { program: prog, terms, amount, until } => {
                     owner_signed(e, &writer)?;
                     if *amount < d.min_send || terms.len() > escrow::TERMS_MAX {
@@ -1269,7 +1345,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         return Err("an escrow named twice");
                     }
                     open_escrows.push((e.nonce, *amount, *prog, *until));
-                    balance.checked_sub(*amount).ok_or("a debit over the balance")?
+                    balance.checked_sub(gross(*amount)?).ok_or("a debit over the balance")?
                 }
                 Body::Unescrow { escrow: nonce_, refund } => {
                     if !e.worked() {
@@ -1363,7 +1439,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         return Err("a send under the minimum");
                     }
                     let total = schedule.iter().try_fold(0u128, |t, (_, a)| t.checked_add(*a)).ok_or("a balance overflow")?;
-                    balance.checked_sub(total).ok_or("a debit over the balance")?
+                    balance.checked_sub(gross(total)?).ok_or("a debit over the balance")?
                 }
                 Body::Vested { from, vest, step, amount, at, cited, ev } => {
                     if *from == p.owner {
@@ -1687,7 +1763,7 @@ pub fn debits_from(merged: &State, from: usize) -> bool {
 pub fn timed(d: &Definition, now: u64, merged: &State, e: &Entry) -> Result<(), Why> {
     let m = d.margin;
     match &e.body {
-        Body::Receive { cited, .. } | Body::Vested { cited, .. } => {
+        Body::Receive { cited, .. } | Body::Vested { cited, .. } | Body::FeeClaim { cited, .. } => {
             if e.stamp < cited.saturating_add(m) {
                 return Err("an entry citing one not yet final");
             }
@@ -1717,7 +1793,7 @@ pub fn timed(d: &Definition, now: u64, merged: &State, e: &Entry) -> Result<(), 
 /// a vesting step's vest.
 fn misdeed_cites(e: &Entry) -> Option<([u8; 32], u64)> {
     match &e.body {
-        Body::Receive { from, cited, .. } | Body::Vested { from, cited, .. } => Some((*from, *cited)),
+        Body::Receive { from, cited, .. } | Body::Vested { from, cited, .. } | Body::FeeClaim { from, cited, .. } => Some((*from, *cited)),
         _ => None,
     }
 }
@@ -1730,6 +1806,16 @@ pub(crate) fn debit_for(x: &Entry, owner: &[u8; 32], e: &Entry) -> bool {
         }
         Body::Vested { vest, step, amount, at, cited, .. } => {
             x.nonce == *vest && x.stamp == *cited && matches!(&x.body, Body::Vest { to, schedule } if to == owner && schedule.get(*step as usize) == Some(&(*at, *amount)))
+        }
+        // A fee: any transfer of that amount (its receiver is not the collector's business).
+        Body::FeeClaim { nonce, gross, cited, .. } => {
+            x.nonce == *nonce
+                && x.stamp == *cited
+                && match &x.body {
+                    Body::Send { amount, .. } | Body::Spend { amount, .. } | Body::Escrow { amount, .. } => amount == gross,
+                    Body::Vest { schedule, .. } => schedule.iter().try_fold(0u128, |t, s| t.checked_add(s.1)) == Some(*gross),
+                    _ => false,
+                }
         }
         _ => false,
     }

@@ -142,7 +142,7 @@ impl W {
         v
     }
     fn def(&self, genesis: u8, name: &[u8], k: u8) -> T::Definition {
-        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog, mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false }
+        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog, mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None }
     }
     fn chain(&self, token: [u8; 32], o: u8) -> T::ChainParams {
         T::ChainParams { code_hash: self.ch, definition: token, owner: did(o), beacon: self.beacon, idlog: self.idlog, item: [0; 32] }
@@ -198,7 +198,7 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
     let balance = match &body {
         T::Body::Genesis { amount } => *amount,
         T::Body::Send { amount, .. } | T::Body::Burn { amount } | T::Body::Spend { amount, .. } => bal - amount,
-        T::Body::Receive { amount, .. } | T::Body::Mint { amount, .. } | T::Body::CappedMint { amount, .. } | T::Body::Vested { amount, .. } => bal + amount,
+        T::Body::Receive { amount, .. } | T::Body::Mint { amount, .. } | T::Body::CappedMint { amount, .. } | T::Body::FeeClaim { amount, .. } | T::Body::Vested { amount, .. } => bal + amount,
         T::Body::Vest { schedule, .. } => bal - schedule.iter().map(|x| x.1).sum::<u128>(),
         T::Body::Escrow { amount, .. } => bal - amount,
         T::Body::Unescrow { refund, .. } => bal + refund,
@@ -296,6 +296,7 @@ async fn main() -> Result<()> {
             "nft" => nft(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "editions" => editions(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "soulbound" => soulbound(&w).await?,
+            "fees" => fees(&w).await?,
             "reclaim" => reclaim(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "holders" => holders(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "vest" => vest(&w).await?,
@@ -1621,5 +1622,54 @@ async fn soulbound(w: &W) -> Result<()> {
     let mut x = c.clone();
     push(&mut x, T::Body::Burn { amount: 10 }, w.n(20), Some(2), r);
     println!("4  2 burns 10, on Y: {} — holds {}", w.put_chain(&w.y, t, 2, &x).await?.0, x.balance());
+    Ok(())
+}
+
+/// TRANSFER FEES (TOKEN §1e), LIVE: token F — 1% per transfer, at most 5, to collector 9. 1 sends 300 to 2 paying 3 on
+/// top (an entry without it refused); 2 receives the whole 300; 9 claims the 3 once; 8 (not the collector) cannot.
+async fn fees(w: &W) -> Result<()> {
+    println!("— fees (a transfer fee on top, claimed by its collector)");
+    let d = T::Definition { transfer_fee: Some((100, 5, did(9))), ..w.def(1, b"Fee", 31) };
+    let t = w.put_def(&d).await?;
+    let h = w.now().await?;
+    // An entry whose carried balance pays `fee` on top (signed again after).
+    let with_fee = |s: &mut T::State, body: T::Body, n: [u8; 16], by: Option<u8>, stamp: u64, fee: u128| {
+        push(s, body, n, by, stamp);
+        let mut e = s.entries.pop().unwrap();
+        e.balance -= fee;
+        let m = e.message();
+        e.auth = match by {
+            Some(k) => T::Auth::Sig(key(k).sign(&m).to_bytes()),
+            None => T::Auth::Work((0u64..).find(|x| T::work_ok(&m, *x)).unwrap()),
+        };
+        s.entries.push(e);
+    };
+    let mut a = T::State::default();
+    push(&mut a, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h);
+    let mut bad = a.clone();
+    with_fee(&mut bad, T::Body::Send { to: did(2), amount: 300 }, w.n(30), Some(1), h, 0);
+    println!("1  1 sends 300 to 2 WITHOUT the fee, on X: {}", w.put_chain(&w.x, t, 1, &bad).await?.0);
+    with_fee(&mut a, T::Body::Send { to: did(2), amount: 300 }, w.n(30), Some(1), h, 3);
+    println!("2  1 sends 300 to 2 paying 3 on top, on X: {} — 1 holds {}", w.put_chain(&w.x, t, 1, &a).await?.0, a.balance());
+    let r = w.until(h + 3).await?;
+    let mut b = T::State::default();
+    push(&mut b, T::Body::Receive { from: did(1), nonce: w.n(30), amount: 300, cited: h, ev: T::Evidence::default() }, w.n(30), None, r);
+    println!("3  2 receives the whole 300, on Y: {}", w.put_chain(&w.y, t, 2, &b).await?.0);
+    let claim = |o: u8, k: u8, amount: u128| {
+        let mut c = T::State::default();
+        push(&mut c, T::Body::FeeClaim { from: did(1), nonce: w.n(30), gross: 300, amount, cited: h, ev: T::Evidence::default() }, w.n(k), None, r);
+        (o, c)
+    };
+    let (o, c) = claim(9, 40, 2);
+    println!("4  9 claims 2 (the fee is 3), on Y: {}", w.put_chain(&w.y, t, o, &c).await?.0);
+    let (o, c) = claim(8, 41, 3);
+    println!("5  8 (not the collector) claims the 3, on Y: {}", w.put_chain(&w.y, t, o, &c).await?.0);
+    let (o, mut c) = claim(9, 42, 3);
+    println!("6  9 claims the 3, on Y: {}", w.put_chain(&w.y, t, o, &c).await?.0);
+    push(&mut c, T::Body::FeeClaim { from: did(1), nonce: w.n(30), gross: 300, amount: 3, cited: h, ev: T::Evidence::default() }, w.n(43), None, r);
+    println!("7  … and again, on Y: {}", w.put_chain(&w.y, t, 9, &c).await?.0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let bal = |s: Option<T::State>| s.map_or(0, |s| s.balance());
+    println!("   1 {} · 2 {} · 9 {} (= 1000)", bal(w.get_chain(&w.x, t, 1).await?), bal(w.get_chain(&w.y, t, 2).await?), bal(w.get_chain(&w.y, t, 9).await?));
     Ok(())
 }

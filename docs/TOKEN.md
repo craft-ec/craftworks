@@ -34,6 +34,7 @@ Every behaviour of the blockchain token standards, and how this standard gives i
 | NFTs — `ownerOf`, transfer, per-item approve, `setApprovalForAll` (ERC-721) | ✅ | a definition with `ids: unique`; a chain per (item, owner) whose head says held or not; `allow` per item; an OPERATORS list per (token, owner) for all items at once (§1b) |
 | Multi-token, batch transfer (ERC-1155) | ✅ batch not atomic | one definition, many ids; a chain per (item, owner); a batch = one send per item, each final on its own; an all-or-nothing bundle trade goes through a program over escrow (§1b, §4) |
 | Metadata (token and per item) | ✅ | the definition names the Craftworks ITEM it is of (and a version pin); the item's own kind schema is its metadata (§1c) |
+| Transfer fees (Token-2022) | ✅ optional | a definition's fee on top of every send, spend, escrow, vest; claimed by its collector (§1e) |
 | Non-transferable (soulbound) | ✅ | a definition flag: nothing leaves the chain it is minted into; burn allowed (§1d) |
 | Editions, numbered copies, max supply | ✅ | an EDITION is a definition with a CAP; numbered (#n of cap) or plain (semi-fungible) copies; editions grouped by a COLLECTION; each its own royalty (§1c) |
 | History, traceable by anyone (an explorer) | ✅ | no one ledger: from genesis and the supply bag, sends followed FORWARD reach every chain; credits cite their debits BACKWARD; kept alive by readers and keepers (§1a) |
@@ -193,6 +194,18 @@ A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has CO
 A definition may be `soulbound`: its tokens stay in the chain they are minted (or given at genesis) into — no send,
 spend (an operator's neither), allowance, escrow or vest of them; they can be burned, and staked (which stays the
 owner's). For badges, certificates, standing. (Token-2022's non-transferable extension.)
+
+## 1e. Transfer fees (optional, 10-10)
+
+A definition may carry a TRANSFER FEE — the owner's choice to enforce it: (basis points, the most one transfer pays —
+0: no most, the collector). It is charged ON TOP of every send, spend, escrow and vest: the sender's chain carries its
+balance less the amount AND the fee; the receiver (or the program) gets the whole amount. None when the collector
+itself transfers. The collector claims each fee with `fee_claim(payer, debit, gross, amount)` in its own chain —
+appended by anyone (with work), once (its name in the received set), once the debit is final, its amount exactly the
+definition's fee of `gross` (rounded up, at most the most); witnesses accept it on the debit accepted, as a receive.
+Programs' payouts and releases carry no fee: what entered a program paid it at its escrow. (Token-2022's
+transfer-fee extension, withheld at the receiver there; here paid by the sender on top, so a receive stays exactly
+its send.)
 
 ## 2. A chain's entries
 
@@ -792,6 +805,12 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    97 tests; 5 mutants (one per entry kind) killed — the spend one after an operator's spend was tested (no
    allowance can exist, an operator needs none). LIVE fx/fy (`token-live soulbound`): 100 badge minted to 2 and
    credited; its send, allowance and escrow REFUSED; its burn ACCEPTED (holds 90).
+
+20. TRANSFER FEES — BUILT 10-10 (§1e): `Definition.transfer_fee`, `transfer_fee()`, the fee on top in send, spend,
+   escrow and vest, `Body::FeeClaim` (cited debit, timed, received set). Token 98 tests; 13 mutants killed (incl. one
+   per debit kind). LIVE fx/fy (`token-live fees`): a send without its fee REFUSED; with it ACCEPTED (1 holds 697); 2
+   received the whole 300; the collector claiming 2 REFUSED, 8 claiming REFUSED, 9 claiming 3 ACCEPTED, again
+   REFUSED — 697 + 300 + 3 = 1000.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under

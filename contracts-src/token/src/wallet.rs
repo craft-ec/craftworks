@@ -91,7 +91,7 @@ pub fn cited(p: &ChainParams, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 32]) -> Opti
         Ok((c, held.entries[i].clone(), i.checked_sub(1).map(|j| held.entries[j].clone())))
     };
     Ok(match &e.body {
-        Body::Receive { from, .. } | Body::Vested { from, .. } => vec![find(p.tok(), *from, &|x| crate::debit_for(x, &p.owner, e))?],
+        Body::Receive { from, .. } | Body::Vested { from, .. } | Body::FeeClaim { from, .. } => vec![find(p.tok(), *from, &|x| crate::debit_for(x, &p.owner, e))?],
         // A holders' share: the claimant's chain of the copy — its LAST entry (what says it holds the copy) accepted.
         Body::HolderPayout { edition, copy, .. } => {
             let t = Tok { definition: *edition, item: crate::numbered_item(edition, *copy) };

@@ -15,6 +15,7 @@ pub fn received_keys(entries: &[Entry]) -> Vec<Vec<u8>> {
         .iter()
         .filter_map(|e| match &e.body {
             Body::Receive { from, nonce, .. } => Some(received_key(RECEIVED, from, nonce)),
+            Body::FeeClaim { from, nonce, .. } => Some(crate::received_key(crate::FEE, from, nonce)),
             Body::Mint { nonce, .. } | Body::CappedMint { nonce, .. } => Some(received_key(MINTED, &MINTER, nonce)),
             Body::Vested { from, vest, step, .. } => Some(crate::vested_key(from, vest, *step)),
             Body::Payout { program, key, .. } => Some(crate::received_key(crate::PAYOUT, program, key)),
