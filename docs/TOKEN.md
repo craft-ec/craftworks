@@ -487,6 +487,15 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   node about itself (no node query in the delegate API, freenet-stdlib 0.10), so a node whose page never opens in an
   epoch earns nothing that epoch. Open pages also EXTEND the beacon, in a worker (a step is ~60 s of one core; a
   delegate wake-up cannot); one honest extender keeps it alive.
+- **Where it lives — the STANDING CONTRACT, one per peer** (params: the beacon, the peer): its attestations, bindings,
+  holdings and answers within the BEACON'S WINDOW (the steps the beacon keeps, at most 4096 — ~68 h at 60 s a step).
+  A node makes its own standing contract first, so every copy of it may be its own: nothing in it is taken on trust
+  from an earlier update — every record is checked FROM SCRATCH, against the beacon (a related read), and what falls
+  out of the beacon's window is dropped. A holdings commitment stands until the next one (the page re-commits when it
+  opens); the delegate answers at SAMPLED heights (about 1 in 32, picked by the beacon's output and the peer). An
+  answer's hash is checked by whoever holds the challenged piece: a wrong one is a FRAUD PROOF that voids that
+  holdings commitment. A node's place and arc come from its attesters (each says where the peer is and where IT is —
+  its connected peers are its ring neighbours). Standing = what it proved held within the window.
 - **What is at stake: STANDING, earned over time.** A node's weight is its assigned storage PROVED over time
   (GB-days, ramping up), not the disk it shows today; two signatures at one place reset it to zero and forfeit its
   unclaimed keeper rewards (rewards claimable only after a delay, so some are always at stake). A disk cannot be
