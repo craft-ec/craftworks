@@ -1411,6 +1411,16 @@ old key's addresses.
       rollout).
       ECONOMICS (owner decides, later): supply, initial allocation and its vesting, keeper reward size and source,
       reward→stake lock, fees.
+      [x] 9 BEACON MIX + LOT DELAY — BUILT 10-09: each step carries its extender's fresh mix (start(prev, height, mix));
+          the contract always re-runs the newest step's first segment (a lied mix refused at once); tools extend with
+          fresh entropy. The witness lot is drawn at stamp + margin + 2 (`lot_of(stamp, margin)`, margin from the
+          entry's own token: `Source.definition`), so a writer cannot choose its committee by stamp or delay. Beacon 13
+          tests, 4 mutants killed; token 95 tests, 3 mutants killed. Residual (recorded in TOKEN §5a): parallel mix
+          grinding by an extender, a faster core's lead. beacon.wasm 92300b2a, token.wasm 65f67643.
+          LIVE fx/fy: beacon-live fake caught + honest step back on both nodes; token-live witness on these contracts:
+          every honest entry 16/16, the buried fake and its payment refused by all, 3's wallet Ok(16) in 34 ms, burn ACCEPTED.
+          NEW ITEM (found here): BURN A WITNESS WHO SIGNS AN ENTRY THAT DOES NOT HOLD — a fraud proof anyone checks by
+          re-running the witness rule; without it a committee captured by grinding costs nothing.
       [x] 8 OPERATORS / setApprovalForAll (TOKEN §1b) — BUILT + LIVE 10-09: operators list per (token, owner), spans
           kept, append only extends the past; spends by an operator on at their stamp; read only when needed. 94 tests,
           20 mutants killed. token.wasm 6f0d1dca. NEXT (contract/mechanism, buildable now): beacon entropy mix → beacon

@@ -1,5 +1,8 @@
 use super::*;
 
+/// An extender's mix (the same in these tests unless a test says otherwise).
+const M: [u8; 32] = [7; 32];
+
 fn p() -> Params {
     Params { k: 64, segs: 8, sample: 2, window: 2, keep: 5, seed: [3; 32] }
 }
@@ -7,7 +10,7 @@ fn p() -> Params {
 fn chain(n: usize) -> State {
     let mut s = State::default();
     for _ in 0..n {
-        s = s.extend(&p());
+        s = s.extend(&p(), M);
     }
     s
 }
@@ -16,7 +19,7 @@ fn chain(n: usize) -> State {
 /// misses both segments it touches — what a cheater does. `j` the last point: the OUTPUT is forged too.
 fn fake_at(s: &State, j: usize) -> State {
     let p = p();
-    let honest = Step::compute(&p, s.out(&p), s.height() + 1);
+    let honest = Step::compute(&p, s.out(&p), s.height() + 1, M);
     for t in 0u32.. {
         let mut st = honest.clone();
         let pts = st.points.as_mut().unwrap();
@@ -46,10 +49,24 @@ fn honest_steps_are_well_formed_and_carry_points_only_in_the_window() {
 }
 
 #[test]
-fn two_extenders_compute_the_same_step() {
-    let a = chain(2).extend(&p());
-    let b = chain(2).extend(&p());
+fn a_steps_output_is_fixed_by_its_parent_and_its_mix() {
+    // The same parent and mix: the same step (nothing else in it is the extender's to choose).
+    let a = chain(2).extend(&p(), M);
+    let b = chain(2).extend(&p(), M);
     assert_eq!(a, b);
+    // Another mix: another output — a chain computed ahead of time (with mixes of its own) says nothing about the step
+    // an honest extender, with fresh entropy, adds.
+    let c = chain(2).extend(&p(), [8; 32]);
+    assert_ne!(a.out(&p()), c.out(&p()));
+    assert_eq!(check(&p(), &c), Ok(()));
+    // The mix is under the work: a step claiming another mix than the one it was computed with fails its sample.
+    let mut lie = c.clone();
+    lie.steps.last_mut().unwrap().mix = M;
+    assert_eq!(check(&p(), &lie), Err("a sampled segment that does not compute"), "its first segment is always re-run");
+    // And proven by anyone, as any wrong segment.
+    assert_eq!(lie.steps.last().unwrap().find_fraud(&p()).map(|f| f.j), Some(0));
+    assert!(lie.steps.last().unwrap().find_fraud(&p()).unwrap().holds(&p()), "the proof holds standalone");
+    assert!(c.steps.last().unwrap().find_fraud(&p()).is_none(), "control: the honest step has none");
 }
 
 #[test]
@@ -64,7 +81,7 @@ fn it_keeps_only_its_newest_steps_and_a_cut_chain_still_checks() {
 fn a_sampled_segment_that_does_not_compute_is_refused() {
     // Forge EVERY point: whatever the sample picks is wrong.
     let s = chain(2);
-    let mut st = Step::compute(&p(), s.out(&p()), 3);
+    let mut st = Step::compute(&p(), s.out(&p()), 3, M);
     let pts: Vec<[u8; 32]> = (0..8u8).map(|i| [i; 32]).collect();
     st.root = root(&pts);
     st.out = pts[7];
@@ -139,9 +156,9 @@ fn once_proven_a_fake_is_gone_in_every_order_and_stays_gone() {
     let fake = fake_at(&s, 7);
     let fr = fake.steps.last().unwrap().find_fraud(&p()).unwrap();
     // It even runs ahead (it is cheap to make)…
-    let fake_longer = fake.extend(&p()).extend(&p());
+    let fake_longer = fake.extend(&p(), M).extend(&p(), M);
     assert_eq!(fake_longer.height(), 5);
-    let honest = s.extend(&p());
+    let honest = s.extend(&p(), M);
     let mut proof_only = s.clone();
     proof_only.frauds.push(fr.clone());
     let r = all_orders(&[fake_longer.clone(), honest.clone(), proof_only.clone()]);
@@ -163,15 +180,15 @@ fn a_fake_that_kept_the_true_output_loses_only_itself() {
     let s = chain(2);
     let (fake, _) = fake_next(&s);
     let fr = fake.steps.last().unwrap().find_fraud(&p()).unwrap();
-    let on_top = fake.extend(&p()).extend(&p());
-    let honest = s.extend(&p());
+    let on_top = fake.extend(&p(), M).extend(&p(), M);
+    let honest = s.extend(&p(), M);
     let mut proof_only = s.clone();
     proof_only.frauds.push(fr);
     let r = all_orders(&[on_top, honest.clone(), proof_only]);
     assert!(r.windows(2).all(|w| w[0] == w[1]), "one result in every order");
     assert_eq!(r[0].height(), 5);
     assert_eq!(r[0].steps[2].root, honest.steps[2].root, "the honest step at the fake's height");
-    assert_eq!(r[0].steps, honest.extend(&p()).extend(&p()).steps, "exactly the honest chain");
+    assert_eq!(r[0].steps, honest.extend(&p(), M).extend(&p(), M).steps, "exactly the honest chain");
     assert_eq!(r[0].frauds.len(), 1, "the proof kept");
 }
 
@@ -225,10 +242,10 @@ fn a_full_length_beacon_merges() {
     let q = Params { keep: 1440, ..p() };
     let mut s = State::default();
     for _ in 0..1500 {
-        s = s.extend(&q);
+        s = s.extend(&q, M);
     }
     assert_eq!(s.steps.len(), 1440);
-    let longer = s.extend(&q);
+    let longer = s.extend(&q, M);
     assert_eq!(merge(&q, &s, &longer), longer);
     assert_eq!(merge(&q, &longer, &s), longer);
     assert_eq!(check(&q, &longer), Ok(()));

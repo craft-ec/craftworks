@@ -22,17 +22,22 @@ pub struct Source<'a> {
     pub sigs: &'a dyn Fn(&[u8; 32], u64) -> Vec<WitnessSig>,
     pub out: &'a dyn Fn(u64) -> Option<[u8; 32]>,
     pub stake_of: &'a dyn Fn(&[u8; 32], u64) -> Option<witness::Stake>,
+    /// A token's definition (its MARGIN sets when an entry's lot is drawn).
+    pub definition: &'a dyn Fn(&[u8; 32]) -> Option<Definition>,
 }
 
-/// The lot of an entry stamped `stamp`: the claims of its stamp's epoch, under the beacon output one step after it
-/// (nobody knows the committee before the entry is written).
-pub fn lot_of(stamp: u64) -> (u64, u64) {
-    (supply::epoch(stamp), stamp + 1)
+/// The lot of an entry stamped `stamp` in a token of margin `margin`: the claims of its stamp's epoch, under the beacon
+/// output TWO steps past the last height at which that stamp may still be appended (`stamp + margin`, the append rule).
+/// So whoever writes it cannot know its committee in time to choose: not by picking a stamp within the margin, nor by
+/// holding the entry back — and the step after is one a faster machine has not finished before everyone else either.
+pub fn lot_of(stamp: u64, margin: u64) -> (u64, u64) {
+    (supply::epoch(stamp), stamp + margin + 2)
 }
 
 /// Is `e` of `chain` ACCEPTED? `Ok`: how many of its committee signed it.
 pub fn accept(src: &Source, chain: &ChainParams, e: &Entry) -> Result<usize, Why> {
-    let (epoch, height) = lot_of(e.stamp);
+    let margin = (src.definition)(&chain.definition).ok_or("an entry of a token not known")?.margin;
+    let (epoch, height) = lot_of(e.stamp, margin);
     let out = (src.out)(height).ok_or("an entry whose lot is not drawn yet")?;
     let id = chain.id();
     let at = epoch * supply::EPOCH;

@@ -1962,11 +1962,12 @@ impl Lot {
             out: Box::leak(Box::new(|h: u64| (h <= self.drawn).then(|| Lot::out(h)))),
             // Every staker's stake as held at epoch 0's start (height 0) — its claims' epoch.
             stake_of: &|o, h| (h == 0).then(|| (100, vec![pk(o[0])])),
+            definition: &|t| [(id_a(), def()), (id_b(), def_b())].into_iter().find(|x| x.0 == *t).map(|x| x.1),
         }
     }
     /// `n` of the entry's committee sign it (`entry`: what they sign).
     fn sign(&mut self, chain: &ChainParams, e: &Entry, n: usize, entry: [u8; 32]) {
-        let (epoch, h) = wallet::lot_of(e.stamp);
+        let (epoch, h) = wallet::lot_of(e.stamp, def().margin);
         let id = chain.id();
         let members = draw::committee(&id_a(), &Lot::out(h), &id, e.seq, epoch, &self.claims, wallet::COMMITTEE);
         let v = self.sigs.entry((id, e.seq)).or_default();
@@ -2451,4 +2452,21 @@ fn an_operators_list_only_extends_its_past_on_the_owners_current_key() {
     assert_ne!(x, y);
     assert_eq!(operators::merge(&x, &y), operators::merge(&y, &x));
     assert_eq!(operators::fresh(&x, &y, 51, m, 0), Err("an operator record that is not newer"));
+}
+
+#[test]
+fn an_entrys_lot_is_drawn_past_the_last_moment_it_could_be_written() {
+    // Stamped s, appendable while the beacon is at most s + margin: drawn from the output at s + margin + 2.
+    assert_eq!(wallet::lot_of(10, 2), (0, 14));
+    assert_eq!(wallet::lot_of(supply::EPOCH - 1, 2).0, 0, "the claims of its stamp's epoch");
+    let w = three_hops();
+    let mut lot = Lot::new();
+    lot.witness(&w, 1).unwrap();
+    let e = w.get(id_a(), 1).entries[0].clone();
+    assert_eq!(e.stamp + def().margin + 2, wallet::lot_of(e.stamp, def().margin).1);
+    // Not drawn until that output exists.
+    lot.drawn = e.stamp + def().margin + 1;
+    assert_eq!(lot.accept(&w, 1, 0), Err("an entry whose lot is not drawn yet"));
+    lot.drawn = e.stamp + def().margin + 2;
+    assert_eq!(lot.accept(&w, 1, 0), Ok(11));
 }

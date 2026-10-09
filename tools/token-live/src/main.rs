@@ -228,7 +228,7 @@ async fn start_beacon(code: &[u8], x: &str, salt: [u8; 16]) -> Result<[u8; 32]> 
     let p = B::Params { k: 1 << 20, segs: 256, sample: 8, window: 2, keep: 600, seed: *blake3::hash(&salt).as_bytes() };
     let c = || container(code, p.encode());
     let id: [u8; 32] = c().key().id().as_bytes().try_into().unwrap();
-    let first = B::State::default().extend(&p);
+    let first = B::State::default().extend(&p, fresh_mix());
     put(x, c(), B::wire::encode(&first)).await?;
     let (code, x) = (code.to_vec(), x.to_string());
     tokio::spawn(async move {
@@ -237,7 +237,7 @@ async fn start_beacon(code: &[u8], x: &str, salt: [u8; 16]) -> Result<[u8; 32]> 
             if !FAST.load(std::sync::atomic::Ordering::Relaxed) {
                 tokio::time::sleep(Duration::from_millis(1000)).await;
             }
-            s = s.extend(&p);
+            s = s.extend(&p, fresh_mix());
             let _ = put(&x, container(&code, p.encode()), B::wire::encode(&s)).await;
         }
     });
@@ -887,8 +887,8 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
     let mut d = T::State::default();
     push(&mut d, T::Body::Receive { from: did(4), nonce: w.n(50), amount: 3000, cited: r2, ev: T::Evidence::default() }, w.n(50), None, r3);
     println!("9  5 receives the 3000, on Y: {}", w.put_chain(&w.y, ta, 5, &d).await?.0);
-    // Let the lot of the last entry be drawn (the beacon output one step after it).
-    w.until(r3 + 2).await?;
+    // Let the lot of the last entry be drawn (the beacon output two steps past its last append chance).
+    w.until(r3 + td.margin + 3).await?;
 
     // THE WITNESSES and THE WALLETS: everything read from the nodes (blocking reads on a runtime of their own).
     let (x, y, beacon, bc, ch, bid, idlog) = (w.x.clone(), w.y.clone(), w.beacon, bag_code.to_vec(), w.ch, w.beacon, w.idlog);
@@ -919,7 +919,8 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
             let p = params(pool, n);
             wallet::stake_at(&p, &pd2, &read(&p)?, at).ok()
         };
-        let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of };
+        let defs = |t: &[u8; 32]| if *t == ta { Some(td2.clone()) } else if *t == pool { Some(pd2.clone()) } else { None };
+        let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of, definition: &defs };
         let cited = |t: &T::Tok, o: &[u8; 32]| rt.block_on(get(&y, T::ChainParams { code_hash: ch, definition: t.definition, owner: *o, beacon: bid, idlog, item: t.item }.id())).ok().flatten().and_then(|b| T::State::decode(&b));
         // Witness one entry: its committee drawn, each member re-checks it by the rule and signs into its bag on X.
         let witness = |o: u8, seq: u64, who: &str| -> bool {
@@ -929,7 +930,7 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
                 return false;
             };
             let e = s.entries.iter().find(|e| e.seq == seq).unwrap().clone();
-            let (ep, hh) = wallet::lot_of(e.stamp);
+            let (ep, hh) = wallet::lot_of(e.stamp, td2.margin);
             let claims = claims_of(ep);
             let Some(o_) = out_at(hh) else {
                 out.borrow_mut().push(format!("   {who} seq {seq}: its lot is not drawn"));
@@ -1101,4 +1102,12 @@ async fn operators_mode(w: &W) -> Result<()> {
         held(get(&w.y, ip(2, m).id()).await?)
     );
     Ok(())
+}
+
+/// An extender's MIX: fresh entropy for the step it adds (the clock's nanoseconds and a counter, hashed).
+fn fresh_mix() -> [u8; 32] {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    *blake3::hash(&[&t.to_le_bytes()[..], &n.to_le_bytes()].concat()).as_bytes()
 }

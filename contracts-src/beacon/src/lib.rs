@@ -85,11 +85,14 @@ pub fn seg(mut x: [u8; 32], n: u64) -> [u8; 32] {
     x
 }
 
-/// Where step `height` starts.
-pub fn start(prev: &[u8; 32], height: u64) -> [u8; 32] {
+/// Where step `height` starts: after `prev`, with its extender's MIX (fresh entropy: what an honest extender adds so
+/// no one knows the step's output before it is computed — a chain run ahead of time, while nobody extended, is void the
+/// moment an honest step lands).
+pub fn start(prev: &[u8; 32], height: u64, mix: &[u8; 32]) -> [u8; 32] {
     let mut h = blake3::Hasher::new();
     h.update(prev);
     h.update(&height.to_le_bytes());
+    h.update(mix);
     *h.finalize().as_bytes()
 }
 
@@ -156,26 +159,28 @@ pub fn samples(p: &Params, root_: &[u8; 32], prev: &[u8; 32], height: u64) -> Ve
 pub struct Step {
     pub height: u64,
     pub prev: [u8; 32],
+    /// Its extender's fresh entropy (TOKEN §5a: the MIX).
+    pub mix: [u8; 32],
     pub out: [u8; 32],
     pub root: [u8; 32],
     pub points: Option<Vec<[u8; 32]>>,
 }
 
 impl Step {
-    /// COMPUTE step `height` after `prev` — the extender's work (`K` sequential iterations).
-    pub fn compute(p: &Params, prev: [u8; 32], height: u64) -> Self {
-        let mut x = start(&prev, height);
+    /// COMPUTE step `height` after `prev`, with the extender's `mix` — its work (`K` sequential iterations).
+    pub fn compute(p: &Params, prev: [u8; 32], height: u64, mix: [u8; 32]) -> Self {
+        let mut x = start(&prev, height, &mix);
         let mut points = Vec::with_capacity(p.segs as usize);
         for _ in 0..p.segs {
             x = seg(x, p.per_seg());
             points.push(x);
         }
-        Self { height, prev, out: x, root: root(&points), points: Some(points) }
+        Self { height, prev, mix, out: x, root: root(&points), points: Some(points) }
     }
     /// The segment `j`'s two ends, as this step claims them.
     pub fn ends(&self, j: usize) -> Option<([u8; 32], [u8; 32])> {
         let pts = self.points.as_ref()?;
-        let a = if j == 0 { start(&self.prev, self.height) } else { pts[j - 1] };
+        let a = if j == 0 { start(&self.prev, self.height, &self.mix) } else { pts[j - 1] };
         Some((a, pts[j]))
     }
     /// Find a wrong segment by recomputing every one (a verifier's work: in parallel, in practice).
@@ -194,6 +199,7 @@ impl Step {
 pub struct Fraud {
     pub height: u64,
     pub prev: [u8; 32],
+    pub mix: [u8; 32],
     pub root: [u8; 32],
     pub j: u32,
     pub a: [u8; 32],
@@ -206,7 +212,7 @@ impl Fraud {
     pub fn of(s: &Step, j: usize) -> Self {
         let pts = s.points.as_ref().expect("points");
         let (a, b) = s.ends(j).unwrap();
-        Self { height: s.height, prev: s.prev, root: s.root, j: j as u32, a, a_path: if j == 0 { vec![] } else { proof(pts, j - 1) }, b, b_path: proof(pts, j) }
+        Self { height: s.height, prev: s.prev, mix: s.mix, root: s.root, j: j as u32, a, a_path: if j == 0 { vec![] } else { proof(pts, j - 1) }, b, b_path: proof(pts, j) }
     }
     /// It proves what it says: both ends under the root, and the segment between them does not compute.
     pub fn holds(&self, p: &Params) -> bool {
@@ -214,7 +220,7 @@ impl Fraud {
         if j >= p.segs as usize {
             return false;
         }
-        let a_ok = if j == 0 { self.a == start(&self.prev, self.height) } else { verify(&self.root, j - 1, &self.a, &self.a_path) };
+        let a_ok = if j == 0 { self.a == start(&self.prev, self.height, &self.mix) } else { verify(&self.root, j - 1, &self.a, &self.a_path) };
         a_ok && verify(&self.root, j, &self.b, &self.b_path) && seg(self.a, p.per_seg()) != self.b
     }
     fn refutes(&self, s: &Step) -> bool {
@@ -239,10 +245,10 @@ impl State {
     pub fn out(&self, p: &Params) -> [u8; 32] {
         self.steps.last().map_or(p.genesis(), |s| s.out)
     }
-    /// The next step, computed and added (an extender's whole job).
-    pub fn extend(&self, p: &Params) -> State {
+    /// The next step, computed with the extender's fresh `mix` and added (an extender's whole job).
+    pub fn extend(&self, p: &Params, mix: [u8; 32]) -> State {
         let mut next = self.clone();
-        next.steps.push(Step::compute(p, self.out(p), self.height() + 1));
+        next.steps.push(Step::compute(p, self.out(p), self.height() + 1, mix));
         normalize(p, next)
     }
 }
@@ -302,9 +308,10 @@ pub fn check(p: &Params, s: &State) -> Result<(), Why> {
             return Err("a candidate proven fraudulent or already in the chain");
         }
     }
-    // The newest step: its sampled segments re-run (the speed bump).
+    // The newest step: its sampled segments re-run (the speed bump) — and always its FIRST, where its mix enters, so a
+    // step claiming another mix than it was computed with is refused at once (one segment: 1/S of the work).
     if let Some(top) = s.steps.last() {
-        for j in samples(p, &top.root, &top.prev, top.height) {
+        for j in std::iter::once(0).chain(samples(p, &top.root, &top.prev, top.height)) {
             let (a, b) = top.ends(j).ok_or("a step in the fraud window without its points")?;
             if seg(a, p.per_seg()) != b {
                 return Err("a sampled segment that does not compute");
@@ -481,6 +488,7 @@ pub mod wire {
     fn step(v: &mut Vec<u8>, st: &Step) {
         v.extend_from_slice(&st.height.to_le_bytes());
         v.extend_from_slice(&st.prev);
+        v.extend_from_slice(&st.mix);
         v.extend_from_slice(&st.out);
         v.extend_from_slice(&st.root);
         match &st.points {
@@ -506,6 +514,7 @@ pub mod wire {
         for f in &s.frauds {
             v.extend_from_slice(&f.height.to_le_bytes());
             v.extend_from_slice(&f.prev);
+            v.extend_from_slice(&f.mix);
             v.extend_from_slice(&f.root);
             v.extend_from_slice(&f.j.to_le_bytes());
             v.extend_from_slice(&f.a);
@@ -528,6 +537,7 @@ pub mod wire {
         let read = |r: &mut R| -> Option<Step> {
             let height = r.u64()?;
             let prev = r.h()?;
+            let mix = r.h()?;
             let out = r.h()?;
             let root = r.h()?;
             let points = match r.take(1)?[0] {
@@ -535,7 +545,7 @@ pub mod wire {
                 1 => Some(r.hs(4096)?),
                 _ => return None,
             };
-            Some(Step { height, prev, out, root, points })
+            Some(Step { height, prev, mix, out, root, points })
         };
         let mut steps = Vec::with_capacity(n);
         for _ in 0..n {
@@ -555,7 +565,7 @@ pub mod wire {
         }
         let mut frauds = Vec::with_capacity(m);
         for _ in 0..m {
-            frauds.push(Fraud { height: r.u64()?, prev: r.h()?, root: r.h()?, j: r.u32()?, a: r.h()?, a_path: r.hs(16)?, b: r.h()?, b_path: r.hs(16)? });
+            frauds.push(Fraud { height: r.u64()?, prev: r.h()?, mix: r.h()?, root: r.h()?, j: r.u32()?, a: r.h()?, a_path: r.hs(16)?, b: r.h()?, b_path: r.hs(16)? });
         }
         r.0.is_empty().then_some(State { steps, alts, frauds })
     }

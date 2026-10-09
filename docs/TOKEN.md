@@ -380,11 +380,20 @@ are checked):
   racing ahead cannot push it out; above the chain's top too, a step whose parent is not known yet waits for it) — so
   a fraud proof arriving in any order brings the honest step back. A fake that kept the true OUTPUT (forged inside)
   loses only itself: what was built on it is honest and stays.
-- **MIX = entropy nobody controls.** `mix(n)` = the hash of EVERY contribution to the beacon's entropy bag that became
-  final in step `n` (chain data only: an extender cannot leave one out). A contributor cannot steer the result:
-  what their contribution does is unknown until `K` sequential iterations later, after the window has closed.
-- **Randomness is used one step late.** `random(n) = out(n+1)`: a faster machine learns `out(n+1)` a little before
-  everyone else, but anything drawn from it was fixed a whole step earlier.
+- **MIX = fresh entropy in every step** (BUILT 10-09): a step carries its extender's `mix` (32 random bytes), entered
+  where the step starts (`start(prev, height, mix)`), under all `K` iterations. A chain computed AHEAD of time — while
+  nobody extended — is void the moment an honest extender lands a step with entropy no one knew. The contract always
+  re-runs the newest step's first segment, so a step claiming another mix than it was computed with is refused at once
+  (and proven by a fraud proof like any wrong segment). Honestly, what it does NOT stop: an extender trying several
+  mixes for its own step in parallel (each costing the full step) and publishing one it likes — the tie-break (lowest
+  output) lets it win against an honest step at the same height; and an extender with a strictly FASTER core running
+  its own chain knows outputs ahead by its lead. Both are bounded by the lot's delay below, the pace every wallet
+  watches, and the burn of witnesses who sign what does not hold (§7a). (Designed first as a bag of contributions
+  every step must include; dropped: an extender can omit any, so it adds nothing over its own mix.)
+- **Randomness is used late.** `random(n) = out(n+1)`: a faster machine learns `out(n+1)` a little before everyone
+  else, but anything drawn from it was fixed a whole step earlier. A WITNESS LOT goes further (`wallet::lot_of`): an
+  entry stamped `s` may still be appended while the beacon is at `s + margin`, so its committee is drawn from
+  `out(s + margin + 2)` — the writer cannot pick a stamp, or hold the entry back, to choose its committee.
 
 **Its pace, honestly:** height grows with sequential speed, not wall time. One extender with a faster single core (or,
 later, special hardware for blake3) moves it faster for everyone — by that speed ratio, not by how many machines they
@@ -403,7 +412,8 @@ own. So:
 passed the 8-of-2048 sample on the FIRST try) plus a step on it accepted and leading at height 5; its fraud proof
 (found by recomputing in 0.97 s) with the honest step: both nodes at the honest height 4 within 5 s. ONE REAL STEP
 (K = 1.07 × 10⁹, 2048 segments, 8 sampled): computed in 61.5 s on the M4; 65 KB; the node accepted it in 1.2 s. Not
-yet: the entropy MIX (outputs are a clock, not yet unpredictable randomness).
+yet then: the entropy MIX — BUILT 10-09 (each step's extender mix; live on fx/fy, `tools/beacon-live`: the fake step
+caught and the honest step back on both nodes, as before).
 
 **MEASURED (10-08, `tools/beacon-bench`)** — sequential blake3, each iteration hashing the last 32-byte output:
 

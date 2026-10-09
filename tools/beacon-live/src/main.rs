@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
         let p = B::Params { k: 2048 * 524_288, segs: 2048, sample: 8, window: 2, keep: 1440, seed };
         let c = container(&code, p.encode());
         let t = Instant::now();
-        let s = B::State::default().extend(&p);
+        let s = B::State::default().extend(&p, fresh_mix());
         let secs = t.elapsed().as_secs_f64();
         let bytes = B::wire::encode(&s);
         let (said, ms) = put(x, c, bytes.clone()).await?;
@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
     let mut s = B::State::default();
     for (n, ws, name) in [(1, x, "X"), (2, y, "Y"), (3, x, "X")] {
         let t = Instant::now();
-        s = s.extend(&p);
+        s = s.extend(&p, fresh_mix());
         let secs = t.elapsed().as_secs_f64();
         let (said, ms) = put(ws, c(), B::wire::encode(&s)).await?;
         println!("{n}  step {} computed in {secs:.2} s, PUT on {name}: {said} ({ms} ms)", s.height());
@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
     println!("   X holds {} · Y holds {} · same: {}", desc(&gx), desc(&gy), gx.is_some() && gx == gy);
 
     // A FAKE step 4 that slips past the sample: its output forged, the root ground until the sample misses it.
-    let honest4 = B::Step::compute(&p, s.out(&p), 4);
+    let honest4 = B::Step::compute(&p, s.out(&p), 4, fresh_mix());
     let mut fake = None;
     for t in 0u32.. {
         let mut st = honest4.clone();
@@ -120,7 +120,7 @@ async fn main() -> Result<()> {
     let mut fs = s.clone();
     fs.steps.push(fake.clone());
     let fs = B::normalize(&p, fs);
-    let fake_ahead = fs.extend(&p);
+    let fake_ahead = fs.extend(&p, fresh_mix());
     let (said, ms) = put(y, c(), B::wire::encode(&fake_ahead)).await?;
     println!("4  FAKE step 4 (output forged, {tries} root tries to dodge the sample) + an honest step 5 on it, PUT on Y: {said} ({ms} ms)");
     tokio::time::sleep(Duration::from_secs(5)).await;
@@ -145,4 +145,12 @@ async fn main() -> Result<()> {
         println!("   after ~{t} s: X holds {} (honest step 4: {}) · Y holds {} (honest step 4: {}) · same: {}", desc(&gx), honest_top(&gx), desc(&gy), honest_top(&gy), gx.is_some() && gx == gy);
     }
     Ok(())
+}
+
+/// An extender's MIX: fresh entropy for the step it adds (the clock's nanoseconds and a counter, hashed).
+fn fresh_mix() -> [u8; 32] {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    *blake3::hash(&[&t.to_le_bytes()[..], &n.to_le_bytes()].concat()).as_bytes()
 }
