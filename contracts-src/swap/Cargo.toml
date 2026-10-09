@@ -1,0 +1,31 @@
+[package]
+name = "craftworks-swap-contract"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "A DIRECT SWAP (TOKEN §5): an app over the token's escrow — one contract per deal between two parties; both escrow, the verdict crosses them, or refunds whoever came alone after the deadline."
+
+# Own workspace: own lockfile, so the wasm hash (= part of every batch's id) is stable.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+freenet-stdlib = { version = "0.10.0", features = ["contract"], optional = true }
+craftworks-token-contract = { path = "../token", default-features = false }
+craftworks-beacon-contract = { path = "../beacon", default-features = false }
+blake3 = { version = "1", default-features = false }
+
+[features]
+default = ["freenet-main-contract"]
+freenet-main-contract = ["dep:freenet-stdlib"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false

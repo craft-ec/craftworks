@@ -1439,7 +1439,13 @@ old key's addresses.
               REFUSED; all four releases/payouts ACCEPTED; a second payout REFUSED; 1: 750 A / 500 B, 2: 250 A / 500 B.
               (First live run refused everything: I had deployed a token wasm built before the terms-hash change —
               the local check on the node's bytes passed, which pointed at the deployed code. Rebuild before every run.)
-          [ ] 18c SWAPS (offer/lock/fill/claim/refund) moved out the same way
+          [x] 18c SWAPS as their own contracts: an order book = a pool batch (one maker, many takers — fair, no queue
+              jumping); a DIRECT DEAL between two parties = `contracts-src/swap` (swap.wasm e61650df): both escrow → the
+              verdict CROSSES them; one alone → refunded from deadline + GRACE; a verdict once taken is NEVER replaced
+              (a refund paid out then a crossing would pay out of an escrow already gone — caught while writing it).
+              2 tests; 9 mutants killed (1 after a canonical-order case). LIVE fx/fy (`token-live deal`): deal 1
+              crossed (1 got 500 B, 2 got 300 A), all four releases/payouts ACCEPTED; deal 2: a refund before the
+              cutoff REFUSED, at it ACCEPTED, 1's 300 A back; 1: 700 A / 500 B, 2: 300 A / 500 B.
           [ ] 18d the app-specific bodies removed from the token (Order/Settle/Bought, Offer/Lock/Fill/Claim/Refund)
           NOT building lending (owner).
       [x] 17 BATCH-AUCTION POOLS (TOKEN §5) — in parts:

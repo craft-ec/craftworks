@@ -306,6 +306,7 @@ async fn main() -> Result<()> {
             "operators" => operators_mode(&w).await?,
             "misdeed" => misdeed_mode(&w).await?,
             "outputs" => outputs_mode(&w, &bcode).await?,
+            "deal" => deal_mode(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "pool" => pool_mode(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("pool.wasm"))?).await?,
             "standing" => standing_mode(&w, &bcode, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("standing.wasm"))?).await?,
             "witness" => witness_mode(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("bag.wasm"))?).await?,
@@ -1401,6 +1402,68 @@ async fn pool_mode(w: &W, pcode: &[u8]) -> Result<()> {
     let mut again = p1.clone();
     push(&mut again, T::Body::Payout { program: prog, key: k1, amount: g1, ev: T::Evidence::default() }, w.n(34), None, w.now().await?);
     println!("8  1's payout a second time, on Y: {}", w.put_chain(&w.y, tb, 1, &again).await?.0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let bal = |s: Option<T::State>| s.map_or(0, |s| s.balance());
+    println!(
+        "   1: {} A, {} B · 2: {} A, {} B",
+        bal(w.get_chain(&w.x, ta, 1).await?),
+        bal(w.get_chain(&w.y, tb, 1).await?),
+        bal(w.get_chain(&w.x, ta, 2).await?),
+        bal(w.get_chain(&w.y, tb, 2).await?)
+    );
+    Ok(())
+}
+
+/// A DIRECT SWAP, LIVE (TOKEN §5) — an app over escrow: deal 1, both sides escrow and it CROSSES (1 gets 500 B, 2 gets
+/// 300 A); deal 2, only 1 escrows — a refund before the deadline's cutoff is refused, after it taken, 1's 300 back.
+async fn deal_mode(w: &W, scode: &[u8]) -> Result<()> {
+    use craftworks_swap_contract as S;
+    println!("— deal (a direct swap over escrow)");
+    let (da, db) = (w.def(1, b"DealA", 19), w.def(2, b"DealB", 20));
+    let (ta, tb) = (w.put_def(&da).await?, w.put_def(&db).await?);
+    let h0 = w.now().await?;
+    let deal = |deadline: u64| S::Deal { x: ta.into(), party_x: did(1), amount_x: 300, y: tb.into(), party_y: did(2), amount_y: 500, deadline, beacon: w.beacon };
+    let (d1, d2) = (deal(h0 + 30), deal(h0 + 6));
+    let id = |d: &S::Deal| -> [u8; 32] { *container(scode, d.encode()).key().id().as_bytes().first_chunk::<32>().unwrap() };
+    let h = T::escrow::terms_hash(S::TERMS);
+    let mut c1 = T::State::default();
+    push(&mut c1, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h0);
+    push(&mut c1, T::Body::Escrow { program: id(&d1), terms: S::TERMS.to_vec(), amount: 300 }, w.n(7), Some(1), h0);
+    push(&mut c1, T::Body::Escrow { program: id(&d2), terms: S::TERMS.to_vec(), amount: 300 }, w.n(9), Some(1), h0);
+    println!("1  1 escrows 300 A with deal 1 and 300 A with deal 2, on X: {} — balance {}", w.put_chain(&w.x, ta, 1, &c1).await?.0, c1.balance());
+    let mut c2 = T::State::default();
+    push(&mut c2, T::Body::Genesis { amount: 1000 }, w.n(2), Some(2), h0);
+    push(&mut c2, T::Body::Escrow { program: id(&d1), terms: S::TERMS.to_vec(), amount: 500 }, w.n(8), Some(2), h0);
+    println!("2  2 escrows 500 B with deal 1, on Y: {} — balance {}", w.put_chain(&w.y, tb, 2, &c2).await?.0, c2.balance());
+    let (ex, ey, ex2) = ((ta.into(), did(1), w.n(7)), (tb.into(), did(2), w.n(8)), (ta.into(), did(1), w.n(9)));
+    let alone = |r: T::escrow::EscrowRef, a: u128| T::escrow::Section { escrows: vec![(r, a, h)], ..Default::default() };
+    let c = || container(scode, d1.encode());
+    println!("3  deal 1 with 1's escrow, on X: {}", put(&w.x, c(), alone(ex, 300).encode()).await?.0);
+    println!("4  … and 2's (the deal crosses), on X: {}", put(&w.x, c(), alone(ey, 500).encode()).await?.0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let held = get(&w.x, id(&d1)).await?.and_then(|b| T::escrow::Section::decode_prefix(&b).map(|x| x.0)).context("deal 1")?;
+    println!("   deal 1 holds: {} escrows, crossed {}", held.escrows.len(), held == S::crossed(&d1, &ex, &ey));
+    let now = w.now().await?;
+    let mut s1 = c1.clone();
+    push(&mut s1, T::Body::Unescrow { escrow: w.n(7), refund: 0 }, w.n(30), None, now);
+    let mut p1 = T::State::default();
+    push(&mut p1, T::Body::Payout { program: id(&d1), key: S::pay_key(&ex), amount: 500, ev: T::Evidence::default() }, w.n(31), None, now);
+    let mut s2 = c2.clone();
+    push(&mut s2, T::Body::Unescrow { escrow: w.n(8), refund: 0 }, w.n(32), None, now);
+    let mut p2 = T::State::default();
+    push(&mut p2, T::Body::Payout { program: id(&d1), key: S::pay_key(&ey), amount: 300, ev: T::Evidence::default() }, w.n(33), None, now);
+    let r = [w.put_chain(&w.x, ta, 1, &s1).await?.0, w.put_chain(&w.y, tb, 1, &p1).await?.0, w.put_chain(&w.y, tb, 2, &s2).await?.0, w.put_chain(&w.x, ta, 2, &p2).await?.0];
+    println!("5  crossed — 1's release {}, 1 paid 500 B {}, 2's release {}, 2 paid 300 A {}", r[0], r[1], r[2], r[3]);
+    // Deal 2: 1 alone.
+    let c = || container(scode, d2.encode());
+    println!("6  deal 2 with 1's escrow alone, on X: {}", put(&w.x, c(), alone(ex2, 300).encode()).await?.0);
+    let refund = S::refunded(&d2, &ex2, true);
+    println!("7  its refund before the cutoff ({}; now {}), on X: {}", d2.deadline + S::GRACE, w.now().await?, put(&w.x, c(), refund.encode()).await?.0);
+    let at = w.until(d2.deadline + S::GRACE).await?;
+    println!("8  its refund at the cutoff ({at}), on X: {}", put(&w.x, c(), refund.encode()).await?.0);
+    let mut back = s1.clone();
+    push(&mut back, T::Body::Unescrow { escrow: w.n(9), refund: 300 }, w.n(34), None, w.now().await?);
+    println!("9  1's 300 A released from deal 2, on X: {}", w.put_chain(&w.x, ta, 1, &back).await?.0);
     tokio::time::sleep(Duration::from_secs(2)).await;
     let bal = |s: Option<T::State>| s.map_or(0, |s| s.balance());
     println!(
