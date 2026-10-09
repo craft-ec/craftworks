@@ -154,14 +154,22 @@ A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has CO
   metadata — the token does not copy it.
 - **Copies, two kinds.** NUMBERED (`ids: numbered`): copy `n` is its own item (`numbered_item(edition, n)`), one of
   each, `n` from 1 up to the cap. PLAIN: the edition is fungible within itself (`ids: none`, decimals 0) — "3 Silver".
-- **A capped edition mints into ONE supply shard for all time** (`supply::WHOLE`), so its cap and its numbers are
-  checked in one place; every mint-authority change seals it. A mint of a numbered edition names a RANGE (its nonce the
-  first number), so one mint can make many copies (one shard holds 1,024 mints). A chain credits a capped mint with
-  `CappedMint` (for a numbered copy: its number and amount 1).
-- **ADMITTED, not refused.** Two copies of a shard must merge the same everywhere, so a mint past the cap or onto a
-  taken number is kept in the shard but never ADMITTED (`supply::admitted`: in stamp order — a mint new to a copy is
-  stamped near now, so it comes after what was taken before it — each while the total and its numbers fit). Only an
-  admitted mint is credited. A mint authority signing over its own cap only wastes its signature.
+- **Minted on demand, without end** (owner 10-10: "how does it work with 1mil copies?"). A capped edition's mints live
+  in RECORDS by NUMBER, not by time: record `k` holds copies `k·1024 + 1 … (k+1)·1024` (`supply::record_of`; plain
+  copies are numbered too, unseen). A record is made when its first copy is minted, so there is no end — copy
+  5,000,001 is in record 4882 — and each number is in exactly one record, so the cap (numbers stop at it) and "each
+  number once" are checked record by record. A mint names a RANGE of numbers inside one record (its nonce the first);
+  a chain credits it with `CappedMint` (for a numbered copy: its number, amount 1). Plain copies leave the genesis's
+  numbers to it (they start after `genesis_amount`).
+- **Taken numbers.** Two copies of a record must merge the same everywhere, so a mint onto numbers another took is
+  kept but never ADMITTED (`supply::admitted`: in stamp order — a mint new to a copy is stamped near now, so it comes
+  after what was taken before it); only an admitted mint is credited. Two buyers racing for one next number: one is
+  admitted, the other's mint takes the following number. A mint past the cap, outside its record or of no number is
+  refused outright.
+- **A new mint key cannot be back-dated by the old.** A mint-authority change names its FRONTIER — the highest record
+  minted so far, with that record's seal: the frontier record must be exactly as sealed, and no record past it may
+  hold a mint stamped before the change. A record below the frontier already exists, and refuses a back-dated mint
+  by its update rule (a new mint stamped near now).
 - **Who may mint an item's edition.** The token checks the mint authority; that the edition's creator (its
   `genesis_owner`) is the Craftworks item's author is checked by the app where it shows the edition — it already proves
   an item's author from its feed's credentials; a contract cannot read that cheaply.
@@ -730,12 +738,14 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    creator, an outsider's claim of the 5 REFUSED (item M 0 · T 1; B M 95 · creator 5 · outsider 0). `deal` and `pool`
    re-run on the rebuilt wasms: the same verdicts and balances as before.
 
-16. EDITIONS — BUILT 10-10 (§1c): `Definition.cap / collection / item / version`, `Ids::Numbered`, the one shard for
-   all time, admission in stamp order (cap and numbers), `CappedMint`. Token 94 tests; 14 mutants on the new rules,
-   all killed (3 after boundary cases: exactly the cap, a range touching another at one number, stamp vs nonce order).
+16. EDITIONS — BUILT 10-10 (§1c): `Definition.cap / collection / item / version`, `Ids::Numbered`, mints in RECORDS
+   of 1,024 numbers made on demand (first built as one shard for all time — 1,024 mints at most — then split by
+   number the same day so minting on demand has no end), admission in stamp order, the mint key's frontier seal,
+   `CappedMint`. Token 94 tests; 16 mutants on the record rules, all killed (1 after a range put in its later record).
    LIVE fx/fy (`token-live editions`): Gold (numbered, cap 3, 10%) and Silver (plain, cap 5, 5%) of one collection
-   and item; Gold #4 past the cap and 2 Silver past 5 kept in their shards, not admitted, their credits REFUSED; M
-   claiming T's #3 REFUSED; Gold #1 resold through a deal: 90 B to M, 10 B to the creator, the copy to T.
+   and item; Gold #4 and Silver 5–6 past their caps REFUSED; #2 minted again kept, not admitted; an open edition's
+   #1024 in record 0 and #1025 in record 1 ACCEPTED, #1025 in record 0 REFUSED, #1025 credited; M claiming T's #3
+   REFUSED; Gold #1 resold through a deal: 90 B to M, 10 B to the creator, the copy to T. `mint` re-run unchanged.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under

@@ -1459,10 +1459,12 @@ old key's addresses.
           NOT building lending (owner).
       [x] 19 EDITIONS (TOKEN §1c) — DONE 10-10 (owner: collection → editions → copies; per-edition royalty). An edition
           is a definition (its own royalty, so swap/pool pay it unchanged) + cap, collection, item, version;
-          Ids::Numbered (copy n = numbered_item); capped tokens mint into ONE shard for all time (supply::WHOLE),
-          admitted in stamp order within cap and numbers; Body::CappedMint. Item authorship checked app-side (the
-          token cannot read a feed's credentials). token.wasm aa306fef, pool 6332a6bc, swap ccf2bc0e (rebuilt: they
-          decode definitions). 94/9/3 tests; 14 mutants killed. LIVE fx/fy `editions` as in TOKEN step 16.
+          Ids::Numbered (copy n = numbered_item); capped tokens mint by NUMBER into records of 1,024 made on demand
+          (supply::record_of; owner: minting on demand must scale past 1M — first built as one shard for all time,
+          capped at 1,024 mints, replaced the same day); admitted in stamp order; a mint change's FRONTIER record
+          sealed, none past it back-dated; Body::CappedMint. Item authorship checked app-side (the
+          token cannot read a feed's credentials). token.wasm 18710494, pool 8fb6d07c, swap d7ab3996 (rebuilt: they
+          decode definitions). 94/9/3 tests; 16 mutants killed. LIVE fx/fy `editions` as in TOKEN step 16.
           NOT BUILT (asked about, not ordered): royalty shared by holders (needs: royalty paid into escrow for a
           program; owner's open choice — the seller's own copy counted or not); fractional ownership.
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version

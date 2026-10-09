@@ -109,7 +109,8 @@ pub struct Definition {
     /// Its ROYALTY: a share in basis points and the creator (a DID) it goes to — paid on every sale of it (§1b, §4).
     pub royalty: Option<(u16, [u8; 32])>,
     /// Its CAP (TOKEN §1c): the most there will ever be — genesis plus every mint (0: none). A capped token (and every
-    /// numbered one) mints into ONE supply shard for all time ([`supply::WHOLE`]), so the cap is checked in one place.
+    /// numbered one) mints by NUMBER into records of [`supply::RECORD`] copies ([`supply::record_of`]), made as copies
+    /// are minted, without end; a cap stops the numbers.
     pub cap: u128,
     /// Its COLLECTION (§1c): the id it is grouped under (zero: none) — a label readers group by, the definition's
     /// creator's own claim.
@@ -206,10 +207,10 @@ impl Definition {
             _ => return None,
         };
         let (cap, collection, item, version) = (r.u128()?, r.arr()?, r.arr()?, r.arr()?);
-        let ok = r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1 && royalty.is_none_or(|(b, _)| b > 0 && b <= 10_000) && (cap == 0 || genesis_amount <= cap);
+        let ok = r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1 && royalty.is_none_or(|(b, _)| b > 0 && b <= 10_000) && (cap == 0 || genesis_amount <= cap) && (cap == 0 || matches!(ids, Ids::None | Ids::Numbered));
         ok.then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog, mint, freeze, ids, royalty, cap, collection, item, version })
     }
-    /// Minted into ONE shard for all time ([`supply::WHOLE`]): a cap, or numbered copies (each number once, ever).
+    /// Minted by NUMBER into records ([`supply::RECORD`]): a cap, or numbered copies (each number once, ever).
     pub fn capped(&self) -> bool {
         self.cap > 0 || self.ids == Ids::Numbered
     }
@@ -354,8 +355,9 @@ pub enum Body {
     /// A MINT (TOKEN §1a): the mint `nonce` of the token's supply shard of beacon `minted`'s epoch, naming this owner
     /// and `amount` — credited here; appended by anyone (with work), once.
     Mint { nonce: [u8; 16], amount: u128, minted: u64, ev: Evidence },
-    /// A mint of a CAPPED token (§1c): the same, its mint in the token's one [`supply::WHOLE`] shard — and ADMITTED
-    /// there ([`supply::admitted`]). For a numbered token `nonce` is the copy's NUMBER (big-endian) and `amount` 1.
+    /// A mint of a CAPPED token (§1c): the same, its mint in the RECORD of its numbers ([`supply::record_of`]) — and
+    /// ADMITTED there ([`supply::admitted`]). `nonce` is a NUMBER (big-endian): for a numbered token the copy's (and
+    /// `amount` 1); for plain copies the mint's first.
     CappedMint { nonce: [u8; 16], amount: u128, minted: u64, ev: Evidence },
     /// STAKE (TOKEN §7a): `amount` of the balance locked as witness stake — what a witness's draw weighs, and what
     /// its equivocation burns.
@@ -927,7 +929,10 @@ pub fn minted_epochs_from(s: &State, from: usize) -> Vec<u64> {
     for e in s.entries.iter().skip(from) {
         let at = match &e.body {
             Body::Mint { minted, .. } => supply::epoch(*minted),
-            Body::CappedMint { .. } => supply::WHOLE,
+            Body::CappedMint { nonce, .. } => match supply::record_of(u128::from_be_bytes(*nonce)) {
+                Some(k) => k,
+                None => continue,
+            },
             _ => continue,
         };
         if !out.contains(&at) {
@@ -1299,7 +1304,8 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     minted.push(*nonce);
                     // In its epoch's supply shard ALREADY (the shard holds only the mint authority's signed mints).
                     if recent {
-                        let shard = supply(if capped { supply::WHOLE } else { supply::epoch(*at) }).ok_or("the mint's supply shard is not there")?;
+                        let at_shard = if capped { supply::record_of(u128::from_be_bytes(*nonce)).ok_or("a mint of numbers not its record's")? } else { supply::epoch(*at) };
+                        let shard = supply(at_shard).ok_or("the mint's supply shard is not there")?;
                         let ok = if !capped {
                             shard.find(nonce).is_some_and(|m| m.to == p.owner && m.item == p.item && m.amount == *amount && m.stamp == *at)
                         } else if d.ids == Ids::Numbered {

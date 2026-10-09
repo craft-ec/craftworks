@@ -18,9 +18,16 @@ pub fn epoch(stamp: u64) -> u64 {
     stamp / EPOCH
 }
 
-/// The ONE shard of a CAPPED token (TOKEN §1c: a cap, or numbered copies) — every mint of it, for all time, so its cap
-/// and its numbers are checked in one place. Its "epoch" in the shard's params.
-pub const WHOLE: u64 = u64::MAX;
+/// A capped token's (TOKEN §1c: a cap, or numbered copies) mints live in RECORDS by NUMBER, not by time: record `k`
+/// holds the mints of copies `k·RECORD + 1 ..= (k+1)·RECORD` (plain copies are numbered too, unseen), each number in
+/// exactly one record — so its cap and its numbers are checked record by record, and records are made only as copies
+/// are minted, without end. Its index is the shard params' "epoch".
+pub const RECORD: u128 = 1024;
+
+/// The record holding copy `n` (from 1; `None`: 0, or past the last record an index can name).
+pub fn record_of(n: u128) -> Option<u64> {
+    n.checked_sub(1).and_then(|x| u64::try_from(x / RECORD).ok())
+}
 
 /// One MINT: `amount` to the chain of DID `to`, named by `nonce`, at beacon `stamp`, signed by k of the mint set.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -121,40 +128,59 @@ pub fn seal(s: &Shard, before: u64) -> Option<[u8; 32]> {
     (!prefix.mints.is_empty()).then(|| *blake3::hash(&prefix.encode()).as_bytes())
 }
 
-/// Every mint in the shard is of its epoch (a capped token's: the [`WHOLE`] shard), for something, and signed by the
-/// mint set current at its stamp — and every MINT CHANGE whose span holds this epoch (the whole shard: every change)
-/// sealed what it holds before that change, exactly. Over its cap or overlapping numbers is NOT refused here (two
-/// copies of a shard must merge the same everywhere): such a mint is simply not [`admitted`].
+/// Every mint in the shard is of its epoch (a capped token's: within its record's numbers), for something, and signed
+/// by the mint set current at its stamp — and the mint changes SEALED it: an epoch shard, every change whose span holds
+/// its epoch, exactly; a record, every change naming it as its FRONTIER (the highest record it names) exactly, and
+/// every change whose frontier is below it (or none) found NO mint of it stamped before the change — a replaced set
+/// can never mint new numbers into its past. (A record below a frontier that already exists refuses a back-dated mint
+/// by its update rule, [`fresh`].) Overlapping numbers are NOT refused here (two copies of a record must merge the
+/// same everywhere): such a mint is simply not [`admitted`].
 pub fn holds(p: &Params, d: &crate::Definition, chain: &authority::Chain, s: &Shard) -> Result<(), Why> {
-    if d.capped() != (p.epoch == WHOLE) {
-        return Err("a shard of the other kind than its token's");
-    }
+    let ranged = d.capped();
     let mut from = 0u64;
     for c in chain.changes.iter().filter(|c| c.role == authority::Role::Mint) {
-        let upto = epoch(c.stamp);
-        let spans = p.epoch == WHOLE || (from..=upto).contains(&p.epoch);
-        if spans && seal(s, c.stamp) != c.closed.iter().find(|(e, _)| *e == p.epoch).map(|(_, h)| *h) {
-            return Err("a shard that is not what its mint authority sealed");
+        let named = c.closed.iter().find(|(e, _)| *e == p.epoch).map(|(_, h)| *h);
+        if ranged {
+            let frontier = c.closed.iter().map(|(e, _)| *e).max();
+            if frontier == Some(p.epoch) && seal(s, c.stamp) != named {
+                return Err("a shard that is not what its mint authority sealed");
+            }
+            if frontier.is_none_or(|f| p.epoch > f) && seal(s, c.stamp).is_some() {
+                return Err("a shard that is not what its mint authority sealed");
+            }
+        } else {
+            let upto = epoch(c.stamp);
+            if (from..=upto).contains(&p.epoch) && seal(s, c.stamp) != named {
+                return Err("a shard that is not what its mint authority sealed");
+            }
+            from = upto;
         }
-        from = upto;
     }
     for m in &s.mints {
-        if p.epoch != WHOLE && epoch(m.stamp) != p.epoch {
-            return Err("a mint of another epoch");
-        }
         if m.amount == 0 {
             return Err("a mint of nothing");
         }
-        // Its item as its token's kind: none for a fungible one; a unique one's made by this mint, and one of it; a
-        // numbered one's mint names a RANGE of numbers (its nonce the first, from 1), no item.
-        let item_ok = match d.ids {
-            crate::Ids::None => m.item == [0; 32],
-            crate::Ids::Unique => m.amount == 1 && m.item == crate::unique_item(&p.definition, p.epoch, &m.nonce),
-            crate::Ids::Many => m.item != [0; 32],
-            crate::Ids::Numbered => m.item == [0; 32] && u128::from_be_bytes(m.nonce) >= 1 && u128::from_be_bytes(m.nonce).checked_add(m.amount).is_some(),
-        };
-        if !item_ok {
-            return Err("a mint of an item not its token's kind");
+        if ranged {
+            // Its numbers: a range in this record, past the genesis (plain copies count it), within the cap.
+            let first = u128::from_be_bytes(m.nonce);
+            let last = first.checked_add(m.amount - 1).ok_or("a mint of numbers past the last")?;
+            if first <= d.genesis_amount || record_of(first) != Some(p.epoch) || record_of(last) != Some(p.epoch) || (d.cap > 0 && last > d.cap) || m.item != [0; 32] {
+                return Err("a mint of numbers not its record's");
+            }
+        } else {
+            if epoch(m.stamp) != p.epoch {
+                return Err("a mint of another epoch");
+            }
+            // Its item as its token's kind: none for a fungible one; a unique one's made by this mint, and one of it.
+            let item_ok = match d.ids {
+                crate::Ids::None => m.item == [0; 32],
+                crate::Ids::Unique => m.amount == 1 && m.item == crate::unique_item(&p.definition, p.epoch, &m.nonce),
+                crate::Ids::Many => m.item != [0; 32],
+                crate::Ids::Numbered => false,
+            };
+            if !item_ok {
+                return Err("a mint of an item not its token's kind");
+            }
         }
         let (mint, _) = authority::sets_at(&p.definition, (&d.mint, &d.freeze), chain, m.stamp)?;
         let set = mint.ok_or("a mint with no mint authority")?;
@@ -165,42 +191,31 @@ pub fn holds(p: &Params, d: &crate::Definition, chain: &authority::Chain, s: &Sh
     Ok(())
 }
 
-/// The mints of a capped token's shard that COUNT, in one order every reader shares — stamp, then nonce (a mint new
-/// to a copy is stamped near now, so it comes after what was taken before it): each while the total stays within the
-/// cap (from the genesis); a numbered mint, while its numbers are within the cap and none minted before. An uncapped
-/// shard: all.
+/// The mints of a capped token's record that COUNT, in one order every reader shares — stamp, then nonce (a mint new
+/// to a copy is stamped near now, so it comes after what was taken before it): each whose numbers none before took.
+/// (Its numbers are within the cap and its record by [`holds`].) An uncapped shard: all.
 pub fn admitted<'a>(d: &crate::Definition, s: &'a Shard) -> Vec<&'a Mint> {
     let mut order: Vec<&Mint> = s.mints.iter().collect();
     if !d.capped() {
         return order;
     }
     order.sort_by_key(|m| (m.stamp, m.nonce));
-    let mut total = d.genesis_amount;
+    let span = |m: &Mint| (u128::from_be_bytes(m.nonce), u128::from_be_bytes(m.nonce) + (m.amount - 1));
     let mut out: Vec<&Mint> = Vec::new();
     for m in order {
-        let Some(t) = total.checked_add(m.amount) else { continue };
-        if d.cap > 0 && t > d.cap {
+        let (a, z) = span(m);
+        if out.iter().any(|o| {
+            let (oa, oz) = span(o);
+            a <= oz && oa <= z
+        }) {
             continue;
         }
-        if d.ids == crate::Ids::Numbered {
-            let (a, z) = (u128::from_be_bytes(m.nonce), u128::from_be_bytes(m.nonce) + (m.amount - 1));
-            if d.cap > 0 && z > d.cap {
-                continue;
-            }
-            if out.iter().any(|o| {
-                let oa = u128::from_be_bytes(o.nonce);
-                a <= oa + (o.amount - 1) && oa <= z
-            }) {
-                continue;
-            }
-        }
-        total = t;
         out.push(m);
     }
     out
 }
 
-/// A numbered token's ADMITTED mint holding copy `n`.
+/// A capped token's ADMITTED mint holding number `n` (a numbered copy), in its record's shard.
 pub fn covering<'a>(d: &crate::Definition, s: &'a Shard, n: u128) -> Option<&'a Mint> {
     admitted(d, s).into_iter().find(|m| {
         let a = u128::from_be_bytes(m.nonce);

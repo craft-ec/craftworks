@@ -1399,8 +1399,9 @@ async fn deal_mode(w: &W, scode: &[u8]) -> Result<()> {
 }
 
 /// EDITIONS (TOKEN §1c), LIVE: a collection "Pixel Cats" of two editions of one Craftworks item — GOLD (numbered, cap
-/// 3, 10% to its creator) and SILVER (plain copies, cap 5, 5%). Mints past a cap or onto taken numbers are kept in the
-/// edition's one shard but never admitted, so never credited. A Gold copy resold through a deal pays Gold's own royalty.
+/// 3, 10% to its creator) and SILVER (plain copies, cap 5, 5%), and an OPEN numbered edition whose copy #1025 makes
+/// its second record. Mints are kept in records of 1,024 numbers, made as copies are minted; a mint past a cap is
+/// refused, one onto taken numbers kept but never admitted. A Gold copy resold through a deal pays Gold's own royalty.
 async fn editions(w: &W, scode: &[u8]) -> Result<()> {
     use craftworks_swap_contract as S;
     println!("— editions (Pixel Cats: Gold numbered of 3, Silver plain of 5)");
@@ -1416,13 +1417,23 @@ async fn editions(w: &W, scode: &[u8]) -> Result<()> {
         x.sigs = vec![(0, key(60).sign(&x.message(d)).to_bytes())];
         x
     };
-    let whole = |d: [u8; 32]| container(&w.code, T::supply::Params { code_hash: w.ch, definition: d, beacon: w.beacon, epoch: T::supply::WHOLE }.encode());
+    let record = |d: [u8; 32], k: u64| container(&w.code, T::supply::Params { code_hash: w.ch, definition: d, beacon: w.beacon, epoch: k }.encode());
     let gs = T::supply::Shard { mints: vec![mint(&g, m, 1, 2), mint(&g, t, 3, 1)] };
-    println!("1  Gold #1–2 minted to M, #3 to T (one shard for all time), on X: {}", put(&w.x, whole(g), gs.encode()).await?.0);
-    let more = T::supply::merge(&gs, &T::supply::Shard { mints: vec![mint(&g, 8, 4, 1)] }).unwrap();
-    println!("2  … and #4 to 8 (past the cap of 3), on X: {} — admitted {} of {} mints", put(&w.x, whole(g), more.encode()).await?.0, T::supply::admitted(&gd, &more).len(), more.mints.len());
-    let ss = T::supply::Shard { mints: vec![mint(&sv, m, 1, 4), mint(&sv, t, 2, 2)] };
-    println!("3  Silver: 4 to M, then 2 to T (past 5), on X: {} — admitted {:?}", put(&w.x, whole(sv), ss.encode()).await?.0, T::supply::admitted(&sd, &ss).iter().map(|x| x.amount).collect::<Vec<_>>());
+    println!("1  Gold #1–2 minted to M, #3 to T (record 0), on X: {}", put(&w.x, record(g, 0), gs.encode()).await?.0);
+    let past = T::supply::merge(&gs, &T::supply::Shard { mints: vec![mint(&g, 8, 4, 1)] }).unwrap();
+    println!("2  … and #4 to 8 (past the cap of 3), on X: {}", put(&w.x, record(g, 0), past.encode()).await?.0);
+    let taken = T::supply::merge(&gs, &T::supply::Shard { mints: vec![mint(&g, 8, 2, 1)] }).unwrap();
+    println!("2b … and #2 again to 8 (taken), on X: {} — admitted {} of {} mints", put(&w.x, record(g, 0), taken.encode()).await?.0, T::supply::admitted(&gd, &taken).len(), taken.mints.len());
+    let ss = T::supply::Shard { mints: vec![mint(&sv, m, 1, 4)] };
+    println!("3  Silver: 4 to M (numbers 1–4, unseen), on X: {}", put(&w.x, record(sv, 0), ss.encode()).await?.0);
+    let over = T::supply::merge(&ss, &T::supply::Shard { mints: vec![mint(&sv, t, 5, 2)] }).unwrap();
+    println!("3b … and 2 to T (5–6, past 5), on X: {}", put(&w.x, record(sv, 0), over.encode()).await?.0);
+    let od = ed(b"Open", 24, T::Ids::Numbered, 0, 1000);
+    let op = w.put_def(&od).await?;
+    println!("3c an OPEN numbered edition: #1024 in record 0 {}, #1025 in record 1 {}, #1025 put in record 0 {}",
+        put(&w.x, record(op, 0), T::supply::Shard { mints: vec![mint(&op, m, 1024, 1)] }.encode()).await?.0,
+        put(&w.x, record(op, 1), T::supply::Shard { mints: vec![mint(&op, t, 1025, 1)] }.encode()).await?.0,
+        put(&w.y, record(op, 0), T::supply::Shard { mints: vec![mint(&op, t, 1025, 1)] }.encode()).await?.0);
     let r = w.now().await?;
     let copy = |o: u8, n: u128| T::ChainParams { item: T::numbered_item(&g, n), ..w.chain(g, o) };
     let credit = |n: [u8; 16], amount: u128| {
@@ -1435,7 +1446,9 @@ async fn editions(w: &W, scode: &[u8]) -> Result<()> {
     println!("6  M claims T's #3, on Y: {}", put(&w.y, container(&w.code, copy(m, 3).encode()), credit(3u128.to_be_bytes(), 1).encode()).await?.0);
     println!("7  8's #4 (past the cap), on Y: {}", put(&w.y, container(&w.code, copy(8, 4).encode()), credit(4u128.to_be_bytes(), 1).encode()).await?.0);
     println!("8  M's 4 Silver, on Y: {}", w.put_chain(&w.y, sv, m, &credit(1u128.to_be_bytes(), 4)).await?.0);
-    println!("9  T's 2 Silver (past the cap), on Y: {}", w.put_chain(&w.y, sv, t, &credit(2u128.to_be_bytes(), 2)).await?.0);
+    println!("9  T's 2 Silver (past the cap), on Y: {}", w.put_chain(&w.y, sv, t, &credit(5u128.to_be_bytes(), 2)).await?.0);
+    let oc = T::ChainParams { item: T::numbered_item(&op, 1025), ..w.chain(op, t) };
+    println!("9b T's Open #1025 credited from record 1, on Y: {}", put(&w.y, container(&w.code, oc.encode()), credit(1025u128.to_be_bytes(), 1).encode()).await?.0);
     // M resells Gold #1 to T for 100 B through a deal: Gold's 10% to the creator.
     let tb = w.put_def(&w.def(t, b"PayEd", 23)).await?;
     let it = T::Tok { definition: g, item: T::numbered_item(&g, 1) };

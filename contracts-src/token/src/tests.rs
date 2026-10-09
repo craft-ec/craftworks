@@ -2585,83 +2585,112 @@ fn ed_mint(d: &Definition, to: u8, first: u128, amount: u128, at: u64) -> supply
     m.sigs = vec![(0, key(60).sign(&m.message(&did_of(d))).to_bytes())];
     m
 }
-fn whole(d: &Definition) -> supply::Params {
-    supply::Params { code_hash: CODE, definition: did_of(d), beacon: BEACON, epoch: supply::WHOLE }
+fn record(d: &Definition, k: u64) -> supply::Params {
+    supply::Params { code_hash: CODE, definition: did_of(d), beacon: BEACON, epoch: k }
 }
 
 #[test]
-fn a_capped_edition_admits_its_mints_in_one_order_within_its_cap_and_numbers() {
+fn a_capped_edition_mints_by_number_into_records_made_as_needed() {
     let (g, sv) = (gold(), silver());
     assert_eq!(Definition::decode(&g.encode()), Some(g.clone()));
     assert!(g.capped() && sv.capped() && !def().capped());
     assert_eq!(Definition::decode(&Definition { genesis_amount: 101, ..sv.clone() }.encode()), None, "a genesis over its cap");
+    assert_eq!(Definition::decode(&Definition { ids: Ids::Unique, ..sv.clone() }.encode()), None, "a cap on unique items");
+    assert_eq!((supply::record_of(0), supply::record_of(1), supply::record_of(1024), supply::record_of(1025)), (None, Some(0), Some(0), Some(1)));
     let none = authority::Chain::default();
-    // GOLD: 1–3 to M, 4–5 to T; then 3 (taken: the edge of 1–3), 9–11 (past 10), 6 — the last admitted, the others not.
-    let s = supply::Shard { mints: vec![ed_mint(&g, M, 1, 3, 5), ed_mint(&g, T, 4, 2, 6), ed_mint(&g, 8, 3, 1, 7), ed_mint(&g, 8, 9, 3, 8), ed_mint(&g, 9, 6, 1, 9)] };
-    let s = supply::Shard { mints: { let mut v = s.mints; v.sort_by_key(|m| m.nonce); v.dedup_by_key(|m| m.nonce); v } };
-    assert_eq!(supply::holds(&whole(&g), &g, &none, &s), Ok(()), "over the cap or overlapping: kept, not admitted");
+    // GOLD (cap 10): 1–3 to M, 4–5 to T, 6 to 9; 3 again (the edge of 1–3) — kept, not admitted.
+    let s = supply::Shard { mints: vec![ed_mint(&g, M, 1, 3, 5), ed_mint(&g, 8, 3, 1, 7), ed_mint(&g, T, 4, 2, 6), ed_mint(&g, 9, 6, 1, 9)] };
+    assert_eq!(supply::holds(&record(&g, 0), &g, &none, &s), Ok(()));
     let ad: Vec<(u128, u128)> = supply::admitted(&g, &s).iter().map(|m| (u128::from_be_bytes(m.nonce), m.amount)).collect();
     assert_eq!(ad, vec![(1, 3), (4, 2), (6, 1)]);
     assert_eq!(supply::covering(&g, &s, 2).map(|m| m.to), Some(did(M)));
     assert_eq!(supply::covering(&g, &s, 5).map(|m| m.to), Some(did(T)));
     assert_eq!(supply::covering(&g, &s, 7), None);
-    assert_eq!(supply::covering(&g, &s, 10), None, "minted past the cap: not admitted");
-    assert_eq!(supply::holds(&supply::Params { epoch: 0, ..whole(&g) }, &g, &none, &s), Err("a shard of the other kind than its token's"));
-    assert_eq!(supply::holds(&whole(&g), &g, &none, &supply::Shard { mints: vec![ed_mint(&g, M, 0, 1, 5)] }), Err("a mint of an item not its token's kind"), "no copy 0");
-    // SILVER: 60 then 40 — exactly the cap — then 30 and 1 not; in STAMP order (by nonce the 30 would come before the 40).
-    let s = supply::Shard { mints: vec![ed_mint(&sv, M, 1, 60, 5), ed_mint(&sv, T, 3, 40, 6), ed_mint(&sv, T, 2, 30, 7), ed_mint(&sv, T, 4, 1, 8)] };
-    assert_eq!(supply::holds(&whole(&sv), &sv, &none, &s), Ok(()));
-    assert_eq!(supply::admitted(&sv, &s).iter().map(|m| m.amount).collect::<Vec<_>>(), vec![60, 40]);
-    // The one shard for all time is sealed by EVERY mint change.
+    let one = |m: supply::Mint, k: u64, d: &Definition| supply::holds(&record(d, k), d, &none, &supply::Shard { mints: vec![m] });
+    assert_eq!(one(ed_mint(&g, 8, 10, 1, 5), 0, &g), Ok(()), "the last number");
+    assert_eq!(one(ed_mint(&g, 8, 10, 2, 5), 0, &g), Err("a mint of numbers not its record's"), "past the cap");
+    assert_eq!(one(ed_mint(&g, M, 0, 1, 5), 0, &g), Err("a mint of numbers not its record's"), "no copy 0");
+    // OPEN (no cap): records without end — 1024 in record 0, 1025 in record 1, never one mint across two.
+    let open = Definition { cap: 0, ..g.clone() };
+    assert_eq!(one(ed_mint(&open, M, 1024, 1, 5), 0, &open), Ok(()));
+    assert_eq!(one(ed_mint(&open, M, 1025, 1, 5), 1, &open), Ok(()));
+    assert_eq!(one(ed_mint(&open, M, 1025, 1, 5), 0, &open), Err("a mint of numbers not its record's"), "in another record");
+    assert_eq!(one(ed_mint(&open, M, 1024, 2, 5), 0, &open), Err("a mint of numbers not its record's"), "across two records");
+    assert_eq!(one(ed_mint(&open, M, 1020, 10, 5), 1, &open), Err("a mint of numbers not its record's"), "across two records, put in the later");
+    assert_eq!(one(ed_mint(&open, M, 5_000_001, 1, 5), 4882, &open), Ok(()), "copy five million and one");
+    // SILVER (plain, cap 100): 1–60, 61–100 — exactly the cap — 101 not; admitted in STAMP order (the 62–63 stamped
+    // first takes its numbers before 61–100, though its nonce is higher).
+    let s = supply::Shard { mints: vec![ed_mint(&sv, M, 1, 60, 5), ed_mint(&sv, T, 61, 40, 6), ed_mint(&sv, 8, 62, 2, 4)] };
+    assert_eq!(supply::holds(&record(&sv, 0), &sv, &none, &s), Ok(()));
+    assert_eq!(supply::admitted(&sv, &s).iter().map(|m| m.amount).collect::<Vec<_>>(), vec![2, 60]);
+    assert_eq!(one(ed_mint(&sv, T, 61, 40, 6), 0, &sv), Ok(()), "exactly the cap");
+    assert_eq!(one(ed_mint(&sv, T, 61, 41, 6), 0, &sv), Err("a mint of numbers not its record's"), "one past it");
+    let given = Definition { genesis_amount: 10, ..sv.clone() };
+    assert_eq!(one(ed_mint(&given, T, 10, 1, 6), 0, &given), Err("a mint of numbers not its record's"), "the genesis's numbers");
+    assert_eq!(one(ed_mint(&given, T, 11, 1, 6), 0, &given), Ok(()));
+    // A mint change seals its FRONTIER record exactly, and no record past it holds a mint from before it.
     let mut c = authority::Change { seq: 0, role: authority::Role::Mint, next: Some(authority::KeySet { k: 1, keys: vec![key(61).verifying_key().to_bytes()] }), stamp: 7, closed: vec![], cap: 0, sigs: vec![] };
     let sealed = |c: &mut authority::Change, closed: Vec<(u64, [u8; 32])>| {
         c.closed = closed;
-        c.sigs = vec![(0, key(60).sign(&c.message(&did_of(&sv))).to_bytes())];
+        c.sigs = vec![(0, key(60).sign(&c.message(&did_of(&open))).to_bytes())];
         authority::Chain { changes: vec![c.clone()] }
     };
-    let two = supply::Shard { mints: s.mints[..2].to_vec() };
-    assert_eq!(supply::holds(&whole(&sv), &sv, &sealed(&mut c, vec![(supply::WHOLE, supply::seal(&two, 7).unwrap())]), &two), Ok(()));
-    assert_eq!(supply::holds(&whole(&sv), &sv, &sealed(&mut c, vec![]), &two), Err("a shard that is not what its mint authority sealed"));
-    let backdated = supply::Shard { mints: [two.mints.clone(), vec![ed_mint(&sv, T, 4, 10, 6)]].concat() };
-    assert_eq!(supply::holds(&whole(&sv), &sv, &sealed(&mut c, vec![(supply::WHOLE, supply::seal(&two, 7).unwrap())]), &backdated), Err("a shard that is not what its mint authority sealed"), "the old key, into its past");
-    assert_eq!(supply::holds(&whole(&sv), &sv, &sealed(&mut c, vec![(supply::WHOLE, supply::seal(&two, 7).unwrap())]), &s), Err("a mint not signed by the mint authority"), "the old key after its change");
+    let r0 = supply::Shard { mints: vec![ed_mint(&open, M, 1, 3, 5)] };
+    let seal0 = vec![(0, supply::seal(&r0, 7).unwrap())];
+    assert_eq!(supply::holds(&record(&open, 0), &open, &sealed(&mut c, seal0.clone()), &r0), Ok(()));
+    let back0 = supply::Shard { mints: vec![ed_mint(&open, M, 1, 3, 5), ed_mint(&open, 8, 4, 1, 6)] };
+    assert_eq!(supply::holds(&record(&open, 0), &open, &sealed(&mut c, seal0.clone()), &back0), Err("a shard that is not what its mint authority sealed"), "into the frontier, back-dated");
+    let back1 = supply::Shard { mints: vec![ed_mint(&open, 8, 1025, 1, 6)] };
+    assert_eq!(supply::holds(&record(&open, 1), &open, &sealed(&mut c, seal0.clone()), &back1), Err("a shard that is not what its mint authority sealed"), "past the frontier, back-dated");
+    assert_eq!(supply::holds(&record(&open, 0), &open, &sealed(&mut c, vec![]), &r0), Err("a shard that is not what its mint authority sealed"), "no frontier: nothing before it");
+    let mut after = supply::Mint { to: did(8), item: [0; 32], amount: 1, nonce: 1025u128.to_be_bytes(), stamp: 8, sigs: vec![] };
+    after.sigs = vec![(0, key(61).sign(&after.message(&did_of(&open))).to_bytes())];
+    assert_eq!(supply::holds(&record(&open, 1), &open, &sealed(&mut c, seal0), &supply::Shard { mints: vec![after] }), Ok(()), "the new key, after");
 }
 
 #[test]
 fn a_numbered_copy_is_credited_once_to_whom_its_mint_names() {
-    let g = gold();
+    let g = Definition { cap: 0, ..gold() };
     let gid = did_of(&g);
-    let shard = supply::Shard { mints: vec![ed_mint(&g, M, 1, 3, 5), ed_mint(&g, T, 4, 2, 6), ed_mint(&g, 8, 9, 3, 8)] };
-    let copy = |owner: u8, n: u128, amount: u128, body: fn([u8; 16], u128, u64) -> Body| {
-        let p = ChainParams { item: numbered_item(&gid, n), ..at(gid, owner) };
+    let r0 = supply::Shard { mints: vec![ed_mint(&g, M, 1, 3, 5), ed_mint(&g, T, 4, 2, 6), ed_mint(&g, 8, 2, 1, 7)] };
+    let r1 = supply::Shard { mints: vec![ed_mint(&g, T, 1025, 1, 6)] };
+    let records = |k: u64| match k {
+        0 => Some(r0.clone()),
+        1 => Some(r1.clone()),
+        _ => None,
+    };
+    let copy = |owner: u8, n: u128, amount: u128, at: u64, body: fn([u8; 16], u128, u64) -> Body| {
+        let p = ChainParams { item: numbered_item(&gid, n), ..at_(gid, owner) };
         let mut s = State::default();
-        put_at(&mut s, 1, body(n.to_be_bytes(), amount, if n >= 4 { 6 } else { 5 }), None, 10);
-        check(&p, &g, &s, &|_, _| None, &|e| (e == supply::WHOLE).then(|| shard.clone()), Some(&log(owner)), &Extra::NONE)
+        put_at(&mut s, 1, body(n.to_be_bytes(), amount, at), None, 10);
+        check(&p, &g, &s, &|_, _| None, &records, Some(&log(owner)), &Extra::NONE)
     };
     let capped: fn([u8; 16], u128, u64) -> Body = |nonce, amount, minted| Body::CappedMint { nonce, amount, minted, ev: Evidence::default() };
     let plain: fn([u8; 16], u128, u64) -> Body = |nonce, amount, minted| Body::Mint { nonce, amount, minted, ev: Evidence::default() };
-    assert_eq!(copy(M, 2, 1, capped), Ok(()), "copy #2, M's");
-    assert_eq!(copy(T, 5, 1, capped), Ok(()), "copy #5, T's");
-    assert_eq!(copy(M, 5, 1, capped), Err("a mint that is not in its supply shard"), "T's copy claimed by M");
-    assert_eq!(copy(8, 9, 1, capped), Err("a mint that is not in its supply shard"), "past the cap");
-    assert_eq!(copy(M, 2, 2, capped), Err("a mint that is not in its supply shard"), "two of one copy");
-    assert_eq!(copy(M, 2, 1, plain), Err("a mint of the other kind than its token's"));
+    assert_eq!(copy(M, 2, 1, 5, capped), Ok(()), "copy #2, M's");
+    assert_eq!(copy(T, 5, 1, 6, capped), Ok(()), "copy #5, T's");
+    assert_eq!(copy(T, 1025, 1, 6, capped), Ok(()), "copy #1025, in record 1");
+    assert_eq!(copy(M, 5, 1, 6, capped), Err("a mint that is not in its supply shard"), "T's copy claimed by M");
+    assert_eq!(copy(8, 2, 1, 7, capped), Err("a mint that is not in its supply shard"), "a number taken before");
+    assert_eq!(copy(M, 2, 2, 5, capped), Err("a mint that is not in its supply shard"), "two of one copy");
+    assert_eq!(copy(8, 2049, 1, 5, capped), Err("the mint's supply shard is not there"), "a record never made");
+    assert_eq!(copy(M, 2, 1, 5, plain), Err("a mint of the other kind than its token's"));
     // A copy's chain is its own: copy #2's mint credited in copy #3's chain is not its mint.
     let p3 = ChainParams { item: numbered_item(&gid, 3), ..at(gid, M) };
     let mut s = State::default();
     put_at(&mut s, 1, Body::CappedMint { nonce: 2u128.to_be_bytes(), amount: 1, minted: 5, ev: Evidence::default() }, None, 10);
-    assert_eq!(check(&p3, &g, &s, &|_, _| None, &|e| (e == supply::WHOLE).then(|| shard.clone()), Some(&log(M)), &Extra::NONE), Err("a mint that is not in its supply shard"));
-    // SILVER: plain copies; the admitted 60 credited, the 50 past the cap not.
+    assert_eq!(check(&p3, &g, &s, &|_, _| None, &records, Some(&log(M)), &Extra::NONE), Err("a mint that is not in its supply shard"));
+    // SILVER: plain copies — the admitted 60 credited; a mint whose numbers another took first, not.
     let sv = silver();
     let sid = did_of(&sv);
-    let sh = supply::Shard { mints: vec![ed_mint(&sv, M, 1, 60, 5), ed_mint(&sv, T, 2, 50, 6)] };
+    let sh = supply::Shard { mints: vec![ed_mint(&sv, M, 1, 60, 5), ed_mint(&sv, T, 50, 20, 6)] };
     let take = |owner: u8, n: u128, amount: u128, at: u64| {
         let mut s = State::default();
         put_at(&mut s, 1, Body::CappedMint { nonce: n.to_be_bytes(), amount, minted: at, ev: Evidence::default() }, None, 10);
-        check(&at_(sid, owner), &sv, &s, &|_, _| None, &|e| (e == supply::WHOLE).then(|| sh.clone()), Some(&log(owner)), &Extra::NONE)
+        check(&at_(sid, owner), &sv, &s, &|_, _| None, &|k| (k == 0).then(|| sh.clone()), Some(&log(owner)), &Extra::NONE)
     };
     assert_eq!(take(M, 1, 60, 5), Ok(()));
-    assert_eq!(take(T, 2, 50, 6), Err("a mint that is not in its supply shard"), "past the cap");
+    assert_eq!(take(T, 50, 20, 6), Err("a mint that is not in its supply shard"), "numbers taken");
 }
 fn at_(token: [u8; 32], owner: u8) -> ChainParams {
     at(token, owner)
