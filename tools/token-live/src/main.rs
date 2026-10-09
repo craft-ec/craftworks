@@ -303,6 +303,7 @@ async fn main() -> Result<()> {
             "operators" => operators_mode(&w).await?,
             "misdeed" => misdeed_mode(&w).await?,
             "outputs" => outputs_mode(&w, &bcode).await?,
+            "pool" => pool_mode(&w).await?,
             "standing" => standing_mode(&w, &bcode, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("standing.wasm"))?).await?,
             "witness" => witness_mode(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("bag.wasm"))?).await?,
             "cut" => cut(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("block.wasm"))?).await?,
@@ -955,7 +956,7 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
             wallet::stake_at(&p, &pd2, &read(&p)?, at).ok()
         };
         let defs = |t: &[u8; 32]| if *t == ta { Some(td2.clone()) } else if *t == pool { Some(pd2.clone()) } else { None };
-        let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of, definition: &defs };
+        let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of, definition: &defs, pools: &|_| None, orders: &|_| None };
         let cited = |t: &T::Tok, o: &[u8; 32]| rt.block_on(get(&y, T::ChainParams { code_hash: ch, definition: t.definition, owner: *o, beacon: bid, idlog, item: t.item }.id())).ok().flatten().and_then(|b| T::State::decode(&b));
         // Witness one entry: its committee drawn, each member re-checks it by the rule and signs into its bag on X.
         let witness = |o: u8, seq: u64, who: &str| -> bool {
@@ -1321,5 +1322,82 @@ async fn standing_mode(w: &W, bcode: &[u8], scode: &[u8]) -> Result<()> {
     }
     println!("3  a record with one answer moved to another height (re-signed), on Y: {}", put(&w.y, c(), S::codec::encode(&bad)).await?.0);
     println!("4  the record, on Y: {}", put(&w.y, c(), S::codec::encode(&rec)).await?.0);
+    Ok(())
+}
+
+/// A BATCH-AUCTION POOL, LIVE (TOKEN §5): a pool of tokens A and B; 1 sells 300 A at ≥ 2, 2 buys A with 500 B at ≤ 3,
+/// each an `Order` in its own chain, both pointed to from the batch's registry. Past the batch's close an order is
+/// refused; past its settle height the registry takes nothing more. The batch cleared (`clear::clear`: 250 A at 2) and
+/// settled — each order's `Settle` and `Bought` — and a settlement before the settle height refused.
+async fn pool_mode(w: &W) -> Result<()> {
+    use T::{clear, pool};
+    println!("— pool");
+    let (da, db) = (w.def(1, b"PoolA", 17), w.def(2, b"PoolB", 18));
+    let (ta, tb) = (w.put_def(&da).await?, w.put_def(&db).await?);
+    let h0 = w.now().await?;
+    let pl = pool::Pool { code_hash: w.ch, a: ta.into(), b: tb.into(), epoch: 12, grace: 4, beacon: w.beacon };
+    println!("1  the pool (A, B, batches of 12 steps, grace 4), on X: {}", put(&w.x, container(&w.code, pl.encode()), pl.encode()).await?.0);
+    let e = pl.batch(h0);
+    let (close, settle) = pl.window(e);
+    let one = clear::PRICE_ONE;
+    let mut c1 = T::State::default();
+    push(&mut c1, T::Body::Genesis { amount: 1000 }, w.n(1), Some(1), h0);
+    push(&mut c1, T::Body::Order { pool: pl.id(), epoch: e, close, settle, side: 0, amount: 300, limit: 2 * one }, w.n(7), Some(1), h0);
+    println!("2  1 sells 300 A at ≥ 2 in batch {e} (closes {close}, settles {settle}), on X: {} — balance {}", w.put_chain(&w.x, ta, 1, &c1).await?.0, c1.balance());
+    let mut c2 = T::State::default();
+    push(&mut c2, T::Body::Genesis { amount: 1000 }, w.n(2), Some(2), h0);
+    push(&mut c2, T::Body::Order { pool: pl.id(), epoch: e, close, settle, side: 1, amount: 500, limit: 3 * one }, w.n(8), Some(2), h0);
+    println!("3  2 buys A with 500 B at ≤ 3, on Y: {} — balance {}", w.put_chain(&w.y, tb, 2, &c2).await?.0, c2.balance());
+    let rp = pool::Params::of(&pl, e);
+    let mut refs = vec![(T::Tok::from(ta), did(1), w.n(7)), (T::Tok::from(tb), did(2), w.n(8))];
+    refs.sort();
+    println!("4  both orders in batch {e}'s registry, on X: {}", put(&w.x, container(&w.code, rp.encode()), pool::Registry { orders: refs.clone() }.encode()).await?.0);
+    let at_close = w.until(close).await?;
+    let mut late = c1.clone();
+    push(&mut late, T::Body::Order { pool: pl.id(), epoch: e, close, settle, side: 0, amount: 100, limit: one }, w.n(9), Some(1), at_close);
+    println!("5  an order of 1 at the close ({at_close}), on X: {}", w.put_chain(&w.x, ta, 1, &late).await?.0);
+    let early = {
+        let mut x = c1.clone();
+        push(&mut x, T::Body::Settle { order: w.n(7), refund: 50 }, w.n(30), None, w.now().await?);
+        x
+    };
+    println!("6  1's settlement before the batch settles, on X: {}", w.put_chain(&w.x, ta, 1, &early).await?.0);
+    let now = w.until(settle).await?;
+    let mut after = refs.clone();
+    after.push((T::Tok::from(tb), did(3), w.n(1)));
+    after.sort();
+    let _ = put(&w.x, container(&w.code, rp.encode()), pool::Registry { orders: after }.encode()).await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let held = get(&w.x, rp.id()).await?.and_then(|b| pool::Registry::decode(&b)).map_or(0, |r| r.orders.len());
+    println!("7  a pointer added after the settle height ({now}): the registry holds {held} orders");
+    // The batch cleared, as anyone computes it from the registry's orders (in its order).
+    let reg = get(&w.x, rp.id()).await?.and_then(|b| pool::Registry::decode(&b)).context("the registry")?;
+    let orders: Vec<clear::Order> = reg.orders.iter().map(|r| if r.0 == T::Tok::from(ta) { clear::Order { side: clear::Side::Sell, amount: 300, limit: 2 * one } } else { clear::Order { side: clear::Side::Buy, amount: 500, limit: 3 * one } }).collect();
+    let cl = clear::clear(&orders);
+    let fill = |tok: [u8; 32]| reg.orders.iter().position(|r| r.0 == T::Tok::from(tok)).map(|i| cl.fills[i]).unwrap();
+    let (f1, f2) = (fill(ta), fill(tb));
+    println!("8  cleared at {:?}: 1 paid {} A, got {} B; 2 paid {} B, got {} A", cl.price.map(|p| p as f64 / one as f64), f1.paid, f1.got, f2.paid, f2.got);
+    let mut s1 = c1.clone();
+    push(&mut s1, T::Body::Settle { order: w.n(7), refund: 300 - f1.paid }, w.n(30), None, now);
+    let mut b1 = T::State::default();
+    push(&mut b1, T::Body::Bought { tok: ta.into(), order: w.n(7), settle, got: f1.got, ev: T::Evidence::default() }, w.n(31), None, now);
+    let mut s2 = c2.clone();
+    push(&mut s2, T::Body::Settle { order: w.n(8), refund: 500 - f2.paid }, w.n(32), None, now);
+    let mut b2 = T::State::default();
+    push(&mut b2, T::Body::Bought { tok: tb.into(), order: w.n(8), settle, got: f2.got, ev: T::Evidence::default() }, w.n(33), None, now);
+    let r = [w.put_chain(&w.x, ta, 1, &s1).await?.0, w.put_chain(&w.y, tb, 1, &b1).await?.0, w.put_chain(&w.y, tb, 2, &s2).await?.0, w.put_chain(&w.x, ta, 2, &b2).await?.0];
+    println!("9  settled — 1's refund {}, 1's purchase {}, 2's refund {}, 2's purchase {}", r[0], r[1], r[2], r[3]);
+    let mut twice = b1.clone();
+    push(&mut twice, T::Body::Bought { tok: ta.into(), order: w.n(7), settle, got: f1.got, ev: T::Evidence::default() }, w.n(34), None, w.now().await?);
+    println!("10 1's purchase received a second time, on Y: {}", w.put_chain(&w.y, tb, 1, &twice).await?.0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let bal = |s: Option<T::State>| s.map_or(0, |s| s.balance());
+    println!(
+        "   1: {} A, {} B · 2: {} A, {} B",
+        bal(w.get_chain(&w.x, ta, 1).await?),
+        bal(w.get_chain(&w.y, tb, 1).await?),
+        bal(w.get_chain(&w.x, ta, 2).await?),
+        bal(w.get_chain(&w.y, tb, 2).await?)
+    );
     Ok(())
 }

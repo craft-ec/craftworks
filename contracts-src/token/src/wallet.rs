@@ -28,6 +28,9 @@ pub struct Source<'a> {
     pub stake_of: &'a dyn Fn(&[u8; 32], u64) -> Option<witness::Stake>,
     /// A token's definition (its MARGIN sets when an entry's lot is drawn).
     pub definition: &'a dyn Fn(&[u8; 32]) -> Option<Definition>,
+    /// A POOL by its id, and a batch's ORDER REGISTRY (what a settlement is checked against: TOKEN §5).
+    pub pools: &'a dyn Fn(&[u8; 32]) -> Option<crate::pool::Pool>,
+    pub orders: &'a dyn Fn(&crate::pool::Params) -> Option<crate::pool::Registry>,
 }
 
 /// The LOT of an entry: (the claims' epoch, the beacon height its output is drawn at). Fixed by the entry's PLACE —
@@ -127,6 +130,8 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
         return Err("an entry stamped too long ago");
     }
     timed(d, e.stamp, &prefix, e)?;
+    // A SETTLEMENT: exactly its batch's clearing.
+    settled(src, p, s, e, chain)?;
     match i.checked_sub(1) {
         Some(j) => {
             accept(src, p, &s.entries[j], j.checked_sub(1).map(|k| &s.entries[k]))?;
@@ -138,6 +143,55 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
         accept(src, &c, &x, before.as_ref())?;
     }
     Ok(e.hash())
+}
+
+/// A BATCH, as witnesses clear it (TOKEN §5): each order its registry points to that is an `Order` of this pool and
+/// epoch, in the chain of the token its side gives, and ACCEPTED — in the registry's canonical order — cleared. A
+/// pointer to anything else (no such chain, no such order, one not accepted) is not in the batch, the same for every
+/// witness that reads it; a witness that fails a read clears otherwise and does not sign.
+#[allow(clippy::type_complexity)]
+pub fn batch(src: &Source, pl: &crate::pool::Pool, e: u64, base: &ChainParams, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<(Vec<crate::pool::OrderRef>, crate::clear::Cleared), Why> {
+    let reg = (src.orders)(&crate::pool::Params::of(pl, e)).ok_or("a batch whose registry is not read")?;
+    let mut refs = Vec::new();
+    let mut orders = Vec::new();
+    for r in &reg.orders {
+        let (tok, owner, nonce) = r;
+        let Some(c) = chain(tok, owner) else { continue };
+        let Some(i) = c.entries.iter().position(|x| &x.nonce == nonce) else { continue };
+        let x = &c.entries[i];
+        let Body::Order { pool, epoch, side, amount, limit, .. } = &x.body else { continue };
+        let gives = if *side == 0 { pl.a } else { pl.b };
+        if *pool != pl.id() || *epoch != e || *tok != gives {
+            continue;
+        }
+        if accept(src, &base.at(*tok, *owner), x, i.checked_sub(1).map(|j| &c.entries[j])).is_err() {
+            continue;
+        }
+        refs.push(*r);
+        orders.push(crate::clear::Order { side: if *side == 0 { crate::clear::Side::Sell } else { crate::clear::Side::Buy }, amount: *amount, limit: *limit });
+    }
+    Ok((refs, crate::clear::clear(&orders)))
+}
+
+/// A SETTLEMENT entry (`Settle` in the order's chain, `Bought` in the other token's) is exactly its batch's clearing for
+/// its order — its refund what the order did not spend, its purchase what it got (an order not in the batch: all back,
+/// nothing bought). Any other entry: nothing to check.
+fn settled(src: &Source, p: &ChainParams, s: &State, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<(), Why> {
+    // The order: (its token, its chain, its nonce), and what the entry says of it.
+    let (tok, held, nonce, says_refund, says_got) = match &e.body {
+        Body::Settle { order, refund } => (p.tok(), s.clone(), *order, Some(*refund), None),
+        Body::Bought { tok, order, got, .. } => (*tok, chain(tok, &p.owner).ok_or("the order's chain is not there")?, *order, None, Some(*got)),
+        _ => return Ok(()),
+    };
+    let x = held.entries.iter().find(|x| x.nonce == nonce).ok_or("a settlement of no order")?;
+    let Body::Order { pool, epoch, amount, .. } = &x.body else { return Err("a settlement of no order") };
+    let pl = (src.pools)(pool).ok_or("a settlement of an unknown pool")?;
+    let (refs, cleared) = batch(src, &pl, *epoch, p, chain)?;
+    let fill = refs.iter().position(|r| *r == (tok, p.owner, nonce)).map(|i| cleared.fills[i]).unwrap_or_default();
+    if says_refund.is_some_and(|r| r != amount - fill.paid) || says_got.is_some_and(|g| g != fill.got) {
+        return Err("a settlement that is not its batch's clearing");
+    }
+    Ok(())
 }
 
 /// THE WATCH (TOKEN §7a): the EQUIVOCATIONS in one place's witness signatures (`sigs`: its bag) by the stakers of

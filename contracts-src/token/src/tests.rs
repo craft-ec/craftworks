@@ -1942,6 +1942,8 @@ struct Lot {
     drawn: u64,
     /// The beacon's height as the witnesses read it.
     now: u64,
+    /// Batches' order registries (TOKEN §5), by their params.
+    regs: Vec<(pool::Params, pool::Registry)>,
 }
 impl Lot {
     fn new() -> Lot {
@@ -1952,7 +1954,7 @@ impl Lot {
                 draw::StakeClaim { owner: [n; 32], amount: 100, epoch: 0, key: kb, sig: key(n).sign(&draw::StakeClaim::message(&pool, &[n; 32], 100, 0, &kb)).to_bytes() }
             })
             .collect();
-        Lot { claims, sigs: HashMap::new(), drawn: 100, now: 100 }
+        Lot { claims, sigs: HashMap::new(), drawn: 100, now: 100, regs: vec![] }
     }
     fn out(h: u64) -> [u8; 32] {
         *blake3::hash(&h.to_le_bytes()).as_bytes()
@@ -1966,6 +1968,8 @@ impl Lot {
             // Every staker's stake as held at epoch 0's start (height 0) — its claims' epoch.
             stake_of: &|o, h| (h == 0).then(|| (100, vec![pk(o[0])])),
             definition: &|t| [(id_a(), def()), (id_b(), def_b())].into_iter().find(|x| x.0 == *t).map(|x| x.1),
+            pools: &|id| (*id == a_pool().id()).then(a_pool),
+            orders: Box::leak(Box::new(|rp: &pool::Params| self.regs.iter().find(|x| x.0 == *rp).map(|x| x.1.clone()))),
         }
     }
     /// `n` of the entry's committee sign it (`entry`: what they sign).
@@ -1981,18 +1985,26 @@ impl Lot {
     }
     /// The committee witnesses every entry of `owner`'s chain of token A, in order — each only if the rule lets it.
     fn witness(&mut self, w: &Two, owner: u8) -> Result<(), Why> {
-        let p = at(id_a(), owner);
-        let s = w.get(id_a(), owner).clone();
+        self.witness_t(w, id_a(), owner)
+    }
+    fn may(&self, w: &Two, owner: u8, seq: u64) -> Result<[u8; 32], Why> {
+        self.may_t(w, id_a(), owner, seq)
+    }
+    /// As `witness` / `may`, in the chains of token `t` (A or B).
+    fn witness_t(&mut self, w: &Two, t: [u8; 32], owner: u8) -> Result<(), Why> {
+        let p = at(t, owner);
+        let s = w.get(t, owner).clone();
         for (i, e) in s.entries.iter().enumerate() {
-            let h = self.may(w, owner, e.seq)?;
+            let h = self.may_t(w, t, owner, e.seq)?;
             self.sign(&p, e, i.checked_sub(1).map(|j| &s.entries[j]), wallet::NEED, h);
         }
         Ok(())
     }
-    fn may(&self, w: &Two, owner: u8, seq: u64) -> Result<[u8; 32], Why> {
-        let p = at(id_a(), owner);
-        let holds = |s: &State| check(&p, &def(), s, &|t, o| w.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(owner)), None);
-        wallet::may_witness(&self.src(), &p, &def(), w.get(id_a(), owner), seq, self.now, &holds, &|t, o| w.0.get(&(t.definition, *o)).cloned())
+    fn may_t(&self, w: &Two, t: [u8; 32], owner: u8, seq: u64) -> Result<[u8; 32], Why> {
+        let p = at(t, owner);
+        let d = if t == id_a() { def() } else { def_b() };
+        let holds = |s: &State| check(&p, &d, s, &|t, o| w.0.get(&(t.definition, *o)).cloned(), &|_| None, Some(&log(owner)), None);
+        wallet::may_witness(&self.src(), &p, &d, w.get(t, owner), seq, self.now, &holds, &|t, o| w.0.get(&(t.definition, *o)).cloned())
     }
     fn accept(&self, w: &Two, owner: u8, seq: u64) -> Result<usize, Why> {
         let s = w.get(id_a(), owner);
@@ -2737,4 +2749,83 @@ fn a_batch_registry_freezes_at_its_settle_height() {
     let unsorted = pool::Registry { orders: vec![r2.orders[0], r1.orders[0]] };
     let bytes = unsorted.encode();
     assert_eq!(pool::Registry::decode(&bytes).is_some(), r2.orders[0] < r1.orders[0], "kept only in its canonical order");
+}
+
+#[test]
+fn a_settlement_is_witnessed_only_as_its_batch_clears() {
+    let pl = a_pool();
+    let (close, settle) = pl.window(0);
+    let p2 = 2 * clear::PRICE_ONE;
+    // 1 sells 300 A at ≥ 2 (its chain of A); 2 buys A with 500 B at ≤ 3 (its chain of B).
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 7, Body::Order { pool: pl.id(), epoch: 0, close, settle, side: 0, amount: 300, limit: p2 }, Some(1), 3);
+    put_at(w.chain(id_b(), 2), 1, Body::Genesis { amount: 1000 }, Some(2), 0);
+    put_at(w.chain(id_b(), 2), 8, Body::Order { pool: pl.id(), epoch: 0, close, settle, side: 1, amount: 500, limit: 3 * clear::PRICE_ONE }, Some(2), 3);
+    let mut lot = Lot::new();
+    let refs = vec![(Tok::from(id_a()), did(1), nonce(7)), (Tok::from(id_b()), did(2), nonce(8))];
+    let mut sorted = refs.clone();
+    sorted.sort();
+    lot.regs.push((pool::Params::of(&pl, 0), pool::Registry { orders: sorted }));
+    lot.witness_t(&w, id_a(), 1).unwrap();
+    lot.witness_t(&w, id_b(), 2).unwrap();
+    // Cleared at 2: 250 A trade. 1: 50 A back, 500 B bought. 2: nothing back, 250 A bought.
+    let settle_in = |w: &Two, t: [u8; 32], owner: u8, n: u8, body: Body| {
+        let mut x = Two(w.0.clone());
+        put_at(x.chain(t, owner), n, body, None, settle);
+        x
+    };
+    let ok = settle_in(&w, id_a(), 1, 30, Body::Settle { order: nonce(7), refund: 50 });
+    assert_eq!(ok.check(id_a(), 1), Ok(()));
+    lot.now = settle;
+    assert!(lot.may_t(&ok, id_a(), 1, 3).is_ok(), "1's refund: 50");
+    let wrong = settle_in(&w, id_a(), 1, 30, Body::Settle { order: nonce(7), refund: 60 });
+    assert_eq!(lot.may_t(&wrong, id_a(), 1, 3), Err("a settlement that is not its batch's clearing"));
+    let got = |g: u128| settle_in(&w, id_b(), 1, 31, Body::Bought { tok: id_a().into(), order: nonce(7), settle, got: g, ev: Evidence::default() });
+    assert!(lot.may_t(&got(500), id_b(), 1, 0).is_ok(), "1 bought 500 B");
+    assert_eq!(lot.may_t(&got(501), id_b(), 1, 0), Err("a settlement that is not its batch's clearing"));
+    let theirs = |g: u128| settle_in(&w, id_a(), 2, 32, Body::Bought { tok: id_b().into(), order: nonce(8), settle, got: g, ev: Evidence::default() });
+    assert!(lot.may_t(&theirs(250), id_a(), 2, 0).is_ok(), "2 bought 250 A");
+    assert!(lot.may_t(&settle_in(&w, id_b(), 2, 33, Body::Settle { order: nonce(8), refund: 0 }), id_b(), 2, 3).is_ok(), "2: nothing back");
+    // An order NOT ACCEPTED is not in the batch: 2's order unwitnessed → nothing crosses → 1's whole 300 back.
+    let mut half = Lot::new();
+    half.regs = lot.regs.clone();
+    half.witness_t(&w, id_a(), 1).unwrap();
+    half.now = settle;
+    assert_eq!(half.may_t(&ok, id_a(), 1, 3), Err("a settlement that is not its batch's clearing"));
+    assert!(half.may_t(&settle_in(&w, id_a(), 1, 30, Body::Settle { order: nonce(7), refund: 300 }), id_a(), 1, 3).is_ok());
+    // A junk pointer (a chain that is not there) changes nothing.
+    let mut junk = lot.regs[0].1.clone();
+    junk.orders.push((Tok::from(id_b()), did(9), nonce(1)));
+    junk.orders.sort();
+    lot.regs[0].1 = junk;
+    assert!(lot.may_t(&ok, id_a(), 1, 3).is_ok());
+}
+
+#[test]
+fn a_batch_counts_only_its_own_orders_in_the_right_chains() {
+    let pl = a_pool();
+    let (close, settle) = pl.window(0);
+    let (close1, settle1) = pl.window(1);
+    let one = clear::PRICE_ONE;
+    // 1 (A): sells 300 at ≥ 2 in batch 0; ALSO an order for batch 1, and a "buy" in its A chain (a buy gives B).
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 7, Body::Order { pool: pl.id(), epoch: 0, close, settle, side: 0, amount: 300, limit: 2 * one }, Some(1), 3);
+    put_at(w.chain(id_a(), 1), 10, Body::Order { pool: pl.id(), epoch: 1, close: close1, settle: settle1, side: 0, amount: 300, limit: one }, Some(1), 3);
+    put_at(w.chain(id_a(), 1), 11, Body::Order { pool: pl.id(), epoch: 0, close, settle, side: 1, amount: 300, limit: 3 * one }, Some(1), 3);
+    put_at(w.chain(id_b(), 2), 1, Body::Genesis { amount: 1000 }, Some(2), 0);
+    put_at(w.chain(id_b(), 2), 8, Body::Order { pool: pl.id(), epoch: 0, close, settle, side: 1, amount: 500, limit: 3 * one }, Some(2), 3);
+    let mut lot = Lot::new();
+    let mut refs = vec![(Tok::from(id_a()), did(1), nonce(7)), (Tok::from(id_a()), did(1), nonce(10)), (Tok::from(id_a()), did(1), nonce(11)), (Tok::from(id_b()), did(2), nonce(8))];
+    refs.sort();
+    lot.regs.push((pool::Params::of(&pl, 0), pool::Registry { orders: refs }));
+    lot.witness_t(&w, id_a(), 1).unwrap();
+    lot.witness_t(&w, id_b(), 2).unwrap();
+    lot.now = settle;
+    // Only 7 and 8 are batch 0's: the same clearing as with them alone — 1's 50 A back.
+    let mut x = Two(w.0.clone());
+    put_at(x.chain(id_a(), 1), 30, Body::Settle { order: nonce(7), refund: 50 }, None, settle);
+    let seq = x.get(id_a(), 1).entries.last().unwrap().seq;
+    assert!(lot.may_t(&x, id_a(), 1, seq).is_ok());
 }

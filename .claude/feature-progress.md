@@ -1419,7 +1419,7 @@ old key's addresses.
           grinding by an extender, a faster core's lead. beacon.wasm 92300b2a, token.wasm 65f67643.
           LIVE fx/fy: beacon-live fake caught + honest step back on both nodes; token-live witness on these contracts:
           every honest entry 16/16, the buried fake and its payment refused by all, 3's wallet Ok(16) in 34 ms, burn ACCEPTED.
-      [ ] 17 BATCH-AUCTION POOLS (TOKEN §5) — in parts:
+      [x] 17 BATCH-AUCTION POOLS (TOKEN §5) — in parts:
           [x] 17a CLEARING (`clear.rs`): limit orders (an LP's curve = a ladder of them, built by its client), ONE
               uniform price maximising matched A, ties → smaller imbalance → lower price; short side whole, long side
               pro rata (rounded down, the rest to the earliest); buyers pay ceil, sellers get floor (B dust stays in the
@@ -1427,9 +1427,16 @@ old key's addresses.
           [x] 17b the POOL (kind 8, state = params) + ORDER entry (a debit held for (pool, epoch), stamped before close)
               + SETTLE (refund, once, from settle) + BOUGHT (credit in the other token's chain, once, cites the order)
               + the ORDER REGISTRY (kind 9) frozen at settle; no cut over an open order. 108 tests; 13 mutants killed.
-          [ ] 17c SETTLE entries (credit the bought token, refund the unfilled) + the witness rule recomputing the
-              clearing from the registry
-          [ ] 17d live fx/fy
+          [x] 17c THE WITNESS RULE for settlements: `wallet::batch` (the registry's pointers that are an ACCEPTED Order
+              of this pool and epoch, in the chain of the token its side gives — anything else skipped alike by
+              everyone; a failed read → that witness does not sign) cleared; `Settle`/`Bought` only as that clearing.
+              110 tests; 7 mutants killed (2 after a membership test).
+          [x] 17d LIVE fx/fy (`token-live pool`): pool + two orders + registry ACCEPTED; an order at the close and a
+              settlement before settle REFUSED; a pointer after settle ignored (2 held); cleared at 2 (250 A for 500 B);
+              all four settlements ACCEPTED; a second purchase REFUSED; balances 1: 750 A / 500 B, 2: 250 A / 500 B —
+              both tokens conserved. (Witness recomputation itself: unit-tested; live witnessing needs the staking
+              setup of the witness mode.)
+      [x] 17 BATCH-AUCTION POOLS — DONE 10-09.
       [x] 16 REPRODUCIBLE CONTRACT BUILDS — FIXED 10-09: token and standing were NOT reproducible — the same commit built
           in two checkouts gave two hashes (standing d4a58a72 / 87552c5a vs 09cfdbc8 committed; token ff19c4ca vs
           caed367c). Measured cause: location, not content — no path is in the bytes (strings diff shows code layout

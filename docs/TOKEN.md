@@ -40,7 +40,7 @@ Every behaviour of the blockchain token standards, and how this standard gives i
 | Staking | ✅ | `lock` to a staking definition; its rewards a supply rule of that definition (§4a, §6) |
 | Escrow, two-party loans | ✅ | locks with release conditions (§4) |
 | Order book | ✅ | standing `offer`s in the pair's offers bag, filled with the maker offline (§4) |
-| AMM / pooled liquidity | ✅ per epoch | batch auctions: one uniform price per epoch, LPs as curve orders (§5) |
+| AMM / pooled liquidity | ✅ per epoch | batch auctions: one uniform price per epoch, LPs as ladders of limit orders (§5) |
 | Pooled lending | ⚠️ per epoch | lenders' and borrowers' offers matched per epoch by the same batch clearing; liquidation by beacon-timed conditions — designed after pools work |
 | Composability (contracts calling contracts) | ✅ by reading | a contract validates against OTHER contracts' state (measured, step 1) and anyone appends what those states prove; logic beyond that runs in pure functions anyone recomputes, or delegates. Not: one transaction changing many contracts atomically — two-phase (§4) or batches (§5) instead |
 | Global transaction order | ✗ by choice | not needed by any row above; it is the expensive central part |
@@ -677,7 +677,10 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    fx/fy (`token-live vest`): 2 vests 3 100 at h+6 and 200 at h+10 (2's balance 700 at once); step 0 claimed early
    REFUSED, at its time ACCEPTED, again REFUSED; step 1 claiming 300 REFUSED, as scheduled ACCEPTED; 3's balance 300.
 13. The Craftworks token: contributions as locks, payouts as claims.
-14. Batch-auction pools.
+14. BATCH-AUCTION POOLS — BUILT 10-09 (§5): `clear.rs` (one uniform price, pro rata, nothing created), `pool.rs` (the
+   pool, the frozen order registry), `Order` / `Settle` / `Bought`, and the witness rule that recomputes a batch's
+   clearing (`wallet::batch`). LIVE fx/fy (`token-live pool`): 250 A for 500 B cleared at 2 and settled; both tokens
+   conserved; late orders, early settlements and a second purchase refused.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under
