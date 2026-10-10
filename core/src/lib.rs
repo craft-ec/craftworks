@@ -1002,6 +1002,11 @@ mod js {
                 table: (!table.is_empty()).then(|| table.to_string()),
             })
         }
+        /// WITNESS an entry (`WitnessSign`: the home site only; the delegate records the place first and never signs
+        /// another entry there): `entry` (its hash, or a statement's root) at (`chain`, `seq`).
+        pub fn frames_witness_sign(&mut self, chain: &[u8], seq: f64, entry: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::WitnessSign { chain: b32(chain)?, seq: seq as u64, entry: b32(entry)? })
+        }
         /// Sign a TOKEN ENTRY's message (`TokenSign`: the home site only, a message under the token's entry domain).
         pub fn frames_token_sign(&mut self, message: &[u8]) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::TokenSign { message: message.to_vec() })

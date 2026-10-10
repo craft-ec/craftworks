@@ -15,7 +15,7 @@ pub struct WitnessSig {
 
 impl WitnessSig {
     pub fn message(chain: &[u8; 32], seq: u64, entry: &[u8; 32]) -> Vec<u8> {
-        [&b"craftworks token witness"[..], chain, &seq.to_le_bytes(), entry].concat()
+        craftworks_identity::witness_message(chain, seq, entry)
     }
     pub fn signed_by(&self, key: &[u8; 32]) -> bool {
         sig_ok(key, &Self::message(&self.chain, self.seq, &self.entry), &self.sig)

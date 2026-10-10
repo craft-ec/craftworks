@@ -1819,7 +1819,15 @@ old key's addresses.
               Live fx v562: epochs 5–8 "2 · 2,441.406 · 4.44% · 50%", epoch 4 "0". OPEN: the split by LINEAGE (needs the
               reputation tree's lineage per line), below-gate claims (none possible now: the statement pays only kept
               lines; a witness signing a mint under another root is refused by K3).
-              NEXT: witness fees F (the pot's 10% to witnesses, by signatures given).
+          WITNESS COMPLETENESS (10-11, owner order: after keeper issuance): S1 domains + guarded signing → S2 staking
+              (writer entry on the $CRAFT chain, StakeClaim, claims registry; pool = $CRAFT) → S3 the page's witness
+              loop → fees F → liveness lapse.
+          [x] S1 10-11: identity CLAIM_DOMAIN (in SIGN_DOMAINS) + WITNESS_DOMAIN (NOT: only `WitnessSign`), one owner
+              of both message forms (`claim_message`, `witness_message`; token's StakeClaim/WitnessSig call them).
+              `Request::WitnessSign { chain, seq, entry }`: home site only, the place saved before the signature,
+              another entry there refused (`Why::Equivocation`) — the TOKEN §7d rule. Page door `identity.witnessSign`.
+              Test: same entry → same sig; another → Equivocation; TokenSign refuses a witness message. token.wasm
+              ad470883.
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and

@@ -773,3 +773,24 @@ fn a_token_entry_is_signed_by_the_member_for_its_home_only() {
     assert_eq!(serve(&mut m, Request::Lock, APP), Answer::LoggedOut);
     assert_eq!(serve(&mut m, Request::TokenSign { message: msg }, APP), Answer::Refused(Why::NoSession));
 }
+
+/// WITNESSING (TOKEN §7a): a member's key signs a witness message only through `WitnessSign`, which records the place
+/// first and never signs another entry there — the equivocation that burns a witness's stake.
+#[test]
+fn a_member_witnesses_one_entry_per_place_never_two() {
+    let mut m = provisioned(APP);
+    let Answer::Unlocked { public, .. } = unlock(&mut m, ALICE_PIN, APP) else { panic!("unlocked") };
+    let key = ed25519_dalek::VerifyingKey::from_bytes(&public).unwrap();
+    let (chain, a, b) = ([7u8; 32], [1u8; 32], [2u8; 32]);
+    let Answer::Signed { sig } = serve(&mut m, Request::WitnessSign { chain, seq: 4, entry: a }, APP) else { panic!("signed") };
+    assert!(key.verify_strict(&witness_message(&chain, 4, &a), &ed25519_dalek::Signature::from_bytes(&sig.clone().try_into().unwrap())).is_ok(), "the witness message, by the member's key");
+    assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 4, entry: a }, APP), Answer::Signed { sig }, "the same entry again: the same signature");
+    assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 4, entry: b }, APP), Answer::Refused(Why::Equivocation), "another entry at that place");
+    assert!(matches!(serve(&mut m, Request::WitnessSign { chain, seq: 5, entry: b }, APP), Answer::Signed { .. }), "another place: signed");
+    // TokenSign never signs a witness message (it would skip the record); it signs a stake claim.
+    assert_eq!(serve(&mut m, Request::TokenSign { message: witness_message(&chain, 9, &b) }, APP), Answer::Refused(Why::NotAnEntry));
+    assert!(matches!(serve(&mut m, Request::TokenSign { message: claim_message(&[3; 32], &[4; 32], 10, 2, &public) }, APP), Answer::Signed { .. }));
+    // Only the home site.
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 6, entry: a }, OTHER), Answer::Refused(Why::NotHome));
+}

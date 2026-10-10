@@ -17,7 +17,7 @@ pub struct StakeClaim {
 
 impl StakeClaim {
     pub fn message(definition: &[u8; 32], owner: &[u8; 32], amount: u128, epoch: u64, key: &[u8; 32]) -> Vec<u8> {
-        [&b"craftworks token stake claim"[..], definition, owner, &amount.to_le_bytes(), &epoch.to_le_bytes(), key].concat()
+        craftworks_identity::claim_message(definition, owner, amount, epoch, key)
     }
     pub fn holds(&self, definition: &[u8; 32]) -> bool {
         self.amount > 0 && sig_ok(&self.key, &Self::message(definition, &self.owner, self.amount, self.epoch, &self.key), &self.sig)

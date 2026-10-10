@@ -154,6 +154,8 @@ export async function start(ctx) {
     // A TOKEN ENTRY signed by this node's member (`TokenSign`: the home site only; a message under the token's entry
     // domain) — the account's device on its token chains (`editions`).
     tokenSign: message => call(core.frames_token_sign(message), "signing a token entry"),
+    // WITNESS (TOKEN §7a): `entry` at (`chain`, `seq`) — never a second entry at a place (the delegate's record).
+    witnessSign: (chain, seq, entry) => call(core.frames_witness_sign(chain, seq, entry), "witnessing an entry"),
     // Leave to write one of the account's tables. The node may ask the person (its own prompt, which waits up to a
     // minute), so this waits longer than any other call.
     grant: tables => call(core.frames_grant(tables), `asking for ${tables.map(t => `“${t}”`).join(", ")}`, 90000),
