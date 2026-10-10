@@ -1814,7 +1814,12 @@ old key's addresses.
               lists $CRAFT first (`craft_id`), its total counts stake ("staked (locked: earned by keeping)"), its history
               "Earned by keeping" per epoch; Send hidden when nothing is spendable. Live fx v561 (A): CRAFT 2,441.40625
               staked = epochs 5 + 7 × 1,220.703125 (each the 2% cap: two keepers; the rest never minted).
-              NEXT: K6 issuance monitor (per epoch: keepers paid, total, top shares, lineages); witness fees F.
+          [x] K6 ISSUANCE MONITOR 10-11: statement_build's `issuance` {keepers, total, top, pot}; `statement.issuance(e)`;
+              Usage › Kept "$CRAFT issuance" — the last 5 epochs: keepers paid, minted, % of the pot, largest share.
+              Live fx v562: epochs 5–8 "2 · 2,441.406 · 4.44% · 50%", epoch 4 "0". OPEN: the split by LINEAGE (needs the
+              reputation tree's lineage per line), below-gate claims (none possible now: the statement pays only kept
+              lines; a witness signing a mint under another root is refused by K3).
+              NEXT: witness fees F (the pot's 10% to witnesses, by signatures given).
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and

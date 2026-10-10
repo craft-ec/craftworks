@@ -7,6 +7,7 @@
 // proven under the root) and the treasury's release — `allowance_verdict`; anyone may, nobody has to stay online.
 //
 //   (await ctx.require("statement")).status()   // { epoch, root, lines } of the last one this page published
+//   await statement.issuance(epoch)             // { keepers, total, top, pot }: $CRAFT keeper issuance that epoch
 export async function start(ctx) {
   const [node, index, blocks, idlogCode, standingCode, beaconCode] = await Promise.all(["node", "index", "blocks", "idlog-wasm", "standing-wasm", "beacon-wasm"].map(n => ctx.require(n)));
   const { core, glue } = node;
@@ -100,5 +101,7 @@ export async function start(ctx) {
       await new Promise(r => setTimeout(r, TICK));
     }
   })();
-  return { status: () => ({ ...state }), now: publishIfMissing };
+  // THE ISSUANCE of epoch `epoch` as this page computes its statement: { keepers, total, top, pot } (units).
+  const issuance = async epoch => (await build(epoch)).issuance;
+  return { status: () => ({ ...state }), now: publishIfMissing, issuance };
 }

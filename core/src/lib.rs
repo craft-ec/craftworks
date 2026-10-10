@@ -2590,7 +2590,11 @@ mod js {
                 let proof = freenet_prolly::proof::prove(&blocks, &root, d).map_err(|_| err("a statement line that does not prove".into()))?.encode();
                 minted.push(&[JsValue::from(js_sys::Uint8Array::from(&d[..])), js_sys::Uint8Array::from(&proof[..]).into()].into_iter().collect::<js_sys::Array>());
             }
-            Ok(js_obj(&[("root", JsValue::from(hex(&root))), ("posted", js_sys::Uint8Array::from(&posted[..]).into()), ("puts", puts.into()), ("lines", JsValue::from(st.lines.len() as f64)), ("kept", JsValue::from(kept.len() as f64)), ("owed", owed.into()), ("keepers", minted.into())]))
+            // THE ISSUANCE it makes (the monitor, TOKEN §7d MONITORED): keepers paid, the total, the largest share.
+            let pay: Vec<u128> = st.lines.values().map(|l| l.keeper).filter(|k| *k > 0).collect();
+            let total: u128 = pay.iter().sum();
+            let issuance = json!({ "keepers": pay.len(), "total": total.to_string(), "top": pay.iter().max().copied().unwrap_or(0).to_string(), "pot": pots.keeper.0.to_string() });
+            Ok(js_obj(&[("root", JsValue::from(hex(&root))), ("posted", js_sys::Uint8Array::from(&posted[..]).into()), ("puts", puts.into()), ("lines", JsValue::from(st.lines.len() as f64)), ("kept", JsValue::from(kept.len() as f64)), ("owed", owed.into()), ("keepers", minted.into()), ("issuance", js_sys::JSON::parse(&issuance.to_string())?)]))
         }
         /// The ALLOWANCE's verdict of `epoch` (`allowance::verdict`; `owed`: `[[did, proof]]` from `statement_build`, under
         /// `root` hex): `{ done: null }` (nothing escrowed to it) or `{ done: { puts: [{ id, frames }] } }` — the program's

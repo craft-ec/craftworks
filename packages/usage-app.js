@@ -250,7 +250,28 @@ export async function mount(ctx, el) {
       const n = await keeper.network((await ctx.require("node")).glue.CraftworksCore.keeper_epoch(h));
       net.textContent = `Network: ${n.files} file(s) listed · ${size(n.bytes)} · ${n.keepers} keeper(s) this epoch`;
     })().catch(e => (net.textContent = `Network: could not read (${e?.message ?? e})`));
-    body.replaceChildren(krow, net, klist);
+    // ISSUANCE (TOKEN §7d MONITORED): the last epochs' $CRAFT keeper issuance — keepers paid, the total of the pot,
+    // the largest share (concentration).
+    const iss = Object.assign(document.createElement("div"), { textContent: "Issuance: …" });
+    (async () => {
+      const h = (await ctx.require("beacon")).status().height;
+      const st = await ctx.require("statement");
+      if (h == null || !st.issuance) return (iss.textContent = "");
+      const Core = (await ctx.require("node")).glue.CraftworksCore;
+      const now = Math.floor(Math.max(0, h - Core.statement_settle()) / Core.standing_epoch());
+      const craft = n => (Number(BigInt(n) / 1000000n) / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 });
+      const t = document.createElement("table");
+      t.createTHead().insertRow().append(...["Epoch", "Keepers paid", "$CRAFT minted", "Of the pot", "Largest share"].map(x => Object.assign(document.createElement("th"), { textContent: x })));
+      const tb = t.createTBody();
+      for (let e = now; e >= Math.max(0, now - 4); e--) {
+        const r = await st.issuance(e).catch(() => null);
+        if (!r) continue;
+        const pct = (a, b) => (BigInt(b) ? `${Number((BigInt(a) * 10000n) / BigInt(b)) / 100}%` : "—");
+        tb.insertRow().append(td(String(e)), td(String(r.keepers), "num"), td(craft(r.total), "num"), td(pct(r.total, r.pot), "num"), td(r.keepers ? pct(r.top, r.total) : "—", "num"));
+      }
+      iss.replaceChildren(Object.assign(document.createElement("h3"), { textContent: "$CRAFT issuance" }), t);
+    })().catch(e => (iss.textContent = `Issuance: could not read (${e?.message ?? e})`));
+    body.replaceChildren(krow, net, iss, klist);
     await drawKept();
   }
 }
