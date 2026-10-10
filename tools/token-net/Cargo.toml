@@ -1,0 +1,18 @@
+[package]
+name = "token-net"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The tools' ONE network view of the token (TOKEN §7a): what a witness or a wallet reads — chains, definitions, key logs, the claims, the witness bags, the beacon's outputs, stake, programs, freeze lists, the witness queue — through node-io's one door; and WITNESSING one queued entry."
+[workspace]
+[dependencies]
+node-io = { path = "../node-io" }
+craftworks-token-contract = { path = "../../contracts-src/token", default-features = false }
+craftworks-beacon-contract = { path = "../../contracts-src/beacon", default-features = false }
+craftworks-idlog-contract = { path = "../../contracts-src/idlog", default-features = false }
+craftworks-bag-contract = { path = "../../contracts-src/bag", default-features = false }
+craftworks-wallet = { path = "../../wallet" }
+ed25519-dalek = { version = "=2.2.0", default-features = false }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+blake3 = "1"

@@ -11,6 +11,8 @@
 //!   refuses.
 //! - COLLECTING ([`Wallet::collect`], W2) and CUTS ([`Wallet::cut`], W3): see each.
 
+pub mod chained;
+pub mod queue;
 pub mod stealth;
 
 use craftworks_token_contract as t;

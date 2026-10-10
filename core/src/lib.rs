@@ -2535,9 +2535,7 @@ mod js {
                 list.push(&self.put_obj(&account::Put { id: pid, id_bytes, contract, state })?);
             }
             if let Some(p) = b.release {
-                let (id, contract, state) = wire::puts::contract(token_code, &p.params, &p.state);
-                let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
-                list.push(&self.put_obj(&account::Put { id, id_bytes, contract, state })?);
+                list.push(&self.chain_put_obj(token_code, &p)?);
             }
             js_sys::Reflect::set(&js_sys::Reflect::get(&v, &"done".into())?, &"puts".into(), &list)?;
             Ok(v)
@@ -2689,8 +2687,8 @@ mod js {
         pub fn standing_epoch() -> f64 {
             craftworks_reputation::EPOCH as f64
         }
-        /// A payments bag with fewer items than this takes an announcement (`stealth::ROOM`); one with this many is
-        /// full — the next (k + 1) is the one to read or drop into.
+        /// A CHAINED bag (payments, the witness queue: `wallet::chained`) with fewer items than this takes one; one with
+        /// this many is full — the next (k + 1) is the one to read or drop into.
         pub fn stealth_room() -> f64 {
             craftworks_wallet::stealth::ROOM as f64
         }
@@ -2707,6 +2705,10 @@ mod js {
             let p = craftworks_wallet::stealth::pay(&keys.public(), &b32(rand)?).ok_or_else(|| err("not keys".into()))?;
             let a = craftworks_wallet::stealth::Announce { token: b32(token)?, from: [0; 32], nonce: [0; 16], to: p.to, r: p.r };
             Ok(js_obj(&[("to", JsValue::from(hex(&p.to))), ("bytes", js_sys::Uint8Array::from(&a.encode()[..]).into())]))
+        }
+        /// The WITNESS QUEUE bag `k` of standing epoch `epoch` (its address; TOKEN §7a).
+        pub fn witness_queue_address(epoch: f64, k: u32) -> js_sys::Uint8Array {
+            js_sys::Uint8Array::from(&craftworks_wallet::queue::address(epoch as u64, k)[..])
         }
         /// The PAYMENTS BAG `k` of standing epoch `epoch` (its address).
         pub fn stealth_payments_address(epoch: f64, k: u32) -> js_sys::Uint8Array {
@@ -2819,6 +2821,24 @@ mod js {
             }
             Ok(js_obj(&[("id", JsValue::from(hex(&id))), ("puts", list.into())]))
         }
+        /// A TOKEN CHAIN put with its WITNESS QUEUE items (TOKEN §7a): `{ id, idBytes, frames, queue: [bytes] }` — one
+        /// `Queued` per entry not in the state this core read (what this page wrote), for its writer to drop into the
+        /// epoch's queue once the put is taken.
+        fn chain_put_obj(&mut self, token_code: &[u8], p: &tokens::Put) -> Result<JsValue, JsValue> {
+            let (id, contract, state) = wire::puts::contract(token_code, &p.params, &p.state);
+            let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
+            let o = self.put_obj(&account::Put { id, id_bytes, contract, state })?;
+            let queue = js_sys::Array::new();
+            if let (Some(cp), Some(st)) = (craftworks_token_contract::ChainParams::decode(&p.params), craftworks_token_contract::State::decode(&p.state)) {
+                let before = self.0.got(&id_bytes).and_then(craftworks_token_contract::State::decode).and_then(|s| s.entries.last().map(|e| e.seq));
+                for e in st.entries.iter().filter(|e| before.is_none_or(|b| e.seq > b)) {
+                    let q = craftworks_wallet::queue::Queued { token: cp.tok(), owner: cp.owner, seq: e.seq };
+                    queue.push(&js_sys::Uint8Array::from(&q.encode()[..]));
+                }
+            }
+            js_sys::Reflect::set(&o, &"queue".into(), &queue)?;
+            Ok(o)
+        }
         fn attach_puts(&mut self, v: JsValue, token_code: &[u8], puts: &[tokens::Put]) -> Result<JsValue, JsValue> {
             if puts.is_empty() {
                 return Ok(v);
@@ -2826,9 +2846,7 @@ mod js {
             let done = js_sys::Reflect::get(&v, &"done".into())?;
             let list = js_sys::Array::new();
             for p in puts {
-                let (id, contract, state) = wire::puts::contract(token_code, &p.params, &p.state);
-                let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
-                list.push(&self.put_obj(&account::Put { id, id_bytes, contract, state })?);
+                list.push(&self.chain_put_obj(token_code, p)?);
             }
             js_sys::Reflect::set(&done, &"puts".into(), &list)?;
             Ok(v)

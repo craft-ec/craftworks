@@ -31,12 +31,19 @@ export async function start(ctx) {
 
   // READ a contract so the core holds it (`node.read`; a contract the node does not have: "read, not there").
   const read = idHex => node.read(bytes(idHex), "reading a token contract", { absent: true });
-  // PUT what a step built, each answered; then FORGOTTEN by the core (read again, fresh, when next asked).
+  // PUT what a step built, each answered; then FORGOTTEN by the core (read again, fresh, when next asked). A token
+  // chain's new entries then go into the WITNESS QUEUE (TOKEN §7a: how they reach their witnesses).
   async function putAll(puts) {
+    const queue = [];
     for (const p of puts ?? []) {
       const said = await ask(p.frames, s => (s.kind === "put" && s.key === p.id) || s.kind === "refused", "putting a token contract", 60000);
       if (said.kind !== "put") throw new Error(`the node refused it (${said.said})`);
       core.take_got(hexOf(p.idBytes));
+      queue.push(...(p.queue ?? []));
+    }
+    if (queue.length) {
+      const at = await now();
+      for (const q of queue) await chained(Core.witness_queue_address, at, q, "queueing an entry for its witnesses").catch(e => ctx.log("tokens", { what: e.message ?? String(e) }));
     }
   }
   // RUN a step to its end: read what it wants, have the delegate sign what it asks (one entry a round), until done.
@@ -85,6 +92,21 @@ export async function start(ctx) {
   const EPOCH = Core.standing_epoch();
   const ROOM = Core.stealth_room();
   const priv = await storage.table("wallet");
+  // A CHAINED BAG's drop (`wallet::chained`: payments, the witness queue): into the epoch's first bag with room, read
+  // back (over a cap a bag keeps its most-worked items: not kept → the next).
+  async function chained(addressOf, at, item, what) {
+    const epoch = Math.floor(at / EPOCH);
+    const want = hexOf(item);
+    for (let k = 0; k < 64; k++) {
+      const address = addressOf(epoch, k);
+      const items = await index.bag.read(address, what);
+      if (items.some(i => hexOf(i) === want)) return;
+      if (items.length >= ROOM) continue;
+      await index.bag.add(address, item, what);
+      if ((await index.bag.read(address, what)).some(i => hexOf(i) === want)) return;
+    }
+    throw new Error(`${what}: its bags are full`);
+  }
   const rows = prefix => priv.rows().filter(r => r.key.startsWith(prefix)).map(r => JSON.parse(r.value));
   async function seeds() {
     const have = rows("seed/").sort((a, b) => (a.seed < b.seed ? -1 : 1));
@@ -101,22 +123,8 @@ export async function start(ctx) {
     const card = await directory.card(me.did, { fresh: true }).catch(() => null);
     if (card?.pay?.scan !== keys.scan || card?.pay?.spend !== keys.spend) await directory.setPay(keys);
   }
-  // DROP an announcement into the current epoch's payments bags: the first with room, read back (over a cap a bag
-  // keeps its most-worked items: not kept → the next).
-  async function announce(at, a) {
-    const epoch = Math.floor(at / EPOCH);
-    const want = hexOf(a);
-    for (let k = 0; k < 64; k++) {
-      const address = Core.stealth_payments_address(epoch, k);
-      const items = await index.bag.read(address, "reading a payments bag");
-      if (items.some(i => hexOf(i) === want)) return;
-      if (items.length >= ROOM) continue;
-      await index.bag.add(address, a, "announcing a payment");
-      const again = await index.bag.read(address, "reading a payments bag back");
-      if (again.some(i => hexOf(i) === want)) return;
-    }
-    throw new Error("the payment was made but could not be announced: the payments bags are full");
-  }
+  // DROP an announcement into the current epoch's payments bags.
+  const announce = (at, a) => chained(Core.stealth_payments_address, at, a, "announcing a payment");
   // RECEIVE everything owed this wallet: SCAN the payments bags from the last epoch scanned to now (every payment
   // found kept; `onToken(id)` for its token), take each payment not yet taken, and each PAYEE's sales (an edition's
   // records name them). `{ got, pending }`: chains credited, payments still inside their margin.

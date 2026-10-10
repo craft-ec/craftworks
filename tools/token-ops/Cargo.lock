@@ -1690,6 +1690,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
+name = "token-net"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "craftworks-bag-contract",
+ "craftworks-beacon-contract",
+ "craftworks-idlog-contract",
+ "craftworks-token-contract",
+ "craftworks-wallet",
+ "ed25519-dalek",
+ "node-io",
+ "tokio",
+]
+
+[[package]]
 name = "token-ops"
 version = "0.1.0"
 dependencies = [
@@ -1708,6 +1724,7 @@ dependencies = [
  "futures",
  "getrandom 0.2.17",
  "node-io",
+ "token-net",
  "tokio",
  "tokio-tungstenite",
  "wire",

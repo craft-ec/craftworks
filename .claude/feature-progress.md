@@ -1675,8 +1675,18 @@ old key's addresses.
                   6+: no baseline, 4 of 6; 16: 11). 116 token tests (a small-network one, with Wren's real key where
                   the seed is held); 3 mutants killed. No contract bytes changed (acceptance is the wallet's and
                   witnesses').
-              [ ] WT3 A WITNESS RUNNER: Wren's on B (signs every entry it is seated for, by induction — `may_witness` —
-                  into the witness bags), members' when their page is open; entries reach it by …
+              [x] WT3 A WITNESS RUNNER — LIVE fx 10-10 (v537): entries reach witnesses by the WITNESS QUEUE
+                  (`wallet::queue`: `Queued { token, owner, seq }` in the epoch's chained bags — `wallet::chained`, the
+                  one chained-bag rule, payments' too); every token-chain put a page makes carries its new entries'
+                  queue items (`chain_put_obj`: seqs past the state the core read) and `putAll` drops them; one
+                  chained drop in `tokens.js` (payments + queue). `tools/token-net`: the tools' ONE network view of
+                  the token (chains, definitions, key logs, claims, witness bags, beacon outputs — with the OUTPUTS LOG
+                  for heights the beacon no longer keeps —, stake, programs, freeze lists, the queue) and `witness()`
+                  (lot, seat, may_witness, sign, drop). `token-ops witness …` runs it. Measured on fx: Wren's key
+                  (baseline, no stakers) signed A's DID chain seq 0–2 (writer, genesis, move-to-private) in order by
+                  induction, then A's new private chain's receive (seq 0). Found live: a chain's first entry is drawn
+                  at its epoch's first step, which the beacon's state (newest 600 steps) no longer held — the lot read
+                  "not drawn" forever; now read from the outputs log.
               [ ] WT4 WALLETS COUNT ONLY ACCEPTED: a receive / payout credited as value only once `accept` holds.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
               rendezvous), within its limit, instead of what was watched; the standing record proves it.

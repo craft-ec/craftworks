@@ -4,6 +4,8 @@
 //!       THE BEACON, kept ticking: its params from the seed file (made once: the same beacon after every restart), its
 //!       state read back from the node and extended — a step every tick, its final outputs into the outputs log. Run
 //!       as a service on the node's own box.
+//!   token-ops witness <token.wasm> <idlog.wasm> <bag.wasm> <ws> <beacon hex> <pool hex> <key seed file> [tick secs]
+//!       A WITNESS kept running: signs every queued entry it is seated for, by induction (TOKEN §7a).
 //!   token-ops make-token <token.wasm> <idlog.wasm> <ws> <beacon id hex> <words file> <device seed file> <name> <supply>
 //!       (`supply` in whole tokens: made with the standard 9 decimals, `T::DECIMALS`)
 //!       A TOKEN made by the account the words hold: its definition (the account its creator, the whole supply its
@@ -181,6 +183,58 @@ async fn main() -> Result<()> {
             }
             println!("{} posted", items.len());
             Ok(())
+        }
+        Some("witness") => {
+            // token-ops witness <token.wasm> <idlog.wasm> <bag.wasm> <ws> <beacon hex> <pool hex> <key seed file> [tick secs]
+            // (the beacon's code: beacon.wasm beside token.wasm):
+            // A WITNESS (TOKEN §7a), kept running: every tick it reads the witness queue of this standing epoch and the
+            // last, and signs each entry it is SEATED for (drawn by lot, or the baseline's seat while the network is
+            // small) once the rule takes it (`wallet::may_witness`, by induction — an entry refused now, its past not yet
+            // accepted, is tried again until it is too old) into the entry's witness bag.
+            let net = token_net::Net {
+                ws: a[5].clone(),
+                code_hash: *blake3::hash(&std::fs::read(&a[2])?).as_bytes(),
+                idlog_hash: *blake3::hash(&std::fs::read(&a[3])?).as_bytes(),
+                bag_code: std::fs::read(&a[4])?,
+                beacon_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes(),
+                beacon: unhex32(&a[6])?,
+                pool: unhex32(&a[7])?,
+            };
+            let key = ed25519_dalek::SigningKey::from_bytes(&seed_file(&a[8])?);
+            let tick = Duration::from_secs(a.get(9).map_or(Ok(10), |t| t.parse())?);
+            println!("witness {} — pool {}, tick {:?}", hex(&key.verifying_key().to_bytes()[..6]), hex(&net.pool[..6]), tick);
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                let r = token_net::Reader::new(&net)?;
+                let mut signed: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+                let mut said: std::collections::HashMap<Vec<u8>, String> = std::collections::HashMap::new();
+                loop {
+                    let epoch = r.height() / T::supply::EPOCH;
+                    for e in epoch.saturating_sub(1)..=epoch {
+                        for q in r.queue(e) {
+                            let k = q.encode();
+                            if signed.contains(&k) {
+                                continue;
+                            }
+                            let place = format!("{}…/{} seq {}", hex(&q.token.definition[..4]), hex(&q.owner[..4]), q.seq);
+                            match r.witness(&q, &key) {
+                                Ok(Some(_)) => {
+                                    println!("signed  {place}");
+                                    signed.insert(k);
+                                }
+                                Ok(None) => {}
+                                Err(why) => {
+                                    if said.get(&k) != Some(&why) {
+                                        println!("refused {place}: {why}");
+                                        said.insert(k, why);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    std::thread::sleep(tick);
+                }
+            })
+            .await?
         }
         Some("key") => {
             // token-ops key <seed file>: the ed25519 PUBLIC key of a seed file (hex) — never the seed.
