@@ -270,6 +270,8 @@ pub enum Stage {
     Unwitnessed(String),
     /// Accepted: this many of its committee signed.
     Accepted(usize),
+    /// NOT SEEN, and why (a report carries its diagnosis): its chain is not on the network, or holds no such entry.
+    Missing(String),
 }
 
 /// The STATUS of the payment `a` announces (sent or received alike): `None` when its debit is not in the paying chain
@@ -283,7 +285,14 @@ pub fn status(ctx: &Ctx, lot: &crate::tokens::Lot, got: Got, a: &stealth::Announ
         Err(w) => return Ok(Step::Want(w)),
         Ok(mut cs) => cs.remove(0),
     };
-    let Some(e) = s.entries.iter().find(|e| e.nonce == a.nonce) else { return Ok(Step::Done(None)) };
+    let missing = |why: String| Ok(Step::Done(Some(Status { amount: 0, stamp: 0, stage: Stage::Missing(why) })));
+    let Some(e) = s.entries.iter().find(|e| e.nonce == a.nonce) else {
+        return missing(if s.entries.is_empty() {
+            format!("its chain ({}…) is not on the network", p.id().iter().take(6).map(|b| format!("{b:02x}")).collect::<String>())
+        } else {
+            format!("its chain holds {} entr(ies), none this payment", s.entries.len())
+        });
+    };
     let amount = match e.body {
         Body::Send { amount, .. } | Body::Spend { amount, .. } => amount,
         _ => return Ok(Step::Done(None)),
@@ -408,7 +417,8 @@ mod tests {
         let mut unsigned = got.clone();
         crate::tokens::testlot::witness(&tl, &mut unsigned, &pa, &d, &debit, debit.entries.last().unwrap().seq, 0);
         assert_eq!(st(e1 + 14, &unsigned), Some((100, Stage::Unwitnessed("an entry its committee has not witnessed".into()))));
-        assert_eq!(crate::tokens::testlot::done(&|g| status(&ctx, &tl.lot, g, &stealth::Announce { nonce: [0; 16], ..ann }, e1 + 14), &got), Ok(None));
+        let other = crate::tokens::testlot::done(&|g| status(&ctx, &tl.lot, g, &stealth::Announce { nonce: [0; 16], ..ann }, e1 + 14), &got).unwrap().unwrap();
+        assert!(matches!(other.stage, Stage::Missing(ref w) if w.contains("none this payment")), "{:?}", other.stage);
         got.insert(pb2.id(), r.put.unwrap().state);
         let g = got.clone();
         let mine = [(paid.r, paid.to)];

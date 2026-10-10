@@ -118,7 +118,7 @@ export async function mount(ctx, el) {
   };
   // A payment's STATUS as a chip (its reason, when waiting, in its title).
   const chip = st => {
-    if (!st) return h("span", { className: "chip settling", textContent: "not seen yet" });
+    if (!st || st.stage === "missing") return h("span", { className: "chip settling", textContent: "not seen yet", title: st?.why ?? "" });
     if (st.stage === "accepted") return h("span", { className: "chip accepted", textContent: `accepted ✓ ${st.signed}`, title: `${st.signed} witness signature(s)` });
     if (st.stage === "witnessing") return h("span", { className: "chip witnessing", textContent: "waiting for witnesses", title: st.why ?? "" });
     return h("span", { className: "chip settling", textContent: "settling", title: "inside its margin: final in a few beacon steps" });
@@ -187,7 +187,8 @@ export async function mount(ctx, el) {
           tb.append(h("tr", {}, h("td", { textContent: when(it.at) }), h("td", { textContent: what }), amt, st));
           purse.status(it.a).then(
             s => {
-              amt.textContent = s ? `${out ? "−" : "+"}${shown(s.amount, v.decimals)}` : "—";
+              amt.textContent = s && s.stage !== "missing" ? `${out ? "−" : "+"}${shown(s.amount, v.decimals)}` : "—";
+              if (s?.stage === "missing") ctx.log("wallet", { what: `${what}: not seen — ${s.why}` });
               st.replaceChildren(chip(s));
             },
             e => st.replaceChildren(h("span", { className: "said", textContent: e.message ?? String(e) })),

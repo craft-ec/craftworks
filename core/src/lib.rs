@@ -2926,6 +2926,7 @@ mod js {
                             wallet::Stage::Settling => ("settling", None, None),
                             wallet::Stage::Unwitnessed(w) => ("witnessing", Some(w), None),
                             wallet::Stage::Accepted(n) => ("accepted", None, Some(n)),
+                            wallet::Stage::Missing(w) => ("missing", Some(w), None),
                         };
                         json!({ "amount": s.amount.to_string(), "stamp": s.stamp, "stage": stage, "why": why, "signed": signed })
                     }

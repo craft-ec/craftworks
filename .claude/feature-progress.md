@@ -1774,6 +1774,16 @@ old key's addresses.
               names it); record id `standing_contract::Params::keeper(..).id(code)` (standing.wasm 47f3a4ca unchanged).
               Live fx v552: "epoch 2: … 1 account(s) kept the epoch before". Fixed: allowance verdict with nothing
               escrowed resolved `{}` → `v.puts.length` threw (v553).
+          [x] KA follow-ups 10-10: every logged-in account with limit > 0 registers as a keeper (holdings or not); every
+              holder re-lists the files it keeps whole (own, watched, assigned) — a file stays listed while anyone keeps
+              it. Live fy epoch 4: "57 file(s) (29 assigned), 3375 piece(s); 57 file(s) listed".
+          [x] BOOTSTRAP (owner 10-10): keeper pot ungated while < KEEPERS_GATED_FROM (1000) accounts kept; weight =
+              rep + GATE floor; lines for zero-rep keepers; allowance stays gated. TOKEN.md gate paragraph reconciled.
+          [!] TOKEN RE-KEY FOUND 10-10: token.wasm changed be2d1f2d → 3431346f (552e20f, prolly list move) → d4dd92e2
+              (c7464fb, identity STANDING_DOMAIN) — the token contract links identity + prolly, so every chain moved
+              address; fx/fy test chains intact under be2d1f2d (`token-ops chains` with the old wasm: all found).
+              Wallet status now says why ("its chain (…) is not on the network"). PROPOSED to owner: freeze token.wasm
+              like signer.wasm (build fails on an undeclared change); re-mint test tokens with A3.
           [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` — FIRST CUT COMMITTED 10-10 (proof, epoch, binding,
               name; 12 mutants killed; its credential through identity's one rule, which closed a skipped key-log
               check) — REWORK: amount = the statement's (witness-checked), appended by anyone with work, the bind

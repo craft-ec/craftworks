@@ -184,6 +184,38 @@ async fn main() -> Result<()> {
             println!("{} posted", items.len());
             Ok(())
         }
+        Some("chains") => {
+            // token-ops chains <token.wasm> <idlog.wasm> <bag.wasm> <ws> <beacon hex> <epoch>…
+            // (beacon.wasm, standing.wasm beside token.wasm): every chain queued for its witnesses in those standing
+            // epochs, and whether the network still answers it (its entries) — a diagnosis for "not seen".
+            let net = token_net::Net {
+                ws: a[5].clone(),
+                code_hash: *blake3::hash(&std::fs::read(&a[2])?).as_bytes(),
+                idlog_hash: *blake3::hash(&std::fs::read(&a[3])?).as_bytes(),
+                bag_code: std::fs::read(&a[4])?,
+                beacon_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes(),
+                beacon: unhex32(&a[6])?,
+                pool: [0; 32],
+                standing_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("standing.wasm"))?).as_bytes(),
+            };
+            let epochs: Vec<u64> = a[7..].iter().map(|e| e.parse()).collect::<Result<_, _>>()?;
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                let r = token_net::Reader::new(&net)?;
+                let mut seen = std::collections::HashSet::new();
+                for e in epochs {
+                    for q in r.queue(e) {
+                        if !seen.insert((q.token.definition, q.owner)) {
+                            continue;
+                        }
+                        let id = r.params(&q.token, &q.owner).map(|p| hex(&p.id()));
+                        let st = r.chain(&q.token, &q.owner);
+                        println!("epoch {e} token {} owner {} chain {}: {}", hex(&q.token.definition[..4]), hex(&q.owner[..4]), id.unwrap_or("? (no definition)".into()), st.map_or("NOT FOUND".into(), |s| format!("{} entries", s.entries.len())));
+                    }
+                }
+                Ok(())
+            })
+            .await?
+        }
         Some("witness") => {
             // token-ops witness <token.wasm> <idlog.wasm> <bag.wasm> <ws> <beacon hex> <pool hex> <key seed file> [tick secs]
             // (the beacon's and the standing contract's code: beacon.wasm, standing.wasm beside token.wasm):
