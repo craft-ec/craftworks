@@ -112,10 +112,8 @@ pub struct Definition {
     /// numbered one) mints by NUMBER into records of [`supply::RECORD`] copies ([`supply::record_of`]), made as copies
     /// are minted, without end; a cap stops the numbers.
     pub cap: u128,
-    /// Its COLLECTION (§1c): the id it is grouped under (zero: none) — a label readers group by, the definition's
-    /// creator's own claim.
-    pub collection: [u8; 32],
-    /// The Craftworks ITEM it is of (§1c; zero: none) and the item's VERSION it pins (zero: the item as it is).
+    /// The Craftworks ITEM it is of (§1c; zero: none) and the item's VERSION it pins (zero: the item as it is). An
+    /// item may be a collection (a set item): grouping is the item's own metadata, not the token's (owner 10-10).
     pub item: [u8; 32],
     pub version: [u8; 32],
     /// NON-TRANSFERABLE (soulbound, TOKEN §1d): held where it is minted — no send, spend, allowance, escrow or vest of
@@ -195,7 +193,6 @@ impl Definition {
             }
         }
         v.extend_from_slice(&self.cap.to_le_bytes());
-        v.extend_from_slice(&self.collection);
         v.extend_from_slice(&self.item);
         v.extend_from_slice(&self.version);
         v.push(self.soulbound as u8);
@@ -247,7 +244,7 @@ impl Definition {
             1 => Some((u16::from_le_bytes(r.arr()?), r.arr()?)),
             _ => return None,
         };
-        let (cap, collection, item, version) = (r.u128()?, r.arr()?, r.arr()?, r.arr()?);
+        let (cap, item, version) = (r.u128()?, r.arr()?, r.arr()?);
         let soulbound = match r.u8()? {
             0 => false,
             1 => true,
@@ -270,7 +267,7 @@ impl Definition {
             && (ids != Ids::Numbered || (decimals == 0 && min_send == 1 && genesis_amount == 0))
             // A sale: of a capped (or numbered) token, at a price, to someone.
             && sale.is_none_or(|(_, price, payee)| price > 0 && payee != HOLDERS && (cap > 0 || ids == Ids::Numbered));
-        ok.then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog, mint, freeze, ids, royalty, cap, collection, item, version, soulbound, transfer_fee, sale })
+        ok.then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog, mint, freeze, ids, royalty, cap, item, version, soulbound, transfer_fee, sale })
     }
     /// Minted by NUMBER into records ([`supply::RECORD`]): a cap, or numbered copies (each number once, ever).
     pub fn capped(&self) -> bool {

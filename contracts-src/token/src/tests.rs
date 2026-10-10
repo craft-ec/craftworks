@@ -49,7 +49,7 @@ fn ensure_writer(s: &mut State, by: u8) {
     }
 }
 fn def() -> Definition {
-    Definition { code_hash: CODE, decimals: 8, min_send: 10, genesis_owner: did(1), genesis_amount: 1000, name: b"T".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None }
+    Definition { code_hash: CODE, decimals: 8, min_send: 10, genesis_owner: did(1), genesis_amount: 1000, name: b"T".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None }
 }
 fn params(owner: u8) -> ChainParams {
     ChainParams { code_hash: CODE, definition: id(&CODE, &def().encode()), owner: did(owner), beacon: BEACON, idlog: IDLOG, item: [0; 32] }
@@ -2620,10 +2620,10 @@ fn an_item_sold_through_a_program_pays_its_creators_royalty() {
 
 /// GOLD: numbered copies of item [42; 32], cap 10, 10% to the creator (7). SILVER: plain copies, cap 100, 5%.
 fn gold() -> Definition {
-    Definition { ids: Ids::Numbered, cap: 10, decimals: 0, min_send: 1, genesis_amount: 0, mint: Some(mint_set()), royalty: Some((1000, did(7))), collection: [41; 32], item: [42; 32], name: b"Gold".to_vec(), nonce: [3; 16], ..def() }
+    Definition { ids: Ids::Numbered, cap: 10, decimals: 0, min_send: 1, genesis_amount: 0, mint: Some(mint_set()), royalty: Some((1000, did(7))), item: [42; 32], name: b"Gold".to_vec(), nonce: [3; 16], ..def() }
 }
 fn silver() -> Definition {
-    Definition { ids: Ids::None, cap: 100, decimals: 0, min_send: 1, genesis_amount: 0, mint: Some(mint_set()), royalty: Some((500, did(7))), collection: [41; 32], item: [42; 32], name: b"Silver".to_vec(), nonce: [4; 16], ..def() }
+    Definition { ids: Ids::None, cap: 100, decimals: 0, min_send: 1, genesis_amount: 0, mint: Some(mint_set()), royalty: Some((500, did(7))), item: [42; 32], name: b"Silver".to_vec(), nonce: [4; 16], ..def() }
 }
 fn did_of(d: &Definition) -> [u8; 32] {
     id(&CODE, &d.encode())

@@ -37,7 +37,7 @@ Every behaviour of the blockchain token standards, and how this standard gives i
 | Metadata (token and per item) | ✅ | the definition names the Craftworks ITEM it is of (and a version pin); the item's own kind schema is its metadata (§1c) |
 | Transfer fees (Token-2022) | ✅ optional | a definition's fee on top of every send, spend, escrow, vest; claimed by its collector (§1e) |
 | Non-transferable (soulbound) | ✅ | a definition flag: nothing leaves the chain it is minted into; burn allowed (§1d) |
-| Editions, numbered copies, max supply | ✅ | an EDITION is a definition with a CAP; numbered (#n of cap) or plain (semi-fungible) copies; editions grouped by a COLLECTION; each its own royalty (§1c) |
+| Editions, numbered copies, max supply | ✅ | an EDITION is a definition with a CAP; numbered (#n of cap) or plain (semi-fungible) copies; each of a Craftworks ITEM (a collection is an item too); each its own royalty (§1c) |
 | History, traceable by anyone (an explorer) | ✅ | no one ledger: from genesis and the supply bag, sends followed FORWARD reach every chain; credits cite their debits BACKWARD; kept alive by readers and keepers (§1a) |
 | Atomic swap between two tokens | ✅ an app | the SWAP contract over escrow: both escrow, the deal crosses or refunds; the race closed by time (§4) |
 | Vesting, time locks | ✅ | `vest(beneficiary, schedule)`: a debit now; each step claimable by the beneficiary once the beacon reaches it, once; never taken back (§4a) |
@@ -125,7 +125,7 @@ A definition says `ids: none` (fungible), `ids: unique` (ERC-721: each item's su
 **A chain holds one token's ONE ITEM** (built 10-09): its params name the item (`ChainParams.item`, zero for a fungible
 token), and chains name each other by a `Tok` — (definition, item). Every rule of a fungible chain (send, receive,
 allow, escrow, payout, cut, mint, freeze) holds per item unchanged; the supply shards, the authority
-chain and the freeze list stay per TOKEN, so one authority governs a whole collection. A `unique` item is MADE by its
+chain and the freeze list stay per TOKEN, so one authority governs a whole token. A `unique` item is MADE by its
 mint — `unique_item(definition, epoch, nonce)`, amount 1 — so each is minted once; a `many` item is any nonzero id the
 mint authority names. For `unique`, the chain of the item's holder is the `ownerOf` answer; a transfer is the same
 send/receive. Per-item metadata is a Craftworks item named by the id. A BATCH of several items is several sends (one
@@ -146,17 +146,18 @@ three programs (SPL Token, Metaplex metadata, rule sets / Core plugins for enfor
 everyone's: a plain transfer (a gift) can hide a payment made elsewhere — royalties hold on sales through programs,
 not on private deals.
 
-## 1c. Editions, copies, collections (owner 10-10)
+## 1c. Editions and copies of an item (owner 10-10)
 
-A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has COPIES. Built 10-10:
+An ITEM has EDITIONS ("Gold", "Silver"); an edition has COPIES — item > editions > copies. Built 10-10. A COLLECTION
+is an item too (a set: an album, "Pixel Cats"), whose own editions sell the whole set; which items belong to it is the
+items' metadata in Craftworks. The token holds no collection (owner 10-10: dropped — a chain needs one only because
+its items have no identity of their own; here an item is first-class, its author proven by its feed).
 
 - **An edition is a definition.** It carries everything an edition has — its own ROYALTY (so every app already pays
   it: the swap and the pool read definitions, §1b), its mint authority (the creator), and three fields: `cap` (the most
-  there will ever be; 0: none), `collection` (the id it is grouped under) and `item` + `version` (the Craftworks item it
-  is of, and the item's version it pins; zero: the item as it is). The item's kind schema (video, book, image …) is its
-  metadata — the token does not copy it. The COLLECTION is itself a Craftworks item or space: its name and all its
-  metadata are that item's; the token holds only its id (an edition's own `name` is just its label — "Gold" — or
-  empty for the item's title).
+  there will ever be; 0: none) and `item` + `version` (the Craftworks item it is of, and the item's version it pins;
+  zero: the item as it is). The item's kind schema (video, book, image …) and its name are its metadata — the token
+  does not copy them (an edition's own `name` is just its label — "Gold" — or empty for the item's title).
 - **Copies, two kinds.** NUMBERED (`ids: numbered`): copy `n` is its own item (`numbered_item(edition, n)`), one of
   each, `n` from 1 up to the cap. PLAIN: the edition is fungible within itself (`ids: none`, decimals 0) — "3 Silver".
 - **Minted on demand, without end** (owner 10-10: "how does it work with 1mil copies?"). A capped edition's mints live
@@ -177,11 +178,11 @@ A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has CO
   only the highest record left lower ones, not yet made, open to the old key). The cost is the change's size: one
   seal per record holding mints. The authority chain itself only ever EXTENDS: a change held at a seq is never
   replaced (audit 10-10: a leaked old key could sign a second change at a past seq and win it by hash).
-- **Who may mint an item's edition, who may join a collection.** The token checks the mint authority; that the
-  edition's creator (its `genesis_owner`) is the Craftworks item's author — and the collection item's owner — is
-  checked by the app where it shows the edition: it already proves an item's author from its feed's credentials (a
-  contract cannot read that cheaply). An edition naming a collection it does not own is simply not shown in it; no
-  name can be copied, as the collection has none but its item's (owner 10-10: no Metaplex-style "verified" flag).
+- **Who may sell an item's editions.** The token checks the mint authority; that the edition's creator (its
+  `genesis_owner`) is the Craftworks item's author is checked by the page where it shows the edition — by design, as
+  everything on Freenet with no central coordination: the page already proves an item's author from its feed's
+  credentials (a contract cannot read that cheaply). An edition of an item made by anyone else is simply not shown on
+  it; no name can be copied, as an edition has none but its item's (owner 10-10: no Metaplex-style "verified" flag).
 - **A royalty its HOLDERS share** (owner 10-10: "seller own copy should not get a cut"). An edition's royalty may name
   `HOLDERS` instead of a creator — only a numbered edition of at least 2 copies. Every app pays the fee as it pays a
   creator's — to `HOLDERS`, under the standard `escrow::fee_key(sold escrow)`, in the payment's token. Then each OTHER
@@ -854,12 +855,12 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    creator, an outsider's claim of the 5 REFUSED (item M 0 · T 1; B M 95 · creator 5 · outsider 0). `deal` and `pool`
    re-run on the rebuilt wasms: the same verdicts and balances as before.
 
-16. EDITIONS — BUILT 10-10 (§1c): `Definition.cap / collection / item / version`, `Ids::Numbered`, mints in RECORDS
+16. EDITIONS — BUILT 10-10 (§1c): `Definition.cap / item / version` (a `collection` too, dropped the same day), `Ids::Numbered`, mints in RECORDS
    of 1,024 numbers made on demand (first built as one shard for all time — 1,024 mints at most — then split by
    number the same day so minting on demand has no end), admission in stamp order, the mint key's frontier seal,
    `CappedMint`. Token 94 tests; 16 mutants on the record rules, all killed (1 after a range put in its later record).
-   LIVE fx/fy (`token-live editions`): Gold (numbered, cap 3, 10%) and Silver (plain, cap 5, 5%) of one collection
-   and item; Gold #4 and Silver 5–6 past their caps REFUSED; #2 minted again kept, not admitted; an open edition's
+   LIVE fx/fy (`token-live editions`): Gold (numbered, cap 3, 10%) and Silver (plain, cap 5, 5%) of one item;
+   Gold #4 and Silver 5–6 past their caps REFUSED; #2 minted again kept, not admitted; an open edition's
    #1024 in record 0 and #1025 in record 1 ACCEPTED, #1025 in record 0 REFUSED, #1025 credited; M claiming T's #3
    REFUSED; Gold #1 resold through a deal: 90 B to M, 10 B to the creator, the copy to T. `mint` re-run unchanged.
 

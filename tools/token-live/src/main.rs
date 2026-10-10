@@ -142,7 +142,7 @@ impl W {
         v
     }
     fn def(&self, genesis: u8, name: &[u8], k: u8) -> T::Definition {
-        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog, mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None }
+        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog, mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None }
     }
     fn chain(&self, token: [u8; 32], o: u8) -> T::ChainParams {
         T::ChainParams { code_hash: self.ch, definition: token, owner: did(o), beacon: self.beacon, idlog: self.idlog, item: [0; 32] }
@@ -1406,7 +1406,7 @@ async fn deal_mode(w: &W, scode: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// EDITIONS (TOKEN §1c), LIVE: a collection "Pixel Cats" of two editions of one Craftworks item — GOLD (numbered, cap
+/// EDITIONS (TOKEN §1c), LIVE: two editions of one Craftworks item (a Pixel Cats picture) — GOLD (numbered, cap
 /// 3, 10% to its creator) and SILVER (plain copies, cap 5, 5%), and an OPEN numbered edition whose copy #1025 makes
 /// its second record. Mints are kept in records of 1,024 numbers, made as copies are minted; a mint past a cap is
 /// refused, one onto taken numbers kept but never admitted. A Gold copy resold through a deal pays Gold's own royalty.
@@ -1414,9 +1414,8 @@ async fn editions(w: &W, scode: &[u8]) -> Result<()> {
     use craftworks_swap_contract as S;
     println!("— editions (Pixel Cats: Gold numbered of 3, Silver plain of 5)");
     let (m, t, c) = (1u8, 2u8, 7u8);
-    let coll = *blake3::hash(b"Pixel Cats").as_bytes();
     let item = *blake3::hash(b"a Craftworks item: the cat picture").as_bytes();
-    let ed = |name: &[u8], k: u8, ids: T::Ids, cap: u128, bps: u16| T::Definition { ids, cap, decimals: 0, min_send: 1, genesis_amount: 0, mint: Some(one(60)), royalty: Some((bps, did(c))), collection: coll, item, ..w.def(c, name, k) };
+    let ed = |name: &[u8], k: u8, ids: T::Ids, cap: u128, bps: u16| T::Definition { ids, cap, decimals: 0, min_send: 1, genesis_amount: 0, mint: Some(one(60)), royalty: Some((bps, did(c))), item, ..w.def(c, name, k) };
     let (gd, sd) = (ed(b"Gold", 21, T::Ids::Numbered, 3, 1000), ed(b"Silver", 22, T::Ids::None, 5, 500));
     let (g, sv) = (w.put_def(&gd).await?, w.put_def(&sd).await?);
     let h = w.now().await?;

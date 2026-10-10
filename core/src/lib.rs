@@ -2322,7 +2322,6 @@ mod js {
             "cap": d.cap.to_string(),
             "numbered": d.ids == craftworks_token_contract::Ids::Numbered,
             "item": hex(&d.item),
-            "collection": hex(&d.collection),
             "creator": hex(&d.genesis_owner),
             "royalty": d.royalty.map(|(b, to)| json!({ "bps": b, "to": hex(&to) })),
             "sale": d.sale.map(|(t, price, payee)| json!({ "token": hex(&t.definition), "price": price.to_string(), "payee": hex(&payee) })),
@@ -2343,7 +2342,7 @@ mod js {
         pub fn beacon_height(&self, beacon: &[u8]) -> Result<JsValue, JsValue> {
             Ok(self.0.got(&b32(beacon)?).and_then(craftworks_beacon_contract::wire::decode).map_or(JsValue::NULL, |s| JsValue::from(s.height() as f64)))
         }
-        /// An EDITION (`editions::edition`): `{ done: { id, name, cap, numbered, item, collection, creator, royalty, sale,
+        /// An EDITION (`editions::edition`): `{ done: { id, name, cap, numbered, item, creator, royalty, sale,
         /// minted, open, mine } }` (`mine`: the copies minted to `me`, when given 32 bytes).
         pub fn edition_read(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], me: &[u8]) -> Result<JsValue, JsValue> {
             let ctx = edition_ctx(token_code, beacon, idlog_code)?;
