@@ -628,6 +628,23 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   keeper reward locked as witness stake → the lot weighted by locked stake. **Open:** the committee size and how many
   signatures make an entry; how fast stake counts (a ramp) — from measurement on the network.
 
+## 7c. The wallet core (owner 10-10: before the shop)
+
+What an account's DEVICE does with the token, as one library (`wallet/`, the main workspace — the delegate links it):
+pure functions over what the caller read, returning the entries to append. It holds no keys and does no I/O: the
+account's device signs (the delegate holds its node key and the credential the account's owner key gave it — the same
+account and key management as everything else), the caller fetches and publishes. One identity across devices: a
+token chain has one writing device at a time, taken with a WRITER entry; the account decides which device writes, the
+wallet only hands the chain over when told.
+
+- **W1 DEBITS — BUILT 10-10.** `Wallet::debit`: send, escrow, vest, burn, allow, stake, unstake — the chain's next
+  entry, its carried balance computed (a transfer fee on top), its name derived from its place (never one nonce
+  twice), stamped never below its predecessor, signed by this device; the device's writer entry first when another
+  device (or none) wrote last. Every entry is checked against the token's own shape rules before it is returned.
+- W2 COLLECTING (receives, payouts and releases, holders' shares, fee claims, vesting steps, mints, reclaims — each
+  only once final); W3 CUTS (its own chains pruned, the proofs credits need after); W4 ACCEPTANCE (a payment is
+  value: its witnesses' signatures) and a live mode end to end.
+
 ## 8. Open in the architecture
 
 1. The BEACON's cadence (§5a) — mechanism designed, `K`/`S`/`s` calibrated from measurement; special hardware's

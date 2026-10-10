@@ -1497,7 +1497,10 @@ old key's addresses.
           hash makes it unframeable). Then mint credits carry their signed mint + Body::FalseMint, and freeze changes
           seal the freeze list (a back-dated pause refused). Audit: nothing open in the rules.
       [ ] 27 WALLET CORE (owner agreed 10-10: before the shop) — user-side token logic on the existing account and
-          device keys; library + fx/fy, no release.
+          device keys; library + fx/fy, no release. Crate `wallet/` (main workspace), TOKEN §7c.
+          [x] W1 DEBITS: Wallet::debit (writer handover, fee on top, place-derived nonce, stamp never below, checked by
+              the token's walk). 2 tests; 4 mutants killed (1 after a lagging-beacon case).
+          [ ] W2 COLLECTING (credits once final)  [ ] W3 CUTS + proofs  [ ] W4 ACCEPTANCE + live mode
       [ ] 28 SHOP — sell an edition on demand over the wallet core.
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).

@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "identity", "publish", "account", "mls", "feed", "gov", "data", "delegate", "files", "standing"]
+members = ["core", "identity", "publish", "account", "mls", "feed", "gov", "data", "delegate", "files", "standing", "wallet"]
 # This repo's own contracts: each its own workspace and lockfile (the wasm hash is part of every instance's key).
 exclude = ["contracts-src", "sdk"]
 resolver = "2"

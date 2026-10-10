@@ -402,6 +402,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-beacon-contract"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+]
+
+[[package]]
 name = "craftworks-core"
 version = "0.1.0"
 dependencies = [
@@ -600,6 +607,31 @@ name = "craftworks-standing"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "ed25519-dalek",
+]
+
+[[package]]
+name = "craftworks-token-contract"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "contract-keys",
+ "craftworks-beacon-contract",
+ "craftworks-identity",
+ "craftworks-idlog-contract",
+ "ed25519-dalek",
+ "engine",
+ "freenet-prolly",
+]
+
+[[package]]
+name = "craftworks-wallet"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "craftworks-identity",
+ "craftworks-idlog-contract",
+ "craftworks-token-contract",
  "ed25519-dalek",
 ]
 

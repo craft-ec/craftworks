@@ -1,0 +1,16 @@
+[package]
+name = "craftworks-wallet"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "THE WALLET CORE (docs/TOKEN.md §7c): the user's side of the token — builds and signs this account's entries on its device, collects what is owed it once final, keeps its cuts' proofs, and checks a payment is value. Pure: no network, no keys of its own."
+
+[dependencies]
+craftworks-token-contract = { path = "../contracts-src/token", default-features = false }
+craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
+blake3 = "1"
+
+[dev-dependencies]
+craftworks-identity = { path = "../identity" }
+ed25519-dalek = { version = "=2.2.0", default-features = false }
