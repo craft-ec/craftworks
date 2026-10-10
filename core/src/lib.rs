@@ -2435,6 +2435,40 @@ mod js {
             let item = craftworks_reputation::item::Item { from, to: b32(to)?, at: at as u64, on, cred: dev.credential, key_seq: dev.key_seq, sig };
             Ok(js_obj(&[("item", js_sys::Uint8Array::from(&item.encode()[..]).into())]))
         }
+        /// This device's KEEPERS-REGISTRY item (`reputation::keepers`): the account, and the credential naming its member
+        /// key `public` (its standing record's key) — `{ done: item }`, or `{ want }` (the account's key log) first.
+        pub fn keeper_listing(&self, idlog_code: &[u8], did: &[u8], public: &[u8], creds: js_sys::Array) -> Result<JsValue, JsValue> {
+            let did = b32(did)?;
+            let Some(dev) = account_device(&self.0, idlog_code, &did, public, &creds, &js_sys::Array::new())? else { return want_log(idlog_code, &did) };
+            let k = craftworks_reputation::keepers::Keeper { did, cred: dev.credential, key_seq: dev.key_seq };
+            Ok(js_obj(&[("done", js_sys::Uint8Array::from(&k.encode()[..]).into())]))
+        }
+        /// The KEEPERS REGISTRY's bag `k` of standing epoch `epoch` (its address).
+        pub fn keepers_address(epoch: f64, k: u32) -> js_sys::Uint8Array {
+            js_sys::Uint8Array::from(&craftworks_reputation::keepers::address(epoch as u64, k)[..])
+        }
+        /// The KEEPERS listed in a registry's items, verified against each account's key log (read into the core:
+        /// `{ want: [hex] }` first): `{ done: [{ did, key }] }` (DID text, record key hex).
+        pub fn keepers_listed(&self, idlog_code: &[u8], items: js_sys::Array) -> Result<JsValue, JsValue> {
+            use craftworks_reputation::keepers as K;
+            let items = bytes_list(&items);
+            let mut want: Vec<String> = Vec::new();
+            for k in items.iter().filter_map(|b| K::Keeper::decode(b)) {
+                let id = account::idlog_put(idlog_code, &k.did, None).id_bytes;
+                if self.0.got(&id).is_none() && !want.contains(&hex(&id)) {
+                    want.push(hex(&id));
+                }
+            }
+            if !want.is_empty() {
+                return js_sys::JSON::parse(&json!({ "want": want }).to_string());
+            }
+            let log_of = |d: &[u8; 32]| {
+                let id = account::idlog_put(idlog_code, d, None).id_bytes;
+                self.0.got(&id).filter(|b| !b.is_empty()).and_then(|b| craftworks_idlog_contract::read(d, b))
+            };
+            let out: Vec<serde_json::Value> = K::listed(&items, &log_of).iter().map(|(d, key)| json!({ "did": account::did(d), "key": hex(key) })).collect();
+            js_sys::JSON::parse(&json!({ "done": out }).to_string())
+        }
         /// The VOUCH REGISTRY's bag address for standing epoch `epoch`.
         pub fn vouch_registry_address(epoch: f64) -> js_sys::Uint8Array {
             js_sys::Uint8Array::from(&craftworks_reputation::item::registry_address(epoch as u64)[..])

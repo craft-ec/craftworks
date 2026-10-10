@@ -35,6 +35,7 @@ pub struct Vouch {
 }
 
 pub mod item;
+pub mod keepers;
 pub mod statement;
 
 /// The most vouches of one account that count (its earliest).

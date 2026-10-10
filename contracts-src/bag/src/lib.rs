@@ -14,6 +14,8 @@ pub const ITEM_MAX: usize = 16 * 1024;
 pub const STATE_MAX: usize = 256 * 1024;
 pub const ITEMS_MAX: usize = 1024;
 
+pub mod chained;
+
 /// An item's hash at an address (what orders the bag and what its work is counted on).
 pub fn hash(address: &[u8], item: &[u8]) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key("craftworks 2026-09-28 bag item");

@@ -10,7 +10,7 @@
 // and size: what lets other keepers find their pieces), so a file stays listed while its owner keeps it.
 //
 //   (await ctx.require("keeper")).status()   // { peer, epoch, files, pieces, listed, opened, answered, last } — what this page did
-//   await keeper.network(epoch)              // { files, bytes }: the registry's live files at standing epoch `epoch`
+//   await keeper.network(epoch)              // { files, bytes, keepers }: the registries at standing epoch `epoch`
 export async function start(ctx) {
   const beaconSvc = await ctx.require("beacon");
   if (beaconSvc.status().off) return { status: () => ({ off: true }) };
@@ -72,6 +72,11 @@ export async function start(ctx) {
           ctx.log("keeper", { what: `epoch ${epoch}: holdings of ${state.files} file(s), ${self.hosted.length} piece(s) committed; ${state.listed} own file(s) listed in the registry` });
         }
         self.open = true;
+        // FINDABLE: this keeper (its account and the credential naming its record's key) in the epoch's keepers registry.
+        const { creds } = await tokens.device();
+        const item = await run(() => core.keeper_listing(tokens.idlogCode, me.didBytes, public_, creds));
+        await (await ctx.require("index")).bag.chained(Core.keepers_address, epoch, item, "listing this keeper");
+        state.registered = epoch;
       }
       // ANSWER every height of this epoch since the last one handled that is sampled for this keeper (one that came
       // while it was sealing is not missed), while the beacon's state still holds its output. The beacon read into the
@@ -105,12 +110,17 @@ export async function start(ctx) {
     }
   }
   beaconSvc.onHeight(tick);
-  // The NETWORK's volume: the files live in the registry at `epoch` (listed then or the epoch before) and their bytes.
+  // The NETWORK: the files live in the registry at `epoch` (listed then or the epoch before) and their bytes; the
+  // keepers listed that epoch (verified against their accounts' key logs).
   async function network(epoch) {
-    const index = await ctx.require("index");
-    const [now, before] = await Promise.all([epoch, epoch - 1].map(e => (e < 0 ? [] : index.bag.chain(Core.registry_address, e, "reading the files registry"))));
+    const [index, tokens] = await Promise.all(["index", "tokens"].map(n => ctx.require(n)));
+    const [now, before, ks] = await Promise.all([
+      ...[epoch, epoch - 1].map(e => (e < 0 ? [] : index.bag.chain(Core.registry_address, e, "reading the files registry"))),
+      index.bag.chain(Core.keepers_address, epoch, "reading the keepers registry"),
+    ]);
     const live = Core.registry_live(now, before);
-    return { files: live.length, bytes: live.reduce((n, l) => n + l.size, 0) };
+    const keepers = await tokens.run(() => core.keepers_listed(tokens.idlogCode, ks));
+    return { files: live.length, bytes: live.reduce((n, l) => n + l.size, 0), keepers: keepers.length };
   }
   return { status: () => ({ ...state }), network };
 }

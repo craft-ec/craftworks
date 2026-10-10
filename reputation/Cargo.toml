@@ -9,6 +9,8 @@ description = "REPUTATION (docs/REPUTATION.md): computed from public vouches, we
 # A vouch's signature and credential (the identity's format) and the voucher's key log.
 craftworks-identity = { path = "../identity" }
 craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
+# The keepers registry is a chained list (the bag's own rule).
+craftworks-bag-contract = { path = "../contracts-src/bag", default-features = false }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = { version = "1", default-features = false }
 # The statement's tree: built the one way a whole tree is built (`engine::repair::build_tree`), a prolly tree.

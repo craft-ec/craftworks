@@ -1755,6 +1755,11 @@ old key's addresses.
               keeper's piece list without the file key). One chained door: `index.bag.chained/chain` (tokens.js moved
               onto it; `stealth_room` → `chained_room`). keeper.js lists own whole files each epoch; `keeper.network(e)`
               → Usage › Kept "Network: N files · bytes". Live fx v550: "1 file(s) listed · 105 KB".
+          [x] K0b KEEPERS REGISTRY 10-10: `reputation::keepers` Keeper{did, cred, key_seq} ("CWKP") in chained bags per
+              standing epoch; `listed(items, log_of)` → (did, record key) verified by identity's `credential_node`.
+              The chained rule moved to its bag: `craftworks_bag_contract::chained` (bag.wasm f5c35985 and allowance.wasm
+              7cdd3961 unchanged; wallet re-exports). keeper.js lists itself each epoch; Usage › Kept shows keepers.
+              Live fx v551: "1 file(s) listed · 105 KB · 1 keeper(s) this epoch".
           [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` — FIRST CUT COMMITTED 10-10 (proof, epoch, binding,
               name; 12 mutants killed; its credential through identity's one rule, which closed a skipped key-log
               check) — REWORK: amount = the statement's (witness-checked), appended by anyone with work, the bind

@@ -248,7 +248,7 @@ export async function mount(ctx, el) {
       const keeper = await ctx.require("keeper");
       if (h == null || !keeper.network) return (net.textContent = "Network: no clock on this site");
       const n = await keeper.network((await ctx.require("node")).glue.CraftworksCore.keeper_epoch(h));
-      net.textContent = `Network: ${n.files} file(s) listed · ${size(n.bytes)} (the files registry, this epoch and the last)`;
+      net.textContent = `Network: ${n.files} file(s) listed · ${size(n.bytes)} · ${n.keepers} keeper(s) this epoch`;
     })().catch(e => (net.textContent = `Network: could not read (${e?.message ?? e})`));
     body.replaceChildren(krow, net, klist);
     await drawKept();
