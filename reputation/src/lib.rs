@@ -146,6 +146,22 @@ pub fn tree(roots: &[Did], vouches: &[Vouch]) -> Tree {
     t
 }
 
+/// Beacon heights per epoch (the standing epoch): what the ramp counts in.
+pub const EPOCH: u64 = 1024;
+/// Epochs over which a vouch grows into full weight: a quarter in the epoch it is made, full after [`RAMP`].
+pub const RAMP: u64 = 4;
+
+/// REPUTATION AS OF beacon height `now` (TOKEN §7d: the epoch-start SNAPSHOT every witness computes alike): only vouches
+/// made by then, each RAMPED in — `(epochs it has stood + 1) / RAMP` of its weight, full after RAMP epochs — so nobody
+/// is vouched in, paid an epoch and dropped, and a voucher has time to notice before a vouch carries all of its weight.
+pub fn reputation_at(roots: &[Did], vouches: &[Vouch], now: u64) -> BTreeMap<Did, u128> {
+    let then: Vec<Vouch> = vouches.iter().copied().filter(|v| v.at <= now).collect();
+    reputation_ramped(roots, &then, &|v: &Vouch| {
+        let stood = (now / EPOCH).saturating_sub(v.at / EPOCH) + 1;
+        ONE * stood.min(RAMP) as u128 / RAMP as u128
+    })
+}
+
 /// Vouchers' lineages an account needs to be PROMOTED — besides holding at least the MEDIAN reputation of the admitted
 /// accounts (relative: reputation thins out as the network grows, so a fixed bar would not scale).
 pub const PROMOTE_LINEAGES: usize = 3;
@@ -155,14 +171,19 @@ pub const PROMOTE_LINEAGES: usize = 3;
 /// FAMILY of its own (kinship stops at it), never a source of trust. Computed once without families, the promoted
 /// found from that, then again with them.
 pub fn reputation(roots: &[Did], vouches: &[Vouch]) -> BTreeMap<Did, u128> {
+    reputation_ramped(roots, vouches, &|_| ONE)
+}
+
+/// [`reputation`] with each vouch's weight scaled by `ramp` (fixed point).
+fn reputation_ramped(roots: &[Did], vouches: &[Vouch], ramp: &dyn Fn(&Vouch) -> u128) -> BTreeMap<Did, u128> {
     let vs = counted(vouches);
     let t = tree(roots, &vs);
-    let first = flow(roots, &vs, &t, &BTreeSet::new());
+    let first = flow(roots, &vs, &t, &BTreeSet::new(), ramp);
     let promoted = promoted(roots, &vs, &t, &first);
     if promoted.is_empty() {
         return first;
     }
-    flow(roots, &vs, &t, &promoted)
+    flow(roots, &vs, &t, &promoted, ramp)
 }
 
 /// The PROMOTED: not a starting root, holding at least the median reputation of the admitted non-root accounts,
@@ -184,7 +205,7 @@ pub fn promoted(roots: &[Did], vouches: &[Vouch], t: &Tree, rep: &BTreeMap<Did, 
         .collect()
 }
 
-fn flow(roots: &[Did], vs: &[Vouch], t: &Tree, families: &BTreeSet<Did>) -> BTreeMap<Did, u128> {
+fn flow(roots: &[Did], vs: &[Vouch], t: &Tree, families: &BTreeSet<Did>, ramp: &dyn Fn(&Vouch) -> u128) -> BTreeMap<Did, u128> {
     let vs = vs.to_vec();
     let vs: Vec<Vouch> = vs.into_iter().filter(|x| t.parent.contains_key(&x.from) && t.parent.contains_key(&x.to)).collect();
     // Each vouch's DIVERSITY at its vouchee: its vouchers in admission order, each by Π(1 − closeness) to those before.
@@ -215,7 +236,7 @@ fn flow(roots: &[Did], vs: &[Vouch], t: &Tree, families: &BTreeSet<Did>) -> BTre
         let mut next: BTreeMap<Did, u128> = t.parent.keys().map(|d| (*d, seed(d))).collect();
         for x in &vs {
             let share = r[&x.from] * DAMP_NUM / DAMP_DEN / outdeg[&x.from];
-            *next.get_mut(&x.to).unwrap() += share * diversity[&(x.from, x.to)] / ONE;
+            *next.get_mut(&x.to).unwrap() += share * diversity[&(x.from, x.to)] / ONE * ramp(x) / ONE;
         }
         r = next;
     }
@@ -352,7 +373,7 @@ mod tests {
         vs.extend([v(7, 600, 3), v(12, 600, 3), v(17, 600, 3), v(600, 601, 4), v(600, 602, 4), v(601, 603, 5), v(602, 603, 5)]);
         let c = counted(&vs);
         let t = tree(&[d(0)], &c);
-        let first = flow(&[d(0)], &c, &t, &BTreeSet::new());
+        let first = flow(&[d(0)], &c, &t, &BTreeSet::new(), &|_| ONE);
         let p = promoted(&[d(0)], &c, &t, &first);
         println!("600's reputation {}; promoted {}", first[&d(600)], p.len());
         assert!(p.contains(&d(600)));
@@ -379,6 +400,26 @@ mod tests {
         println!("ring off three lineages: {got}; with no discount at all: {bound}");
         // Promotions may give it families, but never more than the flow with no discount — what it was given.
         assert!(got <= bound, "the ring took more than its inputs allow");
+    }
+
+    #[test]
+    fn a_vouch_ramps_in_over_epochs_and_a_later_one_is_not_seen() {
+        // 0 vouches 1 at height 10 (epoch 0); 1 vouches 2 at height 3 × EPOCH (epoch 3).
+        let vs = vec![v(0, 1, 10), v(1, 2, 3 * EPOCH)];
+        // Read at each epoch's LAST height (the vouch at height 10 exists from then on in epoch 0).
+        let at = |e: u64| reputation_at(&[d(0)], &vs, e * EPOCH + EPOCH - 1);
+        let one = |e: u64| at(e).get(&d(1)).copied().unwrap_or(0);
+        println!("1's reputation by epoch: {} {} {} {} {}", one(0), one(1), one(2), one(3), one(4));
+        // A quarter in its first epoch, rising each epoch, full (the unramped value) from the fourth on.
+        assert!(one(0) < one(1) && one(1) < one(2) && one(2) < one(3));
+        assert_eq!(one(3), one(9));
+        assert_eq!(one(3), reputation(&[d(0)], &vs[..1])[&d(1)]);
+        assert!((one(0) as i128 - (one(3) / 4) as i128).abs() <= 1, "a quarter in the first epoch");
+        // 2's vouch (epoch 3) is not seen before it is made: no reputation for 2 at epoch 2.
+        assert_eq!(at(2).get(&d(2)), None);
+        assert!(at(3).get(&d(2)).is_some());
+        // And at height 9, before 0's own vouch: nobody but the root.
+        assert_eq!(reputation_at(&[d(0)], &vs, 9).get(&d(1)), None);
     }
 
     /// The control: the same flow with every vouch counted in full (no diversity).

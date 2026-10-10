@@ -1521,6 +1521,9 @@ old key's addresses.
           ORDER (owner 10-10, after the design review — TOKEN §7d "REVISED", "Gaps closed"):
           [ ] V1 VOUCH REGISTRY + EPOCH STATEMENT: vouches registered per epoch; reputation from the epoch-start
               snapshot (ramp, decay); the statement (reputation, keeper shares, WREN allowance) — one number set.
+              [x] V1a `reputation_at(roots, vouches, height)`: the SNAPSHOT (later vouches unseen) and the RAMP (¼ a
+                  standing epoch, full after 4) — measured 31.9 / 63.8 / 95.6 / 127.5 (×10⁻³) by epoch.
+              [ ] V1b the registry (a contract per epoch every witness reads alike), decay, the statement.
           [ ] W  WALLET APP: send, receive/collect (inbox note), balances.
           [ ] A  WREN DAILY ALLOWANCE: 1,000/day by reputation share, cap 20, claim-or-return; service on B.
           [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` (BUILT uncommitted 10-10: proof, epoch, binding, name;
