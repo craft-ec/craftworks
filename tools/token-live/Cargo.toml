@@ -14,6 +14,7 @@ craftworks-standing = { path = "../../standing" }
 craftworks-standing-contract = { path = "../../contracts-src/standing", default-features = false }
 craftworks-pool-contract = { path = "../../contracts-src/pool", default-features = false }
 craftworks-swap-contract = { path = "../../contracts-src/swap", default-features = false }
+craftworks-wallet = { path = "../../wallet" }
 craftworks-identity = { path = "../../identity" }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = "1"

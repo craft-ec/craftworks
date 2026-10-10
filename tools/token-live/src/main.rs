@@ -298,6 +298,7 @@ async fn main() -> Result<()> {
             "soulbound" => soulbound(&w).await?,
             "fees" => fees(&w).await?,
             "pause" => pause(&w).await?,
+            "wallet" => wallet_mode(&w).await?,
             "reclaim" => reclaim(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "holders" => holders(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "vest" => vest(&w).await?,
@@ -1709,5 +1710,70 @@ async fn pause(w: &W) -> Result<()> {
     let mut z = a.clone();
     push(&mut z, T::Body::Send { to: did(3), amount: 100 }, w.n(5), Some(1), w.now().await?);
     println!("7  1 sends 100 to 3, on Y: {}", w.put_chain(&w.y, t, 1, &z).await?.0);
+    Ok(())
+}
+
+/// Person `n`'s DEVICE for the wallet core: its node key `key(n)`, credentialed by its account's owner key.
+struct Dev(u8);
+impl craftworks_wallet::Device for Dev {
+    fn public(&self) -> [u8; 32] {
+        pk(self.0)
+    }
+    fn sign(&self, m: &[u8]) -> [u8; 64] {
+        key(self.0).sign(m).to_bytes()
+    }
+    fn credential(&self) -> Vec<u8> {
+        craftworks_identity::credential(&did(self.0), &pk(self.0), &[], &owner_seed(self.0))
+    }
+    fn key_seq(&self) -> u32 {
+        0
+    }
+}
+
+/// THE WALLET CORE (TOKEN §7c), LIVE: every entry here built and signed by `craftworks_wallet` — no hand-made entry.
+/// 1 starts token W and pays 2 300 and 3 100; 2 collects its receive once final and pays 3 50; 1 CUTS its chain; 3
+/// collects both its payments — 1's from 1's history (the cut's blocks), with its proof. Each through the network.
+async fn wallet_mode(w: &W) -> Result<()> {
+    use craftworks_wallet::{Held, Sources, Wallet};
+    println!("— wallet (the wallet core, end to end)");
+    let d = w.def(1, b"Wal", 41);
+    let t = w.put_def(&d).await?;
+    let held = |o: u8, s: T::State| Held { params: w.chain(t, o), definition: d.clone(), state: s, blocks: Default::default() };
+    let (l1, l2, l3) = (log(1), log(2), log(3));
+    let (w1, w2, w3) = (Wallet { device: &Dev(1), keys: &l1 }, Wallet { device: &Dev(2), keys: &l2 }, Wallet { device: &Dev(3), keys: &l3 });
+    let why = |e: &str| anyhow::anyhow!("{e}");
+    let mut a = held(1, T::State::default());
+    let h0 = w.now().await?;
+    a.state.entries.extend(w1.genesis(&a, h0).map_err(why)?);
+    a.state.entries.extend(w1.debit(&a, T::Body::Send { to: did(2), amount: 300 }, h0).map_err(why)?);
+    a.state.entries.extend(w1.debit(&a, T::Body::Send { to: did(3), amount: 100 }, h0).map_err(why)?);
+    println!("1  1: genesis, 300 to 2, 100 to 3 (its wallet), on X: {} — {}", w.put_chain(&w.x, t, 1, &a.state).await?.0, a.state.balance());
+    let none = T::cut::Blocks::new();
+    let chains1 = [(did(1), a.state.clone())];
+    let early = w2.collect(&held(2, T::State::default()), &Sources { chains: &chains1, blocks: &none, programs: &[], shards: &[] }, w.now().await?).map_err(why)?;
+    println!("2  2 collects before the margin: {} credit(s)", early.len());
+    let now = w.until(h0 + 3).await?;
+    let mut b = held(2, T::State::default());
+    b.state.entries.extend(w2.collect(&b, &Sources { chains: &chains1, blocks: &none, programs: &[], shards: &[] }, now).map_err(why)?);
+    println!("3  2 collects after it (now {now}): its receive, on Y: {} — {}", w.put_chain(&w.y, t, 2, &b.state).await?.0, b.state.balance());
+    b.state.entries.extend(w2.debit(&b, T::Body::Send { to: did(3), amount: 50 }, now).map_err(why)?);
+    println!("4  2 pays 3 50, on Y: {} — {}", w.put_chain(&w.y, t, 2, &b.state).await?.0, b.state.balance());
+    let (cut, blocks) = w1.cut(&a, now).map_err(why)?;
+    a.state.entries.extend(cut);
+    a.state = T::prune(&a.state);
+    a.blocks = blocks;
+    println!("5  1 CUTS its chain (its sends now behind the cut), on X: {} — live {} entr(ies)", w.put_chain(&w.x, t, 1, &a.state).await?.0, a.state.entries.len());
+    let now = w.until(now + 3).await?;
+    let chains = [(did(1), a.state.clone()), (did(2), b.state.clone())];
+    let mut c = held(3, T::State::default());
+    let got = w3.collect(&c, &Sources { chains: &chains, blocks: &a.blocks, programs: &[], shards: &[] }, now).map_err(why)?;
+    let shown = got.iter().filter(|e| matches!(&e.body, T::Body::Receive { ev, .. } if !ev.theirs.is_empty())).count();
+    c.state.entries.extend(got);
+    println!("6  3 collects both — 1's from its history ({shown} with a proof), on Y: {} — {}", w.put_chain(&w.y, t, 3, &c.state).await?.0, c.state.balance());
+    let again = w3.collect(&c, &Sources { chains: &chains, blocks: &a.blocks, programs: &[], shards: &[] }, now).map_err(why)?;
+    println!("7  3 collects again: {} credit(s)", again.len());
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let bal = |s: Option<T::State>| s.map_or(0, |s| s.balance());
+    println!("   on the network: 1 {} · 2 {} · 3 {} (= 1000)", bal(w.get_chain(&w.x, t, 1).await?), bal(w.get_chain(&w.y, t, 2).await?), bal(w.get_chain(&w.y, t, 3).await?));
     Ok(())
 }

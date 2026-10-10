@@ -298,3 +298,58 @@ fn a_wallet_cuts_its_chain_and_collects_across_cuts_with_their_proofs() {
     e = with(&e, w1.debit(&e, Body::Escrow { program: PROG, terms: vec![], amount: 10, until: 0 }, 1).unwrap());
     assert_eq!(w1.cut(&e, 5).err(), Some("a cut over an open escrow"));
 }
+
+#[test]
+fn a_wallet_starts_its_token_and_credits_a_payment_only_once_witnessed() {
+    // GENESIS: this device's writer entry, then the definition's amount.
+    let (d1, l1) = (Dev::new(1, 11), log(1));
+    let w1 = Wallet { device: &d1, keys: &l1 };
+    let a0 = held(1, &def());
+    let g = w1.genesis(&a0, 0).unwrap();
+    let a = with(&a0, g);
+    assert_eq!(a.state.balance(), 1000);
+    assert_eq!(t::check(&a.params, &def(), &a.state, &|_, _| None, &|_| None, Some(&l1), &t::Extra::NONE), Ok(()));
+    assert_eq!(w1.genesis(&a, 0).err(), Some("a genesis of a chain begun"));
+    assert_eq!(Wallet { device: &Dev::new(2, 22), keys: &log(2) }.genesis(&held(2, &def()), 0).err(), Some("a genesis that is not the definition's"), "not the definition's owner");
+    // 1 pays 2 300: VALUE only once its committee (drawn by lot from 20 stakers, 100 each) signed it.
+    let a = with(&a, w1.debit(&a, Body::Send { to: did(2), amount: 300 }, 1).unwrap());
+    let send = a.state.entries.last().unwrap().clone();
+    let pool = [40; 32];
+    let stakers: Vec<t::draw::StakeClaim> = (60..80u8)
+        .map(|n| {
+            let k = SigningKey::from_bytes(&[n; 32]);
+            let kb = k.verifying_key().to_bytes();
+            t::draw::StakeClaim { owner: [n; 32], amount: 100, epoch: 0, key: kb, sig: k.sign(&t::draw::StakeClaim::message(&pool, &[n; 32], 100, 0, &kb)).to_bytes() }
+        })
+        .collect();
+    let out = |h: u64| *blake3::hash(&h.to_le_bytes()).as_bytes();
+    let pred = &a.state.entries[a.state.entries.len() - 2];
+    let (epoch, h) = t::wallet::lot_of(&send, Some(pred), def().margin).unwrap();
+    let members = t::draw::committee(&pool, &out(h), &a.params.id(), send.seq, epoch, &stakers, t::wallet::COMMITTEE);
+    let sign = |n: usize| {
+        members.iter().take(n).map(|m| {
+            let k = SigningKey::from_bytes(&[stakers[*m].owner[0]; 32]);
+            t::witness::WitnessSig { chain: a.params.id(), seq: send.seq, entry: send.hash(), sig: k.sign(&t::witness::WitnessSig::message(&a.params.id(), send.seq, &send.hash())).to_bytes() }
+        }).collect::<Vec<_>>()
+    };
+    let check_with = |sigs: Vec<t::witness::WitnessSig>| {
+        let d = def();
+        let src = t::wallet::Source {
+            pool,
+            claims: &|e| if e == 0 { stakers.clone() } else { vec![] },
+            sigs: &|_, _| sigs.clone(),
+            out: &|x| Some(out(x)),
+            stake_of: &|o, at| (at == 0).then(|| (100, vec![SigningKey::from_bytes(&[o[0]; 32]).verifying_key().to_bytes()])),
+            definition: &|_| Some(d.clone()),
+            program: &|_| None,
+            freeze: &|_| None,
+            keys: &|_| None,
+            history: &|_, _| None,
+        };
+        is_value(&src, &a.params, &a.state, &send.nonce)
+    };
+    assert_eq!(check_with(vec![]), Err("an entry its committee has not witnessed"));
+    assert_eq!(check_with(sign(t::wallet::NEED - 1)), Err("an entry its committee has not witnessed"), "one short");
+    assert_eq!(check_with(sign(t::wallet::NEED)), Ok(t::wallet::NEED));
+    assert_eq!(is_value(&t::wallet::Source { pool, claims: &|_| vec![], sigs: &|_, _| vec![], out: &|_| None, stake_of: &|_, _| None, definition: &|_| None, program: &|_| None, freeze: &|_| None, keys: &|_| None, history: &|_, _| None }, &a.params, &a.state, &[0; 16]), Err("a payment whose debit is not there"));
+}

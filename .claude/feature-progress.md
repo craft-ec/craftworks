@@ -1506,7 +1506,9 @@ old key's addresses.
               token.wasm 3fab0d85 (unbonding_of made pub).
           [x] W3 CUTS: Wallet::cut + Held.blocks/whole; collect across cuts (whole-history dedup, absence proofs,
               sender-history presence proofs). 6 tests; 5 mutants (1 equivalent block merge removed).
-          [ ] W4 ACCEPTANCE + live mode
+          [x] W4: Wallet::genesis, is_value (witness acceptance); token-live `wallet` mode LIVE fx/fy end to end.
+              7 tests; mutants killed.
+      [x] 27 WALLET CORE — DONE 10-10 (W1–W4). Next: 28 SHOP over it.
       [ ] 28 SHOP — sell an edition on demand over the wallet core.
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).

@@ -652,7 +652,13 @@ wallet only hands the chain over when told.
   old blocks are needed no more). `collect` across cuts: every name the chain ever took (its whole history) is never
   taken again; each new credit carries its ABSENCE proof against the cut's received set (a payout's always); a debit
   behind its SENDER's cut is read from the sender's history blocks and carries its presence proof and bytes.
-- W4 ACCEPTANCE (a payment is value: its witnesses' signatures) and a live mode end to end.
+- **W4 — BUILT 10-10.** `Wallet::genesis` (a token's first chain); `is_value(source, sender, chain, nonce)`: a
+  payment's debit ACCEPTED by its committee — what a wallet credits money on (a contract proves shape, never value).
+  LIVE fx/fy (`token-live wallet`, every entry built and signed by the wallet core): 1 starts token W and pays 2 300
+  and 3 100; 2 collects nothing before the margin, its receive after it, and pays 3 50; 1 CUTS; 3 collects both — 1's
+  from 1's history with its proof — and nothing on a second look: 600 + 250 + 150 = 1000, all ACCEPTED.
+- Not in the core (the account's, at rollout): which device writes a chain (the core hands it over when told), finding
+  counterparties' chains (the token's activity), fetching and publishing.
 
 ## 8. Open in the architecture
 

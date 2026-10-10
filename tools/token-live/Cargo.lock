@@ -351,6 +351,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-wallet"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "craftworks-idlog-contract",
+ "craftworks-token-contract",
+]
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1523,6 +1532,7 @@ dependencies = [
  "craftworks-standing-contract",
  "craftworks-swap-contract",
  "craftworks-token-contract",
+ "craftworks-wallet",
  "ed25519-dalek",
  "freenet-stdlib",
  "futures",

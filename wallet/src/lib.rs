@@ -134,6 +134,31 @@ impl Wallet<'_> {
     }
 }
 
+impl Wallet<'_> {
+    /// The GENESIS of a token (its definition's owner, seq 0 on): this device's writer entry, then the genesis amount.
+    pub fn genesis(&self, h: &Held, now: u64) -> Result<Vec<Entry>, Why> {
+        if !h.state.entries.is_empty() {
+            return Err("a genesis of a chain begun");
+        }
+        let mut s = State::default();
+        let w = self.writer(&s, &h.params, now);
+        s.entries.push(w.clone());
+        let g = self.signed(&s, nonce_of(&h.params, 1), now, Body::Genesis { amount: h.definition.genesis_amount }, h.definition.genesis_amount);
+        s.entries.push(g.clone());
+        t::walk(&h.params, &h.definition, &s, &|_, _| None, &|_| None, Some(self.keys), 0, usize::MAX, &t::Extra::NONE).map_err(|(_, w)| w)?;
+        Ok(vec![w, g])
+    }
+}
+
+/// IS IT VALUE (W4, TOKEN §7a): the debit `nonce` in the sender's chain (`sender`, as read) — what a payment to this
+/// account cites — ACCEPTED by its witnesses (`src`: the lot's claims, the bags' signatures, the beacon's outputs, the
+/// stakers' chains). `Ok`: the signatures counted. A wallet credits a payment only on this: a chain's contract alone
+/// proves its shape, never that its money is real.
+pub fn is_value(src: &t::wallet::Source, sender: &ChainParams, chain: &State, nonce: &[u8; 16]) -> Result<usize, Why> {
+    let i = chain.entries.iter().position(|e| &e.nonce == nonce).ok_or("a payment whose debit is not there")?;
+    t::wallet::accept(src, sender, &chain.entries[i], i.checked_sub(1).map(|j| &chain.entries[j]))
+}
+
 /// What a wallet READ for collecting (W2): the chains of this token it looked in (its counterparties', from the
 /// token's activity — the caller's to find), the programs it holds escrows with or is paid by, the supply shards and
 /// records it was minted in, and the BLOCKS of those chains' cut histories (W3: a debit behind its sender's cut is
