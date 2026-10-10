@@ -81,7 +81,8 @@ export async function mount(ctx, el) {
     const waiting = mine.filter(f => !f.done && !f.edition);
     const amounts = await Promise.all(waiting.map(f => purse.status(f.a).then(s => BigInt(s?.amount ?? 0), () => 0n)));
     const arriving = amounts.reduce((a, b) => a + b, 0n);
-    return { ...v, onId: onId.toString(), private: p.balance, arriving: arriving.toString(), chains: p.chains.filter(c => c.balance !== "0").length, total: (onId + BigInt(p.balance) + arriving).toString() };
+    // STAKED: locked on the DID chain (a keeper's $CRAFT: what weighs its witness lot), counted in the total, never sent.
+    return { ...v, onId: onId.toString(), private: p.balance, arriving: arriving.toString(), chains: p.chains.filter(c => c.balance !== "0").length, total: (onId + BigInt(p.balance) + arriving + BigInt(v.staked ?? 0)).toString() };
   }
 
   // SEND to a person, privately: their card's pay keys, from this wallet's private chains only (§7f: a DID holds
@@ -98,7 +99,7 @@ export async function mount(ctx, el) {
   }
 
   // A token's BALANCE line: its total and where it is (private chains · on the id).
-  const whereOf = v => [v.private !== "0" ? `${shown(v.private, v.decimals)} private (${v.chains} chain${v.chains === 1 ? "" : "s"})` : null, v.arriving && v.arriving !== "0" ? `${shown(v.arriving, v.decimals)} arriving` : null, v.onId !== "0" ? `${shown(v.onId, v.decimals)} on your id` : null].filter(Boolean).join(" · ");
+  const whereOf = v => [v.private !== "0" ? `${shown(v.private, v.decimals)} private (${v.chains} chain${v.chains === 1 ? "" : "s"})` : null, v.arriving && v.arriving !== "0" ? `${shown(v.arriving, v.decimals)} arriving` : null, v.onId !== "0" ? `${shown(v.onId, v.decimals)} on your id` : null, v.staked && v.staked !== "0" ? `${shown(v.staked, v.decimals)} staked (locked: earned by keeping)` : null].filter(Boolean).join(" · ");
 
   // THE LIST: a card per token (its balance), opening its page.
   function card(id, me) {
@@ -171,14 +172,19 @@ export async function mount(ctx, el) {
           h("div", { className: "top" }, h("span", { className: "name", textContent: v.name || "a token" }), made ? h("span", { className: "note", textContent: `you made it · supply ${shown(v.supply, v.decimals)}` }) : null),
           h("span", { className: "big", textContent: shown(v.total, v.decimals) }),
           h("span", { className: "note", textContent: whereOf(v) || "nothing held" }),
-          ...[move, f, said].filter(Boolean),
+          // (Send only what is spendable: staked is locked.)
+          ...[move, BigInt(v.private) + BigInt(v.onId) > 0n ? f : null, said].filter(Boolean),
           h("span", { className: "note", textContent: `token ${id}` }),
         );
         // THE HISTORY, newest first (the last 40): each line's status read from its chain and its witnesses.
         const items = purse.history(id).slice(0, 40);
-        if (!items.length) return hist.append(h("p", { className: "note", textContent: "Nothing yet." }));
+        const mints = [...(v.mints ?? [])].reverse();
+        if (!items.length && !mints.length) return hist.append(h("p", { className: "note", textContent: "Nothing yet." }));
         const tb = h("tbody");
         hist.append(h("table", {}, h("thead", {}, h("tr", {}, ...["When", "What", "Amount", "Status"].map(t => h("th", { textContent: t })))), tb));
+        // EARNED BY KEEPING (TOKEN §7d): each epoch's keeper line, minted as stake (witnessed only under its accepted
+        // statement — what the chain holds here).
+        for (const m of mints) tb.append(h("tr", {}, h("td", { textContent: `epoch ${m.epoch}` }), h("td", { textContent: "Earned by keeping" }), h("td", { className: "num in", textContent: `+${shown(m.amount, v.decimals)}` }), h("td", {}, h("span", { className: "chip accepted", textContent: "staked" }))));
         for (const it of items) {
           const what = it.kind === "send" ? `Sent to ${it.to ? directory.shown(it.to) : "someone"}` : it.kind === "shield" ? "Moved to private" : it.kind === "sale" ? "A sale of your edition" : "Received (private)";
           const out = it.kind === "send";
@@ -219,7 +225,13 @@ export async function mount(ctx, el) {
       }
     };
     const rows = table.rows();
-    out.append(...(rows.length ? rows.map(r => card(r.key, me)) : [h("p", { className: "note", textContent: "No tokens yet: be sent one, or add one by its id." })]), addForm, said);
+    // $CRAFT always first (TOKEN §7d: what keeping earns — one token, the same id for every page of this network),
+    // once anyone has minted it.
+    const craft = node.glue.CraftworksCore.craft_id(code, beacon, idlogCode);
+    const craftCard = h("div");
+    viewOf(craft, me).then(() => craftCard.replaceWith(card(craft, me)), () => craftCard.replaceWith(h("p", { className: "note", textContent: "$CRAFT: nothing minted on this network yet — keeping earns it." })));
+    const others = rows.filter(r => r.key !== craft);
+    out.append(craftCard, ...(others.length ? others.map(r => card(r.key, me)) : [h("p", { className: "note", textContent: "No other tokens yet: be sent one, or add one by its id." })]), addForm, said);
     return out;
   }
 

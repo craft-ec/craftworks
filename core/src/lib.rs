@@ -2813,7 +2813,7 @@ mod js {
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
             token_step(wallet::view(&ctx, &got, &id, &b32(owner)?), |v| {
                 let d = &v.definition;
-                Ok(json!({ "id": hex(&id), "name": String::from_utf8_lossy(&d.name), "decimals": d.decimals, "creator": hex(&d.genesis_owner), "supply": d.genesis_amount.to_string(), "balance": v.balance.to_string(), "begun": v.begun }))
+                Ok(json!({ "id": hex(&id), "name": String::from_utf8_lossy(&d.name), "decimals": d.decimals, "creator": hex(&d.genesis_owner), "supply": d.genesis_amount.to_string(), "balance": v.balance.to_string(), "begun": v.begun, "staked": v.staked.to_string(), "mints": v.mints.iter().map(|(e, a, s)| json!({ "epoch": e, "amount": a.to_string(), "stamp": s })).collect::<Vec<_>>() }))
             })
         }
         /// SEND PRIVATELY from this account's DID chain (`wallet::send`, TOKEN §7f): `amount` (a decimal string) of the

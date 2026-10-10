@@ -1810,7 +1810,11 @@ old key's addresses.
               heights in and disagreed on `kept` (records still settling) — `statement::SETTLE` = 32 heights for both,
               lot at SETTLE+2, and a page posts its own root beside another's. Live fx/fy v559: "epoch 5: 2 keeper
               line(s) minted as $CRAFT stake"; Wren SIGNED $CRAFT 08e08556…/45caba3e (A) seq 0 and …/1ead752b (B) seq 0.
-              NEXT: K5 claim/monitor page ($CRAFT in the wallet as stake), witness fees F (the pot's 10%).
+          [x] K5 $CRAFT IN THE WALLET 10-11: `wallet::View` + staked + its keeper mints (epoch, amount, stamp); the wallet
+              lists $CRAFT first (`craft_id`), its total counts stake ("staked (locked: earned by keeping)"), its history
+              "Earned by keeping" per epoch; Send hidden when nothing is spendable. Live fx v561 (A): CRAFT 2,441.40625
+              staked = epochs 5 + 7 × 1,220.703125 (each the 2% cap: two keepers; the rest never minted).
+              NEXT: K6 issuance monitor (per epoch: keepers paid, total, top shares, lineages); witness fees F.
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and

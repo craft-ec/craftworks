@@ -17,6 +17,10 @@ pub struct View {
     pub balance: u128,
     /// Its chain is there (a creator's not begun: false, its genesis still to come with its first send).
     pub begun: bool,
+    /// LOCKED as stake (a keeper mint's, a stake): not spendable, the weight of its witness lot (TOKEN §7a).
+    pub staked: u128,
+    /// Its KEEPER MINTS: (standing epoch, amount, the entry's stamp), oldest first.
+    pub mints: Vec<(u64, u128, u64)>,
 }
 
 /// What a send built: the sender's chain to put, and the debit's name (what the receiver's credit cites).
@@ -48,10 +52,17 @@ pub fn view(ctx: &Ctx, got: Got, id: &[u8; 32], owner: &[u8; 32]) -> Result<Step
     Ok(match holding(ctx, got, &token(id), owner)? {
         Step::Want(w) => Step::Want(w),
         Step::Sign(m) => Step::Sign(m),
-        Step::Done(Some((h, _))) => Step::Done(View { begun: !h.state.entries.is_empty(), balance: h.state.balance(), definition: h.definition }),
+        Step::Done(Some((h, keys))) => {
+            let staked = t::walk(&h.params, &h.definition, &h.state, &|_, _| None, &|_| None, Some(&keys), 0, usize::MAX, &t::Extra::NONE).map_or(0, |w| w.staked);
+            let mints = h.state.entries.iter().filter_map(|e| match e.body {
+                t::Body::KeeperMint { epoch, amount, .. } => Some((epoch, amount, e.stamp)),
+                _ => None,
+            }).collect();
+            Step::Done(View { begun: !h.state.entries.is_empty(), balance: h.state.balance(), staked, mints, definition: h.definition })
+        }
         Step::Done(None) => {
             let Some(b) = got(id) else { return Ok(Step::Want(vec![*id])) };
-            Step::Done(View { definition: Definition::decode(&b).ok_or("not a token definition")?, balance: 0, begun: false })
+            Step::Done(View { definition: Definition::decode(&b).ok_or("not a token definition")?, balance: 0, begun: false, staked: 0, mints: vec![] })
         }
     })
 }
