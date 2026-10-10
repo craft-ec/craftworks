@@ -2733,7 +2733,8 @@ mod js {
             })
         }
         /// SEND PRIVATELY from this wallet's stealth chains (`wallet::send_private`; `mine`: the announcements it found,
-        /// bytes each): `{ done: { announces: [bytes], puts } }`.
+        /// bytes each): `{ done: { announces: [bytes], rest: [bytes], puts } }` — `rest`: each paying chain's rest, moved
+        /// to a fresh address of this wallet's own (a chain pays once).
         #[allow(clippy::too_many_arguments)]
         pub fn wallet_send_private(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], seed: &[u8], mine: js_sys::Array, pay_scan: &[u8], pay_spend: &[u8], amount: &str, rand: &[u8], now: f64) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
@@ -2746,15 +2747,19 @@ mod js {
             };
             let mut puts = Vec::new();
             let mut anns = Vec::new();
+            let mut rest = Vec::new();
             let v = token_step(step, |s| {
                 puts = s.puts;
                 anns = s.announces.iter().map(|a| a.encode()).collect();
+                rest = s.rest.iter().map(|a| a.encode()).collect();
                 Ok(json!({}))
             })?;
             let v = self.attach_puts(v, token_code, &puts)?;
             if let Ok(done) = js_sys::Reflect::get(&v, &"done".into()) {
                 if !done.is_undefined() {
-                    js_sys::Reflect::set(&done, &"announces".into(), &anns.iter().map(|a| JsValue::from(js_sys::Uint8Array::from(&a[..]))).collect::<js_sys::Array>())?;
+                    let list = |l: &[Vec<u8>]| l.iter().map(|a| JsValue::from(js_sys::Uint8Array::from(&a[..]))).collect::<js_sys::Array>();
+                    js_sys::Reflect::set(&done, &"announces".into(), &list(&anns))?;
+                    js_sys::Reflect::set(&done, &"rest".into(), &list(&rest))?;
                 }
             }
             Ok(v)

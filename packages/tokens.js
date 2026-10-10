@@ -233,6 +233,13 @@ export async function start(ctx) {
       const s = await run(() => core.wallet_send_private(code, beacon, idlogCode, bytes(id), bytes(g.seed), g.mine.map(f => bytes(f.a)), bytes(pay.scan), bytes(pay.spend), g.amount.toString(), rand, at));
       await putAll(s.puts);
       announces.push(...s.announces);
+      // Each chain's REST, moved to a fresh address of this wallet's own (a chain pays once): kept found now, and
+      // announced so the account's other devices find it too.
+      for (const r of s.rest ?? []) {
+        const to = hexOf(r.slice(84, 116));
+        await priv.put(`found/${to}`, JSON.stringify({ a: hexOf(r), seed: g.seed.slice(0, 16), token: id, to, done: false, at: Date.now(), rest: true }));
+        await announce(at, r).catch(e => ctx.log("wallet", { what: `announcing a rest: ${e.message ?? e}` }));
+      }
     }
     for (const a of announces) {
       await announce(at, a);
@@ -265,7 +272,7 @@ export async function start(ctx) {
   function history(id) {
     const sent = priv.rows().filter(r => r.key.startsWith("sent/")).map(r => ({ a: r.key.slice(5), ...JSON.parse(r.value) })).filter(x => x.token === id);
     const mine = new Set(sent.map(x => x.a));
-    const received = found().filter(f => f.token === id && !f.edition && !mine.has(f.a)).map(f => ({ kind: "received", a: f.a, at: f.at ?? null }));
+    const received = found().filter(f => f.token === id && !f.edition && !f.rest && !mine.has(f.a)).map(f => ({ kind: "received", a: f.a, at: f.at ?? null }));
     const sales = found().filter(f => f.token === id && f.edition).flatMap(f => (f.taken ?? []).map(a => ({ kind: "sale", a, edition: f.edition, at: null })));
     return [...sent, ...received, ...sales].sort((x, y) => (y.at ?? 0) - (x.at ?? 0));
   }

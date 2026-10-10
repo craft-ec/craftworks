@@ -100,11 +100,14 @@ impl Private {
     }
 }
 
-/// What a private send built: the chains to put and each debit's announcement (for the payments bags).
+/// What a private send built: the chains to put, each payment's announcement (for the payments bags), and each REST
+/// moved to a fresh address of this wallet's own (its announcement: this wallet keeps it found; announced too, so its
+/// other devices find it).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SentPrivately {
     pub puts: Vec<Put>,
     pub announces: Vec<stealth::Announce>,
+    pub rest: Vec<stealth::Announce>,
 }
 
 use craftworks_wallet::stealth;
@@ -165,7 +168,7 @@ pub fn send_private(ctx: &Ctx, got: Got, id: &[u8; 32], seed: &[u8; 32], mine: &
     let keys = stealth::Keys::from_seed(seed);
     let none = craftworks_idlog_contract::Log { events: vec![] };
     let mut left = amount;
-    let mut out = SentPrivately { puts: vec![], announces: vec![] };
+    let mut out = SentPrivately { puts: vec![], announces: vec![], rest: vec![] };
     for (i, (p, st)) in chains.into_iter().enumerate() {
         if left == 0 {
             break;
@@ -184,12 +187,27 @@ pub fn send_private(ctx: &Ctx, got: Got, id: &[u8; 32], seed: &[u8; 32], mine: &
         let one = keys.find(&r, &p.owner).ok_or("a chain that is not this wallet's")?;
         let paid = stealth::pay(to, blake3::Hasher::new_derive_key("craftworks wallet private send").update(rand).update(&(i as u32).to_le_bytes()).finalize().as_bytes()).ok_or("the recipient's card keys are not keys")?;
         let held = craftworks_wallet::Held { params: p, definition: d.clone(), state: st, blocks: Default::default() };
-        let entries = Wallet { device: &one, keys: &none }.debit(&held, Body::Send { to: paid.to, amount: part }, now).map_err(String::from)?;
+        let w = Wallet { device: &one, keys: &none };
+        let entries = w.debit(&held, Body::Send { to: paid.to, amount: part }, now).map_err(String::from)?;
         let nonce = entries.last().expect("a debit").nonce;
-        let mut s = held.state;
-        s.entries.extend(entries);
-        out.puts.push(Put { params: held.params.encode(), state: s.encode() });
+        let mut held = held;
+        held.state.entries.extend(entries);
         out.announces.push(stealth::Announce { token: *id, from: held.params.owner, nonce, to: paid.to, r: paid.r });
+        // THE REST to a fresh address of this wallet's own (owner 10-10: a chain pays once — whoever it paid learns an
+        // address that pays nobody else): the most that leaves its fee room, if at least the token's smallest send.
+        let left_here = held.state.balance();
+        let mut rest = left_here;
+        while rest > 0 && fee(rest) > left_here {
+            rest -= 1;
+        }
+        if rest >= d.min_send.max(1) {
+            let own = stealth::pay(&keys.public(), blake3::Hasher::new_derive_key("craftworks wallet private rest").update(rand).update(&(i as u32).to_le_bytes()).finalize().as_bytes()).ok_or("this wallet's keys are not keys")?;
+            let more = w.debit(&held, Body::Send { to: own.to, amount: rest }, now).map_err(String::from)?;
+            let n2 = more.last().expect("a debit").nonce;
+            held.state.entries.extend(more);
+            out.rest.push(stealth::Announce { token: *id, from: held.params.owner, nonce: n2, to: own.to, r: own.r });
+        }
+        out.puts.push(Put { params: held.params.encode(), state: held.state.encode() });
         left -= part;
     }
     if left > 0 {
@@ -399,18 +417,25 @@ mod tests {
         assert_eq!(send_private(&ctx, &|x| g.get(x).cloned(), &id, &[22; 32], &mine, &ka.public(), 101, &[2; 32], e1 + 15), Err("not enough: 1 short".into()));
         assert_eq!(send_private(&ctx, &|x| g.get(x).cloned(), &id, &[21; 32], &mine, &ka.public(), 10, &[2; 32], e1 + 15), Err("a chain that is not this wallet's".into()));
         let Ok(Step::Done(back)) = send_private(&ctx, &|x| g.get(x).cloned(), &id, &[22; 32], &mine, &ka.public(), 30, &[2; 32], e1 + 15) else { panic!("sent") };
-        assert_eq!((back.puts.len(), back.announces.len()), (1, 1));
+        assert_eq!((back.puts.len(), back.announces.len(), back.rest.len()), (1, 1, 1));
         let sb2 = State::decode(&back.puts[0].state).unwrap();
         let alice_chain = State::decode(&got[&pa.id()]).unwrap();
         assert_eq!(t::check(&pb2, &d, &sb2, &|_, o| (o == &a).then(|| alice_chain.clone()), &|_| None, None, &t::Extra::NONE), Ok(()));
-        assert_eq!(sb2.balance(), 70);
+        // THE CHAIN PAYS ONCE: 30 to A, the other 70 to a fresh address of B's own — the chain left empty; only B's scan
+        // finds that address, and it is not the one A was paid at.
+        assert_eq!(sb2.balance(), 0);
+        let rest = back.rest[0];
+        assert_eq!((rest.from, kb.scan([&rest]).len(), ka.scan([&rest]).len()), (paid.to, 1, 0));
+        assert_ne!(rest.to, back.announces[0].to);
+        assert!(matches!(sb2.entries.last().unwrap().body, Body::Send { amount: 70, .. }));
         let back_ann = back.announces[0];
         assert_eq!(back_ann.from, paid.to);
         let found = ka.scan([&back_ann]);
         assert_eq!(found.len(), 1);
         got.insert(pb2.id(), back.puts[0].state.clone());
         got.insert(chain(&ctx, &d, &id, &back_ann.to, [0; 32]).id(), vec![]);
-        crate::tokens::testlot::witness(&tl, &mut got, &pb2, &d, &sb2, sb2.entries.last().unwrap().seq, 6);
+        let paid_seq = sb2.entries.iter().find(|e| e.nonce == back_ann.nonce).unwrap().seq;
+        crate::tokens::testlot::witness(&tl, &mut got, &pb2, &d, &sb2, paid_seq, 6);
         assert_eq!(take(&back_ann, e1 + 18, &got).map(|r| r.amount), Ok(30));
         // Neither stealth chain names a DID: their owners are one-time keys' sets.
         assert!(![pb2.owner, back_ann.to].contains(&a) && ![pb2.owner, back_ann.to].contains(&b));

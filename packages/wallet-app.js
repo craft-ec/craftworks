@@ -76,7 +76,12 @@ export async function mount(ctx, el) {
     const mine = purse.found().filter(f => f.token === id);
     const p = mine.length ? await run(() => core.wallet_private(code, beacon, idlogCode, bytes(id), mine.map(f => bytes(f.to)))) : { balance: "0", chains: [] };
     const onId = BigInt(v.begun || v.creator !== hexOf(me.didBytes) ? v.balance : v.supply);
-    return { ...v, onId: onId.toString(), private: p.balance, chains: p.chains.filter(c => c.balance !== "0").length, total: (onId + BigInt(p.balance)).toString() };
+    // ARRIVING: payments found and not yet taken — a payment to you, or a send's rest moving to a fresh address of
+    // yours — counted in the total (shown as arriving), not lost from it while their witnesses sign.
+    const waiting = mine.filter(f => !f.done && !f.edition);
+    const amounts = await Promise.all(waiting.map(f => purse.status(f.a).then(s => BigInt(s?.amount ?? 0), () => 0n)));
+    const arriving = amounts.reduce((a, b) => a + b, 0n);
+    return { ...v, onId: onId.toString(), private: p.balance, arriving: arriving.toString(), chains: p.chains.filter(c => c.balance !== "0").length, total: (onId + BigInt(p.balance) + arriving).toString() };
   }
 
   // SEND to a person, privately: their card's pay keys, from this wallet's private chains only (§7f: a DID holds
@@ -93,7 +98,7 @@ export async function mount(ctx, el) {
   }
 
   // A token's BALANCE line: its total and where it is (private chains · on the id).
-  const whereOf = v => [v.private !== "0" ? `${shown(v.private, v.decimals)} private (${v.chains} chain${v.chains === 1 ? "" : "s"})` : null, v.onId !== "0" ? `${shown(v.onId, v.decimals)} on your id` : null].filter(Boolean).join(" · ");
+  const whereOf = v => [v.private !== "0" ? `${shown(v.private, v.decimals)} private (${v.chains} chain${v.chains === 1 ? "" : "s"})` : null, v.arriving && v.arriving !== "0" ? `${shown(v.arriving, v.decimals)} arriving` : null, v.onId !== "0" ? `${shown(v.onId, v.decimals)} on your id` : null].filter(Boolean).join(" · ");
 
   // THE LIST: a card per token (its balance), opening its page.
   function card(id, me) {

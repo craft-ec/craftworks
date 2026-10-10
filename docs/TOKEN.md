@@ -838,9 +838,11 @@ DID; only the sender and the recipient know who was paid.
 - **FINDING (scanning).** For each announcement since the last scan the wallet computes h = H(s·R), P = B + h·G and
   compares `set_id({P})` with `to` — pure computation; only matches are read. Its spend key is b + h. Everything is
   rediscovered from the seed: nothing to remember.
-- **NO CHANGE NEEDED.** A chain holds a balance, not coins: a send leaves the rest in the source chain (itself not
-  linkable to the DID). Payments made from one chain are linkable to EACH OTHER (never to the DID); spending several
-  chains at once links them: the wallet spends from as few as it can. The wallet core signs a stealth chain as any
+- **A CHAIN PAYS ONCE (owner 10-10).** A send moves the paying chain's REST to a fresh address of the wallet's own in
+  the same write: whoever a chain paid learns an address that pays nobody else — a counterparty who knows it was you
+  learns that one payment, not a history. Spending several chains at once links them to each other (never to the
+  DID): the wallet spends from as few as it can. Who was paid is cryptographically hidden; the graph between unnamed
+  one-time addresses (and amounts) stays public — hiding it too is a zero-knowledge redesign, later if ever. The wallet core signs a stealth chain as any
   device's (`Device::set`: handed over with `Members`, signed as the 1-of-1 set).
 - **A DID CHAIN HOLDS ONLY STAKE** (owner 10-10: "no did account being use at all aside from staking" — so no mixing is
   needed: nothing spendable sits on a DID to shield). Everything spendable lands on a one-time owner: payments, an

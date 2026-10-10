@@ -1708,6 +1708,14 @@ old key's addresses.
               announcement: the debit's amount and stamp, then `tokens::accepted`), tested at every stage. The purse
               records sends (`sent/<announce>`: kind, to, at) and stamps found payments. Measured: B's page showed its
               three receipts +7 +5 +3, each "accepted ✓ 1" (Wren's baseline signature).
+          [x] A CHAIN PAYS ONCE (owner 10-10: "make that default — balance to another private account") — LIVE fx
+              (v543): `send_private` moves each paying chain's REST to a fresh address of the wallet's own in the same
+              write (the most that leaves its fee room; dust under min_send stays) — whoever a chain paid learns an
+              address that pays nobody else. The purse keeps the rest found at once and announces it (the account's
+              other devices); history hides it; the balance counts payments found and not yet taken as "arriving"
+              (it read 0 while the rest awaited its witnesses). Tested: B pays A 30 of 100 — B's chain left 0, the 70
+              at an address only B's scan finds, not the one A was paid at. Measured: A sent 2 then 1 — history
+              "Sent to #34kdzZ" settling → accepted ✓ 1; balance 983 → 982, never 0.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
               rendezvous), within its limit, instead of what was watched; the standing record proves it.
           [ ] F  WITNESS FEES on every token: a set fee per debit, split among its signers, claimed in their chains.
