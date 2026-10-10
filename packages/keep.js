@@ -18,7 +18,8 @@
 //   await keep.now()         // every table kept now; their records
 //   keep.watched(fileRef, itemRef, { title })   // a file this person played: kept for others (rewards step 2)
 //   await keep.kept()        // { limit, files: [{ root, item, title, size, used, at, whole, missing, error }] }
-//   await keep.setLimit(bytes)   // how much of what was played this node keeps (0: none)
+//   await keep.setLimit(bytes)   // how much THIS NODE keeps (0: none) — each node its own
+//   await keep.limits(keys)      // { key: bytes } for the account's nodes
 //   await keep.keepers(root) // [did, …]: who keeps a file (this month or last) — the KEEPERS BAG (rewards step 3)
 //   await keep.holdings(epoch) // [{ sp, row, watched } | { assigned: { key, size, missing } }]: what it keeps, fixed for
 //                            // standing epoch `epoch` (the keeper's)
@@ -134,17 +135,25 @@ export async function start(ctx) {
     const was = read(t.rows().find(r => r.key === k) ?? { value: "null" }) ?? {};
     await t.put(k, JSON.stringify({ ...was, file: { key: file.key, root: file.root, size: file.size ?? 0, ...(file.b ? { b: file.b } : {}) }, item, title: title ?? was.title ?? null, kind: kind ?? was.kind ?? null, used: Date.now() }));
   }
-  const limitOf = t => {
-    const v = read(t.rows().find(r => r.key === "limit") ?? { value: "null" });
+  // THE LIMIT is each NODE's (owner 10-11: a phone and a home server keep different amounts): `limit/<member key>`;
+  // a node without its own falls back to the account's older one, then the default.
+  const thisNode = async () => (await (await ctx.require("auth")).check())?.member?.toLowerCase() ?? null;
+  const limitOf = (t, node) => {
+    const v = read(t.rows().find(r => r.key === `limit/${node}`) ?? t.rows().find(r => r.key === "limit") ?? { value: "null" });
     return typeof v === "number" ? v : DEFAULT_LIMIT;
   };
   async function setLimit(bytes) {
-    await (await keptTable()).put("limit", JSON.stringify(Math.max(0, Number(bytes) || 0)));
+    await (await keptTable()).put(`limit/${await thisNode()}`, JSON.stringify(Math.max(0, Number(bytes) || 0)));
+  }
+  // Each node's limit (`keys`: the account's node keys, hex).
+  async function limits(keys) {
+    const t = await keptTable();
+    return Object.fromEntries(keys.map(k => [k.toLowerCase(), limitOf(t, k.toLowerCase())]));
   }
   // What is kept: newest used first, while the sizes fit the limit; the rest dropped (no longer re-read).
   async function kept() {
     const t = await keptTable();
-    const limit = limitOf(t);
+    const limit = limitOf(t, await thisNode());
     const all = t.rows().filter(r => r.key.startsWith("w/") && r.value).map(r => ({ key: r.key, rec: read(r) })).filter(w => w.rec?.file).map(w => ({ ...w.rec, key: w.key, w: w.rec })).sort((a, b) => (b.used ?? 0) - (a.used ?? 0));
     let total = 0;
     const files = [];
@@ -321,5 +330,5 @@ export async function start(ctx) {
     tick();
     setInterval(tick, 60000);
   }, 120000);
-  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.log("keep", { what: `not noted for keeping: ${e?.message ?? e}` })), kept, setLimit, keepers, holdings, assign };
+  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.log("keep", { what: `not noted for keeping: ${e?.message ?? e}` })), kept, setLimit, limits, keepers, holdings, assign };
 }

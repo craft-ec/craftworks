@@ -80,6 +80,25 @@ export async function start(ctx) {
     return hosted;
   }
 
+  // THE SEAT'S NODE (owner 10-11): an account's witness seat names ONE node's key — the one most likely online, the
+  // node whose standing record answered the most challenges last epoch (ties: the lowest key). Every node of the
+  // account computes the same from the public records; only that one claims.
+  async function seatIsMine(epoch, me) {
+    const [membership, tokens] = await Promise.all(["membership", "tokens"].map(n => ctx.require(n)));
+    const list = (await membership.nodes().catch(() => null)) ?? [{ key: me.member }];
+    if (list.length < 2) return true;
+    let best = null;
+    for (const n of list) {
+      const key = n.key.toLowerCase();
+      const id = tokens.hexOf(Core.keeper_record_id(standingCode, beaconCode, tokens.beacon, tokens.bytes(key)));
+      await tokens.read(id);
+      const rec = core.take_got(id);
+      const answered = (rec ? Core.standing_read(rec) : []).find(x => x.epoch === epoch - 1)?.answers ?? 0;
+      if (!best || answered > best.answered || (answered === best.answered && key < best.key)) best = { key, answered };
+    }
+    return best.key === me.member.toLowerCase();
+  }
+
   async function tick(h) {
     if (busy) return;
     busy = true;
@@ -105,8 +124,9 @@ export async function start(ctx) {
         state.registered = epoch;
       }
       // STAKE IN THE LOT (TOKEN §7a): its earned $CRAFT claimed for the next open claims epoch, its member key the
-      // witness key (made its $CRAFT chain's writer first) — once a standing epoch; nothing staked: nothing claimed.
-      if (self.claimed !== epoch) {
+      // witness key (made its $CRAFT chain's writer first) — once a standing epoch, by the account's SEAT NODE only;
+      // nothing staked: nothing claimed.
+      if (self.claimed !== epoch && (await seatIsMine(epoch, me))) {
         self.claimed = epoch;
         const { creds } = await tokens.device();
         const c = await run(sigs => core.keeper_claim(tokens.code, beacon, tokens.idlogCode, me.didBytes, h, public_, creds, sigs)).catch(e => (ctx.log("keeper", { what: `stake not claimed: ${e?.message ?? e}` }), null));

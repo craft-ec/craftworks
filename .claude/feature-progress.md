@@ -1864,7 +1864,11 @@ old key's addresses.
               this/last epoch, last answer, seat · Keeper: this node's limit and kept files · Data used: the month);
               EXPLORER = the public network only ("This page" removed). Duplicates removed (network line and issuance
               lived in Usage too). Bindings `keeper_record_id`, `standing_read`; statement `paid` lines. Live fx v567.
-              NEXT: per-node storage limit (stored under the node key); the witness seat names the most reliable node.
+          [x] PER-NODE LIMIT 10-11: `limit/<member key>` in the account's `kept` table (fallback: the old account-wide
+              row, then the default); `keep.limits(keys)`; Nodes shows each node's. Live fx v568: "512.0 MB" carried over.
+          [x] SEAT NODE 10-11: only the account's node that answered the most challenges last epoch (ties: lowest key)
+              claims — every node computes it from the public records (before: every node claimed, the registry's merge
+              kept a hash-random one). Multi-node not tested live (fx/fy accounts have one node each).
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and

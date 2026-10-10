@@ -82,6 +82,7 @@ export async function mount(ctx, el) {
     const seats = [c, c + 1].map(x => (seat[x] ? `claims epoch ${x}: node ${seat[x].key.slice(0, 8)}… · ${craft(seat[x].amount)} staked` : `claims epoch ${x}: none`)).join(" · ");
     // NODES: each node's standing record (its key names it).
     const list = (await membership.nodes().catch(() => null)) ?? [{ index: 0, key: me.member, me: true }];
+    const limits = await (await ctx.require("keep")).limits(list.map(n => n.key)).catch(() => ({}));
     const rows = [];
     for (const n of list) {
       const key = n.key.toLowerCase();
@@ -91,11 +92,11 @@ export async function mount(ctx, el) {
       const last = eps.find(x => x.epoch === e - 1);
       const lastSeen = eps.map(x => x.last).find(x => x != null);
       const holds = Object.values(seat).some(s => s.key === key);
-      rows.push([cell(`node ${n.index}${n.me ? " (this one)" : ""}`), cell(`${key.slice(0, 8)}…`), cell(now ? String(now.pieces) : "—", "num"), cell(now ? size(now.bytes) : "—", "num"), cell(now ? String(now.answers) : "0", "num"), cell(last ? String(last.answers) : "0", "num"), cell(lastSeen != null ? String(lastSeen) : "never", "num"), holds ? cell("✓", "ok") : cell("")]);
+      rows.push([cell(`node ${n.index}${n.me ? " (this one)" : ""}`), cell(`${key.slice(0, 8)}…`), cell(limits[key] != null ? size(limits[key]) : "—", "num"), cell(now ? String(now.pieces) : "—", "num"), cell(now ? size(now.bytes) : "—", "num"), cell(now ? String(now.answers) : "0", "num"), cell(last ? String(last.answers) : "0", "num"), cell(lastSeen != null ? String(lastSeen) : "never", "num"), holds ? cell("✓", "ok") : cell("")]);
     }
     return [
       section("Account", `Its statement lines (all its nodes together). Witness seat — ${seats}.`, table([["Epoch", "num"], ["Keeper"], ["Earned as keeper ($CRAFT, staked)", "num"], ["Earned as witness ($CRAFT)", "num"]], acct)),
-      section("Nodes", `Each node's own standing record: what it committed and the challenges it answered (epoch ${e} and ${e - 1}).`, table([["Node"], ["Key"], ["Pieces held", "num"], ["Bytes", "num"], [`Answered ${e}`, "num"], [`Answered ${e - 1}`, "num"], ["Last answer at", "num"], ["Witness seat"]], rows)),
+      section("Nodes", `Each node's own standing record: what it committed and the challenges it answered (epoch ${e} and ${e - 1}).`, table([["Node"], ["Key"], ["Storage limit", "num"], ["Pieces held", "num"], ["Bytes", "num"], [`Answered ${e}`, "num"], [`Answered ${e - 1}`, "num"], ["Last answer at", "num"], ["Witness seat"]], rows)),
     ];
   }
 
