@@ -27,7 +27,7 @@ pub(crate) fn out_at(lot: &Lot, got: Got, beacon_id: &[u8; 32], h: u64) -> Resul
 /// What this page does about one queued entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
-    /// Not drawn into its committee (or its lot not drawn yet): nothing to do.
+    /// Not drawn into its committee, its lot not drawn yet, or its chain not readable here: nothing to do.
     NotSeated,
     /// Seated, and the rule refuses it (why): not signed.
     Refused(String),
@@ -56,14 +56,14 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
     };
     let definition = |tid: &[u8; 32]| read(*tid).and_then(|b| Definition::decode(&b));
     let Some(d) = definition(&q.token.definition) else {
-        return Ok(if want.borrow().is_empty() { Step::Done(Verdict::Refused("the token's definition is not there".into())) } else { wanted(&want) });
+        return Ok(if want.borrow().is_empty() { Step::Done(Verdict::NotSeated) } else { wanted(&want) });
     };
     let params = |tok: &t::Tok, owner: &[u8; 32], d: &Definition| ChainParams { code_hash: ctx.code_hash, definition: tok.definition, owner: *owner, beacon: d.beacon, idlog: d.idlog, item: tok.item };
     let p = params(&q.token, &q.owner, &d);
     let Some(s) = read(p.id()).and_then(|b| State::decode(&b)) else {
-        return Ok(if want.borrow().is_empty() { Step::Done(Verdict::Refused("the chain is not there".into())) } else { wanted(&want) });
+        return Ok(if want.borrow().is_empty() { Step::Done(Verdict::NotSeated) } else { wanted(&want) });
     };
-    let Some(i) = s.entries.iter().position(|e| e.seq == q.seq) else { return Ok(Step::Done(Verdict::Refused("the entry is not held".into()))) };
+    let Some(i) = s.entries.iter().position(|e| e.seq == q.seq) else { return Ok(Step::Done(Verdict::NotSeated)) };
     let (epoch, h) = wallet::lot_of(&s.entries[i], i.checked_sub(1).map(|j| &s.entries[j]), d.margin).map_err(String::from)?;
     let out = match out_at(lot, got, &d.beacon, h) {
         Err(w) => return Ok(Step::Want(vec![w])),

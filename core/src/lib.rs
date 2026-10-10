@@ -2754,6 +2754,87 @@ mod js {
             let address = craftworks_token_contract::wallet::witness_bag(&chain, seq);
             Ok(js_obj(&[("address", js_sys::Uint8Array::from(&address[..]).into()), ("item", js_sys::Uint8Array::from(&craftworks_token_contract::wallet::bytes::witness_sig(&s)[..]).into())]))
         }
+        // ---- THE EXPLORER (owner 10-11: "more transparent … like a block explorer"): what each public record holds ----
+
+        /// The clock's lengths: `{ standing, claims, lead }` (heights a standing epoch, a claims epoch, and how long
+        /// before its epoch a claims registry stops taking claims).
+        pub fn clock() -> JsValue {
+            js_obj(&[("standing", JsValue::from(craftworks_reputation::EPOCH as f64)), ("claims", JsValue::from(craftworks_token_contract::supply::EPOCH as f64)), ("lead", JsValue::from(craftworks_token_contract::claims::LEAD as f64))])
+        }
+        /// A witness-queue item: `{ token, owner, seq }` (hex), or null.
+        pub fn queued_read(b: &[u8]) -> JsValue {
+            match craftworks_wallet::queue::Queued::decode(b) {
+                Some(q) => js_obj(&[("token", JsValue::from(hex(&q.token.definition))), ("owner", JsValue::from(hex(&q.owner))), ("seq", JsValue::from(q.seq as f64))]),
+                None => JsValue::NULL,
+            }
+        }
+        /// The $CRAFT CLAIMS REGISTRY of claims epoch `epoch` (its contract id).
+        pub fn claims_registry_id(token_code: &[u8], beacon: &[u8], idlog_code: &[u8], epoch: f64) -> Result<js_sys::Uint8Array, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let p = craftworks_token_contract::claims::Params { code_hash: ctx.code_hash, pool: keeper::craft(&ctx).1, beacon: ctx.beacon, epoch: epoch as u64 };
+            Ok(js_sys::Uint8Array::from(&p.id()[..]))
+        }
+        /// A claims registry's entrants: `[{ owner, amount, key }]` (hex; amount in units).
+        pub fn claims_read(state: &[u8]) -> JsValue {
+            let out = js_sys::Array::new();
+            for c in craftworks_token_contract::claims::Registry::decode(state).map_or(vec![], |r| r.claims) {
+                out.push(&js_obj(&[("owner", JsValue::from(hex(&c.owner))), ("amount", JsValue::from(c.amount.to_string())), ("key", JsValue::from(hex(&c.key)))]));
+            }
+            out.into()
+        }
+        /// A queued entry's STATUS (`queued`: its bytes): `{ want }`, or `{ done: { kind, stamp, signatures, accepted } |
+        /// { kind, stamp, signatures, waiting: why } | { missing: why } }`.
+        #[allow(clippy::too_many_arguments)]
+        pub fn entry_status(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], queued: &[u8]) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let q = craftworks_wallet::queue::Queued::decode(queued).ok_or_else(|| err("not a queued entry".into()))?;
+            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+            let want = |w: Vec<[u8; 32]>| js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string());
+            let missing = |why: &str| js_sys::JSON::parse(&json!({ "done": { "missing": why } }).to_string());
+            let d = match tokens::there(&got, &q.token.definition) {
+                Err(w) => return want(vec![w]),
+                Ok(None) => return missing("its token is not on the network"),
+                Ok(Some(b)) => craftworks_token_contract::Definition::decode(&b).ok_or_else(|| err("not a token definition".into()))?,
+            };
+            let p = craftworks_token_contract::ChainParams { code_hash: ctx.code_hash, definition: q.token.definition, owner: q.owner, beacon: d.beacon, idlog: d.idlog, item: q.token.item };
+            let addr = craftworks_token_contract::wallet::witness_bag(&p.id(), q.seq);
+            let bag = craftworks_token_contract::id(&lot.bag, &addr);
+            let (s, b) = match (tokens::there(&got, &p.id()), tokens::there(&got, &bag)) {
+                (Ok(s), Ok(b)) => (s, b),
+                (s, b) => return want([s.err(), b.err()].into_iter().flatten().collect()),
+            };
+            let Some(s) = s.and_then(|b| craftworks_token_contract::State::decode(&b)) else { return missing("its chain is not on the network") };
+            let Some(e) = s.entries.iter().find(|e| e.seq == q.seq) else { return missing("its chain holds no such entry") };
+            let signatures = b.and_then(|b| craftworks_bag_contract::read(&addr, &b)).map_or(0, |v| v.len());
+            let kind = format!("{:?}", e.body).split(|c: char| c == ' ' || c == '{' || c == '(').next().unwrap_or("").to_string();
+            let base = json!({ "kind": kind, "stamp": e.stamp, "signatures": signatures, "chain": hex(&p.id()) });
+            match tokens::accepted(&lot, &got, &p, &d, &s, q.seq).map_err(err)? {
+                tokens::Step::Want(w) => want(w),
+                tokens::Step::Sign(_) => Err(err("a status never signs".into())),
+                tokens::Step::Done(r) => {
+                    let mut v = base;
+                    match r {
+                        Ok(n) => v["accepted"] = json!(n),
+                        Err(why) => v["waiting"] = json!(why),
+                    }
+                    js_sys::JSON::parse(&json!({ "done": v }).to_string())
+                }
+            }
+        }
+        /// An epoch STATEMENT root's acceptance (`root` hex): `{ want }`, or `{ done: { accepted: n } | { waiting: why } }`.
+        #[allow(clippy::too_many_arguments)]
+        pub fn statement_status(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], epoch: f64, root: &str) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+            match tokens::statement_accepted(&lot, &got, ctx.code_hash, ctx.beacon, epoch as u64, &bytes32("root", root).map_err(err)?).map_err(err)? {
+                tokens::Step::Want(w) => js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
+                tokens::Step::Sign(_) => Err(err("a status never signs".into())),
+                tokens::Step::Done(Ok(n)) => js_sys::JSON::parse(&json!({ "done": { "accepted": n } }).to_string()),
+                tokens::Step::Done(Err(why)) => js_sys::JSON::parse(&json!({ "done": { "waiting": why } }).to_string()),
+            }
+        }
         /// $CRAFT's token id on this site's network (hex).
         pub fn craft_id(token_code: &[u8], beacon: &[u8], idlog_code: &[u8]) -> Result<String, JsValue> {
             Ok(hex(&keeper::craft(&token_ctx(token_code, beacon, idlog_code)?).1))

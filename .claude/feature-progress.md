@@ -1849,6 +1849,14 @@ old key's addresses.
               mint. Wallet: "Earned by witnessing" rows. Tests: statement 3:1 split + cap + root never; count 4 seated,
               stranger and other-entry sigs nothing, a place once; mint 40 locked + 30 spendable, wrong fee refused.
               OPEN: statement-place signatures not yet counted (only queued entries).
+          [x] EXPLORER 10-11 (owner: "more transparent … less prose. like a block explorer"): `#/explorer` (System) —
+              tables only: Clock (height, standing/claims epoch, next claims epoch, entrants close), Statements (roots
+              posted, accepted n / waiting why, keepers paid, $CRAFT minted), Witness lot (claims epoch c and c+1:
+              account, stake, key, this node), Witness queue (token, owner, seq, entry kind, stamp, signatures,
+              accepted / waiting / missing), Registries, This page (keeper, witness). Bindings `clock`, `queued_read`,
+              `claims_registry_id`, `claims_read`, `entry_status`, `statement_status`. Refreshed every 8 heights. Live
+              fx v565 at 9,688: showed the re-keyed claims (no entrants) and old chains "not on the network". Fixed: an
+              unreadable chain was "seated, refused" — now not seated (v566).
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and
