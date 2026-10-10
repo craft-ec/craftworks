@@ -126,7 +126,7 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
 
 /// The WITNESS SIGNATURES each claimant gave on `queued` (`wallet::fees::count`, the one count) over what this page
 /// read — each read missing asked for first.
-pub fn signed(ctx: &Ctx, lot: &Lot, got: Got, queued: &[Queued]) -> Step<std::collections::BTreeMap<[u8; 32], u64>> {
+pub fn signed(ctx: &Ctx, lot: &Lot, got: Got, queued: &[Queued], statements: &[craftworks_wallet::fees::Statement]) -> Step<std::collections::BTreeMap<[u8; 32], u64>> {
     let want: RefCell<Vec<[u8; 32]>> = RefCell::new(Vec::new());
     let read = |id: [u8; 32]| -> Option<Vec<u8>> {
         match there(got, &id) {
@@ -157,7 +157,7 @@ pub fn signed(ctx: &Ctx, lot: &Lot, got: Got, queued: &[Queued]) -> Step<std::co
         let a = wallet::witness_bag(c, sq);
         read(t::id(&lot.bag, &a)).and_then(|b| craftworks_bag_contract::read(&a, &b)).unwrap_or_default().iter().filter_map(|x| wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(x))).collect()
     };
-    let counted = craftworks_wallet::fees::count(queued, &craftworks_wallet::fees::Reads { pool: lot.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs });
+    let counted = craftworks_wallet::fees::count(queued, statements, &craftworks_wallet::fees::Reads { pool: lot.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs });
     let mut w = want.into_inner();
     if w.is_empty() {
         return Step::Done(counted);

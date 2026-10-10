@@ -183,6 +183,17 @@ export async function start(ctx) {
         await onToken?.(hexOf(allowance.token));
       }
     }
+    // $CRAFT's WITNESS FEES (spendable, minted on the DID chain): moved to private like any payment (TOKEN §7f: a DID
+    // chain holds only stake — the keeper share stays there, locked, the lot's weight).
+    {
+      const me = await auth.check();
+      const craftId = Core.craft_id(code, beacon, idlogCode);
+      const v = await run(() => core.wallet_view(code, beacon, idlogCode, bytes(craftId), me.didBytes)).catch(() => null);
+      if (v && v.begun && v.balance !== "0") {
+        await shield(me, craftId, v.balance).catch(err => ctx.log("wallet", { what: `moving witness fees to private: ${err.message ?? err}` }));
+        await onToken?.(craftId);
+      }
+    }
     for (const f of found().filter(f => f.edition)) {
       const sales = await run(() => core.edition_sales(code, beacon, idlogCode, bytes(f.edition))).catch(() => []);
       const taken = new Set(f.taken ?? []);

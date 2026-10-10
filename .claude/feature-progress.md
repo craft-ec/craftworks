@@ -1869,6 +1869,12 @@ old key's addresses.
           [x] SEAT NODE 10-11: only the account's node that answered the most challenges last epoch (ties: lowest key)
               claims — every node computes it from the public records (before: every node claimed, the registry's merge
               kept a hash-random one). Multi-node not tested live (fx/fy accounts have one node each).
+          [x] Q4 FEES PRIVATE 10-11: the wallet's receive pass shields any spendable $CRAFT on the DID chain (witness fees)
+              to a private address, like the allowance; the keeper share stays there locked (the lot's weight).
+          [x] STATEMENT FEES 10-11: `fees::count(queued, statements, reads)` — a statement root's seated signers count
+              too, only where the root reached the committee's need (the baseline's seat counts toward it, earns
+              nothing). Page passes the epoch before's posted roots; the tool reads them. Test: 4 signers of the
+              accepted root counted once each; a root 2 signed pays nothing. Live fx v570.
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and

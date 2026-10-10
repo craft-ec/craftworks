@@ -2542,7 +2542,7 @@ mod js {
         /// listed keeper whose standing record proves keeping then: `craftworks_standing::record::kept_accounts`; the
         /// standing contract's code and the beacon name the records).
         #[allow(clippy::too_many_arguments)]
-        pub fn statement_build(&mut self, idlog_code: &[u8], items: js_sys::Array, epoch: f64, keepers: js_sys::Array, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], token_code: &[u8], bag_code: &[u8], queued: js_sys::Array) -> Result<JsValue, JsValue> {
+        pub fn statement_build(&mut self, idlog_code: &[u8], items: js_sys::Array, epoch: f64, keepers: js_sys::Array, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], token_code: &[u8], bag_code: &[u8], queued: js_sys::Array, posted: js_sys::Array) -> Result<JsValue, JsValue> {
             use craftworks_reputation as R;
             let epoch = epoch as u64;
             let items: Vec<R::item::Item> = bytes_list(&items).iter().filter_map(|b| R::item::Item::decode(b)).collect();
@@ -2581,7 +2581,10 @@ mod js {
                     let ctx = token_ctx(token_code, beacon, idlog_code)?;
                     let lot = tokens::Lot { pool: keeper::craft(&ctx).1, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
                     let queued: Vec<craftworks_wallet::queue::Queued> = bytes_list(&queued).iter().filter_map(|b| craftworks_wallet::queue::Queued::decode(b)).collect();
-                    match witness::signed(&ctx, &lot, &|x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec), &queued) {
+                    // The epoch before's STATEMENT roots as posted (each a place its witnesses signed).
+                    let prev = epoch - 1;
+                    let statements: Vec<craftworks_wallet::fees::Statement> = posted.iter().filter_map(|r| bytes32("root", &r.as_string().unwrap_or_default()).ok()).map(|root| craftworks_wallet::fees::Statement { place: R::statement::witness_place(prev), root, h: R::statement::lot_height(prev) }).collect();
+                    match witness::signed(&ctx, &lot, &|x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec), &queued, &statements) {
                         tokens::Step::Done(s) => s,
                         tokens::Step::Want(w) => return js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
                         tokens::Step::Sign(_) => return Err(err("a count never signs".into())),

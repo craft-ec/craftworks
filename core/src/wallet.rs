@@ -446,7 +446,7 @@ mod tests {
                 let ad = t::wallet::witness_bag(c, sq);
                 g4.get(&t::id(&tl.lot.bag, &ad)).and_then(|b| craftworks_bag_contract::read(&ad, b)).unwrap_or_default().iter().filter_map(|x| t::wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(x))).collect()
             };
-            let counts = craftworks_wallet::fees::count(&[q, q], &craftworks_wallet::fees::Reads { pool: tl.lot.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs });
+            let counts = craftworks_wallet::fees::count(&[q, q], &[], &craftworks_wallet::fees::Reads { pool: tl.lot.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs });
             assert_eq!((counts.len(), counts.values().sum::<u64>()), (4, 4), "{counts:?}");
             assert!(counts.values().all(|n| *n == 1), "once a place, however often queued");
         }

@@ -348,6 +348,18 @@ mod tests {
         let m = |got: &HashMap<[u8; 32], Vec<u8>>, who: &[u8; 32]| crate::tokens::testlot::done(&|g| mint(&ctx, &tl.lot, g, who, 5, &root, &proof(who), now), got);
         assert_eq!(m(&got, &keeper), Ok(None), "its statement not accepted yet");
         crate::tokens::testlot::witness_statement(&tl, &mut got, ctx.code_hash, ctx.beacon, 5, &root, 4);
+        // WITNESS FEES for STATEMENTS (`wallet::fees`): the four seated signers of the accepted root each count once; a
+        // root only two signed (short of the committee's need) counts nothing.
+        {
+            use craftworks_reputation::statement::{lot_height, witness_place};
+            let place = |r: [u8; 32]| craftworks_wallet::fees::Statement { place: witness_place(5), root: r, h: lot_height(5) };
+            let count = |g: &HashMap<[u8; 32], Vec<u8>>, st: &[craftworks_wallet::fees::Statement]| crate::tokens::testlot::done(&|gg| Ok(crate::witness::signed(&ctx, &tl.lot, gg, &[], st)), g).unwrap();
+            let c = count(&got, &[place(root)]);
+            assert_eq!((c.len(), c.values().sum::<u64>()), (4, 4), "{c:?}");
+            let mut g2 = got.clone();
+            crate::tokens::testlot::witness_statement(&tl, &mut g2, ctx.code_hash, ctx.beacon, 5, &[8; 32], 2);
+            assert!(count(&g2, &[place([8; 32])]).is_empty(), "a root not accepted pays nothing");
+        }
         let minted = m(&got, &keeper).unwrap().expect("minted");
         assert_eq!((minted.amount, minted.craft.len()), (500, 3), "its line; $CRAFT's contracts put with it (not on the network yet)");
         let (d, token) = craft(&ctx);

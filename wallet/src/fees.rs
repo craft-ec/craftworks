@@ -18,8 +18,34 @@ pub struct Reads<'a> {
     pub sigs: &'a dyn Fn(&[u8; 32], u64) -> Vec<witness::WitnessSig>,
 }
 
-/// The signatures each claimant gave on `queued` (each place once).
-pub fn count(queued: &[Queued], r: &Reads) -> BTreeMap<[u8; 32], u64> {
+/// A STATEMENT's place: its root signed at `statement::witness_place(epoch)` (seq 0), its lot drawn at `h`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Statement {
+    pub place: [u8; 32],
+    pub root: [u8; 32],
+    pub h: u64,
+}
+
+/// The claimants SEATED for (`chain`, `seq`) whose signature over `entry` is in its bag (each seat once), and how many
+/// of them acceptance still needs once the baseline's seat is counted.
+fn seated(r: &Reads, chain: &[u8; 32], seq: u64, entry: &[u8; 32], h: u64) -> Option<(Vec<[u8; 32]>, usize)> {
+    let o = (r.out)(h)?;
+    let epoch = craftworks_token_contract::supply::epoch(h);
+    let claims = (r.claims)(epoch);
+    let valid = draw::valid(&r.pool, epoch, &claims);
+    let (k, base, need) = witness::seats(valid.len(), wallet::COMMITTEE);
+    let members = draw::committee_of(&o, chain, seq, &valid, k);
+    let sigs = (r.sigs)(chain, seq);
+    let signers: Vec<[u8; 32]> = members.iter().filter(|m| sigs.iter().any(|s| s.chain == *chain && s.seq == seq && s.entry == *entry && s.signed_by(&claims[**m].key))).map(|m| claims[*m].owner).collect();
+    // (The baseline's seat counts toward acceptance — it earns nothing: the root never does.)
+    let baseline = base && sigs.iter().any(|s| s.chain == *chain && s.seq == seq && s.entry == *entry && s.signed_by(&witness::BASELINE));
+    Some((signers, need.saturating_sub(baseline as usize)))
+}
+
+/// The signatures each claimant gave on `queued` entries (each place once) and on the epoch STATEMENTS' roots
+/// (`statements`: each posted root — counted only where its seated signatures reach the committee's need, so a root
+/// nobody accepted pays nothing).
+pub fn count(queued: &[Queued], statements: &[Statement], r: &Reads) -> BTreeMap<[u8; 32], u64> {
     let mut out: BTreeMap<[u8; 32], u64> = BTreeMap::new();
     let mut seen = BTreeSet::new();
     for q in queued {
@@ -27,17 +53,19 @@ pub fn count(queued: &[Queued], r: &Reads) -> BTreeMap<[u8; 32], u64> {
         if !seen.insert((chain, e.seq)) {
             continue;
         }
-        let Ok((epoch, h)) = wallet::lot_of(&e, pred.as_ref(), margin) else { continue };
-        let Some(o) = (r.out)(h) else { continue };
-        let claims = (r.claims)(epoch);
-        let valid = draw::valid(&r.pool, epoch, &claims);
-        let (k, _, _) = witness::seats(valid.len(), wallet::COMMITTEE);
-        let members = draw::committee_of(&o, &chain, e.seq, &valid, k);
-        let hash = e.hash();
-        let sigs = (r.sigs)(&chain, e.seq);
-        for m in members {
-            if sigs.iter().any(|s| s.chain == chain && s.seq == e.seq && s.entry == hash && s.signed_by(&claims[m].key)) {
-                *out.entry(claims[m].owner).or_default() += 1;
+        let Ok((_, h)) = wallet::lot_of(&e, pred.as_ref(), margin) else { continue };
+        for o in seated(r, &chain, e.seq, &e.hash(), h).map_or(vec![], |x| x.0) {
+            *out.entry(o).or_default() += 1;
+        }
+    }
+    for st in statements {
+        if !seen.insert((st.place, 0)) {
+            continue;
+        }
+        let Some((signers, need)) = seated(r, &st.place, 0, &st.root, st.h) else { continue };
+        if signers.len() >= need.max(1) {
+            for o in signers {
+                *out.entry(o).or_default() += 1;
             }
         }
     }

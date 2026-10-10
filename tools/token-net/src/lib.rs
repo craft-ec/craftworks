@@ -136,7 +136,9 @@ impl<'a> Reader<'a> {
         let claims = |ep: u64| self.claims(ep);
         let out = |h: u64| self.out_at(h);
         let sigs = |c: &[u8; 32], sq: u64| self.sigs(c, sq);
-        craftworks_wallet::fees::count(&queued, &craftworks_wallet::fees::Reads { pool: self.net.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs })
+        use craftworks_reputation::statement::{bag_address, lot_height, witness_place, Posted};
+        let statements: Vec<craftworks_wallet::fees::Statement> = self.bag(bag_address(epoch)).iter().filter_map(|p| Posted::decode(p)).filter(|p| p.epoch == epoch).map(|p| craftworks_wallet::fees::Statement { place: witness_place(epoch), root: p.root, h: lot_height(epoch) }).collect();
+        craftworks_wallet::fees::count(&queued, &statements, &craftworks_wallet::fees::Reads { pool: self.net.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs })
     }
     /// The accounts that KEPT in `epoch`: its keepers registry's keepers whose standing record proves it.
     pub fn kept(&self, epoch: u64, log_of: &dyn Fn(&[u8; 32]) -> Option<craftworks_idlog_contract::Log>) -> Vec<[u8; 32]> {

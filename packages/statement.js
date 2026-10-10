@@ -28,8 +28,10 @@ export async function start(ctx) {
     const beacon = bytes((await ctx.require("beacon")).status().id);
     // SIGNED: the epoch before's witness queue (each seated signature on its entries earns its claimant fees).
     const queued = epoch > 0 ? await index.bag.chain(Core.witness_queue_address, epoch - 1, "reading the witness queue") : [];
+    // …and its statement's posted roots (signing the accepted one earns fees too).
+    const posted = epoch > 0 ? (await index.bag.read(Core.statement_bag_address(epoch - 1), "reading the epoch before's statement")).map(p => Core.statement_posted_read(p)).filter(p => p?.epoch === epoch - 1).map(p => p.root) : [];
     for (let round = 0; round < 6; round++) {
-      const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon, tokenCode, bagCode, queued);
+      const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon, tokenCode, bagCode, queued, posted);
       if (r.want) {
         await Promise.all(r.want.map(id => node.read(bytes(id), "reading a key log or a keeper's record", { absent: true }).catch(() => false)));
         continue;
