@@ -13,7 +13,6 @@
 //! that the root IS the epoch's statement (anyone may post one) and that each escrow is real and accepted — witnesses
 //! check (they recompute the statement; `wallet::program_backed`), and sign no payout of a verdict under another root.
 
-use craftworks_reputation::statement::Line;
 use craftworks_token_contract::escrow::{self, EscrowRef, Section};
 use craftworks_token_contract::Tok;
 
@@ -117,10 +116,7 @@ impl State {
 
 /// `did`'s allowance under `root`, from its proof (`None`: no line, or a proof that does not hold).
 pub fn proven(root: &[u8; 32], did: &Did, proof: &[u8]) -> Option<u128> {
-    match freenet_prolly::proof::verify_bytes(root, did, proof).ok()? {
-        freenet_prolly::proof::ProvenOwned::Present(freenet_prolly::proof::ProvenValue::Inline(b)) => Line::decode(&b).map(|l| l.allowance),
-        _ => None,
-    }
+    craftworks_reputation::statement::line_proven(root, did, proof).map(|l| l.allowance)
 }
 
 /// The VERDICT for `escrows` (each as its `Escrow` entry says) under the statement `root`: each account's allowance

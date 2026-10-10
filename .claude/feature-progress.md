@@ -1792,10 +1792,14 @@ old key's addresses.
               rebuilt from source 874e8b2e. AT FIRST PRODUCTION DEPLOYMENT: TOKEN MIGRATION (owner-signed "moved" entry citing the old
               chain's final state, witnessed; the wallet moves on open) — the signer's sdk#14 analogue; fx/fy's old
               chains (be2d1f2d) its first test.
-          [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` — FIRST CUT COMMITTED 10-10 (proof, epoch, binding,
-              name; 12 mutants killed; its credential through identity's one rule, which closed a skipped key-log
-              check) — REWORK: amount = the statement's (witness-checked), appended by anyone with work, the bind
-              names the account.
+          [x] K2 KEEPER MINT = STATEMENT LINE 10-10: `Body::KeeperMint { epoch, root, proof, amount }` — amount exactly the
+              chain owner's keeper line under `root` (`reputation::statement::line_proven`, now the allowance's check
+              too); appended by anyone with work; once per epoch; stamped once the epoch began. The contract no longer
+              reads standing records (its second KEEP_MIN=6 gone; token no longer links the standing CONTRACT crate).
+              `Keepers { rate, half_life, start }` = the epoch POT. token.wasm b338db70, allowance.wasm 55e03278.
+          [x] K3 WITNESS GATE 10-10: `wallet::statement_accept` in `may_witness` — a KeeperMint is witnessed only under
+              the root ACCEPTED for its epoch. Test: unwitnessed → refused; another root accepted → refused; its root →
+              signed. NEXT: K4 issuance (the statement's keeper pot from $CRAFT's `keepers` rule; page appends mints).
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and

@@ -96,6 +96,15 @@ pub fn compute(x: &Inputs) -> Statement {
     Statement { epoch: x.epoch, lines }
 }
 
+/// `did`'s LINE under statement root `root`, from its proof (a prolly proof): `None` — no line, or a proof that does not
+/// hold. The one check every payout from a statement makes (the allowance's, the keeper mint's).
+pub fn line_proven(root: &Cid, did: &Did, proof: &[u8]) -> Option<Line> {
+    match freenet_prolly::proof::verify_bytes(root, did, proof).ok()? {
+        freenet_prolly::proof::ProvenOwned::Present(freenet_prolly::proof::ProvenValue::Inline(b)) => Line::decode(&b),
+        _ => None,
+    }
+}
+
 /// The STATEMENT BAG of epoch `epoch` (a bag's address): where anyone posts the statement's root ([`Posted`]).
 pub fn bag_address(epoch: u64) -> [u8; 32] {
     blake3::derive_key("craftworks 2026-10-10 epoch statement", &epoch.to_le_bytes())

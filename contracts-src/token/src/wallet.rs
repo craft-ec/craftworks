@@ -80,6 +80,18 @@ pub fn accept(src: &Source, chain: &ChainParams, e: &Entry, pred: Option<&Entry>
     witness::accepted(&src.pool, &id, e.seq, &e.hash(), &out, epoch, &(src.claims)(epoch), &(src.sigs)(&id, e.seq), COMMITTEE, &|o| (src.stake_of)(o, at))
 }
 
+/// Is standing epoch `epoch`'s STATEMENT root `root` ACCEPTED — its committee (drawn at `statement::lot_height`)
+/// signed that root at its `statement::witness_place` (seq 0)? What a payout by a statement rests on (a keeper mint's
+/// line): a root anyone may post, value only once witnessed.
+pub fn statement_accept(src: &Source, epoch: u64, root: &[u8; 32]) -> Result<usize, Why> {
+    use craftworks_reputation::statement::{lot_height, witness_place};
+    let h = lot_height(epoch);
+    let out = (src.out)(h).ok_or("a statement whose lot is not drawn yet")?;
+    let ce = h / supply::EPOCH;
+    let place = witness_place(epoch);
+    witness::accepted(&src.pool, &place, 0, root, &out, ce, &(src.claims)(ce), &(src.sigs)(&place, 0), COMMITTEE, &|o| (src.stake_of)(o, ce * supply::EPOCH))
+}
+
 /// A staker's STAKE at beacon height `at` — what its chain (`p`, in the pool `d`) held staked after its entries stamped
 /// before `at` — and the keys that stake burns for: its device writer's then, and those it had retired while staked.
 /// (Unbonding amounts stay burnable but are not counted.) `Err`: the chain as given starts after `at` (a cut) — read it
@@ -170,6 +182,11 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
     taken(src, p, s, i)?;
     // A RELEASE or PAYOUT of a program: the program BACKED by real, accepted escrows to it.
     program_entry(src, p, s, i, chain)?;
+    // A KEEPER MINT: its line under the statement root ACCEPTED for its epoch (the contract checked the line holds
+    // under the root it names; any root may be posted).
+    if let Body::KeeperMint { epoch, root, .. } = &e.body {
+        statement_accept(src, *epoch, root)?;
+    }
     match i.checked_sub(1) {
         Some(j) => {
             accept(src, p, &s.entries[j], j.checked_sub(1).map(|k| &s.entries[k]))?;

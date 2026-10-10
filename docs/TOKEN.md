@@ -564,7 +564,7 @@ caught and the honest step back on both nodes, as before).
 | `fixed(genesis)` | issued once, in the definition's genesis entries; never more | — |
 | `authority` | the mint set's mints, in the supply shards | k signatures of the mint set current at the mint's stamp |
 | `burnable` (with any) | falls by every `burn` | the owner's signature |
-| `keepers(rate, half-life, start)` | a decaying launch phase (§7d): a fixed amount per account per standing epoch PROVED kept, halving every `half-life` epochs from `start`, locked as stake; only for accounts past the reputation gate | the standing contract the claim cites (the contract) + the reputation gate (witnesses) |
+| `keepers(rate, half-life, start)` | a decaying launch phase (§7d): a POT of `rate` per standing epoch, halving every `half-life` epochs from `start`, split by the epoch's STATEMENT among the accounts that proved keeping; each mints its line, locked as stake | the line's proof under the statement root (the contract) + that root accepted for the epoch (witnesses) |
 
 Deflation needs nothing global: a fixed genesis plus burns. Keeper issuance needs no global cap either: its rate decays
 by beacon height, and sybils gain only by holding real disk (REWARDS §4). It requires the storage PROOFS (deferred
@@ -600,20 +600,20 @@ ISSUANCE — and each piece of the loop has ONE job:
   more); from 1,000 on, only accounts at or above the gate earn, by reputation alone. Keeping itself never waits for
   reputation: every logged-in account with a storage limit is a keeper and is assigned files. The allowance (paid for
   nothing done) keeps its gate throughout.
-- **Proven keeping sets the AMOUNT:** a `keepers` token mints by `Body::KeeperMint` — the keeper's own claim, in its own
-  chain, for one FINISHED standing epoch (`craftworks_standing::EPOCH` beacon heights), citing its node's STANDING
-  CONTRACT. The token contract reads that contract (one related contract) and checks: the epoch is finished (the
-  beacon past its end + the margin); it holds at least `KEEP_MIN` answers in that epoch (each one checked by the
-  standing contract against the beacon: sampled for the peer, the piece asked for, under the committed root); those
-  answers are by a node key the claim's CREDENTIAL binds to this account (the writer-credential check: the account's
-  owner key at the key log seq); one claim per account per epoch (its nonce derived from the epoch); the amount is the
-  definition's rate for that epoch exactly — `rate >> ((epoch − start) / half_life)`, the same for every account.
-  Not scaled by bytes: a holdings' size is self-declared.
+- **The STATEMENT sets the AMOUNT** (built 10-10, K2): a `keepers` token mints by `Body::KeeperMint { epoch, root,
+  proof, amount }` — the account's KEEPER LINE of standing epoch `epoch`'s statement, `proof` its prolly proof under
+  `root` (`statement::line_proven`, the one check the allowance uses too). The contract checks: the line under `root`
+  is the CHAIN OWNER's and `amount` is exactly its keeper share (never 0); one per account per epoch (its nonce derived
+  from the epoch); stamped once that epoch has begun (past the margin). Appended by ANYONE with its work — the proof
+  fixes the amount, so nobody need be online to be paid. Who KEPT is the statement's `kept` (each listed keeper whose
+  standing record holds at least `KEEP_MIN` answered heights that epoch: `standing::record::kept`, the one rule the
+  page and every witness run); how much, its reputation share of the epoch's POT (below).
 - **It lands LOCKED as witness stake** (`staked`, §4a) — the weight of the lot (§7a). Unstaking follows the usual delay.
-- **Witnesses check the gate:** a witness signs a `KeeperMint` only if the account passes the reputation gate as computed
-  from the public vouches (`reputation::reputation`, the same everywhere) — a contract cannot crawl vouches. A claim
-  that does not pass is simply not accepted (⅔ of its committee must sign) — never a burn: the gate rests on a
-  registry honest nodes may briefly see differently (see "AN HONEST NODE IS NEVER BURNED").
+- **Witnesses check the ROOT** (built 10-10, K3: `wallet::statement_accept` in `may_witness`): a witness signs a
+  `KeeperMint` only under the statement root ACCEPTED for its epoch — its committee (drawn at `statement::lot_height`)
+  signed that root at `statement::witness_place`. The gate, the reputation and `kept` are all inside the statement
+  every witness recomputes; a claim under any other root is simply not accepted (⅔ of its committee must sign) —
+  never a burn (see "AN HONEST NODE IS NEVER BURNED").
 - **A cheat burns both:** a proven misdeed burns the stake (§7a) and zeroes reputation; vouchers lose a share.
 - **REVISED 10-10 — the AMOUNT is a trust share, not per head** (measured in conversation: with a flat amount per
   account, ONE malicious direct vouchee builds a clean tree of ~1,110 fakes past the gate — 10 + 100 + 1,000 — each

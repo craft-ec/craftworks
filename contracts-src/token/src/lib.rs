@@ -127,26 +127,23 @@ pub struct Definition {
     /// payee) — anyone pays the price to the payee and mints a copy, the owner offline. Its records are small
     /// ([`supply::PAID_RECORD`]): each paid mint's payment is read when its record is checked.
     pub sale: Option<(Tok, u128, [u8; 32])>,
-    /// KEEPER ISSUANCE (TOKEN §7d, the `keepers` supply rule): an account that PROVED keeping in a finished standing
-    /// epoch mints [`Keepers::amount`] for it, locked as stake ([`Body::KeeperMint`]). `None`: no keeper issuance.
+    /// KEEPER ISSUANCE (TOKEN §7d, the `keepers` supply rule): each standing epoch's POT ([`Keepers::amount`]) is split
+    /// by its STATEMENT among the accounts that proved keeping; each mints its line, locked as stake
+    /// ([`Body::KeeperMint`]). `None`: no keeper issuance.
     pub keepers: Option<Keepers>,
 }
 
-/// The `keepers` supply rule (TOKEN §6, §7d): `rate` per account per standing epoch from epoch `start`, halving every
-/// `half_life` epochs; the standing contracts it counts are of code `standing_code`.
+/// The `keepers` supply rule (TOKEN §6, §7d): a POT of `rate` per standing epoch from epoch `start`, halving every
+/// `half_life` epochs — split by each epoch's statement (who kept: the statement's `kept`, its one rule).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Keepers {
     pub rate: u128,
     pub half_life: u64,
     pub start: u64,
-    pub standing_code: [u8; 32],
 }
 
-/// Answers a standing epoch must hold for its keeper to earn (of ~`EPOCH / SAMPLE` = 8 sampled heights).
-pub const KEEP_MIN: usize = 6;
-
 impl Keepers {
-    /// What one account earns for standing epoch `epoch` (0: before the start, or halved away).
+    /// The POT of standing epoch `epoch` (0: before the start, or halved away).
     pub fn amount(&self, epoch: u64) -> u128 {
         if epoch < self.start {
             return 0;
@@ -256,7 +253,6 @@ impl Definition {
                 v.extend_from_slice(&k.rate.to_le_bytes());
                 v.extend_from_slice(&k.half_life.to_le_bytes());
                 v.extend_from_slice(&k.start.to_le_bytes());
-                v.extend_from_slice(&k.standing_code);
             }
         }
         v
@@ -307,7 +303,7 @@ impl Definition {
         };
         let keepers = match r.u8()? {
             0 => None,
-            1 => Some(Keepers { rate: r.u128()?, half_life: r.u64()?, start: r.u64()?, standing_code: r.arr()? }),
+            1 => Some(Keepers { rate: r.u128()?, half_life: r.u64()?, start: r.u64()? }),
             _ => return None,
         };
         let ok = r.done() && decimals <= DECIMALS && min_send > 0 && name.len() <= NAME_MAX && margin >= 1 && royalty.is_none_or(|(b, _)| b > 0 && b <= 10_000) && (cap == 0 || genesis_amount <= cap) && (cap == 0 || matches!(ids, Ids::None | Ids::Numbered))
@@ -522,11 +518,11 @@ pub enum Body {
     Unstake { amount: u128 },
     /// The unstake `unstake` (its entry's nonce) back into the balance, its delay over — appended by anyone.
     Release { unstake: [u8; 16] },
-    /// KEEPER ISSUANCE (TOKEN §7d): this account PROVED keeping in finished standing epoch `epoch` — its node's standing
-    /// contract (`contract`, its id; `standing`, its params) holds at least [`KEEP_MIN`] answers that epoch by the node key `cred` binds to
-    /// this account (the owner key at `key_seq`) — and mints the definition's `amount` for it, LOCKED as stake. Signed
-    /// by the chain's writer; named by [`keeper_nonce`] (once per epoch).
-    KeeperMint { epoch: u64, contract: [u8; 32], standing: Vec<u8>, cred: Vec<u8>, key_seq: u32, amount: u128 },
+    /// KEEPER ISSUANCE (TOKEN §7d): this account's KEEPER LINE of standing epoch `epoch`'s STATEMENT (`root`; `proof`,
+    /// its line's prolly proof under it) minted, LOCKED as stake — `amount` exactly the line's. Appended by ANYONE with
+    /// its work (the proof fixes the amount: nobody need be online); its witnesses accept it only under the statement
+    /// root accepted for that epoch. Named by [`keeper_nonce`] (once per epoch).
+    KeeperMint { epoch: u64, root: [u8; 32], proof: Vec<u8>, amount: u128 },
     /// An EQUIVOCATION by this chain's witness key (`key`, its writer's node key): two witness signatures at one place
     /// naming different entries — every stake and unbonding amount BURNED. Appended by anyone.
     Slash { key: [u8; 32], a: witness::WitnessSig, b: witness::WitnessSig },
@@ -802,15 +798,12 @@ impl Entry {
                 v.push(15);
                 v.extend_from_slice(&amount.to_le_bytes());
             }
-            Body::KeeperMint { epoch, contract, standing, cred, key_seq, amount } => {
+            Body::KeeperMint { epoch, root, proof, amount } => {
                 v.push(34);
                 v.extend_from_slice(&epoch.to_le_bytes());
-                v.extend_from_slice(contract);
-                v.extend_from_slice(&(standing.len() as u16).to_le_bytes());
-                v.extend_from_slice(standing);
-                v.extend_from_slice(&(cred.len() as u16).to_le_bytes());
-                v.extend_from_slice(cred);
-                v.extend_from_slice(&key_seq.to_le_bytes());
+                v.extend_from_slice(root);
+                v.extend_from_slice(&(proof.len() as u32).to_le_bytes());
+                v.extend_from_slice(proof);
                 v.extend_from_slice(&amount.to_le_bytes());
             }
             Body::Unstake { amount } => {
@@ -981,12 +974,13 @@ impl Entry {
             }
             15 => Body::Stake { amount: r.u128()? },
             34 => {
-                let (epoch, contract) = (r.u64()?, r.arr()?);
-                let n = u16::from_le_bytes(r.arr()?) as usize;
-                let standing = r.take(n)?.to_vec();
-                let n = u16::from_le_bytes(r.arr()?) as usize;
-                let cred = r.take(n)?.to_vec();
-                Body::KeeperMint { epoch, contract, standing, cred, key_seq: r.u32()?, amount: r.u128()? }
+                let (epoch, root) = (r.u64()?, r.arr()?);
+                let n = u32::from_le_bytes(r.arr()?) as usize;
+                if n > PROOF_MAX {
+                    return None;
+                }
+                let proof = r.take(n)?.to_vec();
+                Body::KeeperMint { epoch, root, proof, amount: r.u128()? }
             }
             16 => Body::Unstake { amount: r.u128()? },
             17 => Body::Release { unstake: r.arr()? },
@@ -1810,36 +1804,25 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     writer = Some(Signer::Set(set.clone(), *set_seq));
                     balance
                 }
-                Body::KeeperMint { epoch, contract, standing, cred, key_seq, amount } => {
-                    owner_signed(e, &writer)?;
-                    let k = d.keepers.ok_or("a keeper mint of a token without keeper issuance")?;
+                Body::KeeperMint { epoch, root, proof, amount } => {
+                    // Anyone's, with its work: its LINE fixes what it mints (the witnesses check the root was the one
+                    // accepted for the epoch).
+                    if !e.worked() {
+                        return Err("a keeper mint without its work");
+                    }
+                    d.keepers.ok_or("a keeper mint of a token without keeper issuance")?;
                     if e.nonce != keeper_nonce(&p.definition, *epoch) || kept.contains(epoch) {
                         return Err("a keeper mint named for another epoch, or twice");
                     }
                     kept.push(*epoch);
-                    if *amount == 0 || *amount != k.amount(*epoch) {
-                        return Err("a keeper mint of another amount than the rate's");
+                    let line = craftworks_reputation::statement::line_proven(root, &p.owner, proof).ok_or("a keeper mint whose line does not hold under its root")?;
+                    if *amount == 0 || *amount != line.keeper {
+                        return Err("a keeper mint of another amount than its line's");
                     }
-                    let finished = epoch.checked_add(1).and_then(|x| x.checked_mul(craftworks_standing::EPOCH)).and_then(|x| x.checked_add(d.margin as u64));
-                    if finished.is_none_or(|f| e.stamp < f) {
-                        return Err("a keeper mint for an epoch not finished");
-                    }
-                    let node = device(cred, *key_seq, i, ["a keeper credential that does not hold", "a keeper credential for another account", "a keeper credential not signed by the account's key at that seq"])?;
-                    if recent {
-                        let sp = craftworks_standing_contract::Params::decode(standing).ok_or("a keeper mint citing no standing contract")?;
-                        if sp.beacon != p.beacon {
-                            return Err("a standing contract of another beacon");
-                        }
-                        if *contract != id(&k.standing_code, standing) {
-                            return Err("a standing contract of another code than its token's");
-                        }
-                        let b = x.program.and_then(|f| f(contract)).ok_or("the keeper's standing contract is not there")?;
-                        let st = craftworks_standing_contract::decode(&b).ok_or("the keeper's standing contract does not read")?;
-                        let ep = st.epochs.iter().find(|x| x.epoch == *epoch).ok_or("no standing record of that epoch")?;
-                        let answers = ep.answers.iter().filter(|a| a.key == node).count();
-                        if !ep.binds.iter().any(|b| b.key == node) || answers < KEEP_MIN {
-                            return Err("a keeper mint for an epoch not kept");
-                        }
+                    // Its statement exists once its epoch has begun (past the margin).
+                    let begun = epoch.checked_mul(craftworks_standing::EPOCH).and_then(|x| x.checked_add(d.margin as u64));
+                    if begun.is_none_or(|b| e.stamp < b) {
+                        return Err("a keeper mint before its epoch's statement");
                     }
                     staked = staked.checked_add(*amount).ok_or("a balance overflow")?;
                     balance
@@ -2220,8 +2203,6 @@ pub fn programs_from(p: &ChainParams, s: &State, from: usize) -> Vec<[u8; 32]> {
     for (i, e) in s.entries.iter().enumerate().skip(from) {
         let prog = match &e.body {
             Body::Payout { program, .. } => Some(*program),
-            // A keeper mint's standing contract (read by id, as a program's state is) — of the code its token names.
-            Body::KeeperMint { contract, .. } => Some(*contract),
             Body::FalseMint { tok, entry, .. } => {
                 // The minted token's definition and authority chain (read by id, as a program's state is) — and a paid
                 // mint's payer chain.
