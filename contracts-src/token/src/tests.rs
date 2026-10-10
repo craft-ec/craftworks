@@ -3575,3 +3575,12 @@ fn a_keeper_mints_its_epoch_once_locked_as_stake_by_its_standing_proof() {
     assert_eq!(Definition::decode(&d.encode()), Some(d.clone()));
     assert_eq!(Definition::decode(&Definition { cap: 10, ..d.clone() }.encode()), None);
 }
+
+/// DECIMALS at most 9 (owner 10-10: 18 does not fit u128 splits): a definition with 10 does not decode; 9 and 0 do.
+#[test]
+fn decimals_at_most_nine() {
+    for (n, ok) in [(0u8, true), (DECIMALS, true), (DECIMALS + 1, false), (18, false)] {
+        let d = Definition { decimals: n, ..def() };
+        assert_eq!(Definition::decode(&d.encode()).is_some(), ok, "{n} decimals");
+    }
+}

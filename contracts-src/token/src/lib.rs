@@ -310,7 +310,7 @@ impl Definition {
             1 => Some(Keepers { rate: r.u128()?, half_life: r.u64()?, start: r.u64()?, standing_code: r.arr()? }),
             _ => return None,
         };
-        let ok = r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1 && royalty.is_none_or(|(b, _)| b > 0 && b <= 10_000) && (cap == 0 || genesis_amount <= cap) && (cap == 0 || matches!(ids, Ids::None | Ids::Numbered))
+        let ok = r.done() && decimals <= DECIMALS && min_send > 0 && name.len() <= NAME_MAX && margin >= 1 && royalty.is_none_or(|(b, _)| b > 0 && b <= 10_000) && (cap == 0 || genesis_amount <= cap) && (cap == 0 || matches!(ids, Ids::None | Ids::Numbered))
             && royalty.is_none_or(|(_, to)| to != HOLDERS || (ids == Ids::Numbered && cap >= 2))
             && transfer_fee.is_none_or(|(b, _, c)| b > 0 && b <= 10_000 && c != HOLDERS)
             // Numbered copies are whole, sendable one at a time, and only minted (a genesis would hold numbers no copy has).
@@ -364,7 +364,9 @@ impl Tok {
 
 /// An ACCOUNT CHAIN's params: one token, one OWNER — a DID, written by one device of it (TOKEN §1).
 /// Craftworks tokens' DECIMALS (owner 10-10, micro payments: Solana's 9 — a billion tokens is 10¹⁸ units, far inside
-/// u128); a whole token is [`UNIT`] smallest units. The standard every Craftworks token is made with.
+/// u128); a whole token is [`UNIT`] smallest units. The standard every Craftworks token is made with, and the MOST a
+/// definition may have (owner 10-10: 18 does not fit — amounts are u128 and a split or a price multiplies by up to
+/// 10¹²: at 18 decimals a large supply overflows; 0 for items: a copy is whole).
 pub const DECIMALS: u8 = 9;
 pub const UNIT: u128 = 1_000_000_000;
 
