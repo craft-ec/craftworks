@@ -42,8 +42,9 @@ design and implement for our whole ecosystem." This is that design. Status: DESI
 - **Decay:** an account that stops taking part (no standing record for some epochs) passes on less; nothing is
   permanent without presence.
 
-## 4. Keeping earns; vouches gate (owner 10-10: "keeper get reputation + token in the future but for now, it get
-## reputation first")
+## 4. Keeping earns; vouches gate
+
+Owner 10-10: "keeper get reputation + token in the future but for now, it get reputation first".
 
 Two parts, one path from bootstrap to the token:
 
@@ -63,20 +64,24 @@ Two parts, one path from bootstrap to the token:
 - The committee's rule stays the token's: a witness signs only by induction; a misdeed is self-proving; the burn reaches
   the record (and its stake), and through the vouch graph the account's vouchers.
 
-## 6. Open — the owner's
+## 6. Decided (owner 10-10)
 
-- **The ROOTS.** Someone starts the flow. Candidates: the owner's account; the first N accounts that made public spaces;
-  each space choosing its own roots for its own uses (a per-space reputation — no global root at all). The roots are
-  public and replaceable; every reader may also compute with its OWN roots (personalised: "people I trust, and whom they
-  vouch for").
-- **Whether reputation is one network-wide number or per space** (or both: a global one for witnesses, per-space ones
-  for moderation).
-- The numbers: vouch budget, damping, how long a vouch takes to count, how much a voucher loses.
+- **Roots are OPEN, the owner's account the first.** Anyone may start a tree; a tree counts only as other trees vouch
+  into it (§3). The owner's account is the first root ("my key can start the vouch root").
+- **One network-wide reputation** (witnesses and keepers); a space may later weigh it with roots of its own for its
+  moderation.
+- The numbers (vouch budget 10, damping, kinship discount, how long a vouch takes to count, a voucher's loss) are set
+  and tuned by measurement.
 
-## 7. Order of building (once the open points are settled)
+## 7. Order of building
 
 1. Vouches: the public table, written from a person's page ("Vouch" beside Follow) — page only.
-2. The function: reputation from vouches and roots with the family tree's diversity, in the core, tested against
+2. BUILT 10-10 — `reputation/` (pure, integers): the TRUST tree (an account's parent is the voucher through whom trust
+   first reached it from the roots — not merely its first voucher, which a sybil games by having every fake vouch
+   before being vouched for, each then its own root), kinship by lowest common ancestor, diversity Π(1 − closeness),
+   personalised PageRank (damping 0.85, 40 rounds, budget 10). Measured: a ring of 10 fakes off one fooled account
+   takes 6.8 (×10⁻³), a ring of 1,000 takes 7.2 — flat; the same 1,000 with no discount 24.6; cousins' vouches 6.14 vs
+   siblings' 4.91. Was: the function: reputation from vouches and roots with the family tree's diversity, in the core, tested against
    sybil rings (a ring of N fakes hung off one fooled account gets no more than that one branch carries, however large
    N) and against honest cross-tree vouching (counts in full).
 3. Burns reaching reputation: a misdeed proof zeroes the account and charges its vouchers.

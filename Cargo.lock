@@ -596,6 +596,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-reputation"
+version = "0.1.0"
+
+[[package]]
 name = "craftworks-sdk"
 version = "0.1.0"
 dependencies = [

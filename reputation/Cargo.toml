@@ -1,0 +1,8 @@
+[package]
+name = "craftworks-reputation"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "REPUTATION (docs/REPUTATION.md): computed from public vouches, weighed from roots along the trust tree — same-branch vouches count less."
+
+[dependencies]
