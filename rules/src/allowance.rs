@@ -28,7 +28,7 @@ fn none() -> craftworks_idlog_contract::Log {
 }
 
 /// A chain as read with its owner's key log (an empty state when not there; an empty log when the owner has none).
-pub(crate) fn read_chain(got: Got, p: &t::ChainParams, owner: &[u8; 32], want: &mut Vec<[u8; 32]>) -> Result<Option<(State, craftworks_idlog_contract::Log)>, String> {
+pub fn read_chain(got: Got, p: &t::ChainParams, owner: &[u8; 32], want: &mut Vec<[u8; 32]>) -> Result<Option<(State, craftworks_idlog_contract::Log)>, String> {
     let (c, k) = (there(got, &p.id()), there(got, &p.keys_id()));
     let (Ok(c), Ok(k)) = (c, k) else {
         want.extend([p.id(), p.keys_id()].into_iter().filter(|x| got(x).is_none()));

@@ -12,7 +12,7 @@ use t::{claims, draw, supply, wallet, witness, ChainParams, Definition, State};
 
 /// The beacon's OUTPUT at height `h`: from its state, else its outputs log. `Err(id)`: read that first; `Ok(Err(why))`:
 /// not drawn yet, or not recorded.
-pub(crate) fn out_at(lot: &Lot, got: Got, beacon_id: &[u8; 32], h: u64) -> Result<Result<[u8; 32], &'static str>, [u8; 32]> {
+pub fn out_at(lot: &Lot, got: Got, beacon_id: &[u8; 32], h: u64) -> Result<Result<[u8; 32], &'static str>, [u8; 32]> {
     let beacon = there(got, beacon_id)?.and_then(|b| craftworks_beacon_contract::wire::decode(&b));
     if let Some(o) = beacon.as_ref().and_then(|b| b.steps.iter().find(|st| st.height == h).map(|st| st.out)) {
         return Ok(Ok(o));

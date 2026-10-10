@@ -41,6 +41,9 @@ craftworks-gov = { path = "../gov" }
 craftworks-files = { path = "../files" }
 sha2 = { version = "0.10", default-features = false }
 aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+# BACKGROUND WITNESS and KEEPER (TOKEN §7a: no page open): the rules the page runs (`witness::entry`, `keeper`) —
+# one implementation, the page's and this delegate's.
+craftworks-rules = { path = "../rules" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # The delegate's randomness: upkeep's pool (the page stirs it), through getrandom's custom hook.

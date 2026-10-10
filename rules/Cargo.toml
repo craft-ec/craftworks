@@ -1,0 +1,25 @@
+[package]
+name = "craftworks-rules"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "The token, keeper and witness rules the page and the identity delegate both run: pure, over what a caller read."
+
+[dependencies]
+craftworks-token-contract = { path = "../contracts-src/token", default-features = false }
+craftworks-wallet = { path = "../wallet" }
+craftworks-standing = { path = "../standing" }
+craftworks-standing-contract = { path = "../contracts-src/standing", default-features = false }
+craftworks-allowance-contract = { path = "../contracts-src/allowance", default-features = false }
+craftworks-beacon-contract = { path = "../contracts-src/beacon", default-features = false }
+craftworks-bag-contract = { path = "../contracts-src/bag", default-features = false }
+craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
+craftworks-reputation = { path = "../reputation" }
+craftworks-identity = { path = "../identity" }
+blake3 = { version = "1", default-features = false }
+ed25519-dalek = { version = "=2.2.0", default-features = false }
+
+[dev-dependencies]
+freenet-prolly = { workspace = true }
+engine = { workspace = true }

@@ -1882,6 +1882,14 @@ old key's addresses.
               it, page and tool alike) and refreshed by the epoch before's activity (kept, witnessed, vouched:
               `active_of`). Tests: decay steps; an absent voucher's vouchee gets less, its own reputation does not;
               active carried/refreshed; 300 lines read back from blocks, a withheld root asked for.
+          [~] BACKGROUND KEEPER + WITNESS (#3, owner 10-11 "proceed 1-5"): the identity delegate runs them with no page open.
+              [x] 3a 10-11: the rules (tokens, wallet, editions, allowance, keeper, witness) moved to crate
+                  `craftworks-rules` (pure: no node library) — core re-exports them; the delegate links them (it cannot
+                  link core: freenet-stdlib 0.10's unconditional `__frnt_set_id` export collides with its 0.12). Core's
+                  page bindings behind a default `page` feature. identity.wasm 9f74563 (1.84 MB).
+              [ ] 3b the delegate's WITNESS round (the page creates each entry's empty witness bag when queuing: a
+                  delegate's new contracts do not propagate, freenet #5542 — it only UPDATEs).
+              [ ] 3c the KEEPER MANDATE (the page hands the epoch's holdings over) and the delegate's keeper round.
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and

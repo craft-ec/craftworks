@@ -20,7 +20,9 @@ freenet-prolly = { workspace = true }
 # A read repairs through parity with the SDK's one implementation (`engine::repair`: find a block's group, rebuild
 # and verify it; the root's group of one). Pure: nothing in it reaches the network.
 engine = { workspace = true }
-freenet-stdlib = { version = "0.10.0", features = ["contract"] }
+# (Its `contract` feature — the contract interface's exported symbols — only with `page`: the identity delegate links
+# its own stdlib, whose exports would collide.)
+freenet-stdlib = { version = "0.10.0" }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = { version = "1", default-features = false }
 # Recovery words (BIP39) and the owner key's derivation from them (SLIP-0010 ed25519 over HMAC-SHA512).
@@ -36,6 +38,8 @@ craftworks-bag-contract = { path = "../contracts-src/bag", default-features = fa
 # EDITIONS (`editions`): token editions read, bought and collected — the token's own rules and the wallet core that builds entries.
 craftworks-token-contract = { path = "../contracts-src/token", default-features = false }
 craftworks-wallet = { path = "../wallet" }
+# The token, keeper and witness rules (shared with the identity delegate).
+craftworks-rules = { path = "../rules" }
 # THE KEEPER LOOP (`keeper`): standing records (drafts, merge, codec) and the standing contract's params.
 craftworks-standing = { path = "../standing" }
 craftworks-standing-contract = { path = "../contracts-src/standing", default-features = false }
@@ -65,7 +69,7 @@ js-sys = { version = "0.3", optional = true }
 
 [features]
 default = ["page"]
-page = ["dep:wasm-bindgen", "dep:js-sys"]
+page = ["dep:wasm-bindgen", "dep:js-sys", "freenet-stdlib/contract"]
 
 [dev-dependencies]
 contract-keys = { workspace = true }

@@ -841,12 +841,8 @@ pub fn unhex(h: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-pub mod editions;
-pub mod tokens;
-pub mod wallet;
-pub mod allowance;
-pub mod keeper;
-pub mod witness;
+// THE RULES (crate `craftworks-rules`: the identity delegate runs them too) — re-exported, one implementation.
+pub use craftworks_rules::{allowance, editions, keeper, tokens, wallet, witness};
 
 #[cfg(all(target_arch = "wasm32", feature = "page"))]
 mod js {

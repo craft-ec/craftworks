@@ -43,11 +43,11 @@ pub struct Put {
     pub state: Vec<u8>,
 }
 
-pub(crate) fn short(b: &[u8; 32]) -> String {
+pub fn short(b: &[u8; 32]) -> String {
     b[..6].iter().map(|x| format!("{x:02x}")).collect()
 }
 
-pub(crate) fn there(got: Got, id: &[u8; 32]) -> Result<Option<Vec<u8>>, [u8; 32]> {
+pub fn there(got: Got, id: &[u8; 32]) -> Result<Option<Vec<u8>>, [u8; 32]> {
     match got(id) {
         None => Err(*id),
         Some(b) if b.is_empty() => Ok(None),
@@ -63,14 +63,14 @@ pub fn chain(ctx: &Ctx, d: &Definition, token: &[u8; 32], owner: &[u8; 32], item
 
 /// A token this page can WRITE: one stamped by this page's clock (`ctx.beacon` — the heights it reads are that
 /// beacon's; a token on another beacon is read here, never written).
-pub(crate) fn on_our_clock(ctx: &Ctx, d: &Definition) -> Result<(), String> {
+pub fn on_our_clock(ctx: &Ctx, d: &Definition) -> Result<(), String> {
     if d.beacon != ctx.beacon {
         return Err(format!("this token runs on another clock (beacon {}), not this site's", short(&d.beacon)));
     }
     Ok(())
 }
 
-pub(crate) fn device_of(dev: &Device) -> Asking {
+pub fn device_of(dev: &Device) -> Asking {
     Asking::new(dev.public, dev.credential.clone(), dev.key_seq, dev.sigs.clone())
 }
 
@@ -92,7 +92,7 @@ pub fn device(public: [u8; 32], creds: &[Vec<u8>], keys: &craftworks_idlog_contr
 /// An account's CHAIN of a token as read (`tok`: the token and, for a numbered copy, its item), with the token's
 /// definition and the account's key log. A chain not there is EMPTY when the account is the token's creator with a
 /// genesis (it begins it: [`begin`]); anyone else's chain not there is `Ok(None)` — it holds none.
-pub(crate) fn holding(ctx: &Ctx, got: Got, tok: &t::Tok, owner: &[u8; 32]) -> Result<Step<Option<(Held, craftworks_idlog_contract::Log)>>, String> {
+pub fn holding(ctx: &Ctx, got: Got, tok: &t::Tok, owner: &[u8; 32]) -> Result<Step<Option<(Held, craftworks_idlog_contract::Log)>>, String> {
     let d = match there(got, &tok.definition) {
         Err(w) => return Ok(Step::Want(vec![w])),
         Ok(None) => return Err(format!("the token {} is not there", short(&tok.definition))),
@@ -119,7 +119,7 @@ pub(crate) fn holding(ctx: &Ctx, got: Got, tok: &t::Tok, owner: &[u8; 32]) -> Re
 }
 
 /// BEGIN `held` if it is a creator's chain not begun: its genesis appended. `Some(message)`: the delegate signs it first.
-pub(crate) fn begin(w: &Wallet, asking: &Asking, held: &mut Held, now: u64) -> Result<Option<Vec<u8>>, String> {
+pub fn begin(w: &Wallet, asking: &Asking, held: &mut Held, now: u64) -> Result<Option<Vec<u8>>, String> {
     if !held.state.entries.is_empty() || held.definition.genesis_owner != held.params.owner || held.definition.genesis_amount == 0 {
         return Ok(None);
     }

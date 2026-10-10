@@ -448,6 +448,7 @@ dependencies = [
  "craftworks-identity",
  "craftworks-idlog-contract",
  "craftworks-reputation",
+ "craftworks-rules",
  "craftworks-standing",
  "craftworks-standing-contract",
  "craftworks-token-contract",
@@ -503,6 +504,7 @@ dependencies = [
  "craftworks-identity",
  "craftworks-idlog-contract",
  "craftworks-mls",
+ "craftworks-rules",
  "ed25519-dalek",
  "freenet-stdlib 0.12.1",
  "getrandom 0.2.17",
@@ -618,6 +620,26 @@ dependencies = [
  "craftworks-bag-contract",
  "craftworks-identity",
  "craftworks-idlog-contract",
+ "ed25519-dalek",
+ "engine",
+ "freenet-prolly",
+]
+
+[[package]]
+name = "craftworks-rules"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "craftworks-allowance-contract",
+ "craftworks-bag-contract",
+ "craftworks-beacon-contract",
+ "craftworks-identity",
+ "craftworks-idlog-contract",
+ "craftworks-reputation",
+ "craftworks-standing",
+ "craftworks-standing-contract",
+ "craftworks-token-contract",
+ "craftworks-wallet",
  "ed25519-dalek",
  "engine",
  "freenet-prolly",
