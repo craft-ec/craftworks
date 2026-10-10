@@ -6,8 +6,10 @@
 // what is read least), sealed in the page's worker (`beacon.sealed`), signed. Every record is signed by the member key
 // through its identity delegate (`tokenSign`, the standing domain). (Answering with the page CLOSED is the delegate's.)
 //
-// THE FILES REGISTRY (`wallet::registry`): each epoch it also LISTS the account's own files it keeps whole (address key
-// and size: what lets other keepers find their pieces), so a file stays listed while its owner keeps it.
+// THE FILES REGISTRY (`wallet::registry`): each epoch it also LISTS every file it keeps whole — its own, watched,
+// assigned (address key and size: what lets other keepers find their pieces) — so a file stays listed while anyone
+// keeps it. And it lists ITSELF in the keepers registry each epoch it is open (holding anything yet or not; not when
+// its owner keeps nothing: limit 0), so a new account is assigned files.
 //
 //   (await ctx.require("keeper")).status()   // { key, epoch, files, pieces, listed, opened, answered, last } — what this page did
 //   await keeper.network(epoch)              // { files, bytes, keepers }: the registries at standing epoch `epoch`
@@ -49,15 +51,18 @@ export async function start(ctx) {
     const [keep, files, { bytes }] = await Promise.all(["keep", "files", "tokens"].map(n => ctx.require(n)));
     await assignment(epoch, keep).catch(e => ctx.log("keeper", { what: `no assignment this epoch (${e?.message ?? e})` }));
     const fs = await keep.holdings(epoch);
-    // ITS OWN files listed in this epoch's registry (a watched file is its uploader's to list).
+    // EVERY file it holds whole listed again in this epoch's registry — its own, those it watched, those it is assigned
+    // (none missing): a file stays listed while anyone keeps it, its uploader online or not.
     const index = await ctx.require("index");
     let listed = 0;
-    for (const { sp, row } of fs.filter(f => !f.watched && !f.assigned))
-      await files
-        .listing(sp, row)
-        .then(item => index.bag.chained(Core.registry_address, epoch, item, "listing a file in the registry"))
+    for (const f of fs) {
+      if (f.assigned && f.assigned.missing.length) continue;
+      const item = f.assigned ? Promise.resolve(Core.registry_item(bytes(f.assigned.key), f.assigned.size)) : files.listing(f.sp, f.row);
+      await item
+        .then(i => index.bag.chained(Core.registry_address, epoch, i, "listing a file in the registry"))
         .then(() => (listed += 1))
-        .catch(e => ctx.log("keeper", { what: `${row.id.slice(0, 8)}…: not listed (${e?.message ?? e})` }));
+        .catch(e => ctx.log("keeper", { what: `${(f.assigned?.key ?? f.row.id).slice(0, 8)}…: not listed (${e?.message ?? e})` }));
+    }
     state.listed = listed;
     state.own = fs.filter(f => !f.assigned).length;
     const hosted = [];
@@ -89,22 +94,26 @@ export async function start(ctx) {
       const epoch = Core.keeper_epoch(h);
       // (None yet — `keep`'s passes still running: asked again 64 heights on.)
       if (!self || self.epoch !== epoch || (!self.hosted.length && h - self.at >= 64)) self = { epoch, at: h, hosted: await holdingsOf(epoch), open: false };
-      if (!self.hosted.length) return;
       Object.assign(state, { key: me.member, epoch });
+      // FINDABLE, holding anything yet or not: this keeper (its account and the credential naming its record's key) in
+      // the epoch's keepers registry — so a new account is ASSIGNED files — unless its owner keeps nothing (limit 0).
+      if (self.registered !== epoch && (await (await ctx.require("keep")).kept()).limit > 0) {
+        const { creds } = await tokens.device();
+        const item = await run(() => core.keeper_listing(tokens.idlogCode, me.didBytes, public_, creds));
+        await (await ctx.require("index")).bag.chained(Core.keepers_address, epoch, item, "listing this keeper");
+        self.registered = epoch;
+        state.registered = epoch;
+      }
+      if (!self.hosted.length) return;
       // OPEN the epoch: binding and holdings.
       if (!self.open) {
         const r = await run(sigs => core.keeper_open(standingCode, beaconCode, beacon, public_, epoch, self.hosted, sigs));
         if (r?.puts) {
           await putAll(r.puts);
           state.opened++;
-          ctx.log("keeper", { what: `epoch ${epoch}: holdings of ${state.files} file(s) (${state.assigned ?? 0} assigned), ${self.hosted.length} piece(s) committed; ${state.listed} own file(s) listed in the registry` });
+          ctx.log("keeper", { what: `epoch ${epoch}: holdings of ${state.files} file(s) (${state.assigned ?? 0} assigned), ${self.hosted.length} piece(s) committed; ${state.listed} file(s) listed in the registry` });
         }
         self.open = true;
-        // FINDABLE: this keeper (its account and the credential naming its record's key) in the epoch's keepers registry.
-        const { creds } = await tokens.device();
-        const item = await run(() => core.keeper_listing(tokens.idlogCode, me.didBytes, public_, creds));
-        await (await ctx.require("index")).bag.chained(Core.keepers_address, epoch, item, "listing this keeper");
-        state.registered = epoch;
       }
       // ANSWER every height of this epoch since the last one handled that is sampled for this keeper (one that came
       // while it was sealing is not missed), while the beacon's state still holds its output. The beacon read into the
