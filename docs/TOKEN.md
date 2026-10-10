@@ -639,6 +639,30 @@ ISSUANCE — and each piece of the loop has ONE job:
   chain of that token, citing the entry it signed (as a fee claim does). Income ∝ stake (more draws, more signatures),
   SPENDABLE — never stake. Issuance's 10% carries witnesses at launch; fees take over as issuance halves (as block
   rewards give way to fees). Also the spam cost of a debit.
+- **THE TWO RULES every mechanism here meets** (owner 10-10): (1) NO CENTRAL AUTHORITY — any node or account can do
+  it; (2) NOBODY HAS TO BE ALWAYS ONLINE. Decided against them (owner: "technical and you can decide"):
+  1. VOUCH REGISTRY: a public contract per epoch; each vouch/withdrawal signed by the voucher's device + credential,
+     ≤ 10 per account per epoch. Anyone copies a signed vouch from the voucher's public table into it — the voucher
+     need not be online.
+  2. EPOCH STATEMENT: a pure function; anyone computes and publishes it; witnesses sign the one they recompute. It
+     records each keeper's proof, so a claim can cite it long after the standing record is pruned. KEEPER MINTS are
+     APPENDED BY ANYONE with work (as credits are), into the keeper's own stake: an offline keeper is still paid.
+  3. MISDEED REGISTRY: a public bag of self-proving misdeed proofs, anyone submits; the reputation function reads it —
+     the cheat to zero, its direct vouchers charged by their vouch's weight.
+  4. LINEAGE SEAT CAP inside the lot itself: the draw skips past a lineage's 4th ticket (deterministic).
+  5. WITNESS FEE: `Definition.witness_fee` (≥ 1 smallest unit) on every debit; each signer's share fee ÷ 16, appended
+     by anyone for it; unclaimed shares burned.
+  6. WREN ALLOWANCE: Wren ESCROWS each day's pot (many days at once) to an allowance program whose verdict is the day's
+     statement; anyone appends the payouts; unclaimed amounts RECLAIMED to the treasury after the window (`until`) —
+     no Wren service needed after funding, and an offline user is paid later within the window.
+  7. ABSENCE DECAY: active = any signed activity (a chain entry, a vouch, a standing record); decay starts only after
+     ~30 epochs absent, gradually.
+  8. THE GATE lowers with issuance: G halves at every issuance halving, by height.
+  9. RULE VERSIONS pinned per epoch in the code; a change takes effect only from an announced future epoch.
+  10. PAID DEMAND and issuance COEXIST: demand adds on top and takes over as issuance halves (REWARDS §4–5).
+  11. KEEPER DOUBLE CLAIMS are refused, not punished (nothing gained).
+  12. WITNESS LIVENESS: a staker's claim STANDS until withdrawn, but LAPSES if it signed nothing when drawn in the
+      last few epochs — the live set stays live; returning is claiming again.
 - **MONITORED:** every claim is also listed in the epoch's public ISSUANCE BAG (a bag per token per epoch, like the
   claims registry); the monitor page reads it and shows per epoch: keepers paid, amounts and the total; concentration
   (the top shares); the split by LINEAGE of the trust tree (is one community taking most?); and claims from accounts
