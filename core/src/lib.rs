@@ -2577,22 +2577,102 @@ mod js {
                 Ok(json!({ "id": hex(&id), "name": String::from_utf8_lossy(&d.name), "decimals": d.decimals, "creator": hex(&d.genesis_owner), "supply": d.genesis_amount.to_string(), "balance": v.balance.to_string(), "begun": v.begun }))
             })
         }
-        /// SEND (`wallet::send`) `amount` (a decimal string) of the token `id` from `from` to `to` at beacon height `now`:
-        /// `{ done: { nonce, puts: [{ id, frames }] } }`.
+        /// SEND PRIVATELY from this account's DID chain (`wallet::send`, TOKEN §7f): `amount` (a decimal string) of the
+        /// token `id` to the wallet whose CARD keys are `pay_scan`/`pay_spend` — a fresh one-time owner of theirs
+        /// (`rand`: 32 fresh bytes) — at beacon height `now`: `{ done: { announce, puts } }` (`announce`: bytes, for the
+        /// payments bags).
         #[allow(clippy::too_many_arguments)]
-        pub fn wallet_send(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], from: &[u8], to: &[u8], amount: &str, now: f64, public: &[u8], creds: js_sys::Array, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
+        pub fn wallet_send(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], from: &[u8], pay_scan: &[u8], pay_spend: &[u8], amount: &str, rand: &[u8], now: f64, public: &[u8], creds: js_sys::Array, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let from = b32(from)?;
+            let (from, id) = (b32(from)?, b32(id)?);
             let amount: u128 = amount.trim().parse().map_err(|_| err("an amount is a whole number".into()))?;
+            let card = craftworks_wallet::stealth::Public { scan: b32(pay_scan)?, spend: b32(pay_spend)? };
+            let paid = craftworks_wallet::stealth::pay(&card, &b32(rand)?).ok_or_else(|| err("their card's pay keys are not keys".into()))?;
             let Some(dev) = account_device(&self.0, idlog_code, &from, public, &creds, &sigs)? else { return want_log(idlog_code, &from) };
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-                wallet::send(&ctx, &got, &b32(id)?, &from, &b32(to)?, amount, now as u64, &dev)
+                wallet::send(&ctx, &got, &id, &from, &paid.to, amount, now as u64, &dev)
             };
             let mut puts = Vec::new();
+            let mut announce = None;
             let v = token_step(step, |s| {
                 puts = vec![s.put];
-                Ok(json!({ "nonce": hex(&s.nonce) }))
+                announce = Some(craftworks_wallet::stealth::Announce { token: id, from, nonce: s.nonce, to: paid.to, r: paid.r }.encode());
+                Ok(json!({}))
+            })?;
+            let v = self.attach_puts(v, token_code, &puts)?;
+            if let Some(a) = announce {
+                js_sys::Reflect::set(&js_sys::Reflect::get(&v, &"done".into())?, &"announce".into(), &js_sys::Uint8Array::from(&a[..]))?;
+            }
+            Ok(v)
+        }
+        /// This wallet's card PAY KEYS from its seed: `{ scan, spend }` (hex).
+        pub fn stealth_public(seed: &[u8]) -> Result<JsValue, JsValue> {
+            let k = craftworks_wallet::stealth::Keys::from_seed(&b32(seed)?).public();
+            Ok(js_obj(&[("scan", JsValue::from(hex(&k.scan))), ("spend", JsValue::from(hex(&k.spend)))]))
+        }
+        /// The PAYMENTS BAG `k` of standing epoch `epoch` (its address).
+        pub fn stealth_payments_address(epoch: f64, k: u32) -> js_sys::Uint8Array {
+            js_sys::Uint8Array::from(&craftworks_wallet::stealth::payments_address(epoch as u64, k)[..])
+        }
+        /// SCAN a bag's items (announcement bytes): the ones paying this wallet (`seed`), as `[{ token, to, bytes }]`.
+        pub fn stealth_scan(seed: &[u8], items: js_sys::Array) -> Result<js_sys::Array, JsValue> {
+            let keys = craftworks_wallet::stealth::Keys::from_seed(&b32(seed)?);
+            let all: Vec<craftworks_wallet::stealth::Announce> = items.iter().filter_map(|i| craftworks_wallet::stealth::Announce::decode(&js_sys::Uint8Array::new(&i).to_vec())).collect();
+            Ok(keys.scan(&all).into_iter().map(|(a, _)| js_obj(&[("token", JsValue::from(hex(&a.token))), ("to", JsValue::from(hex(&a.to))), ("bytes", js_sys::Uint8Array::from(&a.encode()[..]).into())])).collect())
+        }
+        /// This wallet's PRIVATE holdings of the token `id` (`wallet::private`; `owners`: the one-time owners it found,
+        /// 32 bytes each): `{ done: { id, name, decimals, balance, chains: [{ owner, balance }] } }`.
+        pub fn wallet_private(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], owners: js_sys::Array) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let id = b32(id)?;
+            let owners: Vec<[u8; 32]> = owners.iter().map(|o| b32(&js_sys::Uint8Array::new(&o).to_vec())).collect::<Result<_, _>>()?;
+            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+            token_step(wallet::private(&ctx, &got, &id, &owners), |v| {
+                let d = &v.definition;
+                Ok(json!({ "id": hex(&id), "name": String::from_utf8_lossy(&d.name), "decimals": d.decimals, "balance": v.balance().to_string(), "chains": v.chains.iter().map(|(o, b)| json!({ "owner": hex(o), "balance": b.to_string() })).collect::<Vec<_>>() }))
+            })
+        }
+        /// SEND PRIVATELY from this wallet's stealth chains (`wallet::send_private`; `mine`: the announcements it found,
+        /// bytes each): `{ done: { announces: [bytes], puts } }`.
+        #[allow(clippy::too_many_arguments)]
+        pub fn wallet_send_private(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], seed: &[u8], mine: js_sys::Array, pay_scan: &[u8], pay_spend: &[u8], amount: &str, rand: &[u8], now: f64) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let amount: u128 = amount.trim().parse().map_err(|_| err("an amount is a whole number".into()))?;
+            let mine: Vec<([u8; 32], [u8; 32])> = mine.iter().filter_map(|m| craftworks_wallet::stealth::Announce::decode(&js_sys::Uint8Array::new(&m).to_vec())).map(|a| (a.r, a.to)).collect();
+            let card = craftworks_wallet::stealth::Public { scan: b32(pay_scan)?, spend: b32(pay_spend)? };
+            let step = {
+                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                wallet::send_private(&ctx, &got, &b32(id)?, &b32(seed)?, &mine, &card, amount, &b32(rand)?, now as u64)
+            };
+            let mut puts = Vec::new();
+            let mut anns = Vec::new();
+            let v = token_step(step, |s| {
+                puts = s.puts;
+                anns = s.announces.iter().map(|a| a.encode()).collect();
+                Ok(json!({}))
+            })?;
+            let v = self.attach_puts(v, token_code, &puts)?;
+            if let Ok(done) = js_sys::Reflect::get(&v, &"done".into()) {
+                if !done.is_undefined() {
+                    js_sys::Reflect::set(&done, &"announces".into(), &anns.iter().map(|a| JsValue::from(js_sys::Uint8Array::from(&a[..]))).collect::<js_sys::Array>())?;
+                }
+            }
+            Ok(v)
+        }
+        /// RECEIVE a payment this wallet found (`wallet::receive_private`; `announce`: its bytes) at beacon height `now`:
+        /// `{ done: { amount, pending, puts } }`.
+        pub fn wallet_receive_private(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], announce: &[u8], now: f64) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let a = craftworks_wallet::stealth::Announce::decode(announce).ok_or_else(|| err("not an announcement".into()))?;
+            let step = {
+                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                wallet::receive_private(&ctx, &got, &a, now as u64)
+            };
+            let mut puts = Vec::new();
+            let v = token_step(step, |r| {
+                puts = r.put.into_iter().collect();
+                Ok(json!({ "amount": r.amount.to_string(), "pending": r.pending }))
             })?;
             self.attach_puts(v, token_code, &puts)
         }

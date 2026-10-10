@@ -1592,9 +1592,14 @@ old key's addresses.
                   collect, spend through `Wallet` on stealth chains, all taken by the token; DID devices unchanged (11
                   wallet tests); 2 mutants killed (always Sig; Writer for a set). No change outputs: a chain holds a
                   balance, the rest stays in the source chain.
-              [ ] P3 CORE: holdings over stealth chains (balance = sum), send (as few chains as can; change to a fresh
-                  own stealth chain; the announcement), receive by scanning; the seed in the account table `wallet`,
-                  S/B on the card.
+              [x] P3b CORE — BUILT 10-10 (`core::wallet`): `private` (a token's found chains and their sum),
+                  `send_private` (from as few stealth chains as pay it, largest first, each debit to a fresh one-time
+                  owner, signed by the one-time keys — no delegate), `receive_private` (worked credit from the
+                  announced chain; `pending` inside the margin); a DID chain's `send` now pays a one-time owner too.
+                  Bindings: `stealth_public`, `stealth_payments_address`, `stealth_scan`, `wallet_private`,
+                  `wallet_send` (card keys → announce), `wallet_send_private`, `wallet_receive_private`. Tested: A's DID
+                  chain pays B's card; only B's scan finds it; pending, then received; B pays A's card back from the
+                  stealth chain (taken by the token); A finds and receives it; neither stealth owner is a DID.
               [ ] P4 PAGE + LIVE fx/fy: A pays B privately; outsiders see no chain at B's DID.
           [ ] A  WREN DAILY ALLOWANCE: 1,000/day by reputation share, cap 20, claim-or-return; service on B.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
