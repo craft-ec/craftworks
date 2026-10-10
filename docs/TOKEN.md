@@ -161,7 +161,7 @@ A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has CO
   each, `n` from 1 up to the cap. PLAIN: the edition is fungible within itself (`ids: none`, decimals 0) — "3 Silver".
 - **Minted on demand, without end** (owner 10-10: "how does it work with 1mil copies?"). A capped edition's mints live
   in RECORDS by NUMBER, not by time: record `k` holds copies `k·1024 + 1 … (k+1)·1024` (`supply::record_of`; plain
-  copies are numbered too, unseen; an edition SOLD ON DEMAND, below, in records of 8). A record is made when its first copy is minted, so there is no end — copy
+  copies are numbered too, unseen; an edition SOLD ON DEMAND, below, in records of 7). A record is made when its first copy is minted, so there is no end — copy
   5,000,001 is in record 4882 — and each number is in exactly one record, so the cap (numbers stop at it) and "each
   number once" are checked record by record. A mint names a RANGE of numbers inside one record (its nonce the first);
   a chain credits it with `CappedMint` (for a numbered copy: its number, amount 1). Plain copies leave the genesis's
@@ -198,13 +198,17 @@ A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has CO
   TAGGED for one record (`supply::sale_tag(edition, k)` in its first 8 bytes), then a PAID MINT in record `k`
   (`Mint.paid = (payer chain id, payment nonce)`, no signature) — to the payer, stamped no earlier than the payment.
   The record reads every NEW paid mint's payer chain when it takes it (asked with the definition); a payment is cited
-  once in a record, and its tag binds it to that record, so one payment buys one copy. A sale's records hold 8
-  numbers (`supply::PAID_RECORD`): a check reads at most 10 contracts. A copy's chain credits it as any mint, and the
+  once in a record, and its tag binds it to that record, so one payment buys one copy. A sale's records hold 7
+  numbers (`supply::PAID_RECORD`): a check reads at most 10 contracts (the definition, its authority chain, 7 payers,
+  the record before). A copy's chain credits it as any mint, and the
   credit names its record (`CappedMint.record`, checked to be its numbers'). A witness that signs a credit of a paid
   mint whose payment is not in the payer's chain is burned (`FalseMint`, shown where the payer's chain can say:
   unforked, whole back to before the mint); signing a paid one proves nothing. A payer that cut its chain since the
-  mint is taken as shown when the record took it. A buyer racing others for the last numbers of a record mints again
-  with other free numbers of the same record (its payment is tagged for that record only).
+  mint is taken as shown when the record took it. A buyer racing others for a record's last numbers mints again with
+  other free numbers of it — or, the record FULL (every number held by an admitted mint: it takes no mint ever again)
+  and none of its mints citing this payment, in the NEXT record (a SPILLED mint, `supply::spill_ok`: that record
+  reads the one before). So a payment is never stranded by a race; only past the cap (sold out) is there nothing to
+  buy.
 - **Not built:** fractional ownership of one item (an app over escrow).
 
 ## 1d. Non-transferable tokens (soulbound, 10-10)
@@ -673,6 +677,8 @@ wallet only hands the chain over when told.
 - **W5 BUYING — BUILT 10-10.** `Wallet::buy(pay, edition, id, (k, record), amount, now)`: an edition sold on demand
   (§1c) — the payment from this account's chain of the sale's token (its nonce tagged for record `k`) and the paid
   mint of the record's first free numbers (past the genesis, within the cap); the copy is then collected as any mint.
+  `remint`: a payment made whose numbers a race took — other free numbers of its record, or the next record's when
+  it is full.
 - Not in the core (the account's, at rollout): which device writes a chain (the core hands it over when told), finding
   counterparties' chains (the token's activity), fetching and publishing.
 
@@ -914,6 +920,10 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    boundaries). LIVE fx/fy (`token-live ondemand`): 1 pays 10 P and its paid mint is ACCEPTED with no signature; a
    mint citing a payment never made and a second copy on one payment REFUSED; a second real buy ACCEPTED; 1's chain
    of copy #1 collects it. Every other live mode re-run: unchanged.
+   Then SPILL (a race must not strand a payment): a payment for a full record buys a copy in the next
+   (`supply::spill_ok`, `wallet::remint`); records of 7. Token 112 tests, wallet 8; 9 mutants, all killed (1 after
+   an added case). LIVE: 1 pays for #3, a 5-copy buy fills record 0 first, #3's payment buys #8 in record 1 ACCEPTED;
+   copy #1's payment spilled into record 1 too REFUSED; mint, editions, holders, wallet re-run unchanged.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under

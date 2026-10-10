@@ -1813,7 +1813,25 @@ async fn ondemand(w: &W) -> Result<()> {
     pay.state.entries.extend(es);
     println!("4b 1 pays again, on X: {} — {}", w.put_chain(&w.x, p, 1, &pay.state).await?.0, pay.state.balance());
     tokio::time::sleep(Duration::from_secs(2)).await;
-    println!("4c its paid mint (copy #{}), on X: {}", u128::from_be_bytes(m2.nonce), put(&w.x, record(), T::supply::merge(&rec, &T::supply::Shard { mints: vec![m2] }).unwrap().encode()).await?.0);
+    let rec2 = T::supply::merge(&rec, &T::supply::Shard { mints: vec![m2.clone()] }).unwrap();
+    println!("4c its paid mint (copy #{}), on X: {}", u128::from_be_bytes(m2.nonce), put(&w.x, record(), rec2.encode()).await?.0);
+    // A RACE: 1 pays for #3, but a 5-copy buy (#3–7) fills record 0 first — #3's payment then buys #8 in record 1.
+    let (es, _) = w1.buy(&pay, &sd, &s, (0, &rec2), 1, w.now().await?).map_err(why)?;
+    let pa = es.last().unwrap().clone();
+    pay.state.entries.extend(es);
+    let (es, m5) = w1.buy(&pay, &sd, &s, (0, &rec2), 5, w.now().await?).map_err(why)?;
+    pay.state.entries.extend(es);
+    println!("6  1 pays for #3, then for 5 copies, on X: {} — {}", w.put_chain(&w.x, p, 1, &pay.state).await?.0, pay.state.balance());
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let full = T::supply::merge(&rec2, &T::supply::Shard { mints: vec![m5] }).unwrap();
+    println!("7  the 5 copies (#3–7) fill record 0, on X: {}", put(&w.x, record(), full.encode()).await?.0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let (k, ms) = craftworks_wallet::remint(&pay.params, &pa, &sd, &s, (0, &full), &T::supply::Shard::default()).map_err(why)?;
+    let record1 = || container(&w.code, T::supply::Params { code_hash: w.ch, definition: s, beacon: w.beacon, epoch: 1 }.encode());
+    println!("8  #3's payment buys #{} in record {k} (record 0 full), on Y: {}", u128::from_be_bytes(ms.nonce), put(&w.y, record1(), T::supply::Shard { mints: vec![ms.clone()] }.encode()).await?.0);
+    let reused = T::supply::Mint { nonce: 9u128.to_be_bytes(), stamp: mint.stamp, ..mint.clone() };
+    let reused = T::supply::Mint { paid: mint.paid, ..reused };
+    println!("9  copy #1's payment spilled into record 1 too, on X: {}", put(&w.x, record1(), T::supply::Shard { mints: vec![ms, reused] }.encode()).await?.0);
     tokio::time::sleep(Duration::from_secs(2)).await;
     let held = get(&w.x, T::supply::Params { code_hash: w.ch, definition: s, beacon: w.beacon, epoch: 0 }.id()).await?.and_then(|b| T::supply::Shard::decode(&b)).context("the record")?;
     println!("   record 0 holds {} mint(s)", held.mints.len());

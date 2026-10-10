@@ -2430,13 +2430,27 @@ mod contract {
 
     fn paid(p: &supply::Params, d: &Definition, m: &supply::Mint, got: &dyn Fn(&[u8; 32]) -> Option<Vec<u8>>) -> Result<(), super::Why> {
         let cid = m.paid.ok_or("a paid mint of no payment")?.0;
-        supply::payment_ok(p, d, m, got(&cid).and_then(|b| super::State::decode(&b)).as_ref())
+        supply::payment_ok(p, d, m, got(&cid).and_then(|b| super::State::decode(&b)).as_ref())?;
+        if supply::spilled(p, m) {
+            supply::spill_ok(d, p.epoch, got(&before(p)).and_then(|b| supply::Shard::decode(&b)).as_ref(), m)?;
+        }
+        Ok(())
+    }
+
+    /// The record before `p`'s (what a spilled paid mint is checked against).
+    fn before(p: &supply::Params) -> [u8; 32] {
+        supply::Params { epoch: p.epoch.saturating_sub(1), ..p.clone() }.id()
     }
 
     fn supply_valid(params: &[u8], state: &[u8], related: &RelatedContracts<'static>) -> Result<ValidateResult, ContractError> {
         let (Some(p), Some(sh)) = (supply::Params::decode(params), supply::Shard::decode(state)) else { return Ok(ValidateResult::Invalid) };
         // The payers of its paid mints (named by the mints themselves: asked in the same round as the definition).
-        let payers: Vec<[u8; 32]> = sh.mints.iter().filter_map(|m| m.paid.map(|(c, _)| c)).collect();
+        let mut payers: Vec<[u8; 32]> = sh.mints.iter().filter_map(|m| m.paid.map(|(c, _)| c)).collect();
+        if sh.mints.iter().any(|m| supply::spilled(&p, m)) {
+            payers.push(before(&p));
+        }
+        payers.sort();
+        payers.dedup();
         if 2 + payers.len() > super::MAX_RELATED {
             return Ok(ValidateResult::Invalid);
         }
@@ -2463,7 +2477,13 @@ mod contract {
             UpdateData::Delta(s) => supply::Shard::decode(s.as_ref()),
             UpdateData::StateAndDelta { state, .. } => supply::Shard::decode(state.as_ref()),
             _ => None,
-        }).flat_map(|sh| sh.mints).filter(|m| !held.mints.contains(m)).filter_map(|m| m.paid.map(|(c, _)| c)).collect();
+        }).flat_map(|sh| sh.mints).filter(|m| !held.mints.contains(m)).flat_map(|m| m.paid.map(|(c, _)| c).into_iter().chain(supply::spilled(&p, &m).then(|| before(&p)))).collect();
+        let given: Vec<[u8; 32]> = given.into_iter().fold(Vec::new(), |mut v, c| {
+            if !v.contains(&c) {
+                v.push(c);
+            }
+            v
+        });
         let related: Vec<([u8; 32], Vec<u8>)> = data.iter().filter_map(|x| match x {
             UpdateData::RelatedState { related_to, state } => <[u8; 32]>::try_from(related_to.as_bytes()).ok().map(|k| (k, state.as_ref().to_vec())),
             _ => None,

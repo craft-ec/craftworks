@@ -3341,7 +3341,7 @@ fn a_copy_of_an_edition_sold_on_demand_is_minted_by_its_payment_alone() {
     assert_eq!(Definition::decode(&s.encode()), Some(s.clone()));
     assert_eq!(Definition::decode(&Definition { sale: Some((id_b().into(), 0, did(7))), ..s.clone() }.encode()), None, "a price of nothing");
     assert_eq!(Definition::decode(&Definition { cap: 0, ids: Ids::None, decimals: 8, min_send: 10, ..s.clone() }.encode()), None, "an uncapped token");
-    assert_eq!((supply::record_of(&s, 8), supply::record_of(&s, 9)), (Some(0), Some(1)), "records of 8");
+    assert_eq!((supply::record_of(&s, 7), supply::record_of(&s, 8)), (Some(0), Some(1)), "records of 7");
     let rp = supply::Params { code_hash: CODE, definition: sid, beacon: BEACON, epoch: 0 };
     let none = authority::Chain::default();
     let n0 = pay_nonce(&s, 0, 1);
@@ -3432,4 +3432,31 @@ fn a_witness_that_signed_an_unpaid_copy_is_burned() {
     // The burn names the payer's chain among what it reads.
     let st = burn_of(paid_mint(&s, 3, 1, 5, n0), payer(&[])).unwrap();
     assert!(programs_from(&at(id_b(), 2), &st, 0).contains(&pc));
+}
+
+#[test]
+fn a_payment_for_a_record_filled_first_buys_a_copy_in_the_next() {
+    let s = sale();
+    let sid = did_of(&s);
+    let rp = |k: u64| supply::Params { code_hash: CODE, definition: sid, beacon: BEACON, epoch: k };
+    let none = authority::Chain::default();
+    let n0 = pay_nonce(&s, 0, 1);
+    let paid = payer(&[(n0, 7, 10)]);
+    // Record 0 filled by others (#1–7) before T's mint got there.
+    let others = |amount: u128| supply::Shard { mints: vec![supply::Mint { to: did(4), amount, paid: Some(([4; 32], [4; 16])), ..paid_mint(&s, 1, amount, 2, n0) }] };
+    let full = others(7);
+    let spill = paid_mint(&s, 8, 1, 5, n0);
+    assert!(supply::spilled(&rp(1), &spill) && !supply::spilled(&rp(0), &paid_mint(&s, 3, 1, 5, n0)));
+    let ok = |before: Option<&supply::Shard>, k: u64, m: supply::Mint| {
+        supply::holds(&rp(k), &s, &none, &supply::Shard { mints: vec![m] }, &|x| {
+            supply::payment_ok(&rp(k), &s, x, Some(&paid))?;
+            if supply::spilled(&rp(k), x) { supply::spill_ok(&s, k, before, x) } else { Ok(()) }
+        })
+    };
+    assert_eq!(ok(Some(&full), 1, spill.clone()), Ok(()), "#8 in record 1 on record 0's payment");
+    assert_eq!(ok(Some(&others(6)), 1, spill.clone()), Err("a spilled mint whose record before is not full"));
+    assert_eq!(ok(None, 1, spill.clone()), Err("a spilled mint whose record before is not there"));
+    let took = supply::Shard { mints: vec![supply::Mint { amount: 6, ..full.mints[0].clone() }, paid_mint(&s, 7, 1, 5, n0)] };
+    assert_eq!(ok(Some(&took), 1, spill.clone()), Err("a spilled mint whose payment its record before took"), "its payment bought #7 already");
+    assert_eq!(ok(Some(&full), 2, paid_mint(&s, 15, 1, 5, n0)), Err("a paid mint that is not this sale's"), "two records on: no");
 }

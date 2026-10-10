@@ -167,6 +167,29 @@ impl Wallet<'_> {
     }
 }
 
+/// The paid mint for a payment ALREADY MADE (`payment`, in the chain `payer`, tagged for record `k`) when a race took
+/// the numbers `buy` chose: other free numbers of record `k` as read now — or, record `k` FULL and none of its mints
+/// this payment's, the first free of record `k + 1` (a spilled mint, TOKEN §1c). Returns the record and the mint.
+pub fn remint(payer: &ChainParams, payment: &Entry, sold: &Definition, sold_id: &[u8; 32], (k, now_k): (u64, &t::supply::Shard), next: &t::supply::Shard) -> Result<(u64, t::supply::Mint), Why> {
+    let (_, price, _) = sold.sale.ok_or("an edition not sold on demand")?;
+    let Body::Send { amount: paid, .. } = payment.body else { return Err("not a payment") };
+    if payment.nonce[..8] != t::supply::sale_tag(sold_id, k) || price == 0 || paid % price != 0 {
+        return Err("not a payment for this record");
+    }
+    let amount = paid / price;
+    let mint = |first: u128| t::supply::Mint { to: payer.owner, item: [0; 32], amount, nonce: first.to_be_bytes(), stamp: payment.stamp, sigs: vec![], paid: Some((payer.id(), payment.nonce)) };
+    if t::supply::admitted(sold, now_k).iter().any(|m| m.paid.is_some_and(|(_, n)| n == payment.nonce)) {
+        return Err("a payment its record took already");
+    }
+    if let Some(first) = free(sold, (k, now_k), amount) {
+        return Ok((k, mint(first)));
+    }
+    let m = mint(0);
+    t::supply::spill_ok(sold, k + 1, Some(now_k), &m)?;
+    let first = free(sold, (k + 1, next), amount).ok_or("no free numbers in the record after")?;
+    Ok((k + 1, mint(first)))
+}
+
 /// The first of `amount` consecutive numbers of record `k` (as read) no admitted mint holds — past the genesis, within
 /// the cap.
 fn free(d: &Definition, (k, shard): (u64, &t::supply::Shard), amount: u128) -> Option<u128> {

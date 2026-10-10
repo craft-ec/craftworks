@@ -24,8 +24,9 @@ pub fn epoch(stamp: u64) -> u64 {
 /// are minted, without end. Its index is the shard params' "epoch".
 pub const RECORD: u128 = 1024;
 /// A record of an edition SOLD ON DEMAND (`Definition::sale`): small — every paid mint in it has its payment read when
-/// the record is checked, and a check reads at most 10 contracts (the definition, its authority chain, 8 payers).
-pub const PAID_RECORD: u128 = 8;
+/// the record is checked, and a check reads at most 10 contracts (the definition, its authority chain, 7 payers and
+/// the record before it).
+pub const PAID_RECORD: u128 = 7;
 
 /// The numbers a record of `d` holds.
 pub fn record_size(d: &crate::Definition) -> u128 {
@@ -224,7 +225,9 @@ pub fn holds(p: &Params, d: &crate::Definition, chain: &authority::Chain, s: &Sh
         if let Some((_, nonce)) = &m.paid {
             // PAID (on demand): a sold edition's, unsigned, its payment tagged for this record — and there (the caller
             // reads the payer's chain).
-            if d.sale.is_none() || !m.sigs.is_empty() || nonce[..8] != sale_tag(&p.definition, p.epoch) {
+            let tag: [u8; 8] = nonce[..8].try_into().unwrap();
+            let spilled = p.epoch > 0 && tag == sale_tag(&p.definition, p.epoch - 1);
+            if d.sale.is_none() || !m.sigs.is_empty() || (tag != sale_tag(&p.definition, p.epoch) && !spilled) {
                 return Err("a paid mint that is not this sale's");
             }
             paid_ok(m)?;
@@ -260,6 +263,28 @@ pub fn payment_ok(p: &Params, d: &crate::Definition, m: &Mint, payer: Option<&cr
         return Ok(());
     }
     Err("a paid mint whose payment is not there")
+}
+
+/// A paid mint SPILLED into record `k` from record `k − 1` (its payment tagged for `k − 1`: a race filled that record
+/// first): only if record `k − 1` (`before`, as read) is FULL — every number of it held by an admitted mint, so it takes
+/// no mint ever again — and none of them cites this payment. So one payment still buys one copy, in one record.
+pub fn spilled(p: &Params, m: &Mint) -> bool {
+    m.paid.is_some_and(|(_, n)| p.epoch > 0 && n[..8] == sale_tag(&p.definition, p.epoch - 1))
+}
+pub fn spill_ok(d: &crate::Definition, k: u64, before: Option<&Shard>, m: &Mint) -> Result<(), Why> {
+    let before = before.ok_or("a spilled mint whose record before is not there")?;
+    let held = admitted(d, before);
+    if held.iter().any(|x| x.paid.is_some_and(|(_, n)| Some(n) == m.paid.map(|(_, n)| n))) {
+        return Err("a spilled mint whose payment its record before took");
+    }
+    let size = record_size(d);
+    let lo = (k as u128 - 1) * size + 1;
+    let hi = (k as u128) * size;
+    let full = (lo.max(d.genesis_amount + 1)..=hi).all(|n| held.iter().any(|x| u128::from_be_bytes(x.nonce) <= n && n - u128::from_be_bytes(x.nonce) < x.amount));
+    if !full {
+        return Err("a spilled mint whose record before is not full");
+    }
+    Ok(())
 }
 
 /// The mints of a capped token's record that COUNT, in one order every reader shares — stamp, then nonce (a mint new

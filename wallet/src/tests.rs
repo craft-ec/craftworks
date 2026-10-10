@@ -385,13 +385,30 @@ fn a_wallet_buys_a_copy_of_an_edition_sold_on_demand() {
     assert_eq!(t::check(&c.params, &sd, &c.state, &|_, _| None, &|k| (k == 0).then(|| after.clone()), Some(&lg), &t::Extra::NONE), Ok(()));
     // Two copies: 3–4 at 20 W. A full record: none.
     assert_eq!(w.buy(&pay, &sd, &sid, (0, &rec), 2, 5).map(|(e, m)| (e.last().unwrap().body.clone(), u128::from_be_bytes(m.nonce))).ok(), Some((Body::Send { to: did(9), amount: 20 }, 3)));
-    let full = t::supply::Shard { mints: vec![t::supply::Mint { amount: 8, ..rec.mints[0].clone() }] };
+    let full = t::supply::Shard { mints: vec![t::supply::Mint { amount: 7, ..rec.mints[0].clone() }] };
     assert_eq!(w.buy(&pay, &sd, &sid, (0, &full), 1, 5).err(), Some("no free numbers in the record"));
     let one = t::supply::Shard { mints: vec![t::supply::Mint { amount: 1, ..rec.mints[0].clone() }] };
     assert_eq!(w.buy(&pay, &sd, &sid, (0, &one), 1, 5).map(|(_, m)| u128::from_be_bytes(m.nonce)).ok(), Some(2), "the number right after a taken one");
-    // Record 1 holds 9–10 only (the cap).
-    assert_eq!(w.buy(&pay, &sd, &sid, (1, &Default::default()), 2, 5).map(|(_, m)| u128::from_be_bytes(m.nonce)).ok(), Some(9));
-    assert_eq!(w.buy(&pay, &sd, &sid, (1, &Default::default()), 3, 5).err(), Some("no free numbers in the record"));
+    // Record 1 holds 8–10 only (records of 7; the cap).
+    assert_eq!(w.buy(&pay, &sd, &sid, (1, &Default::default()), 3, 5).map(|(_, m)| u128::from_be_bytes(m.nonce)).ok(), Some(8));
+    assert_eq!(w.buy(&pay, &sd, &sid, (1, &Default::default()), 4, 5).err(), Some("no free numbers in the record"));
+    // A RACE: 1 paid for #3 of record 0, but others took 3–7 first — the record is full: its copy is #8, record 1.
+    let payment = es.last().unwrap();
+    let raced = t::supply::Shard { mints: vec![rec.mints[0].clone(), t::supply::Mint { nonce: 3u128.to_be_bytes(), amount: 5, ..rec.mints[0].clone() }] };
+    let (k, m) = remint(&pay.params, payment, &sd, &sid, (0, &raced), &Default::default()).unwrap();
+    assert_eq!((k, u128::from_be_bytes(m.nonce), m.paid), (1, 8, mint.paid));
+    let rp1 = t::supply::Params { code_hash: CODE, definition: sid, beacon: BEACON, epoch: 1 };
+    let r1 = t::supply::Shard { mints: vec![m] };
+    assert_eq!(t::supply::holds(&rp1, &sd, &Default::default(), &r1, &|x| { t::supply::payment_ok(&rp1, &sd, x, Some(&paid.state))?; t::supply::spill_ok(&sd, 1, Some(&raced), x) }), Ok(()));
+    // Not full: other free numbers of record 0. Its payment taken already: refused.
+    let part = t::supply::Shard { mints: vec![rec.mints[0].clone(), t::supply::Mint { nonce: 3u128.to_be_bytes(), amount: 1, ..rec.mints[0].clone() }] };
+    assert_eq!(remint(&pay.params, payment, &sd, &sid, (0, &part), &Default::default()).map(|(k, m)| (k, u128::from_be_bytes(m.nonce))), Ok((0, 4)));
+    assert_eq!(remint(&pay.params, payment, &sd, &sid, (0, &after), &Default::default()).err(), Some("a payment its record took already"));
+    assert_eq!(remint(&pay.params, payment, &sd, &sid, (1, &raced), &Default::default()).err(), Some("not a payment for this record"));
+    // Two copies paid, ONE number left in record 0 (#7): not full, so no spill — and no room: refused.
+    let (es2, _) = w.buy(&pay, &sd, &sid, (0, &rec), 2, 5).unwrap();
+    let one_left = t::supply::Shard { mints: vec![rec.mints[0].clone(), t::supply::Mint { nonce: 3u128.to_be_bytes(), amount: 4, ..rec.mints[0].clone() }] };
+    assert_eq!(remint(&pay.params, es2.last().unwrap(), &sd, &sid, (0, &one_left), &Default::default()).err(), Some("a spilled mint whose record before is not full"));
     // Paid from a chain of another token: refused.
     assert_eq!(w.buy(&genesis(&dev, &Definition { name: b"X".to_vec(), ..def() }), &sd, &sid, (0, &rec), 1, 5).err(), Some("a payment from another chain than the sale's token's"));
 }
