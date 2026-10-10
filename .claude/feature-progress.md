@@ -1569,6 +1569,24 @@ old key's addresses.
               refused, received per token so one such stops no other). token-live `BEACON_SEED` serves on the pages'
               beacon; `seed_file` moved into node-io. Measured on fx/fy: A added P (5980cdbc…), sent 25 to B → A 975;
               B's wallet (fy) listed P from the note and took 25.
+          [ ] P  PRIVATE HOLDINGS — STEALTH CHAINS (owner 10-10; TOKEN §7f; before A: the allowance pays to wallets).
+              No contract change (a 1-of-1 multisig owner). Phases:
+              [x] P1 STEALTH KEYS — BUILT 10-10 (`wallet::stealth`): seed → scan/spend keys; `pay` (R, P, owner =
+                  set_id({1,[P]})); `find` (R → P and b + h); `OneTime::sign` (ed25519 by P, hazmat raw_sign); prime-
+                  order points only. End to end against the token's rules: Alice's stealth chain (the token's creator)
+                  begins, takes its genesis, sends to Bob's one-time owner; Bob's chain receives (worked) and spends —
+                  no DID anywhere; another key's set, or a forged signature, refused. 3 mutants killed (no small-order
+                  guard; spend without h; h without the scan secret — this one first SURVIVED: the test never checked
+                  that finding needs s, i.e. that a holder of the card alone cannot link; now it does).
+                  Recovery (owner asked): the `wallet` table is an account table — its keys escrowed to the recovery
+                  words (ARCHITECTURE `keys`), so words alone restore the seed; payments re-found by scanning, and the
+                  found list kept in the same table.
+              [ ] P2 PAYMENTS BAG: per-epoch bag of announcements (token, from, nonce, to, R); scan = compute and
+                  compare, read only matches.
+              [ ] P3 CORE: holdings over stealth chains (balance = sum), send (as few chains as can; change to a fresh
+                  own stealth chain; the announcement), receive by scanning; the seed in the account table `wallet`,
+                  S/B on the card.
+              [ ] P4 PAGE + LIVE fx/fy: A pays B privately; outsiders see no chain at B's DID.
           [ ] A  WREN DAILY ALLOWANCE: 1,000/day by reputation share, cap 20, claim-or-return; service on B.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
               rendezvous), within its limit, instead of what was watched; the standing record proves it.

@@ -668,7 +668,9 @@ dependencies = [
  "craftworks-identity",
  "craftworks-idlog-contract",
  "craftworks-token-contract",
+ "curve25519-dalek",
  "ed25519-dalek",
+ "sha2",
 ]
 
 [[package]]

@@ -811,6 +811,35 @@ wallet only hands the chain over when told.
 - Not in the core (the account's, at rollout): which device writes a chain (the core hands it over when told), finding
   counterparties' chains (the token's activity), fetching and publishing.
 
+## 7f. Private holdings: stealth chains (owner 10-10)
+
+Owner 10-10: "perhaps we should make it like bitcoin, where did hold the main, but all sub-accounts are not traceable
+to the main" — then "yes" to stealth with one payments bag. BY DEFAULT: what an account HOLDS is not linkable to its
+DID; only the sender and the recipient know who was paid.
+
+- **NO NEW CONTRACT RULE.** A STEALTH CHAIN is a multisig-owned chain (foundation 4, §1) of ONE key: its owner id is
+  `set_id({ k: 1, keys: [P] })`, P a ONE-TIME key; its first spend names the set and is signed by P. The token already
+  takes it (no key log, no credential: nothing points at the DID).
+- **THE KEYS.** A WALLET SEED per account (a row of the account's private table `wallet`, sealed like every account
+  table, synced to its devices; made by the first device) gives a SCAN key (s, S) and a SPEND key (b, B). The account's
+  CARD publishes S and B: the only wallet fact tied to the DID.
+- **PAYING (the sender alone; the recipient may be offline).** Random r, R = r·G; h = H(r·S); P = B + h·G; the debit
+  pays `to = set_id({P})`. Its ANNOUNCEMENT `(token, from, nonce, to, R)` goes into the epoch's PAYMENTS BAG (one bag
+  per standing epoch, the existing bag contract) — not the recipient's inbox (its address is the DID's: arrival time
+  would link).
+- **FINDING (scanning).** For each announcement since the last scan the wallet computes h = H(s·R), P = B + h·G and
+  compares `set_id({P})` with `to` — pure computation; only matches are read. Its spend key is b + h. Everything is
+  rediscovered from the seed: nothing to remember.
+- **CHANGE AND MERGING.** A send's change goes to a fresh stealth chain of the sender's own (it pays itself with a fresh
+  r). Spending several chains together links THEM (never to the DID): the wallet spends from as few as it can.
+- **ON THE DID, ON PURPOSE:** staked $CRAFT and keeper issuance (stake answers for a witness), reputation, vouches,
+  and the epoch statement's lines (what is OWED to a DID is public; where it is paid out may be a stealth chain).
+- **STILL VISIBLE:** amounts (confidential amounts would make witnesses check proofs instead of balances — later, if
+  ever), and that a payment happened.
+- Better than an HD tree (xpub): a fresh key per payment without the recipient online, one static key safe to publish
+  forever, and a leaked S/B links nothing (a leaked xpub links everything). The scan key s alone is a VIEW key (sees,
+  cannot spend).
+
 ## 8. Open in the architecture
 
 1. The BEACON's cadence (§5a) — mechanism designed, `K`/`S`/`s` calibrated from measurement; special hardware's
