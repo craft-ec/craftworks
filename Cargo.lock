@@ -423,6 +423,7 @@ name = "craftworks-beacon-step"
 version = "0.1.0"
 dependencies = [
  "craftworks-beacon-contract",
+ "craftworks-standing",
  "wasm-bindgen",
 ]
 
@@ -447,6 +448,8 @@ dependencies = [
  "craftworks-identity",
  "craftworks-idlog-contract",
  "craftworks-reputation",
+ "craftworks-standing",
+ "craftworks-standing-contract",
  "craftworks-token-contract",
  "craftworks-wallet",
  "ed25519-dalek",

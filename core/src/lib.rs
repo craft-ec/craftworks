@@ -836,6 +836,7 @@ pub mod editions;
 pub mod tokens;
 pub mod wallet;
 pub mod allowance;
+pub mod keeper;
 
 #[cfg(target_arch = "wasm32")]
 mod js {

@@ -156,8 +156,17 @@ impl Bind {
         v
     }
     pub fn new(key: &SigningKey, peer: &str, epoch: u64) -> Bind {
-        let k = key.verifying_key().to_bytes();
-        Bind { key: k, peer: peer.into(), epoch, sig: sign(key, &Self::message(&k, peer, epoch)) }
+        let mut b = Self::draft(key.verifying_key().to_bytes(), peer, epoch);
+        b.sig = sign(key, &b.signed());
+        b
+    }
+    /// UNSIGNED, for a key held elsewhere (a node's member key, in its identity delegate): sign [`Bind::signed`], set `sig`.
+    pub fn draft(key: [u8; 32], peer: &str, epoch: u64) -> Bind {
+        Bind { key, peer: peer.into(), epoch, sig: [0; 64] }
+    }
+    /// The message its key signs.
+    pub fn signed(&self) -> Vec<u8> {
+        Self::message(&self.key, &self.peer, self.epoch)
     }
     pub fn holds(&self) -> bool {
         peer_ok(&self.peer) && sig_ok(&self.key, &Self::message(&self.key, &self.peer, self.epoch), &self.sig)
@@ -227,13 +236,22 @@ impl Holdings {
     }
     /// The holdings of `hosted` (id, size) — only those in `arc`.
     pub fn new(key: &SigningKey, peer: &str, epoch: u64, hosted: &[([u8; 32], u64)], arc_: (u64, u64)) -> (Holdings, Vec<[u8; 32]>) {
+        let (mut h, ids) = Self::draft(key.verifying_key().to_bytes(), peer, epoch, hosted, arc_);
+        h.sig = sign(key, &h.signed());
+        (h, ids)
+    }
+    /// UNSIGNED (the key held elsewhere): sign [`Holdings::signed`], set `sig`.
+    pub fn draft(key: [u8; 32], peer: &str, epoch: u64, hosted: &[([u8; 32], u64)], arc_: (u64, u64)) -> (Holdings, Vec<[u8; 32]>) {
         let mut mine: Vec<([u8; 32], u64)> = hosted.iter().copied().filter(|(id, _)| in_arc(ring_of_contract(id), arc_)).collect();
         mine.sort();
         mine.dedup_by_key(|x| x.0);
         let ids: Vec<[u8; 32]> = mine.iter().map(|x| x.0).collect();
         let (r, count, bytes) = (root(&ids), ids.len() as u32, mine.iter().map(|x| x.1).sum());
-        let k = key.verifying_key().to_bytes();
-        (Holdings { key: k, peer: peer.into(), epoch, root: r, count, bytes, sig: sign(key, &Self::message(&k, peer, epoch, &r, count, bytes)) }, ids)
+        (Holdings { key, peer: peer.into(), epoch, root: r, count, bytes, sig: [0; 64] }, ids)
+    }
+    /// The message its key signs.
+    pub fn signed(&self) -> Vec<u8> {
+        Self::message(&self.key, &self.peer, self.epoch, &self.root, self.count, self.bytes)
     }
     pub fn holds(&self) -> bool {
         peer_ok(&self.peer) && sig_ok(&self.key, &Self::message(&self.key, &self.peer, self.epoch, &self.root, self.count, self.bytes), &self.sig)
@@ -261,6 +279,12 @@ pub fn seal(key: &[u8; 32], id: &[u8; 32], piece: &[u8]) -> Vec<u8> {
         }
     }
     out
+}
+
+/// A pick's ANSWER HASH from its piece: sealed for `key` ([`seal`]: the slow part), then hashed with the beacon's
+/// output and the peer ([`answer_hash`]).
+pub fn sealed_hash(key: &[u8; 32], id: &[u8; 32], piece: &[u8], out: &[u8; 32], peer: &str) -> [u8; 32] {
+    answer_hash(&seal(key, id, piece), out, peer)
 }
 
 /// Pieces a sampled height challenges at once: re-sealing them all takes far longer than the beacon step.
@@ -336,16 +360,29 @@ impl Answer {
     /// The answer to the beacon's `out` at `height`, from the node's REPLICAS (`replica`: a sealed copy by id): `None` if
     /// nothing is held, or a challenged replica is not here.
     pub fn new(key: &SigningKey, h: &Holdings, ids: &[[u8; 32]], height: u64, out: &[u8; 32], replica: &dyn Fn(&[u8; 32]) -> Option<Vec<u8>>) -> Option<Answer> {
+        let mut a = Self::draft(h, ids, height, out, replica)?;
+        a.sig = sign(key, &a.message());
+        Some(a)
+    }
+    /// UNSIGNED (the key held elsewhere: `h`'s): sign [`Answer::message`], set `sig`.
+    pub fn draft(h: &Holdings, ids: &[[u8; 32]], height: u64, out: &[u8; 32], replica: &dyn Fn(&[u8; 32]) -> Option<Vec<u8>>) -> Option<Answer> {
+        Self::draft_hashed(h, ids, height, out, &|id| replica(id).map(|r| answer_hash(&r, out, &h.peer)))
+    }
+    /// [`Answer::draft`] from each asked piece's REPLICA HASH (`hash_of`: [`sealed_hash`], computed elsewhere — a page
+    /// seals in a worker, off its thread).
+    pub fn draft_hashed(h: &Holdings, ids: &[[u8; 32]], height: u64, out: &[u8; 32], hash_of: &dyn Fn(&[u8; 32]) -> Option<[u8; 32]>) -> Option<Answer> {
         let picks = challenge(out, &h.peer, h.count)?
             .into_iter()
             .map(|i| {
                 let id = *ids.get(i)?;
-                Some(Pick { index: i as u32, id, path: path(ids, i), hash: answer_hash(&replica(&id)?, out, &h.peer) })
+                Some(Pick { index: i as u32, id, path: path(ids, i), hash: hash_of(&id)? })
             })
             .collect::<Option<Vec<_>>>()?;
-        let mut a = Answer { key: key.verifying_key().to_bytes(), peer: h.peer.clone(), height, picks, sig: [0; 64] };
-        a.sig = sign(key, &a.message());
-        Some(a)
+        Some(Answer { key: h.key, peer: h.peer.clone(), height, picks, sig: [0; 64] })
+    }
+    /// The pieces an answer at `out` asks for (its picks' ids) — what to read before drafting it.
+    pub fn asked(h: &Holdings, ids: &[[u8; 32]], out: &[u8; 32]) -> Vec<[u8; 32]> {
+        challenge(out, &h.peer, h.count).map_or(vec![], |is| is.into_iter().filter_map(|i| ids.get(i).copied()).collect())
     }
 }
 

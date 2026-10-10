@@ -1,4 +1,4 @@
-//! THE BEACON'S NEXT STEP, for a page's worker (TOKEN §5a: anyone extends it). The sequential work — `K` hashes, one
+//! A PAGE'S HEAVY WORK, in a worker — THE BEACON'S NEXT STEP, and a keeper's SEALED answer hashes (TOKEN §5a: anyone extends it). The sequential work — `K` hashes, one
 //! after another — runs off the page's thread; the step is the beacon contract's own (`State::extend`), so a page
 //! computes exactly what the contract checks. Built with `--target no-modules`: a CLASSIC worker (the app's frame has
 //! an opaque origin, where module workers from a blob fail) runs it.
@@ -17,6 +17,14 @@ pub fn next(params: &[u8], state: &[u8], mix: &[u8]) -> Vec<u8> {
         }
     };
     B::wire::encode(&s.extend(&p, mix))
+}
+
+/// A keeper's ANSWER HASH for one challenged piece (TOKEN §7a: `craftworks_standing::sealed_hash` — the seal is slow by
+/// design, so a page runs it here): 32 bytes, or empty when an argument is not 32 bytes.
+#[wasm_bindgen]
+pub fn sealed_hash(key: &[u8], id: &[u8], piece: &[u8], out: &[u8], peer: &str) -> Vec<u8> {
+    let (Ok(key), Ok(id), Ok(out)) = (<[u8; 32]>::try_from(key), <[u8; 32]>::try_from(id), <[u8; 32]>::try_from(out)) else { return Vec::new() };
+    craftworks_standing::sealed_hash(&key, &id, piece, &out, peer).to_vec()
 }
 
 #[cfg(test)]
