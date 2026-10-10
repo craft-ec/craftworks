@@ -384,7 +384,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 105] = [
+    let packages: [(&str, &str, PathBuf); 110] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -509,6 +509,13 @@ async fn main() -> Result<()> {
         // (EDITIONS_CONFIG names the file; the default `{}` shows no editions anywhere).
         ("editions", "service", app.join("packages/editions.js")),
         ("token-wasm", "bytes", contracts.join("token.wasm")),
+        // THE BEACON (TOKEN §5a): every open page extends it when it stalls — the service, the beacon's code, its step
+        // (a classic worker's glue and wasm), and its set-up `{ params }` (BEACON_CONFIG; the default `{}` runs nothing).
+        ("beacon", "service", app.join("packages/beacon.js")),
+        ("beacon-wasm", "bytes", contracts.join("beacon.wasm")),
+        ("beacon-step-glue", "bytes", built.join("craftworks_beacon_step.js")),
+        ("beacon-step-wasm", "bytes", built.join("craftworks_beacon_step_bg.wasm")),
+        ("beacon-config", "bytes", std::env::var("BEACON_CONFIG").map(std::path::PathBuf::from).unwrap_or_else(|_| app.join("packages/beacon-config.json"))),
         ("editions-config", "bytes", std::env::var("EDITIONS_CONFIG").map(std::path::PathBuf::from).unwrap_or_else(|_| app.join("packages/editions-config.json"))),
     ];
     let mut entries = Vec::new();

@@ -1,0 +1,13 @@
+[package]
+name = "craftworks-beacon-step"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The beacon's NEXT STEP for a page's worker: the beacon contract's own extend (sequential work), nothing else."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+craftworks-beacon-contract = { path = "../contracts-src/beacon", default-features = false }
+wasm-bindgen = "=0.2.128"

@@ -206,6 +206,21 @@ async fn main() -> Result<()> {
             let tick = Duration::from_secs(a.get(5).map_or(Ok(5), |t| t.parse())?);
             beacon(&code, &a[3], seed_file(&a[4])?, tick).await
         }
+        Some("height") => {
+            // token-ops height <ws> <beacon id hex>: its height now (0: not there).
+            let h = get(&a[2], unhex32(&a[3])?).await?.and_then(|b| B::wire::decode(&b)).map_or(0, |s| s.height());
+            println!("{h}");
+            Ok(())
+        }
+        Some("params") => {
+            // token-ops params <beacon.wasm> <seed file>: the beacon's params (hex — a page's `beacon-config`) and its id.
+            let code = std::fs::read(&a[2])?;
+            let p = beacon_params(seed_file(&a[3])?);
+            let id = container(&code, p.encode()).key().id().as_bytes().to_vec();
+            println!("{{\"params\":\"{}\"}}", hex(&p.encode()));
+            eprintln!("beacon {}", hex(&id));
+            Ok(())
+        }
         Some("make-token") => {
             let (code, idlog) = (std::fs::read(&a[2])?, std::fs::read(&a[3])?);
             let words = std::fs::read_to_string(&a[6])?;

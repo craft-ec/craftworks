@@ -18,6 +18,13 @@ wasm-bindgen --target web --out-name craftworks_mls --out-dir packages/build "$t
 cargo build -q --release -p craftworks-feed --target wasm32-unknown-unknown
 wasm-bindgen --target web --out-name craftworks_feed --out-dir packages/build "$target/wasm32-unknown-unknown/release/craftworks_feed.wasm"
 
+# THE BEACON'S STEP: its own package, run by the `beacon` service in a CLASSIC worker (no-modules glue: the app's frame
+# has an opaque origin, where a module worker from a blob fails).
+cargo build -q --release -p craftworks-beacon-step --target wasm32-unknown-unknown
+wasm-bindgen --target no-modules --out-name craftworks_beacon_step --out-dir packages/build "$target/wasm32-unknown-unknown/release/craftworks_beacon_step.wasm"
+wasm-opt -O3 --enable-bulk-memory-opt --enable-bulk-memory packages/build/craftworks_beacon_step_bg.wasm -o packages/build/craftworks_beacon_step_bg.opt.wasm
+mv packages/build/craftworks_beacon_step_bg.opt.wasm packages/build/craftworks_beacon_step_bg.wasm
+
 for name in craftworks_core craftworks_mls craftworks_feed; do
   # Optimised for size (binaryen, the same flags freenet-contracts uses): every page load fetches these.
   wasm-opt -Os --enable-bulk-memory-opt --enable-bulk-memory "packages/build/${name}_bg.wasm" -o "packages/build/${name}_bg.opt.wasm"

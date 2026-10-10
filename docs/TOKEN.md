@@ -946,9 +946,14 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
 **Running on the main network (10-10, owner: "manage the beacon via B"; "your own token name, manage however you
 like"):** `tools/token-ops`. A BEACON on B — `6c89f5624570eb4e…` — kept ticking every 5 s by the systemd service
 `craftworks-beacon` on B's box (`token-ops beacon`, its params from `/etc/craftworks-beacon/seed`, resuming its state
-after a restart; its final outputs into the outputs log). One extender today: a single point of LIVENESS (a stop holds
-payments until it ticks again), never of trust (every step is checked by the beacon contract; a fake is provable).
-Next: every open page and node extends it when it falls behind (§5a), so it ticks while anyone is online.
+after a restart; its final outputs into the outputs log). And EVERY OPEN PAGE extends it (`packages/beacon.js`, built
+10-10, owner: "I don't want something that ties only to one node"): it reads the beacon each tick; when no step has
+landed for 3 ticks it waits a random moment, reads again, and if still nobody has, computes the next step in a worker
+(`beacon-step`: the contract's own `extend`, wasm in a classic worker) and puts it with its outputs-log record. B's 5 s
+ticks set the pace while B runs; pages take over at ~20 s a step when it stops — the clock runs while anyone has
+Craftworks open. LIVE fx/fy 10-10: a beacon nobody else extended was begun by the open pages and went 2 → 16 in five
+minutes (both nodes agreeing at every height), on one page alone after the other closed. Set up by `beacon-config`
+(`{ params }`: B's beacon by default; `token-ops params` prints them).
 The first token, WREN (`68532fb588866b67…`), is Wren's — the account Claude keeps (owner 10-10; $CRAFT stays the
 storage reward's): fixed 1,000,000, burnable, its whole genesis Wren's treasury (chain `5df45cdc7c7f8720…`), written by
 a device the words credentialed (`token-ops make-token`). Given out by published rules only: a one-time starter

@@ -409,6 +409,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-beacon-step"
+version = "0.1.0"
+dependencies = [
+ "craftworks-beacon-contract",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "craftworks-core"
 version = "0.1.0"
 dependencies = [

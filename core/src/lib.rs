@@ -2350,6 +2350,40 @@ mod js {
             self.0.not_there(b32(id)?);
             Ok(())
         }
+        /// The BEACON's contract id (hex) from its code and params (TOKEN §5a: one per network).
+        pub fn beacon_id(beacon_code: &[u8], params: &[u8]) -> String {
+            let (_, contract, _) = wire::puts::contract(beacon_code, params, &[]);
+            hex(contract.key().id().as_bytes())
+        }
+        /// The PUTS of a beacon state a page extended (`beacon-step`): the beacon itself, and the OUTPUTS LOG's record of
+        /// its final heights (the span of the newest final height, and the one before it at a span's start) — as the
+        /// beacon's extender writes them. `[{ id, frames }]`; empty when the state does not read.
+        pub fn beacon_puts(&mut self, beacon_code: &[u8], params: &[u8], state: &[u8]) -> Result<js_sys::Array, JsValue> {
+            use craftworks_beacon_contract as B;
+            let list = js_sys::Array::new();
+            let (Some(p), Some(st)) = (B::Params::decode(params), B::wire::decode(state)) else { return Ok(list) };
+            let mut puts = vec![(params.to_vec(), state.to_vec())];
+            let (_, contract, _) = wire::puts::contract(beacon_code, params, &[]);
+            let id: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
+            let fin = st.height().saturating_sub(p.window as u64);
+            for idx in [fin.saturating_sub(1) / B::log::SPAN, fin / B::log::SPAN] {
+                let lp = B::log::Params { beacon: id, index: idx };
+                let rec = B::log::record(&lp, &st);
+                if !rec.entries.is_empty() && (idx == fin / B::log::SPAN || fin % B::log::SPAN < 2) && !puts.iter().any(|(x, _)| *x == lp.encode()) {
+                    puts.push((lp.encode(), rec.encode()));
+                }
+            }
+            for (params, state) in puts {
+                let (pid, contract, state) = wire::puts::contract(beacon_code, &params, &state);
+                let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
+                list.push(&self.put_obj(&account::Put { id: pid, id_bytes, contract, state })?);
+            }
+            Ok(list)
+        }
+        /// A beacon STATE's height (null: not a beacon's state).
+        pub fn beacon_state_height(state: &[u8]) -> JsValue {
+            craftworks_beacon_contract::wire::decode(state).map_or(JsValue::NULL, |s| JsValue::from(s.height() as f64))
+        }
         /// The beacon's height, from its state as read (null: not read).
         pub fn beacon_height(&self, beacon: &[u8]) -> Result<JsValue, JsValue> {
             Ok(self.0.got(&b32(beacon)?).and_then(craftworks_beacon_contract::wire::decode).map_or(JsValue::NULL, |s| JsValue::from(s.height() as f64)))
