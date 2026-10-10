@@ -2314,6 +2314,24 @@ mod js {
         }
         o.into()
     }
+    /// The keeper's context: the standing contract's code, the beacon's code and id.
+    fn keeper_ctx(standing_code: &[u8], beacon_code: &[u8], beacon: &[u8]) -> Result<keeper::Keep, JsValue> {
+        Ok(keeper::Keep { standing: *blake3::hash(standing_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), beacon: b32(beacon)? })
+    }
+    /// `[[id hex, size]]` (the node's hosted contracts, as the node-self answer gives them).
+    fn hosted_of(v: &JsValue) -> Result<Vec<([u8; 32], u64)>, JsValue> {
+        js_sys::Array::from(v).iter().map(|x| {
+            let x = js_sys::Array::from(&x);
+            Ok((bytes32("hosted", &x.get(0).as_string().unwrap_or_default()).map_err(err)?, x.get(1).as_f64().unwrap_or(0.0) as u64))
+        }).collect()
+    }
+    /// `[[message, sig]]` the delegate gave.
+    fn sigs_of(a: &js_sys::Array) -> Result<Vec<(Vec<u8>, [u8; 64])>, JsValue> {
+        a.iter().map(|p| {
+            let p = js_sys::Array::from(&p);
+            Ok((js_sys::Uint8Array::new(&p.get(0)).to_vec(), js_sys::Uint8Array::new(&p.get(1)).to_vec().try_into().map_err(|_| err("a signature is 64 bytes".into()))?))
+        }).collect()
+    }
     /// The context: the token's code, the beacon's id, the key log's code.
     fn token_ctx(token_code: &[u8], beacon: &[u8], idlog_code: &[u8]) -> Result<tokens::Ctx, JsValue> {
         Ok(tokens::Ctx { code_hash: *blake3::hash(token_code).as_bytes(), beacon: b32(beacon)?, idlog: *blake3::hash(idlog_code).as_bytes() })
@@ -2559,6 +2577,52 @@ mod js {
             let v = self.attach_puts(v, token_code, &puts)?;
             js_sys::Reflect::set(&js_sys::Reflect::get(&v, &"done".into())?, &"amount".into(), &JsValue::from(a.to_string()))?;
             Ok(v)
+        }
+        /// The beacon's OUTPUT at `height` (from its state as read; null: not there).
+        pub fn beacon_out(&self, beacon: &[u8], height: f64) -> Result<JsValue, JsValue> {
+            let s = self.0.got(&b32(beacon)?).and_then(craftworks_beacon_contract::wire::decode);
+            Ok(s.and_then(|s| s.steps.iter().find(|st| st.height == height as u64).map(|st| st.out)).map_or(JsValue::NULL, |o| js_sys::Uint8Array::from(&o[..]).into()))
+        }
+        /// The STANDING EPOCH of beacon height `height` (the keeper's: `craftworks_standing::EPOCH`).
+        pub fn keeper_epoch(height: f64) -> f64 {
+            craftworks_standing::epoch(height as u64) as f64
+        }
+        /// OPEN the node's standing epoch (`keeper::open_epoch`; `hosted`: `[[id hex, size]]` from the node): `{ sign }`,
+        /// `{ want }`, or `{ done: null | { puts: [{ id, idBytes, frames }] } }`.
+        #[allow(clippy::too_many_arguments)]
+        pub fn keeper_open(&mut self, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], public: &[u8], peer: &str, epoch: f64, hosted: JsValue, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
+            let k = keeper_ctx(standing_code, beacon_code, beacon)?;
+            let hosted = hosted_of(&hosted)?;
+            let sigs = sigs_of(&sigs)?;
+            let step = {
+                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                keeper::open_epoch(&k, &got, &b32(public)?, peer, epoch as u64, &hosted, &sigs)
+            };
+            self.keeper_step(standing_code, step)
+        }
+        /// The PIECES height `height` asks this node for (`keeper::asked`): `{ done: null | [id hex] }` (or `{ want }`).
+        #[allow(clippy::too_many_arguments)]
+        pub fn keeper_asked(&self, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], public: &[u8], peer: &str, height: f64, out: &[u8], hosted: JsValue) -> Result<JsValue, JsValue> {
+            let k = keeper_ctx(standing_code, beacon_code, beacon)?;
+            let hosted = hosted_of(&hosted)?;
+            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+            token_step(keeper::asked(&k, &got, &b32(public)?, peer, height as u64, &b32(out)?, &hosted), |a| Ok(json!(a.map(|ids| ids.iter().map(|i| hex(i)).collect::<Vec<_>>()))))
+        }
+        /// ANSWER height `height` (`keeper::answer`; `hashes`: `[[id hex, hash bytes]]` — sealed in the worker).
+        #[allow(clippy::too_many_arguments)]
+        pub fn keeper_answer(&mut self, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], public: &[u8], peer: &str, height: f64, out: &[u8], hosted: JsValue, hashes: js_sys::Array, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
+            let k = keeper_ctx(standing_code, beacon_code, beacon)?;
+            let hosted = hosted_of(&hosted)?;
+            let sigs = sigs_of(&sigs)?;
+            let hashes: Vec<([u8; 32], [u8; 32])> = hashes.iter().map(|x| {
+                let x = js_sys::Array::from(&x);
+                Ok((bytes32("id", &x.get(0).as_string().unwrap_or_default()).map_err(err)?, b32(&js_sys::Uint8Array::new(&x.get(1)).to_vec())?))
+            }).collect::<Result<_, JsValue>>()?;
+            let step = {
+                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                keeper::answer(&k, &got, &b32(public)?, peer, height as u64, &b32(out)?, &hosted, &hashes, &sigs)
+            };
+            self.keeper_step(standing_code, step)
         }
         /// The STATEMENT BAG's address of epoch `epoch`, and a posted root's `{ epoch, root }` (null: not one).
         pub fn statement_bag_address(epoch: f64) -> js_sys::Uint8Array {
@@ -2865,6 +2929,23 @@ mod js {
             }
             js_sys::Reflect::set(&o, &"queue".into(), &queue)?;
             Ok(o)
+        }
+        /// A keeper step's answer, its put (the standing contract's) attached.
+        fn keeper_step(&mut self, standing_code: &[u8], step: Result<tokens::Step<Option<keeper::Put>>, String>) -> Result<JsValue, JsValue> {
+            let mut put = None;
+            let v = token_step(step, |p| {
+                let some = p.is_some();
+                put = p;
+                Ok(if some { json!({}) } else { serde_json::Value::Null })
+            })?;
+            if let Some(p) = put {
+                let (id, contract, state) = wire::puts::contract(standing_code, &p.params, &p.state);
+                let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
+                let list = js_sys::Array::new();
+                list.push(&self.put_obj(&account::Put { id, id_bytes, contract, state })?);
+                js_sys::Reflect::set(&js_sys::Reflect::get(&v, &"done".into())?, &"puts".into(), &list)?;
+            }
+            Ok(v)
         }
         fn attach_puts(&mut self, v: JsValue, token_code: &[u8], puts: &[tokens::Put]) -> Result<JsValue, JsValue> {
             if puts.is_empty() {

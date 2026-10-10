@@ -7,4 +7,5 @@ export function mount(ctx, el) {
   ctx.require("beacon").catch(e => ctx.log("beacon", { what: e.message ?? String(e) }));
   // …and publishes the current epoch's statement if nobody has (`statement`: anyone may).
   ctx.require("statement").catch(e => ctx.log("statement", { what: e.message ?? String(e) }));
+  ctx.require("keeper").catch(e => ctx.log("keeper", { what: e.message ?? String(e) }));
 }

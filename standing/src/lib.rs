@@ -19,8 +19,9 @@ pub type Why = &'static str;
 
 /// Beacon heights per epoch: a node's location, binding and holdings are each said once per epoch.
 pub const EPOCH: u64 = 1024;
-/// The longest peer id the node names (base58 of 12 bytes of its transport key is 16–17 characters).
-pub const PEER_MAX: usize = 32;
+/// The longest KEEPER id a record names: a page's keeper is its member key in hex (64 characters) — a page cannot ask
+/// its node for its peer id (the node refuses node queries from web apps); a node's own peer id is 16–17.
+pub const PEER_MAX: usize = 64;
 
 pub fn epoch(height: u64) -> u64 {
     height / EPOCH

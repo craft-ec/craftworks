@@ -561,6 +561,19 @@ export async function start(ctx) {
     return out;
   }
 
+  // A file's PIECES as a keeper holds them — its root, its index, every generation's listed fragments — `[id hex,
+  // size]` (a fragment's size its plan's chunk; the root's and index's not counted). Reads only its index, as a read does.
+  async function pieces(sp, row) {
+    const f = await open({ key: row.key, root: row.root, name: `${row.id.slice(0, 8)}…`, ...(row.b ? { b: row.b } : {}) });
+    const out = [[core.file_root_id(f.key, f.rootHash), 0]];
+    const leaves = Math.ceil(f.plan.gens / 192);
+    for (let n = 0; n < leaves; n++) out.push([core.file_index_id(f.key, await f.indexHash(0, n)), 0]);
+    for (let level = 1; level <= f.depth; level++)
+      for (let n = 0; n < Math.ceil(leaves / 7000 ** level); n++) out.push([core.file_index_id(f.key, await f.indexHash(level, n)), 0]);
+    for (let g = 0; g < f.plan.gens; g++) for (const [j] of await f.listed(g)) out.push([core.file_fragment_id(f.key, g, j), f.plan.chunk]);
+    return out;
+  }
+
   // When a re-key of this row last moved (its progress, else the row): for taking over from a member gone quiet.
   const lastMoved = async (sp, row) => Math.max(row.at ?? 0, (await progressOf(sp, row.id)).at()?.at ?? 0);
 
@@ -637,5 +650,5 @@ export async function start(ctx) {
         }
       });
   }
-  return { keep, put, uploads, keyOf, get, stream, chunk, range, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
+  return { keep, pieces, put, uploads, keyOf, get, stream, chunk, range, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
 }

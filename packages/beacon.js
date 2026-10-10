@@ -8,12 +8,13 @@
 // SET UP by `beacon-config` (`{ params }`: the beacon's params, hex); empty: nothing runs.
 //   (await ctx.require("beacon")).status()   // { id, height, extended, last } — what this page did
 //   beacon.onHeight(fn)                         // fn(height) each time this page sees it advance (returns: stop)
+//   await beacon.sealed(key, id, piece, out, peer)   // a keeper's sealed answer hash, in the page's worker
 export async function start(ctx) {
   let cfg = {};
   try {
     cfg = JSON.parse(new TextDecoder().decode(await ctx.require("beacon-config")));
   } catch {}
-  if (!cfg.params) return { status: () => ({ off: true }), onHeight: () => () => {} };
+  if (!cfg.params) return { status: () => ({ off: true }), onHeight: () => () => {}, sealed: async () => { throw new Error("no beacon on this site"); } };
   const [node, code, glueJs, stepWasm] = await Promise.all(["node", "beacon-wasm", "beacon-step-glue", "beacon-step-wasm"].map(n => ctx.require(n)));
   const { core, glue, ask } = node;
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
@@ -25,22 +26,35 @@ export async function start(ctx) {
   const state = { id, height: null, extended: 0, last: null };
 
   // The WORKER: classic (the frame's opaque origin refuses a module worker from a blob), the step's glue inlined.
+  // The page's HEAVY-WORK worker (`beacon-step`): the beacon's next step, and a keeper's sealed answer hashes — each
+  // request with its id (two may be in flight: the beacon stepping while the keeper seals).
   const src = `${new TextDecoder().decode(glueJs)}
 let ready = null;
 self.onmessage = async e => {
-  const { wasm, params, state, mix } = e.data;
+  const { id, op, wasm, a } = e.data;
   ready ??= wasm_bindgen({ module_or_path: wasm });
   await ready;
-  const out = wasm_bindgen.next(params, state, mix);
-  self.postMessage(out, [out.buffer]);
+  const out = op === "seal" ? wasm_bindgen.sealed_hash(...a) : wasm_bindgen.next(...a);
+  self.postMessage({ id, out }, [out.buffer]);
 };`;
   const worker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
-  const step = (st, mix) =>
+  const waiting = new Map();
+  let ids = 0;
+  worker.onmessage = e => {
+    waiting.get(e.data.id)?.ok(e.data.out);
+    waiting.delete(e.data.id);
+  };
+  worker.onerror = e => {
+    for (const w of waiting.values()) w.no(new Error(e.message || "the page's worker failed"));
+    waiting.clear();
+  };
+  const work = (op, a) =>
     new Promise((ok, no) => {
-      worker.onmessage = e => ok(e.data);
-      worker.onerror = e => no(new Error(e.message || "the beacon's worker failed"));
-      worker.postMessage({ wasm: stepWasm, params, state: st, mix });
+      const id = ++ids;
+      waiting.set(id, { ok, no });
+      worker.postMessage({ id, op, wasm: stepWasm, a });
     });
+  const step = (st, mix) => work("step", [params, st, mix]);
 
   // READ it (`node.read`): its state (bytes), or null (not there yet).
   async function read() {
@@ -87,6 +101,8 @@ self.onmessage = async e => {
   ctx.log("beacon", { what: `extending ${id.slice(0, 12)}… when it stalls` });
   return {
     status: () => ({ ...state }),
+    // A keeper's SEALED ANSWER HASH (`craftworks_standing::sealed_hash`), in the worker: 32 bytes.
+    sealed: (key, id, piece, out, peer) => work("seal", [key, id, piece, out, peer]),
     onHeight(fn) {
       watchers.add(fn);
       return () => watchers.delete(fn);

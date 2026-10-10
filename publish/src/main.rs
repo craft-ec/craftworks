@@ -384,7 +384,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 116] = [
+    let packages: [(&str, &str, PathBuf); 118] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -512,6 +512,9 @@ async fn main() -> Result<()> {
         ("wallet-app", "module", app.join("packages/wallet-app.js")),
         // THE WREN ALLOWANCE's program code (TOKEN §7d; `tokens-config` names its token: `allowance`).
         ("allowance-wasm", "bytes", contracts.join("allowance.wasm")),
+        // THE KEEPER LOOP (TOKEN §7a): the service, and the standing contract's code (a node's record).
+        ("keeper", "service", app.join("packages/keeper.js")),
+        ("standing-wasm", "bytes", contracts.join("standing.wasm")),
         ("token-wasm", "bytes", contracts.join("token.wasm")),
         // THE BEACON (TOKEN §5a): every open page extends it when it stalls — the service, the beacon's code, its step
         // (a classic worker's glue and wasm), and its set-up `{ params }` (BEACON_CONFIG; the default `{}` runs nothing).

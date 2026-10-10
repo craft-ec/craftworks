@@ -1,6 +1,6 @@
-//! THE KEEPER LOOP in the page's core (TOKEN §7a: keepers are paid on proven keeping) — a node's STANDING RECORD kept in
-//! its standing contract (one per peer): each standing epoch its BINDING (its member key runs the peer) and its
-//! HOLDINGS (what it hosts, committed); at each height sampled for it, its ANSWER to the beacon's challenge (the asked
+//! THE KEEPER LOOP in the page's core (TOKEN §7a: keepers are paid on proven keeping) — a keeper's STANDING RECORD kept
+//! in its standing contract (one per keeper: a page's is named by its member key in hex — a page cannot learn its peer
+//! id): each standing epoch its BINDING and its HOLDINGS (the pieces of the files it keeps, committed); at each height sampled for it, its ANSWER to the beacon's challenge (the asked
 //! pieces' sealed hashes — sealed in the page's worker). Every record is signed by the node's member key through its
 //! identity delegate (`TokenSign`, the identity's STANDING_DOMAIN): a step answers what to SIGN, or the PUT. Pure, over
 //! `got` (a contract's state as read; `Some(empty)`: read and not there).
@@ -134,11 +134,13 @@ mod tests {
     }
 
     #[test]
-    fn a_node_opens_its_epoch_and_answers_a_sampled_height_in_a_record_that_holds() {
+    fn a_keeper_opens_its_epoch_and_answers_a_sampled_height_in_a_record_that_holds() {
         let k = Keep { standing: [31; 32], beacon_code: [32; 32], beacon: [33; 32] };
         let key = SigningKey::from_bytes(&[44; 32]);
         let public = key.verifying_key().to_bytes();
-        let peer = "v6MkPeerTestFx01";
+        // A page's keeper: its member key in hex (64 characters, PEER_MAX).
+        let peer_ = public.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let peer = peer_.as_str();
         let piece = |id: &[u8; 32]| [id.to_vec(), vec![7u8; 100]].concat();
         let hosted: Vec<([u8; 32], u64)> = (0..40u32).map(|i| (*blake3::hash(&i.to_le_bytes()).as_bytes(), 132)).collect();
         let rid = t::id(&k.standing, &params(&k, peer).encode());

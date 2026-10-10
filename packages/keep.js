@@ -20,6 +20,7 @@
 //   await keep.kept()        // { limit, files: [{ root, item, title, size, used, at, whole, missing, error }] }
 //   await keep.setLimit(bytes)   // how much of what was played this node keeps (0: none)
 //   await keep.keepers(root) // [did, …]: who keeps a file (this month or last) — the KEEPERS BAG (rewards step 3)
+//   await keep.holdings(epoch) // [{ sp, row }]: the files it keeps whole, fixed for standing epoch `epoch` (the keeper's)
 //
 // THE KEEPERS BAG (rewards step 3): each file's public bag `keepers:<root>` (`index.point`), where a keeper says, once
 // a month, that it keeps the file (`{ did, m: "YYYY-MM" }`; the same claim again merges). A CLAIM, unsigned like every
@@ -192,6 +193,49 @@ export async function start(ctx) {
     if (row?.root) await claim(row.root);
     await t.put(r.key, JSON.stringify({ ...v, claimed: m }));
   }
+  // ITS HOLDINGS in standing epoch `epoch` (TOKEN §7a: what its keeper proves): the files it keeps WHOLE — its own and
+  // its spaces' (a pass found every generation), and those it watched — as `{ sp, row }`, by file id. Fixed for the
+  // epoch on first ask (`h/<epoch>` in the table `keep`: the record commits to this list, and a page opened later in
+  // the epoch must answer from the same one); earlier epochs' lists dropped.
+  async function holdings(epoch) {
+    const t = await records();
+    const k = `h/${epoch}`;
+    const fixed = read(t.rows().find(r => r.key === k) ?? { value: "null" });
+    const spaces = new Map((await space.mine()).filter(s => s.kind === "server").map(s => [s.id, s]));
+    const own = async () => {
+      const out = [];
+      for (const r of t.rows().filter(x => x.key.startsWith("f/"))) {
+        const v = read(r);
+        if (!v || v.error || !v.gens || v.whole !== v.gens) continue;
+        out.push({ space: v.space ?? null, file: v.file });
+      }
+      for (const w of (await kept()).files) if (w.gens && w.whole === w.gens) out.push({ space: null, file: w.root, watched: true });
+      return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+    };
+    const list = fixed ?? (await own());
+    // (Nothing whole yet — the first passes still running: not fixed, asked again.)
+    if (!fixed && list.length) {
+      await t.put(k, JSON.stringify(list));
+      for (const r of t.rows().filter(x => x.key.startsWith("h/") && x.key !== k)) await t.remove(r.key).catch(() => {});
+    }
+    // Each one's row (its key and root): its space's, or the watched record's own ref.
+    const watched = new Map((await kept()).files.map(w => [w.root, w.w.file]));
+    const rowsOf = new Map();
+    const out = [];
+    for (const h of list) {
+      if (h.watched) {
+        const f = watched.get(h.file);
+        if (f) out.push({ sp: null, row: { id: f.root, key: f.key, root: f.root, ...(f.b ? { b: f.b } : {}) } });
+        continue;
+      }
+      const sp = h.space ? (spaces.get(h.space) ?? null) : null;
+      if (h.space && !sp) continue;
+      if (!rowsOf.has(h.space)) rowsOf.set(h.space, await files.rows(sp).catch(() => []));
+      const row = rowsOf.get(h.space).find(x => x.id === h.file);
+      if (row?.root) out.push({ sp, row });
+    }
+    return out;
+  }
   const watchedDue = async () => (await kept()).files.filter(w => Date.now() - w.at > DAY);
 
   let running = false;
@@ -242,5 +286,5 @@ export async function start(ctx) {
     tick();
     setInterval(tick, 60000);
   }, 120000);
-  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.log("keep", { what: `not noted for keeping: ${e?.message ?? e}` })), kept, setLimit, keepers };
+  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.log("keep", { what: `not noted for keeping: ${e?.message ?? e}` })), kept, setLimit, keepers, holdings };
 }

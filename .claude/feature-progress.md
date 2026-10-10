@@ -1739,6 +1739,16 @@ old key's addresses.
           contract; the delegate's half with a release) → K0b a KEEPERS REGISTRY per epoch (who kept is findable) → K0c
           the statement's `kept` from it (KEEP_MIN answers, bound to the account) → K2 rework (amount = the statement
           line, proven under the root; appended by anyone) → K3 witness gate → K4–K6. $CRAFT decimals 9 (doc said 6).
+          [x] K0a KEEPER LOOP 10-10: the node refuses NodeQueries from web apps (freenet-core "Blocked NodeQueries
+              from contract web app") → a page's keeper is named by its MEMBER KEY (hex; standing PEER_MAX 32→64,
+              standing.wasm 47f3a4ca) and proves only what CRAFTWORKS keeps: holdings = pieces (`files.pieces`) of the
+              files `keep` keeps whole (`keep.holdings(epoch)`, fixed per epoch in table keep `h/<epoch>`). keeper.js:
+              after login, open once an epoch, answer every sampled height since the last (catch-up; the beacon read
+              into the core first — beacon.js takes its reads out). Live fx v549: epoch 1 holdings 15 files / 776
+              pieces committed; height 1753 answered (16 pieces sealed in the worker, signed). Owner 10-10: domain is
+              ours only; next a FILES REGISTRY (root, size, epoch; per-bag size sums; renewed by keep; give-to-get base
+              copies) → K0b keepers registry → KA assignment by BLAKE3(beacon ‖ keeper key ‖ root) (arc dropped: needs
+              the blocked query); target = base copies (issuance) + paid copies.
           [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` — FIRST CUT COMMITTED 10-10 (proof, epoch, binding,
               name; 12 mutants killed; its credential through identity's one rule, which closed a skipped key-log
               check) — REWORK: amount = the statement's (witness-checked), appended by anyone with work, the bind
