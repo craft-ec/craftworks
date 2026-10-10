@@ -679,6 +679,13 @@ wallet only hands the chain over when told.
   mint of the record's first free numbers (past the genesis, within the cap); the copy is then collected as any mint.
   `remint`: a payment made whose numbers a race took — other free numbers of its record, or the next record's when
   it is full.
+- **SIGNING ON THE NODE — BUILT 10-10 (shop S2).** A token entry's signed message begins with `ENTRY_DOMAIN`
+  (`craftworks_identity::TOKEN_ENTRY_DOMAIN`, owned by identity): the node key signs a member's tables too, so a
+  signer asked only for token entries signs only messages under this domain. The identity delegate's `TokenSign
+  { message }` signs one with the session's member key — for the HOME site only (the shop is the home app's; no other
+  site spends the person's money), and only a message under the domain (`NotAnEntry` otherwise). The credential and
+  key seq the wallet's `Device` needs are the account's devices contract's (the page reads them). A delegate change:
+  ships with the next full release.
 - Not in the core (the account's, at rollout): which device writes a chain (the core hands it over when told), finding
   counterparties' chains (the token's activity), fetching and publishing.
 

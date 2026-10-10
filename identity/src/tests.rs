@@ -753,3 +753,19 @@ fn a_mandate_older_than_upkeep_s_own_group_is_not_taken() {
     assert_eq!(upkeep_spent(&m, &me), vec![kp_tag("aa"), kp_tag("bb")]);
     assert_eq!(kp_tag("aa")[..4], [0x96, 0x1b, 0x6d, 0xd3]);
 }
+
+/// A TOKEN ENTRY is signed with the member's key for the home site only, and only a message under the token's domain.
+#[test]
+fn a_token_entry_is_signed_by_the_member_for_its_home_only() {
+    let mut m = provisioned(APP);
+    let Answer::Unlocked { public, .. } = unlock(&mut m, ALICE_PIN, APP) else { panic!("unlocked") };
+    let msg = [TOKEN_ENTRY_DOMAIN, b"seq prev nonce stamp body"].concat();
+    let Answer::Signed { sig } = serve(&mut m, Request::TokenSign { message: msg.clone() }, APP) else { panic!("signed") };
+    let key = ed25519_dalek::VerifyingKey::from_bytes(&public).unwrap();
+    assert!(key.verify_strict(&msg, &ed25519_dalek::Signature::from_bytes(&sig.try_into().unwrap())).is_ok(), "by the member's key");
+    assert_eq!(serve(&mut m, Request::TokenSign { message: b"seq prev nonce stamp body".to_vec() }, APP), Answer::Refused(Why::NotAnEntry), "no domain: not signed");
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    assert_eq!(serve(&mut m, Request::TokenSign { message: msg.clone() }, OTHER), Answer::Refused(Why::NotHome));
+    assert_eq!(serve(&mut m, Request::Lock, APP), Answer::LoggedOut);
+    assert_eq!(serve(&mut m, Request::TokenSign { message: msg }, APP), Answer::Refused(Why::NoSession));
+}

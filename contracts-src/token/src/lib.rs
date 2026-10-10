@@ -409,6 +409,10 @@ pub const MINTER: [u8; 32] = [0; 32];
 /// The most related contracts one validation or update asks for in its one round (the node's limit, measured 10-08:
 /// depth 1, at most 10). A holder taking in new entries asks for the definition, the beacon and every chain they cite.
 pub const MAX_RELATED: usize = 10;
+
+/// What every chain entry's signed message BEGINS with: a device's key signs other things too (a member's tables), and
+/// a signer that is asked only for token entries signs only messages that begin with this (TOKEN §7c).
+pub const ENTRY_DOMAIN: &[u8] = craftworks_identity::TOKEN_ENTRY_DOMAIN;
 /// The longest writer credential (`CWMB ‖ did ‖ owner ‖ node ‖ MLS key ‖ signature`, with room).
 pub const CRED_MAX: usize = 512;
 /// The history key of an entry: its seq, big-endian (the tree's order is the chain's). Its value: the entry's bytes.
@@ -592,7 +596,15 @@ fn read_ev(r: &mut R) -> Option<Evidence> {
 
 impl Entry {
     /// What is signed or worked on: everything but the auth.
+    /// What its signer signs: [`ENTRY_DOMAIN`], then its content.
     pub fn message(&self) -> Vec<u8> {
+        let mut v = ENTRY_DOMAIN.to_vec();
+        v.extend_from_slice(&self.content());
+        v
+    }
+
+    /// Its CONTENT: everything but its signature (what its encoding begins with).
+    fn content(&self) -> Vec<u8> {
         let mut v = Vec::with_capacity(120);
         v.extend_from_slice(&self.seq.to_le_bytes());
         v.extend_from_slice(&self.prev);
@@ -803,7 +815,7 @@ impl Entry {
         v
     }
     pub fn encode(&self) -> Vec<u8> {
-        let mut v = self.message();
+        let mut v = self.content();
         match &self.auth {
             Auth::Sig(s) => {
                 v.push(0);

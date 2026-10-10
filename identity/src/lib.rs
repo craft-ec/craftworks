@@ -58,6 +58,10 @@ use serde::{Deserialize, Serialize};
 
 
 
+/// What every TOKEN CHAIN ENTRY's signed message begins with (the token's `ENTRY_DOMAIN`): a member's key signs other
+/// things too, and `TokenSign` signs only messages that begin with this.
+pub const TOKEN_ENTRY_DOMAIN: &[u8] = b"craftworks token entry 2026-10-10\0";
+
 /// Every identity message starts with this, so a page tells an identity answer from any other delegate's.
 pub const MAGIC: &[u8; 4] = b"ID01";
 
@@ -144,6 +148,10 @@ pub enum Request {
     /// The secrets this member holds of a space's EARLIER epochs (below `below`): handed to a member let in later (a
     /// welcome, or their ask), so they read the space's whole history without walking its logs. The home site only.
     EpochSecrets { space: [u8; 32], below: u64 },
+    /// Sign a TOKEN CHAIN ENTRY (TOKEN §7c: this node is the account's device on its token chains) with the session's
+    /// member key: only a message that begins with the token's entry domain, and only for the home site (the shop is
+    /// the home app's; another site never spends the person's money).
+    TokenSign { message: Vec<u8> },
 }
 
 /// A space as upkeep may admit into it: the page's knowledge when it handed it over.
@@ -280,6 +288,8 @@ pub enum Why {
     Unreadable,
     /// No MLS epoch secret is held here (for that epoch, or at all yet).
     NoEpoch,
+    /// Not a token chain entry's message.
+    NotAnEntry,
 }
 
 /// The most tables one grant names (an app's `uses`, asked in one prompt).
@@ -1191,6 +1201,16 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             upkeep_status(h, Some(&m))
         }
         Request::UpkeepStatus => upkeep_status(h, session(h, &app).map(|a| a.public()).as_ref()),
+        Request::TokenSign { message } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            if !message.starts_with(TOKEN_ENTRY_DOMAIN) {
+                return Refused(Why::NotAnEntry);
+            }
+            Signed { sig: a.key().sign(&message).to_bytes().to_vec() }
+        }
         Request::InboxKey => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             let Some(data) = a.data else { return Refused(Why::NoDataKey) };

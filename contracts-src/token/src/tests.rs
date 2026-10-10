@@ -3460,3 +3460,17 @@ fn a_payment_for_a_record_filled_first_buys_a_copy_in_the_next() {
     assert_eq!(ok(Some(&took), 1, spill.clone()), Err("a spilled mint whose payment its record before took"), "its payment bought #7 already");
     assert_eq!(ok(Some(&full), 2, paid_mint(&s, 15, 1, 5, n0)), Err("a paid mint that is not this sale's"), "two records on: no");
 }
+
+#[test]
+fn an_entry_is_signed_under_the_token_entry_domain_only() {
+    let mut w = paid();
+    let a = w.0.get_mut(&did(1)).unwrap();
+    let e = a.entries.last().unwrap().clone();
+    assert!(e.message().starts_with(ENTRY_DOMAIN));
+    let resign = |m: &[u8]| Entry { auth: Auth::Sig(key(1).sign(m).to_bytes()), ..e.clone() };
+    *a.entries.last_mut().unwrap() = resign(&e.message());
+    assert_eq!(w.check(1), Ok(()), "CONTROL: re-signed as it was");
+    let a = w.0.get_mut(&did(1)).unwrap();
+    *a.entries.last_mut().unwrap() = resign(&e.message()[ENTRY_DOMAIN.len()..]);
+    assert!(w.check(1).is_err(), "a signature over the bare content (no domain) proves nothing");
+}
