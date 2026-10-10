@@ -1531,7 +1531,14 @@ old key's addresses.
               author a form (name, price, copies, numbered, royalty %) → `edition_create` puts + `items.editItem`
               with `meta.editions` appended. Set up by `editions-config` (`{ beacon, pay }`; default `{}`: no section).
               A buyer that created the pay token begins its chain with the genesis in the same put.
-          [ ] S5 LIVE fx/fy: beacon + pay token + edition; buy from a second account end to end.
+          [x] S5 LIVE fx/fy — DONE 10-10 (site EckhKsQW… v520, editions-config from `token-live serve`: a ticking
+              beacon + pay token P whose creator is B): A (fx, did 5hSRce…) on its post "Count test" made editions
+              Gold (10) and Silver (5) through the form; B (fy, did 34kdzZDX… = 1ead752b…) pressed Buy on Silver:
+              its P chain began (genesis) and paid, the paid mint went into record 0, copy #1 collected — every entry
+              signed by fy's TokenSign; B's page then read "4 of 5 left · you hold #1", and A's node on fx "4 of 5".
+              Found live: a stray "null" child (fixed); a "no money" refusal that named nothing — it now names the
+              buyer, the token, its chain and the token's creator (it showed the test had the wrong DID).
+          NEXT (not built): the item's author sees sales/earnings; B's P balance shown; resale through the swap.
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).
       [x] 17 BATCH-AUCTION POOLS (TOKEN §5) — in parts:

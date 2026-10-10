@@ -179,11 +179,13 @@ export async function start(ctx) {
               }
             };
           row.replaceChildren(
+            ...[
             h("span", { className: "name", textContent: e.name || it.title || "Edition" }),
             h("span", { className: "s", textContent: `${e.numbered ? "numbered" : "copies"} · ${left}${e.royalty ? ` · ${e.royalty.bps / 100}% royalty` : ""}` }),
             mine ? h("span", { className: "s", textContent: mine }) : null,
             e.open == null ? h("span", { className: "s", textContent: "sold out" }) : b,
             said,
+            ].filter(Boolean),
           );
         },
         err => row.replaceChildren(h("span", { className: "said", textContent: `an edition could not be read: ${err.message ?? err}` })),

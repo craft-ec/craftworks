@@ -66,6 +66,10 @@ pub struct Bought {
     pub amount: u128,
 }
 
+fn short(b: &[u8; 32]) -> String {
+    b[..6].iter().map(|x| format!("{x:02x}")).collect()
+}
+
 fn there(got: Got, id: &[u8; 32]) -> Result<Option<Vec<u8>>, [u8; 32]> {
     match got(id) {
         None => Err(*id),
@@ -163,7 +167,7 @@ pub fn buy(ctx: &Ctx, got: Got, id: &[u8; 32], buyer: &[u8; 32], amount: u128, n
         }
         // Not begun: the token's own creator begins it (its genesis first, in the same put); anyone else holds none.
         Ok(None) if pay_def.genesis_owner == *buyer && pay_def.genesis_amount > 0 => Some(State::default()),
-        Ok(None) => return Err("no money: the buyer holds none of the sale's token".into()),
+        Ok(None) => return Err(format!("no money: the buyer {} holds none of the sale's token {} (its chain {} not there; the token's creator {})", short(buyer), short(&tok.definition), short(&pp.id()), short(&pay_def.genesis_owner))),
         Ok(Some(b)) => Some(State::decode(&b).ok_or("the buyer's chain does not read")?),
     };
     let keys = match there(got, &pp.keys_id()) {
@@ -394,7 +398,7 @@ mod tests {
             g2.insert(soid, so.encode());
             g2.insert(record_params(&ctx, &soid, 0).id(), vec![]);
             g2.insert(chain(&ctx, &other, &oid, &did, [0; 32]).id(), vec![]);
-            assert_eq!(buy(&ctx, &|id| g2.get(id).cloned(), &soid, &did, 1, 5, &d2), Err("no money: the buyer holds none of the sale's token".to_string()));
+            assert_eq!(buy(&ctx, &|id| g2.get(id).cloned(), &soid, &did, 1, 5, &d2), Err(format!("no money: the buyer {} holds none of the sale's token {} (its chain {} not there; the token's creator {})", short(&did), short(&oid), short(&chain(&ctx, &other, &oid, &did, [0; 32]).id()), short(&[8; 32]))));
         }
         got.insert(pp.id(), pay.encode());
         got.insert(pp.keys_id(), lg.encode());

@@ -300,6 +300,7 @@ async fn main() -> Result<()> {
             "pause" => pause(&w).await?,
             "wallet" => wallet_mode(&w).await?,
             "ondemand" => ondemand(&w).await?,
+            "serve" => serve(&w).await?,
             "reclaim" => reclaim(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "holders" => holders(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "vest" => vest(&w).await?,
@@ -1842,4 +1843,23 @@ async fn ondemand(w: &W) -> Result<()> {
     c.state.entries.extend(got);
     println!("5  1's chain of copy #1 collects it, on Y: {} — {}", put(&w.y, container(&w.code, c.params.encode()), c.state.encode()).await?.0, c.state.balance());
     Ok(())
+}
+
+/// SERVE the editions set-up for a page test (TOKEN §1c, S5): the beacon started here keeps ticking (this process is the
+/// test's clock), and a PAY token P — its creator `PAY_OWNER` (hex DID: that account begins its chain with 1000 P when it
+/// first buys) — published on X. Writes `{ beacon, pay }` to `EDITIONS_CONFIG` (the page's `editions-config`), then
+/// ticks until killed.
+async fn serve(w: &W) -> Result<()> {
+    let owner = std::env::var("PAY_OWNER").context("PAY_OWNER: the pay token's creator (hex DID)")?;
+    let owner: [u8; 32] = (0..32).map(|i| u8::from_str_radix(&owner[2 * i..2 * i + 2], 16)).collect::<Result<Vec<_>, _>>()?.try_into().map_err(|_| anyhow::anyhow!("a DID is 32 bytes"))?;
+    let pd = T::Definition { genesis_owner: owner, decimals: 0, min_send: 1, ..w.def(1, b"P", 60) };
+    let pay = w.put_def(&pd).await?;
+    let cfg = format!("{{\"beacon\":\"{}\",\"pay\":\"{}\"}}\n", hex(&w.beacon), hex(&pay));
+    let path = std::env::var("EDITIONS_CONFIG").context("EDITIONS_CONFIG: where to write the page's set-up")?;
+    std::fs::write(&path, &cfg)?;
+    println!("— serve: {cfg}  written to {path}; ticking (kill to stop)");
+    loop {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        println!("   height {}", w.now().await?);
+    }
 }

@@ -693,7 +693,10 @@ wallet only hands the chain over when told.
   entry to SIGN (`TokenSign`), or the puts. `wallet::Asking` is the page's device: it signs by asking, one round per
   entry (a chain's entries are signed in order). FINDING an item's editions (S3): the item lists them in its own
   `meta.editions` (only its author writes it); an edition names its item by `editions::item_id(ref)` and is shown
-  only if it names this item and its creator is the item's author (`editions::of_item`). The page section itself: S4.
+  only if it names this item and its creator is the item's author (`editions::of_item`). The page section
+  (`packages/editions.js`, S4) — LIVE fx/fy 10-10 (S5): A made editions on its post; B on the other node bought a
+  copy (its pay chain begun, paid, minted, collected — signed by its node's `TokenSign`) and both nodes then showed
+  "4 of 5 left", B "you hold #1".
 - Not in the core (the account's, at rollout): which device writes a chain (the core hands it over when told), finding
   counterparties' chains (the token's activity), fetching and publishing.
 
