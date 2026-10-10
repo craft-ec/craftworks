@@ -1787,7 +1787,9 @@ old key's addresses.
               f9fc78b0; contracts-src/build.sh refuses other bytes unless CONTRACT_VERSION_BUMP=<name> (owner's say);
               publish refuses a mismatch. Controls: token rebuild from today's source REFUSED (874e8b2e — the standing
               crate's later changes would have re-keyed a third time); bag rebuild copies; a tampered token.wasm
-              refused at publish. NEXT before release: TOKEN MIGRATION (owner-signed "moved" entry citing the old
+              refused at publish. OWNER 10-10: "nothing deploy yet. no need to bump. we'll do migration on first production
+              deployment" → token.wasm UNPINNED until then (FROZEN keeps the signer; a note holds the token's place),
+              rebuilt from source 874e8b2e. AT FIRST PRODUCTION DEPLOYMENT: TOKEN MIGRATION (owner-signed "moved" entry citing the old
               chain's final state, witnessed; the wallet moves on open) — the signer's sdk#14 analogue; fx/fy's old
               chains (be2d1f2d) its first test.
           [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` — FIRST CUT COMMITTED 10-10 (proof, epoch, binding,

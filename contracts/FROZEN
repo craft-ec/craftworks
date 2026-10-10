@@ -7,5 +7,7 @@
 # that does not match its line here. A change is a VERSION BUMP: declared (CONTRACT_VERSION_BUMP=<name>), with the
 # owner's say, its line here updated — until a migration exists (the token's: an owner-signed "moved" entry; the
 # signer's: sdk#14).
-d4dd92e2525998b364bb5f5f15ed3c21950b719272a285e305ea850ca7606d00  token.wasm
+# token.wasm — NOT frozen until the FIRST PRODUCTION DEPLOYMENT (owner 10-10: "nothing deploy yet. no need to bump.
+# we'll do migration on first production deployment"): it changes freely in development; at that deployment its line
+# goes here with the migration that carries chains across a later bump.
 f9fc78b06c25a159a959ca540bcfb708f3bce6371a8a2083effa49167dfa65c4  signer.wasm
