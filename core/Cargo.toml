@@ -58,8 +58,14 @@ chacha20poly1305 = { version = "0.10", default-features = false, features = ["al
 sha2 = { version = "0.10", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "=0.2.128"
-js-sys = "0.3"
+# The page's bindings (feature `page`, on by default): the identity delegate links this crate's PURE parts (the keeper,
+# the witness rule) without them — a delegate imports nothing but the node's own.
+wasm-bindgen = { version = "=0.2.128", optional = true }
+js-sys = { version = "0.3", optional = true }
+
+[features]
+default = ["page"]
+page = ["dep:wasm-bindgen", "dep:js-sys"]
 
 [dev-dependencies]
 contract-keys = { workspace = true }
