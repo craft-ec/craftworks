@@ -435,6 +435,7 @@ dependencies = [
  "craftworks-gov",
  "craftworks-identity",
  "craftworks-idlog-contract",
+ "craftworks-reputation",
  "craftworks-token-contract",
  "craftworks-wallet",
  "ed25519-dalek",

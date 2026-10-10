@@ -384,7 +384,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 111] = [
+    let packages: [(&str, &str, PathBuf); 112] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -513,6 +513,7 @@ async fn main() -> Result<()> {
         // (a classic worker's glue and wasm), and its set-up `{ params }` (BEACON_CONFIG; the default `{}` runs nothing).
         // VOUCHES (docs/REPUTATION.md): an account's public vouches, its table `vouches`.
         ("vouch", "service", app.join("packages/vouch.js")),
+        ("reputation", "service", app.join("packages/reputation.js")),
         ("beacon", "service", app.join("packages/beacon.js")),
         ("beacon-wasm", "bytes", contracts.join("beacon.wasm")),
         ("beacon-step-glue", "bytes", built.join("craftworks_beacon_step.js")),

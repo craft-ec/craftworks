@@ -17,6 +17,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub type Did = [u8; 32];
 
+/// The STARTING ROOTS (owner 10-10: "my key can start the vouch root" — the only one; every other account starts the
+/// same, relationships build the rest): the owner's account, as its DID text.
+pub const ROOTS: &[&str] = &["did:craftec:7kqYgwompGP2j5Q6n8TYDyY3ymYq2GaxbG86rHkv4nBz"];
+
 /// One vouch: `from` for `to`, at beacon height `at`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Vouch {
@@ -44,21 +48,40 @@ pub struct Tree {
 }
 
 impl Tree {
-    fn line(&self, a: &Did) -> Vec<Did> {
+    /// `a`'s line up to its root — stopping at a PROMOTED root (a family's head: kinship ends there).
+    fn line(&self, a: &Did, promoted: &BTreeSet<Did>) -> Vec<Did> {
         let mut out = vec![*a];
         let mut x = *a;
-        while let Some(Some(p)) = self.parent.get(&x) {
+        while !promoted.contains(&x) {
+            let Some(Some(p)) = self.parent.get(&x) else { break };
             out.push(*p);
             x = *p;
         }
         out
     }
-    /// Closeness of `a` and `b` as (num, den): 0 in different trees.
+    /// `a`'s LINEAGE: the starting root's direct vouchee on its line (itself for one; `None` for a root).
+    pub fn lineage(&self, a: &Did) -> Option<Did> {
+        let mut x = *a;
+        loop {
+            match self.parent.get(&x) {
+                Some(Some(p)) if self.parent.get(p) == Some(&None) => return Some(x),
+                Some(Some(p)) => x = *p,
+                _ => return None,
+            }
+        }
+    }
+    /// Closeness of `a` and `b` as (num, den): 0 in different trees or families.
     pub fn closeness(&self, a: &Did, b: &Did) -> (u128, u128) {
-        let (la, lb) = (self.line(a), self.line(b));
+        self.closeness_in(a, b, &BTreeSet::new())
+    }
+    fn closeness_in(&self, a: &Did, b: &Did, promoted: &BTreeSet<Did>) -> (u128, u128) {
+        let (la, lb) = (self.line(a, promoted), self.line(b, promoted));
         let sb: BTreeSet<&Did> = lb.iter().collect();
         let Some(lca) = la.iter().find(|x| sb.contains(x)) else { return (0, 1) };
-        let (da, db, dl) = (self.depth[a], self.depth[b], self.depth[lca]);
+        // Depths within the family: from its head.
+        let head = |l: &Vec<Did>| self.depth[l.last().unwrap()];
+        let h = head(&la);
+        let (da, db, dl) = (self.depth[a] - h, self.depth[b] - h, self.depth[lca] - h);
         (dl as u128 + 1, da.min(db) as u128 + 1)
     }
 }
@@ -121,10 +144,46 @@ pub fn tree(roots: &[Did], vouches: &[Vouch]) -> Tree {
     t
 }
 
-/// REPUTATION of every admitted account (fixed point, [`ONE`] = 1.0), from `roots` and all `vouches`.
+/// Vouchers' lineages an account needs to be PROMOTED — besides holding at least the MEDIAN reputation of the admitted
+/// accounts (relative: reputation thins out as the network grows, so a fixed bar would not scale).
+pub const PROMOTE_LINEAGES: usize = 3;
+
+/// REPUTATION of every admitted account (fixed point, [`ONE`] = 1.0), from `roots` and all `vouches` — with
+/// PROMOTION: an account holding at least the median reputation and vouched for from [`PROMOTE_LINEAGES`] different lineages heads a
+/// FAMILY of its own (kinship stops at it), never a source of trust. Computed once without families, the promoted
+/// found from that, then again with them.
 pub fn reputation(roots: &[Did], vouches: &[Vouch]) -> BTreeMap<Did, u128> {
     let vs = counted(vouches);
     let t = tree(roots, &vs);
+    let first = flow(roots, &vs, &t, &BTreeSet::new());
+    let promoted = promoted(roots, &vs, &t, &first);
+    if promoted.is_empty() {
+        return first;
+    }
+    flow(roots, &vs, &t, &promoted)
+}
+
+/// The PROMOTED: not a starting root, holding at least the median reputation of the admitted non-root accounts,
+/// vouched for from [`PROMOTE_LINEAGES`] lineages.
+pub fn promoted(roots: &[Did], vouches: &[Vouch], t: &Tree, rep: &BTreeMap<Did, u128>) -> BTreeSet<Did> {
+    let mut lineages: BTreeMap<Did, BTreeSet<Did>> = BTreeMap::new();
+    for x in vouches {
+        if let (true, Some(l)) = (t.parent.contains_key(&x.to), t.lineage(&x.from)) {
+            lineages.entry(x.to).or_default().insert(l);
+        }
+    }
+    let mut all: Vec<u128> = rep.iter().filter(|(a, _)| !roots.contains(a)).map(|(_, r)| *r).collect();
+    all.sort();
+    let median = all.get(all.len() / 2).copied().unwrap_or(u128::MAX);
+    lineages
+        .into_iter()
+        .filter(|(a, ls)| !roots.contains(a) && ls.len() >= PROMOTE_LINEAGES && rep.get(a).copied().unwrap_or(0) >= median)
+        .map(|(a, _)| a)
+        .collect()
+}
+
+fn flow(roots: &[Did], vs: &[Vouch], t: &Tree, families: &BTreeSet<Did>) -> BTreeMap<Did, u128> {
+    let vs = vs.to_vec();
     let vs: Vec<Vouch> = vs.into_iter().filter(|x| t.parent.contains_key(&x.from) && t.parent.contains_key(&x.to)).collect();
     // Each vouch's DIVERSITY at its vouchee: its vouchers in admission order, each by Π(1 − closeness) to those before.
     let mut into: BTreeMap<Did, Vec<Did>> = BTreeMap::new();
@@ -137,7 +196,7 @@ pub fn reputation(roots: &[Did], vouches: &[Vouch]) -> BTreeMap<Did, u128> {
         for (i, f) in froms.iter().enumerate() {
             let mut d = ONE;
             for g in &froms[..i] {
-                let (n, den) = t.closeness(f, g);
+                let (n, den) = t.closeness_in(f, g, families);
                 d = d * (den - n) / den;
             }
             diversity.insert((*f, to), d);
@@ -271,6 +330,53 @@ mod tests {
         let a = reputation(&[d(0)], &vs);
         vs.reverse();
         assert_eq!(a, reputation(&[d(0)], &vs));
+    }
+
+    #[test]
+    fn a_ring_off_one_fooled_account_is_one_lineage_and_promotes_nobody() {
+        let mut vs = community();
+        vs.extend(ring(6, 300));
+        let t = tree(&[d(0)], &counted(&vs));
+        // Every fake's lineage is the fooled account's: 1 (6 hangs under 1).
+        assert!((1000..1300).all(|i| t.lineage(&d(i)) == Some(d(1))));
+        let r = reputation(&[d(0)], &vs);
+        assert!(promoted(&[d(0)], &counted(&vs), &t, &r).iter().all(|a| !(1000..1300).contains(&u32::from_be_bytes(a[..4].try_into().unwrap()))));
+    }
+
+    #[test]
+    fn an_account_trusted_across_three_lineages_heads_a_family_and_adds_no_trust() {
+        // 600 is vouched for by 7 (lineage 1), 12 (lineage 2) and 17 (lineage 3); then vouches for 601 and 602.
+        let mut vs = community();
+        vs.extend([v(7, 600, 3), v(12, 600, 3), v(17, 600, 3), v(600, 601, 4), v(600, 602, 4), v(601, 603, 5), v(602, 603, 5)]);
+        let c = counted(&vs);
+        let t = tree(&[d(0)], &c);
+        let first = flow(&[d(0)], &c, &t, &BTreeSet::new());
+        let p = promoted(&[d(0)], &c, &t, &first);
+        println!("600's reputation {}; promoted {}", first[&d(600)], p.len());
+        assert!(p.contains(&d(600)));
+        // Kinship stops at the family's head: 601 and 602 are siblings in 600's family (depth 1 under it) — as before
+        // promotion — but against an account outside it they are unrelated.
+        assert_eq!(t.closeness_in(&d(601), &d(602), &p), (1, 2));
+        assert_eq!(t.closeness_in(&d(601), &d(6), &p).0, 0);
+        // No new trust: the whole network's reputation is the same with and without the family (to rounding) or less.
+        let after = reputation(&[d(0)], &vs);
+        let sum = |r: &BTreeMap<Did, u128>| r.values().sum::<u128>();
+        println!("total before {} after {}", sum(&first), sum(&after));
+        assert!(sum(&after) <= sum(&first) + sum(&first) / 50, "promotion created trust");
+    }
+
+    #[test]
+    fn a_ring_off_three_lineages_stays_within_what_it_was_given() {
+        // The attacker fooled one account in each of three lineages (6, 11, 16); its 300 fakes vouch each other.
+        let mut vs = community();
+        vs.extend([v(11, 1000, 5), v(16, 1000, 5)]);
+        vs.extend(ring(6, 300));
+        let r = reputation(&[d(0)], &vs);
+        let flat = flat_reputation(&[d(0)], &vs);
+        let (got, bound) = (total(&r, 1000, 1300), total(&flat, 1000, 1300));
+        println!("ring off three lineages: {got}; with no discount at all: {bound}");
+        // Promotions may give it families, but never more than the flow with no discount — what it was given.
+        assert!(got <= bound, "the ring took more than its inputs allow");
     }
 
     /// The control: the same flow with every vouch counted in full (no diversity).

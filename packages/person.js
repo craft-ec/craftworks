@@ -11,7 +11,7 @@
 //                                            // account's conversations, friends and followed, and `extra` (a room's)
 //   person.openMention(anchor, { did, typed })  // a MENTION clicked: their card (`typed`: an old `name#abc123`)
 export async function start(ctx) {
-  const [edge, conversation, directory, roles, moderation, space, vouch] = await Promise.all(["edge", "conversation", "directory", "roles", "moderation", "space", "vouch"].map(n => ctx.require(n)));
+  const [edge, conversation, directory, roles, moderation, space, vouch, reputation] = await Promise.all(["edge", "conversation", "directory", "roles", "moderation", "space", "vouch", "reputation"].map(n => ctx.require(n)));
   const style = document.createElement("style");
   style.textContent = `@layer components {
 
@@ -151,9 +151,21 @@ export async function start(ctx) {
         }
         if (rows.length) server.push(el("div", { className: "head", textContent: `In ${(sp.parent ?? sp).name}` }), el("div", { className: "grid" }, ...rows));
       }
+      // REPUTATION (docs/REPUTATION.md): computed from everyone's vouches — filled in when the crawl answers.
+      const rep = el("p", { className: "id", textContent: "Reputation: reading…" });
+      reputation.of(did).then(
+        r => {
+          rep.textContent =
+            r.rep == null
+              ? "Reputation: none yet — nobody reached from the roots has vouched for them"
+              : `Reputation ${r.rep} · vouched by ${r.vouchedBy}${r.family ? " · heads a family" : ""} · of ${r.admitted} reached`;
+        },
+        e => (rep.textContent = `Reputation: not read (${e.message ?? e})`),
+      );
       box.replaceChildren(
         el("h3", { textContent: directory.shown(did, handle) }),
         el("div", { className: "id", textContent: did, title: "Copy the id", onclick: () => navigator.clipboard.writeText(did) }),
+        rep,
         ...personal,
         ...server,
         said,

@@ -30,6 +30,7 @@ export async function start(ctx) {
 
   async function set(did, on) {
     const t = await mine();
+    (await ctx.require("reputation")).refresh();
     if (!on) return t.remove(did);
     if (read(t).some(v => v.did === did)) return;
     if (read(t).length >= BUDGET) throw new Error(`you vouch for ${BUDGET} people at most — withdraw one first`);

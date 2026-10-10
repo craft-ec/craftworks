@@ -97,8 +97,14 @@ Two parts, one path from bootstrap to the token:
    personalised PageRank (damping 0.85, 40 rounds, budget 10). Measured: a ring of 10 fakes off one fooled account
    takes 6.8 (×10⁻³), a ring of 1,000 takes 7.2 — flat; the same 1,000 with no discount 24.6; cousins' vouches 6.14 vs
    siblings' 4.91.
-3. Roots: the owner's account (the only trust source), and promotion (reputation held + vouched from ≥3 lineages)
-   — a family boundary, never a source.
+3. BUILT 10-10 — roots and promotion: `reputation::ROOTS` = the owner's account (did:craftec:7kqYgwom…); a LINEAGE is
+   a starting root's direct vouchee and below; promoted = vouched from ≥3 lineages and holding at least the MEDIAN
+   reputation (relative: a fixed bar does not scale as reputation thins with growth) — a family boundary, never a
+   source. Measured: promotion moved the network's total reputation by 0.2% (rounding), a ring off one fooled account
+   promotes nobody, a ring off three fooled lineages took 15.9 against 73.7 with no discount. The page: `reputation`
+   crawls vouches outward from the roots (≤ 400 accounts, kept 10 min) and the person panel shows "Reputation N ·
+   vouched by K · heads a family". LIVE fx: B's panel reads "none yet" — A vouched for B, but nothing links A to the
+   owner's root (as designed).
 4. Burns reaching reputation: a misdeed proof zeroes the account and charges its vouchers.
 5. The keeping record per vouched account (standing answers → a tapering per-account rate), as reputation.
 6. The lot weighted by that record (`wallet::lot_of`, the claims registry: a claim of record instead of stake).

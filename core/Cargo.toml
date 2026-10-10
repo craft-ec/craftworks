@@ -37,6 +37,8 @@ craftworks-bag-contract = { path = "../contracts-src/bag", default-features = fa
 craftworks-token-contract = { path = "../contracts-src/token", default-features = false }
 craftworks-wallet = { path = "../wallet" }
 craftworks-beacon-contract = { path = "../contracts-src/beacon", default-features = false }
+# REPUTATION (docs/REPUTATION.md): computed from the vouches the page crawled.
+craftworks-reputation = { path = "../reputation" }
 # The account (words, key log, owner keys, members): its own crate, shared with mls.
 craftworks-account = { path = "../account" }
 # A space's governance: the one replay of its acts (the identity delegate reads a space by it too).

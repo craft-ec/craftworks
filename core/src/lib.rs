@@ -2380,6 +2380,35 @@ mod js {
             }
             Ok(list)
         }
+        /// The reputation's STARTING ROOTS (DID texts).
+        pub fn reputation_roots() -> js_sys::Array {
+            craftworks_reputation::ROOTS.iter().map(|d| JsValue::from(*d)).collect()
+        }
+        /// REPUTATION from the vouches the page crawled (`[[from DID text, to DID text, at]]`): `{ rep: { did: per-mille
+        /// of 1.0 }, promoted: [did], admitted: n }` — `reputation::reputation` over the starting roots.
+        pub fn reputation_compute(vouches: js_sys::Array) -> Result<JsValue, JsValue> {
+            use craftworks_reputation as R;
+            let did = |v: JsValue| v.as_string().and_then(|t| account::did_bytes(&t));
+            let mut vs = Vec::new();
+            for x in vouches.iter() {
+                let x = js_sys::Array::from(&x);
+                if let (Some(from), Some(to), Some(at)) = (did(x.get(0)), did(x.get(1)), x.get(2).as_f64()) {
+                    vs.push(R::Vouch { from, to, at: at as u64 });
+                }
+            }
+            let roots: Vec<R::Did> = R::ROOTS.iter().filter_map(|t| account::did_bytes(t)).collect();
+            let rep = R::reputation(&roots, &vs);
+            let c = R::counted(&vs);
+            let t = R::tree(&roots, &c);
+            let promoted = R::promoted(&roots, &c, &t, &rep);
+            let text = |d: &R::Did| account::did(d);
+            let v = json!({
+                "rep": rep.iter().map(|(d, r)| (text(d), json!((r * 1000 / R::ONE) as u64))).collect::<serde_json::Map<String, Value>>(),
+                "promoted": promoted.iter().map(text).collect::<Vec<_>>(),
+                "admitted": rep.len(),
+            });
+            js_sys::JSON::parse(&v.to_string())
+        }
         /// A beacon STATE's height (null: not a beacon's state).
         pub fn beacon_state_height(state: &[u8]) -> JsValue {
             craftworks_beacon_contract::wire::decode(state).map_or(JsValue::NULL, |s| JsValue::from(s.height() as f64))
