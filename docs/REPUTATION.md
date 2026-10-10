@@ -66,8 +66,13 @@ Two parts, one path from bootstrap to the token:
 
 ## 6. Decided (owner 10-10)
 
-- **Roots are OPEN, the owner's account the first.** Anyone may start a tree; a tree counts only as other trees vouch
-  into it (§3). The owner's account is the first root ("my key can start the vouch root").
+- **ROOTS: a short public list, the owner's account first** ("my key can start the vouch root"). Anyone may vouch, but
+  a vouch passes on only the voucher's own reputation — an unvouched account passes nothing until someone reputable
+  vouches for it (then its earlier vouches count, from that moment). A self-declared root is just an unvouched account.
+- **Roots grow** (owner 10-10: "single root doesn't grow"): (1) at the start, the owner plus a few people from different
+  circles the owner names — separate trees from day one; (2) PROMOTION: an account that, over some epochs, holds solid
+  reputation AND is vouched for from at least three different trees becomes a root; its descendants a new tree. A pure
+  function of the vouches like the rest: every node computes the same list.
 - **One network-wide reputation** (witnesses and keepers); a space may later weigh it with roots of its own for its
   moderation.
 - The numbers (vouch budget 10, damping, kinship discount, how long a vouch takes to count, a voucher's loss) are set
@@ -84,7 +89,8 @@ Two parts, one path from bootstrap to the token:
    personalised PageRank (damping 0.85, 40 rounds, budget 10). Measured: a ring of 10 fakes off one fooled account
    takes 6.8 (×10⁻³), a ring of 1,000 takes 7.2 — flat; the same 1,000 with no discount 24.6; cousins' vouches 6.14 vs
    siblings' 4.91.
-3. Burns reaching reputation: a misdeed proof zeroes the account and charges its vouchers.
-4. The keeping record per vouched account (standing answers → a tapering per-account rate), as reputation.
-5. The lot weighted by that record (`wallet::lot_of`, the claims registry: a claim of record instead of stake).
-6. At $CRAFT launch: issuance paying the record (retroactively), locked as stake.
+3. Roots: the starting list (the owner's + those named), and promotion (reputation held + vouched from ≥3 trees).
+4. Burns reaching reputation: a misdeed proof zeroes the account and charges its vouchers.
+5. The keeping record per vouched account (standing answers → a tapering per-account rate), as reputation.
+6. The lot weighted by that record (`wallet::lot_of`, the claims registry: a claim of record instead of stake).
+7. At $CRAFT launch: issuance paying the record (retroactively), locked as stake.
