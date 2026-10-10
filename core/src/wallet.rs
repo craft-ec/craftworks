@@ -26,13 +26,17 @@ pub struct Sent {
     pub nonce: [u8; 16],
 }
 
-/// What a receive built: the account's chain to put (`None`: nothing to take now), what it took, and how many sends to
-/// it are PENDING (inside their margin: takeable once the beacon passes it — ask again then).
+/// What a receive built: the account's chain to put (`None`: nothing to take now), what it took, how many sends to it
+/// are PENDING (inside their margin: takeable once the beacon passes it — ask again then), and how many are UNWITNESSED
+/// (past it, but their debit not yet ACCEPTED by its committee: not value yet — ask again later).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Received {
     pub put: Option<Put>,
     pub amount: u128,
     pub pending: u32,
+    pub unwitnessed: u32,
+    /// Why not accepted yet (its acceptance's answer), when unwitnessed.
+    pub why: Option<String>,
 }
 
 fn token(id: &[u8; 32]) -> t::Tok {
@@ -80,56 +84,6 @@ pub fn send(ctx: &Ctx, got: Got, id: &[u8; 32], from: &[u8; 32], to: &[u8; 32], 
     let mut s = held.state;
     s.entries.extend(entries);
     Ok(Step::Done(Sent { put: Put { params: held.params.encode(), state: s.encode() }, nonce }))
-}
-
-/// RECEIVE what `senders` sent `owner` of the token `id` (their chains read; one not there is skipped), each once its
-/// margin has passed (`now`: the beacon's height) — worked credits, no signature; the creator's genesis first when its
-/// chain is not begun.
-pub fn receive(ctx: &Ctx, got: Got, id: &[u8; 32], owner: &[u8; 32], senders: &[[u8; 32]], now: u64, dev: &Device) -> Result<Step<Received>, String> {
-    let (mut held, keys) = match holding(ctx, got, &token(id), owner)? {
-        Step::Done(Some(h)) => h,
-        Step::Want(w) => return Ok(Step::Want(w)),
-        Step::Sign(m) => return Ok(Step::Sign(m)),
-        // No chain yet: the first credit begins it.
-        Step::Done(None) => {
-            let d = Definition::decode(&got(id).ok_or("the token was not read")?).ok_or("not a token definition")?;
-            let p = crate::tokens::chain(ctx, &d, id, owner, [0; 32]);
-            let Some(k) = got(&p.keys_id()) else { return Ok(Step::Want(vec![p.keys_id()])) };
-            let keys = craftworks_idlog_contract::read(owner, &k).ok_or("the account's key log does not verify")?;
-            (craftworks_wallet::Held { params: p, definition: d, state: State::default(), blocks: Default::default() }, keys)
-        }
-    };
-    on_our_clock(ctx, &held.definition)?;
-    let mut want = Vec::new();
-    let mut chains = Vec::new();
-    for s in senders.iter().filter(|s| *s != owner) {
-        let cid = held.params.at(held.params.tok(), *s).id();
-        match got(&cid) {
-            None => want.push(cid),
-            Some(b) if b.is_empty() => {}
-            Some(b) => chains.push((*s, State::decode(&b).ok_or("a sender's chain does not read")?)),
-        }
-    }
-    if !want.is_empty() {
-        return Ok(Step::Want(want));
-    }
-    let margin = held.definition.margin;
-    let pending = chains.iter().flat_map(|(_, c)| &c.entries).filter(|e| matches!(e.body, Body::Send { to, .. } if to == *owner) && e.stamp.saturating_add(margin) > now).count() as u32;
-    let before = held.state.entries.len();
-    let asking = device_of(dev);
-    let w = Wallet { device: &asking, keys: &keys };
-    if let Some(m) = begin(&w, &asking, &mut held, now)? {
-        return Ok(Step::Sign(m));
-    }
-    let entries = w.collect(&held, &Sources { chains: &chains, blocks: &Default::default(), programs: &[], shards: &[] }, now);
-    if let Some(m) = asking.next() {
-        return Ok(Step::Sign(m));
-    }
-    let amount: u128 = entries.as_ref().map_err(|w| w.to_string())?.iter().map(|e| if let Body::Receive { amount, .. } = e.body { amount } else { 0 }).sum();
-    let mut s = held.state;
-    s.entries.extend(entries.map_err(String::from)?);
-    // Only a credit is put — a creator's genesis alone waits for its first send.
-    Ok(Step::Done(Received { put: (amount > 0 && s.entries.len() > before).then(|| Put { params: held.params.encode(), state: s.encode() }), amount, pending }))
 }
 
 /// STEALTH HOLDINGS (TOKEN §7f): a token's chains this wallet found (each a one-time owner) and their balances.
@@ -246,7 +200,9 @@ pub fn send_private(ctx: &Ctx, got: Got, id: &[u8; 32], seed: &[u8; 32], mine: &
 
 /// RECEIVE a payment this wallet found (`a`, its announcement) into its one-time chain: the credit from the paying
 /// chain once its margin has passed — worked, no signature.
-pub fn receive_private(ctx: &Ctx, got: Got, a: &stealth::Announce, now: u64) -> Result<Step<Received>, String> {
+/// Taken only once the paying DEBIT is ACCEPTED (TOKEN §7a: `tokens::accepted` over `lot`) — a chain proves shape, its
+/// witnesses that the money is real.
+pub fn receive_private(ctx: &Ctx, lot: &crate::tokens::Lot, got: Got, a: &stealth::Announce, now: u64) -> Result<Step<Received>, String> {
     let d = match definition_of(got, &a.token)? {
         Err(w) => return Ok(Step::Want(vec![w])),
         Ok(d) => d,
@@ -257,6 +213,17 @@ pub fn receive_private(ctx: &Ctx, got: Got, a: &stealth::Announce, now: u64) -> 
         Ok(mut cs) => (cs.remove(0), cs.remove(0)),
     };
     let pending = from.1.entries.iter().filter(|e| e.nonce == a.nonce && e.stamp.saturating_add(d.margin) > now).count() as u32;
+    // Final: its debit ACCEPTED, or nothing is taken yet.
+    if pending == 0 {
+        if let Some(debit) = from.1.entries.iter().find(|e| e.nonce == a.nonce) {
+            match crate::tokens::accepted(lot, got, &from.0, &d, &from.1, debit.seq)? {
+                Step::Want(w) => return Ok(Step::Want(w)),
+                Step::Sign(m) => return Ok(Step::Sign(m)),
+                Step::Done(Err(why)) => return Ok(Step::Done(Received { put: None, amount: 0, pending: 0, unwitnessed: 1, why: Some(why) })),
+                Step::Done(Ok(_)) => {}
+            }
+        }
+    }
     let none = craftworks_idlog_contract::Log { events: vec![] };
     // Credits are worked: the collecting needs no key — any device stands in.
     let anyone = craftworks_wallet::Asking::new([0; 32], vec![], 0, vec![]);
@@ -266,7 +233,7 @@ pub fn receive_private(ctx: &Ctx, got: Got, a: &stealth::Announce, now: u64) -> 
     let amount: u128 = entries.iter().map(|e| if let Body::Receive { amount, .. } = e.body { amount } else { 0 }).sum();
     let mut s = held.state;
     s.entries.extend(entries);
-    Ok(Step::Done(Received { put: (amount > 0).then(|| Put { params: held.params.encode(), state: s.encode() }), amount, pending }))
+    Ok(Step::Done(Received { put: (amount > 0).then(|| Put { params: held.params.encode(), state: s.encode() }), amount, pending, unwitnessed: 0, why: None }))
 }
 
 #[cfg(test)]
@@ -300,13 +267,13 @@ mod tests {
     }
 
     #[test]
-    fn make_a_token_send_it_and_receive_it() {
+    fn send_from_an_id_receive_privately_once_witnessed() {
         let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: IDLOG };
         let (la, lb) = (log(101, 151), log(102, 152));
         let (a, b) = (la.events[0].id(), lb.events[0].id());
         let (na, nb) = (SigningKey::from_bytes(&[12; 32]).verifying_key().to_bytes(), SigningKey::from_bytes(&[13; 32]).verifying_key().to_bytes());
         let mut da = device(na, &[craftworks_identity::credential(&a, &na, &[7; 32], &[101; 32])], &la, vec![]).unwrap();
-        let mut db = device(nb, &[craftworks_identity::credential(&b, &nb, &[7; 32], &[102; 32])], &lb, vec![]).unwrap();
+        let db = device(nb, &[craftworks_identity::credential(&b, &nb, &[7; 32], &[102; 32])], &lb, vec![]).unwrap();
         // A token of A's: its whole supply A's, no mint authority.
         let d = Definition { code_hash: ctx.code_hash, decimals: 2, min_send: 1, genesis_owner: a, genesis_amount: 100_000, name: b"W".to_vec(), nonce: [1; 16], beacon: ctx.beacon, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: t::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None, keepers: None };
         let id = t::id(&ctx.code_hash, &d.encode());
@@ -334,17 +301,6 @@ mod tests {
         got.insert(pa.id(), sent.put.state.clone());
         let g = got.clone();
         assert_eq!(run(12, &mut da, &mut |dv| send(&ctx, &|x| g.get(x).cloned(), &id, &a, &b, 1_000_000, 6, dv)), Err("a debit over the balance".into()));
-        // RECEIVE before the margin passes: nothing yet; after: the credit, a chain begun by it.
-        assert_eq!(run(13, &mut db, &mut |dv| receive(&ctx, &|x| g.get(x).cloned(), &id, &b, &[a], 6, dv)), Ok(Received { put: None, amount: 0, pending: 1 }));
-        let r = run(13, &mut db, &mut |dv| receive(&ctx, &|x| g.get(x).cloned(), &id, &b, &[a], 7, dv)).unwrap();
-        let cb = State::decode(&r.put.as_ref().unwrap().state).unwrap();
-        assert_eq!((r.amount, cb.balance(), r.pending), (250, 250, 0));
-        assert_eq!(t::check(&pb, &d, &cb, &|_, o| (o == &a).then(|| ca.clone()), &|_| None, Some(&lb), &t::Extra::NONE), Ok(()));
-        // Received once: again, nothing to take.
-        got.insert(pb.id(), r.put.unwrap().state);
-        let g = got.clone();
-        assert_eq!(run(13, &mut db, &mut |dv| receive(&ctx, &|x| g.get(x).cloned(), &id, &b, &[a], 9, dv)), Ok(Received { put: None, amount: 0, pending: 0 }));
-        assert_eq!(view(&ctx, &|x| g.get(x).cloned(), &id, &b).map(|s| match s { Step::Done(v) => (v.balance, v.begun), _ => panic!() }), Ok((250, true)));
         // A token on ANOTHER beacon: read (its chains are its own beacon's), never written here.
         let far = Definition { beacon: [8; 32], ..d.clone() };
         let fid = t::id(&ctx.code_hash, &far.encode());
@@ -354,12 +310,15 @@ mod tests {
         g2.insert(chain(&ctx, &far, &fid, &a, [0; 32]).keys_id(), la.encode());
         assert_eq!(chain(&ctx, &far, &fid, &a, [0; 32]).beacon, [8; 32]);
         assert_eq!(send(&ctx, &|x| g2.get(x).cloned(), &fid, &a, &b, 1, 9, &da), Err(format!("this token runs on another clock (beacon {}), not this site's", crate::tokens::short(&[8; 32]))));
-        // PRIVATELY: A (its DID chain) pays B's card — a fresh one-time owner, announced; B finds it by scanning, receives
-        // it (pending inside the margin), and pays A's card back from that stealth chain; A finds and receives it.
+        // PRIVATELY, in epoch 1 (where the test's stakers stand): A (its DID chain) pays B's card — a fresh one-time owner,
+        // announced; B finds it by scanning and receives it — inside the margin pending, past it UNWITNESSED until its
+        // committee signs the debit, then taken — and pays A's card back from that stealth chain; A takes it the same way.
+        let tl = crate::tokens::testlot::stakers(&ctx, &mut got);
+        let e1 = crate::tokens::testlot::E1;
         let (kb, ka) = (stealth::Keys::from_seed(&[22; 32]), stealth::Keys::from_seed(&[21; 32]));
         let paid = stealth::pay(&kb.public(), &[1; 32]).unwrap();
         let g = got.clone();
-        let sent = run(12, &mut da, &mut |dv| send(&ctx, &|x| g.get(x).cloned(), &id, &a, &paid.to, 100, 12, dv)).unwrap();
+        let sent = run(12, &mut da, &mut |dv| send(&ctx, &|x| g.get(x).cloned(), &id, &a, &paid.to, 100, e1 + 12, dv)).unwrap();
         got.insert(pa.id(), sent.put.state.clone());
         let ann = stealth::Announce { token: id, from: a, nonce: sent.nonce, to: paid.to, r: paid.r };
         let found = kb.scan([&ann]);
@@ -367,18 +326,24 @@ mod tests {
         assert!(ka.scan([&ann]).is_empty());
         let pb2 = chain(&ctx, &d, &id, &paid.to, [0; 32]);
         got.insert(pb2.id(), vec![]);
-        let g = got.clone();
-        assert_eq!(receive_private(&ctx, &|x| g.get(x).cloned(), &ann, 13), Ok(Step::Done(Received { put: None, amount: 0, pending: 1 })));
-        let Ok(Step::Done(r)) = receive_private(&ctx, &|x| g.get(x).cloned(), &ann, 14) else { panic!("received") };
-        assert_eq!((r.amount, r.pending), (100, 0));
+        let take = |a: &stealth::Announce, now: u64, got: &HashMap<[u8; 32], Vec<u8>>| crate::tokens::testlot::done(&|g| receive_private(&ctx, &tl.lot, g, a, now), got);
+        assert_eq!(take(&ann, e1 + 13, &got), Ok(Received { put: None, amount: 0, pending: 1, unwitnessed: 0, why: None }));
+        let unwitnessed = Received { put: None, amount: 0, pending: 0, unwitnessed: 1, why: Some("an entry its committee has not witnessed".into()) };
+        assert_eq!(take(&ann, e1 + 14, &got), Ok(unwitnessed.clone()), "not value before its witnesses");
+        let debit = State::decode(&got[&pa.id()]).unwrap();
+        crate::tokens::testlot::witness(&tl, &mut got, &pa, &d, &debit, debit.entries.last().unwrap().seq, 3);
+        assert_eq!(take(&ann, e1 + 14, &got), Ok(unwitnessed), "three of six: short");
+        crate::tokens::testlot::witness(&tl, &mut got, &pa, &d, &debit, debit.entries.last().unwrap().seq, 4);
+        let r = take(&ann, e1 + 14, &got).unwrap();
+        assert_eq!((r.amount, r.pending, r.unwitnessed), (100, 0, 0));
         got.insert(pb2.id(), r.put.unwrap().state);
         let g = got.clone();
         let mine = [(paid.r, paid.to)];
         let Ok(Step::Done(v)) = private(&ctx, &|x| g.get(x).cloned(), &id, &[paid.to]) else { panic!("private") };
         assert_eq!(v.balance(), 100);
-        assert_eq!(send_private(&ctx, &|x| g.get(x).cloned(), &id, &[22; 32], &mine, &ka.public(), 101, &[2; 32], 15), Err("not enough: 1 short".into()));
-        assert_eq!(send_private(&ctx, &|x| g.get(x).cloned(), &id, &[21; 32], &mine, &ka.public(), 10, &[2; 32], 15), Err("a chain that is not this wallet's".into()));
-        let Ok(Step::Done(back)) = send_private(&ctx, &|x| g.get(x).cloned(), &id, &[22; 32], &mine, &ka.public(), 30, &[2; 32], 15) else { panic!("sent") };
+        assert_eq!(send_private(&ctx, &|x| g.get(x).cloned(), &id, &[22; 32], &mine, &ka.public(), 101, &[2; 32], e1 + 15), Err("not enough: 1 short".into()));
+        assert_eq!(send_private(&ctx, &|x| g.get(x).cloned(), &id, &[21; 32], &mine, &ka.public(), 10, &[2; 32], e1 + 15), Err("a chain that is not this wallet's".into()));
+        let Ok(Step::Done(back)) = send_private(&ctx, &|x| g.get(x).cloned(), &id, &[22; 32], &mine, &ka.public(), 30, &[2; 32], e1 + 15) else { panic!("sent") };
         assert_eq!((back.puts.len(), back.announces.len()), (1, 1));
         let sb2 = State::decode(&back.puts[0].state).unwrap();
         let alice_chain = State::decode(&got[&pa.id()]).unwrap();
@@ -390,16 +355,9 @@ mod tests {
         assert_eq!(found.len(), 1);
         got.insert(pb2.id(), back.puts[0].state.clone());
         got.insert(chain(&ctx, &d, &id, &back_ann.to, [0; 32]).id(), vec![]);
-        let g = got.clone();
-        let Ok(Step::Done(r)) = receive_private(&ctx, &|x| g.get(x).cloned(), &back_ann, 18) else { panic!("received back") };
-        assert_eq!(r.amount, 30);
+        crate::tokens::testlot::witness(&tl, &mut got, &pb2, &d, &sb2, sb2.entries.last().unwrap().seq, 6);
+        assert_eq!(take(&back_ann, e1 + 18, &got).map(|r| r.amount), Ok(30));
         // Neither stealth chain names a DID: their owners are one-time keys' sets.
         assert!(![pb2.owner, back_ann.to].contains(&a) && ![pb2.owner, back_ann.to].contains(&b));
-        // B sends some back; the creator's chain (begun) receives it.
-        let back = run(13, &mut db, &mut |dv| send(&ctx, &|x| g.get(x).cloned(), &id, &b, &a, 50, 9, dv)).unwrap();
-        got.insert(pb.id(), back.put.state.clone());
-        let g = got.clone();
-        let r = run(12, &mut da, &mut |dv| receive(&ctx, &|x| g.get(x).cloned(), &id, &a, &[b], 11, dv)).unwrap();
-        assert_eq!((r.amount, State::decode(&r.put.unwrap().state).unwrap().balance()), (50, 100_000 - 250 - 100 + 50));
     }
 }

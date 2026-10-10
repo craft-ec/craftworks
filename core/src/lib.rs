@@ -2759,19 +2759,22 @@ mod js {
             }
             Ok(v)
         }
-        /// RECEIVE a payment this wallet found (`wallet::receive_private`; `announce`: its bytes) at beacon height `now`:
-        /// `{ done: { amount, pending, puts } }`.
-        pub fn wallet_receive_private(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], announce: &[u8], now: f64) -> Result<JsValue, JsValue> {
+        /// RECEIVE a payment this wallet found (`wallet::receive_private`; `announce`: its bytes) at beacon height `now`,
+        /// taken only once its debit is ACCEPTED (the lot: `pool` the stake pool's token, the bag's and beacon's codes):
+        /// `{ done: { amount, pending, unwitnessed, puts } }`.
+        #[allow(clippy::too_many_arguments)]
+        pub fn wallet_receive_private(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], announce: &[u8], now: f64) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
             let a = craftworks_wallet::stealth::Announce::decode(announce).ok_or_else(|| err("not an announcement".into()))?;
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-                wallet::receive_private(&ctx, &got, &a, now as u64)
+                wallet::receive_private(&ctx, &lot, &got, &a, now as u64)
             };
             let mut puts = Vec::new();
             let v = token_step(step, |r| {
                 puts = r.put.into_iter().collect();
-                Ok(json!({ "amount": r.amount.to_string(), "pending": r.pending }))
+                Ok(json!({ "amount": r.amount.to_string(), "pending": r.pending, "unwitnessed": r.unwitnessed, "why": r.why }))
             })?;
             self.attach_puts(v, token_code, &puts)
         }

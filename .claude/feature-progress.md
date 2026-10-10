@@ -1687,7 +1687,19 @@ old key's addresses.
                   induction, then A's new private chain's receive (seq 0). Found live: a chain's first entry is drawn
                   at its epoch's first step, which the beacon's state (newest 600 steps) no longer held — the lot read
                   "not drawn" forever; now read from the outputs log.
-              [ ] WT4 WALLETS COUNT ONLY ACCEPTED: a receive / payout credited as value only once `accept` holds.
+              [x] WT4 WALLETS COUNT ONLY ACCEPTED — LIVE fx/fy 10-10 (v540): `tokens::accepted` (the page core's
+                  acceptance step: the lot's output from the beacon or its outputs log, the epoch's claims, the entry's
+                  witness bag, the signers' stake — each a "want" round — then `witness::accepted`); `receive_private`
+                  takes a payment only once its debit is ACCEPTED, else `unwitnessed` with WHY (logged by the purse);
+                  the DID-to-DID `receive` (an unchecked credit, unused by the page) REMOVED. Test lot (`tokens::
+                  testlot`): six real stakers (signed pool chains staking before epoch 1, signed claims — the baseline
+                  unseated: no private key needed), a beacon and outputs log, `witness()` signing as the drawn
+                  committee; tests: 0/3 signatures refused, 4 accepted, 6 counted; a private receive pending →
+                  unwitnessed (with why) → taken; a sale taken only once its payment is witnessed. Mutant (no acceptance
+                  check) killed. The Wallet RECEIVES ON EVERY BEACON ADVANCE while open (it scanned only on opening:
+                  found live — a payment made with the page open never arrived). Measured: A paid B 7, 5, 3 privately;
+                  Wren's witness (fx) signed each debit; B's open Wallet (fy) took the 3 in 25 s without a reload —
+                  "15 private (3 chains)".
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
               rendezvous), within its limit, instead of what was watched; the standing record proves it.
           [ ] F  WITNESS FEES on every token: a set fee per debit, split among its signers, claimed in their chains.

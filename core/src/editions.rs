@@ -289,7 +289,9 @@ mod tests {
         let mine = [(bp.r, bp.to)];
         assert_eq!(buy(&ctx, &|id| g.get(id).cloned(), &sid, &[31; 32], &mine, 1, 5), Err("a chain that is not this wallet's".into()));
         assert_eq!(buy(&ctx, &|id| g.get(id).cloned(), &sid, &[32; 32], &mine, 101, 5), Err(format!("no money: no private chain of the sale's token {} holds 1010", short(&pid))));
-        let Ok(Step::Done(b)) = buy(&ctx, &|id| g.get(id).cloned(), &sid, &[32; 32], &mine, 1, 5) else { panic!("bought") };
+        // (In epoch 1, where the test's stakers stand: the author takes the sale once its payment is witnessed.)
+        let e1 = crate::tokens::testlot::E1;
+        let Ok(Step::Done(b)) = buy(&ctx, &|id| g.get(id).cloned(), &sid, &[32; 32], &mine, 1, e1 + 5) else { panic!("bought") };
         assert_eq!((b.record, b.first, b.amount, b.to), (0, 1, 1, bp.to));
         let paid = State::decode(&b.puts[0].state).unwrap();
         assert_eq!((t::check(&pp, &base, &paid, &|_, _| None, &|_| None, None, &t::Extra::NONE), paid.balance()), (Ok(()), 990));
@@ -306,7 +308,7 @@ mod tests {
         let g = got.clone();
         let Ok(Step::Done(e)) = edition(&ctx, &|id| g.get(id).cloned(), &sid) else { panic!("the edition") };
         assert_eq!((e.minted, copies_of(&e, &[bp.to]), copies_of(&e, &[ap.to])), (1, vec![1], vec![]));
-        let Ok(Step::Done(Some(put))) = collect_copy(&ctx, &|id| g.get(id).cloned(), &sid, &bp.to, 1, 6) else { panic!("collected") };
+        let Ok(Step::Done(Some(put))) = collect_copy(&ctx, &|id| g.get(id).cloned(), &sid, &bp.to, 1, e1 + 6) else { panic!("collected") };
         let c = State::decode(&put.state).unwrap();
         assert_eq!(t::check(&cp, &sd, &c, &|_, _| None, &|k| (k == 0).then(|| rec.clone()), None, &t::Extra::NONE), Ok(()));
         assert_eq!(c.balance(), 1);
@@ -316,8 +318,11 @@ mod tests {
         assert_eq!((sold[0].from, sold[0].to, sold[0].token), (bp.to, ap.to, pid));
         let payee = chain(&ctx, &base, &pid, &ap.to, [0; 32]);
         got.insert(payee.id(), vec![]);
-        let g = got.clone();
-        let Ok(Step::Done(r)) = crate::wallet::receive_private(&ctx, &|id| g.get(id).cloned(), &sold[0], 8) else { panic!("the sale") };
+        let tl = crate::tokens::testlot::stakers(&ctx, &mut got);
+        let take = |got: &HashMap<[u8; 32], Vec<u8>>| crate::tokens::testlot::done(&|g| crate::wallet::receive_private(&ctx, &tl.lot, g, &sold[0], e1 + 8), got);
+        assert_eq!(take(&got).map(|r| (r.amount, r.unwitnessed)), Ok((0, 1)), "the sale is not value before its payment is witnessed");
+        crate::tokens::testlot::witness(&tl, &mut got, &pp, &base, &paid, paid.entries.last().unwrap().seq, 6);
+        let r = take(&got).unwrap();
         assert_eq!(r.amount, 10);
         let ps2 = State::decode(&r.put.unwrap().state).unwrap();
         assert_eq!(t::check(&payee, &base, &ps2, &|_, o| (o == &bp.to).then(|| paid.clone()), &|_| None, None, &t::Extra::NONE), Ok(()));

@@ -166,29 +166,29 @@ export async function mount(ctx, el) {
   purse.onChange(() => el.isConnected && draw());
   await draw();
   table.onChange(() => el.isConnected && draw());
-  // RECEIVE now, and again each time the beacon advances while a send to this account waits out its margin.
+  // RECEIVE now, and again EACH TIME THE BEACON ADVANCES while the Wallet is open: a payment that arrives with the page
+  // open is found (it was found only on opening), one waiting out its margin or its witnesses taken once it may be.
+  // (Overlapping runs skipped; the subscription ends with the page.)
   const beaconSvc = await ctx.require("beacon");
   let busy = false;
-  let stop = null;
+  let waited = false;
   const receive = async () => {
-    if (busy || !el.isConnected) return stop?.();
+    if (!el.isConnected) return stop();
+    if (busy) return;
     busy = true;
     try {
       const r = await purse.receiveAll({ onToken: async t => table.rows().some(r => r.key === t) || (await table.put(t, JSON.stringify({ name: "" }))) });
       if (r.got) draw();
-      if (r.pending && !stop) {
-        status.textContent = `${r.pending} payment(s) to you on the way: taken in a moment.`;
-        stop = beaconSvc.onHeight(receive);
-      } else if (!r.pending) {
-        if (stop) status.textContent = r.got ? "Received." : status.textContent;
-        stop?.();
-        stop = null;
-      }
+      const waiting = (r.pending ?? 0) + (r.unwitnessed ?? 0);
+      if (waiting) status.textContent = r.unwitnessed ? `${waiting} payment(s) to you waiting for their witnesses: taken once they sign.` : `${waiting} payment(s) to you on the way: taken in a moment.`;
+      else if (waited || r.got) status.textContent = r.got ? "Received." : "";
+      waited = waiting > 0;
     } catch (e) {
       ctx.log("wallet", { what: `receiving: ${e.message ?? e}` });
     } finally {
       busy = false;
     }
   };
+  const stop = beaconSvc.onHeight(receive);
   receive();
 }

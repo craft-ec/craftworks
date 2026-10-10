@@ -8,6 +8,7 @@
 //   tokens.beacon  tokens.pay    // bytes: the beacon (the one `beacon` extends: one clock); the token editions are paid
 //                                // in (null: none)
 //   tokens.allowance             // { token, code } of the WREN ALLOWANCE (TOKEN §7d), or null: not set up
+//   (a payment is RECEIVED only once its debit is ACCEPTED by its witnesses — `purse.receiveAll`'s `unwitnessed`)
 //   tokens.code  tokens.idlogCode
 //   await tokens.read(idHex)  await tokens.putAll(puts)  await tokens.run(sigs => core.…(…, sigs))  await tokens.now()
 //   await tokens.device()        // { member, creds }: this node and the account's credentials (what a step signs with)
@@ -28,6 +29,9 @@ export async function start(ctx) {
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   const beacon = bytes(clock.id);
   const allowance = cfg.allowance ? { token: bytes(cfg.allowance), code: await ctx.require("allowance-wasm") } : null;
+  // THE LOT a payment's acceptance is read from (TOKEN §7a): the stake pool's token (`tokens-config` `pool`; none yet —
+  // no $CRAFT: every committee is the baseline's seat), the bag's and beacon's codes.
+  const lot = { pool: bytes(cfg.pool ?? "00".repeat(32)), bag: await ctx.require("bag-wasm"), beacon: await ctx.require("beacon-wasm") };
 
   // READ a contract so the core holds it (`node.read`; a contract the node does not have: "read, not there").
   const read = idHex => node.read(bytes(idHex), "reading a token contract", { absent: true });
@@ -149,15 +153,18 @@ export async function start(ctx) {
     }
     let got = 0;
     let pending = 0;
+    let unwitnessed = 0;
     // One payment (or sale) on its own (`a`: its announcement's bytes): one that cannot be taken (another clock, a chain
     // that does not read) stops no other.
     const take = async (a, what) => {
       try {
-        const r = await run(() => core.wallet_receive_private(code, beacon, idlogCode, a, at));
+        const r = await run(() => core.wallet_receive_private(code, beacon, idlogCode, lot.pool, lot.bag, lot.beacon, a, at));
         await putAll(r.puts);
         if (r.puts?.length) got++;
         pending += r.pending ?? 0;
-        return !r.pending;
+        unwitnessed += r.unwitnessed ?? 0;
+        if (r.why) ctx.log("wallet", { what: `${what}: not accepted yet — ${r.why}` });
+        return !r.pending && !r.unwitnessed;
       } catch (e) {
         ctx.log("wallet", { what: `receiving ${what}: ${e.message ?? e}` });
         return false;
@@ -198,7 +205,7 @@ export async function start(ctx) {
       }
       if (taken.size !== (f.taken ?? []).length) await priv.put(`found/${f.to}`, JSON.stringify({ ...f, taken: [...taken] }));
     }
-    return { got, pending };
+    return { got, pending, unwitnessed };
   }
   // This wallet's spendable private chains of a token, by seed: [{ seed, mine: [found rows] }].
   async function privately(id) {
