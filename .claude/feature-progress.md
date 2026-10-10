@@ -1529,7 +1529,14 @@ old key's addresses.
                   per pair; a re-vouch keeps its first height). 12 tests; 9 mutants (1 explained: the account check
                   is redundant with the key-log check).
               [ ] V1b-2 the registry: the epoch's bag of items (anyone relays a signed row), the page signs + stores.
-              [ ] V1b-3 decay, the statement.
+              [ ] V1b-3 decay, the statement — THE STATEMENT IS A PUBLIC PROLLY TREE in Block contracts (as a public
+                  table's tree: did → reputation, share), witnesses sign its ROOT, a claim cites its entry with a prolly
+                  proof — no new contract, no new tree (owner 10-10: "we doesn't use our craftworks prolly tree and
+                  block contract?").
+          [ ] DEDUP: the standing record's holdings use their OWN merkle tree (`standing/src/lib.rs` root/path, built
+              10-09) — a second tree beside freenet-prolly. Check whether prolly can prove "the k-th key" (counts in
+              nodes); if so move holdings onto it and delete the standing tree; if not, add positional proofs TO the
+              prolly tree (the shared one), never keep two.
           [ ] W  WALLET APP: send, receive/collect (inbox note), balances.
           [ ] A  WREN DAILY ALLOWANCE: 1,000/day by reputation share, cap 20, claim-or-return; service on B.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
