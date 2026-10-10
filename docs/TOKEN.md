@@ -669,7 +669,8 @@ ISSUANCE — and each piece of the loop has ONE job:
   11. KEEPER DOUBLE CLAIMS are refused, not punished (nothing gained).
   12. WITNESS LIVENESS: a staker's claim STANDS until withdrawn, but LAPSES if it signed nothing when drawn in the
       last few epochs — the live set stays live; returning is claiming again.
-- **A SMALL NETWORK (owner 10-10: "how does it work if we just have few node initially?"):** committees SCALE with the
+- **A SMALL NETWORK (owner 10-10: "how does it work if we just have few node initially?") — SEATS BUILT 10-10
+  (`witness::seats`, `witness::BASELINE`):** committees SCALE with the
   live stakers — size min(16, live), signatures needed ⌈⅔ of the size⌉ (6 live: all 6, 4 to sign; 16+: 16 and 11); the
   lineage seat cap loosens to ⌈size ÷ lineages⌉. With very few nodes the security is those few nodes' honesty — the
   bootstrap's truth, made VISIBLE: the monitor shows each epoch's committee size and wallets show "secured by N

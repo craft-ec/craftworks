@@ -1667,6 +1667,17 @@ old key's addresses.
                   release checked by the token against the verdict). fx/fy have no reputation (the only root, Wren, is
                   the main network's), so no line is owed there: the PAYOUT path is proven by the core test only, and
                   goes live on the main network once Wren has vouched for someone.
+          [ ] WT WITNESSES LIVE (before anything is value; owner 10-10 "proceed"): stake is $CRAFT, none exists yet — the
+              bootstrap is the decided BASELINE (Wren) until 6 live stakers.
+              [x] WT1+WT2 SEATS — BUILT 10-10 (`witness::seats`, `accepted`): drawn seats min(16, live), Wren's BASELINE
+                  key (`witness::BASELINE` = its tool device's public key eb514408…, `token-ops key` prints a seed's
+                  public half) a stakeless seat below 6 live, ⌈⅔⌉ of the seats needed (0 live: Wren alone; 3: 3 of 4;
+                  6+: no baseline, 4 of 6; 16: 11). 116 token tests (a small-network one, with Wren's real key where
+                  the seed is held); 3 mutants killed. No contract bytes changed (acceptance is the wallet's and
+                  witnesses').
+              [ ] WT3 A WITNESS RUNNER: Wren's on B (signs every entry it is seated for, by induction — `may_witness` —
+                  into the witness bags), members' when their page is open; entries reach it by …
+              [ ] WT4 WALLETS COUNT ONLY ACCEPTED: a receive / payout credited as value only once `accept` holds.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
               rendezvous), within its limit, instead of what was watched; the standing record proves it.
           [ ] F  WITNESS FEES on every token: a set fee per debit, split among its signers, claimed in their chains.

@@ -182,6 +182,11 @@ async fn main() -> Result<()> {
             println!("{} posted", items.len());
             Ok(())
         }
+        Some("key") => {
+            // token-ops key <seed file>: the ed25519 PUBLIC key of a seed file (hex) — never the seed.
+            println!("{}", hex(&ed25519_dalek::SigningKey::from_bytes(&seed_file(&a[2])?).verifying_key().to_bytes()));
+            Ok(())
+        }
         Some("height") => {
             // token-ops height <ws> <beacon id hex>: its height now (0: not there).
             let h = get(&a[2], unhex32(&a[3])?).await?.and_then(|b| B::wire::decode(&b)).map_or(0, |s| s.height());

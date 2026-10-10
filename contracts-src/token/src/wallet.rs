@@ -8,12 +8,14 @@ use crate::draw::StakeClaim;
 use crate::witness::{self, WitnessSig};
 use crate::{supply, timed, walk, Body, ChainParams, Definition, Entry, Signer, State, Tok, Why};
 
-/// The committee's size, and how many of it must sign (TOKEN §7a: open — to be set from measurement on the network).
+/// The committee's most DRAWN seats; how many must sign follows the seats (`witness::seats`: ⌈⅔⌉ — 16 seats, 11; a
+/// small network fewer, with the baseline's seat).
 pub const COMMITTEE: usize = 16;
 /// How far behind the beacon a witness still signs an entry's stamp: one epoch. Further back, a writer could pick, among
 /// past epochs whose outputs are known, one whose committee for its place suits it (a first copy is taken without the
 /// append rules); within it, a lot is one try an epoch. A witness has a whole epoch to reach an entry.
 pub const FRESH: u64 = supply::EPOCH;
+/// The signatures a FULL committee needs (16 drawn seats, no baseline).
 pub const NEED: usize = 11;
 
 /// Where a wallet (or a witness) reads the lot from: the STAKE POOL's token (`pool`: whose stake weighs the draw — one
@@ -75,7 +77,7 @@ pub fn accept(src: &Source, chain: &ChainParams, e: &Entry, pred: Option<&Entry>
     let out = (src.out)(height).ok_or("an entry whose lot is not drawn yet")?;
     let id = chain.id();
     let at = epoch * supply::EPOCH;
-    witness::accepted(&src.pool, &id, e.seq, &e.hash(), &out, epoch, &(src.claims)(epoch), &(src.sigs)(&id, e.seq), COMMITTEE, NEED, &|o| (src.stake_of)(o, at))
+    witness::accepted(&src.pool, &id, e.seq, &e.hash(), &out, epoch, &(src.claims)(epoch), &(src.sigs)(&id, e.seq), COMMITTEE, &|o| (src.stake_of)(o, at))
 }
 
 /// A staker's STAKE at beacon height `at` — what its chain (`p`, in the pool `d`) held staked after its entries stamped
@@ -284,7 +286,7 @@ fn taken(src: &Source, p: &ChainParams, s: &State, i: usize) -> Result<(), Why> 
         let Some(out) = (src.out)(h) else { continue };
         let at = supply::epoch(h) * supply::EPOCH;
         for other in &others {
-            if witness::accepted(&src.pool, &id, e.seq, other, &out, supply::epoch(h), &(src.claims)(supply::epoch(h)), &sigs, COMMITTEE, NEED, &|o| (src.stake_of)(o, at)).is_ok() {
+            if witness::accepted(&src.pool, &id, e.seq, other, &out, supply::epoch(h), &(src.claims)(supply::epoch(h)), &sigs, COMMITTEE, &|o| (src.stake_of)(o, at)).is_ok() {
                 return Err("a place another entry was accepted at");
             }
         }

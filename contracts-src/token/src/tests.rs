@@ -1665,14 +1665,16 @@ fn an_entry_counts_once_enough_of_its_committee_signed_it_with_real_stake() {
     };
     let claims: Vec<StakeClaim> = (60..70).map(|n| claim(n, 100)).collect();
     let (chain, seq, entry, out) = ([7u8; 32], 12u64, [1u8; 32], [9u8; 32]);
-    let (k, need) = (5, 4);
+    // Five drawn seats of ten live stakers: four must sign (⌈⅔⌉ of 5; ten live: no baseline seat).
+    let k = 5;
+    assert_eq!(witness::seats(10, k), (5, false, 4));
     let members = draw::committee(&def_id, &out, &chain, seq, 3, &claims, k);
     let sig_by = |n: u8, e: [u8; 32]| witness::WitnessSig { chain, seq, entry: e, sig: key(n).sign(&witness::WitnessSig::message(&chain, seq, &e)).to_bytes() };
     let member_keys: Vec<u8> = members.iter().map(|m| claims[*m].owner[0]).collect();
     let outsiders: Vec<u8> = (60..70).filter(|n| !member_keys.contains(n)).collect();
     // Each staker's chain: 100 staked, its writer key the claim's.
     let real = |o: &[u8; 32]| Some((100u128, vec![pk(o[0])]));
-    let acc = |sigs: &[witness::WitnessSig], stake: &dyn Fn(&[u8; 32]) -> Option<witness::Stake>| witness::accepted(&def_id, &chain, seq, &entry, &out, 3, &claims, sigs, k, need, stake);
+    let acc = |sigs: &[witness::WitnessSig], stake: &dyn Fn(&[u8; 32]) -> Option<witness::Stake>| witness::accepted(&def_id, &chain, seq, &entry, &out, 3, &claims, sigs, k, stake);
     let four: Vec<_> = member_keys[..4].iter().map(|n| sig_by(*n, entry)).collect();
     assert_eq!(acc(&four, &real), Ok(4));
     assert_eq!(acc(&four[..3], &real), Err("an entry its committee has not witnessed"), "three of four needed");
@@ -1690,6 +1692,47 @@ fn an_entry_counts_once_enough_of_its_committee_signed_it_with_real_stake() {
     // A member whose claim's key is not one its chain's stake burns for (another writer): not counted.
     let other_key = |o: &[u8; 32]| Some((100, vec![if o[0] == member_keys[2] { pk(1) } else { pk(o[0]) }]));
     assert_eq!(acc(&four, &other_key), Err("an entry its committee has not witnessed"));
+}
+
+/// A SMALL NETWORK (TOKEN §7d, owner 10-10): committees scale with the live stakers — ⌈⅔⌉ of the seats — and WREN's
+/// baseline key holds a seat (its signature counted without stake) until 6 stakers are live, then none.
+#[test]
+fn a_small_network_scales_its_committee_and_the_baseline_steps_out_at_six() {
+    use draw::StakeClaim;
+    // The seats: (live, max) → (drawn, baseline, need).
+    assert_eq!(witness::seats(0, 16), (0, true, 1));
+    assert_eq!(witness::seats(3, 16), (3, true, 3));
+    assert_eq!(witness::seats(5, 16), (5, true, 4));
+    assert_eq!(witness::seats(6, 16), (6, false, 4));
+    assert_eq!(witness::seats(16, 16), (16, false, wallet::NEED));
+    assert_eq!(witness::seats(40, 16), (16, false, wallet::NEED));
+    // The baseline signs with Wren's device key (its seed kept by Claude, never in the repo): skipped where not held.
+    let Ok(seed) = std::fs::read_to_string(std::env::var("HOME").unwrap_or_default() + "/.config/craftworks/wren-device.seed") else { return };
+    let seed: [u8; 32] = (0..32).map(|i| u8::from_str_radix(&seed.trim()[2 * i..2 * i + 2], 16).unwrap()).collect::<Vec<_>>().try_into().unwrap();
+    let wren = ed25519_dalek::SigningKey::from_bytes(&seed);
+    assert_eq!(wren.verifying_key().to_bytes(), witness::BASELINE);
+    let def_id = params(1).definition;
+    let claim = |n: u8| {
+        let k = key(n);
+        let kb = k.verifying_key().to_bytes();
+        StakeClaim { owner: [n; 32], amount: 100, epoch: 3, key: kb, sig: k.sign(&StakeClaim::message(&def_id, &[n; 32], 100, 3, &kb)).to_bytes() }
+    };
+    let (chain, seq, entry, out) = ([7u8; 32], 12u64, [1u8; 32], [9u8; 32]);
+    let sig = |k: &ed25519_dalek::SigningKey| witness::WitnessSig { chain, seq, entry, sig: k.sign(&witness::WitnessSig::message(&chain, seq, &entry)).to_bytes() };
+    let real = |o: &[u8; 32]| Some((100u128, vec![pk(o[0])]));
+    let acc = |claims: &[StakeClaim], sigs: &[witness::WitnessSig]| witness::accepted(&def_id, &chain, seq, &entry, &out, 3, claims, sigs, wallet::COMMITTEE, &real);
+    // NOBODY staked: the baseline alone accepts (1 of 1); nothing signed, nothing accepted.
+    assert_eq!(acc(&[], &[sig(&wren)]), Ok(1));
+    assert_eq!(acc(&[], &[]), Err("an entry its committee has not witnessed"));
+    // THREE staked: 3 + the baseline = 4 seats, 3 needed — two stakers and Wren, or all three; two alone are short.
+    let three: Vec<StakeClaim> = (60..63).map(claim).collect();
+    assert_eq!(acc(&three, &[sig(&key(60)), sig(&key(61)), sig(&wren)]), Ok(3));
+    assert_eq!(acc(&three, &[sig(&key(60)), sig(&key(61)), sig(&key(62))]), Ok(3));
+    assert_eq!(acc(&three, &[sig(&key(60)), sig(&key(61))]), Err("an entry its committee has not witnessed"));
+    // SIX staked: the baseline has no seat — its signature counts for nothing (6 seats, 4 needed).
+    let six: Vec<StakeClaim> = (60..66).map(claim).collect();
+    assert_eq!(acc(&six, &[sig(&key(60)), sig(&key(61)), sig(&key(62)), sig(&wren)]), Err("an entry its committee has not witnessed"));
+    assert_eq!(acc(&six, &[sig(&key(60)), sig(&key(61)), sig(&key(62)), sig(&key(63))]), Ok(4));
 }
 
 // ---- FOUNDATION 6d: a wallet takes an entry its committee accepted; a witness signs only on an accepted past ----
