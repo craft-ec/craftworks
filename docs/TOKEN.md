@@ -691,7 +691,9 @@ wallet only hands the chain over when told.
   item's page). `core::editions`, pure over what the page read: an edition (its definition and records, copies
   minted, the open record, a person's copies), `buy`, `collect_copy` — each a step: contracts to READ, the next
   entry to SIGN (`TokenSign`), or the puts. `wallet::Asking` is the page's device: it signs by asking, one round per
-  entry (a chain's entries are signed in order). The page section itself: S4.
+  entry (a chain's entries are signed in order). FINDING an item's editions (S3): the item lists them in its own
+  `meta.editions` (only its author writes it); an edition names its item by `editions::item_id(ref)` and is shown
+  only if it names this item and its creator is the item's author (`editions::of_item`). The page section itself: S4.
 - Not in the core (the account's, at rollout): which device writes a chain (the core hands it over when told), finding
   counterparties' chains (the token's activity), fetching and publishing.
 

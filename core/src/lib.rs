@@ -2382,6 +2382,30 @@ mod js {
             })?;
             self.edition_attach_puts(v, token_code, &puts)
         }
+        /// The 32-byte id an edition names the item `item_ref` by (`editions::item_id`), hex.
+        pub fn edition_item_id(item_ref: &str) -> String {
+            hex(&editions::item_id(item_ref))
+        }
+        /// An edition AS THE ITEM SHOWS IT: `{ done: { …edition, shown: true } }`, or `shown: false` with `why` (of
+        /// another item, or not by the item's author: not shown).
+        #[allow(clippy::too_many_arguments)]
+        pub fn edition_of_item(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], item_ref: &str, author: &[u8], me: &[u8]) -> Result<JsValue, JsValue> {
+            let ctx = edition_ctx(token_code, beacon, idlog_code)?;
+            let me = (me.len() == 32).then(|| b32(me)).transpose()?;
+            let author = b32(author)?;
+            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+            edition_step(editions::edition(&ctx, &got, &b32(id)?), |e| {
+                let mut v = edition_json(&e, me.as_ref());
+                match editions::of_item(&e, item_ref, &author) {
+                    Ok(()) => v["shown"] = json!(true),
+                    Err(why) => {
+                        v["shown"] = json!(false);
+                        v["why"] = json!(why);
+                    }
+                }
+                Ok(v)
+            })
+        }
         /// The token chain id of `owner`'s chain of `token` (an edition's copy `n`, or 0: the token's own), hex.
         pub fn edition_chain_id(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], token: &[u8], owner: &[u8], n: f64) -> Result<String, JsValue> {
             let ctx = edition_ctx(token_code, beacon, idlog_code)?;

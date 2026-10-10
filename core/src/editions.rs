@@ -223,6 +223,25 @@ pub fn collect_copy(ctx: &Ctx, got: Got, id: &[u8; 32], owner: &[u8; 32], n: u12
     Ok(Step::Done(Some(Put { params: held.params.encode(), state: s.encode() })))
 }
 
+/// The 32-byte id a token names a Craftworks ITEM by (`Definition::item`): from the item's ref (`<did>/<id>`, or
+/// `space:<id>/<id>`) — the ONE derivation, so an edition made for an item and the item's page agree.
+pub fn item_id(item_ref: &str) -> [u8; 32] {
+    *blake3::Hasher::new_derive_key("craftworks token item 2026-10-10").update(item_ref.as_bytes()).finalize().as_bytes()
+}
+
+/// Is `e` an edition the item `item_ref` (by `author`, its DID) SHOWS: of this item, made by its author (TOKEN §1c: the
+/// page checks what a contract cannot cheaply — an edition of the item by anyone else is not shown). The item lists its
+/// editions in its own metadata (`meta.editions`), which only its author writes.
+pub fn of_item(e: &Edition, item_ref: &str, author: &[u8; 32]) -> Result<(), &'static str> {
+    if e.definition.item != item_id(item_ref) {
+        return Err("an edition of another item");
+    }
+    if e.definition.genesis_owner != *author {
+        return Err("an edition not made by the item's author");
+    }
+    Ok(())
+}
+
 /// The copies of a numbered edition minted to `owner`, from the records read (`Edition::records`).
 pub fn copies_of(e: &Edition, owner: &[u8; 32]) -> Vec<u128> {
     let mut out = Vec::new();
@@ -329,5 +348,11 @@ mod tests {
         let g = got.clone();
         let other = run(&mut dev, &mut |d| collect_copy(&ctx, &|id| g.get(id).cloned(), &sid, &did, 2, 6, d));
         assert_eq!(other, Ok(None));
+        // Shown on the item it names, by its author only.
+        let mut e = e;
+        e.definition.item = item_id("did/t1");
+        assert_eq!(of_item(&e, "did/t1", &did), Ok(()));
+        assert_eq!(of_item(&e, "did/t2", &did), Err("an edition of another item"));
+        assert_eq!(of_item(&e, "did/t1", &[3; 32]), Err("an edition not made by the item's author"));
     }
 }

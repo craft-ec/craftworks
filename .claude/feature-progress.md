@@ -1521,8 +1521,10 @@ old key's addresses.
           [x] S2 DELEGATE — DONE 10-10: token entry messages carry `ENTRY_DOMAIN` (owned by identity);
               `Request::TokenSign { message }` signs one with the member key, home site only (`NotAnEntry`, `NotHome`,
               `NoSession` refused). Credential + key seq come from the account's devices contract. Full-release item.
-          [ ] S3 FINDING EDITIONS: an item's editions listed where the shop can read them (TOKEN §1c: the app checks
-              the edition's creator is the item's author).
+          [x] S3 FINDING — DONE 10-10: the item lists its editions in its own `meta.editions` (hex ids; only its author
+              writes the row; edited by the existing item edit, merging meta). `editions::item_id(ref)` is the ONE
+              derivation of an item's 32-byte token id; `of_item` shows an edition only if it names this item and its
+              creator is the item's author. Bindings `edition_item_id`, `edition_of_item`.
           [ ] S4 ITEM PAGE: an "Editions" section in `packages/item-page.js` — the author makes an edition (price,
               cap, numbered or plain); anyone sees each edition's price and copies left, Buy, and their copies.
           [ ] S5 LIVE fx/fy: beacon + pay token + edition; buy from a second account end to end.
