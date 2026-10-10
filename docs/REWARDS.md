@@ -115,6 +115,13 @@ of cold files, §6).
 - Exact per-answer bandwidth pay would need the node to name the peer that delivered each piece (a node change, and
   even then only the last hop): not planned.
 
+- **ONE PROOF SYSTEM, TWO PAYOUTS (decided 10-10, with TOKEN §7d):** the node's STANDING RECORD (`contracts-src/standing`)
+  is the only keeping proof — it commits to EVERYTHING the node hosts (what Freenet placed and what it cached) and
+  answers the beacon's challenges on it. Two payouts read the same record: $CRAFT ISSUANCE (TOKEN §7d) for any proven
+  epoch, split by reputation share (holding more or junk earns nothing extra: one qualifying epoch, one trust share);
+  and PAID DEMAND (this section) for the proven holdings that are pieces of files someone paid to use. The separate
+  keepers bag with its own proofs, above, is folded into it: no second challenge queue.
+
 ## 4a. What is signed, what is provable
 
 | Data | Signed by | Provable? | Used to pay |
