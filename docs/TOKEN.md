@@ -606,8 +606,9 @@ ISSUANCE — and each piece of the loop has ONE job:
   Not scaled by bytes: a holdings' size is self-declared.
 - **It lands LOCKED as witness stake** (`staked`, §4a) — the weight of the lot (§7a). Unstaking follows the usual delay.
 - **Witnesses check the gate:** a witness signs a `KeeperMint` only if the account passes the reputation gate as computed
-  from the public vouches (`reputation::reputation`, the same everywhere) — a contract cannot crawl vouches. Signing one
-  that does not pass is the witness's misdeed once the gate's evidence is shown (the vouches are public).
+  from the public vouches (`reputation::reputation`, the same everywhere) — a contract cannot crawl vouches. A claim
+  that does not pass is simply not accepted (⅔ of its committee must sign) — never a burn: the gate rests on a
+  registry honest nodes may briefly see differently (see "AN HONEST NODE IS NEVER BURNED").
 - **A cheat burns both:** a proven misdeed burns the stake (§7a) and zeroes reputation; vouchers lose a share.
 - **REVISED 10-10 — the AMOUNT is a trust share, not per head** (measured in conversation: with a flat amount per
   account, ONE malicious direct vouchee builds a clean tree of ~1,110 fakes past the gate — 10 + 100 + 1,000 — each
@@ -623,7 +624,7 @@ ISSUANCE — and each piece of the loop has ONE job:
   network holds at most ~6.7/G earners), lowered on a published schedule by height as it grows.
 - **The amount is checked against the epoch's STATEMENT:** after the epoch closes anyone computes it (a pure function of
   the vouch snapshot and the standing records); a KeeperMint claims the statement's amount; witnesses sign only a
-  match, and a witness signing another amount is shown wrong from the public inputs and burned. (The contract checks
+  match, and a mismatch is simply NOT ACCEPTED (it needs ⅔ of its committee) — never burned (below). (The contract checks
   the proof, the epoch, the account binding and the name; it cannot compute a share.)
 - **Gaps closed (review 10-10):** (1) LAUNCH: until earned stake exists the lot is drawn by REPUTATION, handing over to
   stake as it accrues; (2) AGREEMENT: vouches enter a per-epoch VOUCH REGISTRY, and reputation is computed from it as of
@@ -676,6 +677,15 @@ ISSUANCE — and each piece of the loop has ONE job:
   profits). Members (the owner's everyday account first) claim seats and sign when online; below 6 live witnesses a claim
   LAPSES after one missed epoch, so an absent witness never holds payments up for long. (Amends "the root never
   witnesses": it never does once the network can stand without it.)
+- **AN HONEST NODE IS NEVER BURNED** (owner 10-10: "any node that is non malicious has no worry of their stake being
+  burned right?"). The rule: BURN ONLY FOR A FAULT AN HONEST NODE RUNNING CORRECT SOFTWARE CANNOT COMMIT — self-proving
+  from the entry alone (two signatures at one place; a credit with no debit; a payout its verdict does not pay; a mint
+  nobody authorised). Three accidental paths closed: (1) ONE KEY, TWO MACHINES (a restored backup, a cloned VM): the
+  signer records every place it signed, DURABLY in the identity delegate's store, before releasing a signature, and
+  never signs a place twice — and the wallet says a witness key runs on one node only; (2) OUTDATED SOFTWARE: a witness
+  refuses to sign in an epoch whose rule version it does not know — it goes quiet, never wrong; (3) NO BURN FOR A WRONG
+  STATEMENT AMOUNT (it rests on a registry two honest nodes may briefly see differently): such a claim is just not
+  accepted. The worst an honest node meets is missing rewards while offline.
 - **MONITORED:** every claim is also listed in the epoch's public ISSUANCE BAG (a bag per token per epoch, like the
   claims registry); the monitor page reads it and shows per epoch: keepers paid, amounts and the total; concentration
   (the top shares); the split by LINEAGE of the trust tree (is one community taking most?); and claims from accounts
