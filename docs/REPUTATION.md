@@ -71,8 +71,14 @@ Two parts, one path from bootstrap to the token:
   vouches for it (then its earlier vouches count, from that moment). A self-declared root is just an unvouched account.
 - **Roots grow** (owner 10-10: "single root doesn't grow"): (1) at the start, the owner plus a few people from different
   circles the owner names — separate trees from day one; (2) PROMOTION: an account that, over some epochs, holds solid
-  reputation AND is vouched for from at least three different trees becomes a root; its descendants a new tree. A pure
-  function of the vouches like the rest: every node computes the same list.
+  reputation AND is vouched for from lines tracing back to at least three different STARTING roots becomes a root; its
+  descendants a new tree. A pure function of the vouches like the rest: every node computes the same list.
+- **Promotion makes a FAMILY, never a SOURCE** (owner 10-10: "sybil can still create multiple root and vouch for each
+  other?"). Trust enters only at the starting roots; a promoted root is a kinship boundary (its descendants count as
+  another tree for the diversity discount) and adds no trust. Promoted trees inherit their founders' starting-root
+  lineage, so a sybil that got one fake promoted cannot use it to promote more: promotion still needs three distinct
+  STARTING lineages. A sybil can only fool real people — and then shares only what they gave, split over their 10
+  vouches, discounted as close kin, and burned with them on a cheat.
 - **One network-wide reputation** (witnesses and keepers); a space may later weigh it with roots of its own for its
   moderation.
 - The numbers (vouch budget 10, damping, kinship discount, how long a vouch takes to count, a voucher's loss) are set
@@ -89,7 +95,8 @@ Two parts, one path from bootstrap to the token:
    personalised PageRank (damping 0.85, 40 rounds, budget 10). Measured: a ring of 10 fakes off one fooled account
    takes 6.8 (×10⁻³), a ring of 1,000 takes 7.2 — flat; the same 1,000 with no discount 24.6; cousins' vouches 6.14 vs
    siblings' 4.91.
-3. Roots: the starting list (the owner's + those named), and promotion (reputation held + vouched from ≥3 trees).
+3. Roots: the starting list (the owner's + those named: the only trust sources), and promotion (reputation held +
+   vouched from ≥3 starting lineages) — a family boundary, never a source.
 4. Burns reaching reputation: a misdeed proof zeroes the account and charges its vouchers.
 5. The keeping record per vouched account (standing answers → a tapering per-account rate), as reputation.
 6. The lot weighted by that record (`wallet::lot_of`, the claims registry: a claim of record instead of stake).
