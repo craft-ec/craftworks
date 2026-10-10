@@ -836,6 +836,13 @@ DID; only the sender and the recipient know who was paid.
   linkable to the DID). Payments made from one chain are linkable to EACH OTHER (never to the DID); spending several
   chains at once links them: the wallet spends from as few as it can. The wallet core signs a stealth chain as any
   device's (`Device::set`: handed over with `Members`, signed as the 1-of-1 set).
+- **A DID CHAIN HOLDS ONLY STAKE** (owner 10-10: "no did account being use at all aside from staking" — so no mixing is
+  needed: nothing spendable sits on a DID to shield). Everything spendable lands on a one-time owner: payments, an
+  edition's sale and royalty payee (the author's one-time owner, fixed at the edition's making — one edition's sales are
+  linkable to each other, never to the DID: a contract cannot tell a fresh key is the seller's), a bought copy (minted to
+  the buyer's own fresh one-time owner), a token's genesis, witness fees' spendable part. Every payee field is an owner
+  id, and a one-time owner's id is one: no contract change. Unstaked stake, or anything else on a DID, MOVES TO PRIVATE
+  by a payment to the account's own card — the one DID → private step, of what was already public.
 - **ON THE DID, ON PURPOSE:** staked $CRAFT and keeper issuance (stake answers for a witness), reputation, vouches,
   and the epoch statement's lines (what is OWED to a DID is public; where it is paid out may be a stealth chain).
 - **STILL VISIBLE:** amounts (confidential amounts would make witnesses check proofs instead of balances — later, if

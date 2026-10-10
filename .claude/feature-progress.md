@@ -1612,6 +1612,14 @@ old key's addresses.
                   · 25 on your id"; B sent 4 back from the stealth chain (its first spend by the one-time key, taken)
                   → B "6 private · 25 on your id"; A found it pending, received it on the next height → "4 private ·
                   965 on your id". 969 + 31 = 1,000.
+          [ ] Q  A DID CHAIN HOLDS ONLY STAKE (owner 10-10; TOKEN §7f) — no contract change (every payee is an owner id):
+              [ ] Q1 EDITIONS PRIVATELY: payee + royalty = the author's one-time owner (from its own card); authorship
+                  by the item's own `meta.editions` (the genesis_owner == author check dropped: redundant); buy from
+                  private chains, the copy minted to the buyer's own fresh one-time owner, recorded in `wallet`.
+              [ ] Q2 WALLET: the DID chain shown as stake; "move to private" (a payment to the own card) for anything
+                  spendable on it; no send from a DID.
+              [ ] Q3 token-ops make-token: genesis to the creator's one-time owner (WREN's treasury stays public).
+              [ ] Q4 witness fees' spendable part to a one-time owner (with F).
           [ ] A  WREN DAILY ALLOWANCE: 1,000/day by reputation share, cap 20, claim-or-return; service on B.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
               rendezvous), within its limit, instead of what was watched; the standing record proves it.
