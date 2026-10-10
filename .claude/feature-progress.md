@@ -1731,8 +1731,15 @@ old key's addresses.
               (it read 0 while the rest awaited its witnesses). Tested: B pays A 30 of 100 — B's chain left 0, the 70
               at an address only B's scan finds, not the one A was paid at. Measured: A sent 2 then 1 — history
               "Sent to #34kdzZ" settling → accepted ✓ 1; balance 983 → 982, never 0.
-          [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
-              rendezvous), within its limit, instead of what was watched; the standing record proves it.
+          [x] KA KEEP THE ASSIGNMENT 10-10: `standing::assign` — each registry file's keepers = top COPIES=3 of the
+              epoch-before's listed keepers by BLAKE3(keeper key ‖ address key) (no beacon in the rank: the assignment
+              holds across epochs, a leaving keeper moves only its own files); a keeper takes its files in rank order
+              within its Usage limit. keeper.js computes it each epoch → `keep.assign`; keep re-reads assigned files a
+              day apart (`files.keepAt`: read only, by address key; record `a/<key>` with missing indexes); holdings
+              add their found pieces (from the next epoch: holdings fix at the epoch's first tick). Live fy (B) v554:
+              epoch 3 "29 assigned"; "assigned file 7f16d7f1…: 111/111 piece(s) answered". OPEN: give-to-get cannot be
+              enforced (registry entries name no uploader — by design, privacy); assigned and watched each use the full
+              limit (no shared budget yet); the ring ARC part dropped (needs the blocked node query).
           [ ] F  WITNESS FEES on every token: a set fee per debit, split among its signers, claimed in their chains.
           KEEPER ISSUANCE ORDER (10-10, after reading the state: the keeper loop is NOT built — nothing produces
           standing records yet): K0a the KEEPER LOOP in the page (commit holdings, answer challenges into its standing

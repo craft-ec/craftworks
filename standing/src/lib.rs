@@ -428,6 +428,7 @@ pub fn check(h: &Holdings, a: &Answer, out: &[u8; 32], arc_: Option<(u64, u64)>,
     Ok(())
 }
 
+pub mod assign;
 pub mod record;
 pub mod codec;
 

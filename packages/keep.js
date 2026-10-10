@@ -20,7 +20,9 @@
 //   await keep.kept()        // { limit, files: [{ root, item, title, size, used, at, whole, missing, error }] }
 //   await keep.setLimit(bytes)   // how much of what was played this node keeps (0: none)
 //   await keep.keepers(root) // [did, …]: who keeps a file (this month or last) — the KEEPERS BAG (rewards step 3)
-//   await keep.holdings(epoch) // [{ sp, row, watched }]: the files it keeps whole, fixed for standing epoch `epoch` (the keeper's)
+//   await keep.holdings(epoch) // [{ sp, row, watched } | { assigned: { key, size, missing } }]: what it keeps, fixed for
+//                            // standing epoch `epoch` (the keeper's)
+//   await keep.assign(epoch, files) // the registry files this keeper is assigned ([{ key, size }]): kept from now on
 //
 // THE KEEPERS BAG (rewards step 3): each file's public bag `keepers:<root>` (`index.point`), where a keeper says, once
 // a month, that it keeps the file (`{ did, m: "YYYY-MM" }`; the same claim again merges). A CLAIM, unsigned like every
@@ -210,6 +212,11 @@ export async function start(ctx) {
         out.push({ space: v.space ?? null, file: v.file });
       }
       for (const w of (await kept()).files) if (w.gens && w.whole === w.gens) out.push({ space: null, file: w.root, watched: true });
+      // ASSIGNED files a pass has read (their pieces found then).
+      for (const a of await assignedNow()) {
+        const r = read(t.rows().find(x => x.key === `a/${a.key}`) ?? { value: "null" });
+        if (r && !r.error && r.pieces) out.push({ space: null, file: a.key, assigned: true, size: a.size, missing: r.missing ?? [] });
+      }
       return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
     };
     const list = fixed ?? (await own());
@@ -223,6 +230,10 @@ export async function start(ctx) {
     const rowsOf = new Map();
     const out = [];
     for (const h of list) {
+      if (h.assigned) {
+        out.push({ assigned: { key: h.file, size: h.size, missing: h.missing } });
+        continue;
+      }
       if (h.watched) {
         const f = watched.get(h.file);
         if (f) out.push({ sp: null, row: { id: f.root, key: f.key, root: f.root, ...(f.b ? { b: f.b } : {}) }, watched: true });
@@ -235,6 +246,28 @@ export async function start(ctx) {
       if (row?.root) out.push({ sp, row });
     }
     return out;
+  }
+  // THE ASSIGNMENT (`keeper`: the registry's files this keeper ranks among the copies of, within its limit), kept
+  // like what was watched: each re-read a DAY apart (`files.keepAt`: read only), its record `a/<address key>`.
+  async function assign(epoch, files) {
+    await (await records()).put("assigned", JSON.stringify({ epoch, files }));
+  }
+  const assignedNow = async () => read((await records()).rows().find(r => r.key === "assigned") ?? { value: "null" })?.files ?? [];
+  async function assignedDue() {
+    const t = await records();
+    return (await assignedNow()).filter(a => {
+      const r = read(t.rows().find(x => x.key === `a/${a.key}`) ?? { value: "null" });
+      return !r || Date.now() - r.at > (r.error ? RETRY : DAY);
+    });
+  }
+  async function keepAssigned(a) {
+    let timer;
+    const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+    const out = await Promise.race([files.keepAt(bytes(a.key), a.size), new Promise((_, no) => (timer = setTimeout(() => no(new Error(`not kept in ${WATCH_LIMIT / 60000} min: tried again later`)), WATCH_LIMIT)))])
+      .catch(e => ({ error: e?.message ?? String(e) }))
+      .finally(() => clearTimeout(timer));
+    await (await records()).put(`a/${a.key}`, JSON.stringify({ size: a.size, at: Date.now(), ...out }));
+    ctx.log("kept", { what: `assigned file ${a.key.slice(0, 8)}…: ${out.error ?? `${out.pieces - out.missing.length}/${out.pieces} piece(s) answered`}` });
   }
   const watchedDue = async () => (await kept()).files.filter(w => Date.now() - w.at > DAY);
 
@@ -253,9 +286,11 @@ export async function start(ctx) {
       if (d.tables[0]) await keepOne(d.tables[0]).catch(e => ctx.log("keep", { what: `${d.tables[0].app}: ${e?.message ?? e}` }));
       else if (d.files[0]) await keepFile(d.files[0]);
       else {
-        // Its own first; then what it played, kept for others.
-        const w = (await watchedDue().catch(() => []))[0];
-        if (w) await keepWatched(w);
+        // Its own first; then what it is assigned; then what it played, kept for others.
+        const a = (await assignedDue().catch(() => []))[0];
+        const w = a ? null : (await watchedDue().catch(() => []))[0];
+        if (a) await keepAssigned(a);
+        else if (w) await keepWatched(w);
         else await claimOwn().catch(e => ctx.log("keep", { what: `own files not said in the keepers bag: ${e?.message ?? e}` }));
       }
     } finally {
@@ -286,5 +321,5 @@ export async function start(ctx) {
     tick();
     setInterval(tick, 60000);
   }, 120000);
-  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.log("keep", { what: `not noted for keeping: ${e?.message ?? e}` })), kept, setLimit, keepers, holdings };
+  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.log("keep", { what: `not noted for keeping: ${e?.message ?? e}` })), kept, setLimit, keepers, holdings, assign };
 }

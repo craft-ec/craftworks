@@ -2443,6 +2443,21 @@ mod js {
             let k = craftworks_reputation::keepers::Keeper { did, cred: dev.credential, key_seq: dev.key_seq };
             Ok(js_obj(&[("done", js_sys::Uint8Array::from(&k.encode()[..]).into())]))
         }
+        /// The files keeper `me` is ASSIGNED (`craftworks_standing::assign`): of the registry's live files (`files`:
+        /// `[{ key: address key hex, size }]`) and the listed keepers' record keys (`keepers`: hex), those it ranks among
+        /// the copies of, highest first, while they fit `limit` bytes — `[{ key, size }]`.
+        pub fn keeper_assigned(me: &[u8], files: JsValue, keepers: js_sys::Array, limit: f64) -> Result<JsValue, JsValue> {
+            let files: Vec<([u8; 32], u64)> = js_sys::Array::from(&files)
+                .iter()
+                .map(|f| Ok((bytes32("file", &js_sys::Reflect::get(&f, &"key".into())?.as_string().unwrap_or_default()).map_err(err)?, js_sys::Reflect::get(&f, &"size".into())?.as_f64().unwrap_or(0.0) as u64)))
+                .collect::<Result<_, JsValue>>()?;
+            let keepers: Vec<[u8; 32]> = keepers.iter().map(|k| bytes32("keeper", &k.as_string().unwrap_or_default()).map_err(err)).collect::<Result<_, _>>()?;
+            let out = js_sys::Array::new();
+            for (ak, size) in craftworks_standing::assign::assigned(&b32(me)?, &files, &keepers, craftworks_standing::assign::COPIES, limit as u64) {
+                out.push(&js_obj(&[("key", JsValue::from(hex(&ak))), ("size", JsValue::from(size as f64))]));
+            }
+            Ok(out.into())
+        }
         /// The KEEPERS REGISTRY's bag `k` of standing epoch `epoch` (its address).
         pub fn keepers_address(epoch: f64, k: u32) -> js_sys::Uint8Array {
             js_sys::Uint8Array::from(&craftworks_reputation::keepers::address(epoch as u64, k)[..])

@@ -581,6 +581,25 @@ export async function start(ctx) {
     return glue.CraftworksCore.registry_item(glue.CraftworksCore.file_address_key(f.key), f.plan.size);
   }
 
+  // KEEP an ASSIGNED file (a keeper's, from the registry: its address key and size — it cannot read it): every piece
+  // read (a read is keeping), none made again (healing is every reader's). `{ pieces, missing: [index] }` — indexes
+  // into `core.registry_pieces`.
+  async function keepAt(addressKey, size) {
+    const all = core.registry_pieces(addressKey, size);
+    const missing = [];
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(16, all.length) }, async () => {
+        while (next < all.length) {
+          const i = next++;
+          const st = await fetchState(all[i][0], "keeping an assigned file", { raw: true }).catch(() => null);
+          if (!st || st[0] !== 2) missing.push(i);
+        }
+      }),
+    );
+    return { pieces: all.length, missing: missing.sort((a, b) => a - b) };
+  }
+
   // When a re-key of this row last moved (its progress, else the row): for taking over from a member gone quiet.
   const lastMoved = async (sp, row) => Math.max(row.at ?? 0, (await progressOf(sp, row.id)).at()?.at ?? 0);
 
@@ -657,5 +676,5 @@ export async function start(ctx) {
         }
       });
   }
-  return { keep, pieces, listing, put, uploads, keyOf, get, stream, chunk, range, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
+  return { keep, keepAt, pieces, listing, put, uploads, keyOf, get, stream, chunk, range, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
 }

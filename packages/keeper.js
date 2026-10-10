@@ -24,23 +24,52 @@ export async function start(ctx) {
   // How far back a catch-up looks (the beacon's state keeps its latest steps' outputs; older ones are null).
   const BACK = 1024;
 
-  // The epoch's HOLDINGS: every piece of the files `keep` keeps whole, fixed for the epoch.
+  // THE ASSIGNMENT of epoch `epoch` (`craftworks_standing::assign`): the registry's live files, the keepers listed the
+  // epoch before (complete: every page computes the same), this keeper's limit (Usage) — handed to `keep`.
+  async function assignment(epoch, keep) {
+    if (epoch < 1) return;
+    const [index, tokens] = await Promise.all(["index", "tokens"].map(n => ctx.require(n)));
+    const me = await auth.check();
+    const [now, before, ks] = await Promise.all([
+      index.bag.chain(Core.registry_address, epoch, "reading the files registry"),
+      index.bag.chain(Core.registry_address, epoch - 1, "reading the files registry"),
+      index.bag.chain(Core.keepers_address, epoch - 1, "reading the keepers registry"),
+    ]);
+    const keepers = await tokens.run(() => core.keepers_listed(tokens.idlogCode, ks));
+    const { limit } = await keep.kept();
+    const mine = Core.keeper_assigned(tokens.bytes(me.member), Core.registry_live(now, before), keepers.map(k => k.key), limit);
+    await keep.assign(epoch, mine);
+    state.assigned = mine.length;
+  }
+
+  // The epoch's HOLDINGS: every piece of what `keep` keeps — its own and watched files whole, its assigned ones' pieces
+  // found — fixed for the epoch.
   async function holdingsOf(epoch) {
     // (Like the token service, `keep` and `files` need an account: asked for once one is logged in.)
-    const [keep, files] = await Promise.all(["keep", "files"].map(n => ctx.require(n)));
+    const [keep, files, { bytes }] = await Promise.all(["keep", "files", "tokens"].map(n => ctx.require(n)));
+    await assignment(epoch, keep).catch(e => ctx.log("keeper", { what: `no assignment this epoch (${e?.message ?? e})` }));
     const fs = await keep.holdings(epoch);
     // ITS OWN files listed in this epoch's registry (a watched file is its uploader's to list).
     const index = await ctx.require("index");
     let listed = 0;
-    for (const { sp, row } of fs.filter(f => !f.watched))
+    for (const { sp, row } of fs.filter(f => !f.watched && !f.assigned))
       await files
         .listing(sp, row)
         .then(item => index.bag.chained(Core.registry_address, epoch, item, "listing a file in the registry"))
         .then(() => (listed += 1))
         .catch(e => ctx.log("keeper", { what: `${row.id.slice(0, 8)}…: not listed (${e?.message ?? e})` }));
     state.listed = listed;
+    state.own = fs.filter(f => !f.assigned).length;
     const hosted = [];
-    for (const { sp, row } of fs) hosted.push(...(await files.pieces(sp, row).catch(e => (ctx.log("keeper", { what: `${row.id.slice(0, 8)}…: its pieces not listed (${e?.message ?? e})` }), []))));
+    for (const f of fs) {
+      if (f.assigned) {
+        const gone = new Set(f.assigned.missing);
+        hosted.push(...core.registry_pieces(bytes(f.assigned.key), f.assigned.size).filter((_, i) => !gone.has(i)));
+        continue;
+      }
+      const { sp, row } = f;
+      hosted.push(...(await files.pieces(sp, row).catch(e => (ctx.log("keeper", { what: `${row.id.slice(0, 8)}…: its pieces not listed (${e?.message ?? e})` }), []))));
+    }
     state.files = fs.length;
     state.pieces = hosted.length;
     return hosted;
@@ -68,7 +97,7 @@ export async function start(ctx) {
         if (r?.puts) {
           await putAll(r.puts);
           state.opened++;
-          ctx.log("keeper", { what: `epoch ${epoch}: holdings of ${state.files} file(s), ${self.hosted.length} piece(s) committed; ${state.listed} own file(s) listed in the registry` });
+          ctx.log("keeper", { what: `epoch ${epoch}: holdings of ${state.files} file(s) (${state.assigned ?? 0} assigned), ${self.hosted.length} piece(s) committed; ${state.listed} own file(s) listed in the registry` });
         }
         self.open = true;
         // FINDABLE: this keeper (its account and the credential naming its record's key) in the epoch's keepers registry.
