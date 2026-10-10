@@ -3,7 +3,7 @@
 //! something behind a cut carries. Never in the contract: it builds; the contract only verifies.
 
 use crate::{received_key, walk, Body, ChainParams, Definition, Entry, State, Why, MINTED, MINTER, RECEIVED};
-use freenet_prolly::{build::TreeBuilder, proof::prove, Cid};
+use freenet_prolly::{proof::prove, Cid};
 use std::collections::BTreeMap;
 
 /// The blocks of a cut's trees, by id.
@@ -34,19 +34,7 @@ pub type Rooted = (Cid, Vec<Cid>);
 /// A tree from (key, value bytes), WITH PARITY — every group of nodes coded, and the root's own group of one — its
 /// blocks (data, values, parity) added to `blocks`: a reader racing a block against its group never waits on a lost one.
 fn tree(items: impl IntoIterator<Item = (Vec<u8>, Vec<u8>)>, blocks: &mut Blocks, why: Why) -> Result<Rooted, Why> {
-    let mut b = TreeBuilder::new(|c, x: &[u8]| {
-        blocks.insert(c, x.to_vec());
-    });
-    for (k, v) in items {
-        b.push_bytes(&k, &v).map_err(|_| why)?;
-    }
-    let (root, parity) = b.finish_with_parity().map_err(|_| why)?;
-    blocks.extend(parity);
-    let root_bytes = blocks.get(&root).cloned().ok_or(why)?;
-    let rp = engine::repair::root_parity(&root_bytes).ok_or(why)?;
-    let ids = rp.iter().map(|(c, _)| *c).collect();
-    blocks.extend(rp);
-    Ok((root, ids))
+    engine::repair::build_tree(items, blocks).ok_or(why)
 }
 
 /// The two trees of `entries` — the WHOLE chain from seq 0, nothing pruned: the history and the received set, each

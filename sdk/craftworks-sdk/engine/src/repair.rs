@@ -122,6 +122,25 @@ pub fn root_group(root: Cid, parity_ids: &[Cid]) -> Group {
     Group { missing: root, missing_ix: 0, kind: kind::TREE_NODE, slots, k: 1, max_len: parity::MAX_MEMBER_NODE }
 }
 
+/// A WRITE-ONCE TREE from (key, value) pairs, WITH PARITY — every group of nodes coded, and the root's own group of one
+/// ([`root_parity`]) — its blocks (data, values, parity) added to `blocks`: its root and the root's parity ids. The ONE
+/// way a whole tree is built at once (a token cut's history and received set, an epoch's statement); a table's tree is
+/// the engine's own, written incrementally.
+pub fn build_tree(items: impl IntoIterator<Item = (Vec<u8>, Vec<u8>)>, blocks: &mut std::collections::BTreeMap<Cid, Vec<u8>>) -> Option<(Cid, Vec<Cid>)> {
+    let mut b = freenet_prolly::build::TreeBuilder::new(|c, x: &[u8]| {
+        blocks.insert(c, x.to_vec());
+    });
+    for (k, v) in items {
+        b.push_bytes(&k, &v).ok()?;
+    }
+    let (root, parity) = b.finish_with_parity().ok()?;
+    blocks.extend(parity);
+    let rp = root_parity(blocks.get(&root)?)?;
+    let ids = rp.iter().map(|(c, _)| *c).collect();
+    blocks.extend(rp);
+    Some((root, ids))
+}
+
 /// The root's parity blocks (sdk#335): its group of one, coded by the tree's
 /// own rule for a group of nodes (`kind ‖ bytes`, then `encode_group`), so a
 /// root is repairable by anyone the way every other node is. `None` only if
