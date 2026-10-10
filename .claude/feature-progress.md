@@ -1562,10 +1562,14 @@ old key's addresses.
                   table's tree: did → reputation, share), witnesses sign its ROOT, a claim cites its entry with a prolly
                   proof — no new contract, no new tree (owner 10-10: "we doesn't use our craftworks prolly tree and
                   block contract?").
-          [ ] DEDUP: the standing record's holdings use their OWN merkle tree (`standing/src/lib.rs` root/path, built
-              10-09) — a second tree beside freenet-prolly. Check whether prolly can prove "the k-th key" (counts in
-              nodes); if so move holdings onto it and delete the standing tree; if not, add positional proofs TO the
-              prolly tree (the shared one), never keep two.
+          [x] DEDUP — DONE 10-10: prolly CAN prove "the k-th key" (a presence proof + a count proof of what lies below:
+              node counts are committed) — but MEASURED 20–40× larger: per pick ~9 KB (100 ids), ~11 KB (1,000), ~20 KB
+              (25,000) against 224–480 B for a merkle path; an answer (16 picks) 141–305 KB vs ~4–8 KB, several an epoch
+              per node. Two jobs, not one: a prolly tree is for KEYED MAPS that change; a FIXED LIST sampled by POSITION
+              wants a path. So the positional proof MOVED into the SDK beside the tree — `freenet_prolly::list` (root,
+              path, verify; hash domains unchanged, so every holdings root is the same), the standing crate re-exports
+              it; one home, its test moved with it. standing/token/pool/allowance wasm rebuilt (their pins updated:
+              they link freenet-prolly — every token id moved again, free before release).
           [x] W  WALLET APP — LIVE fx/fy 10-10 (site v530): its own app `#/wallet` (👛, System; `wallet-app`), the
               account's table `tokens`. Core `wallet.rs` (view, send — the creator's genesis first —, receive: worked
               credits, `pending` = sends inside their margin) over `core/src/tokens.rs` (the steps every token action

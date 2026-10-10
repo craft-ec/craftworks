@@ -1,6 +1,7 @@
 //! Prolly tree: a sorted `key -> value` map whose shape and root hash are a pure
 //! function of its contents. See ARCHITECTURE.md §5. Built in phase 1.
 
+pub mod list;
 pub mod aggregate;
 pub mod apply;
 pub mod boundary;

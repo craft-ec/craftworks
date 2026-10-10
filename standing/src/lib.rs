@@ -196,71 +196,10 @@ pub fn sampled(out: &[u8; 32], peer: &str) -> bool {
     u64::from_le_bytes(h.finalize().as_bytes()[..8].try_into().unwrap()) % SAMPLE == 0
 }
 
-// ---- holdings: a merkle tree over sorted ids ----
+// ---- holdings: a FIXED LIST's positional proof — the SDK's one (`freenet_prolly::list`: a prolly tree is for keyed
+// maps; a fixed list sampled by position needs a ~32 B/level path, its prolly proof measured 20–40× larger) ----
 
-fn leaf(id: &[u8; 32]) -> [u8; 32] {
-    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-09 standing leaf");
-    h.update(id);
-    *h.finalize().as_bytes()
-}
-fn node(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
-    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-09 standing node");
-    h.update(a);
-    h.update(b);
-    *h.finalize().as_bytes()
-}
-fn level(xs: &[[u8; 32]]) -> Vec<[u8; 32]> {
-    xs.chunks(2).map(|c| if c.len() == 2 { node(&c[0], &c[1]) } else { c[0] }).collect()
-}
-
-/// The root over `ids` (sorted, distinct): what [`Holdings`] commits to.
-pub fn root(ids: &[[u8; 32]]) -> [u8; 32] {
-    let mut xs: Vec<[u8; 32]> = ids.iter().map(leaf).collect();
-    if xs.is_empty() {
-        return [0; 32];
-    }
-    while xs.len() > 1 {
-        xs = level(&xs);
-    }
-    xs[0]
-}
-
-/// The path proving `ids[i]` under [`root`]: the sibling at each level (none where a level's last node has none).
-pub fn path(ids: &[[u8; 32]], mut i: usize) -> Vec<Option<[u8; 32]>> {
-    let mut xs: Vec<[u8; 32]> = ids.iter().map(leaf).collect();
-    let mut out = Vec::new();
-    while xs.len() > 1 {
-        let j = i ^ 1;
-        out.push(xs.get(j).copied());
-        xs = level(&xs);
-        i /= 2;
-    }
-    out
-}
-
-/// `id` is entry `i` of `count` under `root`.
-pub fn verify(root_: &[u8; 32], count: u32, mut i: usize, id: &[u8; 32], path: &[Option<[u8; 32]>]) -> bool {
-    if i >= count as usize {
-        return false;
-    }
-    let mut x = leaf(id);
-    let mut n = count as usize;
-    for p in path {
-        if n <= 1 {
-            return false;
-        }
-        x = match (i % 2, p) {
-            (0, Some(s)) => node(&x, s),
-            (1, Some(s)) => node(s, &x),
-            // The last node of an odd level rises alone.
-            (0, None) if i == n - 1 => x,
-            _ => return false,
-        };
-        i /= 2;
-        n = n.div_ceil(2);
-    }
-    n == 1 && &x == root_
-}
+pub use freenet_prolly::list::{path, root, verify};
 
 /// A node's HOLDINGS in an epoch: the contracts in its arc, committed — `root` over their sorted ids, `count` of
 /// them, `bytes` their states' total — signed by its bound key.

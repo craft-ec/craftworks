@@ -60,22 +60,6 @@ fn a_place_is_what_enough_other_peers_say() {
 }
 
 #[test]
-fn every_entry_proves_under_its_root() {
-    for n in [1usize, 2, 3, 5, 8, 13] {
-        let ids: Vec<[u8; 32]> = (0..n as u32).map(id).collect();
-        let r = root(&ids);
-        for i in 0..n {
-            assert!(verify(&r, n as u32, i, &ids[i], &path(&ids, i)), "{n} entries, entry {i}");
-            assert!(!verify(&r, n as u32, i, &id(999), &path(&ids, i)), "another id");
-            if n > 1 {
-                assert!(!verify(&r, n as u32, (i + 1) % n, &ids[i], &path(&ids, i)), "another place");
-            }
-        }
-        assert!(!verify(&r, n as u32, n, &ids[0], &path(&ids, 0)), "past the count");
-    }
-}
-
-#[test]
 fn an_answer_holds_only_from_the_replicas_of_the_challenged_contracts() {
     let k = key(7);
     let kb = k.verifying_key().to_bytes();
