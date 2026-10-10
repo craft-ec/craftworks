@@ -2398,7 +2398,7 @@ mod js {
         }
         /// The reputation's STARTING ROOTS (DID texts).
         pub fn reputation_roots() -> js_sys::Array {
-            craftworks_reputation::ROOTS.iter().map(|d| JsValue::from(*d)).collect()
+            craftworks_reputation::ROOTS.iter().map(|d| JsValue::from(account::did(d))).collect()
         }
         /// A VOUCH's message to sign (`TokenSign`, the vouch domain): `from` vouches for (`on`) or withdraws from `to`, at
         /// beacon height `at`.
@@ -2448,7 +2448,7 @@ mod js {
                 self.0.got(&id).filter(|b| !b.is_empty()).and_then(|b| craftworks_idlog_contract::read(d, b))
             };
             let vs = R::item::standing(&items, now as u64, &log_of);
-            let roots: Vec<R::Did> = R::ROOTS.iter().filter_map(|t| account::did_bytes(t)).collect();
+            let roots = R::ROOTS.to_vec();
             let rep = R::reputation_at(&roots, &vs, now as u64);
             let c = R::counted(&vs);
             let t = R::tree(&roots, &c);
@@ -2478,18 +2478,12 @@ mod js {
             if !want.is_empty() {
                 return js_sys::JSON::parse(&json!({ "want": want }).to_string());
             }
-            let start = epoch * R::EPOCH;
-            let rep = {
-                let log_of = |d: &R::Did| {
-                    let id = account::idlog_put(idlog_code, d, None).id_bytes;
-                    self.0.got(&id).filter(|b| !b.is_empty()).and_then(|b| craftworks_idlog_contract::read(d, b))
-                };
-                let vs = R::item::standing(&items, start, &log_of);
-                let roots: Vec<R::Did> = R::ROOTS.iter().filter_map(|t| account::did_bytes(t)).collect();
-                R::reputation_at(&roots, &vs, start)
+            let log_of = |d: &R::Did| {
+                let id = account::idlog_put(idlog_code, d, None).id_bytes;
+                self.0.got(&id).filter(|b| !b.is_empty()).and_then(|b| craftworks_idlog_contract::read(d, b))
             };
-            let roots: Vec<R::Did> = R::ROOTS.iter().filter_map(|t| account::did_bytes(t)).collect();
-            let st = R::statement::compute(&R::statement::Inputs { epoch, rep: &rep, kept: &[], keeper_pot: 0, keeper_cap: 0, gate: R::GATE, allowance_pot: craftworks_allowance_contract::POT, allowance_cap: craftworks_allowance_contract::CAP, never: &roots });
+            let pots = R::statement::Pots { keeper: (0, 0), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP) };
+            let st = R::statement::build(epoch, &items, &log_of, &[], pots);
             let mut blocks = std::collections::BTreeMap::new();
             let (root, parity) = st.tree(&mut blocks).ok_or_else(|| err("the statement's tree does not build".into()))?;
             let puts = js_sys::Array::new();
@@ -2510,8 +2504,9 @@ mod js {
         /// `root` hex): `{ done: null }` (nothing escrowed to it) or `{ done: { puts: [{ id, frames }] } }` — the program's
         /// state (if this page decided it) and the treasury's release.
         #[allow(clippy::too_many_arguments)]
-        pub fn allowance_verdict(&mut self, token_code: &[u8], allowance_code: &[u8], beacon: &[u8], idlog_code: &[u8], token: &[u8], epoch: f64, root: &str, owed: js_sys::Array, now: f64) -> Result<JsValue, JsValue> {
+        pub fn allowance_verdict(&mut self, token_code: &[u8], allowance_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], token: &[u8], epoch: f64, root: &str, owed: js_sys::Array, now: f64) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
             let ach = *blake3::hash(allowance_code).as_bytes();
             let root = bytes32("root", root).map_err(err)?;
             let lines: Vec<([u8; 32], Vec<u8>)> = owed.iter().map(|x| {
@@ -2520,7 +2515,7 @@ mod js {
             }).collect::<Result<_, JsValue>>()?;
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-                allowance::verdict(&ctx, &got, &ach, &b32(token)?, epoch as u64, &root, &lines, now as u64)
+                allowance::verdict(&ctx, &lot, &got, &ach, &b32(token)?, epoch as u64, &root, &lines, now as u64)
             };
             let mut built = None;
             let v = token_step(step, |b| {
@@ -2542,12 +2537,13 @@ mod js {
         }
         /// `did`'s ALLOWANCE PAYOUT of `epoch` (`allowance::payout`): `{ done: null }` or `{ done: { amount, puts } }`.
         #[allow(clippy::too_many_arguments)]
-        pub fn allowance_payout(&mut self, token_code: &[u8], allowance_code: &[u8], beacon: &[u8], idlog_code: &[u8], token: &[u8], epoch: f64, did: &[u8], now: f64) -> Result<JsValue, JsValue> {
+        pub fn allowance_payout(&mut self, token_code: &[u8], allowance_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], token: &[u8], epoch: f64, did: &[u8], now: f64) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
             let ach = *blake3::hash(allowance_code).as_bytes();
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-                allowance::payout(&ctx, &got, &ach, &b32(token)?, epoch as u64, &b32(did)?, now as u64)
+                allowance::payout(&ctx, &lot, &got, &ach, &b32(token)?, epoch as u64, &b32(did)?, now as u64)
             };
             let mut puts = Vec::new();
             let mut amount = None;

@@ -145,12 +145,28 @@ pub struct Lot {
 /// (`witness::accepted`: drawn seats and, while the network is small, the baseline's)? `Done(Ok(n))`: n counted;
 /// `Done(Err(why))`: not (yet) — not witnessed enough, or its lot not drawn yet. What a wallet credits money on.
 pub fn accepted(lot: &Lot, got: Got, p: &ChainParams, d: &Definition, s: &State, seq: u64) -> Result<Step<Result<usize, String>>, String> {
-    use t::{claims, wallet, witness};
     let i = s.entries.iter().position(|e| e.seq == seq).ok_or("the entry not held")?;
     let e = &s.entries[i];
-    let (epoch, h) = wallet::lot_of(e, i.checked_sub(1).map(|j| &s.entries[j]), d.margin).map_err(String::from)?;
+    let (epoch, h) = t::wallet::lot_of(e, i.checked_sub(1).map(|j| &s.entries[j]), d.margin).map_err(String::from)?;
+    accepted_at(lot, got, p.code_hash, d.beacon, &p.id(), seq, &e.hash(), epoch, h)
+}
+
+/// Is the epoch statement of standing epoch `epoch` with ROOT `root` ACCEPTED — its committee (drawn at
+/// `statement::lot_height`) signed that root, at its `statement::witness_place`? What a payout by it rests on: a root
+/// anyone may post, value only once witnessed (TOKEN §7d).
+pub fn statement_accepted(lot: &Lot, got: Got, code_hash: [u8; 32], beacon: [u8; 32], epoch: u64, root: &[u8; 32]) -> Result<Step<Result<usize, String>>, String> {
+    use craftworks_reputation::statement::{lot_height, witness_place};
+    let h = lot_height(epoch);
+    accepted_at(lot, got, code_hash, beacon, &witness_place(epoch), 0, root, h / t::supply::EPOCH, h)
+}
+
+/// ACCEPTANCE at a PLACE (`place`, `seq`: a chain entry's, or a statement's) of `entry` (its hash, or a root), drawn
+/// from claims epoch `epoch` at beacon height `h`.
+#[allow(clippy::too_many_arguments)]
+fn accepted_at(lot: &Lot, got: Got, code_hash: [u8; 32], beacon_id: [u8; 32], place: &[u8; 32], seq: u64, entry: &[u8; 32], epoch: u64, h: u64) -> Result<Step<Result<usize, String>>, String> {
+    use t::{claims, wallet, witness};
     // Its lot's OUTPUT: in the beacon's state, else its outputs log.
-    let beacon = match there(got, &d.beacon) {
+    let beacon = match there(got, &beacon_id) {
         Err(w) => return Ok(Step::Want(vec![w])),
         Ok(b) => b.and_then(|b| craftworks_beacon_contract::wire::decode(&b)),
     };
@@ -159,7 +175,7 @@ pub fn accepted(lot: &Lot, got: Got, p: &ChainParams, d: &Definition, s: &State,
         if beacon.as_ref().is_none_or(|b| b.height() < h) {
             return Ok(Step::Done(Err("its lot is not drawn yet".into())));
         }
-        let log = t::id(&lot.beacon_code, &craftworks_beacon_contract::log::Params::of(d.beacon, h).encode());
+        let log = t::id(&lot.beacon_code, &craftworks_beacon_contract::log::Params::of(beacon_id, h).encode());
         match there(got, &log) {
             Err(w) => return Ok(Step::Want(vec![w])),
             Ok(b) => out = b.and_then(|b| craftworks_beacon_contract::log::Log::decode(&b)).and_then(|l| l.entries.iter().find(|x| x.0 == h).map(|x| x.1)),
@@ -167,8 +183,8 @@ pub fn accepted(lot: &Lot, got: Got, p: &ChainParams, d: &Definition, s: &State,
     }
     let Some(out) = out else { return Ok(Step::Done(Err("its lot's output is not recorded".into()))) };
     // The epoch's CLAIMS and the entry's SIGNATURES.
-    let registry = claims::Params { code_hash: p.code_hash, pool: lot.pool, beacon: d.beacon, epoch }.id();
-    let bag_addr = wallet::witness_bag(&p.id(), seq);
+    let registry = claims::Params { code_hash, pool: lot.pool, beacon: beacon_id, epoch }.id();
+    let bag_addr = wallet::witness_bag(place, seq);
     let bag_id = t::id(&lot.bag, &bag_addr);
     let mut want = Vec::new();
     let mut read = |x: [u8; 32]| match there(got, &x) {
@@ -194,7 +210,7 @@ pub fn accepted(lot: &Lot, got: Got, p: &ChainParams, d: &Definition, s: &State,
     let mut stakes: Vec<([u8; 32], Option<witness::Stake>)> = Vec::new();
     if let Some(pd) = &pool_def {
         for c in claims.iter().filter(|c| sigs.iter().any(|s| s.signed_by(&c.key))) {
-            let cp = ChainParams { code_hash: p.code_hash, definition: lot.pool, owner: c.owner, beacon: pd.beacon, idlog: pd.idlog, item: [0; 32] };
+            let cp = ChainParams { code_hash, definition: lot.pool, owner: c.owner, beacon: pd.beacon, idlog: pd.idlog, item: [0; 32] };
             match there(got, &cp.id()) {
                 Err(w) => want.push(w),
                 Ok(b) => stakes.push((c.owner, b.and_then(|b| State::decode(&b)).and_then(|st| wallet::stake_at(&cp, pd, &st, at).ok()))),
@@ -205,7 +221,7 @@ pub fn accepted(lot: &Lot, got: Got, p: &ChainParams, d: &Definition, s: &State,
         return Ok(Step::Want(want));
     }
     let stake_of = |o: &[u8; 32]| stakes.iter().find(|x| x.0 == *o).and_then(|x| x.1.clone());
-    Ok(Step::Done(witness::accepted(&lot.pool, &p.id(), seq, &e.hash(), &out, epoch, &claims, &sigs, wallet::COMMITTEE, &stake_of).map_err(String::from)))
+    Ok(Step::Done(witness::accepted(&lot.pool, place, seq, entry, &out, epoch, &claims, &sigs, wallet::COMMITTEE, &stake_of).map_err(String::from)))
 }
 
 /// A REAL LOT for tests (TOKEN §7a): six stakers (so the baseline has no seat — no private key needed), each a DID whose
@@ -324,6 +340,26 @@ pub(crate) mod testlot {
         let items: Vec<Vec<u8>> = members.iter().take(n).map(|m| {
             let key = tl.keys.iter().find(|k| k.verifying_key().to_bytes() == reg.claims[*m].key).unwrap();
             let sig = witness::WitnessSig { chain: p.id(), seq, entry: e.hash(), sig: key.sign(&witness::WitnessSig::message(&p.id(), seq, &e.hash())).to_bytes() };
+            craftworks_bag_contract::grind(&addr, &wallet::bytes::witness_sig(&sig))
+        }).collect();
+        got.insert(t::id(&tl.lot.bag, &addr), craftworks_bag_contract::encode(&addr, &items));
+    }
+
+    /// The epoch STATEMENT `root` signed by the first `n` members of its committee (at its witness place).
+    pub fn witness_statement(tl: &TestLot, got: &mut HashMap<[u8; 32], Vec<u8>>, code_hash: [u8; 32], beacon: [u8; 32], epoch: u64, root: &[u8; 32], n: usize) {
+        use craftworks_reputation::statement::{lot_height, witness_place};
+        let h = lot_height(epoch);
+        let ce = h / t::supply::EPOCH;
+        let out = *blake3::hash(&h.to_le_bytes()).as_bytes();
+        let place = witness_place(epoch);
+        let reg = t::claims::Registry::decode(&got[&t::claims::Params { code_hash, pool: tl.lot.pool, beacon, epoch: ce }.id()]).unwrap();
+        let valid = t::draw::valid(&tl.lot.pool, ce, &reg.claims);
+        let (k, _, _) = witness::seats(valid.len(), wallet::COMMITTEE);
+        let members = t::draw::committee_of(&out, &place, 0, &valid, k);
+        let addr = wallet::witness_bag(&place, 0);
+        let items: Vec<Vec<u8>> = members.iter().take(n).map(|m| {
+            let key = tl.keys.iter().find(|k| k.verifying_key().to_bytes() == reg.claims[*m].key).unwrap();
+            let sig = witness::WitnessSig { chain: place, seq: 0, entry: *root, sig: key.sign(&witness::WitnessSig::message(&place, 0, root)).to_bytes() };
             craftworks_bag_contract::grind(&addr, &wallet::bytes::witness_sig(&sig))
         }).collect();
         got.insert(t::id(&tl.lot.bag, &addr), craftworks_bag_contract::encode(&addr, &items));

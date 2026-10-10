@@ -182,7 +182,7 @@ export async function start(ctx) {
       const from = Number(priv.rows().find(r => r.key === "allowed")?.value ?? Math.max(0, current - 8));
       for (let e = from; e <= current; e++) {
         try {
-          const r = await run(() => core.allowance_payout(code, allowance.code, beacon, idlogCode, allowance.token, e, me.didBytes, at));
+          const r = await run(() => core.allowance_payout(code, allowance.code, beacon, idlogCode, lot.pool, lot.bag, lot.beacon, allowance.token, e, me.didBytes, at));
           if (r?.puts?.length) {
             await putAll(r.puts);
             got++;
@@ -283,5 +283,5 @@ export async function start(ctx) {
   }
   const purse = { seeds, found, history, status, ensureCard, receiveAll, privately, pay, shield, payee, owners: () => found().map(f => bytes(f.to)), onChange: fn => priv.onChange(fn) };
 
-  return { on: true, purse, allowance, beacon, pay: cfg.pay ? bytes(cfg.pay) : null, code, idlogCode, read, putAll, run, now, device, bytes, hexOf };
+  return { on: true, purse, allowance, lot, beacon, pay: cfg.pay ? bytes(cfg.pay) : null, code, idlogCode, read, putAll, run, now, device, bytes, hexOf };
 }

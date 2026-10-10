@@ -122,6 +122,36 @@ impl Posted {
     }
 }
 
+/// The pots an epoch's statement splits: (keeper issuance pot, cap), (allowance pot, cap) — each token's own rule
+/// (the allowance's: `craftworks_allowance_contract::{POT, CAP}`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Pots {
+    pub keeper: (u128, u128),
+    pub allowance: (u128, u128),
+}
+
+/// THE STATEMENT of standing epoch `epoch` — the ONE computation (pages publish it, witnesses recompute it): reputation
+/// as of the epoch's START from the signed vouch items standing then (each verified by its voucher's key log,
+/// `log_of`), from the [`crate::ROOTS`], split by `pots` (`kept`: the accounts that proved keeping).
+pub fn build(epoch: u64, items: &[crate::item::Item], log_of: &dyn Fn(&Did) -> Option<craftworks_idlog_contract::Log>, kept: &[Did], pots: Pots) -> Statement {
+    let start = epoch * crate::EPOCH;
+    let vs = crate::item::standing(items, start, log_of);
+    let rep = crate::reputation_at(crate::ROOTS, &vs, start);
+    compute(&Inputs { epoch, rep: &rep, kept, keeper_pot: pots.keeper.0, keeper_cap: pots.keeper.1, gate: crate::GATE, allowance_pot: pots.allowance.0, allowance_cap: pots.allowance.1, never: crate::ROOTS })
+}
+
+/// Where an epoch's statement is WITNESSED (TOKEN §7a, as an entry is): its witness bag is the token's
+/// `witness_bag(place, 0)`, a signature names its ROOT as the entry; its lot is drawn at [`lot_height`].
+pub fn witness_place(epoch: u64) -> [u8; 32] {
+    blake3::derive_key("craftworks 2026-10-10 statement witness place", &epoch.to_le_bytes())
+}
+
+/// The beacon height an epoch's statement's committee is drawn at: just past when it is due (two steps into the
+/// epoch) — its output exists only after the epoch's vouches are fixed.
+pub fn lot_height(epoch: u64) -> u64 {
+    epoch * crate::EPOCH + 4
+}
+
 impl Statement {
     /// Its TREE (DID → line) — blocks added to `blocks`: its root (what witnesses sign) and the root's parity ids.
     pub fn tree(&self, blocks: &mut BTreeMap<Cid, Vec<u8>>) -> Option<(Cid, Vec<Cid>)> {

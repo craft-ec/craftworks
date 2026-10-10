@@ -21,7 +21,10 @@ pub type Did = [u8; 32];
 /// else"): WREN — the account Claude keeps, its recovery words also held offline by the owner (to rotate it back). The
 /// root vouches by its published policy (docs/REPUTATION.md §6), never earns or witnesses; every other account starts
 /// the same, relationships build the rest.
-pub const ROOTS: &[&str] = &["did:craftec:BZ6QnLTT3pnaWtUvfWr9bjtc8nCeRnC2Q7q44XMNUt5h"];
+/// (As bytes — the one form every computer uses; the text is `did:craftec:BZ6QnLTT3pnaWtUvfWr9bjtc8nCeRnC2Q7q44XMNUt5h`.)
+pub const ROOTS: &[Did] = &[[
+    0x9c, 0xcd, 0x92, 0x81, 0xc3, 0x09, 0x05, 0x6b, 0x75, 0x8e, 0x67, 0x56, 0xbc, 0x76, 0x78, 0x81, 0x76, 0x07, 0x86, 0x2f, 0x59, 0xa4, 0x3e, 0x5b, 0x3c, 0x56, 0x10, 0x3e, 0x4c, 0xf2, 0x42, 0x44,
+]];
 
 /// One vouch: `from` for `to`, at beacon height `at`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

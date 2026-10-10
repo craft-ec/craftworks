@@ -117,6 +117,43 @@ impl<'a> Reader<'a> {
         out
     }
 
+    /// The EPOCH STATEMENT of standing epoch `epoch` as this reader computes it (the one build: every vouch registry up
+    /// to it, each item verified by its voucher's key log): its root.
+    pub fn statement_root(&self, epoch: u64) -> Option<[u8; 32]> {
+        use craftworks_reputation as R;
+        let items: Vec<R::item::Item> = (0..=epoch).flat_map(|e| self.bag(R::item::registry_address(e))).filter_map(|b| R::item::Item::decode(&b)).collect();
+        let log_of = |d: &R::Did| self.keys(d);
+        let pots = R::statement::Pots { keeper: (0, 0), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP) };
+        let st = R::statement::build(epoch, &items, &log_of, &[], pots);
+        st.tree(&mut std::collections::BTreeMap::new()).map(|(root, _)| root)
+    }
+
+    /// WITNESS the epoch statement of `epoch` with `key`: `Ok(Some(root))` signed — the root POSTED in its bag that this
+    /// reader computes too —, `Ok(None)` not seated (or its lot not drawn, or that root not posted yet), `Err(why)`.
+    pub fn witness_statement(&self, epoch: u64, key: &SigningKey) -> Result<Option<[u8; 32]>, String> {
+        use craftworks_reputation::statement::{bag_address, lot_height, witness_place, Posted};
+        let me = key.verifying_key().to_bytes();
+        let h = lot_height(epoch);
+        let Some(out) = self.out_at(h) else { return Ok(None) };
+        let ce = h / T::supply::EPOCH;
+        let claims = self.claims(ce);
+        let valid = T::draw::valid(&self.net.pool, ce, &claims);
+        let (k, base, _) = witness::seats(valid.len(), wallet::COMMITTEE);
+        let place = witness_place(epoch);
+        let members = T::draw::committee_of(&out, &place, 0, &valid, k);
+        if !(members.iter().any(|m| claims[*m].key == me) || (base && me == witness::BASELINE)) {
+            return Ok(None);
+        }
+        let posted: Vec<[u8; 32]> = self.bag(bag_address(epoch)).iter().filter_map(|b| Posted::decode(b)).filter(|p| p.epoch == epoch).map(|p| p.root).collect();
+        let mine = self.statement_root(epoch).ok_or("the statement's tree does not build")?;
+        if !posted.contains(&mine) {
+            return if posted.is_empty() { Ok(None) } else { Err(format!("posted root(s) {} — not the one computed here ({})", posted.iter().map(|r| hex6(r)).collect::<Vec<_>>().join(", "), hex6(&mine))) };
+        }
+        let sig = witness::WitnessSig { chain: place, seq: 0, entry: mine, sig: key.sign(&witness::WitnessSig::message(&place, 0, &mine)).to_bytes() };
+        self.drop(wallet::witness_bag(&place, 0), &wallet::bytes::witness_sig(&sig)).map_err(|e| e.to_string())?;
+        Ok(Some(mine))
+    }
+
     /// WITNESS one queued entry with `key`: `Ok(Some(sig))` signed (and dropped into its witness bag), `Ok(None)` not
     /// seated in its committee (or its lot not drawn yet), `Err(why)` refused by the rule.
     pub fn witness(&self, q: &Queued, key: &SigningKey) -> Result<Option<witness::WitnessSig>, String> {
@@ -154,6 +191,10 @@ impl<'a> Reader<'a> {
         self.drop(wallet::witness_bag(&p.id(), q.seq), &wallet::bytes::witness_sig(&sig)).map_err(|e| e.to_string())?;
         Ok(Some(sig))
     }
+}
+
+fn hex6(b: &[u8; 32]) -> String {
+    b[..6].iter().map(|x| format!("{x:02x}")).collect()
 }
 
 fn blake3_hash(b: &[u8]) -> [u8; 32] {

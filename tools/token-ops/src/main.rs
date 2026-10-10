@@ -207,8 +207,28 @@ async fn main() -> Result<()> {
                 let r = token_net::Reader::new(&net)?;
                 let mut signed: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
                 let mut said: std::collections::HashMap<Vec<u8>, String> = std::collections::HashMap::new();
+                let mut statements: std::collections::HashSet<u64> = std::collections::HashSet::new();
                 loop {
-                    let epoch = r.height() / T::supply::EPOCH;
+                    // The epoch STATEMENT (TOKEN §7d): the posted root this witness computes too, signed once.
+                    let h = r.height();
+                    let se = h.saturating_sub(2) / craftworks_reputation::EPOCH;
+                    if !statements.contains(&se) {
+                        match r.witness_statement(se, &key) {
+                            Ok(Some(root)) => {
+                                println!("signed  the statement of epoch {se}: root {}", hex(&root[..6]));
+                                statements.insert(se);
+                            }
+                            Ok(None) => {}
+                            Err(why) => {
+                                let k = format!("statement {se}").into_bytes();
+                                if said.get(&k) != Some(&why) {
+                                    println!("refused the statement of epoch {se}: {why}");
+                                    said.insert(k, why);
+                                }
+                            }
+                        }
+                    }
+                    let epoch = h / T::supply::EPOCH;
                     for e in epoch.saturating_sub(1)..=epoch {
                         for q in r.queue(e) {
                             let k = q.encode();

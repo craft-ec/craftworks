@@ -1547,7 +1547,18 @@ old key's addresses.
                   tree's blocks through the BLOCKS door (`Core::public_block_put`, sharing `block_put` with tables) and
                   posts the root (`statement::Posted`) in the epoch's statement bag. Measured: `token-ops statement`
                   epoch 0 → root c108264c…, 8 parity, 1 posted — by an open page, unprompted.
-              [ ] V1b-3c decay (activity), witnesses signing the posted root (the lot). Was: decay, the statement — THE STATEMENT IS A PUBLIC PROLLY TREE in Block contracts (as a public
+              [x] V1b-3c(i) WITNESSES SIGN THE STATEMENT ROOT — LIVE fx 10-10 (v544): `reputation::statement::build`
+                  is the ONE statement computation (it was inline in the page core's binding: a witness tool would
+                  have needed a second copy); `ROOTS` are bytes (the DID text in a comment; the core turns them to text
+                  for the page). Each epoch's statement is witnessed at `witness_place(epoch)` (seq 0, the root as
+                  the entry), drawn at `lot_height` (two steps past due); `tokens::statement_accepted` (the core's
+                  acceptance, generalised: `accepted_at` a place); the allowance's VERDICT is built, and a PAYOUT
+                  collected, only under an ACCEPTED root. `token-net` `witness_statement` recomputes the statement
+                  (registries + key logs) and signs the posted root only if it is the one it computes;
+                  `token-ops witness` does it each tick. Tests: no verdict before the root is signed, 3 of 6 short, 4
+                  builds it; an unfunded epoch none. Measured: Wren's witness signed epoch 1's statement (root
+                  c108264c…).
+              [ ] V1b-3c(ii) decay (activity). Was: decay, the statement — THE STATEMENT IS A PUBLIC PROLLY TREE in Block contracts (as a public
                   table's tree: did → reputation, share), witnesses sign its ROOT, a claim cites its entry with a prolly
                   proof — no new contract, no new tree (owner 10-10: "we doesn't use our craftworks prolly tree and
                   block contract?").

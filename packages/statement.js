@@ -52,7 +52,7 @@ export async function start(ctx) {
     if (!tokens.on || !tokens.allowance || decided.has(epoch)) return;
     const r = await build(epoch);
     const { allowance, run, putAll } = tokens;
-    const v = await run(() => core.allowance_verdict(tokens.code, allowance.code, tokens.beacon, idlogCode, allowance.token, epoch, r.root, r.owed, h));
+    const v = await run(() => core.allowance_verdict(tokens.code, allowance.code, tokens.beacon, idlogCode, tokens.lot.pool, tokens.lot.bag, tokens.lot.beacon, allowance.token, epoch, r.root, r.owed, h));
     if (!v) return; // nothing escrowed to it (yet)
     await putAll(v.puts);
     decided.add(epoch);

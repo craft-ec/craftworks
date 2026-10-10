@@ -55,7 +55,9 @@ fn definition(got: Got, token: &[u8; 32]) -> Result<Result<Definition, [u8; 32]>
 /// RELEASE under it. `None` when nothing is escrowed to it. A program decided already is not built again (its release
 /// still is).
 #[allow(clippy::too_many_arguments)]
-pub fn verdict(ctx: &Ctx, got: Got, code_hash: &[u8; 32], token: &[u8; 32], epoch: u64, root: &[u8; 32], lines: &[([u8; 32], Vec<u8>)], now: u64) -> Result<Step<Option<Built>>, String> {
+/// Built only under a statement root its witnesses ACCEPTED (`tokens::statement_accepted`: anyone may post a root).
+#[allow(clippy::too_many_arguments)]
+pub fn verdict(ctx: &Ctx, lot: &crate::tokens::Lot, got: Got, code_hash: &[u8; 32], token: &[u8; 32], epoch: u64, root: &[u8; 32], lines: &[([u8; 32], Vec<u8>)], now: u64) -> Result<Step<Option<Built>>, String> {
     let d = match definition(got, token)? {
         Err(w) => return Ok(Step::Want(vec![w])),
         Ok(d) => d,
@@ -75,6 +77,12 @@ pub fn verdict(ctx: &Ctx, got: Got, code_hash: &[u8; 32], token: &[u8; 32], epoc
     let (state, made) = if prog.decided() {
         (prog, false)
     } else {
+        match crate::tokens::statement_accepted(lot, got, ctx.code_hash, d.beacon, epoch, root)? {
+            Step::Want(w) => return Ok(Step::Want(w)),
+            Step::Sign(m) => return Ok(Step::Sign(m)),
+            Step::Done(Err(_)) => return Ok(Step::Done(None)),
+            Step::Done(Ok(_)) => {}
+        }
         let tok = t::Tok { definition: *token, item: [0; 32] };
         let escrows: Vec<(t::escrow::EscrowRef, u128)> = ts.entries.iter().filter_map(|e| match &e.body {
             Body::Escrow { program, amount, terms, .. } if *program == pid && terms == A::TERMS => Some(((tok, d.genesis_owner, e.nonce), *amount)),
@@ -99,7 +107,9 @@ pub fn verdict(ctx: &Ctx, got: Got, code_hash: &[u8; 32], token: &[u8; 32], epoc
 
 /// `did`'s PAYOUT from `epoch`'s program, into its DID chain of the token (worked): the chain to put and the amount
 /// (`None`: nothing owed it, not decided yet, or taken already).
-pub fn payout(ctx: &Ctx, got: Got, code_hash: &[u8; 32], token: &[u8; 32], epoch: u64, did: &[u8; 32], now: u64) -> Result<Step<Option<(Put, u128)>>, String> {
+/// Only under a program whose statement root was ACCEPTED.
+#[allow(clippy::too_many_arguments)]
+pub fn payout(ctx: &Ctx, lot: &crate::tokens::Lot, got: Got, code_hash: &[u8; 32], token: &[u8; 32], epoch: u64, did: &[u8; 32], now: u64) -> Result<Step<Option<(Put, u128)>>, String> {
     let d = match definition(got, token)? {
         Err(w) => return Ok(Step::Want(vec![w])),
         Ok(d) => d,
@@ -112,6 +122,12 @@ pub fn payout(ctx: &Ctx, got: Got, code_hash: &[u8; 32], token: &[u8; 32], epoch
     };
     if !prog.section.pays.iter().any(|p| p.2 == *did) {
         return Ok(Step::Done(None));
+    }
+    match crate::tokens::statement_accepted(lot, got, ctx.code_hash, d.beacon, epoch, &prog.root)? {
+        Step::Want(w) => return Ok(Step::Want(w)),
+        Step::Sign(m) => return Ok(Step::Sign(m)),
+        Step::Done(Err(_)) => return Ok(Step::Done(None)),
+        Step::Done(Ok(_)) => {}
     }
     let cp = chain(ctx, &d, token, did, [0; 32]);
     let mut want = Vec::new();
@@ -151,7 +167,7 @@ mod tests {
         let d = Definition { code_hash: ctx.code_hash, decimals: t::DECIMALS, min_send: 1, genesis_owner: wren, genesis_amount: 1_000 * t::UNIT, name: b"WREN".to_vec(), nonce: [0; 16], beacon: ctx.beacon, margin: 2, idlog: ctx.idlog, mint: None, freeze: None, ids: t::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None, keepers: None };
         let tok = t::id(&ctx.code_hash, &d.encode());
         let tp = chain(&ctx, &d, &tok, &wren, [0; 32]);
-        let (_, pid) = program(&CODE, &tok, 3);
+        let (_, pid) = program(&CODE, &tok, 5);
         // The treasury: its genesis, then the epoch's pot escrowed to the program (signed by the device: the run loop).
         let sign = |dev: &mut crate::tokens::Device, f: &dyn Fn(&Asking) -> Result<Vec<t::Entry>, &'static str>| -> Vec<t::Entry> {
             for _ in 0..6 {
@@ -178,8 +194,14 @@ mod tests {
         for (k, v) in [(tok, d.encode()), (tp.id(), h.state.encode()), (tp.keys_id(), log.encode()), (pid, vec![])] {
             got.insert(k, v);
         }
-        let g = got.clone();
-        let Ok(Step::Done(Some(b))) = verdict(&ctx, &|x| g.get(x).cloned(), &CODE, &tok, 3, &root, &proofs, 10) else { panic!("a verdict") };
+        // THE STATEMENT's root not witnessed: no verdict; signed by its committee (the test's six stakers): built.
+        let tl = crate::tokens::testlot::stakers(&ctx, &mut got);
+        let v = |got: &HashMap<[u8; 32], Vec<u8>>, epoch: u64| crate::tokens::testlot::done(&|g| verdict(&ctx, &tl.lot, g, &CODE, &tok, epoch, &root, &proofs, 10), got);
+        assert_eq!(v(&got, 5), Ok(None), "a root its witnesses have not signed pays nothing");
+        crate::tokens::testlot::witness_statement(&tl, &mut got, ctx.code_hash, ctx.beacon, 5, &root, 3);
+        assert_eq!(v(&got, 5), Ok(None), "three of six: short");
+        crate::tokens::testlot::witness_statement(&tl, &mut got, ctx.code_hash, ctx.beacon, 5, &root, 4);
+        let Ok(Some(b)) = v(&got, 5) else { panic!("a verdict") };
         let (params, st) = b.program.clone().expect("the program's state");
         let ps = A::State::decode(&st).unwrap();
         assert_eq!(A::check(&A::Params::decode(&params).unwrap(), &ps), Ok(()));
@@ -194,23 +216,20 @@ mod tests {
         let p1 = chain(&ctx, &d, &tok, &u1, [0; 32]);
         got.insert(p1.id(), vec![]);
         got.insert(p1.keys_id(), vec![]);
-        let g = got.clone();
-        let Ok(Step::Done(Some((put, amount)))) = payout(&ctx, &|x| g.get(x).cloned(), &CODE, &tok, 3, &u1, 10) else { panic!("a payout") };
+        let pay = |got: &HashMap<[u8; 32], Vec<u8>>, who: &[u8; 32], now: u64| crate::tokens::testlot::done(&|g| payout(&ctx, &tl.lot, g, &CODE, &tok, 5, who, now), got);
+        let Ok(Some((put, amount))) = pay(&got, &u1, 10) else { panic!("a payout") };
         assert_eq!(amount, A::CAP);
         let c1 = State::decode(&put.state).unwrap();
         assert_eq!(t::check(&p1, &d, &c1, &|_, _| None, &|_| None, None, &x), Ok(()));
         got.insert(p1.id(), put.state);
-        let g = got.clone();
-        assert_eq!(payout(&ctx, &|x| g.get(x).cloned(), &CODE, &tok, 3, &u1, 11), Ok(Step::Done(None)));
+        assert_eq!(pay(&got, &u1, 11), Ok(None));
         // Nobody else is paid; a decided program is not built again (its release is: nothing left to release here).
-        assert_eq!(payout(&ctx, &|x| g.get(x).cloned(), &CODE, &tok, 3, &[23; 32], 11), Ok(Step::Done(None)));
+        assert_eq!(pay(&got, &[23; 32], 11), Ok(None));
         let mut g2 = got.clone();
         g2.insert(tp.id(), rel.encode());
-        let Ok(Step::Done(Some(again))) = verdict(&ctx, &|x| g2.get(x).cloned(), &CODE, &tok, 3, &root, &proofs, 12) else { panic!("decided") };
-        assert_eq!(again, Built { program: None, release: None });
-        // An epoch nothing was escrowed to: no verdict.
-        let (_, pid4) = program(&CODE, &tok, 4);
-        g2.insert(pid4, vec![]);
-        assert_eq!(verdict(&ctx, &|x| g2.get(x).cloned(), &CODE, &tok, 4, &root, &proofs, 12), Ok(Step::Done(None)));
+        assert_eq!(v(&g2, 5), Ok(Some(Built { program: None, release: None })));
+        // An epoch nothing was escrowed to (its root witnessed): no verdict.
+        crate::tokens::testlot::witness_statement(&tl, &mut g2, ctx.code_hash, ctx.beacon, 6, &root, 6);
+        assert_eq!(v(&g2, 6), Ok(None));
     }
 }
