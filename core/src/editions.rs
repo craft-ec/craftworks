@@ -124,6 +124,21 @@ fn device_of(dev: &Device) -> Asking {
     Asking::new(dev.public, dev.credential.clone(), dev.key_seq, dev.sigs.clone())
 }
 
+/// This node's DEVICE from the account's credentials as the page holds them (its group's): the one for this node key,
+/// its key seq the key log's event whose key signed it (what the token checks a writer by).
+pub fn device(public: [u8; 32], creds: &[Vec<u8>], keys: &craftworks_idlog_contract::Log, sigs: Vec<(Vec<u8>, [u8; 64])>) -> Result<Device, &'static str> {
+    for c in creds {
+        let Some((_, owner, node, _)) = craftworks_identity::read_credential(c) else { continue };
+        if node != public {
+            continue;
+        }
+        if let Some(seq) = keys.events.iter().position(|e| e.key == owner) {
+            return Ok(Device { public, credential: c.clone(), key_seq: seq as u32, sigs });
+        }
+    }
+    Err("no credential of this node on the account's key log")
+}
+
 /// BUY `amount` copies of the edition `id` for `buyer` (its DID) at beacon height `now`: the payment from the buyer's
 /// chain of the sale's token, and the paid mint added to the edition's open record.
 pub fn buy(ctx: &Ctx, got: Got, id: &[u8; 32], buyer: &[u8; 32], amount: u128, now: u64, dev: &Device) -> Result<Step<Bought>, String> {
@@ -229,6 +244,39 @@ pub fn item_id(item_ref: &str) -> [u8; 32] {
     *blake3::Hasher::new_derive_key("craftworks token item 2026-10-10").update(item_ref.as_bytes()).finalize().as_bytes()
 }
 
+/// A NEW EDITION's definition: of the item `item_ref`, by `author`, sold on demand at `price` of `pay_token` a copy to
+/// the author (no mint authority: copies are minted by payment alone), `cap` copies (0: none, numbered only), a royalty
+/// of `royalty_bps` to the author (0: none). Refused as the token refuses it (its definition must decode back).
+#[allow(clippy::too_many_arguments)]
+pub fn new_edition(ctx: &Ctx, item_ref: &str, author: &[u8; 32], name: &str, cap: u128, numbered: bool, pay_token: &[u8; 32], price: u128, royalty_bps: u16, nonce: [u8; 16]) -> Result<Definition, &'static str> {
+    let d = Definition {
+        code_hash: ctx.code_hash,
+        decimals: 0,
+        min_send: 1,
+        genesis_owner: *author,
+        genesis_amount: 0,
+        name: name.as_bytes().to_vec(),
+        nonce,
+        beacon: ctx.beacon,
+        margin: 2,
+        idlog: ctx.idlog,
+        mint: None,
+        freeze: None,
+        ids: if numbered { t::Ids::Numbered } else { t::Ids::None },
+        royalty: (royalty_bps > 0).then_some((royalty_bps, *author)),
+        cap,
+        item: item_id(item_ref),
+        version: [0; 32],
+        soulbound: false,
+        transfer_fee: None,
+        sale: Some((t::Tok { definition: *pay_token, item: [0; 32] }, price, *author)),
+    };
+    if Definition::decode(&d.encode()).as_ref() != Some(&d) {
+        return Err("not an edition the token takes (a price, and a cap or numbered copies)");
+    }
+    Ok(d)
+}
+
 /// Is `e` an edition the item `item_ref` (by `author`, its DID) SHOWS: of this item, made by its author (TOKEN §1c: the
 /// page checks what a contract cannot cheaply — an edition of the item by anyone else is not shown). The item lists its
 /// editions in its own metadata (`meta.editions`), which only its author writes.
@@ -291,7 +339,10 @@ mod tests {
         let lg = log();
         let did = lg.events[0].id();
         let node = SigningKey::from_bytes(&NODE_SEED).verifying_key().to_bytes();
-        let mut dev = Device { public: node, credential: craftworks_identity::credential(&did, &node, &[], &OWNER_SEED), key_seq: 0, sigs: vec![] };
+        let other = craftworks_identity::credential(&did, &[44; 32], &[], &OWNER_SEED);
+        let mut dev = device(node, &[other, craftworks_identity::credential(&did, &node, &[7; 32], &OWNER_SEED)], &lg, vec![]).unwrap();
+        assert_eq!(dev.key_seq, 0);
+        assert_eq!(device([45; 32], &[dev.credential.clone()], &lg, vec![]).err(), Some("no credential of this node on the account's key log"));
         let base = Definition { code_hash: ctx.code_hash, decimals: 0, min_send: 1, genesis_owner: did, genesis_amount: 1000, name: b"P".to_vec(), nonce: [0; 16], beacon: ctx.beacon, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: t::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None };
         let pid = t::id(&ctx.code_hash, &base.encode());
         let sd = Definition { ids: t::Ids::Numbered, cap: 10, genesis_amount: 0, name: b"S".to_vec(), sale: Some((t::Tok { definition: pid, item: [0; 32] }, 10, [9; 32])), ..base.clone() };
@@ -348,6 +399,11 @@ mod tests {
         let g = got.clone();
         let other = run(&mut dev, &mut |d| collect_copy(&ctx, &|id| g.get(id).cloned(), &sid, &did, 2, 6, d));
         assert_eq!(other, Ok(None));
+        // A new edition: as the token takes it — a price, and a cap or numbered copies.
+        let ne = new_edition(&ctx, "did/t1", &did, "Gold", 10, true, &pid, 10, 1000, [5; 16]).unwrap();
+        assert_eq!((ne.item, ne.sale.map(|s| s.2), ne.royalty, ne.mint.is_none()), (item_id("did/t1"), Some(did), Some((1000, did)), true));
+        assert_eq!(new_edition(&ctx, "did/t1", &did, "x", 0, false, &pid, 10, 0, [5; 16]).err(), Some("not an edition the token takes (a price, and a cap or numbered copies)"));
+        assert_eq!(new_edition(&ctx, "did/t1", &did, "x", 5, false, &pid, 0, 0, [5; 16]).err(), Some("not an edition the token takes (a price, and a cap or numbered copies)"));
         // Shown on the item it names, by its author only.
         let mut e = e;
         e.definition.item = item_id("did/t1");
