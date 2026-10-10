@@ -32,7 +32,12 @@ fn params(k: &Keep, peer: &str) -> Params {
     Params { beacon_code: k.beacon_code, beacon: k.beacon, peer: peer.into() }
 }
 
-/// The node's record as read (empty when not there).
+/// The STANDING RECORD's contract id of the keeper whose key is `key` (its name: `craftworks_standing::keeper_peer`).
+pub fn record_id(k: &Keep, key: &[u8; 32]) -> [u8; 32] {
+    Params::keeper(k.beacon_code, k.beacon, key).id(&k.standing)
+}
+
+/// The keeper's record as read (empty when not there).
 fn record_of(k: &Keep, got: Got, peer: &str) -> Result<Result<record::State, [u8; 32]>, String> {
     let id = t::id(&k.standing, &params(k, peer).encode());
     Ok(match there(got, &id) {
@@ -53,7 +58,8 @@ fn put(k: &Keep, peer: &str, held: &record::State, e: record::Epoch) -> Put {
 
 /// OPEN standing epoch `epoch` in the node's record: its binding and its holdings (`hosted`: what its node hosts, id and
 /// size), both signed by `public` (the member key; `sigs`: the delegate's answers so far). `None`: already open.
-pub fn open_epoch(k: &Keep, got: Got, public: &[u8; 32], peer: &str, epoch: u64, hosted: &[([u8; 32], u64)], sigs: &[(Vec<u8>, [u8; 64])]) -> Result<Step<Option<Put>>, String> {
+pub fn open_epoch(k: &Keep, got: Got, public: &[u8; 32], epoch: u64, hosted: &[([u8; 32], u64)], sigs: &[(Vec<u8>, [u8; 64])]) -> Result<Step<Option<Put>>, String> {
+    let peer = &craftworks_standing::keeper_peer(public);
     let held = match record_of(k, got, peer)? {
         Err(w) => return Ok(Step::Want(vec![w])),
         Ok(s) => s,
@@ -80,7 +86,8 @@ fn holdings(held: &record::State, public: &[u8; 32], peer: &str, epoch: u64, hos
 
 /// The PIECES height `height` (its beacon output `out`) asks this node for: `None` when not sampled for it, its epoch
 /// not open, or answered already.
-pub fn asked(k: &Keep, got: Got, public: &[u8; 32], peer: &str, height: u64, out: &[u8; 32], hosted: &[([u8; 32], u64)]) -> Result<Step<Option<Vec<[u8; 32]>>>, String> {
+pub fn asked(k: &Keep, got: Got, public: &[u8; 32], height: u64, out: &[u8; 32], hosted: &[([u8; 32], u64)]) -> Result<Step<Option<Vec<[u8; 32]>>>, String> {
+    let peer = &craftworks_standing::keeper_peer(public);
     if !craftworks_standing::sampled(out, peer) {
         return Ok(Step::Done(None));
     }
@@ -98,7 +105,8 @@ pub fn asked(k: &Keep, got: Got, public: &[u8; 32], peer: &str, height: u64, out
 /// The ANSWER at `height` from the asked pieces' sealed hashes (`hashes`: id → hash), signed: the record to put
 /// (`None`: nothing to answer — see [`asked`]).
 #[allow(clippy::too_many_arguments)]
-pub fn answer(k: &Keep, got: Got, public: &[u8; 32], peer: &str, height: u64, out: &[u8; 32], hosted: &[([u8; 32], u64)], hashes: &[([u8; 32], [u8; 32])], sigs: &[(Vec<u8>, [u8; 64])]) -> Result<Step<Option<Put>>, String> {
+pub fn answer(k: &Keep, got: Got, public: &[u8; 32], height: u64, out: &[u8; 32], hosted: &[([u8; 32], u64)], hashes: &[([u8; 32], [u8; 32])], sigs: &[(Vec<u8>, [u8; 64])]) -> Result<Step<Option<Put>>, String> {
+    let peer = &craftworks_standing::keeper_peer(public);
     let held = match record_of(k, got, peer)? {
         Err(w) => return Ok(Step::Want(vec![w])),
         Ok(s) => s,
@@ -139,23 +147,23 @@ mod tests {
         let key = SigningKey::from_bytes(&[44; 32]);
         let public = key.verifying_key().to_bytes();
         // A page's keeper: its member key in hex (64 characters, PEER_MAX).
-        let peer_ = public.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let peer_ = craftworks_standing::keeper_peer(&public);
         let peer = peer_.as_str();
         let piece = |id: &[u8; 32]| [id.to_vec(), vec![7u8; 100]].concat();
         let hosted: Vec<([u8; 32], u64)> = (0..40u32).map(|i| (*blake3::hash(&i.to_le_bytes()).as_bytes(), 132)).collect();
-        let rid = t::id(&k.standing, &params(&k, peer).encode());
+        let rid = record_id(&k, &public);
         let mut got: HashMap<[u8; 32], Vec<u8>> = HashMap::new();
         got.insert(rid, vec![]);
         // OPEN epoch 3: binding and holdings, both signed under the standing domain.
         let g = got.clone();
-        let p = run(&key, &mut |s| open_epoch(&k, &|x| g.get(x).cloned(), &public, peer, 3, &hosted, s)).expect("opened");
+        let p = run(&key, &mut |s| open_epoch(&k, &|x| g.get(x).cloned(), &public, 3, &hosted, s)).expect("opened");
         got.insert(rid, p.state.clone());
         let g = got.clone();
-        assert_eq!(run(&key, &mut |s| open_epoch(&k, &|x| g.get(x).cloned(), &public, peer, 3, &hosted, s)), None, "opened once");
+        assert_eq!(run(&key, &mut |s| open_epoch(&k, &|x| g.get(x).cloned(), &public, 3, &hosted, s)), None, "opened once");
         // A SAMPLED height of epoch 3: the asked pieces, their sealed hashes, the answer.
         let out = |h: u64| *blake3::hash(&h.to_le_bytes()).as_bytes();
         let h = (3 * craftworks_standing::EPOCH..4 * craftworks_standing::EPOCH).find(|h| craftworks_standing::sampled(&out(*h), peer)).expect("a sampled height");
-        let ask = |got: &HashMap<[u8; 32], Vec<u8>>, h: u64| match asked(&k, &|x| got.get(x).cloned(), &public, peer, h, &out(h), &hosted).unwrap() {
+        let ask = |got: &HashMap<[u8; 32], Vec<u8>>, h: u64| match asked(&k, &|x| got.get(x).cloned(), &public, h, &out(h), &hosted).unwrap() {
             Step::Done(x) => x,
             _ => panic!("a step"),
         };
@@ -165,7 +173,7 @@ mod tests {
         assert_eq!(pieces.len(), craftworks_standing::PICKS.min(40));
         let hashes: Vec<([u8; 32], [u8; 32])> = pieces.iter().map(|id| (*id, craftworks_standing::sealed_hash(&public, id, &piece(id), &out(h), peer))).collect();
         let g = got.clone();
-        let p = run(&key, &mut |s| answer(&k, &|x| g.get(x).cloned(), &public, peer, h, &out(h), &hosted, &hashes, s)).expect("answered");
+        let p = run(&key, &mut |s| answer(&k, &|x| g.get(x).cloned(), &public, h, &out(h), &hosted, &hashes, s)).expect("answered");
         got.insert(rid, p.state.clone());
         assert_eq!(ask(&got, h), None, "answered once");
         // The RECORD holds, as the standing contract checks it; and each answer checks against a piece's real seal.
@@ -179,10 +187,28 @@ mod tests {
         bad[0].1 = [0; 32];
         let mut g2 = got.clone();
         g2.insert(rid, codec::encode(&record::State { epochs: rec.epochs.iter().map(|e| record::Epoch { answers: vec![], ..e.clone() }).collect() }));
-        let p2 = run(&key, &mut |s| answer(&k, &|x| g2.get(x).cloned(), &public, peer, h, &out(h), &hosted, &bad, s)).unwrap();
+        let p2 = run(&key, &mut |s| answer(&k, &|x| g2.get(x).cloned(), &public, h, &out(h), &hosted, &bad, s)).unwrap();
         let rec2 = codec::decode(&p2.state).unwrap();
         let a2 = &rec2.epochs.iter().find(|e| e.epoch == 3).unwrap().answers[0];
         let j = a2.picks.iter().position(|p| p.id == bad[0].0).unwrap();
         assert!(craftworks_standing::check(hd, a2, &out(h), None, Some((j, &piece(&bad[0].0)))).is_err());
+        // KEPT (the statement's): only once KEEP_MIN sampled heights of the epoch are answered — one is not enough.
+        let did = [9u8; 32];
+        let record_in = |got: &HashMap<[u8; 32], Vec<u8>>| codec::decode(&got[&rid]).unwrap();
+        let kept_of = |got: &HashMap<[u8; 32], Vec<u8>>, e: u64| record::kept_accounts(&[(did, public)], &|key| (*key == public).then(|| record_in(got)), e);
+        assert!(!record::kept(&record_in(&got), &public, 3));
+        assert_eq!(kept_of(&got, 3), Vec::<[u8; 32]>::new());
+        let mut x = h;
+        for _ in 1..record::KEEP_MIN {
+            x = (x + 1..4 * craftworks_standing::EPOCH).find(|y| craftworks_standing::sampled(&out(*y), peer)).expect("another sampled height in the epoch");
+            let ps = ask(&got, x).expect("asked");
+            let hs: Vec<([u8; 32], [u8; 32])> = ps.iter().map(|id| (*id, craftworks_standing::sealed_hash(&public, id, &piece(id), &out(x), peer))).collect();
+            let g = got.clone();
+            let p = run(&key, &mut |s| answer(&k, &|y| g.get(y).cloned(), &public, x, &out(x), &hosted, &hs, s)).expect("answered");
+            got.insert(rid, p.state);
+        }
+        assert!(record::kept(&record_in(&got), &public, 3));
+        assert_eq!(kept_of(&got, 3), vec![did]);
+        assert_eq!(kept_of(&got, 4), Vec::<[u8; 32]>::new(), "another epoch: not kept");
     }
 }

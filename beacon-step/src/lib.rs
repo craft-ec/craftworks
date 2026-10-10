@@ -20,11 +20,12 @@ pub fn next(params: &[u8], state: &[u8], mix: &[u8]) -> Vec<u8> {
 }
 
 /// A keeper's ANSWER HASH for one challenged piece (TOKEN §7a: `craftworks_standing::sealed_hash` — the seal is slow by
-/// design, so a page runs it here): 32 bytes, or empty when an argument is not 32 bytes.
+/// design, so a page runs it here), for the keeper whose key is `key` (its record named `keeper_peer(key)`): 32 bytes,
+/// or empty when an argument is not 32 bytes.
 #[wasm_bindgen]
-pub fn sealed_hash(key: &[u8], id: &[u8], piece: &[u8], out: &[u8], peer: &str) -> Vec<u8> {
+pub fn sealed_hash(key: &[u8], id: &[u8], piece: &[u8], out: &[u8]) -> Vec<u8> {
     let (Ok(key), Ok(id), Ok(out)) = (<[u8; 32]>::try_from(key), <[u8; 32]>::try_from(id), <[u8; 32]>::try_from(out)) else { return Vec::new() };
-    craftworks_standing::sealed_hash(&key, &id, piece, &out, peer).to_vec()
+    craftworks_standing::sealed_hash(&key, &id, piece, &out, &craftworks_standing::keeper_peer(&key)).to_vec()
 }
 
 #[cfg(test)]

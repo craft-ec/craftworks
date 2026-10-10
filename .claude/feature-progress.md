@@ -1760,6 +1760,13 @@ old key's addresses.
               The chained rule moved to its bag: `craftworks_bag_contract::chained` (bag.wasm f5c35985 and allowance.wasm
               7cdd3961 unchanged; wallet re-exports). keeper.js lists itself each epoch; Usage › Kept shows keepers.
               Live fx v551: "1 file(s) listed · 105 KB · 1 keeper(s) this epoch".
+          [x] K0c STATEMENT KEPT 10-10: `standing::record::{kept, KEEP_MIN=4, kept_accounts}`; statement e counts
+              keepers listed in e-1 whose record has holdings + ≥4 answered heights. Page (`statement_build`) and
+              witnesses (token-net `kept`, token-ops reads standing.wasm beside token.wasm) — one rule. Record name
+              owned by `standing::keeper_peer` (core keeper fns and beacon-step's sealed_hash derive it; JS no longer
+              names it); record id `standing_contract::Params::keeper(..).id(code)` (standing.wasm 47f3a4ca unchanged).
+              Live fx v552: "epoch 2: … 1 account(s) kept the epoch before". Fixed: allowance verdict with nothing
+              escrowed resolved `{}` → `v.puts.length` threw (v553).
           [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` — FIRST CUT COMMITTED 10-10 (proof, epoch, binding,
               name; 12 mutants killed; its credential through identity's one rule, which closed a skipped key-log
               check) — REWORK: amount = the statement's (witness-checked), appended by anyone with work, the bind

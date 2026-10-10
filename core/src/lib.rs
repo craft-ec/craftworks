@@ -2517,13 +2517,19 @@ mod js {
         /// the signed vouch items given (each verified by its voucher's key log: `{ want }` first), no pots yet (keepers
         /// and the allowance join when their tokens run). `{ root, posted: bytes, puts: [[name, frames]], lines: n }` —
         /// the tree's blocks to put through the blocks door, the posted root for the epoch's statement bag.
-        pub fn statement_build(&mut self, idlog_code: &[u8], items: js_sys::Array, epoch: f64) -> Result<JsValue, JsValue> {
+        /// `keepers`: the KEEPERS REGISTRY's items of the epoch before (`reputation::keepers`) — its KEPT accounts (each
+        /// listed keeper whose standing record proves keeping then: `craftworks_standing::record::kept_accounts`; the
+        /// standing contract's code and the beacon name the records).
+        #[allow(clippy::too_many_arguments)]
+        pub fn statement_build(&mut self, idlog_code: &[u8], items: js_sys::Array, epoch: f64, keepers: js_sys::Array, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8]) -> Result<JsValue, JsValue> {
             use craftworks_reputation as R;
             let epoch = epoch as u64;
             let items: Vec<R::item::Item> = bytes_list(&items).iter().filter_map(|b| R::item::Item::decode(b)).collect();
+            let keepers = bytes_list(&keepers);
             let mut want: Vec<String> = Vec::new();
-            for i in &items {
-                let id = account::idlog_put(idlog_code, &i.from, None).id_bytes;
+            let accounts = items.iter().map(|i| i.from).chain(keepers.iter().filter_map(|b| R::keepers::Keeper::decode(b)).map(|k| k.did));
+            for d in accounts {
+                let id = account::idlog_put(idlog_code, &d, None).id_bytes;
                 if self.0.got(&id).is_none() && !want.contains(&hex(&id)) {
                     want.push(hex(&id));
                 }
@@ -2535,8 +2541,20 @@ mod js {
                 let id = account::idlog_put(idlog_code, d, None).id_bytes;
                 self.0.got(&id).filter(|b| !b.is_empty()).and_then(|b| craftworks_idlog_contract::read(d, b))
             };
+            // KEPT (the epoch before): each listed keeper's standing record read first.
+            let k = keeper_ctx(standing_code, beacon_code, beacon)?;
+            let listed = R::keepers::listed(&keepers, &log_of);
+            let want: Vec<String> = listed.iter().map(|(_, key)| keeper::record_id(&k, key)).filter(|id| self.0.got(id).is_none()).map(|id| hex(&id)).collect();
+            if !want.is_empty() {
+                return js_sys::JSON::parse(&json!({ "want": want }).to_string());
+            }
+            let record_of = |key: &[u8; 32]| self.0.got(&keeper::record_id(&k, key)).filter(|b| !b.is_empty()).and_then(craftworks_standing::codec::decode);
+            let kept = match epoch.checked_sub(1) {
+                Some(e) => craftworks_standing::record::kept_accounts(&listed, &record_of, e),
+                None => Vec::new(),
+            };
             let pots = R::statement::Pots { keeper: (0, 0), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP) };
-            let st = R::statement::build(epoch, &items, &log_of, &[], pots);
+            let st = R::statement::build(epoch, &items, &log_of, &kept, pots);
             let mut blocks = std::collections::BTreeMap::new();
             let (root, parity) = st.tree(&mut blocks).ok_or_else(|| err("the statement's tree does not build".into()))?;
             let puts = js_sys::Array::new();
@@ -2551,7 +2569,7 @@ mod js {
                 let proof = freenet_prolly::proof::prove(&blocks, &root, d).map_err(|_| err("a statement line that does not prove".into()))?.encode();
                 owed.push(&[JsValue::from(js_sys::Uint8Array::from(&d[..])), js_sys::Uint8Array::from(&proof[..]).into()].into_iter().collect::<js_sys::Array>());
             }
-            Ok(js_obj(&[("root", JsValue::from(hex(&root))), ("posted", js_sys::Uint8Array::from(&posted[..]).into()), ("puts", puts.into()), ("lines", JsValue::from(st.lines.len() as f64)), ("owed", owed.into())]))
+            Ok(js_obj(&[("root", JsValue::from(hex(&root))), ("posted", js_sys::Uint8Array::from(&posted[..]).into()), ("puts", puts.into()), ("lines", JsValue::from(st.lines.len() as f64)), ("kept", JsValue::from(kept.len() as f64)), ("owed", owed.into())]))
         }
         /// The ALLOWANCE's verdict of `epoch` (`allowance::verdict`; `owed`: `[[did, proof]]` from `statement_build`, under
         /// `root` hex): `{ done: null }` (nothing escrowed to it) or `{ done: { puts: [{ id, frames }] } }` — the program's
@@ -2624,27 +2642,27 @@ mod js {
         /// OPEN the node's standing epoch (`keeper::open_epoch`; `hosted`: `[[id hex, size]]` from the node): `{ sign }`,
         /// `{ want }`, or `{ done: null | { puts: [{ id, idBytes, frames }] } }`.
         #[allow(clippy::too_many_arguments)]
-        pub fn keeper_open(&mut self, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], public: &[u8], peer: &str, epoch: f64, hosted: JsValue, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
+        pub fn keeper_open(&mut self, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], public: &[u8], epoch: f64, hosted: JsValue, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
             let k = keeper_ctx(standing_code, beacon_code, beacon)?;
             let hosted = hosted_of(&hosted)?;
             let sigs = sigs_of(&sigs)?;
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-                keeper::open_epoch(&k, &got, &b32(public)?, peer, epoch as u64, &hosted, &sigs)
+                keeper::open_epoch(&k, &got, &b32(public)?, epoch as u64, &hosted, &sigs)
             };
             self.keeper_step(standing_code, step)
         }
         /// The PIECES height `height` asks this node for (`keeper::asked`): `{ done: null | [id hex] }` (or `{ want }`).
         #[allow(clippy::too_many_arguments)]
-        pub fn keeper_asked(&self, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], public: &[u8], peer: &str, height: f64, out: &[u8], hosted: JsValue) -> Result<JsValue, JsValue> {
+        pub fn keeper_asked(&self, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], public: &[u8], height: f64, out: &[u8], hosted: JsValue) -> Result<JsValue, JsValue> {
             let k = keeper_ctx(standing_code, beacon_code, beacon)?;
             let hosted = hosted_of(&hosted)?;
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-            token_step(keeper::asked(&k, &got, &b32(public)?, peer, height as u64, &b32(out)?, &hosted), |a| Ok(json!(a.map(|ids| ids.iter().map(|i| hex(i)).collect::<Vec<_>>()))))
+            token_step(keeper::asked(&k, &got, &b32(public)?, height as u64, &b32(out)?, &hosted), |a| Ok(json!(a.map(|ids| ids.iter().map(|i| hex(i)).collect::<Vec<_>>()))))
         }
         /// ANSWER height `height` (`keeper::answer`; `hashes`: `[[id hex, hash bytes]]` — sealed in the worker).
         #[allow(clippy::too_many_arguments)]
-        pub fn keeper_answer(&mut self, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], public: &[u8], peer: &str, height: f64, out: &[u8], hosted: JsValue, hashes: js_sys::Array, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
+        pub fn keeper_answer(&mut self, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], public: &[u8], height: f64, out: &[u8], hosted: JsValue, hashes: js_sys::Array, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
             let k = keeper_ctx(standing_code, beacon_code, beacon)?;
             let hosted = hosted_of(&hosted)?;
             let sigs = sigs_of(&sigs)?;
@@ -2654,7 +2672,7 @@ mod js {
             }).collect::<Result<_, JsValue>>()?;
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-                keeper::answer(&k, &got, &b32(public)?, peer, height as u64, &b32(out)?, &hosted, &hashes, &sigs)
+                keeper::answer(&k, &got, &b32(public)?, height as u64, &b32(out)?, &hosted, &hashes, &sigs)
             };
             self.keeper_step(standing_code, step)
         }

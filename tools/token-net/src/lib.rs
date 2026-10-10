@@ -22,6 +22,8 @@ pub struct Net {
     pub beacon_hash: [u8; 32],
     pub beacon: [u8; 32],
     pub pool: [u8; 32],
+    /// The standing contract's code hash (keepers' records: the statement's `kept`).
+    pub standing_hash: [u8; 32],
 }
 
 pub struct Reader<'a> {
@@ -104,17 +106,32 @@ impl<'a> Reader<'a> {
         let p = T::freeze::Params { code_hash: self.net.code_hash, definition: *def, beacon: d.beacon };
         self.get(p.id()).and_then(|b| T::freeze::List::decode(&b))
     }
-    /// The WITNESS QUEUE of `epoch` (its chained bags, k = 0 until one with room).
-    pub fn queue(&self, epoch: u64) -> Vec<Queued> {
+    /// Every item of `epoch`'s CHAINED list `address_of` (`craftworks_bag_contract::chained`: k = 0 until one with room).
+    pub fn chained(&self, address_of: fn(u64, u32) -> [u8; 32], epoch: u64) -> Vec<Vec<u8>> {
         let mut out = Vec::new();
         for k in 0..64 {
-            let items = self.bag(craftworks_wallet::queue::address(epoch, k));
-            out.extend(items.iter().filter_map(|p| Queued::decode(p)));
-            if items.len() < craftworks_wallet::chained::ROOM {
+            let items = self.bag(address_of(epoch, k));
+            let n = items.len();
+            out.extend(items);
+            if n < craftworks_bag_contract::chained::ROOM {
                 break;
             }
         }
         out
+    }
+    /// The WITNESS QUEUE of `epoch`.
+    pub fn queue(&self, epoch: u64) -> Vec<Queued> {
+        self.chained(craftworks_wallet::queue::address, epoch).iter().filter_map(|p| Queued::decode(p)).collect()
+    }
+    /// The accounts that KEPT in `epoch`: its keepers registry's keepers whose standing record proves it.
+    pub fn kept(&self, epoch: u64, log_of: &dyn Fn(&[u8; 32]) -> Option<craftworks_idlog_contract::Log>) -> Vec<[u8; 32]> {
+        let items = self.chained(craftworks_reputation::keepers::address, epoch);
+        let listed = craftworks_reputation::keepers::listed(&items, log_of);
+        let record_of = |key: &[u8; 32]| {
+            let id = craftworks_standing_contract::Params::keeper(self.net.beacon_hash, self.net.beacon, key).id(&self.net.standing_hash);
+            self.get(id).filter(|b| !b.is_empty()).and_then(|b| craftworks_standing::codec::decode(&b))
+        };
+        craftworks_standing::record::kept_accounts(&listed, &record_of, epoch)
     }
 
     /// The EPOCH STATEMENT of standing epoch `epoch` as this reader computes it (the one build: every vouch registry up
@@ -124,7 +141,8 @@ impl<'a> Reader<'a> {
         let items: Vec<R::item::Item> = (0..=epoch).flat_map(|e| self.bag(R::item::registry_address(e))).filter_map(|b| R::item::Item::decode(&b)).collect();
         let log_of = |d: &R::Did| self.keys(d);
         let pots = R::statement::Pots { keeper: (0, 0), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP) };
-        let st = R::statement::build(epoch, &items, &log_of, &[], pots);
+        let kept = epoch.checked_sub(1).map_or(Vec::new(), |e| self.kept(e, &log_of));
+        let st = R::statement::build(epoch, &items, &log_of, &kept, pots);
         st.tree(&mut std::collections::BTreeMap::new()).map(|(root, _)| root)
     }
 

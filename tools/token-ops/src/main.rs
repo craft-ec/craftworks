@@ -186,7 +186,7 @@ async fn main() -> Result<()> {
         }
         Some("witness") => {
             // token-ops witness <token.wasm> <idlog.wasm> <bag.wasm> <ws> <beacon hex> <pool hex> <key seed file> [tick secs]
-            // (the beacon's code: beacon.wasm beside token.wasm):
+            // (the beacon's and the standing contract's code: beacon.wasm, standing.wasm beside token.wasm):
             // A WITNESS (TOKEN §7a), kept running: every tick it reads the witness queue of this standing epoch and the
             // last, and signs each entry it is SEATED for (drawn by lot, or the baseline's seat while the network is
             // small) once the rule takes it (`wallet::may_witness`, by induction — an entry refused now, its past not yet
@@ -199,6 +199,7 @@ async fn main() -> Result<()> {
                 beacon_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes(),
                 beacon: unhex32(&a[6])?,
                 pool: unhex32(&a[7])?,
+                standing_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("standing.wasm"))?).as_bytes(),
             };
             let key = ed25519_dalek::SigningKey::from_bytes(&seed_file(&a[8])?);
             let tick = Duration::from_secs(a.get(9).map_or(Ok(10), |t| t.parse())?);

@@ -116,6 +116,27 @@ pub fn prune(s: &State, oldest_height: u64) -> State {
     State { epochs: s.epochs.iter().filter(|e| (e.epoch + 1) * EPOCH > oldest_height).cloned().collect() }
 }
 
+/// Distinct sampled heights a keeper must have ANSWERED in an epoch to have KEPT in it (of ~EPOCH / SAMPLE = 8 sampled:
+/// half — a page open part of the epoch).
+pub const KEEP_MIN: usize = 4;
+
+/// Whether key `key` KEPT in standing epoch `epoch` by its record (committed holdings and at least [`KEEP_MIN`]
+/// answered heights): the statement's `kept`. Assumes [`holds`] (the standing contract keeps only records that do).
+pub fn kept(s: &State, key: &[u8; 32], epoch: u64) -> bool {
+    s.epochs.iter().find(|e| e.epoch == epoch).is_some_and(|e| {
+        e.holdings.iter().any(|h| h.key == *key) && e.answers.iter().filter(|a| a.key == *key).map(|a| a.height).collect::<std::collections::BTreeSet<_>>().len() >= KEEP_MIN
+    })
+}
+
+/// The ACCOUNTS that kept in `epoch`: of the keepers listed `(account, record key)`, those whose record
+/// (`record_of(key)`: `None` — not there) [`kept`]; each account once, in order.
+pub fn kept_accounts(listed: &[([u8; 32], [u8; 32])], record_of: &dyn Fn(&[u8; 32]) -> Option<State>, epoch: u64) -> Vec<[u8; 32]> {
+    let mut out: Vec<[u8; 32]> = listed.iter().filter(|(_, key)| record_of(key).is_some_and(|s| kept(&s, key, epoch))).map(|x| x.0).collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// STANDING: the bytes proved held — each holdings' bytes × the share of its peer's sampled heights (the beacon's, up
 /// to `now`) it answered. `out`: the beacon's outputs. Assumes [`holds`].
 pub fn weight(peer: &str, s: &State, out: &dyn Fn(u64) -> Option<[u8; 32]>, now: u64) -> u128 {

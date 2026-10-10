@@ -32,6 +32,14 @@ impl Params {
         }
         Some(Params { beacon_code: b[1..33].try_into().ok()?, beacon: b[33..65].try_into().ok()?, peer: String::from_utf8(b[66..].to_vec()).ok()? })
     }
+    /// A PAGE KEEPER's record params: named by its key (`craftworks_standing::keeper_peer`).
+    pub fn keeper(beacon_code: [u8; 32], beacon: [u8; 32], key: &[u8; 32]) -> Params {
+        Params { beacon_code, beacon, peer: craftworks_standing::keeper_peer(key) }
+    }
+    /// The record's contract id under the standing contract's code hash `code_hash`.
+    pub fn id(&self, code_hash: &[u8; 32]) -> [u8; 32] {
+        contract_keys::instance(code_hash, &self.encode())
+    }
     /// The outputs log holding height `h`: its contract id.
     pub fn log_id(&self, h: u64) -> [u8; 32] {
         contract_keys::instance(&self.beacon_code, &B::log::Params::of(self.beacon, h).encode())

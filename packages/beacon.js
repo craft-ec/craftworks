@@ -8,7 +8,7 @@
 // SET UP by `beacon-config` (`{ params }`: the beacon's params, hex); empty: nothing runs.
 //   (await ctx.require("beacon")).status()   // { id, height, extended, last } — what this page did
 //   beacon.onHeight(fn)                         // fn(height) each time this page sees it advance (returns: stop)
-//   await beacon.sealed(key, id, piece, out, peer)   // a keeper's sealed answer hash, in the page's worker
+//   await beacon.sealed(key, id, piece, out)         // a keeper's sealed answer hash, in the page's worker
 export async function start(ctx) {
   let cfg = {};
   try {
@@ -102,7 +102,7 @@ self.onmessage = async e => {
   return {
     status: () => ({ ...state }),
     // A keeper's SEALED ANSWER HASH (`craftworks_standing::sealed_hash`), in the worker: 32 bytes.
-    sealed: (key, id, piece, out, peer) => work("seal", [key, id, piece, out, peer]),
+    sealed: (key, id, piece, out) => work("seal", [key, id, piece, out]),
     onHeight(fn) {
       watchers.add(fn);
       return () => watchers.delete(fn);

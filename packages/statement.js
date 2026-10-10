@@ -8,7 +8,7 @@
 //
 //   (await ctx.require("statement")).status()   // { epoch, root, lines } of the last one this page published
 export async function start(ctx) {
-  const [node, index, blocks, idlogCode] = await Promise.all(["node", "index", "blocks", "idlog-wasm"].map(n => ctx.require(n)));
+  const [node, index, blocks, idlogCode, standingCode, beaconCode] = await Promise.all(["node", "index", "blocks", "idlog-wasm", "standing-wasm", "beacon-wasm"].map(n => ctx.require(n)));
   const { core, glue } = node;
   const Core = glue.CraftworksCore;
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
@@ -22,16 +22,19 @@ export async function start(ctx) {
     if (built.has(epoch)) return built.get(epoch);
     const items = [];
     for (let e = 0; e <= epoch; e++) items.push(...(await index.bag.read(Core.vouch_registry_address(e), "reading a vouch registry")));
+    // KEPT: the keepers listed the epoch before (`keeper`), their records proving it.
+    const keepers = epoch > 0 ? await index.bag.chain(Core.keepers_address, epoch - 1, "reading the keepers registry") : [];
+    const beacon = bytes((await ctx.require("beacon")).status().id);
     for (let round = 0; round < 6; round++) {
-      const r = core.statement_build(idlogCode, items, epoch);
+      const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon);
       if (r.want) {
-        await Promise.all(r.want.map(id => node.read(bytes(id), "reading a voucher's key log", { absent: true }).catch(() => false)));
+        await Promise.all(r.want.map(id => node.read(bytes(id), "reading a key log or a keeper's record", { absent: true }).catch(() => false)));
         continue;
       }
       built.set(epoch, r);
       return r;
     }
-    throw new Error("the vouchers' key logs could not be read");
+    throw new Error("the vouchers' key logs or the keepers' records could not be read");
   }
   const decided = new Set(); // epochs whose allowance this page saw decided
   async function publishIfMissing() {
@@ -45,7 +48,7 @@ export async function start(ctx) {
       await blocks.put([...r.puts], "the epoch's statement");
       await index.bag.add(address, r.posted, "posting the epoch's statement");
       Object.assign(state, { epoch, root: r.root, lines: r.lines });
-      ctx.log("statement", { what: `epoch ${epoch}: root ${r.root.slice(0, 12)}…, ${r.lines} line(s)` });
+      ctx.log("statement", { what: `epoch ${epoch}: root ${r.root.slice(0, 12)}…, ${r.lines} line(s), ${r.kept} account(s) kept the epoch before` });
     }
     // THE ALLOWANCE of this epoch.
     const tokens = await ctx.require("tokens");
@@ -53,7 +56,7 @@ export async function start(ctx) {
     const r = await build(epoch);
     const { allowance, run, putAll } = tokens;
     const v = await run(() => core.allowance_verdict(tokens.code, allowance.code, tokens.beacon, idlogCode, tokens.lot.pool, tokens.lot.bag, tokens.lot.beacon, allowance.token, epoch, r.root, r.owed, h));
-    if (!v) return; // nothing escrowed to it (yet)
+    if (!v?.puts) return; // nothing escrowed to it (yet): the verdict step is done with nothing built
     await putAll(v.puts);
     decided.add(epoch);
     if (v.puts.length) ctx.log("statement", { what: `epoch ${epoch}: the allowance's verdict and release put (${r.owed.length} owed)` });

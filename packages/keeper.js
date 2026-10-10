@@ -9,7 +9,7 @@
 // THE FILES REGISTRY (`wallet::registry`): each epoch it also LISTS the account's own files it keeps whole (address key
 // and size: what lets other keepers find their pieces), so a file stays listed while its owner keeps it.
 //
-//   (await ctx.require("keeper")).status()   // { peer, epoch, files, pieces, listed, opened, answered, last } — what this page did
+//   (await ctx.require("keeper")).status()   // { key, epoch, files, pieces, listed, opened, answered, last } — what this page did
 //   await keeper.network(epoch)              // { files, bytes, keepers }: the registries at standing epoch `epoch`
 export async function start(ctx) {
   const beaconSvc = await ctx.require("beacon");
@@ -17,7 +17,7 @@ export async function start(ctx) {
   const [node, auth, standingCode, beaconCode] = await Promise.all(["node", "auth", "standing-wasm", "beacon-wasm"].map(n => ctx.require(n)));
   const { core } = node;
   const Core = node.glue.CraftworksCore;
-  const state = { peer: null, epoch: null, files: 0, pieces: 0, listed: 0, opened: 0, answered: 0, last: null };
+  const state = { key: null, epoch: null, files: 0, pieces: 0, listed: 0, opened: 0, answered: 0, last: null };
   let self = null; // { epoch, hosted, open } — this epoch's holdings ([id hex, size]) and whether its record is open
   let busy = false;
   let upTo = -1; // the last height handled
@@ -57,15 +57,14 @@ export async function start(ctx) {
       if (!tokens.on) return;
       const { beacon, run, putAll, bytes, hexOf } = tokens;
       const public_ = bytes(me.member);
-      const peer = me.member.toLowerCase();
       const epoch = Core.keeper_epoch(h);
       // (None yet — `keep`'s passes still running: asked again 64 heights on.)
       if (!self || self.epoch !== epoch || (!self.hosted.length && h - self.at >= 64)) self = { epoch, at: h, hosted: await holdingsOf(epoch), open: false };
       if (!self.hosted.length) return;
-      Object.assign(state, { peer, epoch });
+      Object.assign(state, { key: me.member, epoch });
       // OPEN the epoch: binding and holdings.
       if (!self.open) {
-        const r = await run(sigs => core.keeper_open(standingCode, beaconCode, beacon, public_, peer, epoch, self.hosted, sigs));
+        const r = await run(sigs => core.keeper_open(standingCode, beaconCode, beacon, public_, epoch, self.hosted, sigs));
         if (r?.puts) {
           await putAll(r.puts);
           state.opened++;
@@ -86,15 +85,15 @@ export async function start(ctx) {
         if (Core.keeper_epoch(x) !== epoch) continue;
         const out = core.beacon_out(beacon, x);
         if (!out) continue;
-        const asked = await run(() => core.keeper_asked(standingCode, beaconCode, beacon, public_, peer, x, out, self.hosted));
+        const asked = await run(() => core.keeper_asked(standingCode, beaconCode, beacon, public_, x, out, self.hosted));
         if (!asked?.length) continue;
         const hashes = [];
         for (const id of asked) {
           await tokens.read(id);
           const piece = core.take_got(id) ?? new Uint8Array(0);
-          hashes.push([id, await beaconSvc.sealed(public_, bytes(id), piece, out, peer)]);
+          hashes.push([id, await beaconSvc.sealed(public_, bytes(id), piece, out)]);
         }
-        const r = await run(sigs => core.keeper_answer(standingCode, beaconCode, beacon, public_, peer, x, out, self.hosted, hashes, sigs));
+        const r = await run(sigs => core.keeper_answer(standingCode, beaconCode, beacon, public_, x, out, self.hosted, hashes, sigs));
         if (r?.puts) {
           await putAll(r.puts);
           state.answered++;

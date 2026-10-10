@@ -23,6 +23,12 @@ pub const EPOCH: u64 = 1024;
 /// its node for its peer id (the node refuses node queries from web apps); a node's own peer id is 16–17.
 pub const PEER_MAX: usize = 64;
 
+/// A PAGE KEEPER's record name: its member key in lowercase hex (a page cannot learn its node's peer id) — the one
+/// rule the page, the statement and the tools name a keeper's record by.
+pub fn keeper_peer(key: &[u8; 32]) -> String {
+    key.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 pub fn epoch(height: u64) -> u64 {
     height / EPOCH
 }
