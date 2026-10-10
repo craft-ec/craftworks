@@ -75,15 +75,15 @@ Two parts, one path from bootstrap to the token:
 
 ## 7. Order of building
 
-1. Vouches: the public table, written from a person's page ("Vouch" beside Follow) — page only.
+1. BUILT 10-10 — vouches: `packages/vouch.js` (the account's public tail `vouches`: a row per person, stamped with the
+   beacon height; 10 at most; withdrawable), "Vouch" beside Follow on a person's panel (confirmed: public, a bet).
+   LIVE fx: A vouched for B; the panel then read "Vouched ✓ · withdraw", also after a fresh load.
 2. BUILT 10-10 — `reputation/` (pure, integers): the TRUST tree (an account's parent is the voucher through whom trust
    first reached it from the roots — not merely its first voucher, which a sybil games by having every fake vouch
    before being vouched for, each then its own root), kinship by lowest common ancestor, diversity Π(1 − closeness),
    personalised PageRank (damping 0.85, 40 rounds, budget 10). Measured: a ring of 10 fakes off one fooled account
    takes 6.8 (×10⁻³), a ring of 1,000 takes 7.2 — flat; the same 1,000 with no discount 24.6; cousins' vouches 6.14 vs
-   siblings' 4.91. Was: the function: reputation from vouches and roots with the family tree's diversity, in the core, tested against
-   sybil rings (a ring of N fakes hung off one fooled account gets no more than that one branch carries, however large
-   N) and against honest cross-tree vouching (counts in full).
+   siblings' 4.91.
 3. Burns reaching reputation: a misdeed proof zeroes the account and charges its vouchers.
 4. The keeping record per vouched account (standing answers → a tapering per-account rate), as reputation.
 5. The lot weighted by that record (`wallet::lot_of`, the claims registry: a claim of record instead of stake).

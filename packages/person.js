@@ -11,7 +11,7 @@
 //                                            // account's conversations, friends and followed, and `extra` (a room's)
 //   person.openMention(anchor, { did, typed })  // a MENTION clicked: their card (`typed`: an old `name#abc123`)
 export async function start(ctx) {
-  const [edge, conversation, directory, roles, moderation, space] = await Promise.all(["edge", "conversation", "directory", "roles", "moderation", "space"].map(n => ctx.require(n)));
+  const [edge, conversation, directory, roles, moderation, space, vouch] = await Promise.all(["edge", "conversation", "directory", "roles", "moderation", "space", "vouch"].map(n => ctx.require(n)));
   const style = document.createElement("style");
   style.textContent = `@layer components {
 
@@ -118,6 +118,10 @@ export async function start(ctx) {
                   ? el("button", { type: "button", textContent: "Friend request sent", disabled: true })
                   : act("Add friend", () => conversation.befriend(did)),
               toggle("follow", "Follow", "Following ✓"),
+              // VOUCH (docs/REPUTATION.md): public, at most 10, a bet on them — their cheat costs you too.
+              vouch.has(did)
+                ? act("Vouched ✓ · withdraw", () => vouch.set(did, false), "on")
+                : act("Vouch", () => vouch.set(did, true), "", "vouch for them: public, at most 10 — if they cheat, you lose reputation too"),
               act("✉ Mail", () => (close(), (location.hash = `#/mail/to/${encodeURIComponent(did)}`))),
               posts,
               toggle("modlist", "Use their moderation list", "Their list applies ✓"),
