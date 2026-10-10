@@ -642,6 +642,7 @@ name = "craftworks-standing"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "craftworks-identity",
  "ed25519-dalek",
  "freenet-prolly",
 ]

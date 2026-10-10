@@ -119,7 +119,7 @@ pub struct Attest {
 
 impl Attest {
     pub fn message(by: &[u8; 32], peer: &str, ring: u64, at: u64, epoch: u64) -> Vec<u8> {
-        let mut v = b"craftworks standing attest".to_vec();
+        let mut v = [craftworks_identity::STANDING_DOMAIN, b"attest"].concat();
         v.extend_from_slice(by);
         put_peer(&mut v, peer);
         v.extend_from_slice(&ring.to_le_bytes());
@@ -149,7 +149,7 @@ pub struct Bind {
 
 impl Bind {
     pub fn message(key: &[u8; 32], peer: &str, epoch: u64) -> Vec<u8> {
-        let mut v = b"craftworks standing bind".to_vec();
+        let mut v = [craftworks_identity::STANDING_DOMAIN, b"bind"].concat();
         v.extend_from_slice(key);
         put_peer(&mut v, peer);
         v.extend_from_slice(&epoch.to_le_bytes());
@@ -216,7 +216,7 @@ pub struct Holdings {
 
 impl Holdings {
     pub fn message(key: &[u8; 32], peer: &str, epoch: u64, root_: &[u8; 32], count: u32, bytes: u64) -> Vec<u8> {
-        let mut v = b"craftworks standing holdings".to_vec();
+        let mut v = [craftworks_identity::STANDING_DOMAIN, b"holdings"].concat();
         v.extend_from_slice(key);
         put_peer(&mut v, peer);
         v.extend_from_slice(&epoch.to_le_bytes());
@@ -312,7 +312,7 @@ pub struct Answer {
 
 impl Answer {
     pub fn message(&self) -> Vec<u8> {
-        let mut v = b"craftworks standing answer".to_vec();
+        let mut v = [craftworks_identity::STANDING_DOMAIN, b"answer"].concat();
         v.extend_from_slice(&self.key);
         put_peer(&mut v, &self.peer);
         v.extend_from_slice(&self.height.to_le_bytes());

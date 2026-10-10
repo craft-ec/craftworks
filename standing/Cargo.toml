@@ -5,6 +5,8 @@ edition = "2021"
 description = "STANDING (TOKEN §7a): what a node proves it holds where Freenet placed it — its ring location as the core computes it, attested by peers, and its holdings answered against the beacon."
 
 [dependencies]
+# Every record's signed message begins with the identity's STANDING_DOMAIN (the node's member key signs it).
+craftworks-identity = { path = "../identity" }
 # A fixed list's positional proof (the holdings): the SDK's one, beside its tree.
 freenet-prolly = { path = "../sdk/freenet-prolly" }
 blake3 = { version = "1", default-features = false }

@@ -766,6 +766,8 @@ fn a_token_entry_is_signed_by_the_member_for_its_home_only() {
     assert_eq!(serve(&mut m, Request::TokenSign { message: b"seq prev nonce stamp body".to_vec() }, APP), Answer::Refused(Why::NotAnEntry), "no domain: not signed");
     let vouch = [VOUCH_DOMAIN, b"from to at on"].concat();
     assert!(matches!(serve(&mut m, Request::TokenSign { message: vouch }, APP), Answer::Signed { .. }), "a vouch: signed");
+    let standing = [STANDING_DOMAIN, b"holdings key peer epoch root count bytes"].concat();
+    assert!(matches!(serve(&mut m, Request::TokenSign { message: standing }, APP), Answer::Signed { .. }), "a standing record: signed");
     assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
     assert_eq!(serve(&mut m, Request::TokenSign { message: msg.clone() }, OTHER), Answer::Refused(Why::NotHome));
     assert_eq!(serve(&mut m, Request::Lock, APP), Answer::LoggedOut);

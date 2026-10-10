@@ -64,8 +64,12 @@ pub const TOKEN_ENTRY_DOMAIN: &[u8] = b"craftworks token entry 2026-10-10\0";
 /// What every VOUCH's signed message begins with (docs/REPUTATION.md: a vouch is signed by the voucher's device, so
 /// anyone can relay it into the epoch's vouch registry).
 pub const VOUCH_DOMAIN: &[u8] = b"craftworks vouch 2026-10-10\0";
+/// What every STANDING RECORD's signed message begins with (TOKEN §7a: a keeper node's holdings, its answers to the
+/// beacon's challenges, its binding and its attestations of peers — signed by the node's member key, which the account
+/// credentialed: what keeper issuance is paid on).
+pub const STANDING_DOMAIN: &[u8] = b"craftworks standing 2026-10-10\0";
 /// The domains `TokenSign` signs under — and nothing else (a member's key signs its tables too).
-pub const SIGN_DOMAINS: &[&[u8]] = &[TOKEN_ENTRY_DOMAIN, VOUCH_DOMAIN];
+pub const SIGN_DOMAINS: &[&[u8]] = &[TOKEN_ENTRY_DOMAIN, VOUCH_DOMAIN, STANDING_DOMAIN];
 
 /// Every identity message starts with this, so a page tells an identity answer from any other delegate's.
 pub const MAGIC: &[u8; 4] = b"ID01";
