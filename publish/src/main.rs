@@ -393,7 +393,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 118] = [
+    let packages: [(&str, &str, PathBuf); 119] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -523,6 +523,8 @@ async fn main() -> Result<()> {
         ("allowance-wasm", "bytes", contracts.join("allowance.wasm")),
         // THE KEEPER LOOP (TOKEN §7a): the service, and the standing contract's code (a node's record).
         ("keeper", "service", app.join("packages/keeper.js")),
+        // THE PAGE'S WITNESS (TOKEN §7a): what its account's stake is drawn for, signed through its identity delegate.
+        ("witness", "service", app.join("packages/witness.js")),
         ("standing-wasm", "bytes", contracts.join("standing.wasm")),
         ("token-wasm", "bytes", contracts.join("token.wasm")),
         // THE BEACON (TOKEN §5a): every open page extends it when it stalls — the service, the beacon's code, its step

@@ -1834,6 +1834,13 @@ old key's addresses.
               the next open claims epoch (supply epochs; frozen LEAD before), key = member key, signed via TokenSign
               (CLAIM_DOMAIN); `keeper_claim` binding; keeper.js claims once a standing epoch. Test: claim holds, the
               lot's stake check finds the key (stake_at keys), claimed once.
+          [~] S3 10-11 (unit-tested; live check pending: claims take effect at claims epoch 3 = height 12,288 on fx):
+              core `witness::entry` — THE WITNESS RULE (`may_witness`) over what the page read, wants collected and
+              asked first; `Verdict { NotSeated | Refused(why) | Sign { chain, seq, entry } }`; `out_at` shared.
+              packages/witness.js: every 4 heights, this and last standing epoch's queue → seated + rule holds →
+              `identity.witnessSign` → the witness bag. Test: B's receive — all six drawn stakers Sign its exact hash;
+              an unclaimed key NotSeated. Live so far: the new $CRAFT (82e7a9ab: token.wasm ad470883 re-keyed it)
+              minted again for epoch 8, Wren signed 82e7a9ab…/45caba3e seq 0; `keeper::claim` quiet while $CRAFT absent.
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and

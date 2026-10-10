@@ -8,4 +8,6 @@ export function mount(ctx, el) {
   // …and publishes the current epoch's statement if nobody has (`statement`: anyone may).
   ctx.require("statement").catch(e => ctx.log("statement", { what: e.message ?? String(e) }));
   ctx.require("keeper").catch(e => ctx.log("keeper", { what: e.message ?? String(e) }));
+  // …and witnesses what its stake is drawn for (`witness`: its member key, through its identity delegate).
+  ctx.require("witness").catch(e => ctx.log("witness", { what: e.message ?? String(e) }));
 }

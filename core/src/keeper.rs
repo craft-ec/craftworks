@@ -191,6 +191,12 @@ pub struct Claimed {
 /// counts for it), at beacon height `now`. `None`: nothing staked, or claimed already.
 pub fn claim(ctx: &crate::tokens::Ctx, got: Got, did: &[u8; 32], now: u64, dev: &crate::tokens::Device) -> Result<Step<Option<Claimed>>, String> {
     let (_, token) = craft(ctx);
+    // No $CRAFT on this network yet (nobody minted it): nothing staked.
+    match there(got, &token) {
+        Err(w) => return Ok(Step::Want(vec![w])),
+        Ok(None) => return Ok(Step::Done(None)),
+        Ok(Some(_)) => {}
+    }
     let (held, keys) = match crate::tokens::holding(ctx, got, &t::Tok { definition: token, item: [0; 32] }, did)? {
         Step::Done(Some(h)) => h,
         Step::Done(None) => return Ok(Step::Done(None)),

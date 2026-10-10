@@ -421,6 +421,18 @@ mod tests {
         crate::tokens::testlot::witness(&tl, &mut got, &pa, &d, &debit, debit.entries.last().unwrap().seq, 4);
         let r = take(&ann, e1 + 14, &got).unwrap();
         assert_eq!((r.amount, r.pending, r.unwitnessed), (100, 0, 0));
+        // THE PAGE'S WITNESS (S3): B's receive (its chain's first entry, citing A's witnessed debit), queued — each
+        // staker drawn signs exactly its hash; a key with no claim is not seated.
+        {
+            let mut g3 = got.clone();
+            let recv = State::decode(&r.put.as_ref().unwrap().state).unwrap();
+            g3.insert(pb2.id(), recv.encode());
+            let q = craftworks_wallet::queue::Queued { token: t::Tok { definition: id, item: [0; 32] }, owner: paid.to, seq: recv.entries[0].seq };
+            let verdict = |me: [u8; 32]| crate::tokens::testlot::done(&|g| crate::witness::entry(&ctx, &tl.lot, g, &q, &me, e1 + 14), &g3).unwrap();
+            let signs: Vec<crate::witness::Verdict> = tl.keys.iter().map(|k| verdict(k.verifying_key().to_bytes())).collect();
+            assert!(signs.iter().all(|v| *v == crate::witness::Verdict::Sign { chain: pb2.id(), seq: recv.entries[0].seq, entry: recv.entries[0].hash() }), "{signs:?}");
+            assert_eq!(verdict([77; 32]), crate::witness::Verdict::NotSeated);
+        }
         // Its STATUS at each stage (what the history shows), from the same announcement.
         let st = |now: u64, got: &HashMap<[u8; 32], Vec<u8>>| crate::tokens::testlot::done(&|g| status(&ctx, &tl.lot, g, &ann, now), got).unwrap().map(|s| (s.amount, s.stage));
         assert_eq!(st(e1 + 13, &got), Some((100, Stage::Settling)));

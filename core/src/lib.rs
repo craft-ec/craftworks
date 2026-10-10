@@ -837,6 +837,7 @@ pub mod tokens;
 pub mod wallet;
 pub mod allowance;
 pub mod keeper;
+pub mod witness;
 
 #[cfg(target_arch = "wasm32")]
 mod js {
@@ -2709,6 +2710,33 @@ mod js {
             js_sys::Reflect::set(&done, &"epoch".into(), &JsValue::from(c.epoch as f64))?;
             js_sys::Reflect::set(&done, &"amount".into(), &JsValue::from(c.amount.to_string()))?;
             Ok(v)
+        }
+        /// THE PAGE'S WITNESS on one queued entry (`witness::entry`; `queued`: its bytes; `me`: this node's member key,
+        /// its claim's): `{ want }`, or `{ done: { seated: false } | { refused: why } | { sign: { chain, seq, entry } } }`
+        /// (chain and entry as bytes — what `WitnessSign` signs).
+        #[allow(clippy::too_many_arguments)]
+        pub fn witness_entry(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], queued: &[u8], me: &[u8], now: f64) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let q = craftworks_wallet::queue::Queued::decode(queued).ok_or_else(|| err("not a queued entry".into()))?;
+            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+            match witness::entry(&ctx, &lot, &got, &q, &b32(me)?, now as u64).map_err(err)? {
+                tokens::Step::Want(w) => js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
+                tokens::Step::Sign(_) => Err(err("a witness step never signs here".into())),
+                tokens::Step::Done(witness::Verdict::NotSeated) => js_sys::JSON::parse(&json!({ "done": { "seated": false } }).to_string()),
+                tokens::Step::Done(witness::Verdict::Refused(why)) => js_sys::JSON::parse(&json!({ "done": { "refused": why } }).to_string()),
+                tokens::Step::Done(witness::Verdict::Sign { chain, seq, entry }) => {
+                    let sign = js_obj(&[("chain", js_sys::Uint8Array::from(&chain[..]).into()), ("seq", JsValue::from(seq as f64)), ("entry", js_sys::Uint8Array::from(&entry[..]).into())]);
+                    Ok(js_obj(&[("done", js_obj(&[("sign", sign)]))]))
+                }
+            }
+        }
+        /// A WITNESS SIGNATURE's bag item and its witness bag's address: `{ address, item }` (the delegate's `sig`).
+        pub fn witness_sig_item(chain: &[u8], seq: f64, entry: &[u8], sig: &[u8]) -> Result<JsValue, JsValue> {
+            let (chain, seq) = (b32(chain)?, seq as u64);
+            let s = craftworks_token_contract::witness::WitnessSig { chain, seq, entry: b32(entry)?, sig: sig.try_into().map_err(|_| err("a signature is 64 bytes".into()))? };
+            let address = craftworks_token_contract::wallet::witness_bag(&chain, seq);
+            Ok(js_obj(&[("address", js_sys::Uint8Array::from(&address[..]).into()), ("item", js_sys::Uint8Array::from(&craftworks_token_contract::wallet::bytes::witness_sig(&s)[..]).into())]))
         }
         /// $CRAFT's token id on this site's network (hex).
         pub fn craft_id(token_code: &[u8], beacon: &[u8], idlog_code: &[u8]) -> Result<String, JsValue> {
