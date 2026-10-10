@@ -642,6 +642,10 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
 - **Replaced checkpoints and vouches (§3a)** — REMOVED in 6d. A witnessed entry is already checked and signed with
   stake at risk, so a wallet verifies the witnesses' signatures and walks nothing (`wallet::accept`); a witness signs
   only by induction (`wallet::may_witness`). Committee 16, 11 signatures to accept — placeholders until measured.
+- **Bootstrap (owner 10-10):** before paid demand and before $CRAFT, keeping earns REPUTATION — the same keeping
+  record later paid by issuance (retroactively) and locked as stake — counted only for accounts VOUCHED for (the gate
+  against one disk posing as many keepers), at a tapering per-account rate. Until then the lot is weighted by that
+  record (REPUTATION.md §4–5).
 - **Order:** keeper payouts (REWARDS §5 — the Craftworks token's contributions as escrows, payouts as a program's verdict, §7) → each
   keeper reward locked as witness stake → the lot weighted by locked stake. **Open:** the committee size and how many
   signatures make an entry; how fast stake counts (a ramp) — from measurement on the network.

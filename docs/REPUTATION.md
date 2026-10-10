@@ -34,14 +34,28 @@ design and implement for our whole ecosystem." This is that design. Status: DESI
 - **Decay:** an account that stops taking part (no standing record for some epochs) passes on less; nothing is
   permanent without presence.
 
-## 4. Witness weight
+## 4. Keeping earns; vouches gate (owner 10-10: "keeper get reputation + token in the future but for now, it get
+## reputation first")
 
-- Lot weight = reputation now; later the lesser of (reputation, stake) or a blend — chosen when $CRAFT stake exists.
-  Reputation keeps sybils out of the lot; stake makes a cheat cost money.
-- The committee's rule stays the token's: a witness signs only by induction; a misdeed is self-proving; the burn now
-  also reaches reputation (and through it the vouchers).
+Two parts, one path from bootstrap to the token:
 
-## 5. Open — the owner's
+- **THE GATE — vouch reputation (§3):** does this account count at all. Unvouched accounts may keep data; they earn
+  nothing for it. This is what stops one disk posing as many keepers (keeping proofs are sybil-cheap, §2).
+- **THE RECORD — keeping:** what a vouched account EARNS — its proven keeping (standing answers, REWARDS §4: pieces
+  the beacon-ranked assignment gave it, held, answered), at a fixed rate per account that tapers by height (the
+  `keepers(rate, half-life)` rule, TOKEN §6), so splitting one disk over many identities gains nothing.
+  - **Now (no paid demand, no token):** the record IS the keeper's reputation — non-transferable, burned on a proven
+    misdeed. It is the witness weight (TOKEN §7a).
+  - **When $CRAFT launches:** issuance pays the SAME record — retroactively for what was kept during the bootstrap —
+    and lands LOCKED as witness stake (TOKEN §7a: "earned stake"). Paid demand takes over from issuance as it grows.
+
+## 5. Witness weight
+
+- Lot weight = the keeping record, counted only for vouched accounts; once $CRAFT exists, the locked stake it earned.
+- The committee's rule stays the token's: a witness signs only by induction; a misdeed is self-proving; the burn reaches
+  the record (and its stake), and through the vouch graph the account's vouchers.
+
+## 6. Open — the owner's
 
 - **The ROOTS.** Someone starts the flow. Candidates: the owner's account; the first N accounts that made public spaces;
   each space choosing its own roots for its own uses (a per-space reputation — no global root at all). The roots are
@@ -51,10 +65,12 @@ design and implement for our whole ecosystem." This is that design. Status: DESI
   for moderation).
 - The numbers: vouch budget, damping, how long a vouch takes to count, how much a voucher loses.
 
-## 6. Order of building (once the open points are settled)
+## 7. Order of building (once the open points are settled)
 
 1. Vouches: the public table, written from a person's page ("Vouch" beside Follow) — page only.
 2. The function: reputation from vouches and roots, in the core, tested against sybil rings (a ring of N fakes with one
    fooled real vouch gets no more than that vouch carries).
 3. Burns reaching reputation: a misdeed proof zeroes the account and charges its vouchers.
-4. The lot weighted by reputation (`wallet::lot_of`, the claims registry: a claim of reputation instead of stake).
+4. The keeping record per vouched account (standing answers → a tapering per-account rate), as reputation.
+5. The lot weighted by that record (`wallet::lot_of`, the claims registry: a claim of record instead of stake).
+6. At $CRAFT launch: issuance paying the record (retroactively), locked as stake.
