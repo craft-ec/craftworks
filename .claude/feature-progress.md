@@ -1569,7 +1569,7 @@ old key's addresses.
               refused, received per token so one such stops no other). token-live `BEACON_SEED` serves on the pages'
               beacon; `seed_file` moved into node-io. Measured on fx/fy: A added P (5980cdbc…), sent 25 to B → A 975;
               B's wallet (fy) listed P from the note and took 25.
-          [ ] P  PRIVATE HOLDINGS — STEALTH CHAINS (owner 10-10; TOKEN §7f; before A: the allowance pays to wallets).
+          [x] P  PRIVATE HOLDINGS — STEALTH CHAINS (owner 10-10; TOKEN §7f; before A: the allowance pays to wallets).
               No contract change (a 1-of-1 multisig owner). Phases:
               [x] P1 STEALTH KEYS — BUILT 10-10 (`wallet::stealth`): seed → scan/spend keys; `pay` (R, P, owner =
                   set_id({1,[P]})); `find` (R → P and b + h); `OneTime::sign` (ed25519 by P, hazmat raw_sign); prime-
@@ -1600,7 +1600,18 @@ old key's addresses.
                   `wallet_send` (card keys → announce), `wallet_send_private`, `wallet_receive_private`. Tested: A's DID
                   chain pays B's card; only B's scan finds it; pending, then received; B pays A's card back from the
                   stealth chain (taken by the token); A finds and receives it; neither stealth owner is a DID.
-              [ ] P4 PAGE + LIVE fx/fy: A pays B privately; outsiders see no chain at B's DID.
+              [x] P4 PAGE + LIVE fx/fy 10-10 (site v531): `wallet-app` — the seed(s) in the account table `wallet`
+                  (`seed/<fp>`; racing devices keep both, every seed scanned, the card names the first), the card's PAY
+                  KEYS (`directory.setPay`, `card(did).pay`), send = pay the card (private chains of one seed when they
+                  hold enough, else the DID chain), announce into the epoch's payments bags (first with room, read
+                  back), receive = scan from the last epoch scanned (found rows `found/<to>`), retried on beacon
+                  advance while pending. Totals shown as "N private (k chains) · M on your id". Inbox-note receiving
+                  and its binding removed. `Core.standing_epoch()` now the one epoch length (vouch, statement, wallet —
+                  two hard-coded 1024s gone). Measured on fx/fy: B opened Wallet (seed written, card seq 77 with pay
+                  keys); A (fx) sent 10 P privately → A 965; B (fy) scanned, found it, received: "10 private (1 chain)
+                  · 25 on your id"; B sent 4 back from the stealth chain (its first spend by the one-time key, taken)
+                  → B "6 private · 25 on your id"; A found it pending, received it on the next height → "4 private ·
+                  965 on your id". 969 + 31 = 1,000.
           [ ] A  WREN DAILY ALLOWANCE: 1,000/day by reputation share, cap 20, claim-or-return; service on B.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
               rendezvous), within its limit, instead of what was watched; the standing record proves it.

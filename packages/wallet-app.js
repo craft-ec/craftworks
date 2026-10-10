@@ -1,10 +1,12 @@
-// WALLET, an app (`#/wallet`): this account's TOKENS (TOKEN §7c) — each with its balance; SEND to anyone by their id
-// (signed by this node, the account's device), and RECEIVE what others sent (a note in this account's inbox names the
-// sender: its credit is taken from their chain once its margin has passed — a worked credit, no signature; while one
-// is inside its margin, received again each time the beacon advances). No token is MADE here (owner 10-10: a page that
-// made them would let anyone flood the network with tokens) — issuers make theirs with their tools. The tokens shown
-// are the account's table `tokens` (token id → { name }), on every device of the account. UI only: every entry is the
-// core's (`wallet_*`), every step `tokens`' run.
+// WALLET, an app (`#/wallet`): this account's TOKENS (TOKEN §7c), held PRIVATELY (§7f, owner 10-10: what an account
+// holds is not linkable to its DID). SEND to anyone by their id: a fresh one-time owner derived from their card's PAY
+// KEYS, announced in the epoch's PAYMENTS BAGS (never their inbox: its address is their DID's). RECEIVE by SCANNING
+// the bags with this wallet's scan key — each payment found is kept, its credit taken once its margin has passed
+// (worked, no signature; while one is inside its margin, again each time the beacon advances). The wallet SEED and
+// what it found are the account's private table `wallet` (sealed, on every device, recovered by the words); the card
+// carries the pay keys. A DID chain (stake, rewards, a creator's supply) is shown and spent from too. No token is MADE
+// here (owner 10-10: a page that made them would let anyone flood the network with tokens). The tokens listed are the
+// account's table `tokens`. UI only: every entry is the core's (`wallet_*`, `stealth_*`), every step `tokens`' run.
 export async function mount(ctx, el) {
   const login = await ctx.require("login");
   if (!(await login.session())) {
@@ -56,57 +58,128 @@ export async function mount(ctx, el) {
     return (BigInt(m[1] || "0") * 10n ** BigInt(dec) + BigInt(frac.padEnd(dec, "0") || "0")).toString();
   };
 
-  const viewOf = async (id, me) => run(() => core.wallet_view(code, beacon, idlogCode, bytes(id), me.didBytes));
+  const Core = glue.CraftworksCore;
+  const EPOCH = Core.standing_epoch();
+  const ROOM = Core.stealth_room();
+  const priv = await storage.table("wallet");
+  const hexToBytes = x => bytes(x);
 
-  // RECEIVE: the senders each "token" note in this account's inbox names, by token; each token's credits taken. New
-  // tokens named there are added to the table.
+  // THE WALLET SEEDS (TOKEN §7f): rows `seed/<fingerprint>` of the account's private table `wallet` (sealed, on every
+  // device, recovered by the words). The first device makes one; two devices racing each keep theirs — every seed is
+  // scanned, the card names the first. Each row: { seed, epoch } (the epoch it was made: no scan before it).
+  async function seeds() {
+    const have = priv.rows().filter(r => r.key.startsWith("seed/")).map(r => JSON.parse(r.value)).sort((a, b) => (a.seed < b.seed ? -1 : 1));
+    if (have.length) return have;
+    const seed = hexOf(crypto.getRandomValues(new Uint8Array(32)));
+    const made = { seed, epoch: Math.floor((await now()) / EPOCH) };
+    await priv.put(`seed/${seed.slice(0, 16)}`, JSON.stringify(made));
+    return [made];
+  }
+  // The card's PAY KEYS: the first seed's, published if the card does not have them.
+  async function ensureCard(me, first) {
+    const keys = Core.stealth_public(hexToBytes(first.seed));
+    const card = await directory.card(me.did, { fresh: true }).catch(() => null);
+    if (card?.pay?.scan !== keys.scan || card?.pay?.spend !== keys.spend) await directory.setPay(keys);
+  }
+  // FOUND payments: rows `found/<to>` → { a (announcement hex), seed (its fingerprint), token, done }.
+  const found = () => priv.rows().filter(r => r.key.startsWith("found/")).map(r => JSON.parse(r.value));
+
+  // A token as this account holds it: on its DID chain (stake, rewards, a creator's supply) and privately (the chains
+  // of the payments it found), summed.
+  async function viewOf(id, me) {
+    const v = await run(() => core.wallet_view(code, beacon, idlogCode, bytes(id), me.didBytes));
+    const mine = found().filter(f => f.token === id);
+    const p = mine.length ? await run(() => core.wallet_private(code, beacon, idlogCode, bytes(id), mine.map(f => hexToBytes(f.to)))) : { balance: "0", chains: [] };
+    const onId = BigInt(v.begun || v.creator !== hexOf(me.didBytes) ? v.balance : v.supply);
+    return { ...v, onId: onId.toString(), private: p.balance, chains: p.chains.length, total: (onId + BigInt(p.balance)).toString() };
+  }
+
+  // DROP an announcement into the current epoch's payments bags: the first with room, read back (over a cap a bag
+  // keeps its most-worked items: not kept → the next).
+  async function announce(at, a) {
+    const epoch = Math.floor(at / EPOCH);
+    const want = hexOf(a);
+    for (let k = 0; k < 64; k++) {
+      const address = Core.stealth_payments_address(epoch, k);
+      const items = await index.bag.read(address, "reading a payments bag");
+      if (items.some(i => hexOf(i) === want)) return;
+      if (items.length >= ROOM) continue;
+      await index.bag.add(address, a, "announcing a payment");
+      const again = await index.bag.read(address, "reading a payments bag back");
+      if (again.some(i => hexOf(i) === want)) return;
+    }
+    throw new Error("the payment was made but could not be announced: the payments bags are full");
+  }
+
+  // SCAN the payments bags from the last epoch scanned (or each seed's first) to now: every payment to this wallet
+  // kept as found (and its token listed); then RECEIVE each not yet received.
   async function receiveAll(me) {
-    const by = new Map();
-    for (const it of await index.inbox()) {
-      if (it.kind !== "token" || !/^[0-9a-f]{64}$/.test(it.token ?? "") || !it.from) continue;
-      if (!by.has(it.token)) by.set(it.token, new Set());
-      by.get(it.token).add(it.from);
+    const all = await seeds();
+    const at = await now();
+    const current = Math.floor(at / EPOCH);
+    const scanned = Number(priv.rows().find(r => r.key === "scanned")?.value ?? Math.min(...all.map(x => x.epoch)));
+    for (let e = scanned; e <= current; e++) {
+      for (let k = 0; k < 64; k++) {
+        const items = await index.bag.read(Core.stealth_payments_address(e, k), "reading a payments bag");
+        for (const sd of all) {
+          for (const f of Core.stealth_scan(hexToBytes(sd.seed), items)) {
+            if (priv.rows().some(r => r.key === `found/${f.to}`)) continue;
+            await priv.put(`found/${f.to}`, JSON.stringify({ a: hexOf(f.bytes), seed: sd.seed.slice(0, 16), token: f.token, to: f.to, done: false }));
+            if (!table.rows().some(r => r.key === f.token)) await table.put(f.token, JSON.stringify({ name: "" }));
+          }
+        }
+        if (items.length < ROOM) break;
+      }
+      if (e < current) await priv.put("scanned", String(e + 1));
     }
     let got = 0;
     let pending = 0;
-    for (const [id, from] of by) {
-      if (!table.rows().some(r => r.key === id)) {
-        const v = await viewOf(id, me).catch(() => null);
-        if (!v) continue;
-        await table.put(id, JSON.stringify({ name: v.name }));
-      }
-      // Each token on its own: one that cannot be received (another clock, a chain that does not read) stops no other.
+    for (const f of found().filter(f => !f.done)) {
+      // Each payment on its own: one that cannot be received (another clock, a chain that does not read) stops no other.
       try {
-        const senders = [...from].map(d => glue.did_bytes(d));
-        const { member, creds } = await tokens.device();
-        const at = await now();
-        const r = await run(sigs => core.wallet_receive(code, beacon, idlogCode, bytes(id), me.didBytes, senders, at, member, creds, sigs));
+        const r = await run(() => core.wallet_receive_private(code, beacon, idlogCode, hexToBytes(f.a), at));
         await putAll(r.puts);
         if (r.puts?.length) got++;
         pending += r.pending ?? 0;
+        if (!r.pending) await priv.put(`found/${f.to}`, JSON.stringify({ ...f, done: true }));
       } catch (e) {
-        ctx.log("wallet", { what: `receiving ${id.slice(0, 12)}…: ${e.message ?? e}` });
+        ctx.log("wallet", { what: `receiving ${f.to.slice(0, 12)}…: ${e.message ?? e}` });
       }
     }
     return { got, pending };
   }
 
+  // SEND PRIVATELY to a person (their card's pay keys): from this wallet's private chains when they hold enough (of
+  // one seed), else from the DID chain; each debit to a fresh one-time owner of theirs, announced.
   async function send(id, me, toText, amountText, dec) {
     const to = await conversation.person(toText.trim());
     if (!to) throw new Error("no such person: an id (did:craftec:…) or name#abc123 of someone you know");
     const amount = units(amountText, dec);
     if (amount === "0") throw new Error("send more than nothing");
-    const { member, creds } = await tokens.device();
+    const pay = (await directory.card(to, { fresh: true }))?.pay;
+    if (!pay) throw new Error(`${directory.shown(to)} has no pay keys yet: they open their Wallet once`);
+    const rand = crypto.getRandomValues(new Uint8Array(32));
     const at = await now();
-    const s = await run(sigs => core.wallet_send(code, beacon, idlogCode, bytes(id), me.didBytes, glue.did_bytes(to), amount, at, member, creds, sigs));
-    await putAll(s.puts);
-    // The note: who sent which token — their wallet takes the credit from this chain.
-    let noted = true;
-    await index.send(to, { kind: "token", from: me.did, token: id }).catch(e => {
-      noted = false;
-      ctx.log("wallet", { what: `sent; the note to ${directory.shown(to)} did not go: ${e.message ?? e}` });
-    });
-    return { to, noted };
+    const all = await seeds();
+    let announces = null;
+    for (const sd of all) {
+      const mine = found().filter(f => f.token === id && f.seed === sd.seed.slice(0, 16) && f.done);
+      if (!mine.length) continue;
+      const p = await run(() => core.wallet_private(code, beacon, idlogCode, bytes(id), mine.map(f => hexToBytes(f.to))));
+      if (BigInt(p.balance) < BigInt(amount)) continue;
+      const s = await run(() => core.wallet_send_private(code, beacon, idlogCode, bytes(id), hexToBytes(sd.seed), mine.map(f => hexToBytes(f.a)), hexToBytes(pay.scan), hexToBytes(pay.spend), amount, rand, at));
+      await putAll(s.puts);
+      announces = s.announces;
+      break;
+    }
+    if (!announces) {
+      const { member, creds } = await tokens.device();
+      const s = await run(sigs => core.wallet_send(code, beacon, idlogCode, bytes(id), me.didBytes, hexToBytes(pay.scan), hexToBytes(pay.spend), amount, rand, at, member, creds, sigs));
+      await putAll(s.puts);
+      announces = [s.announce];
+    }
+    for (const a of announces) await announce(at, a);
+    return { to };
   }
 
   function row(id, me) {
@@ -124,16 +197,17 @@ export async function mount(ctx, el) {
           said.textContent = "";
           try {
             const r = await send(id, me, to.value, amount.value, v.decimals);
-            status.textContent = `Sent ${amount.value.trim()} ${v.name} to ${directory.shown(r.to)}${r.noted ? "" : " (they were not told: tell them to open their wallet)"}.`;
+            status.textContent = `Sent ${amount.value.trim()} ${v.name} to ${directory.shown(r.to)}, privately.`;
             box.replaceWith(row(id, me));
           } catch (e) {
             said.textContent = e.message ?? String(e);
             go.disabled = false;
           }
         };
-        const mine = v.creator === hexOf(me.didBytes);
+        const made = v.creator === hexOf(me.didBytes);
+        const where = [v.private !== "0" ? `${shown(v.private, v.decimals)} private (${v.chains} chain${v.chains === 1 ? "" : "s"})` : null, v.onId !== "0" ? `${shown(v.onId, v.decimals)} on your id` : null].filter(Boolean).join(" · ");
         box.replaceChildren(
-          h("div", { className: "top" }, h("span", { className: "name", textContent: v.name || "a token" }), h("span", { className: "bal", textContent: shown(v.begun || !mine ? v.balance : v.supply, v.decimals) }), mine ? h("span", { className: "note", textContent: `you made it · supply ${shown(v.supply, v.decimals)}` }) : null),
+          h("div", { className: "top" }, h("span", { className: "name", textContent: v.name || "a token" }), h("span", { className: "bal", textContent: shown(v.total, v.decimals) }), where ? h("span", { className: "note", textContent: where }) : null, made ? h("span", { className: "note", textContent: `you made it · supply ${shown(v.supply, v.decimals)}` }) : null),
           h("span", { className: "note", textContent: `id ${id}` }),
           f,
           said,
@@ -171,7 +245,9 @@ export async function mount(ctx, el) {
   const body = h("div");
   root.append(status, body);
   const me = await (await ctx.require("auth")).check();
+  ensureCard(me, (await seeds())[0]).catch(e => ctx.log("wallet", { what: `the card's pay keys: ${e.message ?? e}` }));
   const draw = async () => body.replaceChildren(await list(me));
+  priv.onChange(() => el.isConnected && draw());
   await draw();
   table.onChange(() => el.isConnected && draw());
   // RECEIVE now, and again each time the beacon advances while a send to this account waits out its margin.

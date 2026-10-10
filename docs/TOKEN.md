@@ -827,7 +827,8 @@ DID; only the sender and the recipient know who was paid.
   pays `to = set_id({P})`. Its ANNOUNCEMENT `(token, from, nonce, to, R)` goes into the epoch's PAYMENTS BAG (one bag
   per standing epoch, the existing bag contract) — not the recipient's inbox (its address is the DID's: arrival time
   would link). Bags CHAIN (`payments_address(epoch, k)`): a bag holds at most 1,024 items, so a sender drops into the
-  first of the epoch with room and reads back that it was kept; a scanner reads k = 0, 1, … until one is not there.
+  first of the epoch with room and reads back that it was kept; a scanner reads k = 0, 1, … and stops at the first
+  with room (a sender moves on only from a full one; reading a bag nobody made makes it, empty).
 - **FINDING (scanning).** For each announcement since the last scan the wallet computes h = H(s·R), P = B + h·G and
   compares `set_id({P})` with `to` — pure computation; only matches are read. Its spend key is b + h. Everything is
   rediscovered from the seed: nothing to remember.

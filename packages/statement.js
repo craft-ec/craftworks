@@ -10,7 +10,7 @@ export async function start(ctx) {
   const { core, glue } = node;
   const Core = glue.CraftworksCore;
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
-  const EPOCH = 1024; // standing epoch (beacon heights)
+  const EPOCH = Core.standing_epoch(); // standing epoch (beacon heights)
   const MARGIN = 2; // heights after an epoch starts before its statement is due
   const TICK = 5 * 60 * 1000;
   const state = { epoch: null, root: null, lines: null };

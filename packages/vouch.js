@@ -12,7 +12,7 @@ export async function start(ctx) {
   const Core = glue.CraftworksCore;
   const BUDGET = 10;
   const TABLE = "vouches";
-  const EPOCH = 1024; // standing epoch (beacon heights): a vouch's registry is its height's epoch
+  const EPOCH = Core.standing_epoch(); // a vouch's registry is its height's epoch
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   let mineOpen = null;

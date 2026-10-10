@@ -2606,6 +2606,15 @@ mod js {
             }
             Ok(v)
         }
+        /// The STANDING EPOCH's length in beacon heights (`reputation::EPOCH`: vouch registries, statements, payments bags).
+        pub fn standing_epoch() -> f64 {
+            craftworks_reputation::EPOCH as f64
+        }
+        /// A payments bag with fewer items than this takes an announcement (`stealth::ROOM`); one with this many is
+        /// full — the next (k + 1) is the one to read or drop into.
+        pub fn stealth_room() -> f64 {
+            craftworks_wallet::stealth::ROOM as f64
+        }
         /// This wallet's card PAY KEYS from its seed: `{ scan, spend }` (hex).
         pub fn stealth_public(seed: &[u8]) -> Result<JsValue, JsValue> {
             let k = craftworks_wallet::stealth::Keys::from_seed(&b32(seed)?).public();
@@ -2668,26 +2677,6 @@ mod js {
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
                 wallet::receive_private(&ctx, &got, &a, now as u64)
-            };
-            let mut puts = Vec::new();
-            let v = token_step(step, |r| {
-                puts = r.put.into_iter().collect();
-                Ok(json!({ "amount": r.amount.to_string(), "pending": r.pending }))
-            })?;
-            self.attach_puts(v, token_code, &puts)
-        }
-        /// RECEIVE (`wallet::receive`) what `senders` (DIDs, 32 bytes each) sent `owner` of the token `id`, at beacon
-        /// height `now`: `{ done: { amount, pending, puts: [{ id, frames }] } }` (no puts: nothing to take yet; `pending`: sends still inside
-        /// their margin — ask again when the beacon advances).
-        #[allow(clippy::too_many_arguments)]
-        pub fn wallet_receive(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], owner: &[u8], senders: js_sys::Array, now: f64, public: &[u8], creds: js_sys::Array, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
-            let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let owner = b32(owner)?;
-            let senders: Vec<[u8; 32]> = senders.iter().map(|s| b32(&js_sys::Uint8Array::new(&s).to_vec())).collect::<Result<_, _>>()?;
-            let Some(dev) = account_device(&self.0, idlog_code, &owner, public, &creds, &sigs)? else { return want_log(idlog_code, &owner) };
-            let step = {
-                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-                wallet::receive(&ctx, &got, &b32(id)?, &owner, &senders, now as u64, &dev)
             };
             let mut puts = Vec::new();
             let v = token_step(step, |r| {

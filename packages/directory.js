@@ -10,6 +10,7 @@
 //   await directory.card(did)                 // { did, handle, inbox, keyPackage, keyPackages }, or null (keyPackage: one, at random)
 //   await directory.publish({ handle })       // this person's handle, and their key packages
 //   await directory.setContributions(list)    // this person's contributions, PUBLIC on their card (rewards §5a)
+//   await directory.setPay({ scan, spend })   // this person's wallet pay keys on their card (TOKEN §7f); card(did).pay
 //   await directory.levelOf(did)              // their level now, from their card: { id, name } ("free"|"pro"|"vip")
 //   await directory.handle(did)               // their handle, or null (each card read once per page)
 //   directory.shown(did, handle)              // how a person is SHOWN everywhere: `pat#8r4orC`
@@ -41,6 +42,15 @@ export async function start(ctx) {
     return {
       handle: rows.find(r => r.key === "handle")?.value ?? null,
       inbox: rows.find(r => r.key === "inbox")?.value ?? null,
+      // Their wallet's PAY KEYS (TOKEN §7f: what a private payment to them is derived from) — { scan, spend } hex, or null.
+      pay: (() => {
+        try {
+          const p = JSON.parse(rows.find(r => r.key === "pay")?.value ?? "null");
+          return p && /^[0-9a-f]{64}$/.test(p.scan) && /^[0-9a-f]{64}$/.test(p.spend) ? { scan: p.scan, spend: p.spend } : null;
+        } catch {
+          return null;
+        }
+      })(),
       // Their CONTRIBUTIONS (rewards §5a, PUBLIC — owner 10-07): [{ at, amount, days }], what their level is made of.
       contrib: (() => {
         try {
@@ -124,6 +134,13 @@ export async function start(ctx) {
   }
 
   // THIS person's CONTRIBUTIONS on their card (PUBLIC: anyone computes their level from them — `usage.levelFrom`).
+  // This person's wallet PAY KEYS on their card (TOKEN §7f: the only wallet fact tied to the DID).
+  async function setPay(keys) {
+    const sp = await space.account();
+    if (!sp?.shared) throw new Error("this node does not hold the account's data key");
+    const t = await storage.publicTail(CARD, sp.shared);
+    await t.put("pay", JSON.stringify({ scan: keys.scan, spend: keys.spend }));
+  }
   async function setContributions(list) {
     const sp = await space.account();
     if (!sp?.shared) throw new Error("this node does not hold the account's data key");
@@ -265,5 +282,5 @@ export async function start(ctx) {
     return dids.filter((_, i) => ok[i]);
   }
 
-  return { credTable, card, publish, setContributions, levelOf, renew, handle, shown, name, nameEl, publicOf, dataKey, devices, onDevices, listMe, isListed, listed };
+  return { credTable, card, publish, setContributions, setPay, levelOf, renew, handle, shown, name, nameEl, publicOf, dataKey, devices, onDevices, listMe, isListed, listed };
 }

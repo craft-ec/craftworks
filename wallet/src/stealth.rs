@@ -126,8 +126,9 @@ impl Announce {
 }
 
 /// The PAYMENTS BAG `k` of standing epoch `epoch` (a bag's address). Bags CHAIN: a sender drops into the first of the
-/// epoch with room (`ROOM`), reading back that it was kept (over a bag's cap the most-worked items stay); a scanner
-/// reads k = 0, 1, … until one is not there — however many payments, no fixed cap.
+/// epoch with room (fewer than `ROOM` items), reading back that it was kept (over a bag's cap the most-worked items
+/// stay); a scanner reads k = 0, 1, … and stops at the first with room (a sender moves on only from a full one) —
+/// however many payments, no fixed cap.
 pub fn payments_address(epoch: u64, k: u32) -> [u8; 32] {
     blake3::derive_key("craftworks 2026-10-10 payments bag", &[&epoch.to_le_bytes()[..], &k.to_le_bytes()].concat())
 }
