@@ -161,6 +161,8 @@ pub fn buy(ctx: &Ctx, got: Got, id: &[u8; 32], buyer: &[u8; 32], amount: u128, n
             want.push(w);
             None
         }
+        // Not begun: the token's own creator begins it (its genesis first, in the same put); anyone else holds none.
+        Ok(None) if pay_def.genesis_owner == *buyer && pay_def.genesis_amount > 0 => Some(State::default()),
         Ok(None) => return Err("no money: the buyer holds none of the sale's token".into()),
         Ok(Some(b)) => Some(State::decode(&b).ok_or("the buyer's chain does not read")?),
     };
@@ -173,9 +175,16 @@ pub fn buy(ctx: &Ctx, got: Got, id: &[u8; 32], buyer: &[u8; 32], amount: u128, n
         Ok(Some(b)) => Some(craftworks_idlog_contract::read(buyer, &b).ok_or("the buyer's key log does not verify")?),
     };
     let (Some(state), Some(keys)) = (pay_state, keys) else { return Ok(Step::Want(want)) };
-    let held = Held { params: pp, definition: pay_def, state, blocks: Default::default() };
+    let mut held = Held { params: pp, definition: pay_def, state, blocks: Default::default() };
     let asking = device_of(dev);
     let w = Wallet { device: &asking, keys: &keys };
+    if held.state.entries.is_empty() {
+        let g = w.genesis(&held, now);
+        if let Some(m) = asking.next() {
+            return Ok(Step::Sign(m));
+        }
+        held.state.entries.extend(g.map_err(String::from)?);
+    }
     let record = &e.records[k as usize];
     let built = w.buy(&held, &e.definition, id, (k, record), amount, now);
     if let Some(m) = asking.next() {
@@ -195,19 +204,21 @@ pub fn buy(ctx: &Ctx, got: Got, id: &[u8; 32], buyer: &[u8; 32], amount: u128, n
     }))
 }
 
-/// COLLECT copy `n` of a NUMBERED edition `id` into `owner`'s chain of it (its mint read from its record): the chain to
-/// put, or `None` when there is nothing to collect (not minted to `owner`, or credited already).
+/// COLLECT copy `n` of the edition `id` into `owner`'s chain of it (its mint read from its record): a numbered copy's
+/// own chain, or for plain copies the owner's one chain of the edition (every mint to it in `n`'s record). The chain
+/// to put, or `None` when there is nothing to collect (not minted to `owner`, or credited already).
 pub fn collect_copy(ctx: &Ctx, got: Got, id: &[u8; 32], owner: &[u8; 32], n: u128, now: u64, dev: &Device) -> Result<Step<Option<Put>>, String> {
     let d = match there(got, id) {
         Err(w) => return Ok(Step::Want(vec![w])),
         Ok(None) => return Err("no such edition".into()),
         Ok(Some(b)) => Definition::decode(&b).ok_or("not a token definition")?,
     };
-    if d.ids != t::Ids::Numbered {
-        return Err("not a numbered edition".into());
+    if !d.capped() {
+        return Err("not an edition (no records)".into());
     }
     let k = t::supply::record_of(&d, n).ok_or("no such copy")?;
-    let cp = chain(ctx, &d, id, owner, t::numbered_item(id, n));
+    let item = if d.ids == t::Ids::Numbered { t::numbered_item(id, n) } else { [0; 32] };
+    let cp = chain(ctx, &d, id, owner, item);
     let mut want = Vec::new();
     let mut read = |x: [u8; 32]| match there(got, &x) {
         Err(w) => {
@@ -364,6 +375,27 @@ mod tests {
         let mut got: HashMap<[u8; 32], Vec<u8>> = HashMap::new();
         got.insert(sid, sd.encode());
         got.insert(pid, base.encode());
+        // The creator of P whose chain is NOT BEGUN buys: the genesis first, then the payment, in one chain.
+        {
+            let mut g2 = got.clone();
+            g2.insert(pp.id(), vec![]);
+            g2.insert(pp.keys_id(), lg.encode());
+            g2.insert(record_params(&ctx, &sid, 0).id(), vec![]);
+            let mut d2 = Device { sigs: vec![], ..device(node, &[dev.credential.clone()], &lg, vec![]).unwrap() };
+            let b = run(&mut d2, &mut |d| buy(&ctx, &|id| g2.get(id).cloned(), &sid, &did, 1, 5, d)).unwrap();
+            let c = State::decode(&b.puts[0].state).unwrap();
+            assert_eq!((c.balance(), t::check(&pp, &base, &c, &|_, _| None, &|_| None, Some(&lg), &t::Extra::NONE)), (990, Ok(())));
+            // Someone else's not-begun chain: no money.
+            let other = Definition { genesis_owner: [8; 32], ..base.clone() };
+            let oid = t::id(&ctx.code_hash, &other.encode());
+            let so = Definition { sale: Some((t::Tok { definition: oid, item: [0; 32] }, 10, [9; 32])), ..sd.clone() };
+            let soid = t::id(&ctx.code_hash, &so.encode());
+            g2.insert(oid, other.encode());
+            g2.insert(soid, so.encode());
+            g2.insert(record_params(&ctx, &soid, 0).id(), vec![]);
+            g2.insert(chain(&ctx, &other, &oid, &did, [0; 32]).id(), vec![]);
+            assert_eq!(buy(&ctx, &|id| g2.get(id).cloned(), &soid, &did, 1, 5, &d2), Err("no money: the buyer holds none of the sale's token".to_string()));
+        }
         got.insert(pp.id(), pay.encode());
         got.insert(pp.keys_id(), lg.encode());
         // Before the record is read: wanted.

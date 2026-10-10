@@ -146,6 +146,9 @@ export async function start(ctx) {
       host = h("div", {}, written(it));
       page.append(cards.card(it, { href: null, body: host, actions: [bar], by: true }));
     }
+    // ITS EDITIONS (TOKEN §1c): bought and sold here; the author makes them (`editions`, null when none to show).
+    const eds = await (await ctx.require("editions")).section(it, { changed: redraw }).catch(e => (ctx.log("editions", { what: e.message ?? String(e) }), null));
+    if (eds) page.append(eds);
     // ITS COMMENTS: the one thread.
     if (parts.comments) {
       const thread = await (await ctx.require("comments")).create({ item: it, outside, app: app ?? items.appOf(it.kind) });

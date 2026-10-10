@@ -384,7 +384,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 102] = [
+    let packages: [(&str, &str, PathBuf); 105] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -505,6 +505,11 @@ async fn main() -> Result<()> {
         ("pdfjs", "bytes", app.join("vendor/pdfjs/pdf.min.mjs")),
         ("pdfjs-worker", "bytes", app.join("vendor/pdfjs/pdf.worker.min.mjs")),
         ("bag-wasm", "bytes", contracts.join("bag.wasm")),
+        // EDITIONS on an item's page (TOKEN §1c): the component, the token's code, and its set-up — `{ beacon, pay }`
+        // (EDITIONS_CONFIG names the file; the default `{}` shows no editions anywhere).
+        ("editions", "service", app.join("packages/editions.js")),
+        ("token-wasm", "bytes", contracts.join("token.wasm")),
+        ("editions-config", "bytes", std::env::var("EDITIONS_CONFIG").map(std::path::PathBuf::from).unwrap_or_else(|_| app.join("packages/editions-config.json"))),
     ];
     let mut entries = Vec::new();
     // WHAT IS ALREADY UP: the piece addresses the live manifest names (PUBLISHED_MANIFEST, the app site's own

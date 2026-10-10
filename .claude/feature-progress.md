@@ -1525,8 +1525,12 @@ old key's addresses.
               writes the row; edited by the existing item edit, merging meta). `editions::item_id(ref)` is the ONE
               derivation of an item's 32-byte token id; `of_item` shows an edition only if it names this item and its
               creator is the item's author. Bindings `edition_item_id`, `edition_of_item`.
-          [ ] S4 ITEM PAGE: an "Editions" section in `packages/item-page.js` — the author makes an edition (price,
-              cap, numbered or plain); anyone sees each edition's price and copies left, Buy, and their copies.
+          [x] S4 ITEM PAGE — BUILT 10-10 (not yet run in a browser: S5): `packages/editions.js`, placed by
+              item-page before the comments. Reads `meta.editions`, shows each edition the item shows (name, numbered
+              or copies, left of cap, royalty, the viewer's copies), Buy (pay + paid mint, then collect), and for the
+              author a form (name, price, copies, numbered, royalty %) → `edition_create` puts + `items.editItem`
+              with `meta.editions` appended. Set up by `editions-config` (`{ beacon, pay }`; default `{}`: no section).
+              A buyer that created the pay token begins its chain with the genesis in the same put.
           [ ] S5 LIVE fx/fy: beacon + pay token + edition; buy from a second account end to end.
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).
