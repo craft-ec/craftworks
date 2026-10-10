@@ -1581,8 +1581,12 @@ old key's addresses.
                   Recovery (owner asked): the `wallet` table is an account table — its keys escrowed to the recovery
                   words (ARCHITECTURE `keys`), so words alone restore the seed; payments re-found by scanning, and the
                   found list kept in the same table.
-              [ ] P2 PAYMENTS BAG: per-epoch bag of announcements (token, from, nonce, to, R); scan = compute and
-                  compare, read only matches.
+              [x] P2 PAYMENTS BAG — BUILT 10-10 (`wallet::stealth`): `Announce` (token, from, nonce, to, R — nothing
+                  naming either account; "CWPA"), `payments_address(epoch, k)`, `Keys::scan` (compute and compare: one
+                  point multiplication an announcement). Bags CHAIN (a bag holds ≤ 1,024 items — one per epoch would cap
+                  the network at 1,024 payments an epoch): a sender drops into the first bag with room (`ROOM` = the
+                  bag crate's ITEMS_MAX − 64) and reads back that it was kept; a scanner reads k = 0.. until one is not
+                  there. (The bag I/O is the page's: P3/P4.)
               [ ] P3 CORE: holdings over stealth chains (balance = sum), send (as few chains as can; change to a fresh
                   own stealth chain; the announcement), receive by scanning; the seed in the account table `wallet`,
                   S/B on the card.

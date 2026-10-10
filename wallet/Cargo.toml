@@ -14,6 +14,8 @@ blake3 = "1"
 curve25519-dalek = { version = "=4.1.3", default-features = false, features = ["alloc", "precomputed-tables"] }
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["hazmat", "alloc"] }
 sha2 = { version = "0.10", default-features = false }
+# The payments bags (stealth.rs): the bag's own cap.
+craftworks-bag-contract = { path = "../contracts-src/bag", default-features = false }
 
 [dev-dependencies]
 craftworks-identity = { path = "../identity" }

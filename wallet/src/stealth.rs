@@ -98,6 +98,51 @@ pub fn pay(to: &Public, rand: &[u8; 32]) -> Option<Paid> {
     Some(Paid { r: big_r, key, to: owner(&key) })
 }
 
+/// A payment's ANNOUNCEMENT (TOKEN §7f): in the PAYMENTS BAGS, never the recipient's inbox (its address is the DID's:
+/// the arrival would link). `from` is the paying chain's owner, `nonce` its debit, `to` the one-time owner it pays, `r`
+/// the sender's R — everything a recipient needs to find the payment and collect it, nothing naming either account.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Announce {
+    pub token: [u8; 32],
+    pub from: [u8; 32],
+    pub nonce: [u8; 16],
+    pub to: [u8; 32],
+    pub r: [u8; 32],
+}
+
+const ANNOUNCE: &[u8; 4] = b"CWPA";
+
+impl Announce {
+    pub fn encode(&self) -> Vec<u8> {
+        [&ANNOUNCE[..], &self.token, &self.from, &self.nonce, &self.to, &self.r].concat()
+    }
+    pub fn decode(b: &[u8]) -> Option<Announce> {
+        if b.len() != 4 + 32 * 4 + 16 || &b[..4] != ANNOUNCE {
+            return None;
+        }
+        let a = |i: usize| -> [u8; 32] { b[i..i + 32].try_into().unwrap() };
+        Some(Announce { token: a(4), from: a(36), nonce: b[68..84].try_into().unwrap(), to: a(84), r: a(116) })
+    }
+}
+
+/// The PAYMENTS BAG `k` of standing epoch `epoch` (a bag's address). Bags CHAIN: a sender drops into the first of the
+/// epoch with room (`ROOM`), reading back that it was kept (over a bag's cap the most-worked items stay); a scanner
+/// reads k = 0, 1, … until one is not there — however many payments, no fixed cap.
+pub fn payments_address(epoch: u64, k: u32) -> [u8; 32] {
+    blake3::derive_key("craftworks 2026-10-10 payments bag", &[&epoch.to_le_bytes()[..], &k.to_le_bytes()].concat())
+}
+
+/// A bag with fewer items than this takes an announcement (the bag's own cap, less room for the senders racing it).
+pub const ROOM: usize = craftworks_bag_contract::ITEMS_MAX - 64;
+
+impl Keys {
+    /// SCAN announcements: the ones paying this wallet, each with its one-time key (pure computation: one point
+    /// multiplication an announcement; nothing is read for the rest).
+    pub fn scan<'a>(&self, all: impl IntoIterator<Item = &'a Announce>) -> Vec<(Announce, OneTime)> {
+        all.into_iter().filter_map(|a| self.find(&a.r, &a.to).map(|k| (*a, k))).collect()
+    }
+}
+
 impl OneTime {
     /// SIGN with the one-time key (ed25519: verified as any signature by `key`).
     pub fn sign(&self, message: &[u8]) -> [u8; 64] {
@@ -134,6 +179,17 @@ mod tests {
         assert!(ed25519_dalek::VerifyingKey::from_bytes(&p.key).unwrap().verify(b"hello", &ed25519_dalek::Signature::from_bytes(&sig)).is_ok());
         // A card whose keys are not points: no payment.
         assert!(pay(&Public { scan: [0; 32], spend: bob.public().spend }, &[9; 32]).is_none());
+        // ANNOUNCED among others' payments: the scan finds Bob's alone; an announcement reads back as written.
+        let ann = |p: &Paid, n: u8| Announce { token: [5; 32], from: [6; 32], nonce: [n; 16], to: p.to, r: p.r };
+        let others = pay(&alice.public(), &[11; 32]).unwrap();
+        let list = [ann(&others, 1), ann(&p, 2), ann(&q, 3)];
+        let found = bob.scan(&list);
+        assert_eq!(found.iter().map(|(a, k)| (a.nonce[0], k.key)).collect::<Vec<_>>(), vec![(2, p.key), (3, q.key)]);
+        assert!(alice.scan(&list[1..]).is_empty());
+        assert_eq!(Announce::decode(&list[1].encode()), Some(list[1]));
+        assert_eq!(Announce::decode(&list[1].encode()[1..]), None);
+        assert_ne!(payments_address(5, 0), payments_address(5, 1));
+        assert_ne!(payments_address(5, 0), payments_address(6, 0));
         // A small-order R announced: found by no one.
         let mut small = [0u8; 32];
         small[0] = 1; // the identity point

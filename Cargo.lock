@@ -665,6 +665,7 @@ name = "craftworks-wallet"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "craftworks-bag-contract",
  "craftworks-identity",
  "craftworks-idlog-contract",
  "craftworks-token-contract",
