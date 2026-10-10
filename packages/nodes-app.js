@@ -1,7 +1,7 @@
 // NODES, an app (`#/nodes`; owner 10-11: "my machines and the work they do"): the account's nodes, each a row read
 // from the PUBLIC records (its standing record, the witness lot) — what it holds and proves for the network, which one
 // holds the account's witness seat — the files this node keeps, and the data the account used. Money is the Wallet's;
-// the network as a whole is the Explorer's.
+// the network as a whole is the Network app's.
 export async function mount(ctx, el) {
   const login = await ctx.require("login");
   if (!(await login.session())) {

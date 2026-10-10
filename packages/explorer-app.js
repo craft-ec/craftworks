@@ -1,4 +1,4 @@
-// EXPLORER, an app (`#/explorer`; owner 10-11: "more transparent on what is happening … like a block explorer"):
+// NETWORK, an app (`#/network`; owner 10-11: "more transparent on what is happening … like a block explorer"):
 // every public record the token machinery runs on, as tables — the clock, the epoch statements and their witnesses,
 // the witness lot's entrants, the witness queue with each entry's signatures and status, the registries — yours
 // marked (what your nodes do is the Nodes app's, your money the Wallet's). Read-only; every value is the core's reading of a public contract (`clock`, `statement_status`,
@@ -20,7 +20,7 @@ export async function mount(ctx, el) {
     .ex code { font-size: var(--cw-text-sm); }
     .ex .ok { color: #2aa876; } .ex .wait { color: #b38700; } .ex .bad { color: var(--cw-danger); }
     .ex .scroll { overflow-x: auto; }
-  }</style><div class="ex"><h2>🔎 Explorer</h2><p class="note" data-x="said"></p><div data-x="body"></div></div>`;
+  }</style><div class="ex"><h2>🌐 Network</h2><p class="note" data-x="said"></p><div data-x="body"></div></div>`;
   const said = el.querySelector('[data-x="said"]');
   const body = el.querySelector('[data-x="body"]');
   const tokens = await ctx.require("tokens");
