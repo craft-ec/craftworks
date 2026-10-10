@@ -628,7 +628,7 @@ ISSUANCE — and each piece of the loop has ONE job:
 - **Gaps closed (review 10-10):** (1) LAUNCH: until earned stake exists the lot is drawn by REPUTATION, handing over to
   stake as it accrues; (2) AGREEMENT: vouches enter a per-epoch VOUCH REGISTRY, and reputation is computed from it as of
   the epoch's start — the same numbers for every witness; (3) CONCENTRATION: at most 3 of a committee's 16 seats from
-  one lineage; (4) THE ROOT never earns or witnesses (REPUTATION.md §6); (5) ONE NODE, ONE ACCOUNT: a standing record's
+  one lineage; (4) THE ROOT never earns, and witnesses only as the bootstrap baseline until 6 other live witnesses exist (below); (5) ONE NODE, ONE ACCOUNT: a standing record's
   binding names the account it keeps for, and a KeeperMint must be that account's — witnesses also refuse a second
   claim citing one standing contract in an epoch. Also: vouches RAMP in over epochs, reputation is read from the
   epoch-start SNAPSHOT, absent accounts DECAY; a cheat charges its DIRECT vouchers by their vouch's weight; the beacon's
@@ -670,6 +670,12 @@ ISSUANCE — and each piece of the loop has ONE job:
   witnesses" beside a payment. The PRICE COMMITTEE (REWARDS §5a: a lot of 16 stakers per epoch reporting a USD rate,
   the stake-weighted median counting) switches on by itself only once there are ≥ 48 live stakers; until then levels
   are priced in tokens. All derived from counts anyone sees — nothing switched by a person.
+  WREN IS THE BASELINE (owner 10-10: "wren account start as a baseline. and i occasionally online too. so it scale from
+  that"): Wren, always on (B), witnesses during the bootstrap ONLY — stepping out by itself once 6 OTHER live witnesses
+  exist — so payments never wait while the network is tiny; its fee share returns to the treasury (the root never
+  profits). Members (the owner's everyday account first) claim seats and sign when online; below 6 live witnesses a claim
+  LAPSES after one missed epoch, so an absent witness never holds payments up for long. (Amends "the root never
+  witnesses": it never does once the network can stand without it.)
 - **MONITORED:** every claim is also listed in the epoch's public ISSUANCE BAG (a bag per token per epoch, like the
   claims registry); the monitor page reads it and shows per epoch: keepers paid, amounts and the total; concentration
   (the top shares); the split by LINEAGE of the trust tree (is one community taking most?); and claims from accounts

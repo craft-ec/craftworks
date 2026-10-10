@@ -70,8 +70,8 @@ Two parts, one path from bootstrap to the token:
 
 - **THE ROOT IS WREN** (owner 10-10: "wren hold the key and root reputation. i'll be the first layer member as anyone
   else"; earlier "my key can start the vouch root", then moved): `did:craftec:BZ6QnLTT3pnaWtUvfWr9bjtc8nCeRnC2Q7q44XMNUt5h`, the account Claude keeps.
-  Safeguards: the owner holds Wren's recovery words OFFLINE too (to rotate the key and take the root back); the root
-  NEVER earns or witnesses (it holds the most reputation by construction — it would take the cap every epoch and a
+  Safeguards: the owner holds Wren's recovery words OFFLINE too (saved 10-10; to rotate the key and take the root back);
+  the root NEVER earns, and witnesses only as the bootstrap baseline until 6 other live witnesses exist (TOKEN §7d) (it holds the most reputation by construction — it would take the cap every epoch and a
   stolen key would be worth the most); its vouches ramp in like anyone's. WREN'S VOUCH POLICY, public: the owner's
   everyday account first; then, over time, up to 9 more people chosen for coming from DIFFERENT communities (each starts
   a lineage — diversity is the system's strength); every root vouch logged with its reason. The owner, a layer-1 member,
