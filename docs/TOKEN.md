@@ -633,6 +633,12 @@ ISSUANCE — and each piece of the loop has ONE job:
   claim citing one standing contract in an epoch. Also: vouches RAMP in over epochs, reputation is read from the
   epoch-start SNAPSHOT, absent accounts DECAY; a cheat charges its DIRECT vouchers by their vouch's weight; the beacon's
   pace is issuance per wall time (shown by the monitor).
+- **WITNESS FEES on every token** (owner 10-10: "sounds good" — every token on the standard pays it, no opt-out:
+  otherwise witnesses secure others' tokens for free): each DEBIT (send, spend, escrow, vest) pays a small set WITNESS
+  FEE on top, in the token moved, split among the witnesses who signed that entry; a signer claims its share in its own
+  chain of that token, citing the entry it signed (as a fee claim does). Income ∝ stake (more draws, more signatures),
+  SPENDABLE — never stake. Issuance's 10% carries witnesses at launch; fees take over as issuance halves (as block
+  rewards give way to fees). Also the spam cost of a debit.
 - **MONITORED:** every claim is also listed in the epoch's public ISSUANCE BAG (a bag per token per epoch, like the
   claims registry); the monitor page reads it and shows per epoch: keepers paid, amounts and the total; concentration
   (the top shares); the split by LINEAGE of the trust tree (is one community taking most?); and claims from accounts

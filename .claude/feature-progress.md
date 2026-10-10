@@ -1526,6 +1526,7 @@ old key's addresses.
               [ ] V1b the registry (a contract per epoch every witness reads alike), decay, the statement.
           [ ] W  WALLET APP: send, receive/collect (inbox note), balances.
           [ ] A  WREN DAILY ALLOWANCE: 1,000/day by reputation share, cap 20, claim-or-return; service on B.
+          [ ] F  WITNESS FEES on every token: a set fee per debit, split among its signers, claimed in their chains.
           [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` (BUILT uncommitted 10-10: proof, epoch, binding, name;
               12 mutants killed) — REWORK: amount = the statement's (witness-checked), the bind names the account.
           [ ] K3 WITNESS GATE: may_witness checks the reputation gate for a KeeperMint.
