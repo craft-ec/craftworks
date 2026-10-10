@@ -13,7 +13,8 @@ export async function start(ctx) {
     cfg = JSON.parse(new TextDecoder().decode(await ctx.require("beacon-config")));
   } catch {}
   if (!cfg.params) return { status: () => ({ off: true }) };
-  const [{ core, glue, ask }, code, glueJs, stepWasm] = await Promise.all(["node", "beacon-wasm", "beacon-step-glue", "beacon-step-wasm"].map(n => ctx.require(n)));
+  const [node, code, glueJs, stepWasm] = await Promise.all(["node", "beacon-wasm", "beacon-step-glue", "beacon-step-wasm"].map(n => ctx.require(n)));
+  const { core, glue, ask } = node;
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
   const params = bytes(cfg.params);
   const id = glue.CraftworksCore.beacon_id(code, params);
@@ -40,13 +41,10 @@ self.onmessage = async e => {
       worker.postMessage({ wasm: stepWasm, params, state: st, mix });
     });
 
-  // READ it: its state (bytes) and height, or null (not there yet).
+  // READ it (`node.read`): its state (bytes), or null (not there yet).
   async function read() {
     core.take_got(id);
-    const [hexId, frames] = core.frames_get(idBytes);
-    const said = await ask(frames, s => (s.kind === "got" || s.kind === "get-failed") && s.id === hexId, "reading the beacon", 30000).catch(() => null);
-    if (said?.kind !== "got") return null;
-    return core.take_got(id);
+    return (await node.read(idBytes, "reading the beacon").catch(() => false)) ? core.take_got(id) : null;
   }
   const heightOf = st => (st ? glue.CraftworksCore.beacon_state_height(st) : null);
 

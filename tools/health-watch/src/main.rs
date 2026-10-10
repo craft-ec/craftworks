@@ -9,6 +9,7 @@ use sha2::Digest;
 use std::collections::BTreeMap;
 use tokio_tungstenite::tungstenite::Message;
 use wire::{unframe, Incoming, Reassembler};
+use node_io::{get};
 
 /// The bag a page's `index.point(ref)` writes: `inbox_address(sha256("craftworks pointers " + ref))`.
 fn pointer_address(r: &str) -> [u8; 32] {
@@ -16,27 +17,7 @@ fn pointer_address(r: &str) -> [u8; 32] {
     craftworks_identity::inbox_address(&h)
 }
 
-async fn get(ws: &str, id: [u8; 32]) -> Result<Option<Vec<u8>>> {
-    let (mut tx, mut rx) = tokio_tungstenite::connect_async(ws).await.context("connecting")?.0.split();
-    for f in wire::frame_get(wire::contract_id(id), false, 1).map_err(|e| anyhow::anyhow!(e))? {
-        tx.send(Message::Binary(f.into())).await?;
-    }
-    let mut r = Reassembler::new();
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
-    loop {
-        match tokio::time::timeout_at(deadline, rx.next()).await {
-            Err(_) => return Ok(None),
-            Ok(None) => bail!("closed"),
-            Ok(Some(Err(e))) => bail!("{e}"),
-            Ok(Some(Ok(Message::Binary(b)))) => match unframe(&mut r, &b) {
-                Incoming::Got { state, .. } => return Ok(Some(state)),
-                Incoming::GetFailed { .. } => return Ok(None),
-                _ => {}
-            },
-            Ok(Some(Ok(_))) => {}
-        }
-    }
-}
+
 
 fn day(offset_days: i64) -> String {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64 + offset_days * 86_400;

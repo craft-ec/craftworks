@@ -1,0 +1,15 @@
+[package]
+name = "node-io"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The tools' ONE way to a node's client API: a contract container, a PUT answered, a GET — and the beacon's standard params."
+[workspace]
+[dependencies]
+craftworks-beacon-contract = { path = "../../contracts-src/beacon", default-features = false }
+wire = { path = "../../sdk/craftworks-sdk/wire" }
+freenet-stdlib = { version = "0.10.0", features = ["net"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.27"
+futures = "0.3"
+anyhow = "1"

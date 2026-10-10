@@ -49,7 +49,7 @@ fn ensure_writer(s: &mut State, by: u8) {
     }
 }
 fn def() -> Definition {
-    Definition { code_hash: CODE, decimals: 8, min_send: 10, genesis_owner: did(1), genesis_amount: 1000, name: b"T".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None }
+    Definition { code_hash: CODE, decimals: 8, min_send: 10, genesis_owner: did(1), genesis_amount: 1000, name: b"T".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None, keepers: None }
 }
 fn params(owner: u8) -> ChainParams {
     ChainParams { code_hash: CODE, definition: id(&CODE, &def().encode()), owner: did(owner), beacon: BEACON, idlog: IDLOG, item: [0; 32] }
@@ -74,7 +74,7 @@ fn after(s: &State, body: &Body) -> u128 {
         }).unwrap_or(0),
         Body::Payout { amount, .. } | Body::HolderPayout { amount, .. } => b + amount,
         Body::Stake { amount } => b.wrapping_sub(*amount),
-        Body::Unstake { .. } | Body::Slash { .. } | Body::Misdeed { .. } | Body::FalseVerdict { .. } | Body::FalseMint { .. } => b,
+        Body::Unstake { .. } | Body::Slash { .. } | Body::Misdeed { .. } | Body::FalseVerdict { .. } | Body::FalseMint { .. } | Body::KeeperMint { .. } => b,
         Body::Release { unstake } => b + unbonding_of(s).into_iter().find(|u| &u.0 == unstake).map_or(0, |u| u.1),
         Body::Allow { .. } | Body::Cut { .. } | Body::Writer { .. } | Body::Members { .. } => b,
         Body::Spend { amount, .. } => b.wrapping_sub(*amount),
@@ -3473,4 +3473,105 @@ fn an_entry_is_signed_under_the_token_entry_domain_only() {
     let a = w.0.get_mut(&did(1)).unwrap();
     *a.entries.last_mut().unwrap() = resign(&e.message()[ENTRY_DOMAIN.len()..]);
     assert!(w.check(1).is_err(), "a signature over the bare content (no domain) proves nothing");
+}
+
+// ---- KEEPER ISSUANCE (TOKEN §7d, owner 10-10: "$craft issuance to keeper", paired with reputation) ----
+
+const STANDING_CODE: [u8; 32] = [44; 32];
+
+/// K: a keeper-issued token — 100 an epoch per account from epoch 2, halving every 3 epochs.
+fn kdef() -> Definition {
+    Definition { genesis_amount: 0, name: b"CRAFT".to_vec(), keepers: Some(Keepers { rate: 100, half_life: 3, start: 2, standing_code: STANDING_CODE }), ..def() }
+}
+/// T's node's standing record: epoch `e` bound to `node`, with `answers` answers by `by`.
+fn standing_of(e: u64, node: [u8; 32], by: [u8; 32], answers: usize) -> (Vec<u8>, [u8; 32], Vec<u8>) {
+    let params = craftworks_standing_contract::Params { beacon_code: [3; 32], beacon: BEACON, peer: "peerT".into() };
+    let ep = craftworks_standing::record::Epoch {
+        epoch: e,
+        attests: vec![],
+        binds: vec![craftworks_standing::Bind { key: node, peer: "peerT".into(), epoch: e, sig: [0; 64] }],
+        holdings: vec![],
+        answers: (0..answers).map(|i| craftworks_standing::Answer { key: by, peer: "peerT".into(), height: e * craftworks_standing::EPOCH + i as u64, picks: vec![], sig: [0; 64] }).collect(),
+    };
+    let state = craftworks_standing::codec::encode(&craftworks_standing::record::State { epochs: vec![ep] });
+    let p = params.encode();
+    (p.clone(), id(&STANDING_CODE, &p), state)
+}
+
+#[test]
+fn a_keeper_mints_its_epoch_once_locked_as_stake_by_its_standing_proof() {
+    let d = kdef();
+    let k = id(&CODE, &d.encode());
+    let kp = at(k, T);
+    let (sp, sid, sstate) = standing_of(3, pk(T), pk(T), KEEP_MIN);
+    let reads = |x: &[u8; 32]| (*x == sid).then(|| sstate.clone());
+    let finished = 4 * craftworks_standing::EPOCH + d.margin as u64;
+    let claim = |epoch: u64, amount: u128, stamp: u64, cred_: Vec<u8>, contract: [u8; 32], standing: Vec<u8>| {
+        let mut s = State::default();
+        ensure_writer(&mut s, T);
+        let mut e = entry(&s, keeper_nonce(&k, epoch), Body::KeeperMint { epoch, contract, standing, cred: cred_, key_seq: 0, amount });
+        e.stamp = stamp;
+        e.balance = 0;
+        s.entries.push(sign(e, T));
+        s
+    };
+    let run = |s: &State| check(&kp, &d, s, &|_, _| None, &|_| None, Some(&log(T)), &Extra { ops: None, program: Some(&reads) });
+    // Epoch 3: the rate halved once (3 − 2 = 1 < 3: not yet) → 100.
+    assert_eq!(d.keepers.unwrap().amount(3), 100);
+    assert_eq!(d.keepers.unwrap().amount(5), 50, "halved after 3 epochs");
+    assert_eq!(d.keepers.unwrap().amount(1), 0, "before the start");
+    let ok = claim(3, 100, finished, cred(T), sid, sp.clone());
+    assert_eq!(run(&ok), Ok(()));
+    let w = walk(&kp, &d, &ok, &|_, _| None, &|_| None, Some(&log(T)), RECENT, usize::MAX, &Extra { ops: None, program: Some(&reads) }).unwrap();
+    assert_eq!((w.staked, ok.balance()), (100, 0), "locked as stake, nothing spendable");
+    assert!(programs_from(&kp, &ok, 0).contains(&sid), "the standing contract is read with the chain");
+    // Refused, each:
+    assert_eq!(run(&claim(3, 101, finished, cred(T), sid, sp.clone())), Err("a keeper mint of another amount than the rate's"));
+    assert_eq!(run(&claim(3, 100, finished - 1, cred(T), sid, sp.clone())), Err("a keeper mint for an epoch not finished"));
+    assert_eq!(run(&claim(3, 100, finished, cred(4), sid, sp.clone())), Err("a keeper credential for another account"));
+    assert_eq!(run(&claim(3, 100, finished, cred(T), [1; 32], sp.clone())), Err("a standing contract of another code than its token's"));
+    let (_, few_id, few_state) = standing_of(3, pk(T), pk(T), KEEP_MIN - 1);
+    let few = |x: &[u8; 32]| (*x == few_id).then(|| few_state.clone());
+    assert_eq!(check(&kp, &d, &claim(3, 100, finished, cred(T), few_id, sp.clone()), &|_, _| None, &|_| None, Some(&log(T)), &Extra { ops: None, program: Some(&few) }), Err("a keeper mint for an epoch not kept"), "fewer answers than KEEP_MIN");
+    let (_, other_id, other_state) = standing_of(3, pk(T), pk(5), KEEP_MIN);
+    let other = |x: &[u8; 32]| (*x == other_id).then(|| other_state.clone());
+    assert_eq!(check(&kp, &d, &claim(3, 100, finished, cred(T), other_id, sp.clone()), &|_, _| None, &|_| None, Some(&log(T)), &Extra { ops: None, program: Some(&other) }), Err("a keeper mint for an epoch not kept"), "answers by another node's key");
+    assert_eq!(run(&claim(1, 100, finished, cred(T), sid, sp.clone())), Err("a keeper mint of another amount than the rate's"), "before the start: 0, refused");
+    // No standing record of the claimed epoch.
+    assert_eq!(run(&claim(2, 100, finished, cred(T), sid, sp.clone())), Err("no standing record of that epoch"));
+    // Twice for one epoch: refused (its name is the epoch's).
+    let mut twice = ok.clone();
+    let mut e = entry(&twice, keeper_nonce(&k, 3), Body::KeeperMint { epoch: 3, contract: sid, standing: sp.clone(), cred: cred(T), key_seq: 0, amount: 100 });
+    e.stamp = finished;
+    twice.entries.push(sign(e, T));
+    assert_eq!(run(&twice), Err("a keeper mint named for another epoch, or twice"));
+    // Named for another epoch (epoch 4's name on epoch 3's claim): refused.
+    let mut misnamed = State::default();
+    ensure_writer(&mut misnamed, T);
+    let mut e = entry(&misnamed, keeper_nonce(&k, 4), Body::KeeperMint { epoch: 3, contract: sid, standing: sp.clone(), cred: cred(T), key_seq: 0, amount: 100 });
+    e.stamp = finished;
+    misnamed.entries.push(sign(e, T));
+    assert_eq!(run(&misnamed), Err("a keeper mint named for another epoch, or twice"));
+    // Answers by T's node key, but the record binds another node to the peer: not T's keeping.
+    let (_, unbound_id, unbound_state) = standing_of(3, pk(5), pk(T), KEEP_MIN);
+    let unbound = |x: &[u8; 32]| (*x == unbound_id).then(|| unbound_state.clone());
+    assert_eq!(check(&kp, &d, &claim(3, 100, finished, cred(T), unbound_id, sp.clone()), &|_, _| None, &|_| None, Some(&log(T)), &Extra { ops: None, program: Some(&unbound) }), Err("a keeper mint for an epoch not kept"), "answers by a key the record does not bind");
+    // A standing contract of ANOTHER beacon (its id matching its params): refused.
+    let ob = craftworks_standing_contract::Params { beacon_code: [3; 32], beacon: [1; 32], peer: "peerT".into() }.encode();
+    let ob_id = id(&STANDING_CODE, &ob);
+    let ob_reads = |x: &[u8; 32]| (*x == ob_id).then(|| sstate.clone());
+    assert_eq!(check(&kp, &d, &claim(3, 100, finished, cred(T), ob_id, ob.clone()), &|_, _| None, &|_| None, Some(&log(T)), &Extra { ops: None, program: Some(&ob_reads) }), Err("a standing contract of another beacon"));
+    // No key log, checked from scratch: the keeper's credential cannot be checked — refused (it was skipped before the
+    // one credential rule).
+    // An UPDATE whose writer entry is held already (seq 0) and whose keeper mint is new (from 1): the writer passes
+    // without the log, the mint's credential must not.
+    assert_eq!(walk(&kp, &d, &ok, &|_, _| None, &|_| None, None, RECENT, 1, &Extra { ops: None, program: Some(&reads) }).map(|_| ()).map_err(|(_, w)| w), Err("the owner's key log is not there"));
+    // CONTROL: the same with the mint held too (from 2) is not refused for it.
+    assert!(walk(&kp, &d, &ok, &|_, _| None, &|_| None, None, RECENT, 2, &Extra { ops: None, program: Some(&reads) }).is_ok());
+    // A token without keeper issuance: refused.
+    assert_eq!(check(&at(id(&CODE, &def().encode()), T), &def(), &ok, &|_, _| None, &|_| None, Some(&log(T)), &Extra { ops: None, program: Some(&reads) }), Err("a keeper mint of a token without keeper issuance"));
+    // Round-trips; the definition's rule too; a rule of a capped token refused.
+    assert_eq!(Entry::decode(&ok.entries[1].encode()).as_ref(), Some(&ok.entries[1]));
+    assert_eq!(Definition::decode(&d.encode()), Some(d.clone()));
+    assert_eq!(Definition::decode(&Definition { cap: 10, ..d.clone() }.encode()), None);
 }

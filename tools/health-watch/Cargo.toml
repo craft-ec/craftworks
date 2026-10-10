@@ -6,6 +6,7 @@ publish = false
 description = "Support's read of the day's HEALTH bag (packages/index.js `health`): every page's reported problems, grouped."
 [workspace]
 [dependencies]
+node-io = { path = "../node-io" }
 craftworks-identity = { path = "../../identity" }
 craftworks-bag-contract = { path = "../../contracts-src/bag", default-features = false }
 wire = { path = "../../sdk/craftworks-sdk/wire" }

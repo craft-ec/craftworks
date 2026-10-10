@@ -370,6 +370,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-standing"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "ed25519-dalek",
+]
+
+[[package]]
+name = "craftworks-standing-contract"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "contract-keys",
+ "craftworks-beacon-contract",
+ "craftworks-standing",
+]
+
+[[package]]
 name = "craftworks-token-contract"
 version = "0.1.0"
 dependencies = [
@@ -378,6 +396,8 @@ dependencies = [
  "craftworks-beacon-contract",
  "craftworks-identity",
  "craftworks-idlog-contract",
+ "craftworks-standing",
+ "craftworks-standing-contract",
  "ed25519-dalek",
  "engine",
  "freenet-prolly",
@@ -1042,6 +1062,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "node-io"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "craftworks-beacon-contract",
+ "freenet-stdlib",
+ "futures",
+ "tokio",
+ "tokio-tungstenite",
+ "wire",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1608,6 +1641,7 @@ dependencies = [
  "freenet-stdlib",
  "futures",
  "getrandom 0.2.17",
+ "node-io",
  "tokio",
  "tokio-tungstenite",
  "wire",

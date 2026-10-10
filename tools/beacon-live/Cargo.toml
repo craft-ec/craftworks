@@ -6,6 +6,7 @@ publish = false
 description = "TOKEN step 4, live: the beacon on two nodes — extension, a fake past the sample, its fraud proof; one real calibrated step."
 [workspace]
 [dependencies]
+node-io = { path = "../node-io" }
 craftworks-beacon-contract = { path = "../../contracts-src/beacon", default-features = false }
 blake3 = "1"
 wire = { path = "../../sdk/craftworks-sdk/wire" }

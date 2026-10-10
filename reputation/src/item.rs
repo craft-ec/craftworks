@@ -6,6 +6,11 @@
 use crate::{Did, Vouch};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
+/// The VOUCH REGISTRY of standing epoch `epoch` (a bag's address): where anyone relays the signed vouches made in it.
+pub fn registry_address(epoch: u64) -> [u8; 32] {
+    blake3::derive_key("craftworks 2026-10-10 vouch registry", &epoch.to_le_bytes())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
     pub from: Did,
@@ -55,10 +60,10 @@ impl Item {
     /// Holds against `from`'s KEY LOG: its credential is `from`'s, signed by the owner key at `key_seq`, and the item is
     /// signed by the node key that credential names.
     pub fn holds(&self, log: &craftworks_idlog_contract::Log) -> bool {
-        let Some((did, owner, node, _)) = craftworks_identity::read_credential(&self.cred) else { return false };
-        if did != self.from || self.from == self.to || log.events.get(self.key_seq as usize).is_none_or(|e| e.key != owner) {
+        if self.from == self.to {
             return false;
         }
+        let Ok(node) = craftworks_identity::credential_node(&self.cred, &self.from, log.events.get(self.key_seq as usize).map(|e| e.key)) else { return false };
         let (Ok(vk), Ok(sig)) = (VerifyingKey::from_bytes(&node), Signature::from_slice(&self.sig)) else { return false };
         vk.verify(&Item::message(&self.from, &self.to, self.at, self.on), &sig).is_ok()
     }

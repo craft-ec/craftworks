@@ -285,6 +285,7 @@ pub fn new_edition(ctx: &Ctx, item_ref: &str, author: &[u8; 32], name: &str, cap
         soulbound: false,
         transfer_fee: None,
         sale: Some((t::Tok { definition: *pay_token, item: [0; 32] }, price, *author)),
+        keepers: None,
     };
     if Definition::decode(&d.encode()).as_ref() != Some(&d) {
         return Err("not an edition the token takes (a price, and a cap or numbered copies)");
@@ -358,7 +359,7 @@ mod tests {
         let mut dev = device(node, &[other, craftworks_identity::credential(&did, &node, &[7; 32], &OWNER_SEED)], &lg, vec![]).unwrap();
         assert_eq!(dev.key_seq, 0);
         assert_eq!(device([45; 32], &[dev.credential.clone()], &lg, vec![]).err(), Some("no credential of this node on the account's key log"));
-        let base = Definition { code_hash: ctx.code_hash, decimals: 0, min_send: 1, genesis_owner: did, genesis_amount: 1000, name: b"P".to_vec(), nonce: [0; 16], beacon: ctx.beacon, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: t::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None };
+        let base = Definition { code_hash: ctx.code_hash, decimals: 0, min_send: 1, genesis_owner: did, genesis_amount: 1000, name: b"P".to_vec(), nonce: [0; 16], beacon: ctx.beacon, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: t::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None, keepers: None };
         let pid = t::id(&ctx.code_hash, &base.encode());
         let sd = Definition { ids: t::Ids::Numbered, cap: 10, genesis_amount: 0, name: b"S".to_vec(), sale: Some((t::Tok { definition: pid, item: [0; 32] }, 10, [9; 32])), ..base.clone() };
         let sid = t::id(&ctx.code_hash, &sd.encode());

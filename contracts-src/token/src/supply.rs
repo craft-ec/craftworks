@@ -365,7 +365,7 @@ mod tests {
 
     /// A token minted by `mint`, of `ids`, capped at `cap` (the rest as any).
     fn tok(mint: &Option<KeySet>, ids: crate::Ids, cap: u128) -> crate::Definition {
-        crate::Definition { code_hash: [9; 32], decimals: 0, min_send: 1, genesis_owner: [3; 32], genesis_amount: 0, name: vec![], nonce: [0; 16], beacon: [7; 32], margin: 2, idlog: [0; 32], mint: mint.clone(), freeze: None, ids, royalty: None, cap, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None }
+        crate::Definition { code_hash: [9; 32], decimals: 0, min_send: 1, genesis_owner: [3; 32], genesis_amount: 0, name: vec![], nonce: [0; 16], beacon: [7; 32], margin: 2, idlog: [0; 32], mint: mint.clone(), freeze: None, ids, royalty: None, cap, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None, keepers: None }
     }
 
     const DEF: [u8; 32] = [5; 32];

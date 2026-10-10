@@ -23,6 +23,9 @@ freenet-prolly = { path = "../../sdk/freenet-prolly" }
 # The account's KEY LOG (a chain's owner is a DID: its keys) and the one CREDENTIAL format naming a device's node key
 # (foundation 2).
 craftworks-idlog-contract = { path = "../idlog", default-features = false }
+# A keeper's STANDING CONTRACT (§7d: what a KeeperMint cites): its params and records.
+craftworks-standing-contract = { path = "../standing", default-features = false }
+craftworks-standing = { path = "../../standing" }
 craftworks-identity = { path = "../../identity" }
 # The SDK engine: a tree root's own parity (`repair::root_parity`), as tables code it — the writer's, never the contract's.
 engine = { path = "../../sdk/craftworks-sdk/engine" }

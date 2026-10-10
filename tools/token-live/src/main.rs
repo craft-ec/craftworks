@@ -5,66 +5,15 @@ use craftworks_beacon_contract as B;
 use craftworks_token_contract as T;
 use ed25519_dalek::{Signer, SigningKey};
 use freenet_stdlib::prelude::*;
-use futures::{SinkExt, StreamExt};
 use std::time::{Duration, Instant, SystemTime};
-use tokio_tungstenite::tungstenite::Message;
-
-fn container(code: &[u8], params: Vec<u8>) -> ContractContainer {
-    ContractContainer::from(ContractWasmAPIVersion::V1(WrappedContract::new(
-        std::sync::Arc::new(ContractCode::from(code.to_vec())),
-        Parameters::from(params),
-    )))
-}
-
-async fn put(ws: &str, c: ContractContainer, state: Vec<u8>) -> Result<(String, u128)> {
-    let (mut tx, mut rx) = tokio_tungstenite::connect_async(ws).await.context("connecting")?.0.split();
-    let t = Instant::now();
-    for f in wire::frame_put(c, WrappedState::new(state), 2).map_err(|e| anyhow::anyhow!(e))? {
-        tx.send(Message::Binary(f.into())).await?;
-    }
-    let mut r = wire::Reassembler::new();
-    // ONE deadline for the whole PUT (a per-message timeout restarts on every unrelated message).
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
-    let mut seen: Vec<String> = Vec::new();
-    let said = loop {
-        match tokio::time::timeout_at(deadline, rx.next()).await {
-            Err(_) => break format!("NO ANSWER in 90 s (other messages: {})", seen.join(", ")),
-            Ok(None) => bail!("closed"),
-            Ok(Some(Err(e))) => bail!("{e}"),
-            Ok(Some(Ok(Message::Binary(b)))) => match wire::unframe(&mut r, &b) {
-                wire::Incoming::Ack(wire::AckKind::Put(_)) => break "ACCEPTED".to_string(),
-                wire::Incoming::PutFailed { said, .. } | wire::Incoming::PutFailedByText { said, .. } => break format!("REFUSED: {said}"),
-                wire::Incoming::Refused(r) => break format!("REFUSED: {r:?}"),
-                other => seen.push(format!("{:.60}", format!("{other:?}"))),
-            },
-            Ok(Some(Ok(m))) => seen.push(format!("{:.20}", format!("{m:?}"))),
-        }
-    };
-    Ok((said, t.elapsed().as_millis()))
-}
+use node_io::{container, get, put};
 
 
-async fn get(ws: &str, id: [u8; 32]) -> Result<Option<Vec<u8>>> {
-    let (mut tx, mut rx) = tokio_tungstenite::connect_async(ws).await.context("connecting")?.0.split();
-    for f in wire::frame_get(wire::contract_id(id), false, 3).map_err(|e| anyhow::anyhow!(e))? {
-        tx.send(Message::Binary(f.into())).await?;
-    }
-    let mut r = wire::Reassembler::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        match tokio::time::timeout_at(deadline, rx.next()).await {
-            Err(_) => return Ok(None),
-            Ok(None) => bail!("closed"),
-            Ok(Some(Err(e))) => bail!("{e}"),
-            Ok(Some(Ok(Message::Binary(b)))) => match wire::unframe(&mut r, &b) {
-                wire::Incoming::Got { state, .. } => return Ok(Some(state.to_vec())),
-                wire::Incoming::GetFailed { .. } => return Ok(None),
-                _ => {}
-            },
-            Ok(Some(Ok(_))) => {}
-        }
-    }
-}
+
+
+
+
+
 
 
 fn key(n: u8) -> SigningKey {
@@ -142,7 +91,7 @@ impl W {
         v
     }
     fn def(&self, genesis: u8, name: &[u8], k: u8) -> T::Definition {
-        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog, mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None }
+        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog, mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None, keepers: None }
     }
     fn chain(&self, token: [u8; 32], o: u8) -> T::ChainParams {
         T::ChainParams { code_hash: self.ch, definition: token, owner: did(o), beacon: self.beacon, idlog: self.idlog, item: [0; 32] }
@@ -205,7 +154,7 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
         T::Body::Reclaim { escrow } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Escrow { amount, .. } if &x.nonce == escrow => Some(*amount), _ => None }).unwrap_or(0),
         T::Body::Payout { amount, .. } | T::Body::HolderPayout { amount, .. } => bal + amount,
         T::Body::Stake { amount } => bal - amount,
-        T::Body::Unstake { .. } | T::Body::Slash { .. } | T::Body::Misdeed { .. } | T::Body::FalseVerdict { .. } | T::Body::FalseMint { .. } => bal,
+        T::Body::Unstake { .. } | T::Body::Slash { .. } | T::Body::Misdeed { .. } | T::Body::FalseVerdict { .. } | T::Body::FalseMint { .. } | T::Body::KeeperMint { .. } => bal,
         T::Body::Release { unstake } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Unstake { amount } if &x.nonce == unstake => Some(*amount), _ => None }).unwrap_or(0),
         T::Body::Allow { .. } | T::Body::Cut { .. } | T::Body::Writer { .. } | T::Body::Members { .. } => bal,
     };
@@ -227,7 +176,7 @@ static FAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
 
 /// A beacon on X, extended in the background (a small step: ~4 a second at most; one a second here).
 async fn start_beacon(code: &[u8], x: &str, salt: [u8; 16]) -> Result<[u8; 32]> {
-    let p = B::Params { k: 1 << 20, segs: 256, sample: 8, window: 2, keep: 600, seed: *blake3::hash(&salt).as_bytes() };
+    let p = node_io::beacon_params(*blake3::hash(&salt).as_bytes());
     let c = || container(code, p.encode());
     let id: [u8; 32] = c().key().id().as_bytes().try_into().unwrap();
     // BEACON_START (a test's choice): the first step at that height instead of 1 — a fresh test beacon placed just before

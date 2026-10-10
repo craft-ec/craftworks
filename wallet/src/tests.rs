@@ -44,7 +44,7 @@ impl Device for Dev {
     }
 }
 fn def() -> Definition {
-    Definition { code_hash: CODE, decimals: 0, min_send: 1, genesis_owner: did(1), genesis_amount: 1000, name: b"W".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: t::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None }
+    Definition { code_hash: CODE, decimals: 0, min_send: 1, genesis_owner: did(1), genesis_amount: 1000, name: b"W".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: t::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None, keepers: None }
 }
 fn held(n: u8, d: &Definition) -> Held {
     Held { params: ChainParams { code_hash: CODE, definition: t::id(&CODE, &d.encode()), owner: did(n), beacon: BEACON, idlog: IDLOG, item: [0; 32] }, definition: d.clone(), state: State::default(), blocks: Default::default() }

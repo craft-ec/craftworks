@@ -13,13 +13,15 @@ use craftworks_beacon_contract as B;
 use craftworks_token_contract as T;
 use ed25519_dalek::{Signer as _, SigningKey};
 use freenet_stdlib::prelude::*;
-use futures::{SinkExt, StreamExt};
 use std::time::{Duration, Instant};
-use tokio_tungstenite::tungstenite::Message;
+use node_io::{container, get};
 
-fn container(code: &[u8], params: Vec<u8>) -> ContractContainer {
-    ContractContainer::from(ContractWasmAPIVersion::V1(WrappedContract::new(std::sync::Arc::new(ContractCode::from(code.to_vec())), Parameters::from(params))))
+/// A PUT's answer (`node_io::put`), its time dropped.
+async fn put(ws: &str, c: ContractContainer, state: Vec<u8>) -> Result<String> {
+    Ok(node_io::put(ws, c, state).await?.0)
 }
+
+
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
@@ -40,49 +42,8 @@ fn seed_file(path: &str) -> Result<[u8; 32]> {
     Ok(b)
 }
 
-async fn put(ws: &str, c: ContractContainer, state: Vec<u8>) -> Result<String> {
-    let (mut tx, mut rx) = tokio_tungstenite::connect_async(ws).await.context("connecting")?.0.split();
-    for f in wire::frame_put(c, WrappedState::new(state), 2).map_err(|e| anyhow::anyhow!(e))? {
-        tx.send(Message::Binary(f.into())).await?;
-    }
-    let mut r = wire::Reassembler::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
-    loop {
-        match tokio::time::timeout_at(deadline, rx.next()).await {
-            Err(_) => return Ok("NO ANSWER in 90 s".into()),
-            Ok(None) => bail!("closed"),
-            Ok(Some(Err(e))) => bail!("{e}"),
-            Ok(Some(Ok(Message::Binary(b)))) => match wire::unframe(&mut r, &b) {
-                wire::Incoming::Ack(wire::AckKind::Put(_)) => return Ok("ACCEPTED".into()),
-                wire::Incoming::PutFailed { said, .. } | wire::Incoming::PutFailedByText { said, .. } => return Ok(format!("REFUSED: {said}")),
-                wire::Incoming::Refused(r) => return Ok(format!("REFUSED: {r:?}")),
-                _ => {}
-            },
-            Ok(Some(Ok(_))) => {}
-        }
-    }
-}
-async fn get(ws: &str, id: [u8; 32]) -> Result<Option<Vec<u8>>> {
-    let (mut tx, mut rx) = tokio_tungstenite::connect_async(ws).await.context("connecting")?.0.split();
-    for f in wire::frame_get(wire::contract_id(id), false, 3).map_err(|e| anyhow::anyhow!(e))? {
-        tx.send(Message::Binary(f.into())).await?;
-    }
-    let mut r = wire::Reassembler::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        match tokio::time::timeout_at(deadline, rx.next()).await {
-            Err(_) => return Ok(None),
-            Ok(None) => bail!("closed"),
-            Ok(Some(Err(e))) => bail!("{e}"),
-            Ok(Some(Ok(Message::Binary(b)))) => match wire::unframe(&mut r, &b) {
-                wire::Incoming::Got { state, .. } => return Ok(Some(state.to_vec())),
-                wire::Incoming::GetFailed { .. } => return Ok(None),
-                _ => {}
-            },
-            Ok(Some(Ok(_))) => {}
-        }
-    }
-}
+
+
 
 /// Fresh mix for a step (the beacon's own rule takes any: its output is the VDF's).
 fn mix() -> [u8; 32] {
@@ -92,12 +53,10 @@ fn mix() -> [u8; 32] {
 }
 
 /// The beacon's params — the same shape the token's live runs use — from its seed.
-fn beacon_params(seed: [u8; 32]) -> B::Params {
-    B::Params { k: 1 << 20, segs: 256, sample: 8, window: 2, keep: 600, seed }
-}
+
 
 async fn beacon(code: &[u8], ws: &str, seed: [u8; 32], tick: Duration) -> Result<()> {
-    let p = beacon_params(seed);
+    let p = node_io::beacon_params(seed);
     let c = || container(code, p.encode());
     let id: [u8; 32] = c().key().id().as_bytes().try_into().unwrap();
     // Where it is: read back (a restart continues it), else begun.
@@ -177,7 +136,7 @@ async fn make_token(code: &[u8], idlog_code: &[u8], ws: &str, beacon: [u8; 32], 
     getrandom::getrandom(&mut nonce).map_err(|e| anyhow::anyhow!("randomness: {e}"))?;
     let d = T::Definition {
         code_hash: ch, decimals: 0, min_send: 1, genesis_owner: did, genesis_amount: supply, name: name.as_bytes().to_vec(), nonce, beacon, margin: 2, idlog: ih,
-        mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None,
+        mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None, keepers: None,
     };
     let id = T::id(&ch, &d.encode());
     let a = d.authority();
@@ -215,7 +174,7 @@ async fn main() -> Result<()> {
         Some("params") => {
             // token-ops params <beacon.wasm> <seed file>: the beacon's params (hex — a page's `beacon-config`) and its id.
             let code = std::fs::read(&a[2])?;
-            let p = beacon_params(seed_file(&a[3])?);
+            let p = node_io::beacon_params(seed_file(&a[3])?);
             let id = container(&code, p.encode()).key().id().as_bytes().to_vec();
             println!("{{\"params\":\"{}\"}}", hex(&p.encode()));
             eprintln!("beacon {}", hex(&id));

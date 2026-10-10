@@ -150,8 +150,19 @@ export async function start(ctx) {
       check();
     });
 
+  // READ a contract (its 32-byte id) so the core holds its state — THE page's one GET of a whole contract into the core:
+  // true when the node had it. `absent: true`: a contract the node does not have is marked "read, not there"
+  // (`core.not_there`), so the core's steps tell it from "not read yet".
+  async function read(id, what, { absent = false, ms = 30000 } = {}) {
+    const [hexId, frames] = core.frames_get(id);
+    // (No answer in time throws, as `ask` does: the caller decides whether silence is "not there".)
+    const said = await ask(frames, s => (s.kind === "got" || s.kind === "get-failed") && s.id === hexId, what, ms);
+    if (said.kind !== "got" && absent) core.not_there(id);
+    return said.kind === "got";
+  }
+
   // `drop()`: close the connection as a sleep or a network change does (to see the recovery work).
   // WHAT IS IN FLIGHT now — each request's label and how long it has waited (ms): to see what a page waits on.
   const inFlight = () => waiters.map(w => ({ what: w.what, ms: Math.round(performance.now() - w.at) })).sort((a, b) => b.ms - a.ms);
-  return { core, glue, ask, slot, listen, url, drop: () => ws.close(), WAIT, backoff, idle, busy: () => waiters.length, inFlight };
+  return { core, glue, ask, read, slot, listen, url, drop: () => ws.close(), WAIT, backoff, idle, busy: () => waiters.length, inFlight };
 }

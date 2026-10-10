@@ -15,7 +15,8 @@ export async function start(ctx) {
     cfg = JSON.parse(new TextDecoder().decode(await ctx.require("editions-config")));
   } catch {}
   if (!cfg.beacon || !cfg.pay) return { section: async () => null };
-  const [{ core, glue, ask }, auth, membership, items, tokenCode, idlogCode] = await Promise.all(["node", "auth", "membership", "items", "token-wasm", "idlog-wasm"].map(n => ctx.require(n)));
+  const [node, auth, membership, items, tokenCode, idlogCode] = await Promise.all(["node", "auth", "membership", "items", "token-wasm", "idlog-wasm"].map(n => ctx.require(n)));
+  const { core, glue, ask } = node;
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   const beacon = bytes(cfg.beacon);
@@ -41,13 +42,8 @@ export async function start(ctx) {
     return e;
   };
 
-  // READ a contract so the core holds it (a contract the node does not have is marked so: "read, not there").
-  async function read(idHex) {
-    const id = bytes(idHex);
-    const [hexId, frames] = core.frames_get(id);
-    const said = await ask(frames, s => (s.kind === "got" || s.kind === "get-failed") && s.id === hexId, "reading an edition's contract", 30000);
-    if (said.kind !== "got") core.not_there(id);
-  }
+  // READ a contract so the core holds it (`node.read`; a contract the node does not have: "read, not there").
+  const read = idHex => node.read(bytes(idHex), "reading an edition's contract", { absent: true });
   // PUT what a step built, each answered; then FORGOTTEN by the core (read again, fresh, when next asked).
   async function putAll(puts) {
     for (const p of puts) {

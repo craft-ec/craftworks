@@ -6,6 +6,7 @@ publish = false
 description = "The token's standing operations on a node: the beacon kept ticking (a service), and a token made for an account by its recovery words."
 [workspace]
 [dependencies]
+node-io = { path = "../node-io" }
 craftworks-token-contract = { path = "../../contracts-src/token", default-features = false }
 craftworks-beacon-contract = { path = "../../contracts-src/beacon", default-features = false }
 craftworks-idlog-contract = { path = "../../contracts-src/idlog", default-features = false }

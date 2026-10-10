@@ -23,7 +23,8 @@ export async function start(ctx) {
     if (said.kind === "silent") return { silent: true };
     return said.kind === "identity" ? said.answers.find(a => a.id === id)?.answer ?? null : null;
   }
-  const { core, glue, ask } = await ctx.require("node");
+  const node = await ctx.require("node");
+  const { core, glue, ask } = node;
   const reg = await ask(core.frames_register_identity(), s => s.kind === "registered" || s.kind === "refused", "registering the identity delegate");
   if (reg.kind !== "registered") throw new Error(`the node refused the identity delegate: ${reg.said}`);
   ctx.log("identity ready", { what: core.identity_key().slice(0, 16) + "…" });
@@ -33,11 +34,7 @@ export async function start(ctx) {
     const said = await ask(p.frames, s => (s.kind === "put" && s.key === p.id) || s.kind === "refused", what, 60000);
     if (said.kind !== "put") throw new Error(`the node refused ${what} (${said.said})`);
   }
-  async function get(id, what) {
-    const [hexId, frames] = core.frames_get(id);
-    const said = await ask(frames, s => (s.kind === "got" || s.kind === "get-failed") && s.id === hexId, what, 30000);
-    return said.kind === "got";
-  }
+  const get = (id, what) => node.read(id, what);
   const codes = () => Promise.all(["idlog-wasm", "register-wasm", "devices-wasm"].map(n => ctx.require(n)));
   const logOf = async did => glue.CraftworksCore.idlog_id((await codes())[0], did);
 

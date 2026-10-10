@@ -600,6 +600,7 @@ dependencies = [
 name = "craftworks-reputation"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "craftworks-identity",
  "craftworks-idlog-contract",
  "ed25519-dalek",

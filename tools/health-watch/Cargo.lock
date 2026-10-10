@@ -271,6 +271,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-beacon-contract"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+]
+
+[[package]]
 name = "craftworks-identity"
 version = "0.1.0"
 dependencies = [
@@ -684,6 +691,7 @@ dependencies = [
  "craftworks-identity",
  "freenet-stdlib",
  "futures",
+ "node-io",
  "serde_json",
  "sha2",
  "tokio",
@@ -906,6 +914,19 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys",
+]
+
+[[package]]
+name = "node-io"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "craftworks-beacon-contract",
+ "freenet-stdlib",
+ "futures",
+ "tokio",
+ "tokio-tungstenite",
+ "wire",
 ]
 
 [[package]]

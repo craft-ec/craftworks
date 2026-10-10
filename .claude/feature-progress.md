@@ -1542,8 +1542,14 @@ old key's addresses.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
               rendezvous), within its limit, instead of what was watched; the standing record proves it.
           [ ] F  WITNESS FEES on every token: a set fee per debit, split among its signers, claimed in their chains.
-          [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` (BUILT uncommitted 10-10: proof, epoch, binding, name;
-              12 mutants killed) — REWORK: amount = the statement's (witness-checked), the bind names the account.
+          [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` — FIRST CUT COMMITTED 10-10 (proof, epoch, binding,
+              name; 12 mutants killed; its credential through identity's one rule, which closed a skipped key-log
+              check) — REWORK: amount = the statement's (witness-checked), appended by anyone with work, the bind
+              names the account.
+          [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
+              `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
+              page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and
+              the beacon's standard params (token-live, token-ops, beacon-live, health-watch).
           [ ] K3 WITNESS GATE: may_witness checks the reputation gate for a KeeperMint.
           [ ] K4 ISSUANCE BAG: claims listed per token per epoch.
           [ ] K5 PAGE: claim each finished epoch (needs the page's standing answers running).

@@ -582,6 +582,32 @@ fn cred_message(did: &[u8; 32], node: &[u8; 32], signing_pub: &[u8]) -> Vec<u8> 
     [b"craftworks mls member".as_slice(), did, node, signing_pub].concat()
 }
 
+/// Why a credential does not make `node` a device of `did` ([`credential_node`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredFault {
+    /// Not a credential whose owner signature holds.
+    Unreadable,
+    /// A credential of another account.
+    OtherAccount,
+    /// Not signed by the account's key at the seq it names.
+    NotThatKey,
+}
+
+/// THE CREDENTIAL RULE (the one place it is written): `cred` makes its node key a DEVICE of `did` — its owner signature
+/// holds, it names `did`, and its owner key is the account's key at the seq it is used under (`key_at_seq`: the key
+/// log's key there; `None`: the log has no such seq). Returns the node key. Every chain writer, keeper mint and signed
+/// vouch is checked by this.
+pub fn credential_node(cred: &[u8], did: &[u8; 32], key_at_seq: Option<[u8; 32]>) -> Result<[u8; 32], CredFault> {
+    let (d, owner, node, _) = read_credential(cred).ok_or(CredFault::Unreadable)?;
+    if d != *did {
+        return Err(CredFault::OtherAccount);
+    }
+    if key_at_seq != Some(owner) {
+        return Err(CredFault::NotThatKey);
+    }
+    Ok(node)
+}
+
 /// `(did, owner key, node key, signing key)` of a credential whose owner signature holds.
 pub fn read_credential(b: &[u8]) -> Option<([u8; 32], [u8; 32], [u8; 32], Vec<u8>)> {
     let rest = b.strip_prefix(CRED)?;

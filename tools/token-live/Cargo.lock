@@ -345,6 +345,8 @@ dependencies = [
  "craftworks-beacon-contract",
  "craftworks-identity",
  "craftworks-idlog-contract",
+ "craftworks-standing",
+ "craftworks-standing-contract",
  "ed25519-dalek",
  "engine",
  "freenet-prolly",
@@ -978,6 +980,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "node-io"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "craftworks-beacon-contract",
+ "freenet-stdlib",
+ "futures",
+ "tokio",
+ "tokio-tungstenite",
+ "wire",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1536,6 +1551,7 @@ dependencies = [
  "ed25519-dalek",
  "freenet-stdlib",
  "futures",
+ "node-io",
  "tokio",
  "tokio-tungstenite",
  "wire",

@@ -6,6 +6,7 @@ publish = false
 description = "TOKEN step 3, live: the standard's contract on two nodes — a payment, a double receive, a missing send, an equivocation."
 [workspace]
 [dependencies]
+node-io = { path = "../node-io" }
 craftworks-token-contract = { path = "../../contracts-src/token", default-features = false }
 craftworks-beacon-contract = { path = "../../contracts-src/beacon", default-features = false }
 craftworks-idlog-contract = { path = "../../contracts-src/idlog", default-features = false }
