@@ -91,7 +91,7 @@ export async function start(ctx) {
         const asked = (await conversation.askedCodes().catch(() => [])).some(a => a.key === `code:${conversation.levelCode(gate.space)}`);
         if (!asked) await conversation.joinLevel(gate.space, gate.name ?? null).catch(e => ctx.log("item", { what: `asking into ${gate.space.slice(0, 8)}: ${e.message}` }));
         about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name} · asked, waiting` }));
-      } else about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name}` }), h("a", { href: "#/usage", textContent: "Contribute (Usage)" }));
+      } else about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name}` }), h("a", { href: "#/wallet/contribute", textContent: "Contribute (Wallet)" }));
       return h("div", { className: "cw-page" }, h("h1", { textContent: it.title || "" }), about);
     }
     // A LEVEL'S ITEM from before sealing (rewards §5a) for someone below it: said, with where to contribute — its
@@ -105,7 +105,7 @@ export async function start(ctx) {
           "div",
           { className: "cw-page" },
           h("h1", { textContent: it.title || "" }),
-          h("div", { className: "about" }, h("p", { textContent: `🔒 ${lv === "vip" ? "VIP" : "PRO · VIP"} · you: ${mine.name}` }), h("a", { href: "#/usage", textContent: "Contribute (Usage)" })),
+          h("div", { className: "about" }, h("p", { textContent: `🔒 ${lv === "vip" ? "VIP" : "PRO · VIP"} · you: ${mine.name}` }), h("a", { href: "#/wallet/contribute", textContent: "Contribute (Wallet)" })),
         );
       }
     }

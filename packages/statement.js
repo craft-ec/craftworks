@@ -105,5 +105,7 @@ export async function start(ctx) {
   })();
   // THE ISSUANCE of epoch `epoch` as this page computes its statement: { keepers, total, top, pot } (units).
   const issuance = async epoch => (await build(epoch)).issuance;
-  return { status: () => ({ ...state }), now: publishIfMissing, issuance };
+  // An account's PAID LINE of epoch `epoch` (`did`: hex): { keeper, witness } (units), or null.
+  const paid = async (epoch, did) => (await build(epoch)).paid?.[did] ?? null;
+  return { status: () => ({ ...state }), now: publishIfMissing, issuance, paid };
 }

@@ -1857,6 +1857,14 @@ old key's addresses.
               `claims_registry_id`, `claims_read`, `entry_status`, `statement_status`. Refreshed every 8 heights. Live
               fx v565 at 9,688: showed the re-keyed claims (no entrants) and old chains "not on the network". Fixed: an
               unreadable chain was "seated, refused" — now not seated (v566).
+          [x] APPS RESTRUCTURED 10-11 (owner: "wallet, usage and explore … not structured"): one question each —
+              WALLET = money (Tokens · Contribute · Earnings: the contribution level/split and ledger moved in from Usage);
+              NODES (replaces Usage; `/usage` opens it) = the account's machines and their work (Nodes: account row from
+              its statement lines + the witness seat; per node from its OWN standing record — pieces, bytes, answered
+              this/last epoch, last answer, seat · Keeper: this node's limit and kept files · Data used: the month);
+              EXPLORER = the public network only ("This page" removed). Duplicates removed (network line and issuance
+              lived in Usage too). Bindings `keeper_record_id`, `standing_read`; statement `paid` lines. Live fx v567.
+              NEXT: per-node storage limit (stored under the node key); the witness seat names the most reliable node.
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and

@@ -1,7 +1,7 @@
 // EXPLORER, an app (`#/explorer`; owner 10-11: "more transparent on what is happening … like a block explorer"):
 // every public record the token machinery runs on, as tables — the clock, the epoch statements and their witnesses,
-// the witness lot's entrants, the witness queue with each entry's signatures and status, the registries, and what
-// this page did. Read-only; every value is the core's reading of a public contract (`clock`, `statement_status`,
+// the witness lot's entrants, the witness queue with each entry's signatures and status, the registries — yours
+// marked (what your nodes do is the Nodes app's, your money the Wallet's). Read-only; every value is the core's reading of a public contract (`clock`, `statement_status`,
 // `claims_read`, `entry_status`, …). Refreshed as the beacon advances.
 export async function mount(ctx, el) {
   const login = await ctx.require("login");
@@ -25,7 +25,7 @@ export async function mount(ctx, el) {
   const body = el.querySelector('[data-x="body"]');
   const tokens = await ctx.require("tokens");
   if (!tokens.on) return (said.textContent = "No beacon on this site.");
-  const [node, index, beaconSvc, statement, keeper, witness, auth] = await Promise.all(["node", "index", "beacon", "statement", "keeper", "witness", "auth"].map(n => ctx.require(n)));
+  const [node, index, beaconSvc, statement, keeper, auth] = await Promise.all(["node", "index", "beacon", "statement", "keeper", "auth"].map(n => ctx.require(n)));
   const { core } = node;
   const Core = node.glue.CraftworksCore;
   const { run, lot, bytes, hexOf } = tokens;
@@ -116,14 +116,6 @@ export async function mount(ctx, el) {
     // REGISTRIES
     const net = await keeper.network?.(e).catch(() => null);
     parts.push(section("Registries", "What the network keeps, and who keeps it (this epoch and the last).", table([["Files listed", "num"], ["Bytes", "num"], ["Keepers", "num"]], net ? [[cell(String(net.files), "num"), cell(`${(net.bytes / 1e6).toFixed(1)} MB`, "num"), cell(String(net.keepers), "num")]] : [])));
-
-    // THIS PAGE
-    const ks = keeper.status?.() ?? {};
-    const ws = witness.status?.() ?? {};
-    parts.push(section("This page", "What this open page did for its account.", table(
-      [["Keeper files", "num"], ["Pieces held", "num"], ["Files listed", "num"], ["Challenges answered", "num"], ["Last", "num"], ["Seated", "num"], ["Signed", "num"], ["Refused", "num"]],
-      [[cell(String(ks.files ?? 0), "num"), cell(String(ks.pieces ?? 0), "num"), cell(String(ks.listed ?? 0), "num"), cell(String(ks.answered ?? 0), "num"), cell(ks.last != null ? String(ks.last) : "—", "num"), cell(String(ws.seated ?? 0), "num"), cell(String(ws.signed ?? 0), "num"), cell(String(ws.refused ?? 0), "num")]],
-    )));
 
     said.textContent = `At height ${h}.`;
     body.replaceChildren(...parts);

@@ -2614,7 +2614,9 @@ mod js {
             let pay: Vec<u128> = st.lines.values().map(|l| l.keeper).filter(|k| *k > 0).collect();
             let total: u128 = pay.iter().sum();
             let issuance = json!({ "keepers": pay.len(), "total": total.to_string(), "top": pay.iter().max().copied().unwrap_or(0).to_string(), "pot": pots.keeper.0.to_string() });
-            Ok(js_obj(&[("root", JsValue::from(hex(&root))), ("posted", js_sys::Uint8Array::from(&posted[..]).into()), ("puts", puts.into()), ("lines", JsValue::from(st.lines.len() as f64)), ("kept", JsValue::from(kept.len() as f64)), ("owed", owed.into()), ("keepers", minted.into()), ("issuance", js_sys::JSON::parse(&issuance.to_string())?)]))
+            // Each PAID line (what an account earned: its keeper share, its witness fees).
+            let paid: serde_json::Value = st.lines.iter().filter(|(_, l)| l.keeper > 0 || l.witness > 0).map(|(d, l)| (hex(d), json!({ "keeper": l.keeper.to_string(), "witness": l.witness.to_string() }))).collect::<serde_json::Map<_, _>>().into();
+            Ok(js_obj(&[("root", JsValue::from(hex(&root))), ("posted", js_sys::Uint8Array::from(&posted[..]).into()), ("puts", puts.into()), ("lines", JsValue::from(st.lines.len() as f64)), ("kept", JsValue::from(kept.len() as f64)), ("owed", owed.into()), ("keepers", minted.into()), ("issuance", js_sys::JSON::parse(&issuance.to_string())?), ("paid", js_sys::JSON::parse(&paid.to_string())?)]))
         }
         /// The ALLOWANCE's verdict of `epoch` (`allowance::verdict`; `owed`: `[[did, proof]]` from `statement_build`, under
         /// `root` hex): `{ done: null }` (nothing escrowed to it) or `{ done: { puts: [{ id, frames }] } }` — the program's
@@ -2756,6 +2758,24 @@ mod js {
         }
         // ---- THE EXPLORER (owner 10-11: "more transparent … like a block explorer"): what each public record holds ----
 
+        /// A node's STANDING RECORD contract id (its member key `key`: `keeper::record_id`).
+        pub fn keeper_record_id(standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], key: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&keeper::record_id(&keeper_ctx(standing_code, beacon_code, beacon)?, &b32(key)?)[..]))
+        }
+        /// A standing record, per epoch: `[{ epoch, pieces, bytes, answers, last }]` (pieces and bytes committed; answered
+        /// heights; the last answered — null: none), newest first.
+        pub fn standing_read(state: &[u8]) -> JsValue {
+            let out = js_sys::Array::new();
+            let Some(rec) = craftworks_standing::codec::decode(state) else { return out.into() };
+            let mut eps = rec.epochs.clone();
+            eps.sort_by(|a, b| b.epoch.cmp(&a.epoch));
+            for e in eps {
+                let heights: std::collections::BTreeSet<u64> = e.answers.iter().map(|a| a.height).collect();
+                let (pieces, bytes) = e.holdings.iter().fold((0u64, 0u64), |(p, b), h| (p + h.count as u64, b + h.bytes));
+                out.push(&js_obj(&[("epoch", JsValue::from(e.epoch as f64)), ("pieces", JsValue::from(pieces as f64)), ("bytes", JsValue::from(bytes as f64)), ("answers", JsValue::from(heights.len() as f64)), ("last", heights.iter().last().map_or(JsValue::NULL, |h| JsValue::from(*h as f64)))]));
+            }
+            out.into()
+        }
         /// The clock's lengths: `{ standing, claims, lead }` (heights a standing epoch, a claims epoch, and how long
         /// before its epoch a claims registry stops taking claims).
         pub fn clock() -> JsValue {

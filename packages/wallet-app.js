@@ -238,6 +238,63 @@ export async function mount(ctx, el) {
     return out;
   }
 
+  // CONTRIBUTE (rewards §2-§3, SHADOW MODE: nothing charged or paid yet): your LEVEL, what you gave, and where it goes
+  // — creators by your time on their items, keepers by the data their copies brought you, the network the rest.
+  const tok = n => Number(n).toFixed(9).replace(/\.?0+$/, "");
+  const grid = (head, rows, foot) => {
+    const t = h("table");
+    t.createTHead().insertRow().append(...head.map(x => h("th", { textContent: x })));
+    const b = t.createTBody();
+    for (const r of rows) b.insertRow().append(...r.map((v, i) => (v instanceof Node ? h("td", {}, v) : h("td", { textContent: String(v), className: i ? "num" : "" }))));
+    if (foot) t.createTFoot().insertRow().append(...foot.map((v, i) => h("td", { textContent: String(v), className: i ? "num" : "" })));
+    return t;
+  };
+  const month = () => new Date().toISOString().slice(0, 7);
+  async function contribute() {
+    const usage = await ctx.require("usage");
+    const amount = h("input", { type: "number", min: "0", step: "0.000000001", value: "10", title: "Tokens (9 decimals)", size: 8 });
+    const days = h("select", { title: "Spread over" }, ...[["7", "a week"], ["30", "a month"]].map(([v, t]) => h("option", { value: v, textContent: t, selected: v === "30" })));
+    const give = h("button", { type: "button", textContent: "Give (preview)" });
+    const out = h("div");
+    give.onclick = async () => {
+      give.disabled = true;
+      await usage.contribute(amount.value, days.value).catch(e => (out.textContent = `✕ ${e?.message ?? e}`));
+      give.disabled = false;
+      draw();
+    };
+    const [cs, lv, plan, st] = await Promise.all([usage.contributions().catch(() => []), usage.level().catch(() => null), usage.levelPlan().catch(() => []), usage.statement(month()).catch(() => null)]);
+    const directory = await ctx.require("directory");
+    const split = st?.amount
+      ? grid(["To", "For", "Tokens"], [
+          ...[...new Set([...Object.keys(st.creators), ...Object.keys(st.unclaimed)])].map(d => [directory.nameEl(d), (st.unclaimed[d] ?? 0) ? "creator + keeper share" : "creator", tok((st.creators[d] ?? 0) + (st.unclaimed[d] ?? 0))]),
+          ...Object.entries(st.carriers).map(([d, n]) => [directory.nameEl(d), "keeper", tok(n)]),
+          ["Network", "network", tok(st.network)],
+        ], ["Total", `${st.days} day(s)`, tok(st.amount)])
+      : h("p", { className: "note", textContent: "Nothing given this month." });
+    return h("div", { className: "wl" },
+      h("h3", { textContent: "Level" }),
+      grid(["Level", "Per month", "Until"], lv ? [[lv.name, String(lv.perMonth), plan.find(p => p.id === lv.id)?.until ?? "—"], ...plan.filter(p => p.id !== lv.id).map(p => [p.name, "", p.until])] : []),
+      h("h3", { textContent: "Give (preview: nothing is charged yet)" }),
+      h("form", {}, amount, days, give), out,
+      grid(["Given", "Days", "From", "To"], cs.map(c => [tok(c.amount), String(c.days), usage.dayOf(c.at), usage.dayOf(c.at + (c.days - 1) * 86400000)])),
+      h("h3", { textContent: `Where it goes (${month()}): creators 60 · keepers 30 · network 10` }),
+      split);
+  }
+  // EARNINGS (rewards §5, SHADOW MODE): the contribution ledger, one row per day (today running) — your lines of it.
+  async function earnings() {
+    const usage = await ctx.require("usage");
+    const e = await usage.earnings(month());
+    const mine = hexOf(me.didBytes);
+    const did = (await (await ctx.require("space")).account())?.id ?? mine;
+    const days = Object.entries(e.ledger.perDay).sort((x, y) => (x[0] < y[0] ? 1 : -1));
+    return h("div", { className: "wl" },
+      h("h3", { textContent: `Contribution ledger (${month()}, preview: nothing is paid yet)` }),
+      grid(["Day", "", "You: creator", "You: keeper", "Ledger total", "To creators", "To keepers", "To network"], days.map(([day, d]) => {
+        const m = d.by[did] ?? { creator: 0, carrier: 0 };
+        return [day, d.final ? "final" : "running", tok(m.creator), tok(m.carrier), tok(d.total), tok(d.creators), tok(d.carriers), tok(d.network)];
+      })));
+  }
+
   const status = h("p", { className: "note", role: "status" });
   const body = h("div");
   root.append(status, body);
@@ -245,7 +302,12 @@ export async function mount(ctx, el) {
   purse.ensureCard(me).catch(e => ctx.log("wallet", { what: `the card's pay keys: ${e.message ?? e}` }));
   // The VIEW: a token's page (`#/wallet/t/<id>`) or the list.
   const opened = /^t\/([0-9a-f]{64})$/.exec(ctx.sub ?? "")?.[1] ?? null;
-  const draw = async () => body.replaceChildren(opened ? detail(opened, me) : await list(me));
+  // THE TABS: Tokens (balances, a token's page), Contribute (what you give: your level, its split), Earnings (the
+  // contribution ledger's lines for you) — every one money.
+  const tab = ctx.sub === "contribute" || ctx.sub === "earnings" ? ctx.sub : "";
+  ctx.actions[ctx.route] = [["", "Tokens"], ["contribute", "Contribute"], ["earnings", "Earnings"]].map(([k, label]) => ({ label, href: k ? `#/wallet/${k}` : "#/wallet", on: k === tab }));
+  dispatchEvent(new CustomEvent("craftworks:actions"));
+  const draw = async () => body.replaceChildren(tab === "contribute" ? await contribute() : tab === "earnings" ? await earnings() : opened ? detail(opened, me) : await list(me));
   purse.onChange(() => el.isConnected && draw());
   await draw();
   table.onChange(() => el.isConnected && draw());
