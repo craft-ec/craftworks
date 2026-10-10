@@ -26,6 +26,14 @@ design and implement for our whole ecosystem." This is that design. Status: DESI
   a published set of ROOTS along vouches (EigenTrust / personalised PageRank: each account passes on a damped share of
   what reaches it, split over its vouches). An account nobody reputable vouched for has none, however old or active.
   A sybil ring vouching only for itself has only what flows into it — what it fooled real accounts into giving.
+- **THE FAMILY TREE (owner 10-10: "vouch coming from the same tree worth less than those coming from different
+  trees").** An account's PARENT is its first voucher (earliest by beacon height); parents up to a root make its LINE,
+  and each root's descendants one TREE. Two vouchers' KINSHIP is how far back their lines meet (siblings at their
+  parent; cousins higher; different trees never). A vouch counts by the voucher's reputation × its DIVERSITY: in full
+  from another tree, most from a distant branch of the same tree, little from close family — and vouches from one
+  branch add up with diminishing returns. A sybil ring hung off one fooled account is ONE branch: it gets that branch's
+  worth however many fakes it makes; to count it needs vouches from other trees — real people in other communities.
+  It also makes many independent roots a strength: a new tree gains standing as other trees' members vouch into it.
 - **TIME as a multiplier, not a source:** a vouch counts in full only after it has stood for some epochs (beacon
   heights), so reputation cannot be borrowed for one draw and handed back.
 - **STAKED ON THE VOUCHEE.** A proven misdeed of B (the token's: two signatures at one place, a fake credit, a false
@@ -68,8 +76,9 @@ Two parts, one path from bootstrap to the token:
 ## 7. Order of building (once the open points are settled)
 
 1. Vouches: the public table, written from a person's page ("Vouch" beside Follow) — page only.
-2. The function: reputation from vouches and roots, in the core, tested against sybil rings (a ring of N fakes with one
-   fooled real vouch gets no more than that vouch carries).
+2. The function: reputation from vouches and roots with the family tree's diversity, in the core, tested against
+   sybil rings (a ring of N fakes hung off one fooled account gets no more than that one branch carries, however large
+   N) and against honest cross-tree vouching (counts in full).
 3. Burns reaching reputation: a misdeed proof zeroes the account and charges its vouchers.
 4. The keeping record per vouched account (standing answers → a tapering per-account rate), as reputation.
 5. The lot weighted by that record (`wallet::lot_of`, the claims registry: a claim of record instead of stake).
