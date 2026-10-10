@@ -1632,7 +1632,26 @@ old key's addresses.
                   table), and the page makes no tokens (owner 10-10). So a genesis stays on the issuer's DID and the
                   issuer moves it to private (Q2 "Move to private" — measured). WREN's treasury stays public on purpose.
               [ ] Q4 witness fees' spendable part to a one-time owner (with F).
-          [ ] A  WREN DAILY ALLOWANCE: 1,000/day by reputation share, cap 20, claim-or-return; service on B.
+          [ ] A  WREN DAILY ALLOWANCE (decision 6 — escrow + program; payouts to each DID's chain, the wallet moves them
+              to private: the statement already makes what a DID is owed public, and a claim naming a private key would
+              link the same way while needing every claimant's key log — more than a contract's 10 related reads):
+              [x] A1 THE PROGRAM — BUILT 10-10 (`contracts-src/allowance`, allowance.wasm 122,183 B, 7cdd3961…): one
+                  contract per standing epoch (`Params { token, epoch }`); state = the escrow SECTION + the statement
+                  ROOT + each payout's PROOF; verdict = each line's allowance paid to its DID (proven under the root,
+                  `pay_key(epoch, did)`), every escrow's rest refunded; empty or a verdict, never replaced. Root
+                  correctness and escrow reality: witnesses' (as every program). POT 59.26 WREN an epoch (1,000 a day
+                  at B's 5 s step), CAP 2%. 2 tests; 2 mutants killed (no proof check; rest left locked); a test that
+                  first could not reach the line check (an overpay broke the escrow total first) rewritten.
+                  DECIMALS (owner 10-10, micro payments): `token::DECIMALS = 9` (Solana's), `UNIT` — not 18 (owner
+                  asked): amounts are u128 and a split multiplies by a weight ≤ 10¹² — at 18 the full supply (10²⁷)
+                  × 10¹² = 10³⁹ passes u128 (3.4×10³⁸) and `saturating_mul` pays wrong; at 9 the headroom is 10⁸; token-ops
+                  make-token makes 9-decimal tokens (supply in whole tokens); the Usage preview 9 too. token.wasm
+                  unchanged (4079c5a3…). WREN (0 decimals) is re-minted with 9 at A3 (nothing given out yet).
+              [ ] A2 PAGE: the statement's page also publishes the epoch's allowance verdict (if escrowed and
+                  undecided); the purse appends releases/payouts it is owed and moves them to private.
+              [ ] A3 B: WREN re-minted (9 decimals); Wren funds upcoming epochs (escrow each POT, `until` past the
+                  epoch + margin), as a B service; reclaims what no verdict took.
+              [ ] A4 LIVE fx/fy.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
               rendezvous), within its limit, instead of what was watched; the standing record proves it.
           [ ] F  WITNESS FEES on every token: a set fee per debit, split among its signers, claimed in their chains.

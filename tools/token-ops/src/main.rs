@@ -5,6 +5,7 @@
 //!       state read back from the node and extended — a step every tick, its final outputs into the outputs log. Run
 //!       as a service on the node's own box.
 //!   token-ops make-token <token.wasm> <idlog.wasm> <ws> <beacon id hex> <words file> <device seed file> <name> <supply>
+//!       (`supply` in whole tokens: made with the standard 9 decimals, `T::DECIMALS`)
 //!       A TOKEN made by the account the words hold: its definition (the account its creator, the whole supply its
 //!       genesis), its authority chain and freeze list, and the account's chain begun — written by a device of the
 //!       account this tool keeps (its seed file; credentialed by the words' owner key). Prints the token's id.
@@ -123,7 +124,7 @@ async fn make_token(code: &[u8], idlog_code: &[u8], ws: &str, beacon: [u8; 32], 
     let mut nonce = [0u8; 16];
     getrandom::getrandom(&mut nonce).map_err(|e| anyhow::anyhow!("randomness: {e}"))?;
     let d = T::Definition {
-        code_hash: ch, decimals: 0, min_send: 1, genesis_owner: did, genesis_amount: supply, name: name.as_bytes().to_vec(), nonce, beacon, margin: 2, idlog: ih,
+        code_hash: ch, decimals: T::DECIMALS, min_send: 1, genesis_owner: did, genesis_amount: supply.checked_mul(T::UNIT).context("a supply too large")?, name: name.as_bytes().to_vec(), nonce, beacon, margin: 2, idlog: ih,
         mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None, keepers: None,
     };
     let id = T::id(&ch, &d.encode());

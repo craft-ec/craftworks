@@ -1,0 +1,36 @@
+[package]
+name = "craftworks-allowance-contract"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "THE WREN ALLOWANCE (TOKEN §7d, decision 6): an app over the token's escrow — one contract per standing epoch; the treasury escrows the epoch's pot to it, its verdict pays each account its statement line's allowance, the rest back."
+
+# Own workspace: own lockfile, so the wasm hash (= part of every allowance program's id) is stable.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+freenet-stdlib = { version = "0.10.0", features = ["contract"], optional = true }
+craftworks-token-contract = { path = "../token", default-features = false }
+# The statement's line format (what an account is owed), its one owner.
+craftworks-reputation = { path = "../../reputation" }
+freenet-prolly = { path = "../../sdk/freenet-prolly" }
+blake3 = { version = "1", default-features = false }
+
+[dev-dependencies]
+engine = { path = "../../sdk/craftworks-sdk/engine" }
+
+[features]
+default = ["freenet-main-contract"]
+freenet-main-contract = ["dep:freenet-stdlib"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false

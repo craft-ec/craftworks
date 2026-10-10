@@ -363,6 +363,11 @@ impl Tok {
 }
 
 /// An ACCOUNT CHAIN's params: one token, one OWNER — a DID, written by one device of it (TOKEN §1).
+/// Craftworks tokens' DECIMALS (owner 10-10, micro payments: Solana's 9 — a billion tokens is 10¹⁸ units, far inside
+/// u128); a whole token is [`UNIT`] smallest units. The standard every Craftworks token is made with.
+pub const DECIMALS: u8 = 9;
+pub const UNIT: u128 = 1_000_000_000;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChainParams {
     pub code_hash: [u8; 32],

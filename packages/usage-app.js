@@ -71,9 +71,9 @@ export async function mount(ctx, el) {
   // carriers by the data their kept files brought you, the network the rest. Nothing is charged or paid yet.
   const directory = await ctx.require("directory");
   const fh = Object.assign(document.createElement("h3"), { textContent: "Your contributions (preview)" });
-  const amount = Object.assign(document.createElement("input"), { type: "number", min: "0", step: "0.00000001", value: "10", title: "Tokens (8 decimals)", className: "amount" });
-  // The token's 8 decimals, trailing zeros dropped: 0.33333333, 1, 4.2.
-  const tok = n => Number(n).toFixed(8).replace(/\.?0+$/, "");
+  const amount = Object.assign(document.createElement("input"), { type: "number", min: "0", step: "0.000000001", value: "10", title: "Tokens (9 decimals)", className: "amount" });
+  // A token's 9 decimals (TOKEN: Craftworks tokens' standard), trailing zeros dropped: 0.333333333, 1, 4.2.
+  const tok = n => Number(n).toFixed(9).replace(/\.?0+$/, "");
   // OVER: a week or a month (owner 10-07), a month unless chosen.
   const days = Object.assign(document.createElement("select"), { title: "Spread over" });
   days.append(...[["7", "a week (7 days)"], ["30", "a month (30 days)"]].map(([v, t]) => Object.assign(document.createElement("option"), { value: v, textContent: t, selected: v === "30" })));

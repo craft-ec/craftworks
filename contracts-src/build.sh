@@ -20,6 +20,7 @@ case $1 in
   standing) crate=craftworks-standing-contract ;;
   pool) crate=craftworks-pool-contract ;;
   swap) crate=craftworks-swap-contract ;;
+  allowance) crate=craftworks-allowance-contract ;;
   *) echo "unknown contract: $1" >&2; exit 1 ;;
 esac
 # FROM ONE FIXED PATH (measured 10-09): Cargo's metadata for a PATH dependency (identity, standing, sdk — crates at
