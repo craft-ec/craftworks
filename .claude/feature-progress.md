@@ -1627,7 +1627,10 @@ old key's addresses.
               [x] Q2 WALLET — LIVE fx/fy 10-10: send pays from private chains only (every seed's); the DID chain's
                   spendable shown "on your id" with "Move N to private" (`purse.shield`: a payment to the own card).
                   Measured: A moved 965 → "969 private (2 chains)"; B moved 25 → "31 private (2 chains)".
-              [ ] Q3 token-ops make-token: genesis to the creator's one-time owner (WREN's treasury stays public).
+              [~] Q3 token-ops make-token: genesis to the creator's one-time owner — NOT POSSIBLE from a tool: a genesis
+                  is signed by its owner, a one-time key derives only from the account's wallet seed (its private
+                  table), and the page makes no tokens (owner 10-10). So a genesis stays on the issuer's DID and the
+                  issuer moves it to private (Q2 "Move to private" — measured). WREN's treasury stays public on purpose.
               [ ] Q4 witness fees' spendable part to a one-time owner (with F).
           [ ] A  WREN DAILY ALLOWANCE: 1,000/day by reputation share, cap 20, claim-or-return; service on B.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
