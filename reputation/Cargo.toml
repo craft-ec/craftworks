@@ -6,3 +6,10 @@ publish = false
 description = "REPUTATION (docs/REPUTATION.md): computed from public vouches, weighed from roots along the trust tree — same-branch vouches count less."
 
 [dependencies]
+# A vouch's signature and credential (the identity's format) and the voucher's key log.
+craftworks-identity = { path = "../identity" }
+craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
+ed25519-dalek = { version = "=2.2.0", default-features = false }
+
+[dev-dependencies]
+ed25519-dalek = { version = "=2.2.0", default-features = false }

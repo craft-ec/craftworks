@@ -61,6 +61,11 @@ use serde::{Deserialize, Serialize};
 /// What every TOKEN CHAIN ENTRY's signed message begins with (the token's `ENTRY_DOMAIN`): a member's key signs other
 /// things too, and `TokenSign` signs only messages that begin with this.
 pub const TOKEN_ENTRY_DOMAIN: &[u8] = b"craftworks token entry 2026-10-10\0";
+/// What every VOUCH's signed message begins with (docs/REPUTATION.md: a vouch is signed by the voucher's device, so
+/// anyone can relay it into the epoch's vouch registry).
+pub const VOUCH_DOMAIN: &[u8] = b"craftworks vouch 2026-10-10\0";
+/// The domains `TokenSign` signs under — and nothing else (a member's key signs its tables too).
+pub const SIGN_DOMAINS: &[&[u8]] = &[TOKEN_ENTRY_DOMAIN, VOUCH_DOMAIN];
 
 /// Every identity message starts with this, so a page tells an identity answer from any other delegate's.
 pub const MAGIC: &[u8; 4] = b"ID01";
@@ -148,9 +153,9 @@ pub enum Request {
     /// The secrets this member holds of a space's EARLIER epochs (below `below`): handed to a member let in later (a
     /// welcome, or their ask), so they read the space's whole history without walking its logs. The home site only.
     EpochSecrets { space: [u8; 32], below: u64 },
-    /// Sign a TOKEN CHAIN ENTRY (TOKEN §7c: this node is the account's device on its token chains) with the session's
-    /// member key: only a message that begins with the token's entry domain, and only for the home site (the shop is
-    /// the home app's; another site never spends the person's money).
+    /// Sign a TOKEN CHAIN ENTRY or a VOUCH (TOKEN §7c, REPUTATION.md: this node is the account's device) with the
+    /// session's member key: only a message under one of [`SIGN_DOMAINS`], and only for the home site (another site
+    /// never spends the person's money or vouches in their name).
     TokenSign { message: Vec<u8> },
 }
 
@@ -1206,7 +1211,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             if a.home != app {
                 return Refused(Why::NotHome);
             }
-            if !message.starts_with(TOKEN_ENTRY_DOMAIN) {
+            if !SIGN_DOMAINS.iter().any(|d| message.starts_with(d)) {
                 return Refused(Why::NotAnEntry);
             }
             Signed { sig: a.key().sign(&message).to_bytes().to_vec() }

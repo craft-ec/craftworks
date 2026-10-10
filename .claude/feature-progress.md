@@ -1523,7 +1523,13 @@ old key's addresses.
               snapshot (ramp, decay); the statement (reputation, keeper shares, WREN allowance) — one number set.
               [x] V1a `reputation_at(roots, vouches, height)`: the SNAPSHOT (later vouches unseen) and the RAMP (¼ a
                   standing epoch, full after 4) — measured 31.9 / 63.8 / 95.6 / 127.5 (×10⁻³) by epoch.
-              [ ] V1b the registry (a contract per epoch every witness reads alike), decay, the statement.
+              [x] V1b-1 the SIGNED VOUCH: `reputation::item` (from, to, at, on; signed by a device of `from` under
+                  identity's VOUCH_DOMAIN — `TokenSign` now signs SIGN_DOMAINS = token entries + vouches), verified
+                  against the voucher's key log; `standing(items, now)` folds items to the vouches standing (latest
+                  per pair; a re-vouch keeps its first height). 12 tests; 9 mutants (1 explained: the account check
+                  is redundant with the key-log check).
+              [ ] V1b-2 the registry: the epoch's bag of items (anyone relays a signed row), the page signs + stores.
+              [ ] V1b-3 decay, the statement.
           [ ] W  WALLET APP: send, receive/collect (inbox note), balances.
           [ ] A  WREN DAILY ALLOWANCE: 1,000/day by reputation share, cap 20, claim-or-return; service on B.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
