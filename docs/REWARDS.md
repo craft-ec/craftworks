@@ -214,7 +214,8 @@ A contributor's claims only steer their own contribution (§1): misreporting can
 
 1. Usage record in the contributor's table (no money: shows "your month" to the user) — BUILT. Per-item TIME and DATA
    shown as public counts beside views (owner 2026-10-06: as a view count for now; a confidential roll-up replaces it).
-2. Keep what you watched (re-read daily, read only, within a limit) — BUILT.
+2. Keep what you watched (re-read daily, read only, within a limit) — BUILT; TO CHANGE (10-10, one funnel): re-read the
+   node's ASSIGNMENT (its arc + under-target files by rendezvous) instead of what was watched.
 3. Keepers bag: claims of who keeps which file — BUILT (claims, unsigned, public). SUPERSEDED 10-10 by the one funnel
    (§4): what a node keeps is its ASSIGNMENT, proven by its standing record; the bag stays only as a display hint.
 4. Public DAILY statements (today running, earlier days final), the ledger anyone sums and each one's pending view
