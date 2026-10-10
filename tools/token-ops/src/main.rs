@@ -244,7 +244,7 @@ async fn main() -> Result<()> {
                 loop {
                     // The epoch STATEMENT (TOKEN §7d): the posted root this witness computes too, signed once.
                     let h = r.height();
-                    let se = h.saturating_sub(2) / craftworks_reputation::EPOCH;
+                    let se = h.saturating_sub(craftworks_reputation::statement::SETTLE) / craftworks_reputation::EPOCH;
                     if !statements.contains(&se) {
                         match r.witness_statement(se, &key) {
                             Ok(Some(root)) => {
@@ -261,7 +261,8 @@ async fn main() -> Result<()> {
                             }
                         }
                     }
-                    let epoch = h / T::supply::EPOCH;
+                    // The queue is per STANDING epoch (`wallet::queue::address`), as pages write it.
+                    let epoch = h / craftworks_reputation::EPOCH;
                     for e in epoch.saturating_sub(1)..=epoch {
                         for q in r.queue(e) {
                             let k = q.encode();

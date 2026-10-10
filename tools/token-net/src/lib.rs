@@ -140,7 +140,7 @@ impl<'a> Reader<'a> {
         use craftworks_reputation as R;
         let items: Vec<R::item::Item> = (0..=epoch).flat_map(|e| self.bag(R::item::registry_address(e))).filter_map(|b| R::item::Item::decode(&b)).collect();
         let log_of = |d: &R::Did| self.keys(d);
-        let pots = R::statement::Pots { keeper: (0, 0), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP) };
+        let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP) };
         let kept = epoch.checked_sub(1).map_or(Vec::new(), |e| self.kept(e, &log_of));
         let st = R::statement::build(epoch, &items, &log_of, &kept, pots);
         st.tree(&mut std::collections::BTreeMap::new()).map(|(root, _)| root)

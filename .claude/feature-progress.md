@@ -1799,7 +1799,18 @@ old key's addresses.
               `Keepers { rate, half_life, start }` = the epoch POT. token.wasm b338db70, allowance.wasm 55e03278.
           [x] K3 WITNESS GATE 10-10: `wallet::statement_accept` in `may_witness` — a KeeperMint is witnessed only under
               the root ACCEPTED for its epoch. Test: unwitnessed → refused; another root accepted → refused; its root →
-              signed. NEXT: K4 issuance (the statement's keeper pot from $CRAFT's `keepers` rule; page appends mints).
+              signed.
+          [x] K4 ISSUANCE 10-10: `wallet::craft` — $CRAFT's ONE definition (MAX 1e9, 9 decimals, POT 61,035/epoch,
+              HALF_LIFE 8192; genesis 0, no authority: anyone puts it) and `keeper_pot(e)` = 90% of the pot, cap 2%;
+              both statement builders (page, token-net) use it. `keeper::mint` (core): a keeper line of an ACCEPTED
+              statement → a worked KeeperMint on the DID's $CRAFT chain (+ $CRAFT's contracts if absent) → witness
+              queue. statement.js mints EVERY keeper line of the last 3 epochs (anyone's: a keeper offline is paid).
+              Fixed on the way: (1) the witness read the queue by SUPPLY epoch (4096), pages write it by STANDING
+              epoch (1024) — the witness now reads standing epochs; (2) page and witness computed the statement 2
+              heights in and disagreed on `kept` (records still settling) — `statement::SETTLE` = 32 heights for both,
+              lot at SETTLE+2, and a page posts its own root beside another's. Live fx/fy v559: "epoch 5: 2 keeper
+              line(s) minted as $CRAFT stake"; Wren SIGNED $CRAFT 08e08556…/45caba3e (A) seq 0 and …/1ead752b (B) seq 0.
+              NEXT: K5 claim/monitor page ($CRAFT in the wallet as stake), witness fees F (the pot's 10%).
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and

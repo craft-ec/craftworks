@@ -119,6 +119,61 @@ pub fn answer(k: &Keep, got: Got, public: &[u8; 32], height: u64, out: &[u8; 32]
     Ok(Step::Done(Some(put(k, peer, &held, record::Epoch { epoch, answers: vec![a], ..Default::default() }))))
 }
 
+// ---- THE KEEPER MINT (TOKEN §7d, K4): an account's keeper line of an ACCEPTED statement, minted as $CRAFT stake ----
+
+/// What a keeper mint puts: $CRAFT's contracts first if the network has not got them (anyone may: its definition is
+/// fixed, `craftworks_wallet::craft`), then the account's chain with the mint appended.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Minted {
+    pub craft: Vec<crate::tokens::Put>,
+    pub chain: crate::tokens::Put,
+    pub amount: u128,
+}
+
+/// $CRAFT's definition here and its id.
+pub fn craft(ctx: &crate::tokens::Ctx) -> (t::Definition, [u8; 32]) {
+    let d = craftworks_wallet::craft::definition(ctx.code_hash, ctx.beacon, ctx.idlog);
+    let id = t::id(&ctx.code_hash, &d.encode());
+    (d, id)
+}
+
+/// MINT `did`'s keeper line of standing epoch `epoch`'s statement (`root`; `proof`, its line's proof) into its $CRAFT
+/// chain, WORKED (anyone's: nobody need be online to be paid), at beacon height `now`. Only under the root ACCEPTED
+/// for the epoch; `None`: no line (or 0), not accepted (yet), or minted already.
+#[allow(clippy::too_many_arguments)]
+pub fn mint(ctx: &crate::tokens::Ctx, lot: &crate::tokens::Lot, got: Got, did: &[u8; 32], epoch: u64, root: &[u8; 32], proof: &[u8], now: u64) -> Result<Step<Option<Minted>>, String> {
+    let Some(line) = craftworks_reputation::statement::line_proven(root, did, proof) else { return Ok(Step::Done(None)) };
+    if line.keeper == 0 {
+        return Ok(Step::Done(None));
+    }
+    let (d, token) = craft(ctx);
+    match crate::tokens::statement_accepted(lot, got, ctx.code_hash, d.beacon, epoch, root)? {
+        Step::Want(w) => return Ok(Step::Want(w)),
+        Step::Sign(m) => return Ok(Step::Sign(m)),
+        Step::Done(Err(_)) => return Ok(Step::Done(None)),
+        Step::Done(Ok(_)) => {}
+    }
+    let craft_there = match there(got, &token) {
+        Err(w) => return Ok(Step::Want(vec![w])),
+        Ok(b) => b.is_some(),
+    };
+    let cp = crate::tokens::chain(ctx, &d, &token, did, [0; 32]);
+    let mut want = Vec::new();
+    let Some((s, keys)) = crate::allowance::read_chain(got, &cp, did, &mut want)? else { return Ok(Step::Want(want)) };
+    let nonce = t::keeper_nonce(&token, epoch);
+    if s.entries.iter().any(|e| e.nonce == nonce) {
+        return Ok(Step::Done(None));
+    }
+    let mut e = t::Entry { seq: s.entries.last().map_or(0, |e| e.seq + 1), prev: s.head(), nonce, stamp: now.max(s.entries.last().map_or(0, |e| e.stamp)), body: t::Body::KeeperMint { epoch, root: *root, proof: proof.to_vec(), amount: line.keeper }, balance: s.balance(), auth: t::Auth::Work(0) };
+    let m = e.message();
+    e.auth = t::Auth::Work((0u64..).find(|w| t::work_ok(&m, *w)).unwrap());
+    let mut st = s;
+    st.entries.push(e);
+    t::walk(&cp, &d, &st, &|_, _| None, &|_| None, Some(&keys), 0, usize::MAX, &t::Extra::NONE).map_err(|(_, w)| w.to_string())?;
+    let craft = if craft_there { vec![] } else { d.contracts(&ctx.code_hash).into_iter().map(|(params, state)| crate::tokens::Put { params, state }).collect() };
+    Ok(Step::Done(Some(Minted { craft, chain: crate::tokens::Put { params: cp.encode(), state: st.encode() }, amount: line.keeper })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,5 +265,36 @@ mod tests {
         assert!(record::kept(&record_in(&got), &public, 3));
         assert_eq!(kept_of(&got, 3), vec![did]);
         assert_eq!(kept_of(&got, 4), Vec::<[u8; 32]>::new(), "another epoch: not kept");
+    }
+
+    #[test]
+    fn a_keeper_line_of_an_accepted_statement_mints_once_as_craft_stake() {
+        use craftworks_reputation::statement::{Line, Statement};
+        let ctx = crate::tokens::Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
+        let mut got: HashMap<[u8; 32], Vec<u8>> = HashMap::new();
+        let tl = crate::tokens::testlot::stakers(&ctx, &mut got);
+        let (keeper, idle) = ([21u8; 32], [22u8; 32]);
+        let lines = [(keeper, Line { rep: 1, keeper: 500, allowance: 0 }), (idle, Line { rep: 1, keeper: 0, allowance: 0 })].into_iter().collect();
+        let mut blocks = std::collections::BTreeMap::new();
+        let (root, _) = Statement { epoch: 5, lines }.tree(&mut blocks).unwrap();
+        let proof = |d: &[u8; 32]| freenet_prolly::proof::prove(&blocks, &root, d).unwrap().encode();
+        let now = 5 * craftworks_standing::EPOCH + 10;
+        let m = |got: &HashMap<[u8; 32], Vec<u8>>, who: &[u8; 32]| crate::tokens::testlot::done(&|g| mint(&ctx, &tl.lot, g, who, 5, &root, &proof(who), now), got);
+        assert_eq!(m(&got, &keeper), Ok(None), "its statement not accepted yet");
+        crate::tokens::testlot::witness_statement(&tl, &mut got, ctx.code_hash, ctx.beacon, 5, &root, 4);
+        let minted = m(&got, &keeper).unwrap().expect("minted");
+        assert_eq!((minted.amount, minted.craft.len()), (500, 3), "its line; $CRAFT's contracts put with it (not on the network yet)");
+        let (d, token) = craft(&ctx);
+        let cp = crate::tokens::chain(&ctx, &d, &token, &keeper, [0; 32]);
+        let st = t::State::decode(&minted.chain.state).unwrap();
+        let w = t::walk(&cp, &d, &st, &|_, _| None, &|_| None, None, 0, usize::MAX, &t::Extra::NONE).unwrap();
+        assert_eq!((w.staked, st.balance()), (500, 0), "LOCKED as stake");
+        // Minted already: nothing again; $CRAFT there: not put again.
+        let mut g2 = got.clone();
+        g2.insert(cp.id(), minted.chain.state.clone());
+        g2.insert(token, d.encode());
+        assert_eq!(m(&g2, &keeper), Ok(None), "once an epoch");
+        // A line of nothing mints nothing.
+        assert_eq!(m(&got, &idle), Ok(None));
     }
 }

@@ -13,7 +13,7 @@ export async function start(ctx) {
   const Core = glue.CraftworksCore;
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
   const EPOCH = Core.standing_epoch(); // standing epoch (beacon heights)
-  const MARGIN = 2; // heights after an epoch starts before its statement is due
+  const MARGIN = Core.statement_settle(); // heights after an epoch starts before its statement is due
   const TICK = 5 * 60 * 1000;
   const state = { epoch: null, root: null, lines: null };
 
@@ -37,22 +37,32 @@ export async function start(ctx) {
     throw new Error("the vouchers' key logs or the keepers' records could not be read");
   }
   const decided = new Set(); // epochs whose allowance this page saw decided
-  async function publishIfMissing() {
+  async function publishIfMissing() { // (and a root of its own beside another)
     const h = (await ctx.require("beacon")).status().height;
     if (h == null || h < MARGIN) return;
     const epoch = Math.floor((h - MARGIN) / EPOCH);
     const address = Core.statement_bag_address(epoch);
     const posted = await index.bag.read(address, "reading the epoch's statement");
-    if (!posted.some(p => Core.statement_posted_read(p)?.epoch === epoch)) {
-      const r = await build(epoch);
+    // POSTED unless the root this page computes is there already (a root computed elsewhere from another moment's view
+    // stands beside it; witnesses sign the one they compute too). Recomputed each pass: records settle.
+    built.delete(epoch);
+    const mine = await build(epoch);
+    if (!posted.some(p => (x => x?.epoch === epoch && x.root === mine.root)(Core.statement_posted_read(p)))) {
+      const r = mine;
       await blocks.put([...r.puts], "the epoch's statement");
       await index.bag.add(address, r.posted, "posting the epoch's statement");
       Object.assign(state, { epoch, root: r.root, lines: r.lines });
       ctx.log("statement", { what: `epoch ${epoch}: root ${r.root.slice(0, 12)}…, ${r.lines} line(s), ${r.kept} account(s) kept the epoch before` });
     }
-    // THE ALLOWANCE of this epoch.
     const tokens = await ctx.require("tokens");
-    if (!tokens.on || !tokens.allowance || decided.has(epoch)) return;
+    if (!tokens.on) return;
+    // KEEPER ISSUANCE (TOKEN §7d): every keeper line of the epoch's statement minted as $CRAFT stake once its root is
+    // ACCEPTED — by any page, for every keeper (each mint worked: nobody need be online to be paid; `keeper_mint`
+    // gives nothing for a line minted already or a root not accepted yet).
+    // (The last few epochs too: a root is accepted after its epoch has begun, and the next may begin first.)
+    for (let e = Math.max(0, epoch - 2); e <= epoch; e++) await mintKeepers(tokens, e, h).catch(x => ctx.log("statement", { what: `epoch ${e}: keeper mints: ${x.message ?? x}` }));
+    // THE ALLOWANCE of this epoch.
+    if (!tokens.allowance || decided.has(epoch)) return;
     const r = await build(epoch);
     const { allowance, run, putAll } = tokens;
     const v = await run(() => core.allowance_verdict(tokens.code, allowance.code, tokens.beacon, idlogCode, tokens.lot.pool, tokens.lot.bag, tokens.lot.beacon, allowance.token, epoch, r.root, r.owed, h));
@@ -60,6 +70,28 @@ export async function start(ctx) {
     await putAll(v.puts);
     decided.add(epoch);
     if (v.puts.length) ctx.log("statement", { what: `epoch ${epoch}: the allowance's verdict and release put (${r.owed.length} owed)` });
+  }
+  const minted = new Set(); // `${epoch}/${did hex}` this page minted
+  let saidWaiting = null;
+  async function mintKeepers(tokens, epoch, h) {
+    const r = await build(epoch);
+    const { run, putAll, lot, hexOf } = tokens;
+    let n = 0;
+    let waiting = 0;
+    for (const [did, proof] of r.keepers ?? []) {
+      const k = `${epoch}/${hexOf(did)}`;
+      if (minted.has(k)) continue;
+      const v = await run(() => core.keeper_mint(tokens.code, tokens.beacon, idlogCode, lot.pool, lot.bag, lot.beacon, did, epoch, r.root, proof, h));
+      if (v?.puts) {
+        await putAll(v.puts);
+        n += 1;
+        minted.add(k);
+      } else waiting += 1; // null: minted already, or its root not accepted yet — asked again next tick
+    }
+    if (n) ctx.log("statement", { what: `epoch ${epoch}: ${n} keeper line(s) minted as $CRAFT stake` });
+    const said = `${epoch}/${waiting}`;
+    if (waiting && saidWaiting !== said) ctx.log("statement", { what: `epoch ${epoch}: ${waiting} keeper line(s) not minted here (minted already, or the statement's root not accepted yet)` });
+    saidWaiting = said;
   }
   (async function loop() {
     for (;;) {

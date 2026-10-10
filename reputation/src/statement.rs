@@ -163,10 +163,15 @@ pub fn witness_place(epoch: u64) -> [u8; 32] {
     blake3::derive_key("craftworks 2026-10-10 statement witness place", &epoch.to_le_bytes())
 }
 
-/// The beacon height an epoch's statement's committee is drawn at: just past when it is due (two steps into the
-/// epoch) — its output exists only after the epoch's vouches are fixed.
+/// Heights into an epoch before its statement is computed and posted (page and witness alike): the epoch before's
+/// last keeper answers SETTLE first (measured 10-10: computed 2 heights in, a page and a witness read the same records
+/// at different moments and disagreed on `kept`).
+pub const SETTLE: u64 = 32;
+
+/// The beacon height an epoch's statement's committee is drawn at: just past when it is due ([`SETTLE`] heights into
+/// the epoch) — its output exists only after the statement is fixed.
 pub fn lot_height(epoch: u64) -> u64 {
-    epoch * crate::EPOCH + 4
+    epoch * crate::EPOCH + SETTLE + 2
 }
 
 impl Statement {

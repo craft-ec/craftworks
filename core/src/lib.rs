@@ -2568,7 +2568,7 @@ mod js {
                 Some(e) => craftworks_standing::record::kept_accounts(&listed, &record_of, e),
                 None => Vec::new(),
             };
-            let pots = R::statement::Pots { keeper: (0, 0), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP) };
+            let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP) };
             let st = R::statement::build(epoch, &items, &log_of, &kept, pots);
             let mut blocks = std::collections::BTreeMap::new();
             let (root, parity) = st.tree(&mut blocks).ok_or_else(|| err("the statement's tree does not build".into()))?;
@@ -2584,7 +2584,13 @@ mod js {
                 let proof = freenet_prolly::proof::prove(&blocks, &root, d).map_err(|_| err("a statement line that does not prove".into()))?.encode();
                 owed.push(&[JsValue::from(js_sys::Uint8Array::from(&d[..])), js_sys::Uint8Array::from(&proof[..]).into()].into_iter().collect::<js_sys::Array>());
             }
-            Ok(js_obj(&[("root", JsValue::from(hex(&root))), ("posted", js_sys::Uint8Array::from(&posted[..]).into()), ("puts", puts.into()), ("lines", JsValue::from(st.lines.len() as f64)), ("kept", JsValue::from(kept.len() as f64)), ("owed", owed.into())]))
+            // What its KEEPER POT pays: each keeper line, with its proof (`keeper_mint`).
+            let minted = js_sys::Array::new();
+            for (d, _) in st.lines.iter().filter(|(_, l)| l.keeper > 0) {
+                let proof = freenet_prolly::proof::prove(&blocks, &root, d).map_err(|_| err("a statement line that does not prove".into()))?.encode();
+                minted.push(&[JsValue::from(js_sys::Uint8Array::from(&d[..])), js_sys::Uint8Array::from(&proof[..]).into()].into_iter().collect::<js_sys::Array>());
+            }
+            Ok(js_obj(&[("root", JsValue::from(hex(&root))), ("posted", js_sys::Uint8Array::from(&posted[..]).into()), ("puts", puts.into()), ("lines", JsValue::from(st.lines.len() as f64)), ("kept", JsValue::from(kept.len() as f64)), ("owed", owed.into()), ("keepers", minted.into())]))
         }
         /// The ALLOWANCE's verdict of `epoch` (`allowance::verdict`; `owed`: `[[did, proof]]` from `statement_build`, under
         /// `root` hex): `{ done: null }` (nothing escrowed to it) or `{ done: { puts: [{ id, frames }] } }` — the program's
@@ -2644,6 +2650,34 @@ mod js {
             let v = self.attach_puts(v, token_code, &puts)?;
             js_sys::Reflect::set(&js_sys::Reflect::get(&v, &"done".into())?, &"amount".into(), &JsValue::from(a.to_string()))?;
             Ok(v)
+        }
+        /// MINT `did`'s keeper line of epoch `epoch`'s statement (`root` hex, `proof`) as $CRAFT stake (`keeper::mint`:
+        /// worked, anyone's; only under the ACCEPTED root): `{ want }`, `{ sign }` (never), or `{ done: null | { puts,
+        /// amount } }` — $CRAFT's contracts first when the network has not got them, then the chain (its witness queue).
+        #[allow(clippy::too_many_arguments)]
+        pub fn keeper_mint(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], did: &[u8], epoch: f64, root: &str, proof: &[u8], now: f64) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let root = bytes32("root", root).map_err(err)?;
+            let step = {
+                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                keeper::mint(&ctx, &lot, &got, &b32(did)?, epoch as u64, &root, proof, now as u64)
+            };
+            let mut minted = None;
+            let v = token_step(step, |r| {
+                let some = r.is_some();
+                minted = r;
+                Ok(if some { json!({}) } else { serde_json::Value::Null })
+            })?;
+            let Some(m) = minted else { return Ok(v) };
+            let puts: Vec<tokens::Put> = m.craft.into_iter().chain([m.chain]).collect();
+            let v = self.attach_puts(v, token_code, &puts)?;
+            js_sys::Reflect::set(&js_sys::Reflect::get(&v, &"done".into())?, &"amount".into(), &JsValue::from(m.amount.to_string()))?;
+            Ok(v)
+        }
+        /// $CRAFT's token id on this site's network (hex).
+        pub fn craft_id(token_code: &[u8], beacon: &[u8], idlog_code: &[u8]) -> Result<String, JsValue> {
+            Ok(hex(&keeper::craft(&token_ctx(token_code, beacon, idlog_code)?).1))
         }
         /// The beacon's OUTPUT at `height` (from its state as read; null: not there).
         pub fn beacon_out(&self, beacon: &[u8], height: f64) -> Result<JsValue, JsValue> {
@@ -2812,6 +2846,10 @@ mod js {
             Ok(v)
         }
         /// The STANDING EPOCH's length in beacon heights (`reputation::EPOCH`: vouch registries, statements, payments bags).
+        /// Heights into an epoch before its statement is due (`reputation::statement::SETTLE`).
+        pub fn statement_settle() -> f64 {
+            craftworks_reputation::statement::SETTLE as f64
+        }
         pub fn standing_epoch() -> f64 {
             craftworks_reputation::EPOCH as f64
         }
