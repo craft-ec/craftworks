@@ -1509,6 +1509,11 @@ old key's addresses.
           [x] W4: Wallet::genesis, is_value (witness acceptance); token-live `wallet` mode LIVE fx/fy end to end.
               7 tests; mutants killed.
       [x] 27 WALLET CORE — DONE 10-10 (W1–W4). Next: 28 SHOP over it.
+      [x] 27b SOLD ON DEMAND — DONE 10-10 (owner: "allow mint without owner for on demand"): `Definition.sale`, paid
+          mints (no signature; the payer's chain read by the record), records of 8, `CappedMint.record`, `FalseMint`
+          for an unpaid copy, `Wallet::buy` (W5); LIVE `token-live ondemand`. Residual: a buyer whose record fills in a
+          race mints again in it; a full record strands the payment (fix if wanted: spill to record k+1 when k is
+          full and does not cite it).
       [ ] 28 SHOP — sell an edition on demand over the wallet core.
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).

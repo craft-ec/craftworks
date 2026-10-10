@@ -142,7 +142,7 @@ impl W {
         v
     }
     fn def(&self, genesis: u8, name: &[u8], k: u8) -> T::Definition {
-        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog, mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None }
+        T::Definition { code_hash: self.ch, decimals: 8, min_send: 10, genesis_owner: did(genesis), genesis_amount: 1000, name: name.to_vec(), nonce: self.n(k), beacon: self.beacon, margin: 2, idlog: self.idlog, mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None }
     }
     fn chain(&self, token: [u8; 32], o: u8) -> T::ChainParams {
         T::ChainParams { code_hash: self.ch, definition: token, owner: did(o), beacon: self.beacon, idlog: self.idlog, item: [0; 32] }
@@ -299,6 +299,7 @@ async fn main() -> Result<()> {
             "fees" => fees(&w).await?,
             "pause" => pause(&w).await?,
             "wallet" => wallet_mode(&w).await?,
+            "ondemand" => ondemand(&w).await?,
             "reclaim" => reclaim(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "holders" => holders(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "vest" => vest(&w).await?,
@@ -548,7 +549,7 @@ fn one(n: u8) -> T::authority::KeySet {
     T::authority::KeySet { k: 1, keys: vec![pk(n)] }
 }
 fn a_mint(def: &[u8; 32], to: u8, amount: u128, nonce: [u8; 16], stamp: u64, by: u8) -> T::supply::Mint {
-    let mut m = T::supply::Mint { to: did(to), item: [0; 32], amount, nonce, stamp, sigs: vec![] };
+    let mut m = T::supply::Mint { to: did(to), item: [0; 32], amount, nonce, stamp, sigs: vec![], paid: None };
     m.sigs = vec![(0, key(by).sign(&m.message(def)).to_bytes())];
     m
 }
@@ -700,7 +701,7 @@ async fn nft(w: &W, scode: &[u8]) -> Result<()> {
     let it = T::Tok { definition: tu, item };
     let ip = |o: u8| T::ChainParams { item, ..w.chain(tu, o) };
     let shard = T::supply::Params { code_hash: w.ch, definition: tu, beacon: w.beacon, epoch: e };
-    let mut mint = T::supply::Mint { to: did(m), item, amount: 1, nonce: w.n(1), stamp: h, sigs: vec![] };
+    let mut mint = T::supply::Mint { to: did(m), item, amount: 1, nonce: w.n(1), stamp: h, sigs: vec![], paid: None };
     mint.sigs = vec![(0, key(60).sign(&mint.message(&tu)).to_bytes())];
     println!("1  the item minted to M (key 60), on X: {}", put(&w.x, container(&w.code, shard.encode()), T::supply::Shard { mints: vec![mint.clone()] }.encode()).await?.0);
     let mut two = T::supply::Mint { amount: 2, nonce: w.n(2), item: T::unique_item(&tu, e, &w.n(2)), ..mint.clone() };
@@ -1036,7 +1037,7 @@ async fn operators_mode(w: &W) -> Result<()> {
     let items: Vec<[u8; 32]> = (1..=3u8).map(|k| T::unique_item(&tu, e, &w.n(k))).collect();
     let mints: Vec<T::supply::Mint> = (1..=3u8)
         .map(|k| {
-            let mut mm = T::supply::Mint { to: did(m), item: items[k as usize - 1], amount: 1, nonce: w.n(k), stamp: h, sigs: vec![] };
+            let mut mm = T::supply::Mint { to: did(m), item: items[k as usize - 1], amount: 1, nonce: w.n(k), stamp: h, sigs: vec![], paid: None };
             mm.sigs = vec![(0, key(60).sign(&mm.message(&tu)).to_bytes())];
             mm
         })
@@ -1420,7 +1421,7 @@ async fn editions(w: &W, scode: &[u8]) -> Result<()> {
     let (g, sv) = (w.put_def(&gd).await?, w.put_def(&sd).await?);
     let h = w.now().await?;
     let mint = |d: &[u8; 32], to: u8, first: u128, amount: u128| {
-        let mut x = T::supply::Mint { to: did(to), item: [0; 32], amount, nonce: first.to_be_bytes(), stamp: h, sigs: vec![] };
+        let mut x = T::supply::Mint { to: did(to), item: [0; 32], amount, nonce: first.to_be_bytes(), stamp: h, sigs: vec![], paid: None };
         x.sigs = vec![(0, key(60).sign(&x.message(d)).to_bytes())];
         x
     };
@@ -1445,7 +1446,7 @@ async fn editions(w: &W, scode: &[u8]) -> Result<()> {
     let copy = |o: u8, n: u128| T::ChainParams { item: T::numbered_item(&g, n), ..w.chain(g, o) };
     let credit = |n: [u8; 16], amount: u128, carried: T::supply::Mint| {
         let mut s = T::State::default();
-        push(&mut s, T::Body::CappedMint { nonce: n, amount, minted: h, mint: carried, ev: T::Evidence::default() }, n, None, r);
+        push(&mut s, T::Body::CappedMint { nonce: n, amount, minted: h, record: T::supply::record_of(&gd, u128::from_be_bytes(n)).unwrap_or(0), mint: carried, ev: T::Evidence::default() }, n, None, r);
         s
     };
     println!("4  M's Gold #1 credited, on Y: {}", put(&w.y, container(&w.code, copy(m, 1).encode()), credit(1u128.to_be_bytes(), 1, mint(&g, m, 1, 2)).encode()).await?.0);
@@ -1495,7 +1496,7 @@ async fn holders(w: &W, scode: &[u8]) -> Result<()> {
     let e = w.put_def(&hd).await?;
     let h = w.now().await?;
     let mint = |to: u8, n: u128| {
-        let mut x = T::supply::Mint { to: did(to), item: [0; 32], amount: 1, nonce: n.to_be_bytes(), stamp: h, sigs: vec![] };
+        let mut x = T::supply::Mint { to: did(to), item: [0; 32], amount: 1, nonce: n.to_be_bytes(), stamp: h, sigs: vec![], paid: None };
         x.sigs = vec![(0, key(60).sign(&x.message(&e)).to_bytes())];
         x
     };
@@ -1505,7 +1506,7 @@ async fn holders(w: &W, scode: &[u8]) -> Result<()> {
     let copy = |o: u8, n: u128| T::ChainParams { item: T::numbered_item(&e, n), ..w.chain(e, o) };
     let credit = |o: u8, n: u128| {
         let mut s = T::State::default();
-        push(&mut s, T::Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: h, mint: mint(o, n), ev: T::Evidence::default() }, n.to_be_bytes(), None, r);
+        push(&mut s, T::Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: h, record: 0, mint: mint(o, n), ev: T::Evidence::default() }, n.to_be_bytes(), None, r);
         s
     };
     for (o, n) in [(m, 1u128), (t, 2), (h8, 3)] {
@@ -1601,7 +1602,7 @@ async fn soulbound(w: &W) -> Result<()> {
     let d = T::Definition { soulbound: true, mint: Some(one(60)), genesis_amount: 0, ..w.def(1, b"Badge", 30) };
     let t = w.put_def(&d).await?;
     let h = w.now().await?;
-    let mut m = T::supply::Mint { to: did(2), item: [0; 32], amount: 100, nonce: w.n(1), stamp: h, sigs: vec![] };
+    let mut m = T::supply::Mint { to: did(2), item: [0; 32], amount: 100, nonce: w.n(1), stamp: h, sigs: vec![], paid: None };
     m.sigs = vec![(0, key(60).sign(&m.message(&t)).to_bytes())];
     let sp = T::supply::Params { code_hash: w.ch, definition: t, beacon: w.beacon, epoch: T::supply::epoch(h) };
     println!("1  100 badge minted to 2, on X: {}", put(&w.x, container(&w.code, sp.encode()), T::supply::Shard { mints: vec![m.clone()] }.encode()).await?.0);
@@ -1775,5 +1776,53 @@ async fn wallet_mode(w: &W) -> Result<()> {
     tokio::time::sleep(Duration::from_secs(2)).await;
     let bal = |s: Option<T::State>| s.map_or(0, |s| s.balance());
     println!("   on the network: 1 {} · 2 {} · 3 {} (= 1000)", bal(w.get_chain(&w.x, t, 1).await?), bal(w.get_chain(&w.y, t, 2).await?), bal(w.get_chain(&w.y, t, 3).await?));
+    Ok(())
+}
+
+/// SOLD ON DEMAND (TOKEN §1c, owner 10-10: "allow mint without owner for on demand"), LIVE: edition S — numbered, cap
+/// 10, 10 P a copy to 9, NO mint authority. 1 buys with its wallet: pays 10 P (its nonce tagged for record 0), then
+/// adds the paid mint to the record — held on the payment alone; its chain of the copy collects it. A mint citing no
+/// payment, or one payment twice, is refused.
+async fn ondemand(w: &W) -> Result<()> {
+    use craftworks_wallet::{Held, Sources, Wallet};
+    println!("— ondemand (an edition anyone buys, its owner offline)");
+    let why = |e: &str| anyhow::anyhow!("{e}");
+    let pd = w.def(1, b"P", 43);
+    let p = w.put_def(&pd).await?;
+    let sd = T::Definition { ids: T::Ids::Numbered, cap: 10, decimals: 0, min_send: 1, genesis_amount: 0, sale: Some((p.into(), 10, did(9))), ..w.def(9, b"S", 44) };
+    let s = w.put_def(&sd).await?;
+    let l1 = log(1);
+    let w1 = Wallet { device: &Dev(1), keys: &l1 };
+    let mut pay = Held { params: w.chain(p, 1), definition: pd.clone(), state: T::State::default(), blocks: Default::default() };
+    let h0 = w.now().await?;
+    pay.state.entries.extend(w1.genesis(&pay, h0).map_err(why)?);
+    let empty = T::supply::Shard::default();
+    let (es, mint) = w1.buy(&pay, &sd, &s, (0, &empty), 1, h0).map_err(why)?;
+    pay.state.entries.extend(es);
+    println!("1  1 pays 10 P to 9 for a copy, on X: {} — {}", w.put_chain(&w.x, p, 1, &pay.state).await?.0, pay.state.balance());
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let record = || container(&w.code, T::supply::Params { code_hash: w.ch, definition: s, beacon: w.beacon, epoch: 0 }.encode());
+    let rec = T::supply::Shard { mints: vec![mint.clone()] };
+    println!("2  its paid mint (copy #{}) added to record 0, no signature, on Y: {}", u128::from_be_bytes(mint.nonce), put(&w.y, record(), rec.encode()).await?.0);
+    let unpaid = T::supply::Mint { nonce: 2u128.to_be_bytes(), paid: Some((pay.params.id(), { let mut x = mint.paid.unwrap().1; x[15] ^= 1; x })), ..mint.clone() };
+    println!("3  a mint citing a payment never made, on X: {}", put(&w.x, record(), T::supply::merge(&rec, &T::supply::Shard { mints: vec![unpaid] }).unwrap().encode()).await?.0);
+    let twice = T::supply::Mint { nonce: 3u128.to_be_bytes(), ..mint.clone() };
+    println!("4  a second copy citing the same payment, on X: {}", put(&w.x, record(), T::supply::merge(&rec, &T::supply::Shard { mints: vec![twice] }).unwrap().encode()).await?.0);
+    // CONTROL: a second real buy (copy #2, its own payment) is taken.
+    let (es, m2) = w1.buy(&pay, &sd, &s, (0, &rec), 1, w.now().await?).map_err(why)?;
+    pay.state.entries.extend(es);
+    println!("4b 1 pays again, on X: {} — {}", w.put_chain(&w.x, p, 1, &pay.state).await?.0, pay.state.balance());
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    println!("4c its paid mint (copy #{}), on X: {}", u128::from_be_bytes(m2.nonce), put(&w.x, record(), T::supply::merge(&rec, &T::supply::Shard { mints: vec![m2] }).unwrap().encode()).await?.0);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let held = get(&w.x, T::supply::Params { code_hash: w.ch, definition: s, beacon: w.beacon, epoch: 0 }.id()).await?.and_then(|b| T::supply::Shard::decode(&b)).context("the record")?;
+    println!("   record 0 holds {} mint(s)", held.mints.len());
+    let copy = Held { params: T::ChainParams { item: T::numbered_item(&s, 1), ..w.chain(s, 1) }, definition: sd.clone(), state: T::State::default(), blocks: Default::default() };
+    let recs = [held];
+    let now = w.now().await?;
+    let got = w1.collect(&copy, &Sources { chains: &[], blocks: &Default::default(), programs: &[], shards: &recs }, now).map_err(why)?;
+    let mut c = copy.clone();
+    c.state.entries.extend(got);
+    println!("5  1's chain of copy #1 collects it, on Y: {} — {}", put(&w.y, container(&w.code, c.params.encode()), c.state.encode()).await?.0, c.state.balance());
     Ok(())
 }

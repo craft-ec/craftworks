@@ -125,6 +125,10 @@ pub struct Definition {
     /// — charged ON TOP of every send, spend, escrow and vest (the receiver gets the whole amount), claimed by its
     /// collector with a [`Body::FeeClaim`]. None when the collector itself transfers.
     pub transfer_fee: Option<(u16, u128, [u8; 32])>,
+    /// SOLD ON DEMAND (TOKEN §1c, owner 10-10: "allow mint without owner"): (the token paid in, the price of one, the
+    /// payee) — anyone pays the price to the payee and mints a copy, the owner offline. Its records are small
+    /// ([`supply::PAID_RECORD`]): each paid mint's payment is read when its record is checked.
+    pub sale: Option<(Tok, u128, [u8; 32])>,
 }
 
 /// The transfer fee `from` pays for moving `amount` of a token (TOKEN §1e): its share rounded up, at most its most.
@@ -204,6 +208,15 @@ impl Definition {
                 v.extend_from_slice(&collector);
             }
         }
+        match &self.sale {
+            None => v.push(0),
+            Some((tok, price, payee)) => {
+                v.push(1);
+                tok.put(&mut v);
+                v.extend_from_slice(&price.to_le_bytes());
+                v.extend_from_slice(payee);
+            }
+        }
         v
     }
     pub fn decode(b: &[u8]) -> Option<Self> {
@@ -245,12 +258,19 @@ impl Definition {
             1 => Some((u16::from_le_bytes(r.arr()?), r.u128()?, r.arr()?)),
             _ => return None,
         };
+        let sale = match r.u8()? {
+            0 => None,
+            1 => Some((Tok::read(&mut r)?, r.u128()?, r.arr()?)),
+            _ => return None,
+        };
         let ok = r.done() && decimals <= 18 && min_send > 0 && name.len() <= NAME_MAX && margin >= 1 && royalty.is_none_or(|(b, _)| b > 0 && b <= 10_000) && (cap == 0 || genesis_amount <= cap) && (cap == 0 || matches!(ids, Ids::None | Ids::Numbered))
             && royalty.is_none_or(|(_, to)| to != HOLDERS || (ids == Ids::Numbered && cap >= 2))
             && transfer_fee.is_none_or(|(b, _, c)| b > 0 && b <= 10_000 && c != HOLDERS)
             // Numbered copies are whole, sendable one at a time, and only minted (a genesis would hold numbers no copy has).
-            && (ids != Ids::Numbered || (decimals == 0 && min_send == 1 && genesis_amount == 0));
-        ok.then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog, mint, freeze, ids, royalty, cap, collection, item, version, soulbound, transfer_fee })
+            && (ids != Ids::Numbered || (decimals == 0 && min_send == 1 && genesis_amount == 0))
+            // A sale: of a capped (or numbered) token, at a price, to someone.
+            && sale.is_none_or(|(_, price, payee)| price > 0 && payee != HOLDERS && (cap > 0 || ids == Ids::Numbered));
+        ok.then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog, mint, freeze, ids, royalty, cap, collection, item, version, soulbound, transfer_fee, sale })
     }
     /// Minted by NUMBER into records ([`supply::RECORD`]): a cap, or numbered copies (each number once, ever).
     pub fn capped(&self) -> bool {
@@ -421,7 +441,7 @@ pub enum Body {
     /// A mint of a CAPPED token (§1c): the same, its mint in the RECORD of its numbers ([`supply::record_of`]) — and
     /// ADMITTED there ([`supply::admitted`]). `nonce` is a NUMBER (big-endian): for a numbered token the copy's (and
     /// `amount` 1); for plain copies the mint's first.
-    CappedMint { nonce: [u8; 16], amount: u128, minted: u64, mint: supply::Mint, ev: Evidence },
+    CappedMint { nonce: [u8; 16], amount: u128, minted: u64, record: u64, mint: supply::Mint, ev: Evidence },
     /// A FALSE MINT (TOKEN §7a): this chain's witness key signed a mint credit (`entry`, of chain (`tok`, `owner`))
     /// whose mint — carried in the credit, signatures and all — the token's mint authority never signed (as its
     /// definition and authority chain say at the mint's stamp). Every stake and unbonding amount BURNED. Appended by
@@ -610,11 +630,14 @@ impl Entry {
                 v.extend_from_slice(to);
                 v.extend_from_slice(&amount.to_le_bytes());
             }
-            Body::Mint { nonce, amount, minted, mint, ev } | Body::CappedMint { nonce, amount, minted, mint, ev } => {
+            Body::Mint { nonce, amount, minted, mint, ev } | Body::CappedMint { nonce, amount, minted, mint, ev, .. } => {
                 v.push(if matches!(self.body, Body::Mint { .. }) { 13 } else { 28 });
                 v.extend_from_slice(nonce);
                 v.extend_from_slice(&amount.to_le_bytes());
                 v.extend_from_slice(&minted.to_le_bytes());
+                if let Body::CappedMint { record, .. } = &self.body {
+                    v.extend_from_slice(&record.to_le_bytes());
+                }
                 mint.encode(&mut v);
                 put_ev(&mut v, ev);
             }
@@ -856,7 +879,7 @@ impl Entry {
                 Body::Writer { cred: r.take(n)?.to_vec(), key_seq: r.u32()? }
             }
             13 => Body::Mint { nonce: r.arr()?, amount: r.u128()?, minted: r.u64()?, mint: supply::Mint::read(r)?, ev: read_ev(r)? },
-            28 => Body::CappedMint { nonce: r.arr()?, amount: r.u128()?, minted: r.u64()?, mint: supply::Mint::read(r)?, ev: read_ev(r)? },
+            28 => Body::CappedMint { nonce: r.arr()?, amount: r.u128()?, minted: r.u64()?, record: r.u64()?, mint: supply::Mint::read(r)?, ev: read_ev(r)? },
             33 => {
                 let (key, sig, tok, owner) = (r.arr()?, witness::WitnessSig::read(r)?, Tok::read(r)?, r.arr()?);
                 let n = r.u32()? as usize;
@@ -1091,10 +1114,8 @@ pub fn minted_epochs_from(s: &State, from: usize) -> Vec<u64> {
     for e in s.entries.iter().skip(from) {
         let at = match &e.body {
             Body::Mint { minted, .. } => supply::epoch(*minted),
-            Body::CappedMint { nonce, .. } => match supply::record_of(u128::from_be_bytes(*nonce)) {
-                Some(k) => k,
-                None => continue,
-            },
+            // (The record the credit NAMES — its size is its token's: checked against the definition in the walk.)
+            Body::CappedMint { record, .. } => *record,
             _ => continue,
         };
         if !out.contains(&at) {
@@ -1563,7 +1584,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
                 }
-                Body::Mint { nonce, amount, minted: at, mint, ev } | Body::CappedMint { nonce, amount, minted: at, mint, ev } => {
+                Body::Mint { nonce, amount, minted: at, mint, ev } | Body::CappedMint { nonce, amount, minted: at, mint, ev, .. } => {
                     let capped = matches!(e.body, Body::CappedMint { .. });
                     if capped != d.capped() {
                         return Err("a mint of the other kind than its token's");
@@ -1594,7 +1615,15 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     }
                     // In its epoch's supply shard ALREADY (the shard holds only the mint authority's signed mints).
                     if recent {
-                        let at_shard = if capped { supply::record_of(u128::from_be_bytes(*nonce)).ok_or("a mint of numbers not its record's")? } else { supply::epoch(*at) };
+                        let at_shard = if capped {
+                            let k = supply::record_of(d, u128::from_be_bytes(*nonce)).ok_or("a mint of numbers not its record's")?;
+                            if !matches!(e.body, Body::CappedMint { record, .. } if record == k) {
+                                return Err("a mint credit naming another record than its numbers'");
+                            }
+                            k
+                        } else {
+                            supply::epoch(*at)
+                        };
                         let shard = supply(at_shard).ok_or("the mint's supply shard is not there")?;
                         let ok = if !capped {
                             shard.find(nonce) == Some(mint)
@@ -1763,9 +1792,24 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         }
                         let ap = authority::Params { code_hash: p.code_hash, definition: tok.definition, beacon: p.beacon };
                         let ch = x.program.and_then(|f| f(&ap.id())).and_then(|b| authority::Chain::decode(&b)).ok_or("the minted token's authority chain is not there")?;
-                        let (set, _) = authority::sets_at(&tok.definition, (&dm.mint, &dm.freeze), &ch, m.stamp)?;
-                        if set.is_some_and(|set| set.signed(&m.message(&tok.definition), &m.sigs)) {
-                            return Err("a false mint that its authority signed");
+                        if let Some((cid, nonce)) = m.paid {
+                            // A PAID mint: no payment in its payer's chain — shown where the chain can say (unforked,
+                            // whole back to before the mint), as a vanished debit is.
+                            let (ptok, price, payee) = dm.sale.ok_or("a false mint that was paid")?;
+                            let payer = ChainParams { code_hash: p.code_hash, definition: ptok.definition, owner: m.to, beacon: p.beacon, idlog: dm.idlog, item: ptok.item };
+                            let c = (payer.id() == cid).then(|| x.program.and_then(|f| f(&cid)).and_then(|b| State::decode(&b))).flatten().ok_or("the payer's chain is not there")?;
+                            if c.fork.is_some() || !c.entries.first().is_some_and(|f| f.seq == 0 || f.stamp < m.stamp) {
+                                return Err("a misdeed the cited chain cannot show");
+                            }
+                            let owed = price.saturating_mul(m.amount);
+                            if c.entries.iter().any(|y| y.nonce == nonce && y.stamp <= m.stamp && matches!(y.body, Body::Send { to, amount } if to == payee && amount == owed)) {
+                                return Err("a false mint that was paid");
+                            }
+                        } else {
+                            let (set, _) = authority::sets_at(&tok.definition, (&dm.mint, &dm.freeze), &ch, m.stamp)?;
+                            if set.is_some_and(|set| set.signed(&m.message(&tok.definition), &m.sigs)) {
+                                return Err("a false mint that its authority signed");
+                            }
                         }
                     }
                     staked = 0;
@@ -2034,10 +2078,15 @@ pub fn programs_from(p: &ChainParams, s: &State, from: usize) -> Vec<[u8; 32]> {
     for (i, e) in s.entries.iter().enumerate().skip(from) {
         let prog = match &e.body {
             Body::Payout { program, .. } => Some(*program),
-            Body::FalseMint { tok, .. } => {
-                // The minted token's definition and authority chain (read by id, as a program's state is).
+            Body::FalseMint { tok, entry, .. } => {
+                // The minted token's definition and authority chain (read by id, as a program's state is) — and a paid
+                // mint's payer chain.
                 let a = authority::Params { code_hash: p.code_hash, definition: tok.definition, beacon: p.beacon }.id();
-                for d in [tok.definition, a] {
+                let payer = match &entry.body {
+                    Body::Mint { mint, .. } | Body::CappedMint { mint, .. } => mint.paid.map(|(c, _)| c),
+                    _ => None,
+                };
+                for d in [tok.definition, a].into_iter().chain(payer) {
                     if !out.contains(&d) {
                         out.push(d);
                     }
@@ -2379,16 +2428,58 @@ mod contract {
         Ok(UpdateModification::valid(State::from(encode(&merged))))
     }
 
+    fn paid(p: &supply::Params, d: &Definition, m: &supply::Mint, got: &dyn Fn(&[u8; 32]) -> Option<Vec<u8>>) -> Result<(), super::Why> {
+        let cid = m.paid.ok_or("a paid mint of no payment")?.0;
+        supply::payment_ok(p, d, m, got(&cid).and_then(|b| super::State::decode(&b)).as_ref())
+    }
+
     fn supply_valid(params: &[u8], state: &[u8], related: &RelatedContracts<'static>) -> Result<ValidateResult, ContractError> {
         let (Some(p), Some(sh)) = (supply::Params::decode(params), supply::Shard::decode(state)) else { return Ok(ValidateResult::Invalid) };
-        signed_set_valid(p.authority(), related, &|d, c| supply::holds(&p, d, c, &sh).is_ok())
+        // The payers of its paid mints (named by the mints themselves: asked in the same round as the definition).
+        let payers: Vec<[u8; 32]> = sh.mints.iter().filter_map(|m| m.paid.map(|(c, _)| c)).collect();
+        if 2 + payers.len() > super::MAX_RELATED {
+            return Ok(ValidateResult::Invalid);
+        }
+        let missing: Vec<ContractInstanceId> = payers.iter().filter(|c| related_state(related, c).is_none()).map(|c| ContractInstanceId::new(*c)).collect();
+        if !missing.is_empty() && related_state(related, &p.definition).is_some() {
+            return Ok(ValidateResult::RequestRelated(missing));
+        }
+        let got = |c: &[u8; 32]| related_state(related, c).flatten();
+        match signed_set_valid(p.authority(), related, &|d, c| supply::holds(&p, d, c, &sh, &|m| paid(&p, d, m, &got)).is_ok())? {
+            ValidateResult::RequestRelated(mut want) => {
+                want.extend(missing);
+                Ok(ValidateResult::RequestRelated(want))
+            }
+            r => Ok(r),
+        }
     }
 
     fn supply_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
         let p = supply::Params::decode(params).ok_or(ContractError::InvalidState)?;
         let held = supply::Shard::decode(state).ok_or(ContractError::InvalidState)?;
-        signed_set_update(p.authority(), held, data, &|h, b| supply::merge(h, &supply::Shard::decode(b)?), &supply::Shard::encode, &|d, c, h, m, now| {
-            supply::holds(&p, d, c, m)?;
+        // (The payers of NEW paid mints are asked with the definition: the new mints name them.)
+        let given: Vec<[u8; 32]> = data.iter().filter_map(|x| match x {
+            UpdateData::State(s) => supply::Shard::decode(s.as_ref()),
+            UpdateData::Delta(s) => supply::Shard::decode(s.as_ref()),
+            UpdateData::StateAndDelta { state, .. } => supply::Shard::decode(state.as_ref()),
+            _ => None,
+        }).flat_map(|sh| sh.mints).filter(|m| !held.mints.contains(m)).filter_map(|m| m.paid.map(|(c, _)| c)).collect();
+        let related: Vec<([u8; 32], Vec<u8>)> = data.iter().filter_map(|x| match x {
+            UpdateData::RelatedState { related_to, state } => <[u8; 32]>::try_from(related_to.as_bytes()).ok().map(|k| (k, state.as_ref().to_vec())),
+            _ => None,
+        }).collect();
+        if 3 + given.len() > super::MAX_RELATED {
+            return Err(ContractError::InvalidUpdate);
+        }
+        if given.iter().any(|c| !related.iter().any(|(k, _)| k == c)) {
+            let a = p.authority();
+            let all = [a.definition, a.id(), a.beacon].into_iter().chain(given.iter().copied());
+            return UpdateModification::requires(all.map(|c| RelatedContract { contract_instance_id: ContractInstanceId::new(c), mode: RelatedMode::StateOnce }).collect());
+        }
+        let got = |c: &[u8; 32]| related.iter().find(|(k, _)| k == c).map(|(_, b)| b.clone());
+        signed_set_update(p.authority(), held.clone(), data, &|h, b| supply::merge(h, &supply::Shard::decode(b)?), &supply::Shard::encode, &|d, c, h, m, now| {
+            // Paid mints already held were read when taken; the new ones are read now.
+            supply::holds(&p, d, c, m, &|x| if h.mints.contains(x) { Ok(()) } else { paid(&p, d, x, &got) })?;
             supply::fresh(h, m, now, d.margin, d.capped())
         })
     }

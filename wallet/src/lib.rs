@@ -111,6 +111,11 @@ impl Wallet<'_> {
     /// this device's WRITER entry first if it is not the chain's writer, then the debit. Checked against the token's
     /// shape rules (refused: why); `h` is left as it was — the caller appends what it publishes.
     pub fn debit(&self, h: &Held, body: Body, now: u64) -> Result<Vec<Entry>, Why> {
+        self.debit_named(h, body, now, &|n| n)
+    }
+
+    /// A debit whose name is `name` of its place's (a payment's tagged nonce).
+    fn debit_named(&self, h: &Held, body: Body, now: u64, name: &dyn Fn([u8; 16]) -> [u8; 16]) -> Result<Vec<Entry>, Why> {
         if h.state.fork.is_some() {
             return Err("a forked chain");
         }
@@ -125,13 +130,59 @@ impl Wallet<'_> {
         }
         let balance = s.balance().checked_sub(take).ok_or("a debit over the balance")?;
         let seq = s.entries.last().map_or(0, |e| e.seq + 1);
-        let e = self.signed(&s, nonce_of(&h.params, seq), stamp, body, balance);
+        let e = self.signed(&s, name(nonce_of(&h.params, seq)), stamp, body, balance);
         s.entries.push(e.clone());
         out.push(e);
         // The contract's own rules over the chain as it would be (no citations: a debit cites nothing).
         t::walk(&h.params, &h.definition, &s, &|_, _| None, &|_| None, Some(self.keys), 0, usize::MAX, &t::Extra::NONE).map_err(|(_, w)| w)?;
         Ok(out)
     }
+}
+
+impl Wallet<'_> {
+    /// BUY `amount` copies of an edition SOLD ON DEMAND (TOKEN §1c: `Definition::sale`) — no one else signs. `sold` is
+    /// the edition (its definition id `sold_id`), `record` its record `k` as read; `pay` this account's chain of the
+    /// sale's token. Returns the PAYMENT (this device's writer entry first if need be, then the send of the price to the
+    /// payee, its nonce tagged for record `k`) and the PAID MINT citing it, of the first free numbers in the record. The
+    /// caller publishes the payment, then adds the mint to the record (a race that takes the numbers first: mint
+    /// again with other free numbers of the same record — the payment buys a copy in that record only).
+    pub fn buy(&self, pay: &Held, sold: &Definition, sold_id: &[u8; 32], record: (u64, &t::supply::Shard), amount: u128, now: u64) -> Result<(Vec<Entry>, t::supply::Mint), Why> {
+        let (tok, price, payee) = sold.sale.ok_or("an edition not sold on demand")?;
+        let owner = pay.params.owner;
+        let payer = ChainParams { code_hash: pay.params.code_hash, definition: tok.definition, owner, beacon: pay.params.beacon, idlog: sold.idlog, item: tok.item };
+        if payer.id() != pay.params.id() {
+            return Err("a payment from another chain than the sale's token's");
+        }
+        let first = free(sold, record, amount).ok_or("no free numbers in the record")?;
+        let tag = t::supply::sale_tag(sold_id, record.0);
+        let send = Body::Send { to: payee, amount: price.checked_mul(amount).ok_or("a balance overflow")? };
+        let out = self.debit_named(pay, send, now, &|n| {
+            let mut x = n;
+            x[..8].copy_from_slice(&tag);
+            x
+        })?;
+        let e = out.last().expect("the payment");
+        let mint = t::supply::Mint { to: owner, item: [0; 32], amount, nonce: first.to_be_bytes(), stamp: e.stamp, sigs: vec![], paid: Some((pay.params.id(), e.nonce)) };
+        Ok((out, mint))
+    }
+}
+
+/// The first of `amount` consecutive numbers of record `k` (as read) no admitted mint holds — past the genesis, within
+/// the cap.
+fn free(d: &Definition, (k, shard): (u64, &t::supply::Shard), amount: u128) -> Option<u128> {
+    let size = t::supply::record_size(d);
+    let lo = (k as u128).checked_mul(size)?.checked_add(1)?.max(d.genesis_amount + 1);
+    let hi = (k as u128 + 1).checked_mul(size)?.min(if d.cap > 0 { d.cap } else { u128::MAX });
+    let held = t::supply::admitted(d, shard);
+    let taken = |n: u128| held.iter().any(|m| u128::from_be_bytes(m.nonce) <= n && n - u128::from_be_bytes(m.nonce) < m.amount);
+    let mut n = lo;
+    while amount > 0 && n.checked_add(amount - 1)? <= hi {
+        match (n..n + amount).find(|x| taken(*x)) {
+            None => return Some(n),
+            Some(x) => n = x + 1,
+        }
+    }
+    None
 }
 
 impl Wallet<'_> {
@@ -318,7 +369,8 @@ impl Wallet<'_> {
                     if !taken.contains(&k) {
                         let ev = mine(&k)?;
                         taken.push(k);
-                        push(&mut s, Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: mt.stamp, mint: mt.clone(), ev }, 1, &mut out);
+                        let record = t::supply::record_of(d, n).unwrap_or(0);
+                        push(&mut s, Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: mt.stamp, record, mint: mt.clone(), ev }, 1, &mut out);
                     }
                     continue;
                 }
@@ -328,7 +380,7 @@ impl Wallet<'_> {
                     let ev = mine(&k)?;
                     taken.push(k);
                     let body = if d.capped() {
-                        Body::CappedMint { nonce: mt.nonce, amount: mt.amount, minted: mt.stamp, mint: mt.clone(), ev }
+                        Body::CappedMint { nonce: mt.nonce, amount: mt.amount, minted: mt.stamp, record: t::supply::record_of(d, u128::from_be_bytes(mt.nonce)).unwrap_or(0), mint: mt.clone(), ev }
                     } else {
                         Body::Mint { nonce: mt.nonce, amount: mt.amount, minted: mt.stamp, mint: mt.clone(), ev }
                     };

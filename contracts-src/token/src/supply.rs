@@ -23,10 +23,27 @@ pub fn epoch(stamp: u64) -> u64 {
 /// exactly one record — so its cap and its numbers are checked record by record, and records are made only as copies
 /// are minted, without end. Its index is the shard params' "epoch".
 pub const RECORD: u128 = 1024;
+/// A record of an edition SOLD ON DEMAND (`Definition::sale`): small — every paid mint in it has its payment read when
+/// the record is checked, and a check reads at most 10 contracts (the definition, its authority chain, 8 payers).
+pub const PAID_RECORD: u128 = 8;
 
-/// The record holding copy `n` (from 1; `None`: 0, or past the last record an index can name).
-pub fn record_of(n: u128) -> Option<u64> {
-    n.checked_sub(1).and_then(|x| u64::try_from(x / RECORD).ok())
+/// The numbers a record of `d` holds.
+pub fn record_size(d: &crate::Definition) -> u128 {
+    if d.sale.is_some() { PAID_RECORD } else { RECORD }
+}
+
+/// The record of `d` holding copy `n` (from 1; `None`: 0, or past the last record an index can name).
+pub fn record_of(d: &crate::Definition, n: u128) -> Option<u64> {
+    n.checked_sub(1).and_then(|x| u64::try_from(x / record_size(d)).ok())
+}
+
+/// The tag a PAYMENT for a mint in record `k` of `definition` carries in its nonce's first 8 bytes — a payment buys a
+/// copy in that record only (one payment, one copy, whatever record a race moves it to).
+pub fn sale_tag(definition: &[u8; 32], k: u64) -> [u8; 8] {
+    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-10 token sale tag");
+    h.update(definition);
+    h.update(&k.to_le_bytes());
+    h.finalize().as_bytes()[..8].try_into().unwrap()
 }
 
 /// One MINT: `amount` to the chain of DID `to`, named by `nonce`, at beacon `stamp`, signed by k of the mint set.
@@ -39,6 +56,9 @@ pub struct Mint {
     pub nonce: [u8; 16],
     pub stamp: u64,
     pub sigs: Vec<(u8, [u8; 64])>,
+    /// A PAID mint (an edition sold on demand, `Definition::sale`): no signature — the payer's chain (its id) and the
+    /// nonce of its payment to the sale's payee. `None`: a mint the mint authority signed.
+    pub paid: Option<([u8; 32], [u8; 16])>,
 }
 
 impl Mint {
@@ -60,9 +80,23 @@ impl Mint {
         v.extend_from_slice(&self.nonce);
         v.extend_from_slice(&self.stamp.to_le_bytes());
         authority::put_sigs(v, &self.sigs);
+        match &self.paid {
+            None => v.push(0),
+            Some((c, n)) => {
+                v.push(1);
+                v.extend_from_slice(c);
+                v.extend_from_slice(n);
+            }
+        }
     }
     pub(crate) fn read(r: &mut crate::R) -> Option<Mint> {
-        Some(Mint { to: r.arr()?, item: r.arr()?, amount: r.u128()?, nonce: r.arr()?, stamp: r.u64()?, sigs: authority::read_sigs(r)? })
+        let (to, item, amount, nonce, stamp, sigs) = (r.arr()?, r.arr()?, r.u128()?, r.arr()?, r.u64()?, authority::read_sigs(r)?);
+        let paid = match r.u8()? {
+            0 => None,
+            1 => Some((r.arr()?, r.arr()?)),
+            _ => return None,
+        };
+        Some(Mint { to, item, amount, nonce, stamp, sigs, paid })
     }
 }
 
@@ -133,7 +167,15 @@ pub fn seal(s: &Shard, before: u64) -> Option<[u8; 32]> {
 /// its epoch, exactly; a record, EVERY change, exactly (named: its seal; not named: no mint from before it) — a replaced
 /// set can never mint into its past. Overlapping numbers are not refused from scratch (an update refuses adding one,
 /// [`fresh`]): such a mint is simply not [`admitted`].
-pub fn holds(p: &Params, d: &crate::Definition, chain: &authority::Chain, s: &Shard) -> Result<(), Why> {
+pub fn holds(p: &Params, d: &crate::Definition, chain: &authority::Chain, s: &Shard, paid_ok: &dyn Fn(&Mint) -> Result<(), Why>) -> Result<(), Why> {
+    // A payment buys one copy: cited once in a record.
+    let mut payments: Vec<&[u8; 16]> = s.mints.iter().filter_map(|m| m.paid.as_ref().map(|(_, n)| n)).collect();
+    let n = payments.len();
+    payments.sort();
+    payments.dedup();
+    if payments.len() != n {
+        return Err("a payment cited by two mints");
+    }
     let ranged = d.capped();
     let mut from = 0u64;
     for c in chain.changes.iter().filter(|c| c.role == authority::Role::Mint) {
@@ -161,7 +203,7 @@ pub fn holds(p: &Params, d: &crate::Definition, chain: &authority::Chain, s: &Sh
             // Its numbers: a range in this record, past the genesis (plain copies count it), within the cap.
             let first = u128::from_be_bytes(m.nonce);
             let last = first.checked_add(m.amount - 1).ok_or("a mint of numbers past the last")?;
-            if first <= d.genesis_amount || record_of(first) != Some(p.epoch) || record_of(last) != Some(p.epoch) || (d.cap > 0 && last > d.cap) || m.item != [0; 32] {
+            if first <= d.genesis_amount || record_of(d, first) != Some(p.epoch) || record_of(d, last) != Some(p.epoch) || (d.cap > 0 && last > d.cap) || m.item != [0; 32] {
                 return Err("a mint of numbers not its record's");
             }
         } else {
@@ -179,6 +221,15 @@ pub fn holds(p: &Params, d: &crate::Definition, chain: &authority::Chain, s: &Sh
                 return Err("a mint of an item not its token's kind");
             }
         }
+        if let Some((_, nonce)) = &m.paid {
+            // PAID (on demand): a sold edition's, unsigned, its payment tagged for this record — and there (the caller
+            // reads the payer's chain).
+            if d.sale.is_none() || !m.sigs.is_empty() || nonce[..8] != sale_tag(&p.definition, p.epoch) {
+                return Err("a paid mint that is not this sale's");
+            }
+            paid_ok(m)?;
+            continue;
+        }
         let (mint, _) = authority::sets_at(&p.definition, (&d.mint, &d.freeze), chain, m.stamp)?;
         let set = mint.ok_or("a mint with no mint authority")?;
         if !set.signed(&m.message(&p.definition), &m.sigs) {
@@ -186,6 +237,29 @@ pub fn holds(p: &Params, d: &crate::Definition, chain: &authority::Chain, s: &Sh
         }
     }
     Ok(())
+}
+
+/// A PAID mint's payment (`Definition::sale`), checked in the payer's chain as read (`payer`): the chain the mint
+/// names is the payer's of the sale's token, and it holds the payment — a send of the price × amount to the payee,
+/// under the nonce named, stamped no later than the mint. A payer that cut its chain since (the payment behind a cut
+/// stamped after the mint) is taken as shown when the mint was added: its holders read it then (from scratch, a fresh
+/// copy of a record could then hold a mint whose payment is gone — refused when a chain credits it, and burned in
+/// whoever witnessed that: `FalseMint`).
+pub fn payment_ok(p: &Params, d: &crate::Definition, m: &Mint, payer: Option<&crate::State>) -> Result<(), Why> {
+    let ((tok, price, payee), (cid, nonce)) = (d.sale.ok_or("a paid mint of no sale")?, m.paid.ok_or("a paid mint of no payment")?);
+    let pc = crate::ChainParams { code_hash: p.code_hash, definition: tok.definition, owner: m.to, beacon: p.beacon, idlog: d.idlog, item: tok.item };
+    if pc.id() != cid {
+        return Err("a paid mint naming another chain than its payer's");
+    }
+    let c = payer.ok_or("a paid mint whose payer's chain is not there")?;
+    let owed = price.checked_mul(m.amount).ok_or("a balance overflow")?;
+    if c.entries.iter().any(|x| x.nonce == nonce && x.stamp <= m.stamp && matches!(x.body, crate::Body::Send { to, amount } if to == payee && amount == owed)) {
+        return Ok(());
+    }
+    if c.entries.first().is_some_and(|f| f.seq > 0 && matches!(f.body, crate::Body::Cut { .. }) && f.stamp >= m.stamp) {
+        return Ok(());
+    }
+    Err("a paid mint whose payment is not there")
 }
 
 /// The mints of a capped token's record that COUNT, in one order every reader shares — stamp, then nonce (a mint new
@@ -266,7 +340,7 @@ mod tests {
 
     /// A token minted by `mint`, of `ids`, capped at `cap` (the rest as any).
     fn tok(mint: &Option<KeySet>, ids: crate::Ids, cap: u128) -> crate::Definition {
-        crate::Definition { code_hash: [9; 32], decimals: 0, min_send: 1, genesis_owner: [3; 32], genesis_amount: 0, name: vec![], nonce: [0; 16], beacon: [7; 32], margin: 2, idlog: [0; 32], mint: mint.clone(), freeze: None, ids, royalty: None, cap, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None }
+        crate::Definition { code_hash: [9; 32], decimals: 0, min_send: 1, genesis_owner: [3; 32], genesis_amount: 0, name: vec![], nonce: [0; 16], beacon: [7; 32], margin: 2, idlog: [0; 32], mint: mint.clone(), freeze: None, ids, royalty: None, cap, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None }
     }
 
     const DEF: [u8; 32] = [5; 32];
@@ -283,7 +357,7 @@ mod tests {
         authority::Chain { changes: vec![c] }
     }
     fn mint(n: u8, stamp: u64, by: u8) -> Mint {
-        let mut m = Mint { to: [3; 32], item: [0; 32], amount: 50, nonce: [n; 16], stamp, sigs: vec![] };
+        let mut m = Mint { to: [3; 32], item: [0; 32], amount: 50, nonce: [n; 16], stamp, sigs: vec![], paid: None };
         m.sigs = vec![(0, SigningKey::from_bytes(&[by; 32]).sign(&m.message(&DEF)).to_bytes())];
         m
     }
@@ -294,25 +368,25 @@ mod tests {
         let none = authority::Chain::default();
         let s = Shard { mints: vec![mint(1, 10, 1), mint(2, 11, 1)] };
         assert_eq!(Shard::decode(&s.encode()).as_ref(), Some(&s));
-        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &none, &s), Ok(()));
-        assert_eq!(holds(&p(1), &tok(&first.0, crate::Ids::None, 0), &none, &s), Err("a mint of another epoch"));
+        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &none, &s, &|_| Ok(())), Ok(()));
+        assert_eq!(holds(&p(1), &tok(&first.0, crate::Ids::None, 0), &none, &s, &|_| Ok(())), Err("a mint of another epoch"));
         let mut zero = mint(3, 10, 1);
         zero.amount = 0;
         zero.sigs = vec![(0, SigningKey::from_bytes(&[1; 32]).sign(&zero.message(&DEF)).to_bytes())];
-        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &none, &Shard { mints: vec![zero] }), Err("a mint of nothing"));
+        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &none, &Shard { mints: vec![zero] }, &|_| Ok(())), Err("a mint of nothing"));
         let forged = Shard { mints: vec![mint(1, 10, 2)] };
-        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &none, &forged), Err("a mint not signed by the mint authority"));
-        assert_eq!(holds(&p(0), &tok(&None, crate::Ids::None, 0), &none, &s), Err("a mint with no mint authority"), "fixed supply");
+        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &none, &forged, &|_| Ok(())), Err("a mint not signed by the mint authority"));
+        assert_eq!(holds(&p(0), &tok(&None, crate::Ids::None, 0), &none, &s, &|_| Ok(())), Err("a mint with no mint authority"), "fixed supply");
         // The set moves to key 2 at stamp 11, sealing epoch 0 as it holds key 1's mint at 10.
         let sealed = Shard { mints: vec![mint(1, 10, 1)] };
         let moved = change(11, vec![(0, seal(&sealed, 11).unwrap())]);
-        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &moved, &sealed), Ok(()));
+        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &moved, &sealed, &|_| Ok(())), Ok(()));
         let after = merge(&sealed, &Shard { mints: vec![mint(2, 11, 2)] }).unwrap();
-        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &moved, &after), Ok(()), "the new set mints on");
+        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &moved, &after, &|_| Ok(())), Ok(()), "the new set mints on");
         let stale = merge(&sealed, &Shard { mints: vec![mint(5, 11, 1)] }).unwrap();
-        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &moved, &stale), Err("a mint not signed by the mint authority"), "the old set, after");
+        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &moved, &stale, &|_| Ok(())), Err("a mint not signed by the mint authority"), "the old set, after");
         let backdated = merge(&sealed, &Shard { mints: vec![mint(3, 9, 1)] }).unwrap();
-        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &moved, &backdated), Err("a shard that is not what its mint authority sealed"), "the old set, into its past");
+        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &moved, &backdated, &|_| Ok(())), Err("a shard that is not what its mint authority sealed"), "the old set, into its past");
     }
 
     #[test]
@@ -321,18 +395,18 @@ mod tests {
         let at = 2 * EPOCH + 5;
         let e1 = Shard { mints: vec![mint(1, EPOCH + 3, 1)] };
         let moved = change(at, vec![(1, seal(&e1, at).unwrap())]);
-        assert_eq!(holds(&p(1), &tok(&first.0, crate::Ids::None, 0), &moved, &e1), Ok(()));
-        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &moved, &Shard::default()), Ok(()), "epoch 0: sealed empty");
-        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &moved, &Shard { mints: vec![mint(2, 7, 1)] }), Err("a shard that is not what its mint authority sealed"), "a shard first put after the seal");
-        assert_eq!(holds(&p(2), &tok(&first.0, crate::Ids::None, 0), &moved, &Shard { mints: vec![mint(2, 2 * EPOCH, 1)] }), Err("a shard that is not what its mint authority sealed"), "its own epoch, before it");
-        assert_eq!(holds(&p(2), &tok(&first.0, crate::Ids::None, 0), &moved, &Shard { mints: vec![mint(2, at, 2)] }), Ok(()), "its own epoch, after it");
-        assert_eq!(holds(&p(3), &tok(&first.0, crate::Ids::None, 0), &moved, &Shard { mints: vec![mint(2, 3 * EPOCH, 2)] }), Ok(()), "beyond it: open");
+        assert_eq!(holds(&p(1), &tok(&first.0, crate::Ids::None, 0), &moved, &e1, &|_| Ok(())), Ok(()));
+        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &moved, &Shard::default(), &|_| Ok(())), Ok(()), "epoch 0: sealed empty");
+        assert_eq!(holds(&p(0), &tok(&first.0, crate::Ids::None, 0), &moved, &Shard { mints: vec![mint(2, 7, 1)] }, &|_| Ok(())), Err("a shard that is not what its mint authority sealed"), "a shard first put after the seal");
+        assert_eq!(holds(&p(2), &tok(&first.0, crate::Ids::None, 0), &moved, &Shard { mints: vec![mint(2, 2 * EPOCH, 1)] }, &|_| Ok(())), Err("a shard that is not what its mint authority sealed"), "its own epoch, before it");
+        assert_eq!(holds(&p(2), &tok(&first.0, crate::Ids::None, 0), &moved, &Shard { mints: vec![mint(2, at, 2)] }, &|_| Ok(())), Ok(()), "its own epoch, after it");
+        assert_eq!(holds(&p(3), &tok(&first.0, crate::Ids::None, 0), &moved, &Shard { mints: vec![mint(2, 3 * EPOCH, 2)] }, &|_| Ok(())), Ok(()), "beyond it: open");
         // The NEXT change (key 2 → 3, epoch 3) seals from the epoch of the one before: key 2's mint after it in epoch 2.
         let mut two = moved.clone();
         let mut c = authority::Change { seq: 1, role: authority::Role::Mint, next: Some(set(&[3])), stamp: 3 * EPOCH, closed: vec![], cap: 0, sigs: vec![] };
         c.sigs = vec![(0, SigningKey::from_bytes(&[2; 32]).sign(&c.message(&DEF)).to_bytes())];
         two.changes.push(c);
-        assert_eq!(holds(&p(2), &tok(&first.0, crate::Ids::None, 0), &two, &Shard { mints: vec![mint(2, at, 2)] }), Err("a shard that is not what its mint authority sealed"), "left out by the next seal");
+        assert_eq!(holds(&p(2), &tok(&first.0, crate::Ids::None, 0), &two, &Shard { mints: vec![mint(2, at, 2)] }, &|_| Ok(())), Err("a shard that is not what its mint authority sealed"), "left out by the next seal");
     }
 
     #[test]

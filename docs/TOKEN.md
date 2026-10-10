@@ -161,7 +161,7 @@ A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has CO
   each, `n` from 1 up to the cap. PLAIN: the edition is fungible within itself (`ids: none`, decimals 0) — "3 Silver".
 - **Minted on demand, without end** (owner 10-10: "how does it work with 1mil copies?"). A capped edition's mints live
   in RECORDS by NUMBER, not by time: record `k` holds copies `k·1024 + 1 … (k+1)·1024` (`supply::record_of`; plain
-  copies are numbered too, unseen). A record is made when its first copy is minted, so there is no end — copy
+  copies are numbered too, unseen; an edition SOLD ON DEMAND, below, in records of 8). A record is made when its first copy is minted, so there is no end — copy
   5,000,001 is in record 4882 — and each number is in exactly one record, so the cap (numbers stop at it) and "each
   number once" are checked record by record. A mint names a RANGE of numbers inside one record (its nonce the first);
   a chain credits it with `CappedMint` (for a numbered copy: its number, amount 1). Plain copies leave the genesis's
@@ -192,6 +192,19 @@ A COLLECTION ("Pixel Cats") holds EDITIONS ("Gold", "Silver"); an edition has CO
   claimant could name an edition of its own). The sold copy takes none. A witness signs it only on the sale's time
   being its escrow's stamp, the program backed and every escrow of its verdict released, and the claimant's holding
   entry accepted. Numbered only: a plain copy has no number to name.
+- **Sold on demand, its owner offline** (owner 10-10: "allow mint without owner for on demand"). An edition may carry
+  a SALE — `Definition.sale = (token paid in, price of one, payee)`, capped or numbered only — and then ANYONE mints a
+  copy by paying for it: a send of `price × amount` to the payee from their own chain of the sale's token, its nonce
+  TAGGED for one record (`supply::sale_tag(edition, k)` in its first 8 bytes), then a PAID MINT in record `k`
+  (`Mint.paid = (payer chain id, payment nonce)`, no signature) — to the payer, stamped no earlier than the payment.
+  The record reads every NEW paid mint's payer chain when it takes it (asked with the definition); a payment is cited
+  once in a record, and its tag binds it to that record, so one payment buys one copy. A sale's records hold 8
+  numbers (`supply::PAID_RECORD`): a check reads at most 10 contracts. A copy's chain credits it as any mint, and the
+  credit names its record (`CappedMint.record`, checked to be its numbers'). A witness that signs a credit of a paid
+  mint whose payment is not in the payer's chain is burned (`FalseMint`, shown where the payer's chain can say:
+  unforked, whole back to before the mint); signing a paid one proves nothing. A payer that cut its chain since the
+  mint is taken as shown when the record took it. A buyer racing others for the last numbers of a record mints again
+  with other free numbers of the same record (its payment is tagged for that record only).
 - **Not built:** fractional ownership of one item (an app over escrow).
 
 ## 1d. Non-transferable tokens (soulbound, 10-10)
@@ -657,6 +670,9 @@ wallet only hands the chain over when told.
   LIVE fx/fy (`token-live wallet`, every entry built and signed by the wallet core): 1 starts token W and pays 2 300
   and 3 100; 2 collects nothing before the margin, its receive after it, and pays 3 50; 1 CUTS; 3 collects both — 1's
   from 1's history with its proof — and nothing on a second look: 600 + 250 + 150 = 1000, all ACCEPTED.
+- **W5 BUYING — BUILT 10-10.** `Wallet::buy(pay, edition, id, (k, record), amount, now)`: an edition sold on demand
+  (§1c) — the payment from this account's chain of the sale's token (its nonce tagged for record `k`) and the paid
+  mint of the record's first free numbers (past the genesis, within the cap); the copy is then collected as any mint.
 - Not in the core (the account's, at rollout): which device writes a chain (the core hands it over when told), finding
   counterparties' chains (the token's activity), fetching and publishing.
 
@@ -891,6 +907,13 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    back-dated word — a pause included — is refused even where the list was never held. 109 tests; mutants killed.
    The 10-10 audit leaves NOTHING open in the token's rules; what remains is rollout (witnesses, keepers, wallets
    running live).
+23. SOLD ON DEMAND — BUILT 10-10 (§1c; owner: "allow mint without owner for on demand"): `Definition.sale`, paid
+   mints (`Mint.paid`, no signature, the payment tagged for its record), the record reading its new paid mints'
+   payer chains, records of 8 (`PAID_RECORD`), `CappedMint.record`, `FalseMint` for a credit of an unpaid copy, and
+   `Wallet::buy` (§7c W5). Token 111 tests, wallet 8; 18 mutants on the new rules, all killed (3 after added
+   boundaries). LIVE fx/fy (`token-live ondemand`): 1 pays 10 P and its paid mint is ACCEPTED with no signature; a
+   mint citing a payment never made and a second copy on one payment REFUSED; a second real buy ACCEPTED; 1's chain
+   of copy #1 collects it. Every other live mode re-run: unchanged.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under

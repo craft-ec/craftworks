@@ -44,7 +44,7 @@ impl Device for Dev {
     }
 }
 fn def() -> Definition {
-    Definition { code_hash: CODE, decimals: 0, min_send: 1, genesis_owner: did(1), genesis_amount: 1000, name: b"W".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: t::Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None }
+    Definition { code_hash: CODE, decimals: 0, min_send: 1, genesis_owner: did(1), genesis_amount: 1000, name: b"W".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: t::Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None }
 }
 fn held(n: u8, d: &Definition) -> Held {
     Held { params: ChainParams { code_hash: CODE, definition: t::id(&CODE, &d.encode()), owner: did(n), beacon: BEACON, idlog: IDLOG, item: [0; 32] }, definition: d.clone(), state: State::default(), blocks: Default::default() }
@@ -221,7 +221,7 @@ fn a_wallet_collects_its_mints_and_its_numbered_copies() {
     let md = Definition { mint: Some(set.clone()), genesis_amount: 0, ..def() };
     let mid = t::id(&CODE, &md.encode());
     let mint = |d: &[u8; 32], to: u8, nonce: [u8; 16], amount: u128, stamp: u64| {
-        let mut m = t::supply::Mint { to: did(to), item: [0; 32], amount, nonce, stamp, sigs: vec![] };
+        let mut m = t::supply::Mint { to: did(to), item: [0; 32], amount, nonce, stamp, sigs: vec![], paid: None };
         m.sigs = vec![(0, SigningKey::from_bytes(&[60; 32]).sign(&m.message(d)).to_bytes())];
         m
     };
@@ -352,4 +352,46 @@ fn a_wallet_starts_its_token_and_credits_a_payment_only_once_witnessed() {
     assert_eq!(check_with(sign(t::wallet::NEED - 1)), Err("an entry its committee has not witnessed"), "one short");
     assert_eq!(check_with(sign(t::wallet::NEED)), Ok(t::wallet::NEED));
     assert_eq!(is_value(&t::wallet::Source { pool, claims: &|_| vec![], sigs: &|_, _| vec![], out: &|_| None, stake_of: &|_, _| None, definition: &|_| None, program: &|_| None, freeze: &|_| None, keys: &|_| None, history: &|_, _| None }, &a.params, &a.state, &[0; 16]), Err("a payment whose debit is not there"));
+}
+
+#[test]
+fn a_wallet_buys_a_copy_of_an_edition_sold_on_demand() {
+    // S: numbered copies (cap 10) sold for 10 W each to 9 — no mint authority at all. 1 holds 1000 W.
+    let dev = Dev::new(1, 11);
+    let lg = log(1);
+    let w = Wallet { device: &dev, keys: &lg };
+    let wid = t::id(&CODE, &def().encode());
+    let sd = Definition { ids: t::Ids::Numbered, cap: 10, genesis_amount: 0, name: b"S".to_vec(), idlog: IDLOG, sale: Some((t::Tok { definition: wid, item: [0; 32] }, 10, did(9))), ..def() };
+    let sid = t::id(&CODE, &sd.encode());
+    let pay = genesis(&dev, &def());
+    // Copies 1–2 of record 0 bought already (by 4).
+    let other = t::supply::Mint { to: did(4), item: [0; 32], amount: 2, nonce: 1u128.to_be_bytes(), stamp: 1, sigs: vec![], paid: Some(([4; 32], [4; 16])) };
+    let rec = t::supply::Shard { mints: vec![other] };
+    let (es, mint) = w.buy(&pay, &sd, &sid, (0, &rec), 1, 5).unwrap();
+    assert_eq!((u128::from_be_bytes(mint.nonce), mint.amount, mint.to), (3, 1, did(1)), "the first free number");
+    let paid = with(&pay, es.clone());
+    assert_eq!(t::check(&paid.params, &paid.definition, &paid.state, &|_, _| None, &|_| None, Some(&lg), &t::Extra::NONE), Ok(()));
+    assert!(matches!(es.last().unwrap().body, Body::Send { amount: 10, .. }));
+    // The record holds it on the payment alone.
+    let rp = t::supply::Params { code_hash: CODE, definition: sid, beacon: BEACON, epoch: 0 };
+    let after = t::supply::Shard { mints: vec![mint.clone()] };
+    assert_eq!(t::supply::holds(&rp, &sd, &Default::default(), &after, &|m| t::supply::payment_ok(&rp, &sd, m, Some(&paid.state))), Ok(()));
+    // …and 1's chain of copy #3 collects it.
+    let copy3 = Held { params: ChainParams { item: t::numbered_item(&sid, 3), ..held(1, &sd).params }, definition: sd.clone(), state: State::default(), blocks: Default::default() };
+    let recs = [after.clone()];
+    let got = w.collect(&copy3, &Sources { blocks: &Default::default(), chains: &[], programs: &[], shards: &recs }, 6).unwrap();
+    assert!(matches!(&got[..], [Entry { body: Body::CappedMint { record: 0, amount: 1, .. }, .. }]));
+    let c = with(&copy3, got);
+    assert_eq!(t::check(&c.params, &sd, &c.state, &|_, _| None, &|k| (k == 0).then(|| after.clone()), Some(&lg), &t::Extra::NONE), Ok(()));
+    // Two copies: 3–4 at 20 W. A full record: none.
+    assert_eq!(w.buy(&pay, &sd, &sid, (0, &rec), 2, 5).map(|(e, m)| (e.last().unwrap().body.clone(), u128::from_be_bytes(m.nonce))).ok(), Some((Body::Send { to: did(9), amount: 20 }, 3)));
+    let full = t::supply::Shard { mints: vec![t::supply::Mint { amount: 8, ..rec.mints[0].clone() }] };
+    assert_eq!(w.buy(&pay, &sd, &sid, (0, &full), 1, 5).err(), Some("no free numbers in the record"));
+    let one = t::supply::Shard { mints: vec![t::supply::Mint { amount: 1, ..rec.mints[0].clone() }] };
+    assert_eq!(w.buy(&pay, &sd, &sid, (0, &one), 1, 5).map(|(_, m)| u128::from_be_bytes(m.nonce)).ok(), Some(2), "the number right after a taken one");
+    // Record 1 holds 9–10 only (the cap).
+    assert_eq!(w.buy(&pay, &sd, &sid, (1, &Default::default()), 2, 5).map(|(_, m)| u128::from_be_bytes(m.nonce)).ok(), Some(9));
+    assert_eq!(w.buy(&pay, &sd, &sid, (1, &Default::default()), 3, 5).err(), Some("no free numbers in the record"));
+    // Paid from a chain of another token: refused.
+    assert_eq!(w.buy(&genesis(&dev, &Definition { name: b"X".to_vec(), ..def() }), &sd, &sid, (0, &rec), 1, 5).err(), Some("a payment from another chain than the sale's token's"));
 }
