@@ -90,6 +90,8 @@ export async function start(ctx) {
   //   `found/<to>` → { a, seed, token, to, done, edition?, taken? }   a one-time owner of this wallet's: a payment found
   //                                    by scanning (`a`: its announcement), or a PAYEE it made (an edition's: `edition`,
   //                                    the sales it took in `taken`)
+  //   `sent/<announce>` → { token, kind: "send" | "shield", to, amount, at }   what this wallet paid (its HISTORY's half;
+  //                                    `at`: wall-clock ms)
   //   `scanned` → the first epoch not yet scanned to its end
   const [storage, index, directory] = await Promise.all(["storage", "index", "directory"].map(n => ctx.require(n)));
   const Core = node.glue.CraftworksCore;
@@ -143,7 +145,7 @@ export async function start(ctx) {
         for (const sd of all) {
           for (const f of Core.stealth_scan(bytes(sd.seed), items)) {
             if (priv.rows().some(r => r.key === `found/${f.to}`)) continue;
-            await priv.put(`found/${f.to}`, JSON.stringify({ a: hexOf(f.bytes), seed: sd.seed.slice(0, 16), token: f.token, to: f.to, done: false }));
+            await priv.put(`found/${f.to}`, JSON.stringify({ a: hexOf(f.bytes), seed: sd.seed.slice(0, 16), token: f.token, to: f.to, done: false, at: Date.now() }));
             await onToken?.(f.token);
           }
         }
@@ -213,7 +215,7 @@ export async function start(ctx) {
   }
   // PAY `amount` (smallest unit, a string) of the token `id` to the wallet whose card keys are `pay`, from this
   // wallet's private chains (every seed's, as many as it takes), each debit to a fresh one-time owner, announced.
-  async function pay(id, pay, amount) {
+  async function pay(id, pay, amount, to = null) {
     const at = await now();
     let left = BigInt(amount);
     const plan = [];
@@ -232,7 +234,10 @@ export async function start(ctx) {
       await putAll(s.puts);
       announces.push(...s.announces);
     }
-    for (const a of announces) await announce(at, a);
+    for (const a of announces) {
+      await announce(at, a);
+      await priv.put(`sent/${hexOf(a)}`, JSON.stringify({ token: id, kind: "send", to, at: Date.now() }));
+    }
   }
   // MOVE TO PRIVATE: `amount` of the token `id` from this account's DID chain to its own card — the one DID → private
   // step (§7f: a DID holds only stake), of what was already public.
@@ -245,6 +250,7 @@ export async function start(ctx) {
     const s = await run(sigs => core.wallet_send(code, beacon, idlogCode, bytes(id), me.didBytes, bytes(keys.scan), bytes(keys.spend), amount, rand, at, member, creds, sigs));
     await putAll(s.puts);
     await announce(at, s.announce);
+    await priv.put(`sent/${hexOf(s.announce)}`, JSON.stringify({ token: id, kind: "shield", to: me.did, at: Date.now() }));
   }
   // A PAYEE: a fresh one-time owner of this wallet's own for the token `pay` — an edition's (it collects that
   // edition's sales: `edition` set once the edition is made).
@@ -254,7 +260,21 @@ export async function start(ctx) {
     const row = { a: hexOf(o.bytes), seed: sd.seed.slice(0, 16), token: payToken, to: o.to, done: true };
     return { to: o.to, keep: edition => priv.put(`found/${o.to}`, JSON.stringify({ ...row, edition })) };
   }
-  const purse = { seeds, found, ensureCard, receiveAll, privately, pay, shield, payee, owners: () => found().map(f => bytes(f.to)), onChange: fn => priv.onChange(fn) };
+  // A token's HISTORY, newest first: what this wallet sent (and moved to private), what it received, its editions'
+  // sales — each { kind, a (the announcement, hex: its status is `status(a)`), to?, at? }.
+  function history(id) {
+    const sent = priv.rows().filter(r => r.key.startsWith("sent/")).map(r => ({ a: r.key.slice(5), ...JSON.parse(r.value) })).filter(x => x.token === id);
+    const mine = new Set(sent.map(x => x.a));
+    const received = found().filter(f => f.token === id && !f.edition && !mine.has(f.a)).map(f => ({ kind: "received", a: f.a, at: f.at ?? null }));
+    const sales = found().filter(f => f.token === id && f.edition).flatMap(f => (f.taken ?? []).map(a => ({ kind: "sale", a, edition: f.edition, at: null })));
+    return [...sent, ...received, ...sales].sort((x, y) => (y.at ?? 0) - (x.at ?? 0));
+  }
+  // A payment's STATUS (`wallet_payment_status`): { amount, stamp, stage, why, signed } or null.
+  async function status(a) {
+    const at = await now();
+    return run(() => core.wallet_payment_status(code, beacon, idlogCode, lot.pool, lot.bag, lot.beacon, bytes(a), at));
+  }
+  const purse = { seeds, found, history, status, ensureCard, receiveAll, privately, pay, shield, payee, owners: () => found().map(f => bytes(f.to)), onChange: fn => priv.onChange(fn) };
 
   return { on: true, purse, allowance, beacon, pay: cfg.pay ? bytes(cfg.pay) : null, code, idlogCode, read, putAll, run, now, device, bytes, hexOf };
 }

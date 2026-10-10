@@ -1700,6 +1700,14 @@ old key's addresses.
                   found live — a payment made with the page open never arrived). Measured: A paid B 7, 5, 3 privately;
                   Wren's witness (fx) signed each debit; B's open Wallet (fy) took the 3 in 25 s without a reload —
                   "15 private (3 chains)".
+          [x] WALLET HISTORY + STATUS (owner 10-10: "why wallet UI is so basic, no transaction history, transaction
+              status") — LIVE fy (v541): a token list opening each token's page (`#/wallet/t/<id>`: balance and where
+              it is, send, move to private, HISTORY newest first — sent (to whom), moved to private, received
+              (private), sales of your editions — each with its STATUS chip: settling (inside the margin), waiting for
+              witnesses (why in its title), accepted ✓ N). Core `wallet::status` (one stage reader from the
+              announcement: the debit's amount and stamp, then `tokens::accepted`), tested at every stage. The purse
+              records sends (`sent/<announce>`: kind, to, at) and stamps found payments. Measured: B's page showed its
+              three receipts +7 +5 +3, each "accepted ✓ 1" (Wren's baseline signature).
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
               rendezvous), within its limit, instead of what was watched; the standing record proves it.
           [ ] F  WITNESS FEES on every token: a set fee per debit, split among its signers, claimed in their chains.

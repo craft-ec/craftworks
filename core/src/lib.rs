@@ -2759,6 +2759,28 @@ mod js {
             }
             Ok(v)
         }
+        /// A PAYMENT's STATUS (`wallet::status`; `announce`: its bytes; the lot as for a receive): `{ done: null }` (its
+        /// debit not there) or `{ done: { amount, stamp, stage: "settling" | "witnessing" | "accepted", why, signed } }`.
+        #[allow(clippy::too_many_arguments)]
+        pub fn wallet_payment_status(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], announce: &[u8], now: f64) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let a = craftworks_wallet::stealth::Announce::decode(announce).ok_or_else(|| err("not an announcement".into()))?;
+            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+            token_step(wallet::status(&ctx, &lot, &got, &a, now as u64), |s| {
+                Ok(match s {
+                    None => serde_json::Value::Null,
+                    Some(s) => {
+                        let (stage, why, signed) = match s.stage {
+                            wallet::Stage::Settling => ("settling", None, None),
+                            wallet::Stage::Unwitnessed(w) => ("witnessing", Some(w), None),
+                            wallet::Stage::Accepted(n) => ("accepted", None, Some(n)),
+                        };
+                        json!({ "amount": s.amount.to_string(), "stamp": s.stamp, "stage": stage, "why": why, "signed": signed })
+                    }
+                })
+            })
+        }
         /// RECEIVE a payment this wallet found (`wallet::receive_private`; `announce`: its bytes) at beacon height `now`,
         /// taken only once its debit is ACCEPTED (the lot: `pool` the stake pool's token, the bag's and beacon's codes):
         /// `{ done: { amount, pending, unwitnessed, puts } }`.

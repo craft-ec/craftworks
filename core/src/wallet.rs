@@ -236,6 +236,53 @@ pub fn receive_private(ctx: &Ctx, lot: &crate::tokens::Lot, got: Got, a: &stealt
     Ok(Step::Done(Received { put: (amount > 0).then(|| Put { params: held.params.encode(), state: s.encode() }), amount, pending, unwitnessed: 0, why: None }))
 }
 
+/// A PAYMENT's STATUS (for the Wallet's history): its amount and stamp as its debit says, and its STAGE.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Status {
+    pub amount: u128,
+    pub stamp: u64,
+    pub stage: Stage,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stage {
+    /// Inside its margin: not final yet.
+    Settling,
+    /// Final, its committee has not accepted it yet (why).
+    Unwitnessed(String),
+    /// Accepted: this many of its committee signed.
+    Accepted(usize),
+}
+
+/// The STATUS of the payment `a` announces (sent or received alike): `None` when its debit is not in the paying chain
+/// as read (not there yet, or not this payment).
+pub fn status(ctx: &Ctx, lot: &crate::tokens::Lot, got: Got, a: &stealth::Announce, now: u64) -> Result<Step<Option<Status>>, String> {
+    let d = match definition_of(got, &a.token)? {
+        Err(w) => return Ok(Step::Want(vec![w])),
+        Ok(d) => d,
+    };
+    let (p, s) = match stealth_chains(ctx, got, &d, &a.token, &[a.from])? {
+        Err(w) => return Ok(Step::Want(w)),
+        Ok(mut cs) => cs.remove(0),
+    };
+    let Some(e) = s.entries.iter().find(|e| e.nonce == a.nonce) else { return Ok(Step::Done(None)) };
+    let amount = match e.body {
+        Body::Send { amount, .. } | Body::Spend { amount, .. } => amount,
+        _ => return Ok(Step::Done(None)),
+    };
+    if e.stamp.saturating_add(d.margin) > now {
+        return Ok(Step::Done(Some(Status { amount, stamp: e.stamp, stage: Stage::Settling })));
+    }
+    Ok(match crate::tokens::accepted(lot, got, &p, &d, &s, e.seq)? {
+        Step::Want(w) => Step::Want(w),
+        Step::Sign(m) => Step::Sign(m),
+        Step::Done(r) => Step::Done(Some(Status { amount, stamp: e.stamp, stage: match r {
+            Ok(n) => Stage::Accepted(n),
+            Err(why) => Stage::Unwitnessed(why),
+        } })),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,6 +383,14 @@ mod tests {
         crate::tokens::testlot::witness(&tl, &mut got, &pa, &d, &debit, debit.entries.last().unwrap().seq, 4);
         let r = take(&ann, e1 + 14, &got).unwrap();
         assert_eq!((r.amount, r.pending, r.unwitnessed), (100, 0, 0));
+        // Its STATUS at each stage (what the history shows), from the same announcement.
+        let st = |now: u64, got: &HashMap<[u8; 32], Vec<u8>>| crate::tokens::testlot::done(&|g| status(&ctx, &tl.lot, g, &ann, now), got).unwrap().map(|s| (s.amount, s.stage));
+        assert_eq!(st(e1 + 13, &got), Some((100, Stage::Settling)));
+        assert_eq!(st(e1 + 14, &got), Some((100, Stage::Accepted(4))));
+        let mut unsigned = got.clone();
+        crate::tokens::testlot::witness(&tl, &mut unsigned, &pa, &d, &debit, debit.entries.last().unwrap().seq, 0);
+        assert_eq!(st(e1 + 14, &unsigned), Some((100, Stage::Unwitnessed("an entry its committee has not witnessed".into()))));
+        assert_eq!(crate::tokens::testlot::done(&|g| status(&ctx, &tl.lot, g, &stealth::Announce { nonce: [0; 16], ..ann }, e1 + 14), &got), Ok(None));
         got.insert(pb2.id(), r.put.unwrap().state);
         let g = got.clone();
         let mine = [(paid.r, paid.to)];

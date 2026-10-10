@@ -26,6 +26,14 @@ export async function mount(ctx, el) {
     .wl form { display: flex; gap: var(--cw-space-2); align-items: end; flex-wrap: wrap; }
     .wl label { display: grid; gap: var(--cw-space-1); font-size: var(--cw-text-sm); }
     .wl input { min-width: 0; }
+    .wl a.tok { color: inherit; text-decoration: none; }
+    .wl .big { font-size: 1.8rem; font-variant-numeric: tabular-nums; font-weight: 600; }
+    .wl table { border-collapse: collapse; width: 100%; font-size: var(--cw-text-sm); }
+    .wl th, .wl td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--cw-line); vertical-align: top; }
+    .wl td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .wl td.in { color: var(--cw-ok, #2aa876); } .wl td.out { color: inherit; }
+    .wl .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: var(--cw-text-sm); border: 1px solid var(--cw-line); white-space: nowrap; }
+    .wl .chip.accepted { border-color: #2aa876; color: #2aa876; } .wl .chip.witnessing { border-color: #d9a400; color: #b38700; } .wl .chip.settling { color: var(--cw-muted); }
   }</style><div class="wl"><h2>👛 Wallet</h2></div>`;
   const root = el.querySelector(".wl");
   const tokens = await ctx.require("tokens");
@@ -80,15 +88,46 @@ export async function mount(ctx, el) {
     if (amount === "0") throw new Error("send more than nothing");
     const pay = (await directory.card(to, { fresh: true }))?.pay;
     if (!pay) throw new Error(`${directory.shown(to)} has no pay keys yet: they open their Wallet once`);
-    await purse.pay(id, pay, amount);
+    await purse.pay(id, pay, amount, to);
     return { to };
   }
 
-  function row(id, me) {
-    const box = h("div", { className: "tok" }, h("span", { className: "note", textContent: "reading…" }));
+  // A token's BALANCE line: its total and where it is (private chains · on the id).
+  const whereOf = v => [v.private !== "0" ? `${shown(v.private, v.decimals)} private (${v.chains} chain${v.chains === 1 ? "" : "s"})` : null, v.onId !== "0" ? `${shown(v.onId, v.decimals)} on your id` : null].filter(Boolean).join(" · ");
+
+  // THE LIST: a card per token (its balance), opening its page.
+  function card(id, me) {
+    const box = h("a", { className: "tok", href: `#/wallet/t/${id}` }, h("span", { className: "note", textContent: "reading…" }));
+    viewOf(id, me).then(
+      v => box.replaceChildren(h("div", { className: "top" }, h("span", { className: "name", textContent: v.name || "a token" }), h("span", { className: "bal", textContent: shown(v.total, v.decimals) }), h("span", { className: "note", textContent: whereOf(v) || "nothing held" }))),
+      e => box.replaceChildren(h("span", { className: "said", textContent: `${id.slice(0, 12)}… could not be read: ${e.message ?? e}` })),
+    );
+    return box;
+  }
+
+  // WHEN, from wall-clock ms: "just now", "5 min ago", "3 h ago", or the date.
+  const when = at => {
+    if (!at) return "—";
+    const s = (Date.now() - at) / 1000;
+    return s < 60 ? "just now" : s < 3600 ? `${Math.floor(s / 60)} min ago` : s < 86400 ? `${Math.floor(s / 3600)} h ago` : new Date(at).toLocaleDateString();
+  };
+  // A payment's STATUS as a chip (its reason, when waiting, in its title).
+  const chip = st => {
+    if (!st) return h("span", { className: "chip settling", textContent: "not seen yet" });
+    if (st.stage === "accepted") return h("span", { className: "chip accepted", textContent: `accepted ✓ ${st.signed}`, title: `${st.signed} witness signature(s)` });
+    if (st.stage === "witnessing") return h("span", { className: "chip witnessing", textContent: "waiting for witnesses", title: st.why ?? "" });
+    return h("span", { className: "chip settling", textContent: "settling", title: "inside its margin: final in a few beacon steps" });
+  };
+
+  // A TOKEN's PAGE: its balance, send, move to private, and its HISTORY with each payment's status.
+  function detail(id, me) {
+    const out = h("div", { className: "wl" }, h("a", { href: "#/wallet", className: "note", textContent: "← Tokens" }));
+    const head = h("div", { className: "tok" }, h("span", { className: "note", textContent: "reading…" }));
+    const said = h("span", { className: "said" });
+    const hist = h("div", { className: "tok" }, h("h3", { textContent: "History" }));
+    out.append(head, hist);
     viewOf(id, me).then(
       v => {
-        const said = h("span", { className: "said" });
         const to = h("input", { placeholder: "name#abc123 or did:craftec:…", size: 28 });
         const amount = h("input", { placeholder: "amount", size: 10 });
         const go = h("button", { type: "submit", textContent: "Send" });
@@ -100,14 +139,12 @@ export async function mount(ctx, el) {
           try {
             const r = await send(id, to.value, amount.value, v.decimals);
             status.textContent = `Sent ${amount.value.trim()} ${v.name} to ${directory.shown(r.to)}, privately.`;
-            box.replaceWith(row(id, me));
+            draw();
           } catch (e) {
             said.textContent = e.message ?? String(e);
             go.disabled = false;
           }
         };
-        const made = v.creator === hexOf(me.didBytes);
-        const where = [v.private !== "0" ? `${shown(v.private, v.decimals)} private (${v.chains} chain${v.chains === 1 ? "" : "s"})` : null, v.onId !== "0" ? `${shown(v.onId, v.decimals)} on your id` : null].filter(Boolean).join(" · ");
         // MOVE TO PRIVATE what is spendable on the id (its genesis, a payment from before, unstaked stake).
         const move = v.onId !== "0" ? h("button", { type: "button", textContent: `Move ${shown(v.onId, v.decimals)} to private` }) : null;
         if (move)
@@ -118,20 +155,43 @@ export async function mount(ctx, el) {
               await purse.shield(me, id, v.onId);
               status.textContent = `Moved ${shown(v.onId, v.decimals)} ${v.name} to private: taken in a moment.`;
               receive();
+              draw();
             } catch (e) {
               said.textContent = e.message ?? String(e);
               move.disabled = false;
             }
           };
-        box.replaceChildren(
-          h("div", { className: "top" }, h("span", { className: "name", textContent: v.name || "a token" }), h("span", { className: "bal", textContent: shown(v.total, v.decimals) }), where ? h("span", { className: "note", textContent: where }) : null, made ? h("span", { className: "note", textContent: `you made it · supply ${shown(v.supply, v.decimals)}` }) : null),
-          h("span", { className: "note", textContent: `id ${id}` }),
+        const made = v.creator === hexOf(me.didBytes);
+        head.replaceChildren(
+          h("div", { className: "top" }, h("span", { className: "name", textContent: v.name || "a token" }), made ? h("span", { className: "note", textContent: `you made it · supply ${shown(v.supply, v.decimals)}` }) : null),
+          h("span", { className: "big", textContent: shown(v.total, v.decimals) }),
+          h("span", { className: "note", textContent: whereOf(v) || "nothing held" }),
           ...[move, f, said].filter(Boolean),
+          h("span", { className: "note", textContent: `token ${id}` }),
         );
+        // THE HISTORY, newest first (the last 40): each line's status read from its chain and its witnesses.
+        const items = purse.history(id).slice(0, 40);
+        if (!items.length) return hist.append(h("p", { className: "note", textContent: "Nothing yet." }));
+        const tb = h("tbody");
+        hist.append(h("table", {}, h("thead", {}, h("tr", {}, ...["When", "What", "Amount", "Status"].map(t => h("th", { textContent: t })))), tb));
+        for (const it of items) {
+          const what = it.kind === "send" ? `Sent to ${it.to ? directory.shown(it.to) : "someone"}` : it.kind === "shield" ? "Moved to private" : it.kind === "sale" ? "A sale of your edition" : "Received (private)";
+          const out = it.kind === "send";
+          const amt = h("td", { className: `num ${out ? "out" : "in"}`, textContent: "…" });
+          const st = h("td", {}, h("span", { className: "note", textContent: "…" }));
+          tb.append(h("tr", {}, h("td", { textContent: when(it.at) }), h("td", { textContent: what }), amt, st));
+          purse.status(it.a).then(
+            s => {
+              amt.textContent = s ? `${out ? "−" : "+"}${shown(s.amount, v.decimals)}` : "—";
+              st.replaceChildren(chip(s));
+            },
+            e => st.replaceChildren(h("span", { className: "said", textContent: e.message ?? String(e) })),
+          );
+        }
       },
-      e => box.replaceChildren(h("span", { className: "said", textContent: `${id.slice(0, 12)}… could not be read: ${e.message ?? e}` })),
+      e => head.replaceChildren(h("span", { className: "said", textContent: `${id.slice(0, 12)}… could not be read: ${e.message ?? e}` })),
     );
-    return box;
+    return out;
   }
 
   async function list(me) {
@@ -153,7 +213,7 @@ export async function mount(ctx, el) {
       }
     };
     const rows = table.rows();
-    out.append(...(rows.length ? rows.map(r => row(r.key, me)) : [h("p", { className: "note", textContent: "No tokens yet: be sent one, or add one by its id." })]), addForm, said);
+    out.append(...(rows.length ? rows.map(r => card(r.key, me)) : [h("p", { className: "note", textContent: "No tokens yet: be sent one, or add one by its id." })]), addForm, said);
     return out;
   }
 
@@ -162,7 +222,9 @@ export async function mount(ctx, el) {
   root.append(status, body);
   const me = await (await ctx.require("auth")).check();
   purse.ensureCard(me).catch(e => ctx.log("wallet", { what: `the card's pay keys: ${e.message ?? e}` }));
-  const draw = async () => body.replaceChildren(await list(me));
+  // The VIEW: a token's page (`#/wallet/t/<id>`) or the list.
+  const opened = /^t\/([0-9a-f]{64})$/.exec(ctx.sub ?? "")?.[1] ?? null;
+  const draw = async () => body.replaceChildren(opened ? detail(opened, me) : await list(me));
   purse.onChange(() => el.isConnected && draw());
   await draw();
   table.onChange(() => el.isConnected && draw());
@@ -179,6 +241,7 @@ export async function mount(ctx, el) {
     try {
       const r = await purse.receiveAll({ onToken: async t => table.rows().some(r => r.key === t) || (await table.put(t, JSON.stringify({ name: "" }))) });
       if (r.got) draw();
+      else if (opened && waited) draw(); // a status moved on
       const waiting = (r.pending ?? 0) + (r.unwitnessed ?? 0);
       if (waiting) status.textContent = r.unwitnessed ? `${waiting} payment(s) to you waiting for their witnesses: taken once they sign.` : `${waiting} payment(s) to you on the way: taken in a moment.`;
       else if (waited || r.got) status.textContent = r.got ? "Received." : "";
