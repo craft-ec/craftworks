@@ -1541,7 +1541,13 @@ old key's addresses.
                   provable from the root. prolly now implements `Blocks` for a plain block map (the token's private
                   `Store` wrapper removed). 15 reputation tests; 6 mutants killed. Measured: one account's weight split
                   over 100 fakes pays 1,000 against 1,000.
-              [ ] V1b-3b publish it (Block contracts + the root), decay. Was: decay, the statement — THE STATEMENT IS A PUBLIC PROLLY TREE in Block contracts (as a public
+              [x] V1b-3b PUBLISHED, LIVE fx 10-10: `packages/statement.js` (started by the footer: every open page
+                  publishes the current epoch's statement if nobody has) reads every vouch registry up to the epoch,
+                  `core.statement_build` (reputation as of the epoch's start; `reputation::GATE` the one gate), puts the
+                  tree's blocks through the BLOCKS door (`Core::public_block_put`, sharing `block_put` with tables) and
+                  posts the root (`statement::Posted`) in the epoch's statement bag. Measured: `token-ops statement`
+                  epoch 0 → root c108264c…, 8 parity, 1 posted — by an open page, unprompted.
+              [ ] V1b-3c decay (activity), witnesses signing the posted root (the lot). Was: decay, the statement — THE STATEMENT IS A PUBLIC PROLLY TREE in Block contracts (as a public
                   table's tree: did → reputation, share), witnesses sign its ROOT, a claim cites its entry with a prolly
                   proof — no new contract, no new tree (owner 10-10: "we doesn't use our craftworks prolly tree and
                   block contract?").

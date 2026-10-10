@@ -5,4 +5,6 @@ export function mount(ctx, el) {
   el.querySelector("p").textContent = `${ctx.app} · on Freenet`;
   // Every open page keeps the network's clock going (`beacon`: it extends the beacon when it stalls).
   ctx.require("beacon").catch(e => ctx.log("beacon", { what: e.message ?? String(e) }));
+  // …and publishes the current epoch's statement if nobody has (`statement`: anyone may).
+  ctx.require("statement").catch(e => ctx.log("statement", { what: e.message ?? String(e) }));
 }

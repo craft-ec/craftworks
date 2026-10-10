@@ -180,6 +180,21 @@ async fn main() -> Result<()> {
             println!("{} item(s)", items.len());
             Ok(())
         }
+        Some("statement") => {
+            // token-ops statement <bag.wasm> <ws> <epoch>: the roots posted for that epoch's statement.
+            let code = std::fs::read(&a[2])?;
+            let address = craftworks_reputation::statement::bag_address(a[4].parse()?);
+            let id: [u8; 32] = container(&code, address.to_vec()).key().id().as_bytes().try_into()?;
+            let items = get(&a[3], id).await?.and_then(|b| craftworks_bag_contract::read(&address, &b)).unwrap_or_default();
+            for i in &items {
+                match craftworks_reputation::statement::Posted::decode(craftworks_bag_contract::payload(i)) {
+                    Some(p) => println!("epoch {} root {} ({} parity)", p.epoch, hex(&p.root), p.parity.len()),
+                    None => println!("(not a posted statement)"),
+                }
+            }
+            println!("{} posted", items.len());
+            Ok(())
+        }
         Some("height") => {
             // token-ops height <ws> <beacon id hex>: its height now (0: not there).
             let h = get(&a[2], unhex32(&a[3])?).await?.and_then(|b| B::wire::decode(&b)).map_or(0, |s| s.height());

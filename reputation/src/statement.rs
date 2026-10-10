@@ -88,6 +88,40 @@ pub fn compute(x: &Inputs) -> Statement {
     Statement { epoch: x.epoch, lines }
 }
 
+/// The STATEMENT BAG of epoch `epoch` (a bag's address): where anyone posts the statement's root ([`Posted`]).
+pub fn bag_address(epoch: u64) -> [u8; 32] {
+    blake3::derive_key("craftworks 2026-10-10 epoch statement", &epoch.to_le_bytes())
+}
+
+/// A statement's ROOT as posted in its epoch's bag: what witnesses check and sign (TOKEN §7d).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Posted {
+    pub epoch: u64,
+    pub root: Cid,
+    pub parity: Vec<Cid>,
+}
+
+impl Posted {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut v = b"CWST".to_vec();
+        v.extend_from_slice(&self.epoch.to_le_bytes());
+        v.extend_from_slice(&self.root);
+        v.push(self.parity.len() as u8);
+        for c in &self.parity {
+            v.extend_from_slice(c);
+        }
+        v
+    }
+    pub fn decode(b: &[u8]) -> Option<Posted> {
+        let b = b.strip_prefix(b"CWST")?;
+        let epoch = u64::from_le_bytes(b.get(..8)?.try_into().ok()?);
+        let root: Cid = b.get(8..40)?.try_into().ok()?;
+        let n = *b.get(40)? as usize;
+        let rest = b.get(41..)?;
+        (rest.len() == n * 32).then(|| Posted { epoch, root, parity: rest.chunks(32).map(|c| c.try_into().unwrap()).collect() })
+    }
+}
+
 impl Statement {
     /// Its TREE (DID → line) — blocks added to `blocks`: its root (what witnesses sign) and the root's parity ids.
     pub fn tree(&self, blocks: &mut BTreeMap<Cid, Vec<u8>>) -> Option<(Cid, Vec<Cid>)> {
@@ -156,5 +190,9 @@ mod tests {
         // A line is provable from the root (a prolly proof): a claim cites it.
         let proof = freenet_prolly::proof::prove(&b1, &r1, &d(1)).unwrap();
         assert!(freenet_prolly::proof::verify(&r1, &d(1), &proof).is_ok());
+        // Its root as posted round-trips.
+        let posted = Posted { epoch: 5, root: r1, parity: s.tree(&mut BTreeMap::new()).unwrap().1 };
+        assert_eq!(Posted::decode(&posted.encode()), Some(posted.clone()));
+        assert_ne!(bag_address(5), bag_address(6));
     }
 }

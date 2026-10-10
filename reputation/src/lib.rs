@@ -43,6 +43,9 @@ pub const DAMP_DEN: u128 = 100;
 pub const ROUNDS: usize = 40;
 /// Fixed point: 1.0.
 pub const ONE: u128 = 1_000_000_000_000;
+/// THE GATE (TOKEN §7d): the least reputation (a trust share) that earns — keeper issuance, the allowance. Halves at
+/// every issuance halving (by height) as the network grows.
+pub const GATE: u128 = ONE / 100_000;
 
 /// The TREE: each admitted account's parent (`None`: a root) and depth, in admission order.
 #[derive(Clone, Debug, Default)]

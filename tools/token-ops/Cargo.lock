@@ -384,6 +384,8 @@ dependencies = [
  "craftworks-identity",
  "craftworks-idlog-contract",
  "ed25519-dalek",
+ "engine",
+ "freenet-prolly",
 ]
 
 [[package]]

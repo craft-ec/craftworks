@@ -522,12 +522,21 @@ impl Core {
         } else {
             wire::block::block_contract(&self.block_code, cid)
         };
+        self.block_put(c, state).map(Some)
+    }
+
+    /// A BLOCK's put — `(its contract's name, frames)` — the one way a block is framed (a table's, a statement's).
+    fn block_put(&mut self, c: freenet_stdlib::prelude::ContractContainer, state: Vec<u8>) -> Result<(String, Vec<Vec<u8>>), String> {
         let name = c.key().id().encode();
         let s = self.stream();
-        Ok(Some((
-            name,
-            wire::frame_put(c, freenet_stdlib::prelude::WrappedState::new(state), s)?,
-        )))
+        Ok((name, wire::frame_put(c, freenet_stdlib::prelude::WrappedState::new(state), s)?))
+    }
+
+    /// A PUBLIC tree block's put (a Block contract by its cid, in the clear): a statement's.
+    pub fn public_block_put(&mut self, cid: &freenet_prolly::Cid, body: &[u8]) -> Result<(String, Vec<Vec<u8>>), String> {
+        let state = wire::block::block_state(cid, body).ok_or("a block of no kind")?;
+        let c = wire::block::block_contract(&self.block_code, cid);
+        self.block_put(c, state)
     }
 
     /// Frames that PUT the tail's signed state AGAIN (re-publishing it: the network keeps the newest).
@@ -2443,6 +2452,56 @@ mod js {
                 "promoted": promoted.iter().map(text).collect::<Vec<_>>(),
                 "admitted": rep.len(),
             }).to_string())
+        }
+        /// The EPOCH STATEMENT of standing epoch `epoch` (`reputation::statement`): reputation as of the epoch's START from
+        /// the signed vouch items given (each verified by its voucher's key log: `{ want }` first), no pots yet (keepers
+        /// and the allowance join when their tokens run). `{ root, posted: bytes, puts: [[name, frames]], lines: n }` —
+        /// the tree's blocks to put through the blocks door, the posted root for the epoch's statement bag.
+        pub fn statement_build(&mut self, idlog_code: &[u8], items: js_sys::Array, epoch: f64) -> Result<JsValue, JsValue> {
+            use craftworks_reputation as R;
+            let epoch = epoch as u64;
+            let items: Vec<R::item::Item> = bytes_list(&items).iter().filter_map(|b| R::item::Item::decode(b)).collect();
+            let mut want: Vec<String> = Vec::new();
+            for i in &items {
+                let id = account::idlog_put(idlog_code, &i.from, None).id_bytes;
+                if self.0.got(&id).is_none() && !want.contains(&hex(&id)) {
+                    want.push(hex(&id));
+                }
+            }
+            if !want.is_empty() {
+                return js_sys::JSON::parse(&json!({ "want": want }).to_string());
+            }
+            let start = epoch * R::EPOCH;
+            let rep = {
+                let log_of = |d: &R::Did| {
+                    let id = account::idlog_put(idlog_code, d, None).id_bytes;
+                    self.0.got(&id).filter(|b| !b.is_empty()).and_then(|b| craftworks_idlog_contract::read(d, b))
+                };
+                let vs = R::item::standing(&items, start, &log_of);
+                let roots: Vec<R::Did> = R::ROOTS.iter().filter_map(|t| account::did_bytes(t)).collect();
+                R::reputation_at(&roots, &vs, start)
+            };
+            let roots: Vec<R::Did> = R::ROOTS.iter().filter_map(|t| account::did_bytes(t)).collect();
+            let st = R::statement::compute(&R::statement::Inputs { epoch, rep: &rep, kept: &[], keeper_pot: 0, keeper_cap: 0, gate: R::GATE, allowance_pot: 0, allowance_cap: 0, never: &roots });
+            let mut blocks = std::collections::BTreeMap::new();
+            let (root, parity) = st.tree(&mut blocks).ok_or_else(|| err("the statement's tree does not build".into()))?;
+            let puts = js_sys::Array::new();
+            for (cid, body) in &blocks {
+                let (name, f) = self.0.public_block_put(cid, body).map_err(err)?;
+                puts.push(&[JsValue::from(name), JsValue::from(frames(f))].into_iter().collect::<js_sys::Array>());
+            }
+            let posted = R::statement::Posted { epoch, root, parity }.encode();
+            Ok(js_obj(&[("root", JsValue::from(hex(&root))), ("posted", js_sys::Uint8Array::from(&posted[..]).into()), ("puts", puts.into()), ("lines", JsValue::from(st.lines.len() as f64))]))
+        }
+        /// The STATEMENT BAG's address of epoch `epoch`, and a posted root's `{ epoch, root }` (null: not one).
+        pub fn statement_bag_address(epoch: f64) -> js_sys::Uint8Array {
+            js_sys::Uint8Array::from(&craftworks_reputation::statement::bag_address(epoch as u64)[..])
+        }
+        pub fn statement_posted_read(b: &[u8]) -> JsValue {
+            match craftworks_reputation::statement::Posted::decode(b) {
+                Some(p) => js_obj(&[("epoch", JsValue::from(p.epoch as f64)), ("root", JsValue::from(hex(&p.root)))]),
+                None => JsValue::NULL,
+            }
         }
         /// A beacon STATE's height (null: not a beacon's state).
         pub fn beacon_state_height(state: &[u8]) -> JsValue {
