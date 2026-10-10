@@ -13,6 +13,20 @@ pub fn beacon_params(seed: [u8; 32]) -> B::Params {
     B::Params { k: 1 << 20, segs: 256, sample: 8, window: 2, keep: 600, seed }
 }
 
+/// 32 bytes from a file holding them as hex — made fresh (and kept, 0600) when it does not exist.
+pub fn seed_file(path: &str) -> Result<[u8; 32]> {
+    if let Ok(s) = std::fs::read_to_string(path) {
+        let v: Vec<u8> = (0..s.trim().len() / 2).map(|i| u8::from_str_radix(&s.trim()[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().context("a seed file holds hex")?;
+        return v.try_into().map_err(|_| anyhow::anyhow!("a seed is 32 bytes"));
+    }
+    let mut b = [0u8; 32];
+    getrandom::getrandom(&mut b).map_err(|e| anyhow::anyhow!("randomness: {e}"))?;
+    std::fs::write(path, b.iter().map(|x| format!("{x:02x}")).collect::<String>() + "\n")?;
+    #[cfg(unix)]
+    std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    Ok(b)
+}
+
 pub fn container(code: &[u8], params: Vec<u8>) -> ContractContainer {
     ContractContainer::from(ContractWasmAPIVersion::V1(WrappedContract::new(
         std::sync::Arc::new(ContractCode::from(code.to_vec())),

@@ -6,6 +6,7 @@ publish = false
 description = "The tools' ONE way to a node's client API: a contract container, a PUT answered, a GET — and the beacon's standard params."
 [workspace]
 [dependencies]
+getrandom = "0.2"
 craftworks-beacon-contract = { path = "../../contracts-src/beacon", default-features = false }
 wire = { path = "../../sdk/craftworks-sdk/wire" }
 freenet-stdlib = { version = "0.10.0", features = ["net"] }

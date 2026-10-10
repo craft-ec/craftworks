@@ -321,6 +321,13 @@ impl Definition {
             && keepers.is_none_or(|k| k.rate > 0 && k.half_life > 0 && cap == 0 && ids == Ids::None);
         ok.then_some(Self { code_hash, decimals, min_send, genesis_owner, genesis_amount, name, nonce, beacon, margin, idlog, mint, freeze, ids, royalty, cap, item, version, soulbound, transfer_fee, sale, keepers })
     }
+    /// A TOKEN'S CONTRACTS, as made with it — `(params, first state)` of its DEFINITION, its AUTHORITY CHAIN and its
+    /// FREEZE LIST (a debit's update reads the freeze list): the one list every tool and page puts.
+    pub fn contracts(&self, code_hash: &[u8; 32]) -> [(Vec<u8>, Vec<u8>); 3] {
+        let id = id(code_hash, &self.encode());
+        let f = freeze::Params { code_hash: *code_hash, definition: id, beacon: self.beacon };
+        [(self.encode(), self.encode()), (self.authority().encode(), authority::Chain::default().encode()), (f.encode(), freeze::List::default().encode())]
+    }
     /// Minted by NUMBER into records ([`supply::RECORD`]): a cap, or numbered copies (each number once, ever).
     pub fn capped(&self) -> bool {
         self.cap > 0 || self.ids == Ids::Numbered

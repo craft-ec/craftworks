@@ -104,9 +104,7 @@ impl W {
     /// debit's update reads the freeze list).
     async fn put_def(&self, d: &T::Definition) -> Result<[u8; 32]> {
         let id = T::id(&self.ch, &d.encode());
-        let a = d.authority();
-        let f = T::freeze::Params { code_hash: self.ch, definition: id, beacon: self.beacon };
-        for (params, state) in [(d.encode(), d.encode()), (a.encode(), T::authority::Chain::default().encode()), (f.encode(), T::freeze::List::default().encode())] {
+        for (params, state) in d.contracts(&self.ch) {
             let (said, _) = put(&self.x, container(&self.code, params), state).await?;
             if said != "ACCEPTED" {
                 bail!("a token's definition, authority chain or freeze list: {said}");
@@ -220,7 +218,12 @@ async fn main() -> Result<()> {
     let (x, y) = (a[3].clone(), a[4].clone());
     let salt: [u8; 16] = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_nanos().to_le_bytes();
     RUN.set(salt).ok();
-    let beacon = start_beacon(&bcode, &x, salt).await?;
+    // BEACON_SEED (a seed file): an existing beacon — the one the pages extend (`serve`: the page's tokens on the page's
+    // clock); otherwise a fresh one, ticked by this run.
+    let beacon = match std::env::var("BEACON_SEED") {
+        Ok(f) => container(&bcode, node_io::beacon_params(node_io::seed_file(&f)?).encode()).key().id().as_bytes().try_into().unwrap(),
+        Err(_) => start_beacon(&bcode, &x, salt).await?,
+    };
     let idlog_code = std::fs::read(std::path::Path::new(&a[1]).with_file_name("idlog.wasm"))?;
     let w = W { ch: *blake3::hash(&code).as_bytes(), code, x, y, beacon, salt, idlog: *blake3::hash(&idlog_code).as_bytes(), idlog_code };
     // Everyone's KEY LOG on the network (a chain's validation reads its owner's).
@@ -234,7 +237,8 @@ async fn main() -> Result<()> {
     }
     println!("key logs of 9 people on X and Y in {} ms", t.elapsed().as_millis());
     w.until(2).await?;
-    println!("beacon {} on X, ticking; height {}", hex(&beacon[..4]), w.now().await?);
+    let who = if std::env::var("BEACON_SEED").is_ok() { "the pages' (they extend it)" } else { "ticked by this run" };
+    println!("beacon {} on X, {who}; height {}", hex(&beacon[..4]), w.now().await?);
     for mode in a.get(5).map_or(vec!["basic", "allow", "swap"], |m| vec![m.as_str()]) {
         match mode {
             "basic" => basic(&w).await?,
@@ -1794,19 +1798,19 @@ async fn ondemand(w: &W) -> Result<()> {
     Ok(())
 }
 
-/// SERVE the editions set-up for a page test (TOKEN §1c, S5): the beacon started here keeps ticking (this process is the
-/// test's clock), and a PAY token P — its creator `PAY_OWNER` (hex DID: that account begins its chain with 1000 P when it
-/// first buys) — published on X. Writes `{ beacon, pay }` to `EDITIONS_CONFIG` (the page's `editions-config`), then
+/// SERVE the token set-up for a page test (TOKEN §1c, S5): on the beacon (BEACON_SEED: the pages', which they extend;
+/// else one started here, this process the test's clock), and a PAY token P — its creator `PAY_OWNER` (hex DID: that account begins its chain with 1000 P when it
+/// first buys) — published on X. Writes `{ pay }` to `TOKENS_CONFIG` (the page's `tokens-config`), then
 /// ticks until killed.
 async fn serve(w: &W) -> Result<()> {
     let owner = std::env::var("PAY_OWNER").context("PAY_OWNER: the pay token's creator (hex DID)")?;
     let owner: [u8; 32] = (0..32).map(|i| u8::from_str_radix(&owner[2 * i..2 * i + 2], 16)).collect::<Result<Vec<_>, _>>()?.try_into().map_err(|_| anyhow::anyhow!("a DID is 32 bytes"))?;
     let pd = T::Definition { genesis_owner: owner, decimals: 0, min_send: 1, ..w.def(1, b"P", 60) };
     let pay = w.put_def(&pd).await?;
-    let cfg = format!("{{\"beacon\":\"{}\",\"pay\":\"{}\"}}\n", hex(&w.beacon), hex(&pay));
-    let path = std::env::var("EDITIONS_CONFIG").context("EDITIONS_CONFIG: where to write the page's set-up")?;
+    let cfg = format!("{{\"pay\":\"{}\"}}\n", hex(&pay));
+    let path = std::env::var("TOKENS_CONFIG").context("TOKENS_CONFIG: where to write the page's set-up")?;
     std::fs::write(&path, &cfg)?;
-    println!("— serve: {cfg}  written to {path}; ticking (kill to stop)");
+    println!("— serve: {cfg}  written to {path}; running (kill to stop)");
     loop {
         tokio::time::sleep(Duration::from_secs(60)).await;
         println!("   height {}", w.now().await?);

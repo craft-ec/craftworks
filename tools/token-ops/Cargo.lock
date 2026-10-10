@@ -1088,6 +1088,7 @@ dependencies = [
  "craftworks-beacon-contract",
  "freenet-stdlib",
  "futures",
+ "getrandom 0.2.17",
  "tokio",
  "tokio-tungstenite",
  "wire",

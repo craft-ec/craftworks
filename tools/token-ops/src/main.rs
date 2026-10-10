@@ -14,7 +14,7 @@ use craftworks_token_contract as T;
 use ed25519_dalek::{Signer as _, SigningKey};
 use freenet_stdlib::prelude::*;
 use std::time::{Duration, Instant};
-use node_io::{container, get};
+use node_io::{seed_file, container, get};
 
 /// A PUT's answer (`node_io::put`), its time dropped.
 async fn put(ws: &str, c: ContractContainer, state: Vec<u8>) -> Result<String> {
@@ -28,18 +28,6 @@ fn hex(b: &[u8]) -> String {
 fn unhex32(s: &str) -> Result<[u8; 32]> {
     let v = (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16)).collect::<Result<Vec<_>, _>>()?;
     v.try_into().map_err(|_| anyhow::anyhow!("32 bytes of hex"))
-}
-/// 32 bytes from a file holding them as hex — made fresh (and kept, 0600) when it does not exist.
-fn seed_file(path: &str) -> Result<[u8; 32]> {
-    if let Ok(s) = std::fs::read_to_string(path) {
-        return unhex32(s.trim());
-    }
-    let mut b = [0u8; 32];
-    getrandom::getrandom(&mut b).map_err(|e| anyhow::anyhow!("randomness: {e}"))?;
-    std::fs::write(path, hex(&b) + "\n")?;
-    #[cfg(unix)]
-    std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-    Ok(b)
 }
 
 
@@ -139,9 +127,7 @@ async fn make_token(code: &[u8], idlog_code: &[u8], ws: &str, beacon: [u8; 32], 
         mint: None, freeze: None, ids: T::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None, keepers: None,
     };
     let id = T::id(&ch, &d.encode());
-    let a = d.authority();
-    let f = T::freeze::Params { code_hash: ch, definition: id, beacon };
-    for (what, params, state) in [("definition", d.encode(), d.encode()), ("authority chain", a.encode(), T::authority::Chain::default().encode()), ("freeze list", f.encode(), T::freeze::List::default().encode())] {
+    for (what, (params, state)) in ["definition", "authority chain", "freeze list"].into_iter().zip(d.contracts(&ch)) {
         println!("{what}: {}", put(ws, container(code, params), state).await?);
     }
     let now = get(ws, beacon).await?.and_then(|b| B::wire::decode(&b)).map(|s| s.height()).context("the beacon is not there")?;

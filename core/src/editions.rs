@@ -4,38 +4,10 @@
 //! or what it built (`Done`). The wallet core builds every entry; nothing here decides a token rule.
 
 use craftworks_token_contract as t;
-use craftworks_wallet::{Asking, Held, Sources, Wallet};
-use t::{ChainParams, Definition, State};
-
-/// A contract's state as the page read it: `None` not read yet, `Some(empty)` read and not there.
-pub type Got<'a> = &'a dyn Fn(&[u8; 32]) -> Option<Vec<u8>>;
-
-/// One step of an edition action.
-#[derive(Debug, PartialEq)]
-pub enum Step<T> {
-    /// Read these contracts, then ask again.
-    Want(Vec<[u8; 32]>),
-    /// Have the identity delegate sign this (`TokenSign`), then ask again with its signature.
-    Sign(Vec<u8>),
-    Done(T),
-}
-
-/// What it works with: the token's code (its hash names every token contract), the beacon (the clock every
-/// chain is stamped by) and the key log's code hash (a chain's owner's keys).
-pub struct Ctx {
-    pub code_hash: [u8; 32],
-    pub beacon: [u8; 32],
-    pub idlog: [u8; 32],
-}
-
-/// The account's DEVICE as the page knows it: its node key, the credential its owner key gave it (from the account's
-/// devices), the key seq of that owner key, and the signatures the delegate gave so far.
-pub struct Device {
-    pub public: [u8; 32],
-    pub credential: Vec<u8>,
-    pub key_seq: u32,
-    pub sigs: Vec<(Vec<u8>, [u8; 64])>,
-}
+use craftworks_wallet::{Held, Sources, Wallet};
+pub use crate::tokens::{chain, device, Ctx, Device, Got, Put, Step};
+use crate::tokens::{begin, device_of, holding, on_our_clock, short, there};
+use t::{Definition, State};
 
 /// An EDITION as the item page shows it.
 #[derive(Debug, Clone, PartialEq)]
@@ -50,13 +22,6 @@ pub struct Edition {
     pub records: Vec<t::supply::Shard>,
 }
 
-/// A PUT: a token contract (by its params) and its state.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Put {
-    pub params: Vec<u8>,
-    pub state: Vec<u8>,
-}
-
 /// What a buy built: the payment's chain and the record to put, and the copies it buys.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bought {
@@ -66,25 +31,9 @@ pub struct Bought {
     pub amount: u128,
 }
 
-fn short(b: &[u8; 32]) -> String {
-    b[..6].iter().map(|x| format!("{x:02x}")).collect()
-}
-
-fn there(got: Got, id: &[u8; 32]) -> Result<Option<Vec<u8>>, [u8; 32]> {
-    match got(id) {
-        None => Err(*id),
-        Some(b) if b.is_empty() => Ok(None),
-        Some(b) => Ok(Some(b)),
-    }
-}
-
-fn record_params(ctx: &Ctx, edition: &[u8; 32], k: u64) -> t::supply::Params {
-    t::supply::Params { code_hash: ctx.code_hash, definition: *edition, beacon: ctx.beacon, epoch: k }
-}
-
-/// A chain's params: `owner`'s chain of `token` (`item`: a numbered copy's, else zero).
-pub fn chain(ctx: &Ctx, d: &Definition, token: &[u8; 32], owner: &[u8; 32], item: [u8; 32]) -> ChainParams {
-    ChainParams { code_hash: ctx.code_hash, definition: *token, owner: *owner, beacon: ctx.beacon, idlog: d.idlog, item }
+/// Record `k` of the edition `edition` (its definition `d`: on its own beacon).
+fn record_params(ctx: &Ctx, d: &Definition, edition: &[u8; 32], k: u64) -> t::supply::Params {
+    t::supply::Params { code_hash: ctx.code_hash, definition: *edition, beacon: d.beacon, epoch: k }
 }
 
 /// The EDITION `id`: its definition and its records read in order until one with room (or the cap).
@@ -105,7 +54,7 @@ pub fn edition(ctx: &Ctx, got: Got, id: &[u8; 32]) -> Result<Step<Edition>, Stri
         if d.cap > 0 && lo > d.cap {
             return Ok(Step::Done(Edition { id: *id, definition: d, minted, open: None, records }));
         }
-        let rid = record_params(ctx, id, k).id();
+        let rid = record_params(ctx, &d, id, k).id();
         let shard = match there(got, &rid) {
             Err(w) => return Ok(Step::Want(vec![w])),
             Ok(None) => t::supply::Shard::default(),
@@ -124,25 +73,6 @@ pub fn edition(ctx: &Ctx, got: Got, id: &[u8; 32]) -> Result<Step<Edition>, Stri
     unreachable!()
 }
 
-fn device_of(dev: &Device) -> Asking {
-    Asking::new(dev.public, dev.credential.clone(), dev.key_seq, dev.sigs.clone())
-}
-
-/// This node's DEVICE from the account's credentials as the page holds them (its group's): the one for this node key,
-/// its key seq the key log's event whose key signed it (what the token checks a writer by).
-pub fn device(public: [u8; 32], creds: &[Vec<u8>], keys: &craftworks_idlog_contract::Log, sigs: Vec<(Vec<u8>, [u8; 64])>) -> Result<Device, &'static str> {
-    for c in creds {
-        let Some((_, owner, node, _)) = craftworks_identity::read_credential(c) else { continue };
-        if node != public {
-            continue;
-        }
-        if let Some(seq) = keys.events.iter().position(|e| e.key == owner) {
-            return Ok(Device { public, credential: c.clone(), key_seq: seq as u32, sigs });
-        }
-    }
-    Err("no credential of this node on the account's key log")
-}
-
 /// BUY `amount` copies of the edition `id` for `buyer` (its DID) at beacon height `now`: the payment from the buyer's
 /// chain of the sale's token, and the paid mint added to the edition's open record.
 pub fn buy(ctx: &Ctx, got: Got, id: &[u8; 32], buyer: &[u8; 32], amount: u128, now: u64, dev: &Device) -> Result<Step<Bought>, String> {
@@ -158,36 +88,18 @@ pub fn buy(ctx: &Ctx, got: Got, id: &[u8; 32], buyer: &[u8; 32], amount: u128, n
         Ok(None) => return Err("the sale's token is not there".into()),
         Ok(Some(b)) => Definition::decode(&b).ok_or("the sale's token does not read")?,
     };
-    let pp = ChainParams { code_hash: ctx.code_hash, definition: tok.definition, owner: *buyer, beacon: ctx.beacon, idlog: e.definition.idlog, item: tok.item };
-    let mut want = Vec::new();
-    let pay_state = match there(got, &pp.id()) {
-        Err(w) => {
-            want.push(w);
-            None
-        }
-        // Not begun: the token's own creator begins it (its genesis first, in the same put); anyone else holds none.
-        Ok(None) if pay_def.genesis_owner == *buyer && pay_def.genesis_amount > 0 => Some(State::default()),
-        Ok(None) => return Err(format!("no money: the buyer {} holds none of the sale's token {} (its chain {} not there; the token's creator {})", short(buyer), short(&tok.definition), short(&pp.id()), short(&pay_def.genesis_owner))),
-        Ok(Some(b)) => Some(State::decode(&b).ok_or("the buyer's chain does not read")?),
+    let (mut held, keys) = match holding(ctx, got, &tok, buyer)? {
+        Step::Done(Some(h)) => h,
+        Step::Done(None) => return Err(format!("no money: the buyer {} holds none of the sale's token {} (its chain {} not there; the token's creator {})", short(buyer), short(&tok.definition), short(&chain(ctx, &pay_def, &tok.definition, buyer, tok.item).id()), short(&pay_def.genesis_owner))),
+        Step::Want(w) => return Ok(Step::Want(w)),
+        Step::Sign(m) => return Ok(Step::Sign(m)),
     };
-    let keys = match there(got, &pp.keys_id()) {
-        Err(w) => {
-            want.push(w);
-            None
-        }
-        Ok(None) => return Err("the buyer's key log is not there".into()),
-        Ok(Some(b)) => Some(craftworks_idlog_contract::read(buyer, &b).ok_or("the buyer's key log does not verify")?),
-    };
-    let (Some(state), Some(keys)) = (pay_state, keys) else { return Ok(Step::Want(want)) };
-    let mut held = Held { params: pp, definition: pay_def, state, blocks: Default::default() };
+    on_our_clock(ctx, &e.definition)?;
+    on_our_clock(ctx, &held.definition)?;
     let asking = device_of(dev);
     let w = Wallet { device: &asking, keys: &keys };
-    if held.state.entries.is_empty() {
-        let g = w.genesis(&held, now);
-        if let Some(m) = asking.next() {
-            return Ok(Step::Sign(m));
-        }
-        held.state.entries.extend(g.map_err(String::from)?);
+    if let Some(m) = begin(&w, &asking, &mut held, now)? {
+        return Ok(Step::Sign(m));
     }
     let record = &e.records[k as usize];
     let built = w.buy(&held, &e.definition, id, (k, record), amount, now);
@@ -201,7 +113,7 @@ pub fn buy(ctx: &Ctx, got: Got, id: &[u8; 32], buyer: &[u8; 32], amount: u128, n
     let mut shard = record.clone();
     shard.mints.push(mint);
     Ok(Step::Done(Bought {
-        puts: vec![Put { params: held.params.encode(), state: s.encode() }, Put { params: record_params(ctx, id, k).encode(), state: shard.encode() }],
+        puts: vec![Put { params: held.params.encode(), state: s.encode() }, Put { params: record_params(ctx, &e.definition, id, k).encode(), state: shard.encode() }],
         record: k,
         first,
         amount,
@@ -220,6 +132,7 @@ pub fn collect_copy(ctx: &Ctx, got: Got, id: &[u8; 32], owner: &[u8; 32], n: u12
     if !d.capped() {
         return Err("not an edition (no records)".into());
     }
+    on_our_clock(ctx, &d)?;
     let k = t::supply::record_of(&d, n).ok_or("no such copy")?;
     let item = if d.ids == t::Ids::Numbered { t::numbered_item(id, n) } else { [0; 32] };
     let cp = chain(ctx, &d, id, owner, item);
@@ -231,7 +144,7 @@ pub fn collect_copy(ctx: &Ctx, got: Got, id: &[u8; 32], owner: &[u8; 32], n: u12
         }
         Ok(b) => Some(b),
     };
-    let (rec, mine, keys) = (read(record_params(ctx, id, k).id()), read(cp.id()), read(cp.keys_id()));
+    let (rec, mine, keys) = (read(record_params(ctx, &d, id, k).id()), read(cp.id()), read(cp.keys_id()));
     let (Some(rec), Some(mine), Some(keys)) = (rec, mine, keys) else { return Ok(Step::Want(want)) };
     let shard = rec.map(|b| t::supply::Shard::decode(&b).ok_or("a record that does not read")).transpose()?.unwrap_or_default();
     let state = mine.map(|b| State::decode(&b).ok_or("the copy's chain does not read")).transpose()?.unwrap_or_default();
@@ -385,7 +298,7 @@ mod tests {
             let mut g2 = got.clone();
             g2.insert(pp.id(), vec![]);
             g2.insert(pp.keys_id(), lg.encode());
-            g2.insert(record_params(&ctx, &sid, 0).id(), vec![]);
+            g2.insert(record_params(&ctx, &sd, &sid, 0).id(), vec![]);
             let mut d2 = Device { sigs: vec![], ..device(node, &[dev.credential.clone()], &lg, vec![]).unwrap() };
             let b = run(&mut d2, &mut |d| buy(&ctx, &|id| g2.get(id).cloned(), &sid, &did, 1, 5, d)).unwrap();
             let c = State::decode(&b.puts[0].state).unwrap();
@@ -397,7 +310,7 @@ mod tests {
             let soid = t::id(&ctx.code_hash, &so.encode());
             g2.insert(oid, other.encode());
             g2.insert(soid, so.encode());
-            g2.insert(record_params(&ctx, &soid, 0).id(), vec![]);
+            g2.insert(record_params(&ctx, &so, &soid, 0).id(), vec![]);
             g2.insert(chain(&ctx, &other, &oid, &did, [0; 32]).id(), vec![]);
             assert_eq!(buy(&ctx, &|id| g2.get(id).cloned(), &soid, &did, 1, 5, &d2), Err(format!("no money: the buyer {} holds none of the sale's token {} (its chain {} not there; the token's creator {})", short(&did), short(&oid), short(&chain(&ctx, &other, &oid, &did, [0; 32]).id()), short(&[8; 32]))));
         }
@@ -405,8 +318,8 @@ mod tests {
         got.insert(pp.keys_id(), lg.encode());
         // Before the record is read: wanted.
         let g = got.clone();
-        assert_eq!(edition(&ctx, &|id| g.get(id).cloned(), &sid), Ok(Step::Want(vec![record_params(&ctx, &sid, 0).id()])));
-        got.insert(record_params(&ctx, &sid, 0).id(), vec![]);
+        assert_eq!(edition(&ctx, &|id| g.get(id).cloned(), &sid), Ok(Step::Want(vec![record_params(&ctx, &sd, &sid, 0).id()])));
+        got.insert(record_params(&ctx, &sd, &sid, 0).id(), vec![]);
         let g = got.clone();
         let Ok(Step::Done(e)) = edition(&ctx, &|id| g.get(id).cloned(), &sid) else { panic!("the edition") };
         assert_eq!((e.minted, e.open), (0, Some(0)));
@@ -416,7 +329,7 @@ mod tests {
         let paid = State::decode(&b.puts[0].state).unwrap();
         assert_eq!(t::check(&pp, &base, &paid, &|_, _| None, &|_| None, Some(&lg), &t::Extra::NONE), Ok(()));
         assert_eq!(paid.balance(), 990);
-        let rp = record_params(&ctx, &sid, 0);
+        let rp = record_params(&ctx, &sd, &sid, 0);
         let rec = t::supply::Shard::decode(&b.puts[1].state).unwrap();
         assert_eq!(t::supply::holds(&rp, &sd, &Default::default(), &rec, &|m| t::supply::payment_ok(&rp, &sd, m, Some(&paid))), Ok(()));
         // The record as put: the edition shows it, and the buyer COLLECTS copy #1.

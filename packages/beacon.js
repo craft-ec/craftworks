@@ -7,12 +7,13 @@
 //
 // SET UP by `beacon-config` (`{ params }`: the beacon's params, hex); empty: nothing runs.
 //   (await ctx.require("beacon")).status()   // { id, height, extended, last } — what this page did
+//   beacon.onHeight(fn)                         // fn(height) each time this page sees it advance (returns: stop)
 export async function start(ctx) {
   let cfg = {};
   try {
     cfg = JSON.parse(new TextDecoder().decode(await ctx.require("beacon-config")));
   } catch {}
-  if (!cfg.params) return { status: () => ({ off: true }) };
+  if (!cfg.params) return { status: () => ({ off: true }), onHeight: () => () => {} };
   const [node, code, glueJs, stepWasm] = await Promise.all(["node", "beacon-wasm", "beacon-step-glue", "beacon-step-wasm"].map(n => ctx.require(n)));
   const { core, glue, ask } = node;
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
@@ -49,12 +50,15 @@ self.onmessage = async e => {
   const heightOf = st => (st ? glue.CraftworksCore.beacon_state_height(st) : null);
 
   let seen = { height: null, at: Date.now() };
+  const watchers = new Set();
+  const advanced = h => watchers.forEach(fn => fn(h));
   async function tick() {
     const st = await read();
     const h = heightOf(st);
     state.height = h;
     if (h !== seen.height) {
       seen = { height: h, at: Date.now() };
+      if (h != null) advanced(h);
       return;
     }
     if (Date.now() - seen.at < STALE) return;
@@ -71,6 +75,8 @@ self.onmessage = async e => {
     state.extended += 1;
     state.last = Date.now();
     seen = { height: glue.CraftworksCore.beacon_state_height(next), at: Date.now() };
+    state.height = seen.height;
+    advanced(seen.height);
   }
   (async function loop() {
     for (;;) {
@@ -79,5 +85,11 @@ self.onmessage = async e => {
     }
   })();
   ctx.log("beacon", { what: `extending ${id.slice(0, 12)}… when it stalls` });
-  return { status: () => ({ ...state }) };
+  return {
+    status: () => ({ ...state }),
+    onHeight(fn) {
+      watchers.add(fn);
+      return () => watchers.delete(fn);
+    },
+  };
 }

@@ -2,25 +2,18 @@
 // sold on the item itself — no separate shop). The item lists its editions in its own `meta.editions` (only its author
 // writes it); each is shown only if it names this item and its author made it (`core.edition_of_item`). Anyone buys a
 // copy on demand — a payment and a paid mint, no one else acting — and collects it; the author makes new editions.
-// Every token entry is built by the core (the wallet) and signed by this node's identity delegate (`tokenSign`).
+// Every token entry is built by the core (the wallet) and signed by this node's identity delegate — `tokens`' run.
 //
 //   const editions = await ctx.require("editions");
 //   page.append(await editions.section(it, { changed }))   // null when editions are not set up, or none to show
 //
-// SET UP by the `editions-config` package (`{ beacon, pay }`: the beacon every chain is stamped by, the token copies
-// are paid in — hex ids); empty: no section anywhere.
+// SET UP by `tokens` (the page's beacon; its `tokens-config`: the token copies are paid in); no pay token: no section.
 export async function start(ctx) {
-  let cfg = {};
-  try {
-    cfg = JSON.parse(new TextDecoder().decode(await ctx.require("editions-config")));
-  } catch {}
-  if (!cfg.beacon || !cfg.pay) return { section: async () => null };
-  const [node, auth, membership, items, tokenCode, idlogCode] = await Promise.all(["node", "auth", "membership", "items", "token-wasm", "idlog-wasm"].map(n => ctx.require(n)));
-  const { core, glue, ask } = node;
-  const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
-  const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
-  const beacon = bytes(cfg.beacon);
-  const pay = bytes(cfg.pay);
+  const tokens = await ctx.require("tokens");
+  if (!tokens.on || !tokens.pay) return { section: async () => null };
+  const [node, auth, items] = await Promise.all(["node", "auth", "items"].map(n => ctx.require(n)));
+  const { core, glue } = node;
+  const { beacon, pay, code: tokenCode, idlogCode, run, putAll, now, bytes } = tokens;
   const NONE = new Uint8Array(0);
 
   const style = document.createElement("style");
@@ -42,44 +35,6 @@ export async function start(ctx) {
     return e;
   };
 
-  // READ a contract so the core holds it (`node.read`; a contract the node does not have: "read, not there").
-  const read = idHex => node.read(bytes(idHex), "reading an edition's contract", { absent: true });
-  // PUT what a step built, each answered; then FORGOTTEN by the core (read again, fresh, when next asked).
-  async function putAll(puts) {
-    for (const p of puts) {
-      const said = await ask(p.frames, s => (s.kind === "put" && s.key === p.id) || s.kind === "refused", "putting a token contract", 60000);
-      if (said.kind !== "put") throw new Error(`the node refused it (${said.said})`);
-      core.take_got(hexOf(p.idBytes));
-    }
-  }
-  // RUN a step to its end: read what it wants, have the delegate sign what it asks (one entry a round), until done.
-  async function run(step) {
-    const sigs = [];
-    for (let round = 0; round < 16; round++) {
-      const r = step(sigs);
-      if (r.done) return r.done;
-      if (r.want) {
-        await Promise.all(r.want.map(read));
-        continue;
-      }
-      if (r.sign) {
-        const a = await auth.identity.tokenSign(r.sign);
-        if (!a?.signed) throw new Error(`this node did not sign (${a?.refused ?? "no answer"})`);
-        sigs.push([r.sign, bytes(a.signed)]);
-        continue;
-      }
-      throw new Error("a step with no answer");
-    }
-    throw new Error("too many rounds");
-  }
-  // NOW: the beacon's height (every chain entry is stamped by it).
-  async function now() {
-    await read(cfg.beacon);
-    const n = core.beacon_height(beacon);
-    if (n == null) throw new Error("the beacon is not there");
-    return n;
-  }
-
   // An edition AS THIS ITEM SHOWS IT (null: not shown — another item's, or not by its author).
   async function edition(it, idHex, me) {
     const e = await run(() => core.edition_of_item(tokenCode, beacon, idlogCode, bytes(idHex), it.ref, glue.did_bytes(it.by), me?.didBytes ?? NONE));
@@ -89,8 +44,7 @@ export async function start(ctx) {
 
   // BUY one copy, then COLLECT it into this account's chain.
   async function buy(e, me) {
-    const creds = await membership.credentials();
-    const member = bytes(me.member);
+    const { member, creds } = await tokens.device();
     const at = await now();
     const b = await run(sigs => core.edition_buy(tokenCode, beacon, idlogCode, bytes(e.id), me.didBytes, 1, at, member, creds, sigs));
     await putAll(b.puts ?? []);

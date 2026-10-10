@@ -1555,7 +1555,20 @@ old key's addresses.
               10-09) — a second tree beside freenet-prolly. Check whether prolly can prove "the k-th key" (counts in
               nodes); if so move holdings onto it and delete the standing tree; if not, add positional proofs TO the
               prolly tree (the shared one), never keep two.
-          [ ] W  WALLET APP: send, receive/collect (inbox note), balances.
+          [x] W  WALLET APP — LIVE fx/fy 10-10 (site v530): its own app `#/wallet` (👛, System; `wallet-app`), the
+              account's table `tokens`. Core `wallet.rs` (view, send — the creator's genesis first —, receive: worked
+              credits, `pending` = sends inside their margin) over `core/src/tokens.rs` (the steps every token action
+              shares, moved out of editions: Step/Ctx/Device/Put, `holding` + `begin`); `Definition::contracts` the ONE
+              list of a token's three contracts (page, token-ops, token-live). Page side: `packages/tokens.js` (run /
+              putAll / now / device, moved out of editions.js). Receive: an inbox note (`index.send`, kind "token")
+              names the sender; retried each time the beacon advances while a send is pending (`beacon.onHeight`).
+              NO TOKEN MAKING in the app (owner 10-10: "user will flood with new token") — issuers use token-ops.
+              ONE CLOCK: `tokens` takes its beacon from the `beacon` service (`tokens-config` = `{ pay }` only — it
+              named a second, throwaway beacon that stopped: a send never became final); a chain's params use the
+              TOKEN's beacon (`Definition.beacon`); a page writes only tokens on its own clock ("another clock"
+              refused, received per token so one such stops no other). token-live `BEACON_SEED` serves on the pages'
+              beacon; `seed_file` moved into node-io. Measured on fx/fy: A added P (5980cdbc…), sent 25 to B → A 975;
+              B's wallet (fy) listed P from the note and took 25.
           [ ] A  WREN DAILY ALLOWANCE: 1,000/day by reputation share, cap 20, claim-or-return; service on B.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
               rendezvous), within its limit, instead of what was watched; the standing record proves it.
