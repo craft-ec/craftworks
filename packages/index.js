@@ -15,6 +15,8 @@
 //   await index.openPointers(ref)                    // a THING's public bag, made (by its author, when it is made)
 //   await index.point(ref, { from })                 // a pointer (plain) to where something about `ref` is: its bag
 //   await index.pointers(ref)                        // the pointers in it (claims: the reader resolves each)
+//   await index.bag.chained(addressOf, epoch, item, what) // an item into an epoch's CHAINED list (`wallet::chained`)
+//   await index.bag.chain(addressOf, epoch, what)         // every item of an epoch's chained list
 //   await index.watch(ref, fn)                       // fn() whenever its bag changes (the node pushes it)
 //   await index.listSpace(desc)   await index.spaces()   // DISCOVER's list of public spaces: a space's description
 //                                                    // ({ id, name, governance }) in one public bag; each a claim
@@ -257,6 +259,31 @@ export async function start(ctx) {
   const healthOf = day => pointers(`health ${day}`);
 
   // ANY OPEN BAG by its address (a registry: the epoch's vouches): add an item (with its work), read its items.
-  const bag = { add: (address, payload, what = "adding to a bag") => drop(address, payload, what), read: (address, what = "reading a bag") => read(address, what) };
+  // A CHAINED list (`wallet::chained`: payments, the witness queue, the files registry) — an epoch's items in bags
+  // k = 0, 1, …: DROP into the first with room, read back (over a cap a bag keeps its most-worked items: not kept →
+  // the next); READ k = 0.. up to the first with room. `addressOf(epoch, k)` names the list.
+  const ROOM = Core.chained_room();
+  async function chained(addressOf, epoch, item, what) {
+    const want = item.join(",");
+    for (let k = 0; k < 64; k++) {
+      const address = addressOf(epoch, k);
+      const items = await read(address, what);
+      if (items.some(i => i.join(",") === want)) return;
+      if (items.length >= ROOM) continue;
+      await drop(address, item, what);
+      if ((await read(address, what)).some(i => i.join(",") === want)) return;
+    }
+    throw new Error(`${what}: its bags are full`);
+  }
+  async function chain(addressOf, epoch, what) {
+    const out = [];
+    for (let k = 0; k < 64; k++) {
+      const items = await read(addressOf(epoch, k), what);
+      out.push(...items);
+      if (items.length < ROOM) break;
+    }
+    return out;
+  }
+  const bag = { add: (address, payload, what = "adding to a bag") => drop(address, payload, what), read: (address, what = "reading a bag") => read(address, what), chained, chain };
   return { bag, onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, watch, listSpace, spaces, health, healthOf, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, OPEN };
 }

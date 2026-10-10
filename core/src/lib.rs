@@ -2748,11 +2748,6 @@ mod js {
         pub fn standing_epoch() -> f64 {
             craftworks_reputation::EPOCH as f64
         }
-        /// A CHAINED bag (payments, the witness queue: `wallet::chained`) with fewer items than this takes one; one with
-        /// this many is full — the next (k + 1) is the one to read or drop into.
-        pub fn stealth_room() -> f64 {
-            craftworks_wallet::stealth::ROOM as f64
-        }
         /// This wallet's card PAY KEYS from its seed: `{ scan, spend }` (hex).
         pub fn stealth_public(seed: &[u8]) -> Result<JsValue, JsValue> {
             let k = craftworks_wallet::stealth::Keys::from_seed(&b32(seed)?).public();
@@ -2770,6 +2765,29 @@ mod js {
         /// The WITNESS QUEUE bag `k` of standing epoch `epoch` (its address; TOKEN §7a).
         pub fn witness_queue_address(epoch: f64, k: u32) -> js_sys::Uint8Array {
             js_sys::Uint8Array::from(&craftworks_wallet::queue::address(epoch as u64, k)[..])
+        }
+        /// A CHAINED bag (payments, the witness queue, the files registry: `wallet::chained`) with fewer items than this
+        /// takes one; one with this many is full — the next (k + 1) is the one to read or drop into.
+        pub fn chained_room() -> f64 {
+            craftworks_wallet::chained::ROOM as f64
+        }
+        /// The FILES REGISTRY's bag `k` of standing epoch `epoch` (its address).
+        pub fn registry_address(epoch: f64, k: u32) -> js_sys::Uint8Array {
+            js_sys::Uint8Array::from(&craftworks_wallet::registry::address(epoch as u64, k)[..])
+        }
+        /// A file's registry ITEM: its address key and size.
+        pub fn registry_item(address_key: &[u8], size: f64) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&craftworks_wallet::registry::Listed { address_key: b32(address_key)?, size: size as u64 }.encode()[..]))
+        }
+        /// The files LIVE from an epoch's registry items and the epoch before's: `[{ key: address key hex, size }]`.
+        pub fn registry_live(this: js_sys::Array, before: js_sys::Array) -> JsValue {
+            let v = |a: &js_sys::Array| a.iter().map(|i| js_sys::Uint8Array::new(&i).to_vec()).collect::<Vec<_>>();
+            let live = craftworks_wallet::registry::live(&v(&this), &v(&before));
+            let out = js_sys::Array::new();
+            for l in live {
+                out.push(&js_obj(&[("key", JsValue::from(hex(&l.address_key))), ("size", JsValue::from(l.size as f64))]));
+            }
+            out.into()
         }
         /// The PAYMENTS BAG `k` of standing epoch `epoch` (its address).
         pub fn stealth_payments_address(epoch: f64, k: u32) -> js_sys::Uint8Array {
@@ -3044,6 +3062,24 @@ mod js {
         }
         pub fn file_fragment_id(&self, key: &[u8], g: f64, j: u8) -> Result<String, JsValue> {
             Ok(hex(&self.0.piece_id(&craftworks_files::fragment_address(&b32(key)?, g as u64, j))))
+        }
+        /// A REGISTERED file's pieces from its address key and size alone (a keeper's, who cannot read its index): each
+        /// generation's fragments as uploaded (`k` + `EXTRA`), `[[id hex, size]]`.
+        pub fn registry_pieces(&self, address_key: &[u8], size: f64) -> Result<JsValue, JsValue> {
+            let ak = b32(address_key)?;
+            let plan = craftworks_files::Plan::of(size as u64);
+            let out = js_sys::Array::new();
+            for g in 0..plan.gens {
+                for j in 0..(plan.k(g) + craftworks_files::EXTRA) as u8 {
+                    let id = hex(&self.0.piece_id(&craftworks_files::fragment_at(&ak, g, j)));
+                    out.push(&js_sys::Array::of2(&JsValue::from(id), &JsValue::from(plan.chunk as f64)));
+                }
+            }
+            Ok(out.into())
+        }
+        /// A file's ADDRESS KEY (what the files registry lists: its pieces' addresses, nothing it opens).
+        pub fn file_address_key(key: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&craftworks_files::address_key(&b32(key)?)[..]))
         }
         /// KEEP a file's piece (`what` and `a`, `b` as `file_burn`): the state a GET gave, put again. `[id, frames]`.
         pub fn file_keep(

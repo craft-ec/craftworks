@@ -1749,6 +1749,12 @@ old key's addresses.
               ours only; next a FILES REGISTRY (root, size, epoch; per-bag size sums; renewed by keep; give-to-get base
               copies) → K0b keepers registry → KA assignment by BLAKE3(beacon ‖ keeper key ‖ root) (arc dropped: needs
               the blocked query); target = base copies (issuance) + paid copies.
+          [x] FILES REGISTRY 10-10: `wallet::registry` Listed{address key, size} ("CWFL") in chained bags per standing
+              epoch; live = this epoch + last (holders re-list each epoch). `files::address_key` (every piece address,
+              opens nothing) + `fragment_at`; core `registry_pieces(ak, size)` = k+EXTRA fragments per generation (a
+              keeper's piece list without the file key). One chained door: `index.bag.chained/chain` (tokens.js moved
+              onto it; `stealth_room` → `chained_room`). keeper.js lists own whole files each epoch; `keeper.network(e)`
+              → Usage › Kept "Network: N files · bytes". Live fx v550: "1 file(s) listed · 105 KB".
           [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` — FIRST CUT COMMITTED 10-10 (proof, epoch, binding,
               name; 12 mutants killed; its credential through identity's one rule, which closed a skipped key-log
               check) — REWORK: amount = the statement's (witness-checked), appended by anyone with work, the bind

@@ -13,6 +13,7 @@
 
 pub mod chained;
 pub mod queue;
+pub mod registry;
 pub mod stealth;
 
 use craftworks_token_contract as t;

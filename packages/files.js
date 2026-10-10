@@ -574,6 +574,13 @@ export async function start(ctx) {
     return out;
   }
 
+  // A file's FILES-REGISTRY item (`wallet::registry`): its address key and size — what lets a keeper find its pieces
+  // without reading it.
+  async function listing(sp, row) {
+    const f = await open({ key: row.key, root: row.root, name: `${row.id.slice(0, 8)}…`, ...(row.b ? { b: row.b } : {}) });
+    return glue.CraftworksCore.registry_item(glue.CraftworksCore.file_address_key(f.key), f.plan.size);
+  }
+
   // When a re-key of this row last moved (its progress, else the row): for taking over from a member gone quiet.
   const lastMoved = async (sp, row) => Math.max(row.at ?? 0, (await progressOf(sp, row.id)).at()?.at ?? 0);
 
@@ -650,5 +657,5 @@ export async function start(ctx) {
         }
       });
   }
-  return { keep, pieces, put, uploads, keyOf, get, stream, chunk, range, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
+  return { keep, pieces, listing, put, uploads, keyOf, get, stream, chunk, range, current, adopt, publicity, rows, rowOf, salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
 }

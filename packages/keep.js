@@ -20,7 +20,7 @@
 //   await keep.kept()        // { limit, files: [{ root, item, title, size, used, at, whole, missing, error }] }
 //   await keep.setLimit(bytes)   // how much of what was played this node keeps (0: none)
 //   await keep.keepers(root) // [did, …]: who keeps a file (this month or last) — the KEEPERS BAG (rewards step 3)
-//   await keep.holdings(epoch) // [{ sp, row }]: the files it keeps whole, fixed for standing epoch `epoch` (the keeper's)
+//   await keep.holdings(epoch) // [{ sp, row, watched }]: the files it keeps whole, fixed for standing epoch `epoch` (the keeper's)
 //
 // THE KEEPERS BAG (rewards step 3): each file's public bag `keepers:<root>` (`index.point`), where a keeper says, once
 // a month, that it keeps the file (`{ did, m: "YYYY-MM" }`; the same claim again merges). A CLAIM, unsigned like every
@@ -225,7 +225,7 @@ export async function start(ctx) {
     for (const h of list) {
       if (h.watched) {
         const f = watched.get(h.file);
-        if (f) out.push({ sp: null, row: { id: f.root, key: f.key, root: f.root, ...(f.b ? { b: f.b } : {}) } });
+        if (f) out.push({ sp: null, row: { id: f.root, key: f.key, root: f.root, ...(f.b ? { b: f.b } : {}) }, watched: true });
         continue;
       }
       const sp = h.space ? (spaces.get(h.space) ?? null) : null;

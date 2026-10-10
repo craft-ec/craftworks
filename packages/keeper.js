@@ -6,14 +6,18 @@
 // what is read least), sealed in the page's worker (`beacon.sealed`), signed. Every record is signed by the member key
 // through its identity delegate (`tokenSign`, the standing domain). (Answering with the page CLOSED is the delegate's.)
 //
-//   (await ctx.require("keeper")).status()   // { peer, epoch, files, pieces, opened, answered, last } — what this page did
+// THE FILES REGISTRY (`wallet::registry`): each epoch it also LISTS the account's own files it keeps whole (address key
+// and size: what lets other keepers find their pieces), so a file stays listed while its owner keeps it.
+//
+//   (await ctx.require("keeper")).status()   // { peer, epoch, files, pieces, listed, opened, answered, last } — what this page did
+//   await keeper.network(epoch)              // { files, bytes }: the registry's live files at standing epoch `epoch`
 export async function start(ctx) {
   const beaconSvc = await ctx.require("beacon");
   if (beaconSvc.status().off) return { status: () => ({ off: true }) };
   const [node, auth, standingCode, beaconCode] = await Promise.all(["node", "auth", "standing-wasm", "beacon-wasm"].map(n => ctx.require(n)));
   const { core } = node;
   const Core = node.glue.CraftworksCore;
-  const state = { peer: null, epoch: null, files: 0, pieces: 0, opened: 0, answered: 0, last: null };
+  const state = { peer: null, epoch: null, files: 0, pieces: 0, listed: 0, opened: 0, answered: 0, last: null };
   let self = null; // { epoch, hosted, open } — this epoch's holdings ([id hex, size]) and whether its record is open
   let busy = false;
   let upTo = -1; // the last height handled
@@ -25,6 +29,16 @@ export async function start(ctx) {
     // (Like the token service, `keep` and `files` need an account: asked for once one is logged in.)
     const [keep, files] = await Promise.all(["keep", "files"].map(n => ctx.require(n)));
     const fs = await keep.holdings(epoch);
+    // ITS OWN files listed in this epoch's registry (a watched file is its uploader's to list).
+    const index = await ctx.require("index");
+    let listed = 0;
+    for (const { sp, row } of fs.filter(f => !f.watched))
+      await files
+        .listing(sp, row)
+        .then(item => index.bag.chained(Core.registry_address, epoch, item, "listing a file in the registry"))
+        .then(() => (listed += 1))
+        .catch(e => ctx.log("keeper", { what: `${row.id.slice(0, 8)}…: not listed (${e?.message ?? e})` }));
+    state.listed = listed;
     const hosted = [];
     for (const { sp, row } of fs) hosted.push(...(await files.pieces(sp, row).catch(e => (ctx.log("keeper", { what: `${row.id.slice(0, 8)}…: its pieces not listed (${e?.message ?? e})` }), []))));
     state.files = fs.length;
@@ -55,7 +69,7 @@ export async function start(ctx) {
         if (r?.puts) {
           await putAll(r.puts);
           state.opened++;
-          ctx.log("keeper", { what: `epoch ${epoch}: holdings of ${state.files} file(s), ${self.hosted.length} piece(s) committed` });
+          ctx.log("keeper", { what: `epoch ${epoch}: holdings of ${state.files} file(s), ${self.hosted.length} piece(s) committed; ${state.listed} own file(s) listed in the registry` });
         }
         self.open = true;
       }
@@ -91,5 +105,12 @@ export async function start(ctx) {
     }
   }
   beaconSvc.onHeight(tick);
-  return { status: () => ({ ...state }) };
+  // The NETWORK's volume: the files live in the registry at `epoch` (listed then or the epoch before) and their bytes.
+  async function network(epoch) {
+    const index = await ctx.require("index");
+    const [now, before] = await Promise.all([epoch, epoch - 1].map(e => (e < 0 ? [] : index.bag.chain(Core.registry_address, e, "reading the files registry"))));
+    const live = Core.registry_live(now, before);
+    return { files: live.length, bytes: live.reduce((n, l) => n + l.size, 0) };
+  }
+  return { status: () => ({ ...state }), network };
 }

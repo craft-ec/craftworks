@@ -241,7 +241,16 @@ export async function mount(ctx, el) {
     pick.hidden = true;
     const krow = Object.assign(document.createElement("div"), { className: "us-row" });
     krow.append(limit, knote, kfig);
-    body.replaceChildren(krow, klist);
+    // THE NETWORK's volume (the files registry, `keeper.network`): every Craftworks file live this standing epoch.
+    const net = Object.assign(document.createElement("p"), { className: "muted", textContent: "Network: …" });
+    (async () => {
+      const h = (await ctx.require("beacon")).status().height;
+      const keeper = await ctx.require("keeper");
+      if (h == null || !keeper.network) return (net.textContent = "Network: no clock on this site");
+      const n = await keeper.network((await ctx.require("node")).glue.CraftworksCore.keeper_epoch(h));
+      net.textContent = `Network: ${n.files} file(s) listed · ${size(n.bytes)} (the files registry, this epoch and the last)`;
+    })().catch(e => (net.textContent = `Network: could not read (${e?.message ?? e})`));
+    body.replaceChildren(krow, net, klist);
     await drawKept();
   }
 }

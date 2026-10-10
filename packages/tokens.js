@@ -96,22 +96,10 @@ export async function start(ctx) {
   const [storage, index, directory] = await Promise.all(["storage", "index", "directory"].map(n => ctx.require(n)));
   const Core = node.glue.CraftworksCore;
   const EPOCH = Core.standing_epoch();
-  const ROOM = Core.stealth_room();
   const priv = await storage.table("wallet");
-  // A CHAINED BAG's drop (`wallet::chained`: payments, the witness queue): into the epoch's first bag with room, read
-  // back (over a cap a bag keeps its most-worked items: not kept → the next).
-  async function chained(addressOf, at, item, what) {
-    const epoch = Math.floor(at / EPOCH);
-    const want = hexOf(item);
-    for (let k = 0; k < 64; k++) {
-      const address = addressOf(epoch, k);
-      const items = await index.bag.read(address, what);
-      if (items.some(i => hexOf(i) === want)) return;
-      if (items.length >= ROOM) continue;
-      await index.bag.add(address, item, what);
-      if ((await index.bag.read(address, what)).some(i => hexOf(i) === want)) return;
-    }
-    throw new Error(`${what}: its bags are full`);
+  // A CHAINED BAG's drop (`index.bag.chained`: payments, the witness queue) into the epoch of beacon height `at`.
+  function chained(addressOf, at, item, what) {
+    return index.bag.chained(addressOf, Math.floor(at / EPOCH), item, what);
   }
   const rows = prefix => priv.rows().filter(r => r.key.startsWith(prefix)).map(r => JSON.parse(r.value));
   async function seeds() {
@@ -140,16 +128,13 @@ export async function start(ctx) {
     const current = Math.floor(at / EPOCH);
     const scanned = Number(priv.rows().find(r => r.key === "scanned")?.value ?? Math.min(...all.map(x => x.epoch)));
     for (let e = scanned; e <= current; e++) {
-      for (let k = 0; k < 64; k++) {
-        const items = await index.bag.read(Core.stealth_payments_address(e, k), "reading a payments bag");
-        for (const sd of all) {
-          for (const f of Core.stealth_scan(bytes(sd.seed), items)) {
-            if (priv.rows().some(r => r.key === `found/${f.to}`)) continue;
-            await priv.put(`found/${f.to}`, JSON.stringify({ a: hexOf(f.bytes), seed: sd.seed.slice(0, 16), token: f.token, to: f.to, done: false, at: Date.now() }));
-            await onToken?.(f.token);
-          }
+      const items = await index.bag.chain(Core.stealth_payments_address, e, "reading the payments bags");
+      for (const sd of all) {
+        for (const f of Core.stealth_scan(bytes(sd.seed), items)) {
+          if (priv.rows().some(r => r.key === `found/${f.to}`)) continue;
+          await priv.put(`found/${f.to}`, JSON.stringify({ a: hexOf(f.bytes), seed: sd.seed.slice(0, 16), token: f.token, to: f.to, done: false, at: Date.now() }));
+          await onToken?.(f.token);
         }
-        if (items.length < ROOM) break;
       }
       if (e < current) await priv.put("scanned", String(e + 1));
     }

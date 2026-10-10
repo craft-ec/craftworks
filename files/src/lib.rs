@@ -127,10 +127,19 @@ fn nonce(key: &[u8; 32], what: &[u8]) -> [u8; 24] {
     n
 }
 
+/// A file's ADDRESS KEY: every piece's address comes from it, nothing opens with it (the content keys are other
+/// derivations of the file key) — what the FILES REGISTRY lists so a keeper finds the pieces it cannot read.
+pub fn address_key(key: &[u8; 32]) -> [u8; 32] {
+    sub(key, "craftworks files address")
+}
 /// Where fragment `j` of generation `g` lives.
 pub fn fragment_address(key: &[u8; 32], g: u64, j: u8) -> [u8; 32] {
+    fragment_at(&address_key(key), g, j)
+}
+/// Where fragment `j` of generation `g` lives, from the file's ADDRESS KEY alone (a keeper's).
+pub fn fragment_at(address_key: &[u8; 32], g: u64, j: u8) -> [u8; 32] {
     let place = [&b"f"[..], &g.to_be_bytes(), &[j]].concat();
-    blake3::keyed_hash(&sub(key, "craftworks files address"), &place).into()
+    blake3::keyed_hash(address_key, &place).into()
 }
 /// Where an index piece (the root too) lives: by its hash, which its parent (the reference, for the root) carries —
 /// two uploads of one file that stored other fragments never meet at one address.
