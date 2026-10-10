@@ -185,8 +185,11 @@ A contributor's claims only steer their own contribution (§1): misreporting can
   tokens — the token's own pool's clearing price, TIME-WEIGHTED over many epochs (one trade cannot move a level); and
   when a token is worth pricing in money, thresholds are stated in USD (or another currency) and converted by a rate
   OBSERVED on the network — a pool against a USD-backed token where one exists, else a price the WITNESSES report (each
-  committee member reports; the stake-weighted MEDIAN counts; a report far from it forfeits its fees). A change of
-  reference unit only at an announced epoch.
+  committee member reports; the stake-weighted MEDIAN counts; a report far from it forfeits its fees — a price lot
+  of 16 per epoch, on by itself from ≥ 48 live stakers, TOKEN §7d). A change of reference unit only at an announced
+  epoch. THRESHOLDS ABOVE THE ALLOWANCE (owner 10-10): free WREN must not make everyone VIP — PRO at 2× and VIP at 5×
+  the MEDIAN account's monthly allowance (relative: they follow the network's size); contributing allowance WREN is
+  still real money reaching creators and keepers (the bootstrap subsidy), but a level means adding one's own.
 - **An item's minimum level** (creator's choice: everyone, PRO, VIP): the item ENCRYPTED, its key sealed to the people at
   that level — never one server secret that decrypts everything (Handcraft's `CONTENT_ENCRYPTION_SECRET`).
 - **Paying for one item:** in the token, to its creator; the buyer gets the item's key sealed to them.
