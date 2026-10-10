@@ -564,7 +564,7 @@ caught and the honest step back on both nodes, as before).
 | `fixed(genesis)` | issued once, in the definition's genesis entries; never more | — |
 | `authority` | the mint set's mints, in the supply shards | k signatures of the mint set current at the mint's stamp |
 | `burnable` (with any) | falls by every `burn` | the owner's signature |
-| `keepers(rate, half-life, start, end)` | a decaying launch phase: per GB-day PROVED held, by beacon-ranked assignment (REWARDS §4) | the storage proof (anyone recomputes it) |
+| `keepers(rate, half-life, start)` | a decaying launch phase (§7d): a fixed amount per account per standing epoch PROVED kept, halving every `half-life` epochs from `start`, locked as stake; only for accounts past the reputation gate | the standing contract the claim cites (the contract) + the reputation gate (witnesses) |
 
 Deflation needs nothing global: a fixed genesis plus burns. Keeper issuance needs no global cap either: its rate decays
 by beacon height, and sybils gain only by holding real disk (REWARDS §4). It requires the storage PROOFS (deferred
@@ -583,6 +583,36 @@ The standard's first instance. What it changes in REWARDS:
 - ITS OWN ISSUANCE, still to choose (the Craftworks token's, not the standard's): its supply rule and size (e.g.
   `fixed` + `burnable`, with or without a `keepers` launch phase), who holds its genesis (a sale, early contributors,
   keepers only), and the network share (burned, or kept for upkeep).
+
+## 7d. $CRAFT keeper issuance, paired with reputation (owner 10-10: "pair it with $craft issuance to keeper … so it
+## ties to reputation and reward and the loop will strengthen both from sybil"; "lets build it. and method to monitor")
+
+$CRAFT is the storage reward's token (WREN is Claude's own, §7). Before paid demand exists, keepers are paid by
+ISSUANCE — and each piece of the loop has ONE job:
+
+- **Reputation is the GATE** (docs/REPUTATION.md): only an account at or above the gate earns. It decides WHETHER,
+  never HOW MUCH — issuance ∝ reputation would compound (more stake → more duty → more vouches) and let one captured
+  community grow forever.
+- **Proven keeping sets the AMOUNT:** a `keepers` token mints by `Body::KeeperMint` — the keeper's own claim, in its own
+  chain, for one FINISHED standing epoch (`craftworks_standing::EPOCH` beacon heights), citing its node's STANDING
+  CONTRACT. The token contract reads that contract (one related contract) and checks: the epoch is finished (the
+  beacon past its end + the margin); it holds at least `KEEP_MIN` answers in that epoch (each one checked by the
+  standing contract against the beacon: sampled for the peer, the piece asked for, under the committed root); those
+  answers are by a node key the claim's CREDENTIAL binds to this account (the writer-credential check: the account's
+  owner key at the key log seq); one claim per account per epoch (its nonce derived from the epoch); the amount is the
+  definition's rate for that epoch exactly — `rate >> ((epoch − start) / half_life)`, the same for every account.
+  Not scaled by bytes: a holdings' size is self-declared.
+- **It lands LOCKED as witness stake** (`staked`, §4a) — the weight of the lot (§7a). Unstaking follows the usual delay.
+- **Witnesses check the gate:** a witness signs a `KeeperMint` only if the account passes the reputation gate as computed
+  from the public vouches (`reputation::reputation`, the same everywhere) — a contract cannot crawl vouches. Signing one
+  that does not pass is the witness's misdeed once the gate's evidence is shown (the vouches are public).
+- **A cheat burns both:** a proven misdeed burns the stake (§7a) and zeroes reputation; vouchers lose a share.
+- **MONITORED:** every claim is also listed in the epoch's public ISSUANCE BAG (a bag per token per epoch, like the
+  claims registry); the monitor page reads it and shows per epoch: keepers paid, amounts and the total; concentration
+  (the top shares); the split by LINEAGE of the trust tree (is one community taking most?); and claims from accounts
+  below the gate (a witness signing those is the misdeed above).
+- **Sybils, both halves:** extra disks earn nothing without vouches from real people across lineages; fooled vouchers
+  admit fakes that must still keep data for months to build stake — and one proof loses it all. A cheat must beat both.
 
 ## 7a. Witnesses by lot, weighted by earned stake (owner 10-09)
 

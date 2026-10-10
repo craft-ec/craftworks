@@ -1513,6 +1513,16 @@ old key's addresses.
           mints (no signature; the payer's chain read by the record), records of 7, `CappedMint.record`, `FalseMint`
           for an unpaid copy, `Wallet::buy` (W5); LIVE `token-live ondemand`. Spill (10-10): a payment for a record a race filled buys a copy in the next
           (`spill_ok`, `wallet::remint`); live ACCEPTED/REFUSED as expected.
+      [ ] 29 $CRAFT KEEPER ISSUANCE + REPUTATION (owner 10-10: "lets build it. and method to monitor the
+          distribution"; design TOKEN §7d). Phases:
+          [x] K1 DESIGN — TOKEN §7d + §6 `keepers` row: reputation = gate, proven keeping = amount (flat per account per
+              epoch, halving), KeeperMint in the keeper's own chain citing its standing contract, locked as stake,
+              witnesses check the gate, the epoch issuance bag + monitor page.
+          [ ] K2 TOKEN: `Definition.keepers: Option<(rate, half_life, start)>`, `Body::KeeperMint`, contract checks.
+          [ ] K3 WITNESS GATE: may_witness checks the reputation gate for a KeeperMint.
+          [ ] K4 ISSUANCE BAG: claims listed per token per epoch.
+          [ ] K5 PAGE: claim each finished epoch (needs the page's standing answers running).
+          [ ] K6 MONITOR: the issuance page (per epoch: paid, total, concentration, by lineage, below-gate).
       [ ] 28 EDITIONS ON THE ITEM PAGE (was "shop"; owner 10-10: no separate app — buying and selling are embedded in
           the item kinds app) — sell an edition on demand over the wallet core. Phases (10-10, all local):
           [x] S1 CORE — DONE 10-10: `core::editions` (edition read over its records, `buy`, `collect_copy`,
