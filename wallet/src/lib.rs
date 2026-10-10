@@ -23,6 +23,11 @@ pub trait Device {
     fn sign(&self, message: &[u8]) -> [u8; 64];
     fn credential(&self) -> Vec<u8>;
     fn key_seq(&self) -> u32;
+    /// A device that IS its chain's owner key (a stealth one-time key, TOKEN §7f): its 1-of-1 key set — the chain is
+    /// handed over with `Members`, signed as the set. `None` (every DID's device): a `Writer` entry, signed as a device.
+    fn set(&self) -> Option<t::authority::KeySet> {
+        None
+    }
 }
 
 /// One chain this account holds: its params, its token's definition, its state as last read — and the BLOCKS of its
@@ -72,12 +77,19 @@ fn taken(d: &Definition, owner: &[u8; 32], body: &Body) -> Option<u128> {
 impl Wallet<'_> {
     /// This device as a chain's signer.
     pub fn signer(&self) -> Signer {
-        Signer::Device(self.device.public(), self.device.key_seq())
+        match self.device.set() {
+            Some(set) => Signer::Set(set, 0),
+            None => Signer::Device(self.device.public(), self.device.key_seq()),
+        }
     }
 
     fn writer(&self, s: &State, p: &ChainParams, stamp: u64) -> Entry {
         let seq = s.entries.last().map_or(0, |e| e.seq + 1);
-        self.signed(s, nonce_of(p, seq), stamp, Body::Writer { cred: self.device.credential(), key_seq: self.device.key_seq() }, s.balance())
+        let body = match self.device.set() {
+            Some(set) => Body::Members { set, set_seq: 0 },
+            None => Body::Writer { cred: self.device.credential(), key_seq: self.device.key_seq() },
+        };
+        self.signed(s, nonce_of(p, seq), stamp, body, s.balance())
     }
 
     /// A CUT of `h` (W3): this device's writer entry first if need be, then the cut — signed, its trees' blocks returned
@@ -105,7 +117,8 @@ impl Wallet<'_> {
 
     fn signed(&self, s: &State, nonce: [u8; 16], stamp: u64, body: Body, balance: u128) -> Entry {
         let mut e = Entry { seq: s.entries.last().map_or(0, |e| e.seq + 1), prev: s.head(), nonce, stamp, body, balance, auth: t::Auth::Work(0) };
-        e.auth = t::Auth::Sig(self.device.sign(&e.message()));
+        let sig = self.device.sign(&e.message());
+        e.auth = if self.device.set().is_some() { t::Auth::Multi(vec![(0, sig)]) } else { t::Auth::Sig(sig) };
         e
     }
 

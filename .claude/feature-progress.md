@@ -1587,6 +1587,11 @@ old key's addresses.
                   the network at 1,024 payments an epoch): a sender drops into the first bag with room (`ROOM` = the
                   bag crate's ITEMS_MAX − 64) and reads back that it was kept; a scanner reads k = 0.. until one is not
                   there. (The bag I/O is the page's: P3/P4.)
+              [x] P3a WALLET CORE SIGNS STEALTH CHAINS — BUILT 10-10: `Device::set()` (default None); a one-time key is a
+                  device whose set is {P}: handover = `Members`, signer = the set, auth = Multi. Tested: genesis, send,
+                  collect, spend through `Wallet` on stealth chains, all taken by the token; DID devices unchanged (11
+                  wallet tests); 2 mutants killed (always Sig; Writer for a set). No change outputs: a chain holds a
+                  balance, the rest stays in the source chain.
               [ ] P3 CORE: holdings over stealth chains (balance = sum), send (as few chains as can; change to a fresh
                   own stealth chain; the announcement), receive by scanning; the seed in the account table `wallet`,
                   S/B on the card.

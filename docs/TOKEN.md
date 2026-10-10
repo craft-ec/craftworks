@@ -831,8 +831,10 @@ DID; only the sender and the recipient know who was paid.
 - **FINDING (scanning).** For each announcement since the last scan the wallet computes h = H(s·R), P = B + h·G and
   compares `set_id({P})` with `to` — pure computation; only matches are read. Its spend key is b + h. Everything is
   rediscovered from the seed: nothing to remember.
-- **CHANGE AND MERGING.** A send's change goes to a fresh stealth chain of the sender's own (it pays itself with a fresh
-  r). Spending several chains together links THEM (never to the DID): the wallet spends from as few as it can.
+- **NO CHANGE NEEDED.** A chain holds a balance, not coins: a send leaves the rest in the source chain (itself not
+  linkable to the DID). Payments made from one chain are linkable to EACH OTHER (never to the DID); spending several
+  chains at once links them: the wallet spends from as few as it can. The wallet core signs a stealth chain as any
+  device's (`Device::set`: handed over with `Members`, signed as the 1-of-1 set).
 - **ON THE DID, ON PURPOSE:** staked $CRAFT and keeper issuance (stake answers for a witness), reputation, vouches,
   and the epoch statement's lines (what is OWED to a DID is public; where it is paid out may be a stealth chain).
 - **STILL VISIBLE:** amounts (confidential amounts would make witnesses check proofs instead of balances — later, if

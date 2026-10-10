@@ -152,6 +152,26 @@ impl OneTime {
     }
 }
 
+/// A one-time key is its chain's DEVICE: the wallet core builds and signs its entries as for any account's device —
+/// handed over with `Members` (its 1-of-1 set), signed as the set.
+impl crate::Device for OneTime {
+    fn public(&self) -> [u8; 32] {
+        self.key
+    }
+    fn sign(&self, message: &[u8]) -> [u8; 64] {
+        OneTime::sign(self, message)
+    }
+    fn credential(&self) -> Vec<u8> {
+        Vec::new()
+    }
+    fn key_seq(&self) -> u32 {
+        0
+    }
+    fn set(&self) -> Option<t::authority::KeySet> {
+        Some(set(&self.key))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,6 +255,24 @@ mod tests {
         push(&mut sb, Body::Members { set: set(&b.key), set_seq: 0 }, 30, 4, Some(&b));
         push(&mut sb, Body::Send { to: a_paid.to, amount: 5 }, 25, 4, Some(&b));
         assert_eq!(ok(&bp, &sb, &[(&a_paid.to, &sa)]), Ok(()));
+        // THE WALLET CORE builds the same, signing with the one-time keys as devices: Alice's genesis and send, Bob's
+        // receive (collected from her chain) and spend — every chain one the token takes.
+        let none = craftworks_idlog_contract::Log { events: vec![] };
+        let wa = crate::Wallet { device: &a, keys: &none };
+        let mut ha = crate::Held { params: ap, definition: d.clone(), state: State::default(), blocks: Default::default() };
+        ha.state.entries = wa.genesis(&ha, 1).unwrap();
+        let paid2 = pay(&bob.public(), &[12; 32]).unwrap();
+        ha.state.entries.extend(wa.debit(&ha, Body::Send { to: paid2.to, amount: 40 }, 2).unwrap());
+        assert_eq!((ok(&ap, &ha.state, &[]), ha.state.balance()), (Ok(()), 60));
+        let b2 = bob.find(&paid2.r, &paid2.to).unwrap();
+        let wb = crate::Wallet { device: &b2, keys: &none };
+        let mut hb = crate::Held { params: ChainParams { owner: paid2.to, ..ap }, definition: d.clone(), state: State::default(), blocks: Default::default() };
+        let chains = [(a_paid.to, ha.state.clone())];
+        hb.state.entries = wb.collect(&hb, &crate::Sources { chains: &chains, blocks: &Default::default(), programs: &[], shards: &[] }, 4).unwrap();
+        assert_eq!(hb.state.balance(), 40);
+        hb.state.entries.extend(wb.debit(&hb, Body::Send { to: a_paid.to, amount: 15 }, 4).unwrap());
+        assert_eq!(hb.state.entries.iter().filter(|e| matches!(e.body, Body::Members { .. })).count(), 1);
+        assert_eq!((ok(&hb.params, &hb.state, &[(&a_paid.to, &ha.state)]), hb.state.balance()), (Ok(()), 25));
         // Bob's chain named by Alice's key (her set is not this chain's owner), or signed by her over Bob's set: refused.
         let mut wrong = sb.clone();
         wrong.entries.truncate(1);
