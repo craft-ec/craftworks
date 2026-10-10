@@ -1,0 +1,25 @@
+[package]
+name = "token-ops"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The token's standing operations on a node: the beacon kept ticking (a service), and a token made for an account by its recovery words."
+[workspace]
+[dependencies]
+craftworks-token-contract = { path = "../../contracts-src/token", default-features = false }
+craftworks-beacon-contract = { path = "../../contracts-src/beacon", default-features = false }
+craftworks-idlog-contract = { path = "../../contracts-src/idlog", default-features = false }
+craftworks-wallet = { path = "../../wallet" }
+craftworks-identity = { path = "../../identity" }
+craftworks-account = { path = "../../account", default-features = false }
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["rand_core"] }
+blake3 = "1"
+wire = { path = "../../sdk/craftworks-sdk/wire" }
+freenet-stdlib = { version = "0.10.0", features = ["net"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.27"
+futures = "0.3"
+anyhow = "1"
+getrandom = "0.2"
+[profile.release]
+opt-level = 3

@@ -943,6 +943,17 @@ choice, made in its definition from the menu (§6), not the standard's: the Craf
    an added case). LIVE: 1 pays for #3, a 5-copy buy fills record 0 first, #3's payment buys #8 in record 1 ACCEPTED;
    copy #1's payment spilled into record 1 too REFUSED; mint, editions, holders, wallet re-run unchanged.
 
+**Running on the main network (10-10, owner: "manage the beacon via B"; "your own token name, manage however you
+like"):** `tools/token-ops`. A BEACON on B — `6c89f5624570eb4e…` — kept ticking every 5 s by the systemd service
+`craftworks-beacon` on B's box (`token-ops beacon`, its params from `/etc/craftworks-beacon/seed`, resuming its state
+after a restart; its final outputs into the outputs log). One extender today: a single point of LIVENESS (a stop holds
+payments until it ticks again), never of trust (every step is checked by the beacon contract; a fake is provable).
+Next: every open page and node extends it when it falls behind (§5a), so it ticks while anyone is online.
+The first token, WREN (`68532fb588866b67…`), is Wren's — the account Claude keeps (owner 10-10; $CRAFT stays the
+storage reward's): fixed 1,000,000, burnable, its whole genesis Wren's treasury (chain `5df45cdc7c7f8720…`), written by
+a device the words credentialed (`token-ops make-token`). Given out by published rules only: a one-time starter
+grant to any account that claims it, posted bounties, nothing to Wren itself.
+
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under
 real receives from accounts they control. The chain is well-formed and its money is from nothing; only the witness
