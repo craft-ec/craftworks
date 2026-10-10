@@ -165,6 +165,21 @@ async fn main() -> Result<()> {
             let tick = Duration::from_secs(a.get(5).map_or(Ok(5), |t| t.parse())?);
             beacon(&code, &a[3], seed_file(&a[4])?, tick).await
         }
+        Some("registry") => {
+            // token-ops registry <bag.wasm> <ws> <epoch>: the signed vouches in that epoch's vouch registry.
+            let code = std::fs::read(&a[2])?;
+            let address = craftworks_reputation::item::registry_address(a[4].parse()?);
+            let id: [u8; 32] = container(&code, address.to_vec()).key().id().as_bytes().try_into()?;
+            let items = get(&a[3], id).await?.and_then(|b| craftworks_bag_contract::read(&address, &b)).unwrap_or_default();
+            for i in &items {
+                match craftworks_reputation::item::Item::decode(craftworks_bag_contract::payload(i)) {
+                    Some(v) => println!("{} → {} at {} {}", hex(&v.from[..4]), hex(&v.to[..4]), v.at, if v.on { "vouch" } else { "withdraw" }),
+                    None => println!("(not a vouch item)"),
+                }
+            }
+            println!("{} item(s)", items.len());
+            Ok(())
+        }
         Some("height") => {
             // token-ops height <ws> <beacon id hex>: its height now (0: not there).
             let h = get(&a[2], unhex32(&a[3])?).await?.and_then(|b| B::wire::decode(&b)).map_or(0, |s| s.height());

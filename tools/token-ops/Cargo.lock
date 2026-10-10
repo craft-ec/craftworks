@@ -330,6 +330,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-bag-contract"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+]
+
+[[package]]
 name = "craftworks-beacon-contract"
 version = "0.1.0"
 dependencies = [
@@ -366,6 +373,16 @@ name = "craftworks-idlog-contract"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "ed25519-dalek",
+]
+
+[[package]]
+name = "craftworks-reputation"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "craftworks-identity",
+ "craftworks-idlog-contract",
  "ed25519-dalek",
 ]
 
@@ -1632,9 +1649,11 @@ dependencies = [
  "anyhow",
  "blake3",
  "craftworks-account",
+ "craftworks-bag-contract",
  "craftworks-beacon-contract",
  "craftworks-identity",
  "craftworks-idlog-contract",
+ "craftworks-reputation",
  "craftworks-token-contract",
  "craftworks-wallet",
  "ed25519-dalek",

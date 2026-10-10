@@ -2305,9 +2305,9 @@ mod js {
     fn edition_ctx(token_code: &[u8], beacon: &[u8], idlog_code: &[u8]) -> Result<editions::Ctx, JsValue> {
         Ok(editions::Ctx { code_hash: *blake3::hash(token_code).as_bytes(), beacon: b32(beacon)?, idlog: *blake3::hash(idlog_code).as_bytes() })
     }
-    /// The page's device: its node key, the account's credentials (its group's: this node's is picked, its key seq
+    /// The page's DEVICE (token entries, vouches): its node key, the account's credentials (its group's: this node's is picked, its key seq
     /// from the key log `did`'s, as read), and the signatures so far (`[[message, sig]]`). `None`: the key log not read.
-    fn edition_device(core: &Core, idlog_code: &[u8], did: &[u8; 32], public: &[u8], creds: &js_sys::Array, sigs: &js_sys::Array) -> Result<Option<editions::Device>, JsValue> {
+    fn account_device(core: &Core, idlog_code: &[u8], did: &[u8; 32], public: &[u8], creds: &js_sys::Array, sigs: &js_sys::Array) -> Result<Option<editions::Device>, JsValue> {
         let id = account::idlog_put(idlog_code, did, None).id_bytes;
         let Some(st) = core.got(&id).filter(|b| !b.is_empty()) else { return Ok(None) };
         let log = craftworks_idlog_contract::read(did, st).ok_or_else(|| err("the account's key log does not verify".into()))?;
@@ -2384,30 +2384,65 @@ mod js {
         pub fn reputation_roots() -> js_sys::Array {
             craftworks_reputation::ROOTS.iter().map(|d| JsValue::from(*d)).collect()
         }
-        /// REPUTATION from the vouches the page crawled (`[[from DID text, to DID text, at]]`): `{ rep: { did: per-mille
-        /// of 1.0 }, promoted: [did], admitted: n }` — `reputation::reputation` over the starting roots.
-        pub fn reputation_compute(vouches: js_sys::Array) -> Result<JsValue, JsValue> {
+        /// A VOUCH's message to sign (`TokenSign`, the vouch domain): `from` vouches for (`on`) or withdraws from `to`, at
+        /// beacon height `at`.
+        pub fn vouch_message(from: &[u8], to: &[u8], at: f64, on: bool) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&craftworks_reputation::item::Item::message(&b32(from)?, &b32(to)?, at as u64, on)[..]))
+        }
+        /// The SIGNED VOUCH item (`reputation::item`): this node's credential and key seq picked from the account's
+        /// credentials (the key log read: `{ want }` otherwise), the device's signature `sig` of `vouch_message`.
+        /// `{ item: bytes }`.
+        #[allow(clippy::too_many_arguments)]
+        pub fn vouch_item(&self, idlog_code: &[u8], from: &[u8], to: &[u8], at: f64, on: bool, public: &[u8], creds: js_sys::Array, sig: &[u8]) -> Result<JsValue, JsValue> {
+            let from = b32(from)?;
+            let Some(dev) = account_device(&self.0, idlog_code, &from, public, &creds, &js_sys::Array::new())? else { return want_log(idlog_code, &from) };
+            let sig: [u8; 64] = sig.try_into().map_err(|_| err("a signature is 64 bytes".into()))?;
+            let item = craftworks_reputation::item::Item { from, to: b32(to)?, at: at as u64, on, cred: dev.credential, key_seq: dev.key_seq, sig };
+            Ok(js_obj(&[("item", js_sys::Uint8Array::from(&item.encode()[..]).into())]))
+        }
+        /// The VOUCH REGISTRY's bag address for standing epoch `epoch`.
+        pub fn vouch_registry_address(epoch: f64) -> js_sys::Uint8Array {
+            js_sys::Uint8Array::from(&craftworks_reputation::item::registry_address(epoch as u64)[..])
+        }
+        /// A signed vouch item's `{ from, to, at, on }` (DID texts), or null.
+        pub fn vouch_item_read(item: &[u8]) -> JsValue {
+            match craftworks_reputation::item::Item::decode(item) {
+                Some(i) => js_obj(&[("from", account::did(&i.from).into()), ("to", account::did(&i.to).into()), ("at", JsValue::from(i.at as f64)), ("on", JsValue::from(i.on))]),
+                None => JsValue::NULL,
+            }
+        }
+        /// REPUTATION AS OF height `now` from SIGNED vouch items (`reputation::item::standing` — each verified against its
+        /// voucher's key log, read into the core: `{ want: [hex] }` first — then `reputation_at` over the roots):
+        /// `{ rep: { did: per-mille }, promoted: [did], admitted: n }`.
+        pub fn reputation_from_items(&self, idlog_code: &[u8], items: js_sys::Array, now: f64) -> Result<JsValue, JsValue> {
             use craftworks_reputation as R;
-            let did = |v: JsValue| v.as_string().and_then(|t| account::did_bytes(&t));
-            let mut vs = Vec::new();
-            for x in vouches.iter() {
-                let x = js_sys::Array::from(&x);
-                if let (Some(from), Some(to), Some(at)) = (did(x.get(0)), did(x.get(1)), x.get(2).as_f64()) {
-                    vs.push(R::Vouch { from, to, at: at as u64 });
+            let items: Vec<R::item::Item> = bytes_list(&items).iter().filter_map(|b| R::item::Item::decode(b)).collect();
+            let mut want: Vec<String> = Vec::new();
+            for i in &items {
+                let id = account::idlog_put(idlog_code, &i.from, None).id_bytes;
+                if self.0.got(&id).is_none() && !want.contains(&hex(&id)) {
+                    want.push(hex(&id));
                 }
             }
+            if !want.is_empty() {
+                return js_sys::JSON::parse(&json!({ "want": want }).to_string());
+            }
+            let log_of = |d: &R::Did| {
+                let id = account::idlog_put(idlog_code, d, None).id_bytes;
+                self.0.got(&id).filter(|b| !b.is_empty()).and_then(|b| craftworks_idlog_contract::read(d, b))
+            };
+            let vs = R::item::standing(&items, now as u64, &log_of);
             let roots: Vec<R::Did> = R::ROOTS.iter().filter_map(|t| account::did_bytes(t)).collect();
-            let rep = R::reputation(&roots, &vs);
+            let rep = R::reputation_at(&roots, &vs, now as u64);
             let c = R::counted(&vs);
             let t = R::tree(&roots, &c);
             let promoted = R::promoted(&roots, &c, &t, &rep);
             let text = |d: &R::Did| account::did(d);
-            let v = json!({
+            js_sys::JSON::parse(&json!({
                 "rep": rep.iter().map(|(d, r)| (text(d), json!((r * 1000 / R::ONE) as u64))).collect::<serde_json::Map<String, Value>>(),
                 "promoted": promoted.iter().map(text).collect::<Vec<_>>(),
                 "admitted": rep.len(),
-            });
-            js_sys::JSON::parse(&v.to_string())
+            }).to_string())
         }
         /// A beacon STATE's height (null: not a beacon's state).
         pub fn beacon_state_height(state: &[u8]) -> JsValue {
@@ -2430,7 +2465,7 @@ mod js {
         pub fn edition_buy(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], buyer: &[u8], amount: f64, now: f64, public: &[u8], creds: js_sys::Array, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
             let ctx = edition_ctx(token_code, beacon, idlog_code)?;
             let buyer = b32(buyer)?;
-            let Some(dev) = edition_device(&self.0, idlog_code, &buyer, public, &creds, &sigs)? else { return want_log(idlog_code, &buyer) };
+            let Some(dev) = account_device(&self.0, idlog_code, &buyer, public, &creds, &sigs)? else { return want_log(idlog_code, &buyer) };
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
                 editions::buy(&ctx, &got, &b32(id)?, &buyer, amount as u128, now as u64, &dev)
@@ -2447,7 +2482,7 @@ mod js {
         pub fn edition_collect(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], owner: &[u8], n: f64, now: f64, public: &[u8], creds: js_sys::Array, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
             let ctx = edition_ctx(token_code, beacon, idlog_code)?;
             let owner = b32(owner)?;
-            let Some(dev) = edition_device(&self.0, idlog_code, &owner, public, &creds, &sigs)? else { return want_log(idlog_code, &owner) };
+            let Some(dev) = account_device(&self.0, idlog_code, &owner, public, &creds, &sigs)? else { return want_log(idlog_code, &owner) };
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
                 editions::collect_copy(&ctx, &got, &b32(id)?, &owner, n as u128, now as u64, &dev)

@@ -1528,7 +1528,12 @@ old key's addresses.
                   against the voucher's key log; `standing(items, now)` folds items to the vouches standing (latest
                   per pair; a re-vouch keeps its first height). 12 tests; 9 mutants (1 explained: the account check
                   is redundant with the key-log check).
-              [ ] V1b-2 the registry: the epoch's bag of items (anyone relays a signed row), the page signs + stores.
+              [x] V1b-2 THE REGISTRY, LIVE fx 10-10: the page signs a vouch (TokenSign, vouch domain), stores the signed
+                  item as its public vouch row, drops it into the epoch's registry bag (`index.bag`, the existing bag
+                  contract); reputation crawls signed items, RELAYS what a registry lacks (anyone relays), computes
+                  `reputation_from_items` as of the beacon height (each item verified by its key log). Measured on fx:
+                  A's panel "Vouched ✓"; `token-ops registry` epoch 0 → "45caba3e → 1ead752b at 407 vouch, 1 item".
+                  The old unsigned `reputation_compute` removed; `account_device` shared by editions and vouches.
               [ ] V1b-3 decay, the statement — THE STATEMENT IS A PUBLIC PROLLY TREE in Block contracts (as a public
                   table's tree: did → reputation, share), witnesses sign its ROOT, a claim cites its entry with a prolly
                   proof — no new contract, no new tree (owner 10-10: "we doesn't use our craftworks prolly tree and

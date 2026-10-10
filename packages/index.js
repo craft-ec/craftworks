@@ -256,5 +256,7 @@ export async function start(ctx) {
   }
   const healthOf = day => pointers(`health ${day}`);
 
-  return { onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, watch, listSpace, spaces, health, healthOf, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, OPEN };
+  // ANY OPEN BAG by its address (a registry: the epoch's vouches): add an item (with its work), read its items.
+  const bag = { add: (address, payload, what = "adding to a bag") => drop(address, payload, what), read: (address, what = "reading a bag") => read(address, what) };
+  return { bag, onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, watch, listSpace, spaces, health, healthOf, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, OPEN };
 }
