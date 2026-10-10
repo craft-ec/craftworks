@@ -1513,15 +1513,18 @@ old key's addresses.
           mints (no signature; the payer's chain read by the record), records of 7, `CappedMint.record`, `FalseMint`
           for an unpaid copy, `Wallet::buy` (W5); LIVE `token-live ondemand`. Spill (10-10): a payment for a record a race filled buys a copy in the next
           (`spill_ok`, `wallet::remint`); live ACCEPTED/REFUSED as expected.
-      [ ] 28 SHOP — sell an edition on demand over the wallet core. Phases (10-10, all local; nothing released):
-          [ ] S1 CORE: `core` links wallet + token; wasm-bindgen bindings — chain/record/definition ids, decode a
-              definition/record/chain to JSON, `buy` + `collect` given what the page read, frame the puts.
+      [ ] 28 EDITIONS ON THE ITEM PAGE (was "shop"; owner 10-10: no separate app — buying and selling are embedded in
+          the item kinds app) — sell an edition on demand over the wallet core. Phases (10-10, all local):
+          [x] S1 CORE — DONE 10-10: `core::editions` (edition read over its records, `buy`, `collect_copy`,
+              `copies_of`) as steps want/sign/done; `wallet::Asking` (a device that signs by asking the delegate, one
+              round per entry); bindings `edition_read/buy/collect/chain_id`, `beacon_height`, `not_there`.
           [x] S2 DELEGATE — DONE 10-10: token entry messages carry `ENTRY_DOMAIN` (owned by identity);
               `Request::TokenSign { message }` signs one with the member key, home site only (`NotAnEntry`, `NotHome`,
               `NoSession` refused). Credential + key seq come from the account's devices contract. Full-release item.
           [ ] S3 FINDING EDITIONS: an item's editions listed where the shop can read them (TOKEN §1c: the app checks
               the edition's creator is the item's author).
-          [ ] S4 PAGE: `packages/shop.js` — an item's editions, price, copies left, Buy; my copies.
+          [ ] S4 ITEM PAGE: an "Editions" section in `packages/item-page.js` — the author makes an edition (price,
+              cap, numbered or plain); anyone sees each edition's price and copies left, Buy, and their copies.
           [ ] S5 LIVE fx/fy: beacon + pay token + edition; buy from a second account end to end.
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).

@@ -412,3 +412,29 @@ fn a_wallet_buys_a_copy_of_an_edition_sold_on_demand() {
     // Paid from a chain of another token: refused.
     assert_eq!(w.buy(&genesis(&dev, &Definition { name: b"X".to_vec(), ..def() }), &sd, &sid, (0, &rec), 1, 5).err(), Some("a payment from another chain than the sale's token's"));
 }
+
+#[test]
+fn a_device_that_asks_builds_the_same_entries_one_signature_a_round() {
+    // A second device of 1 (so a writer entry comes first), signing only by asking.
+    let (first, real) = (Dev::new(1, 11), Dev::new(1, 12));
+    let lg = log(1);
+    let h = genesis(&first, &def());
+    let mut sigs: Vec<(Vec<u8>, [u8; 64])> = Vec::new();
+    let mut rounds = 0;
+    let out = loop {
+        let asking = Asking::new(real.public(), real.credential(), 0, sigs.clone());
+        let w = Wallet { device: &asking, keys: &lg };
+        let got = w.debit(&h, Body::Send { to: did(2), amount: 300 }, 5);
+        match asking.next() {
+            Some(m) => {
+                assert!(m.starts_with(t::ENTRY_DOMAIN), "only entries are asked");
+                sigs.push((m.clone(), real.sign(&m)));
+                rounds += 1;
+            }
+            None => break got.unwrap(),
+        }
+    };
+    assert_eq!(rounds, 2, "the writer entry, then the send");
+    let direct = Wallet { device: &real, keys: &lg }.debit(&h, Body::Send { to: did(2), amount: 300 }, 5).unwrap();
+    assert_eq!(out, direct, "the same entries as the device signing itself");
+}

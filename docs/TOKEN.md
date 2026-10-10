@@ -686,6 +686,11 @@ wallet only hands the chain over when told.
   site spends the person's money), and only a message under the domain (`NotAnEntry` otherwise). The credential and
   key seq the wallet's `Device` needs are the account's devices contract's (the page reads them). A delegate change:
   ships with the next full release.
+- **ON THE ITEM PAGE — S1 BUILT 10-10** (owner 10-10: no separate shop app — editions are bought and sold on the
+  item's page). `core::editions`, pure over what the page read: an edition (its definition and records, copies
+  minted, the open record, a person's copies), `buy`, `collect_copy` — each a step: contracts to READ, the next
+  entry to SIGN (`TokenSign`), or the puts. `wallet::Asking` is the page's device: it signs by asking, one round per
+  entry (a chain's entries are signed in order). The page section itself: S4.
 - Not in the core (the account's, at rollout): which device writes a chain (the core hands it over when told), finding
   counterparties' chains (the token's activity), fetching and publishing.
 

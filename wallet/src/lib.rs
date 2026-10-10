@@ -430,3 +430,50 @@ impl Wallet<'_> {
 
 #[cfg(test)]
 mod tests;
+
+/// A DEVICE that signs by ASKING (the page's: its node's identity delegate answers `TokenSign` asynchronously, and the
+/// wallet's building is synchronous). Built with the signatures the delegate gave so far; every message it has none
+/// for is recorded in `need` (and signed with zeros, so nothing built that way is valid). The page builds, has the
+/// delegate sign the next message, and builds again — until nothing is needed (one round per entry signed: a chain's
+/// entries are signed in order, each over its predecessor's head). A build that asked is refused by the token's rules
+/// (its zeros): the caller reads `next` first.
+pub struct Asking {
+    pub public: [u8; 32],
+    pub credential: Vec<u8>,
+    pub key_seq: u32,
+    pub sigs: Vec<(Vec<u8>, [u8; 64])>,
+    pub need: std::cell::RefCell<Vec<Vec<u8>>>,
+}
+
+impl Asking {
+    pub fn new(public: [u8; 32], credential: Vec<u8>, key_seq: u32, sigs: Vec<(Vec<u8>, [u8; 64])>) -> Asking {
+        Asking { public, credential, key_seq, sigs, need: Default::default() }
+    }
+    /// The NEXT message to sign: the first asked (a later one was built over a head with zeros in it — it is asked
+    /// again, right, once this one is signed). `None`: everything built was signed.
+    pub fn next(&self) -> Option<Vec<u8>> {
+        self.need.borrow().first().cloned()
+    }
+}
+
+impl Device for Asking {
+    fn public(&self) -> [u8; 32] {
+        self.public
+    }
+    fn sign(&self, message: &[u8]) -> [u8; 64] {
+        if let Some((_, s)) = self.sigs.iter().find(|(m, _)| m == message) {
+            return *s;
+        }
+        let mut need = self.need.borrow_mut();
+        if !need.iter().any(|m| m == message) {
+            need.push(message.to_vec());
+        }
+        [0; 64]
+    }
+    fn credential(&self) -> Vec<u8> {
+        self.credential.clone()
+    }
+    fn key_seq(&self) -> u32 {
+        self.key_seq
+    }
+}

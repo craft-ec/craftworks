@@ -283,6 +283,11 @@ impl Core {
         self.got.get(id).map(Vec::as_slice)
     }
 
+    /// Mark `id` READ AND NOT THERE (the node found no such contract): the edition steps tell it from not read yet.
+    pub fn not_there(&mut self, id: [u8; 32]) {
+        self.got.insert(id, Vec::new());
+    }
+
     /// The state the node sent for `id`, TAKEN (a file's fragments: read once, never kept here).
     pub fn take_got(&mut self, id: &[u8; 32]) -> Option<Vec<u8>> {
         self.got.remove(id)
@@ -817,6 +822,8 @@ pub fn unhex(h: &str) -> Option<Vec<u8>> {
         .map(|i| u8::from_str_radix(h.get(i..i + 2)?, 16).ok())
         .collect()
 }
+
+pub mod editions;
 
 #[cfg(target_arch = "wasm32")]
 mod js {
@@ -2270,6 +2277,137 @@ mod js {
             Ok(js_sys::Uint8Array::from(
                 &self.0.plain().map_err(file_err)?[..],
             ))
+        }
+    }
+
+    /// EDITIONS (`editions`): a step's answer for the page — `{ want: [hex] }`, `{ sign: bytes }` (have the identity
+    /// delegate `TokenSign` it, then call again with it in `sigs`), or `{ done: … }`.
+    fn edition_step<T>(s: Result<editions::Step<T>, String>, done: impl FnOnce(T) -> Result<serde_json::Value, JsValue>) -> Result<JsValue, JsValue> {
+        let v = match s.map_err(err)? {
+            editions::Step::Want(w) => json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }),
+            editions::Step::Sign(m) => return Ok(js_obj(&[("sign", js_sys::Uint8Array::from(&m[..]).into())])),
+            editions::Step::Done(x) => json!({ "done": done(x)? }),
+        };
+        js_sys::JSON::parse(&v.to_string())
+    }
+    fn js_obj(kv: &[(&str, JsValue)]) -> JsValue {
+        let o = js_sys::Object::new();
+        for (k, v) in kv {
+            let _ = js_sys::Reflect::set(&o, &(*k).into(), v);
+        }
+        o.into()
+    }
+    /// The context: the token's code, the beacon's id, the key log's code.
+    fn edition_ctx(token_code: &[u8], beacon: &[u8], idlog_code: &[u8]) -> Result<editions::Ctx, JsValue> {
+        Ok(editions::Ctx { code_hash: *blake3::hash(token_code).as_bytes(), beacon: b32(beacon)?, idlog: *blake3::hash(idlog_code).as_bytes() })
+    }
+    /// The page's device: its node key, its credential, the key seq, and the signatures so far (`[[message, sig]]`).
+    fn edition_device(public: &[u8], credential: &[u8], key_seq: u32, sigs: &js_sys::Array) -> Result<editions::Device, JsValue> {
+        let sigs = sigs
+            .iter()
+            .map(|p| {
+                let p = js_sys::Array::from(&p);
+                let m = js_sys::Uint8Array::new(&p.get(0)).to_vec();
+                let s: [u8; 64] = js_sys::Uint8Array::new(&p.get(1)).to_vec().try_into().map_err(|_| err("a signature is 64 bytes".into()))?;
+                Ok((m, s))
+            })
+            .collect::<Result<Vec<_>, JsValue>>()?;
+        Ok(editions::Device { public: b32(public)?, credential: credential.to_vec(), key_seq, sigs })
+    }
+    fn edition_json(e: &editions::Edition, me: Option<&[u8; 32]>) -> serde_json::Value {
+        let d = &e.definition;
+        json!({
+            "id": hex(&e.id),
+            "name": String::from_utf8_lossy(&d.name),
+            "cap": d.cap.to_string(),
+            "numbered": d.ids == craftworks_token_contract::Ids::Numbered,
+            "item": hex(&d.item),
+            "collection": hex(&d.collection),
+            "creator": hex(&d.genesis_owner),
+            "royalty": d.royalty.map(|(b, to)| json!({ "bps": b, "to": hex(&to) })),
+            "sale": d.sale.map(|(t, price, payee)| json!({ "token": hex(&t.definition), "price": price.to_string(), "payee": hex(&payee) })),
+            "minted": e.minted.to_string(),
+            "open": e.open,
+            "mine": me.map(|m| editions::copies_of(e, m).iter().map(|n| n.to_string()).collect::<Vec<_>>()),
+        })
+    }
+
+    #[wasm_bindgen]
+    impl CraftworksCore {
+        /// Mark a contract READ AND NOT THERE (its GET failed: no such contract).
+        pub fn not_there(&mut self, id: &[u8]) -> Result<(), JsValue> {
+            self.0.not_there(b32(id)?);
+            Ok(())
+        }
+        /// The beacon's height, from its state as read (null: not read).
+        pub fn beacon_height(&self, beacon: &[u8]) -> Result<JsValue, JsValue> {
+            Ok(self.0.got(&b32(beacon)?).and_then(craftworks_beacon_contract::wire::decode).map_or(JsValue::NULL, |s| JsValue::from(s.height() as f64)))
+        }
+        /// An EDITION (`editions::edition`): `{ done: { id, name, cap, numbered, item, collection, creator, royalty, sale,
+        /// minted, open, mine } }` (`mine`: the copies minted to `me`, when given 32 bytes).
+        pub fn edition_read(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], me: &[u8]) -> Result<JsValue, JsValue> {
+            let ctx = edition_ctx(token_code, beacon, idlog_code)?;
+            let me = (me.len() == 32).then(|| b32(me)).transpose()?;
+            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+            edition_step(editions::edition(&ctx, &got, &b32(id)?), |e| Ok(edition_json(&e, me.as_ref())))
+        }
+        /// BUY (`editions::buy`): `{ done: { puts: [{ id, frames }], record, first, amount } }`.
+        #[allow(clippy::too_many_arguments)]
+        pub fn edition_buy(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], buyer: &[u8], amount: f64, now: f64, public: &[u8], credential: &[u8], key_seq: u32, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
+            let ctx = edition_ctx(token_code, beacon, idlog_code)?;
+            let dev = edition_device(public, credential, key_seq, &sigs)?;
+            let step = {
+                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                editions::buy(&ctx, &got, &b32(id)?, &b32(buyer)?, amount as u128, now as u64, &dev)
+            };
+            let mut puts = Vec::new();
+            let v = edition_step(step, |b| {
+                puts = b.puts.clone();
+                Ok(json!({ "record": b.record, "first": b.first.to_string(), "amount": b.amount.to_string() }))
+            })?;
+            self.edition_attach_puts(v, token_code, &puts)
+        }
+        /// COLLECT copy `n` (`editions::collect_copy`): `{ done: { puts: [{ id, frames }] } }` (no puts: nothing to collect).
+        #[allow(clippy::too_many_arguments)]
+        pub fn edition_collect(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], owner: &[u8], n: f64, now: f64, public: &[u8], credential: &[u8], key_seq: u32, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
+            let ctx = edition_ctx(token_code, beacon, idlog_code)?;
+            let dev = edition_device(public, credential, key_seq, &sigs)?;
+            let step = {
+                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                editions::collect_copy(&ctx, &got, &b32(id)?, &b32(owner)?, n as u128, now as u64, &dev)
+            };
+            let mut puts = Vec::new();
+            let v = edition_step(step, |p| {
+                puts = p.into_iter().collect();
+                Ok(json!({}))
+            })?;
+            self.edition_attach_puts(v, token_code, &puts)
+        }
+        /// The token chain id of `owner`'s chain of `token` (an edition's copy `n`, or 0: the token's own), hex.
+        pub fn edition_chain_id(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], token: &[u8], owner: &[u8], n: f64) -> Result<String, JsValue> {
+            let ctx = edition_ctx(token_code, beacon, idlog_code)?;
+            let token = b32(token)?;
+            let item = if n > 0.0 { craftworks_token_contract::numbered_item(&token, n as u128) } else { [0; 32] };
+            let d = craftworks_token_contract::Definition::decode(self.0.got(&token).ok_or_else(|| err("the token's definition is not read".into()))?).ok_or_else(|| err("not a token definition".into()))?;
+            Ok(hex(&editions::chain(&ctx, &d, &token, &b32(owner)?, item).id()))
+        }
+    }
+
+    impl CraftworksCore {
+        /// `done.puts`: each put as `{ id, frames }`.
+        fn edition_attach_puts(&mut self, v: JsValue, token_code: &[u8], puts: &[editions::Put]) -> Result<JsValue, JsValue> {
+            if puts.is_empty() {
+                return Ok(v);
+            }
+            let done = js_sys::Reflect::get(&v, &"done".into())?;
+            let list = js_sys::Array::new();
+            for p in puts {
+                let (id, contract, state) = wire::puts::contract(token_code, &p.params, &p.state);
+                let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
+                list.push(&self.put_obj(&account::Put { id, id_bytes, contract, state })?);
+            }
+            js_sys::Reflect::set(&done, &"puts".into(), &list)?;
+            Ok(v)
         }
     }
 
