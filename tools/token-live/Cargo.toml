@@ -16,6 +16,8 @@ craftworks-standing-contract = { path = "../../contracts-src/standing", default-
 craftworks-pool-contract = { path = "../../contracts-src/pool", default-features = false }
 craftworks-swap-contract = { path = "../../contracts-src/swap", default-features = false }
 craftworks-wallet = { path = "../../wallet" }
+# The WREN ALLOWANCE's program (serve with ALLOWANCE=1): its params and terms.
+craftworks-allowance-contract = { path = "../../contracts-src/allowance", default-features = false }
 craftworks-identity = { path = "../../identity" }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = "1"

@@ -36,6 +36,8 @@ craftworks-bag-contract = { path = "../contracts-src/bag", default-features = fa
 # EDITIONS (`editions`): token editions read, bought and collected — the token's own rules and the wallet core that builds entries.
 craftworks-token-contract = { path = "../contracts-src/token", default-features = false }
 craftworks-wallet = { path = "../wallet" }
+# THE WREN ALLOWANCE (`allowance`): its program's params, verdict and rule — the contract's own.
+craftworks-allowance-contract = { path = "../contracts-src/allowance", default-features = false }
 craftworks-beacon-contract = { path = "../contracts-src/beacon", default-features = false }
 # REPUTATION (docs/REPUTATION.md): computed from the vouches the page crawled.
 craftworks-reputation = { path = "../reputation" }

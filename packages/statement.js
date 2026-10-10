@@ -2,7 +2,9 @@
 // may (the two rules) — computed from every vouch registry up to it (`core.statement_build`: reputation as of the
 // epoch's start, each signed item verified by its voucher's key log), its tree's blocks put through the BLOCKS door
 // (public Block contracts), its root posted in the epoch's STATEMENT BAG. Witnesses check and sign a posted root (the
-// lot, later); every page computes the same root from the same registries.
+// lot, later); every page computes the same root from the same registries. Then THE ALLOWANCE (TOKEN §7d): if the
+// treasury escrowed the epoch's pot and nobody decided its program yet, this page puts its VERDICT (each line owed,
+// proven under the root) and the treasury's release — `allowance_verdict`; anyone may, nobody has to stay online.
 //
 //   (await ctx.require("statement")).status()   // { epoch, root, lines } of the last one this page published
 export async function start(ctx) {
@@ -15,13 +17,9 @@ export async function start(ctx) {
   const TICK = 5 * 60 * 1000;
   const state = { epoch: null, root: null, lines: null };
 
-  async function publishIfMissing() {
-    const h = (await ctx.require("beacon")).status().height;
-    if (h == null || h < MARGIN) return;
-    const epoch = Math.floor((h - MARGIN) / EPOCH);
-    const address = Core.statement_bag_address(epoch);
-    const posted = await index.bag.read(address, "reading the epoch's statement");
-    if (posted.some(p => Core.statement_posted_read(p)?.epoch === epoch)) return;
+  const built = new Map(); // epoch → the statement this page computed (its root, what it owes)
+  async function build(epoch) {
+    if (built.has(epoch)) return built.get(epoch);
     const items = [];
     for (let e = 0; e <= epoch; e++) items.push(...(await index.bag.read(Core.vouch_registry_address(e), "reading a vouch registry")));
     for (let round = 0; round < 6; round++) {
@@ -30,12 +28,35 @@ export async function start(ctx) {
         await Promise.all(r.want.map(id => node.read(bytes(id), "reading a voucher's key log", { absent: true }).catch(() => false)));
         continue;
       }
+      built.set(epoch, r);
+      return r;
+    }
+    throw new Error("the vouchers' key logs could not be read");
+  }
+  const decided = new Set(); // epochs whose allowance this page saw decided
+  async function publishIfMissing() {
+    const h = (await ctx.require("beacon")).status().height;
+    if (h == null || h < MARGIN) return;
+    const epoch = Math.floor((h - MARGIN) / EPOCH);
+    const address = Core.statement_bag_address(epoch);
+    const posted = await index.bag.read(address, "reading the epoch's statement");
+    if (!posted.some(p => Core.statement_posted_read(p)?.epoch === epoch)) {
+      const r = await build(epoch);
       await blocks.put([...r.puts], "the epoch's statement");
       await index.bag.add(address, r.posted, "posting the epoch's statement");
       Object.assign(state, { epoch, root: r.root, lines: r.lines });
       ctx.log("statement", { what: `epoch ${epoch}: root ${r.root.slice(0, 12)}…, ${r.lines} line(s)` });
-      return;
     }
+    // THE ALLOWANCE of this epoch.
+    const tokens = await ctx.require("tokens");
+    if (!tokens.on || !tokens.allowance || decided.has(epoch)) return;
+    const r = await build(epoch);
+    const { allowance, run, putAll } = tokens;
+    const v = await run(() => core.allowance_verdict(tokens.code, allowance.code, tokens.beacon, idlogCode, allowance.token, epoch, r.root, r.owed, h));
+    if (!v) return; // nothing escrowed to it (yet)
+    await putAll(v.puts);
+    decided.add(epoch);
+    if (v.puts.length) ctx.log("statement", { what: `epoch ${epoch}: the allowance's verdict and release put (${r.owed.length} owed)` });
   }
   (async function loop() {
     for (;;) {

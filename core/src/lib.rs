@@ -835,6 +835,7 @@ pub fn unhex(h: &str) -> Option<Vec<u8>> {
 pub mod editions;
 pub mod tokens;
 pub mod wallet;
+pub mod allowance;
 
 #[cfg(target_arch = "wasm32")]
 mod js {
@@ -2488,7 +2489,7 @@ mod js {
                 R::reputation_at(&roots, &vs, start)
             };
             let roots: Vec<R::Did> = R::ROOTS.iter().filter_map(|t| account::did_bytes(t)).collect();
-            let st = R::statement::compute(&R::statement::Inputs { epoch, rep: &rep, kept: &[], keeper_pot: 0, keeper_cap: 0, gate: R::GATE, allowance_pot: 0, allowance_cap: 0, never: &roots });
+            let st = R::statement::compute(&R::statement::Inputs { epoch, rep: &rep, kept: &[], keeper_pot: 0, keeper_cap: 0, gate: R::GATE, allowance_pot: craftworks_allowance_contract::POT, allowance_cap: craftworks_allowance_contract::CAP, never: &roots });
             let mut blocks = std::collections::BTreeMap::new();
             let (root, parity) = st.tree(&mut blocks).ok_or_else(|| err("the statement's tree does not build".into()))?;
             let puts = js_sys::Array::new();
@@ -2497,7 +2498,72 @@ mod js {
                 puts.push(&[JsValue::from(name), JsValue::from(frames(f))].into_iter().collect::<js_sys::Array>());
             }
             let posted = R::statement::Posted { epoch, root, parity }.encode();
-            Ok(js_obj(&[("root", JsValue::from(hex(&root))), ("posted", js_sys::Uint8Array::from(&posted[..]).into()), ("puts", puts.into()), ("lines", JsValue::from(st.lines.len() as f64))]))
+            // What the epoch's ALLOWANCE pays: each line owed, with its proof under the root (`allowance_verdict`).
+            let owed = js_sys::Array::new();
+            for (d, _) in st.lines.iter().filter(|(_, l)| l.allowance > 0) {
+                let proof = freenet_prolly::proof::prove(&blocks, &root, d).map_err(|_| err("a statement line that does not prove".into()))?.encode();
+                owed.push(&[JsValue::from(js_sys::Uint8Array::from(&d[..])), js_sys::Uint8Array::from(&proof[..]).into()].into_iter().collect::<js_sys::Array>());
+            }
+            Ok(js_obj(&[("root", JsValue::from(hex(&root))), ("posted", js_sys::Uint8Array::from(&posted[..]).into()), ("puts", puts.into()), ("lines", JsValue::from(st.lines.len() as f64)), ("owed", owed.into())]))
+        }
+        /// The ALLOWANCE's verdict of `epoch` (`allowance::verdict`; `owed`: `[[did, proof]]` from `statement_build`, under
+        /// `root` hex): `{ done: null }` (nothing escrowed to it) or `{ done: { puts: [{ id, frames }] } }` — the program's
+        /// state (if this page decided it) and the treasury's release.
+        #[allow(clippy::too_many_arguments)]
+        pub fn allowance_verdict(&mut self, token_code: &[u8], allowance_code: &[u8], beacon: &[u8], idlog_code: &[u8], token: &[u8], epoch: f64, root: &str, owed: js_sys::Array, now: f64) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let ach = *blake3::hash(allowance_code).as_bytes();
+            let root = bytes32("root", root).map_err(err)?;
+            let lines: Vec<([u8; 32], Vec<u8>)> = owed.iter().map(|x| {
+                let x = js_sys::Array::from(&x);
+                Ok((b32(&js_sys::Uint8Array::new(&x.get(0)).to_vec())?, js_sys::Uint8Array::new(&x.get(1)).to_vec()))
+            }).collect::<Result<_, JsValue>>()?;
+            let step = {
+                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                allowance::verdict(&ctx, &got, &ach, &b32(token)?, epoch as u64, &root, &lines, now as u64)
+            };
+            let mut built = None;
+            let v = token_step(step, |b| {
+                built = b;
+                Ok(json!({}))
+            })?;
+            let Some(b) = built else { return Ok(v) };
+            let list = js_sys::Array::new();
+            if let Some((params, state)) = b.program {
+                let (pid, contract, state) = wire::puts::contract(allowance_code, &params, &state);
+                let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
+                list.push(&self.put_obj(&account::Put { id: pid, id_bytes, contract, state })?);
+            }
+            if let Some(p) = b.release {
+                let (id, contract, state) = wire::puts::contract(token_code, &p.params, &p.state);
+                let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
+                list.push(&self.put_obj(&account::Put { id, id_bytes, contract, state })?);
+            }
+            js_sys::Reflect::set(&js_sys::Reflect::get(&v, &"done".into())?, &"puts".into(), &list)?;
+            Ok(v)
+        }
+        /// `did`'s ALLOWANCE PAYOUT of `epoch` (`allowance::payout`): `{ done: null }` or `{ done: { amount, puts } }`.
+        #[allow(clippy::too_many_arguments)]
+        pub fn allowance_payout(&mut self, token_code: &[u8], allowance_code: &[u8], beacon: &[u8], idlog_code: &[u8], token: &[u8], epoch: f64, did: &[u8], now: f64) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let ach = *blake3::hash(allowance_code).as_bytes();
+            let step = {
+                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                allowance::payout(&ctx, &got, &ach, &b32(token)?, epoch as u64, &b32(did)?, now as u64)
+            };
+            let mut puts = Vec::new();
+            let mut amount = None;
+            let v = token_step(step, |r| {
+                if let Some((p, a)) = r {
+                    puts.push(p);
+                    amount = Some(a);
+                }
+                Ok(json!({}))
+            })?;
+            let Some(a) = amount else { return Ok(v) };
+            let v = self.attach_puts(v, token_code, &puts)?;
+            js_sys::Reflect::set(&js_sys::Reflect::get(&v, &"done".into())?, &"amount".into(), &JsValue::from(a.to_string()))?;
+            Ok(v)
         }
         /// The STATEMENT BAG's address of epoch `epoch`, and a posted root's `{ epoch, root }` (null: not one).
         pub fn statement_bag_address(epoch: f64) -> js_sys::Uint8Array {

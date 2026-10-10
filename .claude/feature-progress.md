@@ -1647,11 +1647,26 @@ old key's addresses.
                   × 10¹² = 10³⁹ passes u128 (3.4×10³⁸) and `saturating_mul` pays wrong; at 9 the headroom is 10⁸; token-ops
                   make-token makes 9-decimal tokens (supply in whole tokens); the Usage preview 9 too. token.wasm
                   unchanged (4079c5a3…). WREN (0 decimals) is re-minted with 9 at A3 (nothing given out yet).
-              [ ] A2 PAGE: the statement's page also publishes the epoch's allowance verdict (if escrowed and
-                  undecided); the purse appends releases/payouts it is owed and moves them to private.
+              [x] A2 PAGE — BUILT 10-10: `core::allowance` (`verdict`: the treasury's escrows to the epoch's program
+                  found in its chain + the statement's owed lines → the program state + the treasury's release, all
+                  worked; `payout`: an account's into its DID chain); `statement_build` sets the pot and returns each
+                  owed line's proof; `statement.js` computes the statement once an epoch, posts it if missing, then
+                  builds the allowance verdict if funded and undecided; the purse collects each recent epoch's payout
+                  and MOVES IT TO PRIVATE (never the token creator's: the treasury stays public). `tokens-config`
+                  `{ pay, allowance }`; `allowance-wasm` published. `run` now ends on a `done` that is null (it took
+                  `done: null` for no answer). Core test: escrow → verdict (2 lines) → release (the rest back) → a
+                  payout, once; nobody else paid; a decided program not rebuilt; an unfunded epoch no verdict — every
+                  chain taken by the token with the program read.
+                  DECIMALS CAPPED AT 9 in the token (owner 10-10: "18 doesn't have enough buffer, so what is the
+                  point?") — 63c2b4a; token/pool/swap wasm rebuilt, every token id moved (fx test tokens remade).
               [ ] A3 B: WREN re-minted (9 decimals); Wren funds upcoming epochs (escrow each POT, `until` past the
                   epoch + margin), as a B service; reclaims what no verdict took.
-              [ ] A4 LIVE fx/fy.
+              [~] A4 LIVE fx (v536) — the REFUND path: `token-live serve` with ALLOWANCE=1 made a 9-decimal test token
+                  whose treasury (test account 1) escrowed epochs 0–2's pots (ACCEPTED); an open fx page (no service)
+                  logged "epoch 0: the allowance's verdict and release put (0 owed)" — both puts accepted by fx (the
+                  release checked by the token against the verdict). fx/fy have no reputation (the only root, Wren, is
+                  the main network's), so no line is owed there: the PAYOUT path is proven by the core test only, and
+                  goes live on the main network once Wren has vouched for someone.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
               rendezvous), within its limit, instead of what was watched; the standing record proves it.
           [ ] F  WITNESS FEES on every token: a set fee per debit, split among its signers, claimed in their chains.

@@ -1807,7 +1807,36 @@ async fn serve(w: &W) -> Result<()> {
     let owner: [u8; 32] = (0..32).map(|i| u8::from_str_radix(&owner[2 * i..2 * i + 2], 16)).collect::<Result<Vec<_>, _>>()?.try_into().map_err(|_| anyhow::anyhow!("a DID is 32 bytes"))?;
     let pd = T::Definition { genesis_owner: owner, decimals: 0, min_send: 1, ..w.def(1, b"P", 60) };
     let pay = w.put_def(&pd).await?;
-    let cfg = format!("{{\"pay\":\"{}\"}}\n", hex(&pay));
+    // ALLOWANCE=1: an allowance token (9 decimals) whose TREASURY is test account 1, its pot escrowed to the programs of
+    // this standing epoch and the next two (each reclaimable after its epoch): the page builds each verdict.
+    let allowance = if std::env::var("ALLOWANCE").is_ok() {
+        use craftworks_allowance_contract as A;
+        use craftworks_wallet::{Held, Wallet};
+        let acode = std::fs::read(std::path::Path::new(&std::env::args().nth(1).unwrap()).with_file_name("allowance.wasm"))?;
+        let ah = *blake3::hash(&acode).as_bytes();
+        let ad = T::Definition { decimals: T::DECIMALS, min_send: 1, genesis_amount: 1_000 * T::UNIT, ..w.def(1, b"WRENT", 61) };
+        let at = w.put_def(&ad).await?;
+        let l1 = log(1);
+        let w1 = Wallet { device: &Dev(1), keys: &l1 };
+        let why = |e: &str| anyhow::anyhow!("{e}");
+        let mut h = Held { params: w.chain(at, 1), definition: ad.clone(), state: T::State::default(), blocks: Default::default() };
+        let now = w.now().await?;
+        h.state.entries.extend(w1.genesis(&h, now).map_err(why)?);
+        let epoch = now / 1024;
+        for e in epoch..epoch + 3 {
+            let pid = T::id(&ah, &A::Params { token: T::Tok { definition: at, item: [0; 32] }, epoch: e }.encode());
+            let until = (e + 1) * 1024 + 8;
+            h.state.entries.extend(w1.debit(&h, T::Body::Escrow { program: pid, terms: A::TERMS.to_vec(), amount: A::POT, until }, now).map_err(why)?);
+        }
+        println!("— allowance token {} (treasury: account 1), epochs {epoch}..{} funded: {}", hex(&at[..6]), epoch + 2, w.put_chain(&w.x, at, 1, &h.state).await?.0);
+        Some(at)
+    } else {
+        None
+    };
+    let cfg = match allowance {
+        Some(a) => format!("{{\"pay\":\"{}\",\"allowance\":\"{}\"}}\n", hex(&pay), hex(&a)),
+        None => format!("{{\"pay\":\"{}\"}}\n", hex(&pay)),
+    };
     let path = std::env::var("TOKENS_CONFIG").context("TOKENS_CONFIG: where to write the page's set-up")?;
     std::fs::write(&path, &cfg)?;
     println!("— serve: {cfg}  written to {path}; running (kill to stop)");

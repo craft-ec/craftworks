@@ -653,9 +653,14 @@ ISSUANCE — and each piece of the loop has ONE job:
   4. LINEAGE SEAT CAP inside the lot itself: the draw skips past a lineage's 4th ticket (deterministic).
   5. WITNESS FEE: `Definition.witness_fee` (≥ 1 smallest unit) on every debit; each signer's share fee ÷ 16, appended
      by anyone for it; unclaimed shares burned.
-  6. WREN ALLOWANCE: Wren ESCROWS each day's pot (many days at once) to an allowance program whose verdict is the day's
-     statement; anyone appends the payouts; unclaimed amounts RECLAIMED to the treasury after the window (`until`) —
-     no Wren service needed after funding, and an offline user is paid later within the window.
+  6. WREN ALLOWANCE — BUILT 10-10 (`contracts-src/allowance`, `core::allowance`): Wren ESCROWS each epoch's pot (many
+     epochs at once; POT 59.26 WREN an epoch = 1,000 a day at B's 5 s step, CAP 2%) to that epoch's allowance program;
+     its verdict pays each account the allowance its statement line says (proven under the root it names) and refunds
+     the rest; any open page builds it and appends the treasury's release; the recipient's wallet appends its payout
+     to its DID chain and MOVES IT TO PRIVATE (§7f — the statement already makes what a DID is owed public; a claim
+     naming a private key would link the same way, and need every claimant's key log, more than a contract may read).
+     Unpaid, an escrow is RECLAIMED after its `until` — no Wren service needed after funding, an offline user paid
+     later. Which root is the epoch's: witnesses' (they recompute it).
   7. ABSENCE DECAY: active = any signed activity (a chain entry, a vouch, a standing record); decay starts only after
      ~30 epochs absent, gradually.
   8. THE GATE lowers with issuance: G halves at every issuance halving, by height.

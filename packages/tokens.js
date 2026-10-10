@@ -7,13 +7,14 @@
 //   tokens.on                    // the page has a beacon: false, no token action anywhere
 //   tokens.beacon  tokens.pay    // bytes: the beacon (the one `beacon` extends: one clock); the token editions are paid
 //                                // in (null: none)
+//   tokens.allowance             // { token, code } of the WREN ALLOWANCE (TOKEN §7d), or null: not set up
 //   tokens.code  tokens.idlogCode
 //   await tokens.read(idHex)  await tokens.putAll(puts)  await tokens.run(sigs => core.…(…, sigs))  await tokens.now()
 //   await tokens.device()        // { member, creds }: this node and the account's credentials (what a step signs with)
 //   tokens.purse                 // THE PRIVATE WALLET (TOKEN §7f), below: seeds, what it found, pay, receive, payees
 //
-// ON when the page has a beacon (`beacon`, from its `beacon-config`); the `tokens-config` package (`{ pay }`, a hex
-// id) names the token editions are paid in.
+// ON when the page has a beacon (`beacon`, from its `beacon-config`); the `tokens-config` package (`{ pay, allowance }`,
+// hex ids) names the token editions are paid in and the token the allowance pays.
 export async function start(ctx) {
   let cfg = {};
   try {
@@ -26,6 +27,7 @@ export async function start(ctx) {
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   const beacon = bytes(clock.id);
+  const allowance = cfg.allowance ? { token: bytes(cfg.allowance), code: await ctx.require("allowance-wasm") } : null;
 
   // READ a contract so the core holds it (`node.read`; a contract the node does not have: "read, not there").
   const read = idHex => node.read(bytes(idHex), "reading a token contract", { absent: true });
@@ -42,7 +44,7 @@ export async function start(ctx) {
     const sigs = [];
     for (let round = 0; round < 16; round++) {
       const r = step(sigs);
-      if (r.done) return r.done;
+      if ("done" in r) return r.done;
       if (r.want) {
         await Promise.all(r.want.map(read));
         continue;
@@ -156,6 +158,29 @@ export async function start(ctx) {
     for (const f of found().filter(f => !f.done && !f.edition)) {
       if (await take(bytes(f.a), f.to.slice(0, 12))) await priv.put(`found/${f.to}`, JSON.stringify({ ...f, done: true }));
     }
+    // THE ALLOWANCE (TOKEN §7d): each recent epoch's payout to this account's DID chain, then MOVED TO PRIVATE (§7f: a
+    // DID holds only stake) — never the token's creator's (the treasury is public on purpose).
+    if (allowance) {
+      const me = await auth.check();
+      const from = Number(priv.rows().find(r => r.key === "allowed")?.value ?? Math.max(0, current - 8));
+      for (let e = from; e <= current; e++) {
+        try {
+          const r = await run(() => core.allowance_payout(code, allowance.code, beacon, idlogCode, allowance.token, e, me.didBytes, at));
+          if (r?.puts?.length) {
+            await putAll(r.puts);
+            got++;
+          }
+        } catch (err) {
+          ctx.log("wallet", { what: `the allowance of epoch ${e}: ${err.message ?? err}` });
+        }
+      }
+      if (current - 1 > from) await priv.put("allowed", String(current - 1));
+      const v = await run(() => core.wallet_view(code, beacon, idlogCode, allowance.token, me.didBytes)).catch(() => null);
+      if (v && v.begun && v.balance !== "0" && v.creator !== hexOf(me.didBytes)) {
+        await shield(me, hexOf(allowance.token), v.balance).catch(err => ctx.log("wallet", { what: `moving the allowance to private: ${err.message ?? err}` }));
+        await onToken?.(hexOf(allowance.token));
+      }
+    }
     for (const f of found().filter(f => f.edition)) {
       const sales = await run(() => core.edition_sales(code, beacon, idlogCode, bytes(f.edition))).catch(() => []);
       const taken = new Set(f.taken ?? []);
@@ -216,5 +241,5 @@ export async function start(ctx) {
   }
   const purse = { seeds, found, ensureCard, receiveAll, privately, pay, shield, payee, owners: () => found().map(f => bytes(f.to)), onChange: fn => priv.onChange(fn) };
 
-  return { on: true, purse, beacon, pay: cfg.pay ? bytes(cfg.pay) : null, code, idlogCode, read, putAll, run, now, device, bytes, hexOf };
+  return { on: true, purse, allowance, beacon, pay: cfg.pay ? bytes(cfg.pay) : null, code, idlogCode, read, putAll, run, now, device, bytes, hexOf };
 }

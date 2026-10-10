@@ -395,6 +395,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-allowance-contract"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "craftworks-reputation",
+ "craftworks-token-contract",
+ "freenet-prolly",
+]
+
+[[package]]
 name = "craftworks-bag-contract"
 version = "0.1.0"
 dependencies = [
@@ -427,6 +437,7 @@ dependencies = [
  "contract-keys",
  "craftec-register-contract",
  "craftworks-account",
+ "craftworks-allowance-contract",
  "craftworks-bag-contract",
  "craftworks-beacon-contract",
  "craftworks-data",
