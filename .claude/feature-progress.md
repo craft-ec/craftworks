@@ -1613,11 +1613,20 @@ old key's addresses.
                   → B "6 private · 25 on your id"; A found it pending, received it on the next height → "4 private ·
                   965 on your id". 969 + 31 = 1,000.
           [ ] Q  A DID CHAIN HOLDS ONLY STAKE (owner 10-10; TOKEN §7f) — no contract change (every payee is an owner id):
-              [ ] Q1 EDITIONS PRIVATELY: payee + royalty = the author's one-time owner (from its own card); authorship
-                  by the item's own `meta.editions` (the genesis_owner == author check dropped: redundant); buy from
-                  private chains, the copy minted to the buyer's own fresh one-time owner, recorded in `wallet`.
-              [ ] Q2 WALLET: the DID chain shown as stake; "move to private" (a payment to the own card) for anything
-                  spendable on it; no send from a DID.
+              [x] Q1 EDITIONS PRIVATELY — LIVE fx/fy 10-10 (v535): `new_edition(payee)` (genesis, sale payee and
+                  royalty = the author's fresh one-time owner, `purse.payee`, kept with its edition); `of_item` checks
+                  the item only (authorship = the item's own `meta.editions`); `buy` from one of the buyer's stealth
+                  chains, the copy minted to that one-time owner (`Bought.to`); `collect_copy` worked, no key log
+                  needed; `sales(edition)` = each paid mint as an announcement — the purse takes them into the payee
+                  chain. The private wallet moved to ONE place: `tokens.purse` (seeds, found, card keys, announce,
+                  scan + receive + sales, pay, shield, payee) — Wallet and Editions both use it. Measured: A made
+                  "Bronze" (5, 10 P, 10%); B bought #1 → "4 of 5 left · you hold #1"; A's Wallet took the sale → 979
+                  private (3 chains); B 21; 1,000 in all. Found live: a random drawn per signing round (never matched
+                  what was signed: "too many rounds") — one random per run; sale bytes passed as hex; a "null" child.
+                  Older test editions (made before `keepers` joined the definition) no longer decode — dev data.
+              [x] Q2 WALLET — LIVE fx/fy 10-10: send pays from private chains only (every seed's); the DID chain's
+                  spendable shown "on your id" with "Move N to private" (`purse.shield`: a payment to the own card).
+                  Measured: A moved 965 → "969 private (2 chains)"; B moved 25 → "31 private (2 chains)".
               [ ] Q3 token-ops make-token: genesis to the creator's one-time owner (WREN's treasury stays public).
               [ ] Q4 witness fees' spendable part to a one-time owner (with F).
           [ ] A  WREN DAILY ALLOWANCE: 1,000/day by reputation share, cap 20, claim-or-return; service on B.

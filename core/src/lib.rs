@@ -2337,7 +2337,11 @@ mod js {
     fn want_log(idlog_code: &[u8], did: &[u8; 32]) -> Result<JsValue, JsValue> {
         js_sys::JSON::parse(&json!({ "want": [hex(&account::idlog_put(idlog_code, did, None).id_bytes)] }).to_string())
     }
-    fn edition_json(e: &editions::Edition, me: Option<&[u8; 32]>) -> serde_json::Value {
+    /// Owners (32 bytes each) from a JS array: this wallet's one-time owners.
+    fn owners_of(a: &js_sys::Array) -> Result<Vec<[u8; 32]>, JsValue> {
+        a.iter().map(|o| b32(&js_sys::Uint8Array::new(&o).to_vec())).collect()
+    }
+    fn edition_json(e: &editions::Edition, mine: &[[u8; 32]]) -> serde_json::Value {
         let d = &e.definition;
         json!({
             "id": hex(&e.id),
@@ -2350,7 +2354,7 @@ mod js {
             "sale": d.sale.map(|(t, price, payee)| json!({ "token": hex(&t.definition), "price": price.to_string(), "payee": hex(&payee) })),
             "minted": e.minted.to_string(),
             "open": e.open,
-            "mine": me.map(|m| editions::copies_of(e, m).iter().map(|n| n.to_string()).collect::<Vec<_>>()),
+            "mine": editions::copies_of(e, mine).iter().map(|n| n.to_string()).collect::<Vec<_>>(),
         })
     }
 
@@ -2514,39 +2518,37 @@ mod js {
             Ok(self.0.got(&b32(beacon)?).and_then(craftworks_beacon_contract::wire::decode).map_or(JsValue::NULL, |s| JsValue::from(s.height() as f64)))
         }
         /// An EDITION (`editions::edition`): `{ done: { id, name, cap, numbered, item, creator, royalty, sale,
-        /// minted, open, mine } }` (`mine`: the copies minted to `me`, when given 32 bytes).
-        pub fn edition_read(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], me: &[u8]) -> Result<JsValue, JsValue> {
+        /// minted, open, mine } }` (`mine`: the copies minted to any of `owners` — this wallet's one-time owners).
+        pub fn edition_read(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], owners: js_sys::Array) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let me = (me.len() == 32).then(|| b32(me)).transpose()?;
+            let owners = owners_of(&owners)?;
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-            token_step(editions::edition(&ctx, &got, &b32(id)?), |e| Ok(edition_json(&e, me.as_ref())))
+            token_step(editions::edition(&ctx, &got, &b32(id)?), |e| Ok(edition_json(&e, &owners)))
         }
-        /// BUY (`editions::buy`): `{ done: { puts: [{ id, frames }], record, first, amount } }`.
+        /// BUY PRIVATELY (`editions::buy`): from this wallet's stealth chains of the sale's token (`seed`; `mine`: the
+        /// announcements it found, bytes each) — `{ done: { puts: [{ id, frames }], record, first, amount } }`.
         #[allow(clippy::too_many_arguments)]
-        pub fn edition_buy(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], buyer: &[u8], amount: f64, now: f64, public: &[u8], creds: js_sys::Array, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
+        pub fn edition_buy(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], seed: &[u8], mine: js_sys::Array, amount: f64, now: f64) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let buyer = b32(buyer)?;
-            let Some(dev) = account_device(&self.0, idlog_code, &buyer, public, &creds, &sigs)? else { return want_log(idlog_code, &buyer) };
+            let mine: Vec<([u8; 32], [u8; 32])> = mine.iter().filter_map(|m| craftworks_wallet::stealth::Announce::decode(&js_sys::Uint8Array::new(&m).to_vec())).map(|a| (a.r, a.to)).collect();
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-                editions::buy(&ctx, &got, &b32(id)?, &buyer, amount as u128, now as u64, &dev)
+                editions::buy(&ctx, &got, &b32(id)?, &b32(seed)?, &mine, amount as u128, now as u64)
             };
             let mut puts = Vec::new();
             let v = token_step(step, |b| {
                 puts = b.puts.clone();
-                Ok(json!({ "record": b.record, "first": b.first.to_string(), "amount": b.amount.to_string() }))
+                Ok(json!({ "record": b.record, "first": b.first.to_string(), "amount": b.amount.to_string(), "to": hex(&b.to) }))
             })?;
             self.attach_puts(v, token_code, &puts)
         }
-        /// COLLECT copy `n` (`editions::collect_copy`): `{ done: { puts: [{ id, frames }] } }` (no puts: nothing to collect).
-        #[allow(clippy::too_many_arguments)]
-        pub fn edition_collect(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], owner: &[u8], n: f64, now: f64, public: &[u8], creds: js_sys::Array, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
+        /// COLLECT copy `n` (`editions::collect_copy`) into `owner`'s chain (a one-time owner): `{ done: { puts } }` (no
+        /// puts: nothing to collect). Worked: nothing signs.
+        pub fn edition_collect(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], owner: &[u8], n: f64, now: f64) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let owner = b32(owner)?;
-            let Some(dev) = account_device(&self.0, idlog_code, &owner, public, &creds, &sigs)? else { return want_log(idlog_code, &owner) };
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-                editions::collect_copy(&ctx, &got, &b32(id)?, &owner, n as u128, now as u64, &dev)
+                editions::collect_copy(&ctx, &got, &b32(id)?, &b32(owner)?, n as u128, now as u64)
             };
             let mut puts = Vec::new();
             let v = token_step(step, |p| {
@@ -2555,15 +2557,26 @@ mod js {
             })?;
             self.attach_puts(v, token_code, &puts)
         }
-        /// A NEW EDITION of the item `item_ref` by its author `author` (DID), SOLD ON DEMAND (TOKEN §1c): `price` of the
-        /// token `pay_token` a copy, to the author; `cap` copies (0: none — numbered only); numbered or plain; a royalty
-        /// of `royalty_bps` to the author on resales (0: none); `nonce` 16 fresh bytes. `{ id, puts: [{ id, frames }] }`
-        /// — its definition, authority chain and freeze list.
-        #[allow(clippy::too_many_arguments)]
-        pub fn edition_create(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], item_ref: &str, author: &[u8], name: &str, cap: f64, numbered: bool, pay_token: &[u8], price: f64, royalty_bps: u16, nonce: &[u8]) -> Result<JsValue, JsValue> {
+        /// An edition's SALES as announcements to its payee (`editions::sales`): `{ done: [bytes] }` — what its author
+        /// collects (`wallet_receive_private`).
+        pub fn edition_sales(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8]) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let author = b32(author)?;
-            let d = editions::new_edition(&ctx, item_ref, &author, name, cap as u128, numbered, &b32(pay_token)?, price as u128, royalty_bps, nonce.try_into().map_err(|_| err("a nonce is 16 bytes".into()))?).map_err(|e| err(e.into()))?;
+            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+            Ok(match editions::edition(&ctx, &got, &b32(id)?).map_err(err)? {
+                tokens::Step::Done(e) => js_obj(&[("done", editions::sales(&e).iter().map(|a| JsValue::from(js_sys::Uint8Array::from(&a.encode()[..]))).collect::<js_sys::Array>().into())]),
+                tokens::Step::Want(w) => js_obj(&[("want", w.iter().map(|x| JsValue::from(hex(x))).collect::<js_sys::Array>().into())]),
+                tokens::Step::Sign(_) => return Err(err("an edition's read signs nothing".into())),
+            })
+        }
+        /// A NEW EDITION of the item `item_ref`, SOLD ON DEMAND (TOKEN §1c): `price` of the token `pay_token` a copy, to
+        /// `payee` — the author's one-time owner (§7f), also its royalty's; `cap` copies (0: none — numbered only);
+        /// numbered or plain; a royalty of `royalty_bps` on resales (0: none); `nonce` 16 fresh bytes. `{ id, puts: [{ id,
+        /// frames }] }` — its definition, authority chain and freeze list.
+        #[allow(clippy::too_many_arguments)]
+        pub fn edition_create(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], item_ref: &str, payee: &[u8], name: &str, cap: f64, numbered: bool, pay_token: &[u8], price: f64, royalty_bps: u16, nonce: &[u8]) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let payee = b32(payee)?;
+            let d = editions::new_edition(&ctx, item_ref, &payee, name, cap as u128, numbered, &b32(pay_token)?, price as u128, royalty_bps, nonce.try_into().map_err(|_| err("a nonce is 16 bytes".into()))?).map_err(|e| err(e.into()))?;
             self.token_contract_puts(token_code, &ctx, &d)
         }
         /// A token as `owner` holds it (`wallet::view`): `{ done: { id, name, decimals, creator, supply, balance, begun } }`
@@ -2619,6 +2632,15 @@ mod js {
         pub fn stealth_public(seed: &[u8]) -> Result<JsValue, JsValue> {
             let k = craftworks_wallet::stealth::Keys::from_seed(&b32(seed)?).public();
             Ok(js_obj(&[("scan", JsValue::from(hex(&k.scan))), ("spend", JsValue::from(hex(&k.spend)))]))
+        }
+        /// A fresh ONE-TIME OWNER of this wallet's own (`seed`; `rand`: 32 fresh bytes) for the token `token` — an
+        /// edition's payee (TOKEN §7f): `{ to, bytes }` (`bytes`: as an announcement — its R and owner — the form a found
+        /// payment is kept in).
+        pub fn stealth_own(seed: &[u8], token: &[u8], rand: &[u8]) -> Result<JsValue, JsValue> {
+            let keys = craftworks_wallet::stealth::Keys::from_seed(&b32(seed)?);
+            let p = craftworks_wallet::stealth::pay(&keys.public(), &b32(rand)?).ok_or_else(|| err("not keys".into()))?;
+            let a = craftworks_wallet::stealth::Announce { token: b32(token)?, from: [0; 32], nonce: [0; 16], to: p.to, r: p.r };
+            Ok(js_obj(&[("to", JsValue::from(hex(&p.to))), ("bytes", js_sys::Uint8Array::from(&a.encode()[..]).into())]))
         }
         /// The PAYMENTS BAG `k` of standing epoch `epoch` (its address).
         pub fn stealth_payments_address(epoch: f64, k: u32) -> js_sys::Uint8Array {
@@ -2690,16 +2712,15 @@ mod js {
             hex(&editions::item_id(item_ref))
         }
         /// An edition AS THE ITEM SHOWS IT: `{ done: { …edition, shown: true } }`, or `shown: false` with `why` (of
-        /// another item, or not by the item's author: not shown).
+        /// another item: not shown); `mine`: copies minted to any of `owners` (this wallet's one-time owners).
         #[allow(clippy::too_many_arguments)]
-        pub fn edition_of_item(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], item_ref: &str, author: &[u8], me: &[u8]) -> Result<JsValue, JsValue> {
+        pub fn edition_of_item(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], item_ref: &str, owners: js_sys::Array) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let me = (me.len() == 32).then(|| b32(me)).transpose()?;
-            let author = b32(author)?;
+            let owners = owners_of(&owners)?;
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
             token_step(editions::edition(&ctx, &got, &b32(id)?), |e| {
-                let mut v = edition_json(&e, me.as_ref());
-                match editions::of_item(&e, item_ref, &author) {
+                let mut v = edition_json(&e, &owners);
+                match editions::of_item(&e, item_ref) {
                     Ok(()) => v["shown"] = json!(true),
                     Err(why) => {
                         v["shown"] = json!(false);

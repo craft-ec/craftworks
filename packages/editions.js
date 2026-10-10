@@ -12,9 +12,8 @@ export async function start(ctx) {
   const tokens = await ctx.require("tokens");
   if (!tokens.on || !tokens.pay) return { section: async () => null };
   const [node, auth, items] = await Promise.all(["node", "auth", "items"].map(n => ctx.require(n)));
-  const { core, glue } = node;
-  const { beacon, pay, code: tokenCode, idlogCode, run, putAll, now, bytes } = tokens;
-  const NONE = new Uint8Array(0);
+  const { core } = node;
+  const { beacon, pay, code: tokenCode, idlogCode, run, putAll, now, bytes, hexOf, purse } = tokens;
 
   const style = document.createElement("style");
   style.textContent = `@layer components {
@@ -35,30 +34,44 @@ export async function start(ctx) {
     return e;
   };
 
-  // An edition AS THIS ITEM SHOWS IT (null: not shown — another item's, or not by its author).
+  // An edition AS THIS ITEM SHOWS IT (null: not shown — another item's). Its author is the item's (only the author
+  // writes `meta.editions`); `mine`: the copies minted to this wallet's one-time owners.
   async function edition(it, idHex, me) {
-    const e = await run(() => core.edition_of_item(tokenCode, beacon, idlogCode, bytes(idHex), it.ref, glue.did_bytes(it.by), me?.didBytes ?? NONE));
+    const owners = me ? purse.owners() : [];
+    const e = await run(() => core.edition_of_item(tokenCode, beacon, idlogCode, bytes(idHex), it.ref, owners));
     if (!e.shown) ctx.log("editions", { what: `${idHex.slice(0, 12)}… not shown on ${it.ref}: ${e.why}` });
     return e.shown ? e : null;
   }
 
-  // BUY one copy, then COLLECT it into this account's chain.
-  async function buy(e, me) {
-    const { member, creds } = await tokens.device();
+  // BUY one copy PRIVATELY (TOKEN §7f): paid from this wallet's private chains of the sale's token (each seed's in
+  // turn), the copy minted to the paying one-time owner; then COLLECT it into that owner's chain of the edition.
+  async function buy(e) {
     const at = await now();
-    const b = await run(sigs => core.edition_buy(tokenCode, beacon, idlogCode, bytes(e.id), me.didBytes, 1, at, member, creds, sigs));
+    let b = null;
+    let why = "no private balance of the sale's token: move some to private in your Wallet";
+    for (const g of await purse.privately(e.sale.token)) {
+      try {
+        b = await run(() => core.edition_buy(tokenCode, beacon, idlogCode, bytes(e.id), bytes(g.seed), g.mine.map(f => bytes(f.a)), 1, at));
+        break;
+      } catch (err) {
+        why = err.message ?? String(err);
+      }
+    }
+    if (!b) throw new Error(why);
     await putAll(b.puts ?? []);
     const at2 = await now();
-    const c = await run(sigs => core.edition_collect(tokenCode, beacon, idlogCode, bytes(e.id), me.didBytes, Number(b.first), at2, member, creds, sigs));
+    const c = await run(() => core.edition_collect(tokenCode, beacon, idlogCode, bytes(e.id), bytes(b.to), Number(b.first), at2));
     await putAll(c.puts ?? []);
     return b;
   }
 
-  // A NEW EDITION of this item by its author, listed in the item's own `meta.editions`.
+  // A NEW EDITION of this item by its author, listed in the item's own `meta.editions`: its sales and royalty paid to a
+  // fresh one-time owner of the author's (TOKEN §7f) — kept in the purse, which collects its sales.
   async function create(it, f) {
     const nonce = crypto.getRandomValues(new Uint8Array(16));
-    const me = await auth.check();
-    const made = core.edition_create(tokenCode, beacon, idlogCode, it.ref, me.didBytes, f.name, f.cap, f.numbered, pay, f.price, f.royaltyBps, nonce);
+    const payee = await purse.payee(hexOf(pay));
+    const made = core.edition_create(tokenCode, beacon, idlogCode, it.ref, bytes(payee.to), f.name, f.cap, f.numbered, pay, f.price, f.royaltyBps, nonce);
+    await payee.keep(made.id);
     await putAll(made.puts);
     const list = [...(it.meta?.editions ?? []), made.id];
     await items.editItem(it.ref, it.body, { files: it.files ?? null, meta: { ...(it.meta ?? {}), editions: list }, title: it.title });
@@ -120,7 +133,7 @@ export async function start(ctx) {
               b.disabled = true;
               said.textContent = "";
               try {
-                const got = await buy(e, me);
+                const got = await buy(e);
                 b.textContent = `Bought #${got.first}`;
                 changed?.();
               } catch (err) {
