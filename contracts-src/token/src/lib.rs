@@ -1129,7 +1129,7 @@ pub fn cited_chains_from(p: &ChainParams, s: &State, from: usize) -> Vec<(Tok, [
 }
 
 /// What is unbonding in a chain: (unstake nonce, amount, release height) — from its unstakes, and its cut's.
-fn unbonding_of(s: &State) -> Vec<([u8; 16], u128, u64)> {
+pub fn unbonding_of(s: &State) -> Vec<([u8; 16], u128, u64)> {
     s.entries
         .iter()
         .flat_map(|e| match &e.body {

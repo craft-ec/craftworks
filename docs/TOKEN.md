@@ -641,9 +641,14 @@ wallet only hands the chain over when told.
   entry, its carried balance computed (a transfer fee on top), its name derived from its place (never one nonce
   twice), stamped never below its predecessor, signed by this device; the device's writer entry first when another
   device (or none) wrote last. Every entry is checked against the token's own shape rules before it is returned.
-- W2 COLLECTING (receives, payouts and releases, holders' shares, fee claims, vesting steps, mints, reclaims — each
-  only once final); W3 CUTS (its own chains pruned, the proofs credits need after); W4 ACCEPTANCE (a payment is
-  value: its witnesses' signatures) and a live mode end to end.
+- **W2 COLLECTING — BUILT 10-10.** `Wallet::collect(held, sources, now)`: from the chains, programs and supply
+  records the caller read, every credit owed and takeable now — receives and vesting steps once the margin is past
+  what they cite (a step from its height), fee claims for the collector, releases by a program's verdict (naming it),
+  payouts to this owner, reclaims of escrows no program listed past their `until`, mints to this owner (a numbered
+  copy: the one its number is), stake releases after the delay — each once, with its work, checked by the token's
+  rules. A name that a cut of this chain may hold waits for W3's proofs. Holders' shares: with the shop.
+- W3 CUTS (its own chains pruned, the proofs credits need after); W4 ACCEPTANCE (a payment is value: its witnesses'
+  signatures) and a live mode end to end.
 
 ## 8. Open in the architecture
 

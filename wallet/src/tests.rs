@@ -118,3 +118,132 @@ fn another_device_of_the_account_takes_the_chain_with_its_writer_entry() {
     let w3 = Wallet { device: &stranger, keys: &lg };
     assert_eq!(w3.debit(&h, Body::Burn { amount: 10 }, 5).err(), Some("a writer credential for another account"));
 }
+
+/// Apply `es` to `h`'s chain.
+fn with(h: &Held, es: Vec<Entry>) -> Held {
+    let mut x = h.clone();
+    x.state.entries.extend(es);
+    x
+}
+
+#[test]
+fn a_wallet_collects_receives_vesting_steps_and_fees_only_once_final() {
+    // F: 1% fee to 9. 1 sends 2 300 and vests it 50 at 4 and 50 at 20 (stamp 1). Margin 2.
+    let fd = Definition { transfer_fee: Some((100, 0, did(9))), ..def() };
+    let d1 = Dev::new(1, 11);
+    let l1 = log(1);
+    let w1 = Wallet { device: &d1, keys: &l1 };
+    let mut a = genesis(&d1, &fd);
+    a = with(&a, w1.debit(&a, Body::Send { to: did(2), amount: 300 }, 1).unwrap());
+    a = with(&a, w1.debit(&a, Body::Vest { to: did(2), schedule: vec![(4, 50), (20, 50)] }, 1).unwrap());
+    let chains = [(did(1), a.state.clone())];
+    let src = Sources { chains: &chains, programs: &[], shards: &[] };
+    let (d2, l2) = (Dev::new(2, 22), log(2));
+    let w2 = Wallet { device: &d2, keys: &l2 };
+    let b = held(2, &fd);
+    assert!(w2.collect(&b, &src, 2).unwrap().is_empty(), "not final yet (1 + 2 > 2)");
+    let got = w2.collect(&b, &src, 5).unwrap();
+    assert_eq!(got.iter().map(|e| e.balance).collect::<Vec<_>>(), vec![300, 350], "the receive, then step 0 (at 4); step 1 not yet");
+    let b = with(&b, got);
+    let read = |_: &t::Tok, o: &[u8; 32]| (*o == did(1)).then(|| a.state.clone());
+    assert_eq!(t::check(&b.params, &fd, &b.state, &read, &|_| None, Some(&l2), &t::Extra::NONE), Ok(()), "the contract takes them");
+    assert!(w2.collect(&b, &src, 5).unwrap().is_empty(), "never twice");
+    let later = w2.collect(&b, &src, 25).unwrap();
+    assert_eq!(later.len(), 1);
+    assert!(matches!(later[0].body, Body::Vested { step: 1, .. }));
+    // The COLLECTOR (9) claims the fees: 3 on the send, 1 on the vest of 100.
+    let (d9, l9) = (Dev::new(9, 29), log(9));
+    let w9 = Wallet { device: &d9, keys: &l9 };
+    let c = held(9, &fd);
+    let fees = w9.collect(&c, &src, 5).unwrap();
+    assert_eq!(fees.iter().map(|e| match e.body { Body::FeeClaim { amount, .. } => amount, _ => 0 }).collect::<Vec<_>>(), vec![3, 1]);
+    let c = with(&c, fees);
+    assert_eq!(t::check(&c.params, &fd, &c.state, &read, &|_| None, Some(&l9), &t::Extra::NONE), Ok(()));
+    // Someone else (8) is owed nothing.
+    let (d8, l8) = (Dev::new(8, 28), log(8));
+    assert!(Wallet { device: &d8, keys: &l8 }.collect(&held(8, &fd), &src, 25).unwrap().is_empty());
+}
+
+#[test]
+fn a_wallet_collects_releases_payouts_and_reclaims_as_programs_decide() {
+    const PROG: [u8; 32] = [77; 32];
+    const GONE: [u8; 32] = [78; 32];
+    let d1 = Dev::new(1, 11);
+    let l1 = log(1);
+    let w1 = Wallet { device: &d1, keys: &l1 };
+    let mut a = genesis(&d1, &def());
+    a = with(&a, w1.debit(&a, Body::Escrow { program: PROG, terms: b"t".to_vec(), amount: 300, until: 10 }, 1).unwrap());
+    let e1 = a.state.entries.last().unwrap().nonce;
+    a = with(&a, w1.debit(&a, Body::Escrow { program: GONE, terms: vec![], amount: 200, until: 10 }, 1).unwrap());
+    // PROG's verdict: 50 back to 1, 250 to 2. GONE never existed (a wrong id).
+    let sec = t::escrow::Section { escrows: vec![((a.params.tok(), did(1), e1), 300, t::escrow::terms_hash(b"t"))], refunds: vec![((a.params.tok(), did(1), e1), 50)], pays: vec![([1; 16], a.params.tok(), did(2), 250)] };
+    let programs = [(PROG, sec.encode())];
+    let src = Sources { chains: &[], programs: &programs, shards: &[] };
+    let before = w1.collect(&a, &src, 5).unwrap();
+    assert_eq!(before.len(), 1, "the release; the reclaim not before its time");
+    assert!(matches!(before[0].body, Body::Unescrow { refund: 50, verdict, .. } if verdict == sec.hash()));
+    let at = w1.collect(&a, &src, 10).unwrap();
+    assert_eq!(at.len(), 2, "the release, and the escrow to no program reclaimed");
+    assert!(matches!(at[1].body, Body::Reclaim { .. }));
+    // A program that LISTS the escrow, no verdict yet: it took it — never reclaimed, whatever the time.
+    let listing = t::escrow::Section { escrows: vec![((a.params.tok(), did(1), e1), 300, t::escrow::terms_hash(b"t"))], ..Default::default() };
+    let listed = [(PROG, listing.encode())];
+    let pending = w1.collect(&a, &Sources { chains: &[], programs: &listed, shards: &[] }, 50).unwrap();
+    assert_eq!(pending.len(), 1, "only GONE's escrow comes back");
+    assert!(matches!(pending[0].body, Body::Reclaim { escrow } if escrow != e1));
+    let a2 = with(&a, at);
+    assert_eq!(a2.state.balance(), 1000 - 300 - 200 + 50 + 200);
+    let prog = |id: &[u8; 32]| (*id == PROG).then(|| sec.encode());
+    assert_eq!(t::check(&a2.params, &def(), &a2.state, &|_, _| None, &|_| None, Some(&l1), &t::Extra { ops: None, program: Some(&prog) }), Ok(()));
+    // 2 is paid its 250 under the verdict, once.
+    let (d2, l2) = (Dev::new(2, 22), log(2));
+    let w2 = Wallet { device: &d2, keys: &l2 };
+    let b = held(2, &def());
+    let paid = w2.collect(&b, &src, 5).unwrap();
+    assert!(matches!(paid[..], [Entry { body: Body::Payout { amount: 250, .. }, .. }]));
+    let b = with(&b, paid);
+    assert_eq!(t::check(&b.params, &def(), &b.state, &|_, _| None, &|_| None, Some(&l2), &t::Extra { ops: None, program: Some(&prog) }), Ok(()));
+    assert!(w2.collect(&b, &src, 5).unwrap().is_empty());
+    // STAKE: unstaked, released once its delay is over.
+    let mut s = genesis(&d1, &def());
+    s = with(&s, w1.debit(&s, Body::Stake { amount: 100 }, 1).unwrap());
+    s = with(&s, w1.debit(&s, Body::Unstake { amount: 100 }, 1).unwrap());
+    let none = Sources { chains: &[], programs: &[], shards: &[] };
+    assert!(w1.collect(&s, &none, t::UNBOND).unwrap().is_empty(), "not yet");
+    let rel = w1.collect(&s, &none, 1 + t::UNBOND).unwrap();
+    assert!(matches!(rel[..], [Entry { body: Body::Release { .. }, balance: 1000, .. }]));
+    assert!(w1.collect(&with(&s, rel), &none, 1 + t::UNBOND).unwrap().is_empty(), "released once");
+}
+
+#[test]
+fn a_wallet_collects_its_mints_and_its_numbered_copies() {
+    let set = t::authority::KeySet { k: 1, keys: vec![SigningKey::from_bytes(&[60; 32]).verifying_key().to_bytes()] };
+    let md = Definition { mint: Some(set.clone()), genesis_amount: 0, ..def() };
+    let mid = t::id(&CODE, &md.encode());
+    let mint = |d: &[u8; 32], to: u8, nonce: [u8; 16], amount: u128, stamp: u64| {
+        let mut m = t::supply::Mint { to: did(to), item: [0; 32], amount, nonce, stamp, sigs: vec![] };
+        m.sigs = vec![(0, SigningKey::from_bytes(&[60; 32]).sign(&m.message(d)).to_bytes())];
+        m
+    };
+    let shard = t::supply::Shard { mints: vec![mint(&mid, 2, [1; 16], 500, 3), mint(&mid, 3, [2; 16], 70, 3)] };
+    let shards = [shard.clone()];
+    let src = Sources { chains: &[], programs: &[], shards: &shards };
+    let (d2, l2) = (Dev::new(2, 22), log(2));
+    let w2 = Wallet { device: &d2, keys: &l2 };
+    let b = held(2, &md);
+    let got = w2.collect(&b, &src, 5).unwrap();
+    assert!(matches!(got[..], [Entry { body: Body::Mint { amount: 500, .. }, .. }]), "its mint, not 3's");
+    let b = with(&b, got);
+    assert_eq!(t::check(&b.params, &md, &b.state, &|_, _| None, &|e| (e == 0).then(|| shard.clone()), Some(&l2), &t::Extra::NONE), Ok(()));
+    assert!(w2.collect(&b, &src, 5).unwrap().is_empty());
+    // A NUMBERED edition: copies 1–3 minted to 2 in one range — 2's chain of copy #2 takes copy #2.
+    let nd = Definition { ids: t::Ids::Numbered, cap: 10, genesis_amount: 0, mint: Some(set), ..def() };
+    let nid = t::id(&CODE, &nd.encode());
+    let rec = t::supply::Shard { mints: vec![mint(&nid, 2, 1u128.to_be_bytes(), 3, 3)] };
+    let recs = [rec.clone()];
+    let copy2 = Held { params: ChainParams { item: t::numbered_item(&nid, 2), ..held(2, &nd).params }, definition: nd.clone(), state: State::default() };
+    let got = w2.collect(&copy2, &Sources { chains: &[], programs: &[], shards: &recs }, 5).unwrap();
+    assert!(matches!(&got[..], [Entry { body: Body::CappedMint { nonce, amount: 1, .. }, .. }] if *nonce == 2u128.to_be_bytes()));
+    let c = with(&copy2, got);
+    assert_eq!(t::check(&c.params, &nd, &c.state, &|_, _| None, &|k| (k == 0).then(|| rec.clone()), Some(&l2), &t::Extra::NONE), Ok(()));
+}

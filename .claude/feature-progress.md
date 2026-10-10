@@ -1500,7 +1500,11 @@ old key's addresses.
           device keys; library + fx/fy, no release. Crate `wallet/` (main workspace), TOKEN §7c.
           [x] W1 DEBITS: Wallet::debit (writer handover, fee on top, place-derived nonce, stamp never below, checked by
               the token's walk). 2 tests; 4 mutants killed (1 after a lagging-beacon case).
-          [ ] W2 COLLECTING (credits once final)  [ ] W3 CUTS + proofs  [ ] W4 ACCEPTANCE + live mode
+          [x] W2 COLLECTING: Wallet::collect — receives, vesting steps, fee claims, releases (verdict-named), payouts,
+              reclaims, mints (numbered copies too), stake releases; once final, once each; 5 tests (each output through
+              the token's check); 10 mutants (1 equivalent check removed, 1 killed after a pending-verdict case).
+              token.wasm 3fab0d85 (unbonding_of made pub).
+          [ ] W3 CUTS + proofs  [ ] W4 ACCEPTANCE + live mode
       [ ] 28 SHOP — sell an edition on demand over the wallet core.
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).
