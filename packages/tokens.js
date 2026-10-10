@@ -29,9 +29,9 @@ export async function start(ctx) {
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   const beacon = bytes(clock.id);
   const allowance = cfg.allowance ? { token: bytes(cfg.allowance), code: await ctx.require("allowance-wasm") } : null;
-  // THE LOT a payment's acceptance is read from (TOKEN §7a): the stake pool's token (`tokens-config` `pool`; none yet —
-  // no $CRAFT: every committee is the baseline's seat), the bag's and beacon's codes.
-  const lot = { pool: bytes(cfg.pool ?? "00".repeat(32)), bag: await ctx.require("bag-wasm"), beacon: await ctx.require("beacon-wasm") };
+  // THE LOT a payment's acceptance is read from (TOKEN §7a): the stake pool — $CRAFT, keepers' earned stake (`craft_id`:
+  // one per network; while fewer than six claim, the baseline keeps its seat) — the bag's and beacon's codes.
+  const lot = { pool: bytes(node.glue.CraftworksCore.craft_id(code, beacon, idlogCode)), bag: await ctx.require("bag-wasm"), beacon: await ctx.require("beacon-wasm") };
 
   // READ a contract so the core holds it (`node.read`; a contract the node does not have: "read, not there").
   const read = idHex => node.read(bytes(idHex), "reading a token contract", { absent: true });

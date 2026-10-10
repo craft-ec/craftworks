@@ -2684,6 +2684,32 @@ mod js {
             js_sys::Reflect::set(&js_sys::Reflect::get(&v, &"done".into())?, &"amount".into(), &JsValue::from(m.amount.to_string()))?;
             Ok(v)
         }
+        /// CLAIM this account's $CRAFT stake for the next open claims epoch (`keeper::claim`: this node's member key
+        /// `public` made its chain's writer first, then the claim signed — `{ sign }` steps): `{ want }`, `{ sign }`, or
+        /// `{ done: null | { puts, epoch, amount } }` (the chain, then the claims registry).
+        #[allow(clippy::too_many_arguments)]
+        pub fn keeper_claim(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], did: &[u8], now: f64, public: &[u8], creds: js_sys::Array, sigs: js_sys::Array) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let did = b32(did)?;
+            let Some(dev) = account_device(&self.0, idlog_code, &did, public, &creds, &sigs)? else { return want_log(idlog_code, &did) };
+            let step = {
+                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                keeper::claim(&ctx, &got, &did, now as u64, &dev)
+            };
+            let mut claimed = None;
+            let v = token_step(step, |r| {
+                let some = r.is_some();
+                claimed = r;
+                Ok(if some { json!({}) } else { serde_json::Value::Null })
+            })?;
+            let Some(c) = claimed else { return Ok(v) };
+            let puts: Vec<tokens::Put> = c.chain.into_iter().chain([c.registry]).collect();
+            let v = self.attach_puts(v, token_code, &puts)?;
+            let done = js_sys::Reflect::get(&v, &"done".into())?;
+            js_sys::Reflect::set(&done, &"epoch".into(), &JsValue::from(c.epoch as f64))?;
+            js_sys::Reflect::set(&done, &"amount".into(), &JsValue::from(c.amount.to_string()))?;
+            Ok(v)
+        }
         /// $CRAFT's token id on this site's network (hex).
         pub fn craft_id(token_code: &[u8], beacon: &[u8], idlog_code: &[u8]) -> Result<String, JsValue> {
             Ok(hex(&keeper::craft(&token_ctx(token_code, beacon, idlog_code)?).1))

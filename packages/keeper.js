@@ -104,6 +104,17 @@ export async function start(ctx) {
         self.registered = epoch;
         state.registered = epoch;
       }
+      // STAKE IN THE LOT (TOKEN §7a): its earned $CRAFT claimed for the next open claims epoch, its member key the
+      // witness key (made its $CRAFT chain's writer first) — once a standing epoch; nothing staked: nothing claimed.
+      if (self.claimed !== epoch) {
+        self.claimed = epoch;
+        const { creds } = await tokens.device();
+        const c = await run(sigs => core.keeper_claim(tokens.code, beacon, tokens.idlogCode, me.didBytes, h, public_, creds, sigs)).catch(e => (ctx.log("keeper", { what: `stake not claimed: ${e?.message ?? e}` }), null));
+        if (c?.puts) {
+          await putAll(c.puts);
+          ctx.log("keeper", { what: `staked in the witness lot: ${c.amount} units of $CRAFT, claims epoch ${c.epoch}` });
+        }
+      }
       if (!self.hosted.length) return;
       // OPEN the epoch: binding and holdings.
       if (!self.open) {

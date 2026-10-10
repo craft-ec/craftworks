@@ -174,6 +174,64 @@ pub fn mint(ctx: &crate::tokens::Ctx, lot: &crate::tokens::Lot, got: Got, did: &
     Ok(Step::Done(Some(Minted { craft, chain: crate::tokens::Put { params: cp.encode(), state: st.encode() }, amount: line.keeper })))
 }
 
+// ---- THE STAKE CLAIM (TOKEN §7a, S2): a keeper's $CRAFT stake standing in the next epoch's witness lots ----
+
+/// What a stake claim puts: the $CRAFT chain with this device made its writer (if it was not), and the claims registry
+/// of `epoch` with this account's claim.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Claimed {
+    pub chain: Option<crate::tokens::Put>,
+    pub registry: crate::tokens::Put,
+    pub epoch: u64,
+    pub amount: u128,
+}
+
+/// CLAIM `did`'s $CRAFT stake for the next claims epoch whose registry is still open (it freezes `claims::LEAD` steps
+/// before its epoch), witness key this device's (`dev`: the member key — made the chain's writer first, so the stake
+/// counts for it), at beacon height `now`. `None`: nothing staked, or claimed already.
+pub fn claim(ctx: &crate::tokens::Ctx, got: Got, did: &[u8; 32], now: u64, dev: &crate::tokens::Device) -> Result<Step<Option<Claimed>>, String> {
+    let (_, token) = craft(ctx);
+    let (held, keys) = match crate::tokens::holding(ctx, got, &t::Tok { definition: token, item: [0; 32] }, did)? {
+        Step::Done(Some(h)) => h,
+        Step::Done(None) => return Ok(Step::Done(None)),
+        Step::Want(w) => return Ok(Step::Want(w)),
+        Step::Sign(m) => return Ok(Step::Sign(m)),
+    };
+    let staked = t::walk(&held.params, &held.definition, &held.state, &|_, _| None, &|_| None, Some(&keys), 0, usize::MAX, &t::Extra::NONE).map_or(0, |w| w.staked);
+    if staked == 0 {
+        return Ok(Step::Done(None));
+    }
+    let mut epoch = now / t::supply::EPOCH + 1;
+    let rp = |e: u64| t::claims::Params { code_hash: ctx.code_hash, pool: token, beacon: held.definition.beacon, epoch: e };
+    if now >= rp(epoch).frozen_at() {
+        epoch += 1;
+    }
+    let reg = match there(got, &rp(epoch).id()) {
+        Err(w) => return Ok(Step::Want(vec![w])),
+        Ok(None) => t::claims::Registry::default(),
+        Ok(Some(b)) => t::claims::Registry::decode(&b).ok_or("a claims registry that does not read")?,
+    };
+    if reg.claims.iter().any(|c| c.owner == *did && c.key == dev.public) {
+        return Ok(Step::Done(None));
+    }
+    let asking = crate::tokens::device_of(dev);
+    let adopted = craftworks_wallet::Wallet { device: &asking, keys: &keys }.adopt(&held, now);
+    if let Some(m) = asking.next() {
+        return Ok(Step::Sign(m));
+    }
+    let adopted = adopted.map_err(String::from)?;
+    let message = t::draw::StakeClaim::message(&token, did, staked, epoch, &dev.public);
+    let Some(sig) = dev.sigs.iter().find(|(m, _)| *m == message).map(|x| x.1) else { return Ok(Step::Sign(message)) };
+    let mine = t::draw::StakeClaim { owner: *did, amount: staked, epoch, key: dev.public, sig };
+    let registry = t::claims::merge(&reg, &t::claims::Registry { claims: vec![mine] });
+    let chain = (!adopted.is_empty()).then(|| {
+        let mut st = held.state.clone();
+        st.entries.extend(adopted);
+        crate::tokens::Put { params: held.params.encode(), state: st.encode() }
+    });
+    Ok(Step::Done(Some(Claimed { chain, registry: crate::tokens::Put { params: rp(epoch).encode(), state: registry.encode() }, epoch, amount: staked })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,5 +354,60 @@ mod tests {
         assert_eq!(m(&g2, &keeper), Ok(None), "once an epoch");
         // A line of nothing mints nothing.
         assert_eq!(m(&got, &idle), Ok(None));
+    }
+
+    #[test]
+    fn a_keeper_with_stake_claims_the_next_epoch_with_its_member_key_as_its_chains_writer() {
+        use craftworks_reputation::statement::{Line, Statement};
+        let ctx = crate::tokens::Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
+        let mut got: HashMap<[u8; 32], Vec<u8>> = HashMap::new();
+        let tl = crate::tokens::testlot::stakers(&ctx, &mut got);
+        // An account (its key log) and this node, its device.
+        let next = SigningKey::from_bytes(&[152; 32]).verifying_key().to_bytes();
+        let ev = craftworks_idlog_contract::Event::signed(0, [0; 32], &[102; 32], craftworks_idlog_contract::commit(&next), [1; 32], [1; 32], vec![]).unwrap();
+        let log = craftworks_idlog_contract::Log { events: vec![ev] };
+        let did = log.events[0].id();
+        let node = SigningKey::from_bytes(&[13; 32]);
+        let public = node.verifying_key().to_bytes();
+        let mut dev = crate::tokens::device(public, &[craftworks_identity::credential(&did, &public, &[7; 32], &[102; 32])], &log, vec![]).unwrap();
+        // Its keeper line minted (epoch 5), as a page mints it.
+        let lines = [(did, Line { rep: 1, keeper: 500, allowance: 0 })].into_iter().collect();
+        let mut blocks = std::collections::BTreeMap::new();
+        let (root, _) = Statement { epoch: 5, lines }.tree(&mut blocks).unwrap();
+        let proof = freenet_prolly::proof::prove(&blocks, &root, &did).unwrap().encode();
+        crate::tokens::testlot::witness_statement(&tl, &mut got, ctx.code_hash, ctx.beacon, 5, &root, 4);
+        let now = 5 * craftworks_standing::EPOCH + 40;
+        let (d, token) = craft(&ctx);
+        let cp = crate::tokens::chain(&ctx, &d, &token, &did, [0; 32]);
+        got.insert(cp.keys_id(), log.encode());
+        let minted = crate::tokens::testlot::done(&|g| mint(&ctx, &tl.lot, g, &did, 5, &root, &proof, now), &got).unwrap().unwrap();
+        got.insert(token, d.encode());
+        got.insert(cp.id(), minted.chain.state.clone());
+        // CLAIM: the device signs what it is asked (the writer entry, then the claim) — the page's run loop.
+        let claimed = loop {
+            let g = got.clone();
+            match crate::tokens::testlot::done(&|gg| match claim(&ctx, gg, &did, now, &dev)? {
+                Step::Sign(m) => Ok(Step::Done(Err(m))),
+                Step::Done(x) => Ok(Step::Done(Ok(x))),
+                Step::Want(w) => Ok(Step::Want(w)),
+            }, &g).unwrap() {
+                Err(m) => dev.sigs.push((m.clone(), node.sign(&m).to_bytes())),
+                Ok(c) => break c.expect("claimed"),
+            }
+        };
+        let ce = now / t::supply::EPOCH + 1;
+        assert_eq!((claimed.epoch, claimed.amount), (ce, 500), "the next claims epoch, its whole stake");
+        let reg = t::claims::Registry::decode(&claimed.registry.state).unwrap();
+        let c = &reg.claims[0];
+        assert!(c.holds(&token) && c.key == public && c.owner == did, "signed by the member key");
+        // The member key is now its chain's writer: the stake counts for that key (what the lot checks).
+        let st = t::State::decode(&claimed.chain.expect("a writer entry").state).unwrap();
+        let (amount, keys) = t::wallet::stake_at(&cp, &d, &st, ce * t::supply::EPOCH).unwrap();
+        assert!(amount >= c.amount && keys.contains(&public));
+        // Claimed already: nothing again.
+        let mut g2 = got.clone();
+        g2.insert(t::claims::Params { code_hash: ctx.code_hash, pool: token, beacon: d.beacon, epoch: ce }.id(), claimed.registry.state.clone());
+        g2.insert(cp.id(), st.encode());
+        assert_eq!(crate::tokens::testlot::done(&|g| claim(&ctx, g, &did, now, &dev), &g2), Ok(None));
     }
 }

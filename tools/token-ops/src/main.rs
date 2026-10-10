@@ -217,20 +217,23 @@ async fn main() -> Result<()> {
             .await?
         }
         Some("witness") => {
-            // token-ops witness <token.wasm> <idlog.wasm> <bag.wasm> <ws> <beacon hex> <pool hex> <key seed file> [tick secs]
+            // token-ops witness <token.wasm> <idlog.wasm> <bag.wasm> <ws> <beacon hex> <pool hex | craft> <key seed file> [tick secs]
             // (the beacon's and the standing contract's code: beacon.wasm, standing.wasm beside token.wasm):
             // A WITNESS (TOKEN §7a), kept running: every tick it reads the witness queue of this standing epoch and the
             // last, and signs each entry it is SEATED for (drawn by lot, or the baseline's seat while the network is
             // small) once the rule takes it (`wallet::may_witness`, by induction — an entry refused now, its past not yet
             // accepted, is tried again until it is too old) into the entry's witness bag.
+            let (code_hash, idlog_hash, beacon) = (*blake3::hash(&std::fs::read(&a[2])?).as_bytes(), *blake3::hash(&std::fs::read(&a[3])?).as_bytes(), unhex32(&a[6])?);
+            // The stake pool: `craft` — $CRAFT, keepers' earned stake (its one definition for this network).
+            let pool = if a[7] == "craft" { T::id(&code_hash, &craftworks_wallet::craft::definition(code_hash, beacon, idlog_hash).encode()) } else { unhex32(&a[7])? };
             let net = token_net::Net {
                 ws: a[5].clone(),
-                code_hash: *blake3::hash(&std::fs::read(&a[2])?).as_bytes(),
-                idlog_hash: *blake3::hash(&std::fs::read(&a[3])?).as_bytes(),
+                code_hash,
+                idlog_hash,
                 bag_code: std::fs::read(&a[4])?,
                 beacon_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes(),
-                beacon: unhex32(&a[6])?,
-                pool: unhex32(&a[7])?,
+                beacon,
+                pool,
                 standing_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("standing.wasm"))?).as_bytes(),
             };
             let key = ed25519_dalek::SigningKey::from_bytes(&seed_file(&a[8])?);

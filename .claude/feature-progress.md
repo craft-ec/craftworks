@@ -1828,6 +1828,12 @@ old key's addresses.
               another entry there refused (`Why::Equivocation`) — the TOKEN §7d rule. Page door `identity.witnessSign`.
               Test: same entry → same sig; another → Equivocation; TokenSign refuses a witness message. token.wasm
               ad470883.
+          [x] S2 10-11 (unit-tested; live with S3 — once stakers claim, a committee needs 2 signatures and Wren's
+              baseline alone no longer suffices): the lot's POOL is $CRAFT (page: `craft_id`; witness tool: pool
+              `craft`). `Wallet::adopt` (this device made the chain's writer); `keeper::claim` — staked $CRAFT claimed for
+              the next open claims epoch (supply epochs; frozen LEAD before), key = member key, signed via TokenSign
+              (CLAIM_DOMAIN); `keeper_claim` binding; keeper.js claims once a standing epoch. Test: claim holds, the
+              lot's stake check finds the key (stake_at keys), claimed once.
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and

@@ -134,6 +134,23 @@ impl Wallet<'_> {
     }
 
     /// A debit whose name is `name` of its place's (a payment's tagged nonce).
+    /// ADOPT `h`: this device's WRITER entry, if it is not the chain's writer yet (empty if it is) — what makes its key
+    /// one the chain's stake counts for (a stake claim's witness key, TOKEN §7a).
+    pub fn adopt(&self, h: &Held, now: u64) -> Result<Vec<Entry>, Why> {
+        if h.state.fork.is_some() {
+            return Err("a forked chain");
+        }
+        if t::writer_at(&h.state, h.state.entries.len()) == Some(self.signer()) {
+            return Ok(vec![]);
+        }
+        let stamp = now.max(h.state.entries.last().map_or(0, |e| e.stamp));
+        let w = self.writer(&h.state, &h.params, stamp);
+        let mut s = h.state.clone();
+        s.entries.push(w.clone());
+        t::walk(&h.params, &h.definition, &s, &|_, _| None, &|_| None, Some(self.keys), 0, usize::MAX, &t::Extra::NONE).map_err(|(_, w)| w)?;
+        Ok(vec![w])
+    }
+
     fn debit_named(&self, h: &Held, body: Body, now: u64, name: &dyn Fn([u8; 16]) -> [u8; 16]) -> Result<Vec<Entry>, Why> {
         if h.state.fork.is_some() {
             return Err("a forked chain");
