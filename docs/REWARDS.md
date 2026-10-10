@@ -115,6 +115,11 @@ of cold files, §6).
 - Exact per-answer bandwidth pay would need the node to name the peer that delivered each piece (a node change, and
   even then only the last hop): not planned.
 
+- **PAYING AND KEEPING ARE SEPARATE ROLES (owner 10-10: "perhaps user doesn't keep the content. just paid for it?").**
+  Keeping what one used is ON by default, within the storage limit its owner sets — and the limit may be 0: then the
+  account only PAYS (phones, sleeping laptops, anyone not giving disk). Its contribution is split by what it used as
+  ever; the carrier share of those files goes to whichever OTHER nodes prove holding them. A node that only hosts
+  (views nothing) earns for what it proves. The money follows the PROOF, never the viewer.
 - **ONE PROOF SYSTEM, TWO PAYOUTS (decided 10-10, with TOKEN §7d):** the node's STANDING RECORD (`contracts-src/standing`)
   is the only keeping proof — it commits to EVERYTHING the node hosts (what Freenet placed and what it cached) and
   answers the beacon's challenges on it. Two payouts read the same record: $CRAFT ISSUANCE (TOKEN §7d) for any proven
