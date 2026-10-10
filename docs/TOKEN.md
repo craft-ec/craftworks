@@ -618,7 +618,7 @@ ISSUANCE — and each piece of the loop has ONE job:
   stake: stake grows only by keeping). What the cap or an absent keeper leaves is NEVER MINTED. A malicious account's
   whole tree then splits only its own slice of trust: spawning fakes gains nothing. (Pay by reputation does not
   compound: reputation comes from vouches only — keeping, stake and pay never feed it.)
-- **THE NUMBERS (owner 10-10: "i trust your projection"):** max 1,000,000,000 $CRAFT (6 decimals), minted ONLY by
+- **THE NUMBERS (owner 10-10: "i trust your projection"):** max 1,000,000,000 $CRAFT (9 decimals — the standard, `token::DECIMALS`; was 6 before the standard: 10¹⁸ units, far inside u128), minted ONLY by
   keeper issuance — no premine, no sale; the first pot ~61,035 per standing epoch, HALVING every 8,192 epochs (the
   geometric sum is the cap); the GATE a minimum trust share G = 1/100,000 (≈ four layers deep at full vouching; the
   network holds at most ~6.7/G earners), lowered on a published schedule by height as it grows.

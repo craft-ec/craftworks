@@ -1730,6 +1730,11 @@ old key's addresses.
           [ ] KA KEEP THE ASSIGNMENT (REWARDS §4 one funnel): `keep` re-reads the node's arc + under-target files (beacon
               rendezvous), within its limit, instead of what was watched; the standing record proves it.
           [ ] F  WITNESS FEES on every token: a set fee per debit, split among its signers, claimed in their chains.
+          KEEPER ISSUANCE ORDER (10-10, after reading the state: the keeper loop is NOT built — nothing produces
+          standing records yet): K0a the KEEPER LOOP in the page (commit holdings, answer challenges into its standing
+          contract; the delegate's half with a release) → K0b a KEEPERS REGISTRY per epoch (who kept is findable) → K0c
+          the statement's `kept` from it (KEEP_MIN answers, bound to the account) → K2 rework (amount = the statement
+          line, proven under the root; appended by anyone) → K3 witness gate → K4–K6. $CRAFT decimals 9 (doc said 6).
           [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` — FIRST CUT COMMITTED 10-10 (proof, epoch, binding,
               name; 12 mutants killed; its credential through identity's one rule, which closed a skipped key-log
               check) — REWORK: amount = the statement's (witness-checked), appended by anyone with work, the bind
