@@ -1782,8 +1782,14 @@ old key's addresses.
           [!] TOKEN RE-KEY FOUND 10-10: token.wasm changed be2d1f2d → 3431346f (552e20f, prolly list move) → d4dd92e2
               (c7464fb, identity STANDING_DOMAIN) — the token contract links identity + prolly, so every chain moved
               address; fx/fy test chains intact under be2d1f2d (`token-ops chains` with the old wasm: all found).
-              Wallet status now says why ("its chain (…) is not on the network"). PROPOSED to owner: freeze token.wasm
-              like signer.wasm (build fails on an undeclared change); re-mint test tokens with A3.
+              Wallet status now says why ("its chain (…) is not on the network").
+          [x] FROZEN CONTRACTS 10-10 (owner: "proceed"): contracts/FROZEN pins token.wasm d4dd92e2 + signer.wasm
+              f9fc78b0; contracts-src/build.sh refuses other bytes unless CONTRACT_VERSION_BUMP=<name> (owner's say);
+              publish refuses a mismatch. Controls: token rebuild from today's source REFUSED (874e8b2e — the standing
+              crate's later changes would have re-keyed a third time); bag rebuild copies; a tampered token.wasm
+              refused at publish. NEXT before release: TOKEN MIGRATION (owner-signed "moved" entry citing the old
+              chain's final state, witnessed; the wallet moves on open) — the signer's sdk#14 analogue; fx/fy's old
+              chains (be2d1f2d) its first test.
           [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` — FIRST CUT COMMITTED 10-10 (proof, epoch, binding,
               name; 12 mutants killed; its credential through identity's one rule, which closed a skipped key-log
               check) — REWORK: amount = the statement's (witness-checked), appended by anyone with work, the bind

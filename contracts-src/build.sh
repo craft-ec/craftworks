@@ -36,4 +36,13 @@ ln -sf "$fixed/sdk/freenet-contracts/contract-build.sh" "$fixed/contracts-src/.c
 (cd "$fixed/contracts-src" && ./.contract-build.sh "$1" "$crate")
 mkdir -p "$here/build"
 cp "$fixed/contracts-src/build/$1.wasm" "$here/build/$1.wasm"
+# FROZEN (contracts/FROZEN): a contract whose code hash keys what it holds is not replaced by other bytes unless the
+# change is DECLARED (CONTRACT_VERSION_BUMP=<name>: a version bump, with the owner's say; then its line there updated).
+pin=$(awk -v f="$1.wasm" '$1 !~ /^#/ && $2 == f { print $1 }' "$here/../contracts/FROZEN")
+got=$(shasum -a 256 "$here/build/$1.wasm" | cut -d' ' -f1)
+if [ -n "$pin" ] && [ "$got" != "$pin" ] && [ "${CONTRACT_VERSION_BUMP:-}" != "$1" ]; then
+  echo "$1.wasm is FROZEN (contracts/FROZEN): this build is $got, the pin $pin — every address it keys would move." >&2
+  echo "Not copied into contracts/ (the build is in contracts-src/build/$1.wasm). A real change: CONTRACT_VERSION_BUMP=$1, the owner's say, and its FROZEN line." >&2
+  exit 1
+fi
 cp "$here/build/$1.wasm" "$here/../contracts/$1.wasm"

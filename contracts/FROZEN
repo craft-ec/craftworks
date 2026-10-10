@@ -1,0 +1,11 @@
+# FROZEN CONTRACTS: each is a contract whose CODE HASH is part of every address it makes, so a rebuild with other bytes
+# — after ANY change to a crate it links, not only its own — moves everything it holds to new addresses:
+#   token.wasm  every token chain (balances) is keyed by its code hash (10-10: two unrelated commits, the prolly list
+#               move and identity's standing domain, re-keyed every chain on fx/fy)
+#   signer.wasm the identity delegate's key is its code hash: other bytes, every user a new identity
+# contracts-src/build.sh refuses to put other bytes for one of these into contracts/, and publish refuses a contract
+# that does not match its line here. A change is a VERSION BUMP: declared (CONTRACT_VERSION_BUMP=<name>), with the
+# owner's say, its line here updated — until a migration exists (the token's: an owner-signed "moved" entry; the
+# signer's: sdk#14).
+d4dd92e2525998b364bb5f5f15ed3c21950b719272a285e305ea850ca7606d00  token.wasm
+f9fc78b06c25a159a959ca540bcfb708f3bce6371a8a2083effa49167dfa65c4  signer.wasm

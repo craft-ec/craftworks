@@ -344,6 +344,15 @@ async fn main() -> Result<()> {
     let contracts = app.join("contracts");
     // The contract code and the frozen signer, exactly the bytes contracts/SHA256SUMS names: a different signer is a
     // different identity, a different contract a different address.
+    // FROZEN (contracts/FROZEN): a contract whose code hash keys what it holds (the token's chains, the signer's
+    // identity) is published only as its pinned bytes.
+    for line in std::fs::read_to_string(contracts.join("FROZEN"))?.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
+        let (want, file) = line.split_once("  ").context("FROZEN: a line that is not '<sha256>  <file>'")?;
+        let got = sha256_hex(&read(&contracts.join(file))?);
+        if got != want {
+            bail!("contracts/{file} is FROZEN at {want} but hashes to {got}: every address it keys would move (a version bump needs the owner's say)");
+        }
+    }
     for line in std::fs::read_to_string(contracts.join("SHA256SUMS"))?.lines() {
         let (want, file) = line.split_once("  ").context("SHA256SUMS: a line that is not '<sha256>  <file>'")?;
         let got = sha256_hex(&read(&contracts.join(file))?);
