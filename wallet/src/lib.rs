@@ -9,6 +9,7 @@
 //!   time — the account decides which device; this core only hands the chain over when told). Every entry built is
 //!   checked against the token's own shape rules before it is returned: the wallet never writes what the contract
 //!   refuses.
+//! - COLLECTING ([`Wallet::collect`], W2) and CUTS ([`Wallet::cut`], W3): see each.
 
 use craftworks_token_contract as t;
 use t::{Body, ChainParams, Definition, Entry, Signer, State, Why};
@@ -22,12 +23,21 @@ pub trait Device {
     fn key_seq(&self) -> u32;
 }
 
-/// One chain this account holds: its params, its token's definition, its state as last read.
+/// One chain this account holds: its params, its token's definition, its state as last read — and the BLOCKS of its
+/// cuts' trees (its history and received set: what it publishes, and proves its later credits from).
 #[derive(Clone, Debug)]
 pub struct Held {
     pub params: ChainParams,
     pub definition: Definition,
     pub state: State,
+    pub blocks: t::cut::Blocks,
+}
+
+impl Held {
+    /// The chain WHOLE, seq 0 on: its cut's history (from its blocks) and its live entries.
+    pub fn whole(&self) -> Result<State, Why> {
+        t::cut::whole(&self.state, &|c| self.blocks.get(c).cloned()).map_err(|_| "a history whose blocks are not held")
+    }
 }
 
 /// The wallet of one account on one device.
@@ -63,6 +73,34 @@ impl Wallet<'_> {
         Signer::Device(self.device.public(), self.device.key_seq())
     }
 
+    fn writer(&self, s: &State, p: &ChainParams, stamp: u64) -> Entry {
+        let seq = s.entries.last().map_or(0, |e| e.seq + 1);
+        self.signed(s, nonce_of(p, seq), stamp, Body::Writer { cred: self.device.credential(), key_seq: self.device.key_seq() }, s.balance())
+    }
+
+    /// A CUT of `h` (W3): this device's writer entry first if need be, then the cut — signed, its trees' blocks returned
+    /// (to publish, and to keep: the chain's `blocks` from now on — the new trees hold the whole history, the old cut's
+    /// blocks are needed no more). The caller appends the
+    /// entries and then prunes (`t::prune`). Refused while an escrow is open or the chain is frozen, as the contract
+    /// refuses.
+    pub fn cut(&self, h: &Held, now: u64) -> Result<(Vec<Entry>, t::cut::Blocks), Why> {
+        let mut whole = h.whole()?;
+        let stamp = now.max(whole.entries.last().map_or(0, |e| e.stamp));
+        let mut out = Vec::new();
+        if t::writer_at(&whole, whole.entries.len()) != Some(self.signer()) {
+            let w = self.writer(&whole, &h.params, stamp);
+            whole.entries.push(w.clone());
+            out.push(w);
+        }
+        let (body, blocks) = t::cut::make(&h.params, &h.definition, &whole, Some(self.keys))?;
+        let seq = whole.entries.last().map_or(0, |e| e.seq + 1);
+        let e = self.signed(&whole, nonce_of(&h.params, seq), stamp, body, whole.balance());
+        whole.entries.push(e.clone());
+        out.push(e);
+        t::walk(&h.params, &h.definition, &whole, &|_, _| None, &|_| None, Some(self.keys), 0, usize::MAX, &t::Extra::NONE).map_err(|(_, w)| w)?;
+        Ok((out, blocks))
+    }
+
     fn signed(&self, s: &State, nonce: [u8; 16], stamp: u64, body: Body, balance: u128) -> Entry {
         let mut e = Entry { seq: s.entries.last().map_or(0, |e| e.seq + 1), prev: s.head(), nonce, stamp, body, balance, auth: t::Auth::Work(0) };
         e.auth = t::Auth::Sig(self.device.sign(&e.message()));
@@ -81,8 +119,7 @@ impl Wallet<'_> {
         let stamp = now.max(s.entries.last().map_or(0, |e| e.stamp));
         let mut out = Vec::new();
         if t::writer_at(&s, s.entries.len()) != Some(self.signer()) {
-            let seq = s.entries.last().map_or(0, |e| e.seq + 1);
-            let w = self.signed(&s, nonce_of(&h.params, seq), stamp, Body::Writer { cred: self.device.credential(), key_seq: self.device.key_seq() }, s.balance());
+            let w = self.writer(&s, &h.params, stamp);
             s.entries.push(w.clone());
             out.push(w);
         }
@@ -99,10 +136,13 @@ impl Wallet<'_> {
 
 /// What a wallet READ for collecting (W2): the chains of this token it looked in (its counterparties', from the
 /// token's activity — the caller's to find), the programs it holds escrows with or is paid by, the supply shards and
-/// records it was minted in.
+/// records it was minted in, and the BLOCKS of those chains' cut histories (W3: a debit behind its sender's cut is
+/// still received, shown by its history).
 pub struct Sources<'a> {
-    /// Others' chains of this token, by their owners.
+    /// Others' chains of this token, by their owners (as live: maybe starting at a cut).
     pub chains: &'a [([u8; 32], State)],
+    /// Blocks of others' cut histories (by id).
+    pub blocks: &'a t::cut::Blocks,
     /// Programs' states, by their ids.
     pub programs: &'a [([u8; 32], Vec<u8>)],
     /// Supply shards / records of this token.
@@ -121,9 +161,19 @@ impl Wallet<'_> {
         if s.fork.is_some() {
             return Err("a forked chain");
         }
-        let cut_at = s.entries.first().filter(|e| matches!(e.body, Body::Cut { .. })).map(|e| e.stamp);
-        let behind = |at: u64| cut_at.is_some_and(|c| at <= c);
-        let mut taken: Vec<Vec<u8>> = t::cut::received_keys(&s.entries);
+        // After a CUT: every name ever taken (the whole history), and each new credit's ABSENCE proof against its received
+        // set (W3: what the contract asks of a name a cut may hold).
+        let received_root = s.entries.first().and_then(|e| match &e.body {
+            Body::Cut { received, .. } if e.seq > 0 => Some(*received),
+            _ => None,
+        });
+        let mut taken: Vec<Vec<u8>> = t::cut::received_keys(&h.whole()?.entries);
+        let mine = |key: &[u8]| -> Result<t::Evidence, Why> {
+            Ok(match received_root {
+                Some(root) => t::Evidence { mine: t::cut::proof(&h.blocks, &root, key)?, theirs: vec![] },
+                None => t::Evidence::default(),
+            })
+        };
         let mut out: Vec<Entry> = Vec::new();
         let stamp = now.max(s.entries.last().map_or(0, |e| e.stamp));
         let push = |s: &mut State, body: Body, plus: u128, out: &mut Vec<Entry>| {
@@ -134,31 +184,48 @@ impl Wallet<'_> {
             s.entries.push(e.clone());
             out.push(e);
         };
-        let ev = t::Evidence::default;
+
         // RECEIVES and VESTING STEPS from others' chains; FEES if this account is the collector.
         let collector = d.transfer_fee.is_some_and(|(_, _, c)| c == p.owner);
         for (from, c) in src.chains {
             if c.fork.is_some() {
                 continue;
             }
-            for x in &c.entries {
-                if x.stamp.saturating_add(m) > stamp || behind(x.stamp) {
+            let cp = p.at(p.tok(), *from);
+            let whole = t::cut::whole(c, &|b| src.blocks.get(b).cloned()).unwrap_or_else(|_| c.clone());
+            let history_root = c.entries.first().and_then(|e| match &e.body {
+                Body::Cut { history, .. } if e.seq > 0 => Some(*history),
+                _ => None,
+            });
+            for x in &whole.entries {
+                if x.stamp.saturating_add(m) > stamp {
                     continue;
                 }
+                // Pruned from the sender's live chain: shown by its history (a presence proof and its bytes).
+                let shown = |key: &[u8]| -> Result<t::Evidence, Why> {
+                    let mut ev = mine(key)?;
+                    if !c.entries.iter().any(|y| y.seq == x.seq) {
+                        let root = history_root.ok_or("a debit behind a cut not shown")?;
+                        ev.theirs.push((cp.id(), x.seq, t::cut::proof(src.blocks, &root, &t::history_key(x.seq))?, x.encode()));
+                    }
+                    Ok(ev)
+                };
                 match &x.body {
                     Body::Send { to, amount } | Body::Spend { to, amount } if *to == p.owner => {
                         let k = t::received_key(t::RECEIVED, from, &x.nonce);
                         if !taken.contains(&k) {
+                            let ev = shown(&k)?;
                             taken.push(k);
-                            push(&mut s, Body::Receive { from: *from, nonce: x.nonce, amount: *amount, cited: x.stamp, ev: ev() }, *amount, &mut out);
+                            push(&mut s, Body::Receive { from: *from, nonce: x.nonce, amount: *amount, cited: x.stamp, ev }, *amount, &mut out);
                         }
                     }
                     Body::Vest { to, schedule } if *to == p.owner => {
                         for (i, (at, amount)) in schedule.iter().enumerate() {
                             let k = t::vested_key(from, &x.nonce, i as u32);
                             if *at <= stamp && !taken.contains(&k) {
+                                let ev = shown(&k)?;
                                 taken.push(k);
-                                push(&mut s, Body::Vested { from: *from, vest: x.nonce, step: i as u32, amount: *amount, at: *at, cited: x.stamp, ev: ev() }, *amount, &mut out);
+                                push(&mut s, Body::Vested { from: *from, vest: x.nonce, step: i as u32, amount: *amount, at: *at, cited: x.stamp, ev }, *amount, &mut out);
                             }
                         }
                     }
@@ -173,8 +240,9 @@ impl Wallet<'_> {
                     let fee = gross.map_or(0, |g| t::transfer_fee(d, from, g));
                     let k = t::received_key(t::FEE, from, &x.nonce);
                     if fee > 0 && !taken.contains(&k) {
+                        let ev = shown(&k)?;
                         taken.push(k);
-                        push(&mut s, Body::FeeClaim { from: *from, nonce: x.nonce, gross: gross.unwrap(), amount: fee, cited: x.stamp, ev: ev() }, fee, &mut out);
+                        push(&mut s, Body::FeeClaim { from: *from, nonce: x.nonce, gross: gross.unwrap(), amount: fee, cited: x.stamp, ev }, fee, &mut out);
                     }
                 }
             }
@@ -204,16 +272,17 @@ impl Wallet<'_> {
             let Some((sec, _)) = t::escrow::Section::decode_prefix(state) else { continue };
             for (key, tok, to, amount) in &sec.pays {
                 let k = t::received_key(t::PAYOUT, prog, key);
-                if *tok == p.tok() && *to == p.owner && !taken.contains(&k) && cut_at.is_none() {
+                if *tok == p.tok() && *to == p.owner && !taken.contains(&k) {
+                    let ev = mine(&k)?;
                     taken.push(k);
-                    push(&mut s, Body::Payout { program: *prog, key: *key, amount: *amount, verdict: sec.hash(), ev: ev() }, *amount, &mut out);
+                    push(&mut s, Body::Payout { program: *prog, key: *key, amount: *amount, verdict: sec.hash(), ev }, *amount, &mut out);
                 }
             }
         }
         // MINTS to this owner (of this chain's item) in the shards read.
         for sh in src.shards {
             for mt in t::supply::admitted(d, sh) {
-                if mt.to != p.owner || behind(mt.stamp) || mt.stamp > stamp {
+                if mt.to != p.owner || mt.stamp > stamp {
                     continue;
                 }
                 // A NUMBERED copy: this chain's, if its number is in the mint's range (one copy).
@@ -222,19 +291,21 @@ impl Wallet<'_> {
                     let Some(n) = (first..first.saturating_add(mt.amount)).find(|n| t::numbered_item(&p.definition, *n) == p.item) else { continue };
                     let k = t::received_key(t::MINTED, &t::MINTER, &n.to_be_bytes());
                     if !taken.contains(&k) {
+                        let ev = mine(&k)?;
                         taken.push(k);
-                        push(&mut s, Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: mt.stamp, mint: mt.clone(), ev: ev() }, 1, &mut out);
+                        push(&mut s, Body::CappedMint { nonce: n.to_be_bytes(), amount: 1, minted: mt.stamp, mint: mt.clone(), ev }, 1, &mut out);
                     }
                     continue;
                 }
                 let k = t::received_key(t::MINTED, &t::MINTER, &mt.nonce);
                 let plain = mt.item == p.item && !d.capped();
                 if (plain || (d.capped() && d.ids != t::Ids::Numbered && mt.item == p.item)) && !taken.contains(&k) {
+                    let ev = mine(&k)?;
                     taken.push(k);
                     let body = if d.capped() {
-                        Body::CappedMint { nonce: mt.nonce, amount: mt.amount, minted: mt.stamp, mint: mt.clone(), ev: ev() }
+                        Body::CappedMint { nonce: mt.nonce, amount: mt.amount, minted: mt.stamp, mint: mt.clone(), ev }
                     } else {
-                        Body::Mint { nonce: mt.nonce, amount: mt.amount, minted: mt.stamp, mint: mt.clone(), ev: ev() }
+                        Body::Mint { nonce: mt.nonce, amount: mt.amount, minted: mt.stamp, mint: mt.clone(), ev }
                     };
                     push(&mut s, body, mt.amount, &mut out);
                 }

@@ -647,8 +647,12 @@ wallet only hands the chain over when told.
   payouts to this owner, reclaims of escrows no program listed past their `until`, mints to this owner (a numbered
   copy: the one its number is), stake releases after the delay — each once, with its work, checked by the token's
   rules. A name that a cut of this chain may hold waits for W3's proofs. Holders' shares: with the shop.
-- W3 CUTS (its own chains pruned, the proofs credits need after); W4 ACCEPTANCE (a payment is value: its witnesses'
-  signatures) and a live mode end to end.
+- **W3 CUTS — BUILT 10-10.** `Wallet::cut`: the chain's cut (this device's writer entry first if need be), signed, its
+  trees' blocks returned — published, and kept as the chain's `blocks` (a new cut's trees hold the whole history: the
+  old blocks are needed no more). `collect` across cuts: every name the chain ever took (its whole history) is never
+  taken again; each new credit carries its ABSENCE proof against the cut's received set (a payout's always); a debit
+  behind its SENDER's cut is read from the sender's history blocks and carries its presence proof and bytes.
+- W4 ACCEPTANCE (a payment is value: its witnesses' signatures) and a live mode end to end.
 
 ## 8. Open in the architecture
 

@@ -47,7 +47,7 @@ fn def() -> Definition {
     Definition { code_hash: CODE, decimals: 0, min_send: 1, genesis_owner: did(1), genesis_amount: 1000, name: b"W".to_vec(), nonce: [0; 16], beacon: BEACON, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: t::Ids::None, royalty: None, cap: 0, collection: [0; 32], item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None }
 }
 fn held(n: u8, d: &Definition) -> Held {
-    Held { params: ChainParams { code_hash: CODE, definition: t::id(&CODE, &d.encode()), owner: did(n), beacon: BEACON, idlog: IDLOG, item: [0; 32] }, definition: d.clone(), state: State::default() }
+    Held { params: ChainParams { code_hash: CODE, definition: t::id(&CODE, &d.encode()), owner: did(n), beacon: BEACON, idlog: IDLOG, item: [0; 32] }, definition: d.clone(), state: State::default(), blocks: Default::default() }
 }
 /// 1's chain with its genesis, written by device `dev`.
 fn genesis(dev: &Dev, d: &Definition) -> Held {
@@ -137,7 +137,7 @@ fn a_wallet_collects_receives_vesting_steps_and_fees_only_once_final() {
     a = with(&a, w1.debit(&a, Body::Send { to: did(2), amount: 300 }, 1).unwrap());
     a = with(&a, w1.debit(&a, Body::Vest { to: did(2), schedule: vec![(4, 50), (20, 50)] }, 1).unwrap());
     let chains = [(did(1), a.state.clone())];
-    let src = Sources { chains: &chains, programs: &[], shards: &[] };
+    let src = Sources { blocks: &Default::default(), chains: &chains, programs: &[], shards: &[] };
     let (d2, l2) = (Dev::new(2, 22), log(2));
     let w2 = Wallet { device: &d2, keys: &l2 };
     let b = held(2, &fd);
@@ -178,7 +178,7 @@ fn a_wallet_collects_releases_payouts_and_reclaims_as_programs_decide() {
     // PROG's verdict: 50 back to 1, 250 to 2. GONE never existed (a wrong id).
     let sec = t::escrow::Section { escrows: vec![((a.params.tok(), did(1), e1), 300, t::escrow::terms_hash(b"t"))], refunds: vec![((a.params.tok(), did(1), e1), 50)], pays: vec![([1; 16], a.params.tok(), did(2), 250)] };
     let programs = [(PROG, sec.encode())];
-    let src = Sources { chains: &[], programs: &programs, shards: &[] };
+    let src = Sources { blocks: &Default::default(), chains: &[], programs: &programs, shards: &[] };
     let before = w1.collect(&a, &src, 5).unwrap();
     assert_eq!(before.len(), 1, "the release; the reclaim not before its time");
     assert!(matches!(before[0].body, Body::Unescrow { refund: 50, verdict, .. } if verdict == sec.hash()));
@@ -188,7 +188,7 @@ fn a_wallet_collects_releases_payouts_and_reclaims_as_programs_decide() {
     // A program that LISTS the escrow, no verdict yet: it took it — never reclaimed, whatever the time.
     let listing = t::escrow::Section { escrows: vec![((a.params.tok(), did(1), e1), 300, t::escrow::terms_hash(b"t"))], ..Default::default() };
     let listed = [(PROG, listing.encode())];
-    let pending = w1.collect(&a, &Sources { chains: &[], programs: &listed, shards: &[] }, 50).unwrap();
+    let pending = w1.collect(&a, &Sources { blocks: &Default::default(), chains: &[], programs: &listed, shards: &[] }, 50).unwrap();
     assert_eq!(pending.len(), 1, "only GONE's escrow comes back");
     assert!(matches!(pending[0].body, Body::Reclaim { escrow } if escrow != e1));
     let a2 = with(&a, at);
@@ -208,7 +208,7 @@ fn a_wallet_collects_releases_payouts_and_reclaims_as_programs_decide() {
     let mut s = genesis(&d1, &def());
     s = with(&s, w1.debit(&s, Body::Stake { amount: 100 }, 1).unwrap());
     s = with(&s, w1.debit(&s, Body::Unstake { amount: 100 }, 1).unwrap());
-    let none = Sources { chains: &[], programs: &[], shards: &[] };
+    let none = Sources { blocks: &Default::default(), chains: &[], programs: &[], shards: &[] };
     assert!(w1.collect(&s, &none, t::UNBOND).unwrap().is_empty(), "not yet");
     let rel = w1.collect(&s, &none, 1 + t::UNBOND).unwrap();
     assert!(matches!(rel[..], [Entry { body: Body::Release { .. }, balance: 1000, .. }]));
@@ -227,7 +227,7 @@ fn a_wallet_collects_its_mints_and_its_numbered_copies() {
     };
     let shard = t::supply::Shard { mints: vec![mint(&mid, 2, [1; 16], 500, 3), mint(&mid, 3, [2; 16], 70, 3)] };
     let shards = [shard.clone()];
-    let src = Sources { chains: &[], programs: &[], shards: &shards };
+    let src = Sources { blocks: &Default::default(), chains: &[], programs: &[], shards: &shards };
     let (d2, l2) = (Dev::new(2, 22), log(2));
     let w2 = Wallet { device: &d2, keys: &l2 };
     let b = held(2, &md);
@@ -241,9 +241,60 @@ fn a_wallet_collects_its_mints_and_its_numbered_copies() {
     let nid = t::id(&CODE, &nd.encode());
     let rec = t::supply::Shard { mints: vec![mint(&nid, 2, 1u128.to_be_bytes(), 3, 3)] };
     let recs = [rec.clone()];
-    let copy2 = Held { params: ChainParams { item: t::numbered_item(&nid, 2), ..held(2, &nd).params }, definition: nd.clone(), state: State::default() };
-    let got = w2.collect(&copy2, &Sources { chains: &[], programs: &[], shards: &recs }, 5).unwrap();
+    let copy2 = Held { params: ChainParams { item: t::numbered_item(&nid, 2), ..held(2, &nd).params }, definition: nd.clone(), state: State::default(), blocks: Default::default() };
+    let got = w2.collect(&copy2, &Sources { blocks: &Default::default(), chains: &[], programs: &[], shards: &recs }, 5).unwrap();
     assert!(matches!(&got[..], [Entry { body: Body::CappedMint { nonce, amount: 1, .. }, .. }] if *nonce == 2u128.to_be_bytes()));
     let c = with(&copy2, got);
     assert_eq!(t::check(&c.params, &nd, &c.state, &|_, _| None, &|k| (k == 0).then(|| rec.clone()), Some(&l2), &t::Extra::NONE), Ok(()));
+}
+
+/// `h` after its cut `(es, blocks)`: appended, then pruned to the cut, its blocks kept.
+fn after_cut(h: &Held, (es, blocks): (Vec<Entry>, t::cut::Blocks)) -> Held {
+    let mut x = with(h, es);
+    x.state = t::prune(&x.state);
+    x.blocks = blocks;
+    x
+}
+
+#[test]
+fn a_wallet_cuts_its_chain_and_collects_across_cuts_with_their_proofs() {
+    const PROG: [u8; 32] = [77; 32];
+    let (d1, l1) = (Dev::new(1, 11), log(1));
+    let w1 = Wallet { device: &d1, keys: &l1 };
+    let mut a = genesis(&d1, &def());
+    a = with(&a, w1.debit(&a, Body::Send { to: did(2), amount: 300 }, 1).unwrap());
+    // 1 CUTS (stamp 5): its send to 2 is now behind the cut.
+    let a_cut = after_cut(&a, w1.cut(&a, 5).unwrap());
+    assert_eq!(a_cut.state.entries.len(), 1, "only the cut is live");
+    assert_eq!(a_cut.whole().unwrap().entries.len(), a.state.entries.len() + 1, "its whole history read back from its blocks");
+    // 2 receives it from 1's HISTORY (the cut's blocks), with the proof the contract asks.
+    let (d2, l2) = (Dev::new(2, 22), log(2));
+    let w2 = Wallet { device: &d2, keys: &l2 };
+    let chains = [(did(1), a_cut.state.clone())];
+    let none = t::cut::Blocks::new();
+    assert!(w2.collect(&held(2, &def()), &Sources { blocks: &none, chains: &chains, programs: &[], shards: &[] }, 10).unwrap().is_empty(), "its history not read: nothing seen");
+    let src = Sources { blocks: &a_cut.blocks, chains: &chains, programs: &[], shards: &[] };
+    let got = w2.collect(&held(2, &def()), &src, 10).unwrap();
+    assert!(matches!(&got[..], [Entry { body: Body::Receive { amount: 300, ev, .. }, .. }] if ev.theirs.len() == 1));
+    let b = with(&held(2, &def()), got);
+    let read1 = |_: &t::Tok, o: &[u8; 32]| (*o == did(1)).then(|| a_cut.state.clone());
+    assert_eq!(t::check(&b.params, &def(), &b.state, &read1, &|_| None, Some(&l2), &t::Extra::NONE), Ok(()));
+    // 2 CUTS too (stamp 12) — then a payout to it, and 1's send again: the payout with its ABSENCE proof against 2's
+    // received set; the send, already received behind 2's cut, never again.
+    let b_cut = after_cut(&b, w2.cut(&b, 12).unwrap());
+    let sec = t::escrow::Section { escrows: vec![((b.params.tok(), did(1), [7; 16]), 100, [0; 32])], refunds: vec![], pays: vec![([1; 16], b.params.tok(), did(2), 100)] };
+    let programs = [(PROG, sec.encode())];
+    let src = Sources { blocks: &a_cut.blocks, chains: &chains, programs: &programs, shards: &[] };
+    let got = w2.collect(&b_cut, &src, 13).unwrap();
+    assert!(matches!(&got[..], [Entry { body: Body::Payout { amount: 100, ev, .. }, .. }] if !ev.mine.is_empty()), "the payout only, with its proof");
+    let b2 = with(&b_cut, got);
+    let prog = |id: &[u8; 32]| (*id == PROG).then(|| sec.encode());
+    assert_eq!(t::check(&b2.params, &def(), &b2.state, &read1, &|_| None, Some(&l2), &t::Extra { ops: None, program: Some(&prog) }), Ok(()));
+    // A SECOND cut of 2's chain: its new blocks alone read the whole history back (the first cut's are needed no more).
+    let b3 = after_cut(&b2, w2.cut(&b2, 14).unwrap());
+    assert_eq!(b3.whole().unwrap().entries.len(), b2.whole().unwrap().entries.len() + 1);
+    // A cut over an open escrow: refused, as the contract refuses.
+    let mut e = genesis(&d1, &def());
+    e = with(&e, w1.debit(&e, Body::Escrow { program: PROG, terms: vec![], amount: 10, until: 0 }, 1).unwrap());
+    assert_eq!(w1.cut(&e, 5).err(), Some("a cut over an open escrow"));
 }

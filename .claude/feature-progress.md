@@ -1504,7 +1504,9 @@ old key's addresses.
               reclaims, mints (numbered copies too), stake releases; once final, once each; 5 tests (each output through
               the token's check); 10 mutants (1 equivalent check removed, 1 killed after a pending-verdict case).
               token.wasm 3fab0d85 (unbonding_of made pub).
-          [ ] W3 CUTS + proofs  [ ] W4 ACCEPTANCE + live mode
+          [x] W3 CUTS: Wallet::cut + Held.blocks/whole; collect across cuts (whole-history dedup, absence proofs,
+              sender-history presence proofs). 6 tests; 5 mutants (1 equivalent block merge removed).
+          [ ] W4 ACCEPTANCE + live mode
       [ ] 28 SHOP — sell an edition on demand over the wallet core.
       [x] 18 APPS OUT OF THE TOKEN — DONE 10-09. NEXT: NFT = Craftworks item (mint names the item id, optional version
           pin, the token the owner of record; a standard "Craftworks items" token, only the item's owner mints, once).
