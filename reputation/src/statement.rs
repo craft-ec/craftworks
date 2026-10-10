@@ -72,18 +72,26 @@ pub struct Inputs<'a> {
     pub never: &'a [Did],
 }
 
-/// THE STATEMENT of an epoch: keepers split the keeper pot by reputation among those past the gate who kept; everyone
-/// past the gate splits the allowance pot by reputation; every reputation is listed.
+/// THE STATEMENT of an epoch: keepers split the keeper pot by reputation among those past the gate who kept (while few
+/// kept — bootstrap — every keeper, by reputation plus a floor); everyone past the gate splits the allowance pot by
+/// reputation; every reputation is listed, and every keeper (a line for it even with no reputation).
 pub fn compute(x: &Inputs) -> Statement {
     let eligible = |d: &Did| x.rep.get(d).copied().unwrap_or(0) >= x.gate && !x.never.contains(d);
-    let keepers: BTreeMap<Did, u128> = x.kept.iter().filter(|d| eligible(d)).map(|d| (*d, x.rep[d])).collect();
+    // BOOTSTRAP (`KEEPERS_GATED_FROM`): too few kept for the gate — every keeper earns, reputation plus a floor.
+    let bootstrap = x.kept.len() < crate::KEEPERS_GATED_FROM;
+    let keepers: BTreeMap<Did, u128> = if bootstrap {
+        x.kept.iter().filter(|d| !x.never.contains(d)).map(|d| (*d, x.rep.get(d).copied().unwrap_or(0) + x.gate)).collect()
+    } else {
+        x.kept.iter().filter(|d| eligible(d)).map(|d| (*d, x.rep[d])).collect()
+    };
     let everyone: BTreeMap<Did, u128> = x.rep.iter().filter(|(d, _)| eligible(d)).map(|(d, r)| (*d, *r)).collect();
     let k = shares(x.keeper_pot, x.keeper_cap, &keepers);
     let a = shares(x.allowance_pot, x.allowance_cap, &everyone);
     let lines = x
         .rep
-        .iter()
-        .map(|(d, r)| (*d, Line { rep: *r, keeper: k.get(d).copied().unwrap_or(0), allowance: a.get(d).copied().unwrap_or(0) }))
+        .keys()
+        .chain(k.keys())
+        .map(|d| (*d, Line { rep: x.rep.get(d).copied().unwrap_or(0), keeper: k.get(d).copied().unwrap_or(0), allowance: a.get(d).copied().unwrap_or(0) }))
         .collect();
     Statement { epoch: x.epoch, lines }
 }
@@ -203,10 +211,26 @@ mod tests {
     #[test]
     fn the_statement_pays_keepers_past_the_gate_never_the_root_and_its_tree_is_canonical() {
         let rep: BTreeMap<Did, u128> = [(d(0), ONE), (d(1), ONE / 10), (d(2), ONE / 100), (d(3), ONE / 1_000_000)].into_iter().collect();
-        let x = Inputs { epoch: 5, rep: &rep, kept: &[d(0), d(1), d(3)], keeper_pot: 1_000, keeper_cap: 1_000, gate: ONE / 100_000, allowance_pot: 100, allowance_cap: 100, never: &[d(0)] };
+        // GATED (as many kept as `KEEPERS_GATED_FROM`; the rest have no reputation).
+        let fill: Vec<Did> = (0..crate::KEEPERS_GATED_FROM as u32).map(|i| *blake3::hash(&i.to_le_bytes()).as_bytes()).collect();
+        let kept: Vec<Did> = [d(0), d(1), d(3)].into_iter().chain(fill.iter().copied()).take(crate::KEEPERS_GATED_FROM).collect();
+        let x = Inputs { epoch: 5, rep: &rep, kept: &kept, keeper_pot: 1_000, keeper_cap: 1_000, gate: ONE / 100_000, allowance_pot: 100, allowance_cap: 100, never: &[d(0)] };
         let s = compute(&x);
-        // The root kept but never earns; 3 kept but is below the gate; 2 did not keep: only 1 earns the keeper pot.
+        // The root kept but never earns; 3 kept but is below the gate; 2 did not keep; no reputation, no line: only 1
+        // earns the keeper pot.
         assert_eq!((s.lines[&d(0)].keeper, s.lines[&d(1)].keeper, s.lines[&d(2)].keeper, s.lines[&d(3)].keeper), (0, 1_000, 0, 0));
+        assert!(!s.lines.contains_key(&fill[5]));
+        // BOOTSTRAP (fewer kept): every keeper but the root earns — reputation plus the gate's floor, so reputation
+        // still weighs more — and one with no reputation has a line to claim from.
+        let few = Inputs { kept: &[d(0), d(1), d(3), d(4)], keeper_pot: 1_000_000, keeper_cap: 1_000_000, ..x };
+        let b = compute(&few);
+        let kp = |n: u8| b.lines.get(&d(n)).map_or(0, |l| l.keeper);
+        assert_eq!(kp(0), 0, "the root never earns");
+        assert_eq!(kp(2), 0, "did not keep");
+        assert!(kp(1) > kp(3) && kp(3) > kp(4) && kp(4) > 0, "{} {} {}", kp(1), kp(3), kp(4));
+        assert_eq!(b.lines[&d(4)].rep, 0);
+        // The allowance keeps its gate in bootstrap too.
+        assert_eq!((b.lines[&d(3)].allowance, b.lines[&d(4)].allowance), (0, 0));
         // The allowance: everyone past the gate but the root, by reputation (1 and 2: 100 × 10/11, 100 × 1/11).
         assert_eq!((s.lines[&d(1)].allowance, s.lines[&d(2)].allowance, s.lines[&d(3)].allowance), (90, 9, 0));
         assert_eq!(Line::decode(&s.lines[&d(1)].encode()), Some(s.lines[&d(1)]));

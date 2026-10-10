@@ -50,6 +50,11 @@ pub const ONE: u128 = 1_000_000_000_000;
 /// THE GATE (TOKEN §7d): the least reputation (a trust share) that earns — keeper issuance, the allowance. Halves at
 /// every issuance halving (by height) as the network grows.
 pub const GATE: u128 = ONE / 100_000;
+/// BOOTSTRAP (owner 10-10: "let node keep by default … reputation still weighted higher"): while fewer accounts than
+/// this KEPT in an epoch, the keeper pot has no gate — every account that proved keeping earns, weighted by its
+/// reputation plus a floor of [`GATE`] (none: as one just past the gate; any reputation: more). From this many on, the
+/// gate holds and the weight is reputation alone. The allowance (paid for nothing done) keeps its gate throughout.
+pub const KEEPERS_GATED_FROM: usize = 1000;
 
 /// The TREE: each admitted account's parent (`None`: a root) and depth, in admission order.
 #[derive(Clone, Debug, Default)]

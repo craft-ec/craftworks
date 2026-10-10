@@ -592,9 +592,14 @@ both from sybil"; "lets build it. and method to monitor the distribution".
 $CRAFT is the storage reward's token (WREN is Claude's own, §7). Before paid demand exists, keepers are paid by
 ISSUANCE — and each piece of the loop has ONE job:
 
-- **Reputation is the GATE** (docs/REPUTATION.md): only an account at or above the gate earns. It decides WHETHER,
-  never HOW MUCH — issuance ∝ reputation would compound (more stake → more duty → more vouches) and let one captured
-  community grow forever.
+- **Reputation is the GATE and the WEIGHT** (docs/REPUTATION.md; the statement, `reputation::statement::compute`): the
+  keeper pot is split among accounts that PROVED keeping, by reputation, each capped per account (the cap keeps one
+  captured community from compounding). BOOTSTRAP (owner 10-10: "let node keep by default … reputation still weighted
+  higher"): while fewer than `KEEPERS_GATED_FROM` (1,000) accounts kept in an epoch there is no gate — every keeper
+  earns, weighted by reputation plus a floor of the gate value (none: as one just past the gate; any reputation:
+  more); from 1,000 on, only accounts at or above the gate earn, by reputation alone. Keeping itself never waits for
+  reputation: every logged-in account with a storage limit is a keeper and is assigned files. The allowance (paid for
+  nothing done) keeps its gate throughout.
 - **Proven keeping sets the AMOUNT:** a `keepers` token mints by `Body::KeeperMint` — the keeper's own claim, in its own
   chain, for one FINISHED standing epoch (`craftworks_standing::EPOCH` beacon heights), citing its node's STANDING
   CONTRACT. The token contract reads that contract (one related contract) and checks: the epoch is finished (the
