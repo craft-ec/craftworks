@@ -60,14 +60,21 @@ contributions and the rows already published are enough.
 ## 4. Carriers: keepers who prove they hold
 
 Freenet does not tell a reader which node answered (a get may be answered by any node that cached it on the way), so
-bandwidth cannot be paid per answer. Owner, 2026-10-06: **pay the holders, weighted by demand** — and **the users are
-the keepers**: a contributor's node already received every piece of what it watched, read or downloaded, so it keeps
-what it used (up to a storage limit its owner sets, oldest dropped first; the `keep` capability re-reads it, READ ONLY — owner 2026-10-07: a keeper only keeps, healing is every reader's,
-during its read) and registers in the **keepers bag** as its keeper. Supply follows demand by itself (a hit has as many keepers as
-past viewers, as torrent seeding), and the money moves between contributors: a contributor's carrier share goes to the
-earlier users keeping what they used, and comes back to them from the later users of what they keep — **never to the
-contributor's own nodes** (§1). Anyone else may opt in as a keeper too (a creator's own nodes, a space's, paid pinning
-of cold files, §6).
+bandwidth cannot be paid per answer: **pay the holders, weighted by demand** (owner 2026-10-06). And Freenet does not
+keep data forever — a node holds a bounded number of contracts and drops the least recently read first, so a file
+nobody reads lately loses pieces across the network — so something must KEEP it.
+
+**ONE FUNNEL (owner 2026-10-10: "it is just one single funnel. paid demand also flow through the same funnel"):** a node
+KEEPS WHAT IT IS ASSIGNED — (1) its ARC: the pieces Freenet places near its ring position; (2) files BELOW THEIR TARGET
+copies: assigned by a beacon rendezvous each node computes for itself (`BLAKE3(beacon ‖ node ‖ piece)` ranks, no
+coordinator), until healthy again — within the storage limit its owner sets (0: it keeps nothing and only pays). The
+`keep` capability re-reads the assignment (READ ONLY — a keeper only keeps; healing is every reader's, during its read);
+the node's STANDING RECORD proves it (one challenge queue); and every payout reads that one proof: $CRAFT ISSUANCE
+(TOKEN §7d) for each proven epoch, by reputation share, and PAID DEMAND — a contributor's carrier share — to the nodes
+proving pieces of the files that contributor used, **never to the contributor's own nodes** (§1). (Replaces "the users
+are the keepers — keep what you used", 10-06: cold files had no keepers, and keeping was tied to viewing. What one views
+is still cached by Freenet as ever; it is just not a category of its own.) A node that only hosts (views nothing) earns
+for what it proves; an account that only pays keeps nothing. The money follows the PROOF, never the viewer.
 
 - **The keeper's copy is the node's own, held by RE-READING it** (no second store, no node change, no renewal
   traffic). Measured 2026-10-07 on freenet 0.2.142, same set-up as below: the keeper got A and B once, then fetched 60
@@ -88,7 +95,7 @@ of cold files, §6).
 - **Proof of holding — a continuous, deterministic random queue** (as ZephCraft's HealthScan: a small slice every
   cycle, never one big daily round; `craftec/docs/CRAFTOBJ_DESIGN.md` §HealthScan, rendezvous by
   `BLAKE3(node_id ‖ cid ‖ epoch)`). At a cadence still to be tuned (§6), the network's **beacon** (the beacon contract, TOKEN §5a) turns over —
-  known to nobody beforehand —; each keeper's queue is its claimed pieces ranked by `BLAKE3(beacon ‖ node id ‖ piece)`, and it
+  known to nobody beforehand —; each keeper's queue is its ASSIGNED pieces ranked by `BLAKE3(beacon ‖ node id ‖ piece)`, and it
   answers the head of that queue — a slice sized so the queue covers a set share of its claim over time (the share and pace to be tuned, §6) — with
   `hash(piece ‖ beacon ‖ node id)`, within that beacon's window. Deterministic: anyone recomputes which pieces were due
   and checks a sample against the public pieces. Random: nobody knows the next slice before its beacon. The node id
@@ -107,25 +114,14 @@ of cold files, §6).
   work.
 - **Everyone gets their turn:** on the global network every node eventually takes part in hosting (Freenet places data
   across the ring), so carrying pay spreads across participants over time rather than pooling at a few servers.
-- **Beyond what one used** (owner 10-09, TOKEN §7a): a node also proves what FREENET PLACED on it — anything PUT,
-  hosted near the node's ring location by the core's own placement — by the same queue; it earns WITNESS STANDING
-  (TOKEN §7a), so data nobody read lately is still kept. The node never chooses what counts.
+- **Its arc** (owner 10-09, TOKEN §7a): a node proves what FREENET PLACED on it — anything PUT,
+  hosted near the node's ring location by the core's own placement — by the same queue, as part of its assignment, so
+  data nobody read lately is still kept. The node never chooses what counts.
 - Healing is every reader's (files heal on read: a missing fragment is made again by whoever reads it), paid or not; a keeper
   does not repair — it KEEPS, so that a reader finds enough to read and heal from.
 - Exact per-answer bandwidth pay would need the node to name the peer that delivered each piece (a node change, and
   even then only the last hop): not planned.
 
-- **PAYING AND KEEPING ARE SEPARATE ROLES (owner 10-10: "perhaps user doesn't keep the content. just paid for it?").**
-  Keeping what one used is ON by default, within the storage limit its owner sets — and the limit may be 0: then the
-  account only PAYS (phones, sleeping laptops, anyone not giving disk). Its contribution is split by what it used as
-  ever; the carrier share of those files goes to whichever OTHER nodes prove holding them. A node that only hosts
-  (views nothing) earns for what it proves. The money follows the PROOF, never the viewer.
-- **ONE PROOF SYSTEM, TWO PAYOUTS (decided 10-10, with TOKEN §7d):** the node's STANDING RECORD (`contracts-src/standing`)
-  is the only keeping proof — it commits to EVERYTHING the node hosts (what Freenet placed and what it cached) and
-  answers the beacon's challenges on it. Two payouts read the same record: $CRAFT ISSUANCE (TOKEN §7d) for any proven
-  epoch, split by reputation share (holding more or junk earns nothing extra: one qualifying epoch, one trust share);
-  and PAID DEMAND (this section) for the proven holdings that are pieces of files someone paid to use. The separate
-  keepers bag with its own proofs, above, is folded into it: no second challenge queue.
 
 ## 4a. What is signed, what is provable
 
@@ -219,7 +215,8 @@ A contributor's claims only steer their own contribution (§1): misreporting can
 1. Usage record in the contributor's table (no money: shows "your month" to the user) — BUILT. Per-item TIME and DATA
    shown as public counts beside views (owner 2026-10-06: as a view count for now; a confidential roll-up replaces it).
 2. Keep what you watched (re-read daily, read only, within a limit) — BUILT.
-3. Keepers bag: claims of who keeps which file — BUILT (claims, unsigned, public).
+3. Keepers bag: claims of who keeps which file — BUILT (claims, unsigned, public). SUPERSEDED 10-10 by the one funnel
+   (§4): what a node keeps is its ASSIGNMENT, proven by its standing record; the bag stays only as a display hint.
 4. Public DAILY statements (today running, earlier days final), the ledger anyone sums and each one's pending view
    (Usage app: "Your earnings") — BUILT 2026-10-07, in shadow mode (computed, not paid) for a few months to calibrate
    the split; carriers' shares from CLAIMS; a day that does not add up is left out of every sum. No treasury (§5).
