@@ -166,3 +166,21 @@ pub fn signed(ctx: &Ctx, lot: &Lot, got: Got, queued: &[Queued], statements: &[c
     w.dedup();
     Step::Want(w)
 }
+
+/// Which of `statements` (an epoch's posted roots) is ACCEPTED (`wallet::fees::statement_accepted`) — the first such
+/// in order of their roots; `None`: none read as accepted here (reads it lacks count as none: ask it to read first).
+pub fn accepted_statement(ctx: &Ctx, lot: &Lot, got: Got, statements: &[craftworks_wallet::fees::Statement]) -> Option<craftworks_wallet::fees::Statement> {
+    let beacon = ctx.beacon;
+    let read = |id: [u8; 32]| there(got, &id).ok().flatten();
+    let claims = |ep: u64| read(claims::Params { code_hash: ctx.code_hash, pool: lot.pool, beacon, epoch: ep }.id()).and_then(|b| claims::Registry::decode(&b)).map_or(vec![], |r| r.claims);
+    let out = |h: u64| out_at(lot, got, &beacon, h).ok().and_then(|r| r.ok());
+    let sigs = |c: &[u8; 32], sq: u64| {
+        let a = wallet::witness_bag(c, sq);
+        read(t::id(&lot.bag, &a)).and_then(|b| craftworks_bag_contract::read(&a, &b)).unwrap_or_default().iter().filter_map(|x| wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(x))).collect()
+    };
+    let entry = |_: &Queued| None;
+    let r = craftworks_wallet::fees::Reads { pool: lot.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs };
+    let mut sts = statements.to_vec();
+    sts.sort_by_key(|s| s.root);
+    sts.into_iter().find(|s| craftworks_wallet::fees::statement_accepted(&r, s))
+}

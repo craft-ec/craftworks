@@ -170,10 +170,36 @@ pub const RAMP: u64 = 4;
 /// made by then, each RAMPED in — `(epochs it has stood + 1) / RAMP` of its weight, full after RAMP epochs — so nobody
 /// is vouched in, paid an epoch and dropped, and a voucher has time to notice before a vouch carries all of its weight.
 pub fn reputation_at(roots: &[Did], vouches: &[Vouch], now: u64) -> BTreeMap<Did, u128> {
+    reputation_active(roots, vouches, now, &|_| Some(now / EPOCH))
+}
+
+/// Epochs an account may be ABSENT (no signed activity: a chain entry it kept or witnessed, a vouch) before what it
+/// passes on DECAYS (TOKEN §7d item 7) — then halving every [`DECAY_HALF`] epochs more. Nothing is permanent without
+/// presence.
+pub const DECAY_AFTER: u64 = 30;
+pub const DECAY_HALF: u64 = 30;
+
+/// A voucher's DECAY at standing epoch `now_epoch`, last active at `last` (fixed point): full while it was active within
+/// [`DECAY_AFTER`] epochs, then halved for every [`DECAY_HALF`] epochs (a step each, never zero by rounding alone).
+pub fn decay(now_epoch: u64, last: u64) -> u128 {
+    let absent = now_epoch.saturating_sub(last);
+    if absent <= DECAY_AFTER {
+        return ONE;
+    }
+    let halvings = (absent - DECAY_AFTER).div_ceil(DECAY_HALF);
+    if halvings >= 64 { 0 } else { ONE >> halvings }
+}
+
+/// [`reputation_at`] with ABSENCE DECAY: each vouch weighs its ramp × its voucher's [`decay`], the voucher last active
+/// at `last_active` (a standing epoch; `None`: never seen active — counted from its vouch).
+pub fn reputation_active(roots: &[Did], vouches: &[Vouch], now: u64, last_active: &dyn Fn(&Did) -> Option<u64>) -> BTreeMap<Did, u128> {
     let then: Vec<Vouch> = vouches.iter().copied().filter(|v| v.at <= now).collect();
+    let ne = now / EPOCH;
     reputation_ramped(roots, &then, &|v: &Vouch| {
-        let stood = (now / EPOCH).saturating_sub(v.at / EPOCH) + 1;
-        ONE * stood.min(RAMP) as u128 / RAMP as u128
+        let stood = ne.saturating_sub(v.at / EPOCH) + 1;
+        let ramp = ONE * stood.min(RAMP) as u128 / RAMP as u128;
+        let last = last_active(&v.from).unwrap_or(0).max(v.at / EPOCH);
+        ramp * decay(ne, last) / ONE
     })
 }
 
@@ -456,5 +482,21 @@ mod tests {
             r = next;
         }
         r
+    }
+
+    /// ABSENCE DECAY (TOKEN §7d item 7): full for DECAY_AFTER absent epochs, then halving every DECAY_HALF; an absent
+    /// voucher passes on less — its vouchee's reputation falls, the voucher's own does not.
+    #[test]
+    fn an_absent_voucher_passes_on_less() {
+        assert_eq!(decay(100, 100), ONE);
+        assert_eq!(decay(100, 100 - DECAY_AFTER), ONE, "30 absent: still full");
+        assert_eq!(decay(100, 100 - DECAY_AFTER - 1), ONE / 2, "then halved");
+        assert_eq!(decay(200, 200 - DECAY_AFTER - DECAY_HALF - 1), ONE / 4);
+        let vs = vec![Vouch { from: d(0), to: d(1), at: 0 }, Vouch { from: d(1), to: d(2), at: 0 }];
+        let now = 100 * EPOCH;
+        let present = reputation_active(&[d(0)], &vs, now, &|_| Some(100));
+        let absent = reputation_active(&[d(0)], &vs, now, &|x| if *x == d(1) { Some(10) } else { Some(100) });
+        assert!(absent[&d(2)] < present[&d(2)], "1 absent 90 epochs: 2 gets less ({} < {})", absent[&d(2)], present[&d(2)]);
+        assert_eq!(absent[&d(1)], present[&d(1)], "1's own reputation is not what decays");
     }
 }

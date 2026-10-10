@@ -340,7 +340,7 @@ mod tests {
         let mut got: HashMap<[u8; 32], Vec<u8>> = HashMap::new();
         let tl = crate::tokens::testlot::stakers(&ctx, &mut got);
         let (keeper, idle) = ([21u8; 32], [22u8; 32]);
-        let lines = [(keeper, Line { rep: 1, keeper: 500, allowance: 0, witness: 0 }), (idle, Line { rep: 1, keeper: 0, allowance: 0, witness: 0 })].into_iter().collect();
+        let lines = [(keeper, Line { rep: 1, keeper: 500, allowance: 0, witness: 0, active: 0 }), (idle, Line { rep: 1, keeper: 0, allowance: 0, witness: 0, active: 0 })].into_iter().collect();
         let mut blocks = std::collections::BTreeMap::new();
         let (root, _) = Statement { epoch: 5, lines }.tree(&mut blocks).unwrap();
         let proof = |d: &[u8; 32]| freenet_prolly::proof::prove(&blocks, &root, d).unwrap().encode();
@@ -391,7 +391,7 @@ mod tests {
         let public = node.verifying_key().to_bytes();
         let mut dev = crate::tokens::device(public, &[craftworks_identity::credential(&did, &public, &[7; 32], &[102; 32])], &log, vec![]).unwrap();
         // Its keeper line minted (epoch 5), as a page mints it.
-        let lines = [(did, Line { rep: 1, keeper: 500, allowance: 0, witness: 0 })].into_iter().collect();
+        let lines = [(did, Line { rep: 1, keeper: 500, allowance: 0, witness: 0, active: 0 })].into_iter().collect();
         let mut blocks = std::collections::BTreeMap::new();
         let (root, _) = Statement { epoch: 5, lines }.tree(&mut blocks).unwrap();
         let proof = freenet_prolly::proof::prove(&blocks, &root, &did).unwrap().encode();

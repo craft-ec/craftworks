@@ -532,6 +532,15 @@ impl Core {
         Ok((name, wire::frame_put(c, freenet_stdlib::prelude::WrappedState::new(state), s)?))
     }
 
+    /// The LINES of the public statement under `root`, its blocks read from their Block contracts: `Err(ids)` — read
+    /// these contracts first.
+    pub fn statement_lines(&self, root: &freenet_prolly::Cid) -> Result<std::collections::BTreeMap<[u8; 32], craftworks_reputation::statement::Line>, Vec<[u8; 32]>> {
+        let id_of = wire::block::contract_deriver(&self.block_code);
+        // (A Block contract's state is `kind ‖ body`; the tree's block is its body.)
+        let block = |c: &freenet_prolly::Cid| self.got(&id_of(c)).filter(|s| s.len() > 1).map(|s| s[1..].to_vec());
+        craftworks_reputation::statement::lines(root, &block).map_err(|cids| cids.iter().map(|c| id_of(c)).collect())
+    }
+
     /// A PUBLIC tree block's put (a Block contract by its cid, in the clear): a statement's.
     pub fn public_block_put(&mut self, cid: &freenet_prolly::Cid, body: &[u8]) -> Result<(String, Vec<Vec<u8>>), String> {
         let state = wire::block::block_state(cid, body).ok_or("a block of no kind")?;
@@ -2575,6 +2584,7 @@ mod js {
                 None => Vec::new(),
             };
             // SIGNED (the epoch before's witness fees): each seated signature on its queued entries (`wallet::fees`).
+            let mut prev = std::collections::BTreeMap::new();
             let signed = match epoch.checked_sub(1) {
                 None => Default::default(),
                 Some(_) => {
@@ -2585,14 +2595,23 @@ mod js {
                     let prev = epoch - 1;
                     let statements: Vec<craftworks_wallet::fees::Statement> = posted.iter().filter_map(|r| bytes32("root", &r.as_string().unwrap_or_default()).ok()).map(|root| craftworks_wallet::fees::Statement { place: R::statement::witness_place(prev), root, h: R::statement::lot_height(prev) }).collect();
                     match witness::signed(&ctx, &lot, &|x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec), &queued, &statements) {
-                        tokens::Step::Done(s) => s,
+                        tokens::Step::Done(s) => {
+                            // THE PREVIOUS STATEMENT: its accepted root's lines (each account's last active epoch).
+                            if let Some(st) = witness::accepted_statement(&ctx, &lot, &|x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec), &statements) {
+                                match self.0.statement_lines(&st.root) {
+                                    Ok(l) => prev = l,
+                                    Err(w) => return js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
+                                }
+                            }
+                            s
+                        }
                         tokens::Step::Want(w) => return js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
                         tokens::Step::Sign(_) => return Err(err("a count never signs".into())),
                     }
                 }
             };
             let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP), witness: craftworks_wallet::craft::witness_pot(epoch) };
-            let st = R::statement::build(epoch, &items, &log_of, &kept, &signed, pots);
+            let st = R::statement::build(epoch, &items, &log_of, &kept, &signed, &prev, pots);
             let mut blocks = std::collections::BTreeMap::new();
             let (root, parity) = st.tree(&mut blocks).ok_or_else(|| err("the statement's tree does not build".into()))?;
             let puts = js_sys::Array::new();

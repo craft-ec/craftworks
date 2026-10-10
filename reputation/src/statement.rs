@@ -33,18 +33,22 @@ pub struct Line {
     pub allowance: u128,
     /// Its WITNESS FEES of the epoch's issuance (TOKEN §7d: the pot's 10%, by the signatures it gave — SPENDABLE).
     pub witness: u128,
+    /// The last standing epoch it was ACTIVE (kept, witnessed or vouched) — carried from statement to statement: what
+    /// its vouches' absence DECAY is read from (`reputation_active`). 0: not seen yet.
+    pub active: u64,
 }
 
 impl Line {
     pub fn encode(&self) -> Vec<u8> {
-        [self.rep.to_le_bytes(), self.keeper.to_le_bytes(), self.allowance.to_le_bytes(), self.witness.to_le_bytes()].concat()
+        [&self.rep.to_le_bytes()[..], &self.keeper.to_le_bytes(), &self.allowance.to_le_bytes(), &self.witness.to_le_bytes(), &self.active.to_le_bytes()].concat()
     }
     pub fn decode(b: &[u8]) -> Option<Line> {
-        (b.len() == 64).then(|| Line {
+        (b.len() == 72).then(|| Line {
             rep: u128::from_le_bytes(b[..16].try_into().unwrap()),
             keeper: u128::from_le_bytes(b[16..32].try_into().unwrap()),
             allowance: u128::from_le_bytes(b[32..48].try_into().unwrap()),
-            witness: u128::from_le_bytes(b[48..].try_into().unwrap()),
+            witness: u128::from_le_bytes(b[48..64].try_into().unwrap()),
+            active: u64::from_le_bytes(b[64..].try_into().unwrap()),
         })
     }
 }
@@ -76,6 +80,8 @@ pub struct Inputs<'a> {
     pub signed: &'a BTreeMap<Did, u64>,
     pub witness_pot: u128,
     pub witness_cap: u128,
+    /// Each account's last ACTIVE epoch as of this statement (carried, refreshed by the epoch before's activity).
+    pub active: &'a BTreeMap<Did, u64>,
     /// Accounts that never earn (the roots).
     pub never: &'a [Did],
 }
@@ -103,7 +109,8 @@ pub fn compute(x: &Inputs) -> Statement {
         .keys()
         .chain(k.keys())
         .chain(w.keys())
-        .map(|d| (*d, Line { rep: x.rep.get(d).copied().unwrap_or(0), keeper: k.get(d).copied().unwrap_or(0), allowance: a.get(d).copied().unwrap_or(0), witness: w.get(d).copied().unwrap_or(0) }))
+        .chain(x.active.keys())
+        .map(|d| (*d, Line { rep: x.rep.get(d).copied().unwrap_or(0), keeper: k.get(d).copied().unwrap_or(0), allowance: a.get(d).copied().unwrap_or(0), witness: w.get(d).copied().unwrap_or(0), active: x.active.get(d).copied().unwrap_or(0) }))
         .collect();
     Statement { epoch: x.epoch, lines }
 }
@@ -115,6 +122,52 @@ pub fn line_proven(root: &Cid, did: &Did, proof: &[u8]) -> Option<Line> {
         freenet_prolly::proof::ProvenOwned::Present(freenet_prolly::proof::ProvenValue::Inline(b)) => Line::decode(&b),
         _ => None,
     }
+}
+
+/// EVERY LINE of the statement under `root` (what the next statement carries forward: each account's last active
+/// epoch), its blocks read through `block` (a block's bytes by its cid; `None`: not read yet). `Err(cids)`: read these
+/// first, then ask again.
+pub fn lines(root: &Cid, block: &dyn Fn(&Cid) -> Option<Vec<u8>>) -> Result<BTreeMap<Did, Line>, Vec<Cid>> {
+    use freenet_prolly::range::{range, PageEnd, Range};
+    let mut held: BTreeMap<Cid, Vec<u8>> = BTreeMap::new();
+    let mut out = BTreeMap::new();
+    let mut after: Option<Vec<u8>> = None;
+    for _ in 0..100_000 {
+        let r = Range { after: after.clone(), ..Range::default() };
+        let (entries, next, need, end) = {
+            let page = range(&held, root, &r).map_err(|_| vec![*root])?;
+            let entries: Vec<(Vec<u8>, Option<Line>)> = page.entries.iter().map(|(k, v)| (k.clone(), match v {
+                freenet_prolly::node::Value::Inline(b) => Line::decode(b),
+                _ => None,
+            })).collect();
+            (entries, page.next.clone(), page.need.clone(), page.end)
+        };
+        for (k, l) in entries {
+            if let (Ok(d), Some(l)) = (Did::try_from(k.as_slice()), l) {
+                out.insert(d, l);
+            }
+        }
+        match end {
+            PageEnd::EndOfRange | PageEnd::EndOfTree => return Ok(out),
+            PageEnd::Limit => after = next,
+            PageEnd::Blocked => {
+                let missing: Vec<Cid> = need.iter().filter(|c| !held.contains_key(*c)).copied().collect();
+                let mut absent = Vec::new();
+                for c in missing {
+                    match block(&c) {
+                        Some(b) => {
+                            held.insert(c, b);
+                        }
+                        None => absent.push(c),
+                    }
+                }
+                if !absent.is_empty() {
+                    return Err(absent);
+                }
+            }
+        }
+    }
+    Err(vec![])
 }
 
 /// The STATEMENT BAG of epoch `epoch` (a bag's address): where anyone posts the statement's root ([`Posted`]).
@@ -164,11 +217,24 @@ pub struct Pots {
 /// as of the epoch's START from the signed vouch items standing then (each verified by its voucher's key log,
 /// `log_of`), from the [`crate::ROOTS`], split by `pots` (`kept`: the accounts that proved keeping; `signed`: the
 /// witness signatures each gave).
-pub fn build(epoch: u64, items: &[crate::item::Item], log_of: &dyn Fn(&Did) -> Option<craftworks_idlog_contract::Log>, kept: &[Did], signed: &BTreeMap<Did, u64>, pots: Pots) -> Statement {
+pub fn build(epoch: u64, items: &[crate::item::Item], log_of: &dyn Fn(&Did) -> Option<craftworks_idlog_contract::Log>, kept: &[Did], signed: &BTreeMap<Did, u64>, prev: &BTreeMap<Did, Line>, pots: Pots) -> Statement {
     let start = epoch * crate::EPOCH;
     let vs = crate::item::standing(items, start, log_of);
-    let rep = crate::reputation_at(crate::ROOTS, &vs, start);
-    compute(&Inputs { epoch, rep: &rep, kept, keeper_pot: pots.keeper.0, keeper_cap: pots.keeper.1, gate: crate::GATE, allowance_pot: pots.allowance.0, allowance_cap: pots.allowance.1, signed, witness_pot: pots.witness.0, witness_cap: pots.witness.1, never: crate::ROOTS })
+    let active = active_of(epoch, prev, kept, signed, items);
+    let rep = crate::reputation_active(crate::ROOTS, &vs, start, &|d| active.get(d).copied());
+    compute(&Inputs { epoch, rep: &rep, kept, keeper_pot: pots.keeper.0, keeper_cap: pots.keeper.1, gate: crate::GATE, allowance_pot: pots.allowance.0, allowance_cap: pots.allowance.1, signed, witness_pot: pots.witness.0, witness_cap: pots.witness.1, active: &active, never: crate::ROOTS })
+}
+
+/// Each account's last ACTIVE epoch as of statement `epoch`: the previous statement's (`prev`, its lines), refreshed to
+/// `epoch − 1` for every account active then — it KEPT, gave witness signatures, or made a vouch item that epoch.
+pub fn active_of(epoch: u64, prev: &BTreeMap<Did, Line>, kept: &[Did], signed: &BTreeMap<Did, u64>, items: &[crate::item::Item]) -> BTreeMap<Did, u64> {
+    let mut out: BTreeMap<Did, u64> = prev.iter().filter(|(_, l)| l.active > 0).map(|(d, l)| (*d, l.active)).collect();
+    let Some(last) = epoch.checked_sub(1) else { return out };
+    let vouched = items.iter().filter(|i| i.at / crate::EPOCH == last).map(|i| i.from);
+    for d in kept.iter().copied().chain(signed.iter().filter(|(_, n)| **n > 0).map(|(d, _)| *d)).chain(vouched) {
+        out.insert(d, last);
+    }
+    out
 }
 
 /// Where an epoch's statement is WITNESSED (TOKEN §7a, as an entry is): its witness bag is the token's
@@ -243,7 +309,7 @@ mod tests {
         let fill: Vec<Did> = (0..crate::KEEPERS_GATED_FROM as u32).map(|i| *blake3::hash(&i.to_le_bytes()).as_bytes()).collect();
         let kept: Vec<Did> = [d(0), d(1), d(3)].into_iter().chain(fill.iter().copied()).take(crate::KEEPERS_GATED_FROM).collect();
         let none = BTreeMap::new();
-        let x = Inputs { epoch: 5, rep: &rep, kept: &kept, keeper_pot: 1_000, keeper_cap: 1_000, gate: ONE / 100_000, allowance_pot: 100, allowance_cap: 100, signed: &none, witness_pot: 0, witness_cap: 0, never: &[d(0)] };
+        let x = Inputs { epoch: 5, rep: &rep, kept: &kept, keeper_pot: 1_000, keeper_cap: 1_000, gate: ONE / 100_000, allowance_pot: 100, allowance_cap: 100, signed: &none, witness_pot: 0, witness_cap: 0, active: &BTreeMap::new(), never: &[d(0)] };
         let s = compute(&x);
         // The root kept but never earns; 3 kept but is below the gate; 2 did not keep; no reputation, no line: only 1
         // earns the keeper pot.
@@ -286,5 +352,34 @@ mod tests {
         let posted = Posted { epoch: 5, root: r1, parity: s.tree(&mut BTreeMap::new()).unwrap().1 };
         assert_eq!(Posted::decode(&posted.encode()), Some(posted.clone()));
         assert_ne!(bag_address(5), bag_address(6));
+    }
+
+    #[test]
+    fn active_epochs_carry_from_statement_to_statement() {
+        let prev: BTreeMap<Did, Line> = [(d(1), Line { active: 3, ..Default::default() }), (d(2), Line { active: 4, ..Default::default() })].into_iter().collect();
+        let signed: BTreeMap<Did, u64> = [(d(3), 2)].into_iter().collect();
+        let a = active_of(9, &prev, &[d(2)], &signed, &[]);
+        assert_eq!((a[&d(1)], a[&d(2)], a[&d(3)]), (3, 8, 8), "carried; refreshed to the epoch before by keeping or witnessing");
+        let l = Line { rep: 1, keeper: 2, allowance: 3, witness: 4, active: 5 };
+        assert_eq!(Line::decode(&l.encode()), Some(l));
+    }
+
+    #[test]
+    fn a_statements_lines_read_back_from_its_blocks() {
+        let lines: BTreeMap<Did, Line> = (0..300u32).map(|i| (*blake3::hash(&i.to_le_bytes()).as_bytes(), Line { rep: i as u128, keeper: 1, allowance: 0, witness: 2, active: i as u64 })).collect();
+        let st = Statement { epoch: 4, lines: lines.clone() };
+        let mut blocks = BTreeMap::new();
+        let (root, parity) = st.tree(&mut blocks).unwrap();
+        assert_eq!(lines_of(&root, &blocks), Ok(lines), "every line back");
+        // Its root withheld: asked for, by its cid (nothing else read without it). Its parity is never needed to read.
+        let mut short = blocks.clone();
+        short.remove(&root);
+        assert_eq!(lines_of(&root, &short), Err(vec![root]));
+        let mut no_parity = blocks.clone();
+        no_parity.retain(|c, _| !parity.contains(c));
+        assert_eq!(lines_of(&root, &no_parity).map(|l| l.len()), Ok(300));
+    }
+    fn lines_of(root: &Cid, b: &BTreeMap<Cid, Vec<u8>>) -> Result<BTreeMap<Did, Line>, Vec<Cid>> {
+        lines(root, &|c| b.get(c).cloned())
     }
 }

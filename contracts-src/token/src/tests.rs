@@ -3528,7 +3528,7 @@ fn kdef() -> Definition {
 /// A statement whose lines give T a keeper line of `amount` (and account 5 one of 7): its root and T's proof.
 fn statement_for_t(amount: u128) -> ([u8; 32], Vec<u8>, Vec<u8>) {
     use craftworks_reputation::statement::{Line, Statement};
-    let lines = [(did(T), Line { rep: 1, keeper: amount, allowance: 0, witness: 0 }), (did(5), Line { rep: 1, keeper: 7, allowance: 0, witness: 0 })].into_iter().collect();
+    let lines = [(did(T), Line { rep: 1, keeper: amount, allowance: 0, witness: 0, active: 0 }), (did(5), Line { rep: 1, keeper: 7, allowance: 0, witness: 0, active: 0 })].into_iter().collect();
     let st = Statement { epoch: 3, lines };
     let mut blocks = std::collections::BTreeMap::new();
     let (root, _) = st.tree(&mut blocks).unwrap();
@@ -3595,7 +3595,7 @@ fn a_keeper_mints_its_statement_line_once_locked_as_stake_by_anyone() {
     // is refused; a witness-only line (keeper 0) mints its fee alone.
     let fee_line = |keeper: u128, witness: u128| {
         use craftworks_reputation::statement::{Line, Statement};
-        let lines = [(did(T), Line { rep: 1, keeper, allowance: 0, witness })].into_iter().collect();
+        let lines = [(did(T), Line { rep: 1, keeper, allowance: 0, witness, active: 0 })].into_iter().collect();
         let mut blocks = std::collections::BTreeMap::new();
         let (r, _) = Statement { epoch: 3, lines }.tree(&mut blocks).unwrap();
         (r, freenet_prolly::proof::prove(&blocks, &r, &did(T)).unwrap().encode())

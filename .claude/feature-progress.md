@@ -1875,6 +1875,13 @@ old key's addresses.
               too, only where the root reached the committee's need (the baseline's seat counts toward it, earns
               nothing). Page passes the epoch before's posted roots; the tool reads them. Test: 4 signers of the
               accepted root counted once each; a root 2 signed pays nothing. Live fx v570.
+          [x] DECAY 10-11 (code + tests; contracts rebuilt and published after the live S3 check — Line grew, token.wasm
+              re-keys $CRAFT): `reputation::decay` (full ≤ DECAY_AFTER=30 absent epochs, then halving per DECAY_HALF=30),
+              `reputation_active` (each vouch × its voucher's decay). Statement Line + `active` (72 bytes) carried from the
+              previous ACCEPTED statement (`statement::lines` reads its public blocks; `fees::statement_accepted` picks
+              it, page and tool alike) and refreshed by the epoch before's activity (kept, witnessed, vouched:
+              `active_of`). Tests: decay steps; an absent voucher's vouchee gets less, its own reputation does not;
+              active carried/refreshed; 300 lines read back from blocks, a withheld root asked for.
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and

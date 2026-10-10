@@ -24,6 +24,8 @@ pub struct Net {
     pub pool: [u8; 32],
     /// The standing contract's code hash (keepers' records: the statement's `kept`).
     pub standing_hash: [u8; 32],
+    /// The Block contract's code (a statement's tree: the previous statement's lines).
+    pub block_code: Vec<u8>,
 }
 
 pub struct Reader<'a> {
@@ -123,6 +125,21 @@ impl<'a> Reader<'a> {
     pub fn queue(&self, epoch: u64) -> Vec<Queued> {
         self.chained(craftworks_wallet::queue::address, epoch).iter().filter_map(|p| Queued::decode(p)).collect()
     }
+    /// The LINES of standing epoch `epoch`'s ACCEPTED statement (`wallet::fees::statement_accepted`), read from its
+    /// public blocks — `None`: none accepted, or not readable.
+    pub fn statement_lines(&self, epoch: u64) -> Option<std::collections::BTreeMap<[u8; 32], craftworks_reputation::statement::Line>> {
+        use craftworks_reputation::statement::{bag_address, lines, lot_height, witness_place, Posted};
+        let claims = |ep: u64| self.claims(ep);
+        let out = |h: u64| self.out_at(h);
+        let sigs = |c: &[u8; 32], sq: u64| self.sigs(c, sq);
+        let entry = |_: &Queued| None;
+        let r = craftworks_wallet::fees::Reads { pool: self.net.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs };
+        let mut sts: Vec<craftworks_wallet::fees::Statement> = self.bag(bag_address(epoch)).iter().filter_map(|p| Posted::decode(p)).filter(|p| p.epoch == epoch).map(|p| craftworks_wallet::fees::Statement { place: witness_place(epoch), root: p.root, h: lot_height(epoch) }).collect();
+        sts.sort_by_key(|s| s.root);
+        let st = sts.into_iter().find(|s| craftworks_wallet::fees::statement_accepted(&r, s))?;
+        let block = |c: &[u8; 32]| self.get(contract_keys::block::contract_for(&self.net.block_code, c)).filter(|s| s.len() > 1).map(|s| s[1..].to_vec());
+        lines(&st.root, &block).ok()
+    }
     /// The WITNESS SIGNATURES each claimant gave on standing epoch `epoch`'s queued entries (`wallet::fees::count`).
     pub fn signed(&self, epoch: u64) -> std::collections::BTreeMap<[u8; 32], u64> {
         let queued = self.queue(epoch);
@@ -160,7 +177,8 @@ impl<'a> Reader<'a> {
         let signed = epoch.checked_sub(1).map_or(Default::default(), |e| self.signed(e));
         let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP), witness: craftworks_wallet::craft::witness_pot(epoch) };
         let kept = epoch.checked_sub(1).map_or(Vec::new(), |e| self.kept(e, &log_of));
-        let st = R::statement::build(epoch, &items, &log_of, &kept, &signed, pots);
+        let prev = epoch.checked_sub(1).and_then(|e| self.statement_lines(e)).unwrap_or_default();
+        let st = R::statement::build(epoch, &items, &log_of, &kept, &signed, &prev, pots);
         st.tree(&mut std::collections::BTreeMap::new()).map(|(root, _)| root)
     }
 

@@ -42,6 +42,12 @@ fn seated(r: &Reads, chain: &[u8; 32], seq: u64, entry: &[u8; 32], h: u64) -> Op
     Some((signers, need.saturating_sub(baseline as usize)))
 }
 
+/// Is statement `st`'s root ACCEPTED by this count's rule (its seated signatures, with the baseline's, reach the
+/// committee's need)? The one test page and witnesses pick the epoch's root by (what the next statement carries on).
+pub fn statement_accepted(r: &Reads, st: &Statement) -> bool {
+    seated(r, &st.place, 0, &st.root, st.h).is_some_and(|(signers, need)| signers.len() >= need.max(1) || (need == 0))
+}
+
 /// The signatures each claimant gave on `queued` entries (each place once) and on the epoch STATEMENTS' roots
 /// (`statements`: each posted root — counted only where its seated signatures reach the committee's need, so a root
 /// nobody accepted pays nothing).

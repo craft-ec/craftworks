@@ -197,6 +197,7 @@ async fn main() -> Result<()> {
                 beacon: unhex32(&a[6])?,
                 pool: [0; 32],
                 standing_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("standing.wasm"))?).as_bytes(),
+                block_code: std::fs::read(std::path::Path::new(&a[2]).with_file_name("block.wasm"))?,
             };
             let epochs: Vec<u64> = a[7..].iter().map(|e| e.parse()).collect::<Result<_, _>>()?;
             tokio::task::spawn_blocking(move || -> Result<()> {
@@ -235,6 +236,7 @@ async fn main() -> Result<()> {
                 beacon,
                 pool,
                 standing_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("standing.wasm"))?).as_bytes(),
+                block_code: std::fs::read(std::path::Path::new(&a[2]).with_file_name("block.wasm"))?,
             };
             let key = ed25519_dalek::SigningKey::from_bytes(&seed_file(&a[8])?);
             let tick = Duration::from_secs(a.get(9).map_or(Ok(10), |t| t.parse())?);

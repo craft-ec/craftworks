@@ -17,6 +17,8 @@ craftworks-reputation = { path = "../../reputation" }
 craftworks-allowance-contract = { path = "../../contracts-src/allowance", default-features = false }
 # The statement's KEPT: keepers' standing records (their params, their rule).
 craftworks-standing = { path = "../../standing" }
+# A Block contract's id from a tree block's cid (the previous statement's lines).
+contract-keys = { path = "../../sdk/craftworks-sdk/contract-keys" }
 craftworks-standing-contract = { path = "../../contracts-src/standing", default-features = false }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 tokio = { version = "1", features = ["full"] }

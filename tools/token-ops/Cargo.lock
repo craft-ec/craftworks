@@ -1708,6 +1708,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "contract-keys",
  "craftworks-allowance-contract",
  "craftworks-bag-contract",
  "craftworks-beacon-contract",
