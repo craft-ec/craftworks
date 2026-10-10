@@ -102,6 +102,14 @@ impl BlocksMut for MemBlocks {
     }
 }
 
+/// A plain map of blocks (a whole tree built at once: `engine::repair::build_tree` fills one) is a block source — the one
+/// impl, so no caller wraps it again.
+impl Blocks for std::collections::BTreeMap<Cid, Vec<u8>> {
+    fn get(&self, cid: &Cid) -> Option<&[u8]> {
+        std::collections::BTreeMap::get(self, cid).map(Vec::as_slice)
+    }
+}
+
 impl Blocks for MemBlocks {
     fn get(&self, cid: &Cid) -> Option<&[u8]> {
         self.0.get(cid).map(Vec::as_slice)

@@ -11,6 +11,9 @@ craftworks-identity = { path = "../identity" }
 craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 blake3 = { version = "1", default-features = false }
+# The statement's tree: built the one way a whole tree is built (`engine::repair::build_tree`), a prolly tree.
+engine = { path = "../sdk/craftworks-sdk/engine" }
+freenet-prolly = { path = "../sdk/freenet-prolly" }
 
 [dev-dependencies]
 ed25519-dalek = { version = "=2.2.0", default-features = false }

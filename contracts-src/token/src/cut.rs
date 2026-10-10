@@ -64,17 +64,11 @@ pub fn make(p: &ChainParams, d: &Definition, whole: &State, keys: Option<&craftw
 }
 
 /// A tree's blocks, to prove from.
-struct Store<'a>(&'a Blocks);
-impl freenet_prolly::store::Blocks for Store<'_> {
-    fn get(&self, cid: &Cid) -> Option<&[u8]> {
-        self.0.get(cid).map(Vec::as_slice)
-    }
-}
 
 /// A proof of `key` under `root` (present or absent), from the tree's blocks.
 pub fn proof(blocks: &Blocks, root: &Cid, key: &[u8]) -> Result<Vec<u8>, Why> {
     // (An entry stored by reference: the proof carries its id and length; the evidence carries its bytes.)
-    Ok(prove(&Store(blocks), root, key).map_err(|_| "a tree whose blocks are not all here")?.encode())
+    Ok(prove(blocks, root, key).map_err(|_| "a tree whose blocks are not all here")?.encode())
 }
 
 /// Why a history did not read: blocks not HELD yet (fetch them through the blocks door — raced against their groups,

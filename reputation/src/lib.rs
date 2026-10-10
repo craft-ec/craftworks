@@ -32,6 +32,7 @@ pub struct Vouch {
 }
 
 pub mod item;
+pub mod statement;
 
 /// The most vouches of one account that count (its earliest).
 pub const BUDGET: usize = 10;
