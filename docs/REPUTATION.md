@@ -53,20 +53,30 @@ Two parts, one path from bootstrap to the token:
 - **THE RECORD — keeping:** what a vouched account EARNS — its proven keeping (standing answers, REWARDS §4: pieces
   the beacon-ranked assignment gave it, held, answered), at a fixed rate per account that tapers by height (the
   `keepers(rate, half-life)` rule, TOKEN §6), so splitting one disk over many identities gains nothing.
-  - **Now (no paid demand, no token):** the record IS the keeper's reputation — non-transferable, burned on a proven
-    misdeed. It is the witness weight (TOKEN §7a).
-  - **When $CRAFT launches:** issuance pays the SAME record — retroactively for what was kept during the bootstrap —
-    and lands LOCKED as witness stake (TOKEN §7a: "earned stake"). Paid demand takes over from issuance as it grows.
+  - **Paid in $CRAFT from the start** (owner 10-10: "pair it with $craft issuance to keeper"; TOKEN §7d): each finished
+    epoch proven kept mints a flat amount LOCKED as witness stake. Two steps for a user: get VOUCHED (past the gate),
+    then KEEP (stake grows). Keeping does NOT raise reputation — reputation is social (vouches) and stake is earned;
+    if keeping fed reputation, earnings would grow the very thing that gates them (the compounding we ruled out).
+    (Replaces the earlier interim "keeping earns reputation until $CRAFT exists".) Paid demand takes over from
+    issuance as it grows.
 
 ## 5. Witness weight
 
-- Lot weight = the keeping record, counted only for vouched accounts; once $CRAFT exists, the locked stake it earned.
+- Lot weight = the locked $CRAFT stake keeping earned (only vouched accounts earn it).
 - The committee's rule stays the token's: a witness signs only by induction; a misdeed is self-proving; the burn reaches
   the record (and its stake), and through the vouch graph the account's vouchers.
 
 ## 6. Decided (owner 10-10)
 
-- **ROOTS: a short public list, the owner's account first** ("my key can start the vouch root"). Anyone may vouch, but
+- **THE ROOT IS WREN** (owner 10-10: "wren hold the key and root reputation. i'll be the first layer member as anyone
+  else"; earlier "my key can start the vouch root", then moved): `did:craftec:BZ6QnLTT3pnaWtUvfWr9bjtc8nCeRnC2Q7q44XMNUt5h`, the account Claude keeps.
+  Safeguards: the owner holds Wren's recovery words OFFLINE too (to rotate the key and take the root back); the root
+  NEVER earns or witnesses (it holds the most reputation by construction — it would take the cap every epoch and a
+  stolen key would be worth the most); its vouches ramp in like anyone's. WREN'S VOUCH POLICY, public: the owner's
+  everyday account first; then, over time, up to 9 more people chosen for coming from DIFFERENT communities (each starts
+  a lineage — diversity is the system's strength); every root vouch logged with its reason. The owner, a layer-1 member,
+  grows a branch of their own below at full speed.
+- **ROOTS: a short public list** (now Wren alone). Anyone may vouch, but
   a vouch passes on only the voucher's own reputation — an unvouched account passes nothing until someone reputable
   vouches for it (then its earlier vouches count, from that moment). A self-declared root is just an unvouched account.
 - **Roots grow** (owner 10-10: "single root doesn't grow"): (1) at the start, the owner plus a few people from different
@@ -97,7 +107,7 @@ Two parts, one path from bootstrap to the token:
    personalised PageRank (damping 0.85, 40 rounds, budget 10). Measured: a ring of 10 fakes off one fooled account
    takes 6.8 (×10⁻³), a ring of 1,000 takes 7.2 — flat; the same 1,000 with no discount 24.6; cousins' vouches 6.14 vs
    siblings' 4.91.
-3. BUILT 10-10 — roots and promotion: `reputation::ROOTS` = the owner's account (did:craftec:7kqYgwom…); a LINEAGE is
+3. BUILT 10-10 — roots and promotion: `reputation::ROOTS` = Wren (moved from the owner's account the same day); a LINEAGE is
    a starting root's direct vouchee and below; promoted = vouched from ≥3 lineages and holding at least the MEDIAN
    reputation (relative: a fixed bar does not scale as reputation thins with growth) — a family boundary, never a
    source. Measured: promotion moved the network's total reputation by 0.2% (rounding), a ring off one fooled account
@@ -106,6 +116,5 @@ Two parts, one path from bootstrap to the token:
    vouched by K · heads a family". LIVE fx: B's panel reads "none yet" — A vouched for B, but nothing links A to the
    owner's root (as designed).
 4. Burns reaching reputation: a misdeed proof zeroes the account and charges its vouchers.
-5. The keeping record per vouched account (standing answers → a tapering per-account rate), as reputation.
-6. The lot weighted by that record (`wallet::lot_of`, the claims registry: a claim of record instead of stake).
-7. At $CRAFT launch: issuance paying the record (retroactively), locked as stake.
+5. Keeper issuance (TOKEN §7d): `KeeperMint` — the token checks the standing proof and the amount; witnesses the gate.
+6. The lot weighted by that stake (already: §7a's earned stake).

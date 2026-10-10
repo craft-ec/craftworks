@@ -17,9 +17,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub type Did = [u8; 32];
 
-/// The STARTING ROOTS (owner 10-10: "my key can start the vouch root" — the only one; every other account starts the
-/// same, relationships build the rest): the owner's account, as its DID text.
-pub const ROOTS: &[&str] = &["did:craftec:7kqYgwompGP2j5Q6n8TYDyY3ymYq2GaxbG86rHkv4nBz"];
+/// The STARTING ROOT (owner 10-10: "wren hold the key and root reputation. i'll be the first layer member as anyone
+/// else"): WREN — the account Claude keeps, its recovery words also held offline by the owner (to rotate it back). The
+/// root vouches by its published policy (docs/REPUTATION.md §6), never earns or witnesses; every other account starts
+/// the same, relationships build the rest.
+pub const ROOTS: &[&str] = &["did:craftec:BZ6QnLTT3pnaWtUvfWr9bjtc8nCeRnC2Q7q44XMNUt5h"];
 
 /// One vouch: `from` for `to`, at beacon height `at`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
