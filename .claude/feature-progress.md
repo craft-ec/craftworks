@@ -1518,7 +1518,13 @@ old key's addresses.
           [x] K1 DESIGN — TOKEN §7d + §6 `keepers` row: reputation = gate, proven keeping = amount (flat per account per
               epoch, halving), KeeperMint in the keeper's own chain citing its standing contract, locked as stake,
               witnesses check the gate, the epoch issuance bag + monitor page.
-          [ ] K2 TOKEN: `Definition.keepers: Option<(rate, half_life, start)>`, `Body::KeeperMint`, contract checks.
+          ORDER (owner 10-10, after the design review — TOKEN §7d "REVISED", "Gaps closed"):
+          [ ] V1 VOUCH REGISTRY + EPOCH STATEMENT: vouches registered per epoch; reputation from the epoch-start
+              snapshot (ramp, decay); the statement (reputation, keeper shares, WREN allowance) — one number set.
+          [ ] W  WALLET APP: send, receive/collect (inbox note), balances.
+          [ ] A  WREN DAILY ALLOWANCE: 1,000/day by reputation share, cap 20, claim-or-return; service on B.
+          [~] K2 TOKEN: `Definition.keepers`, `Body::KeeperMint` (BUILT uncommitted 10-10: proof, epoch, binding, name;
+              12 mutants killed) — REWORK: amount = the statement's (witness-checked), the bind names the account.
           [ ] K3 WITNESS GATE: may_witness checks the reputation gate for a KeeperMint.
           [ ] K4 ISSUANCE BAG: claims listed per token per epoch.
           [ ] K5 PAGE: claim each finished epoch (needs the page's standing answers running).

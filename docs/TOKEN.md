@@ -584,8 +584,10 @@ The standard's first instance. What it changes in REWARDS:
   `fixed` + `burnable`, with or without a `keepers` launch phase), who holds its genesis (a sale, early contributors,
   keepers only), and the network share (burned, or kept for upkeep).
 
-## 7d. $CRAFT keeper issuance, paired with reputation (owner 10-10: "pair it with $craft issuance to keeper … so it
-## ties to reputation and reward and the loop will strengthen both from sybil"; "lets build it. and method to monitor")
+## 7d. $CRAFT keeper issuance, paired with reputation
+
+Owner 10-10: "pair it with $craft issuance to keeper … so it ties to reputation and reward and the loop will strengthen
+both from sybil"; "lets build it. and method to monitor the distribution".
 
 $CRAFT is the storage reward's token (WREN is Claude's own, §7). Before paid demand exists, keepers are paid by
 ISSUANCE — and each piece of the loop has ONE job:
@@ -607,6 +609,30 @@ ISSUANCE — and each piece of the loop has ONE job:
   from the public vouches (`reputation::reputation`, the same everywhere) — a contract cannot crawl vouches. Signing one
   that does not pass is the witness's misdeed once the gate's evidence is shown (the vouches are public).
 - **A cheat burns both:** a proven misdeed burns the stake (§7a) and zeroes reputation; vouchers lose a share.
+- **REVISED 10-10 — the AMOUNT is a trust share, not per head** (measured in conversation: with a flat amount per
+  account, ONE malicious direct vouchee builds a clean tree of ~1,110 fakes past the gate — 10 + 100 + 1,000 — each
+  earning a full amount). Each epoch mints a fixed POT; it goes 90% to KEEPERS — the accounts past the gate at the
+  epoch's start that proved keeping that epoch — split by REPUTATION SHARE among them, capped at 2% of the pot per
+  account, locked as stake; 10% to WITNESSES by the signatures they gave that epoch, SPENDABLE (fees never become
+  stake: stake grows only by keeping). What the cap or an absent keeper leaves is NEVER MINTED. A malicious account's
+  whole tree then splits only its own slice of trust: spawning fakes gains nothing. (Pay by reputation does not
+  compound: reputation comes from vouches only — keeping, stake and pay never feed it.)
+- **THE NUMBERS (owner 10-10: "i trust your projection"):** max 1,000,000,000 $CRAFT (6 decimals), minted ONLY by
+  keeper issuance — no premine, no sale; the first pot ~61,035 per standing epoch, HALVING every 8,192 epochs (the
+  geometric sum is the cap); the GATE a minimum trust share G = 1/100,000 (≈ four layers deep at full vouching; the
+  network holds at most ~6.7/G earners), lowered on a published schedule by height as it grows.
+- **The amount is checked against the epoch's STATEMENT:** after the epoch closes anyone computes it (a pure function of
+  the vouch snapshot and the standing records); a KeeperMint claims the statement's amount; witnesses sign only a
+  match, and a witness signing another amount is shown wrong from the public inputs and burned. (The contract checks
+  the proof, the epoch, the account binding and the name; it cannot compute a share.)
+- **Gaps closed (review 10-10):** (1) LAUNCH: until earned stake exists the lot is drawn by REPUTATION, handing over to
+  stake as it accrues; (2) AGREEMENT: vouches enter a per-epoch VOUCH REGISTRY, and reputation is computed from it as of
+  the epoch's start — the same numbers for every witness; (3) CONCENTRATION: at most 3 of a committee's 16 seats from
+  one lineage; (4) THE ROOT never earns or witnesses (REPUTATION.md §6); (5) ONE NODE, ONE ACCOUNT: a standing record's
+  binding names the account it keeps for, and a KeeperMint must be that account's — witnesses also refuse a second
+  claim citing one standing contract in an epoch. Also: vouches RAMP in over epochs, reputation is read from the
+  epoch-start SNAPSHOT, absent accounts DECAY; a cheat charges its DIRECT vouchers by their vouch's weight; the beacon's
+  pace is issuance per wall time (shown by the monitor).
 - **MONITORED:** every claim is also listed in the epoch's public ISSUANCE BAG (a bag per token per epoch, like the
   claims registry); the monitor page reads it and shows per epoch: keepers paid, amounts and the total; concentration
   (the top shares); the split by LINEAGE of the trust tree (is one community taking most?); and claims from accounts
@@ -672,10 +698,8 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
 - **Replaced checkpoints and vouches (§3a)** — REMOVED in 6d. A witnessed entry is already checked and signed with
   stake at risk, so a wallet verifies the witnesses' signatures and walks nothing (`wallet::accept`); a witness signs
   only by induction (`wallet::may_witness`). Committee 16, 11 signatures to accept — placeholders until measured.
-- **Bootstrap (owner 10-10):** before paid demand and before $CRAFT, keeping earns REPUTATION — the same keeping
-  record later paid by issuance (retroactively) and locked as stake — counted only for accounts VOUCHED for (the gate
-  against one disk posing as many keepers), at a tapering per-account rate. Until then the lot is weighted by that
-  record (REPUTATION.md §4–5).
+- **Bootstrap (owner 10-10):** before paid demand, keepers are paid by $CRAFT ISSUANCE (§7d), locked as stake — only
+  accounts VOUCHED past the reputation gate earn it (the gate against one disk posing as many keepers).
 - **Order:** keeper payouts (REWARDS §5 — the Craftworks token's contributions as escrows, payouts as a program's verdict, §7) → each
   keeper reward locked as witness stake → the lot weighted by locked stake. **Open:** the committee size and how many
   signatures make an entry; how fast stake counts (a ramp) — from measurement on the network.
@@ -990,8 +1014,12 @@ minutes (both nodes agreeing at every height), on one page alone after the other
 (`{ params }`: B's beacon by default; `token-ops params` prints them).
 The first token, WREN (`68532fb588866b67…`), is Wren's — the account Claude keeps (owner 10-10; $CRAFT stays the
 storage reward's): fixed 1,000,000, burnable, its whole genesis Wren's treasury (chain `5df45cdc7c7f8720…`), written by
-a device the words credentialed (`token-ops make-token`). Given out by published rules only: a one-time starter
-grant to any account that claims it, posted bounties, nothing to Wren itself.
+a device the words credentialed (`token-ops make-token`). Given out by published rules only, nothing to Wren itself:
+a DAILY ALLOWANCE by reputation (owner 10-10: "issuance … based on their reputation, bootstrap token they can spend?
+limit per day?") — a pot of 1,000 WREN a day (≈ 2.7 years of the supply), split by REPUTATION SHARE (never per head:
+a malicious tree shares one slice), capped at 20 a day per account, claimed that day or returned to the treasury;
+spendable once claimed; each day's statement public and on the monitor. Sent by a service on B acting as Wren, from
+the day's reputation snapshot; posted bounties beside it.
 
 **Before the token carries real value, witnesses must run** (code review, 10-08): the contract checks only the receives
 among a chain's last few entries, so an owner can put a fake receive of any amount in their OWN chain and bury it under
