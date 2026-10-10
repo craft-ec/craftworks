@@ -123,3 +123,46 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
         Err(why) => Verdict::Refused(why.to_string()),
     }))
 }
+
+/// The WITNESS SIGNATURES each claimant gave on `queued` (`wallet::fees::count`, the one count) over what this page
+/// read — each read missing asked for first.
+pub fn signed(ctx: &Ctx, lot: &Lot, got: Got, queued: &[Queued]) -> Step<std::collections::BTreeMap<[u8; 32], u64>> {
+    let want: RefCell<Vec<[u8; 32]>> = RefCell::new(Vec::new());
+    let read = |id: [u8; 32]| -> Option<Vec<u8>> {
+        match there(got, &id) {
+            Err(w) => {
+                want.borrow_mut().push(w);
+                None
+            }
+            Ok(b) => b,
+        }
+    };
+    let entry = |q: &Queued| {
+        let d = read(q.token.definition).and_then(|b| Definition::decode(&b))?;
+        let p = ChainParams { code_hash: ctx.code_hash, definition: q.token.definition, owner: q.owner, beacon: d.beacon, idlog: d.idlog, item: q.token.item };
+        let s = read(p.id()).and_then(|b| State::decode(&b))?;
+        let i = s.entries.iter().position(|e| e.seq == q.seq)?;
+        Some((p.id(), s.entries[i].clone(), i.checked_sub(1).map(|j| s.entries[j].clone()), d.margin))
+    };
+    let beacon = ctx.beacon;
+    let claims = |ep: u64| read(claims::Params { code_hash: ctx.code_hash, pool: lot.pool, beacon, epoch: ep }.id()).and_then(|b| claims::Registry::decode(&b)).map_or(vec![], |r| r.claims);
+    let out = |h: u64| match out_at(lot, got, &beacon, h) {
+        Err(w) => {
+            want.borrow_mut().push(w);
+            None
+        }
+        Ok(r) => r.ok(),
+    };
+    let sigs = |c: &[u8; 32], sq: u64| {
+        let a = wallet::witness_bag(c, sq);
+        read(t::id(&lot.bag, &a)).and_then(|b| craftworks_bag_contract::read(&a, &b)).unwrap_or_default().iter().filter_map(|x| wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(x))).collect()
+    };
+    let counted = craftworks_wallet::fees::count(queued, &craftworks_wallet::fees::Reads { pool: lot.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs });
+    let mut w = want.into_inner();
+    if w.is_empty() {
+        return Step::Done(counted);
+    }
+    w.sort();
+    w.dedup();
+    Step::Want(w)
+}

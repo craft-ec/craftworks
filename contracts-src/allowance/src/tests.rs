@@ -11,7 +11,7 @@ fn d(n: u8) -> Did {
 /// A statement tree: DID → line (only the allowance matters here), its root, and a proof of each line.
 fn statement(lines: &[(Did, u128)]) -> ([u8; 32], BTreeMap<[u8; 32], Vec<u8>>) {
     let mut blocks = BTreeMap::new();
-    let (root, _) = engine::repair::build_tree(lines.iter().map(|(d, a)| (d.to_vec(), Line { rep: 1, keeper: 0, allowance: *a }.encode())), &mut blocks).unwrap();
+    let (root, _) = engine::repair::build_tree(lines.iter().map(|(d, a)| (d.to_vec(), Line { rep: 1, keeper: 0, allowance: *a, witness: 0 }.encode())), &mut blocks).unwrap();
     (root, blocks)
 }
 fn proof(blocks: &BTreeMap<[u8; 32], Vec<u8>>, root: &[u8; 32], did: &Did) -> Vec<u8> {

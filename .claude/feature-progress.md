@@ -1841,6 +1841,14 @@ old key's addresses.
               `identity.witnessSign` → the witness bag. Test: B's receive — all six drawn stakers Sign its exact hash;
               an unclaimed key NotSeated. Live so far: the new $CRAFT (82e7a9ab: token.wasm ad470883 re-keyed it)
               minted again for epoch 8, Wren signed 82e7a9ab…/45caba3e seq 0; `keeper::claim` quiet while $CRAFT absent.
+          [x] F WITNESS FEES 10-11 (unit-tested; published to fx after the S3 live check — token.wasm 84325c4d re-keys
+              $CRAFT): `wallet::fees::count` — the ONE count (page `witness::signed`, tool `Reader::signed`): each
+              signature on an epoch's queued entries by a key SEATED for its place, once per seat, to its claimant.
+              Statement Line + `witness` (64 bytes), Pots.witness = `craft::witness_pot` (10%, cap 2%), roots never.
+              KeeperMint + `fee` = the line's witness, credited SPENDABLE (keeper amount still locked); witness-only lines
+              mint. Wallet: "Earned by witnessing" rows. Tests: statement 3:1 split + cap + root never; count 4 seated,
+              stranger and other-entry sigs nothing, a place once; mint 40 locked + 30 spendable, wrong fee refused.
+              OPEN: statement-place signatures not yet counted (only queued entries).
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and

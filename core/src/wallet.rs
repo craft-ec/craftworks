@@ -19,8 +19,9 @@ pub struct View {
     pub begun: bool,
     /// LOCKED as stake (a keeper mint's, a stake): not spendable, the weight of its witness lot (TOKEN §7a).
     pub staked: u128,
-    /// Its KEEPER MINTS: (standing epoch, amount, the entry's stamp), oldest first.
-    pub mints: Vec<(u64, u128, u64)>,
+    /// Its ISSUANCE MINTS: (standing epoch, keeper amount (locked), witness fee (spendable), the entry's stamp), oldest
+    /// first.
+    pub mints: Vec<(u64, u128, u128, u64)>,
 }
 
 /// What a send built: the sender's chain to put, and the debit's name (what the receiver's credit cites).
@@ -55,7 +56,7 @@ pub fn view(ctx: &Ctx, got: Got, id: &[u8; 32], owner: &[u8; 32]) -> Result<Step
         Step::Done(Some((h, keys))) => {
             let staked = t::walk(&h.params, &h.definition, &h.state, &|_, _| None, &|_| None, Some(&keys), 0, usize::MAX, &t::Extra::NONE).map_or(0, |w| w.staked);
             let mints = h.state.entries.iter().filter_map(|e| match e.body {
-                t::Body::KeeperMint { epoch, amount, .. } => Some((epoch, amount, e.stamp)),
+                t::Body::KeeperMint { epoch, amount, fee, .. } => Some((epoch, amount, fee, e.stamp)),
                 _ => None,
             }).collect();
             Step::Done(View { begun: !h.state.entries.is_empty(), balance: h.state.balance(), staked, mints, definition: h.definition })
@@ -419,6 +420,36 @@ mod tests {
         crate::tokens::testlot::witness(&tl, &mut got, &pa, &d, &debit, debit.entries.last().unwrap().seq, 3);
         assert_eq!(take(&ann, e1 + 14, &got), Ok(unwitnessed), "three of six: short");
         crate::tokens::testlot::witness(&tl, &mut got, &pa, &d, &debit, debit.entries.last().unwrap().seq, 4);
+        // WITNESS FEES' COUNT (`wallet::fees`): the four seated signatures, one each to its claimant; a signature by an
+        // unseated key, or over another entry, counts nothing.
+        {
+            let dseq = debit.entries.last().unwrap().seq;
+            let q = craftworks_wallet::queue::Queued { token: t::Tok { definition: id, item: [0; 32] }, owner: a, seq: dseq };
+            let addr = t::wallet::witness_bag(&pa.id(), dseq);
+            let mut g4 = got.clone();
+            let mut items = craftworks_bag_contract::read(&addr, &g4[&t::id(&tl.lot.bag, &addr)]).unwrap();
+            let stranger = SigningKey::from_bytes(&[99; 32]);
+            let other = [5u8; 32];
+            for (k, e) in [(&stranger, debit.entries.last().unwrap().hash()), (&tl.keys[0], other)] {
+                let sig = t::witness::WitnessSig { chain: pa.id(), seq: dseq, entry: e, sig: k.sign(&t::witness::WitnessSig::message(&pa.id(), dseq, &e)).to_bytes() };
+                items.push(craftworks_bag_contract::grind(&addr, &t::wallet::bytes::witness_sig(&sig)));
+            }
+            g4.insert(t::id(&tl.lot.bag, &addr), craftworks_bag_contract::encode(&addr, &items));
+            let entry = |q: &craftworks_wallet::queue::Queued| {
+                let st = State::decode(&g4[&pa.id()])?;
+                let i = st.entries.iter().position(|e| e.seq == q.seq)?;
+                Some((pa.id(), st.entries[i].clone(), i.checked_sub(1).map(|j| st.entries[j].clone()), d.margin))
+            };
+            let claims = |ep: u64| g4.get(&t::claims::Params { code_hash: ctx.code_hash, pool: tl.lot.pool, beacon: d.beacon, epoch: ep }.id()).and_then(|b| t::claims::Registry::decode(b)).map_or(vec![], |r| r.claims);
+            let out = |h: u64| Some(*blake3::hash(&h.to_le_bytes()).as_bytes());
+            let sigs = |c: &[u8; 32], sq: u64| {
+                let ad = t::wallet::witness_bag(c, sq);
+                g4.get(&t::id(&tl.lot.bag, &ad)).and_then(|b| craftworks_bag_contract::read(&ad, b)).unwrap_or_default().iter().filter_map(|x| t::wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(x))).collect()
+            };
+            let counts = craftworks_wallet::fees::count(&[q, q], &craftworks_wallet::fees::Reads { pool: tl.lot.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs });
+            assert_eq!((counts.len(), counts.values().sum::<u64>()), (4, 4), "{counts:?}");
+            assert!(counts.values().all(|n| *n == 1), "once a place, however often queued");
+        }
         let r = take(&ann, e1 + 14, &got).unwrap();
         assert_eq!((r.amount, r.pending, r.unwitnessed), (100, 0, 0));
         // THE PAGE'S WITNESS (S3): B's receive (its chain's first entry, citing A's witnessed debit), queued — each

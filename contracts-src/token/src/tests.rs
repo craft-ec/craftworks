@@ -74,7 +74,8 @@ fn after(s: &State, body: &Body) -> u128 {
         }).unwrap_or(0),
         Body::Payout { amount, .. } | Body::HolderPayout { amount, .. } => b + amount,
         Body::Stake { amount } => b.wrapping_sub(*amount),
-        Body::Unstake { .. } | Body::Slash { .. } | Body::Misdeed { .. } | Body::FalseVerdict { .. } | Body::FalseMint { .. } | Body::KeeperMint { .. } => b,
+        Body::Unstake { .. } | Body::Slash { .. } | Body::Misdeed { .. } | Body::FalseVerdict { .. } | Body::FalseMint { .. } => b,
+        Body::KeeperMint { fee, .. } => b + fee,
         Body::Release { unstake } => b + unbonding_of(s).into_iter().find(|u| &u.0 == unstake).map_or(0, |u| u.1),
         Body::Allow { .. } | Body::Cut { .. } | Body::Writer { .. } | Body::Members { .. } => b,
         Body::Spend { amount, .. } => b.wrapping_sub(*amount),
@@ -3527,7 +3528,7 @@ fn kdef() -> Definition {
 /// A statement whose lines give T a keeper line of `amount` (and account 5 one of 7): its root and T's proof.
 fn statement_for_t(amount: u128) -> ([u8; 32], Vec<u8>, Vec<u8>) {
     use craftworks_reputation::statement::{Line, Statement};
-    let lines = [(did(T), Line { rep: 1, keeper: amount, allowance: 0 }), (did(5), Line { rep: 1, keeper: 7, allowance: 0 })].into_iter().collect();
+    let lines = [(did(T), Line { rep: 1, keeper: amount, allowance: 0, witness: 0 }), (did(5), Line { rep: 1, keeper: 7, allowance: 0, witness: 0 })].into_iter().collect();
     let st = Statement { epoch: 3, lines };
     let mut blocks = std::collections::BTreeMap::new();
     let (root, _) = st.tree(&mut blocks).unwrap();
@@ -3546,7 +3547,7 @@ fn a_keeper_mints_its_statement_line_once_locked_as_stake_by_anyone() {
     let claim = |epoch: u64, amount: u128, stamp: u64, root: [u8; 32], proof: Vec<u8>, by: Option<u8>| {
         let mut s = State::default();
         ensure_writer(&mut s, T);
-        let mut e = entry(&s, keeper_nonce(&k, epoch), Body::KeeperMint { epoch, root, proof, amount });
+        let mut e = entry(&s, keeper_nonce(&k, epoch), Body::KeeperMint { epoch, root, proof, amount, fee: 0 });
         e.stamp = stamp;
         e.balance = 0;
         s.entries.push(match by {
@@ -3578,18 +3579,43 @@ fn a_keeper_mints_its_statement_line_once_locked_as_stake_by_anyone() {
     assert_eq!(run(&claim(3, 0, begun, root0, proof0, None)), Err("a keeper mint of another amount than its line's"), "a line of nothing mints nothing");
     // Twice for one epoch, or named for another: refused.
     let mut twice = ok.clone();
-    let mut e = entry(&twice, keeper_nonce(&k, 3), Body::KeeperMint { epoch: 3, root, proof: proof.clone(), amount: 40 });
+    let mut e = entry(&twice, keeper_nonce(&k, 3), Body::KeeperMint { epoch: 3, root, proof: proof.clone(), amount: 40, fee: 0 });
     e.stamp = begun;
     twice.entries.push(work(e));
     assert_eq!(run(&twice), Err("a keeper mint named for another epoch, or twice"));
     let mut misnamed = State::default();
     ensure_writer(&mut misnamed, T);
-    let mut e = entry(&misnamed, keeper_nonce(&k, 4), Body::KeeperMint { epoch: 3, root, proof: proof.clone(), amount: 40 });
+    let mut e = entry(&misnamed, keeper_nonce(&k, 4), Body::KeeperMint { epoch: 3, root, proof: proof.clone(), amount: 40, fee: 0 });
     e.stamp = begun;
     misnamed.entries.push(work(e));
     assert_eq!(run(&misnamed), Err("a keeper mint named for another epoch, or twice"));
     // A token without keeper issuance: refused.
     assert_eq!(check(&at(id(&CODE, &def().encode()), T), &def(), &ok, &|_, _| None, &|_| None, Some(&log(T)), &Extra::NONE), Err("a keeper mint of a token without keeper issuance"));
+    // WITNESS FEES in the same mint: a line of keeper 40 and witness 30 mints 40 locked and 30 SPENDABLE; another fee
+    // is refused; a witness-only line (keeper 0) mints its fee alone.
+    let fee_line = |keeper: u128, witness: u128| {
+        use craftworks_reputation::statement::{Line, Statement};
+        let lines = [(did(T), Line { rep: 1, keeper, allowance: 0, witness })].into_iter().collect();
+        let mut blocks = std::collections::BTreeMap::new();
+        let (r, _) = Statement { epoch: 3, lines }.tree(&mut blocks).unwrap();
+        (r, freenet_prolly::proof::prove(&blocks, &r, &did(T)).unwrap().encode())
+    };
+    let feed = |amount: u128, fee: u128, line: ([u8; 32], Vec<u8>)| {
+        let mut s = State::default();
+        ensure_writer(&mut s, T);
+        let mut e = entry(&s, keeper_nonce(&k, 3), Body::KeeperMint { epoch: 3, root: line.0, proof: line.1, amount, fee });
+        e.stamp = begun;
+        e.balance = fee;
+        s.entries.push(work(e));
+        s
+    };
+    let both = feed(40, 30, fee_line(40, 30));
+    assert_eq!(run(&both), Ok(()));
+    let w = walk(&kp, &d, &both, &|_, _| None, &|_| None, Some(&log(T)), RECENT, usize::MAX, &Extra::NONE).unwrap();
+    assert_eq!((w.staked, both.balance()), (40, 30), "keeping locked, witnessing spendable");
+    assert_eq!(run(&feed(40, 31, fee_line(40, 30))), Err("a keeper mint of another amount than its line's"));
+    assert_eq!(run(&feed(0, 30, fee_line(0, 30))), Ok(()), "a witness-only line");
+    assert_eq!(run(&feed(0, 0, fee_line(0, 0))), Err("a keeper mint of another amount than its line's"), "nothing: refused");
     // Round-trips; the definition's rule too; a rule of a capped token refused.
     assert_eq!(Entry::decode(&ok.entries[1].encode()).as_ref(), Some(&ok.entries[1]));
     assert_eq!(Definition::decode(&d.encode()), Some(d.clone()));
@@ -3606,7 +3632,7 @@ fn a_keeper_mint_is_witnessed_only_under_its_epochs_accepted_statement() {
     let p = at(k, T);
     let (root, proof, _) = statement_for_t(40);
     let mut s = State::default();
-    let mut e = entry(&s, keeper_nonce(&k, 0), Body::KeeperMint { epoch: 0, root, proof, amount: 40 });
+    let mut e = entry(&s, keeper_nonce(&k, 0), Body::KeeperMint { epoch: 0, root, proof, amount: 40, fee: 0 });
     e.stamp = 90;
     e.balance = 0;
     s.entries.push(work(e));

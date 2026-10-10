@@ -128,6 +128,8 @@ pub struct Minted {
     pub craft: Vec<crate::tokens::Put>,
     pub chain: crate::tokens::Put,
     pub amount: u128,
+    /// Its witness fees (spendable).
+    pub fee: u128,
 }
 
 /// $CRAFT's definition here and its id.
@@ -143,7 +145,7 @@ pub fn craft(ctx: &crate::tokens::Ctx) -> (t::Definition, [u8; 32]) {
 #[allow(clippy::too_many_arguments)]
 pub fn mint(ctx: &crate::tokens::Ctx, lot: &crate::tokens::Lot, got: Got, did: &[u8; 32], epoch: u64, root: &[u8; 32], proof: &[u8], now: u64) -> Result<Step<Option<Minted>>, String> {
     let Some(line) = craftworks_reputation::statement::line_proven(root, did, proof) else { return Ok(Step::Done(None)) };
-    if line.keeper == 0 {
+    if line.keeper == 0 && line.witness == 0 {
         return Ok(Step::Done(None));
     }
     let (d, token) = craft(ctx);
@@ -164,14 +166,14 @@ pub fn mint(ctx: &crate::tokens::Ctx, lot: &crate::tokens::Lot, got: Got, did: &
     if s.entries.iter().any(|e| e.nonce == nonce) {
         return Ok(Step::Done(None));
     }
-    let mut e = t::Entry { seq: s.entries.last().map_or(0, |e| e.seq + 1), prev: s.head(), nonce, stamp: now.max(s.entries.last().map_or(0, |e| e.stamp)), body: t::Body::KeeperMint { epoch, root: *root, proof: proof.to_vec(), amount: line.keeper }, balance: s.balance(), auth: t::Auth::Work(0) };
+    let mut e = t::Entry { seq: s.entries.last().map_or(0, |e| e.seq + 1), prev: s.head(), nonce, stamp: now.max(s.entries.last().map_or(0, |e| e.stamp)), body: t::Body::KeeperMint { epoch, root: *root, proof: proof.to_vec(), amount: line.keeper, fee: line.witness }, balance: s.balance() + line.witness, auth: t::Auth::Work(0) };
     let m = e.message();
     e.auth = t::Auth::Work((0u64..).find(|w| t::work_ok(&m, *w)).unwrap());
     let mut st = s;
     st.entries.push(e);
     t::walk(&cp, &d, &st, &|_, _| None, &|_| None, Some(&keys), 0, usize::MAX, &t::Extra::NONE).map_err(|(_, w)| w.to_string())?;
     let craft = if craft_there { vec![] } else { d.contracts(&ctx.code_hash).into_iter().map(|(params, state)| crate::tokens::Put { params, state }).collect() };
-    Ok(Step::Done(Some(Minted { craft, chain: crate::tokens::Put { params: cp.encode(), state: st.encode() }, amount: line.keeper })))
+    Ok(Step::Done(Some(Minted { craft, chain: crate::tokens::Put { params: cp.encode(), state: st.encode() }, amount: line.keeper, fee: line.witness })))
 }
 
 // ---- THE STAKE CLAIM (TOKEN §7a, S2): a keeper's $CRAFT stake standing in the next epoch's witness lots ----
@@ -338,7 +340,7 @@ mod tests {
         let mut got: HashMap<[u8; 32], Vec<u8>> = HashMap::new();
         let tl = crate::tokens::testlot::stakers(&ctx, &mut got);
         let (keeper, idle) = ([21u8; 32], [22u8; 32]);
-        let lines = [(keeper, Line { rep: 1, keeper: 500, allowance: 0 }), (idle, Line { rep: 1, keeper: 0, allowance: 0 })].into_iter().collect();
+        let lines = [(keeper, Line { rep: 1, keeper: 500, allowance: 0, witness: 0 }), (idle, Line { rep: 1, keeper: 0, allowance: 0, witness: 0 })].into_iter().collect();
         let mut blocks = std::collections::BTreeMap::new();
         let (root, _) = Statement { epoch: 5, lines }.tree(&mut blocks).unwrap();
         let proof = |d: &[u8; 32]| freenet_prolly::proof::prove(&blocks, &root, d).unwrap().encode();
@@ -377,7 +379,7 @@ mod tests {
         let public = node.verifying_key().to_bytes();
         let mut dev = crate::tokens::device(public, &[craftworks_identity::credential(&did, &public, &[7; 32], &[102; 32])], &log, vec![]).unwrap();
         // Its keeper line minted (epoch 5), as a page mints it.
-        let lines = [(did, Line { rep: 1, keeper: 500, allowance: 0 })].into_iter().collect();
+        let lines = [(did, Line { rep: 1, keeper: 500, allowance: 0, witness: 0 })].into_iter().collect();
         let mut blocks = std::collections::BTreeMap::new();
         let (root, _) = Statement { epoch: 5, lines }.tree(&mut blocks).unwrap();
         let proof = freenet_prolly::proof::prove(&blocks, &root, &did).unwrap().encode();

@@ -13,6 +13,7 @@
 
 pub mod chained;
 pub mod craft;
+pub mod fees;
 pub mod queue;
 pub mod registry;
 pub mod stealth;

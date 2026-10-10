@@ -9,7 +9,7 @@
 //   (await ctx.require("statement")).status()   // { epoch, root, lines } of the last one this page published
 //   await statement.issuance(epoch)             // { keepers, total, top, pot }: $CRAFT keeper issuance that epoch
 export async function start(ctx) {
-  const [node, index, blocks, idlogCode, standingCode, beaconCode] = await Promise.all(["node", "index", "blocks", "idlog-wasm", "standing-wasm", "beacon-wasm"].map(n => ctx.require(n)));
+  const [node, index, blocks, idlogCode, standingCode, beaconCode, tokenCode, bagCode] = await Promise.all(["node", "index", "blocks", "idlog-wasm", "standing-wasm", "beacon-wasm", "token-wasm", "bag-wasm"].map(n => ctx.require(n)));
   const { core, glue } = node;
   const Core = glue.CraftworksCore;
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
@@ -26,8 +26,10 @@ export async function start(ctx) {
     // KEPT: the keepers listed the epoch before (`keeper`), their records proving it.
     const keepers = epoch > 0 ? await index.bag.chain(Core.keepers_address, epoch - 1, "reading the keepers registry") : [];
     const beacon = bytes((await ctx.require("beacon")).status().id);
+    // SIGNED: the epoch before's witness queue (each seated signature on its entries earns its claimant fees).
+    const queued = epoch > 0 ? await index.bag.chain(Core.witness_queue_address, epoch - 1, "reading the witness queue") : [];
     for (let round = 0; round < 6; round++) {
-      const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon);
+      const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon, tokenCode, bagCode, queued);
       if (r.want) {
         await Promise.all(r.want.map(id => node.read(bytes(id), "reading a key log or a keeper's record", { absent: true }).catch(() => false)));
         continue;

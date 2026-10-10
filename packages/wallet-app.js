@@ -184,7 +184,10 @@ export async function mount(ctx, el) {
         hist.append(h("table", {}, h("thead", {}, h("tr", {}, ...["When", "What", "Amount", "Status"].map(t => h("th", { textContent: t })))), tb));
         // EARNED BY KEEPING (TOKEN §7d): each epoch's keeper line, minted as stake (witnessed only under its accepted
         // statement — what the chain holds here).
-        for (const m of mints) tb.append(h("tr", {}, h("td", { textContent: `epoch ${m.epoch}` }), h("td", { textContent: "Earned by keeping" }), h("td", { className: "num in", textContent: `+${shown(m.amount, v.decimals)}` }), h("td", {}, h("span", { className: "chip accepted", textContent: "staked" }))));
+        for (const m of mints) {
+          if (m.amount !== "0") tb.append(h("tr", {}, h("td", { textContent: `epoch ${m.epoch}` }), h("td", { textContent: "Earned by keeping" }), h("td", { className: "num in", textContent: `+${shown(m.amount, v.decimals)}` }), h("td", {}, h("span", { className: "chip accepted", textContent: "staked" }))));
+          if (m.fee && m.fee !== "0") tb.append(h("tr", {}, h("td", { textContent: `epoch ${m.epoch}` }), h("td", { textContent: "Earned by witnessing" }), h("td", { className: "num in", textContent: `+${shown(m.fee, v.decimals)}` }), h("td", {}, h("span", { className: "chip accepted", textContent: "spendable" }))));
+        }
         for (const it of items) {
           const what = it.kind === "send" ? `Sent to ${it.to ? directory.shown(it.to) : "someone"}` : it.kind === "shield" ? "Moved to private" : it.kind === "sale" ? "A sale of your edition" : "Received (private)";
           const out = it.kind === "send";

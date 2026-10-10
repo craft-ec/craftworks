@@ -123,6 +123,21 @@ impl<'a> Reader<'a> {
     pub fn queue(&self, epoch: u64) -> Vec<Queued> {
         self.chained(craftworks_wallet::queue::address, epoch).iter().filter_map(|p| Queued::decode(p)).collect()
     }
+    /// The WITNESS SIGNATURES each claimant gave on standing epoch `epoch`'s queued entries (`wallet::fees::count`).
+    pub fn signed(&self, epoch: u64) -> std::collections::BTreeMap<[u8; 32], u64> {
+        let queued = self.queue(epoch);
+        let entry = |q: &Queued| {
+            let d = self.definition(&q.token.definition)?;
+            let p = self.params(&q.token, &q.owner)?;
+            let s = self.chain(&q.token, &q.owner)?;
+            let i = s.entries.iter().position(|e| e.seq == q.seq)?;
+            Some((p.id(), s.entries[i].clone(), i.checked_sub(1).map(|j| s.entries[j].clone()), d.margin))
+        };
+        let claims = |ep: u64| self.claims(ep);
+        let out = |h: u64| self.out_at(h);
+        let sigs = |c: &[u8; 32], sq: u64| self.sigs(c, sq);
+        craftworks_wallet::fees::count(&queued, &craftworks_wallet::fees::Reads { pool: self.net.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs })
+    }
     /// The accounts that KEPT in `epoch`: its keepers registry's keepers whose standing record proves it.
     pub fn kept(&self, epoch: u64, log_of: &dyn Fn(&[u8; 32]) -> Option<craftworks_idlog_contract::Log>) -> Vec<[u8; 32]> {
         let items = self.chained(craftworks_reputation::keepers::address, epoch);
@@ -140,9 +155,10 @@ impl<'a> Reader<'a> {
         use craftworks_reputation as R;
         let items: Vec<R::item::Item> = (0..=epoch).flat_map(|e| self.bag(R::item::registry_address(e))).filter_map(|b| R::item::Item::decode(&b)).collect();
         let log_of = |d: &R::Did| self.keys(d);
-        let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP) };
+        let signed = epoch.checked_sub(1).map_or(Default::default(), |e| self.signed(e));
+        let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP), witness: craftworks_wallet::craft::witness_pot(epoch) };
         let kept = epoch.checked_sub(1).map_or(Vec::new(), |e| self.kept(e, &log_of));
-        let st = R::statement::build(epoch, &items, &log_of, &kept, pots);
+        let st = R::statement::build(epoch, &items, &log_of, &kept, &signed, pots);
         st.tree(&mut std::collections::BTreeMap::new()).map(|(root, _)| root)
     }
 

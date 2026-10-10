@@ -188,7 +188,7 @@ mod tests {
         let (u1, u2) = ([21u8; 32], [22u8; 32]);
         let mut blocks = BTreeMap::new();
         let lines = [(u1, A::CAP), (u2, A::CAP / 3)];
-        let (root, _) = engine::repair::build_tree(lines.iter().map(|(d, a)| (d.to_vec(), craftworks_reputation::statement::Line { rep: 1, keeper: 0, allowance: *a }.encode())), &mut blocks).unwrap();
+        let (root, _) = engine::repair::build_tree(lines.iter().map(|(d, a)| (d.to_vec(), craftworks_reputation::statement::Line { rep: 1, keeper: 0, allowance: *a, witness: 0 }.encode())), &mut blocks).unwrap();
         let proofs: Vec<([u8; 32], Vec<u8>)> = lines.iter().map(|(d, _)| (*d, freenet_prolly::proof::prove(&blocks, &root, d).unwrap().encode())).collect();
         let mut got: HashMap<[u8; 32], Vec<u8>> = HashMap::new();
         for (k, v) in [(tok, d.encode()), (tp.id(), h.state.encode()), (tp.keys_id(), log.encode()), (pid, vec![])] {

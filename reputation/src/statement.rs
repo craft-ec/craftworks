@@ -31,17 +31,20 @@ pub struct Line {
     pub keeper: u128,
     /// Its WREN allowance for the period this epoch closes (0: none).
     pub allowance: u128,
+    /// Its WITNESS FEES of the epoch's issuance (TOKEN §7d: the pot's 10%, by the signatures it gave — SPENDABLE).
+    pub witness: u128,
 }
 
 impl Line {
     pub fn encode(&self) -> Vec<u8> {
-        [self.rep.to_le_bytes(), self.keeper.to_le_bytes(), self.allowance.to_le_bytes()].concat()
+        [self.rep.to_le_bytes(), self.keeper.to_le_bytes(), self.allowance.to_le_bytes(), self.witness.to_le_bytes()].concat()
     }
     pub fn decode(b: &[u8]) -> Option<Line> {
-        (b.len() == 48).then(|| Line {
+        (b.len() == 64).then(|| Line {
             rep: u128::from_le_bytes(b[..16].try_into().unwrap()),
             keeper: u128::from_le_bytes(b[16..32].try_into().unwrap()),
-            allowance: u128::from_le_bytes(b[32..].try_into().unwrap()),
+            allowance: u128::from_le_bytes(b[32..48].try_into().unwrap()),
+            witness: u128::from_le_bytes(b[48..].try_into().unwrap()),
         })
     }
 }
@@ -68,6 +71,11 @@ pub struct Inputs<'a> {
     /// The WREN allowance's pot and cap for the period this epoch closes (0: this epoch closes none).
     pub allowance_pot: u128,
     pub allowance_cap: u128,
+    /// The WITNESS signatures each account gave (seated, on the epoch's queued entries: `wallet::fees::count`), the
+    /// witness pot and its cap per account.
+    pub signed: &'a BTreeMap<Did, u64>,
+    pub witness_pot: u128,
+    pub witness_cap: u128,
     /// Accounts that never earn (the roots).
     pub never: &'a [Did],
 }
@@ -87,11 +95,15 @@ pub fn compute(x: &Inputs) -> Statement {
     let everyone: BTreeMap<Did, u128> = x.rep.iter().filter(|(d, _)| eligible(d)).map(|(d, r)| (*d, *r)).collect();
     let k = shares(x.keeper_pot, x.keeper_cap, &keepers);
     let a = shares(x.allowance_pot, x.allowance_cap, &everyone);
+    // WITNESSES: by the signatures they gave (stake made them witnesses: no gate), the roots never.
+    let signers: BTreeMap<Did, u128> = x.signed.iter().filter(|(d, n)| **n > 0 && !x.never.contains(d)).map(|(d, n)| (*d, *n as u128)).collect();
+    let w = shares(x.witness_pot, x.witness_cap, &signers);
     let lines = x
         .rep
         .keys()
         .chain(k.keys())
-        .map(|d| (*d, Line { rep: x.rep.get(d).copied().unwrap_or(0), keeper: k.get(d).copied().unwrap_or(0), allowance: a.get(d).copied().unwrap_or(0) }))
+        .chain(w.keys())
+        .map(|d| (*d, Line { rep: x.rep.get(d).copied().unwrap_or(0), keeper: k.get(d).copied().unwrap_or(0), allowance: a.get(d).copied().unwrap_or(0), witness: w.get(d).copied().unwrap_or(0) }))
         .collect();
     Statement { epoch: x.epoch, lines }
 }
@@ -145,16 +157,18 @@ impl Posted {
 pub struct Pots {
     pub keeper: (u128, u128),
     pub allowance: (u128, u128),
+    pub witness: (u128, u128),
 }
 
 /// THE STATEMENT of standing epoch `epoch` — the ONE computation (pages publish it, witnesses recompute it): reputation
 /// as of the epoch's START from the signed vouch items standing then (each verified by its voucher's key log,
-/// `log_of`), from the [`crate::ROOTS`], split by `pots` (`kept`: the accounts that proved keeping).
-pub fn build(epoch: u64, items: &[crate::item::Item], log_of: &dyn Fn(&Did) -> Option<craftworks_idlog_contract::Log>, kept: &[Did], pots: Pots) -> Statement {
+/// `log_of`), from the [`crate::ROOTS`], split by `pots` (`kept`: the accounts that proved keeping; `signed`: the
+/// witness signatures each gave).
+pub fn build(epoch: u64, items: &[crate::item::Item], log_of: &dyn Fn(&Did) -> Option<craftworks_idlog_contract::Log>, kept: &[Did], signed: &BTreeMap<Did, u64>, pots: Pots) -> Statement {
     let start = epoch * crate::EPOCH;
     let vs = crate::item::standing(items, start, log_of);
     let rep = crate::reputation_at(crate::ROOTS, &vs, start);
-    compute(&Inputs { epoch, rep: &rep, kept, keeper_pot: pots.keeper.0, keeper_cap: pots.keeper.1, gate: crate::GATE, allowance_pot: pots.allowance.0, allowance_cap: pots.allowance.1, never: crate::ROOTS })
+    compute(&Inputs { epoch, rep: &rep, kept, keeper_pot: pots.keeper.0, keeper_cap: pots.keeper.1, gate: crate::GATE, allowance_pot: pots.allowance.0, allowance_cap: pots.allowance.1, signed, witness_pot: pots.witness.0, witness_cap: pots.witness.1, never: crate::ROOTS })
 }
 
 /// Where an epoch's statement is WITNESSED (TOKEN §7a, as an entry is): its witness bag is the token's
@@ -228,7 +242,8 @@ mod tests {
         // GATED (as many kept as `KEEPERS_GATED_FROM`; the rest have no reputation).
         let fill: Vec<Did> = (0..crate::KEEPERS_GATED_FROM as u32).map(|i| *blake3::hash(&i.to_le_bytes()).as_bytes()).collect();
         let kept: Vec<Did> = [d(0), d(1), d(3)].into_iter().chain(fill.iter().copied()).take(crate::KEEPERS_GATED_FROM).collect();
-        let x = Inputs { epoch: 5, rep: &rep, kept: &kept, keeper_pot: 1_000, keeper_cap: 1_000, gate: ONE / 100_000, allowance_pot: 100, allowance_cap: 100, never: &[d(0)] };
+        let none = BTreeMap::new();
+        let x = Inputs { epoch: 5, rep: &rep, kept: &kept, keeper_pot: 1_000, keeper_cap: 1_000, gate: ONE / 100_000, allowance_pot: 100, allowance_cap: 100, signed: &none, witness_pot: 0, witness_cap: 0, never: &[d(0)] };
         let s = compute(&x);
         // The root kept but never earns; 3 kept but is below the gate; 2 did not keep; no reputation, no line: only 1
         // earns the keeper pot.
@@ -245,6 +260,15 @@ mod tests {
         assert_eq!(b.lines[&d(4)].rep, 0);
         // The allowance keeps its gate in bootstrap too.
         assert_eq!((b.lines[&d(3)].allowance, b.lines[&d(4)].allowance), (0, 0));
+        // WITNESS FEES: by the signatures given — the root never earns; 1 (3 signatures) and 6 (no reputation, 1
+        // signature) split the pot 3 : 1; the cap holds.
+        let signed: BTreeMap<Did, u64> = [(d(0), 10), (d(1), 3), (d(6), 1)].into_iter().collect();
+        let fees = compute(&Inputs { signed: &signed, witness_pot: 400, witness_cap: 400, ..few });
+        let wf = |n: u8| fees.lines.get(&d(n)).map_or(0, |l| l.witness);
+        assert_eq!((wf(0), wf(1), wf(6)), (0, 300, 100));
+        assert_eq!(fees.lines[&d(6)].rep, 0, "a line even without reputation");
+        let capped = compute(&Inputs { signed: &signed, witness_pot: 400, witness_cap: 250, ..few });
+        assert_eq!(capped.lines[&d(1)].witness, 250, "capped; the rest never minted");
         // The allowance: everyone past the gate but the root, by reputation (1 and 2: 100 × 10/11, 100 × 1/11).
         assert_eq!((s.lines[&d(1)].allowance, s.lines[&d(2)].allowance, s.lines[&d(3)].allowance), (90, 9, 0));
         assert_eq!(Line::decode(&s.lines[&d(1)].encode()), Some(s.lines[&d(1)]));

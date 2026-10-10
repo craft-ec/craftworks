@@ -2542,7 +2542,7 @@ mod js {
         /// listed keeper whose standing record proves keeping then: `craftworks_standing::record::kept_accounts`; the
         /// standing contract's code and the beacon name the records).
         #[allow(clippy::too_many_arguments)]
-        pub fn statement_build(&mut self, idlog_code: &[u8], items: js_sys::Array, epoch: f64, keepers: js_sys::Array, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8]) -> Result<JsValue, JsValue> {
+        pub fn statement_build(&mut self, idlog_code: &[u8], items: js_sys::Array, epoch: f64, keepers: js_sys::Array, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], token_code: &[u8], bag_code: &[u8], queued: js_sys::Array) -> Result<JsValue, JsValue> {
             use craftworks_reputation as R;
             let epoch = epoch as u64;
             let items: Vec<R::item::Item> = bytes_list(&items).iter().filter_map(|b| R::item::Item::decode(b)).collect();
@@ -2574,8 +2574,22 @@ mod js {
                 Some(e) => craftworks_standing::record::kept_accounts(&listed, &record_of, e),
                 None => Vec::new(),
             };
-            let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP) };
-            let st = R::statement::build(epoch, &items, &log_of, &kept, pots);
+            // SIGNED (the epoch before's witness fees): each seated signature on its queued entries (`wallet::fees`).
+            let signed = match epoch.checked_sub(1) {
+                None => Default::default(),
+                Some(_) => {
+                    let ctx = token_ctx(token_code, beacon, idlog_code)?;
+                    let lot = tokens::Lot { pool: keeper::craft(&ctx).1, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+                    let queued: Vec<craftworks_wallet::queue::Queued> = bytes_list(&queued).iter().filter_map(|b| craftworks_wallet::queue::Queued::decode(b)).collect();
+                    match witness::signed(&ctx, &lot, &|x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec), &queued) {
+                        tokens::Step::Done(s) => s,
+                        tokens::Step::Want(w) => return js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
+                        tokens::Step::Sign(_) => return Err(err("a count never signs".into())),
+                    }
+                }
+            };
+            let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP), witness: craftworks_wallet::craft::witness_pot(epoch) };
+            let st = R::statement::build(epoch, &items, &log_of, &kept, &signed, pots);
             let mut blocks = std::collections::BTreeMap::new();
             let (root, parity) = st.tree(&mut blocks).ok_or_else(|| err("the statement's tree does not build".into()))?;
             let puts = js_sys::Array::new();
@@ -2592,7 +2606,7 @@ mod js {
             }
             // What its KEEPER POT pays: each keeper line, with its proof (`keeper_mint`).
             let minted = js_sys::Array::new();
-            for (d, _) in st.lines.iter().filter(|(_, l)| l.keeper > 0) {
+            for (d, _) in st.lines.iter().filter(|(_, l)| l.keeper > 0 || l.witness > 0) {
                 let proof = freenet_prolly::proof::prove(&blocks, &root, d).map_err(|_| err("a statement line that does not prove".into()))?.encode();
                 minted.push(&[JsValue::from(js_sys::Uint8Array::from(&d[..])), js_sys::Uint8Array::from(&proof[..]).into()].into_iter().collect::<js_sys::Array>());
             }
@@ -2682,7 +2696,9 @@ mod js {
             let Some(m) = minted else { return Ok(v) };
             let puts: Vec<tokens::Put> = m.craft.into_iter().chain([m.chain]).collect();
             let v = self.attach_puts(v, token_code, &puts)?;
-            js_sys::Reflect::set(&js_sys::Reflect::get(&v, &"done".into())?, &"amount".into(), &JsValue::from(m.amount.to_string()))?;
+            let done = js_sys::Reflect::get(&v, &"done".into())?;
+            js_sys::Reflect::set(&done, &"amount".into(), &JsValue::from(m.amount.to_string()))?;
+            js_sys::Reflect::set(&done, &"fee".into(), &JsValue::from(m.fee.to_string()))?;
             Ok(v)
         }
         /// CLAIM this account's $CRAFT stake for the next open claims epoch (`keeper::claim`: this node's member key
@@ -2876,7 +2892,7 @@ mod js {
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
             token_step(wallet::view(&ctx, &got, &id, &b32(owner)?), |v| {
                 let d = &v.definition;
-                Ok(json!({ "id": hex(&id), "name": String::from_utf8_lossy(&d.name), "decimals": d.decimals, "creator": hex(&d.genesis_owner), "supply": d.genesis_amount.to_string(), "balance": v.balance.to_string(), "begun": v.begun, "staked": v.staked.to_string(), "mints": v.mints.iter().map(|(e, a, s)| json!({ "epoch": e, "amount": a.to_string(), "stamp": s })).collect::<Vec<_>>() }))
+                Ok(json!({ "id": hex(&id), "name": String::from_utf8_lossy(&d.name), "decimals": d.decimals, "creator": hex(&d.genesis_owner), "supply": d.genesis_amount.to_string(), "balance": v.balance.to_string(), "begun": v.begun, "staked": v.staked.to_string(), "mints": v.mints.iter().map(|(e, a, f, s)| json!({ "epoch": e, "amount": a.to_string(), "fee": f.to_string(), "stamp": s })).collect::<Vec<_>>() }))
             })
         }
         /// SEND PRIVATELY from this account's DID chain (`wallet::send`, TOKEN §7f): `amount` (a decimal string) of the

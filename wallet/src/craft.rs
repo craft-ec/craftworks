@@ -48,6 +48,13 @@ pub fn keeper_pot(epoch: u64) -> (u128, u128) {
     (pot / 10 * 9, pot / 50)
 }
 
+/// The WITNESS POT of standing epoch `epoch` and its cap per account: 10% of the epoch's pot (SPENDABLE: fees never
+/// become stake), at most 2% of it each.
+pub fn witness_pot(epoch: u64) -> (u128, u128) {
+    let pot = KEEPERS.amount(epoch);
+    (pot / 10, pot / 50)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

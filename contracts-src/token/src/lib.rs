@@ -518,11 +518,12 @@ pub enum Body {
     Unstake { amount: u128 },
     /// The unstake `unstake` (its entry's nonce) back into the balance, its delay over — appended by anyone.
     Release { unstake: [u8; 16] },
-    /// KEEPER ISSUANCE (TOKEN §7d): this account's KEEPER LINE of standing epoch `epoch`'s STATEMENT (`root`; `proof`,
-    /// its line's prolly proof under it) minted, LOCKED as stake — `amount` exactly the line's. Appended by ANYONE with
-    /// its work (the proof fixes the amount: nobody need be online); its witnesses accept it only under the statement
-    /// root accepted for that epoch. Named by [`keeper_nonce`] (once per epoch).
-    KeeperMint { epoch: u64, root: [u8; 32], proof: Vec<u8>, amount: u128 },
+    /// ISSUANCE (TOKEN §7d): this account's LINE of standing epoch `epoch`'s STATEMENT (`root`; `proof`, its line's
+    /// prolly proof under it) minted — its KEEPER share `amount` LOCKED as stake, its WITNESS fees `fee` SPENDABLE —
+    /// each exactly the line's. Appended by ANYONE with its work (the proof fixes both: nobody need be online); its
+    /// witnesses accept it only under the statement root accepted for that epoch. Named by [`keeper_nonce`] (once per
+    /// epoch).
+    KeeperMint { epoch: u64, root: [u8; 32], proof: Vec<u8>, amount: u128, fee: u128 },
     /// An EQUIVOCATION by this chain's witness key (`key`, its writer's node key): two witness signatures at one place
     /// naming different entries — every stake and unbonding amount BURNED. Appended by anyone.
     Slash { key: [u8; 32], a: witness::WitnessSig, b: witness::WitnessSig },
@@ -798,13 +799,14 @@ impl Entry {
                 v.push(15);
                 v.extend_from_slice(&amount.to_le_bytes());
             }
-            Body::KeeperMint { epoch, root, proof, amount } => {
+            Body::KeeperMint { epoch, root, proof, amount, fee } => {
                 v.push(34);
                 v.extend_from_slice(&epoch.to_le_bytes());
                 v.extend_from_slice(root);
                 v.extend_from_slice(&(proof.len() as u32).to_le_bytes());
                 v.extend_from_slice(proof);
                 v.extend_from_slice(&amount.to_le_bytes());
+                v.extend_from_slice(&fee.to_le_bytes());
             }
             Body::Unstake { amount } => {
                 v.push(16);
@@ -980,7 +982,7 @@ impl Entry {
                     return None;
                 }
                 let proof = r.take(n)?.to_vec();
-                Body::KeeperMint { epoch, root, proof, amount: r.u128()? }
+                Body::KeeperMint { epoch, root, proof, amount: r.u128()?, fee: r.u128()? }
             }
             16 => Body::Unstake { amount: r.u128()? },
             17 => Body::Release { unstake: r.arr()? },
@@ -1804,7 +1806,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     writer = Some(Signer::Set(set.clone(), *set_seq));
                     balance
                 }
-                Body::KeeperMint { epoch, root, proof, amount } => {
+                Body::KeeperMint { epoch, root, proof, amount, fee } => {
                     // Anyone's, with its work: its LINE fixes what it mints (the witnesses check the root was the one
                     // accepted for the epoch).
                     if !e.worked() {
@@ -1816,7 +1818,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     }
                     kept.push(*epoch);
                     let line = craftworks_reputation::statement::line_proven(root, &p.owner, proof).ok_or("a keeper mint whose line does not hold under its root")?;
-                    if *amount == 0 || *amount != line.keeper {
+                    if *amount != line.keeper || *fee != line.witness || amount.saturating_add(*fee) == 0 {
                         return Err("a keeper mint of another amount than its line's");
                     }
                     // Its statement exists once its epoch has begun (past the margin).
@@ -1825,7 +1827,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         return Err("a keeper mint before its epoch's statement");
                     }
                     staked = staked.checked_add(*amount).ok_or("a balance overflow")?;
-                    balance
+                    balance.checked_add(*fee).ok_or("a balance overflow")?
                 }
                 Body::Stake { amount } => {
                     owner_signed(e, &writer)?;
