@@ -176,6 +176,17 @@ A contributor's claims only steer their own contribution (§1): misreporting can
 - **Contributions are PUBLIC and a level is a BADGE (owner, 2026-10-07):** each person's running contributions are on
   their public card (`directory`: only their account writes it, anyone reads it), so anyone computes their level; every
   name drawn shows it — ⭐ PRO, 💎 VIP. (Self-stated until the token: the token contract's record replaces the card's.)
+- **LIVE, THE LEVELS ARE PAID (owner 10-10):** a contribution is a real token payment escrowed to the contribution program
+  (TOKEN §7), the level computed from those payments (anyone verifies) — the self-stated card number goes. AT LAUNCH in
+  WREN (everyone receives it from the daily allowance by reputation, so levels are reachable from day one; $CRAFT from
+  issuance is locked as stake); LATER in $CRAFT, once spendable $CRAFT circulates — the switch at an announced epoch
+  (TOKEN §7d, rule versions). PRICED BY A REFERENCE, never fixed by anyone (owner: "the rate also should be equiv to the
+  swap rate. and eventually will settle to rate in USD"): the threshold carries over at the MARKET RATE between the
+  tokens — the token's own pool's clearing price, TIME-WEIGHTED over many epochs (one trade cannot move a level); and
+  when a token is worth pricing in money, thresholds are stated in USD (or another currency) and converted by a rate
+  OBSERVED on the network — a pool against a USD-backed token where one exists, else a price the WITNESSES report (each
+  committee member reports; the stake-weighted MEDIAN counts; a report far from it forfeits its fees). A change of
+  reference unit only at an announced epoch.
 - **An item's minimum level** (creator's choice: everyone, PRO, VIP): the item ENCRYPTED, its key sealed to the people at
   that level — never one server secret that decrypts everything (Handcraft's `CONTENT_ENCRYPTION_SECRET`).
 - **Paying for one item:** in the token, to its creator; the buyer gets the item's key sealed to them.
