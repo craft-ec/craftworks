@@ -81,7 +81,7 @@ export async function start(ctx) {
     // (An ATTACHING kind — a caption — is contributed like a comment.)
     const K = await ctx.require("kinds");
     const S = await ctx.require("signals");
-    const ACTION = { message: "post", comment: "comment", reaction: "vote", ...Object.fromEntries(K.all().map(k => [k, "post"])), ...Object.fromEntries(K.attaching().map(k => [k, "comment"])) };
+    const ACTION = { message: "post", comment: "comment", reaction: "vote", ...Object.fromEntries(K.all().map(k => [k, K.action(k) ?? "post"])), ...Object.fromEntries(K.attaching().map(k => [k, K.action(k) ?? "comment"])) };
     const [r, m] = outside
       ? await ctx.require("roles").then(async x => {
           const pr = await x.ofPublic(container.scope);

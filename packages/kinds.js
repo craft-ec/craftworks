@@ -17,6 +17,7 @@
 //   kinds.attachLabel("caption", "music")   // "Lyrics" ("Transcript" on a podcast, "Subtitles" on a video)
 //   kinds.parts("movie")     // its PAGE's parts (`item-page`): { look: "player"|"card", votes, comments, about } — what
 //                            // shows around the item, declared once per domain, never per app
+//   kinds.action("ballot")   // the policy action a kind is written under when not the default ("vote"), else null
 //   kinds.policyDomain("movie") // the DOMAIN whose settings govern it in a space ("video"; a post: "text"; a subtitle:
 //                             // "subtitle") — content decides, not the app showing it (one app may show every domain)
 export async function start() {
@@ -58,6 +59,12 @@ export async function start() {
     ["form", "form", "Form", []],
     // Wiki (Wiki: a page by its title, its text as sections — each a `wiki-section` attached to it: `wiki-pages`)
     ["wiki", "wiki", "Wiki page", []],
+    // Vote (Vote: `vote-tally`) — a POLL (its question the title; options, single or multiple, open, results shown live
+    // or after closing, in `meta`), a PROPOSAL (its outcome act and quorum in `meta`), a member's DELEGATION in a space
+    // (`meta.to`, `meta.seq`: append-only, the highest seq counting).
+    ["poll", "vote", "Poll", []],
+    ["proposal", "vote", "Proposal", []],
+    ["delegation", "vote", "Delegation", []],
   ];
   // COLLABORATIVE kinds: in a space, whoever its `edit` policy allows edits one (a shared note, a shared file's
   // entry), the creator kept; every other kind its author's alone (an app's own enforcement over the policy).
@@ -83,7 +90,7 @@ export async function start() {
     const t = String((typeof x === "string" ? x : x?.type) ?? "").toLowerCase();
     return MEDIA.find(m => m.is(t, ref)) ?? null;
   };
-  const UNTITLED = new Set(["note", "file", "paste"]);
+  const UNTITLED = new Set(["note", "file", "paste", "delegation"]);
   // ATTACHING kinds: their own data, about another item (`in`) — contributed like a comment, listed with what they are
   // about, and a lens of their own (the Caption app). A CAPTION — subtitles, lyrics, a transcript: WebVTT (its file),
   // its language and label.
@@ -91,7 +98,13 @@ export async function start() {
     ["caption", "text", "Caption", ["lang", "label"], ["video", "audio"]],
     // A WIKI SECTION: one writer's latest version of one section of a page (`wiki-pages`: sid, pos, base, merges).
     ["wiki-section", "wiki", "Wiki section", ["sid"], ["wiki"]],
+    // A BALLOT on a poll or a proposal (`meta.seq`, `meta.choice`), and a proposal's TALLY — its finalization (`meta.final`).
+    ["ballot", "vote", "Ballot", [], ["vote"]],
+    ["tally", "vote", "Tally", [], ["vote"]],
   ];
+  // The POLICY ACTION a kind is written under where it is not the default (an item stands: `post`; one attaches:
+  // `comment`) — Vote's records are VOTING: a ballot, a delegation, a tally are checked against who may `vote`.
+  const ACTION = { ballot: "vote", delegation: "vote", tally: "vote" };
   const byKind = new Map(CATALOG.map(([kind, domain, label, fields]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields) })]));
   const onTo = new Map(ATTACHING.map(([kind, domain, label, fields, to]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields), to: Object.freeze(to), attaches: true })]));
   const LABELS = { lang: "Language", label: "Label",  year: "Year", director: "Director", cast: "Cast", genre: "Genre", show: "Show", season: "Season", episode: "Episode", artist: "Artist", album: "Album", host: "Host", author: "Author", narrator: "Narrator", chapter: "Chapter", location: "Location", taken: "Taken", camera: "Camera", medium: "Medium", publisher: "Publisher", isbn: "ISBN", writer: "Writer", issue: "Issue", format: "Format", software: "Software", platform: "Platform", version: "Version", license: "License", schema: "Schema" };
@@ -110,6 +123,7 @@ export async function start() {
     file: { look: "card", votes: true, comments: true, about: true },
     document: { look: "card", votes: true, comments: true, about: true },
     wiki: { look: "card", votes: true, comments: true, about: false },
+    vote: { look: "card", votes: false, comments: true, about: false },
   };
   return {
     parts: kind => PARTS[byKind.get(kind)?.domain] ?? { look: "card", votes: false, comments: false, about: false },
@@ -121,6 +135,7 @@ export async function start() {
     all: () => [...byKind.keys()],
     fieldLabel: f => LABELS[f] ?? f,
     collaborative: kind => COLLABORATIVE.has(kind),
+    action: kind => ACTION[kind] ?? null,
     titled: kind => !UNTITLED.has(kind),
     // The media domains (`MEDIA`), and the one a file (a reference, or a type) is — or null.
     media: () => MEDIA,
