@@ -21,6 +21,34 @@ export async function run(boot) {
   const ctx = { params: boot.params, log: boot.log, on: boot.on, require, route: "/", app: "", apps: [], uses: [], identityPrior: [], actions: {} };
   globalThis.app = ctx;
 
+  // TELEMETRY, ONE FOR EVERY PACKAGE AND APP (owner 10-11: "one implementation where it collects telemetry, as the one
+  // foundation under all apps"): what fails anywhere in the page goes into the day's health bag (`index.health`, sealed
+  // to support, once a kind per source per message per hour), tagged with what the loader knows — the route, the app,
+  // the service starting — so no app writes its own reports: an uncaught error or rejected promise, a package that does
+  // not load, and every log line that says something failed. The apps opened are counted in the heartbeat
+  // (`ctx.appsOpened`, `upkeep`'s `seen`). The mechanisms' own reports (keys, joins, reads) stay: they carry diagnosis
+  // only they know.
+  ctx.appsOpened = new Set();
+  let healthIndex = null;
+  const tag = s => [...String(s)].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) | 0, 7).toString(16).slice(-6);
+  const where = () => ({ route: ctx.route, sub: ctx.sub || null, starting: working.at(-1) ?? null });
+  function report(k, source, why, d = {}) {
+    if (!manifest) return;
+    const msg = String(why ?? "").slice(0, 160);
+    (healthIndex ??= require("index").catch(() => null)).then(ix => ix?.health?.({ k, s: String(source ?? "page").slice(0, 24), to: tag(msg), why: msg, d: { ...where(), ...d } })).catch(() => {});
+  }
+  const stackTop = e => String(e?.stack ?? "").split("\n").slice(1, 3).map(l => l.trim().replace(/blob:[^ )]+/g, "blob")).join(" | ").slice(0, 160);
+  addEventListener("error", e => report("page-error", working.at(-1) || ctx.route, e.message ?? e.error?.message, { stack: stackTop(e.error) }));
+  addEventListener("unhandledrejection", e => report("page-rejection", working.at(-1) || ctx.route, e.reason?.message ?? e.reason, { stack: stackTop(e.reason) }));
+  // A LOG LINE THAT SAYS SOMETHING FAILED (the words every package already uses for it), from the package that said it.
+  // (Not a COUNT of them — "0 refused" in a tally says nothing failed.)
+  const FAILED = /(?<!\d )\b(could not|couldn't|failed|refused|cannot|can't|not (loaded|saved|sent|put|stored|played|opened))\b/i;
+  ctx.log = (step, detail = {}) => {
+    boot.log(step, detail);
+    const what = typeof detail?.what === "string" ? detail.what : "";
+    if (step !== "health" && (step === "FAILED" || FAILED.test(what))) report("log-failed", step, what);
+  };
+
   // A package, fetched and checked by the wrapper, the first time anything asks for it. What it gives depends on its
   // kind: `bytes` (wasm, data), `module` (an imported JS module), `service` (a module whose `start(ctx)` runs once and
   // whose result is shared).
@@ -31,7 +59,8 @@ export async function run(boot) {
   function require(name) {
     if (!loaded.has(name)) {
       askedBy.set(name, working.at(-1) ?? null);
-      loaded.set(name, load(name));
+      // (A service that needs an account, asked before login, is not a failure.)
+      loaded.set(name, load(name).catch(e => (/nobody is logged in/.test(e?.message ?? "") || report("package-failed", name, e?.message ?? e), Promise.reject(e))));
     }
     return loaded.get(name);
   }
@@ -269,6 +298,7 @@ export async function run(boot) {
     }
     await fill("body", page.body ?? []);
     dispatchEvent(new CustomEvent("craftworks:route", { detail: route }));
+    ctx.appsOpened.add(route);
     ctx.log("page ready", { what: route, ms: Math.round(performance.now() - t0) });
   }
 

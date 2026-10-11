@@ -173,6 +173,13 @@ async fn main() -> Result<()> {
             vs.sort_by_key(|v| v["at"].as_u64().unwrap_or(0));
             let last = vs[vs.len() - 1];
             println!("  seen {r}  ×{:<3} {}–{} UTC  v={}", vs.len(), hm(vs[0]), hm(last), last["v"].as_str().unwrap_or("?"));
+            // The APPS opened (each heartbeat's, since the one before): which apps this account used today.
+            let mut apps: Vec<&str> = vs.iter().flat_map(|v| v["apps"].as_array().into_iter().flatten().filter_map(|a| a.as_str())).collect();
+            apps.sort();
+            apps.dedup();
+            if !apps.is_empty() {
+                println!("    apps opened: {}", apps.join(" "));
+            }
             let mut was: BTreeMap<String, String> = BTreeMap::new();
             for v in &vs {
                 for sp in v["sp"].as_array().into_iter().flatten() {

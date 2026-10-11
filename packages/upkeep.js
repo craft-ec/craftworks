@@ -94,7 +94,8 @@ export async function start(ctx) {
       }
       // THE HEARTBEAT: this page open, its version, and its state in each space (a member who stops beating, or whose
       // state turns, is seen in the day's health bag: `tools/health-watch`).
-      await index.health({ k: "seen", sp: seen.slice(0, 12) }).catch(() => {});
+      await index.health({ k: "seen", sp: seen.slice(0, 12), ...(ctx.appsOpened?.size ? { apps: [...ctx.appsOpened].slice(0, 24) } : {}) }).catch(() => {});
+      ctx.appsOpened?.clear();
       // AUDIENCES: each circle's members as they should be (friends; followers, from their notices).
       await (await ctx.require("circles")).sync().catch(e => ctx.log("upkeep", { what: `circles: ${e?.message ?? (typeof e === "object" ? JSON.stringify(e) : String(e))}${e?.stack ? ` (${String(e.stack).split("\n")[1]?.trim() ?? ""})` : ""}` }));
       // Boards: what this person wrote is public exactly while its board reads in public (a board made public shows
