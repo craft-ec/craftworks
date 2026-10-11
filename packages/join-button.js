@@ -53,7 +53,12 @@ export async function start(ctx) {
       // Asked already: said so, whatever the space lets in now.
       const asked = await conversation.asked(d.id).catch(() => null);
       if (!asked && !joinable) return box.replaceChildren(followButton(d));
-      if (asked) return box.replaceChildren(h("button", { type: "button", disabled: true, textContent: "Requested ✓", title: `Asked ${ago(asked.at)}` }), h("p", { textContent: `Asked ${ago(asked.at)}. ${WAITING}` }));
+      if (asked) {
+        // LET IN already (its public acts admit this person): the welcome is what is awaited — asked for again here.
+        const letIn = (await conversation.waiting().catch(() => [])).some(w => w.key === d.id && w.status === "let-in");
+        if (letIn) return box.replaceChildren(h("button", { type: "button", disabled: true, textContent: "Let in ✓", title: `Asked ${ago(asked.at)}` }), h("p", { textContent: `You were let in. Your keys arrive when a member's app is open; this app asks for them again on its own.` }));
+        return box.replaceChildren(h("button", { type: "button", disabled: true, textContent: "Requested ✓", title: `Asked ${ago(asked.at)}` }), h("p", { textContent: `Asked ${ago(asked.at)}. ${WAITING}` }));
+      }
       const said = h("p", { className: "err", hidden: true });
       const b = h("button", {
         type: "button",

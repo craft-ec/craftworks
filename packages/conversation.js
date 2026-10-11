@@ -478,6 +478,7 @@ export async function start(ctx) {
     await once.settled;
     const done = k => once.rows().some(r => r.key === k && r.value);
     let unanswerable = 0; // welcomes made for a key package this account does not hold
+    const againAsks = []; // their asks to welcome again: sent once the card is renewed (below)
     const inbox = await index.inbox();
     // Each space's NEWEST welcome (its inviter's last word): an older one for the same space is from before (a removal,
     // a welcome again) — its key package spent or never to be used — set aside, never tried or asked about again.
@@ -572,7 +573,15 @@ export async function start(ctx) {
             const turn = ordering.turn(`repair:${it.space}|${it.from}|${it.epoch}`, (await groupDids(sp)).filter(d => d !== it.from), me.id);
             if (turn < 0 || Date.now() - (Number(it.at) || 0) < turn * ordering.TAKEOVER) continue;
           }
+          // A MEMBER of the group asking (not a repair): re-added ONCE for the epoch it asks from, by whichever member
+          // answers first (10-11: each failed welcome asked again and each ask re-added it — one commit each, no bound).
+          const member = !it.repair && it.epoch != null && sp.kind !== "direct" && (await groupDids(sp)).includes(it.from);
+          if (member && (await welcomedAgain(sp, it.from, it.epoch))) {
+            await once.put(k, `welcomed again at ${it.epoch} already`);
+            continue;
+          }
           await welcome(sp, it.from, name, null, own ? { epoch: own.epoch, branch: own.branch } : undefined);
+          if (member) await markWelcomed(sp, it.from, it.epoch);
           keys.event("welcome-again-sent", { space: sp.id, to: it.from, repair: !!it.repair, theirEpoch: it.epoch ?? null, ownerEpoch: own?.epoch ?? null });
           // A catch-up recorded in the space (who welcomed whom: `keyStatus`'s "caught up by").
           if (own) await markWelcomed(sp, it.from, it.epoch, own.branch);
@@ -580,7 +589,11 @@ export async function start(ctx) {
           ctx.log("conversation", { what: `${short(it.from)} could not open a ${own ? "repair " : ""}welcome into ${sp.name ?? "a conversation"}: welcomed again` });
         } catch (e) {
           // Said once a page per ask (a node stuck itself fails every pass until it is welcomed again).
-          if (!saidAgain.has(k)) saidAgain.add(k), ctx.log("conversation", { what: `welcoming ${short(it.from)} again: ${e.message}` });
+          if (!saidAgain.has(k)) {
+            saidAgain.add(k);
+            ctx.log("conversation", { what: `welcoming ${short(it.from)} again: ${e.message}` });
+            index.health({ k: "welcome-again-failed", s: String(it.space ?? "").slice(0, 6), to: it.from.replace(/^did:craftec:/, "").slice(0, 6), why: String(e?.message ?? e).slice(0, 160) }).catch(() => {});
+          }
         }
         continue;
       }
@@ -660,6 +673,7 @@ export async function start(ctx) {
         await keys.group(sp).join(it.welcome, { expect, above });
         // JOINED by it: never tried again (its key package is spent — after a removal it would only fail and ask).
         await once.put(`dead:${tried}`, `joined ${Date.now()}`).catch(() => {});
+        if (it.kp) await once.put(`joined-kp:${String(it.kp).slice(0, 32)}`, String(Date.now())).catch(() => {});
         await keepHistory(sp, it.history);
         await space.record(it.space, v);
         // Its request answered: no longer waiting — the space's, and the code the welcome names.
@@ -698,14 +712,21 @@ export async function start(ctx) {
         // Asked again at most once an HOUR while it keeps failing (an answer made from a card that still listed a
         // dead package fails too — never asked only once for good).
         const k = `asked-again:${it.space}|${(it.kp ?? it.welcome).slice(0, 32)}|${Math.floor(Date.now() / 3600e3)}`;
-        if (!held && !done(k)) {
+        // A DUPLICATE (10-11): this account JOINED by that very package already (another welcome for it, from another
+        // member or node, opened first) — nothing lost, nothing to ask: each such ask was one more re-add, one more epoch.
+        const duplicate = it.kp && done(`joined-kp:${String(it.kp).slice(0, 32)}`);
+        if (duplicate) await once.put(`dead:${tried}`, `duplicate ${Date.now()}`).catch(() => {});
+        else if (!held && !done(k)) {
           unanswerable += 1;
-          await index
-            .send(it.from, { kind: "welcome-again", space: it.space, from: me.id, kp: it.kp ?? it.welcome.slice(0, 32), ...(it.repair || had ? { repair: !!it.repair } : {}), at: Date.now() })
-            .then(
-              () => (once.put(k, String(Date.now())), ctx.log("conversation", { what: `asked ${short(it.from)} to welcome again into ${it.name ?? "a space"} (a welcome made for a key package not held here)` })),
-              err => ctx.log("conversation", { what: `asking ${short(it.from)} to welcome again: ${err.message}` }),
-            );
+          const epoch = had && st && !st.removed ? st.epoch : null;
+          againAsks.push(() =>
+            index
+              .send(it.from, { kind: "welcome-again", space: it.space, from: me.id, kp: it.kp ?? it.welcome.slice(0, 32), ...(epoch != null ? { epoch } : {}), ...(it.repair || had ? { repair: !!it.repair } : {}), at: Date.now() })
+              .then(
+                () => (once.put(k, String(Date.now())), ctx.log("conversation", { what: `asked ${short(it.from)} to welcome again into ${it.name ?? "a space"} (a welcome made for a key package not held here)` })),
+                err => ctx.log("conversation", { what: `asking ${short(it.from)} to welcome again: ${err.message}` }),
+              ),
+          );
         }
         ctx.log("conversation", {
           what: `a welcome from ${short(it.from)} (welcome ${await fingerprint(it.welcome)}) did not open here: ${e.message}${it.kp ? ` — made ${it.made ? new Date(it.made).toISOString().slice(0, 16) : "(when unknown)"} for key package ${it.kp.slice(0, 8)}, ${held ? `one this account offered (batch ${held})` : "NOT one this account offered"}` : " — from before welcomes named their key package"}`,
@@ -727,6 +748,8 @@ export async function start(ctx) {
           e => ((renewedForWelcomes = false), ctx.log("conversation", { what: `renewing the card's key packages: ${e?.message ?? e}` })),
         );
     }
+    // THE ASKS, after the card is renewed: an answer made from the card as it was would name a spent package again.
+    for (const send of againAsks) await send();
     return out;
   }
 
@@ -891,7 +914,10 @@ export async function start(ctx) {
     let n = 0;
     for (const a of waiting) {
       const desc = listed.find(s => s.id === a.key);
-      const said = what => ctx.log("conversation", { what: `waiting on ${a.name ?? a.key.slice(0, 8)}: ${what}` });
+      const said = (what, d) => {
+        ctx.log("conversation", { what: `waiting on ${a.name ?? a.key.slice(0, 8)}: ${what}` });
+        index.health({ k: "join-waiting", s: a.key.slice(0, 6), why: what, d: { days: Math.floor((Date.now() - (a.at ?? Date.now())) / 864e5), ...d } }).catch(() => {});
+      };
       if (!desc) {
         said("not listed in Discover (its public acts unread)");
         continue;
@@ -902,13 +928,14 @@ export async function start(ctx) {
       // Asked again once a PAGE while let in and still not in (each load one request: whoever admits answers it once),
       // and whenever it has let this person in again since.
       if (!admissions || (admissions <= (a.seen ?? 0) && askedThisPage.has(a.key))) {
-        said(admissions ? `let in ${admissions} time(s), asked again this page already — its welcome not here yet` : "not let in yet");
+        said(admissions ? `let in ${admissions} time(s), asked again this page already — its welcome not here yet` : "not let in yet (by its public acts)", { admissions, pubActs: pr?.acts().length ?? null });
         continue;
       }
       askedThisPage.add(a.key);
       await index.request(openCode(a.key), { kind: "join", did: me.id, at: Date.now() });
       await noteAsk(a.key, { name: a.name ?? null, seen: admissions });
       ctx.log("conversation", { what: `${a.name ?? a.key.slice(0, 8)}: let in, but its welcome never opened here — asked again` });
+      index.health({ k: "join-asked-again", s: a.key.slice(0, 6), d: { admissions } }).catch(() => {});
       n += 1;
     }
     return n;
@@ -1016,6 +1043,7 @@ export async function start(ctx) {
     const pending = r.roster().filter(d => d !== me.id && !inGroup.has(d) && !r.banned(d));
     const said = `acts say ${r.roster().length} in, the group holds ${inGroup.size}, ${pending.length} to add${pending.length ? ` (${pending.slice(0, 3).map(short).join(", ")})` : ""}`;
     if (reconcileSaid.get(sp.id) !== said) reconcileSaid.set(sp.id, said), ctx.log("conversation", { what: `${sp.name}: reconcile — ${said}` });
+    if (pending.length) index.health({ k: "reconcile", s: sp.id.slice(0, 6), d: { roster: r.roster().length, group: inGroup.size, pending: pending.length, first: pending.slice(0, 3).map(d => d.replace(/^did:craftec:/, "").slice(0, 6)) } }).catch(() => {});
     for (const did of r.roster()) {
       const k = `${sp.id}|${did}`;
       if (did === me.id || inGroup.has(did) || r.banned(did)) {
@@ -1040,6 +1068,7 @@ export async function start(ctx) {
       } catch (e) {
         failed(k);
         ctx.log("conversation", { what: `${sp.name}: adding ${short(did)} as its acts say: ${e.message}` });
+        index.health({ k: "reconcile-failed", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), why: String(e?.message ?? e).slice(0, 160) }).catch(() => {});
       }
     }
     return out;
@@ -1098,6 +1127,7 @@ export async function start(ctx) {
         ctx.log("conversation", { what: `${directory.shown(q.did)} ${q.code === "open" ? `joined ${sp.name} (open)` : `admitted to ${sp.name} by a code`}` });
       } catch (e) {
         ctx.log("conversation", { what: `could not admit ${short(q.did)}: ${e.message}` });
+        index.health({ k: "admit-failed", s: sp.id.slice(0, 6), to: q.did.replace(/^did:craftec:/, "").slice(0, 6), why: String(e?.message ?? e).slice(0, 160) }).catch(() => {});
       }
     }
     return out;

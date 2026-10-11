@@ -2260,6 +2260,19 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       page's root that epoch); partial holders pass ~f² of epochs.
 - [x] 10-11 v579 on fx: token/allowance/standing rebuilt (re-key), pay 2e1a823f / allowance 2f327949 (serve), Wren's
       witness restarted on the new binary (pool craft). Live recheck pending.
+- [x] 10-11 JOIN STUCK "Requested" WHILE A MEMBER (owner in Ivvor's New Space, measured as Wren: listed a member,
+      "keys not announced"; Wren behind 256 of 460, welcome for a package "offered by muvu9mfo, not held").
+      (1) An OPEN space's `admitted`/`added`/`member` acts are PUBLIC (were sealed: the asker, reading only public acts,
+      never learned it was let in, so a failed welcome was never asked for again); the owner's page publishes an open
+      space's roster once a page. (2) "Let in ✓" on the join control. (3) Telemetry: `join-waiting`,
+      `join-asked-again`, `admit-failed`, `reconcile` (pending), `reconcile-failed`, `welcome-again-failed`.
+      (4) Welcome-again loop bounded (agent's read-only root cause: L1 re-added a group member on every failed welcome,
+      no turn, no per-epoch gate — 460 epochs): asks carry the asker's epoch, a member is re-added once per epoch
+      (`welcomedAgain`/`markWelcomed`); a welcome for a package this account JOINED by already (duplicate) is never
+      asked about (`joined-kp:`); asks sent after the card is renewed; a join saves the group before dropping its
+      package from the batch. fx/fy v581: fy outside an open space saw its admission in the PUBLIC acts
+      (`join-asked-again` ced654 08:33), then joined. NOT DONE: welcomers sharing used-package tags (agent fix 3),
+      resend-after-commit outbox (fix 6), member nodes honouring others' re-adds (delegate, needs wasm).
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.

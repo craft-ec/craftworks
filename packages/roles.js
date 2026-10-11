@@ -348,8 +348,11 @@ export async function start(ctx) {
         // admin) — owner 10-07: this check had no entry for it, so no page could write one.
         const lapsing = a.act === "lapsed" && !!role(me.id) && /^level:(pro|vip)$/.test(policyOf("", "join", Infinity) ?? "");
         if (!leaving && !listing && !lapsing && (!need || !can(me.id, need))) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
-        // A public space's acts are public (readers outside must know them); a private one's sealed.
-        const toPublic = isPublic() || (a.act === "policy" && (a.action === "read" || a.action === "join") && a.who === "anyone");
+        // A public space's acts are public (readers outside must know them); a private one's sealed. An OPEN space's
+        // admissions too (10-11: sealed, the asker — reading only the public acts — never learned it was let in, so a
+        // welcome that failed was never asked for again: "Requested" for days while listed as a member).
+        const admits = ["admitted", "added", "member"].includes(a.act) && policyOf("", "join", Infinity) === "anyone";
+        const toPublic = isPublic() || admits || (a.act === "policy" && (a.action === "read" || a.action === "join") && a.who === "anyone");
         // Its time: after every act seen (`dag`: now, or just past the latest) — or when it happened (upkeep let someone
         // in while no page ran: the act says when); and the acts it builds on.
         await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify(dag.stamp(a)));

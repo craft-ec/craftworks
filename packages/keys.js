@@ -861,9 +861,10 @@ export async function start(ctx) {
                 throw new Error("that welcome does not lead onto the space owner's branch: not taken");
               }
             }
-            await t.put(row.key, hexOf(mb.packages()));
             ctx.log(`${sp.name ?? "space"} keys`, { what: `joined the space's group: epoch ${m.status().epoch}` });
             const kept = await save(false, null, "join");
+            // Its package dropped from the batch only once the group is SAVED (a save that failed: the package kept).
+            await t.put(row.key, hexOf(mb.packages()));
             keyEvent("join", { space: hexOf(sp.idBytes), epoch: m.status().epoch, batch: row.key.slice("packages/".length, "packages/".length + 8), expect: expect ? `${expect.epoch}/${String(expect.branch).slice(0, 8)}` : null });
             const n = await logs.history(m.status(), { whole: !!expect }).catch(e => (ctx.log(`${sp.name ?? "space"} keys`, { what: `its history: ${e.message}` }), 0));
             if (n) ctx.log(`${sp.name ?? "space"} keys`, { what: `${n} earlier epoch(s) of its history kept` });

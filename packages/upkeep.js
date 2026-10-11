@@ -18,6 +18,7 @@ export async function start(ctx) {
   };
   let running = false;
   let renewed = false; // key packages renewed this page (once)
+  const published = new Set(); // open spaces whose roster this page made public
   async function tick() {
     if (running) return;
     running = true;
@@ -58,6 +59,11 @@ export async function start(ctx) {
         seen.push(await conversation.selfState(sp).catch(e => ({ s: sp.id.slice(0, 6), why: String(e?.message ?? e).slice(0, 80) })));
         await conversation.observe(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: observing members: ${e.message}` }));
         const r = await roles.of(sp).catch(() => null);
+        // AN OPEN SPACE's roster public (the owner, once a page): askers outside learn they were let in.
+        if (r && !published.has(sp.id) && r.role(me.id) === "owner" && r.policy("", "join") === "anyone") {
+          published.add(sp.id);
+          await r.publish().catch(e => ctx.log("upkeep", { what: `${sp.name}: publishing its roster: ${e.message}` }));
+        }
         // The acts hold in the group: whoever is banned, removed or has left and is still in it, out — by ANY member
         // (the acts already decided it; the group's one order refuses a second commit of the same removal).
         if (r && !r.left && r.role(me.id)) {
