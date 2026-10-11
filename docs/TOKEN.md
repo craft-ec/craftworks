@@ -611,7 +611,10 @@ ISSUANCE — and each piece of the loop has ONE job:
 - **It lands LOCKED as witness stake** (`staked`, §4a) — the weight of the lot (§7a). Unstaking follows the usual delay.
 - **Witnesses check the ROOT** (built 10-10, K3: `wallet::statement_accept` in `may_witness`): a witness signs a
   `KeeperMint` only under the statement root ACCEPTED for its epoch — its committee (drawn at `statement::lot_height`)
-  signed that root at `statement::witness_place`. The gate, the reputation and `kept` are all inside the statement
+  signed that root at `statement::witness_place` — each SEATED PAGE signing the root IT computed (built 10-11,
+  `rules::witness::statement`: one seat check with entries, `witness::seated`), so no tool need stay online; a
+  statement build reads every keeper record FRESH and posts nothing over a record that did not answer (a silent read
+  would leave that keeper out). The gate, the reputation and `kept` are all inside the statement
   every witness recomputes; a claim under any other root is simply not accepted (⅔ of its committee must sign) —
   never a burn (see "AN HONEST NODE IS NEVER BURNED").
 - **A cheat burns both:** a proven misdeed burns the stake (§7a) and zeroes reputation; vouchers lose a share.
@@ -719,6 +722,10 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   machine), an exactly stake-proportional draw in which splitting stake across identities gains nothing. The
   COMMITTEE is the k lowest tickets; anyone computes it, and nobody before the beacon output exists. A drawn witness
   re-runs the chain's checks and signs ([`witness::WitnessSig`]); an entry counts once enough of its committee signed.
+  WHO SIGNS (built 10-11): the drawn member's open PAGE (`witness.js`, `rules::witness::entry`); with the page CLOSED,
+  its identity DELEGATE (`delegate/src/witness_round.rs`, the same rule, by a mandate the page handed over), through
+  ONE guard (the place recorded before a signature, never another entry there). The queuing page makes each entry's
+  empty witness bag: a delegate's new contracts do not propagate (freenet #5542), it adds to bags that exist.
   A claim is checked only when its claimer is drawn (its chain read): one over its real stake does not count.
 - **Stake answers for its key, as held at its epoch's start** (6d). A signature counts only if its claim's key is one
   the claimer's stake BURNS for — its chain's device writer, or a writer key it retired while staked (a chain carries
@@ -750,8 +757,11 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   already participates on the ring and is placed pieces"; "active participation works, and users can leave their page
   open"). The PAGE, when open, once an epoch: asks its node where it is, what it hosts and who its peers are (the wire's
   node queries — measured on fx/fy: 25,635 hosted contracts in ~210 ms); commits its holdings (a merkle root over the
-  sorted ids); hands the list to its DELEGATE, which answers the beacon's sampled heights from its own node, page
-  closed (a delegate cannot query its node: no node query in the delegate API). Each answer covers 16 picks of the
+  sorted ids); hands the list to its DELEGATE (built 10-11, `delegate/src/keeper_round.rs`, `keeper_mandate`), which
+  answers the beacon's sampled heights with the page closed — the page's own rules (`rules::keeper`), ONE piece sealed
+  a wake-up (a seal takes seconds; KEPT needs only `KEEP_MIN` answers an epoch, with no per-height deadline), the
+  record written as an UPDATE whose delta is the merged record; an epoch the page did not open is opened on the same
+  holdings (a delegate cannot query its node: no node query in the delegate API). Each answer covers 16 picks of the
   holdings, hashed with the beacon output and the peer — checked by anyone who fetches a pick. A node's records live in
   its STANDING CONTRACT (one per peer; built 10-09, `contracts-src/standing`), every record checked FROM SCRATCH against
   the beacon — and its outputs log for heights the beacon no longer keeps (a node makes its own contract first, so
