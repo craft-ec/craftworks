@@ -285,6 +285,42 @@ async fn main() -> Result<()> {
             })
             .await?
         }
+        Some("witnessed") => {
+            // token-ops witnessed <token.wasm> <idlog.wasm> <bag.wasm> <ws> <beacon hex> <pool hex | craft> <standing epoch>
+            // (beacon.wasm, standing.wasm, block.wasm beside token.wasm): each entry queued in that standing epoch, its
+            // stamp, and WHICH keys signed it (each claimant's of its claims epoch, and the baseline's) — what tells a
+            // closed page's delegate signing.
+            let (code_hash, idlog_hash, beacon) = (*blake3::hash(&std::fs::read(&a[2])?).as_bytes(), *blake3::hash(&std::fs::read(&a[3])?).as_bytes(), unhex32(&a[6])?);
+            let pool = if a[7] == "craft" { T::id(&code_hash, &craftworks_wallet::craft::definition(code_hash, beacon, idlog_hash).encode()) } else { unhex32(&a[7])? };
+            let net = token_net::Net {
+                ws: a[5].clone(),
+                code_hash,
+                idlog_hash,
+                bag_code: std::fs::read(&a[4])?,
+                beacon_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes(),
+                beacon,
+                pool,
+                standing_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("standing.wasm"))?).as_bytes(),
+                block_code: std::fs::read(std::path::Path::new(&a[2]).with_file_name("block.wasm"))?,
+            };
+            let epoch: u64 = a[8].parse()?;
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                let r = token_net::Reader::new(&net)?;
+                for q in r.queue(epoch) {
+                    let Some(p) = r.params(&q.token, &q.owner) else { continue };
+                    let Some(st) = r.chain(&q.token, &q.owner) else { continue };
+                    let Some(e) = st.entries.iter().find(|e| e.seq == q.seq) else { continue };
+                    let ce = e.stamp / T::supply::EPOCH;
+                    let mut keys: Vec<[u8; 32]> = r.raw_claims(ce).iter().map(|c| c.key).collect();
+                    keys.push(T::witness::BASELINE);
+                    let sigs = r.sigs(&p.id(), q.seq);
+                    let by: Vec<String> = keys.iter().filter(|k| sigs.iter().any(|s| s.entry == e.hash() && s.signed_by(k))).map(|k| hex(&k[..4])).collect();
+                    println!("{}…/{} seq {} stamp {} (claims epoch {ce}): signed by {:?}", hex(&q.token.definition[..4]), hex(&q.owner[..4]), q.seq, e.stamp, by);
+                }
+                Ok(())
+            })
+            .await?
+        }
         Some("accepted") => {
             // token-ops accepted <token.wasm> <bag.wasm> <ws> <beacon hex> <epoch> <root hex>
             // (beacon.wasm beside token.wasm): an EPOCH STATEMENT root's acceptance by the rules' own check
