@@ -2229,6 +2229,9 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       (`standing::keeper_key`); a stranger's binding refused (test; control run). Re-keys standing.wasm at publish.
 - [x] C5 10-11 VOUCH REGISTRY CHAINED (one bag an epoch: anyone with more work evicted every real vouch): chained bags
       (`bag::chained`, new domain — fx/fy's earlier vouches are left behind), page relay/read, token-net, token-ops.
+- [x] C6 10-11 TOKENSIGN PLACE WINDOW (was B5): a token entry's place (seq + prev hash) kept with its wake-up; another
+      entry there refused for 2 wake-ups (`PlaceBusy`: the racing tab reads again and builds the next) — after it, an
+      entry never put does not wedge the wallet. Page TokenSign and the delegate's claim signing share it (test; control).
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.

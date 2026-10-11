@@ -150,12 +150,35 @@ pub fn upkeep_set_keeper_mandate<H: Host>(h: &mut H, member: &[u8; KEY_LEN], m: 
     h.set_secret(&[KEEPER_MANDATE, &member[..]].concat(), &bincode::serialize(m).expect("a mandate encodes"))
 }
 /// UPKEEP CLAIMS with no page open: member `m`'s key signs a token entry or a stake claim — the domains `TokenSign`
-/// signs for the page (`SIGN_DOMAINS`), nothing else.
+/// signs for the page (`SIGN_DOMAINS`), nothing else; through the same place window.
 pub fn upkeep_token_sign<H: Host>(h: &mut H, m: &[u8; KEY_LEN], message: &[u8]) -> Result<[u8; 64], Why> {
     if !SIGN_DOMAINS.iter().any(|d| message.starts_with(d)) {
         return Err(Why::NotAnEntry);
     }
-    Ok(member(h, m).ok_or(Why::NoSession)?.key().sign(message).to_bytes())
+    let key = member(h, m).ok_or(Why::NoSession)?.key();
+    token_place(h, m, message)?;
+    Ok(key.sign(message).to_bytes())
+}
+/// THE PLACE WINDOW (audit 10-11): two token entries the owner signs at one chain place (its seq and the hash before
+/// it) are an equivocation that freezes the chain. Two tabs — or a page and its delegate — racing one account's chain
+/// would build exactly that. A token entry's place is kept with the wake-up it was signed at; ANOTHER entry there is
+/// refused for `PLACE_WINDOW` wake-ups (the racer reads the chain again and builds the next one). After it, an entry
+/// that never went out does not wedge the wallet.
+const TOKEN_PLACE: &[u8] = b"identity/token-place/";
+const PLACE_WINDOW: u64 = 2;
+fn token_place<H: Host>(h: &mut H, m: &[u8], message: &[u8]) -> Result<(), Why> {
+    let Some(content) = message.strip_prefix(TOKEN_ENTRY_DOMAIN) else { return Ok(()) };
+    let Some(place) = content.get(..8 + 32) else { return Err(Why::NotAnEntry) };
+    let key = [TOKEN_PLACE, m, place].concat();
+    let hash = *blake3::hash(message).as_bytes();
+    let now = u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0);
+    if let Some(held) = h.get_secret(&key).filter(|b| b.len() == 40) {
+        let at = u64::from_le_bytes(held[32..40].try_into().expect("8 bytes"));
+        if held[..32] != hash && now.saturating_sub(at) < PLACE_WINDOW {
+            return Err(Why::PlaceBusy);
+        }
+    }
+    h.set_secret(&key, &[&hash[..], &now.to_le_bytes()].concat()).then_some(()).ok_or(Why::NotSaved)
 }
 /// UPKEEP KEEPS with no page open: member `member`'s key signs a STANDING record message (its binding, holdings or an
 /// answer) — that domain only, as `TokenSign` would for the page.
@@ -464,6 +487,9 @@ pub enum Why {
     NotAnEntry,
     /// This member witnessed ANOTHER entry at that place already: signing this one too would be an equivocation.
     Equivocation,
+    /// This member signed ANOTHER token entry at that chain place moments ago (another tab, another round): read the
+    /// chain again and build the next entry.
+    PlaceBusy,
 }
 
 /// The most tables one grant names (an app's `uses`, asked in one prompt).
@@ -1444,6 +1470,9 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             }
             if !SIGN_DOMAINS.iter().any(|d| message.starts_with(d)) {
                 return Refused(Why::NotAnEntry);
+            }
+            if let Err(w) = token_place(h, &a.public(), &message) {
+                return Refused(w);
             }
             Signed { sig: a.key().sign(&message).to_bytes().to_vec() }
         }

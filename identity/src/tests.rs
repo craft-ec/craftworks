@@ -759,7 +759,7 @@ fn a_mandate_older_than_upkeep_s_own_group_is_not_taken() {
 fn a_token_entry_is_signed_by_the_member_for_its_home_only() {
     let mut m = provisioned(APP);
     let Answer::Unlocked { public, .. } = unlock(&mut m, ALICE_PIN, APP) else { panic!("unlocked") };
-    let msg = [TOKEN_ENTRY_DOMAIN, b"seq prev nonce stamp body"].concat();
+    let msg = [TOKEN_ENTRY_DOMAIN, &[0u8; 8 + 32][..], b"nonce stamp body"].concat();
     let Answer::Signed { sig } = serve(&mut m, Request::TokenSign { message: msg.clone() }, APP) else { panic!("signed") };
     let key = ed25519_dalek::VerifyingKey::from_bytes(&public).unwrap();
     assert!(key.verify_strict(&msg, &ed25519_dalek::Signature::from_bytes(&sig.try_into().unwrap())).is_ok(), "by the member's key");
@@ -891,4 +891,24 @@ fn only_the_upkeep_site_rewrites_the_node_wide_upkeep_settings() {
     assert!(matches!(serve(&mut m, codes(1), OTHER), Answer::Upkeep { .. }), "the same codes: fine");
     assert_eq!(serve(&mut m, Request::UpkeepWatch { inbox: [0; 32], seed: [0; 32], now: u64::MAX }, OTHER), Answer::Refused(Why::NotHome));
     assert!(matches!(serve(&mut m, codes(3), APP), Answer::Upkeep { .. }), "the upkeep site changes them");
+}
+
+/// THE PLACE WINDOW (audit 10-11): two different token entries at one chain place (seq + the hash before it) — two
+/// tabs racing — would freeze the chain. The second is refused while the first is fresh; the same one again is fine;
+/// after the window another may be signed (an entry that never went out does not wedge the wallet).
+#[test]
+fn two_token_entries_at_one_place_are_not_signed_moments_apart() {
+    let mut m = provisioned(APP);
+    let _ = unlock(&mut m, ALICE_PIN, APP);
+    let entry = |stamp: u8| [TOKEN_ENTRY_DOMAIN, &4u64.to_le_bytes()[..], &[9u8; 32], &[stamp; 24]].concat();
+    let sign = |m: &mut Map, msg: Vec<u8>| serve(m, Request::TokenSign { message: msg }, APP);
+    assert!(matches!(sign(&mut m, entry(1)), Answer::Signed { .. }));
+    assert!(matches!(sign(&mut m, entry(1)), Answer::Signed { .. }), "the same entry again");
+    assert_eq!(sign(&mut m, entry(2)), Answer::Refused(Why::PlaceBusy), "another entry at the place, moments after");
+    // Another place (the next seq): fine.
+    let next = [TOKEN_ENTRY_DOMAIN, &5u64.to_le_bytes()[..], &[9u8; 32], &[2u8; 24]].concat();
+    assert!(matches!(sign(&mut m, next), Answer::Signed { .. }));
+    // Two wake-ups on: the place is free again.
+    m.set_secret(UPKEEP_WAKEUPS, &2u64.to_le_bytes());
+    assert!(matches!(sign(&mut m, entry(2)), Answer::Signed { .. }), "after the window");
 }
