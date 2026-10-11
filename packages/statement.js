@@ -30,18 +30,27 @@ export async function start(ctx) {
     const queued = epoch > 0 ? await index.bag.chain(Core.witness_queue_address, epoch - 1, "reading the witness queue") : [];
     // …and its statement's posted roots (signing the accepted one earns fees too).
     const posted = epoch > 0 ? (await index.bag.read(Core.statement_bag_address(epoch - 1), "reading the epoch before's statement")).map(p => Core.statement_posted_read(p)).filter(p => p?.epoch === epoch - 1).map(p => p.root) : [];
+    const fresh = new Set(); // what this build read from the network (each keeper's record read fresh, never a held copy)
+    // WHAT IT READ: each contract the node had, said it does not have, or did not answer (asked again; a statement
+    // built over a record that did not answer would leave that keeper out: none is posted then).
+    const reads = { got: 0, absent: [], silent: new Set() };
     for (let round = 0; round < 6; round++) {
-      const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon, tokenCode, bagCode, queued, posted);
+      const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon, tokenCode, bagCode, queued, posted, [...fresh]);
       if (r.want) {
-        await Promise.all(r.want.map(id => node.read(bytes(id), "reading a key log or a keeper's record", { absent: true }).catch(() => false)));
+        await Promise.all(r.want.map(id => node.read(bytes(id), "reading a key log or a keeper's record", { absent: true }).then(
+          got => (fresh.add(id), reads.silent.delete(id), got ? reads.got++ : reads.absent.push(id.slice(0, 8))),
+          () => reads.silent.add(id),
+        )));
         continue;
       }
+      r.reads = { got: reads.got, absent: reads.absent, listed: keepers.length };
       built.set(epoch, r);
       return r;
     }
-    throw new Error("the vouchers' key logs or the keepers' records could not be read");
+    throw new Error(`epoch ${epoch}: not built — no answer for ${[...reads.silent].map(x => x.slice(0, 8)).join(", ") || "what it asked"} (a key log or a keeper's record)`);
   }
   const decided = new Set(); // epochs whose allowance this page saw decided
+  const saidRoots = new Set();
   async function publishIfMissing() { // (and a root of its own beside another)
     const h = (await ctx.require("beacon")).status().height;
     if (h == null || h < MARGIN) return;
@@ -52,6 +61,12 @@ export async function start(ctx) {
     // stands beside it; witnesses sign the one they compute too). Recomputed each pass: records settle.
     built.delete(epoch);
     const mine = await build(epoch);
+    // What this page computed, said once per root (its reads with it): why two pages' roots differ is in their logs.
+    const said = `${epoch}/${mine.root}`;
+    if (!saidRoots.has(said)) {
+      saidRoots.add(said);
+      ctx.log("statement", { what: `epoch ${epoch}: computed root ${mine.root.slice(0, 12)}…, ${mine.kept} kept of ${mine.reads.listed} listed (read ${mine.reads.got}; not there: ${mine.reads.absent.join(", ") || "none"})` });
+    }
     if (!posted.some(p => (x => x?.epoch === epoch && x.root === mine.root)(Core.statement_posted_read(p)))) {
       const r = mine;
       await blocks.put([...r.puts], "the epoch's statement");
@@ -109,5 +124,7 @@ export async function start(ctx) {
   const issuance = async epoch => (await build(epoch)).issuance;
   // An account's PAID LINE of epoch `epoch` (`did`: hex): { keeper, witness } (units), or null.
   const paid = async (epoch, did) => (await build(epoch)).paid?.[did] ?? null;
-  return { status: () => ({ ...state }), now: publishIfMissing, issuance, paid };
+  // THE ROOT this page computes for `epoch` (its own build: what a seated page signs, never one posted elsewhere).
+  const root = async epoch => (await build(epoch)).root;
+  return { status: () => ({ ...state }), now: publishIfMissing, issuance, paid, root, settle: MARGIN };
 }

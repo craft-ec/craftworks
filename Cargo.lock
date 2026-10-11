@@ -507,6 +507,7 @@ dependencies = [
  "craftworks-mls",
  "craftworks-reputation",
  "craftworks-rules",
+ "craftworks-standing",
  "craftworks-token-contract",
  "craftworks-wallet",
  "ed25519-dalek",

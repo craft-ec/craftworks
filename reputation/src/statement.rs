@@ -128,28 +128,35 @@ pub fn line_proven(root: &Cid, did: &Did, proof: &[u8]) -> Option<Line> {
 /// epoch), its blocks read through `block` (a block's bytes by its cid; `None`: not read yet). `Err(cids)`: read these
 /// first, then ask again.
 pub fn lines(root: &Cid, block: &dyn Fn(&Cid) -> Option<Vec<u8>>) -> Result<BTreeMap<Did, Line>, Vec<Cid>> {
+    Ok(entries(root, block)?.into_iter().filter_map(|(k, v)| Some((Did::try_from(k.as_slice()).ok()?, Line::decode(&v?)?))).collect())
+}
+
+/// Every ENTRY under `root` as stored: its key, and its inline value's bytes (`None`: not an inline value) — what
+/// [`lines`] reads, and what a diagnosis of two differing roots compares.
+pub fn entries(root: &Cid, block: &dyn Fn(&Cid) -> Option<Vec<u8>>) -> Result<Vec<(Vec<u8>, Option<Vec<u8>>)>, Vec<Cid>> {
     use freenet_prolly::range::{range, PageEnd, Range};
     let mut held: BTreeMap<Cid, Vec<u8>> = BTreeMap::new();
-    let mut out = BTreeMap::new();
+    let mut out = Vec::new();
     let mut after: Option<Vec<u8>> = None;
     for _ in 0..100_000 {
         let r = Range { after: after.clone(), ..Range::default() };
         let (entries, next, need, end) = {
             let page = range(&held, root, &r).map_err(|_| vec![*root])?;
-            let entries: Vec<(Vec<u8>, Option<Line>)> = page.entries.iter().map(|(k, v)| (k.clone(), match v {
-                freenet_prolly::node::Value::Inline(b) => Line::decode(b),
+            let entries: Vec<(Vec<u8>, Option<Vec<u8>>)> = page.entries.iter().map(|(k, v)| (k.clone(), match v {
+                freenet_prolly::node::Value::Inline(b) => Some(b.to_vec()),
                 _ => None,
             })).collect();
             (entries, page.next.clone(), page.need.clone(), page.end)
         };
-        for (k, l) in entries {
-            if let (Ok(d), Some(l)) = (Did::try_from(k.as_slice()), l) {
-                out.insert(d, l);
-            }
-        }
         match end {
-            PageEnd::EndOfRange | PageEnd::EndOfTree => return Ok(out),
-            PageEnd::Limit => after = next,
+            PageEnd::EndOfRange | PageEnd::EndOfTree => {
+                out.extend(entries);
+                return Ok(out);
+            }
+            PageEnd::Limit => {
+                out.extend(entries);
+                after = next;
+            }
             PageEnd::Blocked => {
                 let missing: Vec<Cid> = need.iter().filter(|c| !held.contains_key(*c)).copied().collect();
                 let mut absent = Vec::new();

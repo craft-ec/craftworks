@@ -1896,7 +1896,18 @@ old key's addresses.
                   each entry's empty witness bag (core `bags` on a chain put): a delegate's new contracts do not
                   propagate (freenet #5542). Test: a drawn staker, page open → no round; away → one signed put,
                   verified; next wake-up → nothing (settled).
-              [ ] 3c the KEEPER MANDATE (the page hands the epoch's holdings over) and the delegate's keeper round.
+              [~] 3c 10-11 (unit-tested; live check pending): the KEEPER MANDATE (`Request::KeeperMandate`: standing +
+                  beacon codes, beacon, the epoch the page opened, its hosted pieces) and the delegate's keeper round
+                  (`delegate/src/keeper_round.rs`, on the shared `reads.rs` round): with the page away it opens a new
+                  epoch on the same holdings, finds each sampled height since the last, SEALS ONE PIECE A WAKE-UP
+                  (seconds each, by design; kept needs KEEP_MIN answers an epoch, no per-height deadline) and puts the
+                  answer as an UPDATE whose delta is the merged record (no code in the delegate). Signs only
+                  STANDING_DOMAIN (`upkeep_standing_sign`). Test: page open → nothing; away → one seal a wake-up, the
+                  answer holds and checks against the real seal; answered once.
+              [~] 3d 10-11 STATEMENTS WITNESSED BY PAGES (found: only Wren's tool signed statement roots — "no one must
+                  stay online" broken): `witness::seated` (one seat check, entries and statements), `witness::statement`
+                  (the root THIS page computed, signed at `witness_place(e)` when seated); witness.js signs it through
+                  `witnessSign` (equivocation guard: one root per epoch per member).
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the
               page's ONE GET-into-core (identity, editions, beacon); `tools/node-io` the tools' ONE put/get/container and
@@ -2176,3 +2187,12 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
   upkeep; `ROOM = 960` in index.js: the live core has no `chained_room`). Published with PUBLISHED_MANIFEST = the live
   manifest: 97 "already published", 5 sent. Not run on a private node first (the base identity differs from fx/fy's);
   the same code ran on fx/fy from main (v572/573).
+
+- 10-11 STATEMENT ROOTS DIFFERED (3 roots for epoch 12): each page left the OTHER node's keeper out. Fixes: the
+  statement build reads every keeper record fresh (`statement_build(..., fresh)`), a record that does not answer is
+  asked again and the build refuses rather than post (no "read, not there" from silence), each build logs
+  `computed root …, K kept of L listed (read …; not there …)`. ALSO FOUND: v571–574 were published to fx WITHOUT
+  BEACON_CONFIG/TOKENS_CONFIG — the pages extended a new beacon from 0 (statements of epoch 0). Use
+  `$CLAUDE_JOB_DIR/tmp/pub-fx.sh`. After v575: fx posted 149381c0 listing BOTH keepers (72-byte lines: the core
+  carries decay; the published token.wasm is pre-decay → mints from it fail until decay is published).
+- Wren's token-ops witness stopped at its 2 h limit 10-11 ~09:30 (not restarted: statements now witnessed by pages).

@@ -112,6 +112,37 @@ pub fn upkeep_witness_sign<H: Host>(h: &mut H, m: &[u8; KEY_LEN], chain: &[u8; 3
     Ok(key.sign(&witness_message(chain, seq, entry)).to_bytes())
 }
 
+/// Where a member's KEEPER MANDATE is kept.
+const KEEPER_MANDATE: &[u8] = b"identity/keeper-mandate/";
+
+/// A MANDATE handed over by the session's HOME site (`bytes` under `prefix` + its member key), its member listed for
+/// upkeep and ticked (its page is here now).
+fn keep_mandate<H: Host>(h: &mut H, app: [u8; 32], prefix: &[u8], bytes: &[u8]) -> Result<(), Why> {
+    let a = session(h, &app).ok_or(Why::NoSession)?;
+    if a.home != app {
+        return Err(Why::NotHome);
+    }
+    let m = a.public();
+    (h.set_secret(&[prefix, &m[..]].concat(), bytes) && upkeep_enlist(h, &m) && upkeep_set_tick(h, &m)).then_some(()).ok_or(Why::NotSaved)
+}
+
+/// A member's KEEPER MANDATE (`None`: no page handed one over).
+pub fn upkeep_keeper_mandate<H: Host>(h: &H, member: &[u8; KEY_LEN]) -> Option<KeeperMandate> {
+    bincode::deserialize(&h.get_secret(&[KEEPER_MANDATE, &member[..]].concat())?).ok()
+}
+/// The keeper round moved the mandate on (an epoch it opened with no page open).
+pub fn upkeep_set_keeper_mandate<H: Host>(h: &mut H, member: &[u8; KEY_LEN], m: &KeeperMandate) -> bool {
+    h.set_secret(&[KEEPER_MANDATE, &member[..]].concat(), &bincode::serialize(m).expect("a mandate encodes"))
+}
+/// UPKEEP KEEPS with no page open: member `member`'s key signs a STANDING record message (its binding, holdings or an
+/// answer) — that domain only, as `TokenSign` would for the page.
+pub fn upkeep_standing_sign<H: Host>(h: &mut H, m: &[u8; KEY_LEN], message: &[u8]) -> Result<[u8; 64], Why> {
+    if !message.starts_with(STANDING_DOMAIN) {
+        return Err(Why::NotAnEntry);
+    }
+    Ok(member(h, m).ok_or(Why::NoSession)?.key().sign(message).to_bytes())
+}
+
 /// A member's WITNESS MANDATE (`None`: no page handed one over).
 /// Handed over by the member's home page (`Request::WitnessMandate`), which also lists them for upkeep and ticks.
 pub fn upkeep_witness_mandate<H: Host>(h: &H, member: &[u8; KEY_LEN]) -> Option<WitnessMandate> {
@@ -217,6 +248,10 @@ pub enum Request {
     /// the codes' hashes (token, key log, bag, beacon), the beacon, the stake pool. Kept per member; the round then
     /// witnesses what this member's stake is drawn for on every wake-up.
     WitnessMandate { mandate: WitnessMandate },
+    /// KEEP WITH NO PAGE OPEN (TOKEN §7a): what the delegate's keeper round needs, handed over by the home site once it
+    /// opened a standing epoch — the codes' hashes (standing, beacon), the beacon, the epoch and what this node hosts.
+    /// Kept per member; the round then answers the beacon's challenges on every wake-up the page is away.
+    KeeperMandate { mandate: KeeperMandate },
 }
 
 /// What the delegate's WITNESS round needs (handed over by a page: `Request::WitnessMandate`).
@@ -228,6 +263,18 @@ pub struct WitnessMandate {
     pub beacon_code: [u8; 32],
     pub beacon: [u8; 32],
     pub pool: [u8; 32],
+}
+
+/// What the delegate's KEEPER round needs (handed over by a page: `Request::KeeperMandate`): where the node's standing
+/// record is (the standing contract's code hash, the beacon's code hash and id), the standing epoch the page opened and
+/// the pieces it committed (`hosted`: id, size) — the round opens the epochs after it on the same.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeeperMandate {
+    pub standing: [u8; 32],
+    pub beacon_code: [u8; 32],
+    pub beacon: [u8; 32],
+    pub epoch: u64,
+    pub hosted: Vec<([u8; 32], u64)>,
 }
 
 /// A space as upkeep may admit into it: the page's knowledge when it handed it over.
@@ -324,6 +371,8 @@ pub enum Answer {
     EpochSecrets { epochs: Vec<(u64, [u8; 32])> },
     /// The witness mandate is kept (`Request::WitnessMandate`).
     WitnessMandated,
+    /// The keeper mandate is kept (`Request::KeeperMandate`).
+    KeeperMandated,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1328,18 +1377,14 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             }
             Signed { sig: a.key().sign(&witness_message(&chain, seq, &entry)).to_bytes().to_vec() }
         }
-        Request::WitnessMandate { mandate } => {
-            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
-            if a.home != app {
-                return Refused(Why::NotHome);
-            }
-            let m = a.public();
-            let key = [WITNESS_MANDATE, &m[..]].concat();
-            if !(h.set_secret(&key, &bincode::serialize(&mandate).expect("a mandate encodes")) && upkeep_enlist(h, &m) && upkeep_set_tick(h, &m)) {
-                return Refused(Why::NotSaved);
-            }
-            WitnessMandated
-        }
+        Request::WitnessMandate { mandate } => match keep_mandate(h, app, WITNESS_MANDATE, &bincode::serialize(&mandate).expect("a mandate encodes")) {
+            Ok(()) => WitnessMandated,
+            Err(w) => Refused(w),
+        },
+        Request::KeeperMandate { mandate } => match keep_mandate(h, app, KEEPER_MANDATE, &bincode::serialize(&mandate).expect("a mandate encodes")) {
+            Ok(()) => KeeperMandated,
+            Err(w) => Refused(w),
+        },
         Request::InboxKey => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             let Some(data) = a.data else { return Refused(Why::NoDataKey) };

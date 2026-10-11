@@ -8,6 +8,7 @@ description = "The token's standing operations on a node: the beacon kept tickin
 [dependencies]
 # The token's network view and witnessing (TOKEN §7a): one place for every tool.
 token-net = { path = "../token-net" }
+contract-keys = { path = "../../sdk/craftworks-sdk/contract-keys" }
 craftworks-bag-contract = { path = "../../contracts-src/bag", default-features = false }
 craftworks-reputation = { path = "../../reputation" }
 node-io = { path = "../node-io" }
@@ -15,6 +16,7 @@ craftworks-token-contract = { path = "../../contracts-src/token", default-featur
 craftworks-beacon-contract = { path = "../../contracts-src/beacon", default-features = false }
 craftworks-idlog-contract = { path = "../../contracts-src/idlog", default-features = false }
 craftworks-wallet = { path = "../../wallet" }
+craftworks-rules = { path = "../../rules" }
 craftworks-identity = { path = "../../identity" }
 craftworks-account = { path = "../../account", default-features = false }
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["rand_core"] }

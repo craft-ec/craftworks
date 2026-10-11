@@ -146,6 +146,15 @@ export async function start(ctx) {
         }
         self.open = true;
       }
+      // HANDED OVER (once an epoch): the identity delegate answers this epoch's challenges — and opens the next ones on
+      // the same holdings — while this page is closed.
+      if (self.mandated !== epoch) {
+        const a = await auth.identity.keeperMandate(standingCode, beaconCode, beacon, epoch, self.hosted).catch(e => ({ refused: e?.message ?? e }));
+        if (a?.keeperMandated) {
+          self.mandated = epoch;
+          ctx.log("keeper", { what: `epoch ${epoch}: the delegate keeps with no page open too` });
+        } else ctx.log("keeper", { what: `not handed to the delegate (${a?.refused ?? "no answer"})` });
+      }
       // ANSWER every height of this epoch since the last one handled that is sampled for this keeper (one that came
       // while it was sealing is not missed), while the beacon's state still holds its output. The beacon read into the
       // core first (the beacon service takes its own reads out of it).

@@ -10,17 +10,7 @@ use craftworks_token_contract as t;
 use ed25519_dalek::{Signature, SigningKey, Verifier};
 use std::collections::HashMap;
 
-#[derive(Default)]
-struct Map(HashMap<Vec<u8>, Vec<u8>>);
-impl Host for Map {
-    fn get_secret(&self, key: &[u8]) -> Option<Vec<u8>> {
-        self.0.get(key).cloned()
-    }
-    fn set_secret(&mut self, key: &[u8], value: &[u8]) -> bool {
-        self.0.insert(key.to_vec(), value.to_vec());
-        true
-    }
-}
+use crate::testhost::Map;
 
 const APP: [u8; 32] = [0xA1; 32];
 

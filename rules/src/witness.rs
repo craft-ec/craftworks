@@ -13,6 +13,12 @@ use t::{claims, draw, supply, wallet, witness, ChainParams, Definition, State};
 /// The beacon's OUTPUT at height `h`: from its state, else its outputs log. `Err(id)`: read that first; `Ok(Err(why))`:
 /// not drawn yet, or not recorded.
 pub fn out_at(lot: &Lot, got: Got, beacon_id: &[u8; 32], h: u64) -> Result<Result<[u8; 32], &'static str>, [u8; 32]> {
+    beacon_out(&lot.beacon_code, got, beacon_id, h)
+}
+
+/// The BEACON's output at height `h` (beacon `beacon_id`, its outputs log under `beacon_code`): from its state while it
+/// holds that step, else its log. `Err(id)`: read that first.
+pub fn beacon_out(beacon_code: &[u8; 32], got: Got, beacon_id: &[u8; 32], h: u64) -> Result<Result<[u8; 32], &'static str>, [u8; 32]> {
     let beacon = there(got, beacon_id)?.and_then(|b| craftworks_beacon_contract::wire::decode(&b));
     if let Some(o) = beacon.as_ref().and_then(|b| b.steps.iter().find(|st| st.height == h).map(|st| st.out)) {
         return Ok(Ok(o));
@@ -20,7 +26,7 @@ pub fn out_at(lot: &Lot, got: Got, beacon_id: &[u8; 32], h: u64) -> Result<Resul
     if beacon.as_ref().is_none_or(|b| b.height() < h) {
         return Ok(Err("its lot is not drawn yet"));
     }
-    let log = t::id(&lot.beacon_code, &craftworks_beacon_contract::log::Params::of(*beacon_id, h).encode());
+    let log = t::id(beacon_code, &craftworks_beacon_contract::log::Params::of(*beacon_id, h).encode());
     Ok(there(got, &log)?.and_then(|b| craftworks_beacon_contract::log::Log::decode(&b)).and_then(|l| l.entries.iter().find(|x| x.0 == h).map(|x| x.1)).ok_or("its lot's output is not recorded"))
 }
 
@@ -64,24 +70,15 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
         return Ok(if want.borrow().is_empty() { Step::Done(Verdict::NotSeated) } else { wanted(&want) });
     };
     let Some(i) = s.entries.iter().position(|e| e.seq == q.seq) else { return Ok(Step::Done(Verdict::NotSeated)) };
-    let (epoch, h) = wallet::lot_of(&s.entries[i], i.checked_sub(1).map(|j| &s.entries[j]), d.margin).map_err(String::from)?;
-    let out = match out_at(lot, got, &d.beacon, h) {
-        Err(w) => return Ok(Step::Want(vec![w])),
-        Ok(Err(_)) => return Ok(Step::Done(Verdict::NotSeated)),
-        Ok(Ok(o)) => o,
-    };
-    // SEATED? The epoch's claims, the committee drawn for this place.
+    let (_, h) = wallet::lot_of(&s.entries[i], i.checked_sub(1).map(|j| &s.entries[j]), d.margin).map_err(String::from)?;
+    // SEATED? The committee drawn for this place.
+    match seated(ctx, lot, got, &d.beacon, &p.id(), q.seq, h, me) {
+        Step::Want(w) => return Ok(Step::Want(w)),
+        Step::Done(false) => return Ok(Step::Done(Verdict::NotSeated)),
+        _ => {}
+    }
     let registry = |ep: u64| claims::Params { code_hash: ctx.code_hash, pool: lot.pool, beacon: d.beacon, epoch: ep }.id();
     let claims_of = |ep: u64| read(registry(ep)).and_then(|b| claims::Registry::decode(&b)).map_or(vec![], |r| r.claims);
-    let claims = claims_of(epoch);
-    if !want.borrow().is_empty() {
-        return Ok(wanted(&want));
-    }
-    let valid = draw::valid(&lot.pool, epoch, &claims);
-    let (k, _, _) = witness::seats(valid.len(), wallet::COMMITTEE);
-    if !draw::committee_of(&out, &p.id(), q.seq, &valid, k).iter().any(|m| claims[*m].key == *me) {
-        return Ok(Step::Done(Verdict::NotSeated));
-    }
     // THE RULE, over what is read here (each read missing is asked for, then the rule run again).
     let sigs = |c: &[u8; 32], sq: u64| {
         let a = wallet::witness_bag(c, sq);
@@ -122,6 +119,38 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
         Ok(entry) => Verdict::Sign { chain: p.id(), seq: q.seq, entry },
         Err(why) => Verdict::Refused(why.to_string()),
     }))
+}
+
+/// SEATED: is witness key `me` drawn for place (`place`, `seq`), its lot at height `h` (beacon `beacon`): the claims
+/// of that height's epoch, the committee drawn there — an entry's place, or an epoch statement's.
+#[allow(clippy::too_many_arguments)]
+pub fn seated(ctx: &Ctx, lot: &Lot, got: Got, beacon: &[u8; 32], place: &[u8; 32], seq: u64, h: u64, me: &[u8; 32]) -> Step<bool> {
+    let out = match out_at(lot, got, beacon, h) {
+        Err(w) => return Step::Want(vec![w]),
+        Ok(Err(_)) => return Step::Done(false),
+        Ok(Ok(o)) => o,
+    };
+    let epoch = supply::epoch(h);
+    let registry = claims::Params { code_hash: ctx.code_hash, pool: lot.pool, beacon: *beacon, epoch }.id();
+    let claims = match there(got, &registry) {
+        Err(w) => return Step::Want(vec![w]),
+        Ok(b) => b.and_then(|b| claims::Registry::decode(&b)).map_or(vec![], |r| r.claims),
+    };
+    let valid = draw::valid(&lot.pool, epoch, &claims);
+    let (k, _, _) = witness::seats(valid.len(), wallet::COMMITTEE);
+    Step::Done(draw::committee_of(&out, place, seq, &valid, k).iter().any(|m| claims[*m].key == *me))
+}
+
+/// An EPOCH STATEMENT's verdict for witness key `me`: the root this page computed for `epoch` (`root`: its own build,
+/// never a posted one it did not compute) signed at the statement's place when `me` is seated there.
+pub fn statement(ctx: &Ctx, lot: &Lot, got: Got, epoch: u64, root: &[u8; 32], me: &[u8; 32]) -> Step<Verdict> {
+    let place = craftworks_reputation::statement::witness_place(epoch);
+    match seated(ctx, lot, got, &ctx.beacon, &place, 0, craftworks_reputation::statement::lot_height(epoch), me) {
+        Step::Done(true) => Step::Done(Verdict::Sign { chain: place, seq: 0, entry: *root }),
+        Step::Done(false) => Step::Done(Verdict::NotSeated),
+        Step::Want(w) => Step::Want(w),
+        Step::Sign(m) => Step::Sign(m),
+    }
 }
 
 /// The WITNESS SIGNATURES each claimant gave on `queued` (`wallet::fees::count`, the one count) over what this page

@@ -7,13 +7,19 @@ pub mod rekey_round;
 pub mod table;
 pub mod write;
 pub mod upkeep;
+pub mod reads;
 pub mod witness_round;
+pub mod keeper_round;
 #[cfg(test)]
 mod table_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod testhost;
+#[cfg(test)]
 mod witness_tests;
+#[cfg(test)]
+mod keeper_tests;
 
 // A delegate has no randomness of its own: upkeep's pool (stirred by the page, ratcheted per draw: `identity::
 // upkeep_random`) ARMS a stream here before MLS draws; nothing is drawn unarmed.
@@ -165,6 +171,9 @@ mod entry {
                     // WITNESSING (TOKEN §7a), by the member's mandate, with no page open.
                     let io = crate::witness_round::woke(&mut c);
                     out.extend(send(&c, io));
+                    // KEEPING (TOKEN §7a): the beacon's challenges answered, by the member's mandate, with no page open.
+                    let io = crate::keeper_round::woke(&mut c);
+                    out.extend(send(&c, io));
                     Ok(out)
                 }
                 // The inbox as the node holds it; anything else, an answer upkeep waits for.
@@ -177,6 +186,7 @@ mod entry {
                     let now = clock_now(&c);
                     let reply = crate::upkeep::Reply::Got { id, state: r.state.map(|s| s.as_ref().to_vec()) };
                     let mut io = crate::witness_round::replied(&mut c, &reply);
+                    io.extend(crate::keeper_round::replied(&mut c, &reply));
                     io.extend(crate::upkeep::replied(&mut c, reply, now));
                     Ok(send(&c, io))
                 }

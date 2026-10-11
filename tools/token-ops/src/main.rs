@@ -170,15 +170,43 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Some("statement") => {
-            // token-ops statement <bag.wasm> <ws> <epoch>: the roots posted for that epoch's statement.
+            // token-ops statement <bag.wasm> <ws> <epoch>: the roots posted for that epoch's statement — and each
+            // root's entries as stored (key, value bytes) when block.wasm lies beside bag.wasm: what two differing
+            // roots differ in.
             let code = std::fs::read(&a[2])?;
+            let block_code = std::fs::read(std::path::Path::new(&a[2]).with_file_name("block.wasm")).ok();
             let address = craftworks_reputation::statement::bag_address(a[4].parse()?);
             let id: [u8; 32] = container(&code, address.to_vec()).key().id().as_bytes().try_into()?;
             let items = get(&a[3], id).await?.and_then(|b| craftworks_bag_contract::read(&address, &b)).unwrap_or_default();
             for i in &items {
-                match craftworks_reputation::statement::Posted::decode(craftworks_bag_contract::payload(i)) {
-                    Some(p) => println!("epoch {} root {} ({} parity)", p.epoch, hex(&p.root), p.parity.len()),
-                    None => println!("(not a posted statement)"),
+                let Some(p) = craftworks_reputation::statement::Posted::decode(craftworks_bag_contract::payload(i)) else {
+                    println!("(not a posted statement)");
+                    continue;
+                };
+                println!("epoch {} root {} ({} parity)", p.epoch, hex(&p.root), p.parity.len());
+                let Some(bc) = &block_code else { continue };
+                let mut held: std::collections::HashMap<[u8; 32], Vec<u8>> = Default::default();
+                for _ in 0..64 {
+                    match craftworks_reputation::statement::entries(&p.root, &|c| held.get(c).cloned()) {
+                        Ok(es) => {
+                            for (k, v) in es {
+                                println!("  {} = {}", hex(&k), v.map_or("(not inline)".into(), |v| format!("{} B {}", v.len(), hex(&v))));
+                            }
+                            break;
+                        }
+                        Err(want) if want.is_empty() => break,
+                        Err(want) => {
+                            for c in want {
+                                match get(&a[3], contract_keys::block::contract_for(bc, &c)).await?.filter(|s| s.len() > 1) {
+                                    Some(st) => held.insert(c, st[1..].to_vec()),
+                                    None => {
+                                        println!("  block {} not on the network", hex(&c));
+                                        held.insert(c, Vec::new())
+                                    }
+                                };
+                            }
+                        }
+                    }
                 }
             }
             println!("{} posted", items.len());
@@ -216,6 +244,53 @@ async fn main() -> Result<()> {
                 Ok(())
             })
             .await?
+        }
+        Some("accepted") => {
+            // token-ops accepted <token.wasm> <bag.wasm> <ws> <beacon hex> <epoch> <root hex>
+            // (beacon.wasm beside token.wasm): an EPOCH STATEMENT root's acceptance by the rules' own check
+            // (`tokens::statement_accepted`, $CRAFT the pool), and what it read — the place's signatures and the claims.
+            let (code_hash, beacon) = (*blake3::hash(&std::fs::read(&a[2])?).as_bytes(), unhex32(&a[5])?);
+            let idlog_hash = *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("idlog.wasm"))?).as_bytes();
+            let pool = T::id(&code_hash, &craftworks_wallet::craft::definition(code_hash, beacon, idlog_hash).encode());
+            let bag_code = std::fs::read(&a[3])?;
+            let lot = craftworks_rules::tokens::Lot { pool, bag: *blake3::hash(&bag_code).as_bytes(), beacon_code: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes() };
+            let (epoch, root): (u64, [u8; 32]) = (a[6].parse()?, unhex32(&a[7])?);
+            let mut got: std::collections::HashMap<[u8; 32], Vec<u8>> = Default::default();
+            for _ in 0..16 {
+                let g = got.clone();
+                match craftworks_rules::tokens::statement_accepted(&lot, &|x| g.get(x).cloned(), code_hash, beacon, epoch, &root).map_err(|e| anyhow::anyhow!(e))? {
+                    craftworks_rules::tokens::Step::Want(w) => {
+                        for id in w {
+                            got.insert(id, get(&a[4], id).await?.unwrap_or_default());
+                        }
+                    }
+                    craftworks_rules::tokens::Step::Done(r) => {
+                        println!("epoch {epoch} root {}: {r:?}", hex(&root[..6]));
+                        let place = craftworks_reputation::statement::witness_place(epoch);
+                        let addr = T::wallet::witness_bag(&place, 0);
+                        let bag = got.get(&T::id(&lot.bag, &addr)).and_then(|b| craftworks_bag_contract::read(&addr, b)).unwrap_or_default();
+                        for i in &bag {
+                            if let Some(w) = T::wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(i)) {
+                                println!("  sig on {} by a key: {}", hex(&w.entry[..6]), if w.entry == root { "this root" } else { "another root" });
+                            }
+                        }
+                        let h = craftworks_reputation::statement::lot_height(epoch);
+                        let reg = T::claims::Params { code_hash, pool, beacon, epoch: h / T::supply::EPOCH }.id();
+                        for c in got.get(&reg).and_then(|b| T::claims::Registry::decode(b)).map_or(vec![], |r| r.claims) {
+                            let signed = bag.iter().filter_map(|i| T::wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(i))).any(|w| w.entry == root && w.signed_by(&c.key));
+                            let pd = got.get(&pool).and_then(|b| T::Definition::decode(b));
+                            let stake = pd.as_ref().and_then(|pd| {
+                                let cp = T::ChainParams { code_hash, definition: pool, owner: c.owner, beacon: pd.beacon, idlog: pd.idlog, item: [0; 32] };
+                                got.get(&cp.id()).and_then(|b| T::State::decode(b)).map(|st| T::wallet::stake_at(&cp, pd, &st, (h / T::supply::EPOCH) * T::supply::EPOCH))
+                            });
+                            println!("  claim {} amount {} key {} signed {signed} stake at the epoch's start: {stake:?}", hex(&c.owner[..4]), c.amount, hex(&c.key[..4]));
+                        }
+                        return Ok(());
+                    }
+                    craftworks_rules::tokens::Step::Sign(_) => anyhow::bail!("a status never signs"),
+                }
+            }
+            anyhow::bail!("too many reads")
         }
         Some("witness") => {
             // token-ops witness <token.wasm> <idlog.wasm> <bag.wasm> <ws> <beacon hex> <pool hex | craft> <key seed file> [tick secs]

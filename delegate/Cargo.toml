@@ -48,6 +48,7 @@ craftworks-token-contract = { path = "../contracts-src/token", default-features 
 craftworks-beacon-contract = { path = "../contracts-src/beacon", default-features = false }
 craftworks-wallet = { path = "../wallet" }
 craftworks-reputation = { path = "../reputation" }
+craftworks-standing = { path = "../standing" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # The delegate's randomness: upkeep's pool (the page stirs it), through getrandom's custom hook.

@@ -73,6 +73,7 @@ pub fn answer_json(a: &Answer) -> Value {
         }
         Answer::EpochSecrets { epochs } => json!({ "epochs": epochs.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>() }),
         Answer::WitnessMandated => json!({ "witnessMandated": true }),
+        Answer::KeeperMandated => json!({ "keeperMandated": true }),
         Answer::HandedKeys { mls, epochs } => json!({ "handedKeys": {
             "mls": mls.as_ref().map(|s| hex(s)),
             "epochs": epochs.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>(),
@@ -1015,6 +1016,12 @@ mod js {
         pub fn frames_witness_mandate(&mut self, token: &[u8], idlog: &[u8], bag: &[u8], beacon_code: &[u8], beacon: &[u8], pool: &[u8]) -> Result<js_sys::Array, JsValue> {
             let h = |b: &[u8]| *blake3::hash(b).as_bytes();
             self.ask(Request::WitnessMandate { mandate: craftworks_identity::WitnessMandate { token: h(token), idlog: h(idlog), bag: h(bag), beacon_code: h(beacon_code), beacon: b32(beacon)?, pool: b32(pool)? } })
+        }
+        /// KEEP WITH NO PAGE OPEN (`KeeperMandate`: the home site only): where this node's standing record is, the epoch
+        /// this page opened and what it hosts (`[[id hex, size]]`, as `keeper_open` took it).
+        pub fn frames_keeper_mandate(&mut self, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], epoch: f64, hosted: JsValue) -> Result<js_sys::Array, JsValue> {
+            let k = keeper_ctx(standing_code, beacon_code, beacon)?;
+            self.ask(Request::KeeperMandate { mandate: craftworks_identity::KeeperMandate { standing: k.standing, beacon_code: k.beacon_code, beacon: k.beacon, epoch: epoch as u64, hosted: hosted_of(&hosted)? } })
         }
         /// WITNESS an entry (`WitnessSign`: the home site only; the delegate records the place first and never signs
         /// another entry there): `entry` (its hash, or a statement's root) at (`chain`, `seq`).
@@ -2338,6 +2345,19 @@ mod js {
         Ok(keeper::Keep { standing: *blake3::hash(standing_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), beacon: b32(beacon)? })
     }
     /// `[[id hex, size]]` (the node's hosted contracts, as the node-self answer gives them).
+    /// A WITNESS VERDICT as the page reads it: `{ want }`, or `{ done: { seated: false } | { refused } | { sign } }`.
+    fn verdict_js(step: tokens::Step<witness::Verdict>) -> Result<JsValue, JsValue> {
+        match step {
+            tokens::Step::Want(w) => js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
+            tokens::Step::Sign(_) => Err(err("a witness step never signs here".into())),
+            tokens::Step::Done(witness::Verdict::NotSeated) => js_sys::JSON::parse(&json!({ "done": { "seated": false } }).to_string()),
+            tokens::Step::Done(witness::Verdict::Refused(why)) => js_sys::JSON::parse(&json!({ "done": { "refused": why } }).to_string()),
+            tokens::Step::Done(witness::Verdict::Sign { chain, seq, entry }) => {
+                let sign = js_obj(&[("chain", js_sys::Uint8Array::from(&chain[..]).into()), ("seq", JsValue::from(seq as f64)), ("entry", js_sys::Uint8Array::from(&entry[..]).into())]);
+                Ok(js_obj(&[("done", js_obj(&[("sign", sign)]))]))
+            }
+        }
+    }
     fn hosted_of(v: &JsValue) -> Result<Vec<([u8; 32], u64)>, JsValue> {
         js_sys::Array::from(v).iter().map(|x| {
             let x = js_sys::Array::from(&x);
@@ -2553,9 +2573,11 @@ mod js {
         /// the tree's blocks to put through the blocks door, the posted root for the epoch's statement bag.
         /// `keepers`: the KEEPERS REGISTRY's items of the epoch before (`reputation::keepers`) — its KEPT accounts (each
         /// listed keeper whose standing record proves keeping then: `craftworks_standing::record::kept_accounts`; the
-        /// standing contract's code and the beacon name the records).
+        /// standing contract's code and the beacon name the records). `fresh`: the contracts (hex) this build read from
+        /// the network — a keeper's record not among them is asked for again, whatever this core holds (a record the
+        /// page wrote or read earlier is a stale copy: its own, held since its last answer, left it out of KEPT).
         #[allow(clippy::too_many_arguments)]
-        pub fn statement_build(&mut self, idlog_code: &[u8], items: js_sys::Array, epoch: f64, keepers: js_sys::Array, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], token_code: &[u8], bag_code: &[u8], queued: js_sys::Array, posted: js_sys::Array) -> Result<JsValue, JsValue> {
+        pub fn statement_build(&mut self, idlog_code: &[u8], items: js_sys::Array, epoch: f64, keepers: js_sys::Array, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], token_code: &[u8], bag_code: &[u8], queued: js_sys::Array, posted: js_sys::Array, fresh: js_sys::Array) -> Result<JsValue, JsValue> {
             use craftworks_reputation as R;
             let epoch = epoch as u64;
             let items: Vec<R::item::Item> = bytes_list(&items).iter().filter_map(|b| R::item::Item::decode(b)).collect();
@@ -2578,7 +2600,8 @@ mod js {
             // KEPT (the epoch before): each listed keeper's standing record read first.
             let k = keeper_ctx(standing_code, beacon_code, beacon)?;
             let listed = R::keepers::listed(&keepers, &log_of);
-            let want: Vec<String> = listed.iter().map(|(_, key)| keeper::record_id(&k, key)).filter(|id| self.0.got(id).is_none()).map(|id| hex(&id)).collect();
+            let fresh: Vec<String> = fresh.iter().filter_map(|x| x.as_string()).collect();
+            let want: Vec<String> = listed.iter().map(|(_, key)| hex(&keeper::record_id(&k, key))).filter(|id| !fresh.contains(id)).collect();
             if !want.is_empty() {
                 return js_sys::JSON::parse(&json!({ "want": want }).to_string());
             }
@@ -2764,16 +2787,16 @@ mod js {
             let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
             let q = craftworks_wallet::queue::Queued::decode(queued).ok_or_else(|| err("not a queued entry".into()))?;
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-            match witness::entry(&ctx, &lot, &got, &q, &b32(me)?, now as u64).map_err(err)? {
-                tokens::Step::Want(w) => js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
-                tokens::Step::Sign(_) => Err(err("a witness step never signs here".into())),
-                tokens::Step::Done(witness::Verdict::NotSeated) => js_sys::JSON::parse(&json!({ "done": { "seated": false } }).to_string()),
-                tokens::Step::Done(witness::Verdict::Refused(why)) => js_sys::JSON::parse(&json!({ "done": { "refused": why } }).to_string()),
-                tokens::Step::Done(witness::Verdict::Sign { chain, seq, entry }) => {
-                    let sign = js_obj(&[("chain", js_sys::Uint8Array::from(&chain[..]).into()), ("seq", JsValue::from(seq as f64)), ("entry", js_sys::Uint8Array::from(&entry[..]).into())]);
-                    Ok(js_obj(&[("done", js_obj(&[("sign", sign)]))]))
-                }
-            }
+            verdict_js(witness::entry(&ctx, &lot, &got, &q, &b32(me)?, now as u64).map_err(err)?)
+        }
+        /// An EPOCH STATEMENT's verdict for witness key `me` (`witness::statement`): the root THIS page computed for
+        /// `epoch` (hex), signed at the statement's place when seated — as `witness_entry` answers.
+        #[allow(clippy::too_many_arguments)]
+        pub fn witness_statement(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], epoch: f64, root: &str, me: &[u8]) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+            verdict_js(witness::statement(&ctx, &lot, &got, epoch as u64, &bytes32("root", root).map_err(err)?, &b32(me)?))
         }
         /// A WITNESS SIGNATURE's bag item and its witness bag's address: `{ address, item }` (the delegate's `sig`).
         pub fn witness_sig_item(chain: &[u8], seq: f64, entry: &[u8], sig: &[u8]) -> Result<JsValue, JsValue> {
@@ -2932,6 +2955,10 @@ mod js {
             self.keeper_step(standing_code, step)
         }
         /// The STATEMENT BAG's address of epoch `epoch`, and a posted root's `{ epoch, root }` (null: not one).
+        /// The height an epoch statement's witnesses are drawn at (`statement::lot_height`).
+        pub fn statement_lot_height(epoch: f64) -> f64 {
+            craftworks_reputation::statement::lot_height(epoch as u64) as f64
+        }
         pub fn statement_bag_address(epoch: f64) -> js_sys::Uint8Array {
             js_sys::Uint8Array::from(&craftworks_reputation::statement::bag_address(epoch as u64)[..])
         }

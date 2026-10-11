@@ -3,8 +3,9 @@
 // witness queue (this standing epoch's and the last), and for each entry its member key is drawn for, runs THE WITNESS
 // RULE over what it reads (`core.witness_entry`: `wallet::may_witness`, the rule Wren's tool runs too); an entry the
 // rule takes is signed through the identity delegate (`witnessSign`: it records the place first and never signs
-// another entry there) and the signature dropped into the entry's witness bag. (Witnessing with the page CLOSED is
-// the delegate's: later.)
+// another entry there) and the signature dropped into the entry's witness bag. The EPOCH STATEMENT too: where its
+// member key is seated at the statement's place, the root THIS page computes (`statement.root`) is signed — no tool
+// and no one node is needed for a statement to be accepted. With the page CLOSED, the delegate witnesses entries.
 //
 //   (await ctx.require("witness")).status()   // { signed, refused, seated, last } — what this page did
 export async function start(ctx) {
@@ -19,6 +20,21 @@ export async function start(ctx) {
   const done = new Map(); // queued item (hex) → "signed" | "not seated" | why refused (asked again while refused)
   let busy = false;
   let lastPass = -Infinity;
+
+  // SIGNED through the delegate (it records the place first) and dropped into the place's witness bag.
+  async function signInto(s, h, tokens, what) {
+    const a = await auth.identity.witnessSign(s.chain, s.seq, s.entry);
+    if (!a?.signed) {
+      ctx.log("witness", { what: `not signed (${a?.refused ?? "no answer"})` });
+      return false;
+    }
+    const { address, item } = Core.witness_sig_item(s.chain, s.seq, s.entry, tokens.bytes(a.signed));
+    await index.bag.add(address, item, "witnessing");
+    state.signed += 1;
+    state.last = h;
+    ctx.log("witness", { what: `signed ${what}` });
+    return true;
+  }
 
   async function pass(h) {
     if (busy || h - lastPass < EVERY) return;
@@ -47,19 +63,29 @@ export async function start(ctx) {
             state.refused += 1;
             continue;
           }
-          const s = v.sign;
-          const a = await auth.identity.witnessSign(s.chain, s.seq, s.entry);
-          if (!a?.signed) {
-            ctx.log("witness", { what: `not signed (${a?.refused ?? "no answer"})` });
-            continue;
-          }
-          const { address, item } = Core.witness_sig_item(s.chain, s.seq, s.entry, bytes(a.signed));
-          await index.bag.add(address, item, "witnessing an entry");
-          done.set(k, "signed");
-          state.signed += 1;
-          state.last = h;
-          ctx.log("witness", { what: `signed ${hexOf(s.chain).slice(0, 8)}… seq ${s.seq}` });
+          if (await signInto(v.sign, h, tokens, `${hexOf(v.sign.chain).slice(0, 8)}… seq ${v.sign.seq}`)) done.set(k, "signed");
         }
+      }
+      // THE EPOCH STATEMENT due now (and the one before), once its lot is drawn: this page's own root, if seated.
+      const statement = await ctx.require("statement");
+      const se = Math.floor((h - statement.settle) / EPOCH);
+      for (let e = Math.max(0, se - 1); e <= se; e++) {
+        if (h < Core.statement_lot_height(e)) continue;
+        const root = await statement.root(e).catch(() => null);
+        const k = `statement ${e} ${root}`;
+        if (!root || done.get(k) === "signed" || done.get(k) === "not seated") continue;
+        const v = await run(() => core.witness_statement(tokens.code, tokens.beacon, tokens.idlogCode, lot.pool, lot.bag, lot.beacon, e, root, bytes(me.member))).catch(x => ({ refused: x.message ?? String(x) }));
+        if (v?.seated === false) {
+          done.set(k, "not seated");
+          continue;
+        }
+        if (v?.refused) {
+          if (done.get(k) !== v.refused) ctx.log("witness", { what: `the statement of epoch ${e}: ${v.refused}` });
+          done.set(k, v.refused);
+          continue;
+        }
+        state.seated += 1;
+        if (await signInto(v.sign, h, tokens, `the statement of epoch ${e}: root ${root.slice(0, 12)}…`)) done.set(k, "signed");
       }
     } catch (e) {
       ctx.log("witness", { what: e.message ?? String(e) });
