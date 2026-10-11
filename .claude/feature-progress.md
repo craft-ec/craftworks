@@ -2273,6 +2273,10 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       package from the batch. fx/fy v581: fy outside an open space saw its admission in the PUBLIC acts
       (`join-asked-again` ced654 08:33), then joined. NOT DONE: welcomers sharing used-package tags (agent fix 3),
       resend-after-commit outbox (fix 6), member nodes honouring others' re-adds (delegate, needs wasm).
+      LIVE HOTFIX v374 (10-11, B8Y3…): the same 5 packages (keys, conversation, roles, upkeep, join-button) on the live
+      base tree (0a4f258 + v373), checked against the live manifest (only those 5 differed of 83 JS); 97 already
+      published, 5 sent, identity unchanged. Ivvor's New Space unblocks once its owner's page runs v374 (publishes
+      the roster) — then askers' pages see they were let in and ask again, once per epoch.
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.
