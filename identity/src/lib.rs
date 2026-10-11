@@ -665,6 +665,16 @@ pub fn upkeep_random<H: Host>(h: &mut H) -> Option<[u8; 32]> {
     }
     Some(blake3::derive_key("craftworks identity upkeep draw", &pool))
 }
+/// The UPKEEP SITE (audit 10-11): the node-wide upkeep settings (contract codes, clock, inbox) are the site's that first
+/// handed them over — the site that installed this delegate. Any site can make itself the home of a member of its own,
+/// and must not rewrite where every member's upkeep puts its writes. `true`: `app` is it (or the first).
+const UPKEEP_SITE: &[u8] = b"identity_upkeep/site";
+fn upkeep_site<H: Host>(h: &mut H, app: &[u8; 32]) -> bool {
+    match h.get_secret(UPKEEP_SITE) {
+        Some(s) if !s.is_empty() => s == app,
+        _ => h.set_secret(UPKEEP_SITE, app),
+    }
+}
 pub fn upkeep_set_clock<H: Host>(h: &mut H, now: u64) {
     let wakeups = u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0);
     h.set_secret(UPKEEP_CLOCK, &[now.to_le_bytes(), wakeups.to_le_bytes()].concat());
@@ -676,7 +686,7 @@ pub fn upkeep_now<H: Host>(h: &H) -> Option<u64> {
     let c = h.get_secret(UPKEEP_CLOCK)?;
     let (then, at) = (u64_of(Some(c.get(..8)?.to_vec()))?, u64_of(Some(c.get(8..16)?.to_vec()))?);
     let wakeups = u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0);
-    Some(then + wakeups.saturating_sub(at) * UPKEEP_EVERY)
+    Some(then.saturating_add(wakeups.saturating_sub(at).saturating_mul(UPKEEP_EVERY)))
 }
 
 /// `MEMBER ‖ public key` → the member (seed, DID, PIN hash, home, data key): one secret, one write.
@@ -1317,6 +1327,9 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             if a.home != app {
                 return Refused(Why::NotHome);
             }
+            if !upkeep_site(h, &app) {
+                return Refused(Why::NotHome);
+            }
             h.set_secret(UPKEEP_INBOX, &inbox);
             upkeep_stir(h, &seed);
             upkeep_set_clock(h, now);
@@ -1325,6 +1338,11 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
         Request::UpkeepCodes { bag, tail, idlog, sealed, piece, block, devices } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            // The node-wide codes: the UPKEEP SITE's (another site may hand over the same codes, never others).
+            let same = h.get_secret(UPKEEP_CODES_HASH).is_some_and(|x| x == upkeep_codes_hash(&bag, &tail, &idlog, &sealed, &piece, &block, &devices));
+            if !same && !upkeep_site(h, &app) {
                 return Refused(Why::NotHome);
             }
             let saved = h.set_secret(UPKEEP_BAG, &bag)

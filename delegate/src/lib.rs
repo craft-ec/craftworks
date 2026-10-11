@@ -69,7 +69,7 @@ mod entry {
         unsafe { crate::NOW_S = s };
         #[cfg(target_arch = "wasm32")]
         mls_rs_core::time::set_clock(crate::clock);
-        s * 1000
+        s.saturating_mul(1000)
     }
 
     /// Upkeep's asks, as the node's messages.

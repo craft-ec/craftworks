@@ -876,3 +876,19 @@ fn a_members_next_build_carries_its_witnessed_places_and_the_old_one_retires() {
     assert_eq!(serve(&mut new, Request::WitnessSign { chain, seq: 4, entry: y }, APP), Answer::Refused(Why::Equivocation), "never another entry where the old build signed");
     assert!(matches!(serve(&mut new, Request::WitnessSign { chain, seq: 4, entry: x }, APP), Answer::Signed { .. }), "the same entry again: fine");
 }
+
+/// THE UPKEEP SITE (audit 10-11): the node-wide upkeep settings are the first site's; another site — home of a member
+/// of its own — may not rewrite them (it would send every member's upkeep writes to its own contracts).
+#[test]
+fn only_the_upkeep_site_rewrites_the_node_wide_upkeep_settings() {
+    let mut m = provisioned(APP);
+    let _ = unlock(&mut m, ALICE_PIN, APP);
+    let codes = |b: u8| Request::UpkeepCodes { bag: vec![b], tail: vec![b], idlog: [b; 32], sealed: vec![b], piece: vec![b], block: [b; 32], devices: [b; 32] };
+    assert!(matches!(serve(&mut m, codes(1), APP), Answer::Upkeep { .. }), "the first site sets them");
+    // Another site, home of its own member.
+    assert_eq!(provision(&mut m, BOB, BOB_DID, BOB_PIN, OTHER), bob());
+    assert_eq!(serve(&mut m, codes(2), OTHER), Answer::Refused(Why::NotHome), "never other codes");
+    assert!(matches!(serve(&mut m, codes(1), OTHER), Answer::Upkeep { .. }), "the same codes: fine");
+    assert_eq!(serve(&mut m, Request::UpkeepWatch { inbox: [0; 32], seed: [0; 32], now: u64::MAX }, OTHER), Answer::Refused(Why::NotHome));
+    assert!(matches!(serve(&mut m, codes(3), APP), Answer::Upkeep { .. }), "the upkeep site changes them");
+}
