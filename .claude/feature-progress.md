@@ -2165,3 +2165,14 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
   unchanged (94190d1e), no PIN; the delegate half ships with the next full release. OPEN: why #HLt27K cannot apply a
   welcome. Also found: SHA256SUMS was stale for token/devices since 5f32f7c/d8daf2f (would refuse the next publish) —
   updated.
+
+- TELEMETRY HOTFIX LIVE 10-11 (site v373 on B8Y3…, owner: "more telemetry so you can investigate and monitor"; dfeda6a
+  ported): hourly `seen` heartbeats (account prefix, version, each space's e/oe/on/unread), `member-keys` from
+  observers with the cause (devices read or why not, announcements, writers size), "devices not read" no longer shown
+  as "keys not announced", failed health writes logged, real account ids (were all "did:craf"), chained day bags.
+  THE LIVE BASE (measured from its manifest, all 102 packages): wasm = a 354c60f build (core ce935ce9 was NOT
+  reproducible — fetched from its pieces with `publish/examples/join_package`; mls 537d5ef6, identity 94190d1e,
+  devices 30140424 = 354c60f's), page JS = 0a4f258 + this hotfix (conversation, index, directory, members-list,
+  upkeep; `ROOM = 960` in index.js: the live core has no `chained_room`). Published with PUBLISHED_MANIFEST = the live
+  manifest: 97 "already published", 5 sent. Not run on a private node first (the base identity differs from fx/fy's);
+  the same code ran on fx/fy from main (v572/573).
