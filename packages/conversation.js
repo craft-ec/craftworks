@@ -35,6 +35,34 @@
 //     sm.may()  await sm.enabled()  await sm.enable()  (its owner)  await sm.send(to, subject, body, re, files)
 //     await sm.fetch()  await sm.list("in" | "sent")  sm.onChange(fn)
 //   (`to` may name a space: `space:<id>` — of a space this person knows, or one whose mail they had.)
+// KEY PACKAGES USED BY OTHERS (10-11: welcomes refused "no key package of this account answers that welcome … not held":
+// TWO welcomes made for the SAME one-use package — each welcomer's record of what it used is its own account's
+// `keypacks`, which no other member, and no other member's node, reads). Each welcome now names its package's TAG in
+// the space's writers list (`{ w, welcomed, kp }`, or the `kp` on a node's `repair` there), which every member reads:
+// `sharedTags` — those tags, each with the device that wrote it. Pure (no node, no page): what `welcome` and the tests
+// both run.
+const TAG = /^[0-9a-f]{32}$/;
+export function sharedTags(pointers) {
+  const out = new Map();
+  for (const p of pointers ?? []) if (p && typeof p.kp === "string" && TAG.test(p.kp) && !out.has(p.kp)) out.set(p.kp, String(p.w ?? ""));
+  return out;
+}
+// The card's packages FREE to welcome with: by index into `tags` (the card's, in its order), none this account used
+// (`ownSpent`: a Set of tags) and none another member used (`shared`: tag → who). `skipped`: the tags left out ONLY
+// because someone else used them — what this account alone would have picked again (the 10-11 double welcome).
+export function freePackages(tags, ownSpent, shared) {
+  const free = [];
+  const skipped = [];
+  tags.forEach((t, i) => {
+    if (ownSpent.has(t)) return;
+    if (shared.has(t)) return void skipped.push(t);
+    free.push(i);
+  });
+  return { free, skipped };
+}
+// A kept welcome's wait before its next try (`tries`: made so far): 2 minutes, doubling, at most an hour.
+export const resendWait = tries => Math.min(3600e3, 120e3 * 2 ** Math.max(0, (Number(tries) || 1) - 1));
+
 export async function start(ctx) {
   const [space, keys, directory, index, content] = await Promise.all(["space", "keys", "directory", "index", "content"].map(n => ctx.require(n)));
   const short = did => `${did.replace(/^did:craftec:/, "").slice(0, 8)}…`;
@@ -59,7 +87,21 @@ export async function start(ctx) {
     const tagOf = async kp => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(kp)))].slice(0, 16).map(x => x.toString(16).padStart(2, "0")).join("");
     const tags = await Promise.all(card.keyPackages.map(tagOf));
     const spent = new Set(used.rows().filter(r => r.value).map(r => r.key));
-    const unused = card.keyPackages.filter((_, i) => !spent.has(tags[i]));
+    // …NOR ONE ANOTHER MEMBER USED (10-11: two welcomes for one package, one of them never opens — and its person, stuck,
+    // is re-added again and again, an epoch each). Read from THIS space's writers list as it is now, and from every
+    // other space this account reads, as upkeep last mirrored them here (`shared:<tag>` rows: `mirrorShared`) — a
+    // package is the person's, not the space's: one spent welcoming them into A is spent for B. (Chosen over waiting
+    // for the person to renew their card: renewal needs THEIR page open, and the welcomes that collide are exactly
+    // the ones made while it is not.) Still unseen: a package another account used in a space this one is not in, or
+    // one a node used that its account's page has not absorbed yet — the person's page renews the card then.
+    const shared = sharedTags(await index.spacePointers(sp, "writers").catch(() => []));
+    for (const r of used.rows()) if (r.value && r.key.startsWith("shared:") && !shared.has(r.key.slice(7))) shared.set(r.key.slice(7), String(r.value));
+    const { free, skipped } = freePackages(tags, spent, shared);
+    if (skipped.length) {
+      ctx.log("conversation", { what: `${directory.shown(did, card.handle)}: ${skipped.length} key package(s) on their card used by another member (${skipped.map(t => `${t.slice(0, 8)} by ${String(shared.get(t)).slice(0, 8)}`).join(", ")}) — not used again; ${free.length} left` });
+      index.health({ k: "welcome-pkg-shared", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), d: { skipped: skipped.length, left: free.length, card: tags.length } }).catch(() => {});
+    }
+    const unused = free.map(i => card.keyPackages[i]);
     if (!unused.length) {
       // Told so, once per card (its packages as they are): their page puts a fresh set on it and asks again.
       const k = `renew-asked:${did}|${tags.join("").slice(0, 32)}`;
@@ -68,7 +110,8 @@ export async function start(ctx) {
       throw new Error("their card has no key package left unused (asked to renew it; it renews when they are next online): try again then");
     }
     const kp = unused[Math.floor(Math.random() * unused.length)];
-    await used.put(tags[card.keyPackages.indexOf(kp)], String(Date.now()));
+    const tag = tags[card.keyPackages.indexOf(kp)];
+    await used.put(tag, String(Date.now()));
     // WELCOMED AGAIN (a welcome that never opened — its key package lost — or a member who lost the space): whatever
     // of theirs the group still holds is taken out first; the group admits one entry per key.
     const g = keys.group(sp);
@@ -86,17 +129,105 @@ export async function start(ctx) {
       ctx.log("conversation", { what: `a welcome for ${directory.shown(did, card.handle)} was made for key package ${made.aimed.join(", ")}, not the one asked (${made.asked}): not sent` });
       throw new Error(`the group made a welcome for another key package of theirs (${made.aimed.join(", ")}), not ${made.asked}`);
     }
+    // ITS PACKAGE SPENT, said to every member (the space's writers list): committed, it is spent whether or not the
+    // welcome reaches them — no other member's welcome may use it (`sharedTags`).
+    await index.spacePoint(sp, "writers", { w: sp.self, welcomed: did, kp: tag, at: Date.now() }).catch(e => ctx.log("conversation", { what: `${directory.shown(did, card.handle)}: its key package ${tag.slice(0, 8)} not listed as used in the space: ${e?.message ?? e}` }));
+    // An earlier welcome to them here still kept unsent (below): its entry replaced by this commit, it could never open.
+    for (const r of used.rows().filter(x => x.value && x.key.startsWith(`outbox:${sp.id}|${did}|`))) await used.remove(r.key).catch(() => {});
     const { owner, nonce } = sp.governance;
     // ITS HISTORY: the space's earlier epochs' secrets held here — the joiner reads everything before it at once, never
     // walking a log per epoch (one log missing cut a late joiner off from all before it).
     const at = (await g.ready().catch(() => null))?.epoch ?? 0;
-    const history = sp.idBytes && at > 0 ? await (await ctx.require("auth")).identity.epochSecrets(sp.idBytes, at).catch(() => []) : [];
     // `kp`: the TAG of the key package it is made for (what the person's page names when it does not open).
-    await index.send(did, { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, kp: tags[card.keyPackages.indexOf(kp)], made: Date.now(), ...(history.length ? { history } : {}), ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(sp.group ? { group: sp.group } : {}), ...(repair ? { repair } : {}) });
+    const msg = { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, kp: tag, made: Date.now(), ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(sp.group ? { group: sp.group } : {}), ...(repair ? { repair } : {}) };
+    // SENT, or KEPT TO SEND AGAIN (10-11): the commit above already replaced their entry in the group — a welcome lost
+    // here left them out with no way in, and every member's next re-add cost another epoch. Kept in `keypacks`
+    // (`outbox:<space>|<did>|<tag>`: the message less its history, read again when sent — no epoch secret kept twice)
+    // and sent again by upkeep (`resendWelcomes`). Their entry IS in the group: the welcome counts as made.
+    const newestKey = `newest:${sp.id}|${did}`;
+    try {
+      await index.send(did, { ...msg, ...(await historyAt(sp, at)) });
+    } catch (e) {
+      const why = String(e?.message ?? e).slice(0, 160);
+      const was = used.rows().find(r => r.key === newestKey)?.value ?? null;
+      await used.put(`outbox:${sp.id}|${did}|${tag}`, JSON.stringify({ msg, at, was, first: Date.now(), last: Date.now(), tries: 1, why })).catch(k => {
+        ctx.log("conversation", { what: `${directory.shown(did, card.handle)}: the welcome not sent (${why}) and not kept to send again (${k?.message ?? k})` });
+        return Promise.reject(e);
+      });
+      index.health({ k: "welcome-send-failed", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), why, d: { tries: 1, kept: true } }).catch(() => {});
+      ctx.log("conversation", { what: `${directory.shown(did, card.handle)}: the welcome (tag ${tag.slice(0, 8)}) not sent (${why}) — kept, sent again by upkeep` });
+      return card;
+    }
     // Their NEWEST welcome here (its key package's tag): an ask to welcome again about an older one is stale.
-    await used.put(`newest:${sp.id}|${did}`, tags[card.keyPackages.indexOf(kp)]).catch(() => {});
-    ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind} (welcome ${await fingerprint(welcome)}, aimed at ${made.aimed.join(", ")}, tag ${tags[card.keyPackages.indexOf(kp)].slice(0, 8)})` });
+    await used.put(newestKey, tag).catch(() => {});
+    ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind} (welcome ${await fingerprint(welcome)}, aimed at ${made.aimed.join(", ")}, tag ${tag.slice(0, 8)})` });
     return card;
+  }
+  // A welcome's HISTORY (`{ history }` or nothing): the space's epochs below `at` held here.
+  async function historyAt(sp, at) {
+    const history = sp.idBytes && at > 0 ? await (await ctx.require("auth")).identity.epochSecrets(sp.idBytes, at).catch(() => []) : [];
+    return history.length ? { history } : {};
+  }
+  // THE WELCOME OUTBOX, sent again (upkeep, every tick): each kept welcome tried after a wait doubling from 2 minutes
+  // to an hour; given up after a day (reported: `welcome-send-failed`, final) — their own page asks again from there
+  // (`askStuck`: let in, never in; `catchUp`: a member behind). Dropped unsent when a NEWER welcome to them went out meanwhile (it replaced this one's entry: this
+  // one could never open), or the space is no longer this account's.
+  const WAIT = { giveUp: 864e5 };
+  async function resendWelcomes() {
+    const used = await (await ctx.require("storage")).table("keypacks");
+    await used.settled;
+    const now = Date.now();
+    let sent = 0;
+    for (const r of used.rows().filter(x => x.value && x.key.startsWith("outbox:"))) {
+      const [spId, did, tag] = r.key.slice(7).split("|");
+      let o;
+      try {
+        o = JSON.parse(r.value);
+      } catch {
+        await used.remove(r.key).catch(() => {});
+        continue;
+      }
+      if (now - (o.last ?? 0) < resendWait(o.tries)) continue;
+      const sp = (await space.mine()).find(s => s.id === spId);
+      const newest = used.rows().find(x => x.key === `newest:${spId}|${did}`)?.value ?? null;
+      const superseded = !!newest && newest !== o.was && newest !== tag;
+      if (!sp || superseded || now - (o.first ?? now) > WAIT.giveUp) {
+        if (!sp || superseded) ctx.log("conversation", { what: `a kept welcome for ${short(did)} dropped: ${!sp ? "the space is no longer this account's" : "a newer welcome to them went out"}` });
+        else {
+          index.health({ k: "welcome-send-failed", s: spId.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), why: String(o.why ?? "").slice(0, 160), d: { tries: o.tries, kept: false, final: true } }).catch(() => {});
+          ctx.log("conversation", { what: `a kept welcome for ${short(did)} (tag ${tag.slice(0, 8)}) given up after ${o.tries} tries over a day: ${o.why}` });
+        }
+        await used.remove(r.key).catch(() => {});
+        continue;
+      }
+      try {
+        await index.send(did, { ...o.msg, ...(await historyAt(sp, o.at)) });
+      } catch (e) {
+        await used.put(r.key, JSON.stringify({ ...o, last: Date.now(), tries: (o.tries ?? 1) + 1, why: String(e?.message ?? e).slice(0, 160) })).catch(() => {});
+        continue;
+      }
+      await used.put(`newest:${spId}|${did}`, tag).catch(() => {});
+      await used.remove(r.key).catch(() => {});
+      sent += 1;
+      ctx.log("conversation", { what: `a kept welcome for ${short(did)} into ${sp.name ?? sp.kind} (tag ${tag.slice(0, 8)}) sent, try ${(o.tries ?? 1) + 1}` });
+    }
+    return sent;
+  }
+  // EVERY SPACE's used key packages (the writers lists' `kp` tags, by any member or node) mirrored into this account's
+  // `keypacks` as `shared:<tag>` (→ which device, which space, when) — what `welcome` checks for a space it is not
+  // welcoming into, and what the node's mandate is handed as spent with this account's own (`upkeep`). Upkeep, each
+  // tick, per space.
+  async function mirrorShared(sp) {
+    const used = await (await ctx.require("storage")).table("keypacks");
+    await used.settled;
+    const have = new Set(used.rows().filter(r => r.value).map(r => r.key));
+    let n = 0;
+    for (const [t, w] of sharedTags(await index.spacePointers(sp, "writers"))) {
+      if (have.has(t) || have.has(`shared:${t}`)) continue;
+      await used.put(`shared:${t}`, `${w.slice(0, 16)}|${sp.id.slice(0, 8)}|${Date.now()}`);
+      n += 1;
+    }
+    return n;
   }
 
   // DIRECT: a two-person space, the other welcomed — or the one this person already has with them.
@@ -1570,5 +1701,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, reconcile, answerStuck, joinLevel, lapse, levelCode, repair, catchUp, keyStatus, reportReads, selfState, observe, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
+  return { direct, group, invite, accept, reconcile, answerStuck, joinLevel, lapse, levelCode, repair, catchUp, keyStatus, reportReads, selfState, observe, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience, resendWelcomes, mirrorShared };
 }

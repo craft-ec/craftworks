@@ -33,6 +33,8 @@ export async function start(ctx) {
         await (await ctx.require("directory")).publish().catch(e => ((renewed = false), ctx.log("upkeep", { what: `the card: ${e.message}` })));
         await conversation.askStuck().catch(e => ctx.log("upkeep", { what: `requests let in, never in: ${e.message}` }));
       }
+      // WELCOMES KEPT UNSENT (their commit made, the send failed): sent again, on their own wait (`conversation`).
+      await conversation.resendWelcomes().catch(e => ctx.log("upkeep", { what: `welcomes kept to send again: ${e.message}` }));
       const joined = await conversation.accept().catch(e => (ctx.log("upkeep", { what: `the inbox: ${e.message}` }), []));
       if (joined.length) ctx.log("upkeep", { what: `joined ${joined.length} space(s) from the inbox` });
       // THE NODE's list first (before each space's slower work): what it keeps with no page open.
@@ -118,13 +120,18 @@ export async function start(ctx) {
       const sp = of(a.space);
       if (!sp) continue;
       written.push([a.space, a.did]);
+      // ITS KEY PACKAGE named in the space as used (`kp`, the tag the node's record carries: `conversation.sharedTags`):
+      // no member's welcome — page or node — uses it again (10-11: two welcomes for one package, one never opened).
+      // (Only once a page of this account absorbs it: until then the members cannot see the node used it.)
+      const kp = typeof a.kp === "string" && /^[0-9a-f]{32}$/.test(a.kp) ? { kp: a.kp } : {};
       // Let in AGAIN (a member stuck behind its own commit): a member already — no act.
       if (a.code === "stuck") {
         // Recorded in the space as any member's welcome again (`conversation`'s once-per-epoch rule reads it).
-        await index.spacePoint(sp, "writers", { w: sp.self, repair: a.did, epoch: Number(a.epoch) }).catch(() => {});
+        await index.spacePoint(sp, "writers", { w: sp.self, repair: a.did, epoch: Number(a.epoch), ...kp }).catch(() => {});
         ctx.log("upkeep", { what: `the delegate let ${a.did.slice(12, 20)}… into ${sp.name} again (stuck behind its own change) while no page ran` });
         continue;
       }
+      if (kp.kp) await index.spacePoint(sp, "writers", { w: sp.self, welcomed: a.did, ...kp, at: a.at || Date.now() }).catch(() => {});
       const r = await roles.of(sp);
       await r.refresh();
       await r.act({ act: "admitted", code: a.code, did: a.did, at: a.at });
@@ -152,6 +159,9 @@ export async function start(ctx) {
       const mayInvite = !!r?.can(me.id, "invite");
       const inGroup = ((await keys.group(sp).ready().catch(() => null))?.members ?? []).filter(m => m.cred).map(m => glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16)))));
       const members = [...new Set([...(r?.members() ?? []).map(m => m.did), ...inGroup])];
+      // The key packages its members (and their nodes) used, mirrored into this account's `keypacks` (`shared:<tag>`):
+      // handed below as spent with this account's own — a package is spent for every space once any member used it.
+      await conversation.mirrorShared(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: key packages used there: ${e?.message ?? e}` }));
       // Its STUCK bag made (once a page): the delegate reads it every round, and never asks for one not made.
       if (!stuckBags.has(sp.id)) await index.openRequests(`stuck ${sp.id}`).then(() => stuckBags.add(sp.id), () => {});
       spaces.push({
@@ -166,9 +176,10 @@ export async function start(ctx) {
         bans: r ? [...new Set([...r.bannedList(), ...r.goneList().filter(d => !lapsedOnly(r, d))])] : [], members, epoch: g.epoch, state: g.state,
       });
     }
-    // With it, the key packages this account used already: upkeep never uses one again.
+    // With it, the key packages this account used already — and those another member used (`shared:<tag>`): upkeep
+    // never uses one again.
     const used = await storage().catch(() => null);
-    const spent = used ? used.rows().filter(r => r.value && /^[0-9a-f]{32}$/.test(r.key)).map(r => r.key) : [];
+    const spent = used ? [...new Set(used.rows().filter(r => r.value).map(r => r.key.replace(/^shared:/, "")).filter(k => /^[0-9a-f]{32}$/.test(k)))] : [];
     const r = await auth.identity.upkeepMandate(me.id, spaces, spent);
     const said = spaces.map(x => `${x.name}${x.codes.length || x.open || x.level ? "" : " (re-add only)"}`).join(", ");
     if (said !== lastMandate) (lastMandate = said), ctx.log("upkeep", { what: `the node upkeeps ${spaces.length} space(s): ${said}` });
