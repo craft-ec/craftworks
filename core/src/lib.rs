@@ -1037,10 +1037,18 @@ mod js {
             self.ask(Request::WitnessMandate { mandate: craftworks_identity::WitnessMandate { token: h(token), idlog: h(idlog), bag: h(bag), beacon_code: h(beacon_code), beacon: b32(beacon)?, pool: b32(pool)? } })
         }
         /// KEEP WITH NO PAGE OPEN (`KeeperMandate`: the home site only): where this node's standing record is, the epoch
-        /// this page opened and what it hosts (`[[id hex, size]]`, as `keeper_open` took it).
-        pub fn frames_keeper_mandate(&mut self, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], epoch: f64, hosted: JsValue) -> Result<js_sys::Array, JsValue> {
+        /// this page opened and what it hosts (`[[id hex, size]]`, as `keeper_open` took it); the account (`did`, this
+        /// device `public` and its `creds`: its key log read first) its listing and stake claim are made for, the codes
+        /// they need, and whether this node holds the account's witness `seat`.
+        #[allow(clippy::too_many_arguments)]
+        pub fn frames_keeper_mandate(&mut self, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], epoch: f64, hosted: JsValue, token_code: &[u8], idlog_code: &[u8], bag_code: &[u8], did: &[u8], public: &[u8], creds: js_sys::Array, seat: bool) -> Result<js_sys::Array, JsValue> {
             let k = keeper_ctx(standing_code, beacon_code, beacon)?;
-            self.ask(Request::KeeperMandate { mandate: craftworks_identity::KeeperMandate { standing: k.standing, beacon_code: k.beacon_code, beacon: k.beacon, epoch: epoch as u64, hosted: hosted_of(&hosted)? } })
+            let did = b32(did)?;
+            let dev = account_device(&self.0, idlog_code, &did, public, &creds, &js_sys::Array::new())?.ok_or_else(|| err("the account's key log has not been read".into()))?;
+            let h = |b: &[u8]| *blake3::hash(b).as_bytes();
+            self.ask(Request::KeeperMandate {
+                mandate: craftworks_identity::KeeperMandate { standing: k.standing, beacon_code: k.beacon_code, beacon: k.beacon, epoch: epoch as u64, hosted: hosted_of(&hosted)?, did, credential: dev.credential, key_seq: dev.key_seq, token: h(token_code), idlog: h(idlog_code), bag: h(bag_code), seat },
+            })
         }
         /// WITNESS an entry (`WitnessSign`: the home site only; the delegate records the place first and never signs
         /// another entry there): `entry` (its hash, or a statement's root) at (`chain`, `seq`).

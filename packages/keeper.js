@@ -150,11 +150,20 @@ export async function start(ctx) {
       }
       // HANDED OVER (once an epoch): the identity delegate answers this epoch's challenges — and opens the next ones on
       // the same holdings — while this page is closed.
+      // With it the account it LISTS in each epoch's keepers registry, and — on the account's seat node — the stake it
+      // CLAIMS each claims epoch: an offline keeper is still listed, kept and seated (TOKEN §7d).
       if (self.mandated !== epoch) {
-        const a = await auth.identity.keeperMandate(standingCode, beaconCode, beacon, epoch, self.hosted).catch(e => ({ refused: e?.message ?? e }));
+        const { creds } = await tokens.device();
+        const seat = await seatIsMine(epoch, me).catch(() => false);
+        const bagCode = await ctx.require("bag-wasm");
+        const a = await auth.identity.keeperMandate(standingCode, beaconCode, beacon, epoch, self.hosted, tokens.code, tokens.idlogCode, bagCode, me.didBytes, public_, creds, seat).catch(e => ({ refused: e?.message ?? e }));
         if (a?.keeperMandated) {
           self.mandated = epoch;
-          ctx.log("keeper", { what: `epoch ${epoch}: the delegate keeps with no page open too` });
+          ctx.log("keeper", { what: `epoch ${epoch}: the delegate keeps, lists${seat ? " and claims" : ""} with no page open too` });
+          // The coming epochs' keepers registries MADE while a page is here (reading one nobody made makes it): a
+          // delegate's own new contracts do not leave its node (freenet #5542) — it can only add to these.
+          const index = await ctx.require("index");
+          for (let e = epoch + 1; e <= epoch + 8; e++) await index.bag.read(Core.keepers_address(e, 0), "making a coming keepers registry").catch(() => {});
         } else ctx.log("keeper", { what: `not handed to the delegate (${a?.refused ?? "no answer"})` });
       }
       // ANSWER every height of this epoch since the last one handled that is sampled for this keeper (one that came

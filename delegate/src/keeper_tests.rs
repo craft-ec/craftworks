@@ -56,7 +56,12 @@ fn an_away_page_s_node_answers_its_sampled_height_one_seal_a_wake_up() {
     // ITS NODE: the member provisioned; its page hands the keeper mandate over, then goes away.
     let mut h = Map::default();
     assert!(matches!(identity::serve(&mut h, Request::Provision { seed, did: [0x44; 32], pin: "246810".into(), data: vec![] }, APP), Answer::Unlocked { .. }));
-    let mandate = KeeperMandate { standing: k.standing, beacon_code: k.beacon_code, beacon: k.beacon, epoch: 3, hosted: hosted.clone() };
+    // (Listed already in epoch 3's keepers registry; not the seat node: this test is the answers'.)
+    let bag_code = [34u8; 32];
+    let listing = craftworks_reputation::keepers::Keeper { did: [0x44; 32], cred: vec![1, 2, 3], key_seq: 0 }.encode();
+    let ka = craftworks_reputation::keepers::address(3, 0);
+    got.insert(craftworks_token_contract::id(&bag_code, &ka), craftworks_bag_contract::encode(&ka, &[craftworks_bag_contract::grind(&ka, &listing)]));
+    let mandate = KeeperMandate { standing: k.standing, beacon_code: k.beacon_code, beacon: k.beacon, epoch: 3, hosted: hosted.clone(), did: [0x44; 32], credential: vec![1, 2, 3], key_seq: 0, token: [35; 32], idlog: [36; 32], bag: bag_code, seat: false };
     assert_eq!(identity::serve(&mut h, Request::KeeperMandate { mandate }, APP), Answer::KeeperMandated);
     let wake = |h: &mut Map, n: u64, got: &HashMap<[u8; 32], Vec<u8>>| -> Vec<Io> {
         h.set_secret(identity::UPKEEP_WAKEUPS, &n.to_le_bytes());
@@ -98,4 +103,45 @@ fn an_away_page_s_node_answers_its_sampled_height_one_seal_a_wake_up() {
     // ANSWERED: the record with it, the next wake-up has nothing to answer.
     got.insert(rid, delta);
     assert!(wake(&mut h, crate::upkeep::PAGE_AWAY + 100, &got).is_empty(), "answered once");
+}
+
+/// LISTED WITH NO PAGE OPEN (audit 10-11): a node whose page is away lists its account in the epoch's keepers registry
+/// (the page did, only while open: a closed page's node went unpaid though its delegate answered) — once.
+#[test]
+fn an_away_page_s_node_lists_its_account_in_the_epoch_s_keepers_registry() {
+    let k = Keep { standing: [31; 32], beacon_code: [32; 32], beacon: [33; 32] };
+    let seed = [44u8; 32];
+    let bag_code = [34u8; 32];
+    let mut got: HashMap<[u8; 32], Vec<u8>> = HashMap::new();
+    let bp = craftworks_beacon_contract::Params { k: 16, segs: 1, sample: 1, window: 2, keep: 600, seed: [5; 32] };
+    let top = 3 * craftworks_standing::EPOCH + 1;
+    got.insert(k.beacon, craftworks_beacon_contract::wire::encode(&craftworks_beacon_contract::State { steps: vec![craftworks_beacon_contract::Step::compute(&bp, [0; 32], top, [1; 32])], alts: vec![], frauds: vec![] }));
+    let ka = craftworks_reputation::keepers::address(3, 0);
+    let kid = craftworks_token_contract::id(&bag_code, &ka);
+    got.insert(kid, craftworks_bag_contract::encode(&ka, &[]));
+    let mut h = Map::default();
+    assert!(matches!(identity::serve(&mut h, Request::Provision { seed, did: [0x44; 32], pin: "246810".into(), data: vec![] }, APP), Answer::Unlocked { .. }));
+    let mandate = KeeperMandate { standing: k.standing, beacon_code: k.beacon_code, beacon: k.beacon, epoch: 3, hosted: vec![], did: [0x44; 32], credential: vec![1, 2, 3], key_seq: 0, token: [35; 32], idlog: [36; 32], bag: bag_code, seat: false };
+    assert_eq!(identity::serve(&mut h, Request::KeeperMandate { mandate }, APP), Answer::KeeperMandated);
+    let wake = |h: &mut Map, n: u64, got: &HashMap<[u8; 32], Vec<u8>>| -> Vec<Io> {
+        h.set_secret(identity::UPKEEP_WAKEUPS, &n.to_le_bytes());
+        let mut sent = Vec::new();
+        let mut todo = keeper_round::woke(h);
+        while let Some(io) = (!todo.is_empty()).then(|| todo.remove(0)) {
+            match io {
+                Io::Get { id, .. } => todo.extend(keeper_round::replied(h, &Reply::Got { id, state: got.get(&id).cloned() })),
+                other => sent.push(other),
+            }
+        }
+        sent
+    };
+    let listing = craftworks_reputation::keepers::Keeper { did: [0x44; 32], cred: vec![1, 2, 3], key_seq: 0 }.encode();
+    let sent = wake(&mut h, crate::upkeep::PAGE_AWAY, &got);
+    let [Io::Put { code: crate::upkeep::Code::Bag, params, state }] = &sent[..] else { panic!("its listing put: {sent:?}") };
+    assert_eq!(params[..], ka[..]);
+    let items = craftworks_bag_contract::read(&ka, state).unwrap();
+    assert_eq!(craftworks_bag_contract::payload(&items[0]), &listing[..]);
+    // The registry with it (the node merged the put): listed — nothing more.
+    got.insert(kid, state.clone());
+    assert!(wake(&mut h, crate::upkeep::PAGE_AWAY + 1, &got).is_empty(), "listed once");
 }

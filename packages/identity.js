@@ -158,7 +158,8 @@ export async function start(ctx) {
     witnessSign: (chain, seq, entry) => call(core.frames_witness_sign(chain, seq, entry), "witnessing an entry"),
     // The WITNESS MANDATE: what the delegate needs to witness with no page open (codes, the beacon, the pool).
     witnessMandate: (token, idlog, bag, beaconCode, beacon, pool) => call(core.frames_witness_mandate(token, idlog, bag, beaconCode, beacon, pool), "handing the witness round over"),
-    keeperMandate: (standingCode, beaconCode, beacon, epoch, hosted) => call(core.frames_keeper_mandate(standingCode, beaconCode, beacon, epoch, hosted), "handing the keeper round over"),
+    keeperMandate: (standingCode, beaconCode, beacon, epoch, hosted, tokenCode, idlogCode, bagCode, did, publicKey, creds, seat) =>
+      call(core.frames_keeper_mandate(standingCode, beaconCode, beacon, epoch, hosted, tokenCode, idlogCode, bagCode, did, publicKey, creds, seat), "handing the keeper round over"),
     // Leave to write one of the account's tables. The node may ask the person (its own prompt, which waits up to a
     // minute), so this waits longer than any other call.
     grant: tables => call(core.frames_grant(tables), `asking for ${tables.map(t => `“${t}”`).join(", ")}`, 90000),

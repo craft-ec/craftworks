@@ -149,6 +149,14 @@ pub fn upkeep_keeper_mandate<H: Host>(h: &H, member: &[u8; KEY_LEN]) -> Option<K
 pub fn upkeep_set_keeper_mandate<H: Host>(h: &mut H, member: &[u8; KEY_LEN], m: &KeeperMandate) -> bool {
     h.set_secret(&[KEEPER_MANDATE, &member[..]].concat(), &bincode::serialize(m).expect("a mandate encodes"))
 }
+/// UPKEEP CLAIMS with no page open: member `m`'s key signs a token entry or a stake claim — the domains `TokenSign`
+/// signs for the page (`SIGN_DOMAINS`), nothing else.
+pub fn upkeep_token_sign<H: Host>(h: &mut H, m: &[u8; KEY_LEN], message: &[u8]) -> Result<[u8; 64], Why> {
+    if !SIGN_DOMAINS.iter().any(|d| message.starts_with(d)) {
+        return Err(Why::NotAnEntry);
+    }
+    Ok(member(h, m).ok_or(Why::NoSession)?.key().sign(message).to_bytes())
+}
 /// UPKEEP KEEPS with no page open: member `member`'s key signs a STANDING record message (its binding, holdings or an
 /// answer) — that domain only, as `TokenSign` would for the page.
 pub fn upkeep_standing_sign<H: Host>(h: &mut H, m: &[u8; KEY_LEN], message: &[u8]) -> Result<[u8; 64], Why> {
@@ -297,6 +305,17 @@ pub struct KeeperMandate {
     pub beacon: [u8; 32],
     pub epoch: u64,
     pub hosted: Vec<([u8; 32], u64)>,
+    /// THE ACCOUNT on this node (audit 10-11: listing and claiming were the open page's only — a node whose page was
+    /// closed for an epoch earned nothing though its delegate answered): its DID, this device's credential and key seq,
+    /// the codes' hashes (token, key log, bag) — what its listing in the keepers registry and its stake claim need —
+    /// and whether this node holds the account's witness SEAT (only that node claims).
+    pub did: [u8; 32],
+    pub credential: Vec<u8>,
+    pub key_seq: u32,
+    pub token: [u8; 32],
+    pub idlog: [u8; 32],
+    pub bag: [u8; 32],
+    pub seat: bool,
 }
 
 /// A space as upkeep may admit into it: the page's knowledge when it handed it over.

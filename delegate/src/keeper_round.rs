@@ -8,7 +8,7 @@
 //! record is written as an UPDATE whose delta is the merged record (the contract merges it: no code needed here).
 
 use crate::reads::{self, Round};
-use crate::upkeep::{Io, Reply};
+use crate::upkeep::{Code, Io, Reply};
 use craftworks_identity::{self as identity, Host, KeeperMandate};
 use craftworks_rules::keeper::{self, Keep};
 use craftworks_rules::tokens::{there, Step};
@@ -33,6 +33,11 @@ pub struct Pending {
 pub struct At {
     pub upto: u64,
     pub pending: Option<Pending>,
+    /// The standing epoch it last LISTED in, and last CLAIMED in (audit 10-11: the page's, while it is closed).
+    pub listed: Option<u64>,
+    pub claimed: Option<u64>,
+    /// The wake-up a listing was last sent in (a pass run again in it does not send it twice).
+    pub sent: Option<u64>,
 }
 pub fn at<H: Host>(h: &H, m: &[u8; 32]) -> At {
     h.get_secret(&[AT, &m[..]].concat()).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
@@ -125,6 +130,72 @@ fn step<H: Host>(h: &mut H, r: &Round, mut m: KeeperMandate) -> Result<(Vec<Io>,
         }
     }
     let mut a = at(h, &public);
+    // (A pass that asks for reads runs again once they are in: the claim is marked done when built, the listing when
+    // sent this wake-up — neither is sent twice.)
+    let mut late: Vec<Io> = Vec::new();
+    // LISTED in this epoch's keepers registry (chained bags: the first with room), its account's listing.
+    if a.listed != Some(epoch) {
+        let item = craftworks_reputation::keepers::Keeper { did: m.did, cred: m.credential.clone(), key_seq: m.key_seq }.encode();
+        for k in 0..64u32 {
+            let address = craftworks_reputation::keepers::address(epoch, k);
+            let st = match there(&got, &craftworks_token_contract::id(&m.bag, &address)) {
+                Err(w) => {
+                    set_at(h, &public, &a);
+                    return Ok((out, vec![w]));
+                }
+                Ok(st) => st,
+            };
+            let items: Vec<Vec<u8>> = st.and_then(|b| craftworks_bag_contract::read(&address, &b)).unwrap_or_default().iter().map(|x| craftworks_bag_contract::payload(x).to_vec()).collect();
+            if items.contains(&item) {
+                a.listed = Some(epoch);
+                break;
+            }
+            if craftworks_bag_contract::chained::full(items.iter().map(Vec::len)) {
+                continue;
+            }
+            // (Read back on the next wake-up: listed once it is there.)
+            if a.sent == Some(r.started) {
+                break;
+            }
+            a.sent = Some(r.started);
+            late.push(Io::Put { code: Code::Bag, params: address.to_vec(), state: craftworks_bag_contract::encode(&address, &[craftworks_bag_contract::grind(&address, &item)]) });
+            break;
+        }
+    }
+    // CLAIMED (the account's seat node only): its $CRAFT stake for the next open claims epoch, its key the witness key
+    // — the page's own rule (`keeper::claim`), signed by the member key under the token's domains.
+    if m.seat && a.claimed != Some(epoch) {
+        let ctx = craftworks_rules::tokens::Ctx { code_hash: m.token, beacon: m.beacon, idlog: m.idlog };
+        let mut sigs: Vec<(Vec<u8>, [u8; 64])> = Vec::new();
+        for _ in 0..8 {
+            let dev = craftworks_rules::tokens::Device { public, credential: m.credential.clone(), key_seq: m.key_seq, sigs: sigs.clone() };
+            match keeper::claim(&ctx, &got, &m.did, height, &dev)? {
+                Step::Want(w) => {
+                    set_at(h, &public, &a);
+                    return Ok((out, w));
+                }
+                Step::Sign(msg) => {
+                    let sig = identity::upkeep_token_sign(h, &public, &msg).map_err(|w| format!("not signed ({w:?})"))?;
+                    sigs.push((msg, sig));
+                }
+                Step::Done(None) => {
+                    a.claimed = Some(epoch);
+                    break;
+                }
+                Step::Done(Some(c)) => {
+                    let update = |p: &craftworks_rules::tokens::Put| Io::Update { id: craftworks_token_contract::id(&m.token, &p.params), delta: p.state.clone() };
+                    late.extend(c.chain.iter().map(update));
+                    late.push(update(&c.registry));
+                    identity::upkeep_say(h, &public, &format!("keeper: {} staked in claims epoch {} with no page open", c.amount, c.epoch));
+                    a.claimed = Some(epoch);
+                    break;
+                }
+            }
+        }
+    }
+    // (What these built goes out now, whatever the answers below still ask for — and their marks are kept now.)
+    out.append(&mut late);
+    set_at(h, &public, &a);
     // THE NEXT SAMPLED HEIGHT since the last handled (this epoch's).
     if a.pending.is_none() {
         for x in a.upto.saturating_add(1).max(height.saturating_sub(BACK))..=height {

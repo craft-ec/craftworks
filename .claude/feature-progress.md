@@ -2220,6 +2220,11 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       contract cannot rank claims it cannot check. Direction: a claim lives in the staker's OWN pool chain (a writer-
       signed entry, witnessed like any other), and the lot's index is a chained pointer bag of staker DIDs (a flood
       costs readers only, each pointer filtered by `valid_stakers`).
+- [x] C3 10-11 LISTING + CLAIMS WITH NO PAGE OPEN (owner rule "nobody must stay online"): the keeper mandate carries
+      the account (DID, device credential, key seq, codes, seat); the delegate's keeper round lists the account in each
+      epoch's keepers registry (tested) and, on the seat node, claims its $CRAFT stake with `keeper::claim` (the rules'
+      tested step; the delegate path is NOT unit-tested — it needs minted stake in a delegate fixture). The page makes
+      the next 8 epochs' keepers bags while open (a delegate's new contracts do not propagate).
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.
