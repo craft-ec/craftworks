@@ -438,3 +438,61 @@ fn a_device_that_asks_builds_the_same_entries_one_signature_a_round() {
     let direct = Wallet { device: &real, keys: &lg }.debit(&h, Body::Send { to: did(2), amount: 300 }, 5).unwrap();
     assert_eq!(out, direct, "the same entries as the device signing itself");
 }
+
+/// TOKEN §3d: 1 sends 2 300 (stamped 1) and its witnesses never come; once they never can, 1 SUPERSEDES the send — its
+/// 300 back — and 2's wallet no longer collects it (nor any receive of it).
+#[test]
+fn a_superseded_send_is_back_with_its_sender_and_collected_by_no_one() {
+    let d1 = Dev::new(1, 11);
+    let l1 = log(1);
+    let w1 = Wallet { device: &d1, keys: &l1 };
+    let a0 = genesis(&d1, &def());
+    let a = with(&a0, w1.debit(&a0, Body::Send { to: did(2), amount: 300 }, 1).unwrap());
+    let sent = a.state.entries.last().unwrap().seq;
+    // Too early (its witnesses may still sign it): refused, as the contract refuses.
+    assert_eq!(w1.supersede(&a, sent, 7679).err(), Some("a supersede of entries its witnesses may still sign"));
+    let out = w1.supersede(&a, sent, 7680).unwrap();
+    assert_eq!(out.len(), 1, "this device writes the chain already");
+    assert!(matches!(out[0].body, Body::Supersede { from } if from == sent));
+    let a2 = with(&a, out);
+    assert_eq!(a2.state.balance(), 1000);
+    assert_eq!(t::check(&a2.params, &a2.definition, &a2.state, &|_, _| None, &|_| None, Some(&l1), &t::Extra::NONE), Ok(()));
+    // 2's wallet: before the supersede the send is collected; after it, nothing.
+    let d2 = Dev::new(2, 12);
+    let l2 = log(2);
+    let w2 = Wallet { device: &d2, keys: &l2 };
+    let b = held(2, &def());
+    let before = [(did(1), a.state.clone())];
+    assert_eq!(w2.collect(&b, &Sources { blocks: &Default::default(), chains: &before, programs: &[], shards: &[] }, 10).unwrap().len(), 1);
+    let after = [(did(1), a2.state.clone())];
+    assert_eq!(w2.collect(&b, &Sources { blocks: &Default::default(), chains: &after, programs: &[], shards: &[] }, 7700).unwrap(), vec![]);
+    // The money moves once: 1 spends the 1000 it holds again.
+    assert!(w1.debit(&a2, Body::Send { to: did(3), amount: 1000 }, 7680).is_ok());
+}
+
+/// A voided RECEIVE's name is free again: 2 collects the same send after superseding the receive no witness signed.
+#[test]
+fn a_superseded_receive_is_collected_again() {
+    let d1 = Dev::new(1, 11);
+    let l1 = log(1);
+    let w1 = Wallet { device: &d1, keys: &l1 };
+    let a0 = genesis(&d1, &def());
+    let a = with(&a0, w1.debit(&a0, Body::Send { to: did(2), amount: 300 }, 1).unwrap());
+    let chains = [(did(1), a.state.clone())];
+    let src = Sources { blocks: &Default::default(), chains: &chains, programs: &[], shards: &[] };
+    let d2 = Dev::new(2, 12);
+    let l2 = log(2);
+    let w2 = Wallet { device: &d2, keys: &l2 };
+    let b = with(&held(2, &def()), w2.collect(&held(2, &def()), &src, 10).unwrap());
+    assert_eq!(w2.collect(&b, &src, 7700).unwrap(), vec![], "taken: never twice");
+    // Its receive (seq 0, stamped 10) wedged: 2's device takes the chain (its writer entry) and supersedes from 0.
+    let sup = w2.supersede(&b, 0, 7700).unwrap();
+    assert_eq!(sup.len(), 2, "its writer entry first, then the supersede");
+    let b2 = with(&b, sup);
+    assert_eq!(b2.state.balance(), 0);
+    let again = w2.collect(&b2, &src, 7700).unwrap();
+    assert!(matches!(again.as_slice(), [Entry { body: Body::Receive { amount: 300, .. }, .. }]));
+    let b3 = with(&b2, again);
+    assert_eq!(b3.state.balance(), 300);
+    assert_eq!(t::check(&b3.params, &b3.definition, &b3.state, &|o, f| if *f == did(1) && o.definition == b3.params.definition { Some(a.state.clone()) } else { None }, &|_| None, Some(&l2), &t::Extra::NONE), Ok(()));
+}

@@ -79,6 +79,8 @@ fn after(s: &State, body: &Body) -> u128 {
         Body::Release { unstake } => b + unbonding_of(s).into_iter().find(|u| &u.0 == unstake).map_or(0, |u| u.1),
         Body::Allow { .. } | Body::Cut { .. } | Body::Writer { .. } | Body::Members { .. } => b,
         Body::Spend { amount, .. } => b.wrapping_sub(*amount),
+        // The balance before `from` (the entry there is never void: TOKEN §3d).
+        Body::Supersede { from } => s.entries.iter().rfind(|x| x.seq < *from).map_or(0, |x| x.balance),
     }
 }
 fn delegate(mut e: Entry, by: u8) -> Entry {
@@ -1755,8 +1757,22 @@ struct Lot {
     rotated: Vec<u8>,
     /// Chains read back WHOLE (from their cut's history), by (token, owner).
     histories: Vec<((Tok, [u8; 32]), State)>,
+    /// The same 20 stakers claim in EVERY epoch (not only epoch 0), their stake held throughout (TOKEN §3d: a tail
+    /// stamped epochs later is witnessed by later epochs' lots).
+    every: bool,
 }
 impl Lot {
+    /// The 20 stakers' claims of claims epoch `e`.
+    fn claims_of(&self, e: u64) -> Vec<draw::StakeClaim> {
+        if e == 0 {
+            return self.claims.clone();
+        }
+        if !self.every {
+            return vec![];
+        }
+        let pool = id_a();
+        (60..80u8).map(|n| draw::StakeClaim { owner: [n; 32], amount: 100, epoch: e, key: pk(n), sig: key(n).sign(&draw::StakeClaim::message(&pool, &[n; 32], 100, e, &pk(n))).to_bytes() }).collect()
+    }
     fn new() -> Lot {
         let pool = id_a();
         let claims = (60..80u8)
@@ -1765,7 +1781,7 @@ impl Lot {
                 draw::StakeClaim { owner: [n; 32], amount: 100, epoch: 0, key: kb, sig: key(n).sign(&draw::StakeClaim::message(&pool, &[n; 32], 100, 0, &kb)).to_bytes() }
             })
             .collect();
-        Lot { claims, sigs: HashMap::new(), drawn: 100, now: 100, progs: vec![], def_a: def(), freeze: None, rotated: vec![], histories: vec![] }
+        Lot { claims, sigs: HashMap::new(), drawn: 100, now: 100, progs: vec![], def_a: def(), freeze: None, rotated: vec![], histories: vec![], every: false }
     }
     fn out(h: u64) -> [u8; 32] {
         *blake3::hash(&h.to_le_bytes()).as_bytes()
@@ -1773,11 +1789,11 @@ impl Lot {
     fn src(&self) -> wallet::Source<'_> {
         wallet::Source {
             pool: id_a(),
-            claims: Box::leak(Box::new(|e: u64| if e == 0 { self.claims.clone() } else { vec![] })),
+            claims: Box::leak(Box::new(|e: u64| self.claims_of(e))),
             sigs: Box::leak(Box::new(|c: &[u8; 32], seq: u64, _epoch: u64| self.sigs.get(&(*c, seq)).cloned().unwrap_or_default())),
             out: Box::leak(Box::new(|h: u64| (h <= self.drawn).then(|| Lot::out(h)))),
             // Every staker's stake as held at epoch 0's start (height 0) — its claims' epoch.
-            stake_of: &|o, h| (h == 0).then(|| (100, vec![pk(o[0])])),
+            stake_of: Box::leak(Box::new(|o: &[u8; 32], h: u64| (h == 0 || self.every).then(|| (100, vec![pk(o[0])])))),
             definition: &|t| [(id_a(), def()), (id_b(), def_b())].into_iter().find(|x| x.0 == *t).map(|x| x.1),
             program: Box::leak(Box::new(|id: &[u8; 32]| self.progs.iter().find(|x| x.0 == *id).map(|x| x.1.clone()))),
             freeze: Box::leak(Box::new(|_: &[u8; 32]| self.freeze.clone())),
@@ -1789,10 +1805,11 @@ impl Lot {
     fn sign(&mut self, chain: &ChainParams, e: &Entry, pred: Option<&Entry>, n: usize, entry: [u8; 32]) {
         let (epoch, h) = wallet::lot_of(e, pred, def().margin).unwrap();
         let id = chain.id();
-        let members = draw::committee(&id_a(), &Lot::out(h), &id, e.seq, epoch, &self.claims, wallet::COMMITTEE);
+        let claims = self.claims_of(epoch);
+        let members = draw::committee(&id_a(), &Lot::out(h), &id, e.seq, epoch, &claims, wallet::COMMITTEE);
         let v = self.sigs.entry((id, e.seq)).or_default();
         for m in members.into_iter().take(n) {
-            let k = self.claims[m].owner[0];
+            let k = claims[m].owner[0];
             v.push(witness::WitnessSig { chain: id, seq: e.seq, entry, at: 0, sig: key(k).sign(&witness::WitnessSig::message(&id, e.seq, &entry, 0)).to_bytes() });
         }
     }
@@ -3838,4 +3855,164 @@ fn a_statement_rooted_program_is_released_only_under_its_epochs_accepted_root() 
     };
     assert_eq!(release(accepted), Ok(()), "under the epoch's accepted root: witnessed");
     assert_eq!(release(other), Err("an entry its committee has not witnessed"), "under any other root: never");
+}
+
+// ---- TOKEN §3d: a tail its witnesses can never sign is SUPERSEDED by its owner ----
+
+/// `owner`'s entry `seq` of token A witnessed — only if the rule lets it (as `Lot::witness`, one entry).
+fn witness_one(lot: &mut Lot, w: &Two, owner: u8, seq: u64) -> Result<(), Why> {
+    let s = w.get(id_a(), owner).clone();
+    let i = s.entries.iter().position(|e| e.seq == seq).unwrap();
+    let h = lot.may(w, owner, seq)?;
+    lot.sign(&at(id_a(), owner), &s.entries[i], i.checked_sub(1).map(|j| &s.entries[j]), wallet::NEED, h);
+    Ok(())
+}
+
+/// three_hops, every lot drawn: 1's chain witnessed whole; 2's receive and writer (seq 0, 1) witnessed — its send to 3
+/// (seq 2, stamped 2) NOT: its witnesses away. 2 then burns 5 (seq 3, stamped 4099).
+fn stranded() -> (Two, Lot) {
+    let mut w = three_hops();
+    let mut lot = Lot::new();
+    lot.every = true;
+    lot.drawn = 1_000_000;
+    lot.witness(&w, 1).unwrap();
+    witness_one(&mut lot, &w, 2, 0).unwrap();
+    witness_one(&mut lot, &w, 2, 1).unwrap();
+    put_at(w.chain(id_a(), 2), 50, Body::Burn { amount: 5 }, Some(2), 4099);
+    (w, lot)
+}
+
+/// The first height a tail whose first entry is stamped 2 may be superseded at: past 2 + FRESH = 4098, and past the next
+/// registry freeze (heights 4096k − 512) by more than AT_SLACK — 7680.
+const SUPERSEDE_AT: u64 = 7680;
+
+#[test]
+fn a_tail_stamped_past_fresh_is_wedged_for_good() {
+    let (w, mut lot) = stranded();
+    lot.now = 2 + wallet::FRESH;
+    assert!(lot.may(&w, 2, 2).is_ok(), "within FRESH a late witness still signs it");
+    lot.now = 2 + wallet::FRESH + 1;
+    assert_eq!(lot.may(&w, 2, 2), Err("an entry stamped too long ago"), "the send: never signed again");
+    assert_eq!(lot.may(&w, 2, 3), Err("an entry its committee has not witnessed"), "every later entry: never, by induction");
+    // However long one waits, nothing of the chain is ever signed again (each is stale or on an unaccepted past).
+    lot.now = 1_000_000;
+    assert_eq!(lot.may(&w, 2, 2), Err("an entry stamped too long ago"));
+    assert!(lot.may(&w, 2, 3).is_err());
+}
+
+#[test]
+fn the_owner_supersedes_a_tail_no_witness_signed_and_the_chain_lives_again() {
+    let (mut w, mut lot) = stranded();
+    // Too early: a signature dated 2 + FRESH could still be taken by its container — refused by the chain itself.
+    let mut early = Two(w.0.clone());
+    put_at(early.chain(id_a(), 2), 51, Body::Supersede { from: 2 }, Some(2), SUPERSEDE_AT - 1);
+    assert_eq!(early.check(id_a(), 2), Err("a supersede of entries its witnesses may still sign"));
+    assert!(!may_supersede(2, SUPERSEDE_AT - 1) && may_supersede(2, SUPERSEDE_AT));
+    put_at(w.chain(id_a(), 2), 51, Body::Supersede { from: 2 }, Some(2), SUPERSEDE_AT);
+    assert_eq!(w.check(id_a(), 2), Ok(()));
+    let s = w.get(id_a(), 2);
+    assert_eq!(s.balance(), 300, "the voided send's 100 and burn's 5 are back");
+    assert!(is_superseded(s, 2) && is_superseded(s, 3) && !is_superseded(s, 1) && !is_superseded(s, 4));
+    // Its witnesses sign it (it stands on seq 1, accepted), and the chain is witnessed on from there.
+    lot.now = SUPERSEDE_AT;
+    witness_one(&mut lot, &w, 2, 4).unwrap();
+    assert_eq!(lot.accept(&w, 2, 4), Ok(wallet::NEED));
+    put_at(w.chain(id_a(), 2), 52, Body::Send { to: did(4), amount: 50 }, Some(2), SUPERSEDE_AT);
+    assert_eq!(w.check(id_a(), 2), Ok(()));
+    witness_one(&mut lot, &w, 2, 5).unwrap();
+    assert_eq!(lot.accept(&w, 2, 5), Ok(wallet::NEED));
+    // A voided entry is never signed, whatever its stamp.
+    assert_eq!(lot.may(&w, 2, 3), Err("an entry its owner superseded"));
+}
+
+#[test]
+fn a_supersede_is_refused_where_any_witness_signed_the_tail() {
+    let (mut w, mut lot) = stranded();
+    // ONE committee member signed the send (not enough to accept it) before the witnesses went away.
+    let s = w.get(id_a(), 2).clone();
+    lot.sign(&at(id_a(), 2), &s.entries[2], Some(&s.entries[1]), 1, s.entries[2].hash());
+    assert_eq!(lot.accept(&w, 2, 2), Err("an entry its committee has not witnessed"));
+    put_at(w.chain(id_a(), 2), 51, Body::Supersede { from: 2 }, Some(2), SUPERSEDE_AT);
+    assert_eq!(w.check(id_a(), 2), Ok(()), "the chain takes it (shape)…");
+    lot.now = SUPERSEDE_AT;
+    assert_eq!(lot.may(&w, 2, 4), Err("a supersede of an entry a witness signed"), "…no witness signs it");
+    // Nor over an ACCEPTED entry (seq 1: its committee signed it).
+    let mut over = Two(stranded().0 .0);
+    put_at(over.chain(id_a(), 2), 51, Body::Supersede { from: 1 }, Some(2), SUPERSEDE_AT);
+    assert_eq!(over.check(id_a(), 2), Ok(()));
+    assert_eq!(lot.may(&over, 2, 4), Err("a supersede of an entry a witness signed"));
+    // Nor leaving an unaccepted entry below it (from 3: the send at 2 kept, never accepted).
+    let (mut below, mut lot2) = stranded();
+    put_at(below.chain(id_a(), 2), 51, Body::Supersede { from: 3 }, Some(2), 4099 + wallet::FRESH + 4096);
+    assert_eq!(below.check(id_a(), 2), Ok(()));
+    lot2.now = 4099 + wallet::FRESH + 4096;
+    assert_eq!(lot2.may(&below, 2, 4), Err("an entry its committee has not witnessed"));
+}
+
+#[test]
+fn a_superseded_send_credits_no_one() {
+    let (mut w, mut lot) = stranded();
+    put_at(w.chain(id_a(), 2), 51, Body::Supersede { from: 2 }, Some(2), SUPERSEDE_AT);
+    lot.now = SUPERSEDE_AT;
+    // 3's receive of the voided send (appended long before, stamped 4): well-formed from scratch as it was taken…
+    assert_eq!(w.check(id_a(), 3), Ok(()));
+    // …and a holder taking it in NEW refuses it outright.
+    assert_eq!(w.strict(id_a(), 3, 1), Err("a credit citing a superseded entry"));
+    // A receive of it made fresh (stamped now, a first copy): no witness signs it — what it cites was superseded.
+    *w.chain(id_a(), 3) = State::default();
+    put_at(w.chain(id_a(), 3), 3, Body::Receive { from: did(2), nonce: nonce(3), amount: 100, cited: 2, ev: Evidence::default() }, None, SUPERSEDE_AT);
+    assert_eq!(w.check(id_a(), 3), Ok(()));
+    assert_eq!(lot.may(&w, 3, 0), Err("a cited entry its owner superseded"));
+    // The money is 2's again — spent once, and only once.
+    assert_eq!(w.get(id_a(), 2).balance(), 300);
+}
+
+#[test]
+fn a_superseded_credit_can_be_taken_again() {
+    // 2's receive of 1's send (seq 0) never witnessed — superseded from 0, taken again.
+    let mut w = three_hops();
+    let mut lot = Lot::new();
+    lot.every = true;
+    lot.drawn = 1_000_000;
+    lot.witness(&w, 1).unwrap();
+    let mut again = Two(w.0.clone());
+    put_at(again.chain(id_a(), 2), 60, Body::Receive { from: did(1), nonce: nonce(2), amount: 300, cited: 0, ev: Evidence::default() }, None, 3);
+    assert_eq!(again.check(id_a(), 2), Err("a send received twice"), "without a supersede: refused");
+    put_at(w.chain(id_a(), 2), 61, Body::Supersede { from: 0 }, Some(2), SUPERSEDE_AT);
+    assert_eq!(w.get(id_a(), 2).balance(), 0);
+    assert!(!cut::received_keys(&w.get(id_a(), 2).entries).contains(&received_key(RECEIVED, &did(1), &nonce(2))), "a cut would not hold its name");
+    put_at(w.chain(id_a(), 2), 62, Body::Receive { from: did(1), nonce: nonce(2), amount: 300, cited: 0, ev: Evidence::default() }, None, SUPERSEDE_AT);
+    assert_eq!(w.check(id_a(), 2), Ok(()));
+    assert_eq!(w.get(id_a(), 2).balance(), 300);
+    lot.now = SUPERSEDE_AT;
+    let last = w.get(id_a(), 2).entries.last().unwrap().seq;
+    witness_one(&mut lot, &w, 2, last - 1).unwrap();
+    witness_one(&mut lot, &w, 2, last).unwrap();
+    assert_eq!(lot.accept(&w, 2, last), Ok(wallet::NEED));
+}
+
+#[test]
+fn a_supersede_is_the_owners_alone_and_never_splits_another() {
+    let (w, _) = stranded();
+    // Worked by anyone: refused.
+    let mut x = Two(w.0.clone());
+    put_at(x.chain(id_a(), 2), 51, Body::Supersede { from: 2 }, None, SUPERSEDE_AT);
+    assert_eq!(x.check(id_a(), 2), Err("an entry not signed by the chain's writer"));
+    // One voiding 2.., then one voiding 3.. over it: splits the first (2 would come back) — refused.
+    let mut y = Two(w.0.clone());
+    put_at(y.chain(id_a(), 2), 51, Body::Supersede { from: 2 }, Some(2), SUPERSEDE_AT);
+    put_at(y.chain(id_a(), 2), 52, Body::Burn { amount: 1 }, Some(2), SUPERSEDE_AT);
+    put_at(y.chain(id_a(), 2), 53, Body::Supersede { from: 3 }, Some(2), SUPERSEDE_AT + 3 * 4096);
+    assert_eq!(y.check(id_a(), 2), Err("a supersede that splits an earlier one"));
+    // Voiding the first WHOLE (from 2 again, the first supersede itself never witnessed): taken.
+    let mut z = Two(w.0.clone());
+    put_at(z.chain(id_a(), 2), 51, Body::Supersede { from: 2 }, Some(2), SUPERSEDE_AT);
+    put_at(z.chain(id_a(), 2), 52, Body::Burn { amount: 1 }, Some(2), SUPERSEDE_AT);
+    put_at(z.chain(id_a(), 2), 53, Body::Supersede { from: 2 }, Some(2), SUPERSEDE_AT + 3 * 4096);
+    assert_eq!(z.check(id_a(), 2), Ok(()));
+    assert_eq!(z.get(id_a(), 2).balance(), 300);
+    // Of nothing: refused.
+    let mut n = Two(w.0.clone());
+    put_at(n.chain(id_a(), 2), 51, Body::Supersede { from: 4 }, Some(2), SUPERSEDE_AT);
+    assert_eq!(n.check(id_a(), 2), Err("a supersede of nothing held"));
 }

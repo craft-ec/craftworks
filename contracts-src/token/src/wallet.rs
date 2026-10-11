@@ -13,7 +13,8 @@ use crate::{supply, timed, walk, Body, ChainParams, Definition, Entry, Signer, S
 pub const COMMITTEE: usize = 16;
 /// How far behind the beacon a witness still signs an entry's stamp: one epoch. Further back, a writer could pick, among
 /// past epochs whose outputs are known, one whose committee for its place suits it (a first copy is taken without the
-/// append rules); within it, a lot is one try an epoch. A witness has a whole epoch to reach an entry.
+/// append rules); within it, a lot is one try an epoch. A witness has a whole epoch to reach an entry. (One it never
+/// reached — its witnesses away — is not stuck: its owner SUPERSEDES it, TOKEN §3d, `crate::may_supersede`.)
 pub const FRESH: u64 = supply::EPOCH;
 /// The signatures a FULL committee needs (16 drawn seats, no baseline).
 pub const NEED: usize = 11;
@@ -198,6 +199,10 @@ pub fn cited(p: &ChainParams, e: &Entry, chain: &dyn Fn(&Tok, &[u8; 32]) -> Opti
         let c = p.at(t, owner);
         let held = chain(&t, &owner).ok_or("a cited chain not held")?;
         let i = held.entries.iter().position(pick).ok_or("a cited entry not held")?;
+        // Never on an entry its owner SUPERSEDED (TOKEN §3d): it was never value, and never will be.
+        if crate::is_superseded(&held, held.entries[i].seq) {
+            return Err("a cited entry its owner superseded");
+        }
         Ok((c, held.entries[i].clone(), i.checked_sub(1).map(|j| held.entries[j].clone())))
     };
     Ok(match &e.body {
@@ -231,6 +236,10 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
         return Err("a forked chain");
     }
     let i = s.entries.iter().position(|e| e.seq == seq).ok_or("an entry not held")?;
+    // A SUPERSEDED entry is void (TOKEN §3d): never signed, whatever its stamp.
+    if crate::is_superseded(s, seq) {
+        return Err("an entry its owner superseded");
+    }
     let prefix = State { entries: s.entries[..=i].to_vec(), fork: None };
     holds(&prefix)?;
     let e = &s.entries[i];
@@ -248,7 +257,8 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
     timed(d, e.stamp, &prefix, e)?;
     // FROZEN or PAUSED (TOKEN §2): a debit of an account its freeze list said frozen at the entry's stamp — the append
     // rule a first copy skips (audit 10-10).
-    let debit = e.balance < i.checked_sub(1).map_or(0, |j| s.entries[j].balance);
+    // (A supersede moves no value: what it takes back never was.)
+    let debit = !matches!(e.body, Body::Supersede { .. }) && e.balance < i.checked_sub(1).map_or(0, |j| s.entries[j].balance);
     if d.freeze.is_some() && debit {
         let list = (src.freeze)(&p.definition).ok_or("the freeze list not read")?;
         if list.frozen_at(&p.owner, e.stamp) {
@@ -265,12 +275,14 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
     if let Body::KeeperMint { epoch, root, .. } = &e.body {
         statement_accept(src, *epoch, root)?;
     }
-    match i.checked_sub(1) {
-        Some(j) => {
+    match (&e.body, i.checked_sub(1)) {
+        // A SUPERSEDE stands on the entry before what it voids, not on its (void) predecessor (TOKEN §3d).
+        (Body::Supersede { from }, _) => supersede_rests(src, p, d.margin, s, i, *from)?,
+        (_, Some(j)) => {
             accept(src, p, &s.entries[j], j.checked_sub(1).map(|k| &s.entries[k]))?;
         }
-        None if seq != 0 => return Err("an entry whose predecessor is not held"),
-        None => {}
+        (_, None) if seq != 0 => return Err("an entry whose predecessor is not held"),
+        (_, None) => {}
     }
     // On the account's CURRENT key (the append rule a first copy skips): a device stolen before a rotation signs
     // nothing a witness takes.
@@ -279,6 +291,31 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
         accept(src, &c, &x, before.as_ref())?;
     }
     Ok(e.hash())
+}
+
+/// What a SUPERSEDE (entry `i` of `s`, voiding seqs `from` on) stands on (TOKEN §3d): the entry before `from` ACCEPTED
+/// (so it voids only an unaccepted tail), and NO witness signature at any place it voids — under each place's own lot
+/// (where its committee signs). What the contract already holds it to (`walk`): a tail stamped so long ago that no
+/// witness signs it, nor any container takes a signature of it, again (`may_supersede`). So nothing anyone was credited
+/// by — nor anything a committee began to sign — is ever voided; and a voided entry can never become value after.
+pub fn supersede_rests(src: &Source, p: &ChainParams, margin: u64, s: &State, i: usize, from: u64) -> Result<(), Why> {
+    let id = p.id();
+    let j = s.entries[..i].iter().position(|x| x.seq == from).ok_or("a supersede of nothing held")?;
+    match j.checked_sub(1) {
+        Some(k) => {
+            accept(src, p, &s.entries[k], k.checked_sub(1).map(|m| &s.entries[m]))?;
+        }
+        None if from != 0 => return Err("an entry whose predecessor is not held"),
+        None => {}
+    }
+    for k in j..i {
+        let x = &s.entries[k];
+        let (lot_epoch, _) = lot_of(x, k.checked_sub(1).map(|m| &s.entries[m]), margin)?;
+        if (src.sigs)(&id, x.seq, lot_epoch).iter().any(|w| w.chain == id && w.seq == x.seq) {
+            return Err("a supersede of an entry a witness signed");
+        }
+    }
+    Ok(())
 }
 
 /// A program's section BACKED (TOKEN §5): it holds (conservation per token), and every escrow it lists is an `Escrow`

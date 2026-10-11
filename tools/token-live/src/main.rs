@@ -155,6 +155,8 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
         T::Body::Unstake { .. } | T::Body::Slash { .. } | T::Body::Misdeed { .. } | T::Body::FalseVerdict { .. } | T::Body::FalseMint { .. } | T::Body::KeeperMint { .. } => bal,
         T::Body::Release { unstake } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Unstake { amount } if &x.nonce == unstake => Some(*amount), _ => None }).unwrap_or(0),
         T::Body::Allow { .. } | T::Body::Cut { .. } | T::Body::Writer { .. } | T::Body::Members { .. } => bal,
+        // The balance before `from` (TOKEN §3d).
+        T::Body::Supersede { from } => s.entries.iter().rfind(|x| x.seq < *from).map_or(0, |x| x.balance),
     };
     let mut e = T::Entry { seq: s.entries.last().map_or(0, |e| e.seq + 1), prev: s.head(), nonce: n, stamp, body, balance, auth: T::Auth::Work(0) };
     let m = e.message();

@@ -10,6 +10,7 @@
 //!   checked against the token's own shape rules before it is returned: the wallet never writes what the contract
 //!   refuses.
 //! - COLLECTING ([`Wallet::collect`], W2) and CUTS ([`Wallet::cut`], W3): see each.
+//! - SUPERSEDING a wedged tail ([`Wallet::supersede`], TOKEN §3d): entries no witness signed and none ever can.
 
 pub mod chained;
 pub mod craft;
@@ -150,6 +151,39 @@ impl Wallet<'_> {
         s.entries.push(w.clone());
         t::walk(&h.params, &h.definition, &s, &|_, _| None, &|_| None, Some(self.keys), 0, usize::MAX, &t::Extra::NONE).map_err(|(_, w)| w)?;
         Ok(vec![w])
+    }
+
+    /// SUPERSEDE `h`'s tail from seq `from` on (TOKEN §3d): this device's writer entry first if need be, then the
+    /// supersede, stamped `now` — the chain back to its state before `from` (a voided debit's money back, a voided
+    /// credit's name free to be taken again: `collect`). The caller has found the tail WEDGED: the entry before `from`
+    /// accepted, none from it on signed by any witness. Refused (as the contract refuses) before its witnesses can never
+    /// sign the entry at `from` again (`may_supersede`). What was paid in the voided tail is NOT paid again here: a
+    /// payment is its person's to make (it returns to the balance, and the payment's status says it was superseded).
+    pub fn supersede(&self, h: &Held, from: u64, now: u64) -> Result<Vec<Entry>, Why> {
+        if h.state.fork.is_some() {
+            return Err("a forked chain");
+        }
+        let s0 = &h.state;
+        let first = s0.entries.iter().find(|e| e.seq == from).ok_or("a supersede of nothing held")?;
+        let stamp = now.max(s0.entries.last().map_or(0, |e| e.stamp));
+        if !t::may_supersede(first.stamp, stamp) {
+            return Err("a supersede of entries its witnesses may still sign");
+        }
+        // The balance before `from`: the entry there carries it (it is never void itself).
+        let balance = s0.entries.iter().rfind(|e| e.seq < from).map_or(0, |e| e.balance);
+        let mut s = s0.clone();
+        let mut out = Vec::new();
+        if t::writer_at(&s, s.entries.len()) != Some(self.signer()) {
+            let w = self.writer(&s, &h.params, stamp);
+            s.entries.push(w.clone());
+            out.push(w);
+        }
+        let seq = s.entries.last().map_or(0, |e| e.seq + 1);
+        let e = self.signed(&s, nonce_of(&h.params, seq), stamp, Body::Supersede { from }, balance);
+        s.entries.push(e.clone());
+        out.push(e);
+        t::walk(&h.params, &h.definition, &s, &|_, _| None, &|_| None, Some(self.keys), 0, usize::MAX, &t::Extra::NONE).map_err(|(_, w)| w)?;
+        Ok(out)
     }
 
     fn debit_named(&self, h: &Held, body: Body, now: u64, name: &dyn Fn([u8; 16]) -> [u8; 16]) -> Result<Vec<Entry>, Why> {
@@ -333,8 +367,10 @@ impl Wallet<'_> {
                 Body::Cut { history, .. } if e.seq > 0 => Some(*history),
                 _ => None,
             });
+            let void = t::superseded(&whole.entries);
             for x in &whole.entries {
-                if x.stamp.saturating_add(m) > stamp {
+                // (A debit its owner SUPERSEDED was never value and never will be — TOKEN §3d.)
+                if x.stamp.saturating_add(m) > stamp || t::voided(&void, x.seq) {
                     continue;
                 }
                 // Pruned from the sender's live chain: shown by its history (a presence proof and its bytes).
@@ -386,7 +422,8 @@ impl Wallet<'_> {
         // RELEASES and PAYOUTS by programs' verdicts; RECLAIMS of escrows no program took, from their time on.
         let open: Vec<([u8; 16], u128, [u8; 32], u64)> = {
             let mut o = Vec::new();
-            for x in &s.entries {
+            let void = t::superseded(&s.entries);
+            for x in s.entries.iter().filter(|x| !t::voided(&void, x.seq)) {
                 match &x.body {
                     Body::Escrow { program, amount, until, .. } => o.push((x.nonce, *amount, *program, *until)),
                     Body::Unescrow { escrow, .. } | Body::Reclaim { escrow } => o.retain(|e: &([u8; 16], u128, [u8; 32], u64)| e.0 != *escrow),
@@ -449,7 +486,8 @@ impl Wallet<'_> {
             }
         }
         // RELEASES of unbonded stake, their delay over.
-        let released: Vec<[u8; 16]> = s.entries.iter().filter_map(|x| match &x.body {
+        let void = t::superseded(&s.entries);
+        let released: Vec<[u8; 16]> = s.entries.iter().filter(|x| !t::voided(&void, x.seq)).filter_map(|x| match &x.body {
             Body::Release { unstake } => Some(*unstake),
             _ => None,
         }).collect();

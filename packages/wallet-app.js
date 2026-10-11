@@ -122,6 +122,7 @@ export async function mount(ctx, el) {
     if (!st || st.stage === "missing") return h("span", { className: "chip settling", textContent: "not seen yet", title: st?.why ?? "" });
     if (st.stage === "accepted") return h("span", { className: "chip accepted", textContent: `accepted ✓ ${st.signed}`, title: `${st.signed} witness signature(s)` });
     if (st.stage === "witnessing") return h("span", { className: "chip witnessing", textContent: "waiting for witnesses", title: st.why ?? "" });
+    if (st.stage === "superseded") return h("span", { className: "chip settling", textContent: "returned to its sender", title: st.why ?? "" });
     return h("span", { className: "chip settling", textContent: "settling", title: "inside its margin: final in a few beacon steps" });
   };
 

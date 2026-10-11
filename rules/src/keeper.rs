@@ -163,7 +163,8 @@ pub fn mint(ctx: &crate::tokens::Ctx, lot: &crate::tokens::Lot, got: Got, did: &
     let mut want = Vec::new();
     let Some((s, keys)) = crate::allowance::read_chain(got, &cp, did, &mut want)? else { return Ok(Step::Want(want)) };
     let nonce = t::keeper_nonce(&token, epoch);
-    if s.entries.iter().any(|e| e.nonce == nonce) {
+    // (Minted already — unless that mint was SUPERSEDED, never witnessed: TOKEN §3d, minted again.)
+    if s.entries.iter().any(|e| e.nonce == nonce && !t::is_superseded(&s, e.seq)) {
         return Ok(Step::Done(None));
     }
     let mut e = t::Entry { seq: s.entries.last().map_or(0, |e| e.seq + 1), prev: s.head(), nonce, stamp: now.max(s.entries.last().map_or(0, |e| e.stamp)), body: t::Body::KeeperMint { epoch, root: *root, proof: proof.to_vec(), amount: line.keeper, fee: line.witness }, balance: s.balance() + line.witness, auth: t::Auth::Work(0) };

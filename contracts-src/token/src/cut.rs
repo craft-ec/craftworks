@@ -10,9 +10,12 @@ use std::collections::BTreeMap;
 pub type Blocks = BTreeMap<Cid, Vec<u8>>;
 
 /// The received-set keys of a chain's entries (every name received, filled or claimed), in key order.
+/// (A SUPERSEDED credit is not in it — TOKEN §3d: its name may be taken again.)
 pub fn received_keys(entries: &[Entry]) -> Vec<Vec<u8>> {
+    let void = crate::superseded(entries);
     let mut k: Vec<Vec<u8>> = entries
         .iter()
+        .filter(|e| !crate::voided(&void, e.seq))
         .filter_map(|e| match &e.body {
             Body::Receive { from, nonce, .. } => Some(received_key(RECEIVED, from, nonce)),
             Body::FeeClaim { from, nonce, .. } => Some(crate::received_key(crate::FEE, from, nonce)),

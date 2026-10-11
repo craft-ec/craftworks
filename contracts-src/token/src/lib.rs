@@ -588,6 +588,13 @@ pub enum Body {
         /// Writer keys retired while stake was held — still burnable.
         retired: Vec<[u8; 32]>,
     },
+    /// A SUPERSEDE (TOKEN §3d, owner-signed): the entries from seq `from` up to this one — a tail NO witness signed,
+    /// stamped so long ago that none ever can (`may_supersede`) — are VOID: the chain carries on from the state before
+    /// `from` (balance, allowances, stake, the names received: a voided credit can be taken again, a voided debit's
+    /// money is back). Its writer stays the one that wrote last. Never over a cut; a supersede it voids voids nothing
+    /// below `from`. Its witnesses sign it only on the entry before `from` ACCEPTED and no signature at any voided
+    /// place (`wallet::may_witness`), so what anyone was ever credited by is never voided.
+    Supersede { from: u64 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -884,6 +891,10 @@ impl Entry {
                     v.extend_from_slice(k);
                 }
             }
+            Body::Supersede { from } => {
+                v.push(35);
+                v.extend_from_slice(&from.to_le_bytes());
+            }
         }
         v.extend_from_slice(&self.balance.to_le_bytes());
         v
@@ -1031,6 +1042,7 @@ impl Entry {
             26 => Body::Unescrow { escrow: r.arr()?, refund: r.u128()?, verdict: r.arr()? },
             27 => Body::Payout { program: r.arr()?, key: r.arr()?, amount: r.u128()?, verdict: r.arr()?, ev: read_ev(r)? },
             29 => Body::HolderPayout { program: r.arr()?, sold: (Tok::read(r)?, r.arr()?, r.arr()?), copy: r.u128()?, at: r.u64()?, amount: r.u128()?, verdict: r.arr()?, ev: read_ev(r)? },
+            35 => Body::Supersede { from: r.u64()? },
             20 => Body::Vested { from: r.arr()?, vest: r.arr()?, step: r.u32()?, amount: r.u128()?, at: r.u64()?, cited: r.u64()?, ev: read_ev(r)? },
             _ => return None,
         };
@@ -1246,8 +1258,10 @@ pub fn cited_chains_from(p: &ChainParams, s: &State, from: usize) -> Vec<(Tok, [
 
 /// What is unbonding in a chain: (unstake nonce, amount, release height) — from its unstakes, and its cut's.
 pub fn unbonding_of(s: &State) -> Vec<([u8; 16], u128, u64)> {
+    let void = superseded(&s.entries);
     s.entries
         .iter()
+        .filter(|e| !voided(&void, e.seq))
         .flat_map(|e| match &e.body {
             Body::Unstake { amount } => vec![(e.nonce, *amount, e.stamp.saturating_add(UNBOND))],
             Body::Cut { unbonding, .. } => unbonding.clone(),
@@ -1256,6 +1270,37 @@ pub fn unbonding_of(s: &State) -> Vec<([u8; 16], u128, u64)> {
         .collect()
 }
 
+
+/// SUPERSEDED (TOKEN §3d): the seqs `[from, at)` each [`Body::Supersede`] among `entries` voids (at: its own seq). A
+/// supersede that is itself voided lies inside the range voiding it, with all it voided (the walk refuses one that
+/// would split another): an entry is void iff some range holds it.
+pub fn superseded(entries: &[Entry]) -> Vec<(u64, u64)> {
+    entries.iter().filter_map(|e| match e.body {
+        Body::Supersede { from } => Some((from, e.seq)),
+        _ => None,
+    }).collect()
+}
+
+/// Is `seq` in one of the `superseded` ranges?
+pub fn voided(ranges: &[(u64, u64)], seq: u64) -> bool {
+    ranges.iter().any(|(f, t)| *f <= seq && seq < *t)
+}
+
+/// Is entry `seq` of `s` VOID — superseded by its owner (TOKEN §3d)? Nothing cites it from then on, and no witness
+/// signs it.
+pub fn is_superseded(s: &State, seq: u64) -> bool {
+    voided(&superseded(&s.entries), seq)
+}
+
+/// May a tail whose FIRST entry is stamped `first` be superseded by an entry stamped `stamp` (TOKEN §3d)? Only once no
+/// witness can ever sign that entry again: a witness signs nothing stamped more than [`wallet::FRESH`] behind the beacon,
+/// so the latest any signature of it is dated is `first + FRESH` — and a signature dated then is no longer TAKEN by its
+/// container (`witness::fresh`: a registry freeze between, past `AT_SLACK`) by the time the supersede is stamped. A
+/// tail that its witnesses may still sign (they were slow, not gone) waits; one they can never sign is never stuck.
+pub fn may_supersede(first: u64, stamp: u64) -> bool {
+    let last = first.saturating_add(wallet::FRESH);
+    stamp > last && !witness::fresh(last, stamp)
+}
 
 /// Is `pick`'s entry in chain `c` (id `cid`) — live, or, pruned behind its cut, shown by the evidence: a presence proof
 /// that its history holds those entry bytes at the seq named.
@@ -1375,6 +1420,14 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
         // The last cut: its stamp (what is stamped at or before it may be in its received set) and that set's root.
         let mut cut: Option<(u64, [u8; 32])> = None;
         let first = s.entries.first().map_or(0, |e| e.seq);
+        // SUPERSEDES (TOKEN §3d): where each one's state comes back from — the carried state just before its `from`, kept
+        // as the walk passes there.
+        let restore_at: Vec<usize> = s.entries.iter().filter_map(|e| match e.body {
+            Body::Supersede { from } if from >= first && from < e.seq => Some((from - first) as usize),
+            _ => None,
+        }).collect();
+        #[allow(clippy::type_complexity)]
+        let mut snaps: Vec<(usize, (u128, bool, Vec<([u8; 32], [u8; 16])>, Vec<([u8; 32], [u8; 16], u32)>, Vec<[u8; 16]>, Vec<([u8; 16], u128, [u8; 32], u64)>, Vec<([u8; 32], [u8; 16])>, Vec<([u8; 32], [u8; 16])>, Vec<([u8; 32], [u8; 16])>, Vec<([u8; 32], u128)>, u128, Vec<u64>, Vec<([u8; 16], u128, u64)>, Vec<[u8; 32]>))> = Vec::new();
         let recent_from = s.entries.len().saturating_sub(window);
         let owner_signed = |e: &Entry, w: &Option<Signer>| if w.as_ref().is_some_and(|w| w.signs(e)) { Ok(()) } else { Err("an entry not signed by the chain's writer") };
         // A credential making a node key a DEVICE of this chain's owner (identity's one rule, `credential_node`), at entry
@@ -1409,6 +1462,9 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
             failed_at = e.seq;
             if e.seq != first + i as u64 {
                 return Err("a seq out of place");
+            }
+            if restore_at.contains(&i) && !snaps.iter().any(|(j, _)| *j == i) {
+                snaps.push((i, (balance, begun, received.clone(), vested.clone(), minted.clone(), open_escrows.clone(), paid.clone(), shared.clone(), fees.clone(), allowed.clone(), staked, kept.clone(), unbonding.clone(), retired.clone())));
             }
             // A chain starts at seq 0 — or at its CUT (what came before pruned).
             let starts_at_cut = i == 0 && first > 0;
@@ -1527,6 +1583,11 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         if !shown(&c, &cp.id(), ev, *cited, &pick) {
                             return Err("a receive whose send is not in its sender's chain");
                         }
+                        // A NEW credit never cites an entry its owner SUPERSEDED (TOKEN §3d) — it was never value.
+                        // (Not from scratch: one appended before the supersede stays as it was taken.)
+                        if strict && c.entries.iter().find(|x| pick(x)).is_some_and(|x| is_superseded(&c, x.seq)) {
+                            return Err("a credit citing a superseded entry");
+                        }
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
                 }
@@ -1553,6 +1614,9 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         let pick = |x: &Entry| debit_for(x, &p.owner, e);
                         if !shown(&c, &cp.id(), ev, *cited, &pick) {
                             return Err("a fee whose transfer is not in its payer's chain");
+                        }
+                        if strict && c.entries.iter().find(|x| pick(x)).is_some_and(|x| is_superseded(&c, x.seq)) {
+                            return Err("a credit citing a superseded entry");
                         }
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
@@ -1700,6 +1764,9 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                         let pick = |x: &Entry| debit_for(x, &p.owner, e);
                         if !shown(&c, &cp.id(), ev, *cited, &pick) {
                             return Err("a vesting step that is not in its giver's chain");
+                        }
+                        if strict && c.entries.iter().find(|x| pick(x)).is_some_and(|x| is_superseded(&c, x.seq)) {
+                            return Err("a credit citing a superseded entry");
                         }
                     }
                     balance.checked_add(*amount).ok_or("a balance overflow")?
@@ -1975,6 +2042,33 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     unbonding.clear();
                     balance
                 }
+                Body::Supersede { from } => {
+                    owner_signed(e, &writer)?;
+                    if *from < first || *from >= e.seq {
+                        return Err("a supersede of nothing held");
+                    }
+                    let j = (*from - first) as usize;
+                    if s.entries[j..i].iter().any(|x| matches!(x.body, Body::Cut { .. })) {
+                        return Err("a supersede over a cut");
+                    }
+                    // A supersede it voids must void nothing below `from` (else the state before `from` would still
+                    // hold what that one voided).
+                    if s.entries[j..i].iter().any(|x| matches!(x.body, Body::Supersede { from: f } if f < *from)) {
+                        return Err("a supersede that splits an earlier one");
+                    }
+                    if !may_supersede(s.entries[j].stamp, e.stamp) {
+                        return Err("a supersede of entries its witnesses may still sign");
+                    }
+                    let (b, bg, rc, vs, mn, oe, pd, sh, fs, al, st, kp, ub, rt) = snaps.iter().find(|(k, _)| *k == j).map(|(_, x)| x.clone()).ok_or("a supersede of nothing held")?;
+                    (begun, received, vested, minted, open_escrows, paid, shared, fees, allowed, staked, kept, unbonding) = (bg, rc, vs, mn, oe, pd, sh, fs, al, st, kp, ub);
+                    // (The writer stays the one that wrote last; a key retired while staked stays burnable.)
+                    for k in rt {
+                        if !retired.contains(&k) {
+                            retired.push(k);
+                        }
+                    }
+                    b
+                }
                 Body::Cut { received: root, history: hroot, allowances, writer: w, staked: st, unbonding: ub, retired: rt, .. } => {
                     // (An escrow comes back before its chain is cut: a cut carries none.)
                     if !open_escrows.is_empty() {
@@ -2018,7 +2112,7 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
             if e.balance != balance {
                 return Err("a carried balance that does not add up");
             }
-            if !matches!(e.body, Body::Writer { .. } | Body::Members { .. }) {
+            if !matches!(e.body, Body::Writer { .. } | Body::Members { .. } | Body::Supersede { .. }) {
                 begun = true;
             }
             if staked == 0 && unbonding.is_empty() {
@@ -2137,7 +2231,8 @@ pub fn validate_wants(p: &ChainParams, s: &State) -> Vec<[u8; 32]> {
 
 /// Does anything new in `merged` (from index `from`) DEBIT the chain?
 pub fn debits_from(merged: &State, from: usize) -> bool {
-    (from..merged.entries.len()).any(|i| merged.entries[i].balance < if i == 0 { 0 } else { merged.entries[i - 1].balance })
+    // (A supersede moves no value: what it takes back was never value — TOKEN §3d.)
+    (from..merged.entries.len()).any(|i| !matches!(merged.entries[i].body, Body::Supersede { .. }) && merged.entries[i].balance < if i == 0 { 0 } else { merged.entries[i - 1].balance })
 }
 
 /// THE TIMED RULES (TOKEN §3b, §4a), of entry `e` of `merged` with the beacon at `now`: a citation no sooner than a
@@ -2253,7 +2348,8 @@ pub fn programs_from(p: &ChainParams, s: &State, from: usize) -> Vec<[u8; 32]> {
 /// the node a lookup).
 pub fn needs_operators(s: &State) -> bool {
     let mut allowed: Vec<([u8; 32], u128)> = Vec::new();
-    for e in &s.entries {
+    let void = superseded(&s.entries);
+    for e in s.entries.iter().filter(|e| !voided(&void, e.seq)) {
         match &e.body {
             Body::Allow { spender, limit } => {
                 allowed.retain(|(k, _)| k != spender);

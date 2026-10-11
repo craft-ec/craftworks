@@ -294,6 +294,7 @@ an entry it signs carries k signatures.
 | `vest(to, schedule)` / `vested(…)` | debit now / credit per step | owner / **anyone** | §4a |
 | `stake` / `unstake` / `release` | stake moved / unbonding / back | owner / owner / **anyone** | §4a |
 | `freeze` / `thaw` | blocks / unblocks debits | the freeze authority (in the freeze list, not the chain) | the definition names one |
+| `supersede(from)` | voids its tail from `from`: the state before it back | owner | no witness signed the tail, none ever can (§3d) |
 
 **Anyone may append what the chain's own rules prove** — so a receiver or a trader need never be online: their chain
 takes the credit, the payout, the refund by itself. The owner's key is needed only for what spends or permits.
@@ -389,6 +390,63 @@ LOCK took its update (v0 → v1); one whose lock says NOPE refused it ("invalid 
 A forged stamp can only pass where the chain was never held (a fresh PUT is checked by its shape alone) — and dies at
 every node that did hold it, which applies the append rules before it merges. A chain's time is its stamps; its stamps
 were checked against the beacon by every node that held the chain when they arrived.
+
+## 3d. A tail no witness can sign is SUPERSEDED by its owner (10-11)
+
+MEASURED on private nodes (10-11): an allowance chain's entry was not witnessed while its witness was down a few hours;
+past `wallet::FRESH` (= one claims epoch, 4,096 steps, ~5.7 h at the live 5 s step) no witness signs it ("an entry
+stamped too long ago", §8 item 5), and every later entry of the chain is refused by induction ("an entry its committee
+has not witnessed") — the wallet WEDGED for good. FRESH stays (no back-dating: a stamp is witnessed only near the beacon,
+so a writer cannot pick among past epochs' committees, nor date a refund or a vesting step back). What is added is a way
+OUT that keeps it: the chain's owner SUPERSEDES the tail nobody signed with fresh entries.
+
+- **Appended, never replaced.** `Body::Supersede { from }` is the chain's NEXT entry (owner-signed, stamped near the
+  beacon like any entry): the entries from seq `from` up to it are VOID, the chain carries on from the state before
+  `from`. Not a second entry at an existing seq: two writer entries at one seq are the owner's equivocation (§3b — the
+  merge freezes the chain, a witness signing both is burned), and the append rules refuse replacing an entry past its
+  finality (`append_check`). So no place ever holds two entries, the merge is untouched, and no witness can be made to
+  look like an equivocator.
+- **The shape rule** (`walk`, true forever once true — §3c: it reads stamps only): signed by the chain's writer; `from`
+  held and below it; no CUT in the voided range; it voids nothing a later supersede would split (one it voids lies wholly
+  in its range — then "void" is simply "inside some supersede's range", `is_superseded`); and `may_supersede(stamp of
+  from, its stamp)`: past `stamp + FRESH` (no witness signs the entry at `from` any more) and far enough past that a
+  signature dated `stamp + FRESH` is no longer TAKEN by its container (`witness::fresh`: a registry freeze between, past
+  `AT_SLACK`). The wait: FRESH + 16 to FRESH + one epoch (~5.7–11.4 h live). A tail its witnesses may still sign (they
+  were slow, not gone) waits; one they can never sign is never stuck. The state after it: the state before `from` —
+  balance, allowances, stake, unbonding, open escrows, the names received, mints, keeper epochs (a voided credit can be
+  taken again; a voided debit's money is back). Its writer stays the one that wrote last; a key retired while staked
+  stays burnable; a voided transfer's nonce stays used (no new debit is ever named like it).
+- **The witness rule** (`wallet::may_witness` → `supersede_rests`): a supersede stands on the entry BEFORE `from`
+  ACCEPTED (not on its void predecessor), and NO signature at any place it voids (each place's container, under its own
+  lot) — a signature is its committee's to finish, never the owner's to void, so nothing anyone was credited by (nor any
+  entry a committee began to sign) is ever voided. A voided entry is never signed ("an entry its owner superseded").
+  The supersede itself is then witnessed like any entry — FRESH applies to IT — and the chain is witnessed on from it.
+- **No double credit.** A voided entry had no signature when it was voided and can take none after (its witnesses
+  refuse it past FRESH; its containers refuse any signature dated then, past the freeze): it is never value. So: a
+  witness signs no credit citing it ("a cited entry its owner superseded"); a holder refuses a NEW credit citing it
+  ("a credit citing a superseded entry" — at append only: a receive taken BEFORE the supersede stays well-formed from
+  scratch, §3c, and is never witnessed: its own chain is then wedged and its owner supersedes it in turn, taking what is
+  really owed again); a wallet collects none (`Wallet::collect`); a receiving page marks the payment done, its status
+  SUPERSEDED ("returned to its sender"). The money moves once: back with its sender.
+- **Who does it, automatically** (one rule: `rules::wallet::supersede_held`, the core's `wallet_supersede`). The page's
+  witness queue (`packages/tokens.js` `queueAll`) already re-checks every entry it wrote that is not accepted when its
+  queue ages out; an entry whose stamp `may_supersede` now has its chain's tail superseded — the tail from the first
+  entry after the last accepted one, only where no witness signed any of it — a DID chain signed by the node's device
+  (the delegate's `TokenSign`), a stealth chain by its one-time key (the wallet seed). The account's own DID chains (the
+  allowance's, $CRAFT's) are checked the same way by their LAST entry (`wedgedOwn`, `wallet_tail`): entries others
+  append there — a keeper mint, by any page — are in no queue row of its page's. Then the voided entries' queue rows
+  are closed, the supersede queued, and what was voided is owed again: a stealth chain's found payment is received again,
+  the allowance's payout cursor rewound to the first voided stamp, a voided keeper mint minted again by the statement
+  loop (`tokens.remints`). A voided DEBIT is not paid again: a payment is its person's to make (its money is back, the
+  history shows it returned); the page's own automatic moves (to private) simply happen again.
+- **The delegate** writes no token chain entry (payments, mints and payouts are the page's): it only WITNESSES, by the
+  same `may_witness` — so it signs supersedes and refuses voided entries as the page does. A wedged chain waits for its
+  page to open (nobody must stay online: the supersede has no deadline). Tools (token-net, token-ops) read through the
+  same contract crate.
+
+Built 10-11 (contract source only — `contracts/token.wasm` not rebuilt: the rebuild re-keys every token contract and
+ships with a release). Tests with negative controls: `contracts-src/token/src/tests.rs` (§3d block), `wallet/src/tests.rs`
+(`a_superseded_*`), `rules/src/wallet.rs` (`a_wedged_payment_is_superseded_*`). Open: §8 item 7.
 
 ## 4. Escrow: the token's one door for apps (owner 10-09: swaps, pools are apps, not the token)
 
@@ -900,6 +958,8 @@ wallet only hands the chain over when told.
   (`packages/editions.js`, S4) — LIVE fx/fy 10-10 (S5): A made editions on its post; B on the other node bought a
   copy (its pay chain begun, paid, minted, collected — signed by its node's `TokenSign`) and both nodes then showed
   "4 of 5 left", B "you hold #1".
+- **SUPERSEDE — BUILT 10-11.** `Wallet::supersede(h, from, now)`: a tail no witness signed and none ever can (§3d) voided
+  by the chain's next entry, its state back to before `from` — this device's writer entry first if need be.
 - Not in the core (the account's, at rollout): which device writes a chain (the core hands it over when told), finding
   counterparties' chains (the token's activity), fetching and publishing.
 
@@ -964,7 +1024,8 @@ DID; only the sender and the recipient know who was paid.
    own stamp and refuses an entry stamped ahead of the beacon, so a first copy's timing tricks are never witnessed.
    CLOSED 10-09: a witness signs no entry stamped more than an epoch behind the beacon (`wallet::FRESH`) — back-dating
    into an older epoch would let a writer pick, among past epochs whose outputs are known, one whose committee for its
-   place suits it; within an epoch the lot is fixed by the place (§5a).
+   place suits it; within an epoch the lot is fixed by the place (§5a). Its cost — an entry not witnessed within FRESH
+   wedged its chain for good (measured 10-11) — CLOSED 10-11 by the owner's SUPERSEDE of such a tail (§3d), FRESH kept.
 
 6. AUDIT 10-11 — OPEN, each with its designed direction (built so far: STORAGE ANSWERS):
    - CLAIMS REGISTRY FILL: one shared registry per epoch caps at 4,096 claims and cannot rank claims it cannot check,
@@ -1012,6 +1073,17 @@ DID; only the sender and the recipient know who was paid.
      makes the item; no page watch runs) — `token-ops misdeed --post` is the submit path.
    - RULE VERSIONS: nothing pins which rules an epoch runs, and the token contract re-keys on every rebuild. Direction:
      the rule version in the statement's params; a witness refuses an epoch whose version it does not run.
+
+7. SUPERSEDE (§3d) — OPEN, each with its direction:
+   - A tail SOME witness signed, fewer than its committee needs, past FRESH: still wedged (the supersede is refused
+     wherever any signature exists — a signature is its committee's to finish). Rare (a committee signs within minutes
+     of each other), but not impossible. Direction: let a supersede void a place whose signatures, as every copy holds
+     them after the freeze past FRESH, are below the threshold — needs a rule on which copy's signatures count.
+   - "No signature" is as each supersede witness READS the containers: a copy missing a signature another copy holds
+     could let a supersede be signed over an entry a wallet counted as accepted (a capture of 11 of 16, or a partition).
+     Direction: a MISDEED (`Body::FalseSupersede`) showing a witness signed a supersede over a place holding signatures
+     dated before it — its stake burned, as a fake credit's witness is.
+   - Not measured on the network: `contracts/token.wasm` is not rebuilt (the rebuild re-keys every token contract).
 
 (A token's own ISSUANCE — its supply rule and size, who holds its genesis, what it does with fees — is that token's
 choice, made in its definition from the menu (§6), not the standard's: the Craftworks token's are in §7.)

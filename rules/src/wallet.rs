@@ -4,7 +4,7 @@
 //! read these, have the delegate sign this, done). The wallet core (`craftworks_wallet`) builds every entry; nothing
 //! here decides a token rule.
 
-use crate::tokens::{begin, device_of, holding, on_our_clock, Ctx, Device, Got, Put, Step};
+use crate::tokens::{begin, device_of, holding, on_our_clock, there, Ctx, Device, Got, Put, Step};
 use craftworks_token_contract as t;
 use craftworks_wallet::{Sources, Wallet};
 use t::{Body, Definition, State};
@@ -242,6 +242,10 @@ pub fn receive_private(ctx: &Ctx, lot: &crate::tokens::Lot, got: Got, a: &stealt
         Err(w) => return Ok(Step::Want(w)),
         Ok(mut cs) => (cs.remove(0), cs.remove(0)),
     };
+    // A debit its sender SUPERSEDED (TOKEN §3d) was never value: nothing to take, ever — done with.
+    if from.1.entries.iter().find(|e| e.nonce == a.nonce).is_some_and(|e| t::is_superseded(&from.1, e.seq)) {
+        return Ok(Step::Done(Received { put: None, amount: 0, pending: 0, unwitnessed: 0, why: Some("its sender superseded it: never value".into()) }));
+    }
     let pending = from.1.entries.iter().filter(|e| e.nonce == a.nonce && e.stamp.saturating_add(d.margin) > now).count() as u32;
     // Final: its debit ACCEPTED, or nothing is taken yet.
     if pending == 0 {
@@ -284,6 +288,9 @@ pub enum Stage {
     Accepted(usize),
     /// NOT SEEN, and why (a report carries its diagnosis): its chain is not on the network, or holds no such entry.
     Missing(String),
+    /// SUPERSEDED by its sender (TOKEN §3d): its witnesses never signed it and never could — never value; its money
+    /// went back to the sender.
+    Superseded,
 }
 
 /// The STATUS of the payment `a` announces (sent or received alike): `None` when its debit is not in the paying chain
@@ -309,6 +316,9 @@ pub fn status(ctx: &Ctx, lot: &crate::tokens::Lot, got: Got, a: &stealth::Announ
         Body::Send { amount, .. } | Body::Spend { amount, .. } => amount,
         _ => return Ok(Step::Done(None)),
     };
+    if t::is_superseded(&s, e.seq) {
+        return Ok(Step::Done(Some(Status { amount, stamp: e.stamp, stage: Stage::Superseded })));
+    }
     if e.stamp.saturating_add(d.margin) > now {
         return Ok(Step::Done(Some(Status { amount, stamp: e.stamp, stage: Stage::Settling })));
     }
@@ -320,6 +330,113 @@ pub fn status(ctx: &Ctx, lot: &crate::tokens::Lot, got: Got, a: &stealth::Announ
             Err(why) => Stage::Unwitnessed(why),
         } })),
     })
+}
+
+/// What a SUPERSEDE built (TOKEN §3d): the chain to put, and the seqs it voided — `from` up to `to` (the supersede's own).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Superseded {
+    pub put: Put,
+    pub from: u64,
+    pub to: u64,
+    /// The first voided entry's stamp (credits owed since then are collected again: the allowance's payouts).
+    pub stamp: u64,
+    /// The standing epochs whose KEEPER MINTS it voided (minted again: their lines are still owed).
+    pub keeper_epochs: Vec<u64>,
+}
+
+/// SUPERSEDE the WEDGED tail of `h` (TOKEN §3d) that holds its entry `seq` — one the caller saw not accepted (the
+/// page's witness queue, as an entry ages out): the tail runs from the first entry after the last ACCEPTED one; it is
+/// superseded only once no witness can ever sign it (`may_supersede` at `now`) and no witness signed any of it (each
+/// place's container, under its own lot). Built and signed by `w` (`asking`: the page's device, which signs by asking).
+/// `Done(Err(why))`: not superseded — accepted, still signable, a witness signed, already superseded.
+pub fn supersede_held(lot: &crate::tokens::Lot, got: Got, w: &Wallet, asking: Option<&craftworks_wallet::Asking>, h: &craftworks_wallet::Held, seq: u64, now: u64) -> Result<Step<Result<Superseded, String>>, String> {
+    let s = &h.state;
+    let (p, d) = (&h.params, &h.definition);
+    if s.fork.is_some() {
+        return Ok(Step::Done(Err("a forked chain".into())));
+    }
+    if t::is_superseded(s, seq) {
+        return Ok(Step::Done(Err("already superseded".into())));
+    }
+    let Some(i) = s.entries.iter().position(|e| e.seq == seq) else { return Ok(Step::Done(Err("its chain holds no such entry".into()))) };
+    // The tail: back from `seq` to the last accepted entry.
+    let mut j = i + 1;
+    while j > 0 {
+        match crate::tokens::accepted(lot, got, p, d, s, s.entries[j - 1].seq)? {
+            Step::Want(x) => return Ok(Step::Want(x)),
+            Step::Sign(m) => return Ok(Step::Sign(m)),
+            Step::Done(Ok(_)) if j == i + 1 => return Ok(Step::Done(Err("accepted".into()))),
+            Step::Done(Ok(_)) => break,
+            Step::Done(Err(_)) => j -= 1,
+        }
+    }
+    let first = &s.entries[j];
+    let stamp = now.max(s.entries.last().map_or(0, |e| e.stamp));
+    if !t::may_supersede(first.stamp, stamp) {
+        return Ok(Step::Done(Err(format!("its witnesses may still sign entry {} (stamped {}, now {})", first.seq, first.stamp, stamp))));
+    }
+    // No witness signed any of it (a signature at a place is the committee's to finish, never the owner's to void).
+    let mut want = Vec::new();
+    for k in j..s.entries.len() {
+        let x = &s.entries[k];
+        let (ep, _) = t::wallet::lot_of(x, k.checked_sub(1).map(|m| &s.entries[m]), d.margin).map_err(String::from)?;
+        let wp = crate::tokens::witness_at(p.code_hash, lot, d.beacon, &p.id(), x.seq, ep);
+        match there(got, &wp.id()) {
+            Err(x) => want.push(x),
+            Ok(Some(b)) if !wp.sigs(&b).is_empty() => return Ok(Step::Done(Err(format!("a witness signed entry {}: it is its committee's to finish", x.seq)))),
+            Ok(_) => {}
+        }
+    }
+    if !want.is_empty() {
+        return Ok(Step::Want(want));
+    }
+    let built = w.supersede(h, first.seq, stamp);
+    if let Some(m) = asking.and_then(|a| a.next()) {
+        return Ok(Step::Sign(m));
+    }
+    let entries = built.map_err(String::from)?;
+    let to = entries.last().expect("a supersede").seq;
+    let keeper_epochs = s.entries[j..].iter().filter_map(|e| match e.body {
+        Body::KeeperMint { epoch, .. } => Some(epoch),
+        _ => None,
+    }).collect();
+    let mut st = s.clone();
+    st.entries.extend(entries);
+    Ok(Step::Done(Ok(Superseded { put: Put { params: p.encode(), state: st.encode() }, from: first.seq, to, stamp: first.stamp, keeper_epochs })))
+}
+
+/// SUPERSEDE the wedged tail of `owner`'s DID chain of the token `id` holding entry `seq` (`supersede_held`), signed by
+/// this node's device (`dev`, through its delegate).
+#[allow(clippy::too_many_arguments)]
+pub fn supersede(ctx: &Ctx, lot: &crate::tokens::Lot, got: Got, id: &[u8; 32], owner: &[u8; 32], seq: u64, now: u64, dev: &Device) -> Result<Step<Result<Superseded, String>>, String> {
+    let (held, keys) = match holding(ctx, got, &token(id), owner)? {
+        Step::Done(Some(h)) => h,
+        Step::Done(None) => return Ok(Step::Done(Err("its chain is not on the network".into()))),
+        Step::Want(w) => return Ok(Step::Want(w)),
+        Step::Sign(m) => return Ok(Step::Sign(m)),
+    };
+    on_our_clock(ctx, &held.definition)?;
+    let asking = device_of(dev);
+    let w = Wallet { device: &asking, keys: &keys };
+    supersede_held(lot, got, &w, Some(&asking), &held, seq, now)
+}
+
+/// SUPERSEDE the wedged tail of this wallet's STEALTH chain `a.to` (`a`: the announcement it was found by — its R;
+/// `seed`: the wallet's) of the token `a.token`, holding entry `seq` — signed by its one-time key.
+pub fn supersede_private(ctx: &Ctx, lot: &crate::tokens::Lot, got: Got, a: &stealth::Announce, seed: &[u8; 32], seq: u64, now: u64) -> Result<Step<Result<Superseded, String>>, String> {
+    let d = match definition_of(got, &a.token)? {
+        Err(w) => return Ok(Step::Want(vec![w])),
+        Ok(d) => d,
+    };
+    on_our_clock(ctx, &d)?;
+    let (p, st) = match stealth_chains(ctx, got, &d, &a.token, &[a.to])? {
+        Err(w) => return Ok(Step::Want(w)),
+        Ok(mut cs) => cs.remove(0),
+    };
+    let one = stealth::Keys::from_seed(seed).find(&a.r, &a.to).ok_or("a chain that is not this wallet's")?;
+    let none = craftworks_idlog_contract::Log { events: vec![] };
+    let held = craftworks_wallet::Held { params: p, definition: d, state: st, blocks: Default::default() };
+    supersede_held(lot, got, &Wallet { device: &one, keys: &none }, None, &held, seq, now)
 }
 
 #[cfg(test)]
@@ -504,5 +621,82 @@ mod tests {
         assert_eq!(take(&back_ann, e1 + 18, &got).map(|r| r.amount), Ok(30));
         // Neither stealth chain names a DID: their owners are one-time keys' sets.
         assert!(![pb2.owner, back_ann.to].contains(&a) && ![pb2.owner, back_ann.to].contains(&b));
+    }
+
+    /// TOKEN §3d, the page's rule: A's DID chain pays B's card at e1 + 12 and no witness ever signs the payment. Until no
+    /// witness can sign it, nothing is superseded; once none can (and none did), A's device supersedes it — the 100
+    /// back with A, the payment's status SUPERSEDED, B's wallet done with it. Where any witness signed: refused.
+    #[test]
+    fn a_wedged_payment_is_superseded_by_its_sender_only_once_no_witness_can_sign_it() {
+        let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: IDLOG };
+        let la = log(101, 151);
+        let a = la.events[0].id();
+        let na = SigningKey::from_bytes(&[12; 32]).verifying_key().to_bytes();
+        let mut da = device(na, &[craftworks_identity::credential(&a, &na, &[7; 32], &[101; 32])], &la, vec![]).unwrap();
+        let d = Definition { code_hash: ctx.code_hash, decimals: 2, min_send: 1, genesis_owner: a, genesis_amount: 100_000, name: b"W".to_vec(), nonce: [1; 16], beacon: ctx.beacon, margin: 2, idlog: IDLOG, mint: None, freeze: None, ids: t::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None, keepers: None };
+        let id = t::id(&ctx.code_hash, &d.encode());
+        let pa = chain(&ctx, &d, &id, &a, [0; 32]);
+        let mut got: HashMap<[u8; 32], Vec<u8>> = HashMap::new();
+        got.insert(id, d.encode());
+        got.insert(pa.id(), vec![]);
+        got.insert(pa.keys_id(), la.encode());
+        let tl = crate::tokens::testlot::stakers(&ctx, &mut got);
+        let e1 = crate::tokens::testlot::E1;
+        let kb = stealth::Keys::from_seed(&[22; 32]);
+        let paid = stealth::pay(&kb.public(), &[1; 32]).unwrap();
+        let g = got.clone();
+        let sent = run(12, &mut da, &mut |dv| send(&ctx, &|x| g.get(x).cloned(), &id, &a, &paid.to, 100, e1 + 12, dv)).unwrap();
+        got.insert(pa.id(), sent.put.state.clone());
+        got.insert(chain(&ctx, &d, &id, &paid.to, [0; 32]).id(), vec![]);
+        let s = State::decode(&sent.put.state).unwrap();
+        let seq = s.entries.last().unwrap().seq;
+        // Its writer and genesis accepted; the payment never signed.
+        for k in 0..seq {
+            crate::tokens::testlot::witness(&tl, &mut got, &pa, &d, &s, k, 6);
+        }
+        crate::tokens::testlot::witness(&tl, &mut got, &pa, &d, &s, seq, 0);
+        let ann = stealth::Announce { token: id, from: a, nonce: sent.nonce, to: paid.to, r: paid.r };
+        // The page's loop: read what it wants (not there: read and NOT THERE), have the delegate sign what it asks.
+        let sup = |now: u64, got: &HashMap<[u8; 32], Vec<u8>>, da: &mut Device| -> Result<Result<Superseded, String>, String> {
+            let mut g = got.clone();
+            for _ in 0..32 {
+                let gg = g.clone();
+                match supersede(&ctx, &tl.lot, &|x| gg.get(x).cloned(), &id, &a, seq, now, da)? {
+                    Step::Done(r) => return Ok(r),
+                    Step::Want(w) => w.into_iter().for_each(|x| {
+                        g.entry(x).or_default();
+                    }),
+                    Step::Sign(m) => da.sigs.push((m.clone(), SigningKey::from_bytes(&[12; 32]).sign(&m).to_bytes())),
+                }
+            }
+            Err("no end".into())
+        };
+        // Its witnesses may still sign it: waits.
+        let early = sup(e1 + 20, &got, &mut da).unwrap();
+        assert!(matches!(&early, Err(w) if w.starts_with("its witnesses may still sign")), "{early:?}");
+        // Late enough — but ONE witness signed it: its committee's to finish, never the owner's to void.
+        let late = 3 * e1 - 512;
+        let mut signed = got.clone();
+        crate::tokens::testlot::witness(&tl, &mut signed, &pa, &d, &s, seq, 1);
+        let refused = sup(late, &signed, &mut da).unwrap();
+        assert!(matches!(&refused, Err(w) if w.starts_with("a witness signed entry")), "{refused:?}");
+        // ACCEPTED (four of six): nothing to supersede.
+        let mut accepted = got.clone();
+        crate::tokens::testlot::witness(&tl, &mut accepted, &pa, &d, &s, seq, 4);
+        assert_eq!(sup(late, &accepted, &mut da).unwrap(), Err("accepted".into()));
+        // None signed, none can: superseded — the 100 back.
+        let done = sup(late, &got, &mut da).unwrap().unwrap();
+        assert_eq!((done.from, done.to), (seq, seq + 1));
+        let after = State::decode(&done.put.state).unwrap();
+        assert_eq!(after.balance(), 100_000);
+        assert_eq!(t::check(&pa, &d, &after, &|_, _| None, &|_| None, Some(&la), &t::Extra::NONE), Ok(()));
+        got.insert(pa.id(), done.put.state.clone());
+        // The payment: SUPERSEDED; B's wallet takes nothing and is done with it.
+        let st = crate::tokens::testlot::done(&|g| status(&ctx, &tl.lot, g, &ann, late), &got).unwrap().unwrap();
+        assert_eq!(st.stage, Stage::Superseded);
+        let r = crate::tokens::testlot::done(&|g| receive_private(&ctx, &tl.lot, g, &ann, late), &got).unwrap();
+        assert_eq!((r.put.is_none(), r.pending, r.unwitnessed), (true, 0, 0));
+        // Asked again: already superseded.
+        assert_eq!(sup(late, &got, &mut da).unwrap(), Err("already superseded".into()));
     }
 }

@@ -3280,11 +3280,69 @@ mod js {
                             wallet::Stage::Unwitnessed(w) => ("witnessing", Some(w), None),
                             wallet::Stage::Accepted(n) => ("accepted", None, Some(n)),
                             wallet::Stage::Missing(w) => ("missing", Some(w), None),
+                            wallet::Stage::Superseded => ("superseded", Some("its sender superseded it: never witnessed, its money back with the sender".to_string()), None),
                         };
                         json!({ "amount": s.amount.to_string(), "stamp": s.stamp, "stage": stage, "why": why, "signed": signed })
                     }
                 })
             })
+        }
+        /// The LAST entry of `owner`'s chain of the token `id` as a witness-queue item (`{ want }`, or `{ done: null |
+        /// { queued } }`): what the page checks for a WEDGED tail (TOKEN §3d) on its own DID chains — entries others append
+        /// there (a keeper mint, by any page) are in no queue row of this page's.
+        pub fn wallet_tail(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], id: &[u8], owner: &[u8]) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let (id, owner) = (b32(id)?, b32(owner)?);
+            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+            let step = tokens::holding(&ctx, &got, &craftworks_token_contract::Tok { definition: id, item: [0; 32] }, &owner);
+            let mut queued = None;
+            let v = token_step(step, |h| {
+                queued = h.and_then(|(h, _)| h.state.entries.last().map(|e| craftworks_wallet::queue::Queued { token: h.params.tok(), owner, seq: e.seq }.encode()));
+                Ok(if queued.is_some() { json!({}) } else { serde_json::Value::Null })
+            })?;
+            if let Some(q) = queued {
+                js_sys::Reflect::set(&js_sys::Reflect::get(&v, &"done".into())?, &"queued".into(), &js_sys::Uint8Array::from(&q[..]))?;
+            }
+            Ok(v)
+        }
+        /// May a tail whose first entry is stamped `stamp` be SUPERSEDED at beacon height `now` (TOKEN §3d,
+        /// `may_supersede`): no witness can ever sign it again.
+        pub fn may_supersede(stamp: f64, now: f64) -> bool {
+            craftworks_token_contract::may_supersede(stamp as u64, now as u64)
+        }
+        /// SUPERSEDE the WEDGED tail holding the queued entry `queued` (its bytes; TOKEN §3d, `wallet::supersede` /
+        /// `supersede_private`) at beacon height `now` — a DID chain signed by this node's device (`public`, `creds`,
+        /// `sigs`: `{ sign }` steps), or, `seed` given (32 bytes), this wallet's stealth chain found by `announce`:
+        /// `{ want }`, `{ sign }`, `{ done: { superseded: true, from, to, puts } | { superseded: false, why } }`.
+        #[allow(clippy::too_many_arguments)]
+        pub fn wallet_supersede(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], queued: &[u8], now: f64, public: &[u8], creds: js_sys::Array, sigs: js_sys::Array, seed: &[u8], announce: &[u8]) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let q = craftworks_wallet::queue::Queued::decode(queued).ok_or_else(|| err("not a queued entry".into()))?;
+            let step = if seed.is_empty() {
+                let Some(dev) = account_device(&self.0, idlog_code, &q.owner, public, &creds, &sigs)? else { return want_log(idlog_code, &q.owner) };
+                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                wallet::supersede(&ctx, &lot, &got, &q.token.definition, &q.owner, q.seq, now as u64, &dev)
+            } else {
+                let a = craftworks_wallet::stealth::Announce::decode(announce).ok_or_else(|| err("not an announcement".into()))?;
+                if a.to != q.owner || a.token != q.token.definition {
+                    return Err(err("an announcement of another chain than the entry's".into()));
+                }
+                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                wallet::supersede_private(&ctx, &lot, &got, &a, &b32(seed)?, q.seq, now as u64)
+            };
+            let mut puts = Vec::new();
+            let v = token_step(step, |r| {
+                Ok(match r {
+                    Ok(s) => {
+                        let j = json!({ "superseded": true, "from": s.from, "to": s.to, "stamp": s.stamp, "keeperEpochs": s.keeper_epochs });
+                        puts.push(s.put);
+                        j
+                    }
+                    Err(why) => json!({ "superseded": false, "why": why }),
+                })
+            })?;
+            self.attach_puts(v, token_code, &puts)
         }
         /// RECEIVE a payment this wallet found (`wallet::receive_private`; `announce`: its bytes) at beacon height `now`,
         /// taken only once its debit is ACCEPTED (the lot: `pool` the stake pool's token, the bag's and beacon's codes):

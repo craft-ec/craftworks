@@ -42,14 +42,15 @@ export async function start(ctx) {
     if (said.kind !== "put") throw new Error(`the node refused it (${said.said})`);
     core.take_got(hexOf(p.idBytes));
   }
+  // KEPT TO QUEUE (audit 10-11): each new entry's queue item and witness container recorded as soon as its put is
+  // taken, and queued from there — one that fails is queued again on the next put, never left unwitnessed.
+  async function putKept(p) {
+    await putOne(p);
+    const qs = p.queue ?? [];
+    for (let i = 0; i < qs.length; i++) await priv.put(`toqueue/${hexOf(qs[i])}`, JSON.stringify({ q: hexOf(qs[i]), wit: p.witnesses?.[i] ? hexOf(p.witnesses[i]) : null, done: false }));
+  }
   async function putAll(puts) {
-    for (const p of puts ?? []) {
-      await putOne(p);
-      // KEPT TO QUEUE (audit 10-11): each new entry's queue item and witness container recorded as soon as its put is
-      // taken, and queued from there — one that fails is queued again on the next put, never left unwitnessed.
-      const qs = p.queue ?? [];
-      for (let i = 0; i < qs.length; i++) await priv.put(`toqueue/${hexOf(qs[i])}`, JSON.stringify({ q: hexOf(qs[i]), wit: p.witnesses?.[i] ? hexOf(p.witnesses[i]) : null, done: false }));
-    }
+    for (const p of puts ?? []) await putKept(p);
     await queueAll();
   }
   // Each entry waiting to be queued: its WITNESS SIGNATURES container made (empty, `core.witness_put`) first — a
@@ -64,6 +65,7 @@ export async function start(ctx) {
     const at = await now();
     const e = Math.floor(at / EPOCH);
     for (const o of open) {
+      if (closed.has(o.q)) continue; // voided by a supersede this pass
       try {
         const queuedIn = o.epoch ?? (o.done ? 0 : null);
         if (queuedIn != null) {
@@ -72,6 +74,16 @@ export async function start(ctx) {
           if (s?.accepted != null || s?.missing) {
             await priv.put(`toqueue/${o.q}`, JSON.stringify({ ...o, done: true, accepted: true, ...(s?.missing ? { missing: s.missing } : {}) }));
             continue;
+          }
+          // WEDGED (TOKEN §3d): stamped so long ago that no witness can ever sign it — its chain's tail superseded (when
+          // no witness signed any of it), the chain witnessed on from there; what it voided is taken again.
+          if (s?.stamp != null && Core.may_supersede(s.stamp, at)) {
+            const r = await supersede(o, at);
+            if (r?.superseded) {
+              ctx.log("tokens", { what: `a wedged tail superseded: entries ${r.from}–${r.to - 1} of its chain (no witness signed them, none could) — its supersede queued` });
+              continue;
+            }
+            ctx.log("tokens", { what: `an entry no witness can sign any more, not superseded: ${r?.why ?? "no answer"}` });
           }
           ctx.log("tokens", { what: `an entry not accepted when its queue (epoch ${queuedIn}) aged out — queued again (${s?.waiting ?? "waiting"})` });
         } else if (o.wit) await putOne(core.witness_put(code, bytes(o.wit), new Uint8Array(0), new Uint8Array(0), new Uint8Array(0), 0));
@@ -82,8 +94,76 @@ export async function start(ctx) {
       }
     }
   }
-  // Checked as the clock moves too (no new entry needed): an entry whose queue aged out is queued again.
-  setInterval(() => queueAll().catch(() => {}), 5 * 60 * 1000);
+  // SUPERSEDE the wedged tail holding the queued entry `o` (TOKEN §3d; `wallet_supersede`: the one rule, in the core) —
+  // this account's DID chain, signed by this node's device, or a stealth chain of this wallet's, by its one-time key.
+  // Superseded: the supersede put (and kept to queue), the voided entries' rows closed, and what they voided owed again
+  // — a stealth chain's payment received again, the allowance's payouts scanned again from the first voided stamp, a
+  // keeper mint minted again (`remints`, by the statement loop).
+  const closed = new Set();
+  async function supersede(o, at) {
+    const q = Core.queued_read(bytes(o.q));
+    if (!q) return { superseded: false, why: "not a queued entry" };
+    const me = await auth.check();
+    const none = new Uint8Array(0);
+    let seed = none;
+    let ann = none;
+    let member = none;
+    let creds = [];
+    if (q.owner === hexOf(me.didBytes)) ({ member, creds } = await device());
+    else {
+      const f = found().find(f => f.to === q.owner);
+      const sd = f && rows("seed/").find(s => s.seed.slice(0, 16) === f.seed);
+      if (!sd) return { superseded: false, why: "a chain neither this account's nor this wallet's" };
+      seed = bytes(sd.seed);
+      ann = bytes(f.a);
+    }
+    const r = await run(sigs => core.wallet_supersede(code, beacon, idlogCode, lot.pool, lot.bag, lot.beacon, bytes(o.q), at, member, creds, sigs, seed, ann));
+    if (!r?.superseded) return r;
+    for (const p of r.puts ?? []) await putKept(p);
+    for (const x of rows("toqueue/")) {
+      const y = Core.queued_read(bytes(x.q));
+      if (y && y.token === q.token && y.owner === q.owner && y.seq >= r.from && y.seq < r.to) {
+        closed.add(x.q);
+        await priv.put(`toqueue/${x.q}`, JSON.stringify({ ...x, done: true, accepted: true, superseded: true }));
+      }
+    }
+    if (seed.length) {
+      const f = found().find(f => f.to === q.owner);
+      if (f && !f.edition) await priv.put(`found/${f.to}`, JSON.stringify({ ...f, done: false }));
+    } else {
+      const from = Math.max(0, Math.floor(r.stamp / EPOCH) - 1);
+      const allowed = Number(priv.rows().find(x => x.key === "allowed")?.value ?? from);
+      if (from < allowed) await priv.put("allowed", String(from));
+      for (const ep of r.keeperEpochs ?? []) await priv.put(`remint/${ep}`, JSON.stringify({ epoch: ep, did: hexOf(me.didBytes) }));
+    }
+    // (Its own entries queued on the next pass — never from inside this one.)
+    setTimeout(() => queueAll().catch(() => {}), 1000);
+    return r;
+  }
+  // KEEPER MINTS a supersede voided (their lines still owed): `[{ epoch, did }]`; `reminted(epoch)` once minted again.
+  const remints = () => rows("remint/");
+  const reminted = epoch => priv.remove(`remint/${epoch}`);
+  // This account's OWN DID chains (the allowance's, $CRAFT's) checked for a WEDGED tail too: entries others append there
+  // (a keeper mint, by any page) are in no queue row of this page's — each chain's last entry, the same way.
+  async function wedgedOwn() {
+    const at = await now();
+    const me = await auth.check();
+    for (const tid of [allowance?.token, bytes(Core.craft_id(code, beacon, idlogCode))].filter(Boolean)) {
+      try {
+        const t = await run(() => core.wallet_tail(code, beacon, idlogCode, tid, me.didBytes));
+        if (!t?.queued || closed.has(hexOf(t.queued))) continue;
+        const s = await run(() => core.entry_status(code, beacon, idlogCode, lot.pool, lot.bag, lot.beacon, t.queued));
+        if (s?.accepted != null || s?.stamp == null || !Core.may_supersede(s.stamp, at)) continue;
+        const r = await supersede({ q: hexOf(t.queued) }, at);
+        ctx.log("tokens", { what: r?.superseded ? `a wedged tail of this account's chain superseded: entries ${r.from}–${r.to - 1}` : `this account's chain is wedged, not superseded: ${r?.why ?? "no answer"}` });
+      } catch (err) {
+        ctx.log("tokens", { what: `checking this account's chain for a wedged tail: ${err.message ?? err}` });
+      }
+    }
+  }
+  // Checked as the clock moves too (no new entry needed): an entry whose queue aged out is queued again; a wedged tail
+  // superseded.
+  setInterval(() => queueAll().then(wedgedOwn).catch(() => {}), 5 * 60 * 1000);
   // RUN a step to its end: read what it wants, have the delegate sign what it asks (one entry a round), until done.
   async function run(step) {
     const sigs = [];
@@ -329,5 +409,5 @@ export async function start(ctx) {
   }
   const purse = { seeds, found, history, status, ensureCard, receiveAll, privately, pay, shield, payee, owners: () => found().map(f => bytes(f.to)), onChange: fn => priv.onChange(fn) };
 
-  return { on: true, purse, allowance, lot, beacon, pay: cfg.pay ? bytes(cfg.pay) : null, code, idlogCode, read, putAll, run, now, device, bytes, hexOf };
+  return { on: true, purse, allowance, lot, beacon, pay: cfg.pay ? bytes(cfg.pay) : null, code, idlogCode, read, putAll, run, now, device, bytes, hexOf, remints, reminted };
 }

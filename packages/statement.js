@@ -109,6 +109,9 @@ export async function start(ctx) {
     // gives nothing for a line minted already or a root not accepted yet).
     // (The last few epochs too: a root is accepted after its epoch has begun, and the next may begin first.)
     for (let e = Math.max(0, epoch - 2); e <= epoch; e++) await mintKeepers(tokens, e, h).catch(x => ctx.log("statement", { what: `epoch ${e}: keeper mints: ${x.message ?? x}` }));
+    // …and this account's keeper mints a SUPERSEDE voided (TOKEN §3d: never witnessed — their lines still owed), of
+    // whatever epoch.
+    for (const r of tokens.remints?.() ?? []) await remint(tokens, r, h).catch(x => ctx.log("statement", { what: `epoch ${r.epoch}: minting a superseded keeper line again: ${x.message ?? x}` }));
     // THE ALLOWANCE of this epoch.
     if (!tokens.allowance || decided.has(epoch)) return;
     const r = await build(epoch);
@@ -118,6 +121,22 @@ export async function start(ctx) {
     await putAll(v.puts);
     decided.add(epoch);
     if (v.puts.length) ctx.log("statement", { what: `epoch ${epoch}: the allowance's verdict and release put (${r.owed.length} owed)` });
+  }
+  // A keeper line of `r.epoch` minted to `r.did` AGAIN (its mint superseded): under the statement as this page computes
+  // it (`keeper_mint` mints only under the ACCEPTED root; null: not yet — asked again next tick).
+  async function remint(tokens, r, h) {
+    const b = await build(r.epoch);
+    const line = (b.keepers ?? []).find(([did]) => tokens.hexOf(did) === r.did);
+    if (!line) {
+      ctx.log("statement", { what: `epoch ${r.epoch}: no keeper line of this account's to mint again` });
+      return tokens.reminted(r.epoch);
+    }
+    const { run, putAll, lot } = tokens;
+    const v = await run(() => core.keeper_mint(tokens.code, tokens.beacon, idlogCode, lot.pool, lot.bag, lot.beacon, line[0], r.epoch, b.root, line[1], h));
+    if (!v?.puts) return;
+    await putAll(v.puts);
+    await tokens.reminted(r.epoch);
+    ctx.log("statement", { what: `epoch ${r.epoch}: a superseded keeper line minted again` });
   }
   const minted = new Set(); // `${epoch}/${did hex}` this page minted
   let saidWaiting = null;
