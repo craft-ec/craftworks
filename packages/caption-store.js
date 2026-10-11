@@ -58,7 +58,8 @@ export async function start(ctx) {
   async function keep(mediaRef, place) {
     if (place === undefined) {
       const item = await items.get(mediaRef).catch(() => null);
-      const sp = mediaRef.startsWith("space:") ? (await space.mine()).find(s => s.id === mediaRef.slice(6, mediaRef.indexOf("/"))) ?? null : null;
+      const sid = items.spaceIdOf(mediaRef);
+      const sp = sid ? ((await space.mine()).find(s => s.id === sid) ?? null) : null;
       return { sp, pub: sp ? !!item?.pub : !item?.private };
     }
     if (place) return { sp: place, pub: await items.publicIn(place, KIND) };

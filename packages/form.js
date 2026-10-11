@@ -64,13 +64,12 @@ export async function mount(ctx, el) {
   const root = el.querySelector(".fm");
   const me = (await space.account()).id;
   const refIn = s => decodeURIComponent(s.slice(2));
-  const spaceIdOf = ref => (String(ref).startsWith("space:") ? ref.slice(6, ref.indexOf("/")) : null);
   const metaOf = form => ({ fields: [], open: true, once: false, editable: true, ...(form?.meta ?? {}) });
   const fail = (said, e) => (said.textContent = e?.message ?? String(e));
 
   // ONE FORM, read where it is: a space this person is in, or from outside (a public space's, a person's).
   async function getForm(ref) {
-    const sid = spaceIdOf(ref);
+    const sid = items.spaceIdOf(ref);
     const inside = !sid || (await space.mine()).some(s => s.id === sid);
     const outside = inside ? null : await items.outsideOf(ref).catch(() => null);
     const it = await items.get(ref, { outside }).catch(() => null);
@@ -78,7 +77,7 @@ export async function mount(ctx, el) {
   }
   // ITS PLACE: the space it is in (this person's, or the public one read from outside), or null (a person's own).
   async function placeOf(form) {
-    const sid = spaceIdOf(form.ref);
+    const sid = items.spaceIdOf(form.ref);
     if (!sid) return null;
     return form.outside ?? (await space.mine()).find(s => s.id === sid) ?? null;
   }
@@ -448,7 +447,7 @@ export async function mount(ctx, el) {
       ...(all.length
         ? all.map(f => {
             const m = metaOf(f);
-            return h("a", { className: "card", href: at.href(`p/${encodeURIComponent(f.ref)}`) }, h("div", { className: "t", textContent: f.title || "Untitled form" }), h("p", { className: "s" }, `${m.fields.length} question(s) · ${m.open ? "open" : "closed"}${!spaceIdOf(f.ref) && f.by === me ? " · you read its responses" : ""}`, at.others ? h("span", {}, " · ", directory.nameEl(f.by)) : null));
+            return h("a", { className: "card", href: at.href(`p/${encodeURIComponent(f.ref)}`) }, h("div", { className: "t", textContent: f.title || "Untitled form" }), h("p", { className: "s" }, `${m.fields.length} question(s) · ${m.open ? "open" : "closed"}${!items.spaceIdOf(f.ref) && f.by === me ? " · you read its responses" : ""}`, at.others ? h("span", {}, " · ", directory.nameEl(f.by)) : null));
           })
         : [h("p", { className: "none", textContent: none })]),
     );

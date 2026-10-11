@@ -383,7 +383,6 @@ export async function start(ctx) {
   const [items, space, roles] = await Promise.all(["items", "space", "roles"].map(n => ctx.require(n)));
   const me = async () => (await space.account()).id;
   const placeOf = ref => String(ref).slice(0, String(ref).lastIndexOf("/"));
-  const spaceIdOf = ref => (String(ref).startsWith("space:") ? String(ref).slice(6, String(ref).indexOf("/")) : null);
   // The page a section item is attached to (a space's: its id there; a person's: its whole reference).
   const pageRefOf = it => (String(it.in ?? "").includes("/") ? it.in : it.in ? `${placeOf(it.ref)}/${it.in}` : null);
   // A person's CIRCLES this reader is in (theirs: yours, your friends' and followers'): part of their personal wiki.
@@ -525,7 +524,7 @@ export async function start(ctx) {
   async function copyToMine(p, { audience = "private" } = {}) {
     const mine = await of({ who: "mine" });
     const live = p.sections.filter(s => !s.gone);
-    const lineage = { from: p.ref, title: p.title, ...(spaceIdOf(p.ref) ? { space: spaceIdOf(p.ref) } : { by: placeOf(p.ref) }), at: Date.now(), heads: Object.fromEntries(live.map(s => [s.sid, s.h])) };
+    const lineage = { from: p.ref, title: p.title, ...(items.spaceIdOf(p.ref) ? { space: items.spaceIdOf(p.ref) } : { by: placeOf(p.ref) }), at: Date.now(), heads: Object.fromEntries(live.map(s => [s.sid, s.h])) };
     const sections = live.map(s => ({ op: "new", sid: s.sid, base: null, body: s.body, pos: s.pos }));
     return mine.create(p.title, "", { audience, lineage, sections });
   }
@@ -534,7 +533,7 @@ export async function start(ctx) {
   async function propose(myPage) {
     const lin = myPage.meta?.lineage;
     if (!lin?.from) throw new Error("this page was not copied from anywhere");
-    const sid = spaceIdOf(lin.from);
+    const sid = items.spaceIdOf(lin.from);
     const sp = sid ? ((await space.mine()).find(s => s.id === sid) ?? null) : null;
     if (sid && !sp) throw new Error("you are not in the space it came from");
     const there = await of(sp ? { who: "space", space: sp } : { who: "person", person: placeOf(lin.from) });

@@ -115,14 +115,16 @@ export async function start(ctx) {
     const on = await Promise.all(all.map(sp => roles.of(sp).then(async r => (await r.settled, r.apps().some(a => PLACE_APPS.includes(a))), e => (ctx.log("posts", { what: `${sp.name ?? sp.id.slice(0, 8)}: its rules do not read (${e?.message ?? e})` }), false))));
     return all.filter((_, i) => on[i]);
   };
+  // The SPACE ID an item reference names (`space:<id>/…`), null for a person's item.
+  const spaceIdOf = x => (String(x).startsWith("space:") ? String(x).slice(6, String(x).indexOf("/")) : null);
   const boardOf = async x => {
-    const id = String(x).startsWith("space:") ? String(x).slice(6, String(x).indexOf("/")) : x;
+    const id = spaceIdOf(x) ?? x;
     return (await boards()).find(s => s.id === id) ?? null;
   };
   // WHY a space is not a place here — said, never a bare "not in it": not among this person's spaces, or its apps show
   // none that keeps items.
   const notInBoard = async x => {
-    const id = String(x).startsWith("space:") ? String(x).slice(6, String(x).indexOf("/")) : x;
+    const id = spaceIdOf(x) ?? x;
     const sp = (await space.mine()).find(s => s.id === id);
     if (!sp) return new Error("you are not in that board's space");
     const r = await roles.of(sp);
@@ -535,8 +537,8 @@ export async function start(ctx) {
   // null when they are (or it is a person's) — what `get`, `list`, votes and comments are given as `outside`.
   async function outsideOf(ref) {
     ref = String(ref?.ref ?? ref);
-    if (!ref.startsWith("space:")) return null;
-    const id = ref.slice(6, ref.indexOf("/"));
+    const id = spaceIdOf(ref);
+    if (!id) return null;
     if (await boardOf(id)) return null;
     return (await publicSpace(id)) ?? (await edge.people()).about("follow", id);
   }
@@ -1091,5 +1093,5 @@ export async function start(ctx) {
       told(null, ref, null, body);
       return out;
     },
-    mayWriteOn, pageOf, linkOf, refOf, appOf, list, get, setFiles, attach, attached, history, publicIn, inPlaces, following, thread, vote, remove, boards, boardOf, publicSpaces, publicSpace, outsideOf, syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
+    mayWriteOn, pageOf, linkOf, refOf, appOf, list, get, setFiles, attach, attached, history, publicIn, inPlaces, following, thread, vote, remove, boards, boardOf, spaceIdOf, publicSpaces, publicSpace, outsideOf, syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
 }

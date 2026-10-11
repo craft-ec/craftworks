@@ -19,6 +19,7 @@ const SP = { id: "f".repeat(64), name: "Club", governance: { owner: "did:craftec
 const placeOf = ref => ref.slice(0, ref.lastIndexOf("/"));
 const editors = new Set(["did:craftec:A", "did:craftec:B"]);
 const items = {
+  spaceIdOf: x => (String(x).startsWith("space:") ? String(x).slice(6, String(x).indexOf("/")) : null),
   async submit({ board, title, body, kind, meta }) {
     const id = nid();
     const ref = board ? `space:${board}/${id}` : `${me}/${id}`;
