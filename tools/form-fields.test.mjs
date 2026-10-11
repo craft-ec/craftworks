@@ -187,10 +187,23 @@ test("a response is addressed to the SPACE for a space form, to the MAKER for a 
 test("a response mail is CHECKED: the form it names, and its respondent being who sent it", () => {
   const x = F.responseMail(spaceForm, spaceDesc, "did:craftec:ann", { q: 1 });
   const m = { id: "m1", from: "did:craftec:ann", body: x.body, at: 5 };
-  assert.deepEqual(F.responseOf(m, spaceForm.ref), { ref: "m1", form: spaceForm.ref, by: "did:craftec:ann", at: 5, answers: { q: 1 } });
+  assert.deepEqual(F.responseOf(m, spaceForm.ref), { ref: "m1", form: spaceForm.ref, by: "did:craftec:ann", at: 5, answers: { q: 1 }, cred: null });
   // Ann's body forwarded by Eve: it names Ann, Eve sent it — nothing.
   assert.equal(F.responseOf({ ...m, from: "did:craftec:eve" }, spaceForm.ref), null);
   assert.equal(F.responseOf(m, myForm.ref), null, "another form's");
   assert.equal(F.responseOf({ ...m, body: JSON.stringify({ kind: "note", form: spaceForm.ref, by: "did:craftec:ann" }) }, spaceForm.ref), null, "not a response");
   assert.equal(F.responseOf({ ...m, body: "plain mail" }, spaceForm.ref), null);
+});
+
+test("a response counts only where it was ADDRESSED: the form's own mailbox", () => {
+  const x = F.responseMail(spaceForm, spaceDesc, "did:craftec:ann", { q: 1 });
+  const to = F.responseTo(spaceForm, spaceDesc);
+  const m = { id: "m2", from: "did:craftec:ann", to: x.to, body: x.body, at: 6 };
+  assert.ok(F.responseOf(m, spaceForm.ref, to), "addressed to the space's mailbox: counted");
+  // The same body mailed to someone else (and pointed at this mailbox): not a response to this form.
+  assert.equal(F.responseOf({ ...m, to: ["did:craftec:eve"] }, spaceForm.ref, to), null);
+  assert.equal(F.responseOf({ ...m, to: undefined }, spaceForm.ref, to), null);
+  // A circle's credential travels with the answer (what the form's rule checks it by).
+  const y = F.responseMail(myForm, null, "did:craftec:ann", { q: 2 }, 7, "ab".repeat(16));
+  assert.equal(F.responseOf({ id: "m3", from: "did:craftec:ann", to: y.to, body: y.body, at: 7 }, myForm.ref).cred, "ab".repeat(16));
 });

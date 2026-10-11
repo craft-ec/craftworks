@@ -211,17 +211,20 @@ export function responseTo(form, place) {
   return toSpace(place) ? `space:${place.id}` : form.by;
 }
 // The mail a response is: { to, subject, body } — the body structured: { kind, form, by, at, answers }.
-export function responseMail(form, place, by, answers, at = Date.now()) {
-  return { to: [responseTo(form, place)], subject: `🗒 ${form.title || "Untitled form"}`, body: JSON.stringify({ kind: RESPONSE, form: form.ref, by, at, answers }) };
+export function responseMail(form, place, by, answers, at = Date.now(), cred = null) {
+  return { to: [responseTo(form, place)], subject: `🗒 ${form.title || "Untitled form"}`, body: JSON.stringify({ kind: RESPONSE, form: form.ref, by, at, answers, ...(cred ? { cred } : {}) }) };
 }
 // A MAIL read back as a response to the form `ref` (null: to any form), CHECKED: its kind, the form it names, and the
 // respondent it names being who SENT it (`mail.from`: proven by whose tail it was in) — a body copied into another's
 // mail, or naming another form, is nothing. { ref: the mail's id, form, by, at, answers }, or null.
-export function responseOf(mail, ref = null) {
+// `to`: the form's mailbox (`responseTo`) — a mail not addressed there is not a response to it (a copy addressed
+// elsewhere and pointed here counts for nothing).
+export function responseOf(mail, ref = null, to = null) {
   try {
     const p = JSON.parse(mail?.body);
     if (p?.kind !== RESPONSE || typeof p.form !== "string" || (ref != null && p.form !== ref) || !p.by || p.by !== mail.from) return null;
-    return { ref: mail.id, form: p.form, by: p.by, at: mail.at, answers: p.answers ?? {} };
+    if (to != null && !(Array.isArray(mail.to) && mail.to.includes(to))) return null;
+    return { ref: mail.id, form: p.form, by: p.by, at: mail.at, answers: p.answers ?? {}, cred: typeof p.cred === "string" ? p.cred : null };
   } catch {
     return null;
   }

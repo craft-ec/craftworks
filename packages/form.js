@@ -26,7 +26,7 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [items, theme, F, directory, space, conversation] = await Promise.all(["items", "theme", "form-fields", "directory", "space", "conversation"].map(n => ctx.require(n)));
+  const [items, theme, F, directory, space, conversation, roles] = await Promise.all(["items", "theme", "form-fields", "directory", "space", "conversation", "roles"].map(n => ctx.require(n)));
   const mail = conversation.mail;
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
@@ -93,7 +93,18 @@ export async function mount(ctx, el) {
   // The MAILBOX its responses arrive in: the space's (space mail), else this person's own.
   const mailboxOf = async place => (F.toSpace(place) ? mail.of(place) : mail);
   // ITS RESPONSES in a mailbox's `which` ("in": received, "sent": this person's own), each checked (`responseOf`).
-  const responsesIn = async (box, which, form) => (await box.list(which)).map(x => F.responseOf(x, form.ref)).filter(Boolean);
+  // (`to`: only mail addressed to the form's mailbox counts.)
+  const responsesIn = async (box, which, form, to = null) => (await box.list(which)).map(x => F.responseOf(x, form.ref, to)).filter(Boolean);
+  // MAY `did` ANSWER this form: the form's `comment` rule, the one check (`roles.mayWrite`: its own rule within its
+  // space's, a circle by the credential it cited) — mail is open to anyone, so who may answer is checked where the
+  // answers are read (and before sending, for the respondent's sake). A rule not read yet: not counted yet.
+  async function mayAnswer(form, place, did, cred = null) {
+    const r = F.toSpace(place) ? await roles.ofPublic(place).catch(() => null) : null;
+    await r?.settled;
+    if (!r) await roles.personal(form.by).ready?.catch?.(() => {});
+    if (r?.banned?.(did)) return false;
+    return roles.mayWrite({ action: "comment", item: form, writer: did, cred, r }) === true;
+  }
 
   // A RESPONSE sent: a mail to the space (a space's form) or to the maker — a change of answer is a new one (the
   // newest of each account counts).
@@ -104,7 +115,10 @@ export async function mount(ctx, el) {
     if (!v.ok) return v;
     const place = await placeOf(form);
     if (F.toSpace(place) && !(await mail.accepts(place.id))) throw new Error(`${space.shown(place)}'s mail is off, so its forms take no responses yet: its owner turns it on (Mail)`);
-    const x = F.responseMail(form, place, me, v.clean);
+    // WHO MAY ANSWER: the form's rule (its readers who may comment); a circle's credential cited, as a comment does.
+    const cred = F.toSpace(place) ? null : await roles.credToCite(form, "comment").catch(() => null);
+    if (!(await mayAnswer(form, place, me, cred))) throw new Error("this form is not open to you");
+    const x = F.responseMail(form, place, me, v.clean, Date.now(), cred);
     const sent = await mail.send(x.to, x.subject, x.body);
     return { ...v, ref: sent.id };
   }
@@ -245,6 +259,9 @@ export async function mount(ctx, el) {
     const place = was ? await placeOf(was) : sp;
     const title = h("input", { type: "text", placeholder: "Form title", maxLength: 300, value: was?.title ?? "" });
     const about = h("textarea", { placeholder: "Description (optional)", rows: 3, value: was?.body ?? "" });
+    // WHERE ITS RESPONSES GO, said plainly (security review 10-11): a space's mail — read by its owner and admins,
+    // including admins added later, as all its mail — or the maker's own mailbox.
+    const goes = h("p", { className: "help", textContent: F.toSpace(place) ? `Responses arrive as ${space.shown(place)}'s mail: its owner and admins read them — admins added later too, as with all its mail.` : "Responses arrive in your own mail; only you read them." });
     const open = h("input", { type: "checkbox", checked: m.open !== false });
     const once = h("input", { type: "checkbox", checked: !!m.once });
     const editable = h("input", { type: "checkbox", checked: m.editable !== false });
@@ -303,6 +320,7 @@ export async function mount(ctx, el) {
       { className: "meta", style: "display:grid;gap:var(--cw-space-3)" },
       title,
       about,
+      goes,
       list,
       h("div", { className: "tools" }, add),
       h("div", { className: "tools" }, h("label", { className: "opt" }, open, "Accepting responses"), h("label", { className: "opt" }, once, "One response per account"), h("label", { className: "opt" }, editable, "Respondents may change their response while open (one per account)")),
@@ -329,7 +347,11 @@ export async function mount(ctx, el) {
     const m = metaOf(form);
     const box = await mailboxOf(place);
     await box.fetch().catch(e => ctx.log("form", { what: `fetching mail: ${e.message}` }));
-    const opened = await responsesIn(box, "in", form);
+    // Only mail addressed to this form's mailbox, from someone the form's rule lets answer.
+    const addressed = await responsesIn(box, "in", form, F.responseTo(form, place));
+    const allowed = await Promise.all(addressed.map(x => mayAnswer(form, place, x.by, x.cred)));
+    const opened = addressed.filter((_, i) => allowed[i]);
+    if (opened.length < addressed.length) ctx.log("form", { what: `${addressed.length - opened.length} response(s) from people the form is not open to: not counted` });
     const all = m.once ? F.latestPerAccount(opened) : opened;
     // Sent after the form closed: shown apart, never counted.
     const late = m.closedAt ? all.filter(r => (r.edited ?? r.at) > m.closedAt) : [];
