@@ -297,6 +297,56 @@ Checking fragments a keeper mints later (not listed in the index) needs homomorp
 Pedersen commitments — and comes with keepers as a new codec version the index names. Files are outside every table's
 tree (the tree holds the reference only); keeping them alive follows the references (phase 4, Lifecycle).
 
+## 7. App domains (owner 2026-10-11)
+
+What comes after today's apps (roadmap row 13), decided in conversation with the owner on 10-11.
+
+**Two shapes of app.** Every app is a lens over one place (personal space, a shared space) and gathers across places;
+how "global" works depends on its shape:
+- COLLECTION apps — each item has ONE author (Board, Video, Audio, Image, Book, Paste): global is a GATHERING of
+  everyone's own items (Board's feed: your spaces' boards and the profiles you follow; the media apps' channels you
+  follow; Discover). Nobody owns the whole. (Note and Drive are private on purpose: no gathering.)
+- SHARED-OBJECT apps — one thing edited by many (Wiki, Docs, Sheets, Vote): ownership decides who edits. NOBODY EDITS
+  ANOTHER PERSON'S PAGE.
+
+**Wiki** (federated, as Ward Cunningham's Federated Wiki, plus ranking):
+- YOUR wiki: only you edit. Others FORK a page into their own wiki, or send a SUGGESTION you accept or decline.
+- A SPACE's wiki: the space owns its pages; members whose role may edit do (Wikipedia-like, under the space's rules:
+  who edits, approves, reverts); others suggest. A page is stored as SECTIONS (one row each): two editors of different
+  sections never collide; two of one section are both kept and shown as a conflict — nothing is lost silently. Every
+  edit signed by its author; the history shows who changed what. Real-time co-editing (a CRDT) is not needed here.
+- GLOBAL: no global editor (no central authority). A title's page GATHERS every public version — the top one opened,
+  "N other versions" below (author or space, last edit, votes, the difference), forks grouped by LINEAGE so near-copies
+  collapse. RANKED by public signals: votes, links in from other pages, the author's reputation (vouches: fake
+  accounts gain nothing), freshness; the reader's own NEIGHBOURHOOD (people and spaces followed or joined) can come
+  first for them. (Federated Wiki left ranking out on purpose so no version looks official; here the "N other
+  versions" stays always visible for the same reason.)
+
+**Productivity queue** (none needs the token; each a lens a space turns on, telemetry from the one collector, row 9):
+1. WIKI — as above.
+2. BLOG — a LENS over Board's posts (no new store): article layout (cover, reading column, reading time, contents),
+   a blog home (an author's or a space's posts as articles, newest and by tag), drafts and scheduled publishing,
+   subscribe = follow, a space as a PUBLICATION (several authors, editors approving, by roles).
+3. FORMS — collecting information: surveys, sign-ups, applications; a form builder (field types, required, choices);
+   answers SEALED to the form's owners; a results table and export.
+4. VOTE — collective decisions: quick POLLS (one question, results) and PROPOSALS with DELEGATION (liquid democracy:
+   delegate to another member, transitive; a direct vote overrides it; delegation persistent until revoked or replaced;
+   delegation and votes as signed append-only statements, highest sequence wins, a deterministic tie-break; cycles
+   resolve to no vote; a depth limit within the related-contract limit — the client walks the graph, the contract
+   verifies; a finalized result names an immutable snapshot and later changes never rewrite it; transparent in v1).
+   The ELECTORATE is a space's members, one account each (admission is the gate). OUTCOMES ACT: a passed proposal
+   writes the space's own acts (grant a role, change a rule, elect a moderator; spend a space treasury once the token is
+   live). The visual delegation graph is a requirement. (Polls live here, not in Forms: a poll is a vote.)
+5. SLIDES — decks written as Markdown, one slide per section; presenter view, themes, PDF export.
+6. DOCS and SHEETS — after a decision on co-editing: one editor at a time, or a merge format (CRDT) in storage. Sheets:
+   a table per sheet (a row per cell), a formula engine, CSV/XLSX import and export.
+
+**Commerce — RESALE of editions (after the token is released and stable):** selling a copy you own, ON THE ITEM'S PAGE
+(owner 10-10: no separate shop): "sell for X" escrows the copy into a SWAP and posts the offer to the item's public
+offers bag; the item page lists offers (copy, price, Buy); a buy crosses the deal; ROYALTIES are the token's (§1b/§1c
+of TOKEN.md: the creator, and holders when the edition shares them); unsold offers refund after their window; the
+wallet shows your copies, offers and an item's price history. One-time owners keep seller and buyer unlinked.
+
 ## Implementation plan
 
 Each phase: build → the private node (all three sites) → published through B → committed. Status as of 2026-10-05.
@@ -321,11 +371,11 @@ Each phase: build → the private node (all three sites) → published through B
 | 6 | **Shapes** | `content`, `edge` | notes as content; pins, labels, likes, votes as edges | done — notes as content; pins, labels; votes, views, saves, shares, reactions and tags as SIGNALS (one catalog: `signals`) |
 | 7 | **Index** | `index` | the Bag: inbox (sealed pointers), directory (public, handle + id), comments | done — inbox, directory, comments, public listings and pointers (bags), Discover |
 | 8 | **Chat** | `chat` page | a space + its MLS group + content (messages) + index (inbox) | done — direct, group and mail conversations; a space's channels, each with its readers and posters |
-| 9 | **Privacy and observability** | all | padding, sealed senders, no time-sortable ids in private spaces; health in `trace`/`account`; ANALYTICS: view counts (one entry per viewer per item, as Grid's tally — deduped, windowed like the feeds, public item counted publicly, private item only among its readers) and the feed bar's Popular | observability done (signals counted, windowed, on the buttons; Popular; hide and flag; NSFW by choice); privacy hardening not started |
+| 9 | **Privacy and observability** | all | padding, sealed senders, no time-sortable ids in private spaces; health in `trace`/`account`; ANALYTICS: view counts (one entry per viewer per item, as Grid's tally — deduped, windowed like the feeds, public item counted publicly, private item only among its readers) and the feed bar's Popular | observability done (signals counted, windowed, on the buttons; Popular; hide and flag; NSFW by choice); HEALTH TELEMETRY (10-11): one collector in the loader for every package and app — uncaught errors, rejected promises, packages that fail to load, failure log lines, apps opened in the heartbeat — into the day's health bag sealed to support (live v378), beside the mechanisms' own reports (keys, joins, reads, witness); privacy hardening not started |
 | 10 | **When needed** | `ordering`, `roles`, `keys` | witnessed snapshots; enterprise role templates and escrow | — |
 | 11 | **Global analytics** | `signals`, `index`, `keep` | network-wide counts every reader agrees on, as the basis of usage QUOTAS and REWARDS: each signal also one entry in a public per-item TALLY (one per person; private items under a per-item alias that cannot be linked across items); QUALIFIED counts (standing: account age, proof of work, later stake or payment) beside the raw ones; quotas on resources held and served (bytes per account), not on engagement; each period SETTLED by independent checkers running the same pure function over the public tallies and signing the result | built in shadow mode — usage record, keepers, DAILY statements final by the date for everyone, ledger, levels and gated items (REWARDS.md); contributions still self-stated until the TOKEN (docs/TOKEN.md: own standard, owner chains, no sequencer — designed, related-contract validation measured) |
 | 12 | **Compute (craftvm)** | `identity`, delegates | programs in nodes (delegates): bots, workflows, services — their clock the node's wake-ups | not started — a delegate's new contracts do not reach the network yet (freenet #5542), as the background re-key found |
-| 13 | **App domains** | all | the apps beyond today's: their kinds, looks and rules declared, built on the one frame | — |
+| 13 | **App domains** | all | the apps beyond today's: their kinds, looks and rules declared, built on the one frame | designed — §7 (owner 10-11): Wiki, Blog, Forms, Vote, Slides, then Docs and Sheets; edition resale after the token |
 | 14 | **Templates** | all | an app made from another's shape | — |
 
 Built already (in the shape since phase 0): identity with rotatable keys (key log contract `idlog`), PIN

@@ -2304,3 +2304,14 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
 - [x] 10-11 WELCOME PACKAGES SHARED + WELCOME OUTBOX (local, page JS only, not published): each welcome names its key package tag in the space's writers list (`{ w, welcomed, kp }`; node admissions absorbed with their `kp`), `welcome` skips tags any member used (this space fresh + every server space mirrored as `keypacks` `shared:<tag>`, also handed to the delegate's mandate as spent; health `welcome-pkg-shared`); a send failing after the commit is kept (`outbox:<space>|<did>|<tag>`) and resent by upkeep (2 min doubling to 1 h, give up after a day; health `welcome-send-failed`). Test: `node --test tools/welcome-packages.test.mjs` (5 pass; control with the exclusion removed: 3 fail). No node run.
 - [x] 10-11 MISDEED REGISTRY → REPUTATION (local, not published): chained bag per epoch of self-proving EQUIVOCATION proofs (`rules::misdeed`, credential binds key→DID); every statement builder reads registries < E through `statement::Inputs::misdeeds` (core/statement.js, delegate, token-net); cheat rep 0 + never earns, direct vouchers charged DAMP·ramp/n for 30 epochs (`reputation::misdeed`); `token-ops misdeed --post`. Statement roots change; token.wasm bytes change on rebuild (reputation crate linked). False credit/mint/verdict not standalone: open (TOKEN §8).
 - [x] 10-11 SUPERSEDE a wedged tail (TOKEN §3d; local, token.wasm NOT rebuilt): `Body::Supersede{from}` appended by the owner voids an unaccepted tail once `may_supersede` (past FRESH + a freeze past AT_SLACK) and no witness signed any of it; state rolls back to before `from`; voided entries never witnessed/cited/collected; page auto-supersedes from its witness queue (`wallet_supersede`), re-takes voided credits; delegate only witnesses (shared `may_witness`). Open: partially-signed tails, observer-dependent "no signature" (§8 item 7).
+
+## App domains (owner 10-11) — docs/ARCHITECTURE.md §7 is the design
+- [ ] WIKI: own (only you edit; fork / suggest), space (roles edit; sections as rows; conflicts kept), global
+      (gathered by title, ranked by votes, links in, author reputation, freshness; neighbourhood first; N other versions).
+- [ ] BLOG: a lens over Board's posts — article layout, blog home, drafts/scheduling, subscribe = follow, publications.
+- [ ] FORMS: builder, answers sealed to owners, results and export (no polls — those are Vote's).
+- [ ] VOTE: polls; proposals with transitive delegation, direct override, cycles, depth limit, snapshot finalization;
+      electorate = a space's members; outcomes write the space's acts; delegation graph view.
+- [ ] SLIDES (Markdown decks), then DOCS and SHEETS after the co-editing decision (one editor vs a CRDT).
+- [ ] RESALE of editions on the item page — after the token is released and stable.
+- [x] Telemetry: one collector in the loader for every app (live v378).
