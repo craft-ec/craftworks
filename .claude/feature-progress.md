@@ -2308,6 +2308,7 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
 ## App domains (owner 10-11) — docs/ARCHITECTURE.md §7 is the design
 - [ ] WIKI: own (only you edit; fork / suggest), space (roles edit; sections as rows; conflicts kept); GLOBAL = one
       OWNERLESS COMMONS (anyone edits behind a reputation gate, full history, disputes and rules by Vote) — after Vote.
+- [x] 10-11 WIKI personal + space (local, page JS only, not published, no node run): `wiki` app + `wiki-pages` (pages by title, sections as per-writer versions with base/merges hashes → heads, conflicts kept, suggestions accept/decline, history/restore, copy with lineage, propose back; `edit` policy on domain `wiki`). Tests: `node --test tools/wiki-pages.test.mjs` (27 pass; control with conflict detection removed: 4 fail; with merge carry removed: 1 fail) and `tools/wiki-flow.test.mjs` (in-memory service flow; fails with carry removed). Global commons not built (seam: `wiki-pages.of` refuses it).
 - [ ] SHARED ITEMS: owner + editors + viewers per item (a small group per item), for Docs/Sheets/Slides/Notes/Wiki/Drive.
 - [ ] CO-EDITING: CRDT over per-writer feeds; first MEASURE Chat delivery delay between two nodes; choose Yjs/Loro/Automerge.
 - [ ] BLOG: a lens over Board's posts — article layout, blog home, drafts/scheduling, subscribe = follow, publications.

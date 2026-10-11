@@ -362,7 +362,7 @@ export async function start(ctx) {
     if (open) c.onclick = e => !e.target.closest("button, .by") && open();
     return c;
   }
-  const LOOKS = { video: media, audio: media, book, note, file, image: file, document: file, text, caption, paste };
+  const LOOKS = { video: media, audio: media, book, note, file, image: file, document: file, text, caption, paste, wiki: text };
   function card(it, { href = items.pageOf(it.ref, it.kind), actions = [], by = true, corner = null, below = null, open = null, lead = null, body = null } = {}) {
     const look = LOOKS[it.kind] ?? LOOKS[kinds.domain(it.kind)];
     if (!look) throw new Error(`no look for ${it.kind} yet`);

@@ -107,7 +107,7 @@ export async function start(ctx) {
   const roles = await ctx.require("roles");
   // A space's board room is its place for every item `posts` keeps — posts, videos, captions — so any app on it opens
   // the place (a space with Video and no Board still takes videos).
-  const PLACE_APPS = ["board", "video", "audio", "caption", "note", "drive", "image", "book", "chat", "form", "blog"];
+  const PLACE_APPS = ["board", "video", "audio", "caption", "note", "drive", "image", "book", "chat", "form", "blog", "wiki"];
   const boards = async () => {
     const all = await space.mine();
     // Its apps once its acts are read (before, a space shows the default apps: a Chat-only space would open a board).
@@ -1034,7 +1034,7 @@ export async function start(ctx) {
 
   // WHERE AN ITEM IS SHOWN — the one link to its page, for every app that links to one: a video or a track where it
   // plays (Video, Audio, Image), a post (or anything else) on its board, a note in Note, a file in Drive.
-  const APP_OF = { video: "video", audio: "audio", image: "image", book: "book", note: "note", file: "drive", document: "drive", form: "form" };
+  const APP_OF = { video: "video", audio: "audio", image: "image", book: "book", note: "note", file: "drive", document: "drive", form: "form", wiki: "wiki" };
   // A kind with an app of its own (a paste: Paste, though of the note family) first; else its domain's.
   const APP_OF_KIND = { paste: "paste" };
   const appOf = kind => APP_OF_KIND[kind] ?? APP_OF[kinds.domain(kind)] ?? "board";

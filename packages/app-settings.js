@@ -126,6 +126,8 @@ export async function start(ctx) {
     note: { title: "Note", fields: [{ action: "post", path: "note", label: "Add" }, { action: "edit", path: "note", label: "Edit" }] },
     // Drive shows the FILE domain: its rules are the domain's (`kinds.policyDomain`), as Board's are the text domain's.
     drive: { title: "Drive", fields: [{ action: "read", path: "file", label: "Read" }, { action: "post", path: "file", label: "Upload" }, { action: "edit", path: "file", label: "Move" }] },
+    // Wiki shows the WIKI domain: who EDITS its pages (the rest suggest — `wiki-pages`), who may suggest (comment).
+    wiki: { title: "Wiki", fields: [{ action: "read", path: "wiki", label: "Read" }, { action: "edit", path: "wiki", label: "Edit" }, { action: "comment", path: "wiki", label: "Suggest" }], saved: async (c, r, sp) => c["wiki|read"] === "anyone" && madePublic(r, sp) },
   };
   // CHAT's own rows: its channels, each with who may post in it.
   async function chatChannels(host, r, sp) {

@@ -325,6 +325,13 @@ how "global" works depends on its shape:
   change anything for everyone. FORKS stay possible (your own wiki) but optional; there is one page per title.
   (Superseded design, kept for the record: a gathering of everyone's versions ranked by votes, links, reputation and
   freshness, as Federated Wiki plus ranking.)
+- STATUS (10-11, local, not published or run on a node): YOUR wiki and a SPACE's BUILT — app `wiki` over `wiki-pages`
+  (no store of its own: a page is an item of kind `wiki`, unique per wiki by its normalized title; each section one
+  writer's latest version, a `wiki-section` item attached to it; a version names the hash it was written over and the
+  conflict heads it settles, so heads, conflicts and suggestions are computed alike by every reader). Who edits a
+  space's: its `edit` policy on the `wiki` domain (Settings → Wiki); others suggest. [[links]] (missing ones to create),
+  what links here, an index tree, history and restore (storage's per-item history), copy with lineage, propose back.
+  GLOBAL commons: NOT built — `wiki-pages.of` refuses that scope by name (after Vote).
 
 **Shared items** (the foundation under Docs, Sheets, Slides — and usable by Notes, Wiki pages, Drive files): an item is
 yours alone, a SPACE's (edited under its roles — built), or SHARED WITH CHOSEN PEOPLE: its own small group (a tiny space

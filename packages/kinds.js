@@ -56,6 +56,8 @@ export async function start() {
     ["channel", "chat", "Channel", []],
     // Form (Forms: questions to answer — its fields, open or closed, one response per account — in `meta`)
     ["form", "form", "Form", []],
+    // Wiki (Wiki: a page by its title, its text as sections — each a `wiki-section` attached to it: `wiki-pages`)
+    ["wiki", "wiki", "Wiki page", []],
   ];
   // COLLABORATIVE kinds: in a space, whoever its `edit` policy allows edits one (a shared note, a shared file's
   // entry), the creator kept; every other kind its author's alone (an app's own enforcement over the policy).
@@ -86,7 +88,12 @@ export async function start() {
   // about, and a lens of their own (the Caption app). A CAPTION — subtitles, lyrics, a transcript: WebVTT (its file),
   // its language and label.
   // A RESPONSE to a form: its answers SEALED to the form's owners (and to its writer), in the writer's own feed.
-  const ATTACHING = [["caption", "text", "Caption", ["lang", "label"], ["video", "audio"]], ["response", "form", "Response", [], ["form"]]];
+  const ATTACHING = [
+    ["caption", "text", "Caption", ["lang", "label"], ["video", "audio"]],
+    ["response", "form", "Response", [], ["form"]],
+    // A WIKI SECTION: one writer's latest version of one section of a page (`wiki-pages`: sid, pos, base, merges).
+    ["wiki-section", "wiki", "Wiki section", ["sid"], ["wiki"]],
+  ];
   const byKind = new Map(CATALOG.map(([kind, domain, label, fields]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields) })]));
   const onTo = new Map(ATTACHING.map(([kind, domain, label, fields, to]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields), to: Object.freeze(to), attaches: true })]));
   const LABELS = { lang: "Language", label: "Label",  year: "Year", director: "Director", cast: "Cast", genre: "Genre", show: "Show", season: "Season", episode: "Episode", artist: "Artist", album: "Album", host: "Host", author: "Author", narrator: "Narrator", chapter: "Chapter", location: "Location", taken: "Taken", camera: "Camera", medium: "Medium", publisher: "Publisher", isbn: "ISBN", writer: "Writer", issue: "Issue", format: "Format", software: "Software", platform: "Platform", version: "Version", license: "License", schema: "Schema" };
@@ -104,6 +111,7 @@ export async function start() {
     note: { look: "card", votes: true, comments: true, about: false },
     file: { look: "card", votes: true, comments: true, about: true },
     document: { look: "card", votes: true, comments: true, about: true },
+    wiki: { look: "card", votes: true, comments: true, about: false },
   };
   return {
     parts: kind => PARTS[byKind.get(kind)?.domain] ?? { look: "card", votes: false, comments: false, about: false },
