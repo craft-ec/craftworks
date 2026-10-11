@@ -393,6 +393,15 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
+    // THE TOKEN OFF (`CRAFTWORKS_TOKEN=off`): a release of everything but the token (owner 10-12: features and fixes go
+    // live apart from it) — no beacon and no tokens set up (both configs `{}`: the beacon, statements, keepers, witnesses
+    // and the token service all idle), and the token's apps left out of the manifest.
+    let token_off = std::env::var("CRAFTWORKS_TOKEN").as_deref() == Ok("off");
+    let off_config = built.join("token-off-config.json");
+    if token_off {
+        std::fs::write(&off_config, b"{}").context("writing the token-off config")?;
+        println!("token: OFF (no beacon, no tokens; Nodes, Wallet and Network left out)");
+    }
     let packages: [(&str, &str, PathBuf); 129] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
@@ -553,8 +562,8 @@ async fn main() -> Result<()> {
         ("beacon-wasm", "bytes", contracts.join("beacon.wasm")),
         ("beacon-step-glue", "bytes", built.join("craftworks_beacon_step.js")),
         ("beacon-step-wasm", "bytes", built.join("craftworks_beacon_step_bg.wasm")),
-        ("beacon-config", "bytes", std::env::var("BEACON_CONFIG").map(std::path::PathBuf::from).unwrap_or_else(|_| app.join("packages/beacon-config.json"))),
-        ("tokens-config", "bytes", std::env::var("TOKENS_CONFIG").map(std::path::PathBuf::from).unwrap_or_else(|_| app.join("packages/tokens-config.json"))),
+        ("beacon-config", "bytes", if token_off { off_config.clone() } else { std::env::var("BEACON_CONFIG").map(std::path::PathBuf::from).unwrap_or_else(|_| app.join("packages/beacon-config.json")) }),
+        ("tokens-config", "bytes", if token_off { off_config.clone() } else { std::env::var("TOKENS_CONFIG").map(std::path::PathBuf::from).unwrap_or_else(|_| app.join("packages/tokens-config.json")) }),
         // SUPPORT (`{ support }`: its X25519 public key, hex; SUPPORT_CONFIG names the file): `index.health` seals each
         // report to it — the health bag is public, only support (tools/health-watch, its secret) reads a report.
         ("support-config", "bytes", std::env::var("SUPPORT_CONFIG").map(std::path::PathBuf::from).unwrap_or_else(|_| app.join("packages/support-config.json"))),
@@ -589,7 +598,12 @@ async fn main() -> Result<()> {
         let up = published.contains(&sha);
         println!("package {name}: {} B as {} pieces{}", bytes.len(), pieces.len(), if up { " (already published)" } else { "" });
         entries.push(format!(r#"    "{name}": {{ "kind": "{kind}", "sha256": "{sha}" }}"#));
-        entry_files.push((format!("p/{}.json", &sha[..16]), format!(r#"{{ "kind": "{kind}", {fields} }}"#).into_bytes()));
+        // One file per CONTENT: two packages with the same bytes (two configs both `{}`) share it — a path twice in the
+        // site's archive makes the node refuse the whole site ("failed unpacking contract").
+        let entry_path = format!("p/{}.json", &sha[..16]);
+        if !entry_files.iter().any(|(p, _)| *p == entry_path) {
+            entry_files.push((entry_path, format!(r#"{{ "kind": "{kind}", {fields} }}"#).into_bytes()));
+        }
         if *kind != "bytes" {
             sources.push((name.to_string(), String::from_utf8_lossy(&bytes).into_owned()));
         }
@@ -675,13 +689,27 @@ async fn main() -> Result<()> {
         }
         needs.push(format!("\"{route}\": [{}]", have.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")));
     }
-    let manifest = format!(
+    let mut manifest = format!(
         "{{ \"app\": \"Craftworks\",\n  \"theme\": \"theme\",\n  \"layout\": {{ \"header\": [\"header\"], \"footer\": [\"footer\"] }},\n  \"pages\": {{ {} }},\n  \"apps\": [ {{ \"name\": \"Note\", \"category\": \"Productivity\", \"views\": [\"personal\", \"shared\", \"public\", \"person\"], \"icon\": \"📝\", \"route\": \"/note\", \"about\": \"Notes, tagged and pinned: yours, or a space's, kept together.\" }}, {{ \"name\": \"Paste\", \"category\": \"Productivity\", \"views\": [\"personal\", \"public\", \"person\"], \"icon\": \"📄\", \"route\": \"/paste\", \"about\": \"Paste code or text, coloured by language: public, unlisted or private, with an expiry; its link and a raw view.\" }}, {{ \"name\": \"Wiki\", \"category\": \"Productivity\", \"views\": [\"personal\", \"shared\", \"public\", \"person\"], \"icon\": \"📖\", \"route\": \"/wiki\", \"about\": \"Pages by title, linked with [[Title]]: your own wiki, or a space's — its editors edit, others suggest; history, conflicts kept, copies with their lineage.\" }},{{ \"name\": \"Vote\", \"category\": \"Productivity\", \"views\": [\"personal\", \"shared\", \"public\", \"person\"], \"icon\": \"🗳\", \"route\": \"/vote\", \"about\": \"Polls, and a space's proposals with delegation: vote yourself or let a member vote for you; results counted the same by everyone, finalized, and carried out as the space's acts.\" }},{{ \"name\": \"Form\", \"category\": \"Productivity\", \"views\": [\"personal\", \"shared\", \"public\", \"person\"], \"icon\": \"🗒\", \"route\": \"/form\", \"about\": \"Surveys, sign-ups and applications: build a form, collect answers sealed to its owners, see the results and export CSV.\" }}, {{ \"name\": \"Chat\", \"category\": \"Communication\", \"views\": [\"personal\", \"shared\", \"public\"], \"icon\": \"💬\", \"route\": \"/chat\", \"counts\": \"chat\", \"about\": \"Your conversations — one person or a group — and a space's channels.\" }}, {{ \"name\": \"Mail\", \"category\": \"Communication\", \"views\": [\"personal\", \"shared\"], \"icon\": \"📮\", \"route\": \"/mail\", \"about\": \"Mail to anyone by their id: signed by your account, sealed to theirs. A space's mail: its own address, its admins'.\" }}, {{ \"name\": \"Contact\", \"category\": \"Communication\", \"views\": [\"personal\", \"shared\", \"public\"], \"icon\": \"👤\", \"route\": \"/contact\", \"about\": \"The people you know: friends, following, requests. Find anyone by their id.\" }}, {{ \"name\": \"Board\", \"category\": \"Social\", \"views\": [\"personal\", \"shared\", \"public\", \"person\"], \"icon\": \"📋\", \"route\": \"/board\", \"about\": \"Posts, comments and votes: a space's, or your own profile.\" }}, {{ \"name\": \"Blog\", \"category\": \"Social\", \"views\": [\"personal\", \"shared\", \"public\", \"person\"], \"icon\": \"✍️\", \"route\": \"/blog\", \"about\": \"Board's posts as articles: your blog, drafts and scheduled posts; a space as a publication, its editors approving.\" }},{{ \"name\": \"Drive\", \"category\": \"Productivity\", \"views\": [\"personal\", \"shared\", \"public\", \"person\"], \"icon\": \"🗂️\", \"route\": \"/drive\", \"about\": \"Every file you upload or attach, in folders: yours, or a space's.\" }}, {{ \"name\": \"Video\", \"category\": \"Media\", \"views\": [\"personal\", \"shared\", \"public\", \"person\"], \"icon\": \"▶️\", \"route\": \"/video\", \"about\": \"Your channel and those you follow: videos, movies, episodes, shorts.\" }}, {{ \"name\": \"Audio\", \"category\": \"Media\", \"views\": [\"personal\", \"shared\", \"public\", \"person\"], \"icon\": \"🎧\", \"route\": \"/audio\", \"about\": \"Music, podcasts and audiobooks: yours and those you follow, with lyrics and transcripts.\" }}, {{ \"name\": \"Image\", \"category\": \"Media\", \"views\": [\"personal\", \"shared\", \"public\", \"person\"], \"icon\": \"🖼\", \"route\": \"/image\", \"about\": \"Photos, artwork and pictures: your photostream and those you follow.\" }}, {{ \"name\": \"Book\", \"category\": \"Media\", \"views\": [\"personal\", \"shared\", \"public\", \"person\"], \"icon\": \"📚\", \"route\": \"/book\", \"about\": \"Books and comics — PDF, EPUB, CBZ — on your shelf and those you follow, read here page by page.\" }}, {{ \"name\": \"Caption\", \"category\": \"Media\", \"views\": [\"personal\", \"shared\", \"public\", \"person\"], \"icon\": \"🔤\", \"route\": \"/caption\", \"about\": \"Captions as data of their own — subtitles, lyrics, transcripts: yours on any video or audio, edited, exported as WebVTT or SRT.\" }}, {{ \"name\": \"Nodes\", \"category\": \"System\", \"views\": [\"personal\"], \"icon\": \"🖥️\", \"route\": \"/nodes\", \"about\": \"Your machines and their work: what each keeps and proves, your witness seat, the data you used.\" }}, {{ \"name\": \"Wallet\", \"category\": \"System\", \"views\": [\"personal\"], \"icon\": \"👛\", \"route\": \"/wallet\", \"about\": \"Your money: balances, payments, what you earned and what you give.\" }}, {{ \"name\": \"Network\", \"category\": \"System\", \"views\": [\"personal\"], \"icon\": \"🌐\", \"route\": \"/network\", \"about\": \"The network's public records: clock, statements, the witness lot and queue, registries.\" }}, {{ \"name\": \"Settings\", \"category\": \"System\", \"views\": [\"personal\", \"shared\"], \"always\": true, \"icon\": \"⚙️\", \"route\": \"/settings\", \"about\": \"The settings of where you are: a space's members, roles, invites and rules; or your account, permissions and devices.\" }} ],\n  \"uses\": [\"pins\", \"tags\", \"spaces\", \"mailbox\", \"spacekeys\", \"spacekeys-2\", \"spacekeys-3\", \"spacekeys-4\", \"spacekeys-5\", \"spacekeys-6\", \"spacekeys-7\", \"spacekeys-8\", \"spacekeys-9\", \"reads\", \"people\", \"posts\", \"journal\", \"asks\", \"files\", \"uploads\", \"keypacks\", \"encodes\", \"keep\", \"usage\", \"kept\", \"contrib\", \"keyevents\", \"vouches\", \"tokens\", \"wallet\", \"forms\"],\n  \"identity_prior\": [{}],\n  \"needs\": {{ {} }},\n  \"packages\": {{\n{}\n  }} }}\n",
         pages.iter().map(|(r, p)| if LOGIN_ONLY.contains(r) { format!("\"{r}\": {{ \"body\": [\"{p}\"], \"access\": \"login\" }}") } else { format!("\"{r}\": [\"{p}\"]") }).collect::<Vec<_>>().join(", "),
         prior.join(", "),
         needs.join(", "),
         entries.join(",\n")
     );
+    if token_off {
+        // The token's apps and their pages out of the manifest (nothing links to what has nothing to run).
+        const TOKEN_ROUTES: [&str; 5] = ["/nodes", "/usage", "/wallet", "/network", "/explorer"];
+        let mut m: serde_json::Value = serde_json::from_str(&manifest).context("the manifest is not JSON")?;
+        if let Some(apps) = m["apps"].as_array_mut() {
+            apps.retain(|a| !TOKEN_ROUTES.contains(&a["route"].as_str().unwrap_or("")));
+        }
+        for key in ["pages", "needs"] {
+            if let Some(o) = m[key].as_object_mut() {
+                o.retain(|r, _| !TOKEN_ROUTES.contains(&r.as_str()));
+            }
+        }
+        manifest = serde_json::to_string(&m)?;
+    }
 
     // 3. The loader's site, then the app's (whose wrapper names the loader's site).
     let sdk = app.join("loader/sdk");
