@@ -204,7 +204,7 @@ export async function start(ctx) {
   // `extra`: the app's own, first (a comment's Reply).
   // `vote`: its VOTES first in the row (true, or `votes`' options: a comment's `post` and `may`) — the ONE row, votes
   // included, on every page: a list, an item's page, a comment, a tile.
-  function bar(it, { outside = null, open = null, edit = null, removed = null, changed = null, discover = false, comments = true, extra = [], vote = false } = {}) {
+  function bar(it, { outside = null, open = null, edit = null, removed = null, changed = null, discover = false, comments = true, extra = [], vote = false, link = null } = {}) {
     const voteEl = vote ? votes(it, { outside, row: true, ...(vote === true ? {} : vote) }) : null;
     const said = h("span", { className: "said", hidden: true });
     const fail = e => ((said.textContent = e?.message ?? String(e)), (said.hidden = false));
@@ -231,7 +231,8 @@ export async function start(ctx) {
           // SHARE: its LINK copied (`items.linkOf`: opens it in a browser with a node; pasted in the app, opens it here, or
           // embeds it through Insert) — and the share signal, counted where it is.
           btn(`↗ Share${n("share")}`, e =>
-            navigator.clipboard.writeText(items.linkOf(it.ref, it.kind)).then(() => {
+            // (`link`: the lens it is read in shares ITS page — Blog an article, not the post's Board page; owner 10-11.)
+            navigator.clipboard.writeText(link?.() ?? items.linkOf(it.ref, it.kind)).then(() => {
               if (!it.signaled?.share) bump(it, "share", true), items.signal(it.ref, "share", true).catch(() => {});
               e.target.textContent = `Link copied${n("share")}`;
             }, fail),

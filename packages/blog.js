@@ -209,6 +209,8 @@ export async function mount(ctx, el) {
       removed: () => (location.hash = base()),
       changed: () => draw(),
       edit: it.by === me && !it.private ? () => (location.hash = `${placeBase(it)}/edit/${it.ref}`) : null,
+      // Shared as the ARTICLE it is read as here (this page's own address), not its Board page.
+      link: () => `${location.origin}${location.pathname}${location.hash}`,
     });
     col.append(bar);
     const thread = await (await ctx.require("comments")).create({ item: it, outside, app: "blog" });
