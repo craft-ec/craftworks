@@ -2248,9 +2248,9 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       `Params::sigs` (`rules::tokens::witness_sigs`); `Source/StakeReads/fees::Reads.sigs` take the claims epoch; the
       chain writer makes the empty container (core `witnesses`), pages PUT, the delegate UPDATEs. Test: 8,256 sybil
       signatures + forged/replayed ones + an equivocator's extras offered — every genuine signature stays, the proof
-      too (control: registry rule off → 8,268 taken, unbounded). Re-keys token.wasm at publish. Follows C2b: if claims
+      too (control: registry rule off → 8,268 taken, unbounded). A held signature is never dropped by a merge (a node whose registry copy lags a claim would have). Re-keys token.wasm at publish. Follows C2b: if claims
       leave the registry, this gate follows them.
-- [x] C9 10-11 DELEGATE ROUND STATE CHEAP: a round's secret is its index only, each state read its own secret written
+- [x] C11 10-11 DELEGATE ROUND STATE CHEAP: a round's secret is its index only, each state read its own secret written
       once (was: every answer re-serialized every state read); the witness round's settled list holds 32-byte item
       hashes, looked up through a set, written only when one is added (test: an answer never rewrites earlier states;
       an ended round's are blanked).

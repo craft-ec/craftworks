@@ -225,14 +225,13 @@ pub fn needs_registry(held: &Signatures, given: &Signatures) -> bool {
     given.items.iter().any(|x| x.key != BASELINE && !held.items.iter().any(|h| (h.key, h.entry) == (x.key, x.entry)))
 }
 
-/// THE MERGE — the same in every order: the union of the signatures that VERIFY, by the baseline or a key of
-/// `registry`'s claims (without it — nothing new but the baseline's was given — `held` as it is and the baseline's),
-/// one per (key, entry) (the lower signature bytes), each key's [`PER_KEY`] lowest entries.
+/// THE MERGE — the same in every order: the union of the signatures that VERIFY, by the baseline, a key of
+/// `registry`'s claims, or already HELD (taken once under a registry; a node's copy of the registry that has not yet
+/// seen a claim never drops what another node took), one per (key, entry) (the lower signature bytes), each key's
+/// [`PER_KEY`] lowest entries.
 pub fn merge(p: &Params, held: &Signatures, given: &Signatures, registry: Option<&crate::claims::Registry>) -> Signatures {
-    let admitted = |x: &Signed| match registry {
-        Some(r) => x.key == BASELINE || r.claims.iter().any(|c| c.key == x.key),
-        None => x.key == BASELINE || held.items.contains(x),
-    };
+    let keys: std::collections::BTreeSet<[u8; 32]> = registry.map(|r| r.claims.iter().map(|c| c.key).collect()).unwrap_or_default();
+    let admitted = |x: &Signed| x.key == BASELINE || held.items.contains(x) || keys.contains(&x.key);
     let mut all: Vec<Signed> = held.items.iter().chain(&given.items).filter(|x| admitted(x) && p.verifies(x)).copied().collect();
     all.sort();
     all.dedup_by(|b, a| (a.key, a.entry) == (b.key, b.entry));

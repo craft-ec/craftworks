@@ -1964,6 +1964,9 @@ fn junk_never_evicts_a_places_genuine_witness_signatures() {
     let all = Signatures { items: [junk.items.clone(), genuine.clone()].concat() };
     assert_eq!(merge(&p, &Signatures::default(), &all, Some(&reg)), after);
     assert_eq!(merge(&p, &held, &junk, None), held);
+    // A node whose registry copy has not yet seen the signers' claims never drops what another node took.
+    let stale = claims::Registry { claims: reg.claims[11..].to_vec() };
+    assert_eq!(merge(&p, &held, &Signatures::default(), Some(&stale)), held, "a lagging registry dropped a held signature");
     // A copy taken without the registry still holds only signatures that verify, at most two per key.
     let mut bad = held.clone();
     bad.items[0].sig[0] ^= 1;
