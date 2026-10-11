@@ -2311,7 +2311,7 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
 - [ ] SHARED ITEMS: owner + editors + viewers per item (a small group per item), for Docs/Sheets/Slides/Notes/Wiki/Drive.
 - [ ] CO-EDITING: CRDT over per-writer feeds; first MEASURE Chat delivery delay between two nodes; choose Yjs/Loro/Automerge.
 - [ ] BLOG: a lens over Board's posts — article layout, blog home, drafts/scheduling, subscribe = follow, publications.
-- [ ] FORMS: builder, answers sealed to owners, results and export (no polls — those are Vote's).
+- [x] FORMS (10-11, local, not published, no node run): `packages/form.js` + `form-fields.js`; responses = attaching `response` items sealed per owner inbox key (+ own), copy in table `forms`; results/summaries/CSV. Test: `node --test tools/form-fields.test.mjs` (10 pass; control without quote-doubling + required check: 4 fail).
 - [ ] VOTE: polls; proposals with transitive delegation, direct override, cycles, depth limit, snapshot finalization;
       electorate = a space's members; outcomes write the space's acts; delegation graph view.
 - [ ] SLIDES (Markdown decks), then DOCS and SHEETS after the co-editing decision (one editor vs a CRDT).

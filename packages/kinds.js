@@ -54,6 +54,8 @@ export async function start() {
     ["paste", "note", "Paste", ["language", "expires"]],
     // Channel (Chat: a place for messages — its title its name; `meta.cid` names its messages' table)
     ["channel", "chat", "Channel", []],
+    // Form (Forms: questions to answer — its fields, open or closed, one response per account — in `meta`)
+    ["form", "form", "Form", []],
   ];
   // COLLABORATIVE kinds: in a space, whoever its `edit` policy allows edits one (a shared note, a shared file's
   // entry), the creator kept; every other kind its author's alone (an app's own enforcement over the policy).
@@ -83,7 +85,8 @@ export async function start() {
   // ATTACHING kinds: their own data, about another item (`in`) — contributed like a comment, listed with what they are
   // about, and a lens of their own (the Caption app). A CAPTION — subtitles, lyrics, a transcript: WebVTT (its file),
   // its language and label.
-  const ATTACHING = [["caption", "text", "Caption", ["lang", "label"], ["video", "audio"]]];
+  // A RESPONSE to a form: its answers SEALED to the form's owners (and to its writer), in the writer's own feed.
+  const ATTACHING = [["caption", "text", "Caption", ["lang", "label"], ["video", "audio"]], ["response", "form", "Response", [], ["form"]]];
   const byKind = new Map(CATALOG.map(([kind, domain, label, fields]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields) })]));
   const onTo = new Map(ATTACHING.map(([kind, domain, label, fields, to]) => [kind, Object.freeze({ kind, domain, label, fields: Object.freeze(fields), to: Object.freeze(to), attaches: true })]));
   const LABELS = { lang: "Language", label: "Label",  year: "Year", director: "Director", cast: "Cast", genre: "Genre", show: "Show", season: "Season", episode: "Episode", artist: "Artist", album: "Album", host: "Host", author: "Author", narrator: "Narrator", chapter: "Chapter", location: "Location", taken: "Taken", camera: "Camera", medium: "Medium", publisher: "Publisher", isbn: "ISBN", writer: "Writer", issue: "Issue", format: "Format", software: "Software", platform: "Platform", version: "Version", license: "License", schema: "Schema" };

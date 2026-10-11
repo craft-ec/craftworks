@@ -358,6 +358,12 @@ snapshot), and the wiki commons' disputes (an edit war, a ban, a rule change go 
    subscribe = follow, a space as a PUBLICATION (several authors, editors approving, by roles).
 3. FORMS — collecting information: surveys, sign-ups, applications; a form builder (field types, required, choices);
    answers SEALED to the form's owners; a results table and export.
+   STATUS (10-11, local, not published): built — `form` app + `form-fields` (pure: fields, validation, summaries, CSV);
+   a form is an item (kind `form`, fields/open/once/editable/owners in `meta`), its audience who may answer; a
+   response is an attaching `response` item in the respondent's own feed (a member's in the form's place, anyone else's
+   in their profile, pointed), its answers sealed per reader to each owner's card inbox key and the respondent's
+   (`seal_to` / `identity.inboxOpen`); owners = maker (+ a space's owner and admins at creation); the respondent's copy
+   also in their table `forms`; results table, per-field counts, CSV (formula cells made inert). No node run yet.
 4. VOTE — collective decisions: quick POLLS (one question, results) and PROPOSALS with DELEGATION (liquid democracy:
    delegate to another member, transitive; a direct vote overrides it; delegation persistent until revoked or replaced;
    delegation and votes as signed append-only statements, highest sequence wins, a deterministic tie-break; cycles
