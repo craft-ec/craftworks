@@ -2552,8 +2552,8 @@ mod js {
             js_sys::JSON::parse(&json!({ "done": out }).to_string())
         }
         /// The VOUCH REGISTRY's bag address for standing epoch `epoch`.
-        pub fn vouch_registry_address(epoch: f64) -> js_sys::Uint8Array {
-            js_sys::Uint8Array::from(&craftworks_reputation::item::registry_address(epoch as u64)[..])
+        pub fn vouch_registry_address(epoch: f64, k: u32) -> js_sys::Uint8Array {
+            js_sys::Uint8Array::from(&craftworks_reputation::item::registry_address(epoch as u64, k)[..])
         }
         /// A signed vouch item's `{ from, to, at, on }` (DID texts), or null.
         pub fn vouch_item_read(item: &[u8]) -> JsValue {

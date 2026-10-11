@@ -157,9 +157,18 @@ async fn main() -> Result<()> {
         Some("registry") => {
             // token-ops registry <bag.wasm> <ws> <epoch>: the signed vouches in that epoch's vouch registry.
             let code = std::fs::read(&a[2])?;
-            let address = craftworks_reputation::item::registry_address(a[4].parse()?);
-            let id: [u8; 32] = container(&code, address.to_vec()).key().id().as_bytes().try_into()?;
-            let items = get(&a[3], id).await?.and_then(|b| craftworks_bag_contract::read(&address, &b)).unwrap_or_default();
+            let epoch: u64 = a[4].parse()?;
+            let mut items = Vec::new();
+            for k in 0..64 {
+                let address = craftworks_reputation::item::registry_address(epoch, k);
+                let id: [u8; 32] = container(&code, address.to_vec()).key().id().as_bytes().try_into()?;
+                let these = get(&a[3], id).await?.and_then(|b| craftworks_bag_contract::read(&address, &b)).unwrap_or_default();
+                let full = craftworks_bag_contract::chained::full(these.iter().map(|i| craftworks_bag_contract::payload(i).len()));
+                items.extend(these);
+                if !full {
+                    break;
+                }
+            }
             for i in &items {
                 match craftworks_reputation::item::Item::decode(craftworks_bag_contract::payload(i)) {
                     Some(v) => println!("{} → {} at {} {}", hex(&v.from[..4]), hex(&v.to[..4]), v.at, if v.on { "vouch" } else { "withdraw" }),

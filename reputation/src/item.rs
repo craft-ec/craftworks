@@ -6,9 +6,10 @@
 use crate::{Did, Vouch};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-/// The VOUCH REGISTRY of standing epoch `epoch` (a bag's address): where anyone relays the signed vouches made in it.
-pub fn registry_address(epoch: u64) -> [u8; 32] {
-    blake3::derive_key("craftworks 2026-10-10 vouch registry", &epoch.to_le_bytes())
+/// The VOUCH REGISTRY of standing epoch `epoch`, bag `k` (CHAINED: `bag::chained` — audit 10-11: one bag an epoch
+/// let anyone with more work evict every real vouch from it): where anyone relays the signed vouches made in it.
+pub fn registry_address(epoch: u64, k: u32) -> [u8; 32] {
+    craftworks_bag_contract::chained::address("craftworks 2026-10-11 vouch registry", epoch, k)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

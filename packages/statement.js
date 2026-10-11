@@ -25,7 +25,7 @@ export async function start(ctx) {
     // a seated page signs the one root it computes.)
     const strict = { strict: true };
     const items = [];
-    for (let e = 0; e <= epoch; e++) items.push(...(await index.bag.read(Core.vouch_registry_address(e), "reading a vouch registry", strict)));
+    for (let e = 0; e <= epoch; e++) items.push(...(await index.bag.chain(Core.vouch_registry_address, e, "reading a vouch registry", strict)));
     // KEPT: the keepers listed the epoch before (`keeper`), their records proving it.
     const keepers = epoch > 0 ? await index.bag.chain(Core.keepers_address, epoch - 1, "reading the keepers registry", strict) : [];
     const beacon = bytes((await ctx.require("beacon")).status().id);

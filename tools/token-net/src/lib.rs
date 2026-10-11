@@ -194,7 +194,7 @@ impl<'a> Reader<'a> {
     /// to it, each item verified by its voucher's key log): its root.
     pub fn statement_root(&self, epoch: u64) -> Option<[u8; 32]> {
         use craftworks_reputation as R;
-        let items: Vec<R::item::Item> = (0..=epoch).flat_map(|e| self.bag(R::item::registry_address(e))).filter_map(|b| R::item::Item::decode(&b)).collect();
+        let items: Vec<R::item::Item> = (0..=epoch).flat_map(|e| self.chained(R::item::registry_address, e)).filter_map(|b| R::item::Item::decode(&b)).collect();
         let log_of = |d: &R::Did| self.keys(d);
         let signed = epoch.checked_sub(1).map_or(Default::default(), |e| self.signed(e));
         let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP), witness: craftworks_wallet::craft::witness_pot(epoch) };

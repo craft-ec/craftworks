@@ -2227,6 +2227,8 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       the next 8 epochs' keepers bags while open (a delegate's new contracts do not propagate).
 - [x] C4 10-11 RECORD CROWDING closed: a keeper's record (named by its key) binds that key alone
       (`standing::keeper_key`); a stranger's binding refused (test; control run). Re-keys standing.wasm at publish.
+- [x] C5 10-11 VOUCH REGISTRY CHAINED (one bag an epoch: anyone with more work evicted every real vouch): chained bags
+      (`bag::chained`, new domain — fx/fy's earlier vouches are left behind), page relay/read, token-net, token-ops.
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.

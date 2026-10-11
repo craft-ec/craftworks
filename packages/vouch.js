@@ -60,11 +60,8 @@ export async function start(ctx) {
       const e = Math.floor(v.at / EPOCH);
       byEpoch.set(e, [...(byEpoch.get(e) ?? []), it]);
     }
-    for (const [e, its] of byEpoch) {
-      const address = Core.vouch_registry_address(e);
-      const held = new Set((await index.bag.read(address, "reading the vouch registry")).map(p => hexOf(p)));
-      for (const it of its) if (!held.has(hexOf(it))) await index.bag.add(address, it, "relaying a vouch");
-    }
+    // (Chained: the epoch's first bag with room — `index.bag.chained` finds it, and skips an item already there.)
+    for (const [e, its] of byEpoch) for (const it of its) await index.bag.chained(Core.vouch_registry_address, e, it, "relaying a vouch");
   }
 
   async function set(did, on) {
