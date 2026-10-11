@@ -3,24 +3,22 @@
 // - A FORM is an item of kind `form` (`items`, `kinds`): its title, its description (the body), and in `meta` its
 //   FIELDS (`form-fields`: short and long text, number, email, date, single and multiple choice, checkbox, file
 //   upload; required flags; choices), `open` (accepting responses; `closedAt` when it closed), `once` (one response
-//   per account), `editable` (a response may be changed while open) and `owners` — who reads the responses.
+//   per account), `editable` (a response may be changed while open).
 //   Who sees it — and so who may answer it — is its AUDIENCE (`audience`: public, followers, friends; a space's
 //   members, a role, the admins, chosen people); who may MAKE one in a space is the space's policy (`form` domain,
 //   `post`); answering is the form's `comment` action (`roles.mayWrite`: its own rule, else the space's).
-// - A RESPONSE is an item of the ATTACHING kind `response` on the form (`items.attach`): written in the respondent's
-//   OWN feed — a member's in the form's place (its room: the writer is who the row says), anyone else's in their own
-//   profile tail with a pointer in the form's bag (a space's public form: in the space's bag) — so WHO answered is
-//   proven by where it is written, never by what it claims. Its body is the answers SEALED, once per reader, to each
-//   OWNER's inbox key (their card's: `directory.card(did).inbox`, `seal_to` as every inbox item) and to the
-//   respondent's own; only those accounts open it (`identity.inboxOpen`, the inbox's own door). Inside, the form's
-//   ref and the respondent's DID, checked against the row: a sealed copy moved into another's response opens as
-//   nothing.
-// - OWNERS: the form's maker; in a space also its owner and admins at the time the form is made (kept in the form:
-//   a later admin reads only what is sealed after the form names them — the maker edits the list).
-// - The respondent KEEPS what they sent: their own sealed copy, and a row in their account's table `forms`
-//   (`sent/<form ref>`: the form, its title, their answers, their response's ref) — "Sent" lists them; editing (where
-//   the form allows, while it is open) replaces the response (`items.editItem`).
-// - RESULTS (owners): a table of responses, per-field summaries (counts for choices), CSV export (`form-fields`).
+// - A RESPONSE is a MAIL (`conversation.mail`, nothing of its own): to the SPACE's own address (`space:<id>`, space
+//   mail) where the form is in a space, else to its MAKER (`form-fields.responseTo`; a circle's form — friends,
+//   followers — is personal: its maker's). Its subject the form's title, its body structured (`form-fields`:
+//   `{ kind: "form-response", form, by, at, answers }`). Who answered is who SENT it (mail's proof: whose tail it was
+//   in); `responseOf` checks the body names this form and its sender — a body copied into another's mail is nothing.
+// - WHO READS THEM is who reads that mail: a space's owner and admins (space mail: an admin added later reads all its
+//   mail, one removed nothing new — as Mail does), a personal form's maker. A space form needs the space's mail ON
+//   (its owner turns it on, here or in Mail); until then the builder says so and makes none.
+// - The respondent KEEPS what they sent: their SENT mail (no table of Forms' own). Changing a response (where the form
+//   allows, one per account, while open) sends a new one; the newest of each account counts.
+// - RESULTS (who reads them): the mailbox's responses to this form — a table, per-field summaries (counts for
+//   choices), CSV export (`form-fields`).
 // Telemetry is the loader's collector's: nothing of its own here.
 export async function mount(ctx, el) {
   const login = await ctx.require("login");
@@ -28,12 +26,8 @@ export async function mount(ctx, el) {
     location.hash = "#/";
     return;
   }
-  const [items, theme, F, directory, space, index, node] = await Promise.all(["items", "theme", "form-fields", "directory", "space", "index", "node"].map(n => ctx.require(n)));
-  const Core = node.glue.CraftworksCore;
-  const enc = new TextEncoder();
-  const dec = new TextDecoder();
-  const hex = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
-  const bytes = h => new Uint8Array(String(h).match(/../g).map(b => parseInt(b, 16)));
+  const [items, theme, F, directory, space, conversation] = await Promise.all(["items", "theme", "form-fields", "directory", "space", "conversation"].map(n => ctx.require(n)));
+  const mail = conversation.mail;
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
     e.append(...kids.flat().filter(k => k != null && k !== false));
@@ -71,9 +65,7 @@ export async function mount(ctx, el) {
   const me = (await space.account()).id;
   const refIn = s => decodeURIComponent(s.slice(2));
   const spaceIdOf = ref => (String(ref).startsWith("space:") ? ref.slice(6, ref.indexOf("/")) : null);
-  const metaOf = form => ({ fields: [], open: true, once: false, editable: true, owners: [form?.by].filter(Boolean), ...(form?.meta ?? {}) });
-  const isOwner = form => metaOf(form).owners.includes(me);
-  const sentTable = () => ctx.require("storage").then(s => s.table("forms"));
+  const metaOf = form => ({ fields: [], open: true, once: false, editable: true, ...(form?.meta ?? {}) });
   const fail = (said, e) => (said.textContent = e?.message ?? String(e));
 
   // ONE FORM, read where it is: a space this person is in, or from outside (a public space's, a person's).
@@ -84,90 +76,41 @@ export async function mount(ctx, el) {
     const it = await items.get(ref, { outside }).catch(() => null);
     return it && it.kind === "form" ? { ...it, outside } : null;
   }
-
-  // THE OWNERS a new form names: its maker; in a space, its owner and admins too.
-  async function ownersFor(sp) {
-    if (!sp) return [me];
-    const r = await (await ctx.require("roles")).of(sp);
+  // ITS PLACE: the space it is in (this person's, or the public one read from outside), or null (a person's own).
+  async function placeOf(form) {
+    const sid = spaceIdOf(form.ref);
+    if (!sid) return null;
+    return form.outside ?? (await space.mine()).find(s => s.id === sid) ?? null;
+  }
+  // WHO READS ITS RESPONSES — who reads the mail they are: a space's owner and admins (space mail's rule), else the maker.
+  async function reads(form, place) {
+    if (!F.toSpace(place)) return form.by === me;
+    if (form.outside) return false;
+    const r = await (await ctx.require("roles")).of(place);
     await r.settled;
-    return [...new Set([me, r.owner, ...r.members().filter(m => m.role === "owner" || m.role === "admin").map(m => m.did)].filter(Boolean))];
+    return ["owner", "admin"].includes(r.role(me));
   }
+  // The MAILBOX its responses arrive in: the space's (space mail), else this person's own.
+  const mailboxOf = async place => (F.toSpace(place) ? mail.of(place) : mail);
+  // ITS RESPONSES in a mailbox's `which` ("in": received, "sent": this person's own), each checked (`responseOf`).
+  const responsesIn = async (box, which, form) => (await box.list(which)).map(x => F.responseOf(x, form.ref)).filter(Boolean);
 
-  // SEALED to each reader's inbox key (their card's): `{ <did>: hex }` — a reader with no card yet is left out, said.
-  async function sealFor(dids, payload) {
-    const out = {};
-    const missing = [];
-    for (const did of dids) {
-      const card = await directory.card(did).catch(() => null);
-      if (!card?.inbox) {
-        missing.push(did);
-        continue;
-      }
-      out[did] = hex(Core.seal_to(bytes(card.inbox), enc.encode(JSON.stringify(payload)), crypto.getRandomValues(new Uint8Array(32))));
-    }
-    return { sealed: out, missing };
-  }
-  // What is sealed to THIS account in each response, opened (one call for all), checked: the form named, its writer
-  // the row's. A response that does not open here, or names another form or person: left out.
-  async function openResponses(form, rows) {
-    const mine = rows
-      .map(r => {
-        try {
-          const b = JSON.parse(r.body);
-          return b?.sealed?.[me] ? { r, h: b.sealed[me] } : null;
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean);
-    if (!mine.length) return [];
-    const opened = (await (await ctx.require("auth")).identity.inboxOpen(mine.map(x => bytes(x.h)))).opened ?? [];
-    const out = [];
-    mine.forEach(({ r }, i) => {
-      try {
-        const p = JSON.parse(dec.decode(bytes(opened[i])));
-        if (p?.form !== form.ref || p?.by !== r.by) return;
-        out.push({ ref: r.ref, by: r.by, at: r.at, edited: r.edited ?? null, answers: p.answers ?? {} });
-      } catch {}
-    });
-    return out;
-  }
-  const responsesOf = form => items.attached(form.ref, "response", { outside: form.outside ?? null }).catch(() => []);
-
-  // A RESPONSE written: sealed to the owners and to its writer, as a new response or replacing this person's own.
-  async function respond(form, answers, had) {
+  // A RESPONSE sent: a mail to the space (a space's form) or to the maker — a change of answer is a new one (the
+  // newest of each account counts).
+  async function respond(form, answers) {
     const m = metaOf(form);
-    const fields = m.fields;
     if (!m.open) throw new Error("this form is closed");
-    const v = F.validate(fields, answers);
+    const v = F.validate(m.fields, answers);
     if (!v.ok) return v;
-    const payload = { v: 1, form: form.ref, by: me, at: Date.now(), answers: v.clean };
-    const { sealed, missing } = await sealFor([...new Set([...m.owners, me])], payload);
-    if (!m.owners.some(d => sealed[d])) throw new Error("none of this form's owners can be reached yet (no card with an inbox)");
-    if (missing.length) ctx.log("form", { what: `${missing.length} reader(s) of a response have no card yet: not sealed to them` });
-    const body = JSON.stringify({ v: 1, sealed });
-    let ref = had?.ref ?? null;
-    if (ref) await items.editItem(ref, body);
-    else if (form.outside) {
-      // NOT IN ITS SPACE (a public space's form): in this person's own profile, pointed in the space's bag.
-      ref = await items.attach(form.ref, "response", body, { place: null });
-      await index.point(`space:${form.outside.id}`, { from: me });
-    } else ref = await items.attach(form.ref, "response", body);
-    await (await sentTable()).put(`sent/${form.ref}`, JSON.stringify({ form: form.ref, title: form.title, response: ref, answers: v.clean, at: Date.now() }));
-    return { ...v, ref };
+    const place = await placeOf(form);
+    if (F.toSpace(place) && !(await mail.accepts(place.id))) throw new Error(`${space.shown(place)}'s mail is off, so its forms take no responses yet: its owner turns it on (Mail)`);
+    const x = F.responseMail(form, place, me, v.clean);
+    const sent = await mail.send(x.to, x.subject, x.body);
+    return { ...v, ref: sent.id };
   }
-  // This person's own response to a form: their kept row (`forms`), else found among the responses (another device's).
+  // This person's own response to a form: the newest in their Sent mail.
   async function myResponse(form) {
-    const row = (await sentTable()).rows().find(r => r.key === `sent/${form.ref}`);
-    if (row) {
-      try {
-        const x = JSON.parse(row.value);
-        if (x?.response) return { ref: x.response, answers: x.answers ?? {}, at: x.at };
-      } catch {}
-    }
-    const rows = (await responsesOf(form)).filter(r => r.by === me);
-    const opened = await openResponses(form, rows);
-    return F.latestPerAccount(opened)[0] ?? null;
+    return F.latestPerAccount(await responsesIn(mail, "sent", form))[0] ?? null;
   }
 
   // ONE QUESTION as an input, and how its answer is read back.
@@ -238,7 +181,8 @@ export async function mount(ctx, el) {
     const m = metaOf(form);
     const tools = h("div", { className: "tools" }, h("a", { href: at.base, textContent: "← Forms" }));
     const said = h("p", { className: "said" });
-    if (isOwner(form)) tools.append(h("a", { className: "cw-btn", href: at.href(`r/${encodeURIComponent(ref)}`), textContent: "Results" }));
+    const place = await placeOf(form);
+    if (await reads(form, place).catch(() => false)) tools.append(h("a", { className: "cw-btn", href: at.href(`r/${encodeURIComponent(ref)}`), textContent: "Results" }));
     if (form.by === me) {
       tools.append(h("a", { className: "cw-btn", href: at.href(`e/${encodeURIComponent(ref)}`), textContent: "Edit" }));
       const flip = h("button", { type: "button", className: "cw-btn", textContent: m.open ? "Close responses" : "Reopen" });
@@ -255,23 +199,23 @@ export async function mount(ctx, el) {
     // ANSWERED already, one per account: changed where the form allows, else said. (Not one per account: each send a
     // further response.)
     if (mine && m.once && !m.editable) return root.append(h("p", { className: "none", textContent: "You answered this form. It does not allow changing a response." }));
-    const had = mine && m.once && m.editable && mine.ref ? mine : null;
+    const had = mine && m.once && m.editable ? mine : null;
     const qs = await Promise.all(m.fields.map(f => question(f, had?.answers?.[f.id])));
     const send = h("button", { type: "submit", className: "cw-btn primary", textContent: had ? "Update response" : "Send" });
     const fsaid = h("p", { className: "said" });
-    const fm = h("form", { className: "answer", style: "display:grid;gap:var(--cw-space-3)" }, had ? h("p", { className: "s", textContent: `You answered on ${new Date(had.at).toLocaleString()}; changing it replaces it.` }) : null, ...qs, h("div", { className: "tools" }, send), fsaid);
+    const fm = h("form", { className: "answer", style: "display:grid;gap:var(--cw-space-3)" }, had ? h("p", { className: "s", textContent: `You answered on ${new Date(had.at).toLocaleString()}; sending again replaces it (the newest counts).` }) : null, ...qs, h("div", { className: "tools" }, send), fsaid);
     const go = theme.action(send, async () => {
       fsaid.textContent = "";
       if (qs.some(q => q.busy?.())) throw new Error("a file is still uploading");
       const answers = Object.fromEntries(m.fields.map((f, i) => [f.id, qs[i].read()]));
-      const v = await respond(form, answers, had);
+      const v = await respond(form, answers);
       m.fields.forEach((f, i) => qs[i].say(v.errors[f.id]));
       if (!v.ok) throw new Error("some answers need a look");
       return v;
     }, { busy: "Sending…", done: "Sent ✓" });
     fm.onsubmit = e => {
       e.preventDefault();
-      go().then(() => root.replaceChildren(tools, head, h("p", { textContent: "Thank you — your response was sent, sealed to the form's owners. A copy is kept under Sent." })), e => fail(fsaid, e));
+      go().then(() => root.replaceChildren(tools, head, h("p", { textContent: F.toSpace(place) ? `Thank you — your response was sent as mail to ${space.shown(place)}. It is in your Sent mail.` : "Thank you — your response was sent as mail to the form's maker. It is in your Sent mail." })), e => fail(fsaid, e));
     };
     root.append(fm);
   }
@@ -286,14 +230,24 @@ export async function mount(ctx, el) {
       const r = await (await ctx.require("roles")).of(sp);
       await r.settled;
       if (!r.allowsIn("post", me, "form")) return root.replaceChildren(h("p", { className: "none", textContent: `${space.shown(sp)} does not let you make forms here (its policy).` }));
+      // ITS RESPONSES ARE SPACE MAIL: none made while the space's mail is off — its owner turns it on (here, or Mail).
+      if (F.toSpace(sp) && !(await mail.accepts(sp.id))) {
+        const off = h("p", { className: "none", textContent: `A form's responses here arrive as ${space.shown(sp)}'s mail (its owner and admins read them), and its mail is off.` });
+        if (r.role(me) !== "owner") return root.replaceChildren(off, h("p", { className: "none", textContent: "Ask its owner to turn its mail on; then forms can be made here." }));
+        const said = h("p", { className: "said" });
+        const on = h("button", { type: "button", className: "cw-btn primary", textContent: "Turn on this space's mail" });
+        const run = theme.action(on, async () => (await mail.of(sp)).enable(), { busy: "Turning on…" });
+        on.onclick = () => run().then(() => builder(at, ref), e => fail(said, e));
+        return root.replaceChildren(off, h("div", { className: "tools" }, on), said);
+      }
     }
     const m = metaOf(was);
+    const place = was ? await placeOf(was) : sp;
     const title = h("input", { type: "text", placeholder: "Form title", maxLength: 300, value: was?.title ?? "" });
     const about = h("textarea", { placeholder: "Description (optional)", rows: 3, value: was?.body ?? "" });
     const open = h("input", { type: "checkbox", checked: m.open !== false });
     const once = h("input", { type: "checkbox", checked: !!m.once });
     const editable = h("input", { type: "checkbox", checked: m.editable !== false });
-    const owners = h("input", { type: "text", placeholder: "Owners' ids (did:craftec:…), comma-separated", value: was ? m.owners.join(", ") : "" });
     const who = was ? null : await (await ctx.require("audience")).picker({ space: sp, kind: "form", initial: sp ? "members" : "public" });
     let fields = m.fields.map(f => ({ ...f }));
     const list = h("div", { style: "display:grid;gap:var(--cw-space-2)" });
@@ -334,8 +288,7 @@ export async function mount(ctx, el) {
         said.textContent = "";
         const clean = F.normalize(fields.filter(f => String(f.label ?? "").trim() || f.choices?.length));
         if (!clean.length) throw new Error("a form needs at least one question");
-        const named = owners.value.split(/[,\s]+/).map(s => s.trim()).filter(s => /^did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64}$/.test(s));
-        const meta = { fields: clean, open: open.checked, once: once.checked, editable: editable.checked, owners: was ? [...new Set([me, ...named])] : await ownersFor(sp), closedAt: open.checked ? null : was && m.open === false ? (m.closedAt ?? Date.now()) : Date.now() };
+        const meta = { fields: clean, open: open.checked, once: once.checked, editable: editable.checked, closedAt: open.checked ? null : was && m.open === false ? (m.closedAt ?? Date.now()) : Date.now() };
         if (!title.value.trim()) throw new Error("a form needs a title");
         if (was) {
           await items.editItem(ref, about.value, { title: title.value.trim(), meta });
@@ -353,7 +306,7 @@ export async function mount(ctx, el) {
       list,
       h("div", { className: "tools" }, add),
       h("div", { className: "tools" }, h("label", { className: "opt" }, open, "Accepting responses"), h("label", { className: "opt" }, once, "One response per account"), h("label", { className: "opt" }, editable, "Respondents may change their response while open (one per account)")),
-      was ? h("label", {}, "Who reads the responses (besides you): ", owners, h("p", { className: "help", textContent: "Responses already sent stay sealed to whom they were; a change applies to new ones." })) : h("p", { className: "help", textContent: sp ? "The responses are sealed to you and this space's owner and admins." : "The responses are sealed to you alone." }),
+      h("p", { className: "help", textContent: F.toSpace(place) ? `Responses arrive as ${space.shown(place)}'s mail: its owner and admins read them (an admin added later reads them all).` : "Responses arrive as mail to you (in Mail too)." }),
       who?.el,
       h("div", { className: "tools" }, save),
       said,
@@ -365,17 +318,18 @@ export async function mount(ctx, el) {
     root.replaceChildren(h("div", { className: "tools" }, h("a", { href: at.base, textContent: "← Forms" })), h("h2", { textContent: was ? "Edit form" : "🗒 New form" }), form);
   }
 
-  // RESULTS (owners): the responses opened here, a table, per-field summaries, CSV.
+  // RESULTS (who reads them): the mailbox's responses to this form — fetched first (as Mail does), checked — a table,
+  // per-field summaries, CSV.
   async function results(ref, at) {
     root.replaceChildren(theme.loading("Opening the responses…"));
     const form = await getForm(ref);
     if (!form) return root.replaceChildren(h("p", { className: "none", textContent: "This form is not there, or not yours to see." }));
-    if (!isOwner(form)) return root.replaceChildren(h("p", { className: "none", textContent: "Only the form's owners read its responses." }));
+    const place = await placeOf(form);
+    if (!(await reads(form, place))) return root.replaceChildren(h("p", { className: "none", textContent: F.toSpace(place) ? `Only ${space.shown(place)}'s owner and admins read its forms' responses (its mail).` : "Only the form's maker reads its responses." }));
     const m = metaOf(form);
-    const rows = await responsesOf(form);
-    const opened = await openResponses(form, rows);
-    // Not sealed to this account (sent before it was an owner), or not opening: counted, said.
-    const unread = rows.length - opened.length;
+    const box = await mailboxOf(place);
+    await box.fetch().catch(e => ctx.log("form", { what: `fetching mail: ${e.message}` }));
+    const opened = await responsesIn(box, "in", form);
     const all = m.once ? F.latestPerAccount(opened) : opened;
     // Sent after the form closed: shown apart, never counted.
     const late = m.closedAt ? all.filter(r => (r.edited ?? r.at) > m.closedAt) : [];
@@ -426,27 +380,20 @@ export async function mount(ctx, el) {
     root.replaceChildren(
       h("div", { className: "tools" }, h("a", { href: at.href(`p/${encodeURIComponent(ref)}`), textContent: "← The form" }), csv),
       h("h2", { textContent: `Results: ${form.title || "Untitled form"}` }),
-      h("p", { className: "s", textContent: `${counted.length} response(s)${m.once ? " (one per account: each person's newest)" : ""}${late.length ? ` · ${late.length} sent after it closed, not counted` : ""}${unread > 0 ? ` · ${unread} not sealed to you (sent before you were an owner)` : ""}` }),
+      h("p", { className: "s", textContent: `${counted.length} response(s)${m.once ? " (one per account: each person's newest)" : ""}${late.length ? ` · ${late.length} sent after it closed, not counted` : ""}` }),
       ...summary,
       counted.length ? h("div", { className: "scroll" }, table) : h("p", { className: "none", textContent: "No responses yet." }),
     );
   }
 
-  // SENT: what this person answered, as they kept it.
+  // SENT: what this person answered — their Sent mail's responses (each mail's body names its form; one sent by them).
   async function sent() {
-    const t = await sentTable();
-    const rows = t
-      .rows()
-      .filter(r => r.key.startsWith("sent/"))
-      .map(r => {
-        try {
-          return JSON.parse(r.value);
-        } catch {
-          return null;
-        }
+    const rows = (await mail.list("sent"))
+      .map(x => {
+        const r = F.responseOf(x);
+        return r ? { ...r, title: x.subject.replace(/^🗒 /, "") } : null;
       })
-      .filter(Boolean)
-      .sort((a, b) => b.at - a.at);
+      .filter(Boolean);
     root.replaceChildren(
       h("h2", { textContent: "🗒 Your responses" }),
       rows.length
@@ -473,7 +420,7 @@ export async function mount(ctx, el) {
       ...(all.length
         ? all.map(f => {
             const m = metaOf(f);
-            return h("a", { className: "card", href: at.href(`p/${encodeURIComponent(f.ref)}`) }, h("div", { className: "t", textContent: f.title || "Untitled form" }), h("p", { className: "s" }, `${m.fields.length} question(s) · ${m.open ? "open" : "closed"}${isOwner(f) ? " · you read its responses" : ""}`, at.others ? h("span", {}, " · ", directory.nameEl(f.by)) : null));
+            return h("a", { className: "card", href: at.href(`p/${encodeURIComponent(f.ref)}`) }, h("div", { className: "t", textContent: f.title || "Untitled form" }), h("p", { className: "s" }, `${m.fields.length} question(s) · ${m.open ? "open" : "closed"}${!spaceIdOf(f.ref) && f.by === me ? " · you read its responses" : ""}`, at.others ? h("span", {}, " · ", directory.nameEl(f.by)) : null));
           })
         : [h("p", { className: "none", textContent: none })]),
     );

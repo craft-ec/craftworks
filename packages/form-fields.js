@@ -11,6 +11,10 @@
 //   F.summarize(fields, responses)  // per field: { id, type, label, answered, counts?, yes?, no?, min?, max?, mean? }
 //   F.toCSV(fields, responses)      // RFC 4180 text (CRLF), one row per response; formula-looking cells made inert
 //   F.csvCell(value)                // one cell, escaped
+//   F.toSpace(place)                // is it a space's form (responses = its space mail)? else the maker's
+//   F.responseTo(form, place)       // whom a response is mailed to: `space:<id>` (a space's form), else the maker
+//   F.responseMail(form, place, by, answers)   // the response as a mail: { to, subject, body }
+//   F.responseOf(mail, formRef)     // a mail read back as a response, checked (kind, form, sender): or null
 // A response: { by, at, edited?, answers: { <field id>: value } } — value: text (short, long, email, date "YYYY-MM-DD"),
 // a number (number), a choice (single), choices (multiple), a boolean (checkbox), file references (file).
 export const TYPES = Object.freeze([
@@ -198,6 +202,31 @@ export function toCSV(fields, responses, { name = by => by } = {}) {
   return [head, ...rows].map(row => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
 }
 
+// A RESPONSE IS A MAIL (`conversation.mail`). TO: the space's own address (`space:<id>`: space mail — its owner and
+// admins read it) where the form is in a space, else the form's maker (a personal form; a circle's — friends,
+// followers — or another group's is personal too). `place`: the form's space description, or null.
+export const RESPONSE = "form-response";
+export const toSpace = place => !!place && !place.circle && !place.group;
+export function responseTo(form, place) {
+  return toSpace(place) ? `space:${place.id}` : form.by;
+}
+// The mail a response is: { to, subject, body } — the body structured: { kind, form, by, at, answers }.
+export function responseMail(form, place, by, answers, at = Date.now()) {
+  return { to: [responseTo(form, place)], subject: `🗒 ${form.title || "Untitled form"}`, body: JSON.stringify({ kind: RESPONSE, form: form.ref, by, at, answers }) };
+}
+// A MAIL read back as a response to the form `ref` (null: to any form), CHECKED: its kind, the form it names, and the
+// respondent it names being who SENT it (`mail.from`: proven by whose tail it was in) — a body copied into another's
+// mail, or naming another form, is nothing. { ref: the mail's id, form, by, at, answers }, or null.
+export function responseOf(mail, ref = null) {
+  try {
+    const p = JSON.parse(mail?.body);
+    if (p?.kind !== RESPONSE || typeof p.form !== "string" || (ref != null && p.form !== ref) || !p.by || p.by !== mail.from) return null;
+    return { ref: mail.id, form: p.form, by: p.by, at: mail.at, answers: p.answers ?? {} };
+  } catch {
+    return null;
+  }
+}
+
 export async function start() {
-  return { TYPES, LIMITS, normalize, validate, latestPerAccount, summarize, csvCell, cellOf, toCSV };
+  return { TYPES, LIMITS, normalize, validate, latestPerAccount, summarize, csvCell, cellOf, toCSV, RESPONSE, toSpace, responseTo, responseMail, responseOf };
 }

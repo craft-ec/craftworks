@@ -137,3 +137,60 @@ test("CSV: a whole export parses back to the same cells", () => {
   assert.equal(row[10], "line1\r\nline2");
   assert.ok(csv.endsWith("\r\n"));
 });
+
+// A RESPONSE IS A MAIL. A stand-in for `conversation.mail` as Forms uses it: a mail is filed in each address's "in"
+// (a person's DID, or `space:<id>` — space mail, its owner and admins' to read) and in its sender's "sent"; `from` is
+// who sent it (the real mail proves it by whose tail it was in).
+function standInMail() {
+  const boxes = new Map();
+  const file = (addr, which, m) => {
+    if (!boxes.has(addr)) boxes.set(addr, { in: [], sent: [] });
+    boxes.get(addr)[which].push(m);
+  };
+  let n = 0;
+  return {
+    send(from, to, subject, body) {
+      const m = { id: `m${n++}`, from, to, subject, body, at: 1000 + n };
+      for (const d of to) file(d, "in", m);
+      file(from, "sent", m);
+      return m;
+    },
+    list: (addr, which) => [...(boxes.get(addr)?.[which] ?? [])],
+  };
+}
+const maker = "did:craftec:maker";
+const spaceDesc = { id: "S1", name: "Club" };
+const spaceForm = { ref: "space:S1/f1", by: maker, title: "Sign-up" };
+const myForm = { ref: `${maker}/f2`, by: maker, title: "Survey" };
+const circleForm = { ref: "space:C1/f3", by: maker, title: "Friends only" };
+
+test("a response is addressed to the SPACE for a space form, to the MAKER for a personal (or circle) form", () => {
+  assert.deepEqual(F.responseMail(spaceForm, spaceDesc, "did:craftec:ann", {}).to, ["space:S1"]);
+  assert.deepEqual(F.responseMail(myForm, null, "did:craftec:ann", {}).to, [maker]);
+  assert.deepEqual(F.responseMail(circleForm, { id: "C1", circle: "friends" }, "did:craftec:ann", {}).to, [maker]);
+  assert.deepEqual(F.responseMail(circleForm, { id: "C1", group: "audience:S1/admins" }, "did:craftec:ann", {}).to, [maker]);
+  // Through the stand-in mail: the space's responses are in its mailbox, not the maker's own; results read them back.
+  const mail = standInMail();
+  for (const [form, place, by] of [[spaceForm, spaceDesc, "did:craftec:ann"], [spaceForm, spaceDesc, "did:craftec:bo"], [myForm, null, "did:craftec:ann"]]) {
+    const x = F.responseMail(form, place, by, { q: by });
+    mail.send(by, x.to, x.subject, x.body);
+  }
+  const of = (addr, form) => mail.list(addr, "in").map(m => F.responseOf(m, form.ref)).filter(Boolean);
+  assert.deepEqual(of("space:S1", spaceForm).map(r => r.by), ["did:craftec:ann", "did:craftec:bo"]);
+  assert.deepEqual(of(maker, spaceForm), []);
+  assert.deepEqual(of(maker, myForm).map(r => r.answers), [{ q: "did:craftec:ann" }]);
+  assert.deepEqual(of("space:S1", myForm), []);
+  // The respondent's own copy is their Sent mail.
+  assert.deepEqual(mail.list("did:craftec:ann", "sent").map(m => F.responseOf(m)?.form), [spaceForm.ref, myForm.ref]);
+});
+
+test("a response mail is CHECKED: the form it names, and its respondent being who sent it", () => {
+  const x = F.responseMail(spaceForm, spaceDesc, "did:craftec:ann", { q: 1 });
+  const m = { id: "m1", from: "did:craftec:ann", body: x.body, at: 5 };
+  assert.deepEqual(F.responseOf(m, spaceForm.ref), { ref: "m1", form: spaceForm.ref, by: "did:craftec:ann", at: 5, answers: { q: 1 } });
+  // Ann's body forwarded by Eve: it names Ann, Eve sent it — nothing.
+  assert.equal(F.responseOf({ ...m, from: "did:craftec:eve" }, spaceForm.ref), null);
+  assert.equal(F.responseOf(m, myForm.ref), null, "another form's");
+  assert.equal(F.responseOf({ ...m, body: JSON.stringify({ kind: "note", form: spaceForm.ref, by: "did:craftec:ann" }) }, spaceForm.ref), null, "not a response");
+  assert.equal(F.responseOf({ ...m, body: "plain mail" }, spaceForm.ref), null);
+});
