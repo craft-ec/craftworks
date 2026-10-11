@@ -82,8 +82,10 @@ export async function mount(ctx, el) {
     // A CIRCLE of yours opened as a space (an item's link): your own wiki.
     if (at.space?.circle && at.space.governance?.owner === at.me) return location.replace(`#/wiki${sub ? `/${sub}` : ""}`);
     at.tabs([], { yoursOn: !sub, create: at.discover || at.saved ? null : { label: "New page", href: at.href("new"), on: sub === "new" || sub.startsWith("new/") } });
-    if (at.discover) return root.replaceChildren(h("h2", { textContent: "📖 The global wiki" }), h("p", { className: "none", textContent: "One wiki for everyone, owned by nobody — anyone edits under rules decided by vote. It comes after Vote; until then, a wiki is yours or a space's." }));
-    if (at.saved) return saved(at);
+    // DISCOVER: every public wiki page (people's, public spaces'), each opened in its own wiki. The global wiki — one
+    // for everyone, owned by nobody — comes after Vote.
+    if (at.discover) return pages(at, "📖 Public wiki pages", "No public wiki pages yet.");
+    if (at.saved) return pages(at, "📖 Saved pages", "Nothing saved: ☆ on a page keeps it here.");
     root.replaceChildren(theme.loading("Opening the wiki…"));
     let wiki;
     try {
@@ -171,12 +173,12 @@ export async function mount(ctx, el) {
     root.replaceChildren(h("h2", {}, "📖 ", placeName(at, wiki)), find, list);
   }
 
-  // YOUR SAVED pages (any wiki's).
-  async function saved(at) {
-    const list = await at.read().catch(() => []);
+  // PAGES LISTED from many wikis (your Saved; Discover's public ones), each a link into its own wiki.
+  async function pages(at, title, none) {
+    const list = (await at.read().catch(() => [])).filter(p => p.kind === "wiki");
     root.replaceChildren(
-      h("h2", { textContent: "📖 Saved pages" }),
-      list.length ? h("ul", {}, ...list.map(p => h("li", {}, h("a", { href: items.pageOf(p.ref, p.kind), textContent: p.title || "Untitled" })))) : h("p", { className: "none", textContent: "Nothing saved: ☆ on a page keeps it here." }),
+      h("h2", { textContent: title }),
+      list.length ? h("ul", {}, ...list.map(p => h("li", {}, h("a", { href: items.pageOf(p.ref, p.kind), textContent: p.title || "Untitled" }), at.discover ? h("span", { className: "s" }, " · ", directory.nameEl(p.by)) : null))) : h("p", { className: "none", textContent: none }),
     );
   }
 

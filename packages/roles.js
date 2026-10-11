@@ -68,6 +68,8 @@ export async function start(ctx) {
     return outside.get(desc.id);
   }
   function of(sp) {
+    // A space READ FROM OUTSIDE (`where`'s, `outside: true`: its public description): its public acts only.
+    if (sp.outside) return ofPublic(sp);
     sp = sp.parent ?? sp;
     if (!spaces.has(sp.id)) spaces.set(sp.id, open(sp));
     return spaces.get(sp.id);

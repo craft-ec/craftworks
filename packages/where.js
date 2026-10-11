@@ -36,8 +36,22 @@ export async function start(ctx) {
   async function of({ kind, kinds = [kind], app = ctx.route.replace(/^\//, ""), yours = "Yours", saves = true } = {}) {
     const me = await space.me();
     const discover = ctx.space === "discover";
-    const sp = ctx.space && !discover ? ((await space.mine()).find(s => s.id === ctx.space) ?? null) : null;
-    if (ctx.space && !discover && !sp) throw new Error("you are not in that space (left, or not joined yet)");
+    const mineSp = ctx.space && !discover ? ((await space.mine()).find(s => s.id === ctx.space) ?? null) : null;
+    // A space this person is NOT in (or anyone, for a guest): opened FROM OUTSIDE where the space lets anyone read this
+    // app — its public description, its public acts' rules (the app on, its kind's `read` policy "anyone"); else said.
+    let sp = mineSp;
+    if (ctx.space && !discover && !sp) {
+      const desc = await items.publicSpace(ctx.space).catch(() => null);
+      const pr = desc ? await roles.ofPublic(desc) : null;
+      if (pr) await pr.settled;
+      const domain = (await ctx.require("kinds")).policyDomain(kind);
+      if (!desc) throw new Error("you are not in that space (left, or not joined yet)");
+      // Why not, said (its public rules: the app not on there, or who reads it).
+      const on = pr.apps().includes(app);
+      const reads = pr.policyIn(domain, "read");
+      if (!on || reads !== "anyone") throw new Error(`${space.shown(desc)}'s ${app} is for its members (${on ? `read by: ${reads ?? "members"}` : "not public there"}): join it to open it`);
+      sp = { ...desc, outside: true };
+    }
     // An app the space TURNED OFF: its Home instead (where its apps are added) — only on that certainty, an `app` act
     // turning it off that counted. Never because it looks unused while the acts are still arriving (a member's acts
     // merge in after "settled": the app would be sent away from a space that uses it).
@@ -70,7 +84,7 @@ export async function start(ctx) {
           .then(list => items.visible(list.filter(it => it && ks.includes(it.kind))));
       if (who === "discover") return items.list({ discover: true }, sort, ks, { window, ...options });
       if (whole) return items.inPlaces(sp ? { spaces: [sp] } : { people: [person ?? me] }, ks, { withVotes: false });
-      return items.list(sp ? { board: sp.id } : { by: person ?? me }, sort, ks, { window, ...options });
+      return items.list(sp?.outside ? { outside: sp } : sp ? { board: sp.id } : { by: person ?? me }, sort, ks, { window, ...options });
     };
     // THE TABS, in the same order in every app: in your space, the app's own page ("Your …"), then the app's extras,
     // then Discover (an app with a public side); elsewhere the extras alone.
@@ -90,11 +104,11 @@ export async function start(ctx) {
             ...extra,
             ...(home && saves ? [{ label: "Saved", href: `#/${app}/saved`, on: saved }] : []),
             ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover" }] : []),
-            ...(create && who !== "person" ? [{ ...create, label: `＋ ${create.label}`, end: true }] : []),
+            ...(create && who !== "person" && !sp?.outside ? [{ ...create, label: `＋ ${create.label}`, end: true }] : []),
           ];
       dispatchEvent(new CustomEvent("craftworks:actions"));
     };
-    return { who, saved, others: who === "person" || who === "discover" || saved, discover: who === "discover", guest: !me, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
+    return { who, saved, outside: !!sp?.outside, others: who === "person" || who === "discover" || saved || !!sp?.outside, discover: who === "discover", guest: !me, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
   }
   return { of, personOf, key: () => `${ctx.space ?? ""}|${ctx.sub ?? ""}`, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
 }

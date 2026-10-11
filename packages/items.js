@@ -1026,9 +1026,13 @@ export async function start(ctx) {
     return out.filter(Boolean);
   };
   async function inPlaces({ spaces = [], people: dids = [] }, kind, { after = null, withVotes = true } = {}) {
-    spaces = [...spaces, ...(await Promise.all(spaces.map(audienceGroups))).flat()];
+    // A space READ FROM OUTSIDE (`outside: true`, its public description — someone not in it, a guest): its public
+    // items, as Discover lists them; no audience groups.
+    const inside = spaces.filter(sp => !sp.outside);
+    spaces = [...spaces, ...(await Promise.all(inside.map(audienceGroups))).flat()];
     const ks = kindsFor(kind);
     const read = async sp => {
+      if (sp.outside) return pointedPosts(ks, 0, { space: sp });
       if (after) await sinceItem(await boardRoom(sp), after);
       return boardPosts(sp, { kinds: ks, window: after ? "held" : "all" });
     };

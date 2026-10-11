@@ -348,7 +348,7 @@ export async function mount(ctx, el) {
     }
     const seen = new Set();
     polls = polls.filter(p => p.kind === "poll" && !seen.has(p.ref) && seen.add(p.ref)).sort((a, b) => b.at - a.at);
-    const parts = [h("h2", { textContent: at.saved ? "Saved polls" : at.who === "person" ? "🗳 Their polls" : "🗳 Your polls" }), polls.length ? h("div", { className: "list" }, ...polls.map(p => pollCard(p, at))) : h("p", { className: "none", textContent: at.who === "mine" ? "No polls yet: ＋ New poll above." : "No polls." })];
+    const parts = [h("h2", { textContent: at.saved ? "Saved polls" : at.discover ? "🗳 Public polls" : at.who === "person" ? "🗳 Their polls" : "🗳 Your polls" }), polls.length ? h("div", { className: "list" }, ...polls.map(p => pollCard(p, at))) : h("p", { className: "none", textContent: at.who === "mine" ? "No polls yet: ＋ New poll above." : "No polls." })];
     // The PERSONAL view gathers: every space you are in that uses Vote — its open proposals, your part in each.
     if (at.who === "mine" && !at.saved) {
       const withVote = [];

@@ -53,12 +53,14 @@ export async function mount(ctx, el) {
     const appGrid = h("div", {});
     icons.grid(
       appGrid,
-      sharedApps.filter(a => !a.always && on.includes(keyOf(a))).map(a => ({ app: a, href: keyOf(a) === "board" ? `#/discover/board/b/${desc.id}` : null, note: keyOf(a) === "board" ? null : "members" })),
+      // Each app opened where it is (`where` opens it from outside when the space lets anyone read it, else says it is
+      // for members); Board reads a public space its own way (Discover's).
+      sharedApps.filter(a => !a.always && on.includes(keyOf(a))).map(a => ({ app: a, href: keyOf(a) === "board" ? `#/discover/board/b/${desc.id}` : `#/s/${desc.id}/${keyOf(a)}` })),
       "No apps yet.",
     );
     root.replaceChildren(
       h("div", { className: "top" }, h("h2", { textContent: space.shown(desc) }), about ? h("p", { className: "about", textContent: String(about) }) : null, h("p", { textContent: `${n} member${n === 1 ? "" : "s"} · you are not in it` }), join),
-      h("section", {}, h("h3", { textContent: "Apps" }), appGrid, h("p", { className: "none", textContent: "Board reads from outside; the others open once you are in." })),
+      h("section", {}, h("h3", { textContent: "Apps" }), appGrid, h("p", { className: "none", textContent: "An app the space lets anyone read opens from here; the rest once you are in." })),
     );
   }
 
