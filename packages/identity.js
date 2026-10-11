@@ -218,7 +218,12 @@ export async function start(ctx) {
       const u = await askPrior(prior, core.frames_unlock_from(prior, pin), "a session");
       if (!u?.unlocked) return { silent: !!u?.silent || !u, said: u?.silent || !u ? "no answer" : u?.wrongPin ? "not a member there" : JSON.stringify(u) };
       const m = await askPrior(prior, core.frames_retire_upkeep_from(prior), "retiring its upkeep");
-      return m?.upkeep ? { retired: true } : { said: m?.silent ? "no answer" : JSON.stringify(m) };
+      if (!m?.upkeep) return { said: m?.silent ? "no answer" : JSON.stringify(m) };
+      // Its WITNESSED PLACES carried here (after it is retired: it signs nothing more), so this build never signs another
+      // entry where it did — one key, two builds (a build from before answers nothing it can read: none carried).
+      const w = (await askPrior(prior, core.frames_handover_witnessed_from(prior, pin), "the places it witnessed"))?.handedWitnessed ?? [];
+      const kept = w.length ? (await call(core.frames_witnessed_keep(w), "keeping its witnessed places"))?.witnessedKept ?? 0 : 0;
+      return { retired: true, witnessed: kept };
     },
     handoverFrom: async (prior, pin) => (await askPrior(prior, core.frames_handover_from(prior, pin), "the member")) ?? { missing: true },
   };

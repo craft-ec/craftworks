@@ -99,9 +99,24 @@ fn witnessed<H: Host>(h: &mut H, member: &[u8], chain: &[u8; 32], seq: u64, entr
     match h.get_secret(&place) {
         Some(had) if had != entry => Err(Why::Equivocation),
         Some(_) => Ok(()),
-        None if h.set_secret(&place, entry) => Ok(()),
+        None if h.set_secret(&place, entry) && index_witnessed(h, member, chain, seq) => Ok(()),
         None => Err(Why::NotSaved),
     }
+}
+/// The places a member signed, newest last (the newest `WITNESSED_KEPT`: older ones are past any entry a witness
+/// still signs) — what a member's next build is handed (`HandoverWitnessed`), so the two never sign one place twice.
+const WITNESSED_INDEX: &[u8] = b"identity/witnessed-index/";
+const WITNESSED_KEPT: usize = 4096;
+fn witnessed_places<H: Host>(h: &H, member: &[u8]) -> Vec<([u8; 32], u64)> {
+    h.get_secret(&[WITNESSED_INDEX, member].concat()).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
+}
+fn index_witnessed<H: Host>(h: &mut H, member: &[u8], chain: &[u8; 32], seq: u64) -> bool {
+    let mut all = witnessed_places(h, member);
+    all.push((*chain, seq));
+    if all.len() > WITNESSED_KEPT {
+        all.drain(..all.len() - WITNESSED_KEPT);
+    }
+    h.set_secret(&[WITNESSED_INDEX, member].concat(), &bincode::serialize(&all).expect("places encode"))
 }
 
 /// UPKEEP WITNESSES with no page open: member `member`'s key signs `entry` at (`chain`, `seq`) through the SAME guard
@@ -252,6 +267,13 @@ pub enum Request {
     /// opened a standing epoch — the codes' hashes (standing, beacon), the beacon, the epoch and what this node hosts.
     /// Kept per member; the round then answers the beacon's challenges on every wake-up the page is away.
     KeeperMandate { mandate: KeeperMandate },
+    /// The PLACES this member signed as a witness (an earlier build asked by the next, after its upkeep is retired):
+    /// carried over so the two builds — one key — never sign one place twice (audit 10-11: the old build kept its own
+    /// guard and, woken with a stale mandate, could sign another entry where the new one had: a burn).
+    HandoverWitnessed { pin: String },
+    /// Places signed by this member's earlier build, kept in this one's guard (home site only; a place held stays —
+    /// keeping one only ever restricts signing).
+    WitnessedKeep { places: Vec<([u8; 32], u64, [u8; 32])> },
 }
 
 /// What the delegate's WITNESS round needs (handed over by a page: `Request::WitnessMandate`).
@@ -373,6 +395,10 @@ pub enum Answer {
     WitnessMandated,
     /// The keeper mandate is kept (`Request::KeeperMandate`).
     KeeperMandated,
+    /// The places this member signed (`HandoverWitnessed`): (chain, seq, entry).
+    HandedWitnessed { places: Vec<([u8; 32], u64, [u8; 32])> },
+    /// Places kept (`WitnessedKeep`): how many were new here.
+    WitnessedKept { kept: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1320,6 +1346,11 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 return Refused(Why::NotHome);
             }
             let m = a.public();
+            // RETIRED (an empty mandate: the member moved to a newer build): its witness and keeper mandates cleared
+            // too — this build never witnesses or keeps for it again (audit 10-11).
+            if me.is_empty() && spaces.is_empty() && spent.is_empty() && !(h.set_secret(&[WITNESS_MANDATE, &m[..]].concat(), &[]) && h.set_secret(&[KEEPER_MANDATE, &m[..]].concat(), &[])) {
+                return Refused(Why::NotSaved);
+            }
             // A space whose group upkeep moved since keeps upkeep's (newer) group until the page loads it.
             let held = upkeep_mandate(h, &m).map(|(_, s)| s).unwrap_or_default();
             let mut stale = Vec::new();
@@ -1393,6 +1424,41 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             Ok(()) => WitnessMandated,
             Err(w) => Refused(w),
         },
+        Request::HandoverWitnessed { pin } => match try_pin(h, &pin) {
+            Err(answer) => answer,
+            Ok(a) if a.home != app => Refused(Why::NotHome),
+            Ok(a) => {
+                if !try_back(h) {
+                    return Refused(Why::NotSaved);
+                }
+                let m = a.public();
+                let places = witnessed_places(h, &m)
+                    .into_iter()
+                    .filter_map(|(c, q)| {
+                        let e: [u8; 32] = h.get_secret(&[WITNESSED, &m[..], &c[..], &q.to_le_bytes()].concat())?.try_into().ok()?;
+                        Some((c, q, e))
+                    })
+                    .collect();
+                HandedWitnessed { places }
+            }
+        },
+        Request::WitnessedKeep { places } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            let m = a.public();
+            let mut kept = 0u32;
+            for (c, q, e) in places.into_iter().take(WITNESSED_KEPT) {
+                match witnessed(h, &m[..], &c, q, &e) {
+                    Ok(()) => kept += 1,
+                    // A place this build signed differently stays as it is.
+                    Err(Why::Equivocation) => {}
+                    Err(w) => return Refused(w),
+                }
+            }
+            WitnessedKept { kept }
+        }
         Request::KeeperMandate { mandate } => match keep_mandate(h, app, KEEPER_MANDATE, &bincode::serialize(&mandate).expect("a mandate encodes")) {
             Ok(()) => KeeperMandated,
             Err(w) => Refused(w),

@@ -74,6 +74,8 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::EpochSecrets { epochs } => json!({ "epochs": epochs.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>() }),
         Answer::WitnessMandated => json!({ "witnessMandated": true }),
         Answer::KeeperMandated => json!({ "keeperMandated": true }),
+        Answer::HandedWitnessed { places } => json!({ "handedWitnessed": places.iter().map(|(c, q, e)| json!([hex(c), q, hex(e)])).collect::<Vec<_>>() }),
+        Answer::WitnessedKept { kept } => json!({ "witnessedKept": kept }),
         Answer::HandedKeys { mls, epochs } => json!({ "handedKeys": {
             "mls": mls.as_ref().map(|s| hex(s)),
             "epochs": epochs.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>(),
@@ -204,6 +206,7 @@ impl Core {
             Request::Handover { .. }
                 | Request::HandoverKeys { .. }
                 | Request::HandoverSpaces { .. }
+                | Request::HandoverWitnessed { .. }
                 | Request::Unlock { .. }
         ) && !matches!(req, Request::UpkeepMandate { spaces, spent, .. } if spaces.is_empty() && spent.is_empty())
         {
@@ -953,6 +956,22 @@ mod js {
             Ok([JsValue::from(id), JsValue::from(frames(f))]
                 .into_iter()
                 .collect())
+        }
+        /// `[id, frames]` asking an earlier build for the PLACES its member signed as a witness (`HandoverWitnessed`).
+        pub fn frames_handover_witnessed_from(&mut self, prior: &str, pin: String) -> Result<js_sys::Array, JsValue> {
+            let (id, f) = self.0.frames_prior(prior, &Request::HandoverWitnessed { pin }).map_err(err)?;
+            Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
+        }
+        /// KEEP an earlier build's witnessed places in this one's guard (`[[chain hex, seq, entry hex]]`).
+        pub fn frames_witnessed_keep(&mut self, places: JsValue) -> Result<js_sys::Array, JsValue> {
+            let places = js_sys::Array::from(&places)
+                .iter()
+                .map(|x| {
+                    let x = js_sys::Array::from(&x);
+                    Ok((bytes32("chain", &x.get(0).as_string().unwrap_or_default()).map_err(err)?, x.get(1).as_f64().unwrap_or(0.0) as u64, bytes32("entry", &x.get(2).as_string().unwrap_or_default()).map_err(err)?))
+                })
+                .collect::<Result<Vec<_>, JsValue>>()?;
+            self.ask(Request::WitnessedKeep { places })
         }
         /// `[id, frames]` of an EMPTY mandate handed to an earlier build (its session's member): its upkeep does nothing
         /// more for them.

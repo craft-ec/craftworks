@@ -850,3 +850,29 @@ fn a_huge_kept_epoch_never_makes_a_walk_from_zero() {
     let _ = serve(&mut m, Request::Forget, APP);
     assert!(t.elapsed().as_secs() < 5, "walked a window, not 2^64 epochs");
 }
+
+/// ONE KEY, TWO BUILDS (audit 10-11): the places the earlier build signed are handed to the next one, which then never
+/// signs another entry there; and retiring the earlier build's upkeep clears its witness and keeper mandates, so its
+/// rounds never sign again.
+#[test]
+fn a_members_next_build_carries_its_witnessed_places_and_the_old_one_retires() {
+    let (chain, x, y) = ([7u8; 32], [1u8; 32], [2u8; 32]);
+    // The EARLIER build: signs x at (chain, 4); holds a witness mandate.
+    let mut old = provisioned(APP);
+    let Answer::Unlocked { public, .. } = unlock(&mut old, ALICE_PIN, APP) else { panic!("unlocked") };
+    let Answer::Signed { .. } = serve(&mut old, Request::WitnessSign { chain, seq: 4, entry: x }, APP) else { panic!("signed") };
+    let mandate = WitnessMandate { token: [1; 32], idlog: [2; 32], bag: [3; 32], beacon_code: [4; 32], beacon: [5; 32], pool: [6; 32] };
+    assert_eq!(serve(&mut old, Request::WitnessMandate { mandate }, APP), Answer::WitnessMandated);
+    // RETIRED: its mandates cleared.
+    let _ = serve(&mut old, Request::UpkeepMandate { me: String::new(), spaces: vec![], spent: vec![] }, APP);
+    assert_eq!(upkeep_witness_mandate(&old, &public), None, "a retired build witnesses no more");
+    // HANDED OVER: its places, into the NEXT build's guard.
+    let Answer::HandedWitnessed { places } = serve(&mut old, Request::HandoverWitnessed { pin: ALICE_PIN.into() }, APP) else { panic!("handed") };
+    assert_eq!(places, vec![(chain, 4, x)]);
+    assert_eq!(serve(&mut old, Request::HandoverWitnessed { pin: ALICE_PIN.into() }, OTHER), Answer::Refused(Why::NotHome));
+    let mut new = provisioned(APP);
+    let _ = unlock(&mut new, ALICE_PIN, APP);
+    assert_eq!(serve(&mut new, Request::WitnessedKeep { places: places.clone() }, APP), Answer::WitnessedKept { kept: 1 });
+    assert_eq!(serve(&mut new, Request::WitnessSign { chain, seq: 4, entry: y }, APP), Answer::Refused(Why::Equivocation), "never another entry where the old build signed");
+    assert!(matches!(serve(&mut new, Request::WitnessSign { chain, seq: 4, entry: x }, APP), Answer::Signed { .. }), "the same entry again: fine");
+}
