@@ -23,7 +23,8 @@
 //   await keep.keepers(root) // [did, …]: who keeps a file (this month or last) — the KEEPERS BAG (rewards step 3)
 //   await keep.holdings(epoch) // [{ sp, row, watched } | { assigned: { key, size, missing } }]: what it keeps, fixed for
 //                            // standing epoch `epoch` (the keeper's)
-//   await keep.assign(epoch, files) // the registry files this keeper is assigned ([{ key, size }]): kept from now on
+//   await keep.assign(epoch, candidates) // the registry files this keeper ranks among the keepers of ([{ key, size }], ranked)
+//   await keep.assigned()    // what it keeps of them ([{ key, size }]): found first, then unread, within its limit — never absent
 //
 // THE KEEPERS BAG (rewards step 3): each file's public bag `keepers:<root>` (`index.point`), where a keeper says, once
 // a month, that it keeps the file (`{ did, m: "YYYY-MM" }`; the same claim again merges). A CLAIM, unsigned like every
@@ -221,10 +222,10 @@ export async function start(ctx) {
         out.push({ space: v.space ?? null, file: v.file });
       }
       for (const w of (await kept()).files) if (w.gens && w.whole === w.gens) out.push({ space: null, file: w.root, watched: true });
-      // ASSIGNED files a pass has read (their pieces found then).
+      // ASSIGNED files a pass has read and FOUND (`registry_found`: there at their listed size).
       for (const a of await assignedNow()) {
         const r = read(t.rows().find(x => x.key === `a/${a.key}`) ?? { value: "null" });
-        if (r && !r.error && r.pieces) out.push({ space: null, file: a.key, assigned: true, size: a.size, missing: r.missing ?? [] });
+        if (r && !r.error && r.found === true) out.push({ space: null, file: a.key, assigned: true, size: a.size, missing: r.missing ?? [] });
       }
       return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
     };
@@ -256,17 +257,32 @@ export async function start(ctx) {
     }
     return out;
   }
-  // THE ASSIGNMENT (`keeper`: the registry's files this keeper ranks among the copies of, within its limit), kept
-  // like what was watched: each re-read a DAY apart (`files.keepAt`: read only), its record `a/<address key>`.
-  async function assign(epoch, files) {
-    await (await records()).put("assigned", JSON.stringify({ epoch, files }));
+  // THE ASSIGNMENT (`keeper`: the registry's files this keeper ranks among the copies of — its CANDIDATES, ranked),
+  // kept like what was watched: each re-read a DAY apart (`files.keepAt`: read only), its record `a/<address key>`
+  // saying whether the read FOUND it. What it keeps of its candidates is `keeper_fill`'s (Rust: the one rule) — found
+  // first, then unread, within its limit; absent never — so a listing nothing serves costs one read, never a place.
+  async function assign(epoch, candidates) {
+    await (await records()).put("assigned", JSON.stringify({ epoch, candidates }));
   }
-  const assignedNow = async () => read((await records()).rows().find(r => r.key === "assigned") ?? { value: "null" })?.files ?? [];
+  const readOf = (rows, key) => read(rows.get(`a/${key}`) ?? { value: "null" });
+  // A read that decided (no error, its verdict said): what `keeper_fill` ranks by. ABSENT holds a DAY, then counts as
+  // unread again (a file missed while its pieces were slow to answer competes again, for the room found files leave).
+  const decided = r => r && !r.error && typeof r.found === "boolean" && (r.found || Date.now() - r.at <= DAY);
+  async function assignedNow() {
+    const t = await records();
+    const candidates = read(t.rows().find(r => r.key === "assigned") ?? { value: "null" })?.candidates ?? [];
+    if (!candidates.length) return [];
+    const rows = new Map(t.rows().filter(r => r.key.startsWith("a/")).map(r => [r.key, r]));
+    const reads = candidates.map(a => [a.key, readOf(rows, a.key)]).filter(([, r]) => decided(r)).map(([key, r]) => ({ key, found: r.found }));
+    const Core = (await ctx.require("node")).glue.CraftworksCore;
+    return Core.keeper_fill(candidates, (await kept()).limit, reads);
+  }
   async function assignedDue() {
     const t = await records();
+    const rows = new Map(t.rows().filter(r => r.key.startsWith("a/")).map(r => [r.key, r]));
     return (await assignedNow()).filter(a => {
-      const r = read(t.rows().find(x => x.key === `a/${a.key}`) ?? { value: "null" });
-      return !r || Date.now() - r.at > (r.error ? RETRY : DAY);
+      const r = readOf(rows, a.key);
+      return !r || (!r.error && !decided(r)) || Date.now() - r.at > (r.error ? RETRY : DAY);
     });
   }
   async function keepAssigned(a) {
@@ -276,7 +292,7 @@ export async function start(ctx) {
       .catch(e => ({ error: e?.message ?? String(e) }))
       .finally(() => clearTimeout(timer));
     await (await records()).put(`a/${a.key}`, JSON.stringify({ size: a.size, at: Date.now(), ...out }));
-    ctx.log("kept", { what: `assigned file ${a.key.slice(0, 8)}…: ${out.error ?? `${out.pieces - out.missing.length}/${out.pieces} piece(s) answered`}` });
+    ctx.log("kept", { what: `assigned file ${a.key.slice(0, 8)}…: ${out.error ?? (out.found ? `${out.pieces - out.missing.length}/${out.pieces} piece(s) answered` : `NOT THERE at its listed size (${out.missing.length} piece(s) unanswered): its place goes to the next`)}` });
   }
   const watchedDue = async () => (await kept()).files.filter(w => Date.now() - w.at > DAY);
 
@@ -330,5 +346,5 @@ export async function start(ctx) {
     tick();
     setInterval(tick, 60000);
   }, 120000);
-  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.log("keep", { what: `not noted for keeping: ${e?.message ?? e}` })), kept, setLimit, limits, keepers, holdings, assign };
+  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.log("keep", { what: `not noted for keeping: ${e?.message ?? e}` })), kept, setLimit, limits, keepers, holdings, assign, assigned: assignedNow };
 }

@@ -2367,6 +2367,20 @@ mod js {
         }
         o.into()
     }
+    /// Registry files as a page passes them: `[{ key: address key hex, size }]`.
+    fn key_sizes(files: &JsValue) -> Result<Vec<([u8; 32], u64)>, JsValue> {
+        js_sys::Array::from(files)
+            .iter()
+            .map(|f| Ok((bytes32("file", &js_sys::Reflect::get(&f, &"key".into())?.as_string().unwrap_or_default()).map_err(err)?, js_sys::Reflect::get(&f, &"size".into())?.as_f64().unwrap_or(0.0) as u64)))
+            .collect()
+    }
+    fn key_sizes_js(files: &[([u8; 32], u64)]) -> JsValue {
+        let out = js_sys::Array::new();
+        for (ak, size) in files {
+            out.push(&js_obj(&[("key", JsValue::from(hex(ak))), ("size", JsValue::from(*size as f64))]));
+        }
+        out.into()
+    }
     /// The keeper's context: the standing contract's code, the beacon's code and id.
     fn keeper_ctx(standing_code: &[u8], beacon_code: &[u8], beacon: &[u8]) -> Result<keeper::Keep, JsValue> {
         Ok(keeper::Keep { standing: *blake3::hash(standing_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), beacon: b32(beacon)? })
@@ -2510,20 +2524,26 @@ mod js {
             let k = craftworks_reputation::keepers::Keeper { did, cred: dev.credential, key_seq: dev.key_seq };
             Ok(js_obj(&[("done", js_sys::Uint8Array::from(&k.encode()[..]).into())]))
         }
-        /// The files keeper `me` is ASSIGNED (`craftworks_standing::assign`): of the registry's live files (`files`:
+        /// Keeper `me`'s CANDIDATES (`craftworks_standing::assign::candidates`): of the registry's live files (`files`:
         /// `[{ key: address key hex, size }]`) and the listed keepers' record keys (`keepers`: hex), those it ranks among
-        /// the copies of, highest first, while they fit `limit` bytes — `[{ key, size }]`.
-        pub fn keeper_assigned(me: &[u8], files: JsValue, keepers: js_sys::Array, limit: f64) -> Result<JsValue, JsValue> {
-            let files: Vec<([u8; 32], u64)> = js_sys::Array::from(&files)
-                .iter()
-                .map(|f| Ok((bytes32("file", &js_sys::Reflect::get(&f, &"key".into())?.as_string().unwrap_or_default()).map_err(err)?, js_sys::Reflect::get(&f, &"size".into())?.as_f64().unwrap_or(0.0) as u64)))
-                .collect::<Result<_, JsValue>>()?;
+        /// the copies of, highest first — `[{ key, size }]`. What it keeps of them: `keeper_fill`.
+        pub fn keeper_candidates(me: &[u8], files: JsValue, keepers: js_sys::Array) -> Result<JsValue, JsValue> {
+            let files = key_sizes(&files)?;
             let keepers: Vec<[u8; 32]> = keepers.iter().map(|k| bytes32("keeper", &k.as_string().unwrap_or_default()).map_err(err)).collect::<Result<_, _>>()?;
-            let out = js_sys::Array::new();
-            for (ak, size) in craftworks_standing::assign::assigned(&b32(me)?, &files, &keepers, craftworks_standing::assign::COPIES, limit as u64) {
-                out.push(&js_obj(&[("key", JsValue::from(hex(&ak))), ("size", JsValue::from(size as f64))]));
+            Ok(key_sizes_js(&craftworks_standing::assign::candidates(&b32(me)?, &files, &keepers, craftworks_standing::assign::COPIES)))
+        }
+        /// The files a keeper KEEPS of its ranked `candidates` (`[{ key, size }]`) within `limit` bytes
+        /// (`craftworks_standing::assign::fill`), by what its own reads found (`reads`: `[{ key, found }]`, one per file
+        /// read; a file not in it is not read yet): found first, then unread, never absent — `[{ key, size }]`.
+        pub fn keeper_fill(candidates: JsValue, limit: f64, reads: js_sys::Array) -> Result<JsValue, JsValue> {
+            use craftworks_standing::assign::Read;
+            let candidates = key_sizes(&candidates)?;
+            let mut read = std::collections::BTreeMap::new();
+            for r in reads.iter() {
+                let key = bytes32("file", &js_sys::Reflect::get(&r, &"key".into())?.as_string().unwrap_or_default()).map_err(err)?;
+                read.insert(key, if js_sys::Reflect::get(&r, &"found".into())?.as_bool() == Some(true) { Read::Found } else { Read::Absent });
             }
-            Ok(out.into())
+            Ok(key_sizes_js(&craftworks_standing::assign::fill(&candidates, limit as u64, &|ak| read.get(ak).copied().unwrap_or(Read::Unread))))
         }
         /// The KEEPERS REGISTRY's bag `k` of standing epoch `epoch` (its address).
         pub fn keepers_address(epoch: f64, k: u32) -> js_sys::Uint8Array {
@@ -3162,6 +3182,13 @@ mod js {
         pub fn registry_item(address_key: &[u8], size: f64) -> Result<js_sys::Uint8Array, JsValue> {
             Ok(js_sys::Uint8Array::from(&craftworks_wallet::registry::Listed { address_key: b32(address_key)?, size: size as u64 }.encode()[..]))
         }
+        /// FOUND (`craftworks_files::found`): a registered file of `size` bytes whose pieces at `missing` (indexes into
+        /// `registry_pieces`) did not answer is there at its listed size — every generation rebuildable. Monotone: a
+        /// read may stop at the first `false`.
+        pub fn registry_found(size: f64, missing: js_sys::Array) -> bool {
+            let missing: Vec<usize> = missing.iter().filter_map(|i| i.as_f64()).map(|i| i as usize).collect();
+            craftworks_files::found(size as u64, &missing)
+        }
         /// The files LIVE from an epoch's registry items and the epoch before's: `[{ key: address key hex, size }]`.
         pub fn registry_live(this: js_sys::Array, before: js_sys::Array) -> JsValue {
             let v = |a: &js_sys::Array| a.iter().map(|i| js_sys::Uint8Array::new(&i).to_vec()).collect::<Vec<_>>();
@@ -3456,11 +3483,9 @@ mod js {
             let ak = b32(address_key)?;
             let plan = craftworks_files::Plan::of(size as u64);
             let out = js_sys::Array::new();
-            for g in 0..plan.gens {
-                for j in 0..(plan.k(g) + craftworks_files::EXTRA) as u8 {
-                    let id = hex(&self.0.piece_id(&craftworks_files::fragment_at(&ak, g, j)));
-                    out.push(&js_sys::Array::of2(&JsValue::from(id), &JsValue::from(plan.chunk as f64)));
-                }
+            for (g, j) in craftworks_files::registered(&plan) {
+                let id = hex(&self.0.piece_id(&craftworks_files::fragment_at(&ak, g, j)));
+                out.push(&js_sys::Array::of2(&JsValue::from(id), &JsValue::from(plan.chunk as f64)));
             }
             Ok(out.into())
         }

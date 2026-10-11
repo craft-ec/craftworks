@@ -1,5 +1,32 @@
 use super::*;
 
+#[test]
+fn a_listed_file_is_found_only_when_every_generation_can_be_rebuilt() {
+    // 3 generations: two of GEN chunks, a last of 5 — indexes in `registered` order.
+    let size = (2 * GEN as u64 + 5) * MAX_CHUNK as u64;
+    let plan = Plan::of(size);
+    let order: Vec<(u64, u8)> = registered(&plan).collect();
+    assert_eq!(order.len(), 2 * (GEN + EXTRA) + 5 + EXTRA);
+    let of_gen = |g: u64| order.iter().enumerate().filter(|(_, x)| x.0 == g).map(|(i, _)| i).collect::<Vec<_>>();
+    // Nothing missing; EXTRA missing in each generation (the last too): found.
+    assert!(found(size, &[]));
+    let extra_each: Vec<usize> = (0..3).flat_map(|g| of_gen(g).into_iter().take(EXTRA)).collect();
+    assert!(found(size, &extra_each));
+    // One more in any one generation (the last's included): not rebuildable, not found.
+    for g in 0..3 {
+        let mut m = extra_each.clone();
+        m.push(of_gen(g)[EXTRA]);
+        assert!(!found(size, &m), "generation {g}");
+    }
+    // A listing nothing serves: its first generation all missing.
+    assert!(!found(size, &of_gen(0)));
+    // A SIZE LIE: one generation stored, three claimed — the claimed ones never answer.
+    let lie: Vec<usize> = of_gen(1).into_iter().chain(of_gen(2)).collect();
+    assert!(!found(size, &lie));
+    // Repeats and indexes past the end are not more missing.
+    assert!(found(size, &[0, 0, 0, 0, 0, 0, 0, 0, 0, 10_000]));
+}
+
 fn bytes(n: usize, seed: u8) -> Vec<u8> {
     let mut x = seed as u32 ^ 0x9E37;
     (0..n)

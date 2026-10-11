@@ -582,22 +582,27 @@ export async function start(ctx) {
   }
 
   // KEEP an ASSIGNED file (a keeper's, from the registry: its address key and size — it cannot read it): every piece
-  // read (a read is keeping), none made again (healing is every reader's). `{ pieces, missing: [index] }` — indexes
-  // into `core.registry_pieces`.
+  // read (a read is keeping), none made again (healing is every reader's). `{ pieces, missing: [index], found }` —
+  // indexes into `core.registry_pieces`; `found` (`registry_found`): there at its listed size. The read STOPS once it
+  // cannot be (a listing nothing serves, or claiming more than was stored, costs a generation's reads, not the file's).
   async function keepAt(addressKey, size) {
     const all = core.registry_pieces(addressKey, size);
     const missing = [];
     let next = 0;
+    let found = true;
     await Promise.all(
       Array.from({ length: Math.min(16, all.length) }, async () => {
-        while (next < all.length) {
+        while (found && next < all.length) {
           const i = next++;
           const st = await fetchState(all[i][0], "keeping an assigned file", { raw: true }).catch(() => null);
-          if (!st || st[0] !== 2) missing.push(i);
+          if (!st || st[0] !== 2) {
+            missing.push(i);
+            if (!glue.CraftworksCore.registry_found(size, missing)) found = false;
+          }
         }
       }),
     );
-    return { pieces: all.length, missing: missing.sort((a, b) => a - b) };
+    return { pieces: all.length, missing: missing.sort((a, b) => a - b), found };
   }
 
   // When a re-key of this row last moved (its progress, else the row): for taking over from a member gone quiet.

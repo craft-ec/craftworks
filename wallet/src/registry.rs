@@ -2,7 +2,9 @@
 //! epoch in a chain of public bags ([`crate::chained`]) — its ADDRESS KEY (`craftworks_files::address_key`: every
 //! fragment's address, nothing it opens) and its SIZE (its plan). A keeper derives the pieces from them; anyone sums the
 //! sizes (the network's volume). Nothing names the uploader. An entry lives the epoch it is listed in and the next: its
-//! holders list it again each epoch, so a file nobody keeps drops out.
+//! holders list it again each epoch, so a file nobody keeps drops out. An entry is UNSIGNED — anyone can list an
+//! address key nothing serves — so what a keeper spends its limit on is decided by its own reads
+//! (`craftworks_standing::assign::fill`, `craftworks_files::found`), never by a listing alone.
 
 /// One file listed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

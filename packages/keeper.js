@@ -26,8 +26,10 @@ export async function start(ctx) {
   // How far back a catch-up looks (the beacon's state keeps its latest steps' outputs; older ones are null).
   const BACK = 1024;
 
-  // THE ASSIGNMENT of epoch `epoch` (`craftworks_standing::assign`): the registry's live files, the keepers listed the
-  // epoch before (complete: every page computes the same), this keeper's limit (Usage) — handed to `keep`.
+  // THE ASSIGNMENT of epoch `epoch` (`craftworks_standing::assign`): of the registry's live files and the keepers listed
+  // the epoch before (complete: every page computes the same), this keeper's CANDIDATES, ranked — handed to `keep`,
+  // which keeps of them what its limit (Usage) holds by what its own reads FOUND (`keeper_fill`: a listing nothing
+  // serves costs one read, never a place).
   async function assignment(epoch, keep) {
     if (epoch < 1) return;
     const [index, tokens] = await Promise.all(["index", "tokens"].map(n => ctx.require(n)));
@@ -40,10 +42,8 @@ export async function start(ctx) {
       index.bag.chain(Core.keepers_address, epoch - 1, "reading the keepers registry", strict),
     ]);
     const keepers = await tokens.run(() => core.keepers_listed(tokens.idlogCode, ks));
-    const { limit } = await keep.kept();
-    const mine = Core.keeper_assigned(tokens.bytes(me.member), Core.registry_live(now, before), keepers.map(k => k.key), limit);
-    await keep.assign(epoch, mine);
-    state.assigned = mine.length;
+    await keep.assign(epoch, Core.keeper_candidates(tokens.bytes(me.member), Core.registry_live(now, before), keepers.map(k => k.key)));
+    state.assigned = (await keep.assigned()).length;
   }
 
   // The epoch's HOLDINGS: every piece of what `keep` keeps — its own and watched files whole, its assigned ones' pieces

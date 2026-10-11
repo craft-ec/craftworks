@@ -67,7 +67,11 @@ nobody reads lately loses pieces across the network — so something must KEEP i
 **ONE FUNNEL (owner 2026-10-10: "it is just one single funnel. paid demand also flow through the same funnel"):** a node
 KEEPS WHAT IT IS ASSIGNED — (1) its ARC: the pieces Freenet places near its ring position; (2) files BELOW THEIR TARGET
 copies: assigned by a beacon rendezvous each node computes for itself (`BLAKE3(beacon ‖ node ‖ piece)` ranks, no
-coordinator), until healthy again — within the storage limit its owner sets (0: it keeps nothing and only pays). The
+coordinator), until healthy again — within the storage limit its owner sets (0: it keeps nothing and only pays).
+LISTINGS ARE UNSIGNED (anyone can list an address key nothing serves, at any size), so the limit is spent only on
+what the keeper's OWN read FOUND (`standing::assign::fill`, `files::found`: every generation rebuildable at the listed
+size): found files first, then unread ones, absent ones never (absent holds a day) — a fake costs one generation's
+reads, never a found file's place; which keepers a file has (the rendezvous) is untouched. The
 `keep` capability re-reads the assignment (READ ONLY — a keeper only keeps; healing is every reader's, during its read);
 the node's STANDING RECORD proves it (one challenge queue); and every payout reads that one proof: $CRAFT ISSUANCE
 (TOKEN §7d) for each proven epoch, by reputation share, and PAID DEMAND — a contributor's carrier share — to the nodes

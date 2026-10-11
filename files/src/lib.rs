@@ -141,6 +141,29 @@ pub fn fragment_at(address_key: &[u8; 32], g: u64, j: u8) -> [u8; 32] {
     let place = [&b"f"[..], &g.to_be_bytes(), &[j]].concat();
     blake3::keyed_hash(address_key, &place).into()
 }
+/// A REGISTERED file's fragments as a keeper reads them from its address key and size alone (`registry_pieces`):
+/// each generation's as uploaded, `k` + [`EXTRA`], generation by generation — `(g, j)` in the one order every list of
+/// them, and every index into one, uses.
+pub fn registered(plan: &Plan) -> impl Iterator<Item = (u64, u8)> + '_ {
+    (0..plan.gens).flat_map(move |g| (0..(plan.k(g) + EXTRA) as u8).map(move |j| (g, j)))
+}
+
+/// FOUND (the files registry's existence rule, owner of it): a registered file of `size` bytes whose fragments at
+/// `missing` (indexes into [`registered`]) did not answer is THERE at the size it was listed with — every generation
+/// still has its `k` (no more than [`EXTRA`] of a generation's missing): rebuildable. A listing nothing serves, or one
+/// claiming more generations than were stored, is not. Monotone (more missing never makes it found again), so a
+/// read may stop at the first `false`. Linear in `missing`, never in the claimed size.
+pub fn found(size: u64, missing: &[usize]) -> bool {
+    let plan = Plan::of(size);
+    let total: u64 = if plan.gens == 0 { 0 } else { (plan.gens - 1) * (GEN + EXTRA) as u64 + (plan.k(plan.gens - 1) + EXTRA) as u64 };
+    let mut m: Vec<u64> = missing.iter().map(|i| *i as u64).filter(|i| *i < total).collect();
+    m.sort_unstable();
+    m.dedup();
+    // Every generation but the last has GEN + EXTRA fragments, so index i is generation i / (GEN + EXTRA).
+    let per = (GEN + EXTRA) as u64;
+    m.chunk_by(|a, b| a / per == b / per).all(|run| run.len() <= EXTRA)
+}
+
 /// Where an index piece (the root too) lives: by its hash, which its parent (the reference, for the root) carries —
 /// two uploads of one file that stored other fragments never meet at one address.
 pub fn hashed_address(key: &[u8; 32], hash: &[u8; 32]) -> [u8; 32] {
