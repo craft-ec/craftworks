@@ -1789,9 +1789,8 @@ old key's addresses.
               crate's later changes would have re-keyed a third time); bag rebuild copies; a tampered token.wasm
               refused at publish. OWNER 10-10: "nothing deploy yet. no need to bump. we'll do migration on first production
               deployment" → token.wasm UNPINNED until then (FROZEN keeps the signer; a note holds the token's place),
-              rebuilt from source 874e8b2e. AT FIRST PRODUCTION DEPLOYMENT: TOKEN MIGRATION (owner-signed "moved" entry citing the old
-              chain's final state, witnessed; the wallet moves on open) — the signer's sdk#14 analogue; fx/fy's old
-              chains (be2d1f2d) its first test.
+              rebuilt from source 874e8b2e. OWNER 10-11: NO MIGRATION ("Nothing really being used by user") — the
+              release re-keys the token contracts; $CRAFT and WREN start fresh on the main network (no "moved" entry).
           [x] K2 KEEPER MINT = STATEMENT LINE 10-10: `Body::KeeperMint { epoch, root, proof, amount }` — amount exactly the
               chain owner's keeper line under `root` (`reputation::statement::line_proven`, now the allowance's check
               too); appended by anyone with work; once per epoch; stamped once the epoch began. The contract no longer
