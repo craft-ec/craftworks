@@ -1732,6 +1732,7 @@ dependencies = [
  "craftworks-beacon-contract",
  "craftworks-idlog-contract",
  "craftworks-reputation",
+ "craftworks-rules",
  "craftworks-standing",
  "craftworks-standing-contract",
  "craftworks-token-contract",

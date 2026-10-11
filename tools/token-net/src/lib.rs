@@ -224,19 +224,29 @@ impl<'a> Reader<'a> {
     /// The EPOCH STATEMENT of standing epoch `epoch` as this reader computes it (the one build: every vouch registry up
     /// to it, each item verified by its voucher's key log; KEPT audited: `kept`): its root. `None`: its lot not drawn yet.
     pub fn statement_root(&self, epoch: u64) -> Option<[u8; 32]> {
+        // THE ONE BUILD (`rules::statement::build`, the page's and the delegate's — 10-11: this tool kept its own and
+        // its epoch-20 root differed from the pages'), over what this reader reads: a contract not answered is taken as
+        // not there (this reader cannot tell them apart; a page refuses to post then).
         use craftworks_reputation as R;
+        use craftworks_reputation::statement::{bag_address, Posted, CARRY_BACK};
         let items: Vec<R::item::Item> = (0..=epoch).flat_map(|e| self.chained(R::item::registry_address, e)).filter_map(|b| R::item::Item::decode(&b)).collect();
-        let log_of = |d: &R::Did| self.keys(d);
-        let signed = epoch.checked_sub(1).map_or(Default::default(), |e| self.signed(e));
-        let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP), witness: craftworks_wallet::craft::witness_pot(epoch), halvings: craftworks_wallet::craft::halvings(epoch) };
-        let kept = match epoch.checked_sub(1) {
-            None => Vec::new(),
-            Some(e) => self.kept(e, &log_of)?,
-        };
-        // The newest ACCEPTED statement within CARRY_BACK epochs (the page's rule).
-        let prev = (1..=R::statement::CARRY_BACK).filter_map(|b| epoch.checked_sub(b)).find_map(|e| self.statement_lines(e)).unwrap_or_default();
-        let st = R::statement::build(epoch, &items, &log_of, &kept, &signed, &prev, pots);
-        st.tree(&mut std::collections::BTreeMap::new()).map(|(root, _)| root)
+        let keepers: Vec<Vec<u8>> = epoch.checked_sub(1).map_or(vec![], |e| self.chained(R::keepers::address, e));
+        let queued = epoch.checked_sub(1).map_or(vec![], |e| self.queue(e));
+        let roots = |x: u64| self.bag(bag_address(x)).iter().filter_map(|p| Posted::decode(p)).filter(|p| p.epoch == x).map(|p| p.root).collect::<Vec<_>>();
+        let posted = epoch.checked_sub(1).map_or(vec![], roots);
+        let earlier: Vec<(u64, [u8; 32])> = if epoch >= 2 { (epoch.saturating_sub(CARRY_BACK)..=epoch - 2).rev().flat_map(|x| roots(x).into_iter().map(move |r| (x, r))).collect() } else { vec![] };
+        let ctx = craftworks_rules::tokens::Ctx { code_hash: self.net.code_hash, beacon: self.net.beacon, idlog: self.net.idlog_hash };
+        let lot = craftworks_rules::tokens::Lot { pool: self.net.pool, bag: blake3_hash(&self.net.bag_code), beacon_code: self.net.beacon_hash };
+        let keep = craftworks_rules::keeper::Keep { standing: self.net.standing_hash, beacon_code: self.net.beacon_hash, beacon: self.net.beacon };
+        let fresh = |_: &[u8; 32]| true;
+        let block = |c: &[u8; 32]| self.get(contract_keys::block::contract_for(&self.net.block_code, c)).filter(|s| s.len() > 1).map(|s| s[1..].to_vec());
+        let lines = |root: &[u8; 32]| R::statement::lines(root, &block).map_err(|_| Vec::new());
+        let inputs = craftworks_rules::statement::Inputs { epoch, items: &items, keepers: &keepers, queued: &queued, posted: &posted, earlier: &earlier, ctx: &ctx, lot: &lot, keep: &keep, fresh: &fresh, lines: &lines, audit: None };
+        let got = |x: &[u8; 32]| Some(self.get(*x).unwrap_or_default());
+        match craftworks_rules::statement::build(&inputs, &got).ok()? {
+            craftworks_rules::tokens::Step::Done((st, _)) => st.tree(&mut std::collections::BTreeMap::new()).map(|(root, _)| root),
+            _ => None,
+        }
     }
 
     /// WITNESS the epoch statement of `epoch` with `key`: `Ok(Some(root))` signed — the root POSTED in its bag that this
