@@ -39,15 +39,20 @@ export async function start(ctx) {
   // chain's new entries then go into the WITNESS QUEUE (TOKEN §7a: how they reach their witnesses).
   async function putAll(puts) {
     const queue = [];
+    const bags = [];
     for (const p of puts ?? []) {
       const said = await ask(p.frames, s => (s.kind === "put" && s.key === p.id) || s.kind === "refused", "putting a token contract", 60000);
       if (said.kind !== "put") throw new Error(`the node refused it (${said.said})`);
       core.take_got(hexOf(p.idBytes));
       queue.push(...(p.queue ?? []));
+      bags.push(...(p.bags ?? []));
     }
+    const said = e => ctx.log("tokens", { what: e.message ?? String(e) });
+    // Each entry's WITNESS BAG made (empty) first: a witness with no page open only adds to a bag already there.
+    for (const a of bags) await index.bag.add(a, new Uint8Array(0), "making an entry's witness bag").catch(said);
     if (queue.length) {
       const at = await now();
-      for (const q of queue) await chained(Core.witness_queue_address, at, q, "queueing an entry for its witnesses").catch(e => ctx.log("tokens", { what: e.message ?? String(e) }));
+      for (const q of queue) await chained(Core.witness_queue_address, at, q, "queueing an entry for its witnesses").catch(said);
     }
   }
   // RUN a step to its end: read what it wants, have the delegate sign what it asks (one entry a round), until done.

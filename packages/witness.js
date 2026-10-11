@@ -67,6 +67,18 @@ export async function start(ctx) {
       busy = false;
     }
   }
+  // THE MANDATE (once a page): so the delegate witnesses with no page open too (its `witness_round`).
+  let mandated = false;
+  beaconSvc.onHeight(async () => {
+    if (mandated) return;
+    const me = await auth.check().catch(() => null);
+    const tokens = me ? await ctx.require("tokens") : null;
+    if (!tokens?.on) return;
+    mandated = true;
+    const bagCode = await ctx.require("bag-wasm");
+    const a = await auth.identity.witnessMandate(tokens.code, tokens.idlogCode, bagCode, tokens.lot.beacon, tokens.beacon, tokens.lot.pool).catch(e => ({ refused: e.message ?? String(e) }));
+    ctx.log("witness", { what: a?.witnessMandated ? "the delegate witnesses with no page open too" : `the delegate not handed the witness round (${a?.refused ?? "no answer"})` });
+  });
   beaconSvc.onHeight(pass);
   return { status: () => ({ ...state }) };
 }

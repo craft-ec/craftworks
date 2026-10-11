@@ -794,3 +794,24 @@ fn a_member_witnesses_one_entry_per_place_never_two() {
     assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
     assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 6, entry: a }, OTHER), Answer::Refused(Why::NotHome));
 }
+
+/// UPKEEP WITNESSES through the SAME guard as a page (TOKEN §7a): whichever signs a place first, the other may sign the
+/// same entry there again, never another; the mandate kept for the home site only.
+#[test]
+fn upkeep_and_page_share_one_witness_guard() {
+    let mut m = provisioned(APP);
+    let Answer::Unlocked { public, .. } = unlock(&mut m, ALICE_PIN, APP) else { panic!("unlocked") };
+    let (chain, a, b) = ([7u8; 32], [1u8; 32], [2u8; 32]);
+    let Answer::Signed { sig } = serve(&mut m, Request::WitnessSign { chain, seq: 4, entry: a }, APP) else { panic!("signed") };
+    assert_eq!(upkeep_witness_sign(&mut m, &public, &chain, 4, &b), Err(Why::Equivocation), "upkeep never signs another entry there");
+    assert_eq!(upkeep_witness_sign(&mut m, &public, &chain, 4, &a).map(|s| s.to_vec()), Ok(sig), "the same entry: the same signature");
+    upkeep_witness_sign(&mut m, &public, &chain, 9, &b).unwrap();
+    assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 9, entry: a }, APP), Answer::Refused(Why::Equivocation), "nor the page after upkeep");
+    // The mandate: kept for the home site; another site refused.
+    let mandate = WitnessMandate { token: [1; 32], idlog: [2; 32], bag: [3; 32], beacon_code: [4; 32], beacon: [5; 32], pool: [6; 32] };
+    assert_eq!(serve(&mut m, Request::WitnessMandate { mandate: mandate.clone() }, APP), Answer::WitnessMandated);
+    assert_eq!(upkeep_witness_mandate(&m, &public), Some(mandate.clone()));
+    assert_eq!(upkeep_members(&m), vec![public], "a witness mandate lists its member for upkeep");
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
+    assert_eq!(serve(&mut m, Request::WitnessMandate { mandate }, OTHER), Answer::Refused(Why::NotHome));
+}

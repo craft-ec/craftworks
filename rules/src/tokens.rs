@@ -228,8 +228,8 @@ fn accepted_at(lot: &Lot, got: Got, code_hash: [u8; 32], beacon_id: [u8; 32], pl
 /// pool chain stakes 1,000 before epoch 1 (genesis to the first, paid on, staked — every entry signed by its device),
 /// their signed claims for epoch 1, a beacon past every lot and its outputs log; and `witness`: an entry signed by its
 /// drawn committee into its witness bag.
-#[cfg(test)]
-pub(crate) mod testlot {
+#[cfg(any(test, feature = "testlot"))]
+pub mod testlot {
     use super::*;
     use craftworks_wallet::{Held, Sources, Wallet};
     use ed25519_dalek::{Signer as _, SigningKey};
@@ -324,6 +324,29 @@ pub(crate) mod testlot {
             got.insert(t::id(&lot.beacon_code, &craftworks_beacon_contract::log::Params { beacon: ctx.beacon, index }.encode()), craftworks_beacon_contract::log::Log { entries }.encode());
         }
         TestLot { lot, keys: people.into_iter().map(|p| p.2.key).collect() }
+    }
+
+    /// A NEW TOKEN's first entries, stamped in epoch 1 (its creator staker 1, the test's): the token "G" made, its
+    /// chain put in `got` — `(the queue item of its first entry, its chain's id, that entry's hash)`. Its first entry has
+    /// nothing before it and cites nothing: what a seated witness may sign by the rule alone.
+    pub fn genesis_in_epoch1(ctx: &Ctx, got: &mut HashMap<[u8; 32], Vec<u8>>) -> (craftworks_wallet::queue::Queued, [u8; 32], [u8; 32]) {
+        let owner_seed = [71u8; 32];
+        let next = SigningKey::from_bytes(&[91; 32]).verifying_key().to_bytes();
+        let ev = craftworks_idlog_contract::Event::signed(0, [0; 32], &owner_seed, craftworks_idlog_contract::commit(&next), [1; 32], [1; 32], vec![]).unwrap();
+        let log = craftworks_idlog_contract::Log { events: vec![ev] };
+        let did = log.events[0].id();
+        let key = SigningKey::from_bytes(&[111; 32]);
+        let cred = craftworks_identity::credential(&did, &key.verifying_key().to_bytes(), &[7; 32], &owner_seed);
+        let dev = Dev { key, cred };
+        let d = Definition { code_hash: ctx.code_hash, decimals: 0, min_send: 1, genesis_owner: did, genesis_amount: 100, name: b"G".to_vec(), nonce: [9; 16], beacon: ctx.beacon, margin: 2, idlog: ctx.idlog, mint: None, freeze: None, ids: t::Ids::None, royalty: None, cap: 0, item: [0; 32], version: [0; 32], soulbound: false, transfer_fee: None, sale: None, keepers: None };
+        let id = t::id(&ctx.code_hash, &d.encode());
+        let mut h = Held { params: chain(ctx, &d, &id, &did, [0; 32]), definition: d.clone(), state: State::default(), blocks: Default::default() };
+        h.state.entries = Wallet { device: &dev, keys: &log }.genesis(&h, E1 + 12).unwrap();
+        got.insert(id, d.encode());
+        got.insert(h.params.id(), h.state.encode());
+        got.insert(h.params.keys_id(), log.encode());
+        let first = &h.state.entries[0];
+        (craftworks_wallet::queue::Queued { token: t::Tok { definition: id, item: [0; 32] }, owner: did, seq: first.seq }, h.params.id(), first.hash())
     }
 
     /// Entry `seq` of chain `p` (state `s`, token `d`) SIGNED by the first `n` members of its committee, into its bag.

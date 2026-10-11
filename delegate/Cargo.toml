@@ -44,6 +44,10 @@ aes-gcm = { version = "0.10", default-features = false, features = ["aes", "allo
 # BACKGROUND WITNESS and KEEPER (TOKEN §7a: no page open): the rules the page runs (`witness::entry`, `keeper`) —
 # one implementation, the page's and this delegate's.
 craftworks-rules = { path = "../rules" }
+craftworks-token-contract = { path = "../contracts-src/token", default-features = false }
+craftworks-beacon-contract = { path = "../contracts-src/beacon", default-features = false }
+craftworks-wallet = { path = "../wallet" }
+craftworks-reputation = { path = "../reputation" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # The delegate's randomness: upkeep's pool (the page stirs it), through getrandom's custom hook.
@@ -53,3 +57,5 @@ getrandom = { version = "0.2", features = ["custom"] }
 tail = { workspace = true }
 # The Tail contract's own merge (a delta applied as a host does): the round test's network.
 craftec-tail-contract = { path = "../sdk/freenet-contracts/tail", default-features = false }
+# The witness round test's world: stakers, their claims, a beacon (`testlot`).
+craftworks-rules = { path = "../rules", features = ["testlot"] }

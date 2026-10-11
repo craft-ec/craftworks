@@ -156,6 +156,8 @@ export async function start(ctx) {
     tokenSign: message => call(core.frames_token_sign(message), "signing a token entry"),
     // WITNESS (TOKEN §7a): `entry` at (`chain`, `seq`) — never a second entry at a place (the delegate's record).
     witnessSign: (chain, seq, entry) => call(core.frames_witness_sign(chain, seq, entry), "witnessing an entry"),
+    // The WITNESS MANDATE: what the delegate needs to witness with no page open (codes, the beacon, the pool).
+    witnessMandate: (token, idlog, bag, beaconCode, beacon, pool) => call(core.frames_witness_mandate(token, idlog, bag, beaconCode, beacon, pool), "handing the witness round over"),
     // Leave to write one of the account's tables. The node may ask the person (its own prompt, which waits up to a
     // minute), so this waits longer than any other call.
     grant: tables => call(core.frames_grant(tables), `asking for ${tables.map(t => `“${t}”`).join(", ")}`, 90000),

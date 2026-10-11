@@ -20,6 +20,10 @@ craftworks-identity = { path = "../identity" }
 blake3 = { version = "1", default-features = false }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 
+[features]
+# The test LOT (six stakers, a beacon past their lots): other crates' tests run the rules against it.
+testlot = []
+
 [dev-dependencies]
 freenet-prolly = { workspace = true }
 engine = { workspace = true }

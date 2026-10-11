@@ -1887,8 +1887,15 @@ old key's addresses.
                   `craftworks-rules` (pure: no node library) — core re-exports them; the delegate links them (it cannot
                   link core: freenet-stdlib 0.10's unconditional `__frnt_set_id` export collides with its 0.12). Core's
                   page bindings behind a default `page` feature. identity.wasm 9f74563 (1.84 MB).
-              [ ] 3b the delegate's WITNESS round (the page creates each entry's empty witness bag when queuing: a
-                  delegate's new contracts do not propagate, freenet #5542 — it only UPDATEs).
+              [x] 3b 10-11 (unit-tested; publish + live check next — identity changes: everyone enters their PIN):
+                  the delegate's WITNESS round (`delegate/src/witness_round.rs`): the home page hands a WitnessMandate
+                  over (token, idlog, bag, beacon code, beacon, pool; lists the member for upkeep, ticks); each wake-up
+                  the next member in turn whose page is away reads beacon + queue (standing e-1, e), runs
+                  `witness::entry` (the page's rule) per item, signs through the SAME guard as the page
+                  (`upkeep_witness_sign`) and PUTs the signature into the entry's witness bag. The queuing page makes
+                  each entry's empty witness bag (core `bags` on a chain put): a delegate's new contracts do not
+                  propagate (freenet #5542). Test: a drawn staker, page open → no round; away → one signed put,
+                  verified; next wake-up → nothing (settled).
               [ ] 3c the KEEPER MANDATE (the page hands the epoch's holdings over) and the delegate's keeper round.
           [x] DEDUP 10-10 (owner: "ensure there is no duplicated method/foundation/primitive"): identity's
               `credential_node` is the ONE credential rule (token writer + keeper mint + signed vouch); `node.read` the

@@ -72,6 +72,7 @@ pub fn answer_json(a: &Answer) -> Value {
             json!({ "opened": items.iter().map(|i| i.as_ref().map(|b| hex(b))).collect::<Vec<_>>() })
         }
         Answer::EpochSecrets { epochs } => json!({ "epochs": epochs.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>() }),
+        Answer::WitnessMandated => json!({ "witnessMandated": true }),
         Answer::HandedKeys { mls, epochs } => json!({ "handedKeys": {
             "mls": mls.as_ref().map(|s| hex(s)),
             "epochs": epochs.iter().map(|(e, s)| json!([e, hex(s)])).collect::<Vec<_>>(),
@@ -1007,6 +1008,13 @@ mod js {
                 space: space_of(space)?,
                 table: (!table.is_empty()).then(|| table.to_string()),
             })
+        }
+        /// Hand the delegate the WITNESS MANDATE (`WitnessMandate`: what its round needs to witness with no page open) —
+        /// the codes' hashes are of `token`, `idlog`, `bag`, `beacon_code` (their bytes), the beacon's and pool's ids.
+        #[allow(clippy::too_many_arguments)]
+        pub fn frames_witness_mandate(&mut self, token: &[u8], idlog: &[u8], bag: &[u8], beacon_code: &[u8], beacon: &[u8], pool: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let h = |b: &[u8]| *blake3::hash(b).as_bytes();
+            self.ask(Request::WitnessMandate { mandate: craftworks_identity::WitnessMandate { token: h(token), idlog: h(idlog), bag: h(bag), beacon_code: h(beacon_code), beacon: b32(beacon)?, pool: b32(pool)? } })
         }
         /// WITNESS an entry (`WitnessSign`: the home site only; the delegate records the place first and never signs
         /// another entry there): `entry` (its hash, or a statement's root) at (`chain`, `seq`).
@@ -3234,22 +3242,25 @@ mod js {
             }
             Ok(js_obj(&[("id", JsValue::from(hex(&id))), ("puts", list.into())]))
         }
-        /// A TOKEN CHAIN put with its WITNESS QUEUE items (TOKEN §7a): `{ id, idBytes, frames, queue: [bytes] }` — one
-        /// `Queued` per entry not in the state this core read (what this page wrote), for its writer to drop into the
-        /// epoch's queue once the put is taken.
+        /// A TOKEN CHAIN put with its WITNESS QUEUE items (TOKEN §7a): `{ id, idBytes, frames, queue: [bytes], bags:
+        /// [address] }` — one `Queued` per entry not in the state this core read (what this page wrote), for its writer
+        /// to drop into the epoch's queue once the put is taken, and that entry's WITNESS BAG for its writer to make
+        /// (empty): a witness with no page open (the identity delegate) can only add to a bag already on the network.
         fn chain_put_obj(&mut self, token_code: &[u8], p: &tokens::Put) -> Result<JsValue, JsValue> {
             let (id, contract, state) = wire::puts::contract(token_code, &p.params, &p.state);
             let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
             let o = self.put_obj(&account::Put { id, id_bytes, contract, state })?;
-            let queue = js_sys::Array::new();
+            let (queue, bags) = (js_sys::Array::new(), js_sys::Array::new());
             if let (Some(cp), Some(st)) = (craftworks_token_contract::ChainParams::decode(&p.params), craftworks_token_contract::State::decode(&p.state)) {
                 let before = self.0.got(&id_bytes).and_then(craftworks_token_contract::State::decode).and_then(|s| s.entries.last().map(|e| e.seq));
                 for e in st.entries.iter().filter(|e| before.is_none_or(|b| e.seq > b)) {
                     let q = craftworks_wallet::queue::Queued { token: cp.tok(), owner: cp.owner, seq: e.seq };
                     queue.push(&js_sys::Uint8Array::from(&q.encode()[..]));
+                    bags.push(&js_sys::Uint8Array::from(&craftworks_token_contract::wallet::witness_bag(&cp.id(), e.seq)[..]));
                 }
             }
             js_sys::Reflect::set(&o, &"queue".into(), &queue)?;
+            js_sys::Reflect::set(&o, &"bags".into(), &bags)?;
             Ok(o)
         }
         /// A keeper step's answer, its put (the standing contract's) attached.

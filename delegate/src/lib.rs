@@ -7,10 +7,13 @@ pub mod rekey_round;
 pub mod table;
 pub mod write;
 pub mod upkeep;
+pub mod witness_round;
 #[cfg(test)]
 mod table_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod witness_tests;
 
 // A delegate has no randomness of its own: upkeep's pool (stirred by the page, ratcheted per draw: `identity::
 // upkeep_random`) ARMS a stream here before MLS draws; nothing is drawn unarmed.
@@ -159,6 +162,9 @@ mod entry {
                     // RE-KEYS (a space's files after a removal), side by side with admissions.
                     let io = crate::rekey_round::woke(&mut c);
                     out.extend(send(&c, io));
+                    // WITNESSING (TOKEN §7a), by the member's mandate, with no page open.
+                    let io = crate::witness_round::woke(&mut c);
+                    out.extend(send(&c, io));
                     Ok(out)
                 }
                 // The inbox as the node holds it; anything else, an answer upkeep waits for.
@@ -169,7 +175,9 @@ mod entry {
                         identity::upkeep_read(&mut c, r.state.as_ref().map(|s| s.as_ref().len() as u64).unwrap_or(0));
                     }
                     let now = clock_now(&c);
-                    let io = crate::upkeep::replied(&mut c, crate::upkeep::Reply::Got { id, state: r.state.map(|s| s.as_ref().to_vec()) }, now);
+                    let reply = crate::upkeep::Reply::Got { id, state: r.state.map(|s| s.as_ref().to_vec()) };
+                    let mut io = crate::witness_round::replied(&mut c, &reply);
+                    io.extend(crate::upkeep::replied(&mut c, reply, now));
                     Ok(send(&c, io))
                 }
                 InboundDelegateMsg::PutContractResponse(r) => {

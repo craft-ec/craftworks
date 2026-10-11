@@ -89,6 +89,34 @@ pub fn witness_message(chain: &[u8; 32], seq: u64, entry: &[u8; 32]) -> Vec<u8> 
 }
 /// Where a member's WITNESSED places are kept (`WitnessSign`'s guard): `<prefix><member key><chain><seq>` → the entry.
 const WITNESSED: &[u8] = b"identity/witnessed/";
+/// Where a member's WITNESS MANDATE is kept.
+const WITNESS_MANDATE: &[u8] = b"identity/witness-mandate/";
+
+/// THE WITNESS GUARD (page and upkeep alike): member `member` may sign `entry` at (`chain`, `seq`) — never another
+/// entry at a place it signed; the place saved BEFORE any signature is made.
+fn witnessed<H: Host>(h: &mut H, member: &[u8], chain: &[u8; 32], seq: u64, entry: &[u8; 32]) -> Result<(), Why> {
+    let place = [WITNESSED, member, &chain[..], &seq.to_le_bytes()].concat();
+    match h.get_secret(&place) {
+        Some(had) if had != entry => Err(Why::Equivocation),
+        Some(_) => Ok(()),
+        None if h.set_secret(&place, entry) => Ok(()),
+        None => Err(Why::NotSaved),
+    }
+}
+
+/// UPKEEP WITNESSES with no page open: member `member`'s key signs `entry` at (`chain`, `seq`) through the SAME guard
+/// as `WitnessSign` (neither ever signs an entry the other signed differently there).
+pub fn upkeep_witness_sign<H: Host>(h: &mut H, m: &[u8; KEY_LEN], chain: &[u8; 32], seq: u64, entry: &[u8; 32]) -> Result<[u8; 64], Why> {
+    let key = member(h, m).ok_or(Why::NoSession)?.key();
+    witnessed(h, &m[..], chain, seq, entry)?;
+    Ok(key.sign(&witness_message(chain, seq, entry)).to_bytes())
+}
+
+/// A member's WITNESS MANDATE (`None`: no page handed one over).
+/// Handed over by the member's home page (`Request::WitnessMandate`), which also lists them for upkeep and ticks.
+pub fn upkeep_witness_mandate<H: Host>(h: &H, member: &[u8; KEY_LEN]) -> Option<WitnessMandate> {
+    bincode::deserialize(&h.get_secret(&[WITNESS_MANDATE, &member[..]].concat())?).ok()
+}
 
 /// Every identity message starts with this, so a page tells an identity answer from any other delegate's.
 pub const MAGIC: &[u8; 4] = b"ID01";
@@ -185,6 +213,21 @@ pub enum Request {
     /// member signed already (the same one again: the same signature). The place is saved BEFORE the signature is
     /// returned, so a crash can lose a signature nobody received, never sign twice.
     WitnessSign { chain: [u8; 32], seq: u64, entry: [u8; 32] },
+    /// WITNESS WITH NO PAGE OPEN (TOKEN §7a): what the delegate's witness round needs, handed over by the home site —
+    /// the codes' hashes (token, key log, bag, beacon), the beacon, the stake pool. Kept per member; the round then
+    /// witnesses what this member's stake is drawn for on every wake-up.
+    WitnessMandate { mandate: WitnessMandate },
+}
+
+/// What the delegate's WITNESS round needs (handed over by a page: `Request::WitnessMandate`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WitnessMandate {
+    pub token: [u8; 32],
+    pub idlog: [u8; 32],
+    pub bag: [u8; 32],
+    pub beacon_code: [u8; 32],
+    pub beacon: [u8; 32],
+    pub pool: [u8; 32],
 }
 
 /// A space as upkeep may admit into it: the page's knowledge when it handed it over.
@@ -279,6 +322,8 @@ pub enum Answer {
         said: Option<String>,
     },
     EpochSecrets { epochs: Vec<(u64, [u8; 32])> },
+    /// The witness mandate is kept (`Request::WitnessMandate`).
+    WitnessMandated,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -433,15 +478,16 @@ pub fn upkeep_members<H: Host>(h: &H) -> Vec<[u8; KEY_LEN]> {
 pub fn upkeep_mandate<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Option<(String, Vec<Mandate>)> {
     h.get_secret(&of(UPKEEP_MANDATE, m)).and_then(|b| bincode::deserialize(&b).ok())
 }
-pub fn upkeep_set_mandate<H: Host>(h: &mut H, m: &[u8; KEY_LEN], me: &str, spaces: &[Mandate]) -> bool {
+/// Member `m` listed among the members upkeep serves (a space mandate or a witness mandate puts them there).
+fn upkeep_enlist<H: Host>(h: &mut H, m: &[u8; KEY_LEN]) -> bool {
     let mut all = upkeep_members(h);
-    if !all.contains(m) {
+    all.contains(m) || {
         all.push(*m);
-        if !h.set_secret(UPKEEP_MEMBERS, &bincode::serialize(&all).expect("members encode")) {
-            return false;
-        }
+        h.set_secret(UPKEEP_MEMBERS, &bincode::serialize(&all).expect("members encode"))
     }
-    h.set_secret(&of(UPKEEP_MANDATE, m), &bincode::serialize(&(me, spaces)).expect("a mandate encodes"))
+}
+pub fn upkeep_set_mandate<H: Host>(h: &mut H, m: &[u8; KEY_LEN], me: &str, spaces: &[Mandate]) -> bool {
+    upkeep_enlist(h, m) && h.set_secret(&of(UPKEEP_MANDATE, m), &bincode::serialize(&(me, spaces)).expect("a mandate encodes"))
 }
 pub fn upkeep_admitted<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Vec<Admitted> {
     h.get_secret(&of(UPKEEP_ADMITTED, m)).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
@@ -1277,17 +1323,22 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             if a.home != app {
                 return Refused(Why::NotHome);
             }
-            let place = [WITNESSED, &a.public()[..], &chain[..], &seq.to_le_bytes()].concat();
-            match h.get_secret(&place) {
-                Some(had) if had != entry => return Refused(Why::Equivocation),
-                Some(_) => {}
-                None => {
-                    if !h.set_secret(&place, &entry) {
-                        return Refused(Why::NotSaved);
-                    }
-                }
+            if let Err(w) = witnessed(h, &a.public(), &chain, seq, &entry) {
+                return Refused(w);
             }
             Signed { sig: a.key().sign(&witness_message(&chain, seq, &entry)).to_bytes().to_vec() }
+        }
+        Request::WitnessMandate { mandate } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            let m = a.public();
+            let key = [WITNESS_MANDATE, &m[..]].concat();
+            if !(h.set_secret(&key, &bincode::serialize(&mandate).expect("a mandate encodes")) && upkeep_enlist(h, &m) && upkeep_set_tick(h, &m)) {
+                return Refused(Why::NotSaved);
+            }
+            WitnessMandated
         }
         Request::InboxKey => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
