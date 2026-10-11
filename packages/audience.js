@@ -38,7 +38,7 @@ export async function start(ctx) {
     // A space's: everyone (where it may), its members — or fewer: a role's holders, the admins, the owner (sealed to
     // them alone: its audience's group).
     const r = sp ? await (await ctx.require("roles")).of(sp).catch(() => null) : null;
-    const me = (await space.account())?.id;
+    const me = await space.me();
     const directory = await ctx.require("directory");
     const listName = l => l.people.map(d => directory.shown(d)).join(", ");
     // A space's: its roles, admins — and NAMED PEOPLE: this person's lists, or a new one chosen from its members.

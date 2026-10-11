@@ -11,11 +11,6 @@
 // lineage), and on a copy, PROPOSE back to where it came from. Discover (the global wiki, an ownerless commons) is
 // not built: said where it would be.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [items, theme, markdown, mdEditor, directory, W, where, spaceCap] = await Promise.all(["items", "theme", "markdown", "md-editor", "directory", "wiki-pages", "where", "space"].map(n => ctx.require(n)));
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

@@ -56,7 +56,7 @@ export async function start(ctx) {
 
   async function create({ item, outside = null, app = "board" }) {
     const ref = item.ref;
-    const me = (await space.account()).id;
+    const me = await space.me();
     // Where it is: its space (from outside: none here), and where its comments' files are kept.
     const sp = !outside && item.board ? await items.boardOf(item.board.id) : null;
     const pub = sp ? !!item.pub : !item.private;

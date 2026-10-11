@@ -82,7 +82,7 @@ export async function start(ctx) {
   async function show(host, conversation, title) {
     const titleEl = typeof title === "string" ? null : title;
     title = titleEl ? titleEl.textContent : title;
-    const me = (await space.account()).id;
+    const me = await space.me();
     const box = el("div", { className: "cw-room" });
     const msgs = el("ol", { className: "msgs" });
     const said = el("p", { className: "said", hidden: true });

@@ -22,7 +22,7 @@ export async function start(ctx) {
   const [space, roles, edge, index] = await Promise.all(["space", "roles", "edge", "index"].map(n => ctx.require(n)));
   const AUDIENCES = { friends: { name: "Friends", relation: "friend" }, followers: { name: "Followers", relation: "follower" } };
   const mineOf = async which => {
-    const me = (await space.account())?.id;
+    const me = await space.me();
     return (await space.mine()).find(s => s.circle === which && s.governance?.owner === me) ?? null;
   };
 
@@ -32,7 +32,7 @@ export async function start(ctx) {
     if (!AUDIENCES[which]) throw new Error(`no such audience: ${which}`);
     const had = await mineOf(which);
     if (had) return had;
-    const handle = await (await ctx.require("directory")).name((await space.account()).id).catch(() => "");
+    const handle = await (await ctx.require("directory")).name((await space.me())).catch(() => "");
     const sp = await groups.of(`circle:${which}`, {
       name: `${AUDIENCES[which].name} of ${handle || "me"}`,
       // Its place (a board): its owner posts; its members read, comment and vote.
@@ -51,7 +51,7 @@ export async function start(ctx) {
   const LEVEL_NAMES = { pro: "PRO", vip: "VIP" };
   async function level(lv) {
     if (!LEVEL_NAMES[lv]) throw new Error(`no such level: ${lv}`);
-    const handle = await (await ctx.require("directory")).name((await space.account()).id).catch(() => "");
+    const handle = await (await ctx.require("directory")).name((await space.me())).catch(() => "");
     return groups.of(`level:${lv}`, {
       name: `${LEVEL_NAMES[lv]} of ${handle || "me"}`,
       setup: async (sp, r) => {
@@ -68,7 +68,7 @@ export async function start(ctx) {
   // comment passes, its credential cited): asked every pass, so a rule made narrower drops who no longer meets it.
   async function takeFollows(people) {
     const items = await index.inbox().catch(() => []);
-    const mine = await roles.followable((await space.account()).id);
+    const mine = await roles.followable((await space.me()));
     const last = new Map();
     for (const it of items) if ((it.kind === "follow" || it.kind === "unfollow") && it.from && (last.get(it.from)?.at ?? 0) <= (it.at ?? 0)) last.set(it.from, it);
     for (const [did, it] of last) {

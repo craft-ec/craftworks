@@ -3,18 +3,13 @@
 // invites, the moderation log, leaving: the one `server-settings`). The space is the one chosen in the spaces panel. UI only: which apps
 // a space uses is `roles`' (an `app` act), its people `roles`' and `conversation`'s, names `directory`'s.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [space, roles, conversation, theme, icons] = await Promise.all(
     ["space", "roles", "conversation", "theme", "app-icons"].map(n => ctx.require(n)),
   );
   // What is new in each app (Chat's unread in this space): its pill, kept current.
   let activity = null;
   ctx.require("activity").then(a => ((activity = a), a.onChange(() => el.isConnected && ctx.route === "/space" && draw())), () => {});
-  const me = (await space.account()).id;
+  const me = await space.me();
   el.innerHTML = `
     <style>@layer apps {
       .sh { display: grid; gap: var(--cw-space-4); }

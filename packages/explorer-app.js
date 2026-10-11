@@ -4,11 +4,6 @@
 // marked (what your nodes do is the Nodes app's, your money the Wallet's). Read-only; every value is the core's reading of a public contract (`clock`, `statement_status`,
 // `claims_read`, `entry_status`, …). Refreshed as the beacon advances.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   el.innerHTML = `<style>@layer apps {
     .ex { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); max-width: 64rem; }
     .ex h2, .ex h3, .ex p { margin: 0; }
@@ -30,8 +25,9 @@ export async function mount(ctx, el) {
   const Core = node.glue.CraftworksCore;
   const { run, lot, bytes, hexOf } = tokens;
   const me = await auth.check();
-  const myDid = hexOf(me.didBytes);
-  const myKey = me.member.toLowerCase();
+  // A guest reads the same public records; "you" and "this node" mark nothing.
+  const myDid = me ? hexOf(me.didBytes) : null;
+  const myKey = me?.member?.toLowerCase() ?? null;
   const clk = Core.clock();
   const short = h => (h ? `${h.slice(0, 8)}…` : "—");
   const craft = n => (Number(BigInt(n) / 1000000n) / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 });

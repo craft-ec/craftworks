@@ -21,11 +21,6 @@
 //   choices), CSV export (`form-fields`).
 // Telemetry is the loader's collector's: nothing of its own here.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [items, theme, F, directory, space, conversation, roles] = await Promise.all(["items", "theme", "form-fields", "directory", "space", "conversation", "roles"].map(n => ctx.require(n)));
   const mail = conversation.mail;
   const h = (tag, props = {}, ...kids) => {
@@ -62,7 +57,7 @@ export async function mount(ctx, el) {
     }</style>
     <div class="fm"></div>`;
   const root = el.querySelector(".fm");
-  const me = (await space.account()).id;
+  const me = await space.me();
   const refIn = s => decodeURIComponent(s.slice(2));
   const metaOf = form => ({ fields: [], open: true, once: false, editable: true, ...(form?.meta ?? {}) });
   const fail = (said, e) => (said.textContent = e?.message ?? String(e));
@@ -72,7 +67,7 @@ export async function mount(ctx, el) {
     const sid = items.spaceIdOf(ref);
     const inside = !sid || (await space.mine()).some(s => s.id === sid);
     const outside = inside ? null : await items.outsideOf(ref).catch(() => null);
-    const it = await items.get(ref, { outside }).catch(() => null);
+    const it = await items.get(ref, { outside }).catch(e => (ctx.log("form", { what: `reading ${ref.slice(0, 40)}… failed: ${e?.message ?? e}` }), null));
     return it && it.kind === "form" ? { ...it, outside } : null;
   }
   // ITS PLACE: the space it is in (this person's, or the public one read from outside), or null (a person's own).

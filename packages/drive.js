@@ -3,11 +3,6 @@
 // folder, open (an image or a video full, anything else downloaded), Move, Remove from Drive. Images show by their
 // thumbnail. The files are `files`' (sealed, coded); the catalogue is `drive-store`'s. A PRIVATE page.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [drive, space, attachments, theme, kinds] = await Promise.all(["drive-store", "space", "attachments", "theme", "kinds"].map(n => ctx.require(n)));
   el.innerHTML = `
     <style>@layer apps {

@@ -337,7 +337,7 @@ export async function start(ctx) {
         await listActWriter();
       },
       async act(a) {
-        if (!me) throw new Error("nobody is logged in");
+        if (!me) throw space.loginNeeded();
         if (out) throw new Error("not a member of this space");
         const need = { role: "roles", assign: "roles", grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", policy: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite", member: "invite" }[a.act];
         // Leaving is any member's own act (the owner hands the space on first).
@@ -483,7 +483,7 @@ export async function start(ctx) {
   async function credToCite(item, action, r = null) {
     if (!r && item?.by) await personal(item.by).ready;
     const rule = ruleOf(item, action, r, Infinity);
-    if (!CIRCLES_OF[rule] || item.by === (await space.account())?.id) return null;
+    if (!CIRCLES_OF[rule] || item.by === (await space.me())) return null;
     const people = await (await ctx.require("edge")).people();
     for (const w of CIRCLES_OF[rule]) {
       const token = people.about(`credin-${w}`, item.by)?.token;

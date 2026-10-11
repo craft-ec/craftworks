@@ -4,11 +4,6 @@
 // Discover) or Private — and when it expires; Save gives its page; the tabs are every app's (`where`: Your pastes, Saved, Discover, ＋ New paste) (`…/paste/…/p/<ref>`: the item page, the code
 // coloured by `highlight`, its action row) and its RAW view (`#/paste/r/<ref>`: the text alone). Below: your pastes.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [items, cards, theme, hl] = await Promise.all(["items", "cards", "theme", "highlight"].map(n => ctx.require(n)));
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

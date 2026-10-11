@@ -103,7 +103,7 @@ export function coverOf(it, { kindOf, keyOf, inlined = new Set() }) {
 
 export async function start(ctx) {
   const [items, space, roles] = await Promise.all(["items", "space", "roles"].map(n => ctx.require(n)));
-  const me = async () => (await space.account())?.id;
+  const me = async () => space.me();
   const blogOf = it => (it?.meta?.blog && typeof it.meta.blog === "object" ? it.meta.blog : {});
 
   // An article as Blog lists it: a post that is neither a draft nor a review copy.

@@ -11,15 +11,10 @@
 //   EDIT         `…/blog/edit/<ref>`     a published article changed (a new version: its history kept)
 // UI only. Its look is `theme`'s tokens; what an item is, `items`'; who may, `roles`'.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [items, press, theme, space, cards, markdown, attachments, directory, person] = await Promise.all(
     ["items", "blog-press", "theme", "space", "cards", "markdown", "attachments", "directory", "person"].map(n => ctx.require(n)),
   );
-  const me = (await space.account()).id;
+  const me = await space.me();
   const whereCap = await ctx.require("where");
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

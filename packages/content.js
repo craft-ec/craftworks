@@ -67,7 +67,7 @@ export async function start(ctx) {
     // whole history. (A table read from outside or a person's public tail: read whole, as before.)
     paged = paged && !container?.outside && container?.kind !== "public";
     const t = await tableOf(container, { lazy: paged });
-    const me = (await space.account()).id;
+    const me = await space.me();
     // In a space (not the account): its roles (who wrote what); in a SHARED space (a server) its moderation too (what is
     // hidden). A conversation (direct, group) is between equals: nobody moderates another's items.
     const open = container.kind === "public";

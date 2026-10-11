@@ -3,11 +3,6 @@
 // menu: message, friend, follow, hide, block); and "Show me in Discover". In DISCOVER (`#/discover/contacts`, its
 // public view): the people who chose to be shown, each opening the same menu. UI only: people are `directory`'s.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [conversation, person, list, directory] = await Promise.all(["conversation", "person", "people-list", "directory"].map(n => ctx.require(n)));
   // WHERE (`where`): your people, or DISCOVER (anyone listed) — the tabs every app has.
   const at = await (await ctx.require("where")).of({ kind: "contact", app: "contact", yours: "Your people", saves: false });

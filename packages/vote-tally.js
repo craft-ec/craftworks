@@ -346,7 +346,7 @@ export function delegationChains(electorate, delegations) {
 // ── THE SERVICE ─────────────────────────────────────────────────────────────────────────────────────────────────────
 export async function start(ctx) {
   const [items, space, roles] = await Promise.all(["items", "space", "roles"].map(n => ctx.require(n)));
-  const me = async () => (await space.account()).id;
+  const me = async () => space.me();
   // The space an item is in, this person a member (null: a person's own item, or a space read from outside).
   const spaceOf = async ref => {
     const sid = items.spaceIdOf(ref);

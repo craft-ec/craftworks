@@ -4,15 +4,10 @@
 // file or pasted text), and one track EDITED (`#/caption/e/<ref>`: its label, language and cues as WebVTT; exported
 // as WebVTT or SRT: the data is portable). UI only.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [subs, items, directory, theme, space, cards] = await Promise.all(["caption-store", "items", "directory", "theme", "space", "cards"].map(n => ctx.require(n)));
   // The FEED BAR (every content app's): which tracks, over which window, in which order.
   const bar = (await ctx.require("feed-bar")).create({ start: "new", onChange: () => draw() });
-  const me = (await space.account()).id;
+  const me = await space.me();
   el.innerHTML = `
     <style>@layer apps {
       .sb { display: grid; gap: var(--cw-space-3); }

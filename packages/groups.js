@@ -17,7 +17,7 @@ export async function start(ctx) {
   const find = async key => (await mine()).find(s => keyOf(s) === key) ?? null;
   const making = new Map();
   async function of(key, { name, setup = null } = {}) {
-    const me = (await space.account())?.id;
+    const me = await space.me();
     const had = (await mine()).find(s => keyOf(s) === key && s.governance?.owner === me);
     if (had) return had;
     if (!making.has(key))
@@ -35,7 +35,7 @@ export async function start(ctx) {
   }
   // ITS MEMBERS as `want` says (this person and its owner always): the missing invited, the extra removed.
   async function keep(sp, want) {
-    const me = (await space.account())?.id;
+    const me = await space.me();
     if (!me) return;
     const r = await roles.of(sp);
     await r.settled;

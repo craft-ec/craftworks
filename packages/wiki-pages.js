@@ -381,7 +381,7 @@ export function tree(pages) {
 // ── THE SERVICE ─────────────────────────────────────────────────────────────────────────────────────────────────────
 export async function start(ctx) {
   const [items, space, roles] = await Promise.all(["items", "space", "roles"].map(n => ctx.require(n)));
-  const me = async () => (await space.account()).id;
+  const me = async () => space.me();
   const placeOf = ref => String(ref).slice(0, String(ref).lastIndexOf("/"));
   // The page a section item is attached to (a space's: its id there; a person's: its whole reference).
   const pageRefOf = it => (String(it.in ?? "").includes("/") ? it.in : it.in ? `${placeOf(it.ref)}/${it.in}` : null);

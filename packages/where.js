@@ -34,7 +34,7 @@ export async function start(ctx) {
   }
 
   async function of({ kind, kinds = [kind], app = ctx.route.replace(/^\//, ""), yours = "Yours", saves = true } = {}) {
-    const me = (await space.account()).id;
+    const me = await space.me();
     const discover = ctx.space === "discover";
     const sp = ctx.space && !discover ? ((await space.mine()).find(s => s.id === ctx.space) ?? null) : null;
     if (ctx.space && !discover && !sp) throw new Error("you are not in that space (left, or not joined yet)");
@@ -52,9 +52,13 @@ export async function start(ctx) {
         }, () => {});
     const p = personOf();
     const person = p && p !== me ? p : null;
-    const who = discover ? "discover" : sp ? "space" : person ? "person" : "mine";
-    const base = discover ? `#/discover/${app}` : sp ? `#/s/${sp.id}/${app}` : person ? `#/${app}/u/${person}` : `#/${app}`;
+    // A GUEST (nobody logged in) has no "yours": an app with a public side opens its Discover, the address made so.
+    const pub = (app_?.views ?? []).includes("public");
+    const guestDiscover = !me && !discover && !sp && !person && pub;
+    const who = discover || guestDiscover ? "discover" : sp ? "space" : person ? "person" : "mine";
+    const base = who === "discover" ? `#/discover/${app}` : sp ? `#/s/${sp.id}/${app}` : person ? `#/${app}/u/${person}` : `#/${app}`;
     const sub = (p ? (ctx.sub ?? "").replace(/^u\/did:[^/]+\/?/, "") : (ctx.sub ?? "")).replace(/^\/+/, "");
+    if (guestDiscover) history.replaceState(history.state, "", `#/discover/${app}${sub ? `/${sub}` : ""}`);
     const saved = saves && who === "mine" && /^saved(\/|$)/.test(sub);
     // THE READ: the place's items — a list's window, or (whole) every one; your Saved: what you saved of its kinds.
     const read = ({ kinds: ks = kinds, sort = "new", window = "all", whole = false, ...options } = {}) => {
@@ -64,26 +68,33 @@ export async function start(ctx) {
           .then(a => Promise.all(a.saved().map(getSaved)))
           // NSFW as every list (`items.visible`).
           .then(list => items.visible(list.filter(it => it && ks.includes(it.kind))));
-      if (discover) return items.list({ discover: true }, sort, ks, { window, ...options });
+      if (who === "discover") return items.list({ discover: true }, sort, ks, { window, ...options });
       if (whole) return items.inPlaces(sp ? { spaces: [sp] } : { people: [person ?? me] }, ks, { withVotes: false });
       return items.list(sp ? { board: sp.id } : { by: person ?? me }, sort, ks, { window, ...options });
     };
     // THE TABS, in the same order in every app: in your space, the app's own page ("Your …"), then the app's extras,
     // then Discover (an app with a public side); elsewhere the extras alone.
-    const pub = (app_?.views ?? []).includes("public");
     const tabs = (extra = [], { yoursOn = true, before = [], create = null } = {}) => {
       const home = who === "mine" || who === "discover";
-      ctx.actions[ctx.route] = [
-        ...(home ? before : []),
-        ...(home ? [{ label: yours, href: `#/${app}`, on: who === "mine" && !saved && yoursOn }] : []),
-        ...extra,
-        ...(home && saves ? [{ label: "Saved", href: `#/${app}/saved`, on: saved }] : []),
-        ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover" }] : []),
-        ...(create && who !== "person" ? [{ ...create, label: `＋ ${create.label}`, end: true }] : []),
-      ];
+      // A GUEST: nothing of theirs (Yours, Saved) and nothing to make — Log in instead; once in, the page starts again
+      // (as at Log out: nothing made for the guest reaches the session).
+      ctx.actions[ctx.route] = !me
+        ? [
+            ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover" }] : []),
+            ...extra.filter(e => e.public),
+            { label: "Log in", run: async () => (await (await ctx.require("login")).session()) && location.reload(), end: true },
+          ]
+        : [
+            ...(home ? before : []),
+            ...(home ? [{ label: yours, href: `#/${app}`, on: who === "mine" && !saved && yoursOn }] : []),
+            ...extra,
+            ...(home && saves ? [{ label: "Saved", href: `#/${app}/saved`, on: saved }] : []),
+            ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover" }] : []),
+            ...(create && who !== "person" ? [{ ...create, label: `＋ ${create.label}`, end: true }] : []),
+          ];
       dispatchEvent(new CustomEvent("craftworks:actions"));
     };
-    return { who, saved, others: who === "person" || who === "discover" || saved, discover, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
+    return { who, saved, others: who === "person" || who === "discover" || saved, discover: who === "discover", guest: !me, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
   }
   return { of, personOf, key: () => `${ctx.space ?? ""}|${ctx.sub ?? ""}`, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
 }

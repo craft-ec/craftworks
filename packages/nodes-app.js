@@ -3,11 +3,6 @@
 // holds the account's witness seat — the files this node keeps, and the data the account used. Money is the Wallet's;
 // the network as a whole is the Network app's.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   el.innerHTML = `<style>@layer apps {
     .nd { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); max-width: 64rem; }
     .nd h2, .nd h3, .nd p { margin: 0; }

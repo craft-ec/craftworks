@@ -14,11 +14,6 @@
 // PERSONAL view (`#/vote`): your polls, and the open proposals of every space you are in that uses Vote, with your part
 // in each. Telemetry is the loader's collector's.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [items, theme, V, directory, space, roles] = await Promise.all(["items", "theme", "vote-tally", "directory", "space", "roles"].map(n => ctx.require(n)));
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
@@ -51,7 +46,7 @@ export async function mount(ctx, el) {
     }</style>
     <div class="vt"></div>`;
   const root = el.querySelector(".vt");
-  const me = (await space.account()).id;
+  const me = await space.me();
   const refIn = s => decodeURIComponent(s.slice(2));
   const fail = (said, e) => (said.textContent = e?.message ?? String(e));
   const WORD = { yes: "Yes", no: "No", abstain: "Abstain" };

@@ -52,7 +52,7 @@ const items = {
     return false;
   },
 };
-const space = { account: async () => ({ id: me }), mine: async () => [SP] };
+const space = { account: async () => ({ id: me }), me: async () => me, mine: async () => [SP] };
 const roles = {
   of: async () => ({ settled: Promise.resolve(), allowsIn: () => true }),
   mayWrite: ({ writer }) => editors.has(writer),

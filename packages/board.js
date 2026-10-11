@@ -9,13 +9,8 @@
 // UI only: posts are `posts`', names `directory`'s, and a name opens the one `person` menu (follow; in a space, its
 // role and removal). The space itself (its members, settings, invites) is its Home's.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [posts, directory, person, theme, space, roles, cards] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "cards"].map(n => ctx.require(n)));
-  const me = (await space.account()).id;
+  const me = await space.me();
   // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.
   const bar = (await ctx.require("feed-bar")).create({ start: "hot", onChange: () => draw() });
   // WHERE Board is (`where`: the one reading of an address — yours, a space's, a person's, Discover), read at each draw.

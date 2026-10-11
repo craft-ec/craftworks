@@ -296,6 +296,12 @@ export async function run(boot) {
         filled[slot] = key;
       }
     }
+    // ACCESS (the manifest's, per page, as any website's routes): a `login` page opens only for someone logged in — the
+    // login dialog if nobody is, home if it is closed. Every other page is public: what it shows is the access rules'.
+    if (page.access === "login" && !(await (await require("login")).session())) {
+      if (location.hash.replace(/^#/, "") === at) location.hash = "#/";
+      return;
+    }
     await fill("body", page.body ?? []);
     dispatchEvent(new CustomEvent("craftworks:route", { detail: route }));
     ctx.appsOpened.add(route);
@@ -392,6 +398,9 @@ export async function run(boot) {
     document.title = manifest.app;
     // The app's THEME (its manifest names it): applied before anything mounts, so nothing shows unstyled.
     if (manifest.theme) await require(manifest.theme);
+    // The SESSION layer (`login`), on every page as any site's: it answers a guest's "log in to do that" anywhere, and
+    // guards the `login` pages.
+    if (manifest.packages.login) require("login").catch(() => {});
     ctx.log("manifest read", {
       what: `${manifest.app}: ${Object.keys(manifest.packages).length} packages, ${Object.keys(manifest.pages).length} pages`,
       bytes: m.bytes.length,

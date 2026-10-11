@@ -64,7 +64,7 @@ export async function start(ctx) {
     }
     if (place) return { sp: place, pub: await items.publicIn(place, KIND) };
     const item = await items.get(mediaRef).catch(() => null);
-    return { sp: null, pub: !(item?.private && item.by === (await space.account())?.id) };
+    return { sp: null, pub: !(item?.private && item.by === (await space.me())) };
   }
   // `in` as a full reference (on a board an item names what it is about by id alone).
   const shape = x => ({ ref: x.ref, in: x.board && x.in && !x.in.startsWith("space:") ? `space:${x.board.id}/${x.in}` : x.in, for: x.meta?.for ?? null, lang: x.meta?.lang ?? "", label: x.meta?.label ?? x.body ?? "", by: x.by, at: x.at, edited: x.edited, file: x.files?.[0] ?? null, mayRemove: !!x.mayRemove, board: x.board, place: x.board ?? null });
@@ -88,7 +88,7 @@ export async function start(ctx) {
       const roles = await ctx.require("roles");
       const teams = [];
       for (const s of (await space.mine()).filter(x => x.kind === "server")) if ((await roles.of(s).catch(() => null))?.apps().includes("caption")) teams.push(s);
-      const me = (await space.account()).id;
+      const me = await space.me();
       const own = itemRef.slice(itemRef.lastIndexOf("/") + 1);
       const itemAt = /^t([0-9a-z]{9})/.test(own) ? parseInt(own.slice(1, 10), 36) : null;
       const from = itemAt == null ? (m?.at ?? null) : Math.min(itemAt, m?.at ?? itemAt);
@@ -147,7 +147,7 @@ export async function start(ctx) {
   const text = async sub => toVtt(await (await files.get(sub.file)).text());
   // THIS PERSON's tracks — within a list's window (`items.list` options: a feed bar's), newest first by default.
   async function mine({ sort = "new", by = null, ...options } = { window: "all" }) {
-    const me = by ?? (await space.account()).id;
+    const me = by ?? (await space.me());
     return (await items.list({ by: me }, sort, KIND, options)).map(shape);
   }
   return { of, ofFile, tracksFor, forFile, add, update, remove, text, toSrt, toVtt, mine, videoId, KIND, shape };

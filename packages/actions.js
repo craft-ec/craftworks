@@ -18,7 +18,7 @@ export async function start(ctx) {
   // A menu placed in the window by its button (`attachments.fitMenu`: never clipped by the card it is in).
   const fit = (menu, anchor) => ctx.require("attachments").then(a => a.fitMenu(menu, anchor), () => {});
   const pins = await edge.pins();
-  const me = async () => (await space.account()).id;
+  const me = async () => space.me();
   const style = document.createElement("style");
   style.textContent = `@layer components {
 

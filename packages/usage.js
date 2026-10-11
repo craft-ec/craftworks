@@ -195,7 +195,7 @@ export async function start(ctx) {
   setTimeout(async () => {
     try {
       const space = await ctx.require("space");
-      const me = (await space.account())?.id;
+      const me = await space.me();
       if (!me) return;
       const directory = await ctx.require("directory");
       const kept = onCard(await contributions());
@@ -299,7 +299,7 @@ export async function start(ctx) {
     };
     const keepersOf = new Map();
     const keepers = root => (keepersOf.has(root) || keepersOf.set(root, keep.keepers(root).catch(() => [])), keepersOf.get(root));
-    return { me: (await space.account())?.id ?? null, byOf, keepers, cs: await contributions() };
+    return { me: (await space.me()) ?? null, byOf, keepers, cs: await contributions() };
   }
   const daysOfMonth = m => {
     const [y, mo] = m.split("-").map(Number);

@@ -77,7 +77,7 @@ export async function start(ctx) {
       if (r.left) return false;
       await rotateIfRemoved(sp, r);
     }
-    const me = (await space.account())?.id;
+    const me = await space.me();
     const dids = r ? r.members().map(m => m.did) : [me];
     for (const { row, pub } of await due(sp, r)) {
       const k = `${sp?.id ?? ""}/${row.id}`;

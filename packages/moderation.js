@@ -75,7 +75,7 @@ export async function start(ctx) {
     return (listsOpen ??= (async () => {
       const [space, edge] = await Promise.all(["space", "edge"].map(n => ctx.require(n)));
       const people = await edge.people();
-      const me = (await space.account()).id;
+      const me = await space.me();
       const LIST = "modlist";
       const mineT = await directory.publicOf(me, LIST);
       const tails = new Map(); // did → tail

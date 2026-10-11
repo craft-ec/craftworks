@@ -2,11 +2,6 @@
 // what this person reads (the spaces they are in, whom they follow) and from Discover (public). A TAG is an item's
 // own, its author's (`items.tagsOf`: what it is, for everyone); NSFW stays hidden unless chosen (`items.list`).
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [items, cards, actions, theme, kinds] = await Promise.all(["items", "cards", "actions", "theme", "kinds"].map(n => ctx.require(n)));
   const bar = (await ctx.require("feed-bar")).create({ start: "hot", onChange: () => draw() });
   const tagNow = () => decodeURIComponent(String(ctx.sub ?? "").split("/")[0] ?? "").toLowerCase();

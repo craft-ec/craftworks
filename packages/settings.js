@@ -2,11 +2,6 @@
 // moderation log, its apps and their rules: `server-settings`, as a page) or, in the personal space, this ACCOUNT's
 // (`account`: its card, nodes, security, storage, apps, recovery, moderation). `…/settings/<tab>` opens at a tab.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   if (!ctx.space) return (await ctx.require("account")).mount(ctx, el);
   // A SPACE's settings: none of the personal settings' header tabs (the account's) — its own tabs are in the page.
   delete ctx.actions[ctx.route];

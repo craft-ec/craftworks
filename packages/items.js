@@ -75,7 +75,7 @@ export async function start(ctx) {
   const fire = () => changed.forEach(f => f());
   // A bag answered (a space's outsiders): what reads it, drawn again.
   index.onChange?.(fire);
-  const me = async () => (await space.account()).id;
+  const me = async () => space.me();
   // Whose profiles this person reads: whom they follow, and their friends (friends need no follow as well).
   // A follow names a SPACE: a person's DID (their personal space) or a shared space's id.
   const following = async () => {
@@ -296,7 +296,8 @@ export async function start(ctx) {
     opened(did, async () => {
       const pub = await content.in({ kind: "public", did, name: TAIL });
       const acc = await space.account();
-      if (did !== acc.id) return pub;
+      // Another's (or anyone's, for a guest): its public posts.
+      if (!acc || did !== acc.id) return pub;
       // Its PRIVATE posts (`journal`) opened in the background: the public ones never wait on them; what needs them
       // (a private post, an item of theirs) waits for them.
       let priv = null;
@@ -1071,7 +1072,7 @@ export async function start(ctx) {
   // — so a mention reaches them wherever it is written (a personal post of someone they never read, a comment), not
   // only where they already read (`activity.mentions`). `ref`: what opens it (a comment: its post).
   const mentionsTold = async (ref, kind, body) => {
-    const me = (await space.account())?.id;
+    const me = await space.me();
     const dids = [...new Set([...String(body ?? "").matchAll(/\(person:(did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64})\)/g)].map(m => m[1]))].filter(d => d !== me);
     for (const did of dids) await index.send(did, { kind: "mention", ref, itemKind: kind, from: me, text: String(body).slice(0, 280), at: Date.now() }).catch(e => ctx.log("posts", { what: `telling ${did.slice(12, 20)}… of a mention: ${e.message}` }));
   };

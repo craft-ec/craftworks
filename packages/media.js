@@ -8,11 +8,6 @@
 // (`caption-store`: Subtitles on a video, Lyrics on a song, a Transcript on a podcast — shown in time for audio).
 // UPLOAD: `…/up` (tags and cover from the file). UI only.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [items, directory, person, theme, space, kinds] = await Promise.all(["items", "directory", "person", "theme", "space", "kinds"].map(n => ctx.require(n)));
   // WHICH APP this page is (its route): its domain, its words.
   const APPS = {
@@ -27,7 +22,7 @@ export async function mount(ctx, el) {
   let only = null; // a SUB-TYPE the list is filtered to (null: all)
   // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.
   const bar = (await ctx.require("feed-bar")).create({ start: "new", onChange: () => draw() });
-  const me = (await space.account()).id;
+  const me = await space.me();
   el.innerHTML = `
     <style>@layer apps {
       .vd { display: grid; gap: var(--cw-space-3); }

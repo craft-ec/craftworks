@@ -4,11 +4,6 @@
 // and its Home's. UI only: a space is `space`'s, a channel a sub-space inheriting its access, its keys `keys`' (the
 // space's group), its messages `content`'s; its channel list is a table of the space (`channels`: `<id>` → `{ name, at }`).
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [space, keys, directory, roomUI, conversation, theme, roles, moderation, person, activity] = await Promise.all(
     ["space", "keys", "directory", "room", "conversation", "theme", "roles", "moderation", "person", "activity"].map(n => ctx.require(n)),
   );

@@ -87,6 +87,8 @@ export async function start(ctx) {
 
   // A person's public tail `name`, under their account's data key: whatever is in it, their account wrote.
   async function publicOf(did, name, opts = {}) {
+    // Nobody (a guest's "me"): an empty table — nothing there.
+    if (did == null) return storage.empty(name);
     const me = await space.account();
     const id = typeof did === "string" ? did : glue.did_of(did);
     if (me?.id === id) return storage.publicTail(name, me.shared, opts);

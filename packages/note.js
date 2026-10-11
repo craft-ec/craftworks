@@ -17,11 +17,6 @@ const COLORS = [
 ];
 
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   el.innerHTML = `
     <style>@layer apps {
       .keep { position: relative; }

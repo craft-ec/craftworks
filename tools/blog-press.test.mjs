@@ -102,7 +102,7 @@ async function pressWith({ approval = "editors", editors = ["did:ed"] } = {}) {
   };
   let comments = [];
   const r = { settled: Promise.resolve(), config: (app, key, d) => (app === "blog" && key === "approval" ? approval : d), can: (did, what) => what === "moderate" && editors.includes(did) };
-  const ctx = { log: () => {}, require: async name => ({ items, space: { account: async () => ({ id: "did:me" }) }, roles: { of: async () => r }, files: { publicity: async () => {} } })[name] };
+  const ctx = { log: () => {}, require: async name => ({ items, space: { account: async () => ({ id: "did:me" }), me: async () => "did:me" }, roles: { of: async () => r }, files: { publicity: async () => {} } })[name] };
   const press = await start(ctx);
   return { press, calls, store, items, setComments: c => (comments = c) };
 }

@@ -1171,8 +1171,38 @@ export async function start(ctx) {
     if (CHANNELS.has(name)) return channel(name);
     openedNames.add(name);
     const acc = await space.account();
-    if (!acc) throw new Error("nobody is logged in");
+    if (!acc) return guestTable(name, opts);
     return merged(name, acc, opts);
+  }
+  // An EMPTY table: a GUEST's own (a public page opened by someone not logged in: nothing is theirs), or nobody's
+  // (`empty`) — it reads empty, and a write says why it cannot be. Every reader of the account's tables (pins, labels,
+  // saves, follows…) and of a person's public ones works for a guest as is.
+  function guestTable(name, { lazy = false } = {}) {
+    const refuse = async () => {
+      throw space.loginNeeded();
+    };
+    return {
+      app: name,
+      lazy,
+      guest: true,
+      page: async () => ({ rows: [], next: null }),
+      feedsNow: () => [],
+      ownWhole: async () => {},
+      whole: async () => {},
+      settled: Promise.resolve(),
+      rows: () => [],
+      history: async () => [],
+      onChange: () => {},
+      put: refuse,
+      flushOwn: async () => {},
+      remove: refuse,
+      sealed: false,
+      // As a public tail too (`publicTail`'s): nothing there, nothing to wait for.
+      absent: true,
+      answer: async () => {},
+      reread: async () => {},
+      info: { rows: 0, pending: 0, flushed: false, legacy: 0, unreadable: 0, feeds: 0, unopened: 0 },
+    };
   }
 
   // Every table of the account, as `{ name, rows, pending, flushed, sealed, legacy, unreadable, feeds }` (for the
@@ -1376,5 +1406,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces, nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }

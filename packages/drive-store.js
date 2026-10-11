@@ -24,7 +24,7 @@ export async function start(ctx) {
     const on = await Promise.all(all.map(usesDrive));
     return all.filter((_, i) => on[i]);
   }
-  const me = async () => (await space.account()).id;
+  const me = async () => space.me();
   const place = async sp => (shared(sp) ? { spaces: [sp] } : { people: [await me()] });
   const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
   // A FILE's id: its own (its first index root; an inline file's own hash) — the same file listed twice is one entry.

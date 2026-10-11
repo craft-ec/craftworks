@@ -9,11 +9,6 @@
 // here (owner 10-10: a page that made them would let anyone flood the network with tokens). The tokens listed are the
 // account's table `tokens`. UI only: every entry is the core's (`wallet_*`, `stealth_*`), every step `tokens`' run.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   el.innerHTML = `<style>@layer apps {
     .wl { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); max-width: 44rem; }
     .wl h2, .wl h3, .wl p { margin: 0; }

@@ -113,7 +113,7 @@ export async function start(ctx) {
     const el = h("div", { className: "cw-media" }, audio ? view.el : stage, h("div", {}, making, kept), view.note, speed, view.line, view.timed);
     let quiet = 0; // checks in a row with nothing being made (the work may not have started yet)
     const showMaking = async () => {
-      if (!el.isConnected || v.by !== (await space.account())?.id) return;
+      if (!el.isConnected || v.by !== (await space.me())) return;
       const pr = await studio.progress(v.ref);
       making.textContent = pr ? ` · processing ${pr.done} of ${pr.of}: ${pr.stage}${pr.p ? ` ${Math.round(pr.p * 100)}%` : ""}` : "";
       quiet = pr ? 0 : quiet + 1;
@@ -128,7 +128,7 @@ export async function start(ctx) {
         u.watch(video, v.ref, info);
         if (!f) return;
         // File REFS (not only roots): what brings bytes here is also kept for others (`keep.watched`) — not one's own.
-        const mine = v.by === (await space.account())?.id;
+        const mine = v.by === await space.me();
         u.track(v.ref, { ...info, mine }, [f]);
         let roots = [f.root];
         if (f.type === studio.MANIFEST) {

@@ -66,7 +66,7 @@ export async function start(ctx) {
     // ADULT CONTENT (tagged NSFW) for someone who did not choose to see it: said, and shown only on asking.
     if (!shown && items.isNsfw(it) && !(await items.nsfwShown())) {
       const space = await ctx.require("space");
-      if (it.by !== (await space.account())?.id) {
+      if (it.by !== (await space.me())) {
         const gate = h(
           "div",
           { className: "cw-page" },

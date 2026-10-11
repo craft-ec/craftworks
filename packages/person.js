@@ -218,7 +218,7 @@ export async function start(ctx) {
   // MENTIONS — one way everywhere (a message, a post, a comment, a note, a mail): written `[@name#abc123](person:DID)`
   // by every composer (`md-editor`), drawn by `markdown` as a link that opens their card here.
   async function mentionable(q = "", { extra = [] } = {}) {
-    const me = (await space.account())?.id;
+    const me = await space.me();
     const dids = new Set(extra);
     const mine = await space.mine().catch(() => []);
     for (const s of mine) if (s.kind === "direct" && s.with) dids.add(s.with);
@@ -236,7 +236,7 @@ export async function start(ctx) {
     // here and this person themselves, by the id's start.
     const short = String(typed ?? "").split("#")[1] ?? "";
     const byStart = async () => {
-      const me = (await space.account())?.id;
+      const me = await space.me();
       const all = [...(await mentionable("").catch(() => [])).map(p => p.did), me].filter(d => d && d.replace(/^did:craftec:/, "").startsWith(short));
       return all.length === 1 ? all[0] : null;
     };

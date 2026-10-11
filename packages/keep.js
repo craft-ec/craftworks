@@ -190,7 +190,7 @@ export async function start(ctx) {
   }
   // Said in the bag once the file is WHOLE here (every generation), once a month (the same claim merges).
   async function claim(root) {
-    const me = (await space.account())?.id;
+    const me = await space.me();
     if (!me) return;
     await (await ctx.require("index")).point(`keepers:${root}`, { did: me, m: monthOf() });
   }

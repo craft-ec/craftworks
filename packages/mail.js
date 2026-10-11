@@ -4,11 +4,6 @@
 // Inbox · Sent · Compose. IN A SPACE: the space's own mail (`conversation.mail.of`) — its address `space:<id>`, its
 // owner and admins writing and reading as the space; its owner turns it on.
 export async function mount(ctx, el) {
-  const login = await ctx.require("login");
-  if (!(await login.session())) {
-    location.hash = "#/";
-    return;
-  }
   const [conversation, directory, theme, person, attachments, markdown, mdEditor] = await Promise.all(["conversation", "directory", "theme", "person", "attachments", "markdown", "md-editor"].map(n => ctx.require(n)));
   const box = ctx.sub === "sent" ? "sent" : "in";
   // WHOSE MAIL: this person's, or (in a space) the space's.

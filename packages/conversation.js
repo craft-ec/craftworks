@@ -74,7 +74,7 @@ export async function start(ctx) {
   const fingerprint = async hex => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(hex))))].slice(0, 4).map(x => x.toString(16).padStart(2, "0")).join("");
   async function welcome(sp, did, name, code = null, repair = null) {
     const me = await space.account();
-    if (!me) throw new Error("nobody is logged in");
+    if (!me) throw space.loginNeeded();
     if (did === me.id) throw new Error("that is you");
     // Their card AS IT IS NOW (read again, never a copy this page read before): key packages work once and are
     // replaced — one from an older read is spent, or lost with what held its secret, and the welcome never opens.
@@ -258,7 +258,7 @@ export async function start(ctx) {
   // FRIENDS: a request in their inbox; both asked (or one accepts) → friends on both sides.
   async function befriend(did) {
     const me = await space.account();
-    if (!me) throw new Error("nobody is logged in");
+    if (!me) throw space.loginNeeded();
     if (did === me.id) throw new Error("that is you");
     const p = await people();
     await p.set("asked", did, true);
@@ -284,7 +284,7 @@ export async function start(ctx) {
       if (fresh && p.is("asked", it.from)) {
         await p.set("friend", it.from, true);
         await p.set("asked", it.from, false);
-        if (it.kind === "friend") await index.send(it.from, { kind: "friend-yes", from: (await space.account()).id, at: Date.now() }).catch(() => {});
+        if (it.kind === "friend") await index.send(it.from, { kind: "friend-yes", from: (await space.me()), at: Date.now() }).catch(() => {});
         continue;
       }
       // A request not answered since it was made (yes, no, or a friendship ended after it).
@@ -296,14 +296,14 @@ export async function start(ctx) {
     const p = await people();
     await p.set("friend", did, false);
     await p.set("answered", did, true);
-    await index.send(did, { kind: "unfriend", from: (await space.account()).id, at: Date.now() }).catch(() => {});
+    await index.send(did, { kind: "unfriend", from: (await space.me()), at: Date.now() }).catch(() => {});
   }
   async function answerFriend(did, yes) {
     const p = await people();
     await p.set("answered", did, true);
     if (!yes) return;
     await p.set("friend", did, true);
-    await index.send(did, { kind: "friend-yes", from: (await space.account()).id, at: Date.now() });
+    await index.send(did, { kind: "friend-yes", from: (await space.me()), at: Date.now() });
   }
 
   const welcomesTried = new Set();
@@ -940,7 +940,7 @@ export async function start(ctx) {
   const revokeInvite = async (sp, code) => (await (await ctx.require("roles")).of(sp)).act({ act: "revoke-invite", code });
   async function join(text) {
     const me = await space.account();
-    if (!me) throw new Error("nobody is logged in");
+    if (!me) throw space.loginNeeded();
     const code = codeOf(text);
     if (code.length !== 19) throw new Error("an invite code is 16 letters and digits: xxxx-xxxx-xxxx-xxxx");
     await directory.publish().catch(() => {}); // the asker's card carries key packages to be added by
@@ -970,7 +970,7 @@ export async function start(ctx) {
   }
   async function joinLevel(gid, name = null) {
     const me = await space.account();
-    if (!me) throw new Error("nobody is logged in");
+    if (!me) throw space.loginNeeded();
     await directory.publish().catch(() => {});
     await index.request(levelCode(gid), { kind: "join", did: me.id, at: Date.now() });
     await noteAsk(`code:${levelCode(gid)}`, { code: "level", name });
@@ -1005,7 +1005,7 @@ export async function start(ctx) {
   }
   async function joinOpen(desc) {
     const me = await space.account();
-    if (!me) throw new Error("nobody is logged in");
+    if (!me) throw space.loginNeeded();
     await directory.publish().catch(() => {});
     await index.request(openCode(desc.id), { kind: "join", did: me.id, at: Date.now() });
     await noteAsk(desc.id, { name: desc.name ?? null });
@@ -1339,7 +1339,7 @@ export async function start(ctx) {
   const dueSince = new Map(); // `${group}|${did}|in|out` → when first seen due here
   const GRACE = 10 * 60 * 1000;
   async function keepReaders(sp) {
-    const me = (await space.account())?.id;
+    const me = await space.me();
     const [groups, roles] = await Promise.all(["groups", "roles"].map(n => ctx.require(n)));
     const r = await roles.of(sp);
     await r.settled;
@@ -1405,7 +1405,7 @@ export async function start(ctx) {
           };
           let done = false;
           const settled = Promise.all([first, r.settled]).finally(() => (done = true));
-          const me = async () => (await space.account()).id;
+          const me = async () => space.me();
           const mayMake = async () => {
             if (!r.can(await me(), "channels")) throw new Error("only who may make channels here changes them");
           };
@@ -1649,7 +1649,7 @@ export async function start(ctx) {
     // `files`: references (`files`), sealed in the mail with the rest: its recipients read them.
     async send(to, subject, body, re = null, files = []) {
       const me = await space.account();
-      if (!me) throw new Error("nobody is logged in");
+      if (!me) throw space.loginNeeded();
       to = [...new Set(to)];
       if (!to.length) throw new Error("to nobody");
       const m = { id: `${Date.now().toString(36)}.${newId()}`, from: me.id, to, subject: String(subject ?? ""), body: String(body ?? ""), at: Date.now(), re, ...(files.length ? { files } : {}) };

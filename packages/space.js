@@ -46,6 +46,17 @@ export async function start(ctx) {
   // A space's own table: the identity's rule for names is 1–32 of a–z 0–9 - _.
   const tableOf = (sp, name) => `x${sp.id.slice(0, 12)}-${name}`;
 
+  // WHO is here: the logged-in person's id, or null for a GUEST (a public page opened by anyone). The one way every
+  // package asks — never `account().id` (a guest has no account).
+  const me = async () => (await account())?.id ?? null;
+  // A GUEST asked to do what needs someone logged in (write, send, make): the ONE refusal, and what is thrown. Asked by
+  // the person (a click or key just now — the browser's own `userActivation`), it asks the page to log in (`login`
+  // answers: its dialog, the page started again once someone is in); background work (a loop's write) only fails.
+  const loginNeeded = () => {
+    if (navigator.userActivation?.isActive) dispatchEvent(new CustomEvent("craftworks:login-needed"));
+    return new Error("nobody is logged in");
+  };
+
   async function account() {
     const s = await auth.check();
     if (!s) return null;
@@ -125,7 +136,7 @@ export async function start(ctx) {
   // listed in the account.
   async function create(kind, name, extra = {}) {
     const acc = await account();
-    if (!acc) throw new Error("nobody is logged in");
+    if (!acc) throw loginNeeded();
     const nonce = hex(crypto.getRandomValues(new Uint8Array(16)));
     const v = { kind, name, owner: acc.id, nonce, at: Date.now(), ...extra };
     const sp = made(await idOf(acc.id, nonce), v, acc);
@@ -163,5 +174,5 @@ export async function start(ctx) {
 
   // A GROUP (a person's circle, a channel's readers — `groups`): a space of its own, never listed as one.
   const isGroup = sp => !!(sp?.circle || sp?.group);
-  return { isGroup, account, tables, mine, create, record, describe, tableOf, channel, board, owner, leave, forget, shown };
+  return { isGroup, account, me, loginNeeded, tables, mine, create, record, describe, tableOf, channel, board, owner, leave, forget, shown };
 }
