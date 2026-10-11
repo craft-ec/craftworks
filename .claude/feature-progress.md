@@ -2320,3 +2320,10 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
 - [ ] SLIDES (Markdown decks), then DOCS and SHEETS after the co-editing decision (one editor vs a CRDT).
 - [ ] RESALE of editions on the item page — after the token is released and stable.
 - [x] Telemetry: one collector in the loader for every app (live v378).
+- [x] 10-11 WIKI, BLOG, FORMS merged and published to fx (v592–v600). Measured on fx: a wiki page created (links,
+      history, what-links-here); Blog's Discover lists real posts as articles; a public form made by fx, answered by fy
+      (as MAIL to the maker), results table read by fx. Found and fixed on the way: Wiki "nullnull" (null children);
+      the shared AUDIENCE/ITEMS rule dropped an explicit "anyone" (items followed the author's own policy — fx's
+      `comment: author` — while the control said "Anyone"): now one pure rule `audience.writeRule/withWrite`, test
+      tools/write-rules.test.mjs with control; LIVE v379 (audience + items only). Forms: answers gated by the form's
+      rule (comment door) and its mailbox address, refusals logged with their measured reason.
