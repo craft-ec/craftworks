@@ -661,9 +661,8 @@ export async function start(ctx) {
   // `write`: who may comment and vote on it ({ comment, vote }: anyone · followers · friends · members · author) — its
   // own rule, over its space's policy (`roles.mayWrite`).
   async function submit({ board = null, place = null, title, body, audience = "public", files = [], kind = "post", meta = {}, at = Date.now(), write = null, outside = null }) {
-    // Every interaction rule chosen is STORED, "anyone" too (10-11, measured on fx: dropped as "the default", the item
-    // followed its author's own policy — `author` there — while the composer said "Anyone who sees it").
-    if (write && Object.values(write).some(Boolean)) meta = { ...meta, write };
+    // Every interaction rule chosen is STORED, "anyone" too (`audience.withWrite`: the one rule, tested).
+    meta = (await ctx.require("audience")).withWrite(meta, write);
     const only = audience === "private";
     title = String(title ?? "").trim();
     body = String(body ?? "").trim();

@@ -12,6 +12,19 @@
 //   a.isPublic()   // read by everyone (its files are put public)
 //   a.level()      // "" (anyone who sees it) | "pro" | "vip": the LEVEL who may open it (rewards §5a) — enforced in
 //                  // Craftworks' pages only until gated keys are built (said beside the choice)
+// THE WRITE RULE an item stores from this control's choices (pure; tested: tools/write-rules.test.mjs): each
+// action's own choice ("" = as the one choice), else the one choice — EVERY choice kept, "anyone" too (10-11, measured
+// on fx: "anyone" left unwritten as "the default" made the item follow its author's own policy — `author` there —
+// while this control showed "Anyone who sees it"). What is shown is what is stored.
+export function writeRule(actions, one, each = {}) {
+  const w = Object.fromEntries(actions.map(a => [a, each[a] || one]).filter(([, v]) => v));
+  return Object.keys(w).length ? w : null;
+}
+// What an item's META carries of a write rule (pure; the one place `items.submit` decides it): a rule with any choice.
+export function withWrite(meta, write) {
+  return write && Object.values(write).some(Boolean) ? { ...meta, write } : meta;
+}
+
 export async function start(ctx) {
   const [items, space] = await Promise.all(["items", "space"].map(n => ctx.require(n)));
   const h = (tag, props = {}, ...kids) => {
@@ -88,11 +101,7 @@ export async function start(ctx) {
       // The write rule ({ comment, vote, react, … }): each action's own choice, else the one choice — only what differs
       // from the space's own (nothing to set on the item: null).
       write: () => {
-        // Every choice WRITTEN, "anyone" too (10-11, measured on fx: "anyone" was left unwritten as "your space's own
-        // default", but a person's own policy can say otherwise — fx's said `comment: author` — so the item followed
-        // that while this control showed "Anyone who sees it". What is shown is what is stored.)
-        const w = Object.fromEntries(ACTS.map(([a]) => [a, each[a].value || wsel.value]).filter(([, v]) => v));
-        return Object.keys(w).length ? w : null;
+        return writeRule(ACTS.map(([a]) => a), wsel.value, Object.fromEntries(ACTS.map(([a]) => [a, each[a].value])));
       },
     };
   }
@@ -114,5 +123,5 @@ export async function start(ctx) {
       d.showModal();
     });
   }
-  return { picker };
+  return { picker, writeRule, withWrite };
 }
