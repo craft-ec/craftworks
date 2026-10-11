@@ -606,8 +606,8 @@ ISSUANCE — and each piece of the loop has ONE job:
   is the CHAIN OWNER's and `amount` is exactly its keeper share (never 0); one per account per epoch (its nonce derived
   from the epoch); stamped once that epoch has begun (past the margin). Appended by ANYONE with its work — the proof
   fixes the amount, so nobody need be online to be paid. Who KEPT is the statement's `kept` (each listed keeper whose
-  standing record holds at least `KEEP_MIN` answered heights that epoch: `standing::record::kept`, the one rule the
-  page and every witness run); how much, its reputation share of the epoch's POT (below).
+  standing record holds at least `KEEP_MIN` answered heights that epoch AND passes its AUDITS by lot — §8 item 6:
+  `standing::record::kept_audited`, the one rule the page and every witness run); how much, its reputation share of the epoch's POT (below).
 - **It lands LOCKED as witness stake** (`staked`, §4a) — the weight of the lot (§7a). Unstaking follows the usual delay.
 - **Witnesses check the ROOT** (built 10-10, K3: `wallet::statement_accept` in `may_witness`): a witness signs a
   `KeeperMint` only under the statement root ACCEPTED for its epoch — its committee (drawn at `statement::lot_height`)
@@ -918,15 +918,28 @@ DID; only the sender and the recipient know who was paid.
    into an older epoch would let a writer pick, among past epochs whose outputs are known, one whose committee for its
    place suits it; within an epoch the lot is fixed by the place (§5a).
 
-6. AUDIT 10-11 — OPEN, each with its designed direction (none built yet):
+6. AUDIT 10-11 — OPEN, each with its designed direction (built so far: STORAGE ANSWERS):
    - CLAIMS REGISTRY FILL: one shared registry per epoch caps at 4,096 claims and cannot rank claims it cannot check,
      so forged owners can fill it. Direction: a stake claim becomes an entry of the staker's OWN pool chain (writer-
      signed, witnessed by induction like any entry), and the lot's index is a CHAINED pointer bag of staker DIDs: a
      flood costs readers only, each pointer filtered by `valid_stakers`.
-   - STORAGE ANSWERS UNCHECKED: a standing answer's picks are hashes nobody recomputes (`check(.., None)`), so a node
-     can claim holdings it does not store. Direction: AUDITS by lot — each epoch the beacon draws a few
-     (keeper, pick) pairs per statement builder; the builder fetches those pieces and re-seals (seconds each, by
-     design) and a keeper whose drawn pick fails is not KEPT that epoch. Cost bounded by the draw size, not by keepers.
+   - STORAGE ANSWERS UNCHECKED — CLOSED 10-11 (AUDITS BY LOT, `standing::record::kept_audited`, the one rule the
+     page's statement build — `rules::statement::build` — and Wren's tool — `token-net` `kept` / `statement_root` —
+     run): a standing answer's picks were hashes nobody recomputed (`check(.., None)`), so a node could commit holdings
+     it does not store, answer junk and be paid. Now the statement of epoch E+1 draws, from the beacon's output at its
+     LOT (`statement::lot_height(E+1)`: after E ends, unknown while E's answers are made) and each keeper's key, for
+     every listed keeper whose record would count as KEPT in E, `AUDITS` = 2 of its answers in E — the two with the
+     lowest ticket `hash(lot output, key, E, the answer's signature)` — and one pick of each (`ticket[8..16] % picks`);
+     the builder reads each drawn pick's PIECE (its contract state) and the beacon's output at that answer's height,
+     re-seals (`check(.., Some(piece))`), and a keeper whose drawn pick fails is NOT KEPT in E. The ticket rides on the
+     answer's signature, so the pick checked is fixed only once all 16 hashes are: no answer can be made for the one
+     pick that will be audited, and junk answers added later are just more tickets that may be drawn. A drawn piece
+     that cannot be READ (not on the network) FAILS its keeper — it claimed to hold it, and an honest keeper's node
+     hosts what it committed; the liveness risk (a piece the network loses after E fails its keeper's audit) costs one
+     epoch's pay, never a burn. COST: `AUDITS` seals per kept keeper per statement build (each `ROUNDS` = 512 hash
+     rounds a 32-byte block: seconds for a 256 KiB piece in a page, ~0.25 s native) — 100 kept keepers ≈ 200 seals,
+     minutes in a page; done once every read is in, never redone for a later want. What it does not catch: a keeper
+     holding a share f of its picks passes ≈ f² of epochs (2 picks checked of the 64-128 a kept epoch's answers carry).
    - STATEMENTS WITH EVERY PAGE CLOSED: delegates witness entries but not statement roots (the statement build is in
      the page-only core). Direction: move the statement build into `craftworks-rules` (pure over reads, as the witness
      rule moved), then the delegate's witness round signs the root it computes where seated.

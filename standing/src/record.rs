@@ -126,20 +126,103 @@ pub fn prune(s: &State, oldest_height: u64) -> State {
 pub const KEEP_MIN: usize = 4;
 
 /// Whether key `key` KEPT in standing epoch `epoch` by its record (committed holdings and at least [`KEEP_MIN`]
-/// answered heights): the statement's `kept`. Assumes [`holds`] (the standing contract keeps only records that do).
+/// answered heights) — the statement's `kept` before its AUDITS ([`kept_audited`]). Assumes [`holds`] (the standing
+/// contract keeps only records that do).
 pub fn kept(s: &State, key: &[u8; 32], epoch: u64) -> bool {
     s.epochs.iter().find(|e| e.epoch == epoch).is_some_and(|e| {
         e.holdings.iter().any(|h| h.key == *key) && e.answers.iter().filter(|a| a.key == *key).map(|a| a.height).collect::<std::collections::BTreeSet<_>>().len() >= KEEP_MIN
     })
 }
 
-/// The ACCOUNTS that kept in `epoch`: of the keepers listed `(account, record key)`, those whose record
-/// (`record_of(key)`: `None` — not there) [`kept`]; each account once, in order.
-pub fn kept_accounts(listed: &[([u8; 32], [u8; 32])], record_of: &dyn Fn(&[u8; 32]) -> Option<State>, epoch: u64) -> Vec<[u8; 32]> {
-    let mut out: Vec<[u8; 32]> = listed.iter().filter(|(_, key)| record_of(key).is_some_and(|s| kept(&s, key, epoch))).map(|x| x.0).collect();
-    out.sort();
-    out.dedup();
-    out
+/// AUDITS BY LOT (TOKEN §8 item 6, "STORAGE ANSWERS UNCHECKED"): a record's answers are checked against the beacon
+/// ([`holds`]) but their pick HASHES are taken on trust — re-sealing every pick is impossible by design (a seal takes
+/// seconds). So the epoch's statement draws, per keeper whose record would count as [`kept`], [`AUDITS`] of its answers
+/// in the epoch and one pick of each, from the beacon output at the statement's LOT (`lot_out`: drawn after the epoch
+/// it audits ends, so nobody knows it while answering) and the keeper's key; whoever builds the statement fetches each
+/// drawn pick's PIECE (its contract's state) and re-seals it ([`check`] with the piece). A keeper whose drawn pick
+/// fails — a wrong hash, or a piece that cannot be read — did NOT keep that epoch.
+pub const AUDITS: usize = 2;
+
+/// One audit: the answer drawn and which of its picks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Audit {
+    pub answer: Answer,
+    pub pick: usize,
+}
+
+fn ticket(lot_out: &[u8; 32], key: &[u8; 32], epoch: u64, a: &Answer) -> [u8; 32] {
+    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-11 standing audit");
+    h.update(lot_out);
+    h.update(key);
+    h.update(&epoch.to_le_bytes());
+    h.update(&a.sig);
+    *h.finalize().as_bytes()
+}
+
+/// THE DRAW: of `key`'s answers in `epoch` (each distinct answer once), the [`AUDITS`] with the lowest TICKET — a hash
+/// of (`lot_out`, key, epoch, the answer's signature) — and of each, pick `u64(ticket[8..16]) % picks`. The ticket
+/// rides on the answer's signature, so the pick audited is fixed only once all its hashes are: an answer cannot be made
+/// for the one pick that will be checked, and a junk answer added later is just another ticket that may be drawn.
+pub fn audits(s: &State, key: &[u8; 32], epoch: u64, lot_out: &[u8; 32]) -> Vec<Audit> {
+    let Some(e) = s.epochs.iter().find(|e| e.epoch == epoch) else { return vec![] };
+    let mut drawn: Vec<([u8; 32], &Answer)> = Vec::new();
+    for a in e.answers.iter().filter(|a| a.key == *key && !a.picks.is_empty()) {
+        if !drawn.iter().any(|(_, x)| x.sig == a.sig) {
+            drawn.push((ticket(lot_out, key, epoch, a), a));
+        }
+    }
+    drawn.sort_by_key(|x| x.0);
+    drawn
+        .into_iter()
+        .take(AUDITS)
+        .map(|(t, a)| Audit { answer: a.clone(), pick: (u64::from_le_bytes(t[8..16].try_into().unwrap()) % a.picks.len() as u64) as usize })
+        .collect()
+}
+
+/// What an audit of `key` in `epoch` must READ: the beacon output at each drawn answer's height, and each drawn pick's
+/// piece (contract id). Empty unless the record would count as [`kept`] (only those are audited).
+pub fn audit_reads(s: &State, key: &[u8; 32], epoch: u64, lot_out: &[u8; 32]) -> (Vec<u64>, Vec<[u8; 32]>) {
+    if !kept(s, key, epoch) {
+        return (vec![], vec![]);
+    }
+    let a = audits(s, key, epoch, lot_out);
+    (a.iter().map(|x| x.answer.height).collect(), a.iter().map(|x| x.answer.picks[x.pick].id).collect())
+}
+
+/// Whether `key`'s record passes its audits in `epoch`: every drawn pick re-sealed from its piece matches its hash.
+/// `out`: the beacon's output at a height; `piece_of`: a piece's contract state — `None` when it cannot be read (not on
+/// the network): FAILED, since the keeper claimed to hold it (an honest keeper's node hosts what it committed, so the
+/// network has it; the liveness risk — a piece the network loses after the epoch fails its keeper's audit — is
+/// accepted: one epoch's pay, never a burn).
+pub fn audited(s: &State, key: &[u8; 32], epoch: u64, lot_out: &[u8; 32], out: &dyn Fn(u64) -> Option<[u8; 32]>, piece_of: &dyn Fn(&[u8; 32]) -> Option<Vec<u8>>) -> bool {
+    let Some(e) = s.epochs.iter().find(|e| e.epoch == epoch) else { return false };
+    audits(s, key, epoch, lot_out).iter().all(|x| {
+        let Some(h) = e.holdings.iter().find(|h| h.key == x.answer.key) else { return false };
+        let (Some(o), Some(piece)) = (out(x.answer.height), piece_of(&x.answer.picks[x.pick].id)) else { return false };
+        check(h, &x.answer, &o, None, Some((x.pick, &piece))).is_ok()
+    })
+}
+
+/// The ACCOUNTS that kept in `epoch` — the statement's KEPT, the one rule the page, the delegate and every witness run:
+/// of the keepers listed `(account, record key)`, those whose record (`record_of(key)`: `None` — not there) [`kept`]
+/// AND passes its [`audited`] draw at the statement's lot output `lot_out`; each account once, in order. Read first
+/// what [`audit_reads`] names (`out`, `piece_of`).
+pub fn kept_audited(
+    listed: &[([u8; 32], [u8; 32])],
+    record_of: &dyn Fn(&[u8; 32]) -> Option<State>,
+    epoch: u64,
+    lot_out: &[u8; 32],
+    out: &dyn Fn(u64) -> Option<[u8; 32]>,
+    piece_of: &dyn Fn(&[u8; 32]) -> Option<Vec<u8>>,
+) -> Vec<[u8; 32]> {
+    let mut v: Vec<[u8; 32]> = listed
+        .iter()
+        .filter(|(_, key)| record_of(key).is_some_and(|s| kept(&s, key, epoch) && audited(&s, key, epoch, lot_out, out, piece_of)))
+        .map(|x| x.0)
+        .collect();
+    v.sort();
+    v.dedup();
+    v
 }
 
 /// STANDING: the bytes proved held — each holdings' bytes × the share of its peer's sampled heights (the beacon's, up

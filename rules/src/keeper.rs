@@ -323,7 +323,8 @@ mod tests {
         // KEPT (the statement's): only once KEEP_MIN sampled heights of the epoch are answered — one is not enough.
         let did = [9u8; 32];
         let record_in = |got: &HashMap<[u8; 32], Vec<u8>>| codec::decode(&got[&rid]).unwrap();
-        let kept_of = |got: &HashMap<[u8; 32], Vec<u8>>, e: u64| record::kept_accounts(&[(did, public)], &|key| (*key == public).then(|| record_in(got)), e);
+        let lot_out = out(9_999_999);
+        let kept_of = |got: &HashMap<[u8; 32], Vec<u8>>, e: u64| record::kept_audited(&[(did, public)], &|key| (*key == public).then(|| record_in(got)), e, &lot_out, &|x| Some(out(x)), &|id| Some(piece(id)));
         assert!(!record::kept(&record_in(&got), &public, 3));
         assert_eq!(kept_of(&got, 3), Vec::<[u8; 32]>::new());
         let mut x = h;

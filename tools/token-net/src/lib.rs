@@ -190,26 +190,42 @@ impl<'a> Reader<'a> {
             })
             .collect()
     }
-    /// The accounts that KEPT in `epoch`: its keepers registry's keepers whose standing record proves it.
-    pub fn kept(&self, epoch: u64, log_of: &dyn Fn(&[u8; 32]) -> Option<craftworks_idlog_contract::Log>) -> Vec<[u8; 32]> {
+    /// The accounts that KEPT in `epoch`: its keepers registry's keepers whose standing record proves it AND passes
+    /// its AUDITS (`standing::record::kept_audited`: drawn by the beacon's output at the lot of the statement that
+    /// pays `epoch` — the next epoch's; each drawn pick's piece read here and re-sealed). `None`: that lot not drawn
+    /// yet. A piece this reader cannot get (not on the network, or not answered) fails its keeper's audit.
+    pub fn kept(&self, epoch: u64, log_of: &dyn Fn(&[u8; 32]) -> Option<craftworks_idlog_contract::Log>) -> Option<Vec<[u8; 32]>> {
         let items = self.chained(craftworks_reputation::keepers::address, epoch);
         let listed = craftworks_reputation::keepers::listed(&items, log_of);
-        let record_of = |key: &[u8; 32]| {
-            let id = craftworks_standing_contract::Params::keeper(self.net.beacon_hash, self.net.beacon, key).id(&self.net.standing_hash);
-            self.get(id).filter(|b| !b.is_empty()).and_then(|b| craftworks_standing::codec::decode(&b))
-        };
-        craftworks_standing::record::kept_accounts(&listed, &record_of, epoch)
+        if listed.is_empty() {
+            return Some(Vec::new());
+        }
+        let lot_out = self.out_at(craftworks_reputation::statement::lot_height(epoch + 1))?;
+        let records: HashMap<[u8; 32], Option<craftworks_standing::record::State>> = listed
+            .iter()
+            .map(|(_, key)| {
+                let id = craftworks_standing_contract::Params::keeper(self.net.beacon_hash, self.net.beacon, key).id(&self.net.standing_hash);
+                (*key, self.get(id).filter(|b| !b.is_empty()).and_then(|b| craftworks_standing::codec::decode(&b)))
+            })
+            .collect();
+        let record_of = |key: &[u8; 32]| records.get(key).cloned().flatten();
+        let out = |h: u64| self.out_at(h);
+        let piece_of = |id: &[u8; 32]| self.get(*id).filter(|b| !b.is_empty());
+        Some(craftworks_standing::record::kept_audited(&listed, &record_of, epoch, &lot_out, &out, &piece_of))
     }
 
     /// The EPOCH STATEMENT of standing epoch `epoch` as this reader computes it (the one build: every vouch registry up
-    /// to it, each item verified by its voucher's key log): its root.
+    /// to it, each item verified by its voucher's key log; KEPT audited: `kept`): its root. `None`: its lot not drawn yet.
     pub fn statement_root(&self, epoch: u64) -> Option<[u8; 32]> {
         use craftworks_reputation as R;
         let items: Vec<R::item::Item> = (0..=epoch).flat_map(|e| self.chained(R::item::registry_address, e)).filter_map(|b| R::item::Item::decode(&b)).collect();
         let log_of = |d: &R::Did| self.keys(d);
         let signed = epoch.checked_sub(1).map_or(Default::default(), |e| self.signed(e));
         let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP), witness: craftworks_wallet::craft::witness_pot(epoch), halvings: craftworks_wallet::craft::halvings(epoch) };
-        let kept = epoch.checked_sub(1).map_or(Vec::new(), |e| self.kept(e, &log_of));
+        let kept = match epoch.checked_sub(1) {
+            None => Vec::new(),
+            Some(e) => self.kept(e, &log_of)?,
+        };
         // The newest ACCEPTED statement within CARRY_BACK epochs (the page's rule).
         let prev = (1..=R::statement::CARRY_BACK).filter_map(|b| epoch.checked_sub(b)).find_map(|e| self.statement_lines(e)).unwrap_or_default();
         let st = R::statement::build(epoch, &items, &log_of, &kept, &signed, &prev, pots);

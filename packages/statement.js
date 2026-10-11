@@ -46,10 +46,12 @@ export async function start(ctx) {
     // WHAT IT READ: each contract the node had, said it does not have, or did not answer (asked again; a statement
     // built over a record that did not answer would leave that keeper out: none is posted then).
     const reads = { got: 0, absent: [], silent: new Set() };
-    for (let round = 0; round < 6; round++) {
+    // (Rounds: key logs, keepers' records, the lot's beacon, the AUDITS' drawn pieces and outputs, the fees' reads,
+    // the previous statement's lines.)
+    for (let round = 0; round < 10; round++) {
       const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon, tokenCode, bagCode, queued, posted, [...fresh], earlier);
       if (r.want) {
-        await Promise.all(r.want.map(id => node.read(bytes(id), "reading a key log or a keeper's record", { absent: true }).then(
+        await Promise.all(r.want.map(id => node.read(bytes(id), "reading a key log, a keeper's record or an audited piece", { absent: true }).then(
           got => (fresh.add(id), reads.silent.delete(id), got ? reads.got++ : reads.absent.push(id.slice(0, 8))),
           () => reads.silent.add(id),
         )));
@@ -59,7 +61,7 @@ export async function start(ctx) {
       built.set(epoch, r);
       return r;
     }
-    throw new Error(`epoch ${epoch}: not built — no answer for ${[...reads.silent].map(x => x.slice(0, 8)).join(", ") || "what it asked"} (a key log or a keeper's record)`);
+    throw new Error(`epoch ${epoch}: not built — no answer for ${[...reads.silent].map(x => x.slice(0, 8)).join(", ") || "what it asked"} (a key log, a keeper's record or an audited piece)`);
   }
   const decided = new Set(); // epochs whose allowance this page saw decided
   const saidRoots = new Set();

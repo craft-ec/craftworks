@@ -2620,7 +2620,7 @@ mod js {
         /// and the allowance join when their tokens run). `{ root, posted: bytes, puts: [[name, frames]], lines: n }` —
         /// the tree's blocks to put through the blocks door, the posted root for the epoch's statement bag.
         /// `keepers`: the KEEPERS REGISTRY's items of the epoch before (`reputation::keepers`) — its KEPT accounts (each
-        /// listed keeper whose standing record proves keeping then: `craftworks_standing::record::kept_accounts`; the
+        /// listed keeper whose standing record proves keeping then and passes its audits: `standing::record::kept_audited`; the
         /// standing contract's code and the beacon name the records). `fresh`: the contracts (hex) this build read from
         /// the network — a keeper's record not among them is asked for again, whatever this core holds (a record the
         /// page wrote or read earlier is a stale copy: its own, held since its last answer, left it out of KEPT).
