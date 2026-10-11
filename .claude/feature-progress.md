@@ -2254,6 +2254,12 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       once (was: every answer re-serialized every state read); the witness round's settled list holds 32-byte item
       hashes, looked up through a set, written only when one is added (test: an answer never rewrites earlier states;
       an ended round's are blanked).
+- [x] C12 10-11 STORAGE ANSWERS AUDITED BY LOT (agent): `standing::record::kept_audited` — 2 answers per kept keeper
+      drawn at the next statement's lot, one pick each re-sealed from its piece; junk hashes → not kept (test; control).
+      Known: Wren's token-net fails a keeper on a piece read that does not answer (liveness only: Wren then refuses the
+      page's root that epoch); partial holders pass ~f² of epochs.
+- [x] 10-11 v579 on fx: token/allowance/standing rebuilt (re-key), pay 2e1a823f / allowance 2f327949 (serve), Wren's
+      witness restarted on the new binary (pool craft). Live recheck pending.
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.
