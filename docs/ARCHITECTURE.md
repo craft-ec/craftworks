@@ -387,6 +387,23 @@ snapshot), and the wiki commons' disputes (an edit war, a ban, a rule change go 
    The ELECTORATE is a space's members, one account each (admission is the gate). OUTCOMES ACT: a passed proposal
    writes the space's own acts (grant a role, change a rule, elect a moderator; spend a space treasury once the token is
    live). The visual delegation graph is a requirement. (Polls live here, not in Forms: a poll is a vote.)
+   STATUS (10-11, local, page JS only, not published or run on a node): built — `vote` (UI) + `vote-tally` (records and
+   the one tally, pure; `tools/vote-tally.test.mjs`). No store of its own: every record is an ITEM in its writer's own
+   feed — a POLL (kind `poll`: options, single/multiple, open/closed, results live or after close in `meta`), a
+   PROPOSAL (kind `proposal`: an optional outcome act and a quorum), a BALLOT (attached `ballot`: `seq`, `choice`), a
+   DELEGATION (kind `delegation` in the space: `seq`, `to`; null revokes) and a FINALIZATION (attached `tally`); all
+   three records are written under the `vote` policy action (`kinds.action`). Per account the highest `seq` counts, a
+   tie to the lower SHA-256 record hash; eligibility is the item's `vote` rule (`roles.mayWrite`) and, in a space,
+   membership. Resolution: direct overrides delegation; chains followed to the first direct vote, at most 10 hops; a
+   cycle, a chain ending without a vote or leaving the electorate counts nothing. FINALIZE (proposer or admin): result
+   + electorate + inputs' hashes + one hash over them; the earliest valid one stands, readers re-check it over exactly
+   its inputs ("verified" / "partial" / "mismatch" / "forged"). OUTCOMES: grant (owner), assign a composed role
+   (`roles`), set a policy (`apps`; read: owner) — applied as the space's own act, tagged with the proposal, by the first
+   page of a member who may do it (or Apply); nobody with that right opening Vote: it stays "passed — waiting to be
+   applied" (no delegate applies it with no page open). Limits (v1): delegation global per space; the electorate a
+   finalization names is the finalizer's view of the members then; a poll's "results after close" is a display rule
+   (records are readable by its readers); a ballot's time is its writer's claim (a closed poll's cut-off is honour; a
+   proposal's is the finalization's snapshot); at most 3000 inputs per finalization.
 5. SLIDES — decks written as Markdown first (one slide per section; presenter view, themes, PDF export); co-edited
    with the others in 6.
 6. SHARED ITEMS (owner, editors, viewers per item), then DOCS, SHEETS and SLIDES with live co-editing (CRDT, above);

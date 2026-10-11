@@ -2317,6 +2317,7 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
 - [ ] FORMS: builder, answers sealed to owners, results and export (no polls — those are Vote's).
 - [ ] VOTE: polls; proposals with transitive delegation, direct override, cycles, depth limit, snapshot finalization;
       electorate = a space's members; outcomes write the space's acts; delegation graph view.
+- [x] 10-11 VOTE (local, page JS only, not published, no node or browser run): `vote` app + `vote-tally` — polls and a space's proposals as items, ballots/delegations/finalizations as append-only items (highest seq, tie by SHA-256 hash), direct > delegation, depth 10, cycles nothing, finalize = result + inputs' hashes (re-checked by readers), outcomes as the space's own acts (grant/assign/policy) by whoever may; delegation screen and SVG graph. Test: `node --test tools/vote-tally.test.mjs` (13 pass; 8 mutants each killed: direct override, cycle detection, depth off-by-one, hash tie-break, seq, finalization recount, poll close cut-off, poll eligibility).
 - [ ] SLIDES (Markdown decks), then DOCS and SHEETS after the co-editing decision (one editor vs a CRDT).
 - [ ] RESALE of editions on the item page — after the token is released and stable.
 - [x] Telemetry: one collector in the loader for every app (live v378).
