@@ -1,5 +1,5 @@
 //! THE WREN ALLOWANCE (TOKEN §7d, decision 6) — an APP over the token's escrow, not part of the token. One contract per
-//! standing EPOCH ([`Params`]): the treasury ESCROWS the epoch's pot to it (its `Escrow` entry, terms [`TERMS`], with an
+//! standing EPOCH ([`Params`]): the treasury ESCROWS the epoch's pot to it (its `Escrow` entry, terms [`terms`], with an
 //! `until` past the epoch's end: unpaid, it reclaims), and its state is the token's standard escrow SECTION then the
 //! statement ROOT it pays under and each payout's PROOF. The verdict:
 //!
@@ -20,8 +20,11 @@ pub type Why = &'static str;
 pub type Did = [u8; 32];
 
 pub const PARAMS: u8 = 0x41;
-/// The terms every escrow to an allowance program carries (the program is its own rule: nothing more to say).
-pub const TERMS: &[u8] = b"craftworks allowance";
+/// The terms every escrow to epoch `epoch`'s allowance program carries: the token's STATEMENT TERMS (its witnesses sign
+/// its release and payouts only under the root accepted for the epoch).
+pub fn terms(epoch: u64) -> Vec<u8> {
+    escrow::statement_terms(epoch)
+}
 use craftworks_token_contract::UNIT;
 /// The pot per standing epoch: 59.26 WREN — 1,000 a day at B's pace of a step per 5 s (1,024 steps ≈ 85 min).
 pub const POT: u128 = 1_000 * UNIT * 1_024 * 5 / 86_400;
@@ -122,7 +125,7 @@ pub fn proven(root: &[u8; 32], did: &Did, proof: &[u8]) -> Option<u128> {
 /// The VERDICT for `escrows` (each as its `Escrow` entry says) under the statement `root`: each account's allowance
 /// paid (`lines`: DID, its proof), each escrow's rest refunded (in the order listed, the first first).
 pub fn verdict(p: &Params, escrows: &[(EscrowRef, u128)], root: &[u8; 32], lines: &[(Did, Vec<u8>)]) -> Result<State, Why> {
-    let h = escrow::terms_hash(TERMS);
+    let h = escrow::terms_hash(&terms(p.epoch));
     let mut pays = Vec::new();
     let mut proofs = Vec::new();
     for (d, proof) in lines {
@@ -158,7 +161,7 @@ pub fn check(p: &Params, s: &State) -> Result<(), Why> {
         return if s.section.escrows.is_empty() && s.proofs.is_empty() { Ok(()) } else { Err("an undecided state that lists something") };
     }
     s.section.holds()?;
-    let h = escrow::terms_hash(TERMS);
+    let h = escrow::terms_hash(&terms(p.epoch));
     if s.section.escrows.iter().any(|(r, _, t)| r.0 != p.token || *t != h) {
         return Err("an escrow that is not this program's");
     }

@@ -23,6 +23,19 @@ pub fn terms_hash(terms: &[u8]) -> [u8; 32] {
     *blake3::Hasher::new_derive_key("craftworks token escrow terms").update(terms).finalize().as_bytes()
 }
 
+/// STATEMENT TERMS (audit 10-11): an escrow to a program that pays under one standing epoch's STATEMENT (the
+/// allowance) carries these terms, its epoch in them. Its witnesses then sign a release or payout of that program only
+/// under the root ACCEPTED for the epoch — the program's verdict names its root right after its section (anyone may put
+/// a verdict; nothing else ties its root to the epoch's statement).
+pub const STATEMENT_TERMS: &[u8] = b"craftworks statement-rooted ";
+pub fn statement_terms(epoch: u64) -> Vec<u8> {
+    [STATEMENT_TERMS, &epoch.to_le_bytes()].concat()
+}
+/// The epoch of statement terms (`None`: other terms).
+pub fn statement_epoch(terms: &[u8]) -> Option<u64> {
+    terms.strip_prefix(STATEMENT_TERMS).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes)
+}
+
 /// A token's ROYALTY, as its definition says: (basis points, creator).
 pub type Royalty = Option<(u16, [u8; 32])>;
 

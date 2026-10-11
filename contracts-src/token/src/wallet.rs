@@ -213,20 +213,37 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
 /// what real escrows put in — whatever the program does.
 pub fn program_backed(src: &Source, base: &ChainParams, prog: &[u8; 32], chain: &dyn Fn(&Tok, &[u8; 32]) -> Option<State>) -> Result<crate::escrow::Section, Why> {
     let b = (src.program)(prog).ok_or("the program is not read")?;
-    let (sec, _) = crate::escrow::Section::decode_prefix(&b).ok_or("a program with no escrow section")?;
+    let (sec, rest) = crate::escrow::Section::decode_prefix(&b).ok_or("a program with no escrow section")?;
     sec.holds()?;
+    let mut rooted: Option<u64> = None;
     for ((tok, owner, nonce), amount, th) in &sec.escrows {
         let c = holding(src, chain, tok, owner, &|c: &State| c.entries.iter().any(|x| &x.nonce == nonce)).ok_or("an escrow's chain not read")?;
         let i = c.entries.iter().position(|x| &x.nonce == nonce).ok_or("a program listing an escrow that is not there")?;
         let x = &c.entries[i];
-        if !matches!(&x.body, Body::Escrow { program, amount: a, terms, .. } if program == prog && a == amount && crate::escrow::terms_hash(terms) == *th) {
+        let Body::Escrow { program, amount: a, terms, .. } = &x.body else { return Err("a program listing an escrow that is not there") };
+        if program != prog || a != amount || crate::escrow::terms_hash(terms) != *th {
             return Err("a program listing an escrow that is not there");
+        }
+        // STATEMENT-ROOTED (the allowance): every such escrow names one epoch.
+        if let Some(e) = crate::escrow::statement_epoch(terms) {
+            if rooted.is_some_and(|r| r != e) {
+                return Err("a program listing escrows for two epochs");
+            }
+            rooted = Some(e);
         }
         // Reclaimed by its owner (the program never took it in time): nothing of this program is signed on.
         if c.entries[i..].iter().any(|y| matches!(&y.body, Body::Reclaim { escrow } if escrow == nonce)) {
             return Err("a program listing an escrow reclaimed");
         }
         accept(src, &base.at(*tok, *owner), x, i.checked_sub(1).map(|j| &c.entries[j]))?;
+    }
+    // Its verdict's ROOT (right after its section) the one ACCEPTED for the epoch — a verdict under any other root backs
+    // nothing (and its escrows are reclaimable).
+    if let Some(e) = rooted {
+        if !sec.refunds.is_empty() || !sec.pays.is_empty() {
+            let root: [u8; 32] = rest.get(..32).and_then(|r| r.try_into().ok()).ok_or("a statement-rooted verdict with no root")?;
+            statement_accept(src, e, &root)?;
+        }
     }
     Ok(sec)
 }

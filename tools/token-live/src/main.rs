@@ -1826,7 +1826,7 @@ async fn serve(w: &W) -> Result<()> {
         for e in epoch..epoch + 3 {
             let pid = T::id(&ah, &A::Params { token: T::Tok { definition: at, item: [0; 32] }, epoch: e }.encode());
             let until = (e + 1) * 1024 + 8;
-            h.state.entries.extend(w1.debit(&h, T::Body::Escrow { program: pid, terms: A::TERMS.to_vec(), amount: A::POT, until }, now).map_err(why)?);
+            h.state.entries.extend(w1.debit(&h, T::Body::Escrow { program: pid, terms: A::terms(e), amount: A::POT, until }, now).map_err(why)?);
         }
         println!("— allowance token {} (treasury: account 1), epochs {epoch}..{} funded: {}", hex(&at[..6]), epoch + 2, w.put_chain(&w.x, at, 1, &h.state).await?.0);
         Some(at)

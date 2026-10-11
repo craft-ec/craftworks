@@ -85,7 +85,7 @@ pub fn verdict(ctx: &Ctx, lot: &crate::tokens::Lot, got: Got, code_hash: &[u8; 3
         }
         let tok = t::Tok { definition: *token, item: [0; 32] };
         let escrows: Vec<(t::escrow::EscrowRef, u128)> = ts.entries.iter().filter_map(|e| match &e.body {
-            Body::Escrow { program, amount, terms, .. } if *program == pid && terms == A::TERMS => Some(((tok, d.genesis_owner, e.nonce), *amount)),
+            Body::Escrow { program, amount, terms, .. } if *program == pid && *terms == A::terms(epoch) => Some(((tok, d.genesis_owner, e.nonce), *amount)),
             _ => None,
         }).collect();
         if escrows.is_empty() {
@@ -182,7 +182,7 @@ mod tests {
         };
         let mut h = Held { params: tp, definition: d.clone(), state: State::default(), blocks: Default::default() };
         h.state.entries = sign(&mut dev, &|a| Wallet { device: a, keys: &log }.genesis(&h, 1));
-        let esc = sign(&mut dev, &|a| Wallet { device: a, keys: &log }.debit(&h, Body::Escrow { program: pid, terms: A::TERMS.to_vec(), amount: A::POT, until: 99 }, 2));
+        let esc = sign(&mut dev, &|a| Wallet { device: a, keys: &log }.debit(&h, Body::Escrow { program: pid, terms: A::terms(5), amount: A::POT, until: 99 }, 2));
         h.state.entries.extend(esc);
         // The epoch's statement: two accounts owed (the root never: it is not listed).
         let (u1, u2) = ([21u8; 32], [22u8; 32]);
@@ -231,5 +231,21 @@ mod tests {
         // An epoch nothing was escrowed to (its root witnessed): no verdict.
         crate::tokens::testlot::witness_statement(&tl, &mut g2, ctx.code_hash, ctx.beacon, 6, &root, 6);
         assert_eq!(v(&g2, 6), Ok(None));
+        // A VERDICT UNDER ANOTHER ROOT (audit 10-11): anyone may put one first (a verdict held is never replaced) — its
+        // own tree paying itself.
+        let u3 = [24u8; 32];
+        let mut bb = BTreeMap::new();
+        let (bad, _) = engine::repair::build_tree([(u3.to_vec(), craftworks_reputation::statement::Line { rep: 1, keeper: 0, allowance: A::CAP, witness: 0, active: 0 }.encode())], &mut bb).unwrap();
+        let bad_proofs = vec![(u3, freenet_prolly::proof::prove(&bb, &bad, &u3).unwrap().encode())];
+        let escrows: Vec<(t::escrow::EscrowRef, u128)> = ps.section.escrows.iter().map(|(r, a, _)| (*r, *a)).collect();
+        let forged = A::verdict(&A::Params::decode(&params).unwrap(), &escrows, &bad, &bad_proofs).unwrap();
+        let mut g3 = got.clone();
+        g3.insert(pid, forged.encode());
+        let p3 = chain(&ctx, &d, &tok, &u3, [0; 32]);
+        g3.insert(p3.id(), vec![]);
+        g3.insert(p3.keys_id(), vec![]);
+        // The honest builder pays no verdict under a root not accepted. (That no WITNESS signs a payout or release of
+        // it is the token's rule: `a_statement_rooted_program_is_released_only_under_its_epochs_accepted_root`.)
+        assert_eq!(pay(&g3, &u3, 10), Ok(None), "the honest builder pays no verdict under another root");
     }
 }

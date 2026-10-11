@@ -3689,3 +3689,39 @@ fn decimals_at_most_nine() {
         assert_eq!(Definition::decode(&d.encode()).is_some(), ok, "{n} decimals");
     }
 }
+
+/// A STATEMENT-ROOTED PROGRAM (audit 10-11: the allowance's verdict was any root — anyone could put one first, paying
+/// itself the pot): an escrow on statement terms for epoch 2 is released only under a verdict naming the root ACCEPTED
+/// for epoch 2 (signed at its place by its committee). Two runs differ only in the verdict's root.
+#[test]
+fn a_statement_rooted_program_is_released_only_under_its_epochs_accepted_root() {
+    let terms = escrow::statement_terms(2);
+    let mut w = Two(HashMap::new());
+    put_at(w.chain(id_a(), 1), 1, Body::Genesis { amount: 1000 }, Some(1), 0);
+    put_at(w.chain(id_a(), 1), 7, Body::Escrow { program: PROG, terms: terms.clone(), amount: 300, until: 0 }, Some(1), 3);
+    let sec = escrow::Section { escrows: vec![(eref(id_a(), 1, 7), 300, escrow::terms_hash(&terms))], refunds: vec![(eref(id_a(), 1, 7), 50)], pays: vec![([1; 16], id_a().into(), did(2), 250)] };
+    let (accepted, other) = ([5u8; 32], [6u8; 32]);
+    let release = |root: [u8; 32]| {
+        let mut lot = Lot::new();
+        lot.drawn = 3_000;
+        lot.now = 100;
+        // The epoch's statement root `accepted`: signed at its place by its committee.
+        let h = craftworks_reputation::statement::lot_height(2);
+        let place = craftworks_reputation::statement::witness_place(2);
+        let members = draw::committee(&id_a(), &Lot::out(h), &place, 0, 0, &lot.claims, wallet::COMMITTEE);
+        let v = lot.sigs.entry((place, 0)).or_default();
+        for m in members.into_iter().take(wallet::NEED) {
+            let k = lot.claims[m].owner[0];
+            v.push(witness::WitnessSig { chain: place, seq: 0, entry: accepted, sig: key(k).sign(&witness::WitnessSig::message(&place, 0, &accepted)).to_bytes() });
+        }
+        let prog = [sec.encode(), root.to_vec()].concat();
+        lot.progs.push((PROG, prog.clone()));
+        lot.witness(&w, 1).unwrap(); // the escrow accepted
+        let mut x = Two(w.0.clone());
+        put_at(x.chain(id_a(), 1), 31, Body::Unescrow { escrow: nonce(7), refund: 50, verdict: vh(&prog) }, None, 5);
+        let last = x.get(id_a(), 1).entries.last().unwrap().seq;
+        lot.may(&x, 1, last).map(|_| ())
+    };
+    assert_eq!(release(accepted), Ok(()), "under the epoch's accepted root: witnessed");
+    assert_eq!(release(other), Err("an entry its committee has not witnessed"), "under any other root: never");
+}
