@@ -259,9 +259,6 @@ export async function mount(ctx, el) {
     const place = was ? await placeOf(was) : sp;
     const title = h("input", { type: "text", placeholder: "Form title", maxLength: 300, value: was?.title ?? "" });
     const about = h("textarea", { placeholder: "Description (optional)", rows: 3, value: was?.body ?? "" });
-    // WHERE ITS RESPONSES GO, said plainly (security review 10-11): a space's mail — read by its owner and admins,
-    // including admins added later, as all its mail — or the maker's own mailbox.
-    const goes = h("p", { className: "help", textContent: F.toSpace(place) ? `Responses arrive as ${space.shown(place)}'s mail: its owner and admins read them — admins added later too, as with all its mail.` : "Responses arrive in your own mail; only you read them." });
     const open = h("input", { type: "checkbox", checked: m.open !== false });
     const once = h("input", { type: "checkbox", checked: !!m.once });
     const editable = h("input", { type: "checkbox", checked: m.editable !== false });
@@ -320,7 +317,6 @@ export async function mount(ctx, el) {
       { className: "meta", style: "display:grid;gap:var(--cw-space-3)" },
       title,
       about,
-      goes,
       list,
       h("div", { className: "tools" }, add),
       h("div", { className: "tools" }, h("label", { className: "opt" }, open, "Accepting responses"), h("label", { className: "opt" }, once, "One response per account"), h("label", { className: "opt" }, editable, "Respondents may change their response while open (one per account)")),
