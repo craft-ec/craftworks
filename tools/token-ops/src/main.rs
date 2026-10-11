@@ -398,6 +398,51 @@ async fn main() -> Result<()> {
             })
             .await?
         }
+        Some("statement-diff") => {
+            // token-ops statement-diff <token.wasm> <idlog.wasm> <bag.wasm> <ws> <beacon hex> <epoch>
+            // (beacon.wasm, standing.wasm, block.wasm beside token.wasm): the statement THIS tool builds for the epoch
+            // (rules::statement::build over its reads) against each POSTED root's lines — every account whose line
+            // differs, field by field: what two builders disagree on, measured.
+            let (code_hash, idlog_hash, beacon) = (*blake3::hash(&std::fs::read(&a[2])?).as_bytes(), *blake3::hash(&std::fs::read(&a[3])?).as_bytes(), unhex32(&a[6])?);
+            let pool = T::id(&code_hash, &craftworks_wallet::craft::definition(code_hash, beacon, idlog_hash).encode());
+            let net = token_net::Net {
+                ws: a[5].clone(),
+                code_hash,
+                code: std::fs::read(&a[2])?,
+                idlog_hash,
+                bag_code: std::fs::read(&a[4])?,
+                beacon_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes(),
+                beacon,
+                pool,
+                standing_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("standing.wasm"))?).as_bytes(),
+                block_code: std::fs::read(std::path::Path::new(&a[2]).with_file_name("block.wasm"))?,
+            };
+            let epoch: u64 = a[7].parse()?;
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                let r = token_net::Reader::new(&net)?;
+                let Some((mine, kept)) = r.statement_built(epoch) else { anyhow::bail!("this tool's build did not complete") };
+                let root = mine.tree(&mut std::collections::BTreeMap::new()).map(|(x, _)| x).unwrap_or_default();
+                println!("built here: root {} — {} lines, {kept} kept", hex(&root[..6]), mine.lines.len());
+                let show = |l: &craftworks_reputation::statement::Line| format!("{l:?}");
+                for posted in r.posted_roots(epoch) {
+                    println!("posted {}:", hex(&posted[..6]));
+                    let Some(theirs) = r.posted_lines(&posted) else {
+                        println!("  (its blocks not all on the network)");
+                        continue;
+                    };
+                    let mut same = 0;
+                    for d in mine.lines.keys().chain(theirs.keys()).collect::<std::collections::BTreeSet<_>>() {
+                        match (mine.lines.get(d), theirs.get(d)) {
+                            (Some(x), Some(y)) if x == y => same += 1,
+                            (x, y) => println!("  {}: here {} | posted {}", hex(&d[..4]), x.map_or("—".into(), show), y.map_or("—".into(), show)),
+                        }
+                    }
+                    println!("  {same} line(s) the same");
+                }
+                Ok(())
+            })
+            .await?
+        }
         Some("accepted") => {
             // token-ops accepted <token.wasm> <bag.wasm> <ws> <beacon hex> <epoch> <root hex>
             // (beacon.wasm beside token.wasm): an EPOCH STATEMENT root's acceptance by the rules' own check

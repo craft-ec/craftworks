@@ -166,6 +166,16 @@ impl<'a> Reader<'a> {
         let block = |c: &[u8; 32]| self.get(contract_keys::block::contract_for(&self.net.block_code, c)).filter(|s| s.len() > 1).map(|s| s[1..].to_vec());
         lines(&st.root, &block).ok()
     }
+    /// A POSTED root's lines (its blocks read from the network); `None`: a block not there.
+    pub fn posted_lines(&self, root: &[u8; 32]) -> Option<std::collections::BTreeMap<[u8; 32], craftworks_reputation::statement::Line>> {
+        let block = |c: &[u8; 32]| self.get(contract_keys::block::contract_for(&self.net.block_code, c)).filter(|s| s.len() > 1).map(|s| s[1..].to_vec());
+        craftworks_reputation::statement::lines(root, &block).ok()
+    }
+    /// The roots posted for `epoch`'s statement.
+    pub fn posted_roots(&self, epoch: u64) -> Vec<[u8; 32]> {
+        use craftworks_reputation::statement::{bag_address, Posted};
+        self.bag(bag_address(epoch)).iter().filter_map(|p| Posted::decode(p)).filter(|p| p.epoch == epoch).map(|p| p.root).collect()
+    }
     /// The WITNESS SIGNATURES each claimant gave on standing epoch `epoch`'s queued entries (`wallet::fees::count`).
     pub fn signed(&self, epoch: u64) -> std::collections::BTreeMap<[u8; 32], u64> {
         let queued = self.queue(epoch);
@@ -224,6 +234,10 @@ impl<'a> Reader<'a> {
     /// The EPOCH STATEMENT of standing epoch `epoch` as this reader computes it (the one build: every vouch registry up
     /// to it, each item verified by its voucher's key log; KEPT audited: `kept`): its root. `None`: its lot not drawn yet.
     pub fn statement_root(&self, epoch: u64) -> Option<[u8; 32]> {
+        self.statement_built(epoch).and_then(|(st, _)| st.tree(&mut std::collections::BTreeMap::new()).map(|(root, _)| root))
+    }
+    /// The statement this reader BUILDS for `epoch` (and how many keepers it counted kept): what its root is of.
+    pub fn statement_built(&self, epoch: u64) -> Option<(craftworks_reputation::statement::Statement, usize)> {
         // THE ONE BUILD (`rules::statement::build`, the page's and the delegate's — 10-11: this tool kept its own and
         // its epoch-20 root differed from the pages'), over what this reader reads: a contract not answered is taken as
         // not there (this reader cannot tell them apart; a page refuses to post then).
@@ -245,7 +259,7 @@ impl<'a> Reader<'a> {
         let inputs = craftworks_rules::statement::Inputs { epoch, items: &items, misdeeds: &misdeeds, keepers: &keepers, queued: &queued, posted: &posted, earlier: &earlier, ctx: &ctx, lot: &lot, keep: &keep, fresh: &fresh, lines: &lines, audit: None };
         let got = |x: &[u8; 32]| Some(self.get(*x).unwrap_or_default());
         match craftworks_rules::statement::build(&inputs, &got).ok()? {
-            craftworks_rules::tokens::Step::Done((st, _)) => st.tree(&mut std::collections::BTreeMap::new()).map(|(root, _)| root),
+            craftworks_rules::tokens::Step::Done(x) => Some(x),
             _ => None,
         }
     }

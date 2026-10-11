@@ -98,6 +98,12 @@ pub fn build(i: &Inputs, got: Got) -> Result<Step<(R::statement::Statement, usiz
         _ => None,
     };
     // SIGNED (the epoch before's witness fees) and THE PREVIOUS STATEMENT (the newest accepted within CARRY_BACK).
+    // Their SIGNATURES read FRESH for this build, as keepers' records are (10-11, measured on fx: a page that read epoch
+    // 24's signatures before its witness signed kept that copy, found it not accepted, carried nothing, and posted a root
+    // Wren's tool — reading fresh — did not build, for epochs 25 and 26). Statement blocks are content-addressed: any
+    // copy is the copy.
+    let fresh_got = |id: &[u8; 32]| if (i.fresh)(id) { got(id) } else { None };
+    let got: Got = &fresh_got;
     let mut prev = BTreeMap::new();
     let signed = match epoch.checked_sub(1) {
         None => Default::default(),
