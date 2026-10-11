@@ -226,7 +226,7 @@ export function mount(ctx, el) {
         if (people.length) groups.push(["People", people.map(p => h("button", { type: "button", textContent: `👤 ${p.shown}`, onclick: e => person.open(e.currentTarget, p.did) }))]);
         out.replaceChildren(...groups.flatMap(([head, rows]) => [h("div", { className: "head", textContent: head }), ...rows]), h("p", { className: "none", textContent: "Looking in items…" }));
         out.hidden = false;
-        const shown = kinds.all().filter(k => !["channel", "folder"].includes(k));
+        const shown = kinds.all().filter(k => !["channel", "folder", "delegation"].includes(k));
         itemsHeld ??= Promise.all([
           items.list({ feed: true }, "new", shown, { window: "all" }).catch(() => []),
           items.list({ discover: true }, "new", shown, { window: "all" }).catch(() => []),

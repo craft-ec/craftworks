@@ -24,8 +24,8 @@ export async function mount(ctx, el) {
     }</style>
     <div class="tg"><h2></h2><div class="bar"></div><div class="grid"></div></div>`;
   const grid = el.querySelector(".grid");
-  // Every kind that stands on its own and has a look (a channel is a place, a folder Drive's).
-  const shown = kinds.all().filter(k => !["channel", "folder"].includes(k));
+  // Every kind that stands on its own and has a look (a channel is a place, a folder Drive's, a delegation Vote's record).
+  const shown = kinds.all().filter(k => !["channel", "folder", "delegation"].includes(k));
   async function draw() {
     const tag = tagNow();
     el.querySelector("h2").textContent = `#${tag}`;

@@ -128,6 +128,8 @@ export async function start(ctx) {
     drive: { title: "Drive", fields: [{ action: "read", path: "file", label: "Read" }, { action: "post", path: "file", label: "Upload" }, { action: "edit", path: "file", label: "Move" }] },
     // Wiki shows the WIKI domain: who EDITS its pages (the rest suggest — `wiki-pages`), who may suggest (comment).
     wiki: { title: "Wiki", fields: [{ action: "read", path: "wiki", label: "Read" }, { action: "edit", path: "wiki", label: "Edit" }, { action: "comment", path: "wiki", label: "Suggest" }], saved: async (c, r, sp) => c["wiki|read"] === "anyone" && madePublic(r, sp) },
+    // Vote shows the VOTE domain: who makes polls and proposals (post), who VOTES (and delegates), who comments.
+    vote: { title: "Vote", fields: [{ action: "read", path: "vote", label: "Read" }, { action: "post", path: "vote", label: "Make polls and proposals" }, { action: "vote", path: "vote", label: "Vote and delegate" }, { action: "comment", path: "vote", label: "Comment" }], saved: async (c, r, sp) => c["vote|read"] === "anyone" && madePublic(r, sp) },
   };
   // CHAT's own rows: its channels, each with who may post in it.
   async function chatChannels(host, r, sp) {
