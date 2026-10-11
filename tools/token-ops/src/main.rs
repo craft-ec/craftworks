@@ -105,14 +105,13 @@ impl craftworks_wallet::Device for Dev {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn make_token(code: &[u8], idlog_code: &[u8], ws: &str, beacon: [u8; 32], words: &str, device_seed: [u8; 32], name: &str, supply: u128) -> Result<()> {
+/// The ACCOUNT a tool acts for (env `DID`) and this tool's DEVICE of it (`device_seed`, credentialed by the account's
+/// owner key from `words`, whichever of its keys they hold): its DID, key log and device — what signs its chains.
+async fn account_device(ws: &str, ih: &[u8; 32], words: &str, device_seed: [u8; 32]) -> Result<(String, [u8; 32], craftworks_idlog_contract::Log, Dev)> {
     let entropy = craftworks_account::entropy(words).context("the words do not read")?;
-    let ch = *blake3::hash(code).as_bytes();
-    let ih = *blake3::hash(idlog_code).as_bytes();
-    // The account: its DID from its key log (the words' owner key is one of its keys — rotated or not).
     let did_text = std::env::var("DID").context("DID: the account's did:craftec:… (the words may be rotated into it)")?;
     let did = craftworks_account::did_bytes(&did_text).context("not a DID")?;
-    let log = get(ws, T::id(&ih, &did)).await?.and_then(|b| craftworks_idlog_contract::read(&did, &b)).context("the account's key log is not there")?;
+    let log = get(ws, T::id(ih, &did)).await?.and_then(|b| craftworks_idlog_contract::read(&did, &b)).context("the account's key log is not there")?;
     let (seq, owner_seed) = (0..8u32)
         .filter_map(|j| craftworks_account::owner_seed_at(&entropy, j))
         .find_map(|s| {
@@ -122,7 +121,13 @@ async fn make_token(code: &[u8], idlog_code: &[u8], ws: &str, beacon: [u8; 32], 
         .context("these words hold none of the account's keys")?;
     let key = SigningKey::from_bytes(&device_seed);
     let cred = craftworks_identity::credential(&did, &key.verifying_key().to_bytes(), &[], &owner_seed);
-    let dev = Dev { key, cred, seq };
+    Ok((did_text, did, log.clone(), Dev { key, cred, seq }))
+}
+
+async fn make_token(code: &[u8], idlog_code: &[u8], ws: &str, beacon: [u8; 32], words: &str, device_seed: [u8; 32], name: &str, supply: u128) -> Result<()> {
+    let ch = *blake3::hash(code).as_bytes();
+    let ih = *blake3::hash(idlog_code).as_bytes();
+    let (did_text, did, log, dev) = account_device(ws, &ih, words, device_seed).await?;
     let mut nonce = [0u8; 16];
     getrandom::getrandom(&mut nonce).map_err(|e| anyhow::anyhow!("randomness: {e}"))?;
     let d = T::Definition {
@@ -142,6 +147,40 @@ async fn make_token(code: &[u8], idlog_code: &[u8], ws: &str, beacon: [u8; 32], 
     s.entries.extend(entries);
     println!("the account's chain ({} of {name}): {}", s.balance(), put(ws, container(code, params.encode()), s.encode()).await?);
     println!("TOKEN {} — {name}, {supply}, made by {did_text} (its chain {})", hex(&id), hex(&params.id()));
+    Ok(())
+}
+
+/// FUND THE ALLOWANCE (TOKEN §7d, decision 6; audit G7: nothing funded it): the account (`DID`, Wren — the token's
+/// treasury) escrows the allowance POT of token `token` to each standing epoch's program from now to `ahead` epochs on,
+/// each epoch once (an escrow there already is skipped), unpaid ones reclaimable after their epoch (`until`).
+#[allow(clippy::too_many_arguments)]
+async fn fund_allowance(code: &[u8], idlog_code: &[u8], allowance_code: &[u8], ws: &str, beacon: [u8; 32], words: &str, device_seed: [u8; 32], token: [u8; 32], ahead: u64) -> Result<()> {
+    use craftworks_allowance_contract as A;
+    let (ch, ih, ah) = (*blake3::hash(code).as_bytes(), *blake3::hash(idlog_code).as_bytes(), *blake3::hash(allowance_code).as_bytes());
+    let (did_text, did, log, dev) = account_device(ws, &ih, words, device_seed).await?;
+    let d = get(ws, token).await?.and_then(|b| T::Definition::decode(&b)).context("the token's definition is not there")?;
+    let params = T::ChainParams { code_hash: ch, definition: token, owner: did, beacon: d.beacon, idlog: ih, item: [0; 32] };
+    let state = get(ws, params.id()).await?.and_then(|b| T::State::decode(&b)).context("the treasury's chain is not there")?;
+    let now = get(ws, beacon).await?.and_then(|b| B::wire::decode(&b)).map(|s| s.height()).context("the beacon is not there")?;
+    let first = now / craftworks_standing::EPOCH;
+    let mut held = craftworks_wallet::Held { params: params.clone(), definition: d.clone(), state, blocks: Default::default() };
+    let w = craftworks_wallet::Wallet { device: &dev, keys: &log };
+    let mut funded = Vec::new();
+    for e in first..=first + ahead {
+        let pid = T::id(&ah, &A::Params { token: T::Tok { definition: token, item: [0; 32] }, epoch: e }.encode());
+        if held.state.entries.iter().any(|x| matches!(&x.body, T::Body::Escrow { program, .. } if *program == pid)) {
+            continue;
+        }
+        let until = (e + 1) * craftworks_standing::EPOCH + 8;
+        let entries = w.debit(&held, T::Body::Escrow { program: pid, terms: A::terms(e), amount: A::POT, until }, now).map_err(|x| anyhow::anyhow!("epoch {e}: {x}"))?;
+        held.state.entries.extend(entries);
+        funded.push(e);
+    }
+    if funded.is_empty() {
+        println!("nothing to fund: epochs {first}..={} escrowed already", first + ahead);
+        return Ok(());
+    }
+    println!("{did_text} escrows {} of {} to epochs {funded:?}: {}", A::POT, hex(&token[..4]), put(ws, container(code, params.encode()), held.state.encode()).await?);
     Ok(())
 }
 
@@ -466,11 +505,19 @@ async fn main() -> Result<()> {
             eprintln!("beacon {}", hex(&id));
             Ok(())
         }
+        Some("fund-allowance") => {
+            // token-ops fund-allowance <token.wasm> <idlog.wasm> <ws> <beacon hex> <words file> <device seed file> <token hex> <epochs ahead>
+            // (allowance.wasm beside token.wasm; env DID: the treasury account)
+            let (code, idlog) = (std::fs::read(&a[2])?, std::fs::read(&a[3])?);
+            let acode = std::fs::read(std::path::Path::new(&a[2]).with_file_name("allowance.wasm"))?;
+            let words = std::fs::read_to_string(&a[6])?;
+            fund_allowance(&code, &idlog, &acode, &a[4], unhex32(&a[5])?, words.trim(), seed_file(&a[7])?, unhex32(&a[8])?, a[9].parse()?).await
+        }
         Some("make-token") => {
             let (code, idlog) = (std::fs::read(&a[2])?, std::fs::read(&a[3])?);
             let words = std::fs::read_to_string(&a[6])?;
             make_token(&code, &idlog, &a[4], unhex32(&a[5])?, words.trim(), seed_file(&a[7])?, &a[8], a[9].parse()?).await
         }
-        _ => bail!("token-ops beacon <beacon.wasm> <ws> <seed file> [tick secs] | make-token <token.wasm> <idlog.wasm> <ws> <beacon hex> <words file> <device seed file> <name> <supply>"),
+        _ => bail!("token-ops beacon <beacon.wasm> <ws> <seed file> [tick secs] | make-token <token.wasm> <idlog.wasm> <ws> <beacon hex> <words file> <device seed file> <name> <supply> | fund-allowance <token.wasm> <idlog.wasm> <ws> <beacon hex> <words file> <device seed file> <token hex> <epochs ahead>"),
     }
 }
