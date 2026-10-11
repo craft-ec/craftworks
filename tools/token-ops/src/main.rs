@@ -348,6 +348,7 @@ async fn main() -> Result<()> {
             let epoch: u64 = a[8].parse()?;
             tokio::task::spawn_blocking(move || -> Result<()> {
                 let r = token_net::Reader::new(&net)?;
+                let mut shown = std::collections::HashSet::new();
                 for q in r.queue(epoch) {
                     let Some(p) = r.params(&q.token, &q.owner) else { continue };
                     let Some(st) = r.chain(&q.token, &q.owner) else { continue };
@@ -356,11 +357,39 @@ async fn main() -> Result<()> {
                     let e = &st.entries[i];
                     // Its lot's claims epoch: whose registry may sign, and whose container holds its signatures.
                     let Ok((ce, _)) = T::wallet::lot_of(e, i.checked_sub(1).map(|j| &st.entries[j]), d.margin) else { continue };
+                    // THE COMMITTEE it is drawn from (once per claims epoch): raw claims, the VALID ones, the seats.
+                    if shown.insert(ce) {
+                        let raw = r.raw_claims(ce);
+                        let valid = r.claims(ce);
+                        let (k, base, need) = T::witness::seats(valid.len(), T::wallet::COMMITTEE);
+                        println!("claims epoch {ce}: {} raw [{}], {} valid [{}] — {k} drawn{}, {need} to accept", raw.len(), raw.iter().map(|c| format!("{}:{}", hex(&c.owner[..4]), hex(&c.key[..4]))).collect::<Vec<_>>().join(" "), valid.len(), valid.iter().map(|c| format!("{}:{}", hex(&c.owner[..4]), hex(&c.key[..4]))).collect::<Vec<_>>().join(" "), if base { " + the baseline" } else { "" });
+                    }
                     let mut keys: Vec<[u8; 32]> = r.raw_claims(ce).iter().map(|c| c.key).collect();
                     keys.push(T::witness::BASELINE);
                     let sigs = r.sigs(&p.id(), q.seq, ce);
                     let by: Vec<String> = keys.iter().filter(|k| sigs.iter().any(|s| s.entry == e.hash() && s.signed_by(k))).map(|k| hex(&k[..4])).collect();
-                    println!("{}…/{} seq {} stamp {} (claims epoch {ce}): signed by {:?}", hex(&q.token.definition[..4]), hex(&q.owner[..4]), q.seq, e.stamp, by);
+                    // ACCEPTED by the rule every page runs (`rules::tokens::accepted`), over what this reader reads.
+                    let lot = craftworks_rules::tokens::Lot { pool: net.pool, bag: *blake3::hash(&net.bag_code).as_bytes(), beacon_code: net.beacon_hash };
+                    let mut got: std::collections::HashMap<[u8; 32], Vec<u8>> = Default::default();
+                    let mut verdict = String::from("too many reads");
+                    for _ in 0..24 {
+                        let g = got.clone();
+                        match craftworks_rules::tokens::accepted(&lot, &|x| g.get(x).cloned(), &p, &d, &st, q.seq) {
+                            Err(w) => (verdict = format!("error: {w}"), ()).1,
+                            Ok(craftworks_rules::tokens::Step::Want(w)) => {
+                                for id in w {
+                                    got.insert(id, r.get(id).unwrap_or_default());
+                                }
+                                continue;
+                            }
+                            Ok(craftworks_rules::tokens::Step::Done(Ok(n))) => verdict = format!("ACCEPTED ({n})"),
+                            Ok(craftworks_rules::tokens::Step::Done(Err(w))) => verdict = format!("not accepted: {w}"),
+                            Ok(craftworks_rules::tokens::Step::Sign(_)) => verdict = "a status never signs".into(),
+                        }
+                        break;
+                    }
+                    let kind = match &e.body { T::Body::KeeperMint { epoch, root, .. } => format!("KeeperMint of epoch {epoch} root {}", hex(&root[..6])), b => format!("{b:?}").chars().take_while(|c| c.is_alphanumeric()).collect() };
+                    println!("{}…/{} seq {} {kind} stamp {} (claims epoch {ce}): signed by {:?} — {verdict}", hex(&q.token.definition[..4]), hex(&q.owner[..4]), q.seq, e.stamp, by);
                 }
                 Ok(())
             })
