@@ -234,6 +234,11 @@ pub fn build(epoch: u64, items: &[crate::item::Item], log_of: &dyn Fn(&Did) -> O
 
 /// Each account's last ACTIVE epoch as of statement `epoch`: the previous statement's (`prev`, its lines), refreshed to
 /// `epoch − 1` for every account active then — it KEPT, gave witness signatures, or made a vouch item that epoch.
+/// How far back a statement looks for the newest ACCEPTED one to carry each account's last active epoch from (audit
+/// 10-11: carried only from the epoch before, one statement not accepted in time reset every account's activity — and
+/// their vouches decayed). An epoch with none accepted loses only its own epoch's activity.
+pub const CARRY_BACK: u64 = 8;
+
 pub fn active_of(epoch: u64, prev: &BTreeMap<Did, Line>, kept: &[Did], signed: &BTreeMap<Did, u64>, items: &[crate::item::Item]) -> BTreeMap<Did, u64> {
     let mut out: BTreeMap<Did, u64> = prev.iter().filter(|(_, l)| l.active > 0).map(|(d, l)| (*d, l.active)).collect();
     let Some(last) = epoch.checked_sub(1) else { return out };

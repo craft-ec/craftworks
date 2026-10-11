@@ -2605,7 +2605,7 @@ mod js {
         /// the network — a keeper's record not among them is asked for again, whatever this core holds (a record the
         /// page wrote or read earlier is a stale copy: its own, held since its last answer, left it out of KEPT).
         #[allow(clippy::too_many_arguments)]
-        pub fn statement_build(&mut self, idlog_code: &[u8], items: js_sys::Array, epoch: f64, keepers: js_sys::Array, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], token_code: &[u8], bag_code: &[u8], queued: js_sys::Array, posted: js_sys::Array, fresh: js_sys::Array) -> Result<JsValue, JsValue> {
+        pub fn statement_build(&mut self, idlog_code: &[u8], items: js_sys::Array, epoch: f64, keepers: js_sys::Array, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], token_code: &[u8], bag_code: &[u8], queued: js_sys::Array, posted: js_sys::Array, fresh: js_sys::Array, earlier: js_sys::Array) -> Result<JsValue, JsValue> {
             use craftworks_reputation as R;
             let epoch = epoch as u64;
             let items: Vec<R::item::Item> = bytes_list(&items).iter().filter_map(|b| R::item::Item::decode(b)).collect();
@@ -2651,8 +2651,20 @@ mod js {
                     let statements: Vec<craftworks_wallet::fees::Statement> = posted.iter().filter_map(|r| bytes32("root", &r.as_string().unwrap_or_default()).ok()).map(|root| craftworks_wallet::fees::Statement { place: R::statement::witness_place(before), root, h: R::statement::lot_height(before) }).collect();
                     match witness::signed(&ctx, &lot, &|x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec), &queued, &statements) {
                         tokens::Step::Done(s) => {
-                            // THE PREVIOUS STATEMENT: its accepted root's lines (each account's last active epoch).
-                            if let Some(st) = witness::accepted_statement(&ctx, &lot, &|x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec), &statements) {
+                            // THE PREVIOUS STATEMENT: the newest ACCEPTED one within CARRY_BACK epochs — the epoch
+                            // before's, else an earlier one's (`earlier`: [epoch, root hex] posted) — its lines (each
+                            // account's last active epoch).
+                            let earlier: Vec<(u64, [u8; 32])> = earlier.iter().filter_map(|x| {
+                                let x = js_sys::Array::from(&x);
+                                Some((x.get(0).as_f64()? as u64, bytes32("root", &x.get(1).as_string()?).ok()?))
+                            }).collect();
+                            let mut epochs: Vec<(u64, Vec<craftworks_wallet::fees::Statement>)> = vec![(before, statements.clone())];
+                            for b in 2..=R::statement::CARRY_BACK {
+                                let Some(e) = epoch.checked_sub(b) else { break };
+                                epochs.push((e, earlier.iter().filter(|x| x.0 == e).map(|x| craftworks_wallet::fees::Statement { place: R::statement::witness_place(e), root: x.1, h: R::statement::lot_height(e) }).collect()));
+                            }
+                            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                            if let Some(st) = epochs.iter().find_map(|(_, sts)| witness::accepted_statement(&ctx, &lot, &got, sts)) {
                                 match self.0.statement_lines(&st.root) {
                                     Ok(l) => prev = l,
                                     Err(w) => return js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
@@ -2986,6 +2998,10 @@ mod js {
         /// The height an epoch statement's witnesses are drawn at (`statement::lot_height`).
         pub fn statement_lot_height(epoch: f64) -> f64 {
             craftworks_reputation::statement::lot_height(epoch as u64) as f64
+        }
+        /// How far back a statement carries activity from (`statement::CARRY_BACK`).
+        pub fn statement_carry_back() -> f64 {
+            craftworks_reputation::statement::CARRY_BACK as f64
         }
         pub fn statement_bag_address(epoch: f64) -> js_sys::Uint8Array {
             js_sys::Uint8Array::from(&craftworks_reputation::statement::bag_address(epoch as u64)[..])

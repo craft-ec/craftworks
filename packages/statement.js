@@ -33,12 +33,21 @@ export async function start(ctx) {
     const queued = epoch > 0 ? await index.bag.chain(Core.witness_queue_address, epoch - 1, "reading the witness queue", strict) : [];
     // …and its statement's posted roots (signing the accepted one earns fees too).
     const posted = epoch > 0 ? (await index.bag.read(Core.statement_bag_address(epoch - 1), "reading the epoch before's statement", strict)).map(p => Core.statement_posted_read(p)).filter(p => p?.epoch === epoch - 1).map(p => p.root) : [];
+    // …and the posted roots of the epochs before that, within CARRY_BACK (the newest ACCEPTED statement carries each
+    // account's last active epoch: one not accepted in time does not reset everyone's).
+    const earlier = [];
+    for (let x = epoch - 2; x >= Math.max(0, epoch - Core.statement_carry_back()); x--) {
+      for (const p of await index.bag.read(Core.statement_bag_address(x), "reading an earlier statement", strict)) {
+        const r = Core.statement_posted_read(p);
+        if (r?.epoch === x) earlier.push([x, r.root]);
+      }
+    }
     const fresh = new Set(); // what this build read from the network (each keeper's record read fresh, never a held copy)
     // WHAT IT READ: each contract the node had, said it does not have, or did not answer (asked again; a statement
     // built over a record that did not answer would leave that keeper out: none is posted then).
     const reads = { got: 0, absent: [], silent: new Set() };
     for (let round = 0; round < 6; round++) {
-      const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon, tokenCode, bagCode, queued, posted, [...fresh]);
+      const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon, tokenCode, bagCode, queued, posted, [...fresh], earlier);
       if (r.want) {
         await Promise.all(r.want.map(id => node.read(bytes(id), "reading a key log or a keeper's record", { absent: true }).then(
           got => (fresh.add(id), reads.silent.delete(id), got ? reads.got++ : reads.absent.push(id.slice(0, 8))),

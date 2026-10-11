@@ -2232,6 +2232,9 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
 - [x] C6 10-11 TOKENSIGN PLACE WINDOW (was B5): a token entry's place (seq + prev hash) kept with its wake-up; another
       entry there refused for 2 wake-ups (`PlaceBusy`: the racing tab reads again and builds the next) — after it, an
       entry never put does not wedge the wallet. Page TokenSign and the delegate's claim signing share it (test; control).
+- [x] C7 10-11 DECAY NOT RESET BY ONE MISSED STATEMENT: activity carried from the newest ACCEPTED statement within
+      CARRY_BACK = 8 epochs (page core + Wren's tool, one constant). NOT unit-tested (wasm-only binding): the live roots
+      agreeing on fx/fy is the check.
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.

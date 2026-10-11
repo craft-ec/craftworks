@@ -199,7 +199,8 @@ impl<'a> Reader<'a> {
         let signed = epoch.checked_sub(1).map_or(Default::default(), |e| self.signed(e));
         let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP), witness: craftworks_wallet::craft::witness_pot(epoch) };
         let kept = epoch.checked_sub(1).map_or(Vec::new(), |e| self.kept(e, &log_of));
-        let prev = epoch.checked_sub(1).and_then(|e| self.statement_lines(e)).unwrap_or_default();
+        // The newest ACCEPTED statement within CARRY_BACK epochs (the page's rule).
+        let prev = (1..=R::statement::CARRY_BACK).filter_map(|b| epoch.checked_sub(b)).find_map(|e| self.statement_lines(e)).unwrap_or_default();
         let st = R::statement::build(epoch, &items, &log_of, &kept, &signed, &prev, pots);
         st.tree(&mut std::collections::BTreeMap::new()).map(|(root, _)| root)
     }
