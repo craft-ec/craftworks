@@ -383,7 +383,14 @@ async fn main() -> Result<()> {
         }
     };
     let mut d = Driver { sock, io, t0 };
-    d.drive("the signer", Duration::from_secs(60), |io| io.provisioned() && io.register_params_known()).await?;
+    // The node's signer within SIGNER_WAIT_S (60 s by default; a loaded node answers slower); SIGNER_ONLY=1 stops once it
+    // has (how long it took said): the signer checked without publishing anything.
+    let signer_wait = std::env::var("SIGNER_WAIT_S").ok().and_then(|s| s.parse().ok()).unwrap_or(60);
+    d.drive("the signer", Duration::from_secs(signer_wait), |io| io.provisioned() && io.register_params_known()).await?;
+    println!("signer: answered in {} ms", t0.elapsed().as_millis());
+    if std::env::var("SIGNER_ONLY").as_deref() == Ok("1") {
+        return Ok(());
+    }
     let loader_site = d.io.site_link(&site_code, "loader").context("no loader site for this identity")?;
     // SITE_NAME: publish the same app at another address too (a second front end over the same account data); the
     // default is the app's own site.
