@@ -618,7 +618,8 @@ ISSUANCE — and each piece of the loop has ONE job:
   would leave that keeper out). The gate, the reputation and `kept` are all inside the statement
   every witness recomputes; a claim under any other root is simply not accepted (⅔ of its committee must sign) —
   never a burn (see "AN HONEST NODE IS NEVER BURNED").
-- **A cheat burns both:** a proven misdeed burns the stake (§7a) and zeroes reputation; vouchers lose a share.
+- **A cheat burns both:** a proven misdeed burns the stake (§7a) and zeroes reputation; vouchers lose a share (BUILT
+  10-11 for EQUIVOCATION, decision 3 below: `rules::misdeed` + `reputation::misdeed`).
 - **REVISED 10-10 — the AMOUNT is a trust share, not per head** (measured in conversation: with a flat amount per
   account, ONE malicious direct vouchee builds a clean tree of ~1,110 fakes past the gate — 10 + 100 + 1,000 — each
   earning a full amount). Each epoch mints a fixed POT; it goes 90% to KEEPERS — the accounts past the gate at the
@@ -657,8 +658,22 @@ ISSUANCE — and each piece of the loop has ONE job:
   2. EPOCH STATEMENT: a pure function; anyone computes and publishes it; witnesses sign the one they recompute. It
      records each keeper's proof, so a claim can cite it long after the standing record is pruned. KEEPER MINTS are
      APPENDED BY ANYONE with work (as credits are), into the keeper's own stake: an offline keeper is still paid.
-  3. MISDEED REGISTRY: a public bag of self-proving misdeed proofs, anyone submits; the reputation function reads it —
-     the cheat to zero, its direct vouchers charged by their vouch's weight.
+  3. MISDEED REGISTRY — BUILT 10-11 for EQUIVOCATION (`rules::misdeed`, `reputation::misdeed`): a CHAINED public bag
+     per standing epoch (`misdeed::registry_address`) of self-proving proofs, anyone submits (`token-ops misdeed …
+     --post`: the watch finds two witness signatures by one key at one place — `wallet::equivocations` — and the
+     staker's credential for that key in its pool chain's writer entries). A proof holds STANDALONE: the token's own
+     `witness::equivocation`, and the credential by which the account's owner key (at its key seq) made that key its
+     device. Every statement build reads the registries of the epochs BEFORE it, strictly, through the one Inputs path
+     (`rules::statement::Inputs::misdeeds`: page core `statement_build` + `packages/statement.js`, the delegate's
+     `witness_statement`, token-net's `statement_root`). PROVEN at `p` = the earliest registry epoch holding a proof
+     that holds; from the statement of epoch `p + 1` on, for good: the cheat's reputation 0, its vouches dropped from
+     the flow (it passes nothing on), and it never earns (keeper, allowance, witness fees). THE CHARGE: each DIRECT
+     voucher V whose vouch for the cheat was counted and standing at the start of epoch `p` loses, in the statements of
+     `p + 1 ..= p + CHARGE_EPOCHS` (30), `f = DAMP × ramp / n` of its own reputation — DAMP 0.85 (the share an account
+     passes on), `n` its counted vouches then, `ramp` = min(epochs the vouch had stood at `p` + 1, RAMP) / RAMP; several
+     cheats add (Σf < DAMP); applied after the flow, so V's other vouchees are not charged. Integers, order-independent.
+     NOT YET: a FALSE CREDIT (`Body::Misdeed`), FALSE MINT, FALSE VERDICT reach reputation — their proof needs the
+     cited chain read whole and unforked, and chains are cut, so a later builder could not show it (§8).
   4. LINEAGE SEAT CAP inside the lot itself: the draw skips past a lineage's 4th ticket (deterministic).
   5. WITNESS FEE: `Definition.witness_fee` (≥ 1 smallest unit) on every debit; each signer's share fee ÷ 16, appended
      by anyone for it; unclaimed shares burned.
@@ -988,8 +1003,13 @@ DID; only the sender and the recipient know who was paid.
    - LINEAGE CAP (≤ 3 of 16 seats per lineage) is not drawn: the token's draw does not know reputation. Direction: a
      claim names its lineage root, checked against the epoch's statement (lines carry the lineage), and the draw skips
      a lineage's fourth ticket.
-   - MISDEEDS do not touch reputation (a misdeed burns stake only). Direction: a misdeed registry the statement reads,
-     zeroing the cheat's reputation and charging its direct vouchers by vouch weight.
+   - MISDEEDS AND REPUTATION — EQUIVOCATION CLOSED 10-11 (the misdeed registry, §7d decision 3: proven equivocation
+     zeroes the account and charges its direct vouchers, in every builder's one statement build). OPEN: the misdeeds
+     shown only against a cited chain (false credit, false mint, false verdict) burn stake only — not standalone, and
+     a chain cut later leaves a later builder unable to re-show them. Direction: the statement CARRIES a "cheat since"
+     mark per account from the statement that first proved it (a Line field: allowance and token contracts re-key),
+     or a proof carries the cited chain's whole signed segment. Page posting is not built (`core.misdeed_equivocation`
+     makes the item; no page watch runs) — `token-ops misdeed --post` is the submit path.
    - RULE VERSIONS: nothing pins which rules an epoch runs, and the token contract re-keys on every rebuild. Direction:
      the rule version in the statement's params; a witness refuses an epoch whose version it does not run.
 

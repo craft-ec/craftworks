@@ -26,6 +26,10 @@ export async function start(ctx) {
     const strict = { strict: true };
     const items = [];
     for (let e = 0; e <= epoch; e++) items.push(...(await index.bag.chain(Core.vouch_registry_address, e, "reading a vouch registry", strict)));
+    // MISDEEDS (TOKEN §7d decision 3): every misdeed registry BEFORE this epoch, each proof with its bag's epoch — a
+    // proof that holds zeroes its account and charges its direct vouchers (`rules::misdeed`).
+    const misdeeds = [];
+    for (let e = 0; e < epoch; e++) for (const it of await index.bag.chain(Core.misdeed_registry_address, e, "reading a misdeed registry", strict)) misdeeds.push([e, it]);
     // KEPT: the keepers listed the epoch before (`keeper`), their records proving it.
     const keepers = epoch > 0 ? await index.bag.chain(Core.keepers_address, epoch - 1, "reading the keepers registry", strict) : [];
     const beacon = bytes((await ctx.require("beacon")).status().id);
@@ -49,7 +53,7 @@ export async function start(ctx) {
     // (Rounds: key logs, keepers' records, the lot's beacon, the AUDITS' drawn pieces and outputs, the fees' reads,
     // the previous statement's lines.)
     for (let round = 0; round < 10; round++) {
-      const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon, tokenCode, bagCode, queued, posted, [...fresh], earlier);
+      const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon, tokenCode, bagCode, queued, posted, [...fresh], earlier, misdeeds);
       if (r.want) {
         await Promise.all(r.want.map(id => node.read(bytes(id), "reading a key log, a keeper's record or an audited piece", { absent: true }).then(
           got => (fresh.add(id), reads.silent.delete(id), got ? reads.got++ : reads.absent.push(id.slice(0, 8))),

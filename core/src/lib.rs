@@ -2582,6 +2582,26 @@ mod js {
         pub fn vouch_registry_address(epoch: f64, k: u32) -> js_sys::Uint8Array {
             js_sys::Uint8Array::from(&craftworks_reputation::item::registry_address(epoch as u64, k)[..])
         }
+        /// The MISDEED REGISTRY's bag address for standing epoch `epoch` (`rules::misdeed`, TOKEN §7d decision 3): where
+        /// anyone posts a self-proving misdeed proof (chained: `index.bag.chained`).
+        pub fn misdeed_registry_address(epoch: f64, k: u32) -> js_sys::Uint8Array {
+            js_sys::Uint8Array::from(&craftworks_rules::misdeed::registry_address(epoch as u64, k)[..])
+        }
+        /// An EQUIVOCATION proof's bytes, to post (`rules::misdeed::Equivocation`): account `did` (32 bytes), the credential
+        /// naming its device `key` (its owner key at `key_seq`), and the two witness signatures by `key` at one place, each
+        /// `{ chain, seq, entry, at, sig }` (hex; seq and at numbers). It is checked by every statement build, not here.
+        pub fn misdeed_equivocation(did: &[u8], cred: &[u8], key_seq: u32, key: &[u8], a: JsValue, b: JsValue) -> Result<js_sys::Uint8Array, JsValue> {
+            let sig = |v: &JsValue| -> Result<craftworks_token_contract::witness::WitnessSig, JsValue> {
+                let f = |k: &str| js_sys::Reflect::get(v, &k.into()).ok();
+                let h = |k: &str| f(k).and_then(|x| x.as_string()).ok_or_else(|| err(format!("a signature's {k}")));
+                let n = |k: &str| f(k).and_then(|x| x.as_f64()).map(|x| x as u64).ok_or_else(|| err(format!("a signature's {k}")));
+                let text = h("sig")?;
+                let sig: [u8; 64] = (0..64).map(|i| text.get(2 * i..2 * i + 2).and_then(|x| u8::from_str_radix(x, 16).ok())).collect::<Option<Vec<u8>>>().and_then(|v| v.try_into().ok()).ok_or_else(|| err("a signature's sig: 64 bytes of hex".into()))?;
+                Ok(craftworks_token_contract::witness::WitnessSig { chain: bytes32("chain", &h("chain")?).map_err(err)?, seq: n("seq")?, entry: bytes32("entry", &h("entry")?).map_err(err)?, at: n("at")?, sig })
+            };
+            let e = craftworks_rules::misdeed::Equivocation { did: b32(did)?, cred: cred.to_vec(), key_seq, key: b32(key)?, a: sig(&a)?, b: sig(&b)? };
+            Ok(js_sys::Uint8Array::from(&e.encode()[..]))
+        }
         /// A signed vouch item's `{ from, to, at, on }` (DID texts), or null.
         pub fn vouch_item_read(item: &[u8]) -> JsValue {
             match craftworks_reputation::item::Item::decode(item) {
@@ -2631,11 +2651,16 @@ mod js {
         /// standing contract's code and the beacon name the records). `fresh`: the contracts (hex) this build read from
         /// the network — a keeper's record not among them is asked for again, whatever this core holds (a record the
         /// page wrote or read earlier is a stale copy: its own, held since its last answer, left it out of KEPT).
+        /// `misdeeds`: the MISDEED REGISTRY's items of every epoch before this one, `[[epoch, item]]` (`rules::misdeed`).
         #[allow(clippy::too_many_arguments)]
-        pub fn statement_build(&mut self, idlog_code: &[u8], items: js_sys::Array, epoch: f64, keepers: js_sys::Array, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], token_code: &[u8], bag_code: &[u8], queued: js_sys::Array, posted: js_sys::Array, fresh: js_sys::Array, earlier: js_sys::Array) -> Result<JsValue, JsValue> {
+        pub fn statement_build(&mut self, idlog_code: &[u8], items: js_sys::Array, epoch: f64, keepers: js_sys::Array, standing_code: &[u8], beacon_code: &[u8], beacon: &[u8], token_code: &[u8], bag_code: &[u8], queued: js_sys::Array, posted: js_sys::Array, fresh: js_sys::Array, earlier: js_sys::Array, misdeeds: js_sys::Array) -> Result<JsValue, JsValue> {
             use craftworks_reputation as R;
             let epoch = epoch as u64;
             let items: Vec<R::item::Item> = bytes_list(&items).iter().filter_map(|b| R::item::Item::decode(b)).collect();
+            let misdeeds: Vec<(u64, Vec<u8>)> = misdeeds.iter().filter_map(|x| {
+                let x = js_sys::Array::from(&x);
+                Some((x.get(0).as_f64()? as u64, js_sys::Uint8Array::new(&x.get(1)).to_vec()))
+            }).collect();
             let keepers = bytes_list(&keepers);
             let queued: Vec<craftworks_wallet::queue::Queued> = bytes_list(&queued).iter().filter_map(|b| craftworks_wallet::queue::Queued::decode(b)).collect();
             let posted: Vec<[u8; 32]> = posted.iter().filter_map(|r| bytes32("root", &r.as_string().unwrap_or_default()).ok()).collect();
@@ -2652,7 +2677,7 @@ mod js {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
                 let is_fresh = |id: &[u8; 32]| fresh.contains(&hex(id));
                 let lines = |root: &[u8; 32]| self.0.statement_lines(root);
-                let inputs = craftworks_rules::statement::Inputs { epoch, items: &items, keepers: &keepers, queued: &queued, posted: &posted, earlier: &earlier, ctx: &ctx, lot: &lot, keep: &k, fresh: &is_fresh, lines: &lines, audit: None };
+                let inputs = craftworks_rules::statement::Inputs { epoch, items: &items, misdeeds: &misdeeds, keepers: &keepers, queued: &queued, posted: &posted, earlier: &earlier, ctx: &ctx, lot: &lot, keep: &k, fresh: &is_fresh, lines: &lines, audit: None };
                 craftworks_rules::statement::build(&inputs, &got).map_err(err)?
             };
             let (st, kept) = match built {

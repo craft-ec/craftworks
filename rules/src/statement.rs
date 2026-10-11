@@ -15,6 +15,9 @@ pub struct Inputs<'a> {
     pub epoch: u64,
     /// The signed vouch items of every epoch up to this one.
     pub items: &'a [R::item::Item],
+    /// The MISDEED REGISTRY's items of every epoch BEFORE this one, each with the epoch of the bag it was in
+    /// (`misdeed::registry_address`): proofs that hold zero their account and charge its direct vouchers.
+    pub misdeeds: &'a [(u64, Vec<u8>)],
     /// The keepers registry's items of the epoch before.
     pub keepers: &'a [Vec<u8>],
     /// The witness queue of the epoch before (its seated signatures earn fees).
@@ -42,7 +45,7 @@ pub fn build(i: &Inputs, got: Got) -> Result<Step<(R::statement::Statement, usiz
     let epoch = i.epoch;
     // Every voucher's and listed keeper's KEY LOG.
     let log_id = |d: &R::Did| craftworks_token_contract::id(&i.ctx.idlog, d);
-    let accounts = i.items.iter().map(|it| it.from).chain(i.keepers.iter().filter_map(|b| R::keepers::Keeper::decode(b)).map(|k| k.did));
+    let accounts = i.items.iter().map(|it| it.from).chain(i.keepers.iter().filter_map(|b| R::keepers::Keeper::decode(b)).map(|k| k.did)).chain(crate::misdeed::accused(i.misdeeds));
     let mut want: Vec<[u8; 32]> = Vec::new();
     for d in accounts {
         let id = log_id(&d);
@@ -147,7 +150,9 @@ pub fn build(i: &Inputs, got: Got) -> Result<Step<(R::statement::Statement, usiz
         None => Vec::new(),
     };
     let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP), witness: craftworks_wallet::craft::witness_pot(epoch), halvings: craftworks_wallet::craft::halvings(epoch) };
-    Ok(Step::Done((R::statement::build(epoch, i.items, &log_of, &kept, &signed, &prev, pots), kept.len())))
+    // MISDEEDS proven in the registries before this epoch (each proof checked against its account's key log).
+    let proven = crate::misdeed::proven(i.misdeeds, &log_of);
+    Ok(Step::Done((R::statement::build(epoch, i.items, &log_of, &kept, &signed, &prev, pots, &proven), kept.len())))
 }
 
 #[cfg(test)]
@@ -164,7 +169,7 @@ mod tests {
         let items = vec![R::item::Item { from: [11; 32], to: [12; 32], at: 5, on: true, cred: vec![], key_seq: 0, sig: [0; 64] }];
         let none = |_: &[u8; 32]| false;
         let lines = |_: &[u8; 32]| Ok(BTreeMap::new());
-        let i = Inputs { epoch: 0, items: &items, keepers: &[], queued: &[], posted: &[], earlier: &[], ctx: &ctx, lot: &lot, keep: &keep, fresh: &none, lines: &lines, audit: None };
+        let i = Inputs { epoch: 0, items: &items, misdeeds: &[], keepers: &[], queued: &[], posted: &[], earlier: &[], ctx: &ctx, lot: &lot, keep: &keep, fresh: &none, lines: &lines, audit: None };
         let mut got: HashMap<[u8; 32], Vec<u8>> = HashMap::new();
         let g = got.clone();
         let Ok(Step::Want(w)) = build(&i, &|x| g.get(x).cloned()) else { panic!("asks first") };
@@ -240,16 +245,16 @@ mod tests {
         }
         let fresh = |_: &[u8; 32]| true;
         let lines = |_: &[u8; 32]| Ok(BTreeMap::new());
-        let i = Inputs { epoch: 4, items: &[], keepers: &keepers, queued: &[], posted: &[], earlier: &[], ctx: &ctx, lot: &lot, keep: &keep, fresh: &fresh, lines: &lines, audit: None };
+        let i = Inputs { epoch: 4, items: &[], misdeeds: &[], keepers: &keepers, queued: &[], posted: &[], earlier: &[], ctx: &ctx, lot: &lot, keep: &keep, fresh: &fresh, lines: &lines, audit: None };
         // The build ASKS for the drawn pieces (2 audits × 2 keepers), then for what the fees count reads (none here).
         let g = got.clone();
         let Ok(Step::Want(w)) = build(&i, &|x| g.get(x).cloned()) else { panic!("asks for the drawn pieces") };
         assert!(!w.is_empty() && w.len() <= 2 * record::AUDITS && w.iter().all(|id| hosted.iter().any(|x| x.0 == *id)), "{w:?}");
-        let run = |got: &HashMap<[u8; 32], Vec<u8>>, piece_there: bool| {
+        let run_with = |i: &Inputs, got: &HashMap<[u8; 32], Vec<u8>>, piece_there: bool| {
             let mut g = got.clone();
             for _ in 0..8 {
                 let gg = g.clone();
-                match build(&i, &|x| gg.get(x).cloned()).unwrap() {
+                match build(i, &|x| gg.get(x).cloned()).unwrap() {
                     Step::Done((st, kept)) => return (st, kept),
                     Step::Want(w) => w.into_iter().for_each(|id| {
                         let state = if piece_there && hosted.iter().any(|x| x.0 == id) { piece(&id) } else { vec![] };
@@ -260,8 +265,29 @@ mod tests {
             }
             panic!("no end")
         };
-        let (_, kept) = run(&got, true);
+        let run = |got: &HashMap<[u8; 32], Vec<u8>>, piece_there: bool| run_with(&i, got, piece_there);
+        let (honest, kept) = run(&got, true);
         assert_eq!(kept, 1, "the honest keeper alone");
+        // THE MISDEED REGISTRY (TOKEN §7d decision 3) through the one Inputs path: the honest keeper's device key — the
+        // credential its owner gave it — signed two entries at one place, proven in epoch 3's registry. Epoch 4's
+        // statement then pays it nothing (bootstrap would: it kept) and lists it at reputation 0; a proof that does not
+        // hold (another's signature as the second) and junk are ignored; the items' order does not matter.
+        let (k0, pk0) = (SigningKey::from_bytes(&[100; 32]), SigningKey::from_bytes(&[100; 32]).verifying_key().to_bytes());
+        let wsig = |k: &SigningKey, entry: u8| {
+            let m = craftworks_token_contract::witness::WitnessSig::message(&[9; 32], 4, &[entry; 32], 4 * EPOCH);
+            craftworks_token_contract::witness::WitnessSig { chain: [9; 32], seq: 4, entry: [entry; 32], at: 4 * EPOCH, sig: k.sign(&m).to_bytes() }
+        };
+        let proof = crate::misdeed::Equivocation { did: dids[0], cred: craftworks_identity::credential(&dids[0], &pk0, &[7; 32], &[60; 32]), key_seq: 0, key: pk0, a: wsig(&k0, 1), b: wsig(&k0, 2) };
+        let forged = crate::misdeed::Equivocation { b: wsig(&SigningKey::from_bytes(&[101; 32]), 2), ..proof.clone() };
+        assert!(honest.lines[&dids[0]].keeper > 0, "the control: paid without its misdeed");
+        let with = |misdeeds: &[(u64, Vec<u8>)]| run_with(&Inputs { misdeeds, ..i }, &got, true).0;
+        let ignored = with(&[(3, forged.encode()), (2, b"junk".to_vec())]);
+        assert_eq!(ignored, honest, "an item that does not prove is ignored");
+        let cheat = with(&[(3, forged.encode()), (3, proof.encode()), (2, b"junk".to_vec())]);
+        println!("keeper share: {} without its misdeed, {} with it", honest.lines[&dids[0]].keeper, cheat.lines[&dids[0]].keeper);
+        assert_eq!((cheat.lines[&dids[0]].keeper, cheat.lines[&dids[0]].rep), (0, 0), "a proven cheat earns nothing");
+        assert_eq!(with(&[(2, b"junk".to_vec()), (3, proof.encode()), (3, forged.encode())]), cheat, "order-independent");
+        assert_eq!(with(&[(4, proof.encode())]), honest, "a proof in this epoch's own registry counts from the next");
         // The same through the tools' rule: which account.
         let log_of = |d: &R::Did| got.get(&craftworks_token_contract::id(&ctx.idlog, d)).and_then(|b| craftworks_idlog_contract::read(d, b));
         let listed = R::keepers::listed(&keepers, &log_of);

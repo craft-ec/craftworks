@@ -6,6 +6,7 @@
 pub mod allowance;
 pub mod editions;
 pub mod keeper;
+pub mod misdeed;
 pub mod statement;
 pub mod tokens;
 pub mod wallet;

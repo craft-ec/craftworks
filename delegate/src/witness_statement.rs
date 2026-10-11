@@ -122,6 +122,11 @@ fn epoch<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate, e: u64, height: u64,
     for x in 0..=e {
         items.extend(take(&mut want, chain_items(&got, &lot.bag, &R::item::registry_address, x)).iter().filter_map(|b| R::item::Item::decode(b)));
     }
+    // THE MISDEED REGISTRIES of the epochs before (each item with its bag's epoch).
+    let mut misdeeds: Vec<(u64, Vec<u8>)> = Vec::new();
+    for x in 0..e {
+        misdeeds.extend(take(&mut want, chain_items(&got, &lot.bag, &craftworks_rules::misdeed::registry_address, x)).into_iter().map(|b| (x, b)));
+    }
     let (mut keepers, mut queued, mut before): (Vec<Vec<u8>>, Vec<craftworks_wallet::queue::Queued>, Vec<[u8; 32]>) = Default::default();
     if let Some(b) = e.checked_sub(1) {
         keepers = take(&mut want, chain_items(&got, &lot.bag, &R::keepers::address, b));
@@ -166,7 +171,7 @@ fn epoch<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate, e: u64, height: u64,
         verdicts.borrow_mut().push((k, v));
         Some(v)
     };
-    let inputs = statement::Inputs { epoch: e, items: &items, keepers: &keepers, queued: &queued, posted: &before, earlier: &earlier, ctx: &ctx, lot: &lot, keep: &keep, fresh: &fresh, lines: &lines, audit: Some(&audit) };
+    let inputs = statement::Inputs { epoch: e, items: &items, misdeeds: &misdeeds, keepers: &keepers, queued: &queued, posted: &before, earlier: &earlier, ctx: &ctx, lot: &lot, keep: &keep, fresh: &fresh, lines: &lines, audit: Some(&audit) };
     let built = statement::build(&inputs, &got);
     let new = verdicts.into_inner();
     if !new.is_empty() {

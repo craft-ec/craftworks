@@ -226,13 +226,26 @@ pub struct Pots {
 /// THE STATEMENT of standing epoch `epoch` — the ONE computation (pages publish it, witnesses recompute it): reputation
 /// as of the epoch's START from the signed vouch items standing then (each verified by its voucher's key log,
 /// `log_of`), from the [`crate::ROOTS`], split by `pots` (`kept`: the accounts that proved keeping; `signed`: the
-/// witness signatures each gave).
-pub fn build(epoch: u64, items: &[crate::item::Item], log_of: &dyn Fn(&Did) -> Option<craftworks_idlog_contract::Log>, kept: &[Did], signed: &BTreeMap<Did, u64>, prev: &BTreeMap<Did, Line>, pots: Pots) -> Statement {
+/// witness signatures each gave) — and MISDEEDS (`proven`: each account whose misdeed the registry proves, and the
+/// earliest registry epoch proving it — `crate::misdeed`): a cheat's reputation 0, its vouches passing nothing, never
+/// earning; its direct vouchers charged by their vouch's weight.
+#[allow(clippy::too_many_arguments)]
+pub fn build(epoch: u64, items: &[crate::item::Item], log_of: &dyn Fn(&Did) -> Option<craftworks_idlog_contract::Log>, kept: &[Did], signed: &BTreeMap<Did, u64>, prev: &BTreeMap<Did, Line>, pots: Pots, proven: &BTreeMap<Did, u64>) -> Statement {
+    build_rooted(crate::ROOTS, epoch, items, log_of, kept, signed, prev, pots, proven)
+}
+
+/// [`build`] from the roots `roots` (tests: roots whose keys they hold; the network's are [`crate::ROOTS`]).
+#[allow(clippy::too_many_arguments)]
+pub fn build_rooted(roots: &[Did], epoch: u64, items: &[crate::item::Item], log_of: &dyn Fn(&Did) -> Option<craftworks_idlog_contract::Log>, kept: &[Did], signed: &BTreeMap<Did, u64>, prev: &BTreeMap<Did, Line>, pots: Pots, proven: &BTreeMap<Did, u64>) -> Statement {
     let start = epoch * crate::EPOCH;
-    let vs = crate::item::standing(items, start, log_of);
+    let cheats = crate::misdeed::cheats(epoch, proven);
+    let vs: Vec<crate::Vouch> = crate::item::standing(items, start, log_of).into_iter().filter(|v| !cheats.contains_key(&v.from)).collect();
     let active = active_of(epoch, prev, kept, signed, items);
-    let rep = crate::reputation_active(crate::ROOTS, &vs, start, &|d| active.get(d).copied());
-    compute(&Inputs { epoch, rep: &rep, kept, keeper_pot: pots.keeper.0, keeper_cap: pots.keeper.1, gate: crate::GATE >> pots.halvings.min(127), allowance_pot: pots.allowance.0, allowance_cap: pots.allowance.1, signed, witness_pot: pots.witness.0, witness_cap: pots.witness.1, active: &active, never: crate::ROOTS })
+    let mut rep = crate::reputation_active(roots, &vs, start, &|d| active.get(d).copied());
+    let charges = crate::misdeed::charges(epoch, &cheats, &|h| crate::item::standing(items, h, log_of));
+    crate::misdeed::apply(&mut rep, &cheats, &charges);
+    let never: Vec<Did> = roots.iter().copied().chain(cheats.keys().copied()).collect();
+    compute(&Inputs { epoch, rep: &rep, kept, keeper_pot: pots.keeper.0, keeper_cap: pots.keeper.1, gate: crate::GATE >> pots.halvings.min(127), allowance_pot: pots.allowance.0, allowance_cap: pots.allowance.1, signed, witness_pot: pots.witness.0, witness_cap: pots.witness.1, active: &active, never: &never })
 }
 
 /// Each account's last ACTIVE epoch as of statement `epoch`: the previous statement's (`prev`, its lines), refreshed to
@@ -395,6 +408,43 @@ mod tests {
         no_parity.retain(|c, _| !parity.contains(c));
         assert_eq!(lines_of(&root, &no_parity).map(|l| l.len()), Ok(300));
     }
+    /// MISDEEDS (TOKEN §7d decision 3): root 1 vouches 2 and 4; 2 vouches 3 and 6; 4 vouches 3; 3 vouches 7. 3's misdeed
+    /// is proven in the registry of epoch 8: from the statement of epoch 9 its reputation is 0, 7 (reached only through
+    /// it) gets nothing, it earns nothing though it kept; its direct vouchers 2 and 4 lose exactly their vouch's share
+    /// (2: DAMP / 2 — two vouches; 4: DAMP / 1), for CHARGE_EPOCHS statements; 6 and the root untouched. Any order.
+    #[test]
+    fn a_proven_cheat_is_zeroed_and_its_direct_vouchers_charged_by_their_vouchs_weight() {
+        use crate::item::tests::{did, item, logs};
+        let items = vec![item(1, 2, 10, true), item(1, 4, 10, true), item(2, 3, 20, true), item(2, 6, 20, true), item(4, 3, 20, true), item(3, 7, 30, true)];
+        let pots = Pots { keeper: (1_000_000, 1_000_000), ..Default::default() };
+        let none = BTreeMap::new();
+        let at = |epoch: u64, items: &[crate::item::Item], proven: &BTreeMap<Did, u64>| build_rooted(&[did(1)], epoch, items, &logs, &[did(3)], &none, &BTreeMap::new(), pots, proven);
+        let proven: BTreeMap<Did, u64> = [(did(3), 8)].into_iter().collect();
+        let rep = |s: &Statement, n: u8| s.lines.get(&did(n)).map_or(0, |l| l.rep);
+        for e in [9, 20, 8 + crate::misdeed::CHARGE_EPOCHS] {
+            let (with, without) = (at(e, &items, &proven), at(e, &items, &BTreeMap::new()));
+            println!("epoch {e}: 2 {} → {}, 3 {} → {}, 4 {} → {}, 6 {} → {}, 7 {} → {}", rep(&without, 2), rep(&with, 2), rep(&without, 3), rep(&with, 3), rep(&without, 4), rep(&with, 4), rep(&without, 6), rep(&with, 6), rep(&without, 7), rep(&with, 7));
+            assert!(rep(&without, 3) > 0 && rep(&without, 7) > 0, "the control: the cheat and its vouchee had reputation");
+            assert_eq!((rep(&with, 3), rep(&with, 7)), (0, 0), "the cheat zeroed, passing nothing on");
+            let charged = |r: u128, f: u128| r - r * f / crate::ONE;
+            assert_eq!(rep(&with, 2), charged(rep(&without, 2), crate::ONE * 85 / 200), "2: DAMP / 2");
+            assert_eq!(rep(&with, 4), charged(rep(&without, 4), crate::ONE * 85 / 100), "4: DAMP / 1");
+            assert_eq!((rep(&with, 1), rep(&with, 6)), (rep(&without, 1), rep(&without, 6)), "the root and 6 untouched");
+            // It KEPT: paid without its misdeed (bootstrap), never with it.
+            assert!(without.lines[&did(3)].keeper > 0);
+            assert_eq!(with.lines[&did(3)].keeper, 0);
+            // Order-independent.
+            let mut rev = items.clone();
+            rev.reverse();
+            assert_eq!(at(e, &rev, &proven), with);
+        }
+        // Proven in epoch 8's registry: not yet in epoch 8's statement (that registry still filling).
+        assert_eq!(at(8, &items, &proven), at(8, &items, &BTreeMap::new()));
+        // After CHARGE_EPOCHS the vouchers are no longer charged; the cheat stays at 0.
+        let (late, late_without) = (at(9 + crate::misdeed::CHARGE_EPOCHS, &items, &proven), at(9 + crate::misdeed::CHARGE_EPOCHS, &items, &BTreeMap::new()));
+        assert_eq!((rep(&late, 2), rep(&late, 4), rep(&late, 3)), (rep(&late_without, 2), rep(&late_without, 4), 0));
+    }
+
     fn lines_of(root: &Cid, b: &BTreeMap<Cid, Vec<u8>>) -> Result<BTreeMap<Did, Line>, Vec<Cid>> {
         lines(root, &|c| b.get(c).cloned())
     }

@@ -34,6 +34,8 @@ struct World {
     items: Vec<R::item::Item>,
     keepers: Vec<Vec<u8>>,
     posted_before: Vec<[u8; 32]>,
+    /// What it reads from the misdeed registries (`[(epoch, item)]`).
+    misdeeds: Vec<(u64, Vec<u8>)>,
 }
 
 /// The beacon's output at a height (testlot's outputs log).
@@ -64,6 +66,7 @@ fn world() -> World {
     }
     let mut keepers = Vec::new();
     let mut voucher = [0; 32];
+    let mut misdeeds = Vec::new();
     for (n, honest) in [(0u8, true), (1u8, false)] {
         let owner_seed = [160 + n; 32];
         let next = SigningKey::from_bytes(&[180 + n; 32]).verifying_key().to_bytes();
@@ -74,6 +77,16 @@ fn world() -> World {
         let key = SigningKey::from_bytes(&[200 + n; 32]);
         let public = key.verifying_key().to_bytes();
         got.insert(t::id(&ctx.idlog, &did), log.encode());
+        // THE HONEST KEEPER's device equivocated (two witness signatures at one place), proven in epoch 3's MISDEED
+        // REGISTRY: epoch 5's statement pays it nothing — the page's build and the delegate's must both read it.
+        if honest {
+            let ws = |entry: u8| {
+                let m = t::witness::WitnessSig::message(&[9; 32], 1, &[entry; 32], 3 * EPOCH);
+                t::witness::WitnessSig { chain: [9; 32], seq: 1, entry: [entry; 32], at: 3 * EPOCH, sig: key.sign(&m).to_bytes() }
+            };
+            let proof = craftworks_rules::misdeed::Equivocation { did, cred: craftworks_identity::credential(&did, &public, &[7; 32], &owner_seed), key_seq: 0, key: public, a: ws(1), b: ws(2) };
+            misdeeds.push((3, proof.encode()));
+        }
         keepers.push(R::keepers::Keeper { did, cred: craftworks_identity::credential(&did, &public, &[7; 32], &owner_seed), key_seq: 0 }.encode());
         let rid = record_id(&keep, &public);
         got.insert(rid, vec![]);
@@ -105,6 +118,7 @@ fn world() -> World {
     // A VOUCH ITEM in epoch 3's registry (its signature junk: the rule drops it — the key log is read all the same).
     let items = vec![R::item::Item { from: voucher, to: [12; 32], at: 3 * R::EPOCH + 5, on: true, cred: vec![], key_seq: 0, sig: [0; 64] }];
     bag_put(&mut got, &tl.lot.bag, R::item::registry_address(3, 0), &[items[0].encode()]);
+    bag_put(&mut got, &tl.lot.bag, craftworks_rules::misdeed::registry_address(3, 0), &misdeeds.iter().map(|m| m.1.clone()).collect::<Vec<_>>());
     // EPOCH 4's STATEMENT: posted, accepted (4 of its 6 seats signed it), its tree in Block contracts — its lines carry.
     let prev = R::statement::Statement { epoch: E - 1, lines: [([0x55; 32], R::statement::Line { active: 3, ..Default::default() })].into_iter().collect() };
     let mut blocks = BTreeMap::new();
@@ -115,13 +129,16 @@ fn world() -> World {
     }
     bag_put(&mut got, &tl.lot.bag, R::statement::bag_address(E - 1), &[R::statement::Posted { epoch: E - 1, root: root4, parity }.encode()]);
     testlot::witness_statement(&tl, &mut got, ctx.code_hash, ctx.beacon, E - 1, &root4, 4);
-    World { ctx, tl, keep, got, items, keepers, posted_before: vec![root4] }
+    World { ctx, tl, keep, got, items, keepers, posted_before: vec![root4], misdeeds }
 }
 
 /// THE PAGE'S PATH: `rules::statement::build` over what the page's `statement` service reads (as core
 /// `statement_build` calls it: each read fresh, the previous statement's lines from its Block contracts, every audit
 /// sealed in the call), each read asked answered from `w.got` (not there: empty) — and the root of its tree.
 fn page_root(w: &World) -> ([u8; 32], usize) {
+    page_root_with(w, &w.misdeeds)
+}
+fn page_root_with(w: &World, misdeeds: &[(u64, Vec<u8>)]) -> ([u8; 32], usize) {
     let block_id = contract_keys::block::contract_deriver_of_hash(BLOCK);
     let mut g = w.got.clone();
     for _ in 0..16 {
@@ -129,7 +146,7 @@ fn page_root(w: &World) -> ([u8; 32], usize) {
         let got = |x: &[u8; 32]| gg.get(x).cloned();
         let fresh = |_: &[u8; 32]| true;
         let lines = |root: &[u8; 32]| R::statement::lines(root, &|c| got(&block_id(c)).filter(|s| s.len() > 1).map(|s| s[1..].to_vec())).map_err(|cids| cids.iter().map(&block_id).collect());
-        let i = craftworks_rules::statement::Inputs { epoch: E, items: &w.items, keepers: &w.keepers, queued: &[], posted: &w.posted_before, earlier: &[], ctx: &w.ctx, lot: &w.tl.lot, keep: &w.keep, fresh: &fresh, lines: &lines, audit: None };
+        let i = craftworks_rules::statement::Inputs { epoch: E, items: &w.items, misdeeds, keepers: &w.keepers, queued: &[], posted: &w.posted_before, earlier: &[], ctx: &w.ctx, lot: &w.tl.lot, keep: &w.keep, fresh: &fresh, lines: &lines, audit: None };
         match craftworks_rules::statement::build(&i, &got).unwrap() {
             Step::Done((st, kept)) => {
                 assert!(st.lines.contains_key(&[0x55; 32]), "epoch 4's accepted lines carried (read from its Block contracts)");
@@ -187,6 +204,7 @@ fn a_seated_member_away_from_their_page_signs_the_statement_root_the_page_builds
     let mut w = world();
     let (root, kept) = page_root(&w);
     assert_eq!(kept, 1, "the page's build: the honest keeper alone kept");
+    assert_ne!(page_root_with(&w, &[]).0, root, "the misdeed changes the root (its keeper unpaid): the delegate must read it");
     bag_put(&mut w.got, &w.tl.lot.bag, R::statement::bag_address(E), &[R::statement::Posted { epoch: E, root, parity: vec![] }.encode()]);
     let (mut h, key) = member_node(&w);
     let said = |h: &Map| -> Vec<String> { h.0.iter().filter(|(k, _)| k.starts_with(b"identity_upkeep/said")).map(|(_, v)| String::from_utf8_lossy(v).into()).collect() };

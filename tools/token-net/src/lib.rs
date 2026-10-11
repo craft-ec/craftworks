@@ -231,6 +231,7 @@ impl<'a> Reader<'a> {
         use craftworks_reputation::statement::{bag_address, Posted, CARRY_BACK};
         let items: Vec<R::item::Item> = (0..=epoch).flat_map(|e| self.chained(R::item::registry_address, e)).filter_map(|b| R::item::Item::decode(&b)).collect();
         let keepers: Vec<Vec<u8>> = epoch.checked_sub(1).map_or(vec![], |e| self.chained(R::keepers::address, e));
+        let misdeeds: Vec<(u64, Vec<u8>)> = (0..epoch).flat_map(|e| self.chained(craftworks_rules::misdeed::registry_address, e).into_iter().map(move |b| (e, b))).collect();
         let queued = epoch.checked_sub(1).map_or(vec![], |e| self.queue(e));
         let roots = |x: u64| self.bag(bag_address(x)).iter().filter_map(|p| Posted::decode(p)).filter(|p| p.epoch == x).map(|p| p.root).collect::<Vec<_>>();
         let posted = epoch.checked_sub(1).map_or(vec![], roots);
@@ -241,7 +242,7 @@ impl<'a> Reader<'a> {
         let fresh = |_: &[u8; 32]| true;
         let block = |c: &[u8; 32]| self.get(contract_keys::block::contract_for(&self.net.block_code, c)).filter(|s| s.len() > 1).map(|s| s[1..].to_vec());
         let lines = |root: &[u8; 32]| R::statement::lines(root, &block).map_err(|_| Vec::new());
-        let inputs = craftworks_rules::statement::Inputs { epoch, items: &items, keepers: &keepers, queued: &queued, posted: &posted, earlier: &earlier, ctx: &ctx, lot: &lot, keep: &keep, fresh: &fresh, lines: &lines, audit: None };
+        let inputs = craftworks_rules::statement::Inputs { epoch, items: &items, misdeeds: &misdeeds, keepers: &keepers, queued: &queued, posted: &posted, earlier: &earlier, ctx: &ctx, lot: &lot, keep: &keep, fresh: &fresh, lines: &lines, audit: None };
         let got = |x: &[u8; 32]| Some(self.get(*x).unwrap_or_default());
         match craftworks_rules::statement::build(&inputs, &got).ok()? {
             craftworks_rules::tokens::Step::Done((st, _)) => st.tree(&mut std::collections::BTreeMap::new()).map(|(root, _)| root),
@@ -274,6 +275,61 @@ impl<'a> Reader<'a> {
         let sig = witness::WitnessSig { chain: place, seq: 0, entry: mine, at: now, sig: key.sign(&witness::WitnessSig::message(&place, 0, &mine, now)).to_bytes() };
         self.put_sig(&self.place(&place, 0, ce), &me, &sig).map_err(|e| e.to_string())?;
         Ok(Some(mine))
+    }
+
+    /// THE MISDEED WATCH (TOKEN §7d decision 3): the EQUIVOCATIONS among the witness signatures on standing epoch
+    /// `epoch`'s queued entries and on its statement (`wallet::equivocations`, the token's own find), each as a
+    /// self-proving registry item (`rules::misdeed::Equivocation`): the staker's credential for the key read from its
+    /// pool chain's writer entries, the proof checked against its key log (one that does not hold is left out).
+    pub fn misdeeds(&self, epoch: u64) -> Vec<craftworks_rules::misdeed::Equivocation> {
+        use craftworks_reputation::statement::{lot_height, witness_place};
+        let mut places: Vec<([u8; 32], u64, u64)> = Vec::new();
+        for q in self.queue(epoch) {
+            let (Some(d), Some(p), Some(s)) = (self.definition(&q.token.definition), self.params(&q.token, &q.owner), self.chain(&q.token, &q.owner)) else { continue };
+            let Some(i) = s.entries.iter().position(|e| e.seq == q.seq) else { continue };
+            let Ok((ce, _)) = wallet::lot_of(&s.entries[i], i.checked_sub(1).map(|j| &s.entries[j]), d.margin) else { continue };
+            places.push((p.id(), q.seq, ce));
+        }
+        places.push((witness_place(epoch), 0, lot_height(epoch) / T::supply::EPOCH));
+        places.sort();
+        places.dedup();
+        let pool = Tok { definition: self.net.pool, item: [0; 32] };
+        let mut out: Vec<craftworks_rules::misdeed::Equivocation> = Vec::new();
+        for (chain, seq, ce) in places {
+            for (owner, body) in wallet::equivocations(&self.sigs(&chain, seq, ce), &self.raw_claims(ce)) {
+                let T::Body::Slash { key, a, b } = body else { continue };
+                if out.iter().any(|x| x.did == owner) {
+                    continue;
+                }
+                let (Some(log), Some(st)) = (self.keys(&owner), self.chain(&pool, &owner)) else { continue };
+                let found = st.entries.iter().rev().find_map(|e| match &e.body {
+                    T::Body::Writer { cred, key_seq } => {
+                        let x = craftworks_rules::misdeed::Equivocation { did: owner, cred: cred.clone(), key_seq: *key_seq, key, a: a.clone(), b: b.clone() };
+                        x.holds(&log).then_some(x)
+                    }
+                    _ => None,
+                });
+                out.extend(found);
+            }
+        }
+        out
+    }
+
+    /// POST `payload` into `epoch`'s CHAINED list `address_of` — into the first bag with room — unless it is there
+    /// already: `Ok(None)` there already, `Ok(Some(answer))` the node's answer to the put.
+    pub fn post_chained(&self, address_of: fn(u64, u32) -> [u8; 32], epoch: u64, payload: &[u8]) -> anyhow::Result<Option<String>> {
+        for k in 0..64 {
+            let addr = address_of(epoch, k);
+            let items = self.bag(addr);
+            if items.iter().any(|i| i == payload) {
+                return Ok(None);
+            }
+            // (A bag not FULL takes it — readers go on past a full one only: `chained::full`.)
+            if !craftworks_bag_contract::chained::full(items.iter().map(Vec::len)) {
+                return self.drop(addr, payload).map(Some);
+            }
+        }
+        anyhow::bail!("every bag of epoch {epoch} is full")
     }
 
     /// WITNESS one queued entry with `key`: `Ok(Some(sig))` signed (and put into its place's container), `Ok(None)` not

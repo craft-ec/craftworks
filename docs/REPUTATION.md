@@ -38,7 +38,11 @@ design and implement for our whole ecosystem." This is that design. Status: DESI
   heights), so reputation cannot be borrowed for one draw and handed back.
 - **STAKED ON THE VOUCHEE.** A proven misdeed of B (the token's: two signatures at one place, a fake credit, a false
   verdict, a false mint — each self-proving, TOKEN §7a) zeroes B and costs every voucher of B a share of its own
-  reputation for a period. Vouching is a bet; whoever vouches for sybils pays when one cheats.
+  reputation for a period. Vouching is a bet; whoever vouches for sybils pays when one cheats. BUILT 10-11 for two
+  signatures at one place (TOKEN §7d decision 3, `reputation::misdeed`): proven in the MISDEED REGISTRY of epoch `p`,
+  B is 0 and passes nothing from the statement of `p + 1` on; each DIRECT voucher (its vouch counted and standing at
+  `p`'s start) loses `0.85 × ramp / n` of its reputation — the share that vouch carried, `n` its vouches — for 30
+  statements. The others (fake credit, false verdict, false mint) need the cited chain to show: open (TOKEN §8).
 - **Decay:** an account that stops taking part (no standing record for some epochs) passes on less; nothing is
   permanent without presence.
 
@@ -115,6 +119,9 @@ Two parts, one path from bootstrap to the token:
    crawls vouches outward from the roots (≤ 400 accounts, kept 10 min) and the person panel shows "Reputation N ·
    vouched by K · heads a family". LIVE fx: B's panel reads "none yet" — A vouched for B, but nothing links A to the
    owner's root (as designed).
-4. Burns reaching reputation: a misdeed proof zeroes the account and charges its vouchers.
+4. BUILT 10-11 (equivocation) — burns reaching reputation: a misdeed proof in the registry zeroes the account and
+   charges its direct vouchers (§3; TOKEN §7d decision 3). Measured in the test: vouchers with 2 and 1 vouches lost
+   42.5% and 85% of their reputation (fully ramped), a sibling vouchee of the voucher and the root unchanged, the cheat's
+   only vouchee 0.
 5. Keeper issuance (TOKEN §7d): `KeeperMint` — the token checks the standing proof and the amount; witnesses the gate.
 6. The lot weighted by that stake (already: §7a's earned stake).

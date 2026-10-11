@@ -11,6 +11,9 @@
 //!       A TOKEN made by the account the words hold: its definition (the account its creator, the whole supply its
 //!       genesis), its authority chain and freeze list, and the account's chain begun — written by a device of the
 //!       account this tool keeps (its seed file; credentialed by the words' owner key). Prints the token's id.
+//!   token-ops misdeed <token.wasm> <idlog.wasm> <bag.wasm> <ws> <beacon hex> <pool hex | craft> <standing epoch>… [--post]
+//!       THE MISDEED WATCH: witness equivocations in those epochs as self-proving proofs; --post puts each into the
+//!       misdeed registry of the epoch now (TOKEN §7d decision 3: reputation 0, direct vouchers charged).
 use anyhow::{bail, Context, Result};
 use craftworks_beacon_contract as B;
 use craftworks_token_contract as T;
@@ -515,6 +518,48 @@ async fn main() -> Result<()> {
                     }
                     std::thread::sleep(tick);
                 }
+            })
+            .await?
+        }
+        Some("misdeed") => {
+            // token-ops misdeed <token.wasm> <idlog.wasm> <bag.wasm> <ws> <beacon hex> <pool hex | craft> <standing epoch>… [--post]
+            // (beacon.wasm, standing.wasm, block.wasm beside token.wasm): THE MISDEED WATCH (TOKEN §7d decision 3) — every
+            // witness EQUIVOCATION on those epochs' queued entries and statements, as a self-proving proof; with --post,
+            // each posted into the MISDEED REGISTRY of the epoch now (anyone may: it counts from the next statement on —
+            // the account's reputation 0, its direct vouchers charged).
+            let post = a.iter().any(|x| x == "--post");
+            let (code_hash, idlog_hash, beacon) = (*blake3::hash(&std::fs::read(&a[2])?).as_bytes(), *blake3::hash(&std::fs::read(&a[3])?).as_bytes(), unhex32(&a[6])?);
+            let pool = if a[7] == "craft" { T::id(&code_hash, &craftworks_wallet::craft::definition(code_hash, beacon, idlog_hash).encode()) } else { unhex32(&a[7])? };
+            let net = token_net::Net {
+                ws: a[5].clone(),
+                code_hash,
+                code: std::fs::read(&a[2])?,
+                idlog_hash,
+                bag_code: std::fs::read(&a[4])?,
+                beacon_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes(),
+                beacon,
+                pool,
+                standing_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("standing.wasm"))?).as_bytes(),
+                block_code: std::fs::read(std::path::Path::new(&a[2]).with_file_name("block.wasm"))?,
+            };
+            let epochs: Vec<u64> = a[8..].iter().filter(|x| *x != "--post").map(|e| e.parse()).collect::<Result<_, _>>()?;
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                let r = token_net::Reader::new(&net)?;
+                let now = r.height() / craftworks_reputation::EPOCH;
+                for e in epochs {
+                    for m in r.misdeeds(e) {
+                        let said = if post {
+                            match r.post_chained(craftworks_rules::misdeed::registry_address, now, &m.encode())? {
+                                None => format!("in epoch {now}'s registry already"),
+                                Some(answer) => format!("posted to epoch {now}'s registry: {answer}"),
+                            }
+                        } else {
+                            "found (--post to post it)".into()
+                        };
+                        println!("epoch {e}: {} key {} signed {} and {} at seq {} — {said}", hex(&m.did[..4]), hex(&m.key[..4]), hex(&m.a.entry[..4]), hex(&m.b.entry[..4]), m.a.seq);
+                    }
+                }
+                Ok(())
             })
             .await?
         }

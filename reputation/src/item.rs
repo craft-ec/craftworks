@@ -115,7 +115,7 @@ pub(crate) mod tests {
         log(n).events[0].id()
     }
     /// A vouch item by person `n`'s device (key `[n+10; 32]`).
-    fn item(n: u8, to: u8, at: u64, on: bool) -> Item {
+    pub(crate) fn item(n: u8, to: u8, at: u64, on: bool) -> Item {
         let dev = SigningKey::from_bytes(&[n + 10; 32]);
         let cred = craftworks_identity::credential(&did(n), &dev.verifying_key().to_bytes(), &[], &owner_seed(n));
         let sig = dev.sign(&Item::message(&did(n), &did(to), at, on)).to_bytes();
