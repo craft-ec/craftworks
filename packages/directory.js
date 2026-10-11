@@ -70,6 +70,9 @@ export async function start(ctx) {
           return [];
         }
       })(),
+      // Whether the account HAS a devices contract (its own word, written once it put one): readers look it up only then
+      // — an absent contract is never searched for.
+      hasDevices: rows.find(r => r.key === "devices")?.value === "1",
       // The DID's key packages (a list; one picked at random for each conversation started — `keyPackages`: all).
       ...(() => {
         let list = [];
@@ -163,7 +166,9 @@ export async function start(ctx) {
     const creds = (st?.members ?? []).map(m => m.cred).filter(Boolean).sort();
     // And into the account's DEVICES contract (a grow-only set: the union is kept) — where readers count them.
     const me = await auth.check().catch(() => null);
-    if (me && creds.length) await auth.identity.addDevices(me.didBytes, creds.map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))))).catch(e => ctx.log("card", { what: `the account's devices: ${e.message}` }));
+    const put = me && creds.length ? await auth.identity.addDevices(me.didBytes, creds.map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))))).then(() => true, e => (ctx.log("card", { what: `the account's devices: ${e.message}` }), false)) : false;
+    // Said on the card once the contract is put: what readers check before looking it up.
+    if (put && !read(t).hasDevices) await t.put("devices", "1");
     if (!creds.length || JSON.stringify(creds) === JSON.stringify(read(t).nodes.slice().sort())) return;
     await t.put("nodes", JSON.stringify(creds));
   }
@@ -252,19 +257,31 @@ export async function start(ctx) {
         (async () => {
           const none = why => (deviceWhy.set(did, why), []);
           if (!(await keysOf(did))) return none("their key log not read");
-          // Their DEVICES contract (owner 10-09): the devices on the key log's CURRENT key. Its card only until the
-          // account has one (the card is the data key's: any of its devices could rewrite it).
-          const devicesCode = await ctx.require("devices-wasm");
-          if (await auth.identity.readDevices(didBytes(did))) {
-            const now = core.account_devices(devicesCode, idlogCode, didBytes(did));
-            if (now) return (deviceWhy.delete(did), Array.from(now));
-          }
+          // Their DEVICES contract (owner 10-09): the devices on the key log's CURRENT key — looked up only when their
+          // card says they have one (an absent contract costs a whole network search on every page). Their card's
+          // devices otherwise (the card is the data key's: any of its devices could rewrite it).
           const c = await card(did, { fresh });
-          if (!c) return none("no devices contract, their card not read");
-          if (!c.nodes.length) return none("no devices contract, their card lists no device");
-          const creds = c.nodes.map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))));
-          const out = Array.from(core.account_members(idlogCode, didBytes(did), creds, []));
-          return out.length ? (deviceWhy.delete(did), out) : none(`no devices contract, none of their card's ${creds.length} device(s) on their key log`);
+          const contract = async () => {
+            const devicesCode = await ctx.require("devices-wasm");
+            if (!(await auth.identity.readDevices(didBytes(did)))) return null;
+            const now = core.account_devices(devicesCode, idlogCode, didBytes(did));
+            return now ? Array.from(now) : null;
+          };
+          if (c?.hasDevices) {
+            const now = await contract();
+            if (now) return (deviceWhy.delete(did), now);
+          }
+          const creds = (c?.nodes ?? []).map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))));
+          const out = creds.length ? Array.from(core.account_members(idlogCode, didBytes(did), creds, [])) : [];
+          if (out.length) return (deviceWhy.delete(did), out);
+          // Nothing on the card counts (no card read, or its devices on a key the log moved past) and it does not say
+          // yet: an account that put its contract before cards said so — looked up then only.
+          if (!c?.hasDevices) {
+            const now = await contract();
+            if (now) return (deviceWhy.delete(did), now);
+          }
+          if (!c) return none("their card not read");
+          return none(c.nodes.length ? `none of their card's ${creds.length} device(s) on their key log` : "their card lists no device");
         })().catch(e => (deviceWhy.set(did, `reading their devices: ${String(e?.message ?? e).slice(0, 80)}`), [])),
       );
     return deviceSets.get(did);

@@ -772,3 +772,37 @@ fn a_members_devices_are_read_from_their_devices_contract_on_the_current_key() {
     // The removed device's old credential alone, after the rotation: no writer.
     assert_eq!(writers(&rotated, &creds0[1..]), Vec::<[u8; 32]>::new());
 }
+
+#[test]
+fn a_members_devices_contract_is_asked_for_only_when_their_card_says_or_nothing_on_it_counts() {
+    // One account, device A on its card; its devices contract absent from the network (an account never made one).
+    let words = [0x31u8; 16];
+    let log = craftworks_idlog_contract::Log { events: vec![craftworks_account::inception(&words).unwrap()] };
+    let did = log.events[0].id();
+    let a = [0xA2; 32];
+    let cred = identity::credential(&did, &a, &[1], &craftworks_account::owner_seed(&words).unwrap());
+    let dev = upkeep::id_of(&contract_keys::code_hash(DEVICES), &craftworks_devices_contract::params(&did, &contract_keys::code_hash(IDLOG)));
+    // (writers, whether the devices contract was asked) for a card with these rows.
+    let read = |rows: Vec<(&str, String)>| {
+        let mut net = Net::default();
+        net.0.insert(upkeep::id_of(&contract_keys::code_hash(IDLOG), &did), log.encode());
+        let data_key = SigningKey::from_bytes(&craftworks_account::data_seed(&words).unwrap());
+        let mut card = data::Open::new(TAIL, &data_key.verifying_key().to_bytes(), "card");
+        card.public = true;
+        let ops = rows.into_iter().map(|(k, v)| tail::Op::Set { key: k.as_bytes().to_vec(), value: v.into_bytes() }).collect();
+        let (seq, hh) = card.prepare(ops).unwrap();
+        let pp = craftec_register_contract::wire::Params::parse(&card.params).unwrap();
+        card.commit(data_key.sign(&pp.signed_message(false, seq, &hh)).to_bytes()).unwrap();
+        net.0.insert(card.id_bytes(), card.state());
+        let (mut r, first) = Reading::of_members(&codes(), SPACE, BTreeMap::new(), &[did], &["files"]);
+        let asked = run(&mut r, first, &net);
+        (r.writer_dids().iter().map(|(k, _)| *k).collect::<Vec<_>>(), asked.contains(&dev))
+    };
+    let nodes = serde_json::to_string(&vec![table::hex(&cred)]).unwrap();
+    // The card's device counts and it does not say: the contract is never asked for.
+    assert_eq!(read(vec![("nodes", nodes.clone())]), (vec![a], false));
+    // It says so: asked (absent here — the card's device still counts).
+    assert_eq!(read(vec![("nodes", nodes), ("devices", "1".into())]), (vec![a], true));
+    // CONTROL: nothing on the card counts — asked, as for an account that made one before cards said so.
+    assert_eq!(read(vec![("nodes", "[]".into())]), (vec![], true));
+}

@@ -83,7 +83,7 @@ pub struct Reading {
     /// Something did not read (named, for the round's log).
     pub notes: Vec<String>,
     /// MEMBERS whose devices are still being read: `(did, their key log's state once got, the contract waited on)`.
-    resolving: Vec<([u8; 32], Option<Vec<u8>>, [u8; 32])>,
+    resolving: Vec<([u8; 32], Option<Vec<u8>>, [u8; 32], Option<Vec<Vec<u8>>>)>,
     /// Each writer's DID (a device of a member, or a roster writer given): whose acts are whose.
     pub writer_dids: Vec<([u8; 32], String)>,
 }
@@ -163,7 +163,7 @@ impl Reading {
         let mut io = Vec::new();
         for did in members {
             let id = crate::upkeep::id_of(&c.idlog_hash, did);
-            r.resolving.push((*did, None, id));
+            r.resolving.push((*did, None, id, None));
             io.push(Io::Get { id, subscribe: false });
         }
         if members.is_empty() {
@@ -172,67 +172,71 @@ impl Reading {
         (r, io)
     }
 
-    /// A member's key log or card answered: their devices, once both are in; the bag once every member's are.
+    /// A member's key log, card or devices contract answered: their devices, once known; the bag once every member's are.
+    /// Order (as `directory.devices`): the KEY LOG, then the CARD, then the DEVICES contract only where the card says
+    /// the account has one (`devices`), or where nothing on the card counts — an absent contract is never searched for
+    /// on every round.
     fn resolved(&mut self, c: &Codes, at: usize, state: Option<Vec<u8>>) -> Vec<Io> {
-        let (did, log, _) = self.resolving[at].clone();
-        match log {
+        let (did, log, _, card_creds) = self.resolving[at].clone();
+        let Some(log_state) = log else {
+            // Their KEY LOG: its head names their data key — their card's address.
+            let Some(st) = state.filter(|st| craftworks_idlog_contract::read(&did, st).is_some()) else {
+                self.notes.push(format!("{}: no key log", craftworks_account::did(&did)));
+                self.resolving.remove(at);
+                return self.members_done(c);
+            };
+            let log = craftworks_idlog_contract::read(&did, &st).expect("checked");
+            let card = data::Open::new(c.tail, &log.head().data, "card").id_bytes();
+            self.resolving[at] = (did, Some(st), card, None);
+            return vec![Io::Get { id: card, subscribe: false }];
+        };
+        let log = craftworks_idlog_contract::read(&did, &log_state).expect("checked when got");
+        let dev = crate::upkeep::id_of(&c.devices_hash, &craftworks_devices_contract::params(&did, &c.idlog_hash));
+        let name = craftworks_account::did(&did);
+        let found = match card_creds {
             None => {
-                // Their KEY LOG: its head names their data key — their card's address.
-                let Some(st) = state.filter(|st| craftworks_idlog_contract::read(&did, st).is_some()) else {
-                    self.notes.push(format!("{}: no key log", craftworks_account::did(&did)));
-                    self.resolving.remove(at);
-                    return self.members_done(c);
-                };
-                // Their DEVICES contract first.
-                let dev = crate::upkeep::id_of(&c.devices_hash, &craftworks_devices_contract::params(&did, &c.idlog_hash));
-                self.resolving[at] = (did, Some(st), dev);
-                vec![Io::Get { id: dev, subscribe: false }]
-            }
-            Some(log_state) => {
-                let log = craftworks_idlog_contract::read(&did, &log_state).expect("checked when got");
-                let card = data::Open::new(c.tail, &log.head().data, "card").id_bytes();
-                if self.resolving[at].2 != card {
-                    // Their DEVICES contract: the devices on the key log's current key.
-                    if let Some(creds) = state.as_deref().and_then(craftworks_devices_contract::decode) {
-                        let name = craftworks_account::did(&did);
-                        for (node, _) in craftworks_devices_contract::current(&did, &log, &creds) {
-                            if !self.writers.contains(&node) {
-                                self.writers.push(node);
-                                self.writer_dids.push((node, name.clone()));
-                            }
-                        }
-                        self.resolving.remove(at);
-                        return self.members_done(c);
-                    }
-                    // None yet: their CARD (as before the devices contract).
-                    self.resolving[at].2 = card;
-                    return vec![Io::Get { id: card, subscribe: false }];
-                }
-                // Their CARD: its `nodes`, each credential checked against the key log.
+                // Their CARD: its `nodes` (each credential checked against the key log), and whether it says the account
+                // has a devices contract.
                 let mut o = data::Open::new(c.tail, &log.head().data, "card");
                 o.public = true;
-                let creds: Vec<Vec<u8>> = state
-                    .filter(|st| o.absorb(st))
-                    .and_then(|_| match o.opened() {
-                        Ok(data::Step::Ready(rows)) => rows.get(b"nodes".as_slice()).cloned(),
-                        _ => None,
-                    })
+                let rows = state.filter(|st| o.absorb(st)).and_then(|_| match o.opened() {
+                    Ok(data::Step::Ready(rows)) => Some(rows),
+                    _ => None,
+                });
+                let marked = rows.as_ref().and_then(|r| r.get(b"devices".as_slice())).is_some_and(|v| v.as_slice() == b"1");
+                let creds: Vec<Vec<u8>> = rows
+                    .and_then(|r| r.get(b"nodes".as_slice()).cloned())
                     .and_then(|v| serde_json::from_slice::<Vec<String>>(&v).ok())
                     .unwrap_or_default()
                     .iter()
                     .filter_map(|h| (0..h.len() / 2).map(|i| u8::from_str_radix(h.get(2 * i..2 * i + 2)?, 16).ok()).collect())
                     .collect();
-                let name = craftworks_account::did(&did);
-                for node in craftworks_account::members(&did, &log, &creds, &[]) {
-                    if !self.writers.contains(&node) {
-                        self.writers.push(node);
-                        self.writer_dids.push((node, name.clone()));
-                    }
+                let on_card = craftworks_account::members(&did, &log, &creds, &[]);
+                if marked || on_card.is_empty() {
+                    // Their DEVICES contract: said on the card, or nothing on the card counts.
+                    self.resolving[at] = (did, Some(log_state), dev, Some(creds));
+                    return vec![Io::Get { id: dev, subscribe: false }];
                 }
-                self.resolving.remove(at);
-                self.members_done(c)
+                on_card
+            }
+            Some(creds) => {
+                // Their DEVICES contract: the devices on the key log's current key — else the card's, as read.
+                let now: Vec<[u8; 32]> = state
+                    .as_deref()
+                    .and_then(craftworks_devices_contract::decode)
+                    .map(|all| craftworks_devices_contract::current(&did, &log, &all).into_iter().map(|(node, _)| node).collect())
+                    .unwrap_or_default();
+                if now.is_empty() { craftworks_account::members(&did, &log, &creds, &[]) } else { now }
+            }
+        };
+        for node in found {
+            if !self.writers.contains(&node) {
+                self.writers.push(node);
+                self.writer_dids.push((node, name.clone()));
             }
         }
+        self.resolving.remove(at);
+        self.members_done(c)
     }
     fn members_done(&mut self, _c: &Codes) -> Vec<Io> {
         if self.resolving.is_empty() {
@@ -249,7 +253,7 @@ impl Reading {
 
     /// Whether this read waits on contract `id`.
     pub fn wants(&self, id: &[u8; 32]) -> bool {
-        self.bag == Some(*id) && !self.bag_read || self.waiting.iter().any(|(w, _, _)| w == id) || self.resolving.iter().any(|(_, _, w)| w == id)
+        self.bag == Some(*id) && !self.bag_read || self.waiting.iter().any(|(w, _, _)| w == id) || self.resolving.iter().any(|(_, _, w, _)| w == id)
     }
 
     /// A tail opened as its job says: its keys, its state, its blocks.
@@ -396,7 +400,7 @@ impl Reading {
 
     /// An ANSWER: the bag (its writers' catalogs asked), a tail (read on), or a block (read on).
     pub fn got(&mut self, c: &Codes, id: [u8; 32], state: Option<Vec<u8>>) -> Vec<Io> {
-        if let Some(at) = self.resolving.iter().position(|(_, _, w)| *w == id) {
+        if let Some(at) = self.resolving.iter().position(|(_, _, w, _)| *w == id) {
             return self.resolved(c, at, state);
         }
         if self.bag == Some(id) && !self.bag_read {
