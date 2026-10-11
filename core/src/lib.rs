@@ -2630,75 +2630,30 @@ mod js {
             let epoch = epoch as u64;
             let items: Vec<R::item::Item> = bytes_list(&items).iter().filter_map(|b| R::item::Item::decode(b)).collect();
             let keepers = bytes_list(&keepers);
-            let mut want: Vec<String> = Vec::new();
-            let accounts = items.iter().map(|i| i.from).chain(keepers.iter().filter_map(|b| R::keepers::Keeper::decode(b)).map(|k| k.did));
-            for d in accounts {
-                let id = account::idlog_put(idlog_code, &d, None).id_bytes;
-                if self.0.got(&id).is_none() && !want.contains(&hex(&id)) {
-                    want.push(hex(&id));
-                }
-            }
-            if !want.is_empty() {
-                return js_sys::JSON::parse(&json!({ "want": want }).to_string());
-            }
-            let log_of = |d: &R::Did| {
-                let id = account::idlog_put(idlog_code, d, None).id_bytes;
-                self.0.got(&id).filter(|b| !b.is_empty()).and_then(|b| craftworks_idlog_contract::read(d, b))
-            };
-            // KEPT (the epoch before): each listed keeper's standing record read first.
-            let k = keeper_ctx(standing_code, beacon_code, beacon)?;
-            let listed = R::keepers::listed(&keepers, &log_of);
+            let queued: Vec<craftworks_wallet::queue::Queued> = bytes_list(&queued).iter().filter_map(|b| craftworks_wallet::queue::Queued::decode(b)).collect();
+            let posted: Vec<[u8; 32]> = posted.iter().filter_map(|r| bytes32("root", &r.as_string().unwrap_or_default()).ok()).collect();
+            let earlier: Vec<(u64, [u8; 32])> = earlier.iter().filter_map(|x| {
+                let x = js_sys::Array::from(&x);
+                Some((x.get(0).as_f64()? as u64, bytes32("root", &x.get(1).as_string()?).ok()?))
+            }).collect();
             let fresh: Vec<String> = fresh.iter().filter_map(|x| x.as_string()).collect();
-            let want: Vec<String> = listed.iter().map(|(_, key)| hex(&keeper::record_id(&k, key))).filter(|id| !fresh.contains(id)).collect();
-            if !want.is_empty() {
-                return js_sys::JSON::parse(&json!({ "want": want }).to_string());
-            }
-            let record_of = |key: &[u8; 32]| self.0.got(&keeper::record_id(&k, key)).filter(|b| !b.is_empty()).and_then(craftworks_standing::codec::decode);
-            let kept = match epoch.checked_sub(1) {
-                Some(e) => craftworks_standing::record::kept_accounts(&listed, &record_of, e),
-                None => Vec::new(),
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let lot = tokens::Lot { pool: keeper::craft(&ctx).1, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let k = keeper_ctx(standing_code, beacon_code, beacon)?;
+            // THE BUILD (`rules::statement`: the delegate's too).
+            let built = {
+                let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+                let is_fresh = |id: &[u8; 32]| fresh.contains(&hex(id));
+                let lines = |root: &[u8; 32]| self.0.statement_lines(root);
+                let inputs = craftworks_rules::statement::Inputs { epoch, items: &items, keepers: &keepers, queued: &queued, posted: &posted, earlier: &earlier, ctx: &ctx, lot: &lot, keep: &k, fresh: &is_fresh, lines: &lines };
+                craftworks_rules::statement::build(&inputs, &got).map_err(err)?
             };
-            // SIGNED (the epoch before's witness fees): each seated signature on its queued entries (`wallet::fees`).
-            let mut prev = std::collections::BTreeMap::new();
-            let signed = match epoch.checked_sub(1) {
-                None => Default::default(),
-                Some(_) => {
-                    let ctx = token_ctx(token_code, beacon, idlog_code)?;
-                    let lot = tokens::Lot { pool: keeper::craft(&ctx).1, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
-                    let queued: Vec<craftworks_wallet::queue::Queued> = bytes_list(&queued).iter().filter_map(|b| craftworks_wallet::queue::Queued::decode(b)).collect();
-                    // The epoch before's STATEMENT roots as posted (each a place its witnesses signed).
-                    let before = epoch - 1;
-                    let statements: Vec<craftworks_wallet::fees::Statement> = posted.iter().filter_map(|r| bytes32("root", &r.as_string().unwrap_or_default()).ok()).map(|root| craftworks_wallet::fees::Statement { place: R::statement::witness_place(before), root, h: R::statement::lot_height(before) }).collect();
-                    match witness::signed(&ctx, &lot, &|x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec), &queued, &statements) {
-                        tokens::Step::Done(s) => {
-                            // THE PREVIOUS STATEMENT: the newest ACCEPTED one within CARRY_BACK epochs — the epoch
-                            // before's, else an earlier one's (`earlier`: [epoch, root hex] posted) — its lines (each
-                            // account's last active epoch).
-                            let earlier: Vec<(u64, [u8; 32])> = earlier.iter().filter_map(|x| {
-                                let x = js_sys::Array::from(&x);
-                                Some((x.get(0).as_f64()? as u64, bytes32("root", &x.get(1).as_string()?).ok()?))
-                            }).collect();
-                            let mut epochs: Vec<(u64, Vec<craftworks_wallet::fees::Statement>)> = vec![(before, statements.clone())];
-                            for b in 2..=R::statement::CARRY_BACK {
-                                let Some(e) = epoch.checked_sub(b) else { break };
-                                epochs.push((e, earlier.iter().filter(|x| x.0 == e).map(|x| craftworks_wallet::fees::Statement { place: R::statement::witness_place(e), root: x.1, h: R::statement::lot_height(e) }).collect()));
-                            }
-                            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-                            if let Some(st) = epochs.iter().find_map(|(_, sts)| witness::accepted_statement(&ctx, &lot, &got, sts)) {
-                                match self.0.statement_lines(&st.root) {
-                                    Ok(l) => prev = l,
-                                    Err(w) => return js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
-                                }
-                            }
-                            s
-                        }
-                        tokens::Step::Want(w) => return js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
-                        tokens::Step::Sign(_) => return Err(err("a count never signs".into())),
-                    }
-                }
+            let (st, kept) = match built {
+                tokens::Step::Want(w) => return js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
+                tokens::Step::Sign(_) => return Err(err("a statement never signs".into())),
+                tokens::Step::Done(x) => x,
             };
             let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP), witness: craftworks_wallet::craft::witness_pot(epoch), halvings: craftworks_wallet::craft::halvings(epoch) };
-            let st = R::statement::build(epoch, &items, &log_of, &kept, &signed, &prev, pots);
             let mut blocks = std::collections::BTreeMap::new();
             let (root, parity) = st.tree(&mut blocks).ok_or_else(|| err("the statement's tree does not build".into()))?;
             let puts = js_sys::Array::new();
@@ -2725,7 +2680,7 @@ mod js {
             let issuance = json!({ "keepers": pay.len(), "total": total.to_string(), "top": pay.iter().max().copied().unwrap_or(0).to_string(), "pot": pots.keeper.0.to_string() });
             // Each PAID line (what an account earned: its keeper share, its witness fees).
             let paid: serde_json::Value = st.lines.iter().filter(|(_, l)| l.keeper > 0 || l.witness > 0).map(|(d, l)| (hex(d), json!({ "keeper": l.keeper.to_string(), "witness": l.witness.to_string() }))).collect::<serde_json::Map<_, _>>().into();
-            Ok(js_obj(&[("root", JsValue::from(hex(&root))), ("posted", js_sys::Uint8Array::from(&posted[..]).into()), ("puts", puts.into()), ("lines", JsValue::from(st.lines.len() as f64)), ("kept", JsValue::from(kept.len() as f64)), ("owed", owed.into()), ("keepers", minted.into()), ("issuance", js_sys::JSON::parse(&issuance.to_string())?), ("paid", js_sys::JSON::parse(&paid.to_string())?)]))
+            Ok(js_obj(&[("root", JsValue::from(hex(&root))), ("posted", js_sys::Uint8Array::from(&posted[..]).into()), ("puts", puts.into()), ("lines", JsValue::from(st.lines.len() as f64)), ("kept", JsValue::from(kept as f64)), ("owed", owed.into()), ("keepers", minted.into()), ("issuance", js_sys::JSON::parse(&issuance.to_string())?), ("paid", js_sys::JSON::parse(&paid.to_string())?)]))
         }
         /// The ALLOWANCE's verdict of `epoch` (`allowance::verdict`; `owed`: `[[did, proof]]` from `statement_build`, under
         /// `root` hex): `{ done: null }` (nothing escrowed to it) or `{ done: { puts: [{ id, frames }] } }` — the program's
