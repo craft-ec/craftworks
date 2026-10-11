@@ -2322,10 +2322,18 @@ fn a_claims_registry_freezes_before_its_epoch() {
     assert_eq!(p.frozen_at(), frozen);
     assert_eq!(claims::take(&p, &one, &two, frozen - 1).claims.len(), 2, "taken before the freeze");
     assert_eq!(claims::take(&p, &one, &two, frozen), one, "ignored from the freeze on");
-    // Copies settle the same in every order; one claim per staker.
+    // Copies settle the same in every order; one claim per (staker, key).
     let other = claims::Registry { claims: vec![claim(60, 90, 2)] };
     assert_eq!(claims::merge(&one, &other), claims::merge(&other, &one));
     assert_eq!(claims::merge(&one, &other).claims.len(), 1);
+    // A FORGER's claim for staker 60 under its own key (audit 10-11): it stays BESIDE the staker's, never replaces it.
+    let kb = pk(70);
+    let forged = draw::StakeClaim { owner: [60; 32], amount: 100, epoch: 2, key: kb, sig: key(70).sign(&draw::StakeClaim::message(&id_a(), &[60; 32], 100, 2, &kb)).to_bytes() };
+    let both = claims::merge(&one, &claims::Registry { claims: vec![forged.clone()] });
+    assert_eq!(both, claims::merge(&claims::Registry { claims: vec![forged] }, &one));
+    assert_eq!(both.claims.len(), 2, "the staker's own claim kept");
+    assert!(both.claims.iter().any(|c| c.key == pk(60)));
+    assert_eq!(claims::Registry::decode(&both.encode()), Some(both.clone()));
 }
 
 // ---- A WITNESS'S MISDEED: signing a credit whose debit is not there burns its stake ----

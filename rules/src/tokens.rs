@@ -479,6 +479,27 @@ mod baseline_check {
         assert!(!after.iter().any(|c| c.owner == two));
     }
 
+    /// A FORGED CLAIM in a staker's name under another key (audit 10-11) stays beside the staker's own and is not the
+    /// one counted: the staker stays valid, with its own key.
+    #[test]
+    fn a_forged_claim_beside_a_stakers_own_never_replaces_it() {
+        let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
+        let mut got = HashMap::new();
+        let tl = testlot::stakers(&ctx, &mut got);
+        let rp = t::claims::Params { code_hash: ctx.code_hash, pool: tl.lot.pool, beacon: ctx.beacon, epoch: 1 }.id();
+        let reg = t::claims::Registry::decode(&got[&rp]).unwrap();
+        let own = reg.claims.iter().find(|c| c.key == tl.keys[2].verifying_key().to_bytes()).unwrap().clone();
+        // (A forger's key that SORTS BEFORE the staker's: the claim met first.)
+        let forger = (1..=255u8).map(|n| ed25519_dalek::SigningKey::from_bytes(&[n; 32])).find(|k| k.verifying_key().to_bytes() < own.key).expect("a key sorting first");
+        let kb = forger.verifying_key().to_bytes();
+        use ed25519_dalek::Signer as _;
+        let forged = t::draw::StakeClaim { owner: own.owner, amount: own.amount, epoch: 1, key: kb, sig: forger.sign(&t::draw::StakeClaim::message(&tl.lot.pool, &own.owner, own.amount, 1, &kb)).to_bytes() };
+        got.insert(rp, t::claims::merge(&reg, &t::claims::Registry { claims: vec![forged] }).encode());
+        let v = testlot::done(&|g| Ok(valid_of(&ctx, &tl.lot, g, 1)), &got).unwrap();
+        assert_eq!(v.len(), 6);
+        assert_eq!(v.iter().find(|c| c.owner == own.owner).map(|c| c.key), Some(own.key), "the staker's own claim counted");
+    }
+
     #[test]
     fn the_test_baseline_key_is_its_seeds() {
         use ed25519_dalek::SigningKey;

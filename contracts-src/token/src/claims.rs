@@ -40,7 +40,9 @@ impl Params {
     }
 }
 
-/// A registry: one claim per staker, sorted by staker.
+/// A registry: one claim per (staker, key), sorted by both (audit 10-11: one per staker let anyone replace a staker's
+/// claim with one of a lower hash under the forger's own key — the staker's signatures then counted for nothing; now
+/// both stay, and only the one the staker's stake answers for is VALID, `wallet::valid_stakers`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Registry {
     pub claims: Vec<StakeClaim>,
@@ -61,7 +63,7 @@ impl Registry {
         (n <= CLAIMS_MAX).then_some(())?;
         let len = crate::wallet::bytes::stake_claim(&StakeClaim { owner: [0; 32], amount: 0, epoch: 0, key: [0; 32], sig: [0; 64] }).len();
         let claims = (0..n).map(|_| crate::wallet::bytes::read_stake_claim(r.take(len)?)).collect::<Option<Vec<_>>>()?;
-        (r.done() && claims.windows(2).all(|w| w[0].owner < w[1].owner)).then_some(Registry { claims })
+        (r.done() && claims.windows(2).all(|w| (w[0].owner, w[0].key) < (w[1].owner, w[1].key))).then_some(Registry { claims })
     }
 }
 
@@ -73,12 +75,12 @@ pub fn holds(p: &Params, r: &Registry) -> Result<(), Why> {
     Ok(())
 }
 
-/// Copies settle the same in every order: per staker, the claim with the lower hash.
+/// Copies settle the same in every order: per (staker, key), the claim with the lower hash.
 pub fn merge(a: &Registry, b: &Registry) -> Registry {
     let h = |c: &StakeClaim| *blake3::hash(&crate::wallet::bytes::stake_claim(c)).as_bytes();
     let mut all: Vec<StakeClaim> = a.claims.clone();
     for c in &b.claims {
-        match all.iter_mut().find(|x| x.owner == c.owner) {
+        match all.iter_mut().find(|x| x.owner == c.owner && x.key == c.key) {
             Some(x) => {
                 if h(c) < h(x) {
                     *x = c.clone();
@@ -87,7 +89,7 @@ pub fn merge(a: &Registry, b: &Registry) -> Registry {
             None => all.push(c.clone()),
         }
     }
-    all.sort_by_key(|c| c.owner);
+    all.sort_by_key(|c| (c.owner, c.key));
     Registry { claims: all }
 }
 

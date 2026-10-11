@@ -2214,6 +2214,12 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       start stakes ≥ the claim with its key, is not forked, and has its last pre-E entry ACCEPTED under V(E′) (E′ its
       lot's epoch < E); cached per epoch. Every lot (seated, accepted_at, fees, statement_accept, wallet stake_of) draws
       over V(E). Fixes: fake stake (self-made mint / deep forged receive) and seat stuffing / baseline removal.
+- [x] C2a 10-11 CLAIM REPLACEMENT closed: a registry holds one claim per (staker, key); `valid_stakers` takes the
+      first per staker its stake answers for (test with a forger key sorting first; control run).
+- [ ] C2b REGISTRY FILL (open, design): 4096 forged owners fill a registry so real claims cannot enter; one shared
+      contract cannot rank claims it cannot check. Direction: a claim lives in the staker's OWN pool chain (a writer-
+      signed entry, witnessed like any other), and the lot's index is a chained pointer bag of staker DIDs (a flood
+      costs readers only, each pointer filtered by `valid_stakers`).
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.

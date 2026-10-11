@@ -118,9 +118,14 @@ pub fn valid_stakers(r: &StakeReads, epoch: u64, memo: &std::cell::RefCell<std::
     memo.borrow_mut().insert(epoch, Vec::new());
     let Some(start) = epoch.checked_mul(supply::EPOCH) else { return Vec::new() };
     let raw = (r.registry)(epoch);
-    let mut out = Vec::new();
-    for (owner, _, i) in crate::draw::valid(&r.pool, epoch, &raw) {
-        let c = &raw[i];
+    let mut out: Vec<StakeClaim> = Vec::new();
+    // Every claim of the epoch (a staker may have several — one per key: a forger's under its own key stays beside the
+    // staker's), the first per staker its stake answers for.
+    for c in raw.iter().filter(|c| c.epoch == epoch && c.holds(&r.pool)) {
+        let owner = c.owner;
+        if out.iter().any(|x| x.owner == owner) {
+            continue;
+        }
         let Some((cp, st)) = (r.chain)(&owner) else { continue };
         if st.fork.is_some() {
             continue;
