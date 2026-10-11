@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
             let Some(state) = get(&a[1], id).await? else { break };
             found = true;
             let these = craftworks_bag_contract::read(&address, &state).unwrap_or_default();
-            let full = these.len() >= craftworks_bag_contract::chained::ROOM;
+            let full = craftworks_bag_contract::chained::full(these.iter().map(|i| craftworks_bag_contract::payload(i).len()));
             items.extend(these);
             if !full {
                 break;

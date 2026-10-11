@@ -1826,6 +1826,12 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     if begun.is_none_or(|b| e.stamp < b) {
                         return Err("a keeper mint before its epoch's statement");
                     }
+                    // NOT AGAIN PAST A CUT (audit 10-11): a cut forgets the mints before it (`kept` is this replay's), so
+                    // an epoch whose statement had begun by the last cut's stamp may have been minted behind it — refused
+                    // (mint before cutting: what was not minted by then is forfeit).
+                    if cut.is_some_and(|(at, _)| begun.is_some_and(|b| b <= at)) {
+                        return Err("a keeper mint for an epoch a cut may hide a mint of");
+                    }
                     staked = staked.checked_add(*amount).ok_or("a balance overflow")?;
                     balance.checked_add(*fee).ok_or("a balance overflow")?
                 }

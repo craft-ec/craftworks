@@ -107,6 +107,11 @@ pub fn stake_at(p: &ChainParams, d: &Definition, s: &State, at: u64) -> Result<w
     if let Some(Signer::Device(node, _)) = c.writer {
         keys.push(node);
     }
+    // AN EQUIVOCATED CHAIN STAKES NOTHING (audit 10-11): a fork freezes the chain — no burn can be appended to it any
+    // more (forking over a pending burn would otherwise keep its stake counting): its signatures count for nothing.
+    if s.fork.is_some() {
+        return Ok((0, keys));
+    }
     Ok((c.staked, keys))
 }
 

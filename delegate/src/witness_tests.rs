@@ -74,3 +74,32 @@ fn a_drawn_member_away_from_their_page_witnesses_a_queued_entry_once() {
     h.set_secret(identity::UPKEEP_WAKEUPS, &(crate::upkeep::PAGE_AWAY + 2).to_le_bytes());
     assert!(run(&mut h, &got).is_empty(), "an entry witnessed once");
 }
+
+/// QUEUED BEFORE ITS LOT (audit 10-11): an entry read while its lot is not drawn yet is NOT settled — once the beacon
+/// passes it, the same member signs it (it was settled for good, and never witnessed by a closed page).
+#[test]
+fn an_entry_queued_before_its_lot_is_drawn_is_signed_once_it_is() {
+    let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
+    let mut got = HashMap::new();
+    let tl = testlot::stakers(&ctx, &mut got);
+    let (q, chain, _) = testlot::genesis_in_epoch1(&ctx, &mut got);
+    let bp = craftworks_beacon_contract::Params { k: 16, segs: 1, sample: 1, window: 2, keep: 600, seed: [5; 32] };
+    let at = |height: u64| craftworks_beacon_contract::wire::encode(&craftworks_beacon_contract::State { steps: vec![craftworks_beacon_contract::Step::compute(&bp, [0; 32], height, [1; 32])], alts: vec![], frauds: vec![] });
+    // The beacon BEFORE the genesis's lot (the epoch's first step).
+    got.insert(ctx.beacon, at(testlot::E1));
+    let address = craftworks_wallet::queue::address(testlot::E1 / craftworks_reputation::EPOCH, 0);
+    let item = q.encode();
+    got.insert(t::id(&tl.lot.bag, &address), craftworks_bag_contract::encode(&address, &[craftworks_bag_contract::grind(&address, &item)]));
+    let seed = [112u8; 32];
+    let mut h = Map::default();
+    assert!(matches!(identity::serve(&mut h, Request::Provision { seed, did: [0x22; 32], pin: "246810".into(), data: vec![] }, APP), Answer::Unlocked { .. }));
+    let mandate = WitnessMandate { token: ctx.code_hash, idlog: ctx.idlog, bag: tl.lot.bag, beacon_code: tl.lot.beacon_code, beacon: ctx.beacon, pool: tl.lot.pool };
+    assert_eq!(identity::serve(&mut h, Request::WitnessMandate { mandate }, APP), Answer::WitnessMandated);
+    h.set_secret(identity::UPKEEP_WAKEUPS, &(crate::upkeep::PAGE_AWAY + 1).to_le_bytes());
+    assert!(run(&mut h, &got).is_empty(), "nothing to sign before its lot");
+    // The beacon PAST it: signed.
+    got.insert(ctx.beacon, at(testlot::E1 + 20));
+    h.set_secret(identity::UPKEEP_WAKEUPS, &(crate::upkeep::PAGE_AWAY + 2).to_le_bytes());
+    let puts = run(&mut h, &got);
+    assert!(matches!(&puts[..], [Io::Put { params, .. }] if params[..] == t::wallet::witness_bag(&chain, q.seq)[..]), "signed once its lot is drawn: {puts:?}");
+}

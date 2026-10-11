@@ -56,6 +56,7 @@ export async function start(ctx) {
             done.set(k, "not seated");
             continue;
           }
+          if (v?.later) continue; // not yet decidable: asked again next pass
           state.seated += 1;
           if (v?.refused) {
             if (done.get(k) !== v.refused) ctx.log("witness", { what: `refused ${k.slice(8, 20)}…: ${v.refused}` });
@@ -79,6 +80,7 @@ export async function start(ctx) {
           done.set(k, "not seated");
           continue;
         }
+        if (v?.later) continue;
         if (v?.refused) {
           if (done.get(k) !== v.refused) ctx.log("witness", { what: `the statement of epoch ${e}: ${v.refused}` });
           done.set(k, v.refused);

@@ -91,13 +91,16 @@ export async function start(ctx) {
   // `follow`: the GET subscribes this node to the bag — its copy kept current by the network (a node answers a GET from
   // its own copy when it holds one, and an unsubscribed copy goes stale: a space's writers list read from it missed
   // what members announced since).
-  async function read(address, what, { show = false, follow = false } = {}) {
+  // `strict`: NO ANSWER throws ("no answer: …") instead of reading as empty — for what must not be decided over a bag
+  // that did not answer (a statement, an assignment, a scan cursor): silence is not "nothing there".
+  async function read(address, what, { show = false, follow = false, strict = false } = {}) {
     const id = Core.bag_id(bagCode, address);
     const full = (async () => {
       const [, frames] = follow ? core.frames_follow(bytes(id)) : core.frames_get(bytes(id));
       const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, what, WAIT.answer).catch(() => ({ kind: "silent" }));
       if (said.kind === "got") return held(address, id);
       if (said.kind === "get-failed" && !madeBags.has(id)) madeBags.add(id), drop(address, new Uint8Array(0), `making ${what}`).catch(() => madeBags.delete(id));
+      if (said.kind === "silent" && strict) throw new Error(`no answer: ${what}`);
       return [];
     })();
     if (!show) return full;
@@ -259,13 +262,8 @@ export async function start(ctx) {
     const r = String((await space.account().catch(() => null))?.id ?? "").replace(/^did:craftec:/, "").slice(0, 8) || null;
     const payload = enc.encode(JSON.stringify({ ...item, r, v, at: Date.now() }));
     try {
-      for (let k = 0; k < 64; k++) {
-        const address = await refAddress(healthRef(day, k));
-        if ((await read(address, "reading the day's health bag")).length >= ROOM) continue;
-        await drop(address, payload, "reporting health");
-        return true;
-      }
-      throw new Error("the day's health bags are full");
+      await chained((d, k) => refAddress(healthRef(d, k)), day, payload, "reporting health");
+      return true;
     } catch (e) {
       // NOT SILENT: a report that could not be written is logged here (and asked again next hour).
       reported.delete(key);
@@ -273,42 +271,35 @@ export async function start(ctx) {
       return false;
     }
   }
-  async function healthOf(day) {
-    const out = [];
-    for (let k = 0; k < 64; k++) {
-      const items = await read(await refAddress(healthRef(day, k)), "reading the day's health bag");
-      out.push(...parse(items));
-      if (items.length < ROOM) break;
-    }
-    return out;
-  }
+  const healthOf = async day => parse(await chain((d, k) => refAddress(healthRef(d, k)), day, "reading the day's health bag"));
 
   // ANY OPEN BAG by its address (a registry: the epoch's vouches): add an item (with its work), read its items.
   // A CHAINED list (`wallet::chained`: payments, the witness queue, the files registry) — an epoch's items in bags
   // k = 0, 1, …: DROP into the first with room, read back (over a cap a bag keeps its most-worked items: not kept →
-  // the next); READ k = 0.. up to the first with room. `addressOf(epoch, k)` names the list.
-  const ROOM = Core.chained_room();
+  // the next); READ k = 0.. up to the first with room. `addressOf(epoch, k)` names the list (an address, or its promise).
+  // FULL by count or by bytes (`Core.chained_full`: the contract's one rule — a few big items fill a bag by bytes).
+  const full = items => Core.chained_full(items);
   async function chained(addressOf, epoch, item, what) {
     const want = item.join(",");
     for (let k = 0; k < 64; k++) {
-      const address = addressOf(epoch, k);
+      const address = await addressOf(epoch, k);
       const items = await read(address, what);
       if (items.some(i => i.join(",") === want)) return;
-      if (items.length >= ROOM) continue;
+      if (full(items)) continue;
       await drop(address, item, what);
       if ((await read(address, what)).some(i => i.join(",") === want)) return;
     }
     throw new Error(`${what}: its bags are full`);
   }
-  async function chain(addressOf, epoch, what) {
+  async function chain(addressOf, epoch, what, { strict = false } = {}) {
     const out = [];
     for (let k = 0; k < 64; k++) {
-      const items = await read(addressOf(epoch, k), what);
+      const items = await read(await addressOf(epoch, k), what, { strict });
       out.push(...items);
-      if (items.length < ROOM) break;
+      if (!full(items)) break;
     }
     return out;
   }
-  const bag = { add: (address, payload, what = "adding to a bag") => drop(address, payload, what), read: (address, what = "reading a bag") => read(address, what), chained, chain };
+  const bag = { add: (address, payload, what = "adding to a bag") => drop(address, payload, what), read: (address, what = "reading a bag", opts = {}) => read(address, what, opts), chained, chain };
   return { bag, onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, watch, listSpace, spaces, health, healthOf, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, OPEN };
 }

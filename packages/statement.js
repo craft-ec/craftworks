@@ -21,15 +21,18 @@ export async function start(ctx) {
   const built = new Map(); // epoch → the statement this page computed (its root, what it owes)
   async function build(epoch) {
     if (built.has(epoch)) return built.get(epoch);
+    // (Every read STRICT: a statement is never built over a bag that did not answer — it would leave its items out, and
+    // a seated page signs the one root it computes.)
+    const strict = { strict: true };
     const items = [];
-    for (let e = 0; e <= epoch; e++) items.push(...(await index.bag.read(Core.vouch_registry_address(e), "reading a vouch registry")));
+    for (let e = 0; e <= epoch; e++) items.push(...(await index.bag.read(Core.vouch_registry_address(e), "reading a vouch registry", strict)));
     // KEPT: the keepers listed the epoch before (`keeper`), their records proving it.
-    const keepers = epoch > 0 ? await index.bag.chain(Core.keepers_address, epoch - 1, "reading the keepers registry") : [];
+    const keepers = epoch > 0 ? await index.bag.chain(Core.keepers_address, epoch - 1, "reading the keepers registry", strict) : [];
     const beacon = bytes((await ctx.require("beacon")).status().id);
     // SIGNED: the epoch before's witness queue (each seated signature on its entries earns its claimant fees).
-    const queued = epoch > 0 ? await index.bag.chain(Core.witness_queue_address, epoch - 1, "reading the witness queue") : [];
+    const queued = epoch > 0 ? await index.bag.chain(Core.witness_queue_address, epoch - 1, "reading the witness queue", strict) : [];
     // …and its statement's posted roots (signing the accepted one earns fees too).
-    const posted = epoch > 0 ? (await index.bag.read(Core.statement_bag_address(epoch - 1), "reading the epoch before's statement")).map(p => Core.statement_posted_read(p)).filter(p => p?.epoch === epoch - 1).map(p => p.root) : [];
+    const posted = epoch > 0 ? (await index.bag.read(Core.statement_bag_address(epoch - 1), "reading the epoch before's statement", strict)).map(p => Core.statement_posted_read(p)).filter(p => p?.epoch === epoch - 1).map(p => p.root) : [];
     const fresh = new Set(); // what this build read from the network (each keeper's record read fresh, never a held copy)
     // WHAT IT READ: each contract the node had, said it does not have, or did not answer (asked again; a statement
     // built over a record that did not answer would leave that keeper out: none is posted then).

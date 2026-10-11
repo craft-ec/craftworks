@@ -38,21 +38,31 @@ export async function start(ctx) {
   // PUT what a step built, each answered; then FORGOTTEN by the core (read again, fresh, when next asked). A token
   // chain's new entries then go into the WITNESS QUEUE (TOKEN §7a: how they reach their witnesses).
   async function putAll(puts) {
-    const queue = [];
-    const bags = [];
     for (const p of puts ?? []) {
       const said = await ask(p.frames, s => (s.kind === "put" && s.key === p.id) || s.kind === "refused", "putting a token contract", 60000);
       if (said.kind !== "put") throw new Error(`the node refused it (${said.said})`);
       core.take_got(hexOf(p.idBytes));
-      queue.push(...(p.queue ?? []));
-      bags.push(...(p.bags ?? []));
+      // KEPT TO QUEUE (audit 10-11): each new entry's queue item and witness bag recorded as soon as its put is taken,
+      // and queued from there — one that fails is queued again on the next put, never left unwitnessed.
+      const qs = p.queue ?? [];
+      for (let i = 0; i < qs.length; i++) await priv.put(`toqueue/${hexOf(qs[i])}`, JSON.stringify({ q: hexOf(qs[i]), bag: p.bags?.[i] ? hexOf(p.bags[i]) : null, done: false }));
     }
-    const said = e => ctx.log("tokens", { what: e.message ?? String(e) });
-    // Each entry's WITNESS BAG made (empty) first: a witness with no page open only adds to a bag already there.
-    for (const a of bags) await index.bag.add(a, new Uint8Array(0), "making an entry's witness bag").catch(said);
-    if (queue.length) {
-      const at = await now();
-      for (const q of queue) await chained(Core.witness_queue_address, at, q, "queueing an entry for its witnesses").catch(said);
+    await queueAll();
+  }
+  // Each entry waiting to be queued: its WITNESS BAG made (empty) first — a witness with no page open only adds to a
+  // bag already there — then the item into the witness queue of this epoch.
+  async function queueAll() {
+    const waiting = rows("toqueue/").filter(o => !o.done);
+    if (!waiting.length) return;
+    const at = await now();
+    for (const o of waiting) {
+      try {
+        if (o.bag) await index.bag.add(bytes(o.bag), new Uint8Array(0), "making an entry's witness bag");
+        await chained(Core.witness_queue_address, at, bytes(o.q), "queueing an entry for its witnesses");
+        await priv.put(`toqueue/${o.q}`, JSON.stringify({ ...o, done: true }));
+      } catch (e) {
+        ctx.log("tokens", { what: `an entry waits to be queued again: ${e.message ?? e}` });
+      }
     }
   }
   // RUN a step to its end: read what it wants, have the delegate sign what it asks (one entry a round), until done.
@@ -124,16 +134,34 @@ export async function start(ctx) {
   }
   // DROP an announcement into the current epoch's payments bags.
   const announce = (at, a) => chained(Core.stealth_payments_address, at, a, "announcing a payment");
+  // THE OUTBOX (audit 10-11): every announcement written here BEFORE its debit is put, and announced from here — one
+  // that fails (a timeout, full bags) is announced again on every pass, never lost with the money already moved.
+  // `sent`: the row its announcement leaves in the wallet's history (null: none — a rest of this wallet's own).
+  const outbox = (a, at, sent) => priv.put(`outbox/${hexOf(a)}`, JSON.stringify({ a: hexOf(a), at, sent, done: false }));
+  async function announceAll() {
+    for (const o of rows("outbox/").filter(o => !o.done)) {
+      try {
+        await announce(o.at, bytes(o.a));
+        if (o.sent) await priv.put(`sent/${o.a}`, JSON.stringify(o.sent));
+        await priv.put(`outbox/${o.a}`, JSON.stringify({ ...o, done: true }));
+      } catch (e) {
+        ctx.log("wallet", { what: `an announcement waits to be sent again: ${e.message ?? e}` });
+      }
+    }
+  }
   // RECEIVE everything owed this wallet: SCAN the payments bags from the last epoch scanned to now (every payment
   // found kept; `onToken(id)` for its token), take each payment not yet taken, and each PAYEE's sales (an edition's
   // records name them). `{ got, pending }`: chains credited, payments still inside their margin.
   async function receiveAll({ onToken } = {}) {
+    // (What waits in the outbox first: a payment whose announcement did not go out is announced again.)
+    await announceAll();
     const all = await seeds();
     const at = await now();
     const current = Math.floor(at / EPOCH);
     const scanned = Number(priv.rows().find(r => r.key === "scanned")?.value ?? Math.min(...all.map(x => x.epoch)));
     for (let e = scanned; e <= current; e++) {
-      const items = await index.bag.chain(Core.stealth_payments_address, e, "reading the payments bags");
+      // (STRICT: an epoch whose bags did not answer stops the scan — the cursor never moves past it unread.)
+      const items = await index.bag.chain(Core.stealth_payments_address, e, "reading the payments bags", { strict: true });
       for (const sd of all) {
         for (const f of Core.stealth_scan(bytes(sd.seed), items)) {
           if (priv.rows().some(r => r.key === `found/${f.to}`)) continue;
@@ -232,20 +260,18 @@ export async function start(ctx) {
     for (const g of plan) {
       const rand = crypto.getRandomValues(new Uint8Array(32));
       const s = await run(() => core.wallet_send_private(code, beacon, idlogCode, bytes(id), bytes(g.seed), g.mine.map(f => bytes(f.a)), bytes(pay.scan), bytes(pay.spend), g.amount.toString(), rand, at));
-      await putAll(s.puts);
-      announces.push(...s.announces);
-      // Each chain's REST, moved to a fresh address of this wallet's own (a chain pays once): kept found now, and
-      // announced so the account's other devices find it too.
+      // In the OUTBOX before the debit is put: the payment's announcements, and each chain's REST (moved to a fresh
+      // address of this wallet's own — a chain pays once: kept found now, announced so the account's other devices
+      // find it too).
+      for (const a of s.announces) await outbox(a, at, { token: id, kind: "send", to, at: Date.now() });
       for (const r of s.rest ?? []) {
-        const to = hexOf(r.slice(84, 116));
-        await priv.put(`found/${to}`, JSON.stringify({ a: hexOf(r), seed: g.seed.slice(0, 16), token: id, to, done: false, at: Date.now(), rest: true }));
-        await announce(at, r).catch(e => ctx.log("wallet", { what: `announcing a rest: ${e.message ?? e}` }));
+        const rto = hexOf(r.slice(84, 116));
+        await priv.put(`found/${rto}`, JSON.stringify({ a: hexOf(r), seed: g.seed.slice(0, 16), token: id, to: rto, done: false, at: Date.now(), rest: true }));
+        await outbox(r, at, null);
       }
+      await putAll(s.puts);
     }
-    for (const a of announces) {
-      await announce(at, a);
-      await priv.put(`sent/${hexOf(a)}`, JSON.stringify({ token: id, kind: "send", to, at: Date.now() }));
-    }
+    await announceAll();
   }
   // MOVE TO PRIVATE: `amount` of the token `id` from this account's DID chain to its own card — the one DID → private
   // step (§7f: a DID holds only stake), of what was already public.
@@ -256,9 +282,9 @@ export async function start(ctx) {
     // One random for the whole run: each round rebuilds the debit, and its one-time owner must stay the one signed.
     const rand = crypto.getRandomValues(new Uint8Array(32));
     const s = await run(sigs => core.wallet_send(code, beacon, idlogCode, bytes(id), me.didBytes, bytes(keys.scan), bytes(keys.spend), amount, rand, at, member, creds, sigs));
+    await outbox(s.announce, at, { token: id, kind: "shield", to: me.did, at: Date.now() });
     await putAll(s.puts);
-    await announce(at, s.announce);
-    await priv.put(`sent/${hexOf(s.announce)}`, JSON.stringify({ token: id, kind: "shield", to: me.did, at: Date.now() }));
+    await announceAll();
   }
   // A PAYEE: a fresh one-time owner of this wallet's own for the token `pay` — an edition's (it collects that
   // edition's sales: `edition` set once the edition is made).

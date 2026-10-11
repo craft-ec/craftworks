@@ -88,7 +88,7 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
                 Ok(st) => st,
             };
             let these: Vec<Vec<u8>> = st.and_then(|b| craftworks_bag_contract::read(&address, &b)).unwrap_or_default().iter().map(|x| craftworks_bag_contract::payload(x).to_vec()).collect();
-            let full = these.len() >= craftworks_bag_contract::chained::ROOM;
+            let full = craftworks_bag_contract::chained::full(these.iter().map(Vec::len));
             items.extend(these);
             if !full {
                 break;
@@ -111,6 +111,8 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
             }
             Ok(tokens::Step::Sign(_)) => {}
             Ok(tokens::Step::Done(witness::Verdict::NotSeated)) => settled.push(it),
+            // Not yet decidable: asked again on a later wake-up (never settled).
+            Ok(tokens::Step::Done(witness::Verdict::Later(_))) => {}
             Ok(tokens::Step::Done(witness::Verdict::Refused(why))) => identity::upkeep_say(h, &r.member, &format!("witness: refused seq {}: {why}", q.seq)),
             Ok(tokens::Step::Done(witness::Verdict::Sign { chain, seq, entry })) => {
                 match identity::upkeep_witness_sign(h, &r.member, &chain, seq, &entry) {

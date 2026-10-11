@@ -2351,6 +2351,7 @@ mod js {
             tokens::Step::Want(w) => js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
             tokens::Step::Sign(_) => Err(err("a witness step never signs here".into())),
             tokens::Step::Done(witness::Verdict::NotSeated) => js_sys::JSON::parse(&json!({ "done": { "seated": false } }).to_string()),
+            tokens::Step::Done(witness::Verdict::Later(why)) => js_sys::JSON::parse(&json!({ "done": { "later": why } }).to_string()),
             tokens::Step::Done(witness::Verdict::Refused(why)) => js_sys::JSON::parse(&json!({ "done": { "refused": why } }).to_string()),
             tokens::Step::Done(witness::Verdict::Sign { chain, seq, entry }) => {
                 let sign = js_obj(&[("chain", js_sys::Uint8Array::from(&chain[..]).into()), ("seq", JsValue::from(seq as f64)), ("entry", js_sys::Uint8Array::from(&entry[..]).into())]);
@@ -3106,8 +3107,9 @@ mod js {
         }
         /// A CHAINED bag (payments, the witness queue, the files registry: `wallet::chained`) with fewer items than this
         /// takes one; one with this many is full — the next (k + 1) is the one to read or drop into.
-        pub fn chained_room() -> f64 {
-            craftworks_wallet::chained::ROOM as f64
+        /// Is a chained bag of these items (payloads) FULL (`bag::chained::full`: by count or by bytes)?
+        pub fn chained_full(items: js_sys::Array) -> bool {
+            craftworks_wallet::chained::full(items.iter().map(|x| js_sys::Uint8Array::from(x).length() as usize))
         }
         /// The FILES REGISTRY's bag `k` of standing epoch `epoch` (its address).
         pub fn registry_address(epoch: f64, k: u32) -> js_sys::Uint8Array {

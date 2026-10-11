@@ -578,6 +578,12 @@ pub fn epoch_secret<H: Host>(h: &H, m: &[u8; KEY_LEN], space: [u8; 32], epoch: u
 pub fn latest_epoch<H: Host>(h: &H, m: &[u8; KEY_LEN], space: [u8; 32]) -> Option<u64> {
     latest_in(h, m, &Some(space))
 }
+/// The epochs a member's secrets are looked for in, newest `latest`: at most `EPOCHS_BACK` of them (audit 10-11: a
+/// site keeping an epoch of `u64::MAX` made every walk from 0 hang the delegate). A group moves one epoch a commit.
+pub const EPOCHS_BACK: u64 = 4096;
+fn epochs_back(latest: u64) -> std::ops::RangeInclusive<u64> {
+    latest.saturating_sub(EPOCHS_BACK)..=latest
+}
 pub fn keep_epoch<H: Host>(h: &mut H, m: &[u8; KEY_LEN], space: Option<[u8; 32]>, epoch: u64, secret: &[u8; 32]) -> bool {
     let latest = latest_in(h, m, &space);
     // The secret, then the newest mark if this epoch is newer (a node joining with the words keeps the epochs it
@@ -1023,8 +1029,14 @@ fn session<H: Host>(h: &H, app: &[u8; 32]) -> Option<Member> {
 }
 
 /// Open `app`'s session on `a`, and clear the try count.
+/// A right PIN takes ONE try back, never all (audit 10-11: a site knowing its own member's PIN reset the node's count
+/// between wrong guesses at another's — unlimited guessing). A person's odd mistype still wears off.
+fn try_back<H: Host>(h: &mut H) -> bool {
+    h.set_secret(TRIES, &[tries(h).saturating_sub(1)])
+}
+
 fn open<H: Host>(h: &mut H, app: &[u8; 32], a: &Member) -> Answer {
-    if !h.set_secret(&session_name(app), &a.public()) || !h.set_secret(TRIES, &[0]) {
+    if !h.set_secret(&session_name(app), &a.public()) || !try_back(h) {
         return Answer::Refused(Why::NotSaved);
     }
     a.unlocked()
@@ -1128,7 +1140,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             // The right PIN from another app is not a handover: that app never held this member.
             Ok(a) if a.home != app => Refused(Why::NotHome),
             Ok(a) => {
-                if !h.set_secret(TRIES, &[0]) {
+                if !try_back(h) {
                     return Refused(Why::NotSaved);
                 }
                 Handed { seed: a.seed, did: a.did, data: a.data }
@@ -1197,12 +1209,12 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             // The secrets first and the member last: a crash between leaves a member holding less, never keys nobody
             // can reach to forget.
             let mut ok = true;
-            for e in 0..=latest.unwrap_or(0) {
+            for e in epochs_back(latest.unwrap_or(0)) {
                 ok &= h.set_secret(&[EPOCH, &m[..], &e.to_be_bytes()].concat(), &[]);
             }
             // Every other space's group too: its state and every epoch's secret.
             for sp in spaces_of(h, &m).into_iter().map(Some) {
-                for e in 0..=latest_in(h, &m, &sp).unwrap_or(0) {
+                for e in epochs_back(latest_in(h, &m, &sp).unwrap_or(0)) {
                     ok &= h.set_secret(&[in_space(EPOCH, &m, &sp), e.to_be_bytes().to_vec()].concat(), &[]);
                 }
                 ok &= h.set_secret(&in_space(EPOCH_LATEST, &m, &sp), &[]) && h.set_secret(&in_space(MLS, &m, &sp), &[]);
@@ -1228,14 +1240,14 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             Err(answer) => answer,
             Ok(a) if a.home != app => Refused(Why::NotHome),
             Ok(a) => {
-                if !h.set_secret(TRIES, &[0]) {
+                if !try_back(h) {
                     return Refused(Why::NotSaved);
                 }
                 let m = a.public();
                 let latest = h.get_secret(&[EPOCH_LATEST, &m[..]].concat()).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes);
                 let epochs = match latest {
                     None => Vec::new(),
-                    Some(l) => (0..=l)
+                    Some(l) => epochs_back(l)
                         .filter_map(|e| Some((e, h.get_secret(&[EPOCH, &m[..], &e.to_be_bytes()].concat())?.try_into().ok()?)))
                         .collect(),
                 };
@@ -1246,7 +1258,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             Err(answer) => answer,
             Ok(a) if a.home != app => Refused(Why::NotHome),
             Ok(a) => {
-                if !h.set_secret(TRIES, &[0]) {
+                if !try_back(h) {
                     return Refused(Why::NotSaved);
                 }
                 let m = a.public();
@@ -1256,7 +1268,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                         let sp = Some(id);
                         let epochs = match latest_in(h, &m, &sp) {
                             None => Vec::new(),
-                            Some(l) => (0..=l).filter_map(|e| Some((e, secret_in(h, &m, &sp, e)?))).collect(),
+                            Some(l) => epochs_back(l).filter_map(|e| Some((e, secret_in(h, &m, &sp, e)?))).collect(),
                         };
                         (id, h.get_secret(&in_space(MLS, &m, &sp)).filter(|s| !s.is_empty()), epochs)
                     })
@@ -1458,7 +1470,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 }
                 let m = a.public();
                 let latest = latest_in(h, &m, &space)?;
-                (0..=latest).rev().find_map(|e| {
+                epochs_back(latest).rev().find_map(|e| {
                     let secret = secret_in(h, &m, &space, e)?;
                     let k = epoch_log_key(&secret);
                     matches!(&p.authority, Authority::One(v) if *v == k.verifying_key()).then_some(k)

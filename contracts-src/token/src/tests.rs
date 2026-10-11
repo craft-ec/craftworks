@@ -2006,6 +2006,11 @@ fn stake_counts_as_held_before_a_height_with_the_keys_it_burns_for() {
     assert_eq!(wallet::stake_at(&p, &d, &a, 11), Ok((600, vec![pk(1)])));
     assert_eq!(wallet::stake_at(&p, &d, &a, 21), Ok((400, vec![pk(1)])), "unbonding is not counted");
     assert_eq!(wallet::stake_at(&p, &d, &a, 31), Ok((400, vec![pk(1), pk(2)])), "the retired key and the writer's");
+    // FORKED (audit 10-11): two owner entries at one place freeze the chain — its stake counts nothing (a fork over a
+    // pending burn would otherwise keep it counting).
+    let mut forked = a.clone();
+    forked.fork = Some((a.entries[1].clone(), a.entries[2].clone()));
+    assert_eq!(wallet::stake_at(&p, &d, &forked, 31), Ok((0, vec![pk(1), pk(2)])), "an equivocated chain stakes nothing");
     // A chain held from a cut stamped after the height cannot say: read it whole.
     let (body, _) = cut::make(&p, &d, &a, Some(&log(1))).unwrap();
     let mut s = a.clone();
@@ -3591,6 +3596,24 @@ fn a_keeper_mints_its_statement_line_once_locked_as_stake_by_anyone() {
     assert_eq!(run(&misnamed), Err("a keeper mint named for another epoch, or twice"));
     // A token without keeper issuance: refused.
     assert_eq!(check(&at(id(&CODE, &def().encode()), T), &def(), &ok, &|_, _| None, &|_| None, Some(&log(T)), &Extra::NONE), Err("a keeper mint of a token without keeper issuance"));
+    // AGAIN PAST A CUT (audit 10-11): the chain cut after its mint, the same mint appended again — refused (a cut
+    // forgets the mints before it). A later epoch's mint still lands after the cut.
+    let mut whole = ok.clone();
+    let (body, _) = cut::make(&kp, &d, &whole, Some(&log(T))).unwrap();
+    put_at(&mut whole, 99, body, Some(T), begun + 10);
+    let again = |w: &State, epoch: u64, stamp: u64, root: [u8; 32], proof: Vec<u8>| {
+        let mut live = prune(w);
+        let mut e = entry(&live, keeper_nonce(&k, epoch), Body::KeeperMint { epoch, root, proof, amount: 40, fee: 0 });
+        e.stamp = stamp;
+        e.balance = live.balance();
+        live.entries.push(work(e));
+        live
+    };
+    let replay = again(&whole, 3, begun + 20, root, proof.clone());
+    assert_eq!(run(&replay), Err("a keeper mint for an epoch a cut may hide a mint of"), "the epoch minted behind the cut");
+    // (The contract checks the line under its root, not the root's epoch: the witnesses check that.)
+    let begun4 = 4 * craftworks_standing::EPOCH + d.margin as u64;
+    assert_eq!(run(&again(&whole, 4, begun4, root, proof.clone())), Ok(()), "an epoch begun after the cut");
     // WITNESS FEES in the same mint: a line of keeper 40 and witness 30 mints 40 locked and 30 SPENDABLE; another fee
     // is refused; a witness-only line (keeper 0) mints its fee alone.
     let fee_line = |keeper: u128, witness: u128| {

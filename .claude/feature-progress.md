@@ -2195,3 +2195,16 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
   `$CLAUDE_JOB_DIR/tmp/pub-fx.sh`. After v575: fx posted 149381c0 listing BOTH keepers (72-byte lines: the core
   carries decay; the published token.wasm is pre-decay → mints from it fail until decay is published).
 - Wren's token-ops witness stopped at its 2 h limit 10-11 ~09:30 (not restarted: statements now witnessed by pages).
+
+## AUDIT 10-11 (4 reviewers: token contracts, identity+delegate, design gaps, page/core) — fix phases
+- [x] A 10-11 (tested; each fix's negative control run except the epoch window — its unfixed form hangs; contracts
+      NOT published yet: re-keys $CRAFT, held until the claims-epoch-4 live check)  (small, clear): KeeperMint in the cut's received set (replay after cut); a forked chain's stake counts 0 (burn
+      escape); chained readers continue past a byte-full bag; statement build refuses on a SILENT bag read; payment
+      announcements kept for retry; delegate witness round keeps "not yet" entries (only settles NotSeated when drawn);
+      PIN tries counted per target not reset by another member's unlock; epoch_log/Forget/HandoverKeys bounded.
+- [ ] B: stake counts only WITNESSED entries (stake_at); witnesses check an allowance verdict's root against the
+      epoch's accepted statement; handover carries witnessed places + retire clears mandates; global upkeep settings
+      not writable by any home site; TokenSign place guard.
+- [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
+      caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
+      baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.

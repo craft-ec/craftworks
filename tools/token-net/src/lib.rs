@@ -113,9 +113,9 @@ impl<'a> Reader<'a> {
         let mut out = Vec::new();
         for k in 0..64 {
             let items = self.bag(address_of(epoch, k));
-            let n = items.len();
+            let full = craftworks_bag_contract::chained::full(items.iter().map(Vec::len));
             out.extend(items);
-            if n < craftworks_bag_contract::chained::ROOM {
+            if !full {
                 break;
             }
         }

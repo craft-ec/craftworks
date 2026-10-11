@@ -815,3 +815,38 @@ fn upkeep_and_page_share_one_witness_guard() {
     assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
     assert_eq!(serve(&mut m, Request::WitnessMandate { mandate }, OTHER), Answer::Refused(Why::NotHome));
 }
+
+/// GUESSING BETWEEN ITS OWN UNLOCKS (audit 10-11): a site that knows its own member's PIN unlocking it between wrong
+/// guesses at another's took the node's count back to nothing — unlimited guesses. Now a right PIN takes one try back:
+/// two wrong guesses and one right a round, the node locks.
+#[test]
+fn guessing_between_ones_own_unlocks_still_locks_the_node() {
+    let mut m = provisioned(APP);
+    let mut locked = false;
+    for _ in 0..10 {
+        for _ in 0..2 {
+            if unlock(&mut m, "999999", OTHER) == Answer::Locked {
+                locked = true;
+            }
+        }
+        if locked {
+            break;
+        }
+        let _ = unlock(&mut m, ALICE_PIN, OTHER);
+    }
+    assert!(locked, "locked within a few rounds");
+    assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), Answer::Locked, "and stays locked to a right PIN");
+}
+
+/// AN EPOCH OF u64::MAX (audit 10-11): kept by a site for its own member, every walk over the member's epochs is a
+/// window back from the newest — never from 0 (it hung the delegate).
+#[test]
+fn a_huge_kept_epoch_never_makes_a_walk_from_zero() {
+    let mut m = provisioned(APP);
+    let Answer::Unlocked { .. } = unlock(&mut m, ALICE_PIN, APP) else { panic!("unlocked") };
+    assert_eq!(serve(&mut m, Request::EpochKeep { space: None, epoch: u64::MAX, secret: [3; 32] }, APP), Answer::MlsSaved);
+    let t = std::time::Instant::now();
+    let _ = serve(&mut m, Request::HandoverKeys { pin: ALICE_PIN.into() }, APP);
+    let _ = serve(&mut m, Request::Forget, APP);
+    assert!(t.elapsed().as_secs() < 5, "walked a window, not 2^64 epochs");
+}

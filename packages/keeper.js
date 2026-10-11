@@ -32,10 +32,12 @@ export async function start(ctx) {
     if (epoch < 1) return;
     const [index, tokens] = await Promise.all(["index", "tokens"].map(n => ctx.require(n)));
     const me = await auth.check();
+    // (STRICT: a registry that did not answer leaves the assignment as it was — never replaced by an empty one.)
+    const strict = { strict: true };
     const [now, before, ks] = await Promise.all([
-      index.bag.chain(Core.registry_address, epoch, "reading the files registry"),
-      index.bag.chain(Core.registry_address, epoch - 1, "reading the files registry"),
-      index.bag.chain(Core.keepers_address, epoch - 1, "reading the keepers registry"),
+      index.bag.chain(Core.registry_address, epoch, "reading the files registry", strict),
+      index.bag.chain(Core.registry_address, epoch - 1, "reading the files registry", strict),
+      index.bag.chain(Core.keepers_address, epoch - 1, "reading the keepers registry", strict),
     ]);
     const keepers = await tokens.run(() => core.keepers_listed(tokens.idlogCode, ks));
     const { limit } = await keep.kept();

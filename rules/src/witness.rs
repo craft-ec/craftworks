@@ -33,8 +33,11 @@ pub fn beacon_out(beacon_code: &[u8; 32], got: Got, beacon_id: &[u8; 32], h: u64
 /// What this page does about one queued entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
-    /// Not drawn into its committee, its lot not drawn yet, or its chain not readable here: nothing to do.
+    /// Not drawn into its committee (its lot drawn, the committee computed): nothing to do, ever.
     NotSeated,
+    /// NOT YET decidable (audit 10-11: these were `NotSeated`, and a delegate settled them for good): its lot not drawn
+    /// yet, its token or chain not readable here, the entry not in the chain as read — asked again later.
+    Later(&'static str),
     /// Seated, and the rule refuses it (why): not signed.
     Refused(String),
     /// Seated, and the rule takes it: sign this entry hash at (chain, seq).
@@ -62,19 +65,20 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
     };
     let definition = |tid: &[u8; 32]| read(*tid).and_then(|b| Definition::decode(&b));
     let Some(d) = definition(&q.token.definition) else {
-        return Ok(if want.borrow().is_empty() { Step::Done(Verdict::NotSeated) } else { wanted(&want) });
+        return Ok(if want.borrow().is_empty() { Step::Done(Verdict::Later("its token or chain is not readable here")) } else { wanted(&want) });
     };
     let params = |tok: &t::Tok, owner: &[u8; 32], d: &Definition| ChainParams { code_hash: ctx.code_hash, definition: tok.definition, owner: *owner, beacon: d.beacon, idlog: d.idlog, item: tok.item };
     let p = params(&q.token, &q.owner, &d);
     let Some(s) = read(p.id()).and_then(|b| State::decode(&b)) else {
-        return Ok(if want.borrow().is_empty() { Step::Done(Verdict::NotSeated) } else { wanted(&want) });
+        return Ok(if want.borrow().is_empty() { Step::Done(Verdict::Later("its token or chain is not readable here")) } else { wanted(&want) });
     };
-    let Some(i) = s.entries.iter().position(|e| e.seq == q.seq) else { return Ok(Step::Done(Verdict::NotSeated)) };
+    let Some(i) = s.entries.iter().position(|e| e.seq == q.seq) else { return Ok(Step::Done(Verdict::Later("the entry is not in its chain as read"))) };
     let (_, h) = wallet::lot_of(&s.entries[i], i.checked_sub(1).map(|j| &s.entries[j]), d.margin).map_err(String::from)?;
     // SEATED? The committee drawn for this place.
     match seated(ctx, lot, got, &d.beacon, &p.id(), q.seq, h, me) {
         Step::Want(w) => return Ok(Step::Want(w)),
-        Step::Done(false) => return Ok(Step::Done(Verdict::NotSeated)),
+        Step::Done(None) => return Ok(Step::Done(Verdict::Later("its lot is not drawn yet"))),
+        Step::Done(Some(false)) => return Ok(Step::Done(Verdict::NotSeated)),
         _ => {}
     }
     let registry = |ep: u64| claims::Params { code_hash: ctx.code_hash, pool: lot.pool, beacon: d.beacon, epoch: ep }.id();
@@ -122,12 +126,13 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
 }
 
 /// SEATED: is witness key `me` drawn for place (`place`, `seq`), its lot at height `h` (beacon `beacon`): the claims
-/// of that height's epoch, the committee drawn there — an entry's place, or an epoch statement's.
+/// of that height's epoch, the committee drawn there — an entry's place, or an epoch statement's. `None`: its lot is not
+/// drawn yet (or its output not recorded): not yet decidable.
 #[allow(clippy::too_many_arguments)]
-pub fn seated(ctx: &Ctx, lot: &Lot, got: Got, beacon: &[u8; 32], place: &[u8; 32], seq: u64, h: u64, me: &[u8; 32]) -> Step<bool> {
+pub fn seated(ctx: &Ctx, lot: &Lot, got: Got, beacon: &[u8; 32], place: &[u8; 32], seq: u64, h: u64, me: &[u8; 32]) -> Step<Option<bool>> {
     let out = match out_at(lot, got, beacon, h) {
         Err(w) => return Step::Want(vec![w]),
-        Ok(Err(_)) => return Step::Done(false),
+        Ok(Err(_)) => return Step::Done(None),
         Ok(Ok(o)) => o,
     };
     let epoch = supply::epoch(h);
@@ -138,7 +143,7 @@ pub fn seated(ctx: &Ctx, lot: &Lot, got: Got, beacon: &[u8; 32], place: &[u8; 32
     };
     let valid = draw::valid(&lot.pool, epoch, &claims);
     let (k, _, _) = witness::seats(valid.len(), wallet::COMMITTEE);
-    Step::Done(draw::committee_of(&out, place, seq, &valid, k).iter().any(|m| claims[*m].key == *me))
+    Step::Done(Some(draw::committee_of(&out, place, seq, &valid, k).iter().any(|m| claims[*m].key == *me)))
 }
 
 /// An EPOCH STATEMENT's verdict for witness key `me`: the root this page computed for `epoch` (`root`: its own build,
@@ -146,8 +151,9 @@ pub fn seated(ctx: &Ctx, lot: &Lot, got: Got, beacon: &[u8; 32], place: &[u8; 32
 pub fn statement(ctx: &Ctx, lot: &Lot, got: Got, epoch: u64, root: &[u8; 32], me: &[u8; 32]) -> Step<Verdict> {
     let place = craftworks_reputation::statement::witness_place(epoch);
     match seated(ctx, lot, got, &ctx.beacon, &place, 0, craftworks_reputation::statement::lot_height(epoch), me) {
-        Step::Done(true) => Step::Done(Verdict::Sign { chain: place, seq: 0, entry: *root }),
-        Step::Done(false) => Step::Done(Verdict::NotSeated),
+        Step::Done(Some(true)) => Step::Done(Verdict::Sign { chain: place, seq: 0, entry: *root }),
+        Step::Done(Some(false)) => Step::Done(Verdict::NotSeated),
+        Step::Done(None) => Step::Done(Verdict::Later("its lot is not drawn yet")),
         Step::Want(w) => Step::Want(w),
         Step::Sign(m) => Step::Sign(m),
     }
