@@ -267,6 +267,7 @@ async fn main() -> Result<()> {
             let net = token_net::Net {
                 ws: a[5].clone(),
                 code_hash: *blake3::hash(&std::fs::read(&a[2])?).as_bytes(),
+                code: std::fs::read(&a[2])?,
                 idlog_hash: *blake3::hash(&std::fs::read(&a[3])?).as_bytes(),
                 bag_code: std::fs::read(&a[4])?,
                 beacon_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes(),
@@ -299,6 +300,7 @@ async fn main() -> Result<()> {
             let net = token_net::Net {
                 ws: a[5].clone(),
                 code_hash: *blake3::hash(&std::fs::read(&a[2])?).as_bytes(),
+                code: std::fs::read(&a[2])?,
                 idlog_hash: *blake3::hash(&std::fs::read(&a[3])?).as_bytes(),
                 bag_code: std::fs::read(&a[4])?,
                 beacon_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes(),
@@ -334,6 +336,7 @@ async fn main() -> Result<()> {
             let net = token_net::Net {
                 ws: a[5].clone(),
                 code_hash,
+                code: std::fs::read(&a[2])?,
                 idlog_hash,
                 bag_code: std::fs::read(&a[4])?,
                 beacon_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes(),
@@ -348,11 +351,14 @@ async fn main() -> Result<()> {
                 for q in r.queue(epoch) {
                     let Some(p) = r.params(&q.token, &q.owner) else { continue };
                     let Some(st) = r.chain(&q.token, &q.owner) else { continue };
-                    let Some(e) = st.entries.iter().find(|e| e.seq == q.seq) else { continue };
-                    let ce = e.stamp / T::supply::EPOCH;
+                    let Some(d) = r.definition(&q.token.definition) else { continue };
+                    let Some(i) = st.entries.iter().position(|e| e.seq == q.seq) else { continue };
+                    let e = &st.entries[i];
+                    // Its lot's claims epoch: whose registry may sign, and whose container holds its signatures.
+                    let Ok((ce, _)) = T::wallet::lot_of(e, i.checked_sub(1).map(|j| &st.entries[j]), d.margin) else { continue };
                     let mut keys: Vec<[u8; 32]> = r.raw_claims(ce).iter().map(|c| c.key).collect();
                     keys.push(T::witness::BASELINE);
-                    let sigs = r.sigs(&p.id(), q.seq);
+                    let sigs = r.sigs(&p.id(), q.seq, ce);
                     let by: Vec<String> = keys.iter().filter(|k| sigs.iter().any(|s| s.entry == e.hash() && s.signed_by(k))).map(|k| hex(&k[..4])).collect();
                     println!("{}…/{} seq {} stamp {} (claims epoch {ce}): signed by {:?}", hex(&q.token.definition[..4]), hex(&q.owner[..4]), q.seq, e.stamp, by);
                 }
@@ -382,17 +388,14 @@ async fn main() -> Result<()> {
                     craftworks_rules::tokens::Step::Done(r) => {
                         println!("epoch {epoch} root {}: {r:?}", hex(&root[..6]));
                         let place = craftworks_reputation::statement::witness_place(epoch);
-                        let addr = T::wallet::witness_bag(&place, 0);
-                        let bag = got.get(&T::id(&lot.bag, &addr)).and_then(|b| craftworks_bag_contract::read(&addr, b)).unwrap_or_default();
-                        for i in &bag {
-                            if let Some(w) = T::wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(i)) {
-                                println!("  sig on {} by a key: {}", hex(&w.entry[..6]), if w.entry == root { "this root" } else { "another root" });
-                            }
-                        }
                         let h = craftworks_reputation::statement::lot_height(epoch);
+                        let sigs = craftworks_rules::tokens::witness_sigs(&|id| got.get(&id).cloned(), &craftworks_rules::tokens::witness_at(code_hash, &lot, beacon, &place, 0, h / T::supply::EPOCH));
+                        for w in &sigs {
+                            println!("  sig on {} by a key: {}", hex(&w.entry[..6]), if w.entry == root { "this root" } else { "another root" });
+                        }
                         let reg = T::claims::Params { code_hash, pool, beacon, epoch: h / T::supply::EPOCH }.id();
                         for c in got.get(&reg).and_then(|b| T::claims::Registry::decode(b)).map_or(vec![], |r| r.claims) {
-                            let signed = bag.iter().filter_map(|i| T::wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(i))).any(|w| w.entry == root && w.signed_by(&c.key));
+                            let signed = sigs.iter().any(|w| w.entry == root && w.signed_by(&c.key));
                             let pd = got.get(&pool).and_then(|b| T::Definition::decode(b));
                             let stake = pd.as_ref().and_then(|pd| {
                                 let cp = T::ChainParams { code_hash, definition: pool, owner: c.owner, beacon: pd.beacon, idlog: pd.idlog, item: [0; 32] };
@@ -413,13 +416,14 @@ async fn main() -> Result<()> {
             // A WITNESS (TOKEN §7a), kept running: every tick it reads the witness queue of this standing epoch and the
             // last, and signs each entry it is SEATED for (drawn by lot, or the baseline's seat while the network is
             // small) once the rule takes it (`wallet::may_witness`, by induction — an entry refused now, its past not yet
-            // accepted, is tried again until it is too old) into the entry's witness bag.
+            // accepted, is tried again until it is too old) into its place's signatures container (`witness::Params`).
             let (code_hash, idlog_hash, beacon) = (*blake3::hash(&std::fs::read(&a[2])?).as_bytes(), *blake3::hash(&std::fs::read(&a[3])?).as_bytes(), unhex32(&a[6])?);
             // The stake pool: `craft` — $CRAFT, keepers' earned stake (its one definition for this network).
             let pool = if a[7] == "craft" { T::id(&code_hash, &craftworks_wallet::craft::definition(code_hash, beacon, idlog_hash).encode()) } else { unhex32(&a[7])? };
             let net = token_net::Net {
                 ws: a[5].clone(),
                 code_hash,
+                code: std::fs::read(&a[2])?,
                 idlog_hash,
                 bag_code: std::fs::read(&a[4])?,
                 beacon_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes(),

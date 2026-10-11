@@ -16,6 +16,8 @@ use T::{draw::StakeClaim, wallet, witness, Definition, State, Tok};
 pub struct Net {
     pub ws: String,
     pub code_hash: [u8; 32],
+    /// The token's code (a witness PUTs its signature into its place's container: `witness::Params`).
+    pub code: Vec<u8>,
     pub idlog_hash: [u8; 32],
     pub bag_code: Vec<u8>,
     /// The beacon's code hash (its OUTPUTS LOG contracts are that code's: heights its state no longer keeps).
@@ -100,12 +102,21 @@ impl<'a> Reader<'a> {
         let registry = |e: u64| self.raw_claims(e);
         let chain = |o: &[u8; 32]| Some((self.params(&tok, o)?, self.chain(&tok, o)?));
         let out = |h: u64| self.out_at(h);
-        let sigs = |c: &[u8; 32], q: u64| self.sigs(c, q);
+        let sigs = |c: &[u8; 32], q: u64, ep: u64| self.sigs(c, q, ep);
         let r = wallet::StakeReads { pool: self.net.pool, pool_def: &pd, registry: &registry, chain: &chain, out: &out, sigs: &sigs };
         wallet::valid_stakers(&r, epoch, &Default::default())
     }
-    pub fn sigs(&self, chain: &[u8; 32], seq: u64) -> Vec<witness::WitnessSig> {
-        self.bag(wallet::witness_bag(chain, seq)).iter().filter_map(|p| wallet::bytes::read_witness_sig(p)).collect()
+    /// A PLACE'S SIGNATURES container under claims epoch `epoch` (`witness::Params`: its registry's keys may sign).
+    pub fn place(&self, chain: &[u8; 32], seq: u64, epoch: u64) -> witness::Params {
+        witness::Params { code_hash: self.net.code_hash, pool: self.net.pool, beacon: self.net.beacon, epoch, chain: *chain, seq }
+    }
+    pub fn sigs(&self, chain: &[u8; 32], seq: u64, epoch: u64) -> Vec<witness::WitnessSig> {
+        let p = self.place(chain, seq, epoch);
+        self.get(p.id()).map(|b| p.sigs(&b)).unwrap_or_default()
+    }
+    /// PUT `key`'s signature `sig` into its place's container `p` (made if not there; else merged).
+    fn put_sig(&self, p: &witness::Params, key: &[u8; 32], sig: &witness::WitnessSig) -> anyhow::Result<String> {
+        Ok(self.rt.block_on(node_io::put(&self.net.ws, node_io::container(&self.net.code, p.encode()), p.state(&[(*key, sig.clone())])))?.0)
     }
     /// A staker's stake as its VALID claim stands at height `at` (its claims epoch's).
     pub fn stake_of(&self, owner: &[u8; 32], at: u64) -> Option<witness::Stake> {
@@ -139,7 +150,7 @@ impl<'a> Reader<'a> {
         use craftworks_reputation::statement::{bag_address, lines, lot_height, witness_place, Posted};
         let claims = |ep: u64| self.claims(ep);
         let out = |h: u64| self.out_at(h);
-        let sigs = |c: &[u8; 32], sq: u64| self.sigs(c, sq);
+        let sigs = |c: &[u8; 32], sq: u64, ep: u64| self.sigs(c, sq, ep);
         let entry = |_: &Queued| None;
         let r = craftworks_wallet::fees::Reads { pool: self.net.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs };
         let mut sts: Vec<craftworks_wallet::fees::Statement> = self.bag(bag_address(epoch)).iter().filter_map(|p| Posted::decode(p)).filter(|p| p.epoch == epoch).map(|p| craftworks_wallet::fees::Statement { place: witness_place(epoch), root: p.root, h: lot_height(epoch) }).collect();
@@ -160,7 +171,7 @@ impl<'a> Reader<'a> {
         };
         let claims = |ep: u64| self.claims(ep);
         let out = |h: u64| self.out_at(h);
-        let sigs = |c: &[u8; 32], sq: u64| self.sigs(c, sq);
+        let sigs = |c: &[u8; 32], sq: u64, ep: u64| self.sigs(c, sq, ep);
         use craftworks_reputation::statement::{bag_address, lot_height, witness_place, Posted};
         let statements: Vec<craftworks_wallet::fees::Statement> = self.bag(bag_address(epoch)).iter().filter_map(|p| Posted::decode(p)).filter(|p| p.epoch == epoch).map(|p| craftworks_wallet::fees::Statement { place: witness_place(epoch), root: p.root, h: lot_height(epoch) }).collect();
         craftworks_wallet::fees::count(&queued, &statements, &craftworks_wallet::fees::Reads { pool: self.net.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs })
@@ -227,11 +238,11 @@ impl<'a> Reader<'a> {
             return if posted.is_empty() { Ok(None) } else { Err(format!("posted root(s) {} — not the one computed here ({})", posted.iter().map(|r| hex6(r)).collect::<Vec<_>>().join(", "), hex6(&mine))) };
         }
         let sig = witness::WitnessSig { chain: place, seq: 0, entry: mine, sig: key.sign(&witness::WitnessSig::message(&place, 0, &mine)).to_bytes() };
-        self.drop(wallet::witness_bag(&place, 0), &wallet::bytes::witness_sig(&sig)).map_err(|e| e.to_string())?;
+        self.put_sig(&self.place(&place, 0, ce), &me, &sig).map_err(|e| e.to_string())?;
         Ok(Some(mine))
     }
 
-    /// WITNESS one queued entry with `key`: `Ok(Some(sig))` signed (and dropped into its witness bag), `Ok(None)` not
+    /// WITNESS one queued entry with `key`: `Ok(Some(sig))` signed (and put into its place's container), `Ok(None)` not
     /// seated in its committee (or its lot not drawn yet), `Err(why)` refused by the rule.
     pub fn witness(&self, q: &Queued, key: &SigningKey) -> Result<Option<witness::WitnessSig>, String> {
         let me = key.verifying_key().to_bytes();
@@ -250,7 +261,7 @@ impl<'a> Reader<'a> {
             return Ok(None);
         }
         let claims_of = |ep: u64| self.claims(ep);
-        let sigs_of = |c: &[u8; 32], sq: u64| self.sigs(c, sq);
+        let sigs_of = |c: &[u8; 32], sq: u64, ep: u64| self.sigs(c, sq, ep);
         let out_of = |hh: u64| self.out_at(hh);
         let stake = |o: &[u8; 32], at: u64| self.stake_of(o, at);
         let defs = |t: &[u8; 32]| self.definition(t);
@@ -265,7 +276,7 @@ impl<'a> Reader<'a> {
         let now = self.height();
         let hash = wallet::may_witness(&src, &p, &d, &s, q.seq, now, &holds, &cited).map_err(String::from)?;
         let sig = witness::WitnessSig { chain: p.id(), seq: q.seq, entry: hash, sig: key.sign(&witness::WitnessSig::message(&p.id(), q.seq, &hash)).to_bytes() };
-        self.drop(wallet::witness_bag(&p.id(), q.seq), &wallet::bytes::witness_sig(&sig)).map_err(|e| e.to_string())?;
+        self.put_sig(&self.place(&p.id(), q.seq, epoch), &me, &sig).map_err(|e| e.to_string())?;
         Ok(Some(sig))
     }
 }

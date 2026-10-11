@@ -1,7 +1,7 @@
 //! THE WITNESS QUEUE (TOKEN §7a): how an entry reaches its witnesses. Its writer — online as it writes — drops a
 //! [`Queued`] item (the chain and the place) into the epoch's queue, a chain of bags ([`crate::chained`]); a witness
 //! reads the queue, draws each entry's committee, and — seated — re-checks it by induction (`wallet::may_witness`) and
-//! signs into the entry's witness bag (`wallet::witness_bag`). Nothing in it names an account the chain does not.
+//! signs into the entry's place's signatures container (`witness::Params`). Nothing in it names an account the chain does not.
 
 use craftworks_token_contract::Tok;
 

@@ -37,27 +37,30 @@ export async function start(ctx) {
   const read = idHex => node.read(bytes(idHex), "reading a token contract", { absent: true });
   // PUT what a step built, each answered; then FORGOTTEN by the core (read again, fresh, when next asked). A token
   // chain's new entries then go into the WITNESS QUEUE (TOKEN §7a: how they reach their witnesses).
+  async function putOne(p) {
+    const said = await ask(p.frames, s => (s.kind === "put" && s.key === p.id) || s.kind === "refused", "putting a token contract", 60000);
+    if (said.kind !== "put") throw new Error(`the node refused it (${said.said})`);
+    core.take_got(hexOf(p.idBytes));
+  }
   async function putAll(puts) {
     for (const p of puts ?? []) {
-      const said = await ask(p.frames, s => (s.kind === "put" && s.key === p.id) || s.kind === "refused", "putting a token contract", 60000);
-      if (said.kind !== "put") throw new Error(`the node refused it (${said.said})`);
-      core.take_got(hexOf(p.idBytes));
-      // KEPT TO QUEUE (audit 10-11): each new entry's queue item and witness bag recorded as soon as its put is taken,
-      // and queued from there — one that fails is queued again on the next put, never left unwitnessed.
+      await putOne(p);
+      // KEPT TO QUEUE (audit 10-11): each new entry's queue item and witness container recorded as soon as its put is
+      // taken, and queued from there — one that fails is queued again on the next put, never left unwitnessed.
       const qs = p.queue ?? [];
-      for (let i = 0; i < qs.length; i++) await priv.put(`toqueue/${hexOf(qs[i])}`, JSON.stringify({ q: hexOf(qs[i]), bag: p.bags?.[i] ? hexOf(p.bags[i]) : null, done: false }));
+      for (let i = 0; i < qs.length; i++) await priv.put(`toqueue/${hexOf(qs[i])}`, JSON.stringify({ q: hexOf(qs[i]), wit: p.witnesses?.[i] ? hexOf(p.witnesses[i]) : null, done: false }));
     }
     await queueAll();
   }
-  // Each entry waiting to be queued: its WITNESS BAG made (empty) first — a witness with no page open only adds to a
-  // bag already there — then the item into the witness queue of this epoch.
+  // Each entry waiting to be queued: its WITNESS SIGNATURES container made (empty, `core.witness_put`) first — a
+  // witness with no page open only adds to one already there — then the item into the witness queue of this epoch.
   async function queueAll() {
     const waiting = rows("toqueue/").filter(o => !o.done);
     if (!waiting.length) return;
     const at = await now();
     for (const o of waiting) {
       try {
-        if (o.bag) await index.bag.add(bytes(o.bag), new Uint8Array(0), "making an entry's witness bag");
+        if (o.wit) await putOne(core.witness_put(code, bytes(o.wit), new Uint8Array(0), new Uint8Array(0), new Uint8Array(0)));
         await chained(Core.witness_queue_address, at, bytes(o.q), "queueing an entry for its witnesses");
         await priv.put(`toqueue/${o.q}`, JSON.stringify({ ...o, done: true }));
       } catch (e) {

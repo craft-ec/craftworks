@@ -263,7 +263,7 @@ async fn main() -> Result<()> {
             "deal" => deal_mode(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("swap.wasm"))?).await?,
             "pool" => pool_mode(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("pool.wasm"))?).await?,
             "standing" => standing_mode(&w, &bcode, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("standing.wasm"))?).await?,
-            "witness" => witness_mode(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("bag.wasm"))?).await?,
+            "witness" => witness_mode(&w).await?,
             "cut" => cut(&w, &std::fs::read(std::path::Path::new(&a[1]).with_file_name("block.wasm"))?).await?,
             m => bail!("no mode {m}"),
         }
@@ -715,11 +715,10 @@ async fn nft(w: &W, scode: &[u8]) -> Result<()> {
 /// FOUNDATION 6, LIVE: WITNESSES BY LOT, weighted by stake. 16 stakers earn and stake 50 each in a POOL token; at the
 /// next epoch they post their stake claims to the pool's stakers bag. In another token A pays B; C credits itself 5000
 /// from a send that does not exist, buried under real receives, and pays D out of it. Each entry's committee — drawn
-/// from the claims by the beacon output after it — re-checks it by the witness rule and signs into its witness bag. B's
-/// wallet accepts its payment from the bags alone; D's is never witnessed. A witness signing twice at one place is
-/// burned.
-async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
-    use craftworks_bag_contract as bag;
+/// from the claims by the beacon output after it — re-checks it by the witness rule and signs into its place's signatures
+/// container (`witness::Params`). B's wallet accepts its payment from the signatures alone; D's is never witnessed. A
+/// witness signing twice at one place is burned.
+async fn witness_mode(w: &W) -> Result<()> {
     use T::{draw, supply, wallet};
     println!("— witness");
     let stakers: Vec<u8> = (20..36).collect();
@@ -812,14 +811,13 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
     w.until(r3 + td.margin + 3).await?;
 
     // THE WITNESSES and THE WALLETS: everything read from the nodes (blocking reads on a runtime of their own).
-    let (x, y, beacon, bc, ch, bid, idlog) = (w.x.clone(), w.y.clone(), w.beacon, bag_code.to_vec(), w.ch, w.beacon, w.idlog);
+    let (x, y, beacon, tc, ch, bid, idlog) = (w.x.clone(), w.y.clone(), w.beacon, w.code.clone(), w.ch, w.beacon, w.idlog);
     let (pd2, td2) = (pd.clone(), td.clone());
     let lines = tokio::task::spawn_blocking(move || -> Vec<String> {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let out = std::cell::RefCell::new(Vec::<String>::new());
         let params = |t: [u8; 32], o: u8| T::ChainParams { code_hash: ch, definition: t, owner: did(o), beacon: bid, idlog, item: [0; 32] };
         let read = |p: &T::ChainParams| rt.block_on(get(&y, p.id())).ok().flatten().and_then(|b| T::State::decode(&b));
-        let bag_items = |addr: [u8; 32]| -> Vec<Vec<u8>> { rt.block_on(get(&x, *container(&bc, addr.to_vec()).key().id().as_bytes().first_chunk::<32>().unwrap())).ok().flatten().and_then(|s| bag::read(&addr, &s)).unwrap_or_default() };
         let beacon_state = std::cell::RefCell::new(None::<B::State>);
         let out_at = |hh: u64| -> Option<[u8; 32]> {
             let find = |s: &B::State| s.steps.iter().find(|st| st.height == hh).map(|st| st.out);
@@ -835,7 +833,12 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
             let rp = T::claims::Params { code_hash: ch, pool, beacon: bid, epoch: e };
             rt.block_on(get(&x, rp.id())).ok().flatten().and_then(|b| T::claims::Registry::decode(&b)).map_or(vec![], |r| r.claims)
         };
-        let sigs_of = |cid: &[u8; 32], seq: u64| bag_items(wallet::witness_bag(cid, seq)).iter().filter_map(|i| wallet::bytes::read_witness_sig(bag::payload(i))).collect::<Vec<_>>();
+        // A place's signatures: its container under the lot's claims epoch (`witness::Params`), on X.
+        let place_of = |cid: &[u8; 32], seq: u64, ep: u64| T::witness::Params { code_hash: ch, pool, beacon: bid, epoch: ep, chain: *cid, seq };
+        let sigs_of = |cid: &[u8; 32], seq: u64, ep: u64| {
+            let wp = place_of(cid, seq, ep);
+            rt.block_on(get(&x, wp.id())).ok().flatten().map(|b| wp.sigs(&b)).unwrap_or_default()
+        };
         let stake_reads = std::cell::Cell::new(0usize);
         let stake_of = |o: &[u8; 32], at: u64| {
             stake_reads.set(stake_reads.get() + 1);
@@ -846,7 +849,7 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
         let defs = |t: &[u8; 32]| if *t == ta { Some(td2.clone()) } else if *t == pool { Some(pd2.clone()) } else { None };
         let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of, definition: &defs, program: &|_| None, freeze: &|_| None, keys: &|o: &[u8; 32]| (1..=99u8).find(|n| did(*n) == *o).map(log), history: &|_, _| None };
         let cited = |t: &T::Tok, o: &[u8; 32]| rt.block_on(get(&y, T::ChainParams { code_hash: ch, definition: t.definition, owner: *o, beacon: bid, idlog, item: t.item }.id())).ok().flatten().and_then(|b| T::State::decode(&b));
-        // Witness one entry: its committee drawn, each member re-checks it by the rule and signs into its bag on X.
+        // Witness one entry: its committee drawn, each member re-checks it by the rule and signs into its container on X.
         let witness = |o: u8, seq: u64, who: &str| -> bool {
             let p = params(ta, o);
             let Some(s) = read(&p) else {
@@ -873,17 +876,17 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
                     false
                 }
                 Ok(hash) => {
-                    let addr = wallet::witness_bag(&p.id(), seq);
-                    let items: Vec<Vec<u8>> = members
+                    let wp = place_of(&p.id(), seq, ep);
+                    let items: Vec<([u8; 32], T::witness::WitnessSig)> = members
                         .iter()
                         .map(|&m| {
                             let n = (20..36u8).find(|n| pk(*n) == claims[m].key).unwrap(); // the member's own key
                             let sig = key(n).sign(&T::witness::WitnessSig::message(&p.id(), seq, &hash)).to_bytes();
-                            bag::grind(&addr, &wallet::bytes::witness_sig(&T::witness::WitnessSig { chain: p.id(), seq, entry: hash, sig }))
+                            (pk(n), T::witness::WitnessSig { chain: p.id(), seq, entry: hash, sig })
                         })
                         .collect();
-                    let said = rt.block_on(put(&x, container(&bc, addr.to_vec()), bag::encode(&addr, &items))).map(|r| r.0).unwrap_or_else(|e| e.to_string());
-                    out.borrow_mut().push(format!("   {who} seq {seq}: drawn {}, each re-checked it and signed — bag on X: {said}", members.len()));
+                    let said = rt.block_on(put(&x, container(&tc, wp.encode()), wp.state(&items))).map(|r| r.0).unwrap_or_else(|e| e.to_string());
+                    out.borrow_mut().push(format!("   {who} seq {seq}: drawn {}, each re-checked it and signed — container on X: {said}", members.len()));
                     true
                 }
             }
@@ -900,7 +903,7 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
             }
         }
         witness(5, 0, "5");
-        // THE WALLETS: an entry accepted from its bags alone.
+        // THE WALLETS: an entry accepted from its signatures alone.
         let accept = |o: u8, seq: u64| {
             let p = params(ta, o);
             let s = read(&p)?;
@@ -917,17 +920,16 @@ async fn witness_mode(w: &W, bag_code: &[u8]) -> Result<()> {
     for l in lines {
         println!("{l}");
     }
-    // AN EQUIVOCATION: staker 20 signs two entries at one place, into that place's witness bag; a WATCHER reads the bag
-    // and the epoch's registry, finds it (`wallet::equivocations`) and appends the burn to the staker's pool chain.
+    // AN EQUIVOCATION: staker 20 signs two entries at one place, into that place's signatures container; a WATCHER reads
+    // it and the epoch's registry, finds it (`wallet::equivocations`) and appends the burn to the staker's pool chain.
     let other = |e: u8| *blake3::hash(&[e]).as_bytes();
     let place = w.chain(ta, 2).id();
     let sg = |e: u8| T::witness::WitnessSig { chain: place, seq: 1, entry: other(e), sig: key(20).sign(&T::witness::WitnessSig::message(&place, 1, &other(e))).to_bytes() };
-    let waddr = wallet::witness_bag(&place, 1);
-    let said = put(&w.x, container(bag_code, waddr.to_vec()), bag::encode(&waddr, &[bag::grind(&waddr, &wallet::bytes::witness_sig(&sg(1))), bag::grind(&waddr, &wallet::bytes::witness_sig(&sg(2)))])).await?.0;
-    println!("13 staker 20 signs two other entries at 2's seq 1, into its witness bag on X: {said}");
+    let wp = T::witness::Params { code_hash: w.ch, pool, beacon: w.beacon, epoch, chain: place, seq: 1 };
+    let said = put(&w.x, container(&w.code, wp.encode()), wp.state(&[(pk(20), sg(1)), (pk(20), sg(2))])).await?.0;
+    println!("13 staker 20 signs two other entries at 2's seq 1, into its signatures container on X: {said}");
     tokio::time::sleep(Duration::from_secs(2)).await;
-    let bag_now = get(&w.x, *container(bag_code, waddr.to_vec()).key().id().as_bytes().first_chunk::<32>().unwrap()).await?.and_then(|s| bag::read(&waddr, &s)).unwrap_or_default();
-    let sigs: Vec<T::witness::WitnessSig> = bag_now.iter().filter_map(|i| wallet::bytes::read_witness_sig(bag::payload(i))).collect();
+    let sigs: Vec<T::witness::WitnessSig> = get(&w.x, wp.id()).await?.map(|b| wp.sigs(&b)).unwrap_or_default();
     let registry = get(&w.x, reg.id()).await?.and_then(|b| T::claims::Registry::decode(&b)).map_or(vec![], |r| r.claims);
     let found = wallet::equivocations(&sigs, &registry);
     println!("   the watcher: {} signatures at that place, {} equivocator(s): {:?}", sigs.len(), found.len(), found.iter().map(|f| stakers.iter().find(|n| did(**n) == f.0).copied()).collect::<Vec<_>>());

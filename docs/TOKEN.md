@@ -725,7 +725,17 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   WHO SIGNS (built 10-11): the drawn member's open PAGE (`witness.js`, `rules::witness::entry`); with the page CLOSED,
   its identity DELEGATE (`delegate/src/witness_round.rs`, the same rule, by a mandate the page handed over), through
   ONE guard (the place recorded before a signature, never another entry there). The queuing page makes each entry's
-  empty witness bag: a delegate's new contracts do not propagate (freenet #5542), it adds to bags that exist.
+  empty signatures container: a delegate's new contracts do not propagate (freenet #5542), it adds to ones that exist.
+- **A place's signatures have their own container** (audit 10-11: `witness::Params`, a kind of the token contract,
+  params = (token code, pool, beacon, the lot's CLAIMS EPOCH, chain, seq)). They lived in a generic bag — anyone adds,
+  past its caps the items with the most work kept — and ~16 junk items of 16 KiB with a little more work evicted every
+  genuine signature (the entry never accepted, an equivocation's proof gone). No rule over items alone stops that: a
+  well-formed signature under a fresh key is free, so ANY bag of N kept by ANY order loses its genuine items to N made
+  to outrank them. What bounds the items is who may sign: the container takes a signature only if it VERIFIES over the
+  place's message under its key and that key is the baseline's or one of the epoch's CLAIMS REGISTRY (frozen before the
+  lots, at most 4,096 claims: the update reads it as a related contract), each key keeping its two lowest entries (two
+  prove an equivocation; an honest key signs one). Its size is then bounded by the registry — nothing taken is ever
+  dropped for room.
   A claim is checked only when its claimer is drawn (its chain read): one over its real stake does not count.
 - **Stake answers for its key, as held at its epoch's start** (6d). A signature counts only if its claim's key is one
   the claimer's stake BURNS for — its chain's device writer, or a writer key it retired while staked (a chain carries
@@ -756,7 +766,7 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   disk and a sybil's weight is cheap and rebuilt after a cheat; a strong proof of replication needs Filecoin-grade
   cryptography. And peers' attestations of a node's ring place are sybil-able (any keys can sign "peer P is at R"), so
   location cannot be the guard either. Storage proofs stay what PAYS keepers — where a fake only shifts small rewards.
-- **The watch** (built 10-09): anyone reading a place's witness bag and the epoch's claims registry finds every key
+- **The watch** (built 10-09): anyone reading a place's signatures and the epoch's claims registry finds every key
   that signed two entries there (`wallet::equivocations`) and appends its burn; running a watcher continuously is
   rollout.
 - **A witness's MISDEED is burned too** (built 10-09): beyond two signatures at one place, a witness that signs a

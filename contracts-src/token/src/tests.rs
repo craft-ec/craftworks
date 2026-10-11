@@ -1774,7 +1774,7 @@ impl Lot {
         wallet::Source {
             pool: id_a(),
             claims: Box::leak(Box::new(|e: u64| if e == 0 { self.claims.clone() } else { vec![] })),
-            sigs: Box::leak(Box::new(|c: &[u8; 32], seq: u64| self.sigs.get(&(*c, seq)).cloned().unwrap_or_default())),
+            sigs: Box::leak(Box::new(|c: &[u8; 32], seq: u64, _epoch: u64| self.sigs.get(&(*c, seq)).cloned().unwrap_or_default())),
             out: Box::leak(Box::new(|h: u64| (h <= self.drawn).then(|| Lot::out(h)))),
             // Every staker's stake as held at epoch 0's start (height 0) — its claims' epoch.
             stake_of: &|o, h| (h == 0).then(|| (100, vec![pk(o[0])])),
@@ -1909,10 +1909,68 @@ fn the_shared_lot_records_round_trip_exactly() {
     assert_eq!(wallet::bytes::read_stake_claim(&b).as_ref(), Some(c));
     assert!(wallet::bytes::read_stake_claim(&[&b[..], &[0]].concat()).is_none());
     assert!(wallet::bytes::read_stake_claim(&b[..b.len() - 1]).is_none());
+    // A place's signatures, as its container holds them: read back exactly; trailing bytes, or out of order, refused.
     let s = wsig(60, 7, 3, 1);
-    let b = wallet::bytes::witness_sig(&s);
-    assert_eq!(wallet::bytes::read_witness_sig(&b).as_ref(), Some(&s));
-    assert!(wallet::bytes::read_witness_sig(&[&b[..], &[0]].concat()).is_none());
+    let wp = witness::Params { code_hash: CODE, pool: id_a(), beacon: [7; 32], epoch: 0, chain: s.chain, seq: s.seq };
+    let b = wp.state(&[(pk(60), s.clone())]);
+    assert_eq!(wp.sigs(&b), vec![s.clone()]);
+    assert_eq!(witness::Params::decode(&wp.encode()), Some(wp));
+    assert!(witness::Signatures::decode(&[&b[..], &[0]].concat()).is_none());
+    let two = witness::Signatures::decode(&b).unwrap().items.repeat(2);
+    assert!(witness::Signatures::decode(&witness::Signatures { items: two }.encode()).is_none(), "one per (key, entry)");
+}
+
+/// A PLACE'S WITNESS SIGNATURES (audit 10-11): in a generic bag, ~16 junk items with more work than a signature's
+/// evicted every genuine one. Their own container takes only signatures that VERIFY over the place, by the baseline or a
+/// key of the claims epoch's registry, each key's two lowest entries — so no flood of junk, however large or however
+/// it ranks, displaces one: what it may hold is bounded by the registry, never by evicting.
+#[test]
+fn junk_never_evicts_a_places_genuine_witness_signatures() {
+    use witness::{merge, needs_registry, Params, Signatures, Signed};
+    let p = Params { code_hash: CODE, pool: id_a(), beacon: [7; 32], epoch: 3, chain: [5; 32], seq: 9 };
+    let entry = [0x80u8; 32];
+    let signed = |k: &SigningKey, chain: [u8; 32], e: [u8; 32]| Signed { key: k.verifying_key().to_bytes(), entry: e, sig: k.sign(&witness::WitnessSig::message(&chain, p.seq, &e)).to_bytes() };
+    // The epoch's registry: 16 stakers (keys 60..76).
+    let reg = claims::Registry {
+        claims: (60..76u8).map(|n| draw::StakeClaim { owner: [n; 32], amount: 100, epoch: 3, key: pk(n), sig: key(n).sign(&draw::StakeClaim::message(&id_a(), &[n; 32], 100, 3, &pk(n))).to_bytes() }).collect(),
+    };
+    // Eleven of the committee signed the entry.
+    let genuine: Vec<Signed> = (60..71u8).map(|n| signed(&key(n), p.chain, entry)).collect();
+    let held = merge(&p, &Signatures::default(), &Signatures { items: genuine.clone() }, Some(&reg));
+    assert_eq!(held.items.len(), 11);
+    // THE FLOOD: more well-formed signatures over this very place than the container could ever hold, each under a
+    // fresh key (free to make: no rule over items alone tells them from a witness's) ...
+    let mut junk: Vec<Signed> = (0..witness::SIGNED_MAX as u32 + 64)
+        .map(|i| signed(&SigningKey::from_bytes(blake3::hash(&i.to_le_bytes()).as_bytes()), p.chain, [(i % 251) as u8; 32]))
+        .collect();
+    // ... signatures under REGISTERED keys that do not verify, or verify over another place (replayed) ...
+    junk.push(Signed { key: pk(61), entry: [1; 32], sig: [7; 64] });
+    junk.push(signed(&key(62), [6; 32], [2; 32]));
+    // ... and one registered key (60) signing three more entries, all ranking below its genuine one.
+    junk.extend([[0u8; 32], [1; 32], [2; 32]].map(|e| signed(&key(60), p.chain, e)));
+    let junk = Signatures { items: junk };
+    assert!(needs_registry(&held, &junk) && !needs_registry(&held, &held));
+    let after = merge(&p, &held, &junk, Some(&reg));
+    // Every genuine signature but the equivocator's stays; the equivocator keeps the proof (two entries) against it.
+    for g in &genuine[1..] {
+        assert!(after.items.contains(g), "a genuine signature evicted");
+    }
+    assert_eq!(after.items.len(), 10 + witness::PER_KEY, "nothing else taken");
+    assert!(witness::holds(&p, &after).is_ok());
+    let read = p.sigs(&after.encode());
+    let mine: Vec<&witness::WitnessSig> = read.iter().filter(|s| s.signed_by(&pk(60))).collect();
+    assert!(witness::equivocation(&pk(60), mine[0], mine[1]), "the equivocation's proof kept");
+    // The same in any order; and with no registry read, nothing new but the baseline's is taken.
+    let all = Signatures { items: [junk.items.clone(), genuine.clone()].concat() };
+    assert_eq!(merge(&p, &Signatures::default(), &all, Some(&reg)), after);
+    assert_eq!(merge(&p, &held, &junk, None), held);
+    // A copy taken without the registry still holds only signatures that verify, at most two per key.
+    let mut bad = held.clone();
+    bad.items[0].sig[0] ^= 1;
+    assert!(witness::holds(&p, &bad).is_err());
+    let mut three = Signatures { items: [[0u8; 32], [1; 32], [2; 32]].map(|e| signed(&key(60), p.chain, e)).to_vec() };
+    three.items.sort();
+    assert!(witness::holds(&p, &three).is_err());
 }
 
 #[test]

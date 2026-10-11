@@ -40,8 +40,9 @@ pub enum Verdict {
     Later(&'static str),
     /// Seated, and the rule refuses it (why): not signed.
     Refused(String),
-    /// Seated, and the rule takes it: sign this entry hash at (chain, seq).
-    Sign { chain: [u8; 32], seq: u64, entry: [u8; 32] },
+    /// Seated, and the rule takes it: sign this entry hash at (chain, seq) — `at`, the place's signatures container
+    /// under its lot's claims epoch (where the signature goes; `at.chain`, `at.seq` its place).
+    Sign { at: t::witness::Params, entry: [u8; 32] },
 }
 
 /// The VERDICT on queued entry `q` for the witness key `me` (this node's member key, its account's claim's), at beacon
@@ -73,7 +74,7 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
         return Ok(if want.borrow().is_empty() { Step::Done(Verdict::Later("its token or chain is not readable here")) } else { wanted(&want) });
     };
     let Some(i) = s.entries.iter().position(|e| e.seq == q.seq) else { return Ok(Step::Done(Verdict::Later("the entry is not in its chain as read"))) };
-    let (_, h) = wallet::lot_of(&s.entries[i], i.checked_sub(1).map(|j| &s.entries[j]), d.margin).map_err(String::from)?;
+    let (lot_epoch, h) = wallet::lot_of(&s.entries[i], i.checked_sub(1).map(|j| &s.entries[j]), d.margin).map_err(String::from)?;
     // SEATED? The committee drawn for this place.
     match seated(ctx, lot, got, &d.beacon, &p.id(), q.seq, h, me) {
         Step::Want(w) => return Ok(Step::Want(w)),
@@ -85,10 +86,7 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
     let memo = crate::tokens::StakeMemo::default();
     let claims_of = |ep: u64| crate::tokens::stakers(ctx.code_hash, lot, got, d.beacon, &read, ep, &memo);
     // THE RULE, over what is read here (each read missing is asked for, then the rule run again).
-    let sigs = |c: &[u8; 32], sq: u64| {
-        let a = wallet::witness_bag(c, sq);
-        read(t::id(&lot.bag, &a)).and_then(|b| craftworks_bag_contract::read(&a, &b)).unwrap_or_default().iter().filter_map(|x| wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(x))).collect()
-    };
+    let sigs = |c: &[u8; 32], sq: u64, ep: u64| crate::tokens::witness_sigs(&read, &crate::tokens::witness_at(ctx.code_hash, lot, d.beacon, c, sq, ep));
     let outs = |hh: u64| match out_at(lot, got, &d.beacon, hh) {
         Err(w) => {
             want.borrow_mut().push(w);
@@ -116,7 +114,7 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
         return Ok(wanted(&want));
     }
     Ok(Step::Done(match r {
-        Ok(entry) => Verdict::Sign { chain: p.id(), seq: q.seq, entry },
+        Ok(entry) => Verdict::Sign { at: crate::tokens::witness_at(ctx.code_hash, lot, d.beacon, &p.id(), q.seq, lot_epoch), entry },
         Err(why) => Verdict::Refused(why.to_string()),
     }))
 }
@@ -157,8 +155,9 @@ pub fn seated(ctx: &Ctx, lot: &Lot, got: Got, beacon: &[u8; 32], place: &[u8; 32
 /// never a posted one it did not compute) signed at the statement's place when `me` is seated there.
 pub fn statement(ctx: &Ctx, lot: &Lot, got: Got, epoch: u64, root: &[u8; 32], me: &[u8; 32]) -> Step<Verdict> {
     let place = craftworks_reputation::statement::witness_place(epoch);
-    match seated(ctx, lot, got, &ctx.beacon, &place, 0, craftworks_reputation::statement::lot_height(epoch), me) {
-        Step::Done(Some(true)) => Step::Done(Verdict::Sign { chain: place, seq: 0, entry: *root }),
+    let h = craftworks_reputation::statement::lot_height(epoch);
+    match seated(ctx, lot, got, &ctx.beacon, &place, 0, h, me) {
+        Step::Done(Some(true)) => Step::Done(Verdict::Sign { at: crate::tokens::witness_at(ctx.code_hash, lot, ctx.beacon, &place, 0, supply::epoch(h)), entry: *root }),
         Step::Done(Some(false)) => Step::Done(Verdict::NotSeated),
         Step::Done(None) => Step::Done(Verdict::Later("its lot is not drawn yet")),
         Step::Want(w) => Step::Want(w),
@@ -196,10 +195,7 @@ pub fn signed(ctx: &Ctx, lot: &Lot, got: Got, queued: &[Queued], statements: &[c
         }
         Ok(r) => r.ok(),
     };
-    let sigs = |c: &[u8; 32], sq: u64| {
-        let a = wallet::witness_bag(c, sq);
-        read(t::id(&lot.bag, &a)).and_then(|b| craftworks_bag_contract::read(&a, &b)).unwrap_or_default().iter().filter_map(|x| wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(x))).collect()
-    };
+    let sigs = |c: &[u8; 32], sq: u64, ep: u64| crate::tokens::witness_sigs(&read, &crate::tokens::witness_at(ctx.code_hash, lot, beacon, c, sq, ep));
     let counted = craftworks_wallet::fees::count(queued, statements, &craftworks_wallet::fees::Reads { pool: lot.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs });
     let mut w = want.into_inner();
     if w.is_empty() {
@@ -218,10 +214,7 @@ pub fn accepted_statement(ctx: &Ctx, lot: &Lot, got: Got, statements: &[craftwor
     let memo = crate::tokens::StakeMemo::default();
     let claims = |ep: u64| crate::tokens::stakers(ctx.code_hash, lot, got, beacon, &read, ep, &memo);
     let out = |h: u64| out_at(lot, got, &beacon, h).ok().and_then(|r| r.ok());
-    let sigs = |c: &[u8; 32], sq: u64| {
-        let a = wallet::witness_bag(c, sq);
-        read(t::id(&lot.bag, &a)).and_then(|b| craftworks_bag_contract::read(&a, &b)).unwrap_or_default().iter().filter_map(|x| wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(x))).collect()
-    };
+    let sigs = |c: &[u8; 32], sq: u64, ep: u64| crate::tokens::witness_sigs(&read, &crate::tokens::witness_at(ctx.code_hash, lot, beacon, c, sq, ep));
     let entry = |_: &Queued| None;
     let r = craftworks_wallet::fees::Reads { pool: lot.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs };
     let mut sts = statements.to_vec();

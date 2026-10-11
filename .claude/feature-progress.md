@@ -2239,6 +2239,17 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       `wallet::craft::halvings`; page core and Wren's tool). The halvings count is tested; the gate's effect on a
       statement is not (a test needs a reputation just under the gate).
 - [x] C9 10-11 FORGET stops the member's upkeep (members list, all mandates) — tested.
+- [x] C10 10-11 WITNESS SIGNATURES NOT EVICTABLE (a place's generic bag: 16 junk items of ~16 KiB with more work than a
+      signature's evicted all 11 genuine ones — measured on the old bag): their own container, a token-contract kind
+      (`witness::Params` = code, pool, beacon, the lot's CLAIMS EPOCH, chain, seq). It takes a signature only if it
+      verifies over the place under its key AND that key is the baseline's or one of the epoch's claims REGISTRY (read
+      as a related contract by the update; not needed when only the baseline's is new — the bootstrap); each key keeps
+      its 2 lowest entries. Bounded by the registry, so nothing taken is ever evicted. Readers all go through
+      `Params::sigs` (`rules::tokens::witness_sigs`); `Source/StakeReads/fees::Reads.sigs` take the claims epoch; the
+      chain writer makes the empty container (core `witnesses`), pages PUT, the delegate UPDATEs. Test: 8,256 sybil
+      signatures + forged/replayed ones + an equivocator's extras offered — every genuine signature stays, the proof
+      too (control: registry rule off → 8,268 taken, unbounded). Re-keys token.wasm at publish. Follows C2b: if claims
+      leave the registry, this gate follows them.
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.

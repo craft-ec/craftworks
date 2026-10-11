@@ -337,7 +337,7 @@ fn a_wallet_starts_its_token_and_credits_a_payment_only_once_witnessed() {
         let src = t::wallet::Source {
             pool,
             claims: &|e| if e == 0 { stakers.clone() } else { vec![] },
-            sigs: &|_, _| sigs.clone(),
+            sigs: &|_, _, _| sigs.clone(),
             out: &|x| Some(out(x)),
             stake_of: &|o, at| (at == 0).then(|| (100, vec![SigningKey::from_bytes(&[o[0]; 32]).verifying_key().to_bytes()])),
             definition: &|_| Some(d.clone()),
@@ -351,7 +351,7 @@ fn a_wallet_starts_its_token_and_credits_a_payment_only_once_witnessed() {
     assert_eq!(check_with(vec![]), Err("an entry its committee has not witnessed"));
     assert_eq!(check_with(sign(t::wallet::NEED - 1)), Err("an entry its committee has not witnessed"), "one short");
     assert_eq!(check_with(sign(t::wallet::NEED)), Ok(t::wallet::NEED));
-    assert_eq!(is_value(&t::wallet::Source { pool, claims: &|_| vec![], sigs: &|_, _| vec![], out: &|_| None, stake_of: &|_, _| None, definition: &|_| None, program: &|_| None, freeze: &|_| None, keys: &|_| None, history: &|_, _| None }, &a.params, &a.state, &[0; 16]), Err("a payment whose debit is not there"));
+    assert_eq!(is_value(&t::wallet::Source { pool, claims: &|_| vec![], sigs: &|_, _, _| vec![], out: &|_| None, stake_of: &|_, _| None, definition: &|_| None, program: &|_| None, freeze: &|_| None, keys: &|_| None, history: &|_, _| None }, &a.params, &a.state, &[0; 16]), Err("a payment whose debit is not there"));
 }
 
 #[test]

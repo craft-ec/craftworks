@@ -252,8 +252,9 @@ pub fn active_of(epoch: u64, prev: &BTreeMap<Did, Line>, kept: &[Did], signed: &
     out
 }
 
-/// Where an epoch's statement is WITNESSED (TOKEN §7a, as an entry is): its witness bag is the token's
-/// `witness_bag(place, 0)`, a signature names its ROOT as the entry; its lot is drawn at [`lot_height`].
+/// Where an epoch's statement is WITNESSED (TOKEN §7a, as an entry is): its signatures are the token's place
+/// (`place`, 0)'s container (`witness::Params`), a signature names its ROOT as the entry; its lot is drawn at
+/// [`lot_height`].
 pub fn witness_place(epoch: u64) -> [u8; 32] {
     blake3::derive_key("craftworks 2026-10-10 statement witness place", &epoch.to_le_bytes())
 }

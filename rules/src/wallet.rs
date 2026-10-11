@@ -425,16 +425,18 @@ mod tests {
         {
             let dseq = debit.entries.last().unwrap().seq;
             let q = craftworks_wallet::queue::Queued { token: t::Tok { definition: id, item: [0; 32] }, owner: a, seq: dseq };
-            let addr = t::wallet::witness_bag(&pa.id(), dseq);
+            let di = debit.entries.len() - 1;
+            let (lot_epoch, _) = t::wallet::lot_of(&debit.entries[di], di.checked_sub(1).map(|j| &debit.entries[j]), d.margin).unwrap();
+            let wp = crate::tokens::witness_at(ctx.code_hash, &tl.lot, d.beacon, &pa.id(), dseq, lot_epoch);
             let mut g4 = got.clone();
-            let mut items = craftworks_bag_contract::read(&addr, &g4[&t::id(&tl.lot.bag, &addr)]).unwrap();
+            let mut items = t::witness::Signatures::decode(&g4[&wp.id()]).unwrap().items;
             let stranger = SigningKey::from_bytes(&[99; 32]);
             let other = [5u8; 32];
             for (k, e) in [(&stranger, debit.entries.last().unwrap().hash()), (&tl.keys[0], other)] {
-                let sig = t::witness::WitnessSig { chain: pa.id(), seq: dseq, entry: e, sig: k.sign(&t::witness::WitnessSig::message(&pa.id(), dseq, &e)).to_bytes() };
-                items.push(craftworks_bag_contract::grind(&addr, &t::wallet::bytes::witness_sig(&sig)));
+                items.push(t::witness::Signed { key: k.verifying_key().to_bytes(), entry: e, sig: k.sign(&t::witness::WitnessSig::message(&pa.id(), dseq, &e)).to_bytes() });
             }
-            g4.insert(t::id(&tl.lot.bag, &addr), craftworks_bag_contract::encode(&addr, &items));
+            items.sort();
+            g4.insert(wp.id(), t::witness::Signatures { items }.encode());
             let entry = |q: &craftworks_wallet::queue::Queued| {
                 let st = State::decode(&g4[&pa.id()])?;
                 let i = st.entries.iter().position(|e| e.seq == q.seq)?;
@@ -442,10 +444,7 @@ mod tests {
             };
             let claims = |ep: u64| g4.get(&t::claims::Params { code_hash: ctx.code_hash, pool: tl.lot.pool, beacon: d.beacon, epoch: ep }.id()).and_then(|b| t::claims::Registry::decode(b)).map_or(vec![], |r| r.claims);
             let out = |h: u64| Some(*blake3::hash(&h.to_le_bytes()).as_bytes());
-            let sigs = |c: &[u8; 32], sq: u64| {
-                let ad = t::wallet::witness_bag(c, sq);
-                g4.get(&t::id(&tl.lot.bag, &ad)).and_then(|b| craftworks_bag_contract::read(&ad, b)).unwrap_or_default().iter().filter_map(|x| t::wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(x))).collect()
-            };
+            let sigs = |c: &[u8; 32], sq: u64, ep: u64| crate::tokens::witness_sigs(&|id| g4.get(&id).cloned(), &crate::tokens::witness_at(ctx.code_hash, &tl.lot, d.beacon, c, sq, ep));
             let counts = craftworks_wallet::fees::count(&[q, q], &[], &craftworks_wallet::fees::Reads { pool: tl.lot.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs });
             assert_eq!((counts.len(), counts.values().sum::<u64>()), (4, 4), "{counts:?}");
             assert!(counts.values().all(|n| *n == 1), "once a place, however often queued");
@@ -461,7 +460,9 @@ mod tests {
             let q = craftworks_wallet::queue::Queued { token: t::Tok { definition: id, item: [0; 32] }, owner: paid.to, seq: recv.entries[0].seq };
             let verdict = |me: [u8; 32]| crate::tokens::testlot::done(&|g| crate::witness::entry(&ctx, &tl.lot, g, &q, &me, e1 + 14), &g3).unwrap();
             let signs: Vec<crate::witness::Verdict> = tl.keys.iter().map(|k| verdict(k.verifying_key().to_bytes())).collect();
-            assert!(signs.iter().all(|v| *v == crate::witness::Verdict::Sign { chain: pb2.id(), seq: recv.entries[0].seq, entry: recv.entries[0].hash() }), "{signs:?}");
+            let (lot_epoch, _) = t::wallet::lot_of(&recv.entries[0], None, d.margin).unwrap();
+            let at = crate::tokens::witness_at(ctx.code_hash, &tl.lot, d.beacon, &pb2.id(), recv.entries[0].seq, lot_epoch);
+            assert!(signs.iter().all(|v| *v == crate::witness::Verdict::Sign { at, entry: recv.entries[0].hash() }), "{signs:?}");
             assert_eq!(verdict([77; 32]), crate::witness::Verdict::NotSeated);
         }
         // Its STATUS at each stage (what the history shows), from the same announcement.

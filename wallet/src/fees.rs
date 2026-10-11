@@ -1,6 +1,6 @@
 //! WITNESS FEES (TOKEN §7d: the pot's 10% to witnesses, by the signatures they gave): the ONE count every statement
 //! builder runs (pages and witnesses alike) — for each entry queued for its witnesses in the epoch, each signature in
-//! its witness bag over THAT entry by a key SEATED for its place (the committee its lot drew from the claims), once per
+//! its place's container over THAT entry by a key SEATED for its place (the committee its lot drew from the claims), once per
 //! seat; counted for the seat's claimant (a DID). Spam signatures (unseated keys, other entries) count nothing.
 
 use crate::queue::Queued;
@@ -15,7 +15,8 @@ pub struct Reads<'a> {
     pub entry: &'a dyn Fn(&Queued) -> Option<([u8; 32], Entry, Option<Entry>, u64)>,
     pub claims: &'a dyn Fn(u64) -> Vec<draw::StakeClaim>,
     pub out: &'a dyn Fn(u64) -> Option<[u8; 32]>,
-    pub sigs: &'a dyn Fn(&[u8; 32], u64) -> Vec<witness::WitnessSig>,
+    /// A place's signatures for a claims epoch (`wallet::Source::sigs`).
+    pub sigs: wallet::Sigs<'a>,
 }
 
 /// A STATEMENT's place: its root signed at `statement::witness_place(epoch)` (seq 0), its lot drawn at `h`.
@@ -26,7 +27,7 @@ pub struct Statement {
     pub h: u64,
 }
 
-/// The claimants SEATED for (`chain`, `seq`) whose signature over `entry` is in its bag (each seat once), and how many
+/// The claimants SEATED for (`chain`, `seq`) whose signature over `entry` is held there (each seat once), and how many
 /// of them acceptance still needs once the baseline's seat is counted.
 fn seated(r: &Reads, chain: &[u8; 32], seq: u64, entry: &[u8; 32], h: u64) -> Option<(Vec<[u8; 32]>, usize)> {
     let o = (r.out)(h)?;
@@ -35,7 +36,7 @@ fn seated(r: &Reads, chain: &[u8; 32], seq: u64, entry: &[u8; 32], h: u64) -> Op
     let valid = draw::valid(&r.pool, epoch, &claims);
     let (k, base, need) = witness::seats(valid.len(), wallet::COMMITTEE);
     let members = draw::committee_of(&o, chain, seq, &valid, k);
-    let sigs = (r.sigs)(chain, seq);
+    let sigs = (r.sigs)(chain, seq, epoch);
     let signers: Vec<[u8; 32]> = members.iter().filter(|m| sigs.iter().any(|s| s.chain == *chain && s.seq == seq && s.entry == *entry && s.signed_by(&claims[**m].key))).map(|m| claims[*m].owner).collect();
     // (The baseline's seat counts toward acceptance — it earns nothing: the root never does.)
     let baseline = base && sigs.iter().any(|s| s.chain == *chain && s.seq == seq && s.entry == *entry && s.signed_by(&witness::BASELINE));

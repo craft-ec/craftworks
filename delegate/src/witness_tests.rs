@@ -1,8 +1,9 @@
 //! THE WITNESS ROUND with no page open, against a scripted network holding a real lot (`testlot`: six stakers, their
 //! claims, a beacon past epoch 1) and a new token's first entry stamped in epoch 1, queued. The member drawn for it
-//! hands a witness mandate over and leaves; upkeep signs the entry through the guard and drops it into its bag.
+//! hands a witness mandate over and leaves; upkeep signs the entry through the guard and sends it to its place's
+//! signatures container (`witness::Params`).
 
-use crate::upkeep::{Code, Io, Reply};
+use crate::upkeep::{Io, Reply};
 use crate::witness_round;
 use craftworks_identity::{self as identity, Answer, Host, Request, WitnessMandate};
 use craftworks_rules::tokens::{testlot, Ctx};
@@ -14,7 +15,14 @@ use crate::testhost::Map;
 
 const APP: [u8; 32] = [0xA1; 32];
 
-/// Drive wake-ups' rounds to their end against `got`: every PUT returned.
+/// The signatures container of the genesis entry `q` (of chain `chain`, as `got` holds it): under its lot's claims epoch.
+fn container(ctx: &Ctx, tl: &testlot::TestLot, got: &HashMap<[u8; 32], Vec<u8>>, chain: &[u8; 32], seq: u64) -> t::witness::Params {
+    let s = t::State::decode(&got[chain]).unwrap();
+    let (epoch, _) = t::wallet::lot_of(&s.entries[0], None, 2).unwrap();
+    craftworks_rules::tokens::witness_at(ctx.code_hash, &tl.lot, ctx.beacon, chain, seq, epoch)
+}
+
+/// Drive wake-ups' rounds to their end against `got`: every PUT and UPDATE returned.
 fn run(h: &mut Map, got: &HashMap<[u8; 32], Vec<u8>>) -> Vec<Io> {
     let mut puts = Vec::new();
     let mut todo = witness_round::woke(h);
@@ -57,17 +65,18 @@ fn a_drawn_member_away_from_their_page_witnesses_a_queued_entry_once() {
     assert_eq!(identity::serve(&mut h, Request::WitnessMandate { mandate }, APP), Answer::WitnessMandated);
     // The page still ticking: no round (it witnesses for itself).
     assert!(run(&mut h, &got).is_empty(), "no round while the page is open");
-    // The page away: the round signs the entry into its witness bag.
+    // The page away: the round signs the entry into its place's signatures container.
     h.set_secret(identity::UPKEEP_WAKEUPS, &(crate::upkeep::PAGE_AWAY + 1).to_le_bytes());
     let puts = run(&mut h, &got);
-    let bag = t::wallet::witness_bag(&chain, q.seq);
-    let [Io::Put { code: Code::Bag, params, state }] = &puts[..] else {
+    let wp = container(&ctx, &tl, &got, &chain, q.seq);
+    let [Io::Update { id, delta }] = &puts[..] else {
         let said: Vec<String> = h.0.iter().filter(|(k, _)| k.starts_with(b"identity_upkeep/said")).map(|(_, v)| String::from_utf8_lossy(v).into()).collect();
-        panic!("one witness bag put: {puts:?}; said {said:?}")
+        panic!("one witness update: {puts:?}; said {said:?}")
     };
-    assert_eq!(params[..], bag[..]);
-    let items = craftworks_bag_contract::read(&bag, state).expect("a bag state");
-    let sig = t::wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(&items[0])).expect("a witness signature");
+    assert_eq!(*id, wp.id());
+    let held = t::witness::Signatures::decode(delta).expect("a container's state");
+    assert!(t::witness::holds(&wp, &held).is_ok() && held.items.len() == 1 && held.items[0].key == member, "the member's one signature");
+    let sig = wp.sigs(delta).remove(0);
     assert_eq!((sig.chain, sig.seq, sig.entry), (chain, q.seq, entry));
     key.verifying_key().verify(&identity::witness_message(&chain, q.seq, &entry), &Signature::from_bytes(&sig.sig)).expect("signed by the member");
     // SETTLED: the next wake-up asks again but signs nothing more.
@@ -101,5 +110,6 @@ fn an_entry_queued_before_its_lot_is_drawn_is_signed_once_it_is() {
     got.insert(ctx.beacon, at(testlot::E1 + 20));
     h.set_secret(identity::UPKEEP_WAKEUPS, &(crate::upkeep::PAGE_AWAY + 2).to_le_bytes());
     let puts = run(&mut h, &got);
-    assert!(matches!(&puts[..], [Io::Put { params, .. }] if params[..] == t::wallet::witness_bag(&chain, q.seq)[..]), "signed once its lot is drawn: {puts:?}");
+    let wp = container(&ctx, &tl, &got, &chain, q.seq);
+    assert!(matches!(&puts[..], [Io::Update { id, .. }] if *id == wp.id()), "signed once its lot is drawn: {puts:?}");
 }

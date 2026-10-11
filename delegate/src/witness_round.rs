@@ -3,11 +3,12 @@
 //! the last), and for each entry runs THE WITNESS RULE (`craftworks_rules::witness::entry`, the page's own) over what it
 //! read — asking the network for each contract the rule wants, one round trip at a time. An entry the member's stake is
 //! drawn for, and the rule takes, is signed through the SAME guard as a page's (`identity::upkeep_witness_sign`: never
-//! another entry at a place) and its signature dropped into the entry's witness bag (a PUT of a bag that exists: the
-//! node merges it). Each step is a message out and an answer in, across calls: the round lives in the secrets.
+//! another entry at a place) and its signature sent to its place's signatures container (`witness::Params`: an UPDATE
+//! of the container its chain's writer made — the node merges it, taking it only from a key of the lot's claims
+//! registry). Each step is a message out and an answer in, across calls: the round lives in the secrets.
 
 use crate::reads::{self, Round};
-use crate::upkeep::{Code, Io, Reply};
+use crate::upkeep::{Io, Reply};
 use craftworks_identity::{self as identity, Host, WitnessMandate};
 use craftworks_rules::{tokens, witness};
 use craftworks_token_contract as t;
@@ -114,13 +115,13 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
             // Not yet decidable: asked again on a later wake-up (never settled).
             Ok(tokens::Step::Done(witness::Verdict::Later(_))) => {}
             Ok(tokens::Step::Done(witness::Verdict::Refused(why))) => identity::upkeep_say(h, &r.member, &format!("witness: refused seq {}: {why}", q.seq)),
-            Ok(tokens::Step::Done(witness::Verdict::Sign { chain, seq, entry })) => {
-                match identity::upkeep_witness_sign(h, &r.member, &chain, seq, &entry) {
+            Ok(tokens::Step::Done(witness::Verdict::Sign { at, entry })) => {
+                match identity::upkeep_witness_sign(h, &r.member, &at.chain, at.seq, &entry) {
                     Ok(sig) => {
-                        let item = t::wallet::bytes::witness_sig(&t::witness::WitnessSig { chain, seq, entry, sig });
-                        let address = t::wallet::witness_bag(&chain, seq);
-                        let state = craftworks_bag_contract::encode(&address, &[craftworks_bag_contract::grind(&address, &item)]);
-                        out.push(Io::Put { code: Code::Bag, params: address.to_vec(), state });
+                        // Into the place's signatures container (its chain's writer made it): an UPDATE, the node
+                        // merging it (`witness::merge`: the member's key registered in the lot's claims epoch).
+                        let state = at.state(&[(r.member, t::witness::WitnessSig { chain: at.chain, seq: at.seq, entry, sig })]);
+                        out.push(Io::Update { id: at.id(), delta: state });
                     }
                     Err(w) => identity::upkeep_say(h, &r.member, &format!("witness: not signed ({w:?})")),
                 }

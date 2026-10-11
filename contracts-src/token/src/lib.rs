@@ -2449,7 +2449,7 @@ pub fn beacon_height(b: &[u8]) -> Option<u64> {
 
 #[cfg(feature = "freenet-main-contract")]
 mod contract {
-    use super::{accept, authority, beacon_height, claims, freeze, operators, supply, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
+    use super::{accept, authority, beacon_height, claims, freeze, operators, supply, witness, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
     use freenet_stdlib::prelude::*;
 
     pub struct Token;
@@ -2744,6 +2744,46 @@ mod contract {
         Ok(UpdateModification::valid(State::from(out.encode())))
     }
 
+    /// A PLACE'S WITNESS SIGNATURES hold (`witness::holds`): each verifies, few enough per key and in all.
+    fn witnesses_valid(params: &[u8], state: &[u8]) -> Result<ValidateResult, ContractError> {
+        let (Some(p), Some(s)) = (witness::Params::decode(params), witness::Signatures::decode(state)) else { return Ok(ValidateResult::Invalid) };
+        Ok(if witness::holds(&p, &s).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
+    }
+
+    /// Their UPDATE (`witness::merge`): what is given that does not read is ignored, never fatal; a new signature by a
+    /// key other than the baseline is taken only with the claims REGISTRY read in the same round (its key registered).
+    fn witnesses_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
+        let p = witness::Params::decode(params).ok_or(ContractError::InvalidState)?;
+        let held = witness::Signatures::decode(state).ok_or(ContractError::InvalidState)?;
+        let registry = p.registry().id();
+        let mut given = witness::Signatures::default();
+        let mut reg: Option<Vec<u8>> = None;
+        for d in data {
+            let b: &[u8] = match &d {
+                UpdateData::State(s) => s.as_ref(),
+                UpdateData::Delta(x) => x.as_ref(),
+                UpdateData::StateAndDelta { delta, .. } => delta.as_ref(),
+                UpdateData::RelatedState { related_to, state } => {
+                    if related_to.as_bytes() == registry {
+                        reg = Some(state.as_ref().to_vec());
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
+            if let Some(g) = witness::Signatures::decode(b) {
+                given.items.extend(g.items);
+            }
+        }
+        let registry_read = match reg {
+            Some(b) => Some(claims::Registry::decode(&b).unwrap_or_default()),
+            None if witness::needs_registry(&held, &given) => {
+                return UpdateModification::requires(vec![RelatedContract { contract_instance_id: ContractInstanceId::new(registry), mode: RelatedMode::StateOnce }]);
+            }
+            None => None,
+        };
+        Ok(UpdateModification::valid(State::from(witness::merge(&p, &held, &given, registry_read.as_ref()).encode())))
+    }
 
     #[contract]
     impl ContractInterface for Token {
@@ -2763,6 +2803,9 @@ mod contract {
             }
             if params.first() == Some(&claims::CLAIMS) {
                 return claims_valid(params, state.as_ref());
+            }
+            if params.first() == Some(&witness::WITNESSES) {
+                return witnesses_valid(params, state.as_ref());
             }
             // A DEFINITION: its state is its params, and they read as one.
             if params.first() == Some(&DEFINITION) {
@@ -2814,6 +2857,9 @@ mod contract {
             }
             if parameters.as_ref().first() == Some(&claims::CLAIMS) {
                 return claims_update(parameters.as_ref(), state.as_ref(), data);
+            }
+            if parameters.as_ref().first() == Some(&witness::WITNESSES) {
+                return witnesses_update(parameters.as_ref(), state.as_ref(), data);
             }
             let p = ChainParams::decode(parameters.as_ref()).ok_or(ContractError::InvalidState)?;
             let held = super::State::decode(state.as_ref()).ok_or(ContractError::InvalidState)?;

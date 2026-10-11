@@ -21,11 +21,12 @@ pub const NEED: usize = 11;
 /// Where a wallet (or a witness) reads the lot from: the STAKE POOL's token (`pool`: whose stake weighs the draw — one
 /// open pool for every token), its stake claims by epoch, the witness signatures held for (chain id, seq), the beacon's
 /// OUTPUT at a height, and a claimer's REAL stake at a height ([`stake_at`] over its chain in the pool — read only for
-/// those who signed).
+/// those who signed). A place's signatures — (chain id, seq) — are read for a CLAIMS EPOCH (the third argument: its
+/// lot's), from that epoch's container of the place (`witness::Params`: its registry says who may sign there).
 pub struct Source<'a> {
     pub pool: [u8; 32],
     pub claims: &'a dyn Fn(u64) -> Vec<StakeClaim>,
-    pub sigs: &'a dyn Fn(&[u8; 32], u64) -> Vec<WitnessSig>,
+    pub sigs: Sigs<'a>,
     pub out: &'a dyn Fn(u64) -> Option<[u8; 32]>,
     pub stake_of: &'a dyn Fn(&[u8; 32], u64) -> Option<witness::Stake>,
     /// A token's definition (its MARGIN sets when an entry's lot is drawn).
@@ -41,6 +42,9 @@ pub struct Source<'a> {
     /// the buyer's payout).
     pub history: &'a dyn Fn(&Tok, &[u8; 32]) -> Option<State>,
 }
+
+/// A place's SIGNATURES as read: (chain id, seq, the claims epoch of its lot) → those its container holds.
+pub type Sigs<'a> = &'a dyn Fn(&[u8; 32], u64, u64) -> Vec<WitnessSig>;
 
 /// A chain to find an entry `nonce` in: its live copy, or — the entry not there and the copy starting at a cut — its
 /// whole history.
@@ -77,7 +81,7 @@ pub fn accept(src: &Source, chain: &ChainParams, e: &Entry, pred: Option<&Entry>
     let out = (src.out)(height).ok_or("an entry whose lot is not drawn yet")?;
     let id = chain.id();
     let at = epoch * supply::EPOCH;
-    witness::accepted(&src.pool, &id, e.seq, &e.hash(), &out, epoch, &(src.claims)(epoch), &(src.sigs)(&id, e.seq), COMMITTEE, &|o| (src.stake_of)(o, at))
+    witness::accepted(&src.pool, &id, e.seq, &e.hash(), &out, epoch, &(src.claims)(epoch), &(src.sigs)(&id, e.seq, epoch), COMMITTEE, &|o| (src.stake_of)(o, at))
 }
 
 /// Is standing epoch `epoch`'s STATEMENT root `root` ACCEPTED — its committee (drawn at `statement::lot_height`)
@@ -89,7 +93,7 @@ pub fn statement_accept(src: &Source, epoch: u64, root: &[u8; 32]) -> Result<usi
     let out = (src.out)(h).ok_or("a statement whose lot is not drawn yet")?;
     let ce = h / supply::EPOCH;
     let place = witness_place(epoch);
-    witness::accepted(&src.pool, &place, 0, root, &out, ce, &(src.claims)(ce), &(src.sigs)(&place, 0), COMMITTEE, &|o| (src.stake_of)(o, ce * supply::EPOCH))
+    witness::accepted(&src.pool, &place, 0, root, &out, ce, &(src.claims)(ce), &(src.sigs)(&place, 0, ce), COMMITTEE, &|o| (src.stake_of)(o, ce * supply::EPOCH))
 }
 
 /// What VALID STAKE (TOKEN §7a) is read from: the raw CLAIMS REGISTRY of an epoch, a staker's POOL CHAIN (its params and
@@ -100,7 +104,7 @@ pub struct StakeReads<'a> {
     pub registry: &'a dyn Fn(u64) -> Vec<StakeClaim>,
     pub chain: &'a dyn Fn(&[u8; 32]) -> Option<(ChainParams, State)>,
     pub out: &'a dyn Fn(u64) -> Option<[u8; 32]>,
-    pub sigs: &'a dyn Fn(&[u8; 32], u64) -> Vec<WitnessSig>,
+    pub sigs: Sigs<'a>,
 }
 
 /// The VALID STAKERS of claims epoch `epoch`, `V(E)` (TOKEN §7a, audit 10-11): each claim of its registry whose staker's
@@ -144,7 +148,7 @@ pub fn valid_stakers(r: &StakeReads, epoch: u64, memo: &std::cell::RefCell<std::
         let Some(o) = (r.out)(h) else { continue };
         let prior = valid_stakers(r, lot_epoch, memo);
         let id = cp.id();
-        if witness::accepted(&r.pool, &id, e.seq, &e.hash(), &o, lot_epoch, &prior, &(r.sigs)(&id, e.seq), COMMITTEE, &|w| stake_from(&prior, w)).is_ok() {
+        if witness::accepted(&r.pool, &id, e.seq, &e.hash(), &o, lot_epoch, &prior, &(r.sigs)(&id, e.seq, lot_epoch), COMMITTEE, &|w| stake_from(&prior, w)).is_ok() {
             out.push(c.clone());
         }
     }
@@ -249,7 +253,7 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
     }
     // A place already TAKEN: another entry at this seq accepted (an owner's later outranking entry, or a fork shown to
     // another committee) — never a second one (audit 10-10).
-    taken(src, p, s, i)?;
+    taken(src, p, d.margin, s, i)?;
     // A RELEASE or PAYOUT of a program: the program BACKED by real, accepted escrows to it.
     program_entry(src, p, s, i, chain)?;
     // A KEEPER MINT: its line under the statement root ACCEPTED for its epoch (the contract checked the line holds
@@ -370,23 +374,23 @@ pub(crate) fn program_entry(src: &Source, p: &ChainParams, s: &State, i: usize, 
 
 /// Is the place of entry `i` already TAKEN by a DIFFERENT entry its committee accepted? The lot is drawn from the
 /// predecessor's stamp (and the entry's epoch), so the committees of every epoch from the predecessor's to this
-/// entry's are asked.
-fn taken(src: &Source, p: &ChainParams, s: &State, i: usize) -> Result<(), Why> {
+/// entry's are asked (`margin`: its token's).
+fn taken(src: &Source, p: &ChainParams, margin: u64, s: &State, i: usize) -> Result<(), Why> {
     let e = &s.entries[i];
     let id = p.id();
-    let sigs = (src.sigs)(&id, e.seq);
-    let mut others: Vec<[u8; 32]> = sigs.iter().filter(|x| x.chain == id && x.seq == e.seq && x.entry != e.hash()).map(|x| x.entry).collect();
-    others.sort();
-    others.dedup();
-    if others.is_empty() {
-        return Ok(());
-    }
-    let margin = (src.definition)(&p.definition).ok_or("an entry of a token not known")?.margin;
     let pred = i.checked_sub(1).map(|j| &s.entries[j]);
     let from = pred.map_or(supply::epoch(e.stamp), |x| supply::epoch(x.stamp));
     for epoch in from..=supply::epoch(e.stamp) {
         let start = epoch * supply::EPOCH + 1;
         let h = pred.map_or(start, |x| (x.stamp + margin + 2).max(start));
+        // (Each lot's signatures are kept under its own claims epoch: `witness::Params`.)
+        let sigs = (src.sigs)(&id, e.seq, supply::epoch(h));
+        let mut others: Vec<[u8; 32]> = sigs.iter().filter(|x| x.chain == id && x.seq == e.seq && x.entry != e.hash()).map(|x| x.entry).collect();
+        others.sort();
+        others.dedup();
+        if others.is_empty() {
+            continue;
+        }
         let Some(out) = (src.out)(h) else { continue };
         let at = supply::epoch(h) * supply::EPOCH;
         for other in &others {
@@ -418,7 +422,7 @@ pub fn sale_at(seller: &State, nonce: &[u8; 16]) -> Option<u64> {
     seller.entries.iter().find(|x| &x.nonce == nonce && matches!(x.body, Body::Escrow { .. })).map(|x| x.stamp)
 }
 
-/// THE WATCH (TOKEN §7a): the EQUIVOCATIONS in one place's witness signatures (`sigs`: its bag) by the stakers of
+/// THE WATCH (TOKEN §7a): the EQUIVOCATIONS in one place's witness signatures (`sigs`: its container) by the stakers of
 /// `claims` — a key that signed two different entries at that (chain, seq). Each: (its staker, the burn to append to
 /// that staker's chain of the pool — anyone may, with work). One per staker.
 pub fn equivocations(sigs: &[WitnessSig], claims: &[StakeClaim]) -> Vec<([u8; 32], Body)> {
@@ -435,32 +439,16 @@ pub fn equivocations(sigs: &[WitnessSig], claims: &[StakeClaim]) -> Vec<([u8; 32
     out
 }
 
-/// THE BAGS (TOKEN §7a) the lot is read from — open sets anyone adds to (`bag` contracts, their params these addresses):
-/// a pool's STAKE CLAIMS of one epoch, and the WITNESS SIGNATURES of one entry (chain id, seq) — what a wallet reads to
-/// accept that entry, one small bag per payment. Each item one record below.
+/// THE BAG (TOKEN §7a) a pool's STAKE CLAIMS of one epoch are dropped into (an open set anyone adds to: a `bag`
+/// contract, its params this address). (A place's WITNESS SIGNATURES have their own container: `witness::Params`.)
 pub fn stakers_bag(pool: &[u8; 32], epoch: u64) -> [u8; 32] {
     *blake3::Hasher::new_derive_key("craftworks token stakers bag").update(pool).update(&epoch.to_le_bytes()).finalize().as_bytes()
-}
-pub fn witness_bag(chain: &[u8; 32], seq: u64) -> [u8; 32] {
-    *blake3::Hasher::new_derive_key("craftworks token witness bag").update(chain).update(&seq.to_le_bytes()).finalize().as_bytes()
 }
 
 /// The records' BYTES — exact: trailing bytes refused.
 pub mod bytes {
     use crate::draw::StakeClaim;
-    use crate::witness::WitnessSig;
     use crate::R;
-
-    pub fn witness_sig(w: &WitnessSig) -> Vec<u8> {
-        let mut v = Vec::new();
-        w.put(&mut v);
-        v
-    }
-    pub fn read_witness_sig(b: &[u8]) -> Option<WitnessSig> {
-        let mut r = R(b);
-        let w = WitnessSig::read(&mut r)?;
-        r.done().then_some(w)
-    }
 
     pub fn stake_claim(c: &StakeClaim) -> Vec<u8> {
         [&c.owner[..], &c.amount.to_le_bytes(), &c.epoch.to_le_bytes(), &c.key, &c.sig].concat()

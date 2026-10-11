@@ -2394,8 +2394,8 @@ mod js {
             tokens::Step::Done(witness::Verdict::NotSeated) => js_sys::JSON::parse(&json!({ "done": { "seated": false } }).to_string()),
             tokens::Step::Done(witness::Verdict::Later(why)) => js_sys::JSON::parse(&json!({ "done": { "later": why } }).to_string()),
             tokens::Step::Done(witness::Verdict::Refused(why)) => js_sys::JSON::parse(&json!({ "done": { "refused": why } }).to_string()),
-            tokens::Step::Done(witness::Verdict::Sign { chain, seq, entry }) => {
-                let sign = js_obj(&[("chain", js_sys::Uint8Array::from(&chain[..]).into()), ("seq", JsValue::from(seq as f64)), ("entry", js_sys::Uint8Array::from(&entry[..]).into())]);
+            tokens::Step::Done(witness::Verdict::Sign { at, entry }) => {
+                let sign = js_obj(&[("chain", js_sys::Uint8Array::from(&at.chain[..]).into()), ("seq", JsValue::from(at.seq as f64)), ("entry", js_sys::Uint8Array::from(&entry[..]).into()), ("params", js_sys::Uint8Array::from(&at.encode()[..]).into())]);
                 Ok(js_obj(&[("done", js_obj(&[("sign", sign)]))]))
             }
         }
@@ -2813,12 +2813,21 @@ mod js {
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
             verdict_js(witness::statement(&ctx, &lot, &got, epoch as u64, &bytes32("root", root).map_err(err)?, &b32(me)?))
         }
-        /// A WITNESS SIGNATURE's bag item and its witness bag's address: `{ address, item }` (the delegate's `sig`).
-        pub fn witness_sig_item(chain: &[u8], seq: f64, entry: &[u8], sig: &[u8]) -> Result<JsValue, JsValue> {
-            let (chain, seq) = (b32(chain)?, seq as u64);
-            let s = craftworks_token_contract::witness::WitnessSig { chain, seq, entry: b32(entry)?, sig: sig.try_into().map_err(|_| err("a signature is 64 bytes".into()))? };
-            let address = craftworks_token_contract::wallet::witness_bag(&chain, seq);
-            Ok(js_obj(&[("address", js_sys::Uint8Array::from(&address[..]).into()), ("item", js_sys::Uint8Array::from(&craftworks_token_contract::wallet::bytes::witness_sig(&s)[..]).into())]))
+        /// A PUT of a place's WITNESS SIGNATURES container (`params`: its `witness::Params`, as a verdict's `sign.params`
+        /// or a chain put's `witnesses` give them): `{ id, idBytes, frames }` — with witness key `key`'s signature `sig`
+        /// over `entry` (the delegate's), or, `key` empty, the container made empty (its chain's writer makes it: a
+        /// witness with no page open only adds to one already there).
+        pub fn witness_put(&mut self, token_code: &[u8], params: &[u8], key: &[u8], entry: &[u8], sig: &[u8]) -> Result<JsValue, JsValue> {
+            let wp = craftworks_token_contract::witness::Params::decode(params).ok_or_else(|| err("not a witness container's params".into()))?;
+            let state = if key.is_empty() {
+                wp.state(&[])
+            } else {
+                let s = craftworks_token_contract::witness::WitnessSig { chain: wp.chain, seq: wp.seq, entry: b32(entry)?, sig: sig.try_into().map_err(|_| err("a signature is 64 bytes".into()))? };
+                wp.state(&[(b32(key)?, s)])
+            };
+            let (id, contract, state) = wire::puts::contract(token_code, params, &state);
+            let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
+            self.put_obj(&account::Put { id, id_bytes, contract, state })
         }
         // ---- THE EXPLORER (owner 10-11: "more transparent … like a block explorer"): what each public record holds ----
 
@@ -2882,15 +2891,20 @@ mod js {
                 Ok(Some(b)) => craftworks_token_contract::Definition::decode(&b).ok_or_else(|| err("not a token definition".into()))?,
             };
             let p = craftworks_token_contract::ChainParams { code_hash: ctx.code_hash, definition: q.token.definition, owner: q.owner, beacon: d.beacon, idlog: d.idlog, item: q.token.item };
-            let addr = craftworks_token_contract::wallet::witness_bag(&p.id(), q.seq);
-            let bag = craftworks_token_contract::id(&lot.bag, &addr);
-            let (s, b) = match (tokens::there(&got, &p.id()), tokens::there(&got, &bag)) {
-                (Ok(s), Ok(b)) => (s, b),
-                (s, b) => return want([s.err(), b.err()].into_iter().flatten().collect()),
+            let s = match tokens::there(&got, &p.id()) {
+                Ok(s) => s,
+                Err(w) => return want(vec![w]),
             };
             let Some(s) = s.and_then(|b| craftworks_token_contract::State::decode(&b)) else { return missing("its chain is not on the network") };
-            let Some(e) = s.entries.iter().find(|e| e.seq == q.seq) else { return missing("its chain holds no such entry") };
-            let signatures = b.and_then(|b| craftworks_bag_contract::read(&addr, &b)).map_or(0, |v| v.len());
+            let Some(i) = s.entries.iter().position(|e| e.seq == q.seq) else { return missing("its chain holds no such entry") };
+            let e = &s.entries[i];
+            // Its SIGNATURES: the container of its place under its lot's claims epoch.
+            let (lot_epoch, _) = craftworks_token_contract::wallet::lot_of(e, i.checked_sub(1).map(|j| &s.entries[j]), d.margin).map_err(|w| err(w.into()))?;
+            let wp = tokens::witness_at(ctx.code_hash, &lot, d.beacon, &p.id(), q.seq, lot_epoch);
+            let signatures = match tokens::there(&got, &wp.id()) {
+                Ok(b) => b.map_or(0, |b| wp.sigs(&b).len()),
+                Err(w) => return want(vec![w]),
+            };
             let kind = format!("{:?}", e.body).split(|c: char| c == ' ' || c == '{' || c == '(').next().unwrap_or("").to_string();
             let base = json!({ "kind": kind, "stamp": e.stamp, "signatures": signatures, "chain": hex(&p.id()) });
             match tokens::accepted(&lot, &got, &p, &d, &s, q.seq).map_err(err)? {
@@ -3296,25 +3310,30 @@ mod js {
             }
             Ok(js_obj(&[("id", JsValue::from(hex(&id))), ("puts", list.into())]))
         }
-        /// A TOKEN CHAIN put with its WITNESS QUEUE items (TOKEN §7a): `{ id, idBytes, frames, queue: [bytes], bags:
-        /// [address] }` — one `Queued` per entry not in the state this core read (what this page wrote), for its writer
-        /// to drop into the epoch's queue once the put is taken, and that entry's WITNESS BAG for its writer to make
-        /// (empty): a witness with no page open (the identity delegate) can only add to a bag already on the network.
+        /// A TOKEN CHAIN put with its WITNESS QUEUE items (TOKEN §7a): `{ id, idBytes, frames, queue: [bytes],
+        /// witnesses: [params] }` — one `Queued` per entry not in the state this core read (what this page wrote), for
+        /// its writer to drop into the epoch's queue once the put is taken, and the params of that entry's WITNESS
+        /// SIGNATURES container (`witness::Params`, under its lot's claims epoch; the stake pool $CRAFT's) for its writer
+        /// to make (empty, `witness_put`): a witness with no page open (the identity delegate) can only add to one
+        /// already on the network.
         fn chain_put_obj(&mut self, token_code: &[u8], p: &tokens::Put) -> Result<JsValue, JsValue> {
             let (id, contract, state) = wire::puts::contract(token_code, &p.params, &p.state);
             let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
             let o = self.put_obj(&account::Put { id, id_bytes, contract, state })?;
-            let (queue, bags) = (js_sys::Array::new(), js_sys::Array::new());
+            let (queue, witnesses) = (js_sys::Array::new(), js_sys::Array::new());
             if let (Some(cp), Some(st)) = (craftworks_token_contract::ChainParams::decode(&p.params), craftworks_token_contract::State::decode(&p.state)) {
                 let before = self.0.got(&id_bytes).and_then(craftworks_token_contract::State::decode).and_then(|s| s.entries.last().map(|e| e.seq));
-                for e in st.entries.iter().filter(|e| before.is_none_or(|b| e.seq > b)) {
+                let margin = self.0.got(&cp.definition).and_then(craftworks_token_contract::Definition::decode).map(|d| d.margin);
+                let lot = tokens::Lot { pool: keeper::craft(&tokens::Ctx { code_hash: cp.code_hash, beacon: cp.beacon, idlog: cp.idlog }).1, bag: [0; 32], beacon_code: [0; 32] };
+                for (i, e) in st.entries.iter().enumerate().filter(|(_, e)| before.is_none_or(|b| e.seq > b)) {
                     let q = craftworks_wallet::queue::Queued { token: cp.tok(), owner: cp.owner, seq: e.seq };
                     queue.push(&js_sys::Uint8Array::from(&q.encode()[..]));
-                    bags.push(&js_sys::Uint8Array::from(&craftworks_token_contract::wallet::witness_bag(&cp.id(), e.seq)[..]));
+                    let lot_epoch = margin.and_then(|m| craftworks_token_contract::wallet::lot_of(e, i.checked_sub(1).map(|j| &st.entries[j]), m).ok()).map(|x| x.0);
+                    witnesses.push(&lot_epoch.map_or(JsValue::NULL, |ep| js_sys::Uint8Array::from(&tokens::witness_at(cp.code_hash, &lot, cp.beacon, &cp.id(), e.seq, ep).encode()[..]).into()));
                 }
             }
             js_sys::Reflect::set(&o, &"queue".into(), &queue)?;
-            js_sys::Reflect::set(&o, &"bags".into(), &bags)?;
+            js_sys::Reflect::set(&o, &"witnesses".into(), &witnesses)?;
             Ok(o)
         }
         /// A keeper step's answer, its put (the standing contract's) attached.

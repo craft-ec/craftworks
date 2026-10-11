@@ -105,3 +105,142 @@ pub fn accepted(
     }
     Ok(n)
 }
+
+// ---- A PLACE'S WITNESS SIGNATURES: their own container (audit 10-11) ----
+//
+// They lived in a generic BAG (anyone adds, ranked by work past its caps): ~16 junk items of 16 KiB with a little more
+// work than a signature's evicted every genuine one — the entry never accepted, an equivocation's proof gone. No rule
+// over items alone can stop that: any well-formed item is free to make (a signature under a fresh key costs nothing),
+// so a bag of N kept by ANY order loses its genuine items to N made to outrank them. What bounds the items is who may
+// sign: only a key in the claims epoch's REGISTRY (frozen before the epoch's lots exist, at most `CLAIMS_MAX` claims)
+// or the BASELINE can ever sit on a committee. So this container takes a signature only if it VERIFIES over the
+// place's message under its key, and that key is the baseline's or a registered claim's; each key keeps its
+// [`PER_KEY`] lowest entries (two distinct ones prove an equivocation; an honest key signs one). The whole is then
+// bounded by the registry itself — nothing taken is ever dropped for room, there is none to make.
+
+/// The kind tag of a place's witness-signature container (params' first byte).
+pub const WITNESSES: u8 = 8;
+/// The entries one key keeps signatures for at one place: enough to prove an equivocation.
+pub const PER_KEY: usize = 2;
+/// The most signatures by keys other than the baseline: every registered key's [`PER_KEY`].
+pub const SIGNED_MAX: usize = crate::claims::CLAIMS_MAX * PER_KEY;
+const MAGIC: &[u8; 4] = b"CWWS";
+
+/// A place's container PARAMS: the token code, the stake pool, the beacon (the claims registry's), the CLAIMS EPOCH its
+/// lot is drawn from (whose registry says who may sign), and the place — (chain, seq).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Params {
+    pub code_hash: [u8; 32],
+    pub pool: [u8; 32],
+    pub beacon: [u8; 32],
+    pub epoch: u64,
+    pub chain: [u8; 32],
+    pub seq: u64,
+}
+
+impl Params {
+    pub fn encode(&self) -> Vec<u8> {
+        [&[WITNESSES][..], &self.code_hash, &self.pool, &self.beacon, &self.epoch.to_le_bytes(), &self.chain, &self.seq.to_le_bytes()].concat()
+    }
+    pub fn decode(b: &[u8]) -> Option<Params> {
+        let mut r = crate::R(b);
+        (r.u8()? == WITNESSES).then_some(())?;
+        let p = Params { code_hash: r.arr()?, pool: r.arr()?, beacon: r.arr()?, epoch: r.u64()?, chain: r.arr()?, seq: r.u64()? };
+        r.done().then_some(p)
+    }
+    pub fn id(&self) -> [u8; 32] {
+        crate::id(&self.code_hash, &self.encode())
+    }
+    /// The claims registry whose keys may sign here.
+    pub fn registry(&self) -> crate::claims::Params {
+        crate::claims::Params { code_hash: self.code_hash, pool: self.pool, beacon: self.beacon, epoch: self.epoch }
+    }
+    /// THE PLACE'S SIGNATURES as a state of this container holds them (none if it does not read) — the one read every
+    /// reader of a place's signatures goes through.
+    pub fn sigs(&self, state: &[u8]) -> Vec<WitnessSig> {
+        Signatures::decode(state).map_or(vec![], |s| s.items.iter().map(|x| WitnessSig { chain: self.chain, seq: self.seq, entry: x.entry, sig: x.sig }).collect())
+    }
+    /// A state holding these signatures (each by its key, at this place): what a witness PUTs or sends as an update
+    /// (its one), or a container as made empty (none).
+    pub fn state(&self, sigs: &[([u8; 32], WitnessSig)]) -> Vec<u8> {
+        let mut items: Vec<Signed> = sigs.iter().map(|(key, s)| Signed { key: *key, entry: s.entry, sig: s.sig }).collect();
+        items.sort();
+        items.dedup_by(|b, a| (a.key, a.entry) == (b.key, b.entry));
+        Signatures { items }.encode()
+    }
+    fn verifies(&self, s: &Signed) -> bool {
+        sig_ok(&s.key, &WitnessSig::message(&self.chain, self.seq, &s.entry), &s.sig)
+    }
+}
+
+/// One signature held: `key`'s over `entry` at the container's place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Signed {
+    pub key: [u8; 32],
+    pub entry: [u8; 32],
+    pub sig: [u8; 64],
+}
+
+/// A container's state: its signatures, sorted by (key, entry), one per pair.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Signatures {
+    pub items: Vec<Signed>,
+}
+
+impl Signatures {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut v = MAGIC.to_vec();
+        v.extend_from_slice(&(self.items.len() as u32).to_le_bytes());
+        for s in &self.items {
+            v.extend_from_slice(&s.key);
+            v.extend_from_slice(&s.entry);
+            v.extend_from_slice(&s.sig);
+        }
+        v
+    }
+    pub fn decode(b: &[u8]) -> Option<Signatures> {
+        let mut r = crate::R(b.strip_prefix(MAGIC)?);
+        let n = r.u32()? as usize;
+        (n <= SIGNED_MAX + PER_KEY).then_some(())?;
+        let items = (0..n).map(|_| Some(Signed { key: r.arr()?, entry: r.arr()?, sig: r.arr()? })).collect::<Option<Vec<_>>>()?;
+        (r.done() && items.windows(2).all(|w| (w[0].key, w[0].entry) < (w[1].key, w[1].entry))).then_some(Signatures { items })
+    }
+}
+
+/// A container's state HOLDS: every signature verifies over the place's message under its key, a key keeps at most
+/// [`PER_KEY`] entries, and keys other than the baseline at most [`SIGNED_MAX`] in all. (Whether a key is registered is
+/// the update's check — it reads the registry; a copy taken without it can only hold what is bounded here.)
+pub fn holds(p: &Params, s: &Signatures) -> Result<(), crate::Why> {
+    if s.items.iter().any(|x| !p.verifies(x)) {
+        return Err("a witness signature that does not verify");
+    }
+    if s.items.iter().filter(|x| x.key != BASELINE).count() > SIGNED_MAX || s.items.windows(PER_KEY + 1).any(|w| w.iter().all(|x| x.key == w[0].key)) {
+        return Err("more witness signatures than a place keeps");
+    }
+    Ok(())
+}
+
+/// Does taking `given` into `held` need the claims registry: a NEW signature by a key other than the baseline?
+pub fn needs_registry(held: &Signatures, given: &Signatures) -> bool {
+    given.items.iter().any(|x| x.key != BASELINE && !held.items.iter().any(|h| (h.key, h.entry) == (x.key, x.entry)))
+}
+
+/// THE MERGE — the same in every order: the union of the signatures that VERIFY, by the baseline or a key of
+/// `registry`'s claims (without it — nothing new but the baseline's was given — `held` as it is and the baseline's),
+/// one per (key, entry) (the lower signature bytes), each key's [`PER_KEY`] lowest entries.
+pub fn merge(p: &Params, held: &Signatures, given: &Signatures, registry: Option<&crate::claims::Registry>) -> Signatures {
+    let admitted = |x: &Signed| match registry {
+        Some(r) => x.key == BASELINE || r.claims.iter().any(|c| c.key == x.key),
+        None => x.key == BASELINE || held.items.contains(x),
+    };
+    let mut all: Vec<Signed> = held.items.iter().chain(&given.items).filter(|x| admitted(x) && p.verifies(x)).copied().collect();
+    all.sort();
+    all.dedup_by(|b, a| (a.key, a.entry) == (b.key, b.entry));
+    let mut out: Vec<Signed> = Vec::with_capacity(all.len());
+    for x in all {
+        if out.iter().rev().take_while(|y| y.key == x.key).count() < PER_KEY {
+            out.push(x);
+        }
+    }
+    Signatures { items: out }
+}
