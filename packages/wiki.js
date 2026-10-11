@@ -241,11 +241,14 @@ export async function mount(ctx, el) {
     const back = h("a", { href: at.href(""), textContent: "← Index" });
     if (!p) {
       const title = /^(space:|did:)/.test(keyOrRef) ? "" : W.cleanTitle(keyOrRef);
+      // (Optional parts filtered: `replaceChildren` makes a null child the TEXT "null".)
       return root.replaceChildren(
-        h("div", { className: "tools" }, back),
-        h("h1", { textContent: title || "Not here" }),
-        h("p", { className: "none", textContent: title ? "There is no page with this title in this wiki yet." : "This page is not here, or not yours to read." }),
-        title && wiki.mayEdit() ? h("a", { className: "cw-btn primary", href: at.href(`new/${encodeURIComponent(title)}`), textContent: "Create it" }) : null,
+        ...[
+          h("div", { className: "tools" }, back),
+          h("h1", { textContent: title || "Not here" }),
+          h("p", { className: "none", textContent: title ? "There is no page with this title in this wiki yet." : "This page is not here, or not yours to read." }),
+          title && wiki.mayEdit() ? h("a", { className: "cw-btn primary", href: at.href(`new/${encodeURIComponent(title)}`), textContent: "Create it" }) : null,
+        ].filter(Boolean),
       );
     }
     const me = at.me;
@@ -424,7 +427,9 @@ export async function mount(ctx, el) {
       : null;
     // WHAT LINKS HERE.
     const links = W.backlinks(all, p.key);
+    // (Optional parts filtered: `replaceChildren` makes a null child the TEXT "null" — measured on fx: "nullnull".)
     root.replaceChildren(
+      ...[
       h("div", { className: "tools" }, back, editPage, historyBtn, copy, propose, h("span", { className: "end" }, save)),
       h("h1", { textContent: p.title }),
       h(
@@ -441,6 +446,7 @@ export async function mount(ctx, el) {
       pendingEl,
       sectionsEl,
       h("details", { className: "box" }, h("summary", { textContent: `What links here (${links.length})` }), links.length ? h("div", { className: "links" }, ...links.map(x => h("a", { href: titleHref(at, x.title), textContent: x.title }))) : h("p", { className: "none", textContent: "No page links here yet." })),
+      ].filter(Boolean),
     );
   }
 
