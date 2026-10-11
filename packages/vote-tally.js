@@ -347,10 +347,9 @@ export function delegationChains(electorate, delegations) {
 export async function start(ctx) {
   const [items, space, roles] = await Promise.all(["items", "space", "roles"].map(n => ctx.require(n)));
   const me = async () => (await space.account()).id;
-  const spaceIdOf = ref => (String(ref).startsWith("space:") ? String(ref).slice(6, String(ref).indexOf("/")) : null);
   // The space an item is in, this person a member (null: a person's own item, or a space read from outside).
   const spaceOf = async ref => {
-    const sid = spaceIdOf(ref);
+    const sid = items.spaceIdOf(ref);
     return sid ? ((await space.mine()).find(s => s.id === sid) ?? null) : null;
   };
   const rolesOf = async sp => {
