@@ -87,10 +87,8 @@ export async function start() {
   // ATTACHING kinds: their own data, about another item (`in`) — contributed like a comment, listed with what they are
   // about, and a lens of their own (the Caption app). A CAPTION — subtitles, lyrics, a transcript: WebVTT (its file),
   // its language and label.
-  // A RESPONSE to a form: its answers SEALED to the form's owners (and to its writer), in the writer's own feed.
   const ATTACHING = [
     ["caption", "text", "Caption", ["lang", "label"], ["video", "audio"]],
-    ["response", "form", "Response", [], ["form"]],
     // A WIKI SECTION: one writer's latest version of one section of a page (`wiki-pages`: sid, pos, base, merges).
     ["wiki-section", "wiki", "Wiki section", ["sid"], ["wiki"]],
   ];
