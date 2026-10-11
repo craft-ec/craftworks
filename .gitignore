@@ -2,3 +2,4 @@ target/
 packages/build/
 .published-site
 .DS_Store
+.claude/worktrees/

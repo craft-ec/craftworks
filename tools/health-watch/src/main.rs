@@ -146,7 +146,15 @@ async fn main() -> Result<()> {
         }
         // Each item OPENED with the support key; what does not open (sealed to another key, a plain report from before
         // reports were sealed, junk) is COUNTED and said — never dropped silently.
-        let all: Vec<serde_json::Value> = items.iter().filter_map(|it| open_report(&seed, craftworks_bag_contract::payload(it))).collect();
+        // (A PLAIN report — pages from before reports were sealed, still live until they update — is read as it is.)
+        let mut plain = 0usize;
+        let all: Vec<serde_json::Value> = items
+            .iter()
+            .filter_map(|it| {
+                let p = craftworks_bag_contract::payload(it);
+                open_report(&seed, p).or_else(|| serde_json::from_slice::<serde_json::Value>(p).ok().filter(|v| v.get("k").is_some()).inspect(|_| plain += 1))
+            })
+            .collect();
         let unopened = items.len() - all.len();
         // HEARTBEATS (`seen`): each account's pages open that day — first and last beat, version, and each space's
         // state as it went (a change of a space's `on`/epoch shown in time order).
@@ -155,6 +163,9 @@ async fn main() -> Result<()> {
             beats.entry(v["r"].as_str().unwrap_or("?").to_string()).or_default().push(v);
         }
         println!("{d}: {} report(s) — {} heartbeat(s) from {} account(s)", all.len(), beats.values().map(Vec::len).sum::<usize>(), beats.len());
+        if plain > 0 {
+            println!("  ({plain} of them plain: from pages before reports were sealed)");
+        }
         if unopened > 0 {
             println!("  {unopened} item(s) did not open with the support key");
         }
