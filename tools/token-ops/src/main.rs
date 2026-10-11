@@ -245,6 +245,37 @@ async fn main() -> Result<()> {
             })
             .await?
         }
+        Some("keepers") => {
+            // token-ops keepers <token.wasm> <idlog.wasm> <bag.wasm> <ws> <beacon hex> <epoch> (beacon.wasm, standing.wasm,
+            // block.wasm beside token.wasm): each keeper listed that epoch and the heights its record answered, by epoch.
+            let net = token_net::Net {
+                ws: a[5].clone(),
+                code_hash: *blake3::hash(&std::fs::read(&a[2])?).as_bytes(),
+                idlog_hash: *blake3::hash(&std::fs::read(&a[3])?).as_bytes(),
+                bag_code: std::fs::read(&a[4])?,
+                beacon_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes(),
+                beacon: unhex32(&a[6])?,
+                pool: [0; 32],
+                standing_hash: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("standing.wasm"))?).as_bytes(),
+                block_code: std::fs::read(std::path::Path::new(&a[2]).with_file_name("block.wasm"))?,
+            };
+            let epoch: u64 = a[7].parse()?;
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                let r = token_net::Reader::new(&net)?;
+                for (did, key, rec) in r.keepers(epoch) {
+                    match rec {
+                        None => println!("{} key {}: no record", hex(&did[..4]), hex(&key[..4])),
+                        Some(eps) => {
+                            for (e, hs) in eps {
+                                println!("{} key {} epoch {e}: {} answer(s) {:?}", hex(&did[..4]), hex(&key[..4]), hs.len(), hs);
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            })
+            .await?
+        }
         Some("accepted") => {
             // token-ops accepted <token.wasm> <bag.wasm> <ws> <beacon hex> <epoch> <root hex>
             // (beacon.wasm beside token.wasm): an EPOCH STATEMENT root's acceptance by the rules' own check

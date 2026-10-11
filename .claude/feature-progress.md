@@ -1896,7 +1896,7 @@ old key's addresses.
                   each entry's empty witness bag (core `bags` on a chain put): a delegate's new contracts do not
                   propagate (freenet #5542). Test: a drawn staker, page open → no round; away → one signed put,
                   verified; next wake-up → nothing (settled).
-              [~] 3c 10-11 (unit-tested; live check pending): the KEEPER MANDATE (`Request::KeeperMandate`: standing +
+              [x] 3c 10-11 LIVE (fy's page closed: its record gained an answer at 12572, made by its delegate): the KEEPER MANDATE (`Request::KeeperMandate`: standing +
                   beacon codes, beacon, the epoch the page opened, its hosted pieces) and the delegate's keeper round
                   (`delegate/src/keeper_round.rs`, on the shared `reads.rs` round): with the page away it opens a new
                   epoch on the same holdings, finds each sampled height since the last, SEALS ONE PIECE A WAKE-UP
@@ -1904,7 +1904,7 @@ old key's addresses.
                   answer as an UPDATE whose delta is the merged record (no code in the delegate). Signs only
                   STANDING_DOMAIN (`upkeep_standing_sign`). Test: page open → nothing; away → one seal a wake-up, the
                   answer holds and checks against the real seal; answered once.
-              [~] 3d 10-11 STATEMENTS WITNESSED BY PAGES (found: only Wren's tool signed statement roots — "no one must
+              [x] 3d 10-11 LIVE (fx and fy pages both signed epoch 12's root 149381c0) STATEMENTS WITNESSED BY PAGES (found: only Wren's tool signed statement roots — "no one must
                   stay online" broken): `witness::seated` (one seat check, entries and statements), `witness::statement`
                   (the root THIS page computed, signed at `witness_place(e)` when seated); witness.js signs it through
                   `witnessSign` (equivocation guard: one root per epoch per member).

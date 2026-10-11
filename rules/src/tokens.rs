@@ -165,23 +165,12 @@ pub fn statement_accepted(lot: &Lot, got: Got, code_hash: [u8; 32], beacon: [u8;
 #[allow(clippy::too_many_arguments)]
 fn accepted_at(lot: &Lot, got: Got, code_hash: [u8; 32], beacon_id: [u8; 32], place: &[u8; 32], seq: u64, entry: &[u8; 32], epoch: u64, h: u64) -> Result<Step<Result<usize, String>>, String> {
     use t::{claims, wallet, witness};
-    // Its lot's OUTPUT: in the beacon's state, else its outputs log.
-    let beacon = match there(got, &beacon_id) {
+    // Its lot's OUTPUT (the beacon's state, else its outputs log: `witness::beacon_out`).
+    let out = match crate::witness::beacon_out(&lot.beacon_code, got, &beacon_id, h) {
         Err(w) => return Ok(Step::Want(vec![w])),
-        Ok(b) => b.and_then(|b| craftworks_beacon_contract::wire::decode(&b)),
+        Ok(Err(why)) => return Ok(Step::Done(Err(why.into()))),
+        Ok(Ok(o)) => o,
     };
-    let mut out = beacon.as_ref().and_then(|b| b.steps.iter().find(|st| st.height == h).map(|st| st.out));
-    if out.is_none() {
-        if beacon.as_ref().is_none_or(|b| b.height() < h) {
-            return Ok(Step::Done(Err("its lot is not drawn yet".into())));
-        }
-        let log = t::id(&lot.beacon_code, &craftworks_beacon_contract::log::Params::of(beacon_id, h).encode());
-        match there(got, &log) {
-            Err(w) => return Ok(Step::Want(vec![w])),
-            Ok(b) => out = b.and_then(|b| craftworks_beacon_contract::log::Log::decode(&b)).and_then(|l| l.entries.iter().find(|x| x.0 == h).map(|x| x.1)),
-        }
-    }
-    let Some(out) = out else { return Ok(Step::Done(Err("its lot's output is not recorded".into()))) };
     // The epoch's CLAIMS and the entry's SIGNATURES.
     let registry = claims::Params { code_hash, pool: lot.pool, beacon: beacon_id, epoch }.id();
     let bag_addr = wallet::witness_bag(place, seq);

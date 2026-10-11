@@ -157,6 +157,20 @@ impl<'a> Reader<'a> {
         let statements: Vec<craftworks_wallet::fees::Statement> = self.bag(bag_address(epoch)).iter().filter_map(|p| Posted::decode(p)).filter(|p| p.epoch == epoch).map(|p| craftworks_wallet::fees::Statement { place: witness_place(epoch), root: p.root, h: lot_height(epoch) }).collect();
         craftworks_wallet::fees::count(&queued, &statements, &craftworks_wallet::fees::Reads { pool: self.net.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs })
     }
+    /// Each keeper LISTED in `epoch`'s registry, its record's key, and its record's answered heights per epoch
+    /// (`None`: no record on the network) — what its node (page or delegate) has proved.
+    pub fn keepers(&self, epoch: u64) -> Vec<([u8; 32], [u8; 32], Option<Vec<(u64, Vec<u64>)>>)> {
+        let log_of = |d: &[u8; 32]| self.keys(d);
+        let items = self.chained(craftworks_reputation::keepers::address, epoch);
+        craftworks_reputation::keepers::listed(&items, &log_of)
+            .into_iter()
+            .map(|(did, key)| {
+                let id = craftworks_standing_contract::Params::keeper(self.net.beacon_hash, self.net.beacon, &key).id(&self.net.standing_hash);
+                let rec = self.get(id).filter(|b| !b.is_empty()).and_then(|b| craftworks_standing::codec::decode(&b));
+                (did, key, rec.map(|r| r.epochs.iter().map(|e| (e.epoch, e.answers.iter().filter(|a| a.key == key).map(|a| a.height).collect())).collect()))
+            })
+            .collect()
+    }
     /// The accounts that KEPT in `epoch`: its keepers registry's keepers whose standing record proves it.
     pub fn kept(&self, epoch: u64, log_of: &dyn Fn(&[u8; 32]) -> Option<craftworks_idlog_contract::Log>) -> Vec<[u8; 32]> {
         let items = self.chained(craftworks_reputation::keepers::address, epoch);

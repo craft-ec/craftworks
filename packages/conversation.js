@@ -233,9 +233,11 @@ export async function start(ctx) {
     if (Date.now() - (observedAt.get(sp.id) ?? 0) < 3600e3) return 0;
     observedAt.set(sp.id, Date.now());
     const ks = await keyStatus(sp);
+    const me = (await space.account().catch(() => null))?.id;
     let n = 0;
     for (const [did, k] of ks.members) {
-      if (k.state === "current") continue;
+      // (This page's own state is its heartbeat's.)
+      if (k.state === "current" || did === me) continue;
       n++;
       await index.health({ k: "member-keys", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), st: k.state, e: k.epoch, oe: ks.owner?.epoch ?? null, d: { devs: k.devs, why: k.why, anns: k.devices, writers: ks.writers, repairedBy: k.repairedBy.length } });
     }
