@@ -2306,8 +2306,10 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
 - [x] 10-11 SUPERSEDE a wedged tail (TOKEN §3d; local, token.wasm NOT rebuilt): `Body::Supersede{from}` appended by the owner voids an unaccepted tail once `may_supersede` (past FRESH + a freeze past AT_SLACK) and no witness signed any of it; state rolls back to before `from`; voided entries never witnessed/cited/collected; page auto-supersedes from its witness queue (`wallet_supersede`), re-takes voided credits; delegate only witnesses (shared `may_witness`). Open: partially-signed tails, observer-dependent "no signature" (§8 item 7).
 
 ## App domains (owner 10-11) — docs/ARCHITECTURE.md §7 is the design
-- [ ] WIKI: own (only you edit; fork / suggest), space (roles edit; sections as rows; conflicts kept), global
-      (gathered by title, ranked by votes, links in, author reputation, freshness; neighbourhood first; N other versions).
+- [ ] WIKI: own (only you edit; fork / suggest), space (roles edit; sections as rows; conflicts kept); GLOBAL = one
+      OWNERLESS COMMONS (anyone edits behind a reputation gate, full history, disputes and rules by Vote) — after Vote.
+- [ ] SHARED ITEMS: owner + editors + viewers per item (a small group per item), for Docs/Sheets/Slides/Notes/Wiki/Drive.
+- [ ] CO-EDITING: CRDT over per-writer feeds; first MEASURE Chat delivery delay between two nodes; choose Yjs/Loro/Automerge.
 - [ ] BLOG: a lens over Board's posts — article layout, blog home, drafts/scheduling, subscribe = follow, publications.
 - [ ] FORMS: builder, answers sealed to owners, results and export (no polls — those are Vote's).
 - [ ] VOTE: polls; proposals with transitive delegation, direct override, cycles, depth limit, snapshot finalization;

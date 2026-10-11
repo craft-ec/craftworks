@@ -315,12 +315,41 @@ how "global" works depends on its shape:
   who edits, approves, reverts); others suggest. A page is stored as SECTIONS (one row each): two editors of different
   sections never collide; two of one section are both kept and shown as a conflict — nothing is lost silently. Every
   edit signed by its author; the history shows who changed what. Real-time co-editing (a CRDT) is not needed here.
-- GLOBAL: no global editor (no central authority). A title's page GATHERS every public version — the top one opened,
-  "N other versions" below (author or space, last edit, votes, the difference), forks grouped by LINEAGE so near-copies
-  collapse. RANKED by public signals: votes, links in from other pages, the author's reputation (vouches: fake
-  accounts gain nothing), freshness; the reader's own NEIGHBOURHOOD (people and spaces followed or joined) can come
-  first for them. (Federated Wiki left ranking out on purpose so no version looks official; here the "N other
-  versions" stays always visible for the same reason.)
+- GLOBAL: ONE OWNERLESS COMMONS (owner 10-11: "a global space without owner, everyone can read and edit, complete
+  history"): a public space (no encryption group, so no key holder) whose pages anyone reads and edits — each editor's
+  changes in its own feed, merged (a CRDT, below); every edit signed and kept; a revert is just another edit. What an
+  owner would do is done by RULES: a REPUTATION GATE (vouched accounts edit directly; new or unvouched ones SUGGEST,
+  and a gated editor accepts — fake accounts gain nothing, reputation comes only from vouches); restricting an account,
+  settling an edit war, hiding a revision (kept in history, hidden) — by VOTE of reputation holders, its outcome
+  applied as the next edit or act; the rules fixed at the commons' creation and changed ONLY by Vote. No one person can
+  change anything for everyone. FORKS stay possible (your own wiki) but optional; there is one page per title.
+  (Superseded design, kept for the record: a gathering of everyone's versions ranked by votes, links, reputation and
+  freshness, as Federated Wiki plus ranking.)
+
+**Shared items** (the foundation under Docs, Sheets, Slides — and usable by Notes, Wiki pages, Drive files): an item is
+yours alone, a SPACE's (edited under its roles — built), or SHARED WITH CHOSEN PEOPLE: its own small group (a tiny space
+for one item — the machinery of audiences, whose "chosen people" are already their own encrypted group) with an OWNER,
+EDITORS and VIEWERS; sharing adds to the group, revoking takes out (reads nothing new); ownership can be handed on (an
+item's identity is not its owner). Today audiences give READERS only; editors per item are new. One sharing piece,
+built once, for every app.
+
+**Live co-editing** (Docs, Sheets, Slides): a CRDT. Each editor's device appends its changes to its OWN FEED in the
+document's table — storage already gives each writer its own feed and readers merge them, the shape a CRDT needs; every
+page applies all feeds' changes and all reach the same document, also after editing offline. Who edits: the space's
+roles or the shared item's editors; each change signed by its device. LIVE: changes travel as contract updates to the
+other editors' nodes, the path a Chat message takes — Chat's delivery delay is how live it feels (NOT YET MEASURED:
+measure Chat between two nodes before committing; seconds = live, much slower = near-live). Cursors and presence:
+short-lived updates outside the document. Feeds compacted into snapshots now and then; history kept. Per app: DOCS a
+text CRDT with formatting; SHEETS a key per cell (latest write wins per cell), rows and columns inserted as a list CRDT,
+formulas recomputed on each page; SLIDES an ordered list of slides, each a small document. Open decision: ONE library
+for all three — Yjs or Loro (JS) or Automerge (Rust, compiles to wasm, fits the core).
+
+**CRDT is not consensus** (owner 10-11; the rule "weakest coordination per problem"): a CRDT answers "how do we all
+reach the same state?" — every edit kept, the same set of edits gives the same result in any order, no one waits for
+anyone. CONSENSUS answers "which of several conflicting options wins?" — a quorum must agree. MERGE where everything can
+be kept (text, cells, lists, wiki edits, the storage feeds); AGREE only where one option must win: the token (witnesses
+by lot sign k-of-n — no double spend), reward statements (a committee signs one root), Vote's finalization (fixed at a
+snapshot), and the wiki commons' disputes (an edit war, a ban, a rule change go to Vote).
 
 **Productivity queue** (none needs the token; each a lens a space turns on, telemetry from the one collector, row 9):
 1. WIKI — as above.
@@ -337,9 +366,11 @@ how "global" works depends on its shape:
    The ELECTORATE is a space's members, one account each (admission is the gate). OUTCOMES ACT: a passed proposal
    writes the space's own acts (grant a role, change a rule, elect a moderator; spend a space treasury once the token is
    live). The visual delegation graph is a requirement. (Polls live here, not in Forms: a poll is a vote.)
-5. SLIDES — decks written as Markdown, one slide per section; presenter view, themes, PDF export.
-6. DOCS and SHEETS — after a decision on co-editing: one editor at a time, or a merge format (CRDT) in storage. Sheets:
-   a table per sheet (a row per cell), a formula engine, CSV/XLSX import and export.
+5. SLIDES — decks written as Markdown first (one slide per section; presenter view, themes, PDF export); co-edited
+   with the others in 6.
+6. SHARED ITEMS (owner, editors, viewers per item), then DOCS, SHEETS and SLIDES with live co-editing (CRDT, above);
+   Sheets with a formula engine and CSV/XLSX import and export. First: measure Chat's delivery delay; choose the library.
+   The GLOBAL WIKI commons comes after VOTE (its governance).
 
 **Commerce — RESALE of editions (after the token is released and stable):** selling a copy you own, ON THE ITEM'S PAGE
 (owner 10-10: no separate shop): "sell for X" escrows the copy into a SWAP and posts the offer to the item's public
