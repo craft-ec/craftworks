@@ -912,3 +912,16 @@ fn two_token_entries_at_one_place_are_not_signed_moments_apart() {
     m.set_secret(UPKEEP_WAKEUPS, &2u64.to_le_bytes());
     assert!(matches!(sign(&mut m, entry(2)), Answer::Signed { .. }), "after the window");
 }
+
+/// FORGOTTEN (audit 10-11): a member forgotten here is no longer one upkeep serves — its witness mandate gone with it.
+#[test]
+fn a_forgotten_member_s_upkeep_stops() {
+    let mut m = provisioned(APP);
+    let Answer::Unlocked { public, .. } = unlock(&mut m, ALICE_PIN, APP) else { panic!("unlocked") };
+    let mandate = WitnessMandate { token: [1; 32], idlog: [2; 32], bag: [3; 32], beacon_code: [4; 32], beacon: [5; 32], pool: [6; 32] };
+    assert_eq!(serve(&mut m, Request::WitnessMandate { mandate }, APP), Answer::WitnessMandated);
+    assert_eq!(upkeep_members(&m), vec![public]);
+    assert_eq!(serve(&mut m, Request::Forget, APP), Answer::LoggedOut);
+    assert!(upkeep_members(&m).is_empty(), "not served any more");
+    assert_eq!(upkeep_witness_mandate(&m, &public), None);
+}

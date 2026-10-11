@@ -1301,6 +1301,13 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 ok &= h.set_secret(&in_space(EPOCH_LATEST, &m, &sp), &[]) && h.set_secret(&in_space(MLS, &m, &sp), &[]);
             }
             ok &= h.set_secret(&[SPACES, &m[..]].concat(), &[]);
+            // Its UPKEEP too (audit 10-11: a forgotten member's rounds kept running): out of the members upkeep serves,
+            // its space, witness and keeper mandates cleared.
+            let rest: Vec<[u8; KEY_LEN]> = upkeep_members(h).into_iter().filter(|x| *x != m).collect();
+            ok &= h.set_secret(UPKEEP_MEMBERS, &bincode::serialize(&rest).expect("members encode"))
+                && h.set_secret(&of(UPKEEP_MANDATE, &m), &[])
+                && h.set_secret(&[WITNESS_MANDATE, &m[..]].concat(), &[])
+                && h.set_secret(&[KEEPER_MANDATE, &m[..]].concat(), &[]);
             for (g, t) in grants(h, &m) {
                 ok &= h.set_secret(&grant_key(&m, &g, &t), &[]);
             }
