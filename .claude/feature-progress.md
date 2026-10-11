@@ -2283,6 +2283,12 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       re-welcome per request, inviters in turn, skipped when its device announced keys after the request (fx v583
       re-added fy who was in; fixed in v584, fy recovered). Live: Wren's page "request found … kept again", "let in …
       asked again" (09:04); the owner's page must load v376 to answer.
+- [x] 10-11 STRANDED ENTRIES (fx v584: $CRAFT chains' first entries never witnessed): (a) token-net cached a failed
+      definition read for the process's life — Wren's witness started before $CRAFT's definition existed and refused
+      every $CRAFT entry ("the token's definition not read"); now only reads are kept. (b) An entry still unaccepted when
+      its queue ages out (witnesses read only this epoch's and the last) is queued again by its page (`toqueue/` kept
+      until `entry_status` says accepted; a 5-minute pass). fx v585: epoch 18's seq 0 and allowance seq 5–6 re-queued
+      into epoch 21, Wren signing them.
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.

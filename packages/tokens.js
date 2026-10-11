@@ -54,20 +54,36 @@ export async function start(ctx) {
   }
   // Each entry waiting to be queued: its WITNESS SIGNATURES container made (empty, `core.witness_put`) first — a
   // witness with no page open only adds to one already there — then the item into the witness queue of this epoch.
+  // KEPT UNTIL ACCEPTED (10-11, fx: the first $CRAFT entries sat in epoch 18's queue unsigned; witnesses read only this
+  // epoch's queue and the last, so once it aged out the chain was stuck for good — each later entry refused as its past
+  // was never witnessed): an entry still not accepted when its queue ages out is queued again, into this epoch's.
+  // (`accepted`: closed. A row from before — `done` without `accepted` — is checked once the same way.)
   async function queueAll() {
-    const waiting = rows("toqueue/").filter(o => !o.done);
-    if (!waiting.length) return;
+    const open = rows("toqueue/").filter(o => !o.accepted);
+    if (!open.length) return;
     const at = await now();
-    for (const o of waiting) {
+    const e = Math.floor(at / EPOCH);
+    for (const o of open) {
       try {
-        if (o.wit) await putOne(core.witness_put(code, bytes(o.wit), new Uint8Array(0), new Uint8Array(0), new Uint8Array(0)));
+        const queuedIn = o.epoch ?? (o.done ? 0 : null);
+        if (queuedIn != null) {
+          if (queuedIn >= e - 1) continue; // in a queue its witnesses still read
+          const s = await run(() => core.entry_status(code, beacon, idlogCode, lot.pool, lot.bag, lot.beacon, bytes(o.q)));
+          if (s?.accepted != null || s?.missing) {
+            await priv.put(`toqueue/${o.q}`, JSON.stringify({ ...o, done: true, accepted: true, ...(s?.missing ? { missing: s.missing } : {}) }));
+            continue;
+          }
+          ctx.log("tokens", { what: `an entry not accepted when its queue (epoch ${queuedIn}) aged out — queued again (${s?.waiting ?? "waiting"})` });
+        } else if (o.wit) await putOne(core.witness_put(code, bytes(o.wit), new Uint8Array(0), new Uint8Array(0), new Uint8Array(0)));
         await chained(Core.witness_queue_address, at, bytes(o.q), "queueing an entry for its witnesses");
-        await priv.put(`toqueue/${o.q}`, JSON.stringify({ ...o, done: true }));
-      } catch (e) {
-        ctx.log("tokens", { what: `an entry waits to be queued again: ${e.message ?? e}` });
+        await priv.put(`toqueue/${o.q}`, JSON.stringify({ ...o, done: true, epoch: e }));
+      } catch (err) {
+        ctx.log("tokens", { what: `an entry waits to be queued again: ${err.message ?? err}` });
       }
     }
   }
+  // Checked as the clock moves too (no new entry needed): an entry whose queue aged out is queued again.
+  setInterval(() => queueAll().catch(() => {}), 5 * 60 * 1000);
   // RUN a step to its end: read what it wants, have the delegate sign what it asks (one entry a round), until done.
   async function run(step) {
     const sigs = [];

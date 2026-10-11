@@ -34,7 +34,7 @@ pub struct Reader<'a> {
     net: &'a Net,
     rt: tokio::runtime::Runtime,
     beacon_state: RefCell<Option<B::State>>,
-    defs: RefCell<HashMap<[u8; 32], Option<Definition>>>,
+    defs: RefCell<HashMap<[u8; 32], Definition>>,
 }
 
 impl<'a> Reader<'a> {
@@ -76,7 +76,14 @@ impl<'a> Reader<'a> {
         })
     }
     pub fn definition(&self, t: &[u8; 32]) -> Option<Definition> {
-        self.defs.borrow_mut().entry(*t).or_insert_with(|| self.get(*t).and_then(|b| Definition::decode(&b))).clone()
+        // Only a definition READ is kept (it never changes); one not there yet (a token whose first entry makes it — $CRAFT
+        // by its first keeper mint) is asked again next time — a kept "not there" refused every entry of it for good.
+        if let Some(d) = self.defs.borrow().get(t) {
+            return Some(d.clone());
+        }
+        let d = self.get(*t).and_then(|b| Definition::decode(&b))?;
+        self.defs.borrow_mut().insert(*t, d.clone());
+        Some(d)
     }
     /// A chain's params (the token's own beacon and key log).
     pub fn params(&self, t: &Tok, owner: &[u8; 32]) -> Option<T::ChainParams> {
