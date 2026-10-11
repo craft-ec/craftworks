@@ -16,18 +16,23 @@ use craftworks_token_contract as t;
 pub const ROUND: &[u8] = b"identity_witness/round";
 /// The member the last round was for (rounds take members in turn).
 const LAST: &[u8] = b"identity_witness/last";
-/// Queue items this member settled (witnessed, or not drawn for): never asked again (the newest kept).
-const DONE: &[u8] = b"identity_witness/done/";
+/// Queue items this member settled (witnessed, or not drawn for): never asked again (the newest kept) — each by its
+/// HASH (32 bytes, not the item), oldest first; looked up through a set, written only when one is added.
+const DONE: &[u8] = b"identity_witness/settled/";
 const DONE_MAX: usize = 4096;
 
-fn done<H: Host>(h: &H, member: &[u8; 32]) -> Vec<Vec<u8>> {
+fn done<H: Host>(h: &H, member: &[u8; 32]) -> Vec<[u8; 32]> {
     h.get_secret(&[DONE, &member[..]].concat()).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
 }
-fn set_done<H: Host>(h: &mut H, member: &[u8; 32], mut all: Vec<Vec<u8>>) {
+fn set_done<H: Host>(h: &mut H, member: &[u8; 32], mut all: Vec<[u8; 32]>) {
     if all.len() > DONE_MAX {
         all.drain(..all.len() - DONE_MAX);
     }
     h.set_secret(&[DONE, &member[..]].concat(), &bincode::serialize(&all).expect("done encodes"));
+}
+/// A queue item's key in the settled list.
+fn item_hash(it: &[u8]) -> [u8; 32] {
+    *blake3::hash(it).as_bytes()
 }
 
 /// A WAKE-UP: when no round is in flight, a round started for the next member in turn with a mandate and their page
@@ -98,20 +103,28 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
     }
     // EACH ENTRY by the rule.
     let mut settled = done(h, &r.member);
+    let mut seen: std::collections::HashSet<[u8; 32]> = settled.iter().copied().collect();
+    let before = settled.len();
     let mut out = Vec::new();
     for it in items {
-        if settled.contains(&it) {
+        let k = item_hash(&it);
+        if seen.contains(&k) {
             continue;
         }
         let Some(q) = craftworks_wallet::queue::Queued::decode(&it) else { continue };
         match witness::entry(&ctx, &lot, &got, &q, &r.member, height) {
             Err(why) => identity::upkeep_say(h, &r.member, &format!("witness: {why}")),
             Ok(tokens::Step::Want(w)) => {
-                set_done(h, &r.member, settled);
+                if settled.len() != before {
+                    set_done(h, &r.member, settled);
+                }
                 return (out, w);
             }
             Ok(tokens::Step::Sign(_)) => {}
-            Ok(tokens::Step::Done(witness::Verdict::NotSeated)) => settled.push(it),
+            Ok(tokens::Step::Done(witness::Verdict::NotSeated)) => {
+                seen.insert(k);
+                settled.push(k);
+            }
             // Not yet decidable: asked again on a later wake-up (never settled).
             Ok(tokens::Step::Done(witness::Verdict::Later(_))) => {}
             Ok(tokens::Step::Done(witness::Verdict::Refused(why))) => identity::upkeep_say(h, &r.member, &format!("witness: refused seq {}: {why}", q.seq)),
@@ -125,10 +138,13 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
                     }
                     Err(w) => identity::upkeep_say(h, &r.member, &format!("witness: not signed ({w:?})")),
                 }
-                settled.push(it);
+                seen.insert(k);
+                settled.push(k);
             }
         }
     }
-    set_done(h, &r.member, settled);
+    if settled.len() != before {
+        set_done(h, &r.member, settled);
+    }
     (out, vec![])
 }

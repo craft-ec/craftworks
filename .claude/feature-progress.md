@@ -2250,6 +2250,10 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       signatures + forged/replayed ones + an equivocator's extras offered — every genuine signature stays, the proof
       too (control: registry rule off → 8,268 taken, unbounded). Re-keys token.wasm at publish. Follows C2b: if claims
       leave the registry, this gate follows them.
+- [x] C9 10-11 DELEGATE ROUND STATE CHEAP: a round's secret is its index only, each state read its own secret written
+      once (was: every answer re-serialized every state read); the witness round's settled list holds 32-byte item
+      hashes, looked up through a set, written only when one is added (test: an answer never rewrites earlier states;
+      an ended round's are blanked).
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.
