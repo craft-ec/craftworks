@@ -47,8 +47,8 @@ pub const DAMP_DEN: u128 = 100;
 pub const ROUNDS: usize = 40;
 /// Fixed point: 1.0.
 pub const ONE: u128 = 1_000_000_000_000;
-/// THE GATE (TOKEN §7d): the least reputation (a trust share) that earns — keeper issuance, the allowance. Halves at
-/// every issuance halving (by height) as the network grows.
+/// THE GATE (TOKEN §7d): the least reputation (a trust share) that earns — keeper issuance, the allowance — at launch;
+/// it halves at every issuance halving as the network grows (`statement::Pots::halvings`).
 pub const GATE: u128 = ONE / 100_000;
 /// BOOTSTRAP (owner 10-10: "let node keep by default … reputation still weighted higher"): while fewer accounts than
 /// this KEPT in an epoch, the keeper pot has no gate — every account that proved keeping earns, weighted by its

@@ -197,7 +197,7 @@ impl<'a> Reader<'a> {
         let items: Vec<R::item::Item> = (0..=epoch).flat_map(|e| self.chained(R::item::registry_address, e)).filter_map(|b| R::item::Item::decode(&b)).collect();
         let log_of = |d: &R::Did| self.keys(d);
         let signed = epoch.checked_sub(1).map_or(Default::default(), |e| self.signed(e));
-        let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP), witness: craftworks_wallet::craft::witness_pot(epoch) };
+        let pots = R::statement::Pots { keeper: craftworks_wallet::craft::keeper_pot(epoch), allowance: (craftworks_allowance_contract::POT, craftworks_allowance_contract::CAP), witness: craftworks_wallet::craft::witness_pot(epoch), halvings: craftworks_wallet::craft::halvings(epoch) };
         let kept = epoch.checked_sub(1).map_or(Vec::new(), |e| self.kept(e, &log_of));
         // The newest ACCEPTED statement within CARRY_BACK epochs (the page's rule).
         let prev = (1..=R::statement::CARRY_BACK).filter_map(|b| epoch.checked_sub(b)).find_map(|e| self.statement_lines(e)).unwrap_or_default();

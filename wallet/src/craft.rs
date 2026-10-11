@@ -14,6 +14,10 @@ pub const HALF_LIFE: u64 = 8_192;
 pub const POT: u128 = MAX / 2 / HALF_LIFE as u128;
 /// The issuance rule.
 pub const KEEPERS: Keepers = Keepers { rate: POT, half_life: HALF_LIFE, start: 0 };
+/// Issuance HALVINGS by standing epoch `epoch` (the reputation GATE halves with each: TOKEN §7d).
+pub fn halvings(epoch: u64) -> u32 {
+    (epoch / HALF_LIFE).min(127) as u32
+}
 
 /// $CRAFT's definition on the network of beacon `beacon` (the token code `code_hash`, the key log code `idlog`).
 pub fn definition(code_hash: [u8; 32], beacon: [u8; 32], idlog: [u8; 32]) -> Definition {
@@ -71,5 +75,7 @@ mod tests {
         let (k, cap) = keeper_pot(0);
         assert_eq!((k, cap), (POT / 10 * 9, POT / 50));
         assert_eq!(keeper_pot(HALF_LIFE).0, (POT / 2) / 10 * 9, "halved");
+        // The GATE halves with the pot (audit 10-11): one halving at each HALF_LIFE.
+        assert_eq!((halvings(HALF_LIFE - 1), halvings(HALF_LIFE), halvings(3 * HALF_LIFE)), (0, 1, 3));
     }
 }

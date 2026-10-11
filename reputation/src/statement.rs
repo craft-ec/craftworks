@@ -218,6 +218,9 @@ pub struct Pots {
     pub keeper: (u128, u128),
     pub allowance: (u128, u128),
     pub witness: (u128, u128),
+    /// Issuance halvings by this epoch (`wallet::craft::halvings`): the GATE halves with each (audit 10-11: it was a
+    /// constant though TOKEN §7d lowers it as the network grows).
+    pub halvings: u32,
 }
 
 /// THE STATEMENT of standing epoch `epoch` — the ONE computation (pages publish it, witnesses recompute it): reputation
@@ -229,7 +232,7 @@ pub fn build(epoch: u64, items: &[crate::item::Item], log_of: &dyn Fn(&Did) -> O
     let vs = crate::item::standing(items, start, log_of);
     let active = active_of(epoch, prev, kept, signed, items);
     let rep = crate::reputation_active(crate::ROOTS, &vs, start, &|d| active.get(d).copied());
-    compute(&Inputs { epoch, rep: &rep, kept, keeper_pot: pots.keeper.0, keeper_cap: pots.keeper.1, gate: crate::GATE, allowance_pot: pots.allowance.0, allowance_cap: pots.allowance.1, signed, witness_pot: pots.witness.0, witness_cap: pots.witness.1, active: &active, never: crate::ROOTS })
+    compute(&Inputs { epoch, rep: &rep, kept, keeper_pot: pots.keeper.0, keeper_cap: pots.keeper.1, gate: crate::GATE >> pots.halvings.min(127), allowance_pot: pots.allowance.0, allowance_cap: pots.allowance.1, signed, witness_pot: pots.witness.0, witness_cap: pots.witness.1, active: &active, never: crate::ROOTS })
 }
 
 /// Each account's last ACTIVE epoch as of statement `epoch`: the previous statement's (`prev`, its lines), refreshed to

@@ -2235,6 +2235,10 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
 - [x] C7 10-11 DECAY NOT RESET BY ONE MISSED STATEMENT: activity carried from the newest ACCEPTED statement within
       CARRY_BACK = 8 epochs (page core + Wren's tool, one constant). NOT unit-tested (wasm-only binding): the live roots
       agreeing on fx/fy is the check.
+- [x] C8 10-11 GATE SCHEDULE: the reputation gate halves with every issuance halving (`Pots::halvings` from
+      `wallet::craft::halvings`; page core and Wren's tool). The halvings count is tested; the gate's effect on a
+      statement is not (a test needs a reputation just under the gate).
+- [x] C9 10-11 FORGET stops the member's upkeep (members list, all mandates) — tested.
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.
