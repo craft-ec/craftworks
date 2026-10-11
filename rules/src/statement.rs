@@ -30,6 +30,11 @@ pub struct Inputs<'a> {
     pub fresh: &'a dyn Fn(&[u8; 32]) -> bool,
     /// A statement's lines from its root (`Err(ids)`: read these blocks' contracts first).
     pub lines: &'a dyn Fn(&[u8; 32]) -> Result<BTreeMap<R::Did, R::statement::Line>, Vec<[u8; 32]>>,
+    /// THE SEALS SPREAD OVER CALLS (the identity delegate: an audit re-seals pieces, seconds each, more than one wake-up
+    /// takes): for a kept keeper's record key and record, `audit(key, record, seal)` gives its verdict — sealed earlier,
+    /// or `seal()` run now — or `None`: not sealed yet, and the build PAUSES (`Step::Want(vec![])`: nothing to read, call
+    /// again). `None` here: every audit sealed in this call (the page's).
+    pub audit: Option<&'a dyn Fn(&[u8; 32], &craftworks_standing::record::State, &dyn Fn() -> bool) -> Option<bool>>,
 }
 
 /// The statement of `i.epoch` and how many accounts kept the epoch before — `Want` what is not read yet.
@@ -121,7 +126,23 @@ pub fn build(i: &Inputs, got: Got) -> Result<Step<(R::statement::Statement, usiz
         Some((e, lot_out)) => {
             let out = |h: u64| beacon_out(h).ok().and_then(|r| r.ok());
             let piece_of = |id: &[u8; 32]| got(id).filter(|b| !b.is_empty());
-            craftworks_standing::record::kept_audited(&listed, &record_of, e, &lot_out, &out, &piece_of)
+            let seal = |key: &[u8; 32], s: &craftworks_standing::record::State| craftworks_standing::record::audited(s, key, e, &lot_out, &out, &piece_of);
+            match i.audit {
+                None => craftworks_standing::record::kept_audited_by(&listed, &record_of, e, &seal),
+                Some(audit) => {
+                    let paused = std::cell::Cell::new(false);
+                    let kept = craftworks_standing::record::kept_audited_by(&listed, &record_of, e, &|key, s| {
+                        audit(key, s, &|| seal(key, s)).unwrap_or_else(|| {
+                            paused.set(true);
+                            false
+                        })
+                    });
+                    if paused.get() {
+                        return Ok(Step::Want(Vec::new()));
+                    }
+                    kept
+                }
+            }
         }
         None => Vec::new(),
     };
@@ -143,7 +164,7 @@ mod tests {
         let items = vec![R::item::Item { from: [11; 32], to: [12; 32], at: 5, on: true, cred: vec![], key_seq: 0, sig: [0; 64] }];
         let none = |_: &[u8; 32]| false;
         let lines = |_: &[u8; 32]| Ok(BTreeMap::new());
-        let i = Inputs { epoch: 0, items: &items, keepers: &[], queued: &[], posted: &[], earlier: &[], ctx: &ctx, lot: &lot, keep: &keep, fresh: &none, lines: &lines };
+        let i = Inputs { epoch: 0, items: &items, keepers: &[], queued: &[], posted: &[], earlier: &[], ctx: &ctx, lot: &lot, keep: &keep, fresh: &none, lines: &lines, audit: None };
         let mut got: HashMap<[u8; 32], Vec<u8>> = HashMap::new();
         let g = got.clone();
         let Ok(Step::Want(w)) = build(&i, &|x| g.get(x).cloned()) else { panic!("asks first") };
@@ -219,7 +240,7 @@ mod tests {
         }
         let fresh = |_: &[u8; 32]| true;
         let lines = |_: &[u8; 32]| Ok(BTreeMap::new());
-        let i = Inputs { epoch: 4, items: &[], keepers: &keepers, queued: &[], posted: &[], earlier: &[], ctx: &ctx, lot: &lot, keep: &keep, fresh: &fresh, lines: &lines };
+        let i = Inputs { epoch: 4, items: &[], keepers: &keepers, queued: &[], posted: &[], earlier: &[], ctx: &ctx, lot: &lot, keep: &keep, fresh: &fresh, lines: &lines, audit: None };
         // The build ASKS for the drawn pieces (2 audits × 2 keepers), then for what the fees count reads (none here).
         let g = got.clone();
         let Ok(Step::Want(w)) = build(&i, &|x| g.get(x).cloned()) else { panic!("asks for the drawn pieces") };

@@ -75,6 +75,10 @@ pub fn save<H: Host>(h: &mut H, name: &[u8], r: Option<&Round>) {
 pub fn busy<H: Host>(h: &H, name: &[u8]) -> bool {
     index(h, name).is_some_and(|r| wakeups(h).saturating_sub(r.started) < STUCK)
 }
+/// Whether a round is kept waiting on NO read (paused by its step: work left for a later call, `witness_statement`).
+pub fn paused<H: Host>(h: &H, name: &[u8]) -> bool {
+    index(h, name).is_some_and(|r| r.waiting.is_empty())
+}
 /// The NEXT MEMBER in turn (after the last one this round served, `last`) among `all`: remembered.
 pub fn next<H: Host>(h: &mut H, last: &[u8], all: &[[u8; 32]]) -> Option<[u8; 32]> {
     let was = h.get_secret(last).and_then(|b| <[u8; 32]>::try_from(b).ok());

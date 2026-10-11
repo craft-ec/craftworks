@@ -2263,3 +2263,9 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.
+- [x] 10-11 STATEMENTS WITNESSED WITH THE PAGE CLOSED (local, not published): the delegate's witness round
+      (`delegate/src/witness_statement.rs`) builds a seated epoch's statement by `rules::statement::build` over its read
+      rounds and signs it only where its root is POSTED (page's encoding: `witness::statement_at` + `Params::state`,
+      shared `witness_round::sign_into`); mandate + standing/Block code hashes; posting page makes the empty container;
+      audit seals spread 1 keeper/call, verdicts kept in secrets, round paused/resumed. Tests: same root as the page
+      path, signed on wake 2 (paused on 1); posted root differs → none (control: comparison disabled → it signs).

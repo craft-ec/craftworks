@@ -307,7 +307,10 @@ pub enum Request {
     WitnessedKeep { places: Vec<([u8; 32], u64, [u8; 32])> },
 }
 
-/// What the delegate's WITNESS round needs (handed over by a page: `Request::WitnessMandate`).
+/// What the delegate's WITNESS round needs (handed over by a page: `Request::WitnessMandate`): the codes' hashes
+/// (token, key log, bag, beacon), the beacon's and the $CRAFT pool's ids — and, for the EPOCH STATEMENT it builds and
+/// signs as the page does (`rules::statement::build`), the standing contract's code hash (keepers' records) and the
+/// Block contract's (the previous statement's lines, read from its tree's blocks).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WitnessMandate {
     pub token: [u8; 32],
@@ -316,6 +319,8 @@ pub struct WitnessMandate {
     pub beacon_code: [u8; 32],
     pub beacon: [u8; 32],
     pub pool: [u8; 32],
+    pub standing: [u8; 32],
+    pub block: [u8; 32],
 }
 
 /// What the delegate's KEEPER round needs (handed over by a page: `Request::KeeperMandate`): where the node's standing

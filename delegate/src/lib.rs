@@ -9,6 +9,7 @@ pub mod write;
 pub mod upkeep;
 pub mod reads;
 pub mod witness_round;
+pub mod witness_statement;
 pub mod keeper_round;
 #[cfg(test)]
 mod table_tests;
@@ -18,6 +19,8 @@ mod tests;
 mod testhost;
 #[cfg(test)]
 mod witness_tests;
+#[cfg(test)]
+mod statement_tests;
 #[cfg(test)]
 mod keeper_tests;
 

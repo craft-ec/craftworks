@@ -61,7 +61,7 @@ fn a_drawn_member_away_from_their_page_witnesses_a_queued_entry_once() {
     let mut h = Map::default();
     let did = [0x22; 32];
     assert!(matches!(identity::serve(&mut h, Request::Provision { seed, did, pin: "246810".into(), data: vec![] }, APP), Answer::Unlocked { .. }));
-    let mandate = WitnessMandate { token: ctx.code_hash, idlog: ctx.idlog, bag: tl.lot.bag, beacon_code: tl.lot.beacon_code, beacon: ctx.beacon, pool: tl.lot.pool };
+    let mandate = WitnessMandate { token: ctx.code_hash, idlog: ctx.idlog, bag: tl.lot.bag, beacon_code: tl.lot.beacon_code, beacon: ctx.beacon, pool: tl.lot.pool, standing: [43; 32], block: [44; 32] };
     assert_eq!(identity::serve(&mut h, Request::WitnessMandate { mandate }, APP), Answer::WitnessMandated);
     // The page still ticking: no round (it witnesses for itself).
     assert!(run(&mut h, &got).is_empty(), "no round while the page is open");
@@ -102,7 +102,7 @@ fn an_entry_queued_before_its_lot_is_drawn_is_signed_once_it_is() {
     let seed = [112u8; 32];
     let mut h = Map::default();
     assert!(matches!(identity::serve(&mut h, Request::Provision { seed, did: [0x22; 32], pin: "246810".into(), data: vec![] }, APP), Answer::Unlocked { .. }));
-    let mandate = WitnessMandate { token: ctx.code_hash, idlog: ctx.idlog, bag: tl.lot.bag, beacon_code: tl.lot.beacon_code, beacon: ctx.beacon, pool: tl.lot.pool };
+    let mandate = WitnessMandate { token: ctx.code_hash, idlog: ctx.idlog, bag: tl.lot.bag, beacon_code: tl.lot.beacon_code, beacon: ctx.beacon, pool: tl.lot.pool, standing: [43; 32], block: [44; 32] };
     assert_eq!(identity::serve(&mut h, Request::WitnessMandate { mandate }, APP), Answer::WitnessMandated);
     h.set_secret(identity::UPKEEP_WAKEUPS, &(crate::upkeep::PAGE_AWAY + 1).to_le_bytes());
     assert!(run(&mut h, &got).is_empty(), "nothing to sign before its lot");

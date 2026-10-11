@@ -808,7 +808,7 @@ fn upkeep_and_page_share_one_witness_guard() {
     upkeep_witness_sign(&mut m, &public, &chain, 9, &b).unwrap();
     assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 9, entry: a }, APP), Answer::Refused(Why::Equivocation), "nor the page after upkeep");
     // The mandate: kept for the home site; another site refused.
-    let mandate = WitnessMandate { token: [1; 32], idlog: [2; 32], bag: [3; 32], beacon_code: [4; 32], beacon: [5; 32], pool: [6; 32] };
+    let mandate = WitnessMandate { token: [1; 32], idlog: [2; 32], bag: [3; 32], beacon_code: [4; 32], beacon: [5; 32], pool: [6; 32], standing: [7; 32], block: [8; 32] };
     assert_eq!(serve(&mut m, Request::WitnessMandate { mandate: mandate.clone() }, APP), Answer::WitnessMandated);
     assert_eq!(upkeep_witness_mandate(&m, &public), Some(mandate.clone()));
     assert_eq!(upkeep_members(&m), vec![public], "a witness mandate lists its member for upkeep");
@@ -861,7 +861,7 @@ fn a_members_next_build_carries_its_witnessed_places_and_the_old_one_retires() {
     let mut old = provisioned(APP);
     let Answer::Unlocked { public, .. } = unlock(&mut old, ALICE_PIN, APP) else { panic!("unlocked") };
     let Answer::Signed { .. } = serve(&mut old, Request::WitnessSign { chain, seq: 4, entry: x }, APP) else { panic!("signed") };
-    let mandate = WitnessMandate { token: [1; 32], idlog: [2; 32], bag: [3; 32], beacon_code: [4; 32], beacon: [5; 32], pool: [6; 32] };
+    let mandate = WitnessMandate { token: [1; 32], idlog: [2; 32], bag: [3; 32], beacon_code: [4; 32], beacon: [5; 32], pool: [6; 32], standing: [7; 32], block: [8; 32] };
     assert_eq!(serve(&mut old, Request::WitnessMandate { mandate }, APP), Answer::WitnessMandated);
     // RETIRED: its mandates cleared.
     let _ = serve(&mut old, Request::UpkeepMandate { me: String::new(), spaces: vec![], spent: vec![] }, APP);
@@ -918,7 +918,7 @@ fn two_token_entries_at_one_place_are_not_signed_moments_apart() {
 fn a_forgotten_member_s_upkeep_stops() {
     let mut m = provisioned(APP);
     let Answer::Unlocked { public, .. } = unlock(&mut m, ALICE_PIN, APP) else { panic!("unlocked") };
-    let mandate = WitnessMandate { token: [1; 32], idlog: [2; 32], bag: [3; 32], beacon_code: [4; 32], beacon: [5; 32], pool: [6; 32] };
+    let mandate = WitnessMandate { token: [1; 32], idlog: [2; 32], bag: [3; 32], beacon_code: [4; 32], beacon: [5; 32], pool: [6; 32], standing: [7; 32], block: [8; 32] };
     assert_eq!(serve(&mut m, Request::WitnessMandate { mandate }, APP), Answer::WitnessMandated);
     assert_eq!(upkeep_members(&m), vec![public]);
     assert_eq!(serve(&mut m, Request::Forget, APP), Answer::LoggedOut);

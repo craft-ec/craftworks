@@ -6,7 +6,8 @@
 // another entry there) and the signature put into its place's signatures container (`witness::Params`: it takes only
 // signatures by keys of the lot's claims registry). The EPOCH STATEMENT too: where its
 // member key is seated at the statement's place, the root THIS page computes (`statement.root`) is signed — no tool
-// and no one node is needed for a statement to be accepted. With the page CLOSED, the delegate witnesses entries.
+// and no one node is needed for a statement to be accepted. With the page CLOSED, the delegate witnesses entries, and
+// statements: it builds the root by the same rule (`rules::statement::build`) and signs it where it matches a posted one.
 //
 //   (await ctx.require("witness")).status()   // { signed, refused, seated, last } — what this page did
 export async function start(ctx) {
@@ -104,9 +105,10 @@ export async function start(ctx) {
     const tokens = me ? await ctx.require("tokens") : null;
     if (!tokens?.on) return;
     mandated = true;
-    const bagCode = await ctx.require("bag-wasm");
-    const a = await auth.identity.witnessMandate(tokens.code, tokens.idlogCode, bagCode, tokens.lot.beacon, tokens.beacon, tokens.lot.pool).catch(e => ({ refused: e.message ?? String(e) }));
-    ctx.log("witness", { what: a?.witnessMandated ? "the delegate witnesses with no page open too" : `the delegate not handed the witness round (${a?.refused ?? "no answer"})` });
+    const [bagCode, standingCode] = await Promise.all(["bag-wasm", "standing-wasm"].map(n => ctx.require(n)));
+    await ctx.require("storage"); // (it sets the core's Block code: the mandate names the statement's tree blocks by it)
+    const a = await auth.identity.witnessMandate(tokens.code, tokens.idlogCode, bagCode, tokens.lot.beacon, tokens.beacon, tokens.lot.pool, standingCode).catch(e => ({ refused: e.message ?? String(e) }));
+    ctx.log("witness", { what: a?.witnessMandated ? "the delegate witnesses entries and epoch statements with no page open too" : `the delegate not handed the witness round (${a?.refused ?? "no answer"})` });
   });
   beaconSvc.onHeight(pass);
   return { status: () => ({ ...state }) };

@@ -612,7 +612,8 @@ ISSUANCE — and each piece of the loop has ONE job:
 - **Witnesses check the ROOT** (built 10-10, K3: `wallet::statement_accept` in `may_witness`): a witness signs a
   `KeeperMint` only under the statement root ACCEPTED for its epoch — its committee (drawn at `statement::lot_height`)
   signed that root at `statement::witness_place` — each SEATED PAGE signing the root IT computed (built 10-11,
-  `rules::witness::statement`: one seat check with entries, `witness::seated`), so no tool need stay online; a
+  `rules::witness::statement`: one seat check with entries, `witness::seated`), and with the page closed its identity
+  delegate signing a posted root it rebuilds by the same rule (§7a, WHO SIGNS), so no tool need stay online; a
   statement build reads every keeper record FRESH and posts nothing over a record that did not answer (a silent read
   would leave that keeper out). The gate, the reputation and `kept` are all inside the statement
   every witness recomputes; a claim under any other root is simply not accepted (⅔ of its committee must sign) —
@@ -726,6 +727,20 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   its identity DELEGATE (`delegate/src/witness_round.rs`, the same rule, by a mandate the page handed over), through
   ONE guard (the place recorded before a signature, never another entry there). The queuing page makes each entry's
   empty signatures container: a delegate's new contracts do not propagate (freenet #5542), it adds to ones that exist.
+  EPOCH STATEMENTS the same way (built 10-11): the seated open page signs the root it computes (`witness.js`,
+  `rules::witness::statement`); with the page CLOSED, the delegate's witness round (`delegate/src/witness_statement.rs`)
+  takes the statement due and the one before once its lot is drawn — seated (`witness::seated`, checked first), it
+  reads what the page's `statement` service reads (vouch registries up to the epoch; the keepers registry, witness
+  queue and posted roots of the epoch before; posted roots within `CARRY_BACK`; each keeper's record, the audits'
+  pieces, the previous statement's tree blocks), builds by the page's one rule (`rules::statement::build`) and signs
+  its root ONLY where it is one of the roots POSTED for the epoch (a root of its own nobody posted is not signed; a
+  build matching none is said and not rebuilt until the posted roots change), through the same guard and into the
+  statement's signatures container with the page's encoding (`witness::statement_at`; the page's `witness_put`). The
+  page that posts a root also makes that container empty, so the delegate's UPDATE has one to land in. The mandate
+  carries what the build needs beyond an entry's: the standing code's hash and the Block code's. Its AUDIT SEALS
+  (seconds each) are spread over wake-ups: one keeper's audits a call (`AUDITS_PER_CALL`), each verdict kept in the
+  secrets by the record it was sealed for, the round PAUSED with what it read and resumed on the next wake-up — n kept
+  keepers take about n wake-ups (minutes each) before the root is signed.
 - **A place's signatures have their own container** (audit 10-11: `witness::Params`, a kind of the token contract,
   params = (token code, pool, beacon, the lot's CLAIMS EPOCH, chain, seq)). They lived in a generic bag — anyone adds,
   past its caps the items with the most work kept — and ~16 junk items of 16 KiB with a little more work evicted every
@@ -940,9 +955,11 @@ DID; only the sender and the recipient know who was paid.
      rounds a 32-byte block: seconds for a 256 KiB piece in a page, ~0.25 s native) — 100 kept keepers ≈ 200 seals,
      minutes in a page; done once every read is in, never redone for a later want. What it does not catch: a keeper
      holding a share f of its picks passes ≈ f² of epochs (2 picks checked of the 64-128 a kept epoch's answers carry).
-   - STATEMENTS WITH EVERY PAGE CLOSED: delegates witness entries but not statement roots (the statement build is in
-     the page-only core). Direction: move the statement build into `craftworks-rules` (pure over reads, as the witness
-     rule moved), then the delegate's witness round signs the root it computes where seated.
+   - STATEMENTS WITH EVERY PAGE CLOSED: BUILT 10-11 — the build moved into `craftworks-rules`
+     (`rules::statement::build`, pure over reads) and the delegate's witness round signs a posted root it reproduces
+     where seated (§7a, WHO SIGNS). Left: the delegate does not POST a root of its own (not built; the epoch's bag and
+     the signatures container are made by a posting page), so with every page closed an epoch's statement waits for
+     some page to post it.
    - THE BASELINE IS ONE KEY: Wren's tool device key is a constant; until six valid stakers exist every acceptance
      leans on it, and only a code release rotates it. Direction: the baseline seat follows the ROOT's key log (Wren's
      DID: its current device credential), so a rotation by the owner key moves it without a release; and the bootstrap

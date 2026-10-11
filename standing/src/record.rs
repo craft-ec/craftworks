@@ -215,9 +215,16 @@ pub fn kept_audited(
     out: &dyn Fn(u64) -> Option<[u8; 32]>,
     piece_of: &dyn Fn(&[u8; 32]) -> Option<Vec<u8>>,
 ) -> Vec<[u8; 32]> {
+    kept_audited_by(listed, record_of, epoch, &|key, s| audited(s, key, epoch, lot_out, out, piece_of))
+}
+
+/// [`kept_audited`] with each kept record's AUDIT VERDICT given by `verdict(key, record)`: [`audited`] run there, or a
+/// verdict sealed on an earlier call (the identity delegate: one wake-up cannot take every seal). Asked only of records
+/// that would count as [`kept`].
+pub fn kept_audited_by(listed: &[([u8; 32], [u8; 32])], record_of: &dyn Fn(&[u8; 32]) -> Option<State>, epoch: u64, verdict: &dyn Fn(&[u8; 32], &State) -> bool) -> Vec<[u8; 32]> {
     let mut v: Vec<[u8; 32]> = listed
         .iter()
-        .filter(|(_, key)| record_of(key).is_some_and(|s| kept(&s, key, epoch) && audited(&s, key, epoch, lot_out, out, piece_of)))
+        .filter(|(_, key)| record_of(key).is_some_and(|s| kept(&s, key, epoch) && verdict(key, &s)))
         .map(|x| x.0)
         .collect();
     v.sort();

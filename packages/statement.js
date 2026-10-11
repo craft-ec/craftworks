@@ -64,6 +64,7 @@ export async function start(ctx) {
     throw new Error(`epoch ${epoch}: not built — no answer for ${[...reads.silent].map(x => x.slice(0, 8)).join(", ") || "what it asked"} (a key log, a keeper's record or an audited piece)`);
   }
   const decided = new Set(); // epochs whose allowance this page saw decided
+  const containered = new Set(); // epochs whose statement signatures container this page put
   const saidRoots = new Set();
   async function publishIfMissing() { // (and a root of its own beside another)
     const h = (await ctx.require("beacon")).status().height;
@@ -90,6 +91,15 @@ export async function start(ctx) {
     }
     const tokens = await ctx.require("tokens");
     if (!tokens.on) return;
+    // ITS SIGNATURES CONTAINER, made empty (once an epoch here; a put never drops a held signature): a seated witness
+    // with no page open — the identity delegate, which cannot create a contract — adds its signature to it.
+    if (!containered.has(epoch)) {
+      const { lot } = tokens;
+      const params = Core.statement_witness_params(tokens.code, tokens.beacon, idlogCode, lot.pool, lot.bag, lot.beacon, epoch);
+      const none = new Uint8Array();
+      await tokens.putAll([core.witness_put(tokens.code, params, none, none, none)]);
+      containered.add(epoch);
+    }
     // KEEPER ISSUANCE (TOKEN §7d): every keeper line of the epoch's statement minted as $CRAFT stake once its root is
     // ACCEPTED — by any page, for every keeper (each mint worked: nobody need be online to be paid; `keeper_mint`
     // gives nothing for a line minted already or a root not accepted yet).

@@ -1030,11 +1030,17 @@ mod js {
             })
         }
         /// Hand the delegate the WITNESS MANDATE (`WitnessMandate`: what its round needs to witness with no page open) —
-        /// the codes' hashes are of `token`, `idlog`, `bag`, `beacon_code` (their bytes), the beacon's and pool's ids.
+        /// the codes' hashes are of `token`, `idlog`, `bag`, `beacon_code`, `standing` (their bytes) and of this core's
+        /// Block code (`set_block_code`: the statement's tree blocks), the beacon's and pool's ids.
         #[allow(clippy::too_many_arguments)]
-        pub fn frames_witness_mandate(&mut self, token: &[u8], idlog: &[u8], bag: &[u8], beacon_code: &[u8], beacon: &[u8], pool: &[u8]) -> Result<js_sys::Array, JsValue> {
+        pub fn frames_witness_mandate(&mut self, token: &[u8], idlog: &[u8], bag: &[u8], beacon_code: &[u8], beacon: &[u8], pool: &[u8], standing: &[u8]) -> Result<js_sys::Array, JsValue> {
             let h = |b: &[u8]| *blake3::hash(b).as_bytes();
-            self.ask(Request::WitnessMandate { mandate: craftworks_identity::WitnessMandate { token: h(token), idlog: h(idlog), bag: h(bag), beacon_code: h(beacon_code), beacon: b32(beacon)?, pool: b32(pool)? } })
+            if self.0.block_code.is_empty() {
+                return Err(err("the Block code is not set (set_block_code)".into()));
+            }
+            // (A Block contract id: `contract_keys::block::contract_deriver_of_hash` of this hash — `code_hash` is BLAKE3.)
+            let block = h(&self.0.block_code);
+            self.ask(Request::WitnessMandate { mandate: craftworks_identity::WitnessMandate { token: h(token), idlog: h(idlog), bag: h(bag), beacon_code: h(beacon_code), beacon: b32(beacon)?, pool: b32(pool)?, standing: h(standing), block } })
         }
         /// KEEP WITH NO PAGE OPEN (`KeeperMandate`: the home site only): where this node's standing record is, the epoch
         /// this page opened and what it hosts (`[[id hex, size]]`, as `keeper_open` took it); the account (`did`, this
@@ -2645,7 +2651,7 @@ mod js {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
                 let is_fresh = |id: &[u8; 32]| fresh.contains(&hex(id));
                 let lines = |root: &[u8; 32]| self.0.statement_lines(root);
-                let inputs = craftworks_rules::statement::Inputs { epoch, items: &items, keepers: &keepers, queued: &queued, posted: &posted, earlier: &earlier, ctx: &ctx, lot: &lot, keep: &k, fresh: &is_fresh, lines: &lines };
+                let inputs = craftworks_rules::statement::Inputs { epoch, items: &items, keepers: &keepers, queued: &queued, posted: &posted, earlier: &earlier, ctx: &ctx, lot: &lot, keep: &k, fresh: &is_fresh, lines: &lines, audit: None };
                 craftworks_rules::statement::build(&inputs, &got).map_err(err)?
             };
             let (st, kept) = match built {
@@ -2812,6 +2818,14 @@ mod js {
             let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
             verdict_js(witness::statement(&ctx, &lot, &got, epoch as u64, &bytes32("root", root).map_err(err)?, &b32(me)?))
+        }
+        /// The params of epoch `epoch`'s statement's SIGNATURES CONTAINER (`witness::statement_at`): its poster makes it
+        /// empty (`witness_put` with no key) beside the root, so a witness with no page open adds its signature to it.
+        #[allow(clippy::too_many_arguments)]
+        pub fn statement_witness_params(token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], epoch: f64) -> Result<js_sys::Uint8Array, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            Ok(js_sys::Uint8Array::from(&witness::statement_at(&ctx, &lot, epoch as u64).encode()[..]))
         }
         /// A PUT of a place's WITNESS SIGNATURES container (`params`: its `witness::Params`, as a verdict's `sign.params`
         /// or a chain put's `witnesses` give them): `{ id, idBytes, frames }` — with witness key `key`'s signature `sig`

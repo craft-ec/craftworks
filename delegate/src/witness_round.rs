@@ -39,6 +39,12 @@ fn item_hash(it: &[u8]) -> [u8; 32] {
 /// away (an open page witnesses for itself).
 pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
     if reads::busy(h, ROUND) {
+        // A round PAUSED (its statement's audit seals spread over wake-ups; nothing to read): driven on.
+        if reads::paused(h, ROUND) {
+            if let Some(r) = reads::load(h, ROUND) {
+                return drive(h, r);
+            }
+        }
         return Vec::new();
     }
     let all: Vec<[u8; 32]> = identity::upkeep_members(h).into_iter().filter(|m| identity::upkeep_witness_mandate(h, m).is_some() && identity::upkeep_since_tick(h, m) >= crate::upkeep::PAGE_AWAY).collect();
@@ -65,40 +71,56 @@ fn drive<H: Host>(h: &mut H, r: Round) -> Vec<Io> {
         reads::save(h, ROUND, None);
         return Vec::new();
     };
-    let (out, want) = step(h, &r, &m);
+    let (out, want, paused) = step(h, &r, &m);
+    if paused {
+        // PAUSED (seals left for the next wake-up): the round kept, as of now (never dropped as stuck while it seals).
+        let r = Round { started: reads::wakeups(h), ..r };
+        reads::save(h, ROUND, Some(&r));
+        return out;
+    }
     reads::go(h, ROUND, r, out, want)
 }
 
-/// One pass over what is read: (what to send now, what to read first). Signatures already made are sent even while
-/// more is read for the entries after them.
-fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8; 32]>) {
+/// A BAG's payloads as read (`Err(id)`: read its contract first; not there: none).
+pub(crate) fn bag_items(got: tokens::Got, bag: &[u8; 32], address: &[u8; 32]) -> Result<Vec<Vec<u8>>, [u8; 32]> {
+    let st = tokens::there(got, &t::id(bag, address))?;
+    Ok(st.and_then(|b| craftworks_bag_contract::read(address, &b)).unwrap_or_default().iter().map(|x| craftworks_bag_contract::payload(x).to_vec()).collect())
+}
+/// A CHAINED list's payloads of epoch `e` (bags k = 0 up to the first with room: `address(e, k)`), as the page's
+/// `index.bag.chain` reads it.
+pub(crate) fn chain_items(got: tokens::Got, bag: &[u8; 32], address: &dyn Fn(u64, u32) -> [u8; 32], e: u64) -> Result<Vec<Vec<u8>>, [u8; 32]> {
+    let mut items = Vec::new();
+    for k in 0..64u32 {
+        let these = bag_items(got, bag, &address(e, k))?;
+        let full = craftworks_bag_contract::chained::full(these.iter().map(Vec::len));
+        items.extend(these);
+        if !full {
+            break;
+        }
+    }
+    Ok(items)
+}
+
+/// One pass over what is read: (what to send now, what to read first, PAUSED: seals left for a later call).
+/// Signatures already made are sent even while more is read for the entries after them.
+fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8; 32]>, bool) {
     let got = |id: &[u8; 32]| r.got.get(id).cloned();
     let ctx = tokens::Ctx { code_hash: m.token, beacon: m.beacon, idlog: m.idlog };
     let lot = tokens::Lot { pool: m.pool, bag: m.bag, beacon_code: m.beacon_code };
     // THE CLOCK.
     let beacon = match tokens::there(&got, &m.beacon) {
-        Err(w) => return (vec![], vec![w]),
-        Ok(None) => return (vec![], vec![]),
+        Err(w) => return (vec![], vec![w], false),
+        Ok(None) => return (vec![], vec![], false),
         Ok(Some(b)) => b,
     };
-    let Some(height) = craftworks_beacon_contract::wire::decode(&beacon).map(|s| s.height()) else { return (vec![], vec![]) };
+    let Some(height) = craftworks_beacon_contract::wire::decode(&beacon).map(|s| s.height()) else { return (vec![], vec![], false) };
     let epoch = height / craftworks_reputation::EPOCH;
     // THE QUEUE: this standing epoch's and the last (chained bags, k = 0 up to the first with room).
     let mut items: Vec<Vec<u8>> = Vec::new();
     for e in [epoch.saturating_sub(1), epoch] {
-        for k in 0..64u32 {
-            let address = craftworks_wallet::queue::address(e, k);
-            let id = t::id(&lot.bag, &address);
-            let st = match tokens::there(&got, &id) {
-                Err(w) => return (vec![], vec![w]),
-                Ok(st) => st,
-            };
-            let these: Vec<Vec<u8>> = st.and_then(|b| craftworks_bag_contract::read(&address, &b)).unwrap_or_default().iter().map(|x| craftworks_bag_contract::payload(x).to_vec()).collect();
-            let full = craftworks_bag_contract::chained::full(these.iter().map(Vec::len));
-            items.extend(these);
-            if !full {
-                break;
-            }
+        match chain_items(&got, &lot.bag, &craftworks_wallet::queue::address, e) {
+            Err(w) => return (vec![], vec![w], false),
+            Ok(these) => items.extend(these),
         }
     }
     // EACH ENTRY by the rule.
@@ -118,7 +140,7 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
                 if settled.len() != before {
                     set_done(h, &r.member, settled);
                 }
-                return (out, w);
+                return (out, w, false);
             }
             Ok(tokens::Step::Sign(_)) => {}
             Ok(tokens::Step::Done(witness::Verdict::NotSeated)) => {
@@ -129,22 +151,38 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
             Ok(tokens::Step::Done(witness::Verdict::Later(_))) => {}
             Ok(tokens::Step::Done(witness::Verdict::Refused(why))) => identity::upkeep_say(h, &r.member, &format!("witness: refused seq {}: {why}", q.seq)),
             Ok(tokens::Step::Done(witness::Verdict::Sign { at, entry })) => {
-                match identity::upkeep_witness_sign(h, &r.member, &at.chain, at.seq, &entry) {
-                    Ok(sig) => {
-                        // Into the place's signatures container (its chain's writer made it): an UPDATE, the node
-                        // merging it (`witness::merge`: the member's key registered in the lot's claims epoch).
-                        let state = at.state(&[(r.member, t::witness::WitnessSig { chain: at.chain, seq: at.seq, entry, sig })]);
-                        out.push(Io::Update { id: at.id(), delta: state });
-                    }
-                    Err(w) => identity::upkeep_say(h, &r.member, &format!("witness: not signed ({w:?})")),
-                }
+                sign_into(h, &r.member, &at, entry, &mut out);
                 seen.insert(k);
                 settled.push(k);
             }
         }
     }
+    // THE EPOCH STATEMENTS due (`witness_statement`): built by the page's rule, signed where the root is posted.
+    let next = crate::witness_statement::step(h, r, m, height, &mut settled, &mut out);
     if settled.len() != before {
         set_done(h, &r.member, settled);
     }
-    (out, vec![])
+    match next {
+        crate::witness_statement::Next::Read(w) => (out, w, false),
+        crate::witness_statement::Next::Pause => (out, vec![], true),
+        crate::witness_statement::Next::Done => (out, vec![], false),
+    }
+}
+
+/// SIGN `entry` at place `at` through the guard (`identity::upkeep_witness_sign`: never another entry at a place) and
+/// send the signature into the place's signatures container: an UPDATE of the container its chain's writer (or a
+/// statement's poster) made — the node merging it (`witness::merge`: the member's key registered in the lot's claims
+/// epoch). The page's encoding (`witness_put`): `Params::state` of the one signature.
+pub(crate) fn sign_into<H: Host>(h: &mut H, member: &[u8; 32], at: &t::witness::Params, entry: [u8; 32], out: &mut Vec<Io>) -> bool {
+    match identity::upkeep_witness_sign(h, member, &at.chain, at.seq, &entry) {
+        Ok(sig) => {
+            let state = at.state(&[(*member, t::witness::WitnessSig { chain: at.chain, seq: at.seq, entry, sig })]);
+            out.push(Io::Update { id: at.id(), delta: state });
+            true
+        }
+        Err(w) => {
+            identity::upkeep_say(h, member, &format!("witness: not signed ({w:?})"));
+            false
+        }
+    }
 }

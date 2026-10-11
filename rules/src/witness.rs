@@ -151,13 +151,21 @@ pub fn seated(ctx: &Ctx, lot: &Lot, got: Got, beacon: &[u8; 32], place: &[u8; 32
     Step::Done(Some(draw::committee_of(&out, place, seq, &valid, k).iter().any(|m| claims[*m].key == *me)))
 }
 
+/// The SIGNATURES CONTAINER of epoch `epoch`'s statement (its witness place, seq 0, under its lot's claims epoch):
+/// where every seated witness's signature on a root goes — made (empty) by whoever posts a root, so a witness with no
+/// page open (the identity delegate: it cannot create a contract) only adds to it.
+pub fn statement_at(ctx: &Ctx, lot: &Lot, epoch: u64) -> t::witness::Params {
+    let h = craftworks_reputation::statement::lot_height(epoch);
+    crate::tokens::witness_at(ctx.code_hash, lot, ctx.beacon, &craftworks_reputation::statement::witness_place(epoch), 0, supply::epoch(h))
+}
+
 /// An EPOCH STATEMENT's verdict for witness key `me`: the root this page computed for `epoch` (`root`: its own build,
 /// never a posted one it did not compute) signed at the statement's place when `me` is seated there.
 pub fn statement(ctx: &Ctx, lot: &Lot, got: Got, epoch: u64, root: &[u8; 32], me: &[u8; 32]) -> Step<Verdict> {
     let place = craftworks_reputation::statement::witness_place(epoch);
     let h = craftworks_reputation::statement::lot_height(epoch);
     match seated(ctx, lot, got, &ctx.beacon, &place, 0, h, me) {
-        Step::Done(Some(true)) => Step::Done(Verdict::Sign { at: crate::tokens::witness_at(ctx.code_hash, lot, ctx.beacon, &place, 0, supply::epoch(h)), entry: *root }),
+        Step::Done(Some(true)) => Step::Done(Verdict::Sign { at: statement_at(ctx, lot, epoch), entry: *root }),
         Step::Done(Some(false)) => Step::Done(Verdict::NotSeated),
         Step::Done(None) => Step::Done(Verdict::Later("its lot is not drawn yet")),
         Step::Want(w) => Step::Want(w),
