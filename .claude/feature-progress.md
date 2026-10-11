@@ -2202,9 +2202,12 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       escape); chained readers continue past a byte-full bag; statement build refuses on a SILENT bag read; payment
       announcements kept for retry; delegate witness round keeps "not yet" entries (only settles NotSeated when drawn);
       PIN tries counted per target not reset by another member's unlock; epoch_log/Forget/HandoverKeys bounded.
-- [ ] B: stake counts only WITNESSED entries (stake_at); witnesses check an allowance verdict's root against the
-      epoch's accepted statement; handover carries witnessed places + retire clears mandates; global upkeep settings
-      not writable by any home site; TokenSign place guard.
+- [x] B 10-11 (B2 8fe24a8, B3 7e84a53, B4 8922125; tested, controls run): allowance verdicts only under the epoch's
+      accepted root (statement terms on the escrow); a member's witnessed places carried to its next build + retire
+      clears its mandates; node-wide upkeep settings are the upkeep site's; saturating clock.
+      MOVED TO C: stake counts only WITNESSED entries (acceptance recurses through other stakes: needs a design — where
+      the recursion is cut, caching); TokenSign place guard (a guard alone wedges a wallet whose signed entry was never
+      put: the wallet must re-send what it signed at a place).
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.
