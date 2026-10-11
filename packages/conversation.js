@@ -908,8 +908,19 @@ export async function start(ctx) {
     await t.settled;
     const mine = new Set((await space.mine()).map(s => s.id));
     const waiting = t.rows().filter(x => x.value && !x.key.startsWith("code:") && !mine.has(x.key)).map(parseAsk).filter(Boolean);
-    if (!waiting.length) return 0;
     const listed = await index.spaces().catch(() => []);
+    // THE REQUEST ITSELF where the account's copy is missing (10-11, Wren: "Requested" from the open door's bag, its
+    // `asks` row gone — so never asked again): each listed space this person is not in, its door's bag read; a request
+    // of theirs there is put back into `asks` (when it was made) and handled as any other.
+    for (const desc of listed) {
+      if (mine.has(desc.id) || waiting.some(a => a.key === desc.id)) continue;
+      const at = Math.max(0, ...(await index.requests(openCode(desc.id)).catch(() => [])).filter(q => q?.kind === "join" && q.did === me.id).map(q => Number(q.at) || 0));
+      if (!at) continue;
+      await t.put(desc.id, JSON.stringify({ name: desc.name ?? null, at })).catch(() => {});
+      waiting.push({ key: desc.id, name: desc.name ?? null, at });
+      ctx.log("conversation", { what: `${desc.name ?? desc.id.slice(0, 8)}: a request found in its door's bag, missing from this account's record — kept again` });
+    }
+    if (!waiting.length) return 0;
     const roles = await ctx.require("roles");
     let n = 0;
     for (const a of waiting) {
@@ -1118,9 +1129,41 @@ export async function start(ctx) {
     if (!me || !r.can(me.id, "invite")) return [];
     const out = [];
     // Each WAITING asker (`requestsOf`): its open door only while the space lets anyone in; a code while in force.
+    let inGroup = null; // this node's group's DIDs, read once (only when a let-in member asks again)
     for (const q of (await requestsOf(sp)).waiting) {
       // In by the acts already (let in, never in the group): `reconcile`'s — in turn, backing off — not tried again here.
-      if (r.roster().includes(q.did)) continue;
+      // LET IN, IN THE GROUP, NEVER IN (10-11, Wren in Craftworks: its entry in the group made from a key package it
+      // lost, so its welcome never opened; its page, holding no group, can only ask again by a request): answered here
+      // — welcomed again in one commit (its old entry replaced), ONCE per request, the inviters in turn.
+      if (r.roster().includes(q.did)) {
+        inGroup ??= new Set(await groupDids(sp));
+        if (!inGroup.has(q.did)) continue;
+        const once = await (await ctx.require("storage")).table("keypacks");
+        await once.settled;
+        const k = `letin-again:${sp.id}|${q.did}|${q.at}`;
+        if (once.rows().some(x => x.key === k && x.value)) continue;
+        // IN SINCE (its device announced keys here after the request: a page that asked just before it opened its
+        // welcome — measured on fx 10-11, a re-add of a member who was in): nothing to do, for good.
+        const devs = await directory.devices(q.did).catch(() => []);
+        if ((await index.spacePointers(sp, "writers").catch(() => [])).some(x => devs.includes(x?.w) && x.epoch != null && Number(x.at) > Number(q.at))) {
+          await once.put(k, `in since ${Date.now()}`).catch(() => {});
+          continue;
+        }
+        const ordering = await ctx.require("ordering");
+        const turn = ordering.turn(k, r.members().filter(m => r.can(m.did, "invite") && m.did !== q.did).map(m => m.did), me.id);
+        if (turn < 0 || Date.now() - (Number(q.at) || 0) < turn * ordering.TAKEOVER) continue;
+        try {
+          await welcome(sp, q.did, sp.name, q.code);
+          await once.put(k, String(Date.now()));
+          out.push(q.did);
+          ctx.log("conversation", { what: `${directory.shown(q.did)} was let into ${sp.name} but never in: welcomed again (turn ${turn})` });
+          index.health({ k: "letin-again", s: sp.id.slice(0, 6), to: q.did.replace(/^did:craftec:/, "").slice(0, 6) }).catch(() => {});
+        } catch (e) {
+          ctx.log("conversation", { what: `welcoming ${short(q.did)} again into ${sp.name}: ${e.message}` });
+          index.health({ k: "admit-failed", s: sp.id.slice(0, 6), to: q.did.replace(/^did:craftec:/, "").slice(0, 6), why: String(e?.message ?? e).slice(0, 160) }).catch(() => {});
+        }
+        continue;
+      }
       try {
         await letIn(sp, q.did, q.code);
         out.push(q.did);

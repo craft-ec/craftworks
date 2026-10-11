@@ -2277,6 +2277,12 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       base tree (0a4f258 + v373), checked against the live manifest (only those 5 differed of 83 JS); 97 already
       published, 5 sent, identity unchanged. Ivvor's New Space unblocks once its owner's page runs v374 (publishes
       the roster) — then askers' pages see they were let in and ask again, once per epoch.
+      v375/v376 (10-11): (5) a request in a listed space's door bag missing from the account's `asks` copy is put back
+      and handled (Wren in Craftworks: "Requested" from the bag, never asked again); (6) `admit` answers a LET-IN
+      member still in the group (an entry from a lost key package) whose request is newer than its admission: one
+      re-welcome per request, inviters in turn, skipped when its device announced keys after the request (fx v583
+      re-added fy who was in; fixed in v584, fy recovered). Live: Wren's page "request found … kept again", "let in …
+      asked again" (09:04); the owner's page must load v376 to answer.
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.
