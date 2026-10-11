@@ -119,7 +119,15 @@ export async function mount(ctx, el) {
     const cred = F.toSpace(place) ? null : await roles.credToCite(form, "comment").catch(() => null);
     // (The respondent's own check is the one comments use — `items.mayWriteOn`: a rule not read yet passes here and is
     // checked where the answers are read; measured on fx: a strict check here refused a public form.)
-    if (!(await items.mayWriteOn(form, "comment", { outside: F.toSpace(place) ? place : null }))) throw new Error("this form is not open to you");
+    if (!(await items.mayWriteOn(form, "comment", { outside: F.toSpace(place) ? place : null }))) {
+      // WHY, measured (owner 10-11: "measure, don't assume"): what the one check saw — in the trace and the health bag
+      // (a failure line: the loader's collector), the person told plainly.
+      const verdict = roles.mayWrite({ action: "comment", item: form, writer: me, cred });
+      const pol = F.toSpace(place) ? null : roles.personal(form.by);
+      const domain = (await ctx.require("kinds")).policyDomain(form.kind);
+      ctx.log("form", { what: `could not answer ${form.ref}: rule ${verdict}; its own ${JSON.stringify(form.meta?.write ?? null)}; ${pol ? `its maker's ${pol.policyIn(domain, "comment")} (read: ${pol.loaded()})` : "a space's"}; cited ${cred ? "a credential" : "none"}` });
+      throw new Error("this form is not open to you");
+    }
     const x = F.responseMail(form, place, me, v.clean, Date.now(), cred);
     const sent = await mail.send(x.to, x.subject, x.body);
     return { ...v, ref: sent.id };

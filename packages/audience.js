@@ -88,8 +88,10 @@ export async function start(ctx) {
       // The write rule ({ comment, vote, react, … }): each action's own choice, else the one choice — only what differs
       // from the space's own (nothing to set on the item: null).
       write: () => {
-        // (Yours: "anyone" is your space's own default — nothing to set.)
-        const w = Object.fromEntries(ACTS.map(([a]) => [a, each[a].value || wsel.value]).filter(([, v]) => v && !(v === "anyone" && !sp)));
+        // Every choice WRITTEN, "anyone" too (10-11, measured on fx: "anyone" was left unwritten as "your space's own
+        // default", but a person's own policy can say otherwise — fx's said `comment: author` — so the item followed
+        // that while this control showed "Anyone who sees it". What is shown is what is stored.)
+        const w = Object.fromEntries(ACTS.map(([a]) => [a, each[a].value || wsel.value]).filter(([, v]) => v));
         return Object.keys(w).length ? w : null;
       },
     };
