@@ -28,6 +28,13 @@ pub const PEER_MAX: usize = 64;
 pub fn keeper_peer(key: &[u8; 32]) -> String {
     key.iter().map(|b| format!("{b:02x}")).collect()
 }
+/// The KEY a keeper's record is named by (`keeper_peer`'s inverse; `None`: a node's own peer id).
+pub fn keeper_key(peer: &str) -> Option<[u8; 32]> {
+    if peer.len() != 64 || !peer.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
+        return None;
+    }
+    (0..32).map(|i| u8::from_str_radix(&peer[2 * i..2 * i + 2], 16).ok()).collect::<Option<Vec<u8>>>()?.try_into().ok()
+}
 
 pub fn epoch(height: u64) -> u64 {
     height / EPOCH

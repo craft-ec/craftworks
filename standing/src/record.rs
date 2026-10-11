@@ -47,6 +47,11 @@ pub fn holds(peer: &str, s: &State, out: &dyn Fn(u64) -> Option<[u8; 32]>) -> Re
         if e.binds.iter().any(|b| b.peer != peer || b.epoch != e.epoch || !b.holds()) {
             return Err("a binding that does not hold here");
         }
+        // A KEEPER's record (named by its key) binds that key alone (audit 10-11: anyone bound its own key into another
+        // keeper's record and crowded the keeper's answers out of the record's cap).
+        if crate::keeper_key(peer).is_some_and(|k| e.binds.iter().any(|b| b.key != k)) {
+            return Err("a binding of another key in a keeper's record");
+        }
         let bound: Vec<[u8; 32]> = e.binds.iter().map(|b| b.key).collect();
         if e.holdings.iter().any(|h| h.peer != peer || h.epoch != e.epoch || !bound.contains(&h.key) || !h.holds()) {
             return Err("holdings not by a key bound to the peer");

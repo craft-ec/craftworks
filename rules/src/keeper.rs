@@ -300,6 +300,13 @@ mod tests {
         // The RECORD holds, as the standing contract checks it; and each answer checks against a piece's real seal.
         let rec = codec::decode(&p.state).unwrap();
         assert_eq!(record::holds(peer, &rec, &|x| Some(out(x))), Ok(()));
+        // A STRANGER's key bound into this keeper's record (audit 10-11: it crowded the keeper's answers out): refused.
+        let stranger = SigningKey::from_bytes(&[45; 32]);
+        let mut bind = Bind::draft(stranger.verifying_key().to_bytes(), peer, 3);
+        bind.sig = stranger.sign(&bind.signed()).to_bytes();
+        let mut crowded = rec.clone();
+        crowded.epochs.iter_mut().find(|e| e.epoch == 3).unwrap().binds.push(bind);
+        assert_eq!(record::holds(peer, &crowded, &|x| Some(out(x))), Err("a binding of another key in a keeper's record"));
         let e = rec.epochs.iter().find(|e| e.epoch == 3).unwrap();
         let (hd, a) = (&e.holdings[0], &e.answers[0]);
         assert_eq!(craftworks_standing::check(hd, a, &out(h), None, Some((0, &piece(&a.picks[0].id)))), Ok(()));

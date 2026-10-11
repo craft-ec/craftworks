@@ -2225,6 +2225,8 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       epoch's keepers registry (tested) and, on the seat node, claims its $CRAFT stake with `keeper::claim` (the rules'
       tested step; the delegate path is NOT unit-tested — it needs minted stake in a delegate fixture). The page makes
       the next 8 epochs' keepers bags while open (a delegate's new contracts do not propagate).
+- [x] C4 10-11 RECORD CROWDING closed: a keeper's record (named by its key) binds that key alone
+      (`standing::keeper_key`); a stranger's binding refused (test; control run). Re-keys standing.wasm at publish.
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.
