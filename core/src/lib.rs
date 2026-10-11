@@ -1057,9 +1057,10 @@ mod js {
             })
         }
         /// WITNESS an entry (`WitnessSign`: the home site only; the delegate records the place first and never signs
-        /// another entry there): `entry` (its hash, or a statement's root) at (`chain`, `seq`).
-        pub fn frames_witness_sign(&mut self, chain: &[u8], seq: f64, entry: &[u8]) -> Result<js_sys::Array, JsValue> {
-            self.ask(Request::WitnessSign { chain: b32(chain)?, seq: seq as u64, entry: b32(entry)? })
+        /// another entry there): `entry` (its hash, or a statement's root) at (`chain`, `seq`), signed at beacon height
+        /// `at` (the page's, now — `witness_put` carries the same).
+        pub fn frames_witness_sign(&mut self, chain: &[u8], seq: f64, entry: &[u8], at: f64) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::WitnessSign { chain: b32(chain)?, seq: seq as u64, entry: b32(entry)?, at: at as u64 })
         }
         /// Sign a TOKEN ENTRY's message (`TokenSign`: the home site only, a message under the token's entry domain).
         pub fn frames_token_sign(&mut self, message: &[u8]) -> Result<js_sys::Array, JsValue> {
@@ -2829,14 +2830,15 @@ mod js {
         }
         /// A PUT of a place's WITNESS SIGNATURES container (`params`: its `witness::Params`, as a verdict's `sign.params`
         /// or a chain put's `witnesses` give them): `{ id, idBytes, frames }` — with witness key `key`'s signature `sig`
-        /// over `entry` (the delegate's), or, `key` empty, the container made empty (its chain's writer makes it: a
-        /// witness with no page open only adds to one already there).
-        pub fn witness_put(&mut self, token_code: &[u8], params: &[u8], key: &[u8], entry: &[u8], sig: &[u8]) -> Result<JsValue, JsValue> {
+        /// over `entry` signed at beacon height `at` (the delegate's, `frames_witness_sign`), or, `key` empty, the
+        /// container made empty (its chain's writer makes it: a witness with no page open only adds to one already
+        /// there).
+        pub fn witness_put(&mut self, token_code: &[u8], params: &[u8], key: &[u8], entry: &[u8], sig: &[u8], at: f64) -> Result<JsValue, JsValue> {
             let wp = craftworks_token_contract::witness::Params::decode(params).ok_or_else(|| err("not a witness container's params".into()))?;
             let state = if key.is_empty() {
                 wp.state(&[])
             } else {
-                let s = craftworks_token_contract::witness::WitnessSig { chain: wp.chain, seq: wp.seq, entry: b32(entry)?, sig: sig.try_into().map_err(|_| err("a signature is 64 bytes".into()))? };
+                let s = craftworks_token_contract::witness::WitnessSig { chain: wp.chain, seq: wp.seq, entry: b32(entry)?, at: at as u64, sig: sig.try_into().map_err(|_| err("a signature is 64 bytes".into()))? };
                 wp.state(&[(b32(key)?, s)])
             };
             let (id, contract, state) = wire::puts::contract(token_code, params, &state);

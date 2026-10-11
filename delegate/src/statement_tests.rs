@@ -203,7 +203,7 @@ fn a_seated_member_away_from_their_page_signs_the_statement_root_the_page_builds
     assert!(t::witness::holds(&at, &held).is_ok() && held.items.len() == 1 && held.items[0].key == key.verifying_key().to_bytes(), "the member's one signature");
     let sig = at.sigs(delta).remove(0);
     assert_eq!((sig.chain, sig.seq, sig.entry), (R::statement::witness_place(E), 0, root), "the page's root, at the statement's place");
-    key.verifying_key().verify(&identity::witness_message(&sig.chain, 0, &root), &Signature::from_bytes(&sig.sig)).expect("signed by the member");
+    key.verifying_key().verify(&identity::witness_message(&sig.chain, 0, &root, sig.at), &Signature::from_bytes(&sig.sig)).expect("signed by the member");
     // SETTLED: a later wake-up signs nothing more.
     assert!(statement_updates(&w, &wake(&mut h, &w.got, 3)).is_empty(), "a statement witnessed once");
 }

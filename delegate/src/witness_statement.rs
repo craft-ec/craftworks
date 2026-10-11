@@ -196,7 +196,7 @@ fn epoch<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate, e: u64, height: u64,
     match witness::statement(&ctx, &lot, &got, e, &root, &r.member) {
         tokens::Step::Want(w) => Next::Read(w),
         tokens::Step::Done(witness::Verdict::Sign { at, entry }) => {
-            sign_into(h, &r.member, &at, entry, out);
+            sign_into(h, &r.member, &at, entry, height, out);
             settled.push(settled_key(e));
             Next::Done
         }

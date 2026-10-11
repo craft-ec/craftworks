@@ -260,7 +260,8 @@ impl<'a> Reader<'a> {
         if !posted.contains(&mine) {
             return if posted.is_empty() { Ok(None) } else { Err(format!("posted root(s) {} — not the one computed here ({})", posted.iter().map(|r| hex6(r)).collect::<Vec<_>>().join(", "), hex6(&mine))) };
         }
-        let sig = witness::WitnessSig { chain: place, seq: 0, entry: mine, sig: key.sign(&witness::WitnessSig::message(&place, 0, &mine)).to_bytes() };
+        let now = self.height();
+        let sig = witness::WitnessSig { chain: place, seq: 0, entry: mine, at: now, sig: key.sign(&witness::WitnessSig::message(&place, 0, &mine, now)).to_bytes() };
         self.put_sig(&self.place(&place, 0, ce), &me, &sig).map_err(|e| e.to_string())?;
         Ok(Some(mine))
     }
@@ -298,7 +299,7 @@ impl<'a> Reader<'a> {
         let holds = |st: &State| T::check(&p, &d, st, &cited, &supply, owner_keys.as_ref(), &T::Extra { ops: None, program: Some(&program) });
         let now = self.height();
         let hash = wallet::may_witness(&src, &p, &d, &s, q.seq, now, &holds, &cited).map_err(String::from)?;
-        let sig = witness::WitnessSig { chain: p.id(), seq: q.seq, entry: hash, sig: key.sign(&witness::WitnessSig::message(&p.id(), q.seq, &hash)).to_bytes() };
+        let sig = witness::WitnessSig { chain: p.id(), seq: q.seq, entry: hash, at: now, sig: key.sign(&witness::WitnessSig::message(&p.id(), q.seq, &hash, now)).to_bytes() };
         self.put_sig(&self.place(&p.id(), q.seq, epoch), &me, &sig).map_err(|e| e.to_string())?;
         Ok(Some(sig))
     }

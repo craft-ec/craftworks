@@ -283,10 +283,38 @@ pub mod testlot {
         pub lot: Lot,
         /// Each staker's device key (what its claim names).
         pub keys: Vec<SigningKey>,
+        /// Each staker's pool chain (its params and state).
+        pub staked: Vec<(ChainParams, State)>,
     }
 
-    /// Six stakers in `got`, for tokens on `ctx`'s beacon.
+    impl TestLot {
+        /// THE BASELINE signs each staker's last entry before epoch 1 (its seat alone accepts: no stakers before), at
+        /// beacon height `at` — before epoch 1's freeze (`claims::frozen_at`) their stake is VALID in epoch 1, after it
+        /// not (`wallet::valid_stakers`).
+        pub fn baseline_signs(&self, ctx: &Ctx, got: &mut HashMap<[u8; 32], Vec<u8>>, at: u64) {
+            let baseline = SigningKey::from_bytes(&witness::BASELINE_SEED);
+            let margin = Definition::decode(&got[&self.lot.pool]).unwrap().margin;
+            for (cp, st) in &self.staked {
+                let e = st.entries.last().unwrap();
+                let (ep, _) = wallet::lot_of(e, st.entries.len().checked_sub(2).map(|j| &st.entries[j]), margin).unwrap();
+                let wp = witness_at(ctx.code_hash, &self.lot, ctx.beacon, &cp.id(), e.seq, ep);
+                let sig = witness::WitnessSig { chain: cp.id(), seq: e.seq, entry: e.hash(), at, sig: baseline.sign(&witness::WitnessSig::message(&cp.id(), e.seq, &e.hash(), at)).to_bytes() };
+                got.insert(wp.id(), wp.state(&[(witness::BASELINE, sig)]));
+            }
+        }
+    }
+
+    /// Six stakers in `got`, for tokens on `ctx`'s beacon — their stake VALID in epoch 1 (the baseline signed their last
+    /// entries long before its freeze).
     pub fn stakers(ctx: &Ctx, got: &mut HashMap<[u8; 32], Vec<u8>>) -> TestLot {
+        let tl = stakers_unwitnessed(ctx, got);
+        tl.baseline_signs(ctx, got, 0);
+        tl
+    }
+
+    /// Six stakers in `got` whose pool chains NO witness has signed yet (not valid stake in any epoch until signed:
+    /// [`TestLot::baseline_signs`]).
+    pub fn stakers_unwitnessed(ctx: &Ctx, got: &mut HashMap<[u8; 32], Vec<u8>>) -> TestLot {
         let mut people = Vec::new();
         for n in 0..6u8 {
             let owner_seed = [70 + n; 32];
@@ -344,17 +372,7 @@ pub mod testlot {
             let entries = (index * span..((index + 1) * span).min(TOP)).filter(|h| *h > 0).map(|h| (h, *blake3::hash(&h.to_le_bytes()).as_bytes())).collect();
             got.insert(t::id(&lot.beacon_code, &craftworks_beacon_contract::log::Params { beacon: ctx.beacon, index }.encode()), craftworks_beacon_contract::log::Log { entries }.encode());
         }
-        // THE BASELINE signs each staker's last entry before epoch 1 (no stakers yet: its seat alone accepts) — so their
-        // stake is VALID stake (`wallet::valid_stakers`), as Wren's witness makes the network's first stakers'.
-        let baseline = SigningKey::from_bytes(&witness::BASELINE_SEED);
-        for (cp, st) in &staked {
-            let e = st.entries.last().unwrap();
-            let (ep, _) = wallet::lot_of(e, st.entries.len().checked_sub(2).map(|j| &st.entries[j]), pd.margin).unwrap();
-            let wp = witness_at(ctx.code_hash, &lot, ctx.beacon, &cp.id(), e.seq, ep);
-            let sig = witness::WitnessSig { chain: cp.id(), seq: e.seq, entry: e.hash(), sig: baseline.sign(&witness::WitnessSig::message(&cp.id(), e.seq, &e.hash())).to_bytes() };
-            got.insert(wp.id(), wp.state(&[(witness::BASELINE, sig)]));
-        }
-        TestLot { lot, keys: people.into_iter().map(|p| p.2.key).collect() }
+        TestLot { lot, keys: people.into_iter().map(|p| p.2.key).collect(), staked }
     }
 
     /// A NEW TOKEN's first entries, stamped in epoch 1 (its creator staker 1, the test's): the token "G" made, its
@@ -394,7 +412,7 @@ pub mod testlot {
         let wp = witness_at(p.code_hash, &tl.lot, d.beacon, &p.id(), seq, epoch);
         let items: Vec<([u8; 32], witness::WitnessSig)> = members.iter().take(n).map(|m| {
             let key = tl.keys.iter().find(|k| k.verifying_key().to_bytes() == reg.claims[*m].key).unwrap();
-            (reg.claims[*m].key, witness::WitnessSig { chain: p.id(), seq, entry: e.hash(), sig: key.sign(&witness::WitnessSig::message(&p.id(), seq, &e.hash())).to_bytes() })
+            (reg.claims[*m].key, witness::WitnessSig { chain: p.id(), seq, entry: e.hash(), at: 0, sig: key.sign(&witness::WitnessSig::message(&p.id(), seq, &e.hash(), 0)).to_bytes() })
         }).collect();
         got.insert(wp.id(), wp.state(&items));
     }
@@ -413,7 +431,7 @@ pub mod testlot {
         let wp = witness_at(code_hash, &tl.lot, beacon, &place, 0, ce);
         let items: Vec<([u8; 32], witness::WitnessSig)> = members.iter().take(n).map(|m| {
             let key = tl.keys.iter().find(|k| k.verifying_key().to_bytes() == reg.claims[*m].key).unwrap();
-            (reg.claims[*m].key, witness::WitnessSig { chain: place, seq: 0, entry: *root, sig: key.sign(&witness::WitnessSig::message(&place, 0, root)).to_bytes() })
+            (reg.claims[*m].key, witness::WitnessSig { chain: place, seq: 0, entry: *root, at: 0, sig: key.sign(&witness::WitnessSig::message(&place, 0, root, 0)).to_bytes() })
         }).collect();
         got.insert(wp.id(), wp.state(&items));
     }
@@ -506,6 +524,56 @@ mod baseline_check {
         let v = testlot::done(&|g| Ok(valid_of(&ctx, &tl.lot, g, 1)), &got).unwrap();
         assert_eq!(v.len(), 6);
         assert_eq!(v.iter().find(|c| c.owner == own.owner).map(|c| c.key), Some(own.key), "the staker's own claim counted");
+    }
+
+    /// The BASELINE's signature on standing epoch `epoch`'s statement `root` (claims epoch 1's lot), made at `at`.
+    fn baseline_signs_statement(ctx: &Ctx, tl: &testlot::TestLot, got: &mut HashMap<[u8; 32], Vec<u8>>, epoch: u64, root: &[u8; 32], at: u64) {
+        use craftworks_reputation::statement::{lot_height, witness_place};
+        use ed25519_dalek::Signer as _;
+        let (place, ce) = (witness_place(epoch), lot_height(epoch) / t::supply::EPOCH);
+        let k = ed25519_dalek::SigningKey::from_bytes(&t::witness::BASELINE_SEED);
+        let sig = t::witness::WitnessSig { chain: place, seq: 0, entry: *root, at, sig: k.sign(&t::witness::WitnessSig::message(&place, 0, root, at)).to_bytes() };
+        let wp = witness_at(ctx.code_hash, &tl.lot, ctx.beacon, &place, 0, ce);
+        got.insert(wp.id(), wp.state(&[(t::witness::BASELINE, sig)]));
+    }
+
+    /// THE MEASURED WEDGE (10-11), as a regression: a statement of claims epoch 1 ACCEPTED by the baseline alone while
+    /// `V(1)` was empty (the stakers' chains not yet witnessed); a keeper mint cites it. Then the stakers' pre-epoch
+    /// entries are accepted LATE — signatures made at or after epoch 1's freeze. `V(1)` must stay empty and the
+    /// statement accepted: before the fix `V(1)` grew to 6, the baseline lost its seat, the statement needed 4 of 6 drawn
+    /// seats and was no longer accepted — the mint citing it never accepted, its chain wedged for good.
+    #[test]
+    fn a_late_acceptance_of_stake_never_unaccepts_what_its_epoch_accepted() {
+        let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
+        let mut got = HashMap::new();
+        let tl = testlot::stakers_unwitnessed(&ctx, &mut got);
+        let (epoch, root) = (5u64, [0x5Au8; 32]); // standing epoch 5: its lot in claims epoch 1
+        let freeze = t::claims::frozen_at(1);
+        let verdict = |g: &HashMap<[u8; 32], Vec<u8>>| testlot::done(&|gg| statement_accepted(&tl.lot, gg, ctx.code_hash, ctx.beacon, epoch, &root), g).unwrap();
+        let valid = |g: &HashMap<[u8; 32], Vec<u8>>| testlot::done(&|gg| Ok(valid_of(&ctx, &tl.lot, gg, 1)), g).unwrap().len();
+        assert_eq!(valid(&got), 0, "no staker witnessed yet");
+        baseline_signs_statement(&ctx, &tl, &mut got, epoch, &root, craftworks_reputation::statement::lot_height(epoch));
+        assert_eq!(verdict(&got), Ok(1), "accepted by the baseline's seat alone");
+        // LATE: the stakers' last pre-epoch entries witnessed at the freeze, and hours after it.
+        for at in [freeze, freeze + 1, 2 * t::supply::EPOCH] {
+            tl.baseline_signs(&ctx, &mut got, at);
+            assert_eq!(valid(&got), 0, "stake accepted at {at} (epoch 1 froze at {freeze}) grew V(1)");
+            assert_eq!(verdict(&got), Ok(1), "a late stake acceptance (at {at}) unaccepted the statement");
+        }
+    }
+
+    /// A staker whose pre-epoch entry was accepted BEFORE the freeze is valid stake — up to the last height before it.
+    #[test]
+    fn stake_accepted_before_the_freeze_is_valid_stake() {
+        let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
+        let mut got = HashMap::new();
+        let tl = testlot::stakers_unwitnessed(&ctx, &mut got);
+        tl.baseline_signs(&ctx, &mut got, t::claims::frozen_at(1) - 1);
+        let v = testlot::done(&|g| Ok(valid_of(&ctx, &tl.lot, g, 1)), &got).unwrap();
+        assert_eq!(v.len(), 6, "witnessed one step before the freeze: all six valid");
+        // So epoch 1's lots are drawn over six stakers: the baseline has no seat, its signature alone accepts nothing.
+        baseline_signs_statement(&ctx, &tl, &mut got, 5, &[0x5A; 32], craftworks_reputation::statement::lot_height(5));
+        assert!(testlot::done(&|g| statement_accepted(&tl.lot, g, ctx.code_hash, ctx.beacon, 5, &[0x5A; 32]), &got).unwrap().is_err());
     }
 
     #[test]

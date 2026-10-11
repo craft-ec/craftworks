@@ -433,7 +433,7 @@ mod tests {
             let stranger = SigningKey::from_bytes(&[99; 32]);
             let other = [5u8; 32];
             for (k, e) in [(&stranger, debit.entries.last().unwrap().hash()), (&tl.keys[0], other)] {
-                items.push(t::witness::Signed { key: k.verifying_key().to_bytes(), entry: e, sig: k.sign(&t::witness::WitnessSig::message(&pa.id(), dseq, &e)).to_bytes() });
+                items.push(t::witness::Signed { key: k.verifying_key().to_bytes(), entry: e, at: 0, sig: k.sign(&t::witness::WitnessSig::message(&pa.id(), dseq, &e, 0)).to_bytes() });
             }
             items.sort();
             g4.insert(wp.id(), t::witness::Signatures { items }.encode());

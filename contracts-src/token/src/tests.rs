@@ -1532,7 +1532,7 @@ fn staker() -> State {
 }
 fn wsig(by: u8, chain: u8, seq: u64, entry: u8) -> witness::WitnessSig {
     let (c, h) = ([chain; 32], [entry; 32]);
-    witness::WitnessSig { chain: c, seq, entry: h, sig: key(by).sign(&witness::WitnessSig::message(&c, seq, &h)).to_bytes() }
+    witness::WitnessSig { chain: c, seq, entry: h, at: 0, sig: key(by).sign(&witness::WitnessSig::message(&c, seq, &h, 0)).to_bytes() }
 }
 fn at_stamp(s: &mut State, n: u8, body: Body, by: Option<u8>, stamp: u64) {
     let mut e = entry(s, nonce(n), body);
@@ -1670,7 +1670,7 @@ fn an_entry_counts_once_enough_of_its_committee_signed_it_with_real_stake() {
     let k = 5;
     assert_eq!(witness::seats(10, k), (5, false, 4));
     let members = draw::committee(&def_id, &out, &chain, seq, 3, &claims, k);
-    let sig_by = |n: u8, e: [u8; 32]| witness::WitnessSig { chain, seq, entry: e, sig: key(n).sign(&witness::WitnessSig::message(&chain, seq, &e)).to_bytes() };
+    let sig_by = |n: u8, e: [u8; 32]| witness::WitnessSig { chain, seq, entry: e, at: 0, sig: key(n).sign(&witness::WitnessSig::message(&chain, seq, &e, 0)).to_bytes() };
     let member_keys: Vec<u8> = members.iter().map(|m| claims[*m].owner[0]).collect();
     let outsiders: Vec<u8> = (60..70).filter(|n| !member_keys.contains(n)).collect();
     // Each staker's chain: 100 staked, its writer key the claim's.
@@ -1719,7 +1719,7 @@ fn a_small_network_scales_its_committee_and_the_baseline_steps_out_at_six() {
         StakeClaim { owner: [n; 32], amount: 100, epoch: 3, key: kb, sig: k.sign(&StakeClaim::message(&def_id, &[n; 32], 100, 3, &kb)).to_bytes() }
     };
     let (chain, seq, entry, out) = ([7u8; 32], 12u64, [1u8; 32], [9u8; 32]);
-    let sig = |k: &ed25519_dalek::SigningKey| witness::WitnessSig { chain, seq, entry, sig: k.sign(&witness::WitnessSig::message(&chain, seq, &entry)).to_bytes() };
+    let sig = |k: &ed25519_dalek::SigningKey| witness::WitnessSig { chain, seq, entry, at: 0, sig: k.sign(&witness::WitnessSig::message(&chain, seq, &entry, 0)).to_bytes() };
     let real = |o: &[u8; 32]| Some((100u128, vec![pk(o[0])]));
     let acc = |claims: &[StakeClaim], sigs: &[witness::WitnessSig]| witness::accepted(&def_id, &chain, seq, &entry, &out, 3, claims, sigs, wallet::COMMITTEE, &real);
     // NOBODY staked: the baseline alone accepts (1 of 1); nothing signed, nothing accepted.
@@ -1793,7 +1793,7 @@ impl Lot {
         let v = self.sigs.entry((id, e.seq)).or_default();
         for m in members.into_iter().take(n) {
             let k = self.claims[m].owner[0];
-            v.push(witness::WitnessSig { chain: id, seq: e.seq, entry, sig: key(k).sign(&witness::WitnessSig::message(&id, e.seq, &entry)).to_bytes() });
+            v.push(witness::WitnessSig { chain: id, seq: e.seq, entry, at: 0, sig: key(k).sign(&witness::WitnessSig::message(&id, e.seq, &entry, 0)).to_bytes() });
         }
     }
     /// The committee witnesses every entry of `owner`'s chain of token A, in order — each only if the rule lets it.
@@ -1926,17 +1926,17 @@ fn the_shared_lot_records_round_trip_exactly() {
 /// it ranks, displaces one: what it may hold is bounded by the registry, never by evicting.
 #[test]
 fn junk_never_evicts_a_places_genuine_witness_signatures() {
-    use witness::{merge, needs_registry, Params, Signatures, Signed};
+    use witness::{merge, needs, Params, Signatures, Signed};
     let p = Params { code_hash: CODE, pool: id_a(), beacon: [7; 32], epoch: 3, chain: [5; 32], seq: 9 };
     let entry = [0x80u8; 32];
-    let signed = |k: &SigningKey, chain: [u8; 32], e: [u8; 32]| Signed { key: k.verifying_key().to_bytes(), entry: e, sig: k.sign(&witness::WitnessSig::message(&chain, p.seq, &e)).to_bytes() };
+    let signed = |k: &SigningKey, chain: [u8; 32], e: [u8; 32]| Signed { key: k.verifying_key().to_bytes(), entry: e, at: 0, sig: k.sign(&witness::WitnessSig::message(&chain, p.seq, &e, 0)).to_bytes() };
     // The epoch's registry: 16 stakers (keys 60..76).
     let reg = claims::Registry {
         claims: (60..76u8).map(|n| draw::StakeClaim { owner: [n; 32], amount: 100, epoch: 3, key: pk(n), sig: key(n).sign(&draw::StakeClaim::message(&id_a(), &[n; 32], 100, 3, &pk(n))).to_bytes() }).collect(),
     };
     // Eleven of the committee signed the entry.
     let genuine: Vec<Signed> = (60..71u8).map(|n| signed(&key(n), p.chain, entry)).collect();
-    let held = merge(&p, &Signatures::default(), &Signatures { items: genuine.clone() }, Some(&reg));
+    let held = merge(&p, &Signatures::default(), &Signatures { items: genuine.clone() }, Some(&reg), Some(0));
     assert_eq!(held.items.len(), 11);
     // THE FLOOD: more well-formed signatures over this very place than the container could ever hold, each under a
     // fresh key (free to make: no rule over items alone tells them from a witness's) ...
@@ -1944,13 +1944,13 @@ fn junk_never_evicts_a_places_genuine_witness_signatures() {
         .map(|i| signed(&SigningKey::from_bytes(blake3::hash(&i.to_le_bytes()).as_bytes()), p.chain, [(i % 251) as u8; 32]))
         .collect();
     // ... signatures under REGISTERED keys that do not verify, or verify over another place (replayed) ...
-    junk.push(Signed { key: pk(61), entry: [1; 32], sig: [7; 64] });
+    junk.push(Signed { key: pk(61), entry: [1; 32], at: 0, sig: [7; 64] });
     junk.push(signed(&key(62), [6; 32], [2; 32]));
     // ... and one registered key (60) signing three more entries, all ranking below its genuine one.
     junk.extend([[0u8; 32], [1; 32], [2; 32]].map(|e| signed(&key(60), p.chain, e)));
     let junk = Signatures { items: junk };
-    assert!(needs_registry(&held, &junk) && !needs_registry(&held, &held));
-    let after = merge(&p, &held, &junk, Some(&reg));
+    assert!(needs(&held, &junk).1 && needs(&held, &held) == (false, false));
+    let after = merge(&p, &held, &junk, Some(&reg), Some(0));
     // Every genuine signature but the equivocator's stays; the equivocator keeps the proof (two entries) against it.
     for g in &genuine[1..] {
         assert!(after.items.contains(g), "a genuine signature evicted");
@@ -1962,11 +1962,11 @@ fn junk_never_evicts_a_places_genuine_witness_signatures() {
     assert!(witness::equivocation(&pk(60), mine[0], mine[1]), "the equivocation's proof kept");
     // The same in any order; and with no registry read, nothing new but the baseline's is taken.
     let all = Signatures { items: [junk.items.clone(), genuine.clone()].concat() };
-    assert_eq!(merge(&p, &Signatures::default(), &all, Some(&reg)), after);
-    assert_eq!(merge(&p, &held, &junk, None), held);
+    assert_eq!(merge(&p, &Signatures::default(), &all, Some(&reg), Some(0)), after);
+    assert_eq!(merge(&p, &held, &junk, None, Some(0)), held);
     // A node whose registry copy has not yet seen the signers' claims never drops what another node took.
     let stale = claims::Registry { claims: reg.claims[11..].to_vec() };
-    assert_eq!(merge(&p, &held, &Signatures::default(), Some(&stale)), held, "a lagging registry dropped a held signature");
+    assert_eq!(merge(&p, &held, &Signatures::default(), Some(&stale), None), held, "a lagging registry dropped a held signature");
     // A copy taken without the registry still holds only signatures that verify, at most two per key.
     let mut bad = held.clone();
     bad.items[0].sig[0] ^= 1;
@@ -1974,6 +1974,51 @@ fn junk_never_evicts_a_places_genuine_witness_signatures() {
     let mut three = Signatures { items: [[0u8; 32], [1; 32], [2; 32]].map(|e| signed(&key(60), p.chain, e)).to_vec() };
     three.items.sort();
     assert!(witness::holds(&p, &three).is_err());
+}
+
+/// WHEN A SIGNATURE WAS MADE (10-11): its `at` is signed, and the container takes a new one only near the beacon's
+/// height — never dated ahead of it, never back across a registry freeze by more than `AT_SLACK` (what valid stake
+/// counts, `accepted_before` at a freeze, cannot be reached by dating a late signature early) — and keeps per (key,
+/// entry) the earliest `at` it took: a replay dated otherwise never moves it earlier.
+#[test]
+fn a_witness_signatures_date_is_checked_against_the_beacon_and_never_moved_earlier() {
+    use witness::{fresh, holds, merge, needs, Params, Signatures, Signed, AT_SLACK};
+    let p = Params { code_hash: CODE, pool: id_a(), beacon: [7; 32], epoch: 1, chain: [5; 32], seq: 9 };
+    let entry = [0x80u8; 32];
+    let signed = |at: u64| Signed { key: pk(60), entry, at, sig: key(60).sign(&witness::WitnessSig::message(&p.chain, p.seq, &entry, at)).to_bytes() };
+    let reg = claims::Registry { claims: vec![draw::StakeClaim { owner: [60; 32], amount: 100, epoch: 1, key: pk(60), sig: key(60).sign(&draw::StakeClaim::message(&id_a(), &[60; 32], 100, 1, &pk(60))).to_bytes() }] };
+    let none = Signatures::default();
+    let take = |held: &Signatures, x: Signed, now: u64| merge(&p, held, &Signatures { items: vec![x] }, Some(&reg), Some(now));
+    let freeze = claims::frozen_at(2);
+    // Ahead of the beacon: refused. At it, and AT_SLACK below it: taken.
+    assert!(take(&none, signed(1001), 1000).items.is_empty(), "a signature dated ahead of the beacon taken");
+    assert_eq!(take(&none, signed(1000), 1000).items, vec![signed(1000)]);
+    assert_eq!(take(&none, signed(1000 - AT_SLACK), 1000).items, vec![signed(1000 - AT_SLACK)]);
+    // Dated back ACROSS A FREEZE by more than the slack: refused; within it: taken.
+    let late = freeze + AT_SLACK + 1;
+    assert!(take(&none, signed(freeze - 1), late).items.is_empty(), "a signature dated back across a freeze taken");
+    assert_eq!(take(&none, signed(freeze - 1), freeze - 1 + AT_SLACK).items.len(), 1);
+    assert!(fresh(freeze - 1, freeze - 1 + AT_SLACK) && !fresh(freeze - 1, freeze + AT_SLACK) && !fresh(5, 4));
+    // Older but within one freeze period (a lagging copy synced late, a delegate's round signing at the height it
+    // read): taken — no verdict at a freeze differs from had it arrived when made.
+    assert_eq!(take(&none, signed(freeze), freeze + 3000).items.len(), 1);
+    // No beacon read: nothing new taken.
+    assert!(merge(&p, &none, &Signatures { items: vec![signed(1000)] }, Some(&reg), None).items.is_empty());
+    // A REPLAY cannot move a held signature earlier: made after the freeze, re-sent dated before it — refused, kept as is.
+    let held = take(&none, signed(late), late);
+    assert_eq!(take(&held, signed(freeze - 1), late), held, "a replay moved a signature back across the freeze");
+    // A replay dated LATER changes nothing (the earliest kept), and needs nothing read.
+    assert_eq!(take(&held, signed(late + 5), late + 5), held);
+    assert_eq!(needs(&held, &Signatures { items: vec![signed(late + 5)] }), (false, false));
+    assert_eq!(needs(&held, &Signatures { items: vec![signed(late - 1)] }), (true, true));
+    // One dated earlier but still fresh: the earliest kept, in either order.
+    let both = Signatures { items: vec![signed(late - 2), signed(late)] };
+    assert_eq!(merge(&p, &none, &both, Some(&reg), Some(late)).items, vec![signed(late - 2)]);
+    assert_eq!(take(&held, signed(late - 2), late).items, vec![signed(late - 2)]);
+    // `at` is under the signature: changed, the item no longer verifies.
+    let mut moved = held.clone();
+    moved.items[0].at -= 1;
+    assert!(holds(&p, &held).is_ok() && holds(&p, &moved).is_err());
 }
 
 #[test]
@@ -2417,7 +2462,7 @@ fn misdeed_world() -> (Two, State) {
 fn misdeed(by: u8, w: &Two, owner: u8, seq: u64) -> Body {
     let entry = w.get(id_a(), owner).entries.iter().find(|e| e.seq == seq).unwrap().clone();
     let chain = at(id_a(), owner).id();
-    let sig = witness::WitnessSig { chain, seq, entry: entry.hash(), sig: key(by).sign(&witness::WitnessSig::message(&chain, seq, &entry.hash())).to_bytes() };
+    let sig = witness::WitnessSig { chain, seq, entry: entry.hash(), at: 0, sig: key(by).sign(&witness::WitnessSig::message(&chain, seq, &entry.hash(), 0)).to_bytes() };
     Body::Misdeed { key: pk(by), sig, tok: id_a().into(), owner: did(owner), entry: Box::new(entry) }
 }
 
@@ -2448,7 +2493,7 @@ fn a_witness_that_signed_fake_money_is_burned() {
     // This chain's key named, the signature made by another key.
     let mut forged = misdeed(2, &w, 3, 0);
     if let Body::Misdeed { sig, .. } = &mut forged {
-        sig.sig = key(4).sign(&witness::WitnessSig::message(&sig.chain, sig.seq, &sig.entry)).to_bytes();
+        sig.sig = key(4).sign(&witness::WitnessSig::message(&sig.chain, sig.seq, &sig.entry, 0)).to_bytes();
     }
     assert_eq!(burn(forged, &w).err(), Some("a misdeed that is not this key's signature on that entry"));
     // Another entry at the SAME seq than the one signed (another amount).
@@ -2507,7 +2552,7 @@ fn the_watch_finds_who_signed_two_entries_at_one_place() {
     let (chain, seq) = ([7u8; 32], 3u64);
     let sig = |n: u8, e: u8| {
         let h = [e; 32];
-        witness::WitnessSig { chain, seq, entry: h, sig: key(n).sign(&witness::WitnessSig::message(&chain, seq, &h)).to_bytes() }
+        witness::WitnessSig { chain, seq, entry: h, at: 0, sig: key(n).sign(&witness::WitnessSig::message(&chain, seq, &h, 0)).to_bytes() }
     };
     // 60 signed two entries; 61 signed one entry twice; 62 one; 99 (no claim) two.
     let bag = vec![sig(60, 1), sig(61, 1), sig(61, 1), sig(62, 2), sig(60, 2), sig(99, 1), sig(99, 2)];
@@ -3362,7 +3407,7 @@ fn a_witness_that_signed_a_payout_its_verdict_does_not_pay_is_burned() {
         put_at(&mut c, 30, Body::Payout { program: PROG, key: [1; 16], amount, verdict, ev: Evidence::default() }, None, 5);
         let entry = c.entries[0].clone();
         let chain = at(id_a(), 2).id();
-        let sig = witness::WitnessSig { chain, seq: entry.seq, entry: entry.hash(), sig: key(by).sign(&witness::WitnessSig::message(&chain, entry.seq, &entry.hash())).to_bytes() };
+        let sig = witness::WitnessSig { chain, seq: entry.seq, entry: entry.hash(), at: 0, sig: key(by).sign(&witness::WitnessSig::message(&chain, entry.seq, &entry.hash(), 0)).to_bytes() };
         Body::FalseVerdict { key: pk(by), sig, tok: id_a().into(), owner: did(2), entry: Box::new(entry), section }
     };
     let burn = |body: Body| {
@@ -3399,7 +3444,7 @@ fn a_witness_that_signed_a_mint_its_authority_never_signed_is_burned() {
     };
     let false_mint = |by_witness: u8, entry: Entry| {
         let chain = at(dmid, 3).id();
-        let sig = witness::WitnessSig { chain, seq: entry.seq, entry: entry.hash(), sig: key(by_witness).sign(&witness::WitnessSig::message(&chain, entry.seq, &entry.hash())).to_bytes() };
+        let sig = witness::WitnessSig { chain, seq: entry.seq, entry: entry.hash(), at: 0, sig: key(by_witness).sign(&witness::WitnessSig::message(&chain, entry.seq, &entry.hash(), 0)).to_bytes() };
         Body::FalseMint { key: pk(by_witness), sig, tok: dmid.into(), owner: did(3), entry: Box::new(entry) }
     };
     let ap = authority::Params { code_hash: CODE, definition: dmid, beacon: BEACON }.id();
@@ -3516,7 +3561,7 @@ fn a_witness_that_signed_an_unpaid_copy_is_burned() {
     };
     let false_mint = |entry: Entry| {
         let chain = ChainParams { item: numbered_item(&sid, 3), ..at(sid, T) }.id();
-        let sig = witness::WitnessSig { chain, seq: entry.seq, entry: entry.hash(), sig: key(2).sign(&witness::WitnessSig::message(&chain, entry.seq, &entry.hash())).to_bytes() };
+        let sig = witness::WitnessSig { chain, seq: entry.seq, entry: entry.hash(), at: 0, sig: key(2).sign(&witness::WitnessSig::message(&chain, entry.seq, &entry.hash(), 0)).to_bytes() };
         Body::FalseMint { key: pk(2), sig, tok: Tok { definition: sid, item: numbered_item(&sid, 3) }, owner: did(T), entry: Box::new(entry) }
     };
     let ap = authority::Params { code_hash: CODE, definition: sid, beacon: BEACON }.id();
@@ -3738,7 +3783,7 @@ fn a_keeper_mint_is_witnessed_only_under_its_epochs_accepted_statement() {
     let signs = |lot: &mut Lot, r: [u8; 32]| {
         let v: Vec<witness::WitnessSig> = members.iter().map(|m| {
             let kk = lot.claims[*m].owner[0];
-            witness::WitnessSig { chain: place, seq: 0, entry: r, sig: key(kk).sign(&witness::WitnessSig::message(&place, 0, &r)).to_bytes() }
+            witness::WitnessSig { chain: place, seq: 0, entry: r, at: 0, sig: key(kk).sign(&witness::WitnessSig::message(&place, 0, &r, 0)).to_bytes() }
         }).collect();
         lot.sigs.insert((place, 0), v);
     };
@@ -3781,7 +3826,7 @@ fn a_statement_rooted_program_is_released_only_under_its_epochs_accepted_root() 
         let v = lot.sigs.entry((place, 0)).or_default();
         for m in members.into_iter().take(wallet::NEED) {
             let k = lot.claims[m].owner[0];
-            v.push(witness::WitnessSig { chain: place, seq: 0, entry: accepted, sig: key(k).sign(&witness::WitnessSig::message(&place, 0, &accepted)).to_bytes() });
+            v.push(witness::WitnessSig { chain: place, seq: 0, entry: accepted, at: 0, sig: key(k).sign(&witness::WitnessSig::message(&place, 0, &accepted, 0)).to_bytes() });
         }
         let prog = [sec.encode(), root.to_vec()].concat();
         lot.progs.push((PROG, prog.clone()));

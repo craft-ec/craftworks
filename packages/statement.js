@@ -97,7 +97,7 @@ export async function start(ctx) {
       const { lot } = tokens;
       const params = Core.statement_witness_params(tokens.code, tokens.beacon, idlogCode, lot.pool, lot.bag, lot.beacon, epoch);
       const none = new Uint8Array();
-      await tokens.putAll([core.witness_put(tokens.code, params, none, none, none)]);
+      await tokens.putAll([core.witness_put(tokens.code, params, none, none, none, 0)]);
       containered.add(epoch);
     }
     // KEEPER ISSUANCE (TOKEN §7d): every keeper line of the epoch's statement minted as $CRAFT stake once its root is

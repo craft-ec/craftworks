@@ -113,7 +113,10 @@ pub struct StakeReads<'a> {
 /// entry's own lot epoch (earlier: the recursion ends at an epoch with none, where the baseline's seat alone decides).
 /// A witness signs an entry only after its predecessor is accepted, so that one acceptance vouches for the whole stake
 /// history: a self-made mint or a forged receive no witness signed never counts. Every lot draws over this, never the
-/// raw registry. `memo`: the epochs already computed in this evaluation.
+/// raw registry. FIXED AT THE FREEZE (10-11): that last entry counts only as accepted by signatures made BEFORE the
+/// epoch's registry froze (`witness::accepted_before` at `claims::frozen_at`) — an acceptance arriving later (an entry
+/// stranded and witnessed hours after) never grows `V(E)` after the fact, so no threshold over it rises and nothing
+/// accepted under it is ever unaccepted. `memo`: the epochs already computed in this evaluation.
 pub fn valid_stakers(r: &StakeReads, epoch: u64, memo: &std::cell::RefCell<std::collections::BTreeMap<u64, Vec<StakeClaim>>>) -> Vec<StakeClaim> {
     if let Some(v) = memo.borrow().get(&epoch) {
         return v.clone();
@@ -148,7 +151,8 @@ pub fn valid_stakers(r: &StakeReads, epoch: u64, memo: &std::cell::RefCell<std::
         let Some(o) = (r.out)(h) else { continue };
         let prior = valid_stakers(r, lot_epoch, memo);
         let id = cp.id();
-        if witness::accepted(&r.pool, &id, e.seq, &e.hash(), &o, lot_epoch, &prior, &(r.sigs)(&id, e.seq, lot_epoch), COMMITTEE, &|w| stake_from(&prior, w)).is_ok() {
+        let sigs = (r.sigs)(&id, e.seq, lot_epoch);
+        if witness::accepted_before(&r.pool, &id, e.seq, &e.hash(), &o, lot_epoch, &prior, &sigs, COMMITTEE, &|w| stake_from(&prior, w), crate::claims::frozen_at(epoch)).is_ok() {
             out.push(c.clone());
         }
     }

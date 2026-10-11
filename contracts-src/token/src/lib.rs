@@ -2750,14 +2750,15 @@ mod contract {
         Ok(if witness::holds(&p, &s).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
     }
 
-    /// Their UPDATE (`witness::merge`): what is given that does not read is ignored, never fatal; a new signature by a
-    /// key other than the baseline is taken only with the claims REGISTRY read in the same round (its key registered).
+    /// Their UPDATE (`witness::merge`): what is given that does not read is ignored, never fatal; a NEW signature is
+    /// taken only with the BEACON read in the same round (its signed `at` checked against the beacon's height:
+    /// `witness::fresh`), and — by a key other than the baseline — the claims REGISTRY too (its key registered).
     fn witnesses_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
         let p = witness::Params::decode(params).ok_or(ContractError::InvalidState)?;
         let held = witness::Signatures::decode(state).ok_or(ContractError::InvalidState)?;
         let registry = p.registry().id();
         let mut given = witness::Signatures::default();
-        let mut reg: Option<Vec<u8>> = None;
+        let (mut reg, mut bea): (Option<Vec<u8>>, Option<Vec<u8>>) = (None, None);
         for d in data {
             let b: &[u8] = match &d {
                 UpdateData::State(s) => s.as_ref(),
@@ -2766,6 +2767,8 @@ mod contract {
                 UpdateData::RelatedState { related_to, state } => {
                     if related_to.as_bytes() == registry {
                         reg = Some(state.as_ref().to_vec());
+                    } else if related_to.as_bytes() == p.beacon {
+                        bea = Some(state.as_ref().to_vec());
                     }
                     continue;
                 }
@@ -2775,14 +2778,21 @@ mod contract {
                 given.items.extend(g.items);
             }
         }
-        let registry_read = match reg {
-            Some(b) => Some(claims::Registry::decode(&b).unwrap_or_default()),
-            None if witness::needs_registry(&held, &given) => {
-                return UpdateModification::requires(vec![RelatedContract { contract_instance_id: ContractInstanceId::new(registry), mode: RelatedMode::StateOnce }]);
-            }
-            None => None,
-        };
-        Ok(UpdateModification::valid(State::from(witness::merge(&p, &held, &given, registry_read.as_ref()).encode())))
+        // What must be read first: each one a new signature needs and this round did not bring.
+        let (need_beacon, need_registry) = witness::needs(&held, &given);
+        let mut want = Vec::new();
+        if need_beacon && bea.is_none() {
+            want.push(RelatedContract { contract_instance_id: ContractInstanceId::new(p.beacon), mode: RelatedMode::StateOnce });
+        }
+        if need_registry && reg.is_none() {
+            want.push(RelatedContract { contract_instance_id: ContractInstanceId::new(registry), mode: RelatedMode::StateOnce });
+        }
+        if !want.is_empty() {
+            return UpdateModification::requires(want);
+        }
+        let registry_read = reg.map(|b| claims::Registry::decode(&b).unwrap_or_default());
+        let now = bea.as_deref().and_then(beacon_height);
+        Ok(UpdateModification::valid(State::from(witness::merge(&p, &held, &given, registry_read.as_ref(), now).encode())))
     }
 
     #[contract]

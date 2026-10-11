@@ -24,14 +24,15 @@ export async function start(ctx) {
   let lastPass = -Infinity;
 
   // SIGNED through the delegate (it records the place first) and PUT into the place's signatures container (`params`:
-  // the verdict's), under this page's member key.
+  // the verdict's), under this page's member key — signed at `h`, the beacon height of this pass (part of what is signed:
+  // the container takes it only near the beacon's height, `witness::fresh`).
   async function signInto(s, h, tokens, me, what) {
-    const a = await auth.identity.witnessSign(s.chain, s.seq, s.entry);
+    const a = await auth.identity.witnessSign(s.chain, s.seq, s.entry, h);
     if (!a?.signed) {
       ctx.log("witness", { what: `not signed (${a?.refused ?? "no answer"})` });
       return false;
     }
-    await tokens.putAll([core.witness_put(tokens.code, s.params, tokens.bytes(me.member), s.entry, tokens.bytes(a.signed))]);
+    await tokens.putAll([core.witness_put(tokens.code, s.params, tokens.bytes(me.member), s.entry, tokens.bytes(a.signed), h)]);
     state.signed += 1;
     state.last = h;
     ctx.log("witness", { what: `signed ${what}` });

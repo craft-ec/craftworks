@@ -155,7 +155,7 @@ export async function start(ctx) {
     // domain) — the account's device on its token chains (`editions`).
     tokenSign: message => call(core.frames_token_sign(message), "signing a token entry"),
     // WITNESS (TOKEN §7a): `entry` at (`chain`, `seq`) — never a second entry at a place (the delegate's record).
-    witnessSign: (chain, seq, entry) => call(core.frames_witness_sign(chain, seq, entry), "witnessing an entry"),
+    witnessSign: (chain, seq, entry, at) => call(core.frames_witness_sign(chain, seq, entry, at), "witnessing an entry"),
     // The WITNESS MANDATE: what the delegate needs to witness with no page open (codes, the beacon, the pool; the
     // standing code for the epoch statement it builds — the Block code is the core's own).
     witnessMandate: (token, idlog, bag, beaconCode, beacon, pool, standing) => call(core.frames_witness_mandate(token, idlog, bag, beaconCode, beacon, pool, standing), "handing the witness round over"),

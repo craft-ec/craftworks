@@ -78,7 +78,7 @@ fn a_drawn_member_away_from_their_page_witnesses_a_queued_entry_once() {
     assert!(t::witness::holds(&wp, &held).is_ok() && held.items.len() == 1 && held.items[0].key == member, "the member's one signature");
     let sig = wp.sigs(delta).remove(0);
     assert_eq!((sig.chain, sig.seq, sig.entry), (chain, q.seq, entry));
-    key.verifying_key().verify(&identity::witness_message(&chain, q.seq, &entry), &Signature::from_bytes(&sig.sig)).expect("signed by the member");
+    key.verifying_key().verify(&identity::witness_message(&chain, q.seq, &entry, sig.at), &Signature::from_bytes(&sig.sig)).expect("signed by the member");
     // SETTLED: the next wake-up asks again but signs nothing more.
     h.set_secret(identity::UPKEEP_WAKEUPS, &(crate::upkeep::PAGE_AWAY + 2).to_le_bytes());
     assert!(run(&mut h, &got).is_empty(), "an entry witnessed once");

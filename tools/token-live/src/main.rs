@@ -881,8 +881,8 @@ async fn witness_mode(w: &W) -> Result<()> {
                         .iter()
                         .map(|&m| {
                             let n = (20..36u8).find(|n| pk(*n) == claims[m].key).unwrap(); // the member's own key
-                            let sig = key(n).sign(&T::witness::WitnessSig::message(&p.id(), seq, &hash)).to_bytes();
-                            (pk(n), T::witness::WitnessSig { chain: p.id(), seq, entry: hash, sig })
+                            let sig = key(n).sign(&T::witness::WitnessSig::message(&p.id(), seq, &hash, now)).to_bytes();
+                            (pk(n), T::witness::WitnessSig { chain: p.id(), seq, entry: hash, at: now, sig })
                         })
                         .collect();
                     let said = rt.block_on(put(&x, container(&tc, wp.encode()), wp.state(&items))).map(|r| r.0).unwrap_or_else(|e| e.to_string());
@@ -924,7 +924,8 @@ async fn witness_mode(w: &W) -> Result<()> {
     // it and the epoch's registry, finds it (`wallet::equivocations`) and appends the burn to the staker's pool chain.
     let other = |e: u8| *blake3::hash(&[e]).as_bytes();
     let place = w.chain(ta, 2).id();
-    let sg = |e: u8| T::witness::WitnessSig { chain: place, seq: 1, entry: other(e), sig: key(20).sign(&T::witness::WitnessSig::message(&place, 1, &other(e))).to_bytes() };
+    let at = w.now().await?;
+    let sg = |e: u8| T::witness::WitnessSig { chain: place, seq: 1, entry: other(e), at, sig: key(20).sign(&T::witness::WitnessSig::message(&place, 1, &other(e), at)).to_bytes() };
     let wp = T::witness::Params { code_hash: w.ch, pool, beacon: w.beacon, epoch, chain: place, seq: 1 };
     let said = put(&w.x, container(&w.code, wp.encode()), wp.state(&[(pk(20), sg(1)), (pk(20), sg(2))])).await?.0;
     println!("13 staker 20 signs two other entries at 2's seq 1, into its signatures container on X: {said}");
@@ -1084,7 +1085,7 @@ async fn misdeed_mode(w: &W) -> Result<()> {
     let place = w.chain(ta, 3).id();
     let proof = |seq: usize| {
         let e = c3.entries[seq].clone();
-        let sig = T::witness::WitnessSig { chain: place, seq: e.seq, entry: e.hash(), sig: key(2).sign(&T::witness::WitnessSig::message(&place, e.seq, &e.hash())).to_bytes() };
+        let sig = T::witness::WitnessSig { chain: place, seq: e.seq, entry: e.hash(), at: r, sig: key(2).sign(&T::witness::WitnessSig::message(&place, e.seq, &e.hash(), r)).to_bytes() };
         T::Body::Misdeed { key: pk(2), sig, tok: ta.into(), owner: did(3), entry: Box::new(e) }
     };
     let now = w.now().await?;

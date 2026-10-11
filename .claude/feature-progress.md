@@ -2298,3 +2298,4 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       shared `witness_round::sign_into`); mandate + standing/Block code hashes; posting page makes the empty container;
       audit seals spread 1 keeper/call, verdicts kept in secrets, round paused/resumed. Tests: same root as the page
       path, signed on wake 2 (paused on 1); posted root differs → none (control: comparison disabled → it signs).
+- [x] 10-11 V(E) FIXED AT THE FREEZE (local, not published; wedge measured: late stake acceptance grew V(5), unaccepted an epoch-20 statement a KeeperMint cited): witness sigs sign `at` (beacon height), container reads the beacon and refuses `at` ahead of it or back across a freeze by > AT_SLACK=16, keeps the earliest `at`; `valid_stakers` counts only sigs below `claims::frozen_at(E)` (`witness::accepted_before`). Tests + controls in token (container) and rules (wedge regression, pre-freeze valid).

@@ -151,7 +151,7 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
             Ok(tokens::Step::Done(witness::Verdict::Later(_))) => {}
             Ok(tokens::Step::Done(witness::Verdict::Refused(why))) => identity::upkeep_say(h, &r.member, &format!("witness: refused seq {}: {why}", q.seq)),
             Ok(tokens::Step::Done(witness::Verdict::Sign { at, entry })) => {
-                sign_into(h, &r.member, &at, entry, &mut out);
+                sign_into(h, &r.member, &at, entry, height, &mut out);
                 seen.insert(k);
                 settled.push(k);
             }
@@ -172,11 +172,12 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
 /// SIGN `entry` at place `at` through the guard (`identity::upkeep_witness_sign`: never another entry at a place) and
 /// send the signature into the place's signatures container: an UPDATE of the container its chain's writer (or a
 /// statement's poster) made — the node merging it (`witness::merge`: the member's key registered in the lot's claims
-/// epoch). The page's encoding (`witness_put`): `Params::state` of the one signature.
-pub(crate) fn sign_into<H: Host>(h: &mut H, member: &[u8; 32], at: &t::witness::Params, entry: [u8; 32], out: &mut Vec<Io>) -> bool {
-    match identity::upkeep_witness_sign(h, member, &at.chain, at.seq, &entry) {
+/// epoch). The page's encoding (`witness_put`): `Params::state` of the one signature. Signed at `height`, the beacon
+/// height this round read (the container takes it only near the beacon's: `witness::fresh`).
+pub(crate) fn sign_into<H: Host>(h: &mut H, member: &[u8; 32], at: &t::witness::Params, entry: [u8; 32], height: u64, out: &mut Vec<Io>) -> bool {
+    match identity::upkeep_witness_sign(h, member, &at.chain, at.seq, &entry, height) {
         Ok(sig) => {
-            let state = at.state(&[(*member, t::witness::WitnessSig { chain: at.chain, seq: at.seq, entry, sig })]);
+            let state = at.state(&[(*member, t::witness::WitnessSig { chain: at.chain, seq: at.seq, entry, at: height, sig })]);
             out.push(Io::Update { id: at.id(), delta: state });
             true
         }

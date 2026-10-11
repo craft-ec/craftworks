@@ -782,17 +782,17 @@ fn a_member_witnesses_one_entry_per_place_never_two() {
     let Answer::Unlocked { public, .. } = unlock(&mut m, ALICE_PIN, APP) else { panic!("unlocked") };
     let key = ed25519_dalek::VerifyingKey::from_bytes(&public).unwrap();
     let (chain, a, b) = ([7u8; 32], [1u8; 32], [2u8; 32]);
-    let Answer::Signed { sig } = serve(&mut m, Request::WitnessSign { chain, seq: 4, entry: a }, APP) else { panic!("signed") };
-    assert!(key.verify_strict(&witness_message(&chain, 4, &a), &ed25519_dalek::Signature::from_bytes(&sig.clone().try_into().unwrap())).is_ok(), "the witness message, by the member's key");
-    assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 4, entry: a }, APP), Answer::Signed { sig }, "the same entry again: the same signature");
-    assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 4, entry: b }, APP), Answer::Refused(Why::Equivocation), "another entry at that place");
-    assert!(matches!(serve(&mut m, Request::WitnessSign { chain, seq: 5, entry: b }, APP), Answer::Signed { .. }), "another place: signed");
+    let Answer::Signed { sig } = serve(&mut m, Request::WitnessSign { chain, seq: 4, entry: a, at: 7 }, APP) else { panic!("signed") };
+    assert!(key.verify_strict(&witness_message(&chain, 4, &a, 7), &ed25519_dalek::Signature::from_bytes(&sig.clone().try_into().unwrap())).is_ok(), "the witness message, by the member's key");
+    assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 4, entry: a, at: 7 }, APP), Answer::Signed { sig }, "the same entry again: the same signature");
+    assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 4, entry: b, at: 7 }, APP), Answer::Refused(Why::Equivocation), "another entry at that place");
+    assert!(matches!(serve(&mut m, Request::WitnessSign { chain, seq: 5, entry: b, at: 7 }, APP), Answer::Signed { .. }), "another place: signed");
     // TokenSign never signs a witness message (it would skip the record); it signs a stake claim.
-    assert_eq!(serve(&mut m, Request::TokenSign { message: witness_message(&chain, 9, &b) }, APP), Answer::Refused(Why::NotAnEntry));
+    assert_eq!(serve(&mut m, Request::TokenSign { message: witness_message(&chain, 9, &b, 7) }, APP), Answer::Refused(Why::NotAnEntry));
     assert!(matches!(serve(&mut m, Request::TokenSign { message: claim_message(&[3; 32], &[4; 32], 10, 2, &public) }, APP), Answer::Signed { .. }));
     // Only the home site.
     assert_eq!(unlock(&mut m, ALICE_PIN, OTHER), alice());
-    assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 6, entry: a }, OTHER), Answer::Refused(Why::NotHome));
+    assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 6, entry: a, at: 7 }, OTHER), Answer::Refused(Why::NotHome));
 }
 
 /// UPKEEP WITNESSES through the SAME guard as a page (TOKEN §7a): whichever signs a place first, the other may sign the
@@ -802,11 +802,11 @@ fn upkeep_and_page_share_one_witness_guard() {
     let mut m = provisioned(APP);
     let Answer::Unlocked { public, .. } = unlock(&mut m, ALICE_PIN, APP) else { panic!("unlocked") };
     let (chain, a, b) = ([7u8; 32], [1u8; 32], [2u8; 32]);
-    let Answer::Signed { sig } = serve(&mut m, Request::WitnessSign { chain, seq: 4, entry: a }, APP) else { panic!("signed") };
-    assert_eq!(upkeep_witness_sign(&mut m, &public, &chain, 4, &b), Err(Why::Equivocation), "upkeep never signs another entry there");
-    assert_eq!(upkeep_witness_sign(&mut m, &public, &chain, 4, &a).map(|s| s.to_vec()), Ok(sig), "the same entry: the same signature");
-    upkeep_witness_sign(&mut m, &public, &chain, 9, &b).unwrap();
-    assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 9, entry: a }, APP), Answer::Refused(Why::Equivocation), "nor the page after upkeep");
+    let Answer::Signed { sig } = serve(&mut m, Request::WitnessSign { chain, seq: 4, entry: a, at: 7 }, APP) else { panic!("signed") };
+    assert_eq!(upkeep_witness_sign(&mut m, &public, &chain, 4, &b, 7), Err(Why::Equivocation), "upkeep never signs another entry there");
+    assert_eq!(upkeep_witness_sign(&mut m, &public, &chain, 4, &a, 7).map(|s| s.to_vec()), Ok(sig), "the same entry: the same signature");
+    upkeep_witness_sign(&mut m, &public, &chain, 9, &b, 7).unwrap();
+    assert_eq!(serve(&mut m, Request::WitnessSign { chain, seq: 9, entry: a, at: 7 }, APP), Answer::Refused(Why::Equivocation), "nor the page after upkeep");
     // The mandate: kept for the home site; another site refused.
     let mandate = WitnessMandate { token: [1; 32], idlog: [2; 32], bag: [3; 32], beacon_code: [4; 32], beacon: [5; 32], pool: [6; 32], standing: [7; 32], block: [8; 32] };
     assert_eq!(serve(&mut m, Request::WitnessMandate { mandate: mandate.clone() }, APP), Answer::WitnessMandated);
@@ -860,7 +860,7 @@ fn a_members_next_build_carries_its_witnessed_places_and_the_old_one_retires() {
     // The EARLIER build: signs x at (chain, 4); holds a witness mandate.
     let mut old = provisioned(APP);
     let Answer::Unlocked { public, .. } = unlock(&mut old, ALICE_PIN, APP) else { panic!("unlocked") };
-    let Answer::Signed { .. } = serve(&mut old, Request::WitnessSign { chain, seq: 4, entry: x }, APP) else { panic!("signed") };
+    let Answer::Signed { .. } = serve(&mut old, Request::WitnessSign { chain, seq: 4, entry: x, at: 7 }, APP) else { panic!("signed") };
     let mandate = WitnessMandate { token: [1; 32], idlog: [2; 32], bag: [3; 32], beacon_code: [4; 32], beacon: [5; 32], pool: [6; 32], standing: [7; 32], block: [8; 32] };
     assert_eq!(serve(&mut old, Request::WitnessMandate { mandate }, APP), Answer::WitnessMandated);
     // RETIRED: its mandates cleared.
@@ -873,8 +873,8 @@ fn a_members_next_build_carries_its_witnessed_places_and_the_old_one_retires() {
     let mut new = provisioned(APP);
     let _ = unlock(&mut new, ALICE_PIN, APP);
     assert_eq!(serve(&mut new, Request::WitnessedKeep { places: places.clone() }, APP), Answer::WitnessedKept { kept: 1 });
-    assert_eq!(serve(&mut new, Request::WitnessSign { chain, seq: 4, entry: y }, APP), Answer::Refused(Why::Equivocation), "never another entry where the old build signed");
-    assert!(matches!(serve(&mut new, Request::WitnessSign { chain, seq: 4, entry: x }, APP), Answer::Signed { .. }), "the same entry again: fine");
+    assert_eq!(serve(&mut new, Request::WitnessSign { chain, seq: 4, entry: y, at: 7 }, APP), Answer::Refused(Why::Equivocation), "never another entry where the old build signed");
+    assert!(matches!(serve(&mut new, Request::WitnessSign { chain, seq: 4, entry: x, at: 7 }, APP), Answer::Signed { .. }), "the same entry again: fine");
 }
 
 /// THE UPKEEP SITE (audit 10-11): the node-wide upkeep settings are the first site's; another site — home of a member

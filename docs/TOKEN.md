@@ -750,7 +750,16 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   place's message under its key and that key is the baseline's or one of the epoch's CLAIMS REGISTRY (frozen before the
   lots, at most 4,096 claims: the update reads it as a related contract), each key keeping its two lowest entries (two
   prove an equivocation; an honest key signs one). Its size is then bounded by the registry — nothing taken is ever
-  dropped for room.
+  dropped for room. Each signature carries WHEN it was made — `at`, the beacon height, under the signature (the witness
+  message is `domain ‖ chain ‖ seq ‖ entry ‖ at`; every signer — page `WitnessSign`, the delegate's witness and
+  statement rounds, token-net — signs at the height it reads). The update never takes `at` on trust: it reads the
+  BEACON in the same round (as it reads the registry) and takes a new signature only if `at` is not above the beacon's
+  height and not dated back across a registry freeze by more than `AT_SLACK` = 16 steps (`witness::fresh`). Per (key,
+  entry) the earliest `at` taken is kept; a replay dated later changes nothing, one dated back across a freeze is
+  refused. (Not a flat "at most 16 below the beacon": copies sync by UPDATE, so a lagging copy is sent signatures taken
+  long ago, and a delegate round signs at the height it read when it started — refused forever, copies would disagree
+  on what is accepted. Within one freeze period an older `at` changes no verdict.) A copy taken whole (validated, not
+  updated) is checked only for signatures that verify — `at` included.
   A claim is checked only when its claimer is drawn (its chain read): one over its real stake does not count.
 - **Stake answers for its key, as held at its epoch's start** (6d). A signature counts only if its claim's key is one
   the claimer's stake BURNS for — its chain's device writer, or a writer key it retired while staked (a chain carries
@@ -763,14 +772,23 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   passed the contract and counted as stake — anyone could seat themselves). The VALID STAKERS of claims epoch E,
   `V(E)`: each claim in E's registry whose staker's pool chain, at E's start, (1) stakes at least the claim with the
   claim's key among the keys that stake burns for (`stake_at`), (2) is not forked, and (3) has its LAST entry before
-  E's start ACCEPTED — signed by enough of its committee, drawn from `V(E′)` of that entry's own lot epoch E′ < E. A
+  E's start ACCEPTED BEFORE E's REGISTRY FROZE — signed by enough of its committee, drawn from `V(E′)` of that entry's
+  own lot epoch E′ < E, counting only signatures made below `claims::frozen_at(E)` (`witness::accepted_before`). A
   witness signs an entry only once its predecessor is accepted (`may_witness`), so an accepted last entry vouches for
   the chain's whole history by induction. The recursion ends at an epoch with no valid stakers (the baseline's seat
   alone). Every lot — committees, seats, acceptance — is drawn over `V(E)`, never the raw registry: a claim nobody's
-  stake backs takes no seat and no longer removes the baseline's seat. `V(E)` is computed once an epoch begins and
-  kept (each staker's pre-E entries are fixed by then; signatures only ever add). An observer reading an entry's
-  signatures later may see a larger `V(E′)` than one reading early: that can delay acceptance (liveness), never count
-  stake that was not witnessed (safety).
+  stake backs takes no seat and no longer removes the baseline's seat. One function computes it
+  (`wallet::valid_stakers`; rules `tokens::stakers`/`valid_of` and token-net `claims` read through it).
+  **`V(E)` is FIXED AT THE FREEZE** (built 10-11, option A). Measured on private nodes: a statement of standing epoch 20
+  was accepted by the baseline alone (`V(5)` empty — the stakers' chains not yet accepted), a page minted a KeeperMint
+  citing it, then the stakers' entries were accepted hours late, `V(5)` became 2, the statement needed 2 of 3 and was
+  no longer accepted — the mint could never be accepted and its chain was wedged. Acceptance arriving late now never
+  grows `V(E)`: what was accepted under `V(E)` stays accepted. (Signatures dated before a freeze are taken only up to
+  `AT_SLACK` steps after it — far inside the 512 steps before E's first lot — so every copy that has synced agrees on
+  `V(E)` before any of E's lots exists.) The cost: a staker whose last pre-E entry is not accepted before the freeze —
+  one written in E's last `LEAD` steps, or witnessed late — sits E out, and counts again from the next epoch whose
+  freeze its acceptance precedes. An observer missing some signatures may still see a smaller `V(E′)` than one that
+  read them all: that can delay acceptance (liveness), never count stake that was not witnessed (safety).
 - **Weight = EARNED STAKE** (owner: "stake come from reward from storage… cumulative, grows over time; the longer in
   the game, the higher the stake"). No upfront cost: a node earns KEEPER REWARDS for holding what real users read
   (REWARDS §4, paid by held DEMAND, never self-claimed) and each reward lands LOCKED as witness stake. Two signatures at

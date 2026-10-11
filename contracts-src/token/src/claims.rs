@@ -36,8 +36,14 @@ impl Params {
     }
     /// The beacon height from which it takes no claim.
     pub fn frozen_at(&self) -> u64 {
-        (self.epoch * supply::EPOCH).saturating_sub(LEAD)
+        frozen_at(self.epoch)
     }
+}
+
+/// THE FREEZE of claims epoch `epoch`'s registry: the beacon height from which it takes no claim — and the height
+/// `epoch`'s VALID STAKE is fixed at (`wallet::valid_stakers`: only acceptance by signatures made below it counts).
+pub fn frozen_at(epoch: u64) -> u64 {
+    epoch.saturating_mul(supply::EPOCH).saturating_sub(LEAD)
 }
 
 /// A registry: one claim per (staker, key), sorted by both (audit 10-11: one per staker let anyone replace a staker's

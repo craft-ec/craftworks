@@ -329,7 +329,7 @@ fn a_wallet_starts_its_token_and_credits_a_payment_only_once_witnessed() {
     let sign = |n: usize| {
         members.iter().take(n).map(|m| {
             let k = SigningKey::from_bytes(&[stakers[*m].owner[0]; 32]);
-            t::witness::WitnessSig { chain: a.params.id(), seq: send.seq, entry: send.hash(), sig: k.sign(&t::witness::WitnessSig::message(&a.params.id(), send.seq, &send.hash())).to_bytes() }
+            t::witness::WitnessSig { chain: a.params.id(), seq: send.seq, entry: send.hash(), at: 0, sig: k.sign(&t::witness::WitnessSig::message(&a.params.id(), send.seq, &send.hash(), 0)).to_bytes() }
         }).collect::<Vec<_>>()
     };
     let check_with = |sigs: Vec<t::witness::WitnessSig>| {

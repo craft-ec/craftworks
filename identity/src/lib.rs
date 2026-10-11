@@ -82,10 +82,11 @@ pub const SIGN_DOMAINS: &[&[u8]] = &[TOKEN_ENTRY_DOMAIN, VOUCH_DOMAIN, STANDING_
 pub fn claim_message(definition: &[u8; 32], owner: &[u8; 32], amount: u128, epoch: u64, key: &[u8; 32]) -> Vec<u8> {
     [CLAIM_DOMAIN, definition, owner, &amount.to_le_bytes(), &epoch.to_le_bytes(), key].concat()
 }
-/// A WITNESS SIGNATURE's message: the entry `entry` (its hash, or a statement's root) at place (`chain`, `seq`) — the
-/// one form: the token's `WitnessSig` signs this.
-pub fn witness_message(chain: &[u8; 32], seq: u64, entry: &[u8; 32]) -> Vec<u8> {
-    [WITNESS_DOMAIN, chain, &seq.to_le_bytes(), entry].concat()
+/// A WITNESS SIGNATURE's message: the entry `entry` (its hash, or a statement's root) at place (`chain`, `seq`), signed
+/// at beacon height `at` (TOKEN §7a: WHEN it was signed is part of what is signed — a claims epoch's valid stake counts
+/// only what was accepted before the epoch's registry froze) — the one form: the token's `WitnessSig` signs this.
+pub fn witness_message(chain: &[u8; 32], seq: u64, entry: &[u8; 32], at: u64) -> Vec<u8> {
+    [WITNESS_DOMAIN, chain, &seq.to_le_bytes(), entry, &at.to_le_bytes()].concat()
 }
 /// Where a member's WITNESSED places are kept (`WitnessSign`'s guard): `<prefix><member key><chain><seq>` → the entry.
 const WITNESSED: &[u8] = b"identity/witnessed/";
@@ -120,11 +121,11 @@ fn index_witnessed<H: Host>(h: &mut H, member: &[u8], chain: &[u8; 32], seq: u64
 }
 
 /// UPKEEP WITNESSES with no page open: member `member`'s key signs `entry` at (`chain`, `seq`) through the SAME guard
-/// as `WitnessSign` (neither ever signs an entry the other signed differently there).
-pub fn upkeep_witness_sign<H: Host>(h: &mut H, m: &[u8; KEY_LEN], chain: &[u8; 32], seq: u64, entry: &[u8; 32]) -> Result<[u8; 64], Why> {
+/// as `WitnessSign` (neither ever signs an entry the other signed differently there), at beacon height `at`.
+pub fn upkeep_witness_sign<H: Host>(h: &mut H, m: &[u8; KEY_LEN], chain: &[u8; 32], seq: u64, entry: &[u8; 32], at: u64) -> Result<[u8; 64], Why> {
     let key = member(h, m).ok_or(Why::NoSession)?.key();
     witnessed(h, &m[..], chain, seq, entry)?;
-    Ok(key.sign(&witness_message(chain, seq, entry)).to_bytes())
+    Ok(key.sign(&witness_message(chain, seq, entry, at)).to_bytes())
 }
 
 /// Where a member's KEEPER MANDATE is kept.
@@ -286,10 +287,10 @@ pub enum Request {
     /// never spends the person's money or vouches in their name).
     TokenSign { message: Vec<u8> },
     /// WITNESS with the session's member key (TOKEN §7a: a witness seated by lot): sign [`witness_message`] for the
-    /// entry `entry` at place (`chain`, `seq`) — only for the home site, and never a DIFFERENT entry at a place this
+    /// entry `entry` at place (`chain`, `seq`), at the beacon height `at` the page reads now — only for the home site, and never a DIFFERENT entry at a place this
     /// member signed already (the same one again: the same signature). The place is saved BEFORE the signature is
     /// returned, so a crash can lose a signature nobody received, never sign twice.
-    WitnessSign { chain: [u8; 32], seq: u64, entry: [u8; 32] },
+    WitnessSign { chain: [u8; 32], seq: u64, entry: [u8; 32], at: u64 },
     /// WITNESS WITH NO PAGE OPEN (TOKEN §7a): what the delegate's witness round needs, handed over by the home site —
     /// the codes' hashes (token, key log, bag, beacon), the beacon, the stake pool. Kept per member; the round then
     /// witnesses what this member's stake is drawn for on every wake-up.
@@ -1488,7 +1489,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             }
             Signed { sig: a.key().sign(&message).to_bytes().to_vec() }
         }
-        Request::WitnessSign { chain, seq, entry } => {
+        Request::WitnessSign { chain, seq, entry, at } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {
                 return Refused(Why::NotHome);
@@ -1496,7 +1497,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             if let Err(w) = witnessed(h, &a.public(), &chain, seq, &entry) {
                 return Refused(w);
             }
-            Signed { sig: a.key().sign(&witness_message(&chain, seq, &entry)).to_bytes().to_vec() }
+            Signed { sig: a.key().sign(&witness_message(&chain, seq, &entry, at)).to_bytes().to_vec() }
         }
         Request::WitnessMandate { mandate } => match keep_mandate(h, app, WITNESS_MANDATE, &bincode::serialize(&mandate).expect("a mandate encodes")) {
             Ok(()) => WitnessMandated,

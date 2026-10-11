@@ -74,7 +74,7 @@ export async function start(ctx) {
             continue;
           }
           ctx.log("tokens", { what: `an entry not accepted when its queue (epoch ${queuedIn}) aged out — queued again (${s?.waiting ?? "waiting"})` });
-        } else if (o.wit) await putOne(core.witness_put(code, bytes(o.wit), new Uint8Array(0), new Uint8Array(0), new Uint8Array(0)));
+        } else if (o.wit) await putOne(core.witness_put(code, bytes(o.wit), new Uint8Array(0), new Uint8Array(0), new Uint8Array(0), 0));
         await chained(Core.witness_queue_address, at, bytes(o.q), "queueing an entry for its witnesses");
         await priv.put(`toqueue/${o.q}`, JSON.stringify({ ...o, done: true, epoch: e }));
       } catch (err) {
