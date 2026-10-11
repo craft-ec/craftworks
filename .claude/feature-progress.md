@@ -2283,6 +2283,8 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       re-welcome per request, inviters in turn, skipped when its device announced keys after the request (fx v583
       re-added fy who was in; fixed in v584, fy recovered). Live: Wren's page "request found … kept again", "let in …
       asked again" (09:04); the owner's page must load v376 to answer.
+      v377 (10-11): shared used-package tags (writers pointers + `shared:` rows, into the node's mandate `spent`) and the
+      welcome resend outbox — fx v588 ran clean; live sent conversation + upkeep only (100 already published).
 - [x] 10-11 STRANDED ENTRIES (fx v584: $CRAFT chains' first entries never witnessed): (a) token-net cached a failed
       definition read for the process's life — Wren's witness started before $CRAFT's definition existed and refused
       every $CRAFT entry ("the token's definition not read"); now only reads are kept. (b) An entry still unaccepted when
