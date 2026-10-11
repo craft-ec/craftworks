@@ -117,7 +117,9 @@ export async function mount(ctx, el) {
     if (F.toSpace(place) && !(await mail.accepts(place.id))) throw new Error(`${space.shown(place)}'s mail is off, so its forms take no responses yet: its owner turns it on (Mail)`);
     // WHO MAY ANSWER: the form's rule (its readers who may comment); a circle's credential cited, as a comment does.
     const cred = F.toSpace(place) ? null : await roles.credToCite(form, "comment").catch(() => null);
-    if (!(await mayAnswer(form, place, me, cred))) throw new Error("this form is not open to you");
+    // (The respondent's own check is the one comments use — `items.mayWriteOn`: a rule not read yet passes here and is
+    // checked where the answers are read; measured on fx: a strict check here refused a public form.)
+    if (!(await items.mayWriteOn(form, "comment", { outside: F.toSpace(place) ? place : null }))) throw new Error("this form is not open to you");
     const x = F.responseMail(form, place, me, v.clean, Date.now(), cred);
     const sent = await mail.send(x.to, x.subject, x.body);
     return { ...v, ref: sent.id };
