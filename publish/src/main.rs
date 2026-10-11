@@ -393,7 +393,7 @@ async fn main() -> Result<()> {
 
     // 2. Packages, immutable.
     let built = app.join("packages/build");
-    let packages: [(&str, &str, PathBuf); 120] = [
+    let packages: [(&str, &str, PathBuf); 121] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -543,6 +543,9 @@ async fn main() -> Result<()> {
         ("beacon-step-wasm", "bytes", built.join("craftworks_beacon_step_bg.wasm")),
         ("beacon-config", "bytes", std::env::var("BEACON_CONFIG").map(std::path::PathBuf::from).unwrap_or_else(|_| app.join("packages/beacon-config.json"))),
         ("tokens-config", "bytes", std::env::var("TOKENS_CONFIG").map(std::path::PathBuf::from).unwrap_or_else(|_| app.join("packages/tokens-config.json"))),
+        // SUPPORT (`{ support }`: its X25519 public key, hex; SUPPORT_CONFIG names the file): `index.health` seals each
+        // report to it — the health bag is public, only support (tools/health-watch, its secret) reads a report.
+        ("support-config", "bytes", std::env::var("SUPPORT_CONFIG").map(std::path::PathBuf::from).unwrap_or_else(|_| app.join("packages/support-config.json"))),
     ];
     let mut entries = Vec::new();
     // WHAT IS ALREADY UP: the piece addresses the live manifest names (PUBLISHED_MANIFEST, the app site's own

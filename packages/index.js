@@ -243,12 +243,21 @@ export async function start(ctx) {
   const SPACES = "discover:spaces";
   const listSpace = desc => point(SPACES, { id: desc.id, name: desc.name, kind: desc.kind, governance: { owner: desc.governance.owner, nonce: desc.governance.nonce } });
   const spaces = () => pointers(SPACES);
-  // HEALTH (10-09, owner: "auto report and you keep monitor"): a problem a page meets, written into the day's PUBLIC
-  // health bag (`health YYYY-MM-DD`, UTC) — never content: its kind, a short space id, epochs, the reason, the
-  // reporting package's version. Once a kind per space per hour from a page. Support reads it (tools/health-watch).
-  // A day's reports CHAINED: `health <day>`, then `health <day> #1`, … (a bag holds ROOM items: a growing network's
-  // heartbeats fill one).
+  // HEALTH (10-09, owner: "auto report and you keep monitor"): a problem a page meets, written into the day's health
+  // bag (`health YYYY-MM-DD`, UTC) — never content: its kind, a short space id, epochs, the reason, the reporting
+  // package's version. Once a kind per space per hour from a page. The bag is PUBLIC (anyone writes a report) but each
+  // report is SEALED, whole, to SUPPORT's public key (`support-config`: `{ support }`) — its prefixes (reporter, space,
+  // member) would otherwise tell anyone who shares which space with whom; only support opens one (tools/health-watch).
+  // No support key: nothing is reported (never in the clear). A day's reports CHAINED: `health <day>`, then
+  // `health <day> #1`, … (a bag holds ROOM items: a growing network's heartbeats fill one).
   const healthRef = (day, k) => (k ? `health ${day} #${k}` : `health ${day}`);
+  let supportKey;
+  const support = () =>
+    (supportKey ??= ctx
+      .require("support-config")
+      .then(b => JSON.parse(dec.decode(b)).support)
+      .then(h => (/^[0-9a-f]{64}$/.test(h ?? "") ? bytes(h) : null))
+      .catch(() => null));
   // Once a kind per space (per member it is about) per hour from a page.
   const reported = new Map();
   async function health(item) {
@@ -260,8 +269,13 @@ export async function start(ctx) {
     // WHO reported (the account's id, its first 8 hex: reports from one account told apart, and its other reports
     // read together) — never more of it.
     const r = String((await space.account().catch(() => null))?.id ?? "").replace(/^did:craftec:/, "").slice(0, 8) || null;
-    const payload = enc.encode(JSON.stringify({ ...item, r, v, at: Date.now() }));
+    const to = await support();
+    if (!to) {
+      ctx.log("health", { what: `${item.k}: not reported (this page has no support key: support-config)` });
+      return false;
+    }
     try {
+      const payload = Core.seal_to(to, enc.encode(JSON.stringify({ ...item, r, v, at: Date.now() })), crypto.getRandomValues(new Uint8Array(32)));
       await chained((d, k) => refAddress(healthRef(d, k)), day, payload, "reporting health");
       return true;
     } catch (e) {
@@ -271,7 +285,6 @@ export async function start(ctx) {
       return false;
     }
   }
-  const healthOf = async day => parse(await chain((d, k) => refAddress(healthRef(d, k)), day, "reading the day's health bag"));
 
   // ANY OPEN BAG by its address (a registry: the epoch's vouches): add an item (with its work), read its items.
   // A CHAINED list (`wallet::chained`: payments, the witness queue, the files registry) — an epoch's items in bags
@@ -301,5 +314,5 @@ export async function start(ctx) {
     return out;
   }
   const bag = { add: (address, payload, what = "adding to a bag") => drop(address, payload, what), read: (address, what = "reading a bag", opts = {}) => read(address, what, opts), chained, chain };
-  return { bag, onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, watch, listSpace, spaces, health, healthOf, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, OPEN };
+  return { bag, onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, watch, listSpace, spaces, health, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, OPEN };
 }

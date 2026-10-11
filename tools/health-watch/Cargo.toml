@@ -11,6 +11,8 @@ craftworks-identity = { path = "../../identity" }
 craftworks-bag-contract = { path = "../../contracts-src/bag", default-features = false }
 wire = { path = "../../sdk/craftworks-sdk/wire" }
 sha2 = "0.10"
+# The support key: its public half from the secret seed (`identity::seal_to` / `open_with` seal and open).
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.27"
