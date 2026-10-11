@@ -88,20 +88,28 @@ impl<'a> Reader<'a> {
     pub fn keys(&self, did: &[u8; 32]) -> Option<craftworks_idlog_contract::Log> {
         self.get(T::id(&self.net.idlog_hash, did)).and_then(|b| craftworks_idlog_contract::read(did, &b))
     }
-    /// The stake CLAIMS of `epoch` (its claims registry).
-    pub fn claims(&self, epoch: u64) -> Vec<StakeClaim> {
+    /// The stake claims of `epoch` as its registry holds them (every one, backed or not).
+    pub fn raw_claims(&self, epoch: u64) -> Vec<StakeClaim> {
         let p = T::claims::Params { code_hash: self.net.code_hash, pool: self.net.pool, beacon: self.net.beacon, epoch };
         self.get(p.id()).and_then(|b| T::claims::Registry::decode(&b)).map_or(vec![], |r| r.claims)
+    }
+    /// The VALID STAKERS of `epoch` (`wallet::valid_stakers`, TOKEN §7a: witnessed stake — what every lot is drawn over).
+    pub fn claims(&self, epoch: u64) -> Vec<StakeClaim> {
+        let Some(pd) = self.definition(&self.net.pool) else { return Vec::new() };
+        let tok = Tok { definition: self.net.pool, item: [0; 32] };
+        let registry = |e: u64| self.raw_claims(e);
+        let chain = |o: &[u8; 32]| Some((self.params(&tok, o)?, self.chain(&tok, o)?));
+        let out = |h: u64| self.out_at(h);
+        let sigs = |c: &[u8; 32], q: u64| self.sigs(c, q);
+        let r = wallet::StakeReads { pool: self.net.pool, pool_def: &pd, registry: &registry, chain: &chain, out: &out, sigs: &sigs };
+        wallet::valid_stakers(&r, epoch, &Default::default())
     }
     pub fn sigs(&self, chain: &[u8; 32], seq: u64) -> Vec<witness::WitnessSig> {
         self.bag(wallet::witness_bag(chain, seq)).iter().filter_map(|p| wallet::bytes::read_witness_sig(p)).collect()
     }
-    /// A staker's real stake in the pool at height `at`.
+    /// A staker's stake as its VALID claim stands at height `at` (its claims epoch's).
     pub fn stake_of(&self, owner: &[u8; 32], at: u64) -> Option<witness::Stake> {
-        let tok = Tok { definition: self.net.pool, item: [0; 32] };
-        let p = self.params(&tok, owner)?;
-        let d = self.definition(&self.net.pool)?;
-        wallet::stake_at(&p, &d, &self.chain(&tok, owner)?, at).ok()
+        wallet::stake_from(&self.claims(at / T::supply::EPOCH), owner)
     }
     pub fn freeze(&self, def: &[u8; 32]) -> Option<T::freeze::List> {
         let d = self.definition(def)?;

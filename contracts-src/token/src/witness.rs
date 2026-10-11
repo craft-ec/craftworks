@@ -49,7 +49,14 @@ pub fn equivocation(key: &[u8; 32], a: &WitnessSig, b: &WitnessSig) -> bool {
 /// public key of the device Wren's words credentialed. While an epoch has fewer than [`BASELINE_UNTIL`] valid stake
 /// claims it holds a SEAT in every committee, its signature counted WITHOUT stake (it has none to burn: a visible
 /// bootstrap trust in Wren); from that many live stakers on it has no seat — stepping out by itself.
+#[cfg(not(feature = "testlot"))]
 pub const BASELINE: [u8; 32] = [0xeb, 0x51, 0x44, 0x08, 0x05, 0xff, 0xd0, 0xe1, 0xb0, 0x92, 0x07, 0x4e, 0x4f, 0x16, 0x01, 0xd5, 0x3a, 0x66, 0x93, 0xc7, 0x4b, 0x92, 0x23, 0x2f, 0xa8, 0xd4, 0xc5, 0xa3, 0xce, 0xdc, 0x1b, 0x1c];
+/// (TESTS of what is drawn over VALID STAKE — `testlot`: a baseline whose seed is known, `BASELINE_SEED` — so a test lot
+/// bootstraps as the network does: the baseline signs the first stakers' entries.)
+#[cfg(feature = "testlot")]
+pub const BASELINE: [u8; 32] = [0xca, 0x7d, 0x75, 0xb4, 0xea, 0x1d, 0x5a, 0x86, 0x1a, 0xa5, 0x83, 0x84, 0x06, 0x78, 0x2d, 0xfc, 0x62, 0xcd, 0xee, 0x7b, 0x05, 0x9a, 0x33, 0x4f, 0x0d, 0xa1, 0x53, 0xd5, 0x93, 0x86, 0xa0, 0x9a];
+#[cfg(feature = "testlot")]
+pub const BASELINE_SEED: [u8; 32] = [0xBA; 32];
 pub const BASELINE_UNTIL: usize = 6;
 
 /// An epoch's SEATS for `live` valid claims (TOKEN §7d, a small network: committees SCALE with the live stakers): drawn

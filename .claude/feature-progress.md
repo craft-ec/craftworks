@@ -2208,6 +2208,12 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       MOVED TO C: stake counts only WITNESSED entries (acceptance recurses through other stakes: needs a design — where
       the recursion is cut, caching); TokenSign place guard (a guard alone wedges a wallet whose signed entry was never
       put: the wallet must re-send what it signed at a place).
+- [x] C1 VALID STAKE 10-11 (built: `wallet::valid_stakers` one rule for pages, delegate and Wren's tool; tested — an
+      unwitnessed staker drops out, its negative control run; the test lot's stakers are baseline-signed under a
+      test-only `testlot` baseline key, absent from every real build — checked in the wasm) (TOKEN §7a "VALID STAKE", designed 10-11): `V(E)` = claims whose staker's pool chain at E's
+      start stakes ≥ the claim with its key, is not forked, and has its last pre-E entry ACCEPTED under V(E′) (E′ its
+      lot's epoch < E); cached per epoch. Every lot (seated, accepted_at, fees, statement_accept, wallet stake_of) draws
+      over V(E). Fixes: fake stake (self-made mint / deep forged receive) and seat stuffing / baseline removal.
 - [ ] C (design first): claims registry backed by stake (seat stuffing / replacement); registries chained + per-voucher
       caps; standing answers checked against pieces; record crowding; listing + claims with no page open; Wren
       baseline dependency; gate schedule; lineage cap; misdeed reputation; rule versions.

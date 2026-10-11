@@ -8,7 +8,7 @@ use crate::tokens::{there, Ctx, Got, Lot, Step};
 use craftworks_token_contract as t;
 use craftworks_wallet::queue::Queued;
 use std::cell::RefCell;
-use t::{claims, draw, supply, wallet, witness, ChainParams, Definition, State};
+use t::{draw, supply, wallet, witness, ChainParams, Definition, State};
 
 /// The beacon's OUTPUT at height `h`: from its state, else its outputs log. `Err(id)`: read that first; `Ok(Err(why))`:
 /// not drawn yet, or not recorded.
@@ -81,8 +81,9 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
         Step::Done(Some(false)) => return Ok(Step::Done(Verdict::NotSeated)),
         _ => {}
     }
-    let registry = |ep: u64| claims::Params { code_hash: ctx.code_hash, pool: lot.pool, beacon: d.beacon, epoch: ep }.id();
-    let claims_of = |ep: u64| read(registry(ep)).and_then(|b| claims::Registry::decode(&b)).map_or(vec![], |r| r.claims);
+    // Every lot over the VALID STAKERS (`stakers`: witnessed stake, never the raw registry).
+    let memo = crate::tokens::StakeMemo::default();
+    let claims_of = |ep: u64| crate::tokens::stakers(ctx.code_hash, lot, got, d.beacon, &read, ep, &memo);
     // THE RULE, over what is read here (each read missing is asked for, then the rule run again).
     let sigs = |c: &[u8; 32], sq: u64| {
         let a = wallet::witness_bag(c, sq);
@@ -95,12 +96,7 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
         }
         Ok(r) => r.ok(),
     };
-    let pool_def = definition(&lot.pool);
-    let stake_of = |o: &[u8; 32], at: u64| {
-        let pd = pool_def.as_ref()?;
-        let cp = params(&t::Tok { definition: lot.pool, item: [0; 32] }, o, pd);
-        wallet::stake_at(&cp, pd, &read(cp.id()).and_then(|b| State::decode(&b))?, at).ok()
-    };
+    let stake_of = |o: &[u8; 32], at: u64| wallet::stake_from(&claims_of(at / supply::EPOCH), o);
     let program = |id: &[u8; 32]| read(*id);
     let freeze = |tid: &[u8; 32]| {
         let td = definition(tid)?;
@@ -136,11 +132,22 @@ pub fn seated(ctx: &Ctx, lot: &Lot, got: Got, beacon: &[u8; 32], place: &[u8; 32
         Ok(Ok(o)) => o,
     };
     let epoch = supply::epoch(h);
-    let registry = claims::Params { code_hash: ctx.code_hash, pool: lot.pool, beacon: *beacon, epoch }.id();
-    let claims = match there(got, &registry) {
-        Err(w) => return Step::Want(vec![w]),
-        Ok(b) => b.and_then(|b| claims::Registry::decode(&b)).map_or(vec![], |r| r.claims),
+    // Over the VALID STAKERS (a claim nobody's witnessed stake backs takes no seat).
+    let want: RefCell<Vec<[u8; 32]>> = RefCell::new(Vec::new());
+    let read = |id: [u8; 32]| match there(got, &id) {
+        Err(w) => {
+            want.borrow_mut().push(w);
+            None
+        }
+        Ok(b) => b,
     };
+    let claims = crate::tokens::stakers(ctx.code_hash, lot, got, *beacon, &read, epoch, &crate::tokens::StakeMemo::default());
+    let mut w = want.into_inner();
+    if !w.is_empty() {
+        w.sort();
+        w.dedup();
+        return Step::Want(w);
+    }
     let valid = draw::valid(&lot.pool, epoch, &claims);
     let (k, _, _) = witness::seats(valid.len(), wallet::COMMITTEE);
     Step::Done(Some(draw::committee_of(&out, place, seq, &valid, k).iter().any(|m| claims[*m].key == *me)))
@@ -180,7 +187,8 @@ pub fn signed(ctx: &Ctx, lot: &Lot, got: Got, queued: &[Queued], statements: &[c
         Some((p.id(), s.entries[i].clone(), i.checked_sub(1).map(|j| s.entries[j].clone()), d.margin))
     };
     let beacon = ctx.beacon;
-    let claims = |ep: u64| read(claims::Params { code_hash: ctx.code_hash, pool: lot.pool, beacon, epoch: ep }.id()).and_then(|b| claims::Registry::decode(&b)).map_or(vec![], |r| r.claims);
+    let memo = crate::tokens::StakeMemo::default();
+    let claims = |ep: u64| crate::tokens::stakers(ctx.code_hash, lot, got, beacon, &read, ep, &memo);
     let out = |h: u64| match out_at(lot, got, &beacon, h) {
         Err(w) => {
             want.borrow_mut().push(w);
@@ -207,7 +215,8 @@ pub fn signed(ctx: &Ctx, lot: &Lot, got: Got, queued: &[Queued], statements: &[c
 pub fn accepted_statement(ctx: &Ctx, lot: &Lot, got: Got, statements: &[craftworks_wallet::fees::Statement]) -> Option<craftworks_wallet::fees::Statement> {
     let beacon = ctx.beacon;
     let read = |id: [u8; 32]| there(got, &id).ok().flatten();
-    let claims = |ep: u64| read(claims::Params { code_hash: ctx.code_hash, pool: lot.pool, beacon, epoch: ep }.id()).and_then(|b| claims::Registry::decode(&b)).map_or(vec![], |r| r.claims);
+    let memo = crate::tokens::StakeMemo::default();
+    let claims = |ep: u64| crate::tokens::stakers(ctx.code_hash, lot, got, beacon, &read, ep, &memo);
     let out = |h: u64| out_at(lot, got, &beacon, h).ok().and_then(|r| r.ok());
     let sigs = |c: &[u8; 32], sq: u64| {
         let a = wallet::witness_bag(c, sq);

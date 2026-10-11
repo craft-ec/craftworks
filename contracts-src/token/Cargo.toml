@@ -35,6 +35,8 @@ contract-keys = { path = "../../sdk/craftworks-sdk/contract-keys" }
 [features]
 default = ["freenet-main-contract"]
 freenet-main-contract = ["dep:freenet-stdlib"]
+# Tests only: the baseline's key is one whose seed tests know (`witness::BASELINE_SEED`). Never in a build.
+testlot = []
 
 [profile.release]
 opt-level = "z"

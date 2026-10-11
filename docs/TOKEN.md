@@ -733,6 +733,19 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   only for the stake its chain held before its claims' epoch began (`wallet::stake_at`), so an entry's acceptance
   never changes when its witnesses later unstake. Unbonding lasts TWO epochs, so whatever was counted for an epoch
   stays burnable a full epoch after it ends. A multisig chain's stake answers for no single key: it does not witness.
+- **VALID STAKE (designed 10-11, audit: built next).** What a claim stands on is WITNESSED stake, not a chain's raw
+  entries (the audit: a self-made KeeperMint under a root of one's own, or a forged receive more than 4 entries back,
+  passed the contract and counted as stake — anyone could seat themselves). The VALID STAKERS of claims epoch E,
+  `V(E)`: each claim in E's registry whose staker's pool chain, at E's start, (1) stakes at least the claim with the
+  claim's key among the keys that stake burns for (`stake_at`), (2) is not forked, and (3) has its LAST entry before
+  E's start ACCEPTED — signed by enough of its committee, drawn from `V(E′)` of that entry's own lot epoch E′ < E. A
+  witness signs an entry only once its predecessor is accepted (`may_witness`), so an accepted last entry vouches for
+  the chain's whole history by induction. The recursion ends at an epoch with no valid stakers (the baseline's seat
+  alone). Every lot — committees, seats, acceptance — is drawn over `V(E)`, never the raw registry: a claim nobody's
+  stake backs takes no seat and no longer removes the baseline's seat. `V(E)` is computed once an epoch begins and
+  kept (each staker's pre-E entries are fixed by then; signatures only ever add). An observer reading an entry's
+  signatures later may see a larger `V(E′)` than one reading early: that can delay acceptance (liveness), never count
+  stake that was not witnessed (safety).
 - **Weight = EARNED STAKE** (owner: "stake come from reward from storage… cumulative, grows over time; the longer in
   the game, the higher the stake"). No upfront cost: a node earns KEEPER REWARDS for holding what real users read
   (REWARDS §4, paid by held DEMAND, never self-claimed) and each reward lands LOCKED as witness stake. Two signatures at

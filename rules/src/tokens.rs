@@ -163,54 +163,77 @@ pub fn statement_accepted(lot: &Lot, got: Got, code_hash: [u8; 32], beacon: [u8;
 /// ACCEPTANCE at a PLACE (`place`, `seq`: a chain entry's, or a statement's) of `entry` (its hash, or a root), drawn
 /// from claims epoch `epoch` at beacon height `h`.
 #[allow(clippy::too_many_arguments)]
+/// A lot's memo of `V(E)` per claims epoch, for one evaluation (`stakers`).
+pub type StakeMemo = std::cell::RefCell<std::collections::BTreeMap<u64, Vec<t::draw::StakeClaim>>>;
+
+/// The VALID STAKERS of claims epoch `epoch` on `lot` (`wallet::valid_stakers`, TOKEN §7a): every read through `read`
+/// (a contract not read: `None` — the caller records it and asks for it, then evaluates again).
+pub fn stakers(code_hash: [u8; 32], lot: &Lot, got: Got, beacon: [u8; 32], read: &dyn Fn([u8; 32]) -> Option<Vec<u8>>, epoch: u64, memo: &StakeMemo) -> Vec<t::draw::StakeClaim> {
+    let Some(pd) = read(lot.pool).and_then(|b| Definition::decode(&b)) else { return Vec::new() };
+    let registry = |ep: u64| read(t::claims::Params { code_hash, pool: lot.pool, beacon, epoch: ep }.id()).and_then(|b| t::claims::Registry::decode(&b)).map_or(vec![], |r| r.claims);
+    let chain = |owner: &[u8; 32]| {
+        let cp = ChainParams { code_hash, definition: lot.pool, owner: *owner, beacon: pd.beacon, idlog: pd.idlog, item: [0; 32] };
+        read(cp.id()).and_then(|b| State::decode(&b)).map(|st| (cp, st))
+    };
+    let out = |h: u64| match crate::witness::beacon_out(&lot.beacon_code, got, &beacon, h) {
+        Err(w) => read(w).and(None),
+        Ok(r) => r.ok(),
+    };
+    let sigs = |c: &[u8; 32], sq: u64| {
+        let a = t::wallet::witness_bag(c, sq);
+        read(t::id(&lot.bag, &a)).and_then(|b| craftworks_bag_contract::read(&a, &b)).unwrap_or_default().iter().filter_map(|x| t::wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(x))).collect()
+    };
+    t::wallet::valid_stakers(&t::wallet::StakeReads { pool: lot.pool, pool_def: &pd, registry: &registry, chain: &chain, out: &out, sigs: &sigs }, epoch, memo)
+}
+
+/// The VALID STAKERS of claims epoch `epoch` as a step (`stakers`): `Want` what is not read yet.
+pub fn valid_of(ctx: &Ctx, lot: &Lot, got: Got, epoch: u64) -> Step<Vec<t::draw::StakeClaim>> {
+    let want = std::cell::RefCell::new(Vec::new());
+    let read = |x: [u8; 32]| match there(got, &x) {
+        Err(w) => {
+            want.borrow_mut().push(w);
+            None
+        }
+        Ok(b) => b,
+    };
+    let v = stakers(ctx.code_hash, lot, got, ctx.beacon, &read, epoch, &StakeMemo::default());
+    let mut w = want.into_inner();
+    if w.is_empty() {
+        return Step::Done(v);
+    }
+    w.sort();
+    w.dedup();
+    Step::Want(w)
+}
+
 fn accepted_at(lot: &Lot, got: Got, code_hash: [u8; 32], beacon_id: [u8; 32], place: &[u8; 32], seq: u64, entry: &[u8; 32], epoch: u64, h: u64) -> Result<Step<Result<usize, String>>, String> {
-    use t::{claims, wallet, witness};
+    use t::{wallet, witness};
     // Its lot's OUTPUT (the beacon's state, else its outputs log: `witness::beacon_out`).
     let out = match crate::witness::beacon_out(&lot.beacon_code, got, &beacon_id, h) {
         Err(w) => return Ok(Step::Want(vec![w])),
         Ok(Err(why)) => return Ok(Step::Done(Err(why.into()))),
         Ok(Ok(o)) => o,
     };
-    // The epoch's CLAIMS and the entry's SIGNATURES.
-    let registry = claims::Params { code_hash, pool: lot.pool, beacon: beacon_id, epoch }.id();
-    let bag_addr = wallet::witness_bag(place, seq);
-    let bag_id = t::id(&lot.bag, &bag_addr);
-    let mut want = Vec::new();
-    let mut read = |x: [u8; 32]| match there(got, &x) {
+    // The epoch's VALID STAKERS (never the raw registry) and the place's SIGNATURES.
+    let want = std::cell::RefCell::new(Vec::new());
+    let read = |x: [u8; 32]| match there(got, &x) {
         Err(w) => {
-            want.push(w);
+            want.borrow_mut().push(w);
             None
         }
-        Ok(b) => Some(b),
+        Ok(b) => b,
     };
-    let (reg, bag) = (read(registry), read(bag_id));
-    let (Some(reg), Some(bag)) = (reg, bag) else { return Ok(Step::Want(want)) };
-    let claims = reg.and_then(|b| claims::Registry::decode(&b)).map_or(vec![], |r| r.claims);
-    let sigs: Vec<witness::WitnessSig> = bag.and_then(|b| craftworks_bag_contract::read(&bag_addr, &b)).unwrap_or_default().iter().filter_map(|i| wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(i))).collect();
-    // The STAKE of every claimer who signed (read only for them).
-    let pool_def = if claims.is_empty() { None } else {
-        match there(got, &lot.pool) {
-            Err(w) => return Ok(Step::Want(vec![w])),
-            Ok(b) => b.and_then(|b| Definition::decode(&b)),
-        }
-    };
-    let at = epoch * t::supply::EPOCH;
-    let mut want = Vec::new();
-    let mut stakes: Vec<([u8; 32], Option<witness::Stake>)> = Vec::new();
-    if let Some(pd) = &pool_def {
-        for c in claims.iter().filter(|c| sigs.iter().any(|s| s.signed_by(&c.key))) {
-            let cp = ChainParams { code_hash, definition: lot.pool, owner: c.owner, beacon: pd.beacon, idlog: pd.idlog, item: [0; 32] };
-            match there(got, &cp.id()) {
-                Err(w) => want.push(w),
-                Ok(b) => stakes.push((c.owner, b.and_then(|b| State::decode(&b)).and_then(|st| wallet::stake_at(&cp, pd, &st, at).ok()))),
-            }
-        }
+    let memo = StakeMemo::default();
+    let valid = stakers(code_hash, lot, got, beacon_id, &read, epoch, &memo);
+    let bag_addr = wallet::witness_bag(place, seq);
+    let sigs: Vec<witness::WitnessSig> = read(t::id(&lot.bag, &bag_addr)).and_then(|b| craftworks_bag_contract::read(&bag_addr, &b)).unwrap_or_default().iter().filter_map(|i| wallet::bytes::read_witness_sig(craftworks_bag_contract::payload(i))).collect();
+    let mut w = want.into_inner();
+    if !w.is_empty() {
+        w.sort();
+        w.dedup();
+        return Ok(Step::Want(w));
     }
-    if !want.is_empty() {
-        return Ok(Step::Want(want));
-    }
-    let stake_of = |o: &[u8; 32]| stakes.iter().find(|x| x.0 == *o).and_then(|x| x.1.clone());
-    Ok(Step::Done(witness::accepted(&lot.pool, place, seq, entry, &out, epoch, &claims, &sigs, wallet::COMMITTEE, &stake_of).map_err(String::from)))
+    Ok(Step::Done(witness::accepted(&lot.pool, place, seq, entry, &out, epoch, &valid, &sigs, wallet::COMMITTEE, &|o| wallet::stake_from(&valid, o)).map_err(String::from)))
 }
 
 /// A REAL LOT for tests (TOKEN §7a): six stakers (so the baseline has no seat — no private key needed), each a DID whose
@@ -283,6 +306,7 @@ pub mod testlot {
         h0.state.entries.extend(w0.debit(&h0, Body::Stake { amount: 1_000 }, 2).unwrap());
         let first = h0.state.clone();
         got.insert(h0.params.id(), first.encode());
+        let mut staked = vec![(h0.params.clone(), first.clone())];
         // The others: receive, then stake.
         for (d, l, v) in &people[1..] {
             let w = Wallet { device: v, keys: l };
@@ -291,6 +315,7 @@ pub mod testlot {
             h.state.entries = w.collect(&h, &Sources { chains: &chains, blocks: &Default::default(), programs: &[], shards: &[] }, 4).unwrap();
             h.state.entries.extend(w.debit(&h, Body::Stake { amount: 1_000 }, 5).unwrap());
             got.insert(h.params.id(), h.state.encode());
+            staked.push((h.params.clone(), h.state.clone()));
         }
         for (d, l, _) in &people {
             got.insert(chain(ctx, &pd, &pool, d, [0; 32]).keys_id(), l.encode());
@@ -311,6 +336,15 @@ pub mod testlot {
         for index in 0..TOP / span + 1 {
             let entries = (index * span..((index + 1) * span).min(TOP)).filter(|h| *h > 0).map(|h| (h, *blake3::hash(&h.to_le_bytes()).as_bytes())).collect();
             got.insert(t::id(&lot.beacon_code, &craftworks_beacon_contract::log::Params { beacon: ctx.beacon, index }.encode()), craftworks_beacon_contract::log::Log { entries }.encode());
+        }
+        // THE BASELINE signs each staker's last entry before epoch 1 (no stakers yet: its seat alone accepts) — so their
+        // stake is VALID stake (`wallet::valid_stakers`), as Wren's witness makes the network's first stakers'.
+        let baseline = SigningKey::from_bytes(&witness::BASELINE_SEED);
+        for (cp, st) in &staked {
+            let e = st.entries.last().unwrap();
+            let a = wallet::witness_bag(&cp.id(), e.seq);
+            let item = wallet::bytes::witness_sig(&witness::WitnessSig { chain: cp.id(), seq: e.seq, entry: e.hash(), sig: baseline.sign(&witness::WitnessSig::message(&cp.id(), e.seq, &e.hash())).to_bytes() });
+            got.insert(t::id(&lot.bag, &a), craftworks_bag_contract::encode(&a, &[craftworks_bag_contract::grind(&a, &item)]));
         }
         TestLot { lot, keys: people.into_iter().map(|p| p.2.key).collect() }
     }
@@ -415,5 +449,40 @@ pub mod testlot {
             witness(&tl, &mut g, &p, &pool_def, &s, 0, n);
             assert_eq!(acc(&g), Ok(want), "{n} signed");
         }
+    }
+}
+#[cfg(test)]
+mod baseline_check {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// VALID STAKE (audit 10-11): a staker whose stake no witness signed is no staker. The six test stakers' chains
+    /// are signed by the baseline (the lot's bootstrap); one's signature taken away, that one drops out of `V(1)`.
+    #[test]
+    fn only_witnessed_stake_is_valid_stake() {
+        let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
+        let mut got = HashMap::new();
+        let tl = testlot::stakers(&ctx, &mut got);
+        let v = |got: &HashMap<[u8; 32], Vec<u8>>| testlot::done(&|g| Ok(valid_of(&ctx, &tl.lot, g, 1)), got).unwrap();
+        assert_eq!(v(&got).len(), 6, "every staker's stake witnessed");
+        // Staker 2's last entry before epoch 1: its witness bag emptied.
+        let reg = t::claims::Registry::decode(&got[&t::claims::Params { code_hash: ctx.code_hash, pool: tl.lot.pool, beacon: ctx.beacon, epoch: 1 }.id()]).unwrap();
+        let two = reg.claims.iter().find(|c| c.key == tl.keys[2].verifying_key().to_bytes()).unwrap().owner;
+        let pd = Definition::decode(&got[&tl.lot.pool]).unwrap();
+        let cp = ChainParams { code_hash: ctx.code_hash, definition: tl.lot.pool, owner: two, beacon: pd.beacon, idlog: pd.idlog, item: [0; 32] };
+        let st = State::decode(&got[&cp.id()]).unwrap();
+        let last = st.entries.last().unwrap();
+        let a = t::wallet::witness_bag(&cp.id(), last.seq);
+        got.insert(t::id(&tl.lot.bag, &a), craftworks_bag_contract::encode(&a, &[]));
+        let after = v(&got);
+        assert_eq!(after.len(), 5, "its stake no longer counts");
+        assert!(!after.iter().any(|c| c.owner == two));
+    }
+
+    #[test]
+    fn the_test_baseline_key_is_its_seeds() {
+        use ed25519_dalek::SigningKey;
+        let t = craftworks_token_contract::witness::BASELINE;
+        assert_eq!(SigningKey::from_bytes(&craftworks_token_contract::witness::BASELINE_SEED).verifying_key().to_bytes(), t);
     }
 }

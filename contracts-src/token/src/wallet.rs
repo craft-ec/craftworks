@@ -92,6 +92,66 @@ pub fn statement_accept(src: &Source, epoch: u64, root: &[u8; 32]) -> Result<usi
     witness::accepted(&src.pool, &place, 0, root, &out, ce, &(src.claims)(ce), &(src.sigs)(&place, 0), COMMITTEE, &|o| (src.stake_of)(o, ce * supply::EPOCH))
 }
 
+/// What VALID STAKE (TOKEN §7a) is read from: the raw CLAIMS REGISTRY of an epoch, a staker's POOL CHAIN (its params and
+/// state, whole from seq 0), the beacon's outputs, a place's witness signatures. A read not there: `None` / empty.
+pub struct StakeReads<'a> {
+    pub pool: [u8; 32],
+    pub pool_def: &'a Definition,
+    pub registry: &'a dyn Fn(u64) -> Vec<StakeClaim>,
+    pub chain: &'a dyn Fn(&[u8; 32]) -> Option<(ChainParams, State)>,
+    pub out: &'a dyn Fn(u64) -> Option<[u8; 32]>,
+    pub sigs: &'a dyn Fn(&[u8; 32], u64) -> Vec<WitnessSig>,
+}
+
+/// The VALID STAKERS of claims epoch `epoch`, `V(E)` (TOKEN §7a, audit 10-11): each claim of its registry whose staker's
+/// pool chain at the epoch's start stakes at least the claim with the claim's key among the keys that stake burns for,
+/// is not forked, and has its LAST entry before the epoch's start ACCEPTED — by its committee drawn from `V` of that
+/// entry's own lot epoch (earlier: the recursion ends at an epoch with none, where the baseline's seat alone decides).
+/// A witness signs an entry only after its predecessor is accepted, so that one acceptance vouches for the whole stake
+/// history: a self-made mint or a forged receive no witness signed never counts. Every lot draws over this, never the
+/// raw registry. `memo`: the epochs already computed in this evaluation.
+pub fn valid_stakers(r: &StakeReads, epoch: u64, memo: &std::cell::RefCell<std::collections::BTreeMap<u64, Vec<StakeClaim>>>) -> Vec<StakeClaim> {
+    if let Some(v) = memo.borrow().get(&epoch) {
+        return v.clone();
+    }
+    // (Marked before the recursion: an epoch never asks for itself, but a read loop must end.)
+    memo.borrow_mut().insert(epoch, Vec::new());
+    let Some(start) = epoch.checked_mul(supply::EPOCH) else { return Vec::new() };
+    let raw = (r.registry)(epoch);
+    let mut out = Vec::new();
+    for (owner, _, i) in crate::draw::valid(&r.pool, epoch, &raw) {
+        let c = &raw[i];
+        let Some((cp, st)) = (r.chain)(&owner) else { continue };
+        if st.fork.is_some() {
+            continue;
+        }
+        let Ok((amount, keys)) = stake_at(&cp, r.pool_def, &st, start) else { continue };
+        if amount < c.amount || !keys.contains(&c.key) {
+            continue;
+        }
+        let n = st.entries.iter().take_while(|e| e.stamp < start).count();
+        let Some(j) = n.checked_sub(1) else { continue };
+        let e = &st.entries[j];
+        let Ok((lot_epoch, h)) = lot_of(e, j.checked_sub(1).map(|k| &st.entries[k]), r.pool_def.margin) else { continue };
+        if lot_epoch >= epoch {
+            continue;
+        }
+        let Some(o) = (r.out)(h) else { continue };
+        let prior = valid_stakers(r, lot_epoch, memo);
+        let id = cp.id();
+        if witness::accepted(&r.pool, &id, e.seq, &e.hash(), &o, lot_epoch, &prior, &(r.sigs)(&id, e.seq), COMMITTEE, &|w| stake_from(&prior, w)).is_ok() {
+            out.push(c.clone());
+        }
+    }
+    memo.borrow_mut().insert(epoch, out.clone());
+    out
+}
+
+/// A staker's stake as its VALID claim stands (`valid_stakers`: its stake already proved — what a signature counts for).
+pub fn stake_from(valid: &[StakeClaim], owner: &[u8; 32]) -> Option<witness::Stake> {
+    valid.iter().find(|c| c.owner == *owner).map(|c| (c.amount, vec![c.key]))
+}
+
 /// A staker's STAKE at beacon height `at` — what its chain (`p`, in the pool `d`) held staked after its entries stamped
 /// before `at` — and the keys that stake burns for: its device writer's then, and those it had retired while staked.
 /// (Unbonding amounts stay burnable but are not counted.) `Err`: the chain as given starts after `at` (a cut) — read it
