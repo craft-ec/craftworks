@@ -115,6 +115,9 @@ export async function start(ctx) {
       ],
       saved: async (changed, r, sp) => changed["text|read"] === "anyone" && madePublic(r, sp),
     },
+    // BLOG: Board's posts as articles (the text domain's rules above); a PUBLICATION whose editors (who may moderate)
+    // approve members' articles before they are public (`blog-press`).
+    blog: { title: "Blog", fields: [{ key: "approval", app: "blog", label: "Approval", choices: [["", "Members publish directly"], ["editors", "Editors approve members' articles"]] }] },
     video: { title: "Video", fields: [...["read", "post"].map(action => ({ action, path: "video", label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS("video")], saved: async (c, r, sp) => c["video|read"] === "anyone" && madePublic(r, sp) },
     audio: { title: "Audio", fields: [...["read", "post"].map(action => ({ action, path: "audio", label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS("audio")], saved: async (c, r, sp) => c["audio|read"] === "anyone" && madePublic(r, sp) },
     image: { title: "Image", fields: [...["read", "post"].map(action => ({ action, path: "image", label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS("image")], saved: async (c, r, sp) => c["image|read"] === "anyone" && madePublic(r, sp) },

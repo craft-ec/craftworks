@@ -356,6 +356,11 @@ snapshot), and the wiki commons' disputes (an edit war, a ban, a rule change go 
 2. BLOG — a LENS over Board's posts (no new store): article layout (cover, reading column, reading time, contents),
    a blog home (an author's or a space's posts as articles, newest and by tag), drafts and scheduled publishing,
    subscribe = follow, a space as a PUBLICATION (several authors, editors approving, by roles).
+   STATUS (10-11, local, not published): built — `blog` (UI) + `blog-press` (its states, kept in the posts' `meta`).
+   A DRAFT is a post "only you" (the `journal`) flagged `meta.blog.draft`; SCHEDULED = its `due`, published by
+   whichever page of the author's is open (`upkeep`'s tick) — none open then: the next page that opens publishes it.
+   EDITORS = who may `moderate`; with the space's `blog`/`approval` = editors, a member's article goes first as a
+   members-only review copy, an editor's "✅ Approved"/"❌ Declined" comment decides, the author's page publishes.
 3. FORMS — collecting information: surveys, sign-ups, applications; a form builder (field types, required, choices);
    answers SEALED to the form's owners; a results table and export.
    STATUS (10-11, local, not published): built — `form` app + `form-fields` (pure: fields, validation, summaries, CSV);

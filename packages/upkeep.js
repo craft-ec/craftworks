@@ -37,6 +37,8 @@ export async function start(ctx) {
       await conversation.resendWelcomes().catch(e => ctx.log("upkeep", { what: `welcomes kept to send again: ${e.message}` }));
       const joined = await conversation.accept().catch(e => (ctx.log("upkeep", { what: `the inbox: ${e.message}` }), []));
       if (joined.length) ctx.log("upkeep", { what: `joined ${joined.length} space(s) from the inbox` });
+      // BLOG: this person's scheduled drafts published when due, and approved ones (`blog-press`) — by any page open.
+      await (await ctx.require("blog-press")).publishDue().catch(e => ctx.log("upkeep", { what: `blog drafts: ${e.message}` }));
       // THE NODE's list first (before each space's slower work): what it keeps with no page open.
       await mandate(me).catch(e => ctx.log("upkeep", { what: `the mandate: ${e.message}` }));
       // One space at a time, each once the node is idle (BACKGROUND: a page's reads first).
