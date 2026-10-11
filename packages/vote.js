@@ -373,6 +373,7 @@ export async function mount(ctx, el) {
     body.replaceChildren(...parts);
   }
 
+  let shown = ""; // the view drawn (a maker is never drawn again under its writer)
   async function draw() {
     let at;
     try {
@@ -380,7 +381,7 @@ export async function mount(ctx, el) {
     } catch (e) {
       return root.replaceChildren(h("p", { className: "none", textContent: e.message }));
     }
-    const s = at.sub;
+    const s = (shown = at.sub);
     const inSp = at.who === "space";
     at.tabs(inSp ? [{ label: "Delegation", href: at.href("delegation"), on: s === "delegation" }, { label: "Graph", href: at.href("graph"), on: s === "graph" }, { label: "＋ New proposal", href: at.href("new-proposal"), on: s === "new-proposal" }] : [], { yoursOn: !s, ...(at.who === "mine" || inSp ? { create: { label: "New poll", href: inSp ? at.href("new-poll") : "#/vote/new-poll", on: s === "new-poll" } } : {}) });
     root.replaceChildren(theme.loading("Opening…"));
@@ -402,4 +403,16 @@ export async function mount(ctx, el) {
   }
   await draw();
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/vote" && draw());
+  // Written elsewhere (another member's vote, a finalization): drawn again — never on a maker, never while this person
+  // is choosing (a focused option or field).
+  let soon = null;
+  items.onChange(() => {
+    clearTimeout(soon);
+    soon = setTimeout(() => {
+      if (!el.isConnected || ctx.route !== "/vote" || /^new-/.test(shown)) return;
+      const f = document.activeElement;
+      if (f && root.contains(f) && /^(INPUT|TEXTAREA|SELECT)$/.test(f.tagName)) return;
+      draw();
+    }, 1500);
+  });
 }

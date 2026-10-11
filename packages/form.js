@@ -351,6 +351,9 @@ export async function mount(ctx, el) {
     if (!(await reads(form, place))) return root.replaceChildren(h("p", { className: "none", textContent: F.toSpace(place) ? `Only ${space.shown(place)}'s owner and admins read its forms' responses (its mail).` : "Only the form's maker reads its responses." }));
     const m = metaOf(form);
     const box = await mailboxOf(place);
+    // A new response (mail) drawn in while the results are open: one listener per mailbox.
+    const boxKey = F.toSpace(place) ? place.id : "";
+    if (!watched.has(boxKey)) (watched.add(boxKey), box.onChange(redrawSoon));
     await box.fetch().catch(e => ctx.log("form", { what: `fetching mail: ${e.message}` }));
     // Only mail addressed to this form's mailbox, from someone the form's rule lets answer.
     const addressed = await responsesIn(box, "in", form, F.responseTo(form, place));
@@ -453,6 +456,15 @@ export async function mount(ctx, el) {
     );
   }
 
+  let shown = ""; // the view drawn
+  const watched = new Set(); // mailboxes whose new mail redraws the results
+  let soon = null;
+  // Written elsewhere (a new response, the form edited or closed): the results and lists drawn again — never a form
+  // being answered or built.
+  function redrawSoon() {
+    clearTimeout(soon);
+    soon = setTimeout(() => el.isConnected && ctx.route === "/form" && !/^(p|e)\/|^new$/.test(shown) && draw(), 1500);
+  }
   async function draw() {
     let at;
     try {
@@ -460,7 +472,7 @@ export async function mount(ctx, el) {
     } catch (e) {
       return root.replaceChildren(h("p", { className: "none", textContent: e.message }));
     }
-    const s = at.sub;
+    const s = (shown = at.sub);
     const mayMake = at.who === "mine" || at.who === "space";
     at.tabs(at.who === "mine" || at.who === "discover" ? [{ label: "Sent", href: "#/form/sent", on: s === "sent" }] : [], { yoursOn: !s, ...(mayMake || at.who === "discover" ? { create: { label: "New form", href: at.who === "space" ? at.href("new") : "#/form/new", on: s === "new" } } : {}) });
     try {
@@ -476,4 +488,5 @@ export async function mount(ctx, el) {
   }
   await draw();
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/form" && draw());
+  items.onChange(redrawSoon);
 }
