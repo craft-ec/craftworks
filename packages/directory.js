@@ -18,6 +18,7 @@
 //   await directory.publicOf(did, name)       // any public tail of theirs (`card`, `mail`: only their account writes it)
 //   await directory.dataKey(did)              // their account's data key (hex) as their key log names it, or null
 //   await directory.devices(did, fresh?)      // their devices' keys (hex), each credential checked against their key log
+//   directory.devicesWhy(did)                 // why their devices read empty here (null: they did not)
 //   directory.onDevices(did, fn)              // their devices changed (their card moved)
 //   await directory.listMe(on)   directory.isListed()   // shown in DISCOVER (Contacts' public view), or not
 //   await directory.listed()                  // the people shown in Discover: [did] (each one's card says so)
@@ -241,27 +242,34 @@ export async function start(ctx) {
     }
     deviceWatch.get(did).push(fn);
   }
+  // WHY a person's devices read EMPTY (`devicesWhy`): an empty list is not "no devices" — their key log, devices contract
+  // or card may not have been read here — and what shows it (a member's key state) must say which.
+  const deviceWhy = new Map();
   function devices(did, fresh = false) {
     if (fresh || !deviceSets.has(did))
       deviceSets.set(
         did,
         (async () => {
-          if (!(await keysOf(did))) return [];
+          const none = why => (deviceWhy.set(did, why), []);
+          if (!(await keysOf(did))) return none("their key log not read");
           // Their DEVICES contract (owner 10-09): the devices on the key log's CURRENT key. Its card only until the
           // account has one (the card is the data key's: any of its devices could rewrite it).
           const devicesCode = await ctx.require("devices-wasm");
           if (await auth.identity.readDevices(didBytes(did))) {
             const now = core.account_devices(devicesCode, idlogCode, didBytes(did));
-            if (now) return Array.from(now);
+            if (now) return (deviceWhy.delete(did), Array.from(now));
           }
           const c = await card(did, { fresh });
-          if (!c?.nodes.length) return [];
+          if (!c) return none("no devices contract, their card not read");
+          if (!c.nodes.length) return none("no devices contract, their card lists no device");
           const creds = c.nodes.map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))));
-          return Array.from(core.account_members(idlogCode, didBytes(did), creds, []));
-        })().catch(() => []),
+          const out = Array.from(core.account_members(idlogCode, didBytes(did), creds, []));
+          return out.length ? (deviceWhy.delete(did), out) : none(`no devices contract, none of their card's ${creds.length} device(s) on their key log`);
+        })().catch(e => (deviceWhy.set(did, `reading their devices: ${String(e?.message ?? e).slice(0, 80)}`), [])),
       );
     return deviceSets.get(did);
   }
+  const devicesWhy = did => deviceWhy.get(did) ?? null;
 
   // DISCOVER's people: whoever chose to be shown. A pointer in one public bag says where to look; their own CARD says
   // whether they still want it (row `listed`): a bag keeps its pointers, so leaving is the card's word.
@@ -282,5 +290,5 @@ export async function start(ctx) {
     return dids.filter((_, i) => ok[i]);
   }
 
-  return { credTable, card, publish, setContributions, setPay, levelOf, renew, handle, shown, name, nameEl, publicOf, dataKey, devices, onDevices, listMe, isListed, listed };
+  return { credTable, card, publish, setContributions, setPay, levelOf, renew, handle, shown, name, nameEl, publicOf, dataKey, devices, devicesWhy, onDevices, listMe, isListed, listed };
 }

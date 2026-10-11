@@ -202,16 +202,44 @@ export async function start(ctx) {
       const a = anns[0] ?? null;
       const repaired = ptrs.filter(p => p?.repair === m.did);
       const by = repaired.length ? await Promise.all(repaired.map(async p => (await directory.name(Object.keys(await whoseDevice(p.w, r)).at(0) ?? "").catch(() => null)) ?? short(p.w ?? ""))) : [];
-      const state = !a ? "not announced" : !own ? "unknown" : a.epoch === own.epoch && a.branch === own.branch ? "current" : a.epoch < own.epoch ? "behind" : a.epoch === own.epoch ? "another branch" : "ahead";
+      // NO DEVICES READ here is not "not announced": what this page could not read, said as such.
+      const unreadDevs = !devs.length ? directory.devicesWhy(m.did) : null;
+      const state = unreadDevs ? "devices not read" : !a ? "not announced" : !own ? "unknown" : a.epoch === own.epoch && a.branch === own.branch ? "current" : a.epoch < own.epoch ? "behind" : a.epoch === own.epoch ? "another branch" : "ahead";
       // What their page REPORTED it cannot read here (`reportReads`): the newest report of each of their devices.
       const reports = devs.map(w => ptrs.filter(p => p?.reads && p.w === w).sort((x, y) => (y.reads.at ?? 0) - (x.reads.at ?? 0))[0]).filter(Boolean);
       const unread = [...new Set(reports.flatMap(p => (Array.isArray(p.reads.unread) ? p.reads.unread : []).map(String)))].slice(0, 6);
       // Why a welcome did not open on their device (`welcomeFailed`): the newest of each device's.
       const fails = devs.map(w => ptrs.filter(p => p?.welcomeFailed && p.w === w).sort((x, y) => (y.welcomeFailed.at ?? 0) - (x.welcomeFailed.at ?? 0))[0]).filter(Boolean);
       const welcomeFailed = fails.map(p => String(p.welcomeFailed.why)).slice(0, 2);
-      out.set(m.did, { state, epoch: a?.epoch ?? null, branch: a?.branch ?? null, devices: anns.length, repairedBy: by, unread, welcomeFailed, reported: Math.max(0, ...reports.map(p => p.reads.at ?? 0)) || null });
+      out.set(m.did, { state, why: unreadDevs, devs: devs.length, epoch: a?.epoch ?? null, branch: a?.branch ?? null, devices: anns.length, repairedBy: by, unread, welcomeFailed, reported: Math.max(0, ...reports.map(p => p.reads.at ?? 0)) || null });
     }
-    return { owner: own ? { epoch: own.epoch, branch: own.branch } : null, members: out };
+    return { owner: own ? { epoch: own.epoch, branch: own.branch } : null, writers: ptrs.length, members: out };
+  }
+  // TELEMETRY (owner 10-11: "more telemetry so you can investigate and monitor our applications health throughout the
+  // network"), into the day's public health bag — never content. THIS PAGE's own state in a space (the heartbeat's
+  // line): `{ s, e, oe, on, u }` — its keys' epoch, the owner's, whether it is on the owner's branch, what it cannot read.
+  async function selfState(sp) {
+    const g = keys.group(sp);
+    const st = await g.ready().catch(() => null);
+    const own = await ownerBranch(sp).catch(() => null);
+    const on = st && own ? st.epoch >= own.epoch && (await g.fingerprint(own.epoch).catch(() => null)) === own.branch : null;
+    const u = (await ctx.require("storage")).problemsIn(sp.id).length;
+    return { s: sp.id.slice(0, 6), e: st?.epoch ?? null, oe: own?.epoch ?? null, on, u };
+  }
+  // …and what this page SEES of the other members (hourly a space): each one not current reported (`member-keys`) with
+  // what settles why — devices read here or why not, their announcements found, the writers list's size.
+  const observedAt = new Map();
+  async function observe(sp) {
+    if (Date.now() - (observedAt.get(sp.id) ?? 0) < 3600e3) return 0;
+    observedAt.set(sp.id, Date.now());
+    const ks = await keyStatus(sp);
+    let n = 0;
+    for (const [did, k] of ks.members) {
+      if (k.state === "current") continue;
+      n++;
+      await index.health({ k: "member-keys", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), st: k.state, e: k.epoch, oe: ks.owner?.epoch ?? null, d: { devs: k.devs, why: k.why, anns: k.devices, writers: ks.writers, repairedBy: k.repairedBy.length } });
+    }
+    return n;
   }
   // WHAT THIS PAGE CANNOT READ in a space (`storage.problemsIn`), reported into its writers list — only when it
   // changes (the last report kept in the account's upkeep marks): any member then sees it (`keyStatus`).
@@ -1467,5 +1495,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, reconcile, answerStuck, joinLevel, lapse, levelCode, repair, catchUp, keyStatus, reportReads, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
+  return { direct, group, invite, accept, reconcile, answerStuck, joinLevel, lapse, levelCode, repair, catchUp, keyStatus, reportReads, selfState, observe, list, members, person, mail, createInvite, revokeInvite, join, joinOpen, asked, askedCodes, askAgain, askStuck, waiting, requestsOf, letIn, setJoin, admit, befriend, friendRequests, answerFriend, unfriend, channels , keepReaders, audience};
 }

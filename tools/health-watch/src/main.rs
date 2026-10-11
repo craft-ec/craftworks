@@ -61,32 +61,69 @@ async fn main() -> Result<()> {
         bail!("no answer");
     }
     let days: Vec<String> = if a.len() > 3 { a[3..].to_vec() } else { vec![day(0), day(-1)] };
+    let hm = |v: &serde_json::Value| v["at"].as_u64().map(|ms| { let s = ms / 1000 % 86_400; format!("{:02}:{:02}", s / 3600, s / 60 % 60) }).unwrap_or("--:--".into());
     for d in days {
-        let address = pointer_address(&format!("health {d}"));
-        let (_, c, _) = wire::puts::contract(&bag_code, &address, &[]);
-        let id: [u8; 32] = c.key().id().as_bytes()[..32].try_into().unwrap();
-        let Some(state) = get(&a[1], id).await? else {
+        // The day's bags CHAINED (`health <day>`, `health <day> #1`, …: `index.health`), each full at ROOM items.
+        let mut items = Vec::new();
+        let mut found = false;
+        for k in 0..64 {
+            let address = pointer_address(&if k == 0 { format!("health {d}") } else { format!("health {d} #{k}") });
+            let (_, c, _) = wire::puts::contract(&bag_code, &address, &[]);
+            let id: [u8; 32] = c.key().id().as_bytes()[..32].try_into().unwrap();
+            let Some(state) = get(&a[1], id).await? else { break };
+            found = true;
+            let these = craftworks_bag_contract::read(&address, &state).unwrap_or_default();
+            let full = these.len() >= craftworks_bag_contract::chained::ROOM;
+            items.extend(these);
+            if !full {
+                break;
+            }
+        }
+        if !found {
             println!("{d}: no health bag (nothing reported, or not reachable)");
             continue;
-        };
-        let items = craftworks_bag_contract::read(&address, &state).unwrap_or_default();
-        let mut groups: BTreeMap<(String, String), Vec<serde_json::Value>> = BTreeMap::new();
-        for it in &items {
-            let Ok(v) = serde_json::from_slice::<serde_json::Value>(craftworks_bag_contract::payload(it)) else { continue };
-            let k = (v["k"].as_str().unwrap_or("?").to_string(), v["s"].as_str().unwrap_or("-").to_string());
+        }
+        let all: Vec<serde_json::Value> = items.iter().filter_map(|it| serde_json::from_slice(craftworks_bag_contract::payload(it)).ok()).collect();
+        // HEARTBEATS (`seen`): each account's pages open that day — first and last beat, version, and each space's
+        // state as it went (a change of a space's `on`/epoch shown in time order).
+        let mut beats: BTreeMap<String, Vec<&serde_json::Value>> = BTreeMap::new();
+        for v in all.iter().filter(|v| v["k"] == "seen") {
+            beats.entry(v["r"].as_str().unwrap_or("?").to_string()).or_default().push(v);
+        }
+        println!("{d}: {} report(s) — {} heartbeat(s) from {} account(s)", all.len(), beats.values().map(Vec::len).sum::<usize>(), beats.len());
+        for (r, mut vs) in beats {
+            vs.sort_by_key(|v| v["at"].as_u64().unwrap_or(0));
+            let last = vs[vs.len() - 1];
+            println!("  seen {r}  ×{:<3} {}–{} UTC  v={}", vs.len(), hm(vs[0]), hm(last), last["v"].as_str().unwrap_or("?"));
+            let mut was: BTreeMap<String, String> = BTreeMap::new();
+            for v in &vs {
+                for sp in v["sp"].as_array().into_iter().flatten() {
+                    let s = sp["s"].as_str().unwrap_or("?").to_string();
+                    let now = format!("e={} oe={} on={} unread={}{}", sp["e"], sp["oe"], sp["on"], sp["u"], sp.get("why").map(|w| format!(" why={w}")).unwrap_or_default());
+                    if was.get(&s) != Some(&now) {
+                        println!("    {} space {s:6} {now}", hm(v));
+                        was.insert(s, now);
+                    }
+                }
+            }
+        }
+        // PROBLEMS: by kind × space (× the member it is about), newest first.
+        let mut groups: BTreeMap<(String, String, String), Vec<&serde_json::Value>> = BTreeMap::new();
+        for v in all.iter().filter(|v| v["k"] != "seen") {
+            let k = (v["k"].as_str().unwrap_or("?").to_string(), v["s"].as_str().unwrap_or("-").to_string(), v["to"].as_str().unwrap_or("").to_string());
             groups.entry(k).or_default().push(v);
         }
-        println!("{d}: {} report(s), {} kind×space", items.len(), groups.len());
-        for ((k, s), mut vs) in groups {
+        for ((k, s, to), mut vs) in groups {
             vs.sort_by_key(|v| std::cmp::Reverse(v["at"].as_u64().unwrap_or(0)));
             let n = vs.len();
-            let last = &vs[0];
+            let last = vs[0];
             // How many ACCOUNTS (`r`: the reporter's id prefix — none on reports from before it was sent).
             let mut who: Vec<&str> = vs.iter().filter_map(|v| v["r"].as_str()).collect();
             who.sort();
             who.dedup();
-            let detail: Vec<String> = ["r", "e", "oe", "to", "why", "v"].iter().filter_map(|f| last.get(*f).filter(|x| !x.is_null()).map(|x| format!("{f}={}", x.as_str().map(str::to_string).unwrap_or_else(|| x.to_string())))).collect();
-            println!("  {k:15} space {s:6}  ×{n:<3} from {} account(s)  newest: {}", who.len(), detail.join(" "));
+            let detail: Vec<String> = ["r", "st", "e", "oe", "why", "v"].iter().filter_map(|f| last.get(*f).filter(|x| !x.is_null()).map(|x| format!("{f}={}", x.as_str().map(str::to_string).unwrap_or_else(|| x.to_string())))).collect();
+            let about = if to.is_empty() { String::new() } else { format!(" member {to}") };
+            println!("  {k:15} space {s:6}{about}  ×{n:<3} from {} account(s)  newest {} UTC: {}", who.len(), hm(last), detail.join(" "));
             // What settles its cause (`d`), as the page measured it.
             if let Some(d) = last.get("d").filter(|x| !x.is_null()) {
                 println!("  {:15}               detail: {d}", "");

@@ -243,20 +243,45 @@ export async function start(ctx) {
   // HEALTH (10-09, owner: "auto report and you keep monitor"): a problem a page meets, written into the day's PUBLIC
   // health bag (`health YYYY-MM-DD`, UTC) — never content: its kind, a short space id, epochs, the reason, the
   // reporting package's version. Once a kind per space per hour from a page. Support reads it (tools/health-watch).
+  // A day's reports CHAINED: `health <day>`, then `health <day> #1`, … (a bag holds ROOM items: a growing network's
+  // heartbeats fill one).
+  const healthRef = (day, k) => (k ? `health ${day} #${k}` : `health ${day}`);
+  // Once a kind per space (per member it is about) per hour from a page.
   const reported = new Map();
   async function health(item) {
-    const key = `${item.k}|${item.s ?? ""}`;
+    const key = `${item.k}|${item.s ?? ""}|${item.to ?? ""}`;
     if (Date.now() - (reported.get(key) ?? 0) < 3600e3) return false;
     reported.set(key, Date.now());
     const day = new Date().toISOString().slice(0, 10);
     const v = String(ctx.shaOf?.("conversation") ?? "").slice(0, 12);
     // WHO reported (the account's id, its first 8 hex: reports from one account told apart, and its other reports
     // read together) — never more of it.
-    const r = String((await space.account().catch(() => null))?.id ?? "").slice(0, 8) || null;
-    await point(`health ${day}`, { ...item, r, v, at: Date.now() }).catch(() => {});
-    return true;
+    const r = String((await space.account().catch(() => null))?.id ?? "").replace(/^did:craftec:/, "").slice(0, 8) || null;
+    const payload = enc.encode(JSON.stringify({ ...item, r, v, at: Date.now() }));
+    try {
+      for (let k = 0; k < 64; k++) {
+        const address = await refAddress(healthRef(day, k));
+        if ((await read(address, "reading the day's health bag")).length >= ROOM) continue;
+        await drop(address, payload, "reporting health");
+        return true;
+      }
+      throw new Error("the day's health bags are full");
+    } catch (e) {
+      // NOT SILENT: a report that could not be written is logged here (and asked again next hour).
+      reported.delete(key);
+      ctx.log("health", { what: `${item.k}: not reported (${e?.message ?? e})` });
+      return false;
+    }
   }
-  const healthOf = day => pointers(`health ${day}`);
+  async function healthOf(day) {
+    const out = [];
+    for (let k = 0; k < 64; k++) {
+      const items = await read(await refAddress(healthRef(day, k)), "reading the day's health bag");
+      out.push(...parse(items));
+      if (items.length < ROOM) break;
+    }
+    return out;
+  }
 
   // ANY OPEN BAG by its address (a registry: the epoch's vouches): add an item (with its work), read its items.
   // A CHAINED list (`wallet::chained`: payments, the witness queue, the files registry) — an epoch's items in bags

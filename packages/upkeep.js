@@ -39,6 +39,8 @@ export async function start(ctx) {
       // One space at a time, each once the node is idle (BACKGROUND: a page's reads first).
       const node = await ctx.require("node");
       const servers = (await space.mine()).filter(s => s.kind === "server");
+      // TELEMETRY: this page's state in each space (the HEARTBEAT, hourly), and what it sees of the other members.
+      const seen = [];
       // The space open first.
       for (const sp of [...servers.filter(s => s.id === ctx.space), ...servers.filter(s => s.id !== ctx.space)]) {
         await node.idle();
@@ -53,6 +55,8 @@ export async function start(ctx) {
         await conversation.catchUp(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: catching up: ${e.message}` }));
         // What this page cannot read here, reported into the space (seen by any member on Members & roles).
         await conversation.reportReads(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: reporting reads: ${e.message}` }));
+        seen.push(await conversation.selfState(sp).catch(e => ({ s: sp.id.slice(0, 6), why: String(e?.message ?? e).slice(0, 80) })));
+        await conversation.observe(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: observing members: ${e.message}` }));
         const r = await roles.of(sp).catch(() => null);
         // The acts hold in the group: whoever is banned, removed or has left and is still in it, out — by ANY member
         // (the acts already decided it; the group's one order refuses a second commit of the same removal).
@@ -80,6 +84,9 @@ export async function start(ctx) {
         const let_in = await conversation.admit(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: ${e.message}` }), []));
         if (let_in.length) ctx.log("upkeep", { what: `${let_in.length} let into ${sp.name}` });
       }
+      // THE HEARTBEAT: this page open, its version, and its state in each space (a member who stops beating, or whose
+      // state turns, is seen in the day's health bag: `tools/health-watch`).
+      await index.health({ k: "seen", sp: seen.slice(0, 12) }).catch(() => {});
       // AUDIENCES: each circle's members as they should be (friends; followers, from their notices).
       await (await ctx.require("circles")).sync().catch(e => ctx.log("upkeep", { what: `circles: ${e?.message ?? (typeof e === "object" ? JSON.stringify(e) : String(e))}${e?.stack ? ` (${String(e.stack).split("\n")[1]?.trim() ?? ""})` : ""}` }));
       // Boards: what this person wrote is public exactly while its board reads in public (a board made public shows
