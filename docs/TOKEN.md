@@ -908,6 +908,33 @@ DID; only the sender and the recipient know who was paid.
    into an older epoch would let a writer pick, among past epochs whose outputs are known, one whose committee for its
    place suits it; within an epoch the lot is fixed by the place (§5a).
 
+6. AUDIT 10-11 — OPEN, each with its designed direction (none built yet):
+   - CLAIMS REGISTRY FILL: one shared registry per epoch caps at 4,096 claims and cannot rank claims it cannot check,
+     so forged owners can fill it. Direction: a stake claim becomes an entry of the staker's OWN pool chain (writer-
+     signed, witnessed by induction like any entry), and the lot's index is a CHAINED pointer bag of staker DIDs: a
+     flood costs readers only, each pointer filtered by `valid_stakers`.
+   - STORAGE ANSWERS UNCHECKED: a standing answer's picks are hashes nobody recomputes (`check(.., None)`), so a node
+     can claim holdings it does not store. Direction: AUDITS by lot — each epoch the beacon draws a few
+     (keeper, pick) pairs per statement builder; the builder fetches those pieces and re-seals (seconds each, by
+     design) and a keeper whose drawn pick fails is not KEPT that epoch. Cost bounded by the draw size, not by keepers.
+   - STATEMENTS WITH EVERY PAGE CLOSED: delegates witness entries but not statement roots (the statement build is in
+     the page-only core). Direction: move the statement build into `craftworks-rules` (pure over reads, as the witness
+     rule moved), then the delegate's witness round signs the root it computes where seated.
+   - THE BASELINE IS ONE KEY: Wren's tool device key is a constant; until six valid stakers exist every acceptance
+     leans on it, and only a code release rotates it. Direction: the baseline seat follows the ROOT's key log (Wren's
+     DID: its current device credential), so a rotation by the owner key moves it without a release; and the bootstrap
+     ends at a stake threshold, not a count.
+   - WITNESS FEES are an issuance slice (10% of the pot), not the per-debit fee §7d describes; as issuance halves,
+     witness pay halves with it. Direction: `Definition.witness_fee` (each debit pays its seated signers), the issuance
+     slice kept only as the bootstrap.
+   - LINEAGE CAP (≤ 3 of 16 seats per lineage) is not drawn: the token's draw does not know reputation. Direction: a
+     claim names its lineage root, checked against the epoch's statement (lines carry the lineage), and the draw skips
+     a lineage's fourth ticket.
+   - MISDEEDS do not touch reputation (a misdeed burns stake only). Direction: a misdeed registry the statement reads,
+     zeroing the cheat's reputation and charging its direct vouchers by vouch weight.
+   - RULE VERSIONS: nothing pins which rules an epoch runs, and the token contract re-keys on every rebuild. Direction:
+     the rule version in the statement's params; a witness refuses an epoch whose version it does not run.
+
 (A token's own ISSUANCE — its supply rule and size, who holds its genesis, what it does with fees — is that token's
 choice, made in its definition from the menu (§6), not the standard's: the Craftworks token's are in §7.)
 
