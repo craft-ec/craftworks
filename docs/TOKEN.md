@@ -410,7 +410,7 @@ OUT that keeps it: the chain's owner SUPERSEDES the tail nobody signed with fres
   held and below it; no CUT in the voided range; it voids nothing a later supersede would split (one it voids lies wholly
   in its range — then "void" is simply "inside some supersede's range", `is_superseded`); and `may_supersede(stamp of
   from, its stamp)`: past `stamp + FRESH` (no witness signs the entry at `from` any more) and far enough past that a
-  signature dated `stamp + FRESH` is no longer TAKEN by its container (`witness::fresh`: a registry freeze between, past
+  signature dated `stamp + FRESH` is no longer TAKEN by its container (`witness::fresh`: an epoch freeze between, past
   `AT_SLACK`). The wait: FRESH + 16 to FRESH + one epoch (~5.7–11.4 h live). A tail its witnesses may still sign (they
   were slow, not gone) waits; one they can never sign is never stuck. The state after it: the state before `from` —
   balance, allowances, stake, unbonding, open escrows, the names received, mints, keeper epochs (a voided credit can be
@@ -749,8 +749,12 @@ ISSUANCE — and each piece of the loop has ONE job:
   9. RULE VERSIONS pinned per epoch in the code; a change takes effect only from an announced future epoch.
   10. PAID DEMAND and issuance COEXIST: demand adds on top and takes over as issuance halves (REWARDS §4–5).
   11. KEEPER DOUBLE CLAIMS are refused, not punished (nothing gained).
-  12. WITNESS LIVENESS: a staker's claim STANDS until withdrawn, but LAPSES if it signed nothing when drawn in the
-      last few epochs — the live set stays live; returning is claiming again.
+  12. WITNESS LIVENESS (built 10-12, owner: "users are not consistent; stakers offline must not stall epochs"): a
+      claim seats its staker for ONE epoch — the next — and is written again each epoch the node is awake, in the claim
+      window (the last quarter-epoch before that epoch's freeze, `keeper::CLAIM_WINDOW`); its witnesses sign it only if
+      the writer's STANDING RECORD answered the beacon in the epoch it is stamped in (`wallet::live`). A node asleep at
+      the window, or one that answered nothing, is simply not seated next epoch — its seat lapses after one missed
+      epoch; returning is claiming again (§7a, the claim).
 - **A SMALL NETWORK (owner 10-10: "how does it work if we just have few node initially?") — SEATS BUILT 10-10
   (`witness::seats`, `witness::BASELINE`):** committees SCALE with the
   live stakers — size min(16, live), signatures needed ⌈⅔ of the size⌉ (6 live: all 6, 4 to sign; 16+: 16 and 11); the
@@ -775,7 +779,7 @@ ISSUANCE — and each piece of the loop has ONE job:
   STATEMENT AMOUNT (it rests on a registry two honest nodes may briefly see differently): such a claim is just not
   accepted. The worst an honest node meets is missing rewards while offline.
 - **MONITORED:** every claim is also listed in the epoch's public ISSUANCE BAG (a bag per token per epoch, like the
-  claims registry); the monitor page reads it and shows per epoch: keepers paid, amounts and the total; concentration
+  stake pointers); the monitor page reads it and shows per epoch: keepers paid, amounts and the total; concentration
   (the top shares); the split by LINEAGE of the trust tree (is one community taking most?); and claims from accounts
   below the gate (a witness signing those is the misdeed above).
 - **Sybils, both halves:** extra disks earn nothing without vouches from real people across lineages; fooled vouchers
@@ -788,10 +792,13 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
 "the most decentralized and open protocol" — no nominated witnesses, no list, no per-token setup: one open pool.
 
 - **Drawn by lot, per entry** (built 6b). There is no global ledger to know the total stake a secret lottery needs, so
-  the lot is PUBLIC: each staker signs a STAKE CLAIM ("I stake N", once an epoch, an epoch AHEAD) into the epoch's
-  CLAIMS REGISTRY (`claims.rs`), which takes no claim from an eighth of an epoch before the epoch starts — so who
-  stands in its lots is fixed before any of its outputs exists (no waiting for an output, then claiming only with the
-  identities whose tickets are low); for an entry (chain, seq) every claimer's TICKET is a hash of (the lot's beacon
+  the lot is PUBLIC: each staker writes a STAKE CLAIM ("I stake N in epoch E", once an epoch, an epoch AHEAD) as an
+  entry of its OWN pool chain (`Body::Claim { from_epoch, amount }`, built 10-12, audit C2b — it replaced a shared
+  claims registry anyone could fill, §8 item 6), before E's FREEZE an eighth of an epoch before E starts
+  (`pointers::frozen_at`) — so who stands in its lots is fixed before any of its outputs exists (no waiting for an
+  output, then claiming only with the identities whose tickets are low). Readers find the claims through POINTERS
+  (`pointers.rs`: per (pool, epoch) chained bags of a staker's DID, its claim's place and hash, and the signatures that
+  accepted it — anyone posts or re-posts one; the staker's node posts its own once its claim is accepted); for an entry (chain, seq) every claimer's TICKET is a hash of (the lot's beacon
   output, chain, seq, claimer) weighted by its claim — an exponential race (−ln u / stake, in fixed-point integers: the same on every
   machine), an exactly stake-proportional draw in which splitting stake across identities gains nothing. The
   COMMITTEE is the k lowest tickets; anyone computes it, and nobody before the beacon output exists. A drawn witness
@@ -815,19 +822,21 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   secrets by the record it was sealed for, the round PAUSED with what it read and resumed on the next wake-up — n kept
   keepers take about n wake-ups (minutes each) before the root is signed.
 - **A place's signatures have their own container** (audit 10-11: `witness::Params`, a kind of the token contract,
-  params = (token code, pool, beacon, the lot's CLAIMS EPOCH, chain, seq)). They lived in a generic bag — anyone adds,
+  params = (token code, pool, beacon, key log code, the lot's CLAIMS EPOCH, chain, seq)). They lived in a generic bag — anyone adds,
   past its caps the items with the most work kept — and ~16 junk items of 16 KiB with a little more work evicted every
   genuine signature (the entry never accepted, an equivocation's proof gone). No rule over items alone stops that: a
   well-formed signature under a fresh key is free, so ANY bag of N kept by ANY order loses its genuine items to N made
   to outrank them. What bounds the items is who may sign: the container takes a signature only if it VERIFIES over the
-  place's message under its key and that key is the baseline's or one of the epoch's CLAIMS REGISTRY (frozen before the
-  lots, at most 4,096 claims: the update reads it as a related contract), each key keeping its two lowest entries (two
-  prove an equivocation; an honest key signs one). Its size is then bounded by the registry — nothing taken is ever
-  dropped for room. Each signature carries WHEN it was made — `at`, the beacon height, under the signature (the witness
+  place's message under its key and that key is the baseline's or the WRITER KEY OF A CLAIM for the epoch in the pool
+  chain of the staker the signature names (each signature carries its staker's DID; the update reads those chains as
+  related contracts, at most 9 a round — `witness::may_sign`: the claim's stamp before the freeze), each key keeping its
+  two lowest entries (two prove an equivocation; an honest key signs one). A junk signer then costs a pool chain the
+  token contract takes — with stake and a claim before the freeze — and past 4,096 keys the lowest keys are kept
+  (weaker than the old registry bound only in name: a registry claim cost nothing). Each signature carries WHEN it was made — `at`, the beacon height, under the signature (the witness
   message is `domain ‖ chain ‖ seq ‖ entry ‖ at`; every signer — page `WitnessSign`, the delegate's witness and
   statement rounds, token-net — signs at the height it reads). The update never takes `at` on trust: it reads the
-  BEACON in the same round (as it reads the registry) and takes a new signature only if `at` is not above the beacon's
-  height and not dated back across a registry freeze by more than `AT_SLACK` = 16 steps (`witness::fresh`). Per (key,
+  BEACON in the same round (as it reads the signers' chains) and takes a new signature only if `at` is not above the beacon's
+  height and not dated back across a freeze by more than `AT_SLACK` = 16 steps (`witness::fresh`). Per (key,
   entry) the earliest `at` taken is kept; a replay dated later changes nothing, one dated back across a freeze is
   refused. (Not a flat "at most 16 below the beacon": copies sync by UPDATE, so a lagging copy is sent signatures taken
   long ago, and a delegate round signs at the height it read when it started — refused forever, copies would disagree
@@ -840,16 +849,22 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   only for the stake its chain held before its claims' epoch began (`wallet::stake_at`), so an entry's acceptance
   never changes when its witnesses later unstake. Unbonding lasts TWO epochs, so whatever was counted for an epoch
   stays burnable a full epoch after it ends. A multisig chain's stake answers for no single key: it does not witness.
-- **VALID STAKE (designed 10-11, audit: built next).** What a claim stands on is WITNESSED stake, not a chain's raw
-  entries (the audit: a self-made KeeperMint under a root of one's own, or a forged receive more than 4 entries back,
-  passed the contract and counted as stake — anyone could seat themselves). The VALID STAKERS of claims epoch E,
-  `V(E)`: each claim in E's registry whose staker's pool chain, at E's start, (1) stakes at least the claim with the
-  claim's key among the keys that stake burns for (`stake_at`), (2) is not forked, and (3) has its LAST entry before
-  E's start ACCEPTED BEFORE E's REGISTRY FROZE — signed by enough of its committee, drawn from `V(E′)` of that entry's
-  own lot epoch E′ < E, counting only signatures made below `claims::frozen_at(E)` (`witness::accepted_before`). A
+- **VALID STAKE (built 10-11; its claims in the stakers' own chains 10-12, C2b).** What a claim stands on is WITNESSED
+  stake, not a chain's raw entries (the audit: a self-made KeeperMint under a root of one's own, or a forged receive
+  more than 4 entries back, passed the contract and counted as stake — anyone could seat themselves). The VALID
+  STAKERS of claims epoch E, `V(E)`: of the CANDIDATES — `V(E−1)`, and every staker POINTED to for E whose pointer
+  passes the CPU PREFILTER (`Pointer::accepted`: its own signatures, by the committee drawn over `V(E−1)`, accept its
+  claim before E's freeze — a forged pointer is dropped before any read of its chain) — each whose pool chain, at E's
+  start, (1) has its last `Claim` for E with no unstake after it, its writer a device (`wallet::seat_of`), (2) stakes
+  at least the claim with that key among the keys the stake burns for (`stake_at`), (3) is not forked, and (4) has its
+  LAST entry before E's start ACCEPTED BEFORE E's FREEZE — signed by enough of its committee, drawn from `V(E′)` of that
+  entry's own lot epoch E′ < E, counting only signatures made below `pointers::frozen_at(E)` (`witness::accepted_before`).
+  The claim among that history was signed only on its writer's LIVENESS (`wallet::live`, in `may_witness`: its
+  standing record answered in the epoch the claim is stamped in — read when the witness signs, while the record still
+  holds that epoch; records keep their newest few epochs, so liveness is fixed by the acceptance, never re-read). A
   witness signs an entry only once its predecessor is accepted (`may_witness`), so an accepted last entry vouches for
   the chain's whole history by induction. The recursion ends at an epoch with no valid stakers (the baseline's seat
-  alone). Every lot — committees, seats, acceptance — is drawn over `V(E)`, never the raw registry: a claim nobody's
+  alone). Every lot — committees, seats, acceptance — is drawn over `V(E)`, never a raw list: a claim nobody's
   stake backs takes no seat and no longer removes the baseline's seat. One function computes it
   (`wallet::valid_stakers`; rules `tokens::stakers`/`valid_of` and token-net `claims` read through it).
   **`V(E)` is FIXED AT THE FREEZE** (built 10-11, option A). Measured on private nodes: a statement of standing epoch 20
@@ -872,7 +887,7 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   disk and a sybil's weight is cheap and rebuilt after a cheat; a strong proof of replication needs Filecoin-grade
   cryptography. And peers' attestations of a node's ring place are sybil-able (any keys can sign "peer P is at R"), so
   location cannot be the guard either. Storage proofs stay what PAYS keepers — where a fake only shifts small rewards.
-- **The watch** (built 10-09): anyone reading a place's signatures and the epoch's claims registry finds every key
+- **The watch** (built 10-09): anyone reading a place's signatures and the epoch's valid stakers finds every key
   that signed two entries there (`wallet::equivocations`) and appends its burn; running a watcher continuously is
   rollout.
 - **A witness's MISDEED is burned too** (built 10-09): beyond two signatures at one place, a witness that signs a
@@ -1028,10 +1043,18 @@ DID; only the sender and the recipient know who was paid.
    wedged its chain for good (measured 10-11) — CLOSED 10-11 by the owner's SUPERSEDE of such a tail (§3d), FRESH kept.
 
 6. AUDIT 10-11 — OPEN, each with its designed direction (built so far: STORAGE ANSWERS):
-   - CLAIMS REGISTRY FILL: one shared registry per epoch caps at 4,096 claims and cannot rank claims it cannot check,
-     so forged owners can fill it. Direction: a stake claim becomes an entry of the staker's OWN pool chain (writer-
-     signed, witnessed by induction like any entry), and the lot's index is a CHAINED pointer bag of staker DIDs: a
-     flood costs readers only, each pointer filtered by `valid_stakers`.
+   - CLAIMS REGISTRY FILL — CLOSED 10-12 (C2b): one shared registry per epoch capped at 4,096 claims and could not
+     rank claims it could not check — measured on the old code: 4,096 forged claims, the real one refused, `V` empty
+     (the baseline alone). Now a stake claim is an entry of the staker's OWN pool chain (`Body::Claim`: writer-signed,
+     witnessed by induction like any entry, nobody else can write it) and the index is CHAINED POINTER BAGS per (pool,
+     epoch) (`pointers.rs`): a flood costs readers CPU only — measured: 4,096 forged pointers + 1 real claim, `V` = the
+     real staker, 0 forged chains read (the prefilter off: 4,096). With it, LIVENESS (§7d decision 12): a claim is
+     signed only on its writer's standing record answering in its epoch, and made only in the claim window. LEFT: a
+     pointer posted after the freeze still grows `V(E)` for readers that see it (a reader missing a pointer sees a
+     smaller `V(E)` — liveness, as with signatures; continuing stakers are found through `V(E−1)` without one); `V(E)`
+     now recurses through every epoch from 0 (a reader memoises per pass); a delegate's claim is witnessed only once
+     some page witness makes its signatures container (a delegate cannot create contracts); a cut stamped in the claim
+     window hides that epoch's claim.
    - STORAGE ANSWERS UNCHECKED — CLOSED 10-11 (AUDITS BY LOT, `standing::record::kept_audited`, the one rule the
      page's statement build — `rules::statement::build` — and Wren's tool — `token-net` `kept` / `statement_root` —
      run): a standing answer's picks were hashes nobody recomputed (`check(.., None)`), so a node could commit holdings

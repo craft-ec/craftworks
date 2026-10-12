@@ -41,13 +41,16 @@ pub enum Verdict {
     /// Seated, and the rule refuses it (why): not signed.
     Refused(String),
     /// Seated, and the rule takes it: sign this entry hash at (chain, seq) — `at`, the place's signatures container
-    /// under its lot's claims epoch (where the signature goes; `at.chain`, `at.seq` its place).
-    Sign { at: t::witness::Params, entry: [u8; 32] },
+    /// under its lot's claims epoch (where the signature goes; `at.chain`, `at.seq` its place). `owner`: the staker whose
+    /// seat it is (its DID — what the signature NAMES in the container: `witness::Signed::owner`).
+    Sign { at: t::witness::Params, entry: [u8; 32], owner: [u8; 32] },
 }
 
 /// The VERDICT on queued entry `q` for the witness key `me` (this node's member key, its account's claim's), at beacon
-/// height `now`.
-pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64) -> Result<Step<Verdict>, String> {
+/// height `now`. `standing`: the standing contract's code hash (a stake claim's writer's record is read for its
+/// LIVENESS: `wallet::live`).
+#[allow(clippy::too_many_arguments)]
+pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64, standing: &[u8; 32]) -> Result<Step<Verdict>, String> {
     let want: RefCell<Vec<[u8; 32]>> = RefCell::new(Vec::new());
     let read = |id: [u8; 32]| -> Option<Vec<u8>> {
         match there(got, &id) {
@@ -76,12 +79,13 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
     let Some(i) = s.entries.iter().position(|e| e.seq == q.seq) else { return Ok(Step::Done(Verdict::Later("the entry is not in its chain as read"))) };
     let (lot_epoch, h) = wallet::lot_of(&s.entries[i], i.checked_sub(1).map(|j| &s.entries[j]), d.margin).map_err(String::from)?;
     // SEATED? The committee drawn for this place.
-    match seated(ctx, lot, got, &d.beacon, &p.id(), q.seq, h, me) {
+    let owner = match seat(ctx, lot, got, &d.beacon, &p.id(), q.seq, h, me) {
         Step::Want(w) => return Ok(Step::Want(w)),
         Step::Done(None) => return Ok(Step::Done(Verdict::Later("its lot is not drawn yet"))),
-        Step::Done(Some(false)) => return Ok(Step::Done(Verdict::NotSeated)),
-        _ => {}
-    }
+        Step::Done(Some(None)) => return Ok(Step::Done(Verdict::NotSeated)),
+        Step::Done(Some(Some(o))) => o,
+        Step::Sign(m) => return Ok(Step::Sign(m)),
+    };
     // Every lot over the VALID STAKERS (`stakers`: witnessed stake, never the raw registry).
     let memo = crate::tokens::StakeMemo::default();
     let claims_of = |ep: u64| crate::tokens::stakers(ctx.code_hash, lot, got, d.beacon, &read, ep, &memo);
@@ -101,7 +105,8 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
         read(t::freeze::Params { code_hash: ctx.code_hash, definition: *tid, beacon: td.beacon }.id()).and_then(|b| t::freeze::List::decode(&b))
     };
     let keys = |o: &[u8; 32]| read(t::id(&d.idlog, o)).and_then(|b| craftworks_idlog_contract::read(o, &b));
-    let src = wallet::Source { pool: lot.pool, claims: &claims_of, sigs: &sigs, out: &outs, stake_of: &stake_of, definition: &definition, program: &program, freeze: &freeze, keys: &keys, history: &|_, _| None };
+    let record = |key: &[u8; 32]| read(craftworks_standing_contract::Params::keeper(lot.beacon_code, d.beacon, key).id(standing)).and_then(|b| craftworks_standing::codec::decode(&b));
+    let src = wallet::Source { pool: lot.pool, claims: &claims_of, sigs: &sigs, out: &outs, stake_of: &stake_of, definition: &definition, program: &program, freeze: &freeze, keys: &keys, history: &|_, _| None, standing: &record };
     let cited = |tok: &t::Tok, o: &[u8; 32]| {
         let td = definition(&tok.definition)?;
         read(params(tok, o, &td).id()).and_then(|b| State::decode(&b))
@@ -114,7 +119,7 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
         return Ok(wanted(&want));
     }
     Ok(Step::Done(match r {
-        Ok(entry) => Verdict::Sign { at: crate::tokens::witness_at(ctx.code_hash, lot, d.beacon, &p.id(), q.seq, lot_epoch), entry },
+        Ok(entry) => Verdict::Sign { at: crate::tokens::witness_at(ctx.code_hash, lot, d.beacon, &p.id(), q.seq, lot_epoch), entry, owner },
         Err(why) => Verdict::Refused(why.to_string()),
     }))
 }
@@ -124,6 +129,16 @@ pub fn entry(ctx: &Ctx, lot: &Lot, got: Got, q: &Queued, me: &[u8; 32], now: u64
 /// drawn yet (or its output not recorded): not yet decidable.
 #[allow(clippy::too_many_arguments)]
 pub fn seated(ctx: &Ctx, lot: &Lot, got: Got, beacon: &[u8; 32], place: &[u8; 32], seq: u64, h: u64, me: &[u8; 32]) -> Step<Option<bool>> {
+    match seat(ctx, lot, got, beacon, place, seq, h, me) {
+        Step::Done(x) => Step::Done(x.map(|o| o.is_some())),
+        Step::Want(w) => Step::Want(w),
+        Step::Sign(m) => Step::Sign(m),
+    }
+}
+
+/// [`seated`], naming the SEAT: `Some(Some(owner))` — `me` is drawn, for the staker `owner` (its claim's DID).
+#[allow(clippy::too_many_arguments)]
+pub fn seat(ctx: &Ctx, lot: &Lot, got: Got, beacon: &[u8; 32], place: &[u8; 32], seq: u64, h: u64, me: &[u8; 32]) -> Step<Option<Option<[u8; 32]>>> {
     let out = match out_at(lot, got, beacon, h) {
         Err(w) => return Step::Want(vec![w]),
         Ok(Err(_)) => return Step::Done(None),
@@ -148,7 +163,7 @@ pub fn seated(ctx: &Ctx, lot: &Lot, got: Got, beacon: &[u8; 32], place: &[u8; 32
     }
     let valid = draw::valid(&lot.pool, epoch, &claims);
     let (k, _, _) = witness::seats(valid.len(), wallet::COMMITTEE);
-    Step::Done(Some(draw::committee_of(&out, place, seq, &valid, k).iter().any(|m| claims[*m].key == *me)))
+    Step::Done(Some(draw::committee_of(&out, place, seq, &valid, k).iter().find(|m| claims[**m].key == *me).map(|m| claims[*m].owner)))
 }
 
 /// The SIGNATURES CONTAINER of epoch `epoch`'s statement (its witness place, seq 0, under its lot's claims epoch):
@@ -164,9 +179,9 @@ pub fn statement_at(ctx: &Ctx, lot: &Lot, epoch: u64) -> t::witness::Params {
 pub fn statement(ctx: &Ctx, lot: &Lot, got: Got, epoch: u64, root: &[u8; 32], me: &[u8; 32]) -> Step<Verdict> {
     let place = craftworks_reputation::statement::witness_place(epoch);
     let h = craftworks_reputation::statement::lot_height(epoch);
-    match seated(ctx, lot, got, &ctx.beacon, &place, 0, h, me) {
-        Step::Done(Some(true)) => Step::Done(Verdict::Sign { at: statement_at(ctx, lot, epoch), entry: *root }),
-        Step::Done(Some(false)) => Step::Done(Verdict::NotSeated),
+    match seat(ctx, lot, got, &ctx.beacon, &place, 0, h, me) {
+        Step::Done(Some(Some(owner))) => Step::Done(Verdict::Sign { at: statement_at(ctx, lot, epoch), entry: *root, owner }),
+        Step::Done(Some(None)) => Step::Done(Verdict::NotSeated),
         Step::Done(None) => Step::Done(Verdict::Later("its lot is not drawn yet")),
         Step::Want(w) => Step::Want(w),
         Step::Sign(m) => Step::Sign(m),

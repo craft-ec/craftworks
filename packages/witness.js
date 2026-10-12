@@ -4,7 +4,7 @@
 // RULE over what it reads (`core.witness_entry`: `wallet::may_witness`, the rule Wren's tool runs too); an entry the
 // rule takes is signed through the identity delegate (`witnessSign`: it records the place first and never signs
 // another entry there) and the signature put into its place's signatures container (`witness::Params`: it takes only
-// signatures by keys of the lot's claims registry). The EPOCH STATEMENT too: where its
+// signatures by keys that wrote a claim for the lot's epoch, named with their staker). The EPOCH STATEMENT too: where its
 // member key is seated at the statement's place, the root THIS page computes (`statement.root`) is signed — no tool
 // and no one node is needed for a statement to be accepted. With the page CLOSED, the delegate witnesses entries, and
 // statements: it builds the root by the same rule (`rules::statement::build`) and signs it where it matches a posted one.
@@ -13,7 +13,7 @@
 export async function start(ctx) {
   const beaconSvc = await ctx.require("beacon");
   if (beaconSvc.status().off) return { status: () => ({ off: true }) };
-  const [node, auth, index] = await Promise.all(["node", "auth", "index"].map(n => ctx.require(n)));
+  const [node, auth, index, standingCode] = await Promise.all(["node", "auth", "index", "standing-wasm"].map(n => ctx.require(n)));
   const { core } = node;
   const Core = node.glue.CraftworksCore;
   const EPOCH = Core.standing_epoch();
@@ -32,7 +32,7 @@ export async function start(ctx) {
       ctx.log("witness", { what: `not signed (${a?.refused ?? "no answer"})` });
       return false;
     }
-    await tokens.putAll([core.witness_put(tokens.code, s.params, tokens.bytes(me.member), s.entry, tokens.bytes(a.signed), h)]);
+    await tokens.putAll([core.witness_put(tokens.code, s.params, tokens.bytes(me.member), s.owner, s.entry, tokens.bytes(a.signed), h)]);
     state.signed += 1;
     state.last = h;
     ctx.log("witness", { what: `signed ${what}` });
@@ -68,7 +68,7 @@ export async function start(ctx) {
             tally[done.get(k)] += 1;
             continue;
           }
-          const v = await run(() => core.witness_entry(tokens.code, tokens.beacon, tokens.idlogCode, lot.pool, lot.bag, lot.beacon, q, bytes(me.member), h)).catch(x => ({ refused: x.message ?? String(x) }));
+          const v = await run(() => core.witness_entry(tokens.code, tokens.beacon, tokens.idlogCode, lot.pool, lot.bag, lot.beacon, q, bytes(me.member), h, standingCode)).catch(x => ({ refused: x.message ?? String(x) }));
           if (v?.seated === false) {
             done.set(k, "not seated");
             tally["not seated"] += 1;

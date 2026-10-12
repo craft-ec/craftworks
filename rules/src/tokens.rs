@@ -131,14 +131,16 @@ pub fn begin(w: &Wallet, asking: &Asking, held: &mut Held, now: u64) -> Result<O
     Ok(None)
 }
 
-/// Where an entry's ACCEPTANCE is read from (TOKEN §7a): the stake POOL's token (whose claims the lot draws from), and
-/// the BAG and BEACON codes' hashes (the witness queue's bags; the beacon's outputs log, for heights its state no
-/// longer keeps). A place's signatures are in their own container of the token code ([`witness_at`]).
+/// Where an entry's ACCEPTANCE is read from (TOKEN §7a): the stake POOL's token (whose claims the lot draws from), the
+/// BAG and BEACON codes' hashes (the witness queue's and the stake pointers' bags; the beacon's outputs log, for heights
+/// its state no longer keeps), and the KEY LOG code's (with the pool, what names a staker's pool chain). A place's
+/// signatures are in their own container of the token code ([`witness_at`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Lot {
     pub pool: [u8; 32],
     pub bag: [u8; 32],
     pub beacon_code: [u8; 32],
+    pub idlog: [u8; 32],
 }
 
 /// Is entry `seq` of chain `p` (its state `s`, its token `d`) ACCEPTED — enough of its committee signed it
@@ -161,9 +163,31 @@ pub fn statement_accepted(lot: &Lot, got: Got, code_hash: [u8; 32], beacon: [u8;
 }
 
 /// A PLACE'S WITNESS SIGNATURES' container (TOKEN §7a, `witness::Params`): (`chain`, `seq`) under claims epoch `epoch`
-/// — the registry `stakers` reads under `beacon` says who may sign there.
+/// — the claims for that epoch in the signers' pool chains (under `beacon`) say who may sign there.
 pub fn witness_at(code_hash: [u8; 32], lot: &Lot, beacon: [u8; 32], chain: &[u8; 32], seq: u64, epoch: u64) -> t::witness::Params {
-    t::witness::Params { code_hash, pool: lot.pool, beacon, epoch, chain: *chain, seq }
+    t::witness::Params { code_hash, pool: lot.pool, beacon, idlog: lot.idlog, epoch, chain: *chain, seq }
+}
+
+/// The bags of the STAKE POINTERS of `epoch` (TOKEN §7a, C2b: `pointers::address`) — the chained rule: read on past a
+/// FULL bag, stop at the first with room (or not there). Each bag's contract id under the bag code (`lot.bag`).
+pub fn pointer_bag(lot: &Lot, epoch: u64, k: u32) -> ([u8; 32], [u8; 32]) {
+    let address = t::pointers::address(&lot.pool, epoch, k);
+    (t::id(&lot.bag, &address), address)
+}
+
+/// Every POINTER posted for `epoch`, as `read` reads their bags (a bag not read: the reads stop there — the caller asks
+/// for it and evaluates again). Items that do not read as pointers are skipped.
+pub fn pointers_of(lot: &Lot, read: &dyn Fn([u8; 32]) -> Option<Vec<u8>>, epoch: u64) -> Vec<t::pointers::Pointer> {
+    let mut out = Vec::new();
+    for k in 0..4096u32 {
+        let (id, address) = pointer_bag(lot, epoch, k);
+        let Some(items) = read(id).and_then(|b| craftworks_bag_contract::read(&address, &b)) else { break };
+        out.extend(items.iter().filter_map(|i| t::pointers::Pointer::decode(craftworks_bag_contract::payload(i))));
+        if !craftworks_bag_contract::chained::full(items.iter().map(|i| craftworks_bag_contract::payload(i).len())) {
+            break;
+        }
+    }
+    out
 }
 
 /// Its SIGNATURES as `read` reads them (none if not there) — what every reader here reads a place's signatures by.
@@ -178,7 +202,7 @@ pub type StakeMemo = std::cell::RefCell<std::collections::BTreeMap<u64, Vec<t::d
 /// (a contract not read: `None` — the caller records it and asks for it, then evaluates again).
 pub fn stakers(code_hash: [u8; 32], lot: &Lot, got: Got, beacon: [u8; 32], read: &dyn Fn([u8; 32]) -> Option<Vec<u8>>, epoch: u64, memo: &StakeMemo) -> Vec<t::draw::StakeClaim> {
     let Some(pd) = read(lot.pool).and_then(|b| Definition::decode(&b)) else { return Vec::new() };
-    let registry = |ep: u64| read(t::claims::Params { code_hash, pool: lot.pool, beacon, epoch: ep }.id()).and_then(|b| t::claims::Registry::decode(&b)).map_or(vec![], |r| r.claims);
+    let pointers = |ep: u64| pointers_of(lot, read, ep);
     let chain = |owner: &[u8; 32]| {
         let cp = ChainParams { code_hash, definition: lot.pool, owner: *owner, beacon: pd.beacon, idlog: pd.idlog, item: [0; 32] };
         read(cp.id()).and_then(|b| State::decode(&b)).map(|st| (cp, st))
@@ -188,7 +212,7 @@ pub fn stakers(code_hash: [u8; 32], lot: &Lot, got: Got, beacon: [u8; 32], read:
         Ok(r) => r.ok(),
     };
     let sigs = |c: &[u8; 32], sq: u64, ep: u64| witness_sigs(read, &witness_at(code_hash, lot, beacon, c, sq, ep));
-    t::wallet::valid_stakers(&t::wallet::StakeReads { pool: lot.pool, pool_def: &pd, registry: &registry, chain: &chain, out: &out, sigs: &sigs }, epoch, memo)
+    t::wallet::valid_stakers(&t::wallet::StakeReads { pool: lot.pool, pool_def: &pd, pointers: &pointers, chain: &chain, out: &out, sigs: &sigs }, epoch, memo)
 }
 
 /// The VALID STAKERS of claims epoch `epoch` as a step (`stakers`): `Want` what is not read yet.
@@ -253,7 +277,7 @@ pub mod testlot {
     use craftworks_wallet::{Held, Sources, Wallet};
     use ed25519_dalek::{Signer as _, SigningKey};
     use std::collections::HashMap;
-    use t::{draw::StakeClaim, wallet, witness, Body};
+    use t::{wallet, witness, Body};
 
     pub const POOL_GEN: u128 = 6_000;
     /// The test beacon's height: past every lot of epoch 1 (`supply::EPOCH` steps an epoch).
@@ -288,20 +312,59 @@ pub mod testlot {
     }
 
     impl TestLot {
-        /// THE BASELINE signs each staker's last entry before epoch 1 (its seat alone accepts: no stakers before), at
-        /// beacon height `at` — before epoch 1's freeze (`claims::frozen_at`) their stake is VALID in epoch 1, after it
-        /// not (`wallet::valid_stakers`).
+        /// THE BASELINE signs each staker's last entry before epoch 1 — its CLAIM for epoch 1 (its seat alone accepts:
+        /// no stakers before) — at beacon height `at`, and its POINTER is posted for epoch 1 with that signature: before
+        /// epoch 1's freeze (`pointers::frozen_at`) their stake is VALID in epoch 1, after it not
+        /// (`wallet::valid_stakers`).
         pub fn baseline_signs(&self, ctx: &Ctx, got: &mut HashMap<[u8; 32], Vec<u8>>, at: u64) {
             let baseline = SigningKey::from_bytes(&witness::BASELINE_SEED);
             let margin = Definition::decode(&got[&self.lot.pool]).unwrap().margin;
+            let mut pointers = Vec::new();
             for (cp, st) in &self.staked {
                 let e = st.entries.last().unwrap();
-                let (ep, _) = wallet::lot_of(e, st.entries.len().checked_sub(2).map(|j| &st.entries[j]), margin).unwrap();
+                let (ep, h) = wallet::lot_of(e, st.entries.len().checked_sub(2).map(|j| &st.entries[j]), margin).unwrap();
                 let wp = witness_at(ctx.code_hash, &self.lot, ctx.beacon, &cp.id(), e.seq, ep);
                 let sig = witness::WitnessSig { chain: cp.id(), seq: e.seq, entry: e.hash(), at, sig: baseline.sign(&witness::WitnessSig::message(&cp.id(), e.seq, &e.hash(), at)).to_bytes() };
-                got.insert(wp.id(), wp.state(&[(witness::BASELINE, sig)]));
+                got.insert(wp.id(), wp.state(&[(witness::BASELINE, [0; 32], sig.clone())]));
+                pointers.push(t::pointers::Pointer { owner: cp.owner, seq: e.seq, entry: e.hash(), height: h, sigs: vec![(witness::BASELINE, at, sig.sig)] });
             }
+            post_pointers(self, got, 1, &pointers);
         }
+    }
+
+    /// POST `pointers` for `epoch` into its pointer bags (`pointers::address`), as writers do: each into the first bag
+    /// with room (`chained::full`), the bags' items kept.
+    pub fn post_pointers(tl: &TestLot, got: &mut HashMap<[u8; 32], Vec<u8>>, epoch: u64, pointers: &[t::pointers::Pointer]) {
+        let mut k = 0u32;
+        let (mut id, mut address) = pointer_bag(&tl.lot, epoch, k);
+        let mut items: Vec<Vec<u8>> = got.get(&id).and_then(|b| craftworks_bag_contract::read(&address, b)).unwrap_or_default();
+        for ptr in pointers {
+            while craftworks_bag_contract::chained::full(items.iter().map(|i| craftworks_bag_contract::payload(i).len())) {
+                got.insert(id, craftworks_bag_contract::encode(&address, &items));
+                k += 1;
+                (id, address) = pointer_bag(&tl.lot, epoch, k);
+                items = got.get(&id).and_then(|b| craftworks_bag_contract::read(&address, b)).unwrap_or_default();
+            }
+            items.push(craftworks_bag_contract::grind(&address, &ptr.encode()));
+        }
+        got.insert(id, craftworks_bag_contract::encode(&address, &items));
+    }
+
+    /// The POINTER to entry `seq` of pool chain `cp` (state `st`) for `epoch`: the signatures its container holds.
+    pub fn pointer_to(tl: &TestLot, got: &HashMap<[u8; 32], Vec<u8>>, ctx: &Ctx, cp: &ChainParams, st: &State, seq: u64) -> t::pointers::Pointer {
+        let margin = Definition::decode(&got[&tl.lot.pool]).unwrap().margin;
+        let i = st.entries.iter().position(|e| e.seq == seq).unwrap();
+        let e = &st.entries[i];
+        let (ep, h) = wallet::lot_of(e, i.checked_sub(1).map(|j| &st.entries[j]), margin).unwrap();
+        let wp = witness_at(ctx.code_hash, &tl.lot, ctx.beacon, &cp.id(), seq, ep);
+        let sigs = got.get(&wp.id()).and_then(|b| witness::Signatures::decode(b)).map_or(vec![], |s| s.items.iter().filter(|x| x.entry == e.hash()).map(|x| (x.key, x.at, x.sig)).collect());
+        t::pointers::Pointer { owner: cp.owner, seq, entry: e.hash(), height: h, sigs }
+    }
+
+    /// `V(epoch)` as `got` reads (`valid_of`).
+    pub fn seats(tl: &TestLot, got: &HashMap<[u8; 32], Vec<u8>>, code_hash: [u8; 32], beacon: [u8; 32], epoch: u64) -> Vec<t::draw::StakeClaim> {
+        let ctx = Ctx { code_hash, beacon, idlog: tl.lot.idlog };
+        done(&|g| Ok(valid_of(&ctx, &tl.lot, g, epoch)), got).unwrap()
     }
 
     /// Six stakers in `got`, for tokens on `ctx`'s beacon — their stake VALID in epoch 1 (the baseline signed their last
@@ -312,8 +375,8 @@ pub mod testlot {
         tl
     }
 
-    /// Six stakers in `got` whose pool chains NO witness has signed yet (not valid stake in any epoch until signed:
-    /// [`TestLot::baseline_signs`]).
+    /// Six stakers in `got`, each pool chain ending in its CLAIM for epoch 1, NO witness has signed yet and no pointer
+    /// posted (not valid stake in any epoch until signed: [`TestLot::baseline_signs`]).
     pub fn stakers_unwitnessed(ctx: &Ctx, got: &mut HashMap<[u8; 32], Vec<u8>>) -> TestLot {
         let mut people = Vec::new();
         for n in 0..6u8 {
@@ -340,8 +403,10 @@ pub mod testlot {
         }
         h0.state.entries.extend(w0.debit(&h0, Body::Stake { amount: 1_000 }, 2).unwrap());
         let first = h0.state.clone();
-        got.insert(h0.params.id(), first.encode());
-        let mut staked = vec![(h0.params.clone(), first.clone())];
+        // Its CLAIM for epoch 1 (stamped in epoch 0, before epoch 1's freeze).
+        h0.state.entries.extend(w0.debit(&h0, Body::Claim { from_epoch: 1, amount: 1_000 }, 6).unwrap());
+        got.insert(h0.params.id(), h0.state.encode());
+        let mut staked = vec![(h0.params.clone(), h0.state.clone())];
         // The others: receive, then stake.
         for (d, l, v) in &people[1..] {
             let w = Wallet { device: v, keys: l };
@@ -349,24 +414,18 @@ pub mod testlot {
             let chains = [(*d0, first.clone())];
             h.state.entries = w.collect(&h, &Sources { chains: &chains, blocks: &Default::default(), programs: &[], shards: &[] }, 4).unwrap();
             h.state.entries.extend(w.debit(&h, Body::Stake { amount: 1_000 }, 5).unwrap());
+            h.state.entries.extend(w.debit(&h, Body::Claim { from_epoch: 1, amount: 1_000 }, 6).unwrap());
             got.insert(h.params.id(), h.state.encode());
             staked.push((h.params.clone(), h.state.clone()));
         }
         for (d, l, _) in &people {
             got.insert(chain(ctx, &pd, &pool, d, [0; 32]).keys_id(), l.encode());
         }
-        // Their CLAIMS for epoch 1.
-        let mut claims: Vec<StakeClaim> = people.iter().map(|(d, _, v)| {
-            let kb = v.key.verifying_key().to_bytes();
-            StakeClaim { owner: *d, amount: 1_000, epoch: 1, key: kb, sig: v.key.sign(&StakeClaim::message(&pool, d, 1_000, 1, &kb)).to_bytes() }
-        }).collect();
-        claims.sort_by_key(|c| c.owner); // a registry lists them by owner
-        got.insert(t::claims::Params { code_hash: ctx.code_hash, pool, beacon: ctx.beacon, epoch: 1 }.id(), t::claims::Registry { claims }.encode());
         // A BEACON past every lot (one step, tiny params), and its outputs log for the heights before.
         let bp = craftworks_beacon_contract::Params { k: 16, segs: 1, sample: 1, window: 2, keep: 600, seed: [5; 32] };
         let top = craftworks_beacon_contract::State { steps: vec![craftworks_beacon_contract::Step::compute(&bp, [0; 32], TOP, [1; 32])], alts: vec![], frauds: vec![] };
         got.insert(ctx.beacon, craftworks_beacon_contract::wire::encode(&top));
-        let lot = Lot { pool, bag: [41; 32], beacon_code: [42; 32] };
+        let lot = Lot { pool, bag: [41; 32], beacon_code: [42; 32], idlog: ctx.idlog };
         let span = craftworks_beacon_contract::log::SPAN;
         for index in 0..TOP / span + 1 {
             let entries = (index * span..((index + 1) * span).min(TOP)).filter(|h| *h > 0).map(|h| (h, *blake3::hash(&h.to_le_bytes()).as_bytes())).collect();
@@ -405,14 +464,14 @@ pub mod testlot {
         let e = &s.entries[i];
         let (epoch, h) = wallet::lot_of(e, i.checked_sub(1).map(|j| &s.entries[j]), d.margin).unwrap();
         let out = *blake3::hash(&h.to_le_bytes()).as_bytes();
-        let reg = t::claims::Registry::decode(&got[&t::claims::Params { code_hash: p.code_hash, pool: tl.lot.pool, beacon: d.beacon, epoch }.id()]).unwrap();
-        let valid = t::draw::valid(&tl.lot.pool, epoch, &reg.claims);
+        let claims = seats(tl, got, p.code_hash, d.beacon, epoch);
+        let valid = t::draw::valid(&tl.lot.pool, epoch, &claims);
         let (k, _, _) = witness::seats(valid.len(), wallet::COMMITTEE);
         let members = t::draw::committee_of(&out, &p.id(), seq, &valid, k);
         let wp = witness_at(p.code_hash, &tl.lot, d.beacon, &p.id(), seq, epoch);
-        let items: Vec<([u8; 32], witness::WitnessSig)> = members.iter().take(n).map(|m| {
-            let key = tl.keys.iter().find(|k| k.verifying_key().to_bytes() == reg.claims[*m].key).unwrap();
-            (reg.claims[*m].key, witness::WitnessSig { chain: p.id(), seq, entry: e.hash(), at: 0, sig: key.sign(&witness::WitnessSig::message(&p.id(), seq, &e.hash(), 0)).to_bytes() })
+        let items: Vec<([u8; 32], [u8; 32], witness::WitnessSig)> = members.iter().take(n).map(|m| {
+            let key = tl.keys.iter().find(|k| k.verifying_key().to_bytes() == claims[*m].key).unwrap();
+            (claims[*m].key, claims[*m].owner, witness::WitnessSig { chain: p.id(), seq, entry: e.hash(), at: 0, sig: key.sign(&witness::WitnessSig::message(&p.id(), seq, &e.hash(), 0)).to_bytes() })
         }).collect();
         got.insert(wp.id(), wp.state(&items));
     }
@@ -424,14 +483,14 @@ pub mod testlot {
         let ce = h / t::supply::EPOCH;
         let out = *blake3::hash(&h.to_le_bytes()).as_bytes();
         let place = witness_place(epoch);
-        let reg = t::claims::Registry::decode(&got[&t::claims::Params { code_hash, pool: tl.lot.pool, beacon, epoch: ce }.id()]).unwrap();
-        let valid = t::draw::valid(&tl.lot.pool, ce, &reg.claims);
+        let claims = seats(tl, got, code_hash, beacon, ce);
+        let valid = t::draw::valid(&tl.lot.pool, ce, &claims);
         let (k, _, _) = witness::seats(valid.len(), wallet::COMMITTEE);
         let members = t::draw::committee_of(&out, &place, 0, &valid, k);
         let wp = witness_at(code_hash, &tl.lot, beacon, &place, 0, ce);
-        let items: Vec<([u8; 32], witness::WitnessSig)> = members.iter().take(n).map(|m| {
-            let key = tl.keys.iter().find(|k| k.verifying_key().to_bytes() == reg.claims[*m].key).unwrap();
-            (reg.claims[*m].key, witness::WitnessSig { chain: place, seq: 0, entry: *root, at: 0, sig: key.sign(&witness::WitnessSig::message(&place, 0, root, 0)).to_bytes() })
+        let items: Vec<([u8; 32], [u8; 32], witness::WitnessSig)> = members.iter().take(n).map(|m| {
+            let key = tl.keys.iter().find(|k| k.verifying_key().to_bytes() == claims[*m].key).unwrap();
+            (claims[*m].key, claims[*m].owner, witness::WitnessSig { chain: place, seq: 0, entry: *root, at: 0, sig: key.sign(&witness::WitnessSig::message(&place, 0, root, 0)).to_bytes() })
         }).collect();
         got.insert(wp.id(), wp.state(&items));
     }
@@ -480,6 +539,7 @@ pub mod testlot {
 mod baseline_check {
     use super::*;
     use std::collections::HashMap;
+    use t::{witness, Body};
 
     /// VALID STAKE (audit 10-11): a staker whose stake no witness signed is no staker. The six test stakers' chains
     /// are signed by the baseline (the lot's bootstrap); one's signature taken away, that one drops out of `V(1)`.
@@ -490,9 +550,8 @@ mod baseline_check {
         let tl = testlot::stakers(&ctx, &mut got);
         let v = |got: &HashMap<[u8; 32], Vec<u8>>| testlot::done(&|g| Ok(valid_of(&ctx, &tl.lot, g, 1)), got).unwrap();
         assert_eq!(v(&got).len(), 6, "every staker's stake witnessed");
-        // Staker 2's last entry before epoch 1: its signatures container emptied.
-        let reg = t::claims::Registry::decode(&got[&t::claims::Params { code_hash: ctx.code_hash, pool: tl.lot.pool, beacon: ctx.beacon, epoch: 1 }.id()]).unwrap();
-        let two = reg.claims.iter().find(|c| c.key == tl.keys[2].verifying_key().to_bytes()).unwrap().owner;
+        // Staker 2's last entry before epoch 1 (its claim): its signatures container emptied (its pointer still posted).
+        let two = tl.staked[2].0.owner;
         let pd = Definition::decode(&got[&tl.lot.pool]).unwrap();
         let cp = ChainParams { code_hash: ctx.code_hash, definition: tl.lot.pool, owner: two, beacon: pd.beacon, idlog: pd.idlog, item: [0; 32] };
         let st = State::decode(&got[&cp.id()]).unwrap();
@@ -505,27 +564,6 @@ mod baseline_check {
         assert!(!after.iter().any(|c| c.owner == two));
     }
 
-    /// A FORGED CLAIM in a staker's name under another key (audit 10-11) stays beside the staker's own and is not the
-    /// one counted: the staker stays valid, with its own key.
-    #[test]
-    fn a_forged_claim_beside_a_stakers_own_never_replaces_it() {
-        let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
-        let mut got = HashMap::new();
-        let tl = testlot::stakers(&ctx, &mut got);
-        let rp = t::claims::Params { code_hash: ctx.code_hash, pool: tl.lot.pool, beacon: ctx.beacon, epoch: 1 }.id();
-        let reg = t::claims::Registry::decode(&got[&rp]).unwrap();
-        let own = reg.claims.iter().find(|c| c.key == tl.keys[2].verifying_key().to_bytes()).unwrap().clone();
-        // (A forger's key that SORTS BEFORE the staker's: the claim met first.)
-        let forger = (1..=255u8).map(|n| ed25519_dalek::SigningKey::from_bytes(&[n; 32])).find(|k| k.verifying_key().to_bytes() < own.key).expect("a key sorting first");
-        let kb = forger.verifying_key().to_bytes();
-        use ed25519_dalek::Signer as _;
-        let forged = t::draw::StakeClaim { owner: own.owner, amount: own.amount, epoch: 1, key: kb, sig: forger.sign(&t::draw::StakeClaim::message(&tl.lot.pool, &own.owner, own.amount, 1, &kb)).to_bytes() };
-        got.insert(rp, t::claims::merge(&reg, &t::claims::Registry { claims: vec![forged] }).encode());
-        let v = testlot::done(&|g| Ok(valid_of(&ctx, &tl.lot, g, 1)), &got).unwrap();
-        assert_eq!(v.len(), 6);
-        assert_eq!(v.iter().find(|c| c.owner == own.owner).map(|c| c.key), Some(own.key), "the staker's own claim counted");
-    }
-
     /// The BASELINE's signature on standing epoch `epoch`'s statement `root` (claims epoch 1's lot), made at `at`.
     fn baseline_signs_statement(ctx: &Ctx, tl: &testlot::TestLot, got: &mut HashMap<[u8; 32], Vec<u8>>, epoch: u64, root: &[u8; 32], at: u64) {
         use craftworks_reputation::statement::{lot_height, witness_place};
@@ -534,7 +572,7 @@ mod baseline_check {
         let k = ed25519_dalek::SigningKey::from_bytes(&t::witness::BASELINE_SEED);
         let sig = t::witness::WitnessSig { chain: place, seq: 0, entry: *root, at, sig: k.sign(&t::witness::WitnessSig::message(&place, 0, root, at)).to_bytes() };
         let wp = witness_at(ctx.code_hash, &tl.lot, ctx.beacon, &place, 0, ce);
-        got.insert(wp.id(), wp.state(&[(t::witness::BASELINE, sig)]));
+        got.insert(wp.id(), wp.state(&[(t::witness::BASELINE, [0; 32], sig)]));
     }
 
     /// THE MEASURED WEDGE (10-11), as a regression: a statement of claims epoch 1 ACCEPTED by the baseline alone while
@@ -548,7 +586,7 @@ mod baseline_check {
         let mut got = HashMap::new();
         let tl = testlot::stakers_unwitnessed(&ctx, &mut got);
         let (epoch, root) = (5u64, [0x5Au8; 32]); // standing epoch 5: its lot in claims epoch 1
-        let freeze = t::claims::frozen_at(1);
+        let freeze = t::pointers::frozen_at(1);
         let verdict = |g: &HashMap<[u8; 32], Vec<u8>>| testlot::done(&|gg| statement_accepted(&tl.lot, gg, ctx.code_hash, ctx.beacon, epoch, &root), g).unwrap();
         let valid = |g: &HashMap<[u8; 32], Vec<u8>>| testlot::done(&|gg| Ok(valid_of(&ctx, &tl.lot, gg, 1)), g).unwrap().len();
         assert_eq!(valid(&got), 0, "no staker witnessed yet");
@@ -568,7 +606,7 @@ mod baseline_check {
         let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
         let mut got = HashMap::new();
         let tl = testlot::stakers_unwitnessed(&ctx, &mut got);
-        tl.baseline_signs(&ctx, &mut got, t::claims::frozen_at(1) - 1);
+        tl.baseline_signs(&ctx, &mut got, t::pointers::frozen_at(1) - 1);
         let v = testlot::done(&|g| Ok(valid_of(&ctx, &tl.lot, g, 1)), &got).unwrap();
         assert_eq!(v.len(), 6, "witnessed one step before the freeze: all six valid");
         // So epoch 1's lots are drawn over six stakers: the baseline has no seat, its signature alone accepts nothing.
@@ -576,32 +614,159 @@ mod baseline_check {
         assert!(testlot::done(&|g| statement_accepted(&tl.lot, g, ctx.code_hash, ctx.beacon, 5, &[0x5A; 32]), &got).unwrap().is_err());
     }
 
-    /// THE FILL ATTACK on the shared CLAIMS REGISTRY (audit C2b), on the code as it stands: 4,096 forged claims (each
-    /// signed by its own fresh key for a made-up owner — all the registry can check) fill epoch 1's registry; a real
-    /// staker's claim arriving after is REFUSED (the update's cap), and `V(1)` is empty — the lot falls to the baseline.
+    /// `V(1)` read through `stakers` with a `read` that COUNTS the reads of the chains in `watch` (the network reads a
+    /// flood of pointers would cost) — every other read from `got`.
+    fn v1_counting(ctx: &Ctx, tl: &testlot::TestLot, got: &HashMap<[u8; 32], Vec<u8>>, watch: &std::collections::HashSet<[u8; 32]>) -> (Vec<t::draw::StakeClaim>, usize) {
+        let n = std::cell::Cell::new(0usize);
+        let read = |id: [u8; 32]| {
+            if watch.contains(&id) {
+                n.set(n.get() + 1);
+            }
+            got.get(&id).cloned()
+        };
+        let v = stakers(ctx.code_hash, &tl.lot, &|x| got.get(x).cloned(), ctx.beacon, &read, 1, &StakeMemo::default());
+        (v, n.get())
+    }
+
+    /// THE FILL ATTACK (audit C2b), on the new code: the old registry refused the real claim once 4,096 forged ones
+    /// filled it. Now a claim is an entry of the staker's own chain, and the index is POINTERS anyone posts: 4,096 forged
+    /// pointers (made-up stakers; signatures that are junk, or real but by keys with no seat) fill the epoch's first
+    /// bags, and ONE real staker's pointer lands after them. `V(1)` holds the real staker only, and not one forged
+    /// pointer's chain is read (the CPU prefilter, `Pointer::accepted`). NEGATIVE CONTROL: the prefilter off — every
+    /// forged pointer's chain is read (4,096 reads; the count assertion fails).
     #[test]
-    fn old_registry_fill_refuses_the_real_claim() {
+    fn a_flood_of_forged_pointers_seats_nobody_and_reads_no_chain() {
         use ed25519_dalek::Signer as _;
         let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
         let mut got = HashMap::new();
-        let tl = testlot::stakers(&ctx, &mut got);
-        let p = t::claims::Params { code_hash: ctx.code_hash, pool: tl.lot.pool, beacon: ctx.beacon, epoch: 1 };
-        let real = t::claims::Registry::decode(&got[&p.id()]).unwrap();
-        let forged: Vec<t::draw::StakeClaim> = (0..t::claims::CLAIMS_MAX as u32).map(|n| {
-            let k = ed25519_dalek::SigningKey::from_bytes(blake3::hash(&n.to_le_bytes()).as_bytes());
-            let (owner, key) = (*blake3::hash(&[&n.to_le_bytes()[..], b"owner"].concat()).as_bytes(), k.verifying_key().to_bytes());
-            t::draw::StakeClaim { owner, amount: 1_000, epoch: 1, key, sig: k.sign(&t::draw::StakeClaim::message(&tl.lot.pool, &owner, 1_000, 1, &key)).to_bytes() }
+        let tl = testlot::stakers_unwitnessed(&ctx, &mut got);
+        let pd = Definition::decode(&got[&tl.lot.pool]).unwrap();
+        // The real staker (0): its claim signed by the baseline before the freeze (`baseline_signs` signs all six and
+        // posts their pointers — the others' pointers taken back out: only staker 0 points).
+        let mut g = got.clone();
+        tl.baseline_signs(&ctx, &mut g, 0);
+        let real = testlot::pointer_to(&tl, &g, &ctx, &tl.staked[0].0, &tl.staked[0].1, tl.staked[0].1.entries.last().unwrap().seq);
+        let cp0 = &tl.staked[0].0;
+        let wp0 = witness_at(ctx.code_hash, &tl.lot, ctx.beacon, &cp0.id(), real.seq, 0);
+        got.insert(wp0.id(), g[&wp0.id()].clone());
+        // THE FLOOD: 4,096 forged pointers — made-up owners, a lot height in epoch 0, each "signed" by the baseline with
+        // junk bytes or by a fresh key that holds no seat.
+        let forged: Vec<t::pointers::Pointer> = (0..4096u32).map(|n| {
+            let owner = *blake3::hash(&[&n.to_le_bytes()[..], b"forged owner"].concat()).as_bytes();
+            let entry = *blake3::hash(&[&n.to_le_bytes()[..], b"forged entry"].concat()).as_bytes();
+            let chain = chain(&ctx, &pd, &tl.lot.pool, &owner, [0; 32]).id();
+            let sig = if n % 2 == 0 {
+                (witness::BASELINE, 0, [(n % 251) as u8; 64])
+            } else {
+                let k = ed25519_dalek::SigningKey::from_bytes(blake3::hash(&n.to_le_bytes()).as_bytes());
+                (k.verifying_key().to_bytes(), 0, k.sign(&witness::WitnessSig::message(&chain, 3, &entry, 0)).to_bytes())
+            };
+            t::pointers::Pointer { owner, seq: 3, entry, height: 9, sigs: vec![sig] }
         }).collect();
-        let full = t::claims::merge(&t::claims::Registry::default(), &t::claims::Registry { claims: forged });
-        assert_eq!(t::claims::holds(&p, &full), Ok(()), "every forged claim holds: signed by its key");
-        // The real claim arrives (well before the freeze): the merge is over the cap — the update refuses it.
-        let taken = t::claims::take(&p, &full, &t::claims::Registry { claims: vec![real.claims[0].clone()] }, 1);
-        assert!(taken.claims.len() > t::claims::CLAIMS_MAX, "over the cap: the update returns 'more claims than a registry holds'");
-        assert!(t::claims::Registry::decode(&taken.encode()).is_none(), "and no copy holding it reads");
-        got.insert(p.id(), full.encode());
-        let v = testlot::done(&|g| Ok(valid_of(&ctx, &tl.lot, g, 1)), &got).unwrap();
-        println!("OLD REGISTRY FILL: {} forged claims, the real one refused (merge {} > cap {}); V(1) = {} staker(s)", full.claims.len(), taken.claims.len(), t::claims::CLAIMS_MAX, v.len());
-        assert!(v.is_empty(), "V(1) empty: the baseline alone");
+        let watch: std::collections::HashSet<[u8; 32]> = forged.iter().map(|p| chain(&ctx, &pd, &tl.lot.pool, &p.owner, [0; 32]).id()).collect();
+        testlot::post_pointers(&tl, &mut got, 1, &forged);
+        testlot::post_pointers(&tl, &mut got, 1, &[real.clone()]);
+        let bags = (0..).take_while(|k| got.contains_key(&pointer_bag(&tl.lot, 1, *k).0)).count();
+        assert!(bags >= 5, "the flood fills the first bags: {bags}");
+        let (v, reads) = v1_counting(&ctx, &tl, &got, &watch);
+        println!("NEW INDEX FILL: {} forged pointers in {bags} bags + 1 real claim; V(1) = {:?}; forged chains read: {reads}", forged.len(), v.iter().map(|c| short(&c.owner)).collect::<Vec<_>>());
+        assert_eq!(v.iter().map(|c| c.owner).collect::<Vec<_>>(), vec![cp0.owner], "the real staker, and only it");
+        assert_eq!(v[0].key, tl.keys[0].verifying_key().to_bytes());
+        assert_eq!(reads, 0, "no forged pointer's chain read");
+        // NEGATIVE CONTROL: the prefilter off — still no forged seat (their chains are not there), but every one read.
+        t::wallet::switches::PREFILTER.with(|c| c.set(false));
+        let (v_off, reads_off) = v1_counting(&ctx, &tl, &got, &watch);
+        t::wallet::switches::PREFILTER.with(|c| c.set(true));
+        println!("CONTROL (prefilter off): V(1) = {} staker(s); forged chains read: {reads_off} — `reads == 0` fails", v_off.len());
+        assert_eq!(reads_off, forged.len(), "without the prefilter each forged pointer costs a chain read");
+    }
+
+    /// A POINTER TO A REAL BUT UNWITNESSED CLAIM (the six stakers' claims, no witness signed them; pointers posted with
+    /// junk signatures) seats nobody: the prefilter refuses the pointers, and the chains' acceptance check refuses the
+    /// claims. NEGATIVE CONTROL: both checks off — all six counted (the `V(1)` empty assertion fails).
+    #[test]
+    fn a_pointer_to_an_unwitnessed_claim_seats_nobody() {
+        let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
+        let mut got = HashMap::new();
+        let tl = testlot::stakers_unwitnessed(&ctx, &mut got);
+        let pointers: Vec<t::pointers::Pointer> = tl.staked.iter().map(|(cp, st)| {
+            let mut p = testlot::pointer_to(&tl, &got, &ctx, cp, st, st.entries.last().unwrap().seq);
+            p.sigs = vec![(witness::BASELINE, 0, [7; 64])];
+            p
+        }).collect();
+        testlot::post_pointers(&tl, &mut got, 1, &pointers);
+        let v = |g: &HashMap<[u8; 32], Vec<u8>>| testlot::seats(&tl, g, ctx.code_hash, ctx.beacon, 1).len();
+        assert_eq!(v(&got), 0, "an unwitnessed claim seats nobody");
+        // Prefilter alone off: the chains are read, and the acceptance check refuses them.
+        t::wallet::switches::PREFILTER.with(|c| c.set(false));
+        assert_eq!(v(&got), 0, "the acceptance check alone refuses them");
+        // NEGATIVE CONTROL: both off.
+        t::wallet::switches::ACCEPTANCE.with(|c| c.set(false));
+        let off = v(&got);
+        t::wallet::switches::PREFILTER.with(|c| c.set(true));
+        t::wallet::switches::ACCEPTANCE.with(|c| c.set(true));
+        println!("CONTROL (prefilter and acceptance off): V(1) = {off} — `V(1) == 0` fails");
+        assert_eq!(off, 6);
+    }
+
+    /// LIVENESS (owner 10-12: "stakers offline must not stall epochs"): staker 0, valid in epoch 1, claims epoch 2 (its
+    /// claim stamped in epoch 1). Its seated witnesses run THE WITNESS RULE (`witness::entry` → `wallet::may_witness`):
+    /// with no standing record answering in epoch 1 the claim is REFUSED — never signed, so staker 0 is not in `V(2)`;
+    /// with one (an answer at a height in epoch 1, before the claim) it is signed, pointed to, and staker 0 is in `V(2)`.
+    /// NEGATIVE CONTROL: the liveness check off — the claim of a node that answered nothing is signed and counted.
+    #[test]
+    fn a_claim_seats_its_staker_only_if_it_answered_last_epoch() {
+        let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
+        let standing = [43u8; 32];
+        let mut got = HashMap::new();
+        let tl = testlot::stakers(&ctx, &mut got);
+        assert_eq!(testlot::seats(&tl, &got, ctx.code_hash, ctx.beacon, 1).len(), 6);
+        let pd = Definition::decode(&got[&tl.lot.pool]).unwrap();
+        let (cp, st) = tl.staked[0].clone();
+        let key = tl.keys[0].verifying_key().to_bytes();
+        // Its CLAIM for epoch 2, stamped in epoch 1.
+        let stamp = testlot::E1 + 100;
+        let mut s2 = st.clone();
+        let mut e = t::Entry { seq: st.entries.last().unwrap().seq + 1, prev: st.head(), nonce: [0xc2; 16], stamp, body: Body::Claim { from_epoch: 2, amount: 1_000 }, balance: st.balance(), auth: t::Auth::Work(0) };
+        e.auth = t::Auth::Sig(ed25519_dalek::Signer::sign(&tl.keys[0], &e.message()).to_bytes());
+        s2.entries.push(e.clone());
+        got.insert(cp.id(), s2.encode());
+        let q = craftworks_wallet::queue::Queued { token: t::Tok { definition: tl.lot.pool, item: [0; 32] }, owner: cp.owner, seq: e.seq };
+        let record_id = craftworks_standing_contract::Params::keeper(tl.lot.beacon_code, ctx.beacon, &key).id(&standing);
+        let answered = craftworks_standing::record::State { epochs: vec![craftworks_standing::record::Epoch { epoch: craftworks_standing::epoch(testlot::E1 + 50), answers: vec![craftworks_standing::Answer { key, peer: craftworks_standing::keeper_peer(&key), height: testlot::E1 + 50, picks: vec![], sig: [0; 64] }], ..Default::default() }] };
+        // Each seated witness's verdict (the page's rule) — and, where it signs, the signatures and the pointer.
+        let run = |got: &HashMap<[u8; 32], Vec<u8>>| -> (Vec<crate::witness::Verdict>, usize) {
+            let verdicts: Vec<crate::witness::Verdict> = tl.keys.iter().map(|k| testlot::done(&|g| crate::witness::entry(&ctx, &tl.lot, g, &q, &k.verifying_key().to_bytes(), stamp + 20, &standing), got).unwrap()).filter(|v| *v != crate::witness::Verdict::NotSeated).collect();
+            let mut g = got.clone();
+            if verdicts.iter().all(|v| matches!(v, crate::witness::Verdict::Sign { .. })) {
+                testlot::witness(&tl, &mut g, &cp, &pd, &s2, e.seq, verdicts.len());
+                let ptr = testlot::pointer_to(&tl, &g, &ctx, &cp, &s2, e.seq);
+                testlot::post_pointers(&tl, &mut g, 2, &[ptr]);
+            }
+            let v2 = testlot::seats(&tl, &g, ctx.code_hash, ctx.beacon, 2);
+            (verdicts, v2.iter().filter(|c| c.owner == cp.owner).count())
+        };
+        // NO STANDING RECORD (or one that answered nothing in epoch 1): refused, not in V(2).
+        got.insert(record_id, vec![]);
+        let (verdicts, seated) = run(&got);
+        assert!(!verdicts.is_empty() && verdicts.iter().all(|v| matches!(v, crate::witness::Verdict::Refused(w) if w.contains("answered nothing"))), "{verdicts:?}");
+        assert_eq!(seated, 0, "a staker that answered nothing last epoch is not in V(2)");
+        let stale = craftworks_standing::record::State { epochs: vec![craftworks_standing::record::Epoch { epoch: 1, answers: vec![craftworks_standing::Answer { height: 1100, ..answered.epochs[0].answers[0].clone() }], ..Default::default() }] };
+        got.insert(record_id, craftworks_standing::codec::encode(&stale));
+        assert_eq!(run(&got).1, 0, "an answer in the epoch BEFORE (epoch 0) proves nothing about epoch 1");
+        // A RECORD THAT ANSWERED in epoch 1, before the claim: signed, pointed to, in V(2).
+        let mut live = got.clone();
+        live.insert(record_id, craftworks_standing::codec::encode(&answered));
+        let (verdicts, seated) = run(&live);
+        assert!(verdicts.iter().all(|v| matches!(v, crate::witness::Verdict::Sign { .. })), "{verdicts:?}");
+        assert_eq!(seated, 1, "a live staker is in V(2)");
+        // NEGATIVE CONTROL: liveness off — the silent node's claim is signed and counted.
+        t::wallet::switches::LIVENESS.with(|c| c.set(false));
+        got.insert(record_id, vec![]);
+        let (_, seated_off) = run(&got);
+        t::wallet::switches::LIVENESS.with(|c| c.set(true));
+        println!("CONTROL (liveness off): the silent staker in V(2): {seated_off} — `seated == 0` fails");
+        assert_eq!(seated_off, 1);
     }
 
     #[test]

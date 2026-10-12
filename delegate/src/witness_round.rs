@@ -106,7 +106,7 @@ pub(crate) fn chain_items(got: tokens::Got, bag: &[u8; 32], address: &dyn Fn(u64
 fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8; 32]>, bool) {
     let got = |id: &[u8; 32]| r.got.get(id).cloned();
     let ctx = tokens::Ctx { code_hash: m.token, beacon: m.beacon, idlog: m.idlog };
-    let lot = tokens::Lot { pool: m.pool, bag: m.bag, beacon_code: m.beacon_code };
+    let lot = tokens::Lot { pool: m.pool, bag: m.bag, beacon_code: m.beacon_code, idlog: m.idlog };
     // THE CLOCK.
     let beacon = match tokens::there(&got, &m.beacon) {
         Err(w) => return (vec![], vec![w], false),
@@ -134,7 +134,7 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
             continue;
         }
         let Some(q) = craftworks_wallet::queue::Queued::decode(&it) else { continue };
-        match witness::entry(&ctx, &lot, &got, &q, &r.member, height) {
+        match witness::entry(&ctx, &lot, &got, &q, &r.member, height, &m.standing) {
             Err(why) => identity::upkeep_say(h, &r.member, &format!("witness: {why}")),
             Ok(tokens::Step::Want(w)) => {
                 if settled.len() != before {
@@ -150,8 +150,8 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
             // Not yet decidable: asked again on a later wake-up (never settled).
             Ok(tokens::Step::Done(witness::Verdict::Later(_))) => {}
             Ok(tokens::Step::Done(witness::Verdict::Refused(why))) => identity::upkeep_say(h, &r.member, &format!("witness: refused seq {}: {why}", q.seq)),
-            Ok(tokens::Step::Done(witness::Verdict::Sign { at, entry })) => {
-                sign_into(h, &r.member, &at, entry, height, &mut out);
+            Ok(tokens::Step::Done(witness::Verdict::Sign { at, entry, owner })) => {
+                sign_into(h, &r.member, &owner, &at, entry, height, &mut out);
                 seen.insert(k);
                 settled.push(k);
             }
@@ -171,13 +171,14 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
 
 /// SIGN `entry` at place `at` through the guard (`identity::upkeep_witness_sign`: never another entry at a place) and
 /// send the signature into the place's signatures container: an UPDATE of the container its chain's writer (or a
-/// statement's poster) made — the node merging it (`witness::merge`: the member's key registered in the lot's claims
-/// epoch). The page's encoding (`witness_put`): `Params::state` of the one signature. Signed at `height`, the beacon
-/// height this round read (the container takes it only near the beacon's: `witness::fresh`).
-pub(crate) fn sign_into<H: Host>(h: &mut H, member: &[u8; 32], at: &t::witness::Params, entry: [u8; 32], height: u64, out: &mut Vec<Io>) -> bool {
+/// statement's poster) made — the node merging it (`witness::merge`: the member's key the writer of a claim for the lot's
+/// claims epoch in the pool chain of `owner`, the staker the seat is). The page's encoding (`witness_put`):
+/// `Params::state` of the one signature. Signed at `height`, the beacon height this round read (the container takes it
+/// only near the beacon's: `witness::fresh`).
+pub(crate) fn sign_into<H: Host>(h: &mut H, member: &[u8; 32], owner: &[u8; 32], at: &t::witness::Params, entry: [u8; 32], height: u64, out: &mut Vec<Io>) -> bool {
     match identity::upkeep_witness_sign(h, member, &at.chain, at.seq, &entry, height) {
         Ok(sig) => {
-            let state = at.state(&[(*member, t::witness::WitnessSig { chain: at.chain, seq: at.seq, entry, at: height, sig })]);
+            let state = at.state(&[(*member, *owner, t::witness::WitnessSig { chain: at.chain, seq: at.seq, entry, at: height, sig })]);
             out.push(Io::Update { id: at.id(), delta: state });
             true
         }

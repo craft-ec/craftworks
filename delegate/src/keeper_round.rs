@@ -33,9 +33,12 @@ pub struct Pending {
 pub struct At {
     pub upto: u64,
     pub pending: Option<Pending>,
-    /// The standing epoch it last LISTED in, and last CLAIMED in (audit 10-11: the page's, while it is closed).
+    /// The standing epoch it last LISTED in, and the CLAIMS epoch it last CLAIMED for and POINTED to its claim for
+    /// (audit 10-11: the page's, while it is closed; C2b 10-12: the claim an entry of its own chain, its pointer posted
+    /// once its witnesses accepted it).
     pub listed: Option<u64>,
     pub claimed: Option<u64>,
+    pub pointed: Option<u64>,
     /// The wake-up a listing was last sent in (a pass run again in it does not send it twice).
     pub sent: Option<u64>,
 }
@@ -162,10 +165,12 @@ fn step<H: Host>(h: &mut H, r: &Round, mut m: KeeperMandate) -> Result<(Vec<Io>,
             break;
         }
     }
-    // CLAIMED (the account's seat node only): its $CRAFT stake for the next open claims epoch, its key the witness key
-    // — the page's own rule (`keeper::claim`), signed by the member key under the token's domains.
-    if m.seat && a.claimed != Some(epoch) {
-        let ctx = craftworks_rules::tokens::Ctx { code_hash: m.token, beacon: m.beacon, idlog: m.idlog };
+    // CLAIMED (the account's seat node only, and only in the claim window — shortly before the next claims epoch's
+    // freeze: a node asleep then is not seated): its $CRAFT stake for that epoch, its key the witness key — the page's
+    // own rule (`keeper::claim`), signed by the member key under the token's domains; the claim queued for its witnesses.
+    let ctx = craftworks_rules::tokens::Ctx { code_hash: m.token, beacon: m.beacon, idlog: m.idlog };
+    let ce = keeper::claim_epoch(height);
+    if m.seat && ce.is_some() && a.claimed != ce {
         let mut sigs: Vec<(Vec<u8>, [u8; 64])> = Vec::new();
         for _ in 0..8 {
             let dev = craftworks_rules::tokens::Device { public, credential: m.credential.clone(), key_seq: m.key_seq, sigs: sigs.clone() };
@@ -179,18 +184,57 @@ fn step<H: Host>(h: &mut H, r: &Round, mut m: KeeperMandate) -> Result<(Vec<Io>,
                     sigs.push((msg, sig));
                 }
                 Step::Done(None) => {
-                    a.claimed = Some(epoch);
+                    a.claimed = ce;
                     break;
                 }
                 Step::Done(Some(c)) => {
-                    let update = |p: &craftworks_rules::tokens::Put| Io::Update { id: craftworks_token_contract::id(&m.token, &p.params), delta: p.state.clone() };
-                    late.extend(c.chain.iter().map(update));
-                    late.push(update(&c.registry));
-                    identity::upkeep_say(h, &public, &format!("keeper: {} staked in claims epoch {} with no page open", c.amount, c.epoch));
-                    a.claimed = Some(epoch);
+                    late.push(Io::Update { id: craftworks_token_contract::id(&m.token, &c.chain.params), delta: c.chain.state.clone() });
+                    // QUEUED for its witnesses (the witness queue of this standing epoch: its first bag with room).
+                    let st = craftworks_token_contract::State::decode(&c.chain.state).ok_or("a claim's chain that does not read")?;
+                    let token = keeper::craft(&ctx).1;
+                    let seq = st.entries.last().map_or(0, |e| e.seq);
+                    let item = craftworks_wallet::queue::Queued { token: craftworks_token_contract::Tok { definition: token, item: [0; 32] }, owner: m.did, seq }.encode();
+                    for k in 0..64u32 {
+                        let address = craftworks_wallet::queue::address(epoch, k);
+                        let items: Vec<Vec<u8>> = match there(&got, &craftworks_token_contract::id(&m.bag, &address)) {
+                            Err(w) => {
+                                set_at(h, &public, &a);
+                                return Ok((out, vec![w]));
+                            }
+                            Ok(st) => st.and_then(|b| craftworks_bag_contract::read(&address, &b)).unwrap_or_default().iter().map(|x| craftworks_bag_contract::payload(x).to_vec()).collect(),
+                        };
+                        if items.contains(&item) || !craftworks_bag_contract::chained::full(items.iter().map(Vec::len)) {
+                            late.push(Io::Update { id: craftworks_token_contract::id(&m.bag, &address), delta: craftworks_bag_contract::encode(&address, &[craftworks_bag_contract::grind(&address, &item)]) });
+                            break;
+                        }
+                    }
+                    identity::upkeep_say(h, &public, &format!("keeper: {} claimed for claims epoch {} with no page open", c.amount, c.epoch));
+                    a.claimed = ce;
                     break;
                 }
             }
+        }
+    }
+    // POINTED (C2b): once its claim for the coming claims epoch is ACCEPTED, the pointer to it — its signatures with it —
+    // into the epoch's pointer bags (`keeper::point`: the first with room), so readers find it (a staker already in the
+    // epoch before is found without one). Only into a bag that exists (a delegate's new contracts do not leave its node:
+    // the page makes the coming epochs' first bags).
+    let next = height / craftworks_token_contract::supply::EPOCH + 1;
+    if m.seat && a.pointed != Some(next) && height < craftworks_token_contract::pointers::frozen_at(next) {
+        let lot = craftworks_rules::tokens::Lot { pool: keeper::craft(&ctx).1, bag: m.bag, beacon_code: m.beacon_code, idlog: m.idlog };
+        match keeper::point(&ctx, &lot, &got, &m.did, next)? {
+            Step::Want(w) => {
+                out.append(&mut late);
+                set_at(h, &public, &a);
+                return Ok((out, w));
+            }
+            Step::Done(Some(p)) => {
+                late.push(Io::Update { id: p.id, delta: craftworks_bag_contract::encode(&p.address, &[craftworks_bag_contract::grind(&p.address, &p.item)]) });
+                identity::upkeep_say(h, &public, &format!("keeper: its claim for claims epoch {next} pointed to with no page open"));
+                a.pointed = Some(next);
+            }
+            // (Not claimed, not accepted yet, or pointed to already: asked again on a later wake-up.)
+            _ => {}
         }
     }
     // (What these built goes out now, whatever the answers below still ask for — and their marks are kept now.)

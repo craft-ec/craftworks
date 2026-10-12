@@ -42,6 +42,9 @@ pub struct Source<'a> {
     /// an escrow, its release or a sale behind a cut is still found (audit 10-10: a seller's cut hid its escrow from
     /// the buyer's payout).
     pub history: &'a dyn Fn(&Tok, &[u8; 32]) -> Option<State>,
+    /// A keeper's STANDING RECORD, by its key (the standing contract named by it: `standing::Params::keeper`) — what a
+    /// stake claim's witness reads for its LIVENESS ([`live`]).
+    pub standing: &'a dyn Fn(&[u8; 32]) -> Option<craftworks_standing::record::State>,
 }
 
 /// A place's SIGNATURES as read: (chain id, seq, the claims epoch of its lot) → those its container holds.
@@ -97,68 +100,141 @@ pub fn statement_accept(src: &Source, epoch: u64, root: &[u8; 32]) -> Result<usi
     witness::accepted(&src.pool, &place, 0, root, &out, ce, &(src.claims)(ce), &(src.sigs)(&place, 0, ce), COMMITTEE, &|o| (src.stake_of)(o, ce * supply::EPOCH))
 }
 
-/// What VALID STAKE (TOKEN §7a) is read from: the raw CLAIMS REGISTRY of an epoch, a staker's POOL CHAIN (its params and
-/// state, whole from seq 0), the beacon's outputs, a place's witness signatures. A read not there: `None` / empty.
+/// What VALID STAKE (TOKEN §7a) is read from: the POINTERS posted for an epoch (every bag of its chain, decoded), a
+/// staker's POOL CHAIN (its params and state, whole from seq 0), the beacon's outputs, a place's witness signatures. A
+/// read not there: `None` / empty.
 pub struct StakeReads<'a> {
     pub pool: [u8; 32],
     pub pool_def: &'a Definition,
-    pub registry: &'a dyn Fn(u64) -> Vec<StakeClaim>,
+    pub pointers: &'a dyn Fn(u64) -> Vec<crate::pointers::Pointer>,
     pub chain: &'a dyn Fn(&[u8; 32]) -> Option<(ChainParams, State)>,
     pub out: &'a dyn Fn(u64) -> Option<[u8; 32]>,
     pub sigs: Sigs<'a>,
 }
 
-/// The VALID STAKERS of claims epoch `epoch`, `V(E)` (TOKEN §7a, audit 10-11): each claim of its registry whose staker's
-/// pool chain at the epoch's start stakes at least the claim with the claim's key among the keys that stake burns for,
-/// is not forked, and has its LAST entry before the epoch's start ACCEPTED — by its committee drawn from `V` of that
-/// entry's own lot epoch (earlier: the recursion ends at an epoch with none, where the baseline's seat alone decides).
-/// A witness signs an entry only after its predecessor is accepted, so that one acceptance vouches for the whole stake
-/// history: a self-made mint or a forged receive no witness signed never counts. Every lot draws over this, never the
-/// raw registry. FIXED AT THE FREEZE (10-11): that last entry counts only as accepted by signatures made BEFORE the
-/// epoch's registry froze (`witness::accepted_before` at `claims::frozen_at`) — an acceptance arriving later (an entry
-/// stranded and witnessed hours after) never grows `V(E)` after the fact, so no threshold over it rises and nothing
-/// accepted under it is ever unaccepted. `memo`: the epochs already computed in this evaluation.
+/// TESTS ONLY (`testlot`): each check of [`valid_stakers`] and the claim witness's liveness ([`live`]) can be turned
+/// off — the NEGATIVE CONTROLS that show a test fails without the mechanism it tests. Never in a build.
+#[cfg(any(test, feature = "testlot"))]
+pub mod switches {
+    use std::cell::Cell;
+    thread_local! {
+        /// The pointer PREFILTER (`Pointer::accepted`): off — every pointer's chain is read.
+        pub static PREFILTER: Cell<bool> = const { Cell::new(true) };
+        /// The ACCEPTANCE of a staker's last entry before the freeze: off — a claim nobody witnessed counts.
+        pub static ACCEPTANCE: Cell<bool> = const { Cell::new(true) };
+        /// The LIVENESS of a claim's writer (its standing record): off — a claim of a node that answered nothing is signed.
+        pub static LIVENESS: Cell<bool> = const { Cell::new(true) };
+    }
+}
+#[cfg(any(test, feature = "testlot"))]
+fn on(s: &'static std::thread::LocalKey<std::cell::Cell<bool>>) -> bool {
+    s.with(|c| c.get())
+}
+#[cfg(not(any(test, feature = "testlot")))]
+macro_rules! on {
+    ($x:expr) => {
+        true
+    };
+}
+#[cfg(any(test, feature = "testlot"))]
+macro_rules! on {
+    ($x:ident) => {
+        on(&switches::$x)
+    };
+}
+
+/// A staker's SEAT in claims epoch `epoch` as its pool chain (`cp`, `st`; the pool `d`) stands at the epoch's start —
+/// before any acceptance is asked: its last `Body::Claim` stamped before the start is for `epoch`, no unstake after it,
+/// its writer a device whose key the stake at the start burns for, and that stake at least the claim. `None`: no seat.
+/// (Also the index of the staker's LAST entry before the start: what must be ACCEPTED before the freeze.)
+pub fn seat_of(cp: &ChainParams, d: &Definition, st: &State, epoch: u64) -> Option<(StakeClaim, usize)> {
+    let start = epoch.checked_mul(supply::EPOCH)?;
+    if st.fork.is_some() {
+        return None;
+    }
+    let n = st.entries.iter().take_while(|e| e.stamp < start).count();
+    let j = n.checked_sub(1)?;
+    let c = st.entries[..n].iter().rposition(|e| matches!(e.body, Body::Claim { .. }))?;
+    let Body::Claim { from_epoch, amount } = st.entries[c].body else { return None };
+    if from_epoch != epoch || st.entries[c + 1..n].iter().any(|e| matches!(e.body, Body::Unstake { .. })) {
+        return None;
+    }
+    let Some(Signer::Device(key, _)) = crate::writer_at(st, c) else { return None };
+    let (staked, keys) = stake_at(cp, d, st, start).ok()?;
+    if staked < amount || !keys.contains(&key) {
+        return None;
+    }
+    Some((StakeClaim { owner: cp.owner, amount, epoch, key }, j))
+}
+
+/// The VALID STAKERS of claims epoch `epoch`, `V(E)` (TOKEN §7a; audit C2b, 10-12): who stands in E's lots. The
+/// CANDIDATES are `V(E−1)` and the stakers POINTED to for E ([`crate::pointers`]: anyone posts one, so a pointer is
+/// first checked on CPU — its own signatures accept its claim before the freeze, `Pointer::accepted` — and only one that
+/// passes has its chain read: a flood of forged pointers costs readers CPU, never a read, and never a seat). A candidate
+/// counts if its pool chain gives it a SEAT ([`seat_of`]: a claim for E, its stake behind it, at E's start) and its LAST
+/// entry before E's start is ACCEPTED — by its committee drawn from `V` of that entry's own lot epoch, counting only
+/// signatures made BEFORE E's FREEZE (`witness::accepted_before` at `pointers::frozen_at(E)`). A witness signs an entry
+/// only once its predecessor is accepted (`may_witness`), so that one acceptance vouches for the whole history — the
+/// claim among it, which its witnesses signed only on its writer's LIVENESS ([`live`]: its standing record answered in
+/// the epoch the claim is stamped in). So a sleeping node — no answer, no claim — is not seated, and a claim cannot be
+/// filled, replaced or crowded out: only the writer writes its chain. FIXED AT THE FREEZE (10-11): an acceptance arriving
+/// later never grows `V(E)`. `memo`: the epochs already computed in this evaluation.
 pub fn valid_stakers(r: &StakeReads, epoch: u64, memo: &std::cell::RefCell<std::collections::BTreeMap<u64, Vec<StakeClaim>>>) -> Vec<StakeClaim> {
     if let Some(v) = memo.borrow().get(&epoch) {
         return v.clone();
     }
     // (Marked before the recursion: an epoch never asks for itself, but a read loop must end.)
     memo.borrow_mut().insert(epoch, Vec::new());
-    let Some(start) = epoch.checked_mul(supply::EPOCH) else { return Vec::new() };
-    let raw = (r.registry)(epoch);
+    if epoch == 0 || epoch.checked_mul(supply::EPOCH).is_none() {
+        return Vec::new();
+    }
+    let freeze = crate::pointers::frozen_at(epoch);
+    let before = valid_stakers(r, epoch - 1, memo);
+    let pool_chain = |owner: &[u8; 32]| ChainParams { code_hash: r.pool_def.code_hash, definition: r.pool, owner: *owner, beacon: r.pool_def.beacon, idlog: r.pool_def.idlog, item: [0; 32] };
+    // THE CANDIDATES: last epoch's stakers, then each pointed-to staker whose pointer passes the prefilter.
+    let mut owners: Vec<[u8; 32]> = before.iter().map(|c| c.owner).collect();
+    for p in (r.pointers)(epoch) {
+        if owners.contains(&p.owner) {
+            continue;
+        }
+        if !on!(PREFILTER) || p.accepted(&r.pool, &pool_chain(&p.owner).id(), epoch, r.out, &before) {
+            owners.push(p.owner);
+        }
+    }
+    owners.sort();
+    owners.dedup();
     let mut out: Vec<StakeClaim> = Vec::new();
-    // Every claim of the epoch (a staker may have several — one per key: a forger's under its own key stays beside the
-    // staker's), the first per staker its stake answers for.
-    for c in raw.iter().filter(|c| c.epoch == epoch && c.holds(&r.pool)) {
-        let owner = c.owner;
-        if out.iter().any(|x| x.owner == owner) {
-            continue;
-        }
+    for owner in owners {
         let Some((cp, st)) = (r.chain)(&owner) else { continue };
-        if st.fork.is_some() {
-            continue;
-        }
-        let Ok((amount, keys)) = stake_at(&cp, r.pool_def, &st, start) else { continue };
-        if amount < c.amount || !keys.contains(&c.key) {
-            continue;
-        }
-        let n = st.entries.iter().take_while(|e| e.stamp < start).count();
-        let Some(j) = n.checked_sub(1) else { continue };
+        let Some((seat, j)) = seat_of(&cp, r.pool_def, &st, epoch) else { continue };
         let e = &st.entries[j];
         let Ok((lot_epoch, h)) = lot_of(e, j.checked_sub(1).map(|k| &st.entries[k]), r.pool_def.margin) else { continue };
         if lot_epoch >= epoch {
             continue;
         }
-        let Some(o) = (r.out)(h) else { continue };
-        let prior = valid_stakers(r, lot_epoch, memo);
-        let id = cp.id();
-        let sigs = (r.sigs)(&id, e.seq, lot_epoch);
-        if witness::accepted_before(&r.pool, &id, e.seq, &e.hash(), &o, lot_epoch, &prior, &sigs, COMMITTEE, &|w| stake_from(&prior, w), crate::claims::frozen_at(epoch)).is_ok() {
-            out.push(c.clone());
+        if on!(ACCEPTANCE) {
+            let Some(o) = (r.out)(h) else { continue };
+            let prior = valid_stakers(r, lot_epoch, memo);
+            let id = cp.id();
+            let sigs = (r.sigs)(&id, e.seq, lot_epoch);
+            if witness::accepted_before(&r.pool, &id, e.seq, &e.hash(), &o, lot_epoch, &prior, &sigs, COMMITTEE, &|w| stake_from(&prior, w), freeze).is_err() {
+                continue;
+            }
         }
+        out.push(seat);
     }
     memo.borrow_mut().insert(epoch, out.clone());
     out
+}
+
+/// LIVENESS (TOKEN §7a, owner 10-12: "stakers offline must not stall epochs"): did the writer of a stake claim stamped
+/// at `stamp` — its witness key `key`, its standing record `record` — ANSWER the beacon (a sampled height, checked from
+/// scratch by its standing contract) in the claims epoch the claim is stamped in, at or before the claim? What a
+/// claim's witness checks before it signs (`may_witness`): the record is read while it still holds that epoch (records
+/// keep the newest few standing epochs), and the acceptance it signs keeps the verdict for good.
+pub fn live(record: Option<&craftworks_standing::record::State>, key: &[u8; 32], stamp: u64) -> bool {
+    let from = supply::epoch(stamp) * supply::EPOCH;
+    record.is_some_and(|r| r.epochs.iter().any(|e| e.answers.iter().any(|a| a.key == *key && a.height >= from && a.height <= stamp)))
 }
 
 /// A staker's stake as its VALID claim stands (`valid_stakers`: its stake already proved — what a signature counts for).
@@ -270,6 +346,13 @@ pub fn may_witness(src: &Source, p: &ChainParams, d: &Definition, s: &State, seq
     taken(src, p, d.margin, s, i)?;
     // A RELEASE or PAYOUT of a program: the program BACKED by real, accepted escrows to it.
     program_entry(src, p, s, i, chain)?;
+    // A STAKE CLAIM: its writer LIVE — its standing record answered in the epoch it is stamped in ([`live`]).
+    if matches!(e.body, Body::Claim { .. }) && on!(LIVENESS) {
+        let Some(Signer::Device(key, _)) = crate::writer_at(s, i) else { return Err("a stake claim with no device writer") };
+        if !live((src.standing)(&key).as_ref(), &key, e.stamp) {
+            return Err("a stake claim whose writer answered nothing this epoch");
+        }
+    }
     // A KEEPER MINT: its line under the statement root ACCEPTED for its epoch (the contract checked the line holds
     // under the root it names; any root may be posted).
     if let Body::KeeperMint { epoch, root, .. } = &e.body {
@@ -478,25 +561,4 @@ pub fn equivocations(sigs: &[WitnessSig], claims: &[StakeClaim]) -> Vec<([u8; 32
         }
     }
     out
-}
-
-/// THE BAG (TOKEN §7a) a pool's STAKE CLAIMS of one epoch are dropped into (an open set anyone adds to: a `bag`
-/// contract, its params this address). (A place's WITNESS SIGNATURES have their own container: `witness::Params`.)
-pub fn stakers_bag(pool: &[u8; 32], epoch: u64) -> [u8; 32] {
-    *blake3::Hasher::new_derive_key("craftworks token stakers bag").update(pool).update(&epoch.to_le_bytes()).finalize().as_bytes()
-}
-
-/// The records' BYTES — exact: trailing bytes refused.
-pub mod bytes {
-    use crate::draw::StakeClaim;
-    use crate::R;
-
-    pub fn stake_claim(c: &StakeClaim) -> Vec<u8> {
-        [&c.owner[..], &c.amount.to_le_bytes(), &c.epoch.to_le_bytes(), &c.key, &c.sig].concat()
-    }
-    pub fn read_stake_claim(b: &[u8]) -> Option<StakeClaim> {
-        let mut r = R(b);
-        let c = StakeClaim { owner: r.arr()?, amount: r.u128()?, epoch: r.u64()?, key: r.arr()?, sig: r.arr()? };
-        r.done().then_some(c)
-    }
 }

@@ -2,7 +2,7 @@
 // every public record the token machinery runs on, as tables — the clock, the epoch statements and their witnesses,
 // the witness lot's entrants, the witness queue with each entry's signatures and status, the registries — yours
 // marked (what your nodes do is the Nodes app's, your money the Wallet's). Read-only; every value is the core's reading of a public contract (`clock`, `statement_status`,
-// `claims_read`, `entry_status`, …). Refreshed as the beacon advances.
+// `stakers`, `entry_status`, …). Refreshed as the beacon advances.
 export async function mount(ctx, el) {
   el.innerHTML = `<style>@layer apps {
     .ex { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); max-width: 64rem; }
@@ -88,12 +88,11 @@ export async function mount(ctx, el) {
     // WITNESS LOT
     const lotRows = [];
     for (const x of [c, c + 1]) {
-      const reg = await stateOf(Core.claims_registry_id(tokens.code, tokens.beacon, tokens.idlogCode, x));
-      const claims = reg ? Core.claims_read(reg) : [];
+      const claims = (await run(() => core.stakers(tokens.code, tokens.beacon, tokens.idlogCode, lot.bag, lot.beacon, x)).catch(() => [])) ?? [];
       if (!claims.length) lotRows.push([cell(String(x), "num"), cell("no entrants: the baseline witnesses alone", "note"), cell(""), cell(""), cell("")]);
       for (const k of claims) lotRows.push([cell(String(x), "num"), cell(k.owner === myDid ? "you" : short(k.owner)), cell(craft(k.amount), "num"), code(short(k.key)), cell(k.key === myKey ? "this node" : "")]);
     }
-    parts.push(section("Witness lot", "Stakers who entered each claims epoch: each entry's witnesses are drawn from them, by stake.", table([["Claims epoch", "num"], ["Account"], ["$CRAFT staked", "num"], ["Witness key"], [""]], lotRows)));
+    parts.push(section("Witness lot", "The valid stakers of each claims epoch — a claim in their own chain, accepted before the epoch froze: each entry's witnesses are drawn from them, by stake.", table([["Claims epoch", "num"], ["Account"], ["$CRAFT staked", "num"], ["Witness key"], [""]], lotRows)));
 
     // WITNESS QUEUE
     const qRows = [];

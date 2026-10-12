@@ -518,6 +518,13 @@ pub enum Body {
     Unstake { amount: u128 },
     /// The unstake `unstake` (its entry's nonce) back into the balance, its delay over — appended by anyone.
     Release { unstake: [u8; 16] },
+    /// A STAKE CLAIM (TOKEN §7a, audit C2b): this chain's writer — a DEVICE, its node key the WITNESS KEY — stands in the
+    /// lots of claims epoch `from_epoch` (always the epoch after the one it is stamped in, written before that epoch's
+    /// FREEZE: `pointers::frozen_at`) with `amount` of its stake. Only the writer writes its chain, so nobody can fill,
+    /// replace or crowd it out; what it is worth is decided by `wallet::valid_stakers` (it, or a later entry, ACCEPTED
+    /// before the freeze) and by its witnesses (`wallet::may_witness`: the writer's standing record shows it ANSWERED
+    /// in the epoch it is stamped in — a sleeping node is not seated). One epoch's seat: written again each epoch.
+    Claim { from_epoch: u64, amount: u128 },
     /// ISSUANCE (TOKEN §7d): this account's LINE of standing epoch `epoch`'s STATEMENT (`root`; `proof`, its line's
     /// prolly proof under it) minted — its KEEPER share `amount` LOCKED as stake, its WITNESS fees `fee` SPENDABLE —
     /// each exactly the line's. Appended by ANYONE with its work (the proof fixes both: nobody need be online); its
@@ -823,6 +830,11 @@ impl Entry {
                 v.push(17);
                 v.extend_from_slice(unstake);
             }
+            Body::Claim { from_epoch, amount } => {
+                v.push(36);
+                v.extend_from_slice(&from_epoch.to_le_bytes());
+                v.extend_from_slice(&amount.to_le_bytes());
+            }
             Body::Slash { key, a, b } => {
                 v.push(18);
                 v.extend_from_slice(key);
@@ -997,6 +1009,7 @@ impl Entry {
             }
             16 => Body::Unstake { amount: r.u128()? },
             17 => Body::Release { unstake: r.arr()? },
+            36 => Body::Claim { from_epoch: r.u64()?, amount: r.u128()? },
             18 => Body::Slash { key: r.arr()?, a: witness::WitnessSig::read(r)?, b: witness::WitnessSig::read(r)? },
             14 => Body::Members { set: authority::KeySet::read(r)?, set_seq: r.u32()? },
             19 => {
@@ -1919,6 +1932,19 @@ pub fn walk(p: &ChainParams, d: &Definition, s: &State, chain: &dyn Fn(&Tok, &[u
                     unbonding.push((e.nonce, *amount, e.stamp.saturating_add(UNBOND)));
                     balance
                 }
+                Body::Claim { from_epoch, amount } => {
+                    owner_signed(e, &writer)?;
+                    if !matches!(writer, Some(Signer::Device(..))) {
+                        return Err("a stake claim with no device writer");
+                    }
+                    if *amount == 0 || *amount > staked {
+                        return Err("a stake claim over the stake");
+                    }
+                    if *from_epoch != supply::epoch(e.stamp) + 1 || e.stamp >= pointers::frozen_at(*from_epoch) {
+                        return Err("a stake claim not for the next epoch before its freeze");
+                    }
+                    balance
+                }
                 Body::Release { unstake } => {
                     if !e.worked() {
                         return Err("a release without its work");
@@ -2545,7 +2571,7 @@ pub fn beacon_height(b: &[u8]) -> Option<u64> {
 
 #[cfg(feature = "freenet-main-contract")]
 mod contract {
-    use super::{accept, authority, beacon_height, claims, freeze, operators, supply, witness, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
+    use super::{accept, authority, beacon_height, freeze, operators, supply, witness, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
     use freenet_stdlib::prelude::*;
 
     pub struct Token;
@@ -2797,49 +2823,6 @@ mod contract {
         Ok(UpdateModification::valid(State::from(merged.encode())))
     }
 
-    /// A CLAIMS REGISTRY holds: every claim of its epoch and signed.
-    fn claims_valid(params: &[u8], state: &[u8]) -> Result<ValidateResult, ContractError> {
-        let (Some(p), Some(r)) = (claims::Params::decode(params), claims::Registry::decode(state)) else { return Ok(ValidateResult::Invalid) };
-        Ok(if claims::holds(&p, &r).is_ok() { ValidateResult::Valid } else { ValidateResult::Invalid })
-    }
-
-    /// A claims registry's UPDATE: merged while the beacon (read in the same round) is below its freeze; after, kept.
-    fn claims_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
-        let p = claims::Params::decode(params).ok_or(ContractError::InvalidState)?;
-        let held = claims::Registry::decode(state).ok_or(ContractError::InvalidState)?;
-        let mut given = claims::Registry::default();
-        let mut beacon: Option<Vec<u8>> = None;
-        for d in data {
-            let b: &[u8] = match &d {
-                UpdateData::State(s) => s.as_ref(),
-                UpdateData::Delta(x) => x.as_ref(),
-                UpdateData::StateAndDelta { state, .. } => state.as_ref(),
-                UpdateData::RelatedState { related_to, state } => {
-                    if related_to.as_bytes() == p.beacon {
-                        beacon = Some(state.as_ref().to_vec());
-                    }
-                    continue;
-                }
-                _ => continue,
-            };
-            let g = claims::Registry::decode(b).ok_or(ContractError::InvalidUpdate)?;
-            claims::holds(&p, &g).map_err(why)?;
-            given = claims::merge(&given, &g);
-        }
-        if claims::merge(&held, &given) == held {
-            return Ok(UpdateModification::valid(State::from(held.encode())));
-        }
-        let Some(bb) = beacon else {
-            return UpdateModification::requires(vec![RelatedContract { contract_instance_id: ContractInstanceId::new(p.beacon), mode: RelatedMode::StateOnce }]);
-        };
-        let now = beacon_height(&bb).ok_or(ContractError::InvalidUpdate)?;
-        let out = claims::take(&p, &held, &given, now);
-        if out.claims.len() > claims::CLAIMS_MAX {
-            return Err(why("more claims than a registry holds"));
-        }
-        Ok(UpdateModification::valid(State::from(out.encode())))
-    }
-
     /// A PLACE'S WITNESS SIGNATURES hold (`witness::holds`): each verifies, few enough per key and in all.
     fn witnesses_valid(params: &[u8], state: &[u8]) -> Result<ValidateResult, ContractError> {
         let (Some(p), Some(s)) = (witness::Params::decode(params), witness::Signatures::decode(state)) else { return Ok(ValidateResult::Invalid) };
@@ -2848,24 +2831,23 @@ mod contract {
 
     /// Their UPDATE (`witness::merge`): what is given that does not read is ignored, never fatal; a NEW signature is
     /// taken only with the BEACON read in the same round (its signed `at` checked against the beacon's height:
-    /// `witness::fresh`), and — by a key other than the baseline — the claims REGISTRY too (its key registered).
+    /// `witness::fresh`), and — by a key other than the baseline — the POOL CHAIN of the staker it names too (its
+    /// claim for the place's epoch written by that key: `witness::may_sign`). At most `MAX_RELATED − 1` stakers' chains a
+    /// round (the lowest named): signatures naming others wait for a later update.
     fn witnesses_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
         let p = witness::Params::decode(params).ok_or(ContractError::InvalidState)?;
         let held = witness::Signatures::decode(state).ok_or(ContractError::InvalidState)?;
-        let registry = p.registry().id();
         let mut given = witness::Signatures::default();
-        let (mut reg, mut bea): (Option<Vec<u8>>, Option<Vec<u8>>) = (None, None);
+        let mut related: Vec<([u8; 32], Vec<u8>)> = Vec::new();
         for d in data {
             let b: &[u8] = match &d {
                 UpdateData::State(s) => s.as_ref(),
                 UpdateData::Delta(x) => x.as_ref(),
                 UpdateData::StateAndDelta { delta, .. } => delta.as_ref(),
                 UpdateData::RelatedState { related_to, state } => {
-                    if related_to.as_bytes() == registry {
-                        reg = Some(state.as_ref().to_vec());
-                    } else if related_to.as_bytes() == p.beacon {
-                        bea = Some(state.as_ref().to_vec());
-                    }
+                    let mut k = [0u8; 32];
+                    k.copy_from_slice(related_to.as_bytes());
+                    related.push((k, state.as_ref().to_vec()));
                     continue;
                 }
                 _ => continue,
@@ -2874,21 +2856,20 @@ mod contract {
                 given.items.extend(g.items);
             }
         }
+        let got = |w: &[u8; 32]| related.iter().find(|(k, _)| k == w).map(|(_, b)| b.clone());
         // What must be read first: each one a new signature needs and this round did not bring.
-        let (need_beacon, need_registry) = witness::needs(&held, &given);
-        let mut want = Vec::new();
-        if need_beacon && bea.is_none() {
-            want.push(RelatedContract { contract_instance_id: ContractInstanceId::new(p.beacon), mode: RelatedMode::StateOnce });
+        let (need_beacon, owners) = witness::needs(&held, &given, super::MAX_RELATED - 1);
+        let mut want: Vec<[u8; 32]> = owners.iter().map(|o| p.pool_chain(o).id()).collect();
+        if need_beacon {
+            want.push(p.beacon);
         }
-        if need_registry && reg.is_none() {
-            want.push(RelatedContract { contract_instance_id: ContractInstanceId::new(registry), mode: RelatedMode::StateOnce });
+        let missing: Vec<RelatedContract> = want.iter().filter(|w| got(w).is_none()).map(|w| RelatedContract { contract_instance_id: ContractInstanceId::new(*w), mode: RelatedMode::StateOnce }).collect();
+        if !missing.is_empty() {
+            return UpdateModification::requires(missing);
         }
-        if !want.is_empty() {
-            return UpdateModification::requires(want);
-        }
-        let registry_read = reg.map(|b| claims::Registry::decode(&b).unwrap_or_default());
-        let now = bea.as_deref().and_then(beacon_height);
-        Ok(UpdateModification::valid(State::from(witness::merge(&p, &held, &given, registry_read.as_ref(), now).encode())))
+        let chain = |o: &[u8; 32]| owners.contains(o).then(|| got(&p.pool_chain(o).id())).flatten().and_then(|b| super::State::decode(&b));
+        let now = got(&p.beacon).as_deref().and_then(beacon_height);
+        Ok(UpdateModification::valid(State::from(witness::merge(&p, &held, &given, &chain, now).encode())))
     }
 
     #[contract]
@@ -2906,9 +2887,6 @@ mod contract {
             }
             if params.first() == Some(&operators::OPERATORS) {
                 return operators_valid(params, state.as_ref(), &related);
-            }
-            if params.first() == Some(&claims::CLAIMS) {
-                return claims_valid(params, state.as_ref());
             }
             if params.first() == Some(&witness::WITNESSES) {
                 return witnesses_valid(params, state.as_ref());
@@ -2960,9 +2938,6 @@ mod contract {
             }
             if parameters.as_ref().first() == Some(&operators::OPERATORS) {
                 return operators_update(parameters.as_ref(), state.as_ref(), data);
-            }
-            if parameters.as_ref().first() == Some(&claims::CLAIMS) {
-                return claims_update(parameters.as_ref(), state.as_ref(), data);
             }
             if parameters.as_ref().first() == Some(&witness::WITNESSES) {
                 return witnesses_update(parameters.as_ref(), state.as_ref(), data);
@@ -3054,7 +3029,7 @@ mod contract {
 
 pub mod authority;
 pub mod cut;
-pub mod claims;
+pub mod pointers;
 pub mod escrow;
 pub mod freeze;
 pub mod operators;

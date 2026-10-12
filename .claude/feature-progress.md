@@ -2343,3 +2343,4 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
   with the token off). Carries: guest views not counted, extension errors filtered, Chat opens a late channel, the
   address bar follows the app (+ tab title), Vote member parts hidden from outside. 1189/1262 pieces, every package
   rebuildable; site/manifest 200.
+- [x] 10-12 C2b CLAIMS IN OWN CHAINS + LIVENESS (local, not published): `Body::Claim` in the staker's pool chain, chained stake-pointer bags (CPU prefilter), signatures container admits a claim-writer key named with its staker, claim witnessed only on a standing answer that epoch, claimed in the window before the freeze (page + delegate); claims.rs gone, token/pool/swap.wasm re-keyed (TOKEN §7a, §8.6).

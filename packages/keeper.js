@@ -125,16 +125,29 @@ export async function start(ctx) {
         self.registered = epoch;
         state.registered = epoch;
       }
-      // STAKE IN THE LOT (TOKEN §7a): its earned $CRAFT claimed for the next open claims epoch, its member key the
-      // witness key (made its $CRAFT chain's writer first) — once a standing epoch, by the account's SEAT NODE only;
-      // nothing staked: nothing claimed.
-      if (self.claimed !== epoch && (await seatIsMine(epoch, me))) {
-        self.claimed = epoch;
+      // STAKE IN THE LOT (TOKEN §7a, C2b): its earned $CRAFT CLAIMED for the next claims epoch — an entry of its own
+      // $CRAFT chain (`Body::Claim`), its member key the witness key (made the chain's writer first) — only in the claim
+      // window, shortly before that epoch's freeze (`Core.claim_epoch`: a node asleep then is not seated), by the
+      // account's SEAT NODE only; queued for its witnesses like any entry (`putAll`), and — once they accepted it — its
+      // POINTER posted in the epoch's pointer bags (`keeper_point`), so readers find it. Nothing staked: nothing claimed.
+      const ce = Core.claim_epoch(h);
+      if (ce != null && self.claimed !== ce && (await seatIsMine(epoch, me))) {
+        self.claimed = ce;
         const { creds } = await tokens.device();
         const c = await run(sigs => core.keeper_claim(tokens.code, beacon, tokens.idlogCode, me.didBytes, h, public_, creds, sigs)).catch(e => (ctx.log("keeper", { what: `stake not claimed: ${e?.message ?? e}` }), null));
         if (c?.puts) {
           await putAll(c.puts);
-          ctx.log("keeper", { what: `staked in the witness lot: ${c.amount} units of $CRAFT, claims epoch ${c.epoch}` });
+          ctx.log("keeper", { what: `claimed in the witness lot: ${c.amount} units of $CRAFT, claims epoch ${c.epoch}` });
+        }
+      }
+      if (ce != null && self.pointed !== ce && !(h - (self.pointTried ?? -Infinity) < 16)) {
+        self.pointTried = h; // (its reads once every 16 heights while not pointed)
+        const bagCode = await ctx.require("bag-wasm");
+        const p = await run(() => core.keeper_point(tokens.code, beacon, tokens.idlogCode, bagCode, beaconCode, me.didBytes, ce)).catch(e => (ctx.log("keeper", { what: `claim not pointed to: ${e?.message ?? e}` }), null));
+        if (p?.address) {
+          await (await ctx.require("index")).bag.add(p.address, p.item, "pointing to this account's stake claim");
+          self.pointed = ce;
+          ctx.log("keeper", { what: `its claim for claims epoch ${ce} accepted: pointed to` });
         }
       }
       if (!self.hosted.length) return;
@@ -164,6 +177,9 @@ export async function start(ctx) {
           // delegate's own new contracts do not leave its node (freenet #5542) — it can only add to these.
           const index = await ctx.require("index");
           for (let e = epoch + 1; e <= epoch + 8; e++) await index.bag.read(Core.keepers_address(e, 0), "making a coming keepers registry").catch(() => {});
+          // And the coming claims epochs' first STAKE POINTER bags (the delegate points to its claim into one).
+          const c = Math.floor(h / Core.clock().claims);
+          for (let e = c + 1; e <= c + 2; e++) await index.bag.read(Core.stake_pointers_address(tokens.code, beacon, tokens.idlogCode, e, 0), "making a coming stake pointers bag").catch(() => {});
         } else ctx.log("keeper", { what: `not handed to the delegate (${a?.refused ?? "no answer"})` });
       }
       // ANSWER every height of this epoch since the last one handled that is sampled for this keeper (one that came

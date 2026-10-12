@@ -358,21 +358,21 @@ async fn main() -> Result<()> {
                     let Some(d) = r.definition(&q.token.definition) else { continue };
                     let Some(i) = st.entries.iter().position(|e| e.seq == q.seq) else { continue };
                     let e = &st.entries[i];
-                    // Its lot's claims epoch: whose registry may sign, and whose container holds its signatures.
+                    // Its lot's claims epoch: whose claims may sign, and whose container holds its signatures.
                     let Ok((ce, _)) = T::wallet::lot_of(e, i.checked_sub(1).map(|j| &st.entries[j]), d.margin) else { continue };
-                    // THE COMMITTEE it is drawn from (once per claims epoch): raw claims, the VALID ones, the seats.
+                    // THE COMMITTEE it is drawn from (once per claims epoch): the pointers posted, the VALID stakers, the seats.
                     if shown.insert(ce) {
-                        let raw = r.raw_claims(ce);
+                        let pointed = r.pointers(ce);
                         let valid = r.claims(ce);
                         let (k, base, need) = T::witness::seats(valid.len(), T::wallet::COMMITTEE);
-                        println!("claims epoch {ce}: {} raw [{}], {} valid [{}] — {k} drawn{}, {need} to accept", raw.len(), raw.iter().map(|c| format!("{}:{}", hex(&c.owner[..4]), hex(&c.key[..4]))).collect::<Vec<_>>().join(" "), valid.len(), valid.iter().map(|c| format!("{}:{}", hex(&c.owner[..4]), hex(&c.key[..4]))).collect::<Vec<_>>().join(" "), if base { " + the baseline" } else { "" });
+                        println!("claims epoch {ce}: {} pointed [{}], {} valid [{}] — {k} drawn{}, {need} to accept", pointed.len(), pointed.iter().take(32).map(|p| format!("{}:{}", hex(&p.owner[..4]), p.seq)).collect::<Vec<_>>().join(" "), valid.len(), valid.iter().map(|c| format!("{}:{}", hex(&c.owner[..4]), hex(&c.key[..4]))).collect::<Vec<_>>().join(" "), if base { " + the baseline" } else { "" });
                     }
-                    let mut keys: Vec<[u8; 32]> = r.raw_claims(ce).iter().map(|c| c.key).collect();
+                    let mut keys: Vec<[u8; 32]> = r.claims(ce).iter().map(|c| c.key).collect();
                     keys.push(T::witness::BASELINE);
                     let sigs = r.sigs(&p.id(), q.seq, ce);
                     let by: Vec<String> = keys.iter().filter(|k| sigs.iter().any(|s| s.entry == e.hash() && s.signed_by(k))).map(|k| hex(&k[..4])).collect();
                     // ACCEPTED by the rule every page runs (`rules::tokens::accepted`), over what this reader reads.
-                    let lot = craftworks_rules::tokens::Lot { pool: net.pool, bag: *blake3::hash(&net.bag_code).as_bytes(), beacon_code: net.beacon_hash };
+                    let lot = craftworks_rules::tokens::Lot { pool: net.pool, bag: *blake3::hash(&net.bag_code).as_bytes(), beacon_code: net.beacon_hash, idlog: net.idlog_hash };
                     let mut got: std::collections::HashMap<[u8; 32], Vec<u8>> = Default::default();
                     let mut verdict = String::from("too many reads");
                     for _ in 0..24 {
@@ -451,7 +451,7 @@ async fn main() -> Result<()> {
             let idlog_hash = *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("idlog.wasm"))?).as_bytes();
             let pool = T::id(&code_hash, &craftworks_wallet::craft::definition(code_hash, beacon, idlog_hash).encode());
             let bag_code = std::fs::read(&a[3])?;
-            let lot = craftworks_rules::tokens::Lot { pool, bag: *blake3::hash(&bag_code).as_bytes(), beacon_code: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes() };
+            let lot = craftworks_rules::tokens::Lot { pool, bag: *blake3::hash(&bag_code).as_bytes(), beacon_code: *blake3::hash(&std::fs::read(std::path::Path::new(&a[2]).with_file_name("beacon.wasm"))?).as_bytes(), idlog: idlog_hash };
             let (epoch, root): (u64, [u8; 32]) = (a[6].parse()?, unhex32(&a[7])?);
             let mut got: std::collections::HashMap<[u8; 32], Vec<u8>> = Default::default();
             for _ in 0..16 {
@@ -470,8 +470,12 @@ async fn main() -> Result<()> {
                         for w in &sigs {
                             println!("  sig on {} by a key: {}", hex(&w.entry[..6]), if w.entry == root { "this root" } else { "another root" });
                         }
-                        let reg = T::claims::Params { code_hash, pool, beacon, epoch: h / T::supply::EPOCH }.id();
-                        for c in got.get(&reg).and_then(|b| T::claims::Registry::decode(b)).map_or(vec![], |r| r.claims) {
+                        let ctx = craftworks_rules::tokens::Ctx { code_hash, beacon, idlog: idlog_hash };
+                        let valid = match craftworks_rules::tokens::valid_of(&ctx, &lot, &|x| got.get(x).cloned(), h / T::supply::EPOCH) {
+                            craftworks_rules::tokens::Step::Done(v) => v,
+                            _ => vec![],
+                        };
+                        for c in valid {
                             let signed = sigs.iter().any(|w| w.entry == root && w.signed_by(&c.key));
                             let pd = got.get(&pool).and_then(|b| T::Definition::decode(b));
                             let stake = pd.as_ref().and_then(|pd| {

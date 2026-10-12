@@ -139,16 +139,18 @@ pub fn accepted_before(
 // work than a signature's evicted every genuine one — the entry never accepted, an equivocation's proof gone. No rule
 // over items alone can stop that: any well-formed item is free to make (a signature under a fresh key costs nothing),
 // so a bag of N kept by ANY order loses its genuine items to N made to outrank them. What bounds the items is who may
-// sign: only a key in the claims epoch's REGISTRY (frozen before the epoch's lots exist, at most `CLAIMS_MAX` claims)
-// or the BASELINE can ever sit on a committee. So this container takes a signature only if it VERIFIES over the
-// place's message under its key, and that key is the baseline's or a registered claim's; each key keeps its
-// [`PER_KEY`] lowest entries (two distinct ones prove an equivocation; an honest key signs one). The whole is then
-// bounded by the registry itself — nothing taken is ever dropped for room, there is none to make.
+// sign: only a key that WROTE A CLAIM for the claims epoch (`Body::Claim`, in its staker's own pool chain, before the
+// epoch's freeze — audit C2b: no shared registry) or the BASELINE can ever sit on a committee. So this container takes
+// a signature only if it VERIFIES over the place's message under its key, and that key is the baseline's or the writer
+// key of such a claim in the pool chain of the staker the signature NAMES (`Signed::owner`: the update reads that chain
+// in the same round, [`may_sign`]); each key keeps its [`PER_KEY`] lowest entries (two distinct ones prove an
+// equivocation; an honest key signs one). A junk signer then costs a pool chain the token contract takes, with stake
+// and a claim before the freeze — and past [`SIGNERS_MAX`] keys the lowest keys are kept ([`merge`]).
 //
 // WHEN A SIGNATURE WAS MADE (10-11: valid stake counts only acceptance before a claims epoch froze — `accepted_before`):
 // each signature carries the beacon height `at` it was signed at, under its signature. The update never takes `at` on
 // trust: it reads the BEACON in the same round and takes a new signature only if `at` is not above the beacon's height
-// and is not dated back across a registry FREEZE (`claims::frozen_at`) by more than [`AT_SLACK`] steps ([`fresh`]) — a
+// and is not dated back across an epoch's FREEZE (`pointers::frozen_at`) by more than [`AT_SLACK`] steps ([`fresh`]) — a
 // signature cannot be dated into the past to join an epoch's valid stake after that epoch froze, the one thing `at`
 // decides. (Not a plain "at most AT_SLACK below the beacon": copies sync by UPDATE too, so a lagging copy is sent
 // signatures taken long ago elsewhere, and a delegate's round signs at the height it read when it started — those
@@ -159,30 +161,34 @@ pub fn accepted_before(
 pub const WITNESSES: u8 = 8;
 /// The entries one key keeps signatures for at one place: enough to prove an equivocation.
 pub const PER_KEY: usize = 2;
-/// The most signatures by keys other than the baseline: every registered key's [`PER_KEY`].
-pub const SIGNED_MAX: usize = crate::claims::CLAIMS_MAX * PER_KEY;
-/// How far back across a registry freeze a new signature's `at` may be dated, below the beacon's height as the taking
-/// node reads it: 16 steps (~16 minutes at ~60 s a step). Room for a signer's beacon read lagging the node's and the
-/// update's trip around a freeze — and small beside [`crate::claims::LEAD`] (512 steps between a registry's freeze and
-/// its epoch's first lot), so every signature dated before a freeze is taken before that epoch's lots exist.
+/// The most keys other than the baseline's a place keeps signatures of.
+pub const SIGNERS_MAX: usize = 4096;
+/// The most signatures by keys other than the baseline: every kept key's [`PER_KEY`].
+pub const SIGNED_MAX: usize = SIGNERS_MAX * PER_KEY;
+/// How far back across a freeze a new signature's `at` may be dated, below the beacon's height as the taking node reads
+/// it: 16 steps (~16 minutes at ~60 s a step). Room for a signer's beacon read lagging the node's and the update's trip
+/// around a freeze — and small beside [`crate::pointers::LEAD`] (512 steps between an epoch's freeze and its first
+/// lot), so every signature dated before a freeze is taken before that epoch's lots exist.
 pub const AT_SLACK: u64 = 16;
-const MAGIC: &[u8; 4] = b"CWW2";
+const MAGIC: &[u8; 4] = b"CWW3";
 
 /// May a signature dated `at` be taken while the beacon is at `now`? Not dated ahead of the beacon, and — unless within
-/// [`AT_SLACK`] — no registry freeze (`claims::frozen_at` of any epoch) between `at` and `now`: what `at` decides
+/// [`AT_SLACK`] — no freeze (`pointers::frozen_at` of any epoch) between `at` and `now`: what `at` decides
 /// (`accepted_before` at a freeze) is then the same as had it arrived when made.
 pub fn fresh(at: u64, now: u64) -> bool {
-    let period = |h: u64| h.saturating_add(crate::claims::LEAD) / crate::supply::EPOCH; // freezes at or below h
+    let period = |h: u64| h.saturating_add(crate::pointers::LEAD) / crate::supply::EPOCH; // freezes at or below h
     at <= now && (now - at <= AT_SLACK || period(at) == period(now))
 }
 
-/// A place's container PARAMS: the token code, the stake pool, the beacon (the claims registry's), the CLAIMS EPOCH its
-/// lot is drawn from (whose registry says who may sign), and the place — (chain, seq).
+/// A place's container PARAMS: the token code, the stake pool, the beacon, the key log code (with the pool and the
+/// beacon: what names a staker's pool chain), the CLAIMS EPOCH its lot is drawn from (whose claims say who may sign),
+/// and the place — (chain, seq).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Params {
     pub code_hash: [u8; 32],
     pub pool: [u8; 32],
     pub beacon: [u8; 32],
+    pub idlog: [u8; 32],
     pub epoch: u64,
     pub chain: [u8; 32],
     pub seq: u64,
@@ -190,30 +196,30 @@ pub struct Params {
 
 impl Params {
     pub fn encode(&self) -> Vec<u8> {
-        [&[WITNESSES][..], &self.code_hash, &self.pool, &self.beacon, &self.epoch.to_le_bytes(), &self.chain, &self.seq.to_le_bytes()].concat()
+        [&[WITNESSES][..], &self.code_hash, &self.pool, &self.beacon, &self.idlog, &self.epoch.to_le_bytes(), &self.chain, &self.seq.to_le_bytes()].concat()
     }
     pub fn decode(b: &[u8]) -> Option<Params> {
         let mut r = crate::R(b);
         (r.u8()? == WITNESSES).then_some(())?;
-        let p = Params { code_hash: r.arr()?, pool: r.arr()?, beacon: r.arr()?, epoch: r.u64()?, chain: r.arr()?, seq: r.u64()? };
+        let p = Params { code_hash: r.arr()?, pool: r.arr()?, beacon: r.arr()?, idlog: r.arr()?, epoch: r.u64()?, chain: r.arr()?, seq: r.u64()? };
         r.done().then_some(p)
     }
     pub fn id(&self) -> [u8; 32] {
         crate::id(&self.code_hash, &self.encode())
     }
-    /// The claims registry whose keys may sign here.
-    pub fn registry(&self) -> crate::claims::Params {
-        crate::claims::Params { code_hash: self.code_hash, pool: self.pool, beacon: self.beacon, epoch: self.epoch }
+    /// Staker `owner`'s POOL CHAIN (where the claim that lets its key sign here is).
+    pub fn pool_chain(&self, owner: &[u8; 32]) -> crate::ChainParams {
+        crate::ChainParams { code_hash: self.code_hash, definition: self.pool, owner: *owner, beacon: self.beacon, idlog: self.idlog, item: [0; 32] }
     }
     /// THE PLACE'S SIGNATURES as a state of this container holds them (none if it does not read) — the one read every
     /// reader of a place's signatures goes through.
     pub fn sigs(&self, state: &[u8]) -> Vec<WitnessSig> {
         Signatures::decode(state).map_or(vec![], |s| s.items.iter().map(|x| WitnessSig { chain: self.chain, seq: self.seq, entry: x.entry, at: x.at, sig: x.sig }).collect())
     }
-    /// A state holding these signatures (each by its key, at this place): what a witness PUTs or sends as an update
-    /// (its one), or a container as made empty (none).
-    pub fn state(&self, sigs: &[([u8; 32], WitnessSig)]) -> Vec<u8> {
-        let mut items: Vec<Signed> = sigs.iter().map(|(key, s)| Signed { key: *key, entry: s.entry, at: s.at, sig: s.sig }).collect();
+    /// A state holding these signatures (each by its key, for the staker it names — the baseline names none: [0; 32] —
+    /// at this place): what a witness PUTs or sends as an update (its one), or a container as made empty (none).
+    pub fn state(&self, sigs: &[([u8; 32], [u8; 32], WitnessSig)]) -> Vec<u8> {
+        let mut items: Vec<Signed> = sigs.iter().map(|(key, owner, s)| Signed { key: *key, owner: *owner, entry: s.entry, at: s.at, sig: s.sig }).collect();
         items.sort();
         items.dedup_by(|b, a| (a.key, a.entry) == (b.key, b.entry));
         Signatures { items }.encode()
@@ -223,13 +229,15 @@ impl Params {
     }
 }
 
-/// One signature held: `key`'s over `entry` at the container's place, signed at beacon height `at`. (Ordered by key,
-/// entry, then `at`: the first of a (key, entry) is its earliest.)
+/// One signature held: `key`'s over `entry` at the container's place, signed at beacon height `at` — by the staker
+/// `owner` names (whose claim lets the key sign: [`may_sign`]). (Ordered by key, then entry, then the rest: the first of
+/// a (key, entry) is its earliest.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Signed {
     pub key: [u8; 32],
     pub entry: [u8; 32],
     pub at: u64,
+    pub owner: [u8; 32],
     pub sig: [u8; 64],
 }
 
@@ -245,6 +253,7 @@ impl Signatures {
         v.extend_from_slice(&(self.items.len() as u32).to_le_bytes());
         for s in &self.items {
             v.extend_from_slice(&s.key);
+            v.extend_from_slice(&s.owner);
             v.extend_from_slice(&s.entry);
             v.extend_from_slice(&s.at.to_le_bytes());
             v.extend_from_slice(&s.sig);
@@ -255,15 +264,15 @@ impl Signatures {
         let mut r = crate::R(b.strip_prefix(MAGIC)?);
         let n = r.u32()? as usize;
         (n <= SIGNED_MAX + PER_KEY).then_some(())?;
-        let items = (0..n).map(|_| Some(Signed { key: r.arr()?, entry: r.arr()?, at: r.u64()?, sig: r.arr()? })).collect::<Option<Vec<_>>>()?;
+        let items = (0..n).map(|_| Some(Signed { key: r.arr()?, owner: r.arr()?, entry: r.arr()?, at: r.u64()?, sig: r.arr()? })).collect::<Option<Vec<_>>>()?;
         (r.done() && items.windows(2).all(|w| (w[0].key, w[0].entry) < (w[1].key, w[1].entry))).then_some(Signatures { items })
     }
 }
 
 /// A container's state HOLDS: every signature verifies over the place's message (its `at` included) under its key, a
 /// key keeps at most [`PER_KEY`] entries, and keys other than the baseline at most [`SIGNED_MAX`] in all. (Whether a key
-/// is registered, and whether `at` was near the beacon when taken, are the update's checks — it reads the registry and
-/// the beacon; a copy taken without them can only hold what is bounded here.)
+/// may sign — its claim — and whether `at` was near the beacon when taken, are the update's checks — it reads the
+/// signers' pool chains and the beacon; a copy taken without them can only hold what is bounded here.)
 pub fn holds(p: &Params, s: &Signatures) -> Result<(), crate::Why> {
     if s.items.iter().any(|x| !p.verifies(x)) {
         return Err("a witness signature that does not verify");
@@ -280,26 +289,52 @@ fn new_to(held: &Signatures, x: &Signed) -> bool {
 }
 
 /// What taking `given` into `held` must READ in the same round: (the BEACON — any new signature: its `at` is checked
-/// against the beacon's height; the claims REGISTRY — a new signature by a key other than the baseline's).
-pub fn needs(held: &Signatures, given: &Signatures) -> (bool, bool) {
+/// against the beacon's height; the POOL CHAINS of the stakers new signatures by keys other than the baseline's name —
+/// at most `max`, the lowest owners: the rest wait for a later update).
+pub fn needs(held: &Signatures, given: &Signatures, max: usize) -> (bool, Vec<[u8; 32]>) {
     let new: Vec<&Signed> = given.items.iter().filter(|x| new_to(held, x)).collect();
-    (!new.is_empty(), new.iter().any(|x| x.key != BASELINE))
+    let mut owners: Vec<[u8; 32]> = new.iter().filter(|x| x.key != BASELINE).map(|x| x.owner).collect();
+    owners.sort();
+    owners.dedup();
+    owners.truncate(max);
+    (!new.is_empty(), owners)
+}
+
+/// MAY `key` SIGN at a place of claims epoch `epoch`, as its staker's pool chain `chain` reads (the related state the
+/// update read)? Its writer wrote a CLAIM for `epoch` with that key, before the epoch's freeze (`Body::Claim`: the
+/// chain's own rules made it — signed by its writer, stamped before the freeze). Whether the claim is VALID stake is
+/// the lot's question (`wallet::valid_stakers`); this only bounds who can fill a place's container.
+pub fn may_sign(chain: &crate::State, epoch: u64, key: &[u8; 32]) -> bool {
+    chain.fork.is_none()
+        && chain.entries.iter().enumerate().any(|(i, e)| {
+            matches!(e.body, crate::Body::Claim { from_epoch, .. } if from_epoch == epoch)
+                && e.stamp < crate::pointers::frozen_at(epoch)
+                && matches!(crate::writer_at(chain, i), Some(crate::Signer::Device(node, _)) if node == *key)
+        })
 }
 
 /// THE MERGE — the same in every order for the same reads: the union of the signatures that VERIFY and are either HELD
-/// (taken once under a registry and a beacon; a node whose copies have not caught up never drops what another took) or
-/// NEW and taken now — by the baseline or a key of `registry`'s claims, dated `at` near the
-/// beacon's height `now` ([`fresh`]; no beacon read: nothing new is taken) — one per (key, entry) (the EARLIEST `at`,
-/// then the lower signature bytes), each key's [`PER_KEY`] lowest entries.
-pub fn merge(p: &Params, held: &Signatures, given: &Signatures, registry: Option<&crate::claims::Registry>, now: Option<u64>) -> Signatures {
-    let keys: std::collections::BTreeSet<[u8; 32]> = registry.map(|r| r.claims.iter().map(|c| c.key).collect()).unwrap_or_default();
-    let known = |k: &[u8; 32]| *k == BASELINE || keys.contains(k);
-    let taken = |x: &Signed| held.items.contains(x) || (known(&x.key) && now.is_some_and(|n| fresh(x.at, n)));
+/// (taken once under a beacon and the signers' chains; a node whose copies have not caught up never drops what another
+/// took) or NEW and taken now — by the baseline, or by a key [`may_sign`] here as its named staker's pool chain reads
+/// (`chain`: by owner, as read in this round — not read: not taken now), dated `at` near the beacon's height `now`
+/// ([`fresh`]; no beacon read: nothing new is taken) — one per (key, entry) (the EARLIEST `at`, then the rest), each
+/// key's [`PER_KEY`] lowest entries; past [`SIGNERS_MAX`] keys other than the baseline's, the lowest keys.
+pub fn merge(p: &Params, held: &Signatures, given: &Signatures, chain: &dyn Fn(&[u8; 32]) -> Option<crate::State>, now: Option<u64>) -> Signatures {
+    let known = |x: &Signed| x.key == BASELINE || chain(&x.owner).is_some_and(|c| may_sign(&c, p.epoch, &x.key));
+    let taken = |x: &Signed| held.items.contains(x) || (now.is_some_and(|n| fresh(x.at, n)) && known(x));
     let mut all: Vec<Signed> = held.items.iter().chain(&given.items).filter(|x| taken(x) && p.verifies(x)).copied().collect();
     all.sort();
     all.dedup_by(|b, a| (a.key, a.entry) == (b.key, b.entry));
     let mut out: Vec<Signed> = Vec::with_capacity(all.len());
+    let mut signers = 0usize;
     for x in all {
+        let first = out.last().is_none_or(|y| y.key != x.key);
+        if first && x.key != BASELINE {
+            if signers == SIGNERS_MAX {
+                continue;
+            }
+            signers += 1;
+        }
         if out.iter().rev().take_while(|y| y.key == x.key).count() < PER_KEY {
             out.push(x);
         }

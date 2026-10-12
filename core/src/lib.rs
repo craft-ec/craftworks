@@ -2401,8 +2401,8 @@ mod js {
             tokens::Step::Done(witness::Verdict::NotSeated) => js_sys::JSON::parse(&json!({ "done": { "seated": false } }).to_string()),
             tokens::Step::Done(witness::Verdict::Later(why)) => js_sys::JSON::parse(&json!({ "done": { "later": why } }).to_string()),
             tokens::Step::Done(witness::Verdict::Refused(why)) => js_sys::JSON::parse(&json!({ "done": { "refused": why } }).to_string()),
-            tokens::Step::Done(witness::Verdict::Sign { at, entry }) => {
-                let sign = js_obj(&[("chain", js_sys::Uint8Array::from(&at.chain[..]).into()), ("seq", JsValue::from(at.seq as f64)), ("entry", js_sys::Uint8Array::from(&entry[..]).into()), ("params", js_sys::Uint8Array::from(&at.encode()[..]).into())]);
+            tokens::Step::Done(witness::Verdict::Sign { at, entry, owner }) => {
+                let sign = js_obj(&[("chain", js_sys::Uint8Array::from(&at.chain[..]).into()), ("seq", JsValue::from(at.seq as f64)), ("entry", js_sys::Uint8Array::from(&entry[..]).into()), ("params", js_sys::Uint8Array::from(&at.encode()[..]).into()), ("owner", js_sys::Uint8Array::from(&owner[..]).into())]);
                 Ok(js_obj(&[("done", js_obj(&[("sign", sign)]))]))
             }
         }
@@ -2670,7 +2670,7 @@ mod js {
             }).collect();
             let fresh: Vec<String> = fresh.iter().filter_map(|x| x.as_string()).collect();
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let lot = tokens::Lot { pool: keeper::craft(&ctx).1, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let lot = tokens::Lot { pool: keeper::craft(&ctx).1, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
             let k = keeper_ctx(standing_code, beacon_code, beacon)?;
             // THE BUILD (`rules::statement`: the delegate's too).
             let built = {
@@ -2720,7 +2720,7 @@ mod js {
         #[allow(clippy::too_many_arguments)]
         pub fn allowance_verdict(&mut self, token_code: &[u8], allowance_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], token: &[u8], epoch: f64, root: &str, owed: js_sys::Array, now: f64) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
             let ach = *blake3::hash(allowance_code).as_bytes();
             let root = bytes32("root", root).map_err(err)?;
             let lines: Vec<([u8; 32], Vec<u8>)> = owed.iter().map(|x| {
@@ -2753,7 +2753,7 @@ mod js {
         #[allow(clippy::too_many_arguments)]
         pub fn allowance_payout(&mut self, token_code: &[u8], allowance_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], token: &[u8], epoch: f64, did: &[u8], now: f64) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
             let ach = *blake3::hash(allowance_code).as_bytes();
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
@@ -2779,7 +2779,7 @@ mod js {
         #[allow(clippy::too_many_arguments)]
         pub fn keeper_mint(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], did: &[u8], epoch: f64, root: &str, proof: &[u8], now: f64) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
             let root = bytes32("root", root).map_err(err)?;
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
@@ -2818,7 +2818,7 @@ mod js {
                 Ok(if some { json!({}) } else { serde_json::Value::Null })
             })?;
             let Some(c) = claimed else { return Ok(v) };
-            let puts: Vec<tokens::Put> = c.chain.into_iter().chain([c.registry]).collect();
+            let puts: Vec<tokens::Put> = vec![c.chain];
             let v = self.attach_puts(v, token_code, &puts)?;
             let done = js_sys::Reflect::get(&v, &"done".into())?;
             js_sys::Reflect::set(&done, &"epoch".into(), &JsValue::from(c.epoch as f64))?;
@@ -2826,22 +2826,23 @@ mod js {
             Ok(v)
         }
         /// THE PAGE'S WITNESS on one queued entry (`witness::entry`; `queued`: its bytes; `me`: this node's member key,
-        /// its claim's): `{ want }`, or `{ done: { seated: false } | { refused: why } | { sign: { chain, seq, entry } } }`
-        /// (chain and entry as bytes — what `WitnessSign` signs).
+        /// its claim's; `standing_code`: the standing contract's code — a stake claim's writer's record is read for its
+        /// liveness): `{ want }`, or `{ done: { seated: false } | { refused: why } | { sign: { chain, seq, entry, owner } } }`
+        /// (bytes — what `WitnessSign` signs; `owner`: the staker whose seat it is, named in the container).
         #[allow(clippy::too_many_arguments)]
-        pub fn witness_entry(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], queued: &[u8], me: &[u8], now: f64) -> Result<JsValue, JsValue> {
+        pub fn witness_entry(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], queued: &[u8], me: &[u8], now: f64, standing_code: &[u8]) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
             let q = craftworks_wallet::queue::Queued::decode(queued).ok_or_else(|| err("not a queued entry".into()))?;
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
-            verdict_js(witness::entry(&ctx, &lot, &got, &q, &b32(me)?, now as u64).map_err(err)?)
+            verdict_js(witness::entry(&ctx, &lot, &got, &q, &b32(me)?, now as u64, blake3::hash(standing_code).as_bytes()).map_err(err)?)
         }
         /// An EPOCH STATEMENT's verdict for witness key `me` (`witness::statement`): the root THIS page computed for
         /// `epoch` (hex), signed at the statement's place when seated — as `witness_entry` answers.
         #[allow(clippy::too_many_arguments)]
         pub fn witness_statement(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], epoch: f64, root: &str, me: &[u8]) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
             verdict_js(witness::statement(&ctx, &lot, &got, epoch as u64, &bytes32("root", root).map_err(err)?, &b32(me)?))
         }
@@ -2850,21 +2851,22 @@ mod js {
         #[allow(clippy::too_many_arguments)]
         pub fn statement_witness_params(token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], epoch: f64) -> Result<js_sys::Uint8Array, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
             Ok(js_sys::Uint8Array::from(&witness::statement_at(&ctx, &lot, epoch as u64).encode()[..]))
         }
         /// A PUT of a place's WITNESS SIGNATURES container (`params`: its `witness::Params`, as a verdict's `sign.params`
         /// or a chain put's `witnesses` give them): `{ id, idBytes, frames }` — with witness key `key`'s signature `sig`
-        /// over `entry` signed at beacon height `at` (the delegate's, `frames_witness_sign`), or, `key` empty, the
-        /// container made empty (its chain's writer makes it: a witness with no page open only adds to one already
-        /// there).
-        pub fn witness_put(&mut self, token_code: &[u8], params: &[u8], key: &[u8], entry: &[u8], sig: &[u8], at: f64) -> Result<JsValue, JsValue> {
+        /// over `entry` signed at beacon height `at` (the delegate's, `frames_witness_sign`), for the staker `owner` (the
+        /// verdict's `sign.owner`: whose claim lets the key sign there), or, `key` empty, the container made empty (its
+        /// chain's writer makes it: a witness with no page open only adds to one already there).
+        #[allow(clippy::too_many_arguments)]
+        pub fn witness_put(&mut self, token_code: &[u8], params: &[u8], key: &[u8], owner: &[u8], entry: &[u8], sig: &[u8], at: f64) -> Result<JsValue, JsValue> {
             let wp = craftworks_token_contract::witness::Params::decode(params).ok_or_else(|| err("not a witness container's params".into()))?;
             let state = if key.is_empty() {
                 wp.state(&[])
             } else {
                 let s = craftworks_token_contract::witness::WitnessSig { chain: wp.chain, seq: wp.seq, entry: b32(entry)?, at: at as u64, sig: sig.try_into().map_err(|_| err("a signature is 64 bytes".into()))? };
-                wp.state(&[(b32(key)?, s)])
+                wp.state(&[(b32(key)?, b32(owner)?, s)])
             };
             let (id, contract, state) = wire::puts::contract(token_code, params, &state);
             let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
@@ -2893,7 +2895,7 @@ mod js {
         /// The clock's lengths: `{ standing, claims, lead }` (heights a standing epoch, a claims epoch, and how long
         /// before its epoch a claims registry stops taking claims).
         pub fn clock() -> JsValue {
-            js_obj(&[("standing", JsValue::from(craftworks_reputation::EPOCH as f64)), ("claims", JsValue::from(craftworks_token_contract::supply::EPOCH as f64)), ("lead", JsValue::from(craftworks_token_contract::claims::LEAD as f64))])
+            js_obj(&[("standing", JsValue::from(craftworks_reputation::EPOCH as f64)), ("claims", JsValue::from(craftworks_token_contract::supply::EPOCH as f64)), ("lead", JsValue::from(craftworks_token_contract::pointers::LEAD as f64))])
         }
         /// A witness-queue item: `{ token, owner, seq }` (hex), or null.
         pub fn queued_read(b: &[u8]) -> JsValue {
@@ -2902,26 +2904,50 @@ mod js {
                 None => JsValue::NULL,
             }
         }
-        /// The $CRAFT CLAIMS REGISTRY of claims epoch `epoch` (its contract id).
-        pub fn claims_registry_id(token_code: &[u8], beacon: &[u8], idlog_code: &[u8], epoch: f64) -> Result<js_sys::Uint8Array, JsValue> {
+        /// THE STAKERS of claims epoch `epoch` — its VALID STAKERS, `V(E)` (`tokens::valid_of`: the one rule; stake pool
+        /// $CRAFT): `{ want }` (hex), then `{ done: [{ owner, amount, key }] }` (hex; amount in units).
+        #[allow(clippy::too_many_arguments)]
+        pub fn stakers(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], bag_code: &[u8], beacon_code: &[u8], epoch: f64) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let p = craftworks_token_contract::claims::Params { code_hash: ctx.code_hash, pool: keeper::craft(&ctx).1, beacon: ctx.beacon, epoch: epoch as u64 };
-            Ok(js_sys::Uint8Array::from(&p.id()[..]))
+            let lot = tokens::Lot { pool: keeper::craft(&ctx).1, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
+            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+            token_step(Ok(tokens::valid_of(&ctx, &lot, &got, epoch as u64)), |v| Ok(json!(v.iter().map(|c| json!({ "owner": hex(&c.owner), "amount": c.amount.to_string(), "key": hex(&c.key) })).collect::<Vec<_>>())))
         }
-        /// A claims registry's entrants: `[{ owner, amount, key }]` (hex; amount in units).
-        pub fn claims_read(state: &[u8]) -> JsValue {
-            let out = js_sys::Array::new();
-            for c in craftworks_token_contract::claims::Registry::decode(state).map_or(vec![], |r| r.claims) {
-                out.push(&js_obj(&[("owner", JsValue::from(hex(&c.owner))), ("amount", JsValue::from(c.amount.to_string())), ("key", JsValue::from(hex(&c.key)))]));
-            }
-            out.into()
+        /// POINT to this account's claim for claims epoch `epoch` once accepted (`keeper::point`): `{ want }`, then
+        /// `{ done: null }` (nothing to point to: not claimed, not accepted yet, or pointed to already) or `{ done: {
+        /// address, item } }` (bytes: drop `item` into the bag at `address`).
+        #[allow(clippy::too_many_arguments)]
+        pub fn keeper_point(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], bag_code: &[u8], beacon_code: &[u8], did: &[u8], epoch: f64) -> Result<JsValue, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            let lot = tokens::Lot { pool: keeper::craft(&ctx).1, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
+            let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
+            let mut point = None;
+            let v = token_step(keeper::point(&ctx, &lot, &got, &b32(did)?, epoch as u64), |p| {
+                let some = p.is_some();
+                point = p;
+                Ok(if some { json!({}) } else { serde_json::Value::Null })
+            })?;
+            let Some(p) = point else { return Ok(v) };
+            let done = js_sys::Reflect::get(&v, &"done".into())?;
+            js_sys::Reflect::set(&done, &"address".into(), &js_sys::Uint8Array::from(&p.address[..]))?;
+            js_sys::Reflect::set(&done, &"item".into(), &js_sys::Uint8Array::from(&p.item[..]))?;
+            Ok(v)
+        }
+        /// Bag `k` of the $CRAFT STAKE POINTERS of claims epoch `epoch` (`pointers::address`).
+        pub fn stake_pointers_address(token_code: &[u8], beacon: &[u8], idlog_code: &[u8], epoch: f64, k: u32) -> Result<js_sys::Uint8Array, JsValue> {
+            let ctx = token_ctx(token_code, beacon, idlog_code)?;
+            Ok(js_sys::Uint8Array::from(&craftworks_token_contract::pointers::address(&keeper::craft(&ctx).1, epoch as u64, k)[..]))
+        }
+        /// The claim window (`keeper::claim_epoch`): the claims epoch a claim made at height `h` is for, or null.
+        pub fn claim_epoch(h: f64) -> JsValue {
+            keeper::claim_epoch(h as u64).map_or(JsValue::NULL, |e| JsValue::from(e as f64))
         }
         /// A queued entry's STATUS (`queued`: its bytes): `{ want }`, or `{ done: { kind, stamp, signatures, accepted } |
         /// { kind, stamp, signatures, waiting: why } | { missing: why } }`.
         #[allow(clippy::too_many_arguments)]
         pub fn entry_status(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], queued: &[u8]) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
             let q = craftworks_wallet::queue::Queued::decode(queued).ok_or_else(|| err("not a queued entry".into()))?;
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
             let want = |w: Vec<[u8; 32]>| js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string());
@@ -2965,7 +2991,7 @@ mod js {
         #[allow(clippy::too_many_arguments)]
         pub fn statement_status(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], epoch: f64, root: &str) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
             match tokens::statement_accepted(&lot, &got, ctx.code_hash, ctx.beacon, epoch as u64, &bytes32("root", root).map_err(err)?).map_err(err)? {
                 tokens::Step::Want(w) => js_sys::JSON::parse(&json!({ "want": w.iter().map(|x| hex(x)).collect::<Vec<_>>() }).to_string()),
@@ -3268,7 +3294,7 @@ mod js {
         #[allow(clippy::too_many_arguments)]
         pub fn wallet_payment_status(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], announce: &[u8], now: f64) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
             let a = craftworks_wallet::stealth::Announce::decode(announce).ok_or_else(|| err("not an announcement".into()))?;
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
             token_step(wallet::status(&ctx, &lot, &got, &a, now as u64), |s| {
@@ -3317,7 +3343,7 @@ mod js {
         #[allow(clippy::too_many_arguments)]
         pub fn wallet_supersede(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], queued: &[u8], now: f64, public: &[u8], creds: js_sys::Array, sigs: js_sys::Array, seed: &[u8], announce: &[u8]) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
             let q = craftworks_wallet::queue::Queued::decode(queued).ok_or_else(|| err("not a queued entry".into()))?;
             let step = if seed.is_empty() {
                 let Some(dev) = account_device(&self.0, idlog_code, &q.owner, public, &creds, &sigs)? else { return want_log(idlog_code, &q.owner) };
@@ -3350,7 +3376,7 @@ mod js {
         #[allow(clippy::too_many_arguments)]
         pub fn wallet_receive_private(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], pool: &[u8], bag_code: &[u8], beacon_code: &[u8], announce: &[u8], now: f64) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes() };
+            let lot = tokens::Lot { pool: b32(pool)?, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
             let a = craftworks_wallet::stealth::Announce::decode(announce).ok_or_else(|| err("not an announcement".into()))?;
             let step = {
                 let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
@@ -3423,7 +3449,7 @@ mod js {
             if let (Some(cp), Some(st)) = (craftworks_token_contract::ChainParams::decode(&p.params), craftworks_token_contract::State::decode(&p.state)) {
                 let before = self.0.got(&id_bytes).and_then(craftworks_token_contract::State::decode).and_then(|s| s.entries.last().map(|e| e.seq));
                 let margin = self.0.got(&cp.definition).and_then(craftworks_token_contract::Definition::decode).map(|d| d.margin);
-                let lot = tokens::Lot { pool: keeper::craft(&tokens::Ctx { code_hash: cp.code_hash, beacon: cp.beacon, idlog: cp.idlog }).1, bag: [0; 32], beacon_code: [0; 32] };
+                let lot = tokens::Lot { pool: keeper::craft(&tokens::Ctx { code_hash: cp.code_hash, beacon: cp.beacon, idlog: cp.idlog }).1, bag: [0; 32], beacon_code: [0; 32], idlog: cp.idlog };
                 for (i, e) in st.entries.iter().enumerate().filter(|(_, e)| before.is_none_or(|b| e.seq > b)) {
                     let q = craftworks_wallet::queue::Queued { token: cp.tok(), owner: cp.owner, seq: e.seq };
                     queue.push(&js_sys::Uint8Array::from(&q.encode()[..]));

@@ -319,7 +319,7 @@ fn a_wallet_starts_its_token_and_credits_a_payment_only_once_witnessed() {
         .map(|n| {
             let k = SigningKey::from_bytes(&[n; 32]);
             let kb = k.verifying_key().to_bytes();
-            t::draw::StakeClaim { owner: [n; 32], amount: 100, epoch: 0, key: kb, sig: k.sign(&t::draw::StakeClaim::message(&pool, &[n; 32], 100, 0, &kb)).to_bytes() }
+            t::draw::StakeClaim { owner: [n; 32], amount: 100, epoch: 0, key: kb }
         })
         .collect();
     let out = |h: u64| *blake3::hash(&h.to_le_bytes()).as_bytes();
@@ -345,13 +345,14 @@ fn a_wallet_starts_its_token_and_credits_a_payment_only_once_witnessed() {
             freeze: &|_| None,
             keys: &|_| None,
             history: &|_, _| None,
+            standing: &|_| None,
         };
         is_value(&src, &a.params, &a.state, &send.nonce)
     };
     assert_eq!(check_with(vec![]), Err("an entry its committee has not witnessed"));
     assert_eq!(check_with(sign(t::wallet::NEED - 1)), Err("an entry its committee has not witnessed"), "one short");
     assert_eq!(check_with(sign(t::wallet::NEED)), Ok(t::wallet::NEED));
-    assert_eq!(is_value(&t::wallet::Source { pool, claims: &|_| vec![], sigs: &|_, _, _| vec![], out: &|_| None, stake_of: &|_, _| None, definition: &|_| None, program: &|_| None, freeze: &|_| None, keys: &|_| None, history: &|_, _| None }, &a.params, &a.state, &[0; 16]), Err("a payment whose debit is not there"));
+    assert_eq!(is_value(&t::wallet::Source { pool, claims: &|_| vec![], sigs: &|_, _, _| vec![], out: &|_| None, stake_of: &|_, _| None, definition: &|_| None, program: &|_| None, freeze: &|_| None, keys: &|_| None, history: &|_, _| None, standing: &|_| None }, &a.params, &a.state, &[0; 16]), Err("a payment whose debit is not there"));
 }
 
 #[test]

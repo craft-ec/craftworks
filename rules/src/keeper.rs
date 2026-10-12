@@ -177,22 +177,35 @@ pub fn mint(ctx: &crate::tokens::Ctx, lot: &crate::tokens::Lot, got: Got, did: &
     Ok(Step::Done(Some(Minted { craft, chain: crate::tokens::Put { params: cp.encode(), state: st.encode() }, amount: line.keeper, fee: line.witness })))
 }
 
-// ---- THE STAKE CLAIM (TOKEN §7a, S2): a keeper's $CRAFT stake standing in the next epoch's witness lots ----
+// ---- THE STAKE CLAIM (TOKEN §7a, S2; audit C2b 10-12): a keeper's $CRAFT stake standing in the next epoch's lots ----
 
-/// What a stake claim puts: the $CRAFT chain with this device made its writer (if it was not), and the claims registry
-/// of `epoch` with this account's claim.
+/// How long before an epoch's FREEZE its claims are made (`pointers::frozen_at`): the last quarter of the epoch before
+/// it. "Shortly before" — a node asleep then does not claim, so it is not seated where it would stall lots (owner
+/// 10-12); long enough for the claim's committee to accept it before the freeze, which is what seats it.
+pub const CLAIM_WINDOW: u64 = t::supply::EPOCH / 4;
+
+/// The claims epoch a claim made at beacon height `now` is for, if `now` is in its window ([`CLAIM_WINDOW`] before
+/// its freeze): `None` otherwise.
+pub fn claim_epoch(now: u64) -> Option<u64> {
+    let e = now / t::supply::EPOCH + 1;
+    let freeze = t::pointers::frozen_at(e);
+    (now < freeze && now + CLAIM_WINDOW >= freeze).then_some(e)
+}
+
+/// What a stake claim puts: the account's $CRAFT chain with this device made its writer (if it was not) and the CLAIM
+/// appended (`Body::Claim`) — queued for its witnesses like every entry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Claimed {
-    pub chain: Option<crate::tokens::Put>,
-    pub registry: crate::tokens::Put,
+    pub chain: crate::tokens::Put,
     pub epoch: u64,
     pub amount: u128,
 }
 
-/// CLAIM `did`'s $CRAFT stake for the next claims epoch whose registry is still open (it freezes `claims::LEAD` steps
-/// before its epoch), witness key this device's (`dev`: the member key — made the chain's writer first, so the stake
-/// counts for it), at beacon height `now`. `None`: nothing staked, or claimed already.
+/// CLAIM `did`'s $CRAFT stake for the next claims epoch — only inside its window ([`claim_epoch`]: shortly before its
+/// freeze) — witness key this device's (`dev`: the member key — made the chain's writer first, so the stake counts for
+/// it), at beacon height `now`. `None`: outside the window, nothing staked, or claimed already.
 pub fn claim(ctx: &crate::tokens::Ctx, got: Got, did: &[u8; 32], now: u64, dev: &crate::tokens::Device) -> Result<Step<Option<Claimed>>, String> {
+    let Some(epoch) = claim_epoch(now) else { return Ok(Step::Done(None)) };
     let (_, token) = craft(ctx);
     // No $CRAFT on this network yet (nobody minted it): nothing staked.
     match there(got, &token) {
@@ -210,35 +223,71 @@ pub fn claim(ctx: &crate::tokens::Ctx, got: Got, did: &[u8; 32], now: u64, dev: 
     if staked == 0 {
         return Ok(Step::Done(None));
     }
-    let mut epoch = now / t::supply::EPOCH + 1;
-    let rp = |e: u64| t::claims::Params { code_hash: ctx.code_hash, pool: token, beacon: held.definition.beacon, epoch: e };
-    if now >= rp(epoch).frozen_at() {
-        epoch += 1;
-    }
-    let reg = match there(got, &rp(epoch).id()) {
-        Err(w) => return Ok(Step::Want(vec![w])),
-        Ok(None) => t::claims::Registry::default(),
-        Ok(Some(b)) => t::claims::Registry::decode(&b).ok_or("a claims registry that does not read")?,
-    };
-    if reg.claims.iter().any(|c| c.owner == *did && c.key == dev.public) {
+    if held.state.entries.iter().any(|e| matches!(e.body, t::Body::Claim { from_epoch, .. } if from_epoch == epoch) && !t::is_superseded(&held.state, e.seq)) {
         return Ok(Step::Done(None));
     }
     let asking = crate::tokens::device_of(dev);
-    let adopted = craftworks_wallet::Wallet { device: &asking, keys: &keys }.adopt(&held, now);
+    let entries = craftworks_wallet::Wallet { device: &asking, keys: &keys }.debit(&held, t::Body::Claim { from_epoch: epoch, amount: staked }, now);
     if let Some(m) = asking.next() {
         return Ok(Step::Sign(m));
     }
-    let adopted = adopted.map_err(String::from)?;
-    let message = t::draw::StakeClaim::message(&token, did, staked, epoch, &dev.public);
-    let Some(sig) = dev.sigs.iter().find(|(m, _)| *m == message).map(|x| x.1) else { return Ok(Step::Sign(message)) };
-    let mine = t::draw::StakeClaim { owner: *did, amount: staked, epoch, key: dev.public, sig };
-    let registry = t::claims::merge(&reg, &t::claims::Registry { claims: vec![mine] });
-    let chain = (!adopted.is_empty()).then(|| {
-        let mut st = held.state.clone();
-        st.entries.extend(adopted);
-        crate::tokens::Put { params: held.params.encode(), state: st.encode() }
-    });
-    Ok(Step::Done(Some(Claimed { chain, registry: crate::tokens::Put { params: rp(epoch).encode(), state: registry.encode() }, epoch, amount: staked })))
+    let mut st = held.state.clone();
+    st.entries.extend(entries.map_err(String::from)?);
+    Ok(Step::Done(Some(Claimed { chain: crate::tokens::Put { params: held.params.encode(), state: st.encode() }, epoch, amount: staked })))
+}
+
+/// A POINTER to post (TOKEN §7a, C2b): into bag `address` (its contract id `id`), the item `item`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Point {
+    pub id: [u8; 32],
+    pub address: [u8; 32],
+    pub item: Vec<u8>,
+}
+
+/// POINT to `did`'s claim for claims epoch `epoch` (its $CRAFT chain's `Body::Claim`), once its witnesses ACCEPTED it:
+/// the pointer — its place, hash, lot height and the signatures its container holds — for the first bag of the epoch's
+/// pointer chain with room (`pointers::address`; read on past full ones). `None`: no such claim, not accepted yet, or
+/// pointed to already. Anyone may run it for anyone (the pointer carries only what anyone reads).
+pub fn point(ctx: &crate::tokens::Ctx, lot: &crate::tokens::Lot, got: Got, did: &[u8; 32], epoch: u64) -> Result<Step<Option<Point>>, String> {
+    let (d, token) = craft(ctx);
+    let cp = crate::tokens::chain(ctx, &d, &token, did, [0; 32]);
+    let s = match there(got, &cp.id()) {
+        Err(w) => return Ok(Step::Want(vec![w])),
+        Ok(None) => return Ok(Step::Done(None)),
+        Ok(Some(b)) => t::State::decode(&b).ok_or("a $CRAFT chain that does not read")?,
+    };
+    let Some(i) = s.entries.iter().rposition(|e| matches!(e.body, t::Body::Claim { from_epoch, .. } if from_epoch == epoch) && !t::is_superseded(&s, e.seq)) else { return Ok(Step::Done(None)) };
+    let e = &s.entries[i];
+    let (lot_epoch, h) = t::wallet::lot_of(e, i.checked_sub(1).map(|j| &s.entries[j]), d.margin).map_err(String::from)?;
+    match crate::tokens::accepted(lot, got, &cp, &d, &s, e.seq)? {
+        Step::Want(w) => return Ok(Step::Want(w)),
+        Step::Done(Err(_)) => return Ok(Step::Done(None)),
+        _ => {}
+    }
+    let wp = crate::tokens::witness_at(ctx.code_hash, lot, d.beacon, &cp.id(), e.seq, lot_epoch);
+    let held = match there(got, &wp.id()) {
+        Err(w) => return Ok(Step::Want(vec![w])),
+        Ok(b) => b.and_then(|b| t::witness::Signatures::decode(&b)).unwrap_or_default(),
+    };
+    let freeze = t::pointers::frozen_at(epoch);
+    let mut sigs: Vec<([u8; 32], u64, [u8; 64])> = held.items.iter().filter(|x| x.entry == e.hash() && x.at < freeze).map(|x| (x.key, x.at, x.sig)).collect();
+    sigs.truncate(t::pointers::SIGS_MAX);
+    let ptr = t::pointers::Pointer { owner: *did, seq: e.seq, entry: e.hash(), height: h, sigs };
+    for k in 0..4096u32 {
+        let (id, address) = crate::tokens::pointer_bag(lot, epoch, k);
+        let items = match there(got, &id) {
+            Err(w) => return Ok(Step::Want(vec![w])),
+            Ok(b) => b.and_then(|b| craftworks_bag_contract::read(&address, &b)).unwrap_or_default(),
+        };
+        let payloads: Vec<&[u8]> = items.iter().map(|x| craftworks_bag_contract::payload(x)).collect();
+        if payloads.iter().filter_map(|p| t::pointers::Pointer::decode(p)).any(|p| p.owner == *did && p.seq == ptr.seq) {
+            return Ok(Step::Done(None));
+        }
+        if !craftworks_bag_contract::chained::full(payloads.iter().map(|p| p.len())) {
+            return Ok(Step::Done(Some(Point { id, address, item: ptr.encode() })));
+        }
+    }
+    Err("every bag of the epoch's stake pointers is full".into())
 }
 
 #[cfg(test)]
@@ -405,13 +454,21 @@ mod tests {
         let (root, _) = Statement { epoch: 5, lines }.tree(&mut blocks).unwrap();
         let proof = freenet_prolly::proof::prove(&blocks, &root, &did).unwrap().encode();
         crate::tokens::testlot::witness_statement(&tl, &mut got, ctx.code_hash, ctx.beacon, 5, &root, 4);
-        let now = 5 * craftworks_standing::EPOCH + 40;
+        let minted_at = 5 * craftworks_standing::EPOCH + 40;
         let (d, token) = craft(&ctx);
         let cp = crate::tokens::chain(&ctx, &d, &token, &did, [0; 32]);
         got.insert(cp.keys_id(), log.encode());
-        let minted = crate::tokens::testlot::done(&|g| mint(&ctx, &tl.lot, g, &did, 5, &root, &proof, now), &got).unwrap().unwrap();
+        let minted = crate::tokens::testlot::done(&|g| mint(&ctx, &tl.lot, g, &did, 5, &root, &proof, minted_at), &got).unwrap().unwrap();
         got.insert(token, d.encode());
         got.insert(cp.id(), minted.chain.state.clone());
+        let ce = minted_at / t::supply::EPOCH + 1;
+        // OUTSIDE ITS WINDOW (long before the freeze): nothing claimed — a node awake early and asleep at the freeze
+        // does not stand in the epoch.
+        assert_eq!(claim_epoch(minted_at), None);
+        assert_eq!(crate::tokens::testlot::done(&|g| claim(&ctx, g, &did, minted_at, &dev), &got), Ok(None));
+        let now = t::pointers::frozen_at(ce) - 10;
+        assert_eq!(claim_epoch(now), Some(ce));
+        assert_eq!(claim_epoch(t::pointers::frozen_at(ce)), None, "from the freeze on: the next epoch's window is not open yet");
         // CLAIM: the device signs what it is asked (the writer entry, then the claim) — the page's run loop.
         let claimed = loop {
             let g = got.clone();
@@ -424,19 +481,19 @@ mod tests {
                 Ok(c) => break c.expect("claimed"),
             }
         };
-        let ce = now / t::supply::EPOCH + 1;
         assert_eq!((claimed.epoch, claimed.amount), (ce, 500), "the next claims epoch, its whole stake");
-        let reg = t::claims::Registry::decode(&claimed.registry.state).unwrap();
-        let c = &reg.claims[0];
-        assert!(c.holds(&token) && c.key == public && c.owner == did, "signed by the member key");
-        // The member key is now its chain's writer: the stake counts for that key (what the lot checks).
-        let st = t::State::decode(&claimed.chain.expect("a writer entry").state).unwrap();
-        let (amount, keys) = t::wallet::stake_at(&cp, &d, &st, ce * t::supply::EPOCH).unwrap();
-        assert!(amount >= c.amount && keys.contains(&public));
+        // The member key is now its chain's writer and the claim its own entry: the stake counts for that key.
+        let st = t::State::decode(&claimed.chain.state).unwrap();
+        let last = st.entries.last().unwrap();
+        assert_eq!(last.body, t::Body::Claim { from_epoch: ce, amount: 500 });
+        assert_eq!(t::writer_at(&st, st.entries.len() - 1), Some(t::Signer::Device(public, 0)));
+        let (seat, _) = t::wallet::seat_of(&cp, &d, &st, ce).expect("a seat (before acceptance)");
+        assert!(seat.key == public && seat.owner == did && seat.amount == 500);
         // Claimed already: nothing again.
         let mut g2 = got.clone();
-        g2.insert(t::claims::Params { code_hash: ctx.code_hash, pool: token, beacon: d.beacon, epoch: ce }.id(), claimed.registry.state.clone());
         g2.insert(cp.id(), st.encode());
         assert_eq!(crate::tokens::testlot::done(&|g| claim(&ctx, g, &did, now, &dev), &g2), Ok(None));
+        // Not accepted yet: nothing to point to.
+        assert_eq!(crate::tokens::testlot::done(&|g| point(&ctx, &tl.lot, g, &did, ce), &g2), Ok(None));
     }
 }

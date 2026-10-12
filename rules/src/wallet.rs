@@ -550,7 +550,7 @@ mod tests {
             let stranger = SigningKey::from_bytes(&[99; 32]);
             let other = [5u8; 32];
             for (k, e) in [(&stranger, debit.entries.last().unwrap().hash()), (&tl.keys[0], other)] {
-                items.push(t::witness::Signed { key: k.verifying_key().to_bytes(), entry: e, at: 0, sig: k.sign(&t::witness::WitnessSig::message(&pa.id(), dseq, &e, 0)).to_bytes() });
+                items.push(t::witness::Signed { key: k.verifying_key().to_bytes(), owner: [0; 32], entry: e, at: 0, sig: k.sign(&t::witness::WitnessSig::message(&pa.id(), dseq, &e, 0)).to_bytes() });
             }
             items.sort();
             g4.insert(wp.id(), t::witness::Signatures { items }.encode());
@@ -559,7 +559,7 @@ mod tests {
                 let i = st.entries.iter().position(|e| e.seq == q.seq)?;
                 Some((pa.id(), st.entries[i].clone(), i.checked_sub(1).map(|j| st.entries[j].clone()), d.margin))
             };
-            let claims = |ep: u64| g4.get(&t::claims::Params { code_hash: ctx.code_hash, pool: tl.lot.pool, beacon: d.beacon, epoch: ep }.id()).and_then(|b| t::claims::Registry::decode(b)).map_or(vec![], |r| r.claims);
+            let claims = |ep: u64| crate::tokens::testlot::seats(&tl, &g4, ctx.code_hash, d.beacon, ep);
             let out = |h: u64| Some(*blake3::hash(&h.to_le_bytes()).as_bytes());
             let sigs = |c: &[u8; 32], sq: u64, ep: u64| crate::tokens::witness_sigs(&|id| g4.get(&id).cloned(), &crate::tokens::witness_at(ctx.code_hash, &tl.lot, d.beacon, c, sq, ep));
             let counts = craftworks_wallet::fees::count(&[q, q], &[], &craftworks_wallet::fees::Reads { pool: tl.lot.pool, entry: &entry, claims: &claims, out: &out, sigs: &sigs });
@@ -575,11 +575,11 @@ mod tests {
             let recv = State::decode(&r.put.as_ref().unwrap().state).unwrap();
             g3.insert(pb2.id(), recv.encode());
             let q = craftworks_wallet::queue::Queued { token: t::Tok { definition: id, item: [0; 32] }, owner: paid.to, seq: recv.entries[0].seq };
-            let verdict = |me: [u8; 32]| crate::tokens::testlot::done(&|g| crate::witness::entry(&ctx, &tl.lot, g, &q, &me, e1 + 14), &g3).unwrap();
+            let verdict = |me: [u8; 32]| crate::tokens::testlot::done(&|g| crate::witness::entry(&ctx, &tl.lot, g, &q, &me, e1 + 14, &[43; 32]), &g3).unwrap();
             let signs: Vec<crate::witness::Verdict> = tl.keys.iter().map(|k| verdict(k.verifying_key().to_bytes())).collect();
             let (lot_epoch, _) = t::wallet::lot_of(&recv.entries[0], None, d.margin).unwrap();
             let at = crate::tokens::witness_at(ctx.code_hash, &tl.lot, d.beacon, &pb2.id(), recv.entries[0].seq, lot_epoch);
-            assert!(signs.iter().all(|v| *v == crate::witness::Verdict::Sign { at, entry: recv.entries[0].hash() }), "{signs:?}");
+            assert!(signs.iter().zip(&tl.staked).all(|(v, (cp, _))| *v == crate::witness::Verdict::Sign { at, entry: recv.entries[0].hash(), owner: cp.owner }), "{signs:?}");
             assert_eq!(verdict([77; 32]), crate::witness::Verdict::NotSeated);
         }
         // Its STATUS at each stage (what the history shows), from the same announcement.

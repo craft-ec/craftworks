@@ -92,7 +92,7 @@ pub fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate, height: u64, sett
 fn epoch<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate, e: u64, height: u64, settled: &mut Vec<[u8; 32]>, out: &mut Vec<Io>) -> Next {
     let got = |id: &[u8; 32]| r.got.get(id).cloned();
     let ctx = tokens::Ctx { code_hash: m.token, beacon: m.beacon, idlog: m.idlog };
-    let lot = tokens::Lot { pool: m.pool, bag: m.bag, beacon_code: m.beacon_code };
+    let lot = tokens::Lot { pool: m.pool, bag: m.bag, beacon_code: m.beacon_code, idlog: m.idlog };
     let lot_height = R::statement::lot_height(e);
     if height < lot_height || settled.contains(&settled_key(e)) {
         return Next::Done;
@@ -200,8 +200,8 @@ fn epoch<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate, e: u64, height: u64,
     }
     match witness::statement(&ctx, &lot, &got, e, &root, &r.member) {
         tokens::Step::Want(w) => Next::Read(w),
-        tokens::Step::Done(witness::Verdict::Sign { at, entry }) => {
-            sign_into(h, &r.member, &at, entry, height, out);
+        tokens::Step::Done(witness::Verdict::Sign { at, entry, owner }) => {
+            sign_into(h, &r.member, &owner, &at, entry, height, out);
             settled.push(settled_key(e));
             Next::Done
         }

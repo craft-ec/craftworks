@@ -3,25 +3,15 @@
 //! k lowest. Stake-proportional exactly: the lowest of exponentials with rates w₁…wₙ is claimer i with chance wᵢ/Σw,
 //! so splitting stake across identities gains nothing.
 
-use crate::sig_ok;
-
-/// "I, `owner` (a DID), stake `amount` of token `definition` in `epoch`, my witness key `key`" — signed by that key.
+/// A SEAT in claims epoch `epoch`'s lots: staker `owner` (a DID) with `amount` of stake, witness key `key`. Never made from
+/// what anyone says: only `wallet::valid_stakers` makes these — from a `Body::Claim` in the staker's own pool chain,
+/// accepted before the epoch's freeze.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StakeClaim {
     pub owner: [u8; 32],
     pub amount: u128,
     pub epoch: u64,
     pub key: [u8; 32],
-    pub sig: [u8; 64],
-}
-
-impl StakeClaim {
-    pub fn message(definition: &[u8; 32], owner: &[u8; 32], amount: u128, epoch: u64, key: &[u8; 32]) -> Vec<u8> {
-        craftworks_identity::claim_message(definition, owner, amount, epoch, key)
-    }
-    pub fn holds(&self, definition: &[u8; 32]) -> bool {
-        self.amount > 0 && sig_ok(&self.key, &Self::message(definition, &self.owner, self.amount, self.epoch, &self.key), &self.sig)
-    }
 }
 
 /// log₂(x) in fixed point (32 fractional bits), x ≥ 1 — integer steps only.
@@ -53,12 +43,12 @@ pub fn ticket(out: &[u8; 32], chain: &[u8; 32], seq: u64, owner: &[u8; 32], amou
     (neg << 64) / amount.max(1)
 }
 
-/// The claims of `epoch` that HOLD for `definition`, one per owner (its first in the list): (owner, amount, index) —
-/// checked once, then drawn from for every entry.
-pub fn valid(definition: &[u8; 32], epoch: u64, claims: &[StakeClaim]) -> Vec<([u8; 32], u128, usize)> {
+/// The seats of `epoch` (of `V(epoch)`, for the pool `_pool`), one per owner (its first in the list) and of some stake:
+/// (owner, amount, index) — taken once, then drawn from for every entry.
+pub fn valid(_pool: &[u8; 32], epoch: u64, claims: &[StakeClaim]) -> Vec<([u8; 32], u128, usize)> {
     let mut out: Vec<([u8; 32], u128, usize)> = Vec::new();
     for (i, c) in claims.iter().enumerate() {
-        if c.epoch == epoch && !out.iter().any(|x| x.0 == c.owner) && c.holds(definition) {
+        if c.epoch == epoch && c.amount > 0 && !out.iter().any(|x| x.0 == c.owner) {
             out.push((c.owner, c.amount, i));
         }
     }
@@ -81,17 +71,14 @@ pub fn committee(definition: &[u8; 32], out: &[u8; 32], chain: &[u8; 32], seq: u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
 
     const DEF: [u8; 32] = [5; 32];
     fn claim(n: u8, amount: u128) -> StakeClaim {
         claim_of(n, [n; 32], amount, 1)
     }
-    /// A claim SIGNED as it reads (key n, for `owner`, `amount`, `epoch`).
+    /// A seat (key n, for `owner`, `amount`, `epoch`).
     fn claim_of(n: u8, owner: [u8; 32], amount: u128, epoch: u64) -> StakeClaim {
-        let k = SigningKey::from_bytes(&[n; 32]);
-        let key = k.verifying_key().to_bytes();
-        StakeClaim { owner, amount, epoch, key, sig: k.sign(&StakeClaim::message(&DEF, &owner, amount, epoch, &key)).to_bytes() }
+        StakeClaim { owner, amount, epoch, key: [n; 32] }
     }
 
     #[test]
@@ -141,17 +128,13 @@ mod tests {
         assert_eq!(c.len(), 2);
         assert_eq!(c, committee(&DEF, &[9; 32], &[8; 32], 5, 1, &claims, 2), "the same for everyone");
         assert_ne!(committee(&DEF, &[9; 32], &[8; 32], 5, 1, &claims, 3), committee(&DEF, &[10; 32], &[8; 32], 5, 1, &claims, 3), "another output, another order (here)");
-        // A forged claim (another stake than signed), another epoch's, another token's, a second of one owner: out.
-        let mut forged = claim(4, 100);
-        forged.amount = 1_000_000;
-        claims.push(forged);
+        // Another epoch's, a second of one owner, a stake of nothing: out.
         claims.push(claim_of(5, [5; 32], 1_000_000, 2));
         claims.push(claim_of(6, [1; 32], 1_000_000, 1));
         claims.push(claim_of(7, [7; 32], 0, 1));
-        assert_eq!(valid(&DEF, 1, &claims).len(), 3, "the forged, another epoch's, an owner's second, a stake of nothing: out");
+        assert_eq!(valid(&DEF, 1, &claims).len(), 3, "another epoch's, an owner's second, a stake of nothing: out");
         for i in committee(&DEF, &[9; 32], &[8; 32], 5, 1, &claims, 10) {
-            assert!(i < 3, "only the three that hold: {i}");
+            assert!(i < 3, "only the three seats: {i}");
         }
-        assert!(committee(&[6; 32], &[9; 32], &[8; 32], 5, 1, &claims, 10).is_empty(), "claims for another token");
     }
 }

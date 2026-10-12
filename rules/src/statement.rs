@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn a_statement_asks_for_its_vouchers_key_logs_then_builds() {
         let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
-        let lot = Lot { pool: [1; 32], bag: [2; 32], beacon_code: [3; 32] };
+        let lot = Lot { pool: [1; 32], bag: [2; 32], beacon_code: [3; 32], idlog: [6; 32] };
         let keep = Keep { standing: [4; 32], beacon_code: [3; 32], beacon: [7; 32] };
         let items = vec![R::item::Item { from: [11; 32], to: [12; 32], at: 5, on: true, cred: vec![], key_seq: 0, sig: [0; 64] }];
         let none = |_: &[u8; 32]| false;
@@ -217,7 +217,7 @@ mod tests {
         use craftworks_standing::{record, EPOCH};
         use ed25519_dalek::{Signer as _, SigningKey};
         let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
-        let lot = Lot { pool: [1; 32], bag: [2; 32], beacon_code: [3; 32] };
+        let lot = Lot { pool: [1; 32], bag: [2; 32], beacon_code: [3; 32], idlog: [6; 32] };
         let keep = Keep { standing: [4; 32], beacon_code: [3; 32], beacon: [7; 32] };
         let out = |h: u64| *blake3::hash(&h.to_le_bytes()).as_bytes();
         let mut got: HashMap<[u8; 32], Vec<u8>> = HashMap::new();

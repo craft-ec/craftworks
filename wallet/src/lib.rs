@@ -75,7 +75,7 @@ fn taken(d: &Definition, owner: &[u8; 32], body: &Body) -> Option<u128> {
         Body::Send { amount, .. } | Body::Escrow { amount, .. } => gross(*amount),
         Body::Vest { schedule, .. } => gross(schedule.iter().try_fold(0u128, |a, s| a.checked_add(s.1))?),
         Body::Burn { amount } | Body::Stake { amount } => Some(*amount),
-        Body::Allow { .. } | Body::Unstake { .. } => Some(0),
+        Body::Allow { .. } | Body::Unstake { .. } | Body::Claim { .. } => Some(0),
         _ => None,
     }
 }

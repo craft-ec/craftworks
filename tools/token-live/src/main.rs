@@ -152,7 +152,7 @@ fn push_as(s: &mut T::State, body: T::Body, n: [u8; 16], who: Signer_, stamp: u6
         T::Body::Reclaim { escrow } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Escrow { amount, .. } if &x.nonce == escrow => Some(*amount), _ => None }).unwrap_or(0),
         T::Body::Payout { amount, .. } | T::Body::HolderPayout { amount, .. } => bal + amount,
         T::Body::Stake { amount } => bal - amount,
-        T::Body::Unstake { .. } | T::Body::Slash { .. } | T::Body::Misdeed { .. } | T::Body::FalseVerdict { .. } | T::Body::FalseMint { .. } | T::Body::KeeperMint { .. } => bal,
+        T::Body::Unstake { .. } | T::Body::Claim { .. } | T::Body::Slash { .. } | T::Body::Misdeed { .. } | T::Body::FalseVerdict { .. } | T::Body::FalseMint { .. } | T::Body::KeeperMint { .. } => bal,
         T::Body::Release { unstake } => bal + s.entries.iter().find_map(|x| match &x.body { T::Body::Unstake { amount } if &x.nonce == unstake => Some(*amount), _ => None }).unwrap_or(0),
         T::Body::Allow { .. } | T::Body::Cut { .. } | T::Body::Writer { .. } | T::Body::Members { .. } => bal,
         // The balance before `from` (TOKEN §3d).
@@ -714,8 +714,8 @@ async fn nft(w: &W, scode: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// FOUNDATION 6, LIVE: WITNESSES BY LOT, weighted by stake. 16 stakers earn and stake 50 each in a POOL token; at the
-/// next epoch they post their stake claims to the pool's stakers bag. In another token A pays B; C credits itself 5000
+/// FOUNDATION 6, LIVE: WITNESSES BY LOT, weighted by stake. 16 stakers earn and stake 50 each in a POOL token, each
+/// CLAIMING the next epoch in its own chain (`Body::Claim`, TOKEN §7a C2b). In another token A pays B; C credits itself 5000
 /// from a send that does not exist, buried under real receives, and pays D out of it. Each entry's committee — drawn
 /// from the claims by the beacon output after it — re-checks it by the witness rule and signs into its place's signatures
 /// container (`witness::Params`). B's wallet accepts its payment from the signatures alone; D's is never witnessed. A
@@ -743,25 +743,19 @@ async fn witness_mode(w: &W) -> Result<()> {
     }
     println!("2  the pool token: genesis, 50 to each staker, on X: {}", w.put_chain(&w.x, pool, 1, &g).await?.0);
     let r = w.until(h + 2).await?;
+    // Stake counts for an epoch as held at its start: to the next one — CLAIMED in each staker's own chain before that
+    // epoch freezes (an eighth of an epoch before it starts).
+    let epoch = supply::epoch(r) + 1;
+    let start = epoch * supply::EPOCH;
     let mut took = 0;
     for &n in &stakers {
         let mut s = T::State::default();
         push(&mut s, T::Body::Receive { from: did(1), nonce: w.n(n), amount: 50, cited: h, ev: T::Evidence::default() }, w.n(n), None, r);
         push(&mut s, T::Body::Stake { amount: 50 }, w.n(100 + n), Some(n), r);
+        push(&mut s, T::Body::Claim { from_epoch: epoch, amount: 50 }, w.n(140 + n), Some(n), r);
         took += (w.put_chain(&w.y, pool, n, &s).await?.0 == "ACCEPTED") as usize;
     }
-    println!("3  each staker receives its 50 and stakes it (at {r}), on Y: {took} of {} ACCEPTED", stakers.len());
-    // Stake counts for an epoch as held at its start: to the next one.
-    let epoch = supply::epoch(r) + 1;
-    let start = epoch * supply::EPOCH;
-    // Their stake CLAIMS for that epoch, in its registry — before it freezes (an eighth of an epoch before it starts).
-    let claims: Vec<draw::StakeClaim> = stakers
-        .iter()
-        .map(|&n| draw::StakeClaim { owner: did(n), amount: 50, epoch, key: pk(n), sig: key(n).sign(&draw::StakeClaim::message(&pool, &did(n), 50, epoch, &pk(n))).to_bytes() })
-        .collect();
-    let reg = T::claims::Params { code_hash: w.ch, pool, beacon: w.beacon, epoch };
-    let registry = T::claims::Registry { claims: { let mut c = claims.clone(); c.sort_by_key(|x| x.owner); c } };
-    println!("4  {} stake claims for epoch {epoch} in its registry (frozen from {}; now {}), on X: {}", claims.len(), reg.frozen_at(), w.now().await?, put(&w.x, container(&w.code, reg.encode()), registry.encode()).await?.0);
+    println!("3  each staker receives its 50, stakes it and claims epoch {epoch} (at {r}; it freezes at {}), on Y: {took} of {} ACCEPTED", T::pointers::frozen_at(epoch), stakers.len());
     let t = Instant::now();
     FAST.store(true, std::sync::atomic::Ordering::Relaxed);
     let reached = loop {
@@ -777,12 +771,13 @@ async fn witness_mode(w: &W) -> Result<()> {
     };
     FAST.store(false, std::sync::atomic::Ordering::Relaxed);
     println!("5  beacon fast-forwarded to epoch {epoch} (height {reached}) in {} s", t.elapsed().as_secs());
-    // A claim AFTER the freeze (staker 19, never claimed): the registry keeps what it held.
-    let late = draw::StakeClaim { owner: did(19), amount: 50, epoch, key: pk(19), sig: key(19).sign(&draw::StakeClaim::message(&pool, &did(19), 50, epoch, &pk(19))).to_bytes() };
-    let said = put(&w.x, container(&w.code, reg.encode()), T::claims::Registry { claims: vec![late] }.encode()).await?.0;
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let held = get(&w.x, reg.id()).await?.and_then(|b| T::claims::Registry::decode(&b)).map_or(0, |r| r.claims.len());
-    println!("   a claim after the freeze, on X: {said} — the registry holds {held} claims");
+    // A claim AFTER the freeze (staker 20 claims epoch {epoch} again): the contract refuses it.
+    let late = {
+        let mut s = get(&w.y, w.chain(pool, 20).id()).await?.and_then(|b| T::State::decode(&b)).unwrap_or_default();
+        push(&mut s, T::Body::Claim { from_epoch: epoch, amount: 50 }, w.n(199), Some(20), reached);
+        w.put_chain(&w.y, pool, 20, &s).await?.0
+    };
+    println!("   a claim after the freeze, on Y: {late}");
     // Token A: 2 pays 3; 4 buries a fake receive and pays 5 out of it.
     let td = w.def(2, b"Paid", 12);
     let ta = w.put_def(&td).await?;
@@ -831,12 +826,11 @@ async fn witness_mode(w: &W) -> Result<()> {
             *beacon_state.borrow_mut() = Some(s);
             o
         };
-        let claims_of = |e: u64| {
-            let rp = T::claims::Params { code_hash: ch, pool, beacon: bid, epoch: e };
-            rt.block_on(get(&x, rp.id())).ok().flatten().and_then(|b| T::claims::Registry::decode(&b)).map_or(vec![], |r| r.claims)
-        };
+        // The stakers' SEATS of claims epoch `e`: each one's claim in its own pool chain (`wallet::seat_of`; this harness
+        // seats them before any witness accepted them, as the registry did).
+        let claims_of = |e: u64| (20..36u8).filter_map(|n| wallet::seat_of(&params(pool, n), &pd2, &read(&params(pool, n))?, e).map(|x| x.0)).collect::<Vec<_>>();
         // A place's signatures: its container under the lot's claims epoch (`witness::Params`), on X.
-        let place_of = |cid: &[u8; 32], seq: u64, ep: u64| T::witness::Params { code_hash: ch, pool, beacon: bid, epoch: ep, chain: *cid, seq };
+        let place_of = |cid: &[u8; 32], seq: u64, ep: u64| T::witness::Params { code_hash: ch, pool, beacon: bid, idlog, epoch: ep, chain: *cid, seq };
         let sigs_of = |cid: &[u8; 32], seq: u64, ep: u64| {
             let wp = place_of(cid, seq, ep);
             rt.block_on(get(&x, wp.id())).ok().flatten().map(|b| wp.sigs(&b)).unwrap_or_default()
@@ -849,7 +843,7 @@ async fn witness_mode(w: &W) -> Result<()> {
             wallet::stake_at(&p, &pd2, &read(&p)?, at).ok()
         };
         let defs = |t: &[u8; 32]| if *t == ta { Some(td2.clone()) } else if *t == pool { Some(pd2.clone()) } else { None };
-        let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of, definition: &defs, program: &|_| None, freeze: &|_| None, keys: &|o: &[u8; 32]| (1..=99u8).find(|n| did(*n) == *o).map(log), history: &|_, _| None };
+        let src = wallet::Source { pool, claims: &claims_of, sigs: &sigs_of, out: &out_at, stake_of: &stake_of, definition: &defs, program: &|_| None, freeze: &|_| None, keys: &|o: &[u8; 32]| (1..=99u8).find(|n| did(*n) == *o).map(log), history: &|_, _| None, standing: &|_| None };
         let cited = |t: &T::Tok, o: &[u8; 32]| rt.block_on(get(&y, T::ChainParams { code_hash: ch, definition: t.definition, owner: *o, beacon: bid, idlog, item: t.item }.id())).ok().flatten().and_then(|b| T::State::decode(&b));
         // Witness one entry: its committee drawn, each member re-checks it by the rule and signs into its container on X.
         let witness = |o: u8, seq: u64, who: &str| -> bool {
@@ -879,12 +873,12 @@ async fn witness_mode(w: &W) -> Result<()> {
                 }
                 Ok(hash) => {
                     let wp = place_of(&p.id(), seq, ep);
-                    let items: Vec<([u8; 32], T::witness::WitnessSig)> = members
+                    let items: Vec<([u8; 32], [u8; 32], T::witness::WitnessSig)> = members
                         .iter()
                         .map(|&m| {
                             let n = (20..36u8).find(|n| pk(*n) == claims[m].key).unwrap(); // the member's own key
                             let sig = key(n).sign(&T::witness::WitnessSig::message(&p.id(), seq, &hash, now)).to_bytes();
-                            (pk(n), T::witness::WitnessSig { chain: p.id(), seq, entry: hash, at: now, sig })
+                            (pk(n), did(n), T::witness::WitnessSig { chain: p.id(), seq, entry: hash, at: now, sig })
                         })
                         .collect();
                     let said = rt.block_on(put(&x, container(&tc, wp.encode()), wp.state(&items))).map(|r| r.0).unwrap_or_else(|e| e.to_string());
@@ -923,17 +917,23 @@ async fn witness_mode(w: &W) -> Result<()> {
         println!("{l}");
     }
     // AN EQUIVOCATION: staker 20 signs two entries at one place, into that place's signatures container; a WATCHER reads
-    // it and the epoch's registry, finds it (`wallet::equivocations`) and appends the burn to the staker's pool chain.
+    // it and the epoch's stakers, finds it (`wallet::equivocations`) and appends the burn to the staker's pool chain.
     let other = |e: u8| *blake3::hash(&[e]).as_bytes();
     let place = w.chain(ta, 2).id();
     let at = w.now().await?;
     let sg = |e: u8| T::witness::WitnessSig { chain: place, seq: 1, entry: other(e), at, sig: key(20).sign(&T::witness::WitnessSig::message(&place, 1, &other(e), at)).to_bytes() };
-    let wp = T::witness::Params { code_hash: w.ch, pool, beacon: w.beacon, epoch, chain: place, seq: 1 };
-    let said = put(&w.x, container(&w.code, wp.encode()), wp.state(&[(pk(20), sg(1)), (pk(20), sg(2))])).await?.0;
+    let wp = T::witness::Params { code_hash: w.ch, pool, beacon: w.beacon, idlog: w.idlog, epoch, chain: place, seq: 1 };
+    let said = put(&w.x, container(&w.code, wp.encode()), wp.state(&[(pk(20), did(20), sg(1)), (pk(20), did(20), sg(2))])).await?.0;
     println!("13 staker 20 signs two other entries at 2's seq 1, into its signatures container on X: {said}");
     tokio::time::sleep(Duration::from_secs(2)).await;
     let sigs: Vec<T::witness::WitnessSig> = get(&w.x, wp.id()).await?.map(|b| wp.sigs(&b)).unwrap_or_default();
-    let registry = get(&w.x, reg.id()).await?.and_then(|b| T::claims::Registry::decode(&b)).map_or(vec![], |r| r.claims);
+    let mut registry = Vec::new();
+    for &n in &stakers {
+        let cp = w.chain(pool, n);
+        if let Some(st) = get(&w.y, cp.id()).await?.and_then(|b| T::State::decode(&b)) {
+            registry.extend(wallet::seat_of(&cp, &pd, &st, epoch).map(|x| x.0));
+        }
+    }
     let found = wallet::equivocations(&sigs, &registry);
     println!("   the watcher: {} signatures at that place, {} equivocator(s): {:?}", sigs.len(), found.len(), found.iter().map(|f| stakers.iter().find(|n| did(**n) == f.0).copied()).collect::<Vec<_>>());
     let (owner, burn) = found.into_iter().next().context("no equivocator found")?;

@@ -35,11 +35,13 @@ pub struct Reader<'a> {
     rt: tokio::runtime::Runtime,
     beacon_state: RefCell<Option<B::State>>,
     defs: RefCell<HashMap<[u8; 32], Definition>>,
+    /// `V(E)` per claims epoch, computed once in this reader's life (a reader is made per pass).
+    valid: std::cell::RefCell<std::collections::BTreeMap<u64, Vec<StakeClaim>>>,
 }
 
 impl<'a> Reader<'a> {
     pub fn new(net: &'a Net) -> anyhow::Result<Reader<'a>> {
-        Ok(Reader { net, rt: tokio::runtime::Builder::new_current_thread().enable_all().build()?, beacon_state: RefCell::new(None), defs: RefCell::new(HashMap::new()) })
+        Ok(Reader { net, rt: tokio::runtime::Builder::new_current_thread().enable_all().build()?, beacon_state: RefCell::new(None), defs: RefCell::new(HashMap::new()), valid: Default::default() })
     }
     /// A contract's state (`None`: not there, or not answered).
     pub fn get(&self, id: [u8; 32]) -> Option<Vec<u8>> {
@@ -97,33 +99,46 @@ impl<'a> Reader<'a> {
     pub fn keys(&self, did: &[u8; 32]) -> Option<craftworks_idlog_contract::Log> {
         self.get(T::id(&self.net.idlog_hash, did)).and_then(|b| craftworks_idlog_contract::read(did, &b))
     }
-    /// The stake claims of `epoch` as its registry holds them (every one, backed or not).
-    pub fn raw_claims(&self, epoch: u64) -> Vec<StakeClaim> {
-        let p = T::claims::Params { code_hash: self.net.code_hash, pool: self.net.pool, beacon: self.net.beacon, epoch };
-        self.get(p.id()).and_then(|b| T::claims::Registry::decode(&b)).map_or(vec![], |r| r.claims)
+    /// The STAKE POINTERS posted for `epoch` (`pointers::address`, chained: every one, forged or not).
+    pub fn pointers(&self, epoch: u64) -> Vec<T::pointers::Pointer> {
+        let mut out = Vec::new();
+        for k in 0..4096u32 {
+            let items = self.bag(T::pointers::address(&self.net.pool, epoch, k));
+            out.extend(items.iter().filter_map(|i| T::pointers::Pointer::decode(i)));
+            if !craftworks_bag_contract::chained::full(items.iter().map(Vec::len)) {
+                break;
+            }
+        }
+        out
     }
     /// The VALID STAKERS of `epoch` (`wallet::valid_stakers`, TOKEN §7a: witnessed stake — what every lot is drawn over).
     pub fn claims(&self, epoch: u64) -> Vec<StakeClaim> {
         let Some(pd) = self.definition(&self.net.pool) else { return Vec::new() };
         let tok = Tok { definition: self.net.pool, item: [0; 32] };
-        let registry = |e: u64| self.raw_claims(e);
+        let pointers = |e: u64| self.pointers(e);
         let chain = |o: &[u8; 32]| Some((self.params(&tok, o)?, self.chain(&tok, o)?));
         let out = |h: u64| self.out_at(h);
         let sigs = |c: &[u8; 32], q: u64, ep: u64| self.sigs(c, q, ep);
-        let r = wallet::StakeReads { pool: self.net.pool, pool_def: &pd, registry: &registry, chain: &chain, out: &out, sigs: &sigs };
-        wallet::valid_stakers(&r, epoch, &Default::default())
+        let r = wallet::StakeReads { pool: self.net.pool, pool_def: &pd, pointers: &pointers, chain: &chain, out: &out, sigs: &sigs };
+        wallet::valid_stakers(&r, epoch, &self.valid)
     }
-    /// A PLACE'S SIGNATURES container under claims epoch `epoch` (`witness::Params`: its registry's keys may sign).
+    /// A keeper's STANDING RECORD by its key (a stake claim's witness reads it: `wallet::live`).
+    pub fn standing(&self, key: &[u8; 32]) -> Option<craftworks_standing::record::State> {
+        let p = craftworks_standing_contract::Params::keeper(self.net.beacon_hash, self.net.beacon, key);
+        self.get(p.id(&self.net.standing_hash)).and_then(|b| craftworks_standing::codec::decode(&b))
+    }
+    /// A PLACE'S SIGNATURES container under claims epoch `epoch` (`witness::Params`: keys with a claim for it may sign).
     pub fn place(&self, chain: &[u8; 32], seq: u64, epoch: u64) -> witness::Params {
-        witness::Params { code_hash: self.net.code_hash, pool: self.net.pool, beacon: self.net.beacon, epoch, chain: *chain, seq }
+        witness::Params { code_hash: self.net.code_hash, pool: self.net.pool, beacon: self.net.beacon, idlog: self.net.idlog_hash, epoch, chain: *chain, seq }
     }
     pub fn sigs(&self, chain: &[u8; 32], seq: u64, epoch: u64) -> Vec<witness::WitnessSig> {
         let p = self.place(chain, seq, epoch);
         self.get(p.id()).map(|b| p.sigs(&b)).unwrap_or_default()
     }
-    /// PUT `key`'s signature `sig` into its place's container `p` (made if not there; else merged).
-    fn put_sig(&self, p: &witness::Params, key: &[u8; 32], sig: &witness::WitnessSig) -> anyhow::Result<String> {
-        Ok(self.rt.block_on(node_io::put(&self.net.ws, node_io::container(&self.net.code, p.encode()), p.state(&[(*key, sig.clone())])))?.0)
+    /// PUT `key`'s signature `sig` — for the staker `owner` whose seat it is (the baseline: none) — into its place's
+    /// container `p` (made if not there; else merged).
+    fn put_sig(&self, p: &witness::Params, key: &[u8; 32], owner: &[u8; 32], sig: &witness::WitnessSig) -> anyhow::Result<String> {
+        Ok(self.rt.block_on(node_io::put(&self.net.ws, node_io::container(&self.net.code, p.encode()), p.state(&[(*key, *owner, sig.clone())])))?.0)
     }
     /// A staker's stake as its VALID claim stands at height `at` (its claims epoch's).
     pub fn stake_of(&self, owner: &[u8; 32], at: u64) -> Option<witness::Stake> {
@@ -251,7 +266,7 @@ impl<'a> Reader<'a> {
         let posted = epoch.checked_sub(1).map_or(vec![], roots);
         let earlier: Vec<(u64, [u8; 32])> = if epoch >= 2 { (epoch.saturating_sub(CARRY_BACK)..=epoch - 2).rev().flat_map(|x| roots(x).into_iter().map(move |r| (x, r))).collect() } else { vec![] };
         let ctx = craftworks_rules::tokens::Ctx { code_hash: self.net.code_hash, beacon: self.net.beacon, idlog: self.net.idlog_hash };
-        let lot = craftworks_rules::tokens::Lot { pool: self.net.pool, bag: blake3_hash(&self.net.bag_code), beacon_code: self.net.beacon_hash };
+        let lot = craftworks_rules::tokens::Lot { pool: self.net.pool, bag: blake3_hash(&self.net.bag_code), beacon_code: self.net.beacon_hash, idlog: self.net.idlog_hash };
         let keep = craftworks_rules::keeper::Keep { standing: self.net.standing_hash, beacon_code: self.net.beacon_hash, beacon: self.net.beacon };
         let fresh = |_: &[u8; 32]| true;
         let block = |c: &[u8; 32]| self.get(contract_keys::block::contract_for(&self.net.block_code, c)).filter(|s| s.len() > 1).map(|s| s[1..].to_vec());
@@ -277,9 +292,9 @@ impl<'a> Reader<'a> {
         let (k, base, _) = witness::seats(valid.len(), wallet::COMMITTEE);
         let place = witness_place(epoch);
         let members = T::draw::committee_of(&out, &place, 0, &valid, k);
-        if !(members.iter().any(|m| claims[*m].key == me) || (base && me == witness::BASELINE)) {
+        let Some(owner) = members.iter().find(|m| claims[**m].key == me).map(|m| claims[*m].owner).or((base && me == witness::BASELINE).then_some([0; 32])) else {
             return Ok(None);
-        }
+        };
         let posted: Vec<[u8; 32]> = self.bag(bag_address(epoch)).iter().filter_map(|b| Posted::decode(b)).filter(|p| p.epoch == epoch).map(|p| p.root).collect();
         let mine = self.statement_root(epoch).ok_or("the statement's tree does not build")?;
         if !posted.contains(&mine) {
@@ -287,7 +302,7 @@ impl<'a> Reader<'a> {
         }
         let now = self.height();
         let sig = witness::WitnessSig { chain: place, seq: 0, entry: mine, at: now, sig: key.sign(&witness::WitnessSig::message(&place, 0, &mine, now)).to_bytes() };
-        self.put_sig(&self.place(&place, 0, ce), &me, &sig).map_err(|e| e.to_string())?;
+        self.put_sig(&self.place(&place, 0, ce), &me, &owner, &sig).map_err(|e| e.to_string())?;
         Ok(Some(mine))
     }
 
@@ -310,7 +325,7 @@ impl<'a> Reader<'a> {
         let pool = Tok { definition: self.net.pool, item: [0; 32] };
         let mut out: Vec<craftworks_rules::misdeed::Equivocation> = Vec::new();
         for (chain, seq, ce) in places {
-            for (owner, body) in wallet::equivocations(&self.sigs(&chain, seq, ce), &self.raw_claims(ce)) {
+            for (owner, body) in wallet::equivocations(&self.sigs(&chain, seq, ce), &self.claims(ce)) {
                 let T::Body::Slash { key, a, b } = body else { continue };
                 if out.iter().any(|x| x.did == owner) {
                     continue;
@@ -361,9 +376,9 @@ impl<'a> Reader<'a> {
         let valid = T::draw::valid(&self.net.pool, epoch, &claims);
         let (k, base, _) = witness::seats(valid.len(), wallet::COMMITTEE);
         let members = T::draw::committee_of(&out, &p.id(), q.seq, &valid, k);
-        if !(members.iter().any(|m| claims[*m].key == me) || (base && me == witness::BASELINE)) {
+        let Some(owner) = members.iter().find(|m| claims[**m].key == me).map(|m| claims[*m].owner).or((base && me == witness::BASELINE).then_some([0; 32])) else {
             return Ok(None);
-        }
+        };
         let claims_of = |ep: u64| self.claims(ep);
         let sigs_of = |c: &[u8; 32], sq: u64, ep: u64| self.sigs(c, sq, ep);
         let out_of = |hh: u64| self.out_at(hh);
@@ -372,7 +387,8 @@ impl<'a> Reader<'a> {
         let program = |id: &[u8; 32]| self.get(*id);
         let freeze = |t: &[u8; 32]| self.freeze(t);
         let keys = |o: &[u8; 32]| self.keys(o);
-        let src = wallet::Source { pool: self.net.pool, claims: &claims_of, sigs: &sigs_of, out: &out_of, stake_of: &stake, definition: &defs, program: &program, freeze: &freeze, keys: &keys, history: &|_, _| None };
+        let standing = |k: &[u8; 32]| self.standing(k);
+        let src = wallet::Source { pool: self.net.pool, claims: &claims_of, sigs: &sigs_of, out: &out_of, stake_of: &stake, definition: &defs, program: &program, freeze: &freeze, keys: &keys, history: &|_, _| None, standing: &standing };
         let cited = |t: &Tok, o: &[u8; 32]| self.chain(t, o);
         let supply = |k: u64| self.get(T::supply::Params { code_hash: self.net.code_hash, definition: q.token.definition, beacon: d.beacon, epoch: k }.id()).and_then(|b| T::supply::Shard::decode(&b));
         let owner_keys = self.keys(&q.owner);
@@ -380,7 +396,7 @@ impl<'a> Reader<'a> {
         let now = self.height();
         let hash = wallet::may_witness(&src, &p, &d, &s, q.seq, now, &holds, &cited).map_err(String::from)?;
         let sig = witness::WitnessSig { chain: p.id(), seq: q.seq, entry: hash, at: now, sig: key.sign(&witness::WitnessSig::message(&p.id(), q.seq, &hash, now)).to_bytes() };
-        self.put_sig(&self.place(&p.id(), q.seq, epoch), &me, &sig).map_err(|e| e.to_string())?;
+        self.put_sig(&self.place(&p.id(), q.seq, epoch), &me, &owner, &sig).map_err(|e| e.to_string())?;
         Ok(Some(sig))
     }
 }
