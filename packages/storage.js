@@ -381,8 +381,29 @@ export async function start(ctx) {
       answered: () => answered,
       // The first read to its end (the node's answer, or its silence past the read's wait): what a DECISION waits for.
       answer: () => (answer ?? Promise.resolve()).catch(() => {}),
+      // ITS READ STATE (FOUNDATION.md §2, the read machine): `{ s: "unknown" }` (not asked, silent, or shown before
+      // its answer), `{ s: "absent" }` (the node ANSWERED not found, or the catalog that would list it says none),
+      // `{ s: "present" }`, `{ s: "unreadable", why }`. `absent` above is what a page SHOWS; this is what a DECISION
+      // reads.
+      get state() {
+      return st;
+      },
+      // DECIDED: the first read's end; still unknown (the node silent), asked once more with the long wait
+      // (WAIT.answer). Never reports unknown as anything else.
+      decided: () => decide(),
     };
     let answered = false; // the last read had the node's answer (the tail, or "not found"), not silence
+    let st = { s: "unknown" }; // the read state (FOUNDATION.md §2)
+    let deciding = null; // the second, long read of an undecided tail (shared)
+    async function decide() {
+      await t.answer();
+      if (st.s !== "unknown") return st;
+      deciding ??= read(WAIT.answer)
+        .catch(e => ctx.log("table not decided", { what: `${app}: ${e?.message ?? e}` }))
+        .finally(() => (deciding = null));
+      await deciding;
+      return st;
+    }
     let wholeRead = null; // the read that made it whole (shared by every later `whole()`)
     let answer = null; // the first read, to its end: what a decision waits for
     // Each open's PHASES (ms from its start): what a page's measure reads (`opens()`).
@@ -422,6 +443,7 @@ export async function start(ctx) {
       if (known === false) {
         core.tail_absent(id);
         t.absent = true;
+        st = { s: "absent" };
         answer = Promise.resolve();
       } else {
         // SHOWN within WAIT.hint, DECIDED on the answer — the one rule of every read: what is held is shown after at
@@ -449,22 +471,25 @@ export async function start(ctx) {
 
     // Read it and follow it. None on the network: its first write is a PUT. No answer at all: the same as none, so
     // it opens empty; a first write the network then refuses resets it and reads it again.
-    async function read() {
+    async function read(ms = wait) {
       const [, frames] = core.tail_get(id);
       let said;
       try {
-        said = await ask(frames, x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "tail-keys" || x.kind === "tail-unreadable" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, wait);
+        said = await ask(frames, x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "tail-keys" || x.kind === "tail-unreadable" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, ms);
         answered = true;
       } catch (e) {
-        ctx.log("table not found yet", { what: `${app}: ${e.message}; opened empty` });
-        said = { kind: "get-failed" };
+        // SILENT: shown empty, but UNKNOWN — never "not there" (R1: nothing is made over a table not answered for).
+        ctx.log("table not found yet", { what: `${app}: ${e.message}; shown empty, not decided` });
         answered = false;
+        if (st.s === "unknown") t.absent = true;
+        return;
       }
       // The tail is there: its tree must load too. A tree that does not is an error, never an empty table (that
       // would write over rows it could not see).
       // LAZY: the tail's own state is enough (its pages read the tree when asked).
       if (t.lazy && said.kind !== "get-failed") {
         t.absent = false;
+        st = said.kind === "tail-unreadable" ? { s: "unreadable", why: said.said } : { s: "present" };
         if (said.kind === "tail") took(said.tail);
         else for (const f of changed) f();
         return;
@@ -476,12 +501,19 @@ export async function start(ctx) {
       if (said.kind === "tail-unreadable") {
         t.absent = false;
         t.unreadable = said.said;
+        st = { s: "unreadable", why: said.said };
         ctx.log("table unreadable", { what: `${app}: ${said.said}` });
         problem(spaceId, `${app}: unreadable (${said.said})`);
         return;
       }
-      if (said.kind !== "get-failed") said = await settle(said, app);
+      if (said.kind !== "get-failed")
+        said = await settle(said, app).catch(e => {
+          // There, but its tree did not open here (a key not held: unreadable; blocks not arriving: still unknown).
+          if (e?.kind === "sealed") st = { s: "unreadable", why: e.message };
+          throw e;
+        });
       t.absent = said.kind !== "tail";
+      st = said.kind === "tail" ? { s: "present" } : { s: "absent" };
       if (said.kind === "tail") took(said.tail);
       else core.tail_absent(id);
     }
@@ -490,11 +522,15 @@ export async function start(ctx) {
     async function write(key, value) {
       if (!(await allowed())) throw new Error(`this app may not change your “${app}”: allow it when your node asks`);
       if (refusing) throw new Error(refusing);
-      await t.answer();
+      // R1 (FOUNDATION.md §2): written only on a DECIDED table — made only where the node answered it is not there,
+      // never over one it did not answer for (that would write over rows it could not see).
+      const now = await t.decided();
+      if (now.s === "unknown") throw new Fault("not-yet", `${app}: not saved, its table not read yet`, { message: `${app}: not saved — your node has not answered whether it exists yet; try again in a moment`, d: { app } });
+      if (now.s === "unreadable") throw new Fault("sealed", `${app}: not saved, its table unreadable here`, { message: `${app}: not saved — ${now.why}`, d: { app } });
       if (t.refuse) throw new Error(t.refuse);
       // Listed BEFORE it is created: a failure between the two leaves a listed tail that is empty, never one nobody
       // can find.
-      if (t.absent && beforeCreate) await beforeCreate();
+      if (now.s === "absent" && beforeCreate) await beforeCreate();
       // A step the identity refuses as a FORK (it signed this tail further than this page holds): the network read
       // again. Caught up — written again on what it holds. The node ANSWERED and holds less — those signed steps never
       // landed (or were lost): this step goes past them, as a whole state. The node silent — nothing is overwritten
@@ -518,6 +554,7 @@ export async function start(ctx) {
       // FLUSH once the tail is long: its rows into the tree, the tail emptied (in this write's turn of the queue).
       if (core.tail_pending(id) >= Core.flush_at()) await flush().catch(e => ctx.log("flush failed", { what: `${app}: ${e.message}` }));
       t.absent = false;
+      st = { s: "present" };
       whenQuiet();
     }
     // FLUSH WHEN QUIET (phase 4, Lifecycle): rows still in the tail once writing has stopped for a while go into the
@@ -564,6 +601,7 @@ export async function start(ctx) {
     function took(tail) {
       // Rows arrived (pushed, or read): it exists now, whatever an earlier read found.
       t.absent = false;
+      st = { s: "present" };
       legacy = tail.legacy ?? 0;
       reseal = !!tail.rekey;
       t.info = { rows: tail.rows.length, pending: tail.pending, flushed: !!tail.root, legacy, unreadable: tail.unreadable ?? 0, writes: tail.writes };
@@ -693,9 +731,13 @@ export async function start(ctx) {
     },
     whole: () => f.whole?.(),
     answer: () => f.answer?.() ?? Promise.resolve(),
+    decided: () => f.decided?.() ?? Promise.resolve(f.state ?? { s: "unknown" }),
     onChange: fn => f.onChange(fn),
     get absent() {
       return f.absent;
+    },
+    get state() {
+      return f.state;
     },
     get info() {
       return f.info;
@@ -738,8 +780,12 @@ export async function start(ctx) {
   // (their public tables) hold plain rows.
   const plain = cat => cat === directoryTail || cat?.plainCatalog === true;
   // A table's PLACE, the one reader of it: "unlisted" (not listed: none), "none" (listed, never made), "blinded" (at
-  // its blinded name), "listed" (a table found by its name: there).
+  // its blinded name), "listed" (a table found by its name: there) — or "unknown": R2 (FOUNDATION.md §2), "not
+  // listed" is an answer only when the catalog was READ (present, or answered absent); a catalog silent or unreadable
+  // lists nothing either way.
+  const decidedCatalog = cat => !cat?.state || cat.state.s === "present" || cat.state.s === "absent";
   const placeOf = (cat, n) => {
+    if (!decidedCatalog(cat)) return "unknown";
     const r = (plain(cat) ? cat.rows() : own(cat)).find(x => x.key === n && x.value);
     if (!r) return "unlisted";
     try {
@@ -784,8 +830,9 @@ export async function start(ctx) {
   // A WRITER's CATALOG feed: the tables it has a feed of. Known to exist once the directory lists its node.
   async function catalogOf(writer) {
     const d = await directory();
-    const listed = d.rows().some(r => r.key === `node:${writer}`);
-    return tail(writer, CATALOG, { known: listed ? null : false, catalogKey: true, beforeCreate: () => listInDirectory(`node:${writer}`) });
+    // Not listed — never made — only when the directory was READ (R2); otherwise it is read.
+    const notListed = decidedCatalog(d) && !d.rows().some(r => r.key === `node:${writer}`);
+    return tail(writer, CATALOG, { known: notListed ? false : null, catalogKey: true, beforeCreate: () => listInDirectory(`node:${writer}`) });
   }
   // The other writers whose feeds count: the nodes the directory lists, those the account's group holds (where it is
   // kept; elsewhere every listed node, until membership is gossiped in the feeds).

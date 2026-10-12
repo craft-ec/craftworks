@@ -67,23 +67,21 @@ export async function run(boot) {
     if (document.visibilityState === "hidden" && (!visit.n || performance.now() - visit.sentAt >= VISIT_EVERY_MS)) sendVisit();
   });
   // A PAGE's outcome: watched until its body has no work left and no placeholder (SETTLED), or STUCK_MS passed.
-  // Recorded when the page STARTS (`loading` until its components are mounted): a page that never gets that far is
-  // still in the visit.
+  // Recorded when the page STARTS (`loading` until its components are mounted), and WATCHED from then: a page that
+  // never gets past mounting is still in the visit, and still reported stuck.
   function beginPage(route, t0) {
+    // (`t0` moves on while the person is asked to log in.)
     const rec = { r: route, ready: null, settled: null, out: "loading" };
     visit.routes.push(rec);
-    return rec;
-  }
-  function watchPage(rec, t0) {
-    const route = rec.r;
-    rec.ready = Math.round(performance.now() - t0);
-    rec.out = "drawn";
-    if (visit.boot === null) visit.boot = Math.round(performance.now() - t00);
     const busy = () => [...slots.body.querySelectorAll("[aria-busy=true], .cw-cover")].map(el => el.closest("[data-component]")?.dataset.component ?? "?");
     let reportedStuck = false;
+    const born = performance.now();
     const check = async () => {
       if (ctx.route !== route && rec.settled === null) return; // left before it settled: its record says so (settled null)
-      const now = busy();
+      if (rec.out === "said" || rec.out === "failed") return;
+      // Waiting on the person (logging in): not timed — its clock starts again once they are in.
+      if (rec.out === "login") return void (performance.now() - born < 600000 && ((t0 = performance.now()), setTimeout(check, 500)));
+      const now = rec.ready === null ? ["(mounting)", ...busy()] : busy();
       if (!now.length) {
         rec.settled = Math.round(performance.now() - t0);
         if (rec.out === "stuck") rec.out = "late";
@@ -101,6 +99,12 @@ export async function run(boot) {
     };
     setTimeout(check, 300);
     return rec;
+  }
+  // MOUNTED: its components drawn (what is still arriving is watched by `beginPage`).
+  function watchPage(rec, t0) {
+    rec.ready = Math.round(performance.now() - t0);
+    if (rec.out === "loading") rec.out = "drawn";
+    if (visit.boot === null) visit.boot = Math.round(performance.now() - t00);
   }
   const stackTop = e => String(e?.stack ?? "").split("\n").slice(1, 3).map(l => l.trim().replace(/blob:[^ )]+/g, "blob")).join(" | ").slice(0, 160);
   // FAULTS (FOUNDATION.md §4, `fault`): anything thrown is classified by KIND and reported by the kind's policy — an
@@ -393,11 +397,13 @@ export async function run(boot) {
     }
     // ACCESS (the manifest's, per page, as any website's routes): a `login` page opens only for someone logged in — the
     // login dialog if nobody is, home if it is closed. Every other page is public: what it shows is the access rules'.
+    // (Waiting on the PERSON — the login dialog — is not the page stuck: `login` while asked.)
+    if (page.access === "login") rec.out = "login";
     if (page.access === "login" && !(await (await require("login")).session())) {
-      rec.out = "login";
       if (location.hash.replace(/^#/, "") === at) location.hash = "#/";
       return;
     }
+    if (rec.out === "login") rec.out = "loading";
     await fill("body", page.body ?? []);
     dispatchEvent(new CustomEvent("craftworks:route", { detail: route }));
     shellAddress();

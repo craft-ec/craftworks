@@ -2365,7 +2365,18 @@ Build order (FOUNDATION §7):
       loader v19: 4 visits read back (/ 493 ms, /board 689, /chat 607, /wiki 682 settled). Not yet seen live: a `stuck`
       report and a `sealed` fault (the /board sealed failure of v641 did not recur on the next load).
       Kept until 7: the log-word matcher (apps still only log failures). Not released to live yet; not committed.
-- [ ] 2. Read machine (ReadState, R1/R2)
+- [x] 2. Read machine, R1 + R2 — every tail has `state` ({unknown|absent|present|unreadable}) and `decided()` (first
+      read's end; still unknown → read again with WAIT.answer). A SILENT read no longer marks the tail absent in the core
+      (`core.tail_absent` only on the node's "not found"). R1: `write` needs a decided table — unknown → `not-yet` fault,
+      unreadable → `sealed`; `beforeCreate`/a create only on `absent`. R2: `placeOf` says "unknown" for a catalog not
+      decided; `catalogOf` reads (not "never made") when the directory is not decided. Capped feed views pass state through.
+      Verified on fx v645 (live probe `tmp/pw/r1.mjs`: node answers dropped, a write to a fresh table): REFUSED as
+      not-yet after 150 s, state stayed unknown; CONTROL with phase-1 storage: went ahead to sign the write (a create over
+      a table it never read) — "signing: no answer". Full recovery (make on fx, words on fy): name, space, message, no
+      reload. Telemetry fixes found by these runs: stuck watched from the page's START (a 32 s mount was "drawn"), a
+      login wait not counted as stuck (loader v21).
+      SEEN, for phase 6: fx (the account's first device) reads `tables` as sealed after fy joined (epoch moved) — /chat,
+      /board fail until a reload once the key arrives (same on v641, before phase 2). R3 + a failed app retrying fixes it.
 - [ ] 3. Lifecycle mechanism + account group + session
 - [ ] 4. Gates and jobs
 - [ ] 5. Page/app/save/delete (save on change, drafts, resume; installed apps in frames)
