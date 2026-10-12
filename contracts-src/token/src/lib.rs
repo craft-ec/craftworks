@@ -2571,7 +2571,7 @@ pub fn beacon_height(b: &[u8]) -> Option<u64> {
 
 #[cfg(feature = "freenet-main-contract")]
 mod contract {
-    use super::{accept, authority, beacon_height, freeze, operators, supply, witness, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
+    use super::{accept, authority, beacon_height, freeze, pointers, operators, supply, witness, check, cited_chains, cited_chains_from, id, merge, new_from, prune, ChainParams, Definition, DEFINITION};
     use freenet_stdlib::prelude::*;
 
     pub struct Token;
@@ -2823,6 +2823,47 @@ mod contract {
         Ok(UpdateModification::valid(State::from(merged.encode())))
     }
 
+    /// A POINTER BAG holds: the bag's rules, every item a pointer (`pointers::read`).
+    fn pointers_valid(params: &[u8], state: &[u8]) -> Result<ValidateResult, ContractError> {
+        let Some(p) = pointers::Params::decode(params) else { return Ok(ValidateResult::Invalid) };
+        Ok(if pointers::read(&p, state).is_some() { ValidateResult::Valid } else { ValidateResult::Invalid })
+    }
+
+    /// A pointer bag's UPDATE (`pointers::take`): new pointers taken only with the BEACON read in the same round, while
+    /// it is below the epoch's freeze; after, the bag keeps what it holds. What is given that does not read is ignored.
+    fn pointers_update(params: &[u8], state: &[u8], data: Vec<UpdateData<'static>>) -> Result<UpdateModification<'static>, ContractError> {
+        let p = pointers::Params::decode(params).ok_or(ContractError::InvalidState)?;
+        let held = pointers::read(&p, state).ok_or(ContractError::InvalidState)?;
+        let mut given: Vec<Vec<u8>> = Vec::new();
+        let mut beacon: Option<Vec<u8>> = None;
+        for d in data {
+            let b: &[u8] = match &d {
+                UpdateData::State(s) => s.as_ref(),
+                UpdateData::Delta(x) => x.as_ref(),
+                UpdateData::StateAndDelta { delta, .. } => delta.as_ref(),
+                UpdateData::RelatedState { related_to, state } => {
+                    if related_to.as_bytes() == p.beacon {
+                        beacon = Some(state.as_ref().to_vec());
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
+            if let Some(items) = pointers::read(&p, b) {
+                given.extend(items.into_iter().filter(|i| !held.contains(i)));
+            }
+        }
+        let encode = |items: &[Vec<u8>]| State::from(craftworks_bag_contract::encode(&p.address(), items));
+        if given.is_empty() {
+            return Ok(UpdateModification::valid(encode(&held)));
+        }
+        let Some(bb) = beacon else {
+            return UpdateModification::requires(vec![RelatedContract { contract_instance_id: ContractInstanceId::new(p.beacon), mode: RelatedMode::StateOnce }]);
+        };
+        let now = beacon_height(&bb).ok_or(ContractError::InvalidUpdate)?;
+        Ok(UpdateModification::valid(encode(&pointers::take(&p, &held, &given, now))))
+    }
+
     /// A PLACE'S WITNESS SIGNATURES hold (`witness::holds`): each verifies, few enough per key and in all.
     fn witnesses_valid(params: &[u8], state: &[u8]) -> Result<ValidateResult, ContractError> {
         let (Some(p), Some(s)) = (witness::Params::decode(params), witness::Signatures::decode(state)) else { return Ok(ValidateResult::Invalid) };
@@ -2891,6 +2932,9 @@ mod contract {
             if params.first() == Some(&witness::WITNESSES) {
                 return witnesses_valid(params, state.as_ref());
             }
+            if params.first() == Some(&super::pointers::POINTERS) {
+                return pointers_valid(params, state.as_ref());
+            }
             // A DEFINITION: its state is its params, and they read as one.
             if params.first() == Some(&DEFINITION) {
                 return Ok(if state.as_ref() == params && Definition::decode(params).is_some() { ValidateResult::Valid } else { ValidateResult::Invalid });
@@ -2941,6 +2985,9 @@ mod contract {
             }
             if parameters.as_ref().first() == Some(&witness::WITNESSES) {
                 return witnesses_update(parameters.as_ref(), state.as_ref(), data);
+            }
+            if parameters.as_ref().first() == Some(&super::pointers::POINTERS) {
+                return pointers_update(parameters.as_ref(), state.as_ref(), data);
             }
             let p = ChainParams::decode(parameters.as_ref()).ok_or(ContractError::InvalidState)?;
             let held = super::State::decode(state.as_ref()).ok_or(ContractError::InvalidState)?;

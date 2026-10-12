@@ -143,9 +143,9 @@ export async function start(ctx) {
       if (ce != null && self.pointed !== ce && !(h - (self.pointTried ?? -Infinity) < 16)) {
         self.pointTried = h; // (its reads once every 16 heights while not pointed)
         const bagCode = await ctx.require("bag-wasm");
-        const p = await run(() => core.keeper_point(tokens.code, beacon, tokens.idlogCode, bagCode, beaconCode, me.didBytes, ce)).catch(e => (ctx.log("keeper", { what: `claim not pointed to: ${e?.message ?? e}` }), null));
-        if (p?.address) {
-          await (await ctx.require("index")).bag.add(p.address, p.item, "pointing to this account's stake claim");
+        const p = await run(() => core.keeper_point(tokens.code, beacon, tokens.idlogCode, bagCode, beaconCode, me.didBytes, ce, h)).catch(e => (ctx.log("keeper", { what: `claim not pointed to: ${e?.message ?? e}` }), null));
+        if (p?.put) {
+          await putAll([p.put]);
           self.pointed = ce;
           ctx.log("keeper", { what: `its claim for claims epoch ${ce} accepted: pointed to` });
         }
@@ -179,7 +179,7 @@ export async function start(ctx) {
           for (let e = epoch + 1; e <= epoch + 8; e++) await index.bag.read(Core.keepers_address(e, 0), "making a coming keepers registry").catch(() => {});
           // And the coming claims epochs' first STAKE POINTER bags (the delegate points to its claim into one).
           const c = Math.floor(h / Core.clock().claims);
-          for (let e = c + 1; e <= c + 2; e++) await index.bag.read(Core.stake_pointers_address(tokens.code, beacon, tokens.idlogCode, e, 0), "making a coming stake pointers bag").catch(() => {});
+          for (let e = c + 1; e <= c + 2; e++) await putAll([core.stake_pointers_put(tokens.code, beacon, tokens.idlogCode, e, 0)]).catch(() => {});
         } else ctx.log("keeper", { what: `not handed to the delegate (${a?.refused ?? "no answer"})` });
       }
       // ANSWER every height of this epoch since the last one handled that is sampled for this keeper (one that came

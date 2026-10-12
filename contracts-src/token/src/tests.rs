@@ -1921,7 +1921,7 @@ fn a_witness_refuses_a_forked_chain_and_what_it_does_not_hold() {
 fn the_shared_lot_records_round_trip_exactly() {
     // A POINTER (TOKEN §7a, C2b): read back exactly; trailing bytes, a byte short, or too many signatures: refused.
     let s = wsig(60, 7, 3, 1);
-    let ptr = pointers::Pointer { owner: did(60), seq: 3, entry: s.entry, height: 4097, sigs: vec![(pk(60), 0, s.sig)] };
+    let ptr = pointers::Pointer { owner: did(60), seq: 3, entry: s.entry, height: 4097, at: 4100, sigs: vec![(pk(60), 0, s.sig)] };
     let b = ptr.encode();
     assert_eq!(pointers::Pointer::decode(&b), Some(ptr.clone()));
     assert!(pointers::Pointer::decode(&[&b[..], &[0]].concat()).is_none());
@@ -2441,6 +2441,35 @@ fn an_entrys_lot_is_fixed_by_its_place_not_by_what_is_written_there() {
     let edge = Entry { stamp: supply::EPOCH - 1, ..pred.clone() };
     let next = Entry { stamp: supply::EPOCH + 1, ..ea.clone() };
     assert_eq!(wallet::lot_of(&next, Some(&edge), m), Ok((1, supply::EPOCH - 1 + m + 2)));
+}
+
+/// THE POINTER BAGS FREEZE (review 10-12, as the claims registry did): a bag takes a pointer only while the beacon is
+/// below its epoch's freeze and only one dated at or below the beacon and below the freeze; from the freeze on it keeps
+/// what it holds. NEGATIVE CONTROL: the same merge with no freeze (the bag contract's own rule) takes the late pointer.
+#[test]
+fn a_pointer_bag_takes_nothing_from_its_epochs_freeze() {
+    let p = pointers::Params { code_hash: CODE, pool: id_a(), beacon: BEACON, epoch: 2, k: 0 };
+    assert_eq!(pointers::Params::decode(&p.encode()), Some(p));
+    let freeze = pointers::frozen_at(2);
+    let ptr = |n: u8, at: u64| pointers::Pointer { owner: did(n), seq: 1, entry: [n; 32], height: 4100, at, sigs: vec![] };
+    let items = |ps: &[pointers::Pointer]| pointers::read(&p, &p.state(ps)).unwrap();
+    let held = items(&[ptr(1, 100)]);
+    assert_eq!(pointers::read(&p, &craftworks_bag_contract::encode(&p.address(), &held)).map(|i| i.len()), Some(1));
+    // Before the freeze: taken, dated at or below the beacon.
+    assert_eq!(pointers::take(&p, &held, &items(&[ptr(2, freeze - 5)]), freeze - 1).len(), 2);
+    // Dated ahead of the beacon, or at the freeze: refused.
+    assert_eq!(pointers::take(&p, &held, &items(&[ptr(2, freeze - 1)]), freeze - 2).len(), 1, "dated ahead of the beacon");
+    // FROM THE FREEZE ON: nothing new, whatever its date.
+    let late = items(&[ptr(3, freeze - 100)]);
+    assert_eq!(pointers::take(&p, &held, &late, freeze), held, "a pointer arriving at the freeze taken");
+    assert_eq!(pointers::take(&p, &held, &late, freeze + 4096), held, "a pointer arriving after the freeze taken");
+    // NEGATIVE CONTROL: the bag's merge alone (no freeze) takes it.
+    let unfrozen = craftworks_bag_contract::merge(&p.address(), &held, &late);
+    println!("CONTROL (no freeze at admission): the bag holds {} pointer(s) after a late post — `== held` fails", unfrozen.len());
+    assert_ne!(unfrozen, held);
+    // A state whose items are not pointers does not read.
+    let junk = craftworks_bag_contract::encode(&p.address(), &[craftworks_bag_contract::grind(&p.address(), b"not a pointer")]);
+    assert!(pointers::read(&p, &junk).is_none());
 }
 
 /// A STAKE CLAIM (TOKEN §7a, C2b): an entry of the staker's OWN chain, by its device writer — for the NEXT epoch, before

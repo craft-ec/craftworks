@@ -222,14 +222,14 @@ fn step<H: Host>(h: &mut H, r: &Round, mut m: KeeperMandate) -> Result<(Vec<Io>,
     let next = height / craftworks_token_contract::supply::EPOCH + 1;
     if m.seat && a.pointed != Some(next) && height < craftworks_token_contract::pointers::frozen_at(next) {
         let lot = craftworks_rules::tokens::Lot { pool: keeper::craft(&ctx).1, bag: m.bag, beacon_code: m.beacon_code, idlog: m.idlog };
-        match keeper::point(&ctx, &lot, &got, &m.did, next)? {
+        match keeper::point(&ctx, &lot, &got, &m.did, next, height)? {
             Step::Want(w) => {
                 out.append(&mut late);
                 set_at(h, &public, &a);
                 return Ok((out, w));
             }
             Step::Done(Some(p)) => {
-                late.push(Io::Update { id: p.id, delta: craftworks_bag_contract::encode(&p.address, &[craftworks_bag_contract::grind(&p.address, &p.item)]) });
+                late.push(Io::Update { id: p.id, delta: p.state });
                 identity::upkeep_say(h, &public, &format!("keeper: its claim for claims epoch {next} pointed to with no page open"));
                 a.pointed = Some(next);
             }

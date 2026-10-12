@@ -797,8 +797,12 @@ receiving wallet (§3a), a fill and a refund both passing across a partition lon
   claims registry anyone could fill, §8 item 6), before E's FREEZE an eighth of an epoch before E starts
   (`pointers::frozen_at`) — so who stands in its lots is fixed before any of its outputs exists (no waiting for an
   output, then claiming only with the identities whose tickets are low). Readers find the claims through POINTERS
-  (`pointers.rs`: per (pool, epoch) chained bags of a staker's DID, its claim's place and hash, and the signatures that
-  accepted it — anyone posts or re-posts one; the staker's node posts its own once its claim is accepted); for an entry (chain, seq) every claimer's TICKET is a hash of (the lot's beacon
+  (`pointers.rs`: per (pool, epoch) chained POINTER BAGS — a kind of the token contract with the bag contract's items
+  and work — of a staker's DID, its claim's place and hash, the signatures that accepted it, and the height it was
+  posted at; anyone posts or re-posts one; the staker's node posts its own once its claim is accepted). The bags FREEZE
+  as the registry did (review 10-12): an update reads the beacon and takes a new pointer only below the epoch's freeze,
+  dated at or below the beacon (`pointers::take`), and every reader ignores a pointer dated at or past the freeze
+  (`valid_stakers`) — a late pointer never splits readers' `V(E)`; for an entry (chain, seq) every claimer's TICKET is a hash of (the lot's beacon
   output, chain, seq, claimer) weighted by its claim — an exponential race (−ln u / stake, in fixed-point integers: the same on every
   machine), an exactly stake-proportional draw in which splitting stake across identities gains nothing. The
   COMMITTEE is the k lowest tickets; anyone computes it, and nobody before the beacon output exists. A drawn witness
@@ -1049,9 +1053,11 @@ DID; only the sender and the recipient know who was paid.
      witnessed by induction like any entry, nobody else can write it) and the index is CHAINED POINTER BAGS per (pool,
      epoch) (`pointers.rs`): a flood costs readers CPU only — measured: 4,096 forged pointers + 1 real claim, `V` = the
      real staker, 0 forged chains read (the prefilter off: 4,096). With it, LIVENESS (§7d decision 12): a claim is
-     signed only on its writer's standing record answering in its epoch, and made only in the claim window. LEFT: a
-     pointer posted after the freeze still grows `V(E)` for readers that see it (a reader missing a pointer sees a
-     smaller `V(E)` — liveness, as with signatures; continuing stakers are found through `V(E−1)` without one); `V(E)`
+     signed only on its writer's standing record answering in its epoch, and made only in the claim window. The pointer
+     bags FREEZE like the registry (update reads the beacon, nothing new from the freeze on; readers ignore a pointer
+     dated at or past it — measured: 6 claims accepted before the freeze, pointed to after it, `V(1)` = 0; check off:
+     6). LEFT: as for the registry, a bag never made before the freeze can be PUT whole later with items dated early (a
+     first copy is taken without the beacon) — pages make the coming epochs' first bags; `V(E)`
      now recurses through every epoch from 0 (a reader memoises per pass); a delegate's claim is witnessed only once
      some page witness makes its signatures container (a delegate cannot create contracts); a cut stamped in the claim
      window hides that epoch's claim.

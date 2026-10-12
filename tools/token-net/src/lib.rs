@@ -99,13 +99,14 @@ impl<'a> Reader<'a> {
     pub fn keys(&self, did: &[u8; 32]) -> Option<craftworks_idlog_contract::Log> {
         self.get(T::id(&self.net.idlog_hash, did)).and_then(|b| craftworks_idlog_contract::read(did, &b))
     }
-    /// The STAKE POINTERS posted for `epoch` (`pointers::address`, chained: every one, forged or not).
+    /// The STAKE POINTERS posted for `epoch` (`pointers::Params`, chained: every one, forged or not).
     pub fn pointers(&self, epoch: u64) -> Vec<T::pointers::Pointer> {
         let mut out = Vec::new();
         for k in 0..4096u32 {
-            let items = self.bag(T::pointers::address(&self.net.pool, epoch, k));
-            out.extend(items.iter().filter_map(|i| T::pointers::Pointer::decode(i)));
-            if !craftworks_bag_contract::chained::full(items.iter().map(Vec::len)) {
+            let p = T::pointers::Params { code_hash: self.net.code_hash, pool: self.net.pool, beacon: self.net.beacon, epoch, k };
+            let items = self.get(p.id()).and_then(|b| T::pointers::read(&p, &b)).unwrap_or_default();
+            out.extend(items.iter().filter_map(|i| T::pointers::Pointer::decode(bag::payload(i))));
+            if !T::pointers::full(&items) {
                 break;
             }
         }

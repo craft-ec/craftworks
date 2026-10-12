@@ -236,19 +236,24 @@ pub fn claim(ctx: &crate::tokens::Ctx, got: Got, did: &[u8; 32], now: u64, dev: 
     Ok(Step::Done(Some(Claimed { chain: crate::tokens::Put { params: held.params.encode(), state: st.encode() }, epoch, amount: staked })))
 }
 
-/// A POINTER to post (TOKEN §7a, C2b): into bag `address` (its contract id `id`), the item `item`.
+/// A POINTER to post (TOKEN §7a, C2b): the pointer bag `params` (a token contract: its id `id`) and a state holding the
+/// one pointer — PUT, or sent as an UPDATE where the bag exists.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Point {
     pub id: [u8; 32],
-    pub address: [u8; 32],
-    pub item: Vec<u8>,
+    pub params: Vec<u8>,
+    pub state: Vec<u8>,
 }
 
 /// POINT to `did`'s claim for claims epoch `epoch` (its $CRAFT chain's `Body::Claim`), once its witnesses ACCEPTED it:
 /// the pointer — its place, hash, lot height and the signatures its container holds — for the first bag of the epoch's
-/// pointer chain with room (`pointers::address`; read on past full ones). `None`: no such claim, not accepted yet, or
-/// pointed to already. Anyone may run it for anyone (the pointer carries only what anyone reads).
-pub fn point(ctx: &crate::tokens::Ctx, lot: &crate::tokens::Lot, got: Got, did: &[u8; 32], epoch: u64) -> Result<Step<Option<Point>>, String> {
+/// pointer chain with room (read on past full ones), dated `now` (the beacon's height). `None`: no such claim, not
+/// accepted yet, pointed to already, or the epoch frozen (from its freeze no bag takes a pointer, and no reader counts
+/// one dated then). Anyone may run it for anyone (the pointer carries only what anyone reads).
+pub fn point(ctx: &crate::tokens::Ctx, lot: &crate::tokens::Lot, got: Got, did: &[u8; 32], epoch: u64, now: u64) -> Result<Step<Option<Point>>, String> {
+    if now >= t::pointers::frozen_at(epoch) {
+        return Ok(Step::Done(None));
+    }
     let (d, token) = craft(ctx);
     let cp = crate::tokens::chain(ctx, &d, &token, did, [0; 32]);
     let s = match there(got, &cp.id()) {
@@ -272,19 +277,18 @@ pub fn point(ctx: &crate::tokens::Ctx, lot: &crate::tokens::Lot, got: Got, did: 
     let freeze = t::pointers::frozen_at(epoch);
     let mut sigs: Vec<([u8; 32], u64, [u8; 64])> = held.items.iter().filter(|x| x.entry == e.hash() && x.at < freeze).map(|x| (x.key, x.at, x.sig)).collect();
     sigs.truncate(t::pointers::SIGS_MAX);
-    let ptr = t::pointers::Pointer { owner: *did, seq: e.seq, entry: e.hash(), height: h, sigs };
+    let ptr = t::pointers::Pointer { owner: *did, seq: e.seq, entry: e.hash(), height: h, at: now, sigs };
     for k in 0..4096u32 {
-        let (id, address) = crate::tokens::pointer_bag(lot, epoch, k);
-        let items = match there(got, &id) {
+        let p = crate::tokens::pointer_bag(ctx.code_hash, lot, d.beacon, epoch, k);
+        let items = match there(got, &p.id()) {
             Err(w) => return Ok(Step::Want(vec![w])),
-            Ok(b) => b.and_then(|b| craftworks_bag_contract::read(&address, &b)).unwrap_or_default(),
+            Ok(b) => b.and_then(|b| t::pointers::read(&p, &b)).unwrap_or_default(),
         };
-        let payloads: Vec<&[u8]> = items.iter().map(|x| craftworks_bag_contract::payload(x)).collect();
-        if payloads.iter().filter_map(|p| t::pointers::Pointer::decode(p)).any(|p| p.owner == *did && p.seq == ptr.seq) {
+        if p.pointers(&craftworks_bag_contract::encode(&p.address(), &items)).iter().any(|x| x.owner == *did && x.seq == ptr.seq) {
             return Ok(Step::Done(None));
         }
-        if !craftworks_bag_contract::chained::full(payloads.iter().map(|p| p.len())) {
-            return Ok(Step::Done(Some(Point { id, address, item: ptr.encode() })));
+        if !t::pointers::full(&items) {
+            return Ok(Step::Done(Some(Point { id: p.id(), params: p.encode(), state: p.state(&[ptr]) })));
         }
     }
     Err("every bag of the epoch's stake pointers is full".into())
@@ -494,6 +498,6 @@ mod tests {
         g2.insert(cp.id(), st.encode());
         assert_eq!(crate::tokens::testlot::done(&|g| claim(&ctx, g, &did, now, &dev), &g2), Ok(None));
         // Not accepted yet: nothing to point to.
-        assert_eq!(crate::tokens::testlot::done(&|g| point(&ctx, &tl.lot, g, &did, ce), &g2), Ok(None));
+        assert_eq!(crate::tokens::testlot::done(&|g| point(&ctx, &tl.lot, g, &did, ce, now), &g2), Ok(None));
     }
 }

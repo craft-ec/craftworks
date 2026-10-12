@@ -2913,30 +2913,36 @@ mod js {
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
             token_step(Ok(tokens::valid_of(&ctx, &lot, &got, epoch as u64)), |v| Ok(json!(v.iter().map(|c| json!({ "owner": hex(&c.owner), "amount": c.amount.to_string(), "key": hex(&c.key) })).collect::<Vec<_>>())))
         }
-        /// POINT to this account's claim for claims epoch `epoch` once accepted (`keeper::point`): `{ want }`, then
-        /// `{ done: null }` (nothing to point to: not claimed, not accepted yet, or pointed to already) or `{ done: {
-        /// address, item } }` (bytes: drop `item` into the bag at `address`).
+        /// POINT to this account's claim for claims epoch `epoch` once accepted (`keeper::point`, dated `now`): `{ want }`,
+        /// then `{ done: null }` (nothing to point to: not claimed, not accepted yet, pointed to already, or the epoch
+        /// frozen) or `{ done: { put } }` (the pointer bag's put, `{ id, idBytes, frames }`: a token contract).
         #[allow(clippy::too_many_arguments)]
-        pub fn keeper_point(&self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], bag_code: &[u8], beacon_code: &[u8], did: &[u8], epoch: f64) -> Result<JsValue, JsValue> {
+        pub fn keeper_point(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], bag_code: &[u8], beacon_code: &[u8], did: &[u8], epoch: f64, now: f64) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
             let lot = tokens::Lot { pool: keeper::craft(&ctx).1, bag: *blake3::hash(bag_code).as_bytes(), beacon_code: *blake3::hash(beacon_code).as_bytes(), idlog: ctx.idlog };
             let got = |x: &[u8; 32]| self.0.got(x).map(<[u8]>::to_vec);
             let mut point = None;
-            let v = token_step(keeper::point(&ctx, &lot, &got, &b32(did)?, epoch as u64), |p| {
+            let step = keeper::point(&ctx, &lot, &got, &b32(did)?, epoch as u64, now as u64);
+            let v = token_step(step, |p| {
                 let some = p.is_some();
                 point = p;
                 Ok(if some { json!({}) } else { serde_json::Value::Null })
             })?;
             let Some(p) = point else { return Ok(v) };
             let done = js_sys::Reflect::get(&v, &"done".into())?;
-            js_sys::Reflect::set(&done, &"address".into(), &js_sys::Uint8Array::from(&p.address[..]))?;
-            js_sys::Reflect::set(&done, &"item".into(), &js_sys::Uint8Array::from(&p.item[..]))?;
+            let (id, contract, state) = wire::puts::contract(token_code, &p.params, &p.state);
+            let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
+            js_sys::Reflect::set(&done, &"put".into(), &self.put_obj(&account::Put { id, id_bytes, contract, state })?)?;
             Ok(v)
         }
-        /// Bag `k` of the $CRAFT STAKE POINTERS of claims epoch `epoch` (`pointers::address`).
-        pub fn stake_pointers_address(token_code: &[u8], beacon: &[u8], idlog_code: &[u8], epoch: f64, k: u32) -> Result<js_sys::Uint8Array, JsValue> {
+        /// The PUT of bag `k` of the $CRAFT STAKE POINTERS of claims epoch `epoch` made EMPTY (`pointers::Params`): a page
+        /// makes the coming epochs' first bags, so the delegate — which cannot make a contract — can add to them.
+        pub fn stake_pointers_put(&mut self, token_code: &[u8], beacon: &[u8], idlog_code: &[u8], epoch: f64, k: u32) -> Result<JsValue, JsValue> {
             let ctx = token_ctx(token_code, beacon, idlog_code)?;
-            Ok(js_sys::Uint8Array::from(&craftworks_token_contract::pointers::address(&keeper::craft(&ctx).1, epoch as u64, k)[..]))
+            let p = craftworks_token_contract::pointers::Params { code_hash: ctx.code_hash, pool: keeper::craft(&ctx).1, beacon: ctx.beacon, epoch: epoch as u64, k };
+            let (id, contract, state) = wire::puts::contract(token_code, &p.encode(), &p.state(&[]));
+            let id_bytes: [u8; 32] = contract.key().id().as_bytes().try_into().map_err(|_| err("a contract id".into()))?;
+            self.put_obj(&account::Put { id, id_bytes, contract, state })
         }
         /// The claim window (`keeper::claim_epoch`): the claims epoch a claim made at height `h` is for, or null.
         pub fn claim_epoch(h: f64) -> JsValue {

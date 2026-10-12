@@ -168,22 +168,21 @@ pub fn witness_at(code_hash: [u8; 32], lot: &Lot, beacon: [u8; 32], chain: &[u8;
     t::witness::Params { code_hash, pool: lot.pool, beacon, idlog: lot.idlog, epoch, chain: *chain, seq }
 }
 
-/// The bags of the STAKE POINTERS of `epoch` (TOKEN §7a, C2b: `pointers::address`) — the chained rule: read on past a
-/// FULL bag, stop at the first with room (or not there). Each bag's contract id under the bag code (`lot.bag`).
-pub fn pointer_bag(lot: &Lot, epoch: u64, k: u32) -> ([u8; 32], [u8; 32]) {
-    let address = t::pointers::address(&lot.pool, epoch, k);
-    (t::id(&lot.bag, &address), address)
+/// Bag `k` of the STAKE POINTERS of `epoch` (TOKEN §7a, C2b: a kind of the token contract, `pointers::Params` — it
+/// freezes at the epoch's freeze), for the stake pool of `lot` on `beacon`.
+pub fn pointer_bag(code_hash: [u8; 32], lot: &Lot, beacon: [u8; 32], epoch: u64, k: u32) -> t::pointers::Params {
+    t::pointers::Params { code_hash, pool: lot.pool, beacon, epoch, k }
 }
 
-/// Every POINTER posted for `epoch`, as `read` reads their bags (a bag not read: the reads stop there — the caller asks
-/// for it and evaluates again). Items that do not read as pointers are skipped.
-pub fn pointers_of(lot: &Lot, read: &dyn Fn([u8; 32]) -> Option<Vec<u8>>, epoch: u64) -> Vec<t::pointers::Pointer> {
+/// Every POINTER posted for `epoch`, as `read` reads their bags — the chained rule: read on past a FULL bag, stop at the
+/// first with room (a bag not read: the reads stop there — the caller asks for it and evaluates again).
+pub fn pointers_of(code_hash: [u8; 32], lot: &Lot, beacon: [u8; 32], read: &dyn Fn([u8; 32]) -> Option<Vec<u8>>, epoch: u64) -> Vec<t::pointers::Pointer> {
     let mut out = Vec::new();
     for k in 0..4096u32 {
-        let (id, address) = pointer_bag(lot, epoch, k);
-        let Some(items) = read(id).and_then(|b| craftworks_bag_contract::read(&address, &b)) else { break };
+        let p = pointer_bag(code_hash, lot, beacon, epoch, k);
+        let Some(items) = read(p.id()).and_then(|b| t::pointers::read(&p, &b)) else { break };
         out.extend(items.iter().filter_map(|i| t::pointers::Pointer::decode(craftworks_bag_contract::payload(i))));
-        if !craftworks_bag_contract::chained::full(items.iter().map(|i| craftworks_bag_contract::payload(i).len())) {
+        if !t::pointers::full(&items) {
             break;
         }
     }
@@ -202,7 +201,7 @@ pub type StakeMemo = std::cell::RefCell<std::collections::BTreeMap<u64, Vec<t::d
 /// (a contract not read: `None` — the caller records it and asks for it, then evaluates again).
 pub fn stakers(code_hash: [u8; 32], lot: &Lot, got: Got, beacon: [u8; 32], read: &dyn Fn([u8; 32]) -> Option<Vec<u8>>, epoch: u64, memo: &StakeMemo) -> Vec<t::draw::StakeClaim> {
     let Some(pd) = read(lot.pool).and_then(|b| Definition::decode(&b)) else { return Vec::new() };
-    let pointers = |ep: u64| pointers_of(lot, read, ep);
+    let pointers = |ep: u64| pointers_of(code_hash, lot, beacon, read, ep);
     let chain = |owner: &[u8; 32]| {
         let cp = ChainParams { code_hash, definition: lot.pool, owner: *owner, beacon: pd.beacon, idlog: pd.idlog, item: [0; 32] };
         read(cp.id()).and_then(|b| State::decode(&b)).map(|st| (cp, st))
@@ -326,39 +325,37 @@ pub mod testlot {
                 let wp = witness_at(ctx.code_hash, &self.lot, ctx.beacon, &cp.id(), e.seq, ep);
                 let sig = witness::WitnessSig { chain: cp.id(), seq: e.seq, entry: e.hash(), at, sig: baseline.sign(&witness::WitnessSig::message(&cp.id(), e.seq, &e.hash(), at)).to_bytes() };
                 got.insert(wp.id(), wp.state(&[(witness::BASELINE, [0; 32], sig.clone())]));
-                pointers.push(t::pointers::Pointer { owner: cp.owner, seq: e.seq, entry: e.hash(), height: h, sigs: vec![(witness::BASELINE, at, sig.sig)] });
+                pointers.push(t::pointers::Pointer { owner: cp.owner, seq: e.seq, entry: e.hash(), height: h, at, sigs: vec![(witness::BASELINE, at, sig.sig)] });
             }
-            post_pointers(self, got, 1, &pointers);
+            post_pointers(self, ctx, got, 1, &pointers);
         }
     }
 
     /// POST `pointers` for `epoch` into its pointer bags (`pointers::address`), as writers do: each into the first bag
     /// with room (`chained::full`), the bags' items kept.
-    pub fn post_pointers(tl: &TestLot, got: &mut HashMap<[u8; 32], Vec<u8>>, epoch: u64, pointers: &[t::pointers::Pointer]) {
-        let mut k = 0u32;
-        let (mut id, mut address) = pointer_bag(&tl.lot, epoch, k);
-        let mut items: Vec<Vec<u8>> = got.get(&id).and_then(|b| craftworks_bag_contract::read(&address, b)).unwrap_or_default();
+    pub fn post_pointers(tl: &TestLot, ctx: &Ctx, got: &mut HashMap<[u8; 32], Vec<u8>>, epoch: u64, pointers: &[t::pointers::Pointer]) {
+        let mut p = pointer_bag(ctx.code_hash, &tl.lot, ctx.beacon, epoch, 0);
+        let mut items: Vec<Vec<u8>> = got.get(&p.id()).and_then(|b| t::pointers::read(&p, b)).unwrap_or_default();
         for ptr in pointers {
-            while craftworks_bag_contract::chained::full(items.iter().map(|i| craftworks_bag_contract::payload(i).len())) {
-                got.insert(id, craftworks_bag_contract::encode(&address, &items));
-                k += 1;
-                (id, address) = pointer_bag(&tl.lot, epoch, k);
-                items = got.get(&id).and_then(|b| craftworks_bag_contract::read(&address, b)).unwrap_or_default();
+            while t::pointers::full(&items) {
+                got.insert(p.id(), craftworks_bag_contract::encode(&p.address(), &items));
+                p.k += 1;
+                items = got.get(&p.id()).and_then(|b| t::pointers::read(&p, b)).unwrap_or_default();
             }
-            items.push(craftworks_bag_contract::grind(&address, &ptr.encode()));
+            items.push(craftworks_bag_contract::grind(&p.address(), &ptr.encode()));
         }
-        got.insert(id, craftworks_bag_contract::encode(&address, &items));
+        got.insert(p.id(), craftworks_bag_contract::encode(&p.address(), &items));
     }
 
     /// The POINTER to entry `seq` of pool chain `cp` (state `st`) for `epoch`: the signatures its container holds.
-    pub fn pointer_to(tl: &TestLot, got: &HashMap<[u8; 32], Vec<u8>>, ctx: &Ctx, cp: &ChainParams, st: &State, seq: u64) -> t::pointers::Pointer {
+    pub fn pointer_to(tl: &TestLot, got: &HashMap<[u8; 32], Vec<u8>>, ctx: &Ctx, cp: &ChainParams, st: &State, seq: u64, at: u64) -> t::pointers::Pointer {
         let margin = Definition::decode(&got[&tl.lot.pool]).unwrap().margin;
         let i = st.entries.iter().position(|e| e.seq == seq).unwrap();
         let e = &st.entries[i];
         let (ep, h) = wallet::lot_of(e, i.checked_sub(1).map(|j| &st.entries[j]), margin).unwrap();
         let wp = witness_at(ctx.code_hash, &tl.lot, ctx.beacon, &cp.id(), seq, ep);
         let sigs = got.get(&wp.id()).and_then(|b| witness::Signatures::decode(b)).map_or(vec![], |s| s.items.iter().filter(|x| x.entry == e.hash()).map(|x| (x.key, x.at, x.sig)).collect());
-        t::pointers::Pointer { owner: cp.owner, seq, entry: e.hash(), height: h, sigs }
+        t::pointers::Pointer { owner: cp.owner, seq, entry: e.hash(), height: h, at, sigs }
     }
 
     /// `V(epoch)` as `got` reads (`valid_of`).
@@ -645,7 +642,7 @@ mod baseline_check {
         // posts their pointers — the others' pointers taken back out: only staker 0 points).
         let mut g = got.clone();
         tl.baseline_signs(&ctx, &mut g, 0);
-        let real = testlot::pointer_to(&tl, &g, &ctx, &tl.staked[0].0, &tl.staked[0].1, tl.staked[0].1.entries.last().unwrap().seq);
+        let real = testlot::pointer_to(&tl, &g, &ctx, &tl.staked[0].0, &tl.staked[0].1, tl.staked[0].1.entries.last().unwrap().seq, 10);
         let cp0 = &tl.staked[0].0;
         let wp0 = witness_at(ctx.code_hash, &tl.lot, ctx.beacon, &cp0.id(), real.seq, 0);
         got.insert(wp0.id(), g[&wp0.id()].clone());
@@ -661,12 +658,12 @@ mod baseline_check {
                 let k = ed25519_dalek::SigningKey::from_bytes(blake3::hash(&n.to_le_bytes()).as_bytes());
                 (k.verifying_key().to_bytes(), 0, k.sign(&witness::WitnessSig::message(&chain, 3, &entry, 0)).to_bytes())
             };
-            t::pointers::Pointer { owner, seq: 3, entry, height: 9, sigs: vec![sig] }
+            t::pointers::Pointer { owner, seq: 3, entry, height: 9, at: 10, sigs: vec![sig] }
         }).collect();
         let watch: std::collections::HashSet<[u8; 32]> = forged.iter().map(|p| chain(&ctx, &pd, &tl.lot.pool, &p.owner, [0; 32]).id()).collect();
-        testlot::post_pointers(&tl, &mut got, 1, &forged);
-        testlot::post_pointers(&tl, &mut got, 1, &[real.clone()]);
-        let bags = (0..).take_while(|k| got.contains_key(&pointer_bag(&tl.lot, 1, *k).0)).count();
+        testlot::post_pointers(&tl, &ctx, &mut got, 1, &forged);
+        testlot::post_pointers(&tl, &ctx, &mut got, 1, &[real.clone()]);
+        let bags = (0..).take_while(|k| got.contains_key(&pointer_bag(ctx.code_hash, &tl.lot, ctx.beacon, 1, *k).id())).count();
         assert!(bags >= 5, "the flood fills the first bags: {bags}");
         let (v, reads) = v1_counting(&ctx, &tl, &got, &watch);
         println!("NEW INDEX FILL: {} forged pointers in {bags} bags + 1 real claim; V(1) = {:?}; forged chains read: {reads}", forged.len(), v.iter().map(|c| short(&c.owner)).collect::<Vec<_>>());
@@ -681,6 +678,47 @@ mod baseline_check {
         assert_eq!(reads_off, forged.len(), "without the prefilter each forged pointer costs a chain read");
     }
 
+    /// A POINTER POSTED AFTER THE FREEZE (review 10-12: `V(E)` must be the same for every reader). The six stakers'
+    /// claims accepted long before epoch 1's freeze, but their pointers posted only after it (dated then — the bags take
+    /// nothing from the freeze on, `pointers::take`; one put whole later is ignored here): `V(1)` is empty, as for a
+    /// reader that never saw them. Posted before the freeze: all six. NEGATIVE CONTROL: the freeze check off — the late
+    /// pointers count (the `V(1) == 0` assertion fails).
+    #[test]
+    fn a_pointer_posted_after_the_freeze_is_ignored_by_every_reader() {
+        let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
+        let freeze = t::pointers::frozen_at(1);
+        let mut signed = HashMap::new();
+        let tl = testlot::stakers_unwitnessed(&ctx, &mut signed);
+        let base = signed.clone();
+        tl.baseline_signs(&ctx, &mut signed, 0);
+        // The witness containers as signed, the pointer bags as they were before (none).
+        let mut got = base.clone();
+        for (k, v) in &signed {
+            if !base.contains_key(k) && !(0..8).any(|j| pointer_bag(ctx.code_hash, &tl.lot, ctx.beacon, 1, j).id() == *k) {
+                got.insert(*k, v.clone());
+            }
+        }
+        let late: Vec<t::pointers::Pointer> = tl.staked.iter().map(|(cp, st)| testlot::pointer_to(&tl, &got, &ctx, cp, st, st.entries.last().unwrap().seq, freeze + 5)).collect();
+        let mut g_late = got.clone();
+        testlot::post_pointers(&tl, &ctx, &mut g_late, 1, &late);
+        let v = |g: &HashMap<[u8; 32], Vec<u8>>| testlot::seats(&tl, g, ctx.code_hash, ctx.beacon, 1).len();
+        assert_eq!(v(&got), 0, "no pointer: nobody found");
+        let n_late = v(&g_late);
+        println!("LATE POINTERS: 6 claims accepted before the freeze ({freeze}), pointed to at {}: V(1) = {n_late}", freeze + 5);
+        assert_eq!(n_late, 0, "a pointer posted after the freeze grew V(1)");
+        // The same pointers dated before the freeze: all six.
+        let early: Vec<t::pointers::Pointer> = late.iter().map(|p| t::pointers::Pointer { at: freeze - 1, ..p.clone() }).collect();
+        let mut g_early = got.clone();
+        testlot::post_pointers(&tl, &ctx, &mut g_early, 1, &early);
+        assert_eq!(v(&g_early), 6, "pointed to before the freeze");
+        // NEGATIVE CONTROL: the freeze check off.
+        t::wallet::switches::LATE.with(|c| c.set(false));
+        let off = v(&g_late);
+        t::wallet::switches::LATE.with(|c| c.set(true));
+        println!("CONTROL (freeze check off): V(1) = {off} — `V(1) == 0` fails");
+        assert_eq!(off, 6);
+    }
+
     /// A POINTER TO A REAL BUT UNWITNESSED CLAIM (the six stakers' claims, no witness signed them; pointers posted with
     /// junk signatures) seats nobody: the prefilter refuses the pointers, and the chains' acceptance check refuses the
     /// claims. NEGATIVE CONTROL: both checks off — all six counted (the `V(1)` empty assertion fails).
@@ -690,11 +728,11 @@ mod baseline_check {
         let mut got = HashMap::new();
         let tl = testlot::stakers_unwitnessed(&ctx, &mut got);
         let pointers: Vec<t::pointers::Pointer> = tl.staked.iter().map(|(cp, st)| {
-            let mut p = testlot::pointer_to(&tl, &got, &ctx, cp, st, st.entries.last().unwrap().seq);
+            let mut p = testlot::pointer_to(&tl, &got, &ctx, cp, st, st.entries.last().unwrap().seq, 10);
             p.sigs = vec![(witness::BASELINE, 0, [7; 64])];
             p
         }).collect();
-        testlot::post_pointers(&tl, &mut got, 1, &pointers);
+        testlot::post_pointers(&tl, &ctx, &mut got, 1, &pointers);
         let v = |g: &HashMap<[u8; 32], Vec<u8>>| testlot::seats(&tl, g, ctx.code_hash, ctx.beacon, 1).len();
         assert_eq!(v(&got), 0, "an unwitnessed claim seats nobody");
         // Prefilter alone off: the chains are read, and the acceptance check refuses them.
@@ -740,8 +778,8 @@ mod baseline_check {
             let mut g = got.clone();
             if verdicts.iter().all(|v| matches!(v, crate::witness::Verdict::Sign { .. })) {
                 testlot::witness(&tl, &mut g, &cp, &pd, &s2, e.seq, verdicts.len());
-                let ptr = testlot::pointer_to(&tl, &g, &ctx, &cp, &s2, e.seq);
-                testlot::post_pointers(&tl, &mut g, 2, &[ptr]);
+                let ptr = testlot::pointer_to(&tl, &g, &ctx, &cp, &s2, e.seq, stamp + 30);
+                testlot::post_pointers(&tl, &ctx, &mut g, 2, &[ptr]);
             }
             let v2 = testlot::seats(&tl, &g, ctx.code_hash, ctx.beacon, 2);
             (verdicts, v2.iter().filter(|c| c.owner == cp.owner).count())

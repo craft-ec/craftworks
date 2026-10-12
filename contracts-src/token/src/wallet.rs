@@ -124,6 +124,8 @@ pub mod switches {
         pub static ACCEPTANCE: Cell<bool> = const { Cell::new(true) };
         /// The LIVENESS of a claim's writer (its standing record): off — a claim of a node that answered nothing is signed.
         pub static LIVENESS: Cell<bool> = const { Cell::new(true) };
+        /// The FREEZE of pointers (a pointer dated at or past the epoch's freeze ignored): off — a late pointer counts.
+        pub static LATE: Cell<bool> = const { Cell::new(true) };
     }
 }
 #[cfg(any(test, feature = "testlot"))]
@@ -168,7 +170,8 @@ pub fn seat_of(cp: &ChainParams, d: &Definition, st: &State, epoch: u64) -> Opti
 }
 
 /// The VALID STAKERS of claims epoch `epoch`, `V(E)` (TOKEN §7a; audit C2b, 10-12): who stands in E's lots. The
-/// CANDIDATES are `V(E−1)` and the stakers POINTED to for E ([`crate::pointers`]: anyone posts one, so a pointer is
+/// CANDIDATES are `V(E−1)` and the stakers POINTED to for E before its freeze ([`crate::pointers`]: anyone posts one,
+/// the bags freeze, and a pointer dated at or past the freeze is ignored here too; so a pointer is
 /// first checked on CPU — its own signatures accept its claim before the freeze, `Pointer::accepted` — and only one that
 /// passes has its chain read: a flood of forged pointers costs readers CPU, never a read, and never a seat). A candidate
 /// counts if its pool chain gives it a SEAT ([`seat_of`]: a claim for E, its stake behind it, at E's start) and its LAST
@@ -194,7 +197,9 @@ pub fn valid_stakers(r: &StakeReads, epoch: u64, memo: &std::cell::RefCell<std::
     // THE CANDIDATES: last epoch's stakers, then each pointed-to staker whose pointer passes the prefilter.
     let mut owners: Vec<[u8; 32]> = before.iter().map(|c| c.owner).collect();
     for p in (r.pointers)(epoch) {
-        if owners.contains(&p.owner) {
+        // FROZEN (review 10-12): a pointer dated at or past the freeze is nobody's candidate — every reader ignores it, as
+        // every bag refused it after the freeze (`pointers::take`): `V(E)` the same for all.
+        if owners.contains(&p.owner) || (p.at >= freeze && on!(LATE)) {
             continue;
         }
         if !on!(PREFILTER) || p.accepted(&r.pool, &pool_chain(&p.owner).id(), epoch, r.out, &before) {

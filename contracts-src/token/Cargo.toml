@@ -26,6 +26,8 @@ craftworks-idlog-contract = { path = "../idlog", default-features = false }
 # A keeper mint's LINE under its epoch's statement root (§7d: the one check, `statement::line_proven`).
 craftworks-reputation = { path = "../../reputation" }
 craftworks-standing = { path = "../../standing" }
+# The POINTER BAGS' items (TOKEN §7a, C2b): the bag contract's items, work and caps — frozen here at the epoch's freeze.
+craftworks-bag-contract = { path = "../bag", default-features = false }
 craftworks-identity = { path = "../../identity" }
 # The SDK engine: a tree root's own parity (`repair::root_parity`), as tables code it — the writer's, never the contract's.
 engine = { path = "../../sdk/craftworks-sdk/engine" }
