@@ -392,13 +392,14 @@ export async function start(ctx) {
       ctx.log("account keys", { what: `this node ${kind} the account's group: epoch ${st.epoch}, ${st.members.length} node(s)` });
       await recovery("account-recovery", `${kind}: group epoch ${st.epoch}, ${st.members.length} node(s), ${kept.size} earlier epoch(s) recovered; walk: ${walked.stop ?? "?"}`, { kind, groupEpoch: st.epoch, nodes: st.members.length, recovered: kept.size, broken: !!at.broken });
       if (kept.size) ctx.log("account keys", { what: `${kept.size} earlier epoch(s) recovered from escrow` });
-      // JOINED with the words (a node new to the account): every capability of this page opened before the keys were
-      // here — the account's tables read sealed, the name, the spaces — and keeps what it saw. The app starts again,
-      // once, with the keys in place (as Log out does): a FULL recovery, never half a page (10-12: the name and the
-      // spaces stayed empty until a reload).
+      // JOINED with the words (a node new to the account): every table this page opened before the keys were here
+      // read sealed — the name, the spaces. A FULL recovery, never half a page (10-12: the name and the spaces stayed
+      // empty until a reload): they open again, and the page shows itself again, with the keys in place.
       if (kind === "joined") {
-        ctx.log("account keys", { what: "recovered: the app starts again with this node's keys in place" });
-        setTimeout(() => location.reload(), 1500);
+        // No reload (FOUNDATION.md §2, R3): the account turning MEMBER reopens every table that did not read here, and
+        // the page shows itself again with the keys in place.
+        ctx.log("account keys", { what: "recovered: every table that did not read here opens again with this node's keys in place" });
+        dispatchEvent(new CustomEvent("craftworks:keys"));
       }
       // Every account has a CARD from the start (its inbox, this node's key packages): nobody who wants to write to it
       // ever waits on one that does not exist. After this turn of the queue (the card asks for key packages).

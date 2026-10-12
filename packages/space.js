@@ -103,6 +103,9 @@ export async function start(ctx) {
     const acc = await account();
     if (!acc) return [];
     const t = await (await ctx.require("storage")).table(SPACES);
+    // DECIDED before it is read as the list (R5): a page opened straight at a space found nothing in a list shown before
+    // its answer, and never looked again (10-13: a space's chat by a direct link showed no channel).
+    await t.decided?.();
     return t
       .rows()
       .map(r => {

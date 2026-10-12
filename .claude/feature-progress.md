@@ -2408,7 +2408,18 @@ Build order (FOUNDATION §7):
       Moved to phase 8: installed apps (manifests, installed table, frames). FOUND (pre-existing, for phase 6): a space's
       chat opened by a DIRECT link shows no channel — chat.js `at()` reads `space.mine()` before the spaces table is
       decided, finds nothing, never looks again (same on the phase-4 build).
-- [ ] 6. R3/R4/R5
+- [x] 6. R3/R4/R5 — R4: a failed tail, merged table or directory open is never cached; a tail opened as never made
+      (`known:false`) is READ when asked for without that assumption. R3: on `craftworks:keys` / the account turning MEMBER,
+      unreadable tails are read again IN PLACE (what reads them redraws); tails opened with no key are dropped only when
+      their key is now held (no reopen loop), with the merged tables and directory built on them, and the page RESUMES
+      (drafts flushed, reloaded where it was — every capability cache built on them fresh), at most every 30 s. R5: merged
+      tables have `state` (unreadable while a writer feed did not open) and `decided()`. `space.mine()` waits for the
+      spaces table to be decided (fixes a space's chat by direct link showing no channel). A page that failed sealed /
+      not-yet / transient is shown again after a pause (4 tries). The reload after a words join is gone (keys event).
+      Verified on fx/fy v654: words recovery complete — name, space home, chat message — and the page was NOT reloaded
+      (marker survived); fx after the join: /chat and /board load (before: sealed until a reload); direct-link chat shows
+      the channel and message (v653). The first try (v653) looped re-showing the page on every keys event (keyless tables
+      reopened while still keyless) — fixed before commit.
 - [ ] 7. Apps on faults
 - [ ] 8. Desktop (App Store, Spaces app with enabled capabilities, Settings)
 - [ ] 9. Reset

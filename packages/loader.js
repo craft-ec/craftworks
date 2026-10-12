@@ -679,6 +679,26 @@ export async function run(boot) {
     addEventListener("focus", again);
   }
 
+  // SHOWN AGAIN (FOUNDATION.md §2, R3): a page that FAILED because something was not readable yet or had not arrived
+  // is shown again after a pause, a few times.
+  let again = null;
+  const showAgain = why => {
+    clearTimeout(again);
+    again = setTimeout(() => {
+      ctx.log("page", { what: `shown again: ${why}` });
+      filled.header = filled.side = filled.footer = null;
+      show(route()).catch(fail);
+    }, 300);
+  };
+  // Tables opened before their key was held (a words login: its keys arrived after the page opened) — every capability
+  // built on them (roles, spaces, names) RESUMED: the page saved (drafts) and loaded again where the person is. An
+  // unreadable table that opens now changes in place (no resume).
+  addEventListener("craftworks:reopen", async () => {
+    if (loaded.has("drafts") && !(await require("drafts").then(d => d.flush(), () => false))) return showAgain("tables opened again (a draft not saved: no resume)");
+    ctx.log("page", { what: "resumed: tables opened before their key was held, opened again with it" });
+    location.reload();
+  });
+  let retries = 0;
   function fail(e) {
     // Whatever was thrown, said (a rejection with no Error showed "undefined").
     const said = e?.message ?? (typeof e === "string" ? e : (() => { try { return JSON.stringify(e); } catch { return String(e); } })());
@@ -699,6 +719,11 @@ export async function run(boot) {
     if (r?.out === "loading") r.out = "failed";
     else visit.routes.push({ r: ctx.route, out: "failed" });
     met(location.hash || "/", e, "page-failed");
+    // Not readable yet, or not arrived: tried again when keys come (`craftworks:reopen`), or after a pause — 4 times.
+    if ((kind === "sealed" || kind === "not-yet" || kind === "transient") && retries < 4) {
+      retries += 1;
+      setTimeout(() => showAgain(`after a ${kind} failure (try ${retries})`), 5000 * retries);
+    }
     if (visit.n === 0) setTimeout(sendVisit, 2000);
     boot.log("page failed", { what: `${location.hash}: ${said}${e?.stack ? ` — ${String(e.stack).split("\n").slice(0, 3).join(" | ")}` : ""}` });
     status.textContent = `Could not load: ${said}`;

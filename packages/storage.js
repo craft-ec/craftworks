@@ -212,6 +212,38 @@ export async function start(ctx) {
   });
 
   const tails = new Map(); // id hex -> Promise<tail> (opened once per page)
+  // R3 (FOUNDATION.md §2): what did NOT read here — UNREADABLE (sealed with a key not held), or opened with NO KEY —
+  // is not terminal: when keys arrive (`craftworks:keys`, or the account's group turns member) every such tail leaves
+  // the caches, with the merged tables and the directory built on it, and the page is told to show what it is on again
+  // (`craftworks:reopen`): opened anew, with the keys now held. No reload.
+  const waiting = new Set(); // id hex of tails read unreadable
+  const mergedNow = new Map(); // at → the merged table, once open
+  let reopenedAt = 0;
+  async function reopenAfterKeys() {
+    // UNREADABLE ones: read again IN PLACE — a table that opens now changes, and whoever reads it draws again.
+    for (const idHex of [...waiting]) live.get(idHex)?.reread().catch(() => {});
+    // Opened with NO KEY: left behind only when its key is held NOW (its key is set when it opens) — one still without
+    // a key stays as it is (never a loop of reopening what cannot open).
+    const out = [];
+    for (const [idHex, t] of [...live]) {
+      if (!t.keyless?.()) continue;
+      const k = await access.key(t.app, { space: t.spaceId }).catch(() => ({}));
+      if (k.key) out.push(idHex);
+    }
+    if (!out.length) return 0;
+    for (const idHex of out) (tails.delete(idHex), live.delete(idHex), waiting.delete(idHex), unkeyed.delete(idHex));
+    for (const [k, p] of [...opening]) p.then(t => out.includes(hexOf(t.id)) && opening.get(k) === p && opening.delete(k)).catch(() => {});
+    for (const [at, m] of [...mergedNow]) if (m.built.some(id => out.includes(id))) (tables.delete(at), mergedNow.delete(at));
+    if (directoryTail && out.includes(hexOf(directoryTail.id))) (directoryOpen = null), (directoryTail = null);
+    ctx.log("tables reopened", { what: `${out.length} table(s) opened before their key was held: opened again with it` });
+    // The page shown again (at most every 30 s): its components open them anew.
+    if (Date.now() - reopenedAt > 30000) (reopenedAt = Date.now()), dispatchEvent(new CustomEvent("craftworks:reopen", { detail: { tables: out.length } }));
+    return out.length;
+  }
+  let reopenTimer = null;
+  const reopenSoon = () => (clearTimeout(reopenTimer), (reopenTimer = setTimeout(reopenAfterKeys, 500)));
+  addEventListener("craftworks:keys", reopenSoon);
+  ctx.require("lifecycle").then(l => l.on("account", (_, to) => to === "MEMBER" && reopenSoon()), () => {});
   const live = new Map(); // id hex -> tail, for what the node pushes
   const ownKeys = new Set(); // this node's writer keys in the spaces opened (its own feeds)
   listen(said => {
@@ -305,7 +337,13 @@ export async function start(ctx) {
     const blindedAs = label !== app ? app : "";
     const idHex = core.tail_open(tailCode, bytes(owner), label);
     // Opened already: as it is — or, opened LAZY and now wanted whole, read whole.
-    if (tails.has(idHex)) return lazy ? tails.get(idHex) : tails.get(idHex).then(t => (t.lazy ? t.whole().then(() => t) : t));
+    if (tails.has(idHex)) {
+      const had = tails.get(idHex);
+      // OPENED AS NEVER MADE (`known: false`, an assumption) and now asked for as unknown: READ (R4 — an assumption
+      // never outlives the next open that does not make it).
+      if (known !== false) had.then(t => t.assumed && ((t.assumed = false), t.reread())).catch(() => {});
+      return lazy ? had : had.then(t => (t.lazy ? t.whole().then(() => t) : t));
+    }
     const id = bytes(idHex);
     const name = Core.id_name(id);
     let rows = [];
@@ -444,6 +482,7 @@ export async function start(ctx) {
       if (known === false) {
         core.tail_absent(id);
         t.absent = true;
+        t.assumed = true; // absent by the caller's word, not the node's: read when asked for without it
         st = { s: "absent" };
         answer = Promise.resolve();
       } else {
@@ -467,6 +506,9 @@ export async function start(ctx) {
     })();
     tails.set(idHex, ready);
     live.set(idHex, t);
+    // R4: a failed open is never kept — the next asks again.
+    ready.catch(() => tails.get(idHex) === ready && (tails.delete(idHex), live.delete(idHex)));
+    t.keyless = () => !open && !t.sealed;
 
     const allowed = () => (catalogKey || spaceId ? Promise.resolve(true) : access.allowed(app));
     // SAVE STATE, said in ONE place (the loader's line): every write announced as saving, then saved or not saved
@@ -512,6 +554,7 @@ export async function start(ctx) {
         t.absent = false;
         t.unreadable = said.said;
         st = { s: "unreadable", why: said.said };
+        waiting.add(idHex);
         ctx.log("table unreadable", { what: `${app}: ${said.said}` });
         problem(spaceId, `${app}: unreadable (${said.said})`);
         return;
@@ -519,11 +562,12 @@ export async function start(ctx) {
       if (said.kind !== "get-failed")
         said = await settle(said, app).catch(e => {
           // There, but its tree did not open here (a key not held: unreadable; blocks not arriving: still unknown).
-          if (e?.kind === "sealed") st = { s: "unreadable", why: e.message };
+          if (e?.kind === "sealed") (st = { s: "unreadable", why: e.message }), waiting.add(idHex);
           throw e;
         });
       t.absent = said.kind !== "tail";
       st = said.kind === "tail" ? { s: "present" } : { s: "absent" };
+      waiting.delete(idHex);
       if (said.kind === "tail") took(said.tail);
       else core.tail_absent(id);
     }
@@ -820,7 +864,7 @@ export async function start(ctx) {
   let directoryOpen = null;
   let directoryTail = null; // the directory, once open: a catalog of plain rows (a node's catalog: versions)
   function directory() {
-    return (directoryOpen ??= (async () => {
+    const p = (directoryOpen ??= (async () => {
       const sp = await space.account();
       const d = await tail(sp.shared, CATALOG, { known: sp.fresh ? false : null, catalogKey: true });
       await d.answer();
@@ -828,6 +872,9 @@ export async function start(ctx) {
       directoryTail = d;
       return d;
     })());
+    // R4: a directory that did not open is asked again next time.
+    p.catch(() => directoryOpen === p && (directoryOpen = null));
+    return p;
   }
   // Whether the directory lists `name`: not listed (false) is never looked for; listed (null) is read.
   const inDirectory = (d, name) => (["none", "unlisted"].includes(placeOf(d, name)) ? false : null);
@@ -1199,6 +1246,22 @@ export async function start(ctx) {
           return per.flat();
         },
         onChange: f => changed.push(f),
+        // R5: its READ STATE — its own feed's, and UNREADABLE (never an empty "present") while a writer's feed did not
+        // open here; DECIDED once its own feed is and every listed writer was tried.
+        get state() {
+          const own = me.state ?? { s: "unknown" };
+          if (own.s !== "present" && own.s !== "absent") return own;
+          return unopened ? { s: "unreadable", why: `${unopened} writer feed(s) not read here` } : { s: "present" };
+        },
+        decided: async () => {
+          await me.decided?.();
+          await settled;
+          return t.state;
+        },
+        // The tails it is built on (their ids, hex): what reopens it when one did not read.
+        get built() {
+          return all.map(f => hexOf(f.id ?? new Uint8Array()));
+        },
         put: (key, value) => write(key, value),
         // This writer's own feed written out now (`flushNow`): before an edit.
         flushOwn: () => me.flushNow?.(),
@@ -1223,6 +1286,11 @@ export async function start(ctx) {
       return t;
     })();
     tables.set(at, ready);
+    // R4: a failed table is never kept; an open one is known by what it is built on (R3 reopens it with them).
+    ready.then(
+      t => tables.get(at) === ready && mergedNow.set(at, t),
+      () => tables.get(at) === ready && tables.delete(at),
+    );
     return ready;
   }
 
