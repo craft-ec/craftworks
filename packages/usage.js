@@ -142,7 +142,8 @@ export async function start(ctx) {
       }
     }).catch(e => ctx.log("usage", { what: `not written: ${e?.message ?? e}` })));
   const given = new Map(); // the items this page counted (given on leaving)
-  setInterval(() => pending.size && flush(), 30000);
+  const life = await ctx.require("lifecycle");
+  life.job("usage-flush", { every: 30000, delay: 30000, run: () => pending.size && flush() });
   addEventListener("pagehide", () => flush(true));
   addEventListener("visibilitychange", () => document.visibilityState === "hidden" && flush(true));
   // A MONTH: what was used, most first (watch time, then data), what is still in memory counted too.
@@ -468,8 +469,7 @@ export async function start(ctx) {
   }
   // Kept current while any page is open: a minute after it is up, then hourly (a finished day final once written).
   const publishing = () => publishStatements().catch(e => ctx.log("usage", { what: `statements not published: ${e?.message ?? e}` }));
-  setTimeout(publishing, 60000);
-  setInterval(publishing, 3600000);
+  life.job("usage-statements", { every: 3600000, delay: 60000, run: publishing });
   // THE LEVEL AHEAD: each level and its LAST day, from today, as the contributions run out — [{ id, name, until }].
   async function levelPlan() {
     const cs = await contributions();

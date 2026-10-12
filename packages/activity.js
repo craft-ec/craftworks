@@ -133,7 +133,8 @@ export async function start(ctx) {
   }
   begin().catch(e => ctx.log("activity", { what: e?.message ?? String(e) }));
   addEventListener("craftworks:auth", () => begin().catch(() => {}));
-  setInterval(() => me && scan().catch(() => {}), 60000);
+  // Unread scanned every minute while someone is logged in (a JOB: paused for a guest).
+  (await ctx.require("lifecycle")).job("activity", { every: 60000, delay: 60000, needs: () => !!me || "nobody is logged in", run: () => scan() });
   // A notification clicked: its conversation or channel.
   addEventListener("message", e => {
     const d = e.data;

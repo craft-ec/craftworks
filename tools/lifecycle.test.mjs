@@ -66,3 +66,31 @@ test("one health report per move, with its from and to; listeners told; a snapsh
   assert.deepEqual(heard, ["s:GUEST>OPEN_KEYLESS", "s:OPEN_KEYLESS>OPEN"]);
   assert.equal(L.snapshot().session.s, "OPEN");
 });
+
+test("a job runs only while its needs hold; paused (once) with why, resumed when they hold again", async () => {
+  healths.length = 0;
+  let ok = "nobody is logged in";
+  let runs = 0;
+  const j = L.job("t", { every: 10, needs: async () => ok, run: async () => runs++ });
+  await new Promise(r => setTimeout(r, 40));
+  assert.equal(runs, 0, "not run while its needs do not hold");
+  assert.equal(L.state("job", "t").s, "PAUSED");
+  ok = true;
+  await new Promise(r => setTimeout(r, 40));
+  assert.ok(runs >= 2, `run once its needs hold (${runs} runs)`);
+  j.stop();
+  const n = runs;
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(runs, n, "stopped: never run again");
+  const moves = healths.filter(h => h.k === "lifecycle-job").map(h => h.to);
+  assert.deepEqual(moves, ["IDLE>PAUSED", "PAUSED>IDLE", "IDLE>STOPPED"], "each run is quiet; pausing, resuming and stopping are reported");
+});
+
+test("become moves only on a change", async () => {
+  healths.length = 0;
+  L.become("space", "x", "held");
+  L.become("space", "x", "held");
+  L.become("space", "x", "behind", { e: 2, oe: 3 });
+  await tick();
+  assert.deepEqual(healths.map(h => h.to), ["UNKNOWN>HELD", "HELD>BEHIND"]);
+});

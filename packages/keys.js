@@ -25,6 +25,7 @@ export async function start(ctx) {
   // THE ACCOUNT'S GROUP on this device moves only through its lifecycle (FOUNDATION.md §3: `account`): made only by a
   // registration on a channel answered absent, joined only by walking a channel read with its group info.
   const life = await ctx.require("lifecycle");
+  const { Fault } = await ctx.require("fault");
   const ME = "me";
   const lifeIs = s => life.state("account", ME).s === s;
   // The account's keys here at last: a session that was KEYLESS is open.
@@ -474,6 +475,26 @@ export async function start(ctx) {
       () => readyShared === p && (readyShared = null),
     );
     return p;
+  }
+
+  // WRITES FOR THE ACCOUNT — its card, key packages, requests, asks to welcome again — only from a device whose
+  // session is OPEN and whose account group is a MEMBER (FOUNDATION.md §3: a KEYLESS session writes none of them; on
+  // 10-12 one re-put the card's key packages and asked members to welcome it again, which dropped the original devices).
+  // `writable()`: true, or why not.
+  async function writable() {
+    if (!(await auth.check().catch(() => null))) return "nobody is logged in";
+    await ready().catch(() => null);
+    const a = life.state("account", ME).s;
+    const s = life.state("session", ME).s;
+    if (a !== "MEMBER" || s === "OPEN_KEYLESS") return `the account's keys are not held on this device (account ${a}, session ${s})`;
+    return true;
+  }
+  async function mustWrite(what) {
+    const ok = await writable();
+    if (ok === true) return;
+    const a = life.state("account", ME).s;
+    const coming = ["CONFIRMING_CHANNEL", "WALKING", "JOINING", "CREATING"].includes(a);
+    throw new Fault(coming ? "not-yet" : "refused", `${what}: not written, the account's keys not held here`, { message: `${what}: not written — ${ok}`, d: { account: a, session: life.state("session", ME).s } });
   }
 
   // REMOVED: the group says this node is out of the account. It FORGETS its member at once — key, PIN, grants, the
@@ -1281,5 +1302,5 @@ export async function start(ctx) {
     return { batches: batches.length, offers, held };
   }
 
-  return { ready, remove, escrowed, group, keyPackages, answers, holdsTag, welcomeFor, packageCounts, event: keyEvent, events: keyEvents, onChange: f => watchers.push(f) };
+  return { ready, writable, mustWrite, remove, escrowed, group, keyPackages, answers, holdsTag, welcomeFor, packageCounts, event: keyEvent, events: keyEvents, onChange: f => watchers.push(f) };
 }

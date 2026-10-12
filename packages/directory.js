@@ -110,6 +110,7 @@ export async function start(ctx) {
 
   // THIS person's card: its handle, and this node's key package (made by `keys`, its secrets kept with this node).
   async function publish({ handle } = {}) {
+    await (await ctx.require("keys")).mustWrite("the card");
     const sp = await space.account();
     if (!sp?.shared) throw new Error("this node does not hold the account's data key");
     const t = await storage.publicTail(CARD, sp.shared);
@@ -177,6 +178,7 @@ export async function start(ctx) {
 
   // NEW key packages (one was used to add this person somewhere: each works once).
   async function renew() {
+    await (await ctx.require("keys")).mustWrite("the card's key packages");
     const sp = await space.account();
     await putKeyPackages(await storage.publicTail(CARD, sp.shared));
   }

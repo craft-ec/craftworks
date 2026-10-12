@@ -51,6 +51,7 @@ export async function start(ctx) {
         await node.idle();
         // REMOVED from it (its group says so): no longer in this person's list — never left shown as theirs.
         if (await (await ctx.require("keys")).group(sp).removed().catch(() => false)) {
+          (await ctx.require("lifecycle")).become("space", sp.id.slice(0, 12), "removed", {});
           await space.forget(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: ${e.message}` }));
           continue;
         }
@@ -60,7 +61,12 @@ export async function start(ctx) {
         await conversation.catchUp(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: catching up: ${e.message}` }));
         // What this page cannot read here, reported into the space (seen by any member on Members & roles).
         await conversation.reportReads(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: reporting reads: ${e.message}` }));
-        seen.push(await conversation.selfState(sp).catch(e => ({ s: sp.id.slice(0, 6), why: String(e?.message ?? e).slice(0, 80) })));
+        const self = await conversation.selfState(sp).catch(e => ({ s: sp.id.slice(0, 6), why: String(e?.message ?? e).slice(0, 80) }));
+        seen.push(self);
+        // ITS MEMBERSHIP HERE, as a lifecycle state (FOUNDATION.md §3: `space`).
+        const life = await ctx.require("lifecycle");
+        const ev = self.why ? "not-held" : self.e == null ? "not-held" : self.oe != null && self.e < self.oe ? "behind" : self.on === false ? "off-branch" : self.u ? "unreadable" : "held";
+        life.become("space", sp.id.slice(0, 12), ev, { e: self.e, oe: self.oe, u: self.u, ...(self.why ? { why: self.why } : {}) });
         await conversation.observe(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: observing members: ${e.message}` }));
         const r = await roles.of(sp).catch(() => null);
         // AN OPEN SPACE's roster public (the owner, once a page): askers outside learn they were let in.
@@ -208,8 +214,10 @@ export async function start(ctx) {
   }
   handOver().catch(() => {});
   addEventListener("craftworks:auth", () => handOver().catch(() => {}));
-  tick();
-  setInterval(tick, 30000);
-  addEventListener("craftworks:auth", () => tick());
+  // A JOB (FOUNDATION.md §3): every 30 s, only while this device may write for the account (its session open, its
+  // account group a member) — paused, and said why, otherwise.
+  const life = await ctx.require("lifecycle");
+  const job = life.job("upkeep", { every: 30000, needs: () => keys.writable(), run: tick });
+  addEventListener("craftworks:auth", () => job.now());
   return { tick };
 }

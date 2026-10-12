@@ -2387,7 +2387,15 @@ Build order (FOUNDATION §7):
       fx v646 + loader v22: registration CONFIRMING→CREATING(channel absent)→MEMBER, words CONFIRMING→WALKING(present,
       info)→JOINING→MEMBER epoch 1 / 2 nodes; recovery complete (name, space, message). NOT built (later): COMMITTING
       for device removal, MEMBER_PARTIAL_HISTORY; space machine (phase 4).
-- [ ] 4. Gates and jobs
+- [x] 4. Gates and jobs — `keys.writable()`/`mustWrite(what)`: the account's writes (card `publish`/`renew`, requests
+      made again, stuck asks, asks to be welcomed again) only from an OPEN session whose account group is MEMBER (else
+      `refused`, or `not-yet` while joining). `lifecycle.job(name, {every, needs, run, delay})`: runs only while needs
+      hold, PAUSED with why otherwise (pause/resume/stop reported, each run quiet); upkeep (needs writable), activity,
+      keep, video leases, usage flush + statements moved onto jobs. SPACE machine (recorded): HELD/BEHIND/OFF_BRANCH/
+      NOT_HELD/UNREADABLE/REMOVED from upkeep's selfState each round (`become`: only on change), WELCOME_FAILED{reason:
+      account-keys-unreadable | not-past | package-not-held | branch}. Verified: lifecycle tests 6/6; fx v647: recovery
+      complete; gate probe on fy — card written while keys held, then session KEYLESS: publish and renew REFUSED,
+      upkeep job PAUSED. Left as they are: UI tickers (header, theme, video player — tied to their elements).
 - [ ] 5. Page/app/save/delete (save on change, drafts, resume; installed apps in frames)
 - [ ] 6. R3/R4/R5
 - [ ] 7. Apps on faults

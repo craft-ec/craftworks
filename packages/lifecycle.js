@@ -48,6 +48,34 @@ export async function start(ctx) {
         removed: { from: "*", to: "REMOVED" },
       },
     },
+    // A SPACE's membership on this device, as upkeep finds it each round: HELD (its keys current, on the owner's
+    // branch), BEHIND (an older epoch), OFF_BRANCH, NOT_HELD (no group here), UNREADABLE (tables it cannot read),
+    // WELCOME_FAILED{reason}, REMOVED. Moved only when it changes (`become`).
+    space: {
+      initial: "UNKNOWN",
+      events: {
+        held: { from: "*", to: "HELD" },
+        behind: { from: "*", to: "BEHIND" },
+        "off-branch": { from: "*", to: "OFF_BRANCH" },
+        "not-held": { from: "*", to: "NOT_HELD" },
+        unreadable: { from: "*", to: "UNREADABLE" },
+        "welcome-failed": { from: "*", to: "WELCOME_FAILED" },
+        removed: { from: "*", to: "REMOVED" },
+      },
+    },
+    // A BACKGROUND JOB (upkeep, sync, the usage flush, keeping): runs every `every` ms only while what it NEEDS holds;
+    // PAUSED (said, with why) while it does not. Each run is not reported — only pausing and resuming are.
+    job: {
+      initial: "IDLE",
+      quiet: ["run", "done"],
+      events: {
+        run: { from: ["IDLE"], to: "RUNNING" },
+        done: { from: ["RUNNING"], to: "IDLE" },
+        pause: { from: ["IDLE", "RUNNING"], to: "PAUSED" },
+        resume: { from: ["PAUSED"], to: "IDLE" },
+        stop: { from: "*", to: "STOPPED" },
+      },
+    },
   };
 
   const states = new Map(); // `${machine}|${key}` → { s, since, event, detail }
@@ -78,12 +106,66 @@ export async function start(ctx) {
     if (ok !== true) throw met("lifecycle", new Fault("refused", `lifecycle: ${machine} ${event} refused`, { message: `${machine}: ${ok}`, d: { from, event } }));
     const to = ev.to;
     states.set(`${machine}|${key}`, { s: to, since: Date.now(), event, detail });
-    ctx.log(`lifecycle ${machine}`, { what: `${String(key).slice(0, 12)}: ${from} → ${to} (${event})` });
-    report(machine, key, from, to, event, detail);
+    if (!m.quiet?.includes(event)) {
+      ctx.log(`lifecycle ${machine}`, { what: `${String(key).slice(0, 12)}: ${from} → ${to} (${event})` });
+      report(machine, key, from, to, event, detail);
+    }
     dispatchEvent(new CustomEvent("craftworks:lifecycle", { detail: { machine, key, from, to, event } }));
     for (const f of listeners.get(machine) ?? []) Promise.resolve(f(key, to, from, event, detail)).catch(e => met("lifecycle", e));
     return to;
   }
+
+  // A JOB: `run()` every `every` ms (and once at the start, after `delay`), only while `needs()` says true; its why-not
+  // otherwise (a string: the job is PAUSED with it, and resumes when it holds again). One run at a time; a run that
+  // throws is met as a fault and the job goes on. `stop()` ends it for good. The page's jobs, as they stand: `jobs()`.
+  const running = new Map();
+  function job(name, { every, needs = async () => true, run, delay = 0 }) {
+    if (running.has(name)) return running.get(name);
+    let timer = null;
+    let stopped = false;
+    const tick = async () => {
+      if (stopped) return;
+      const s = at("job", name).s;
+      if (s === "RUNNING") return;
+      const ok = await Promise.resolve()
+        .then(needs)
+        .catch(e => `its needs could not be read: ${e?.message ?? e}`);
+      if (ok !== true) {
+        if (s !== "PAUSED") transition("job", name, "pause", { why: String(ok).slice(0, 120) });
+        return;
+      }
+      if (s === "PAUSED") transition("job", name, "resume", {});
+      transition("job", name, "run");
+      try {
+        await run();
+      } catch (e) {
+        met(`job ${name}`, e);
+      } finally {
+        if (at("job", name).s === "RUNNING") transition("job", name, "done");
+      }
+    };
+    const start = () => {
+      tick();
+      timer = setInterval(tick, every);
+    };
+    if (delay) setTimeout(() => !stopped && start(), delay);
+    else start();
+    const handle = {
+      now: tick,
+      stop: () => {
+        stopped = true;
+        clearInterval(timer);
+        transition("job", name, "stop", {});
+        running.delete(name);
+      },
+    };
+    running.set(name, handle);
+    return handle;
+  }
+  const jobs = () => [...running.keys()].map(n => ({ name: n, s: at("job", n).s }));
+
+  // The move `event` names, only if it changes the state (a state found again each round is not a move).
+  const become = (machine, key, event, detail = {}) => (MACHINES[machine]?.events[event]?.to === at(machine, key).s ? at(machine, key).s : transition(machine, key, event, detail));
 
   const on = (machine, fn) => listeners.set(machine, [...(listeners.get(machine) ?? []), fn]);
   // Where every process stands now (for the visit report): `{ machine: { key: state } }`.
@@ -96,5 +178,5 @@ export async function start(ctx) {
     return out;
   };
 
-  return { MACHINES, state, transition, on, snapshot };
+  return { MACHINES, state, transition, become, on, snapshot, job, jobs };
 }

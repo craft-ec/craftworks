@@ -832,6 +832,10 @@ export async function start(ctx) {
           pk: await keys.packageCounts().catch(() => null),
         };
         index.health({ k: "welcome-failed", s: it.space.slice(0, 6), e: st?.epoch ?? null, why: String(e?.message ?? e).slice(0, 160), d }).catch(() => {});
+        // ITS MEMBERSHIP HERE: WELCOME_FAILED, with the reason that decides what may follow (FOUNDATION.md §3) — only a
+        // package not held may renew the card's packages and ask again; keys not held here, never.
+        const reason = (await keys.writable()) !== true ? "account-keys-unreadable" : /not past/.test(e?.message ?? "") ? "not-past" : !held ? "package-not-held" : "branch";
+        (await ctx.require("lifecycle")).become("space", it.space.slice(0, 12), "welcome-failed", { reason, from: d.from });
         // SAID in the space (its writers record: the members list shows it), so a member stuck behind is seen WHY.
         if (had) await index.spacePoint(had, "writers", { w: had.self, welcomeFailed: { why: String(e?.message ?? e).slice(0, 200), from: it.from, at: Date.now() } }).catch(() => {});
         if (!held && /WelcomeKeyPackageNotFound/.test(e?.message ?? "")) await once.put(`dead:${tried}`, String(Date.now())).catch(() => {});
@@ -847,7 +851,9 @@ export async function start(ctx) {
         // member or node, opened first) — nothing lost, nothing to ask: each such ask was one more re-add, one more epoch.
         const duplicate = it.kp && done(`joined-kp:${String(it.kp).slice(0, 32)}`);
         if (duplicate) await once.put(`dead:${tried}`, `duplicate ${Date.now()}`).catch(() => {});
-        else if (!held && !done(k)) {
+        // (Asking to be welcomed again is the account's write: never from a device without its keys — on 10-12 such
+        // asks were answered by re-adding the person, which can drop their original devices from the space.)
+        else if (!held && !done(k) && (await (await ctx.require("keys")).writable()) === true) {
           unanswerable += 1;
           const epoch = had && st && !st.removed ? st.epoch : null;
           againAsks.push(() =>
@@ -1016,6 +1022,9 @@ export async function start(ctx) {
   async function askAgain() {
     const me = await space.account();
     if (!me) return 0;
+    // (Requests are the account's writes: not from a device without its keys.)
+    const may = await (await ctx.require("keys")).writable();
+    if (may !== true) return (ctx.log("conversation", { what: `requests not made again: ${may}` }), 0);
     const t = await asks();
     await t.settled;
     const mine = new Set((await space.mine()).map(s => s.id));
@@ -1035,6 +1044,8 @@ export async function start(ctx) {
   async function askStuck() {
     const me = await space.account();
     if (!me) return 0;
+    const may = await (await ctx.require("keys")).writable();
+    if (may !== true) return (ctx.log("conversation", { what: `stuck requests not asked again: ${may}` }), 0);
     const t = await asks();
     await t.settled;
     const mine = new Set((await space.mine()).map(s => s.id));

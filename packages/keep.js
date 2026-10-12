@@ -342,9 +342,7 @@ export async function start(ctx) {
     return out.filter(Boolean);
   }
   // After the page has settled; then one due table a minute.
-  setTimeout(() => {
-    tick();
-    setInterval(tick, 60000);
-  }, 120000);
+  // (A JOB: every minute, two minutes after the page is up, while someone is logged in.)
+  (await ctx.require("lifecycle")).job("keep", { every: 60000, delay: 120000, needs: async () => !!(await space.account().catch(() => null)) || "nobody is logged in", run: () => tick() });
   return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.log("keep", { what: `not noted for keeping: ${e?.message ?? e}` })), kept, setLimit, limits, keepers, holdings, assign, assigned: assignedNow };
 }
