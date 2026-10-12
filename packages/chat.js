@@ -145,7 +145,14 @@ export async function mount(ctx, el) {
         drawMembers(s);
       });
       const c = (chs = await chsP);
-      c.onChange(() => server === s && drawChannels());
+      // Channels arriving LATER (after the first draw, before or without `settled`): drawn, and the wanted or first one
+      // opened if none is yet (fy 10-12: the list showed #general, nothing open).
+      c.onChange(() => {
+        if (server !== s) return;
+        drawChannels();
+        const c = (want && list().find(x => x.id.endsWith(`/${want}`))) || list()[0];
+        if (c && !channel) openChannel(c);
+      });
       c.settled.finally(() => {
         if (server !== s) return;
         drawChannels();
