@@ -2350,3 +2350,26 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
   place. Proven on fx/fy (fresh account with a handle, its own space, a chat message): joined + 1 earlier epoch
   recovered, handle, space, message — no manual reload; also on the release tree itself before publishing.
   Also carries 8c2d17e (reports name the site; members-only refusal not a fault). 1179/1263 pieces.
+
+## FOUNDATION (owner 10-12) — docs/FOUNDATION.md is the design; full reset at the end (no migration)
+
+Build order (FOUNDATION §7):
+- [x] 1. Faults + health outcomes — `packages/fault.js` (kinds, POLICY, attempt/met/absentOnly/say; one report per
+      failure however many places it reaches); loader reports through it (`fault` package registered in the publisher);
+      origins typed: node.ask (transient / cancelled, default WAIT.ask), login gate (login-needed), where (refused-expected),
+      blocks.put (refused), storage reads (sealed, not-yet). HEALTH OUTCOMES (owner: "not only an error collector"):
+      `visit` per page load (each page's outcome loading/drawn/late/stuck/said/failed/login + settle ms, faults by kind,
+      reconnects, member/spaces), `stuck` at 20 s with what it waits on, node WAITS (slow ≥3 s, never answered, queued
+      behind the get cap) summed in `tools/health-watch` ("slow waits, most time lost first").
+      Verified: tools/fault.test.mjs 7/7 (control: a retry-every-kind mutant fails); health-watch tests 3/3; fx v642 +
+      loader v19: 4 visits read back (/ 493 ms, /board 689, /chat 607, /wiki 682 settled). Not yet seen live: a `stuck`
+      report and a `sealed` fault (the /board sealed failure of v641 did not recur on the next load).
+      Kept until 7: the log-word matcher (apps still only log failures). Not released to live yet; not committed.
+- [ ] 2. Read machine (ReadState, R1/R2)
+- [ ] 3. Lifecycle mechanism + account group + session
+- [ ] 4. Gates and jobs
+- [ ] 5. Page/app/save/delete (save on change, drafts, resume; installed apps in frames)
+- [ ] 6. R3/R4/R5
+- [ ] 7. Apps on faults
+- [ ] 8. Desktop (App Store, Spaces app with enabled capabilities, Settings)
+- [ ] 9. Reset

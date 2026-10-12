@@ -22,6 +22,7 @@ const base58 = hex => {
   return out;
 };
 export async function start(ctx) {
+  const { Fault } = await ctx.require("fault");
   const { core, ask, slot, WAIT } = await ctx.require("node");
   const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
 
@@ -170,7 +171,7 @@ export async function start(ctx) {
       puts.map(([key, frames]) => ask(frames, x => (x.kind === "put" && x.key === key) || x.kind === "refused", `putting ${what}'s tree`, 60000)),
     );
     const refused = said.find(s => s.kind === "refused");
-    if (refused) throw new Error(`a tree block was refused: ${refused.said}`);
+    if (refused) throw new Fault("refused", "putting a tree block", { message: `a tree block was refused: ${refused.said}`, d: { said: String(refused.said).slice(0, 80) } });
   }
 
   // KEEP (phase 4): is the block in contract `c` (hex) on the network? Its GET answered with a state (true) or not

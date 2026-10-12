@@ -192,9 +192,26 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        // VISITS (`visit`): how each page load went, success included — per site version: visits, guests and members,
+        // and per page opened how many SETTLED (and the median time to it), were late, STUCK, SAID or FAILED. A visit
+        // sends #1 once its first page settles and #2… later: only the newest of each page load (`to` = pid#n) counts.
+        let mut latest: BTreeMap<String, &serde_json::Value> = BTreeMap::new();
+        for v in all.iter().filter(|v| v["k"] == "visit") {
+            let to = v["to"].as_str().unwrap_or("");
+            let (pid, n) = to.split_once('#').map(|(p, n)| (p.to_string(), n.parse::<u32>().unwrap_or(0))).unwrap_or((to.to_string(), 0));
+            let newer = latest.get(&pid).map(|o| o["to"].as_str().and_then(|t| t.split_once('#')).and_then(|(_, m)| m.parse::<u32>().ok()).unwrap_or(0) < n).unwrap_or(true);
+            if newer {
+                latest.insert(pid, v);
+            }
+        }
+        if !latest.is_empty() {
+            for line in visit_summary(latest.values().copied()) {
+                println!("  {line}");
+            }
+        }
         // PROBLEMS: by kind × space (× the member it is about), newest first.
         let mut groups: BTreeMap<(String, String, String), Vec<&serde_json::Value>> = BTreeMap::new();
-        for v in all.iter().filter(|v| v["k"] != "seen") {
+        for v in all.iter().filter(|v| v["k"] != "seen" && v["k"] != "visit") {
             let k = (v["k"].as_str().unwrap_or("?").to_string(), v["s"].as_str().unwrap_or("-").to_string(), v["to"].as_str().unwrap_or("").to_string());
             groups.entry(k).or_default().push(v);
         }
@@ -218,9 +235,100 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// The VISITS of one day, summed: per site version, how many page loads, members and guests, and per page opened its
+/// outcomes and the median time to settle (ms). Each visit is its newest report.
+fn visit_summary<'a>(visits: impl Iterator<Item = &'a serde_json::Value>) -> Vec<String> {
+    #[derive(Default)]
+    struct Page {
+        settled: Vec<u64>,
+        outs: BTreeMap<String, usize>,
+    }
+    // A WAIT (what the page asked the node, or queued for): how many, slow, never answered, the longest and total ms.
+    #[derive(Default)]
+    struct Wait {
+        n: u64,
+        slow: u64,
+        timeouts: u64,
+        max: u64,
+        total: u64,
+    }
+    let mut waits: BTreeMap<String, Wait> = BTreeMap::new();
+    let mut by_v: BTreeMap<String, (usize, usize, usize, Vec<u64>, BTreeMap<String, Page>, BTreeMap<String, u64>)> = BTreeMap::new();
+    for v in visits {
+        let e = by_v.entry(v["v"].as_str().unwrap_or("?").to_string()).or_default();
+        let d = &v["d"];
+        e.0 += 1;
+        match d["member"].as_bool() {
+            Some(true) => e.1 += 1,
+            Some(false) => e.2 += 1,
+            None => {}
+        }
+        if let Some(b) = d["boot"].as_u64() {
+            e.3.push(b);
+        }
+        for r in d["routes"].as_array().into_iter().flatten() {
+            let p = e.4.entry(r["r"].as_str().unwrap_or("?").to_string()).or_default();
+            *p.outs.entry(r["out"].as_str().unwrap_or("?").to_string()).or_default() += 1;
+            if let Some(ms) = r["settled"].as_u64() {
+                p.settled.push(ms);
+            }
+        }
+        for w in d["waits"].as_array().into_iter().flatten() {
+            let x = waits.entry(w["what"].as_str().unwrap_or("?").to_string()).or_default();
+            let f = |k: &str| w[k].as_u64().unwrap_or(0);
+            x.n += f("n");
+            x.slow += f("slow");
+            x.timeouts += f("timeouts");
+            x.max = x.max.max(f("max"));
+            x.total += f("total");
+        }
+        for (k, n) in d["faults"].as_object().into_iter().flatten() {
+            *e.5.entry(k.clone()).or_default() += n.as_u64().unwrap_or(0);
+        }
+    }
+    let median = |xs: &mut Vec<u64>| -> String {
+        xs.sort_unstable();
+        xs.get(xs.len() / 2).map(|m| format!("{m}")).unwrap_or_else(|| "-".into())
+    };
+    let mut out = Vec::new();
+    for (ver, (n, members, guests, mut boot, pages, faults)) in by_v {
+        out.push(format!("visits v={ver}: {n} page load(s) — {members} member, {guests} guest; start median {} ms", median(&mut boot)));
+        for (r, mut p) in pages {
+            let outs: Vec<String> = p.outs.iter().map(|(o, c)| format!("{o} {c}")).collect();
+            out.push(format!("  {r:12} {}  settled median {} ms", outs.join(", "), median(&mut p.settled)));
+        }
+        if !faults.is_empty() {
+            out.push(format!("  faults: {}", faults.iter().map(|(k, c)| format!("{k} {c}")).collect::<Vec<_>>().join(", ")));
+        }
+    }
+    // WHAT STALLS: the slow waits of every visit, the most time lost first — what to optimize.
+    let mut ws: Vec<(String, Wait)> = waits.into_iter().collect();
+    ws.sort_by(|a, b| b.1.total.cmp(&a.1.total));
+    if !ws.is_empty() {
+        out.push("slow waits (most time lost first):".into());
+    }
+    for (what, x) in ws.into_iter().take(10) {
+        out.push(format!("  {what:40} ×{} slow {} never {}  longest {} ms  total {} ms", x.n, x.slow, x.timeouts, x.max, x.total));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// VISITS are summed per version and page; a page that never settled counts as stuck, not as settled.
+    #[test]
+    fn visits_summed() {
+        let a: serde_json::Value = serde_json::from_str(r#"{"k":"visit","v":"abc","to":"p1#1","d":{"member":true,"boot":900,"routes":[{"r":"/chat","settled":1200,"out":"drawn"}],"faults":{"transient":2},"waits":[{"what":"reading chat","n":5,"slow":2,"timeouts":1,"max":30000,"total":41000}]}}"#).unwrap();
+        let b: serde_json::Value = serde_json::from_str(r#"{"k":"visit","v":"abc","to":"p2#1","d":{"member":false,"boot":700,"routes":[{"r":"/chat","settled":null,"out":"stuck"}],"faults":{}}}"#).unwrap();
+        let lines = visit_summary([&a, &b].into_iter());
+        assert_eq!(lines[0], "visits v=abc: 2 page load(s) — 1 member, 1 guest; start median 900 ms");
+        assert_eq!(lines[1], "  /chat        drawn 1, stuck 1  settled median 1200 ms");
+        assert_eq!(lines[2], "  faults: transient 2");
+        assert_eq!(lines[3], "slow waits (most time lost first):");
+        assert_eq!(lines[4], "  reading chat                             ×5 slow 2 never 1  longest 30000 ms  total 41000 ms");
+    }
 
     /// A report sealed to the support key's public half opens with its secret — and with no other key.
     #[test]

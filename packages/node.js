@@ -3,6 +3,7 @@
 // and `listen(fn)` for what the node sends unasked (a followed contract that changed).
 // It needs `core-glue`, `core-wasm` and `identity-wasm` (the core is built around the identity delegate's code).
 export async function start(ctx) {
+  const { Fault } = await ctx.require("fault");
   const glue = await ctx.require("core-glue");
   await glue.default({ module_or_path: await ctx.require("core-wasm") });
   ctx.log("core started", { what: "wire framing (wasm)" });
@@ -76,24 +77,50 @@ export async function start(ctx) {
     const again = (n = 0) => setTimeout(async () => ((await task().catch(() => false)) ? null : again(n + 1)), Math.min(5000 * 2 ** n, 300000));
     again();
   };
-  // Send frames and wait for the first answer `match` accepts. Never silent: a timeout is an error with its reason.
-  // `signal` (an AbortSignal): no longer wanted — taken off the list at once (a race won by another: its losers).
-  const ask = (frames, match, what, ms = 15000, signal = null) =>
+  // Send frames and wait for the first answer `match` accepts. Never silent: a timeout is a `transient` fault with its
+  // reason (`ms`, and whether the node was being reconnected to). `ms`: WAIT.ask unless said.
+  // `signal` (an AbortSignal): no longer wanted — taken off the list at once (a race won by another: its losers), a
+  // `cancelled` fault.
+  // WAITS RECORDED (owner 10-12: "those long waits also need to be recorded, so we know what stalls, what blocks and
+  // what can be optimized"): every question's time to its answer, by what it was (its label with ids taken out) —
+  // how many, how many SLOW (over SLOW_MS), the longest, the total, how many never answered. The visit report carries
+  // the worst (`waits()`); never content.
+  const SLOW_MS = 3000;
+  const stats = new Map();
+  const label = what => String(what).replace(/[0-9a-f]{8,}/gi, "…").replace(/\d{2,}/g, "#").slice(0, 60);
+  const note = (what, ms, timedOut = false) => {
+    const k = label(what);
+    const x = stats.get(k) ?? { n: 0, slow: 0, max: 0, total: 0, timeouts: 0 };
+    x.n += 1;
+    x.total += ms;
+    x.max = Math.max(x.max, ms);
+    if (ms >= SLOW_MS) x.slow += 1;
+    if (timedOut) x.timeouts += 1;
+    stats.set(k, x);
+  };
+  const waits = (top = 8) =>
+    [...stats]
+      .filter(([, x]) => x.slow || x.timeouts)
+      .sort((a, b) => b[1].total - a[1].total)
+      .slice(0, top)
+      .map(([what, x]) => ({ what, ...x, total: Math.round(x.total), max: Math.round(x.max) }));
+  const ask = (frames, match, what, ms = WAIT.ask, signal = null) =>
     new Promise((resolve, reject) => {
-      const w = { match, what, at: performance.now(), resolve: v => (clearTimeout(t), resolve(v)) };
+      const w = { match, what, at: performance.now(), resolve: v => (clearTimeout(t), note(what, performance.now() - w.at), resolve(v)) };
       // Timed out: no longer waited for — taken off the list (left on it, it would match a late answer meant for
       // another, and count as in flight for ever: `idle` would never come).
       const t = setTimeout(() => {
         const i = waiters.indexOf(w);
         if (i >= 0) waiters.splice(i, 1);
-        reject(new Error(`${what}: no answer from the node in ${ms / 1000} s${lost ? " (reconnecting to it)" : ""}`));
+        note(what, ms, true);
+        reject(new Fault("transient", what, { message: `${what}: no answer from the node in ${ms / 1000} s${lost ? " (reconnecting to it)" : ""}`, d: { ms, reconnecting: lost } }));
       }, ms);
       waiters.push(w);
       signal?.addEventListener("abort", () => {
         clearTimeout(t);
         const i = waiters.indexOf(w);
         if (i >= 0) waiters.splice(i, 1);
-        reject(new Error(`${what}: no longer wanted`));
+        reject(new Fault("cancelled", what, { message: `${what}: no longer wanted` }));
       });
       up.then(s => {
         for (const f of frames) s.send(f);
@@ -119,7 +146,12 @@ export async function start(ctx) {
   };
   const slot = async (f, { urgent = false } = {}) => {
     if (can(urgent) && !(urgent ? urgentQ : backgroundQ).length) take(urgent);
-    else await new Promise(r => (urgent ? urgentQ : backgroundQ).push(r)); // `grant` took the place for it
+    else {
+      // QUEUED behind the cap: how long, recorded as its own wait (what blocks, not what the node is slow at).
+      const q0 = performance.now();
+      await new Promise(r => (urgent ? urgentQ : backgroundQ).push(r)); // `grant` took the place for it
+      note(urgent ? "queued for a get (urgent)" : "queued for a get (background)", performance.now() - q0);
+    }
     try {
       return await f();
     } finally {
@@ -164,5 +196,5 @@ export async function start(ctx) {
   // `drop()`: close the connection as a sleep or a network change does (to see the recovery work).
   // WHAT IS IN FLIGHT now — each request's label and how long it has waited (ms): to see what a page waits on.
   const inFlight = () => waiters.map(w => ({ what: w.what, ms: Math.round(performance.now() - w.at) })).sort((a, b) => b.ms - a.ms);
-  return { core, glue, ask, read, slot, listen, url, drop: () => ws.close(), WAIT, backoff, idle, busy: () => waiters.length, inFlight };
+  return { core, glue, ask, read, slot, listen, url, drop: () => ws.close(), WAIT, backoff, idle, busy: () => waiters.length, inFlight, waits };
 }

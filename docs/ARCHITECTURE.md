@@ -2,6 +2,7 @@
 
 Settled with the owner, 2026-09-28. This is the shape everything is built to; code that does not match it is a bug.
 Where the code is today and what is next: [Implementation plan](#implementation-plan) (and `.claude/feature-progress.md`).
+Every process's lifecycle (page, session, keys, spaces, apps, reads, saves, deletes, jobs) and every failure's handling: [FOUNDATION.md](FOUNDATION.md).
 
 ## 1. The one division: capabilities and apps
 
@@ -14,20 +15,39 @@ Every package is exactly one of two kinds.
   the same posts, as a feed and as articles; Chat and Board on one space share its members, roles and bans). A new app
   adds a view, never a store or a mechanism.
 
-**Spaces and the rail.** Every account has a PERSONAL space (the whole canvas: Messages, Mail, Contacts, Notes, Board as
-your own posts — your profile —, Account as its settings). A SHARED space is made and joined by invite: one governance log
-(members, roles, invites, bans, which apps it uses) that every app on it reads. A permanent rail lists Personal (the
-default) and the shared spaces; each space has a Home listing its apps; an app shows only the space selected — a board is its space's posts only (no feed across spaces). Messages
-is personal only: conversations between equals, no roles — who needs governance makes a space.
+**The desktop (owner 2026-10-12; replaces the rail of 09-29).** Craftworks is an operating system's shell and every
+app is installed in it (FOUNDATION.md §3, "Apps are installed"): you open an app, as on iOS, iPadOS or macOS. There is
+no space dropdown and no app dropdown.
 
-**An app's three views.** An app declares (in the manifest) up to three views, each optional — PERSONAL (the account's
-space), SHARED (a given shared space) and PUBLIC (DISCOVER: the ownerless public network, second on the rail) — and the
-rail composes itself: Personal's Home lists the apps with a personal view, a shared space's Home those with a shared view
-that the space added, Discover's Home those with a public view. Capabilities never know the view: they take a SCOPE (the
-account, a shared space, or the public index — bags that public spaces and posts list themselves in), so one lens points
-at three scopes and no view gets a store of its own. A SHARED view never crosses spaces; the PERSONAL view may gather
-across every space the person is in (it is them: Board's Feed, unread across spaces). Discover has no owner and no log: what shows there is filtered by
-the reader's own blocks and the signed moderation lists they follow.
+- **Home screen**: the installed apps as a grid and a dock, an app switcher, notifications (`activity`), and a status
+  bar (account, node). Opening an app fills the screen; Home is always one step away.
+- **App Store** (an app): the catalog of apps, ours and anyone's; install, uninstall, update; each app's `uses` shown
+  before it is installed.
+- **Spaces** (an app): make, join and find spaces; a space's members, roles, invites and bans; and the space's
+  **enabled capabilities** — the one list its owner maintains: the domains that live in it (`roles`' `DOMAINS`: text,
+  video, audio, image, book, caption, note, file, chat, form, wiki, vote) and the features on them (comments, votes,
+  reactions, mail), each with its read/write policy. Enabling and disabling are the space's acts (`enable`, `disable`,
+  replacing `app`), so roles decide who may. A SHARED space is made and joined by invite: one governance log every app
+  on it reads. The PERSONAL space is the person, not an entry here.
+- **Settings** (an app): the system's — account, devices, each app's permissions, node, appearance.
+- **Apps respect the space's selection and compose from it.** An app's manifest names the capabilities it needs and
+  those it can use. It shows a space when the space enables what it needs, and draws only what is enabled (no comment
+  box where comments are off). No app is ever added to a space: an app installed later, ours or anyone's, works on
+  every space that enables what it needs, and a capability disabled disappears from every app at once.
+- **Spaces inside an app are the app's.** An app shows, in its own sidebar, You (personal), the spaces the person is in
+  that it can show, and Discover where it has a public view — as Mail lists its accounts. The app decides what a space
+  is in its words and layout (Board: a community; Video: a channel; Chat: a server with channels). A SHARED view never
+  crosses spaces; the PERSONAL view may gather across every space the person is in (Board's Feed, unread across
+  spaces). Messages is personal only: conversations between equals — who needs governance makes a space.
+- **An app defines its own settings and its space configuration**: a settings schema in its manifest, its settings
+  inside the app. A space's values are the space's `config` acts, so roles decide who may change them; `app-settings`
+  is the one renderer of those schemas, not a page holding every app's fields.
+
+**An app's three views.** An app declares (in its manifest) up to three views, each optional — PERSONAL (the account's
+space), SHARED (a given shared space) and PUBLIC (DISCOVER: the ownerless public network). Capabilities never know the
+view: they take a SCOPE (the account, a shared space, or the public index — bags that public spaces and posts list
+themselves in), so one lens points at three scopes and no view gets a store of its own. Discover has no owner and no log:
+what shows there is filtered by the reader's own blocks and the signed moderation lists they follow.
 
 A capability that applies to things applies to **every** kind of thing: moderation moderates a post, a comment, a vote or
 a label alike; governance decides who controls one note or a whole company.

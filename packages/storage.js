@@ -20,6 +20,7 @@ const HISTORY = { days: 7, roots: 200 };
 const retention = new Map(); // space id → days
 const daysFor = sp => Math.min(HISTORY.days, retention.get(sp?.id ?? sp) ?? HISTORY.days);
 export async function start(ctx) {
+  const { Fault } = await ctx.require("fault");
   const auth = await ctx.require("auth");
   // What a space is: its keys and its own tables' names (the account, here).
   const space = await ctx.require("space");
@@ -69,12 +70,12 @@ export async function start(ctx) {
   async function settle(view, app) {
     const going = progress();
     for (let round = 0; view.kind === "tail-need" || view.kind === "tail-keys"; round++) {
-      if (!going(view)) throw new Error(`${app}: the tree did not finish loading (${round} rounds, the last ${STALLED} asked nothing new)`);
+      if (!going(view)) throw new Fault("not-yet", `${app}: the tree did not finish loading`, { message: `${app}: the tree did not finish loading (${round} rounds, the last ${STALLED} asked nothing new)`, d: { app, rounds: round } });
       if (view.kind === "tail-keys") await epochKeys(view.id, view.epochs, app);
       else await blocks.fetch(view.id, view.blocks, app);
       view = JSON.parse(core.tail_view(bytes(view.id)));
     }
-    if (view.kind === "tail-unreadable") throw new Error(`${app}: ${view.said}`);
+    if (view.kind === "tail-unreadable") throw new Fault("sealed", `${app}: unreadable here`, { message: `${app}: ${view.said}`, d: { app } });
     return view;
   }
 
@@ -86,9 +87,10 @@ export async function start(ctx) {
     for (let round = 0; ; round++) {
       const v = JSON.parse(core.tail_page(bytes(idHex), b(lo), b(hi), reverse, b(after), limit));
       if (v.kind === "tail-page") return { rows: v.rows.map(([k, val]) => [bytes(k), bytes(val)]), next: v.next ? dec.decode(bytes(v.next)) : null };
-      if ((v.kind === "tail-keys" || v.kind === "tail-need") && !going(v)) throw new Error(`${app}: a page did not finish loading (${round} rounds, the last ${STALLED} asked nothing new)`);
+      if ((v.kind === "tail-keys" || v.kind === "tail-need") && !going(v)) throw new Fault("not-yet", `${app}: a page did not finish loading`, { message: `${app}: a page did not finish loading (${round} rounds, the last ${STALLED} asked nothing new)`, d: { app, rounds: round } });
       if (v.kind === "tail-keys") await epochKeys(v.id, v.epochs, app);
       else if (v.kind === "tail-need") await blocks.fetch(v.id, v.blocks, app);
+      else if (v.kind === "tail-unreadable") throw new Fault("sealed", `${app}: unreadable here`, { message: `${app}: ${v.said}`, d: { app } });
       else throw new Error(`${app}: ${v.said ?? v.kind}`);
     }
   }

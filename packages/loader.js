@@ -37,15 +37,97 @@ export async function run(boot) {
     const msg = String(why ?? "").slice(0, 160);
     (healthIndex ??= require("index").catch(() => null)).then(ix => ix?.health?.({ k, s: String(source ?? "page").slice(0, 24), to: tag(msg), why: msg, d: { ...where(), ...d } })).catch(() => {});
   }
+  // HOW EACH VISIT WENT (owner 10-12: "not only an error collector" — a page that never finishes says nothing by
+  // itself, and a person rarely knows what to report): every page load reports its OUTCOME, success included — how
+  // long the page took to start, each page opened and whether it SETTLED (drawn, its work done), was STUCK (still
+  // working after STUCK_MS), was SAID (a refusal shown) or FAILED; the faults met, by kind; reconnects to the node; the
+  // node questions that were SLOW or never answered and the time spent queued behind the get cap (`node.waits`);
+  // guest or member, and for a member how many spaces read. Sent once the first page settles (`visit #1`) and again
+  // when the page is hidden with something new (`#2`, …, at most every VISIT_EVERY_MS). A page STUCK reports at once
+  // (`stuck`), naming what it waits on. Never content; sealed to support like every report.
+  const STUCK_MS = 20000;
+  const VISIT_EVERY_MS = 5 * 60000;
+  const t00 = performance.now();
+  const visit = { pid: [...crypto.getRandomValues(new Uint8Array(3))].map(x => x.toString(16).padStart(2, "0")).join(""), n: 0, boot: null, routes: [], faults: {}, reconnects: 0, sentAt: 0, sentRoutes: 0 };
+  addEventListener("craftworks:node-back", () => visit.reconnects++);
+  async function sendVisit() {
+    if (!manifest || visit.routes.length === visit.sentRoutes) return;
+    visit.n += 1;
+    visit.sentAt = performance.now();
+    visit.sentRoutes = visit.routes.length;
+    const sp = await require("space").catch(() => null);
+    const me = sp ? await sp.me().catch(() => undefined) : undefined;
+    const spaces = me ? await sp.mine().then(l => l.length, e => `failed: ${String(e?.message ?? e).slice(0, 60)}`) : null;
+    const waits = loaded.has("node") ? await require("node").then(n => n.waits?.() ?? [], () => []) : [];
+    const ix = await (healthIndex ??= require("index").catch(() => null));
+    await ix?.health?.({ k: "visit", s: "page", to: `${visit.pid}#${visit.n}`, why: "", d: { member: me === undefined ? "unknown" : !!me, spaces, boot: visit.boot, up: Math.round(performance.now() - t00), routes: visit.routes.slice(-12), faults: visit.faults, reconnects: visit.reconnects, waits } }).catch(() => {});
+  }
+  document.addEventListener("visibilitychange", () => {
+    // (Hidden before its first page settled — a page that never finished: sent now, it is the visit that matters most.)
+    if (document.visibilityState === "hidden" && (!visit.n || performance.now() - visit.sentAt >= VISIT_EVERY_MS)) sendVisit();
+  });
+  // A PAGE's outcome: watched until its body has no work left and no placeholder (SETTLED), or STUCK_MS passed.
+  // Recorded when the page STARTS (`loading` until its components are mounted): a page that never gets that far is
+  // still in the visit.
+  function beginPage(route, t0) {
+    const rec = { r: route, ready: null, settled: null, out: "loading" };
+    visit.routes.push(rec);
+    return rec;
+  }
+  function watchPage(rec, t0) {
+    const route = rec.r;
+    rec.ready = Math.round(performance.now() - t0);
+    rec.out = "drawn";
+    if (visit.boot === null) visit.boot = Math.round(performance.now() - t00);
+    const busy = () => [...slots.body.querySelectorAll("[aria-busy=true], .cw-cover")].map(el => el.closest("[data-component]")?.dataset.component ?? "?");
+    let reportedStuck = false;
+    const check = async () => {
+      if (ctx.route !== route && rec.settled === null) return; // left before it settled: its record says so (settled null)
+      const now = busy();
+      if (!now.length) {
+        rec.settled = Math.round(performance.now() - t0);
+        if (rec.out === "stuck") rec.out = "late";
+        if (visit.n === 0) setTimeout(sendVisit, 2000);
+        return;
+      }
+      if (!reportedStuck && performance.now() - t0 >= STUCK_MS) {
+        reportedStuck = true;
+        rec.out = "stuck";
+        const waits = await require("node").then(n => n.inFlight().slice(0, 3).map(w => ({ what: String(w.what).replace(/[0-9a-f]{8,}/gi, "…").slice(0, 60), ms: w.ms })), () => []);
+        report("stuck", route, `${route} still working after ${STUCK_MS / 1000} s`, { on: [...new Set(now)].slice(0, 6), waits, pid: visit.pid });
+        if (visit.n === 0) sendVisit();
+      }
+      if (performance.now() - t0 < 120000) setTimeout(check, 500);
+    };
+    setTimeout(check, 300);
+    return rec;
+  }
   const stackTop = e => String(e?.stack ?? "").split("\n").slice(1, 3).map(l => l.trim().replace(/blob:[^ )]+/g, "blob")).join(" | ").slice(0, 160);
+  // FAULTS (FOUNDATION.md §4, `fault`): anything thrown is classified by KIND and reported by the kind's policy — an
+  // extension's own error, an expected refusal, a guest asked to log in, an abort are never reported. The service
+  // loads once the manifest is read; what fails before is not reported (`report` needs the manifest anyway).
+  let faults = null;
+  // (Asked before the manifest is read: nothing yet, and nothing kept — asked again later.)
+  const fault = () => (manifest ? (faults ??= manifest.packages?.fault ? require("fault").then(f => (f.reportTo(report), f)).catch(() => null) : Promise.resolve(null)) : Promise.resolve(null));
+  let faultNow = null; // the service, once loaded: `fail` classifies at once
+  const met = (source, e, via) =>
+    fault().then(f => {
+      if (f) {
+        const c = f.met(source, e, { via, stack: stackTop(e) || undefined });
+        visit.faults[c.kind] = (visit.faults[c.kind] ?? 0) + 1;
+        return c;
+      }
+      // (A site without the service: as before.)
+      if (!extensions(e) && !e?.expected && !/nobody is logged in/.test(e?.message ?? "")) report(via, source, e?.message ?? e, { stack: stackTop(e) });
+    });
   // A BROWSER EXTENSION's own error (its stack wholly in the extension: a wallet extension failing to connect) is not
   // this site's: not reported.
   const extensions = e => {
     const lines = String(e?.stack ?? "").split("\n").slice(1).filter(l => l.trim());
     return lines.length > 0 && lines.every(l => /(chrome|moz|safari(-web)?)-extension:\/\//.test(l));
   };
-  addEventListener("error", e => extensions(e.error) || report("page-error", working.at(-1) || ctx.route, e.message ?? e.error?.message, { stack: stackTop(e.error) }));
-  addEventListener("unhandledrejection", e => extensions(e.reason) || report("page-rejection", working.at(-1) || ctx.route, e.reason?.message ?? e.reason, { stack: stackTop(e.reason) }));
+  addEventListener("error", e => met(working.at(-1) || ctx.route, e.error ?? new Error(e.message), "page-error"));
+  addEventListener("unhandledrejection", e => met(working.at(-1) || ctx.route, e.reason, "page-rejection"));
   // A LOG LINE THAT SAYS SOMETHING FAILED (the words every package already uses for it), from the package that said it.
   // (Not a COUNT of them — "0 refused" in a tally says nothing failed.)
   const FAILED = /(?<!\d )\b(could not|couldn't|failed|refused|cannot|can't|not (loaded|saved|sent|put|stored|played|opened))\b/i;
@@ -65,8 +147,8 @@ export async function run(boot) {
   function require(name) {
     if (!loaded.has(name)) {
       askedBy.set(name, working.at(-1) ?? null);
-      // (A service that needs an account, asked before login, is not a failure.)
-      loaded.set(name, load(name).catch(e => (/nobody is logged in/.test(e?.message ?? "") || report("package-failed", name, e?.message ?? e), Promise.reject(e))));
+      // (A service that needs an account, asked before login, is not a failure: its fault's kind says so.)
+      loaded.set(name, load(name).catch(e => (name !== "fault" && met(name, e, "package-failed"), Promise.reject(e))));
     }
     return loaded.get(name);
   }
@@ -291,6 +373,7 @@ export async function run(boot) {
     const raw = manifest.pages[route];
     const page = Array.isArray(raw) ? { body: raw } : raw;
     const t0 = performance.now();
+    const rec = beginPage(route, t0);
     ctx.log("page", { what: full });
     // The wrapper's "Loading…" line: gone once a page starts (its components show their own placeholders, and how long
     // it took is in the trace); it comes back for a failure.
@@ -311,6 +394,7 @@ export async function run(boot) {
     // ACCESS (the manifest's, per page, as any website's routes): a `login` page opens only for someone logged in — the
     // login dialog if nobody is, home if it is closed. Every other page is public: what it shows is the access rules'.
     if (page.access === "login" && !(await (await require("login")).session())) {
+      rec.out = "login";
       if (location.hash.replace(/^#/, "") === at) location.hash = "#/";
       return;
     }
@@ -319,6 +403,7 @@ export async function run(boot) {
     shellAddress();
     ctx.appsOpened.add(route);
     ctx.log("page ready", { what: route, ms: Math.round(performance.now() - t0) });
+    watchPage(rec, t0);
   }
 
   // THE TRACE: always recorded (the wrapper's log), shown only on demand. A small toggle; the `trace` component is
@@ -417,6 +502,8 @@ export async function run(boot) {
     shell({ type: "title", title: manifest.app });
     addEventListener("craftworks:address", shellAddress);
     // The app's THEME (its manifest names it): applied before anything mounts, so nothing shows unstyled.
+    // FAULTS first: what fails from here on is classified and reported by kind.
+    faultNow = await fault();
     if (manifest.theme) await require(manifest.theme);
     // The SESSION layer (`login`), on every page as any site's: it answers a guest's "log in to do that" anywhere, and
     // guards the `login` pages.
@@ -535,16 +622,25 @@ export async function run(boot) {
   function fail(e) {
     // Whatever was thrown, said (a rejection with no Error showed "undefined").
     const said = e?.message ?? (typeof e === "string" ? e : (() => { try { return JSON.stringify(e); } catch { return String(e); } })());
-    // An EXPECTED refusal (`e.expected`: a members-only app opened from outside) is the page's answer: said as it is,
-    // never reported as a fault.
-    if (e?.expected) {
+    // An EXPECTED refusal (a members-only app opened from outside) or a guest asked to log in is the page's answer:
+    // said as it is, never reported as a fault.
+    const kind = faultNow?.classify(e).kind ?? (e?.expected ? "refused-expected" : null);
+    if (kind === "refused-expected" || kind === "login-needed") {
+      const r = visit.routes.at(-1);
+      if (r?.out === "loading") r.out = "said";
+      else visit.routes.push({ r: ctx.route, out: "said" });
       ctx.log("page", { what: `${location.hash}: ${said}` });
-      status.textContent = said;
+      status.textContent = faultNow?.say(e) ?? said;
       status.className = "said";
       status.hidden = false;
       return;
     }
-    ctx.log("FAILED", { what: `${location.hash}: ${said}${e?.stack ? ` — ${String(e.stack).split("\n").slice(0, 3).join(" | ")}` : ""}` });
+    const r = visit.routes.at(-1);
+    if (r?.out === "loading") r.out = "failed";
+    else visit.routes.push({ r: ctx.route, out: "failed" });
+    met(location.hash || "/", e, "page-failed");
+    if (visit.n === 0) setTimeout(sendVisit, 2000);
+    boot.log("page failed", { what: `${location.hash}: ${said}${e?.stack ? ` — ${String(e.stack).split("\n").slice(0, 3).join(" | ")}` : ""}` });
     status.textContent = `Could not load: ${said}`;
     status.className = "bad";
     status.hidden = false;

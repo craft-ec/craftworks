@@ -23,6 +23,7 @@
 //   where.key()       // the address as a key (an app redraws when it changes)
 //   where.placeKey()  // the PLACE as a key (yours, a space, a person, Discover): another place, the app opened afresh
 export async function start(ctx) {
+  const { Fault } = await ctx.require("fault");
   const [space, items, roles] = await Promise.all(["space", "items", "roles"].map(n => ctx.require(n)));
   const personOf = () => (ctx.space ? null : (/^u\/(did:[^/]+)/.exec(ctx.sub ?? "")?.[1] ?? null));
 
@@ -46,11 +47,11 @@ export async function start(ctx) {
       if (pr) await pr.settled;
       const domain = (await ctx.require("kinds")).policyDomain(kind);
       // (Both refusals are ANSWERS, not failures: `expected` — the loader says them, never as a fault.)
-      if (!desc) throw Object.assign(new Error("you are not in that space (left, or not joined yet)"), { expected: true });
+      if (!desc) throw new Fault("refused-expected", "not in that space", { message: "you are not in that space (left, or not joined yet)" });
       // Why not, said (its public rules: the app not on there, or who reads it).
       const on = pr.apps().includes(app);
       const reads = pr.policyIn(domain, "read");
-      if (!on || reads !== "anyone") throw Object.assign(new Error(`${space.shown(desc)}'s ${app} is for its members (${on ? `read by: ${reads ?? "members"}` : "not public there"}): join it to open it`), { expected: true });
+      if (!on || reads !== "anyone") throw new Fault("refused-expected", "members only", { message: `${space.shown(desc)}'s ${app} is for its members (${on ? `read by: ${reads ?? "members"}` : "not public there"}): join it to open it` });
       sp = { ...desc, outside: true };
     }
     // An app the space TURNED OFF: its Home instead (where its apps are added) — only on that certainty, an `app` act

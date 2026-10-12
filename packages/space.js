@@ -36,6 +36,7 @@
 // table in the server. (A channel that narrows access — private, a moderators' room — gets its own members and group:
 // with roles.)
 export async function start(ctx) {
+  const { Fault } = await ctx.require("fault");
   const auth = await ctx.require("auth");
   const { glue } = await ctx.require("node");
   const tables = Object.freeze(JSON.parse(glue.account_tables()));
@@ -54,7 +55,7 @@ export async function start(ctx) {
   // answers: its dialog, the page started again once someone is in); background work (a loop's write) only fails.
   const loginNeeded = () => {
     if (navigator.userActivation?.isActive) dispatchEvent(new CustomEvent("craftworks:login-needed"));
-    return new Error("nobody is logged in");
+    return new Fault("login-needed", "nobody is logged in");
   };
 
   async function account() {
