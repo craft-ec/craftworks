@@ -332,7 +332,8 @@ export async function mount(ctx, el) {
       const polls = S.polls();
       body.replaceChildren(
         h("h2", { textContent: `🗳 ${space.shown(at.space)}'s votes` }),
-        h("p", { className: "you" }, cur ? `Your vote is delegated to ${nameOf(cur)} where you do not vote yourself. ` : "You do not delegate. ", h("a", { href: at.href("delegation"), textContent: "Change" })),
+        // (Read from outside — not a member, a guest: nobody's vote here to delegate.)
+        at.outside ? null : h("p", { className: "you" }, cur ? `Your vote is delegated to ${nameOf(cur)} where you do not vote yourself. ` : "You do not delegate. ", h("a", { href: at.href("delegation"), textContent: "Change" })),
         h("h3", { textContent: "Proposals" }),
         props.length ? h("div", { className: "list" }, ...props) : h("p", { className: "none", textContent: "No proposals yet." }),
         h("h3", { textContent: "Polls" }),
@@ -377,7 +378,8 @@ export async function mount(ctx, el) {
       return root.replaceChildren(h("p", { className: "none", textContent: e.message }));
     }
     const s = (shown = at.sub);
-    const inSp = at.who === "space";
+    // A space this person is IN (read from outside: its public polls and proposals, nothing of a member's to do).
+    const inSp = at.who === "space" && !at.outside;
     at.tabs(inSp ? [{ label: "Delegation", href: at.href("delegation"), on: s === "delegation" }, { label: "Graph", href: at.href("graph"), on: s === "graph" }, { label: "＋ New proposal", href: at.href("new-proposal"), on: s === "new-proposal" }] : [], { yoursOn: !s, ...(at.who === "mine" || inSp ? { create: { label: "New poll", href: inSp ? at.href("new-poll") : "#/vote/new-poll", on: s === "new-poll" } } : {}) });
     root.replaceChildren(theme.loading("Opening…"));
     try {

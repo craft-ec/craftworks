@@ -271,6 +271,12 @@ export async function run(boot) {
   // A SPACE: `/s/<space id>/…` is the rest's page IN that space (`ctx.space`: its id; none: the personal space), and
   // `/s/<space id>` alone the space's own page, `/space` (its Home). DISCOVER (the public network, nobody's space):
   // `/discover/…`, `ctx.space` "discover".
+  const shell = msg => {
+    try {
+      if (parent !== window) parent.postMessage({ __freenet_shell__: true, ...msg }, "*");
+    } catch {}
+  };
+  const shellAddress = () => location.hash && shell({ type: "hash", hash: location.hash });
   async function show(at) {
     const inSpace = at.match(/^\/s\/([0-9a-f]{64})(\/.*)?$/) ?? at.match(/^\/(discover)(\/.*)?$/);
     ctx.space = inSpace ? inSpace[1] : null;
@@ -310,6 +316,7 @@ export async function run(boot) {
     }
     await fill("body", page.body ?? []);
     dispatchEvent(new CustomEvent("craftworks:route", { detail: route }));
+    shellAddress();
     ctx.appsOpened.add(route);
     ctx.log("page ready", { what: route, ms: Math.round(performance.now() - t0) });
   }
@@ -402,6 +409,10 @@ export async function run(boot) {
     // build still is, until its next login moves it here.
     ctx.identityPrior = manifest.identity_prior ?? [];
     document.title = manifest.app;
+    // The browser's TAB and ADDRESS BAR are the node's shell page's (this page is its iframe): told by its own message
+    // (`__freenet_shell__`), the address after every move — a reload or a copied link opens where the person is.
+    shell({ type: "title", title: manifest.app });
+    addEventListener("craftworks:address", shellAddress);
     // The app's THEME (its manifest names it): applied before anything mounts, so nothing shows unstyled.
     if (manifest.theme) await require(manifest.theme);
     // The SESSION layer (`login`), on every page as any site's: it answers a guest's "log in to do that" anywhere, and

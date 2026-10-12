@@ -246,7 +246,7 @@ export async function mount(ctx, el) {
       const gsp0 = (await space.mine()).find(s => s.id === g);
       const gsp = gsp0 && !(await roles.of(gsp0).then(async r => (await r.settled, r.left), () => true)) ? gsp0 : null;
       const to = `#/s/${server.id}/chat/${c.id.split("/").pop()}`;
-      if (location.hash !== to) history.replaceState(null, "", to);
+      if (location.hash !== to) history.replaceState(null, "", to), dispatchEvent(new CustomEvent("craftworks:address"));
       drawChannels();
       shown?.close();
       if (!gsp) {
@@ -258,7 +258,7 @@ export async function mount(ctx, el) {
     }
     // The address follows the channel open (a reload, a link: the same channel).
     const to = `#/s/${server.id}/chat/${c.id.split("/").pop()}`;
-    if (location.hash !== to) history.replaceState(null, "", to);
+    if (location.hash !== to) history.replaceState(null, "", to), dispatchEvent(new CustomEvent("craftworks:address"));
     drawChannels();
     shown?.close();
     shown = await roomUI.show(roomEl, c, `#${c.name}`);

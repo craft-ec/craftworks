@@ -72,7 +72,7 @@ export async function start(ctx) {
     const who = discover || guestDiscover ? "discover" : sp ? "space" : person ? "person" : "mine";
     const base = who === "discover" ? `#/discover/${app}` : sp ? `#/s/${sp.id}/${app}` : person ? `#/${app}/u/${person}` : `#/${app}`;
     const sub = (p ? (ctx.sub ?? "").replace(/^u\/did:[^/]+\/?/, "") : (ctx.sub ?? "")).replace(/^\/+/, "");
-    if (guestDiscover) history.replaceState(history.state, "", `#/discover/${app}${sub ? `/${sub}` : ""}`);
+    if (guestDiscover) history.replaceState(history.state, "", `#/discover/${app}${sub ? `/${sub}` : ""}`), dispatchEvent(new CustomEvent("craftworks:address"));
     const saved = saves && who === "mine" && /^saved(\/|$)/.test(sub);
     // THE READ: the place's items — a list's window, or (whole) every one; your Saved: what you saved of its kinds.
     const read = ({ kinds: ks = kinds, sort = "new", window = "all", whole = false, ...options } = {}) => {
