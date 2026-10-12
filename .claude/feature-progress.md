@@ -2328,3 +2328,13 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
       `comment: author` — while the control said "Anyone"): now one pure rule `audience.writeRule/withWrite`, test
       tools/write-rules.test.mjs with control; LIVE v379 (audience + items only). Forms: answers gated by the form's
       rule (comment door) and its mailbox address, refusals logged with their measured reason.
+
+## Live release v380 (2026-10-12) — everything but the token
+- Site craftworks v380, loader v37, through B (signer 2.3 s once B's beacon service was stopped; 1252/1262 pieces).
+- Tree: main 22a2830 with CRAFTWORKS_TOKEN=off, devices.wasm (3014…) and mls wasm (537d…) = live's bytes (build drift,
+  no source change); SHA256SUMS aligned in the release worktree ($CLAUDE_JOB_DIR/tmp/release).
+- Verified on the live manifest: devices/mls/idlog/bag/feed/tail/register/sealed unchanged; no Nodes/Wallet/Network;
+  login-only pages caption, chat, contact, drive, mail, note, settings.
+- B: craftworks-beacon.service stopped and disabled (owner 10-12). fx/fy moved to B (/opt/craftworks-test, fresh,
+  started only by $CLAUDE_JOB_DIR/tmp/fxfy.sh up).
+- Token: not released; most epochs still post a second root with an unwitnessed entry.
