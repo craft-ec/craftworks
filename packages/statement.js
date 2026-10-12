@@ -52,7 +52,11 @@ export async function start(ctx) {
     const reads = { got: 0, absent: [], silent: new Set() };
     // (Rounds: key logs, keepers' records, the lot's beacon, the AUDITS' drawn pieces and outputs, the fees' reads,
     // the previous statement's lines.)
-    for (let round = 0; round < 10; round++) {
+    // Rounds: each answers what the build asked; a read the build refused as not fresh is asked again (rules::statement,
+    // 10-12), and what it names (a signatures container: its signers' chains) is asked next — more than 10 (fx 10-12:
+    // "not built" with every read answered). Bounded, each round's reads at once.
+    const ROUNDS = 40;
+    for (let round = 0; round < ROUNDS; round++) {
       const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon, tokenCode, bagCode, queued, posted, [...fresh], earlier, misdeeds);
       if (r.want) {
         await Promise.all(r.want.map(id => node.read(bytes(id), "reading a key log, a keeper's record or an audited piece", { absent: true }).then(
@@ -61,11 +65,11 @@ export async function start(ctx) {
         )));
         continue;
       }
-      r.reads = { got: reads.got, absent: reads.absent, listed: keepers.length };
+      r.reads = { got: reads.got, absent: reads.absent, listed: keepers.length, rounds: round + 1 };
       built.set(epoch, r);
       return r;
     }
-    throw new Error(`epoch ${epoch}: not built — no answer for ${[...reads.silent].map(x => x.slice(0, 8)).join(", ") || "what it asked"} (a key log, a keeper's record or an audited piece)`);
+    throw new Error(`epoch ${epoch}: not built in ${ROUNDS} rounds — no answer for ${[...reads.silent].map(x => x.slice(0, 8)).join(", ") || "what it asked"} (a key log, a keeper's record or an audited piece)`);
   }
   const decided = new Set(); // epochs whose allowance this page saw decided
   const containered = new Set(); // epochs whose statement signatures container this page put
@@ -84,7 +88,7 @@ export async function start(ctx) {
     const said = `${epoch}/${mine.root}`;
     if (!saidRoots.has(said)) {
       saidRoots.add(said);
-      ctx.log("statement", { what: `epoch ${epoch}: computed root ${mine.root.slice(0, 12)}…, ${mine.kept} kept of ${mine.reads.listed} listed (read ${mine.reads.got}; not there: ${mine.reads.absent.join(", ") || "none"})` });
+      ctx.log("statement", { what: `epoch ${epoch}: computed root ${mine.root.slice(0, 12)}…, ${mine.kept} kept of ${mine.reads.listed} listed (read ${mine.reads.got} in ${mine.reads.rounds} round(s); not there: ${mine.reads.absent.join(", ") || "none"})` });
     }
     if (!posted.some(p => (x => x?.epoch === epoch && x.root === mine.root)(Core.statement_posted_read(p)))) {
       const r = mine;
