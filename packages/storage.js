@@ -797,9 +797,14 @@ export async function start(ctx) {
   // A CHANNEL: one shared tail, listed in the directory before it is made.
   async function channel(name) {
     const sp = await space.account();
-    const d = await directory();
-    const listed = inDirectory(d, name);
-    return tail(sp.shared, name, { known: listed === false ? false : null, beforeCreate: () => listInDirectory(name) });
+    // The DIRECTORY is not asked: a node that just logged in with the words cannot open it yet — it is sealed with the
+    // account's epoch keys, which this very channel's escrows give it (10-12: every words login on a new node failed
+    // here — "tables: its tree is sealed with a key this page does not hold"). The channel is keyed by the account's
+    // data key, which the words give.
+    // So the directory never decides that the channel is ABSENT: a sealed directory reads as empty on such a node, and
+    // "not listed" made it start a SECOND group for the account (fx/fy 10-12: "this node created the account's group"
+    // instead of joining it). The channel is always read for what it is.
+    return tail(sp.shared, name, { known: null, beforeCreate: () => listInDirectory(name).catch(() => {}) });
   }
   // A SCOPE: a space seen from this node — who writes in it, where each writer lists its tables, how its tails open.
   // The account: the directory names its nodes, their catalogs are account tables. Another space: its GROUP's members write, each listing the space's tables in its own catalog

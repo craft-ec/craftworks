@@ -324,6 +324,14 @@ export async function start(ctx) {
         const st = await keep(channel, { made: true });
         ctx.log("account keys", { what: `this node ${kind} the account's group: epoch ${st.epoch}, ${st.members.length} node(s)` });
         if (kept.size) ctx.log("account keys", { what: `${kept.size} earlier epoch(s) recovered from escrow` });
+        // JOINED with the words (a node new to the account): every capability of this page opened before the keys were
+        // here — the account's tables read sealed, the name, the spaces — and keeps what it saw. The app starts again,
+        // once, with the keys in place (as Log out does): a FULL recovery, never half a page (10-12: the name and the
+        // spaces stayed empty until a reload).
+        if (kind === "joined") {
+          ctx.log("account keys", { what: "recovered: the app starts again with this node's keys in place" });
+          setTimeout(() => location.reload(), 1500);
+        }
         // Every account has a CARD from the start (its inbox, this node's key packages): nobody who wants to write to it
         // ever waits on one that does not exist. After this turn of the queue (the card asks for key packages).
         setTimeout(() => ctx.require("directory").then(d => d.publish()).catch(e => ctx.log("account keys", { what: `the card: ${e.message}` })));
