@@ -22,6 +22,13 @@
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const storage = await ctx.require("storage");
+  // THE ACCOUNT'S GROUP on this device moves only through its lifecycle (FOUNDATION.md §3: `account`): made only by a
+  // registration on a channel answered absent, joined only by walking a channel read with its group info.
+  const life = await ctx.require("lifecycle");
+  const ME = "me";
+  const lifeIs = s => life.state("account", ME).s === s;
+  // The account's keys here at last: a session that was KEYLESS is open.
+  life.on("account", (_, to) => to === "MEMBER" && life.state("session", ME).s === "OPEN_KEYLESS" && life.transition("session", ME, "open", { keys: "arrived" }));
   // RECORDS OF CRITICAL ACTIONS (owner 10-07: a space's key log broke and nothing said who wrote it, why or when — "why
   // are we not keeping enough log for critical action?"). PROVENANCE: what every key-log row and commit this page writes
   // carries — this device (its member key), why, when, the `keys` code's version. KEY EVENTS: each critical action of
@@ -99,7 +106,9 @@ export async function start(ctx) {
     const st = mls.status();
     const r = await auth.identity.mlsSave(st.state, st.epoch, st.secret);
     if (!r.mlsSaved) throw new Error(`the identity would not keep the account's keys: ${r.refused ?? JSON.stringify(r)}`);
-    if (st.epoch === 0 && !channel.rows().some(x => x.key === escrowKey(0))) {
+    // The group's FIRST escrow and info: written only while this device is CREATING the group (a registration) —
+    // never because the channel, as read here, happens to lack them.
+    if (st.epoch === 0 && lifeIs("CREATING") && !channel.rows().some(x => x.key === escrowKey(0))) {
       await channel.put(escrowKey(0), hexOf(st.escrow));
       await channel.put("info", hexOf(st.info));
     }
@@ -292,88 +301,111 @@ export async function start(ctx) {
       // Only the home site keeps the account's keys: anywhere else, nothing to do (and no table to ask for).
       const home = await auth.identity.mlsLoad();
       if (home.refused) return;
-      const channel = await storage.table(CHANNEL);
-      // The CHANNEL as the NETWORK has it, before anything is decided (10-12, the owner's node: its rows were read before
-      // the node had fetched them — 0 rows — and the page made a SECOND group for the account): its first read awaited,
-      // and for a words login (an account that exists) read again for up to a minute while it still shows nothing.
-      await channel.answer?.();
-      for (let i = 0; !fresh && !channel.rows().length && i < 6; i++) {
-        await new Promise(r => setTimeout(r, 10000));
-        await channel.reread?.().catch(() => {});
+      life.transition("account", ME, "login", { fresh: !!fresh });
+      try {
+        await joinOrMake({ entropy, did, node, fresh });
+      } catch (e) {
+        if (["CONFIRMING_CHANNEL", "WALKING", "JOINING", "CREATING"].includes(life.state("account", ME).s)) life.transition("account", ME, "fail", { why: String(e?.message ?? e).slice(0, 120) });
+        throw e;
       }
-      const kept = new Set();
-      // How the walk went — reported whatever the outcome (`account-recovery`, to the health bag: the account's own
-      // tables may still be sealed here): where it started, how far it got, why it stopped (10-12: the owner's node
-      // recovered the account but not its storage, and nothing said how far the walk had come).
-      const walked = { channelRows: channel.rows().length, fresh: !!fresh, info: false, escrow0: false, epochs: 0, stop: null };
-      const recovery = (k, why, d = {}) =>
-        ctx.require("index").then(ix => ix.health({ k, s: "", e: walked.epochs, why: String(why).slice(0, 160), d: { ...walked, ...d } })).catch(() => {});
-      // The WALK, with the words: from the channel's pointer, every epoch's commit and escrowed next secret, to the
-      // present — each epoch's secret kept here on the way (this node then reads what was written before it joined).
-      async function walk() {
-        let e = 0;
-        let info = channel.rows().find(x => x.key === "info")?.value;
-        walked.info = !!info;
-        const first = channel.rows().find(x => x.key === escrowKey(e))?.value;
-        walked.escrow0 = !!first;
-        if (!first) return ((walked.stop = "no escrow for epoch 0 in the channel"), { e, info, secret: null });
-        let secret = mlsGlue.Mls.open_escrow(entropy, bytes(first));
-        for (;;) {
-          if (!kept.has(e) && (await auth.identity.epochKeep(e, secret)).mlsSaved) kept.add(e);
-          walked.epochs = e;
-          // Each epoch's log read FROM THE NETWORK (not as this new node happens to hold it: nothing yet), and an empty
-          // one asked twice more before it counts as the newest — a walk cut short joins at an old epoch.
-          let entry = await commitFrom(e, secret, true);
-          for (let i = 0; !entry && i < 2; i++) {
-            await new Promise(r => setTimeout(r, 5000));
-            entry = await commitFrom(e, secret, true);
-          }
-          if (!entry) return ((walked.stop = `no commit after epoch ${e} (the newest)`), { e, info, secret });
-          const c = parse(entry);
-          info = c.info ?? info;
-          // A commit without its escrowed next secret (made before escrows, or by a build that did not write one):
-          // the chain of keys breaks here — said, never a bare throw.
-          if (!c.next) return ((walked.stop = `the commit after epoch ${e} carries no escrowed secret: later epochs not recoverable from the words`), { e, info, secret, broken: true });
-          secret = mlsGlue.Mls.open_escrow(entropy, bytes(c.next));
-          e += 1;
-        }
-      }
-      for (let round = 0; round < 4; round++) {
-        const at = await walk();
-        // A WORDS LOGIN never makes a group: the account exists, so its group does. Its info not read here (the channel
-        // still empty, or no escrow for its first epoch) is a failure said and reported — never a second group made
-        // beside the account's own (only a REGISTRATION makes one).
-        if (!fresh && !at.info) {
-          const why = `the account's key channel read ${walked.channelRows} row(s), no group info: not joined (never a second group)`;
-          await recovery("account-recovery", `failed: ${why}`, { kind: "refused" });
-          throw new Error(why);
-        }
-        const [kind, commit] = mls.with_words(did, await keyLog(did), entropy, node, at.info ? bytes(at.info) : new Uint8Array(0));
-        if (kind === "joined") {
-          // The join's commit, in the log of the epoch it moved from: if another node moved the group first, walk on.
-          if (!at.secret) throw new Error("the account's group has no escrow to join from");
-          const r = await commitAt(at.e, at.secret, commit);
-          if (!r.ok) continue;
-        }
-        const st = await keep(channel, { made: true });
-        ctx.log("account keys", { what: `this node ${kind} the account's group: epoch ${st.epoch}, ${st.members.length} node(s)` });
-        await recovery("account-recovery", `${kind}: group epoch ${st.epoch}, ${st.members.length} node(s), ${kept.size} earlier epoch(s) recovered; walk: ${walked.stop ?? "?"}`, { kind, groupEpoch: st.epoch, nodes: st.members.length, recovered: kept.size, broken: !!at.broken });
-        if (kept.size) ctx.log("account keys", { what: `${kept.size} earlier epoch(s) recovered from escrow` });
-        // JOINED with the words (a node new to the account): every capability of this page opened before the keys were
-        // here — the account's tables read sealed, the name, the spaces — and keeps what it saw. The app starts again,
-        // once, with the keys in place (as Log out does): a FULL recovery, never half a page (10-12: the name and the
-        // spaces stayed empty until a reload).
-        if (kind === "joined") {
-          ctx.log("account keys", { what: "recovered: the app starts again with this node's keys in place" });
-          setTimeout(() => location.reload(), 1500);
-        }
-        // Every account has a CARD from the start (its inbox, this node's key packages): nobody who wants to write to it
-        // ever waits on one that does not exist. After this turn of the queue (the card asks for key packages).
-        setTimeout(() => ctx.require("directory").then(d => d.publish()).catch(e => ctx.log("account keys", { what: `the card: ${e.message}` })));
-        return;
-      }
-      throw new Error("the account's group kept moving: joining it again next time");
     })));
+  async function joinOrMake({ entropy, did, node, fresh }) {
+    const channel = await storage.table(CHANNEL);
+    // The CHANNEL as the NETWORK has it, before anything is decided (10-12, the owner's node: its rows were read before
+    // the node had fetched them — 0 rows — and the page made a SECOND group for the account): its first read awaited,
+    // and for a words login (an account that exists) read again for up to a minute while it still shows nothing.
+    // DECIDED first (FOUNDATION.md §2: asked again with the long wait while the node is silent).
+    let chState = (await channel.decided?.())?.s ?? "unknown";
+    for (let i = 0; !fresh && !channel.rows().length && i < 6; i++) {
+      await new Promise(r => setTimeout(r, 10000));
+      await channel.reread?.().catch(() => {});
+      chState = channel.state?.s ?? chState;
+    }
+    const kept = new Set();
+    // How the walk went — reported whatever the outcome (`account-recovery`, to the health bag: the account's own
+    // tables may still be sealed here): where it started, how far it got, why it stopped (10-12: the owner's node
+    // recovered the account but not its storage, and nothing said how far the walk had come).
+    const walked = { channelRows: channel.rows().length, fresh: !!fresh, info: false, escrow0: false, epochs: 0, stop: null };
+    const recovery = (k, why, d = {}) =>
+      ctx.require("index").then(ix => ix.health({ k, s: "", e: walked.epochs, why: String(why).slice(0, 160), d: { ...walked, ...d } })).catch(() => {});
+    // The WALK, with the words: from the channel's pointer, every epoch's commit and escrowed next secret, to the
+    // present — each epoch's secret kept here on the way (this node then reads what was written before it joined).
+    async function walk() {
+      let e = 0;
+      let info = channel.rows().find(x => x.key === "info")?.value;
+      walked.info = !!info;
+      const first = channel.rows().find(x => x.key === escrowKey(e))?.value;
+      walked.escrow0 = !!first;
+      if (!first) return ((walked.stop = "no escrow for epoch 0 in the channel"), { e, info, secret: null });
+      let secret = mlsGlue.Mls.open_escrow(entropy, bytes(first));
+      for (;;) {
+        if (!kept.has(e) && (await auth.identity.epochKeep(e, secret)).mlsSaved) kept.add(e);
+        walked.epochs = e;
+        // Each epoch's log read FROM THE NETWORK (not as this new node happens to hold it: nothing yet), and an empty
+        // one asked twice more before it counts as the newest — a walk cut short joins at an old epoch.
+        let entry = await commitFrom(e, secret, true);
+        for (let i = 0; !entry && i < 2; i++) {
+          await new Promise(r => setTimeout(r, 5000));
+          entry = await commitFrom(e, secret, true);
+        }
+        if (!entry) return ((walked.stop = `no commit after epoch ${e} (the newest)`), { e, info, secret });
+        const c = parse(entry);
+        info = c.info ?? info;
+        // A commit without its escrowed next secret (made before escrows, or by a build that did not write one):
+        // the chain of keys breaks here — said, never a bare throw.
+        if (!c.next) return ((walked.stop = `the commit after epoch ${e} carries no escrowed secret: later epochs not recoverable from the words`), { e, info, secret, broken: true });
+        secret = mlsGlue.Mls.open_escrow(entropy, bytes(c.next));
+        e += 1;
+      }
+    }
+    // THE LIFECYCLE decides which way (its guards): a REGISTRATION makes the group, only on a channel the node
+    // answered is not there; a WORDS LOGIN walks, only a channel read with its group info — never a second group.
+    if (fresh) life.transition("account", ME, "create", { fresh: true, channel: chState });
+    else {
+      const info = channel.rows().some(x => x.key === "info");
+      try {
+        life.transition("account", ME, "walk", { fresh: false, channel: chState, info });
+      } catch (e) {
+        const why = `the account's key channel read ${channel.rows().length} row(s) (${chState}), no group info: not joined (never a second group)`;
+        await recovery("account-recovery", `failed: ${why}`, { kind: "refused" });
+        throw e;
+      }
+    }
+    for (let round = 0; round < 4; round++) {
+      const at = await walk();
+      if (!fresh && !at.info) {
+        const why = `the account's key channel read ${walked.channelRows} row(s), no group info: not joined (never a second group)`;
+        await recovery("account-recovery", `failed: ${why}`, { kind: "refused" });
+        throw new Error(why);
+      }
+      const [kind, commit] = mls.with_words(did, await keyLog(did), entropy, node, at.info ? bytes(at.info) : new Uint8Array(0));
+      if (kind === "joined") {
+        // The join's commit, in the log of the epoch it moved from: if another node moved the group first, walk on.
+        if (!at.secret) throw new Error("the account's group has no escrow to join from");
+        if (lifeIs("WALKING")) life.transition("account", ME, "join", { epoch: at.e });
+        const r = await commitAt(at.e, at.secret, commit);
+        if (!r.ok) continue;
+      } else if (!fresh) throw new Error(`a words login was answered "${kind}", not joined: never a second group`);
+      const st = await keep(channel, { made: true });
+      life.transition("account", ME, kind === "joined" ? "joined" : "made", { epoch: st.epoch, nodes: st.members.length, recovered: kept.size });
+      ctx.log("account keys", { what: `this node ${kind} the account's group: epoch ${st.epoch}, ${st.members.length} node(s)` });
+      await recovery("account-recovery", `${kind}: group epoch ${st.epoch}, ${st.members.length} node(s), ${kept.size} earlier epoch(s) recovered; walk: ${walked.stop ?? "?"}`, { kind, groupEpoch: st.epoch, nodes: st.members.length, recovered: kept.size, broken: !!at.broken });
+      if (kept.size) ctx.log("account keys", { what: `${kept.size} earlier epoch(s) recovered from escrow` });
+      // JOINED with the words (a node new to the account): every capability of this page opened before the keys were
+      // here — the account's tables read sealed, the name, the spaces — and keeps what it saw. The app starts again,
+      // once, with the keys in place (as Log out does): a FULL recovery, never half a page (10-12: the name and the
+      // spaces stayed empty until a reload).
+      if (kind === "joined") {
+        ctx.log("account keys", { what: "recovered: the app starts again with this node's keys in place" });
+        setTimeout(() => location.reload(), 1500);
+      }
+      // Every account has a CARD from the start (its inbox, this node's key packages): nobody who wants to write to it
+      // ever waits on one that does not exist. After this turn of the queue (the card asks for key packages).
+      setTimeout(() => ctx.require("directory").then(d => d.publish()).catch(e => ctx.log("account keys", { what: `the card: ${e.message}` })));
+      return;
+    }
+    throw new Error("the account's group kept moving: joining it again next time");
+  }
 
   // NEW WORDS: every escrow sealed again for them (the old words open nothing after the change), and from now on escrows
   // are sealed for them.
@@ -416,9 +448,13 @@ export async function start(ctx) {
       if (!s) return null;
       if (!status) {
         const r = await auth.identity.mlsLoad();
+        // Not joined here (logged in, the keys not held): the session is KEYLESS — said, never left looking logged in.
+        if (!r.mlsState && !r.refused && !lifeIs("CONFIRMING_CHANNEL") && !lifeIs("WALKING") && !lifeIs("JOINING") && !lifeIs("CREATING"))
+          if (life.state("session", ME).s !== "OPEN_KEYLESS") life.transition("session", ME, "keyless", { why: "the account's keys are not held on this node" });
         if (!r.mlsState) return null; // not the home site, or this node has not joined yet
         mls.load(s.didBytes, await keyLog(s.didBytes), bytes(r.mlsState));
       }
+      if (!lifeIs("MEMBER")) life.transition("account", ME, "loaded", { epoch: mls.status().epoch });
       const channel = await storage.table(CHANNEL);
       const applied = await catchUp();
       if (mls.status().removed) return forget();
@@ -444,6 +480,8 @@ export async function start(ctx) {
   // group's state and every epoch's secret — so a lost or stolen node that comes online again gives nothing away,
   // and the app starts again logged out. The account is untouched: the recovery words bring the node back.
   async function forget() {
+    life.transition("account", ME, "removed", {});
+    life.transition("session", ME, "removed", {});
     storage.refuse("this node was removed from your account: it cannot change it");
     const r = await auth.identity.forget().catch(e => ({ refused: e?.message ?? String(e) }));
     ctx.log("account keys", { what: r.loggedOut ? "this node was removed from the account: it has forgotten everything it held" : `this node was removed, and could not forget: ${r.refused ?? JSON.stringify(r)}` });

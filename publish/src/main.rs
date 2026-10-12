@@ -409,7 +409,7 @@ async fn main() -> Result<()> {
         std::fs::write(&off_config, b"{}").context("writing the token-off config")?;
         println!("token: OFF (no beacon, no tokens; Nodes, Wallet and Network left out)");
     }
-    let packages: [(&str, &str, PathBuf); 130] = [
+    let packages: [(&str, &str, PathBuf); 131] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -419,6 +419,8 @@ async fn main() -> Result<()> {
         ("settings", "module", app.join("packages/settings.js")),
         // FAULTS: what a failure is, once (FOUNDATION.md §4); the loader reports through it.
         ("fault", "service", app.join("packages/fault.js")),
+        // LIFECYCLES: every process's states, one table each (FOUNDATION.md §1, §3).
+        ("lifecycle", "service", app.join("packages/lifecycle.js")),
         ("node", "service", app.join("packages/node.js")),
         ("identity", "service", app.join("packages/identity.js")),
         ("auth", "service", app.join("packages/auth.js")),

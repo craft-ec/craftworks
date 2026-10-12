@@ -12,6 +12,8 @@
 export async function start(ctx) {
   const id = await ctx.require("identity");
   const { glue } = await ctx.require("node");
+  // THE SESSION's lifecycle (FOUNDATION.md §3: `session`): recorded here (shadow — nothing gated on it yet).
+  const life = await ctx.require("lifecycle");
   let current = null;
   let made = null; // the DID (hex) of an account this page registered
 
@@ -26,6 +28,7 @@ export async function start(ctx) {
       fresh: made === a.unlocked.did,
     };
     ctx.log("logged in", { what: `${current.did.slice(0, 24)}… member ${current.member.slice(0, 12)}…` });
+    if (life.state("session", "me").s !== "OPEN") life.transition("session", "me", "open", { fresh: current.fresh });
     announce();
     return current;
   };
@@ -39,6 +42,7 @@ export async function start(ctx) {
   async function logout() {
     await id.lock();
     current = null;
+    life.transition("session", "me", "lock", {});
     ctx.log("logged out", {});
     announce();
     // The app starts again, at home: every capability holds per-session things (grants asked, tables and their keys,

@@ -2377,7 +2377,16 @@ Build order (FOUNDATION §7):
       login wait not counted as stuck (loader v21).
       SEEN, for phase 6: fx (the account's first device) reads `tables` as sealed after fy joined (epoch moved) — /chat,
       /board fail until a reload once the key arrives (same on v641, before phase 2). R3 + a failed app retrying fixes it.
-- [ ] 3. Lifecycle mechanism + account group + session
+- [x] 3. Lifecycle mechanism + account group + session — `packages/lifecycle.js` (MACHINES as data; `transition`
+      checks from-states and guards: illegal → `bug`, guard no → `refused`, both thrown; one `lifecycle-<machine>` report
+      per move; `on`, `snapshot` → the visit's `life`). ACCOUNT in keys.js: login → CONFIRMING_CHANNEL (channel
+      `decided()`), then `create` (guard: fresh ∧ channel absent) or `walk` (guard: not fresh ∧ present ∧ info) → JOINING
+      → MEMBER; `fail` → JOIN_FAILED; `loaded`; `removed`. `keep()` writes e/0 + info ONLY in CREATING. SESSION (shadow,
+      nothing gated yet): open (auth), keyless (keys.ready with no group held), lock, removed; KEYLESS → OPEN when the
+      account turns MEMBER. Verified: tools/lifecycle.test.mjs 4/4 (control: the create guard removed fails 2);
+      fx v646 + loader v22: registration CONFIRMING→CREATING(channel absent)→MEMBER, words CONFIRMING→WALKING(present,
+      info)→JOINING→MEMBER epoch 1 / 2 nodes; recovery complete (name, space, message). NOT built (later): COMMITTING
+      for device removal, MEMBER_PARTIAL_HISTORY; space machine (phase 4).
 - [ ] 4. Gates and jobs
 - [ ] 5. Page/app/save/delete (save on change, drafts, resume; installed apps in frames)
 - [ ] 6. R3/R4/R5

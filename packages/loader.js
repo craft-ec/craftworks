@@ -59,8 +59,11 @@ export async function run(boot) {
     const me = sp ? await sp.me().catch(() => undefined) : undefined;
     const spaces = me ? await sp.mine().then(l => l.length, e => `failed: ${String(e?.message ?? e).slice(0, 60)}`) : null;
     const waits = loaded.has("node") ? await require("node").then(n => n.waits?.() ?? [], () => []) : [];
+    // Where each lifecycle ENDED UP (FOUNDATION.md §3): an account group JOIN_FAILED, a session OPEN_KEYLESS — outcomes
+    // even when nothing threw.
+    const life = loaded.has("lifecycle") ? await require("lifecycle").then(l => l.snapshot(), () => null) : null;
     const ix = await (healthIndex ??= require("index").catch(() => null));
-    await ix?.health?.({ k: "visit", s: "page", to: `${visit.pid}#${visit.n}`, why: "", d: { member: me === undefined ? "unknown" : !!me, spaces, boot: visit.boot, up: Math.round(performance.now() - t00), routes: visit.routes.slice(-12), faults: visit.faults, reconnects: visit.reconnects, waits } }).catch(() => {});
+    await ix?.health?.({ k: "visit", s: "page", to: `${visit.pid}#${visit.n}`, why: "", d: { member: me === undefined ? "unknown" : !!me, spaces, boot: visit.boot, up: Math.round(performance.now() - t00), routes: visit.routes.slice(-12), faults: visit.faults, reconnects: visit.reconnects, waits, life } }).catch(() => {});
   }
   document.addEventListener("visibilitychange", () => {
     // (Hidden before its first page settled — a page that never finished: sent now, it is the visit that matters most.)
