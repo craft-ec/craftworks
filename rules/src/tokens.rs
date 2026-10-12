@@ -576,6 +576,34 @@ mod baseline_check {
         assert!(testlot::done(&|g| statement_accepted(&tl.lot, g, ctx.code_hash, ctx.beacon, 5, &[0x5A; 32]), &got).unwrap().is_err());
     }
 
+    /// THE FILL ATTACK on the shared CLAIMS REGISTRY (audit C2b), on the code as it stands: 4,096 forged claims (each
+    /// signed by its own fresh key for a made-up owner — all the registry can check) fill epoch 1's registry; a real
+    /// staker's claim arriving after is REFUSED (the update's cap), and `V(1)` is empty — the lot falls to the baseline.
+    #[test]
+    fn old_registry_fill_refuses_the_real_claim() {
+        use ed25519_dalek::Signer as _;
+        let ctx = Ctx { code_hash: [9; 32], beacon: [7; 32], idlog: [6; 32] };
+        let mut got = HashMap::new();
+        let tl = testlot::stakers(&ctx, &mut got);
+        let p = t::claims::Params { code_hash: ctx.code_hash, pool: tl.lot.pool, beacon: ctx.beacon, epoch: 1 };
+        let real = t::claims::Registry::decode(&got[&p.id()]).unwrap();
+        let forged: Vec<t::draw::StakeClaim> = (0..t::claims::CLAIMS_MAX as u32).map(|n| {
+            let k = ed25519_dalek::SigningKey::from_bytes(blake3::hash(&n.to_le_bytes()).as_bytes());
+            let (owner, key) = (*blake3::hash(&[&n.to_le_bytes()[..], b"owner"].concat()).as_bytes(), k.verifying_key().to_bytes());
+            t::draw::StakeClaim { owner, amount: 1_000, epoch: 1, key, sig: k.sign(&t::draw::StakeClaim::message(&tl.lot.pool, &owner, 1_000, 1, &key)).to_bytes() }
+        }).collect();
+        let full = t::claims::merge(&t::claims::Registry::default(), &t::claims::Registry { claims: forged });
+        assert_eq!(t::claims::holds(&p, &full), Ok(()), "every forged claim holds: signed by its key");
+        // The real claim arrives (well before the freeze): the merge is over the cap — the update refuses it.
+        let taken = t::claims::take(&p, &full, &t::claims::Registry { claims: vec![real.claims[0].clone()] }, 1);
+        assert!(taken.claims.len() > t::claims::CLAIMS_MAX, "over the cap: the update returns 'more claims than a registry holds'");
+        assert!(t::claims::Registry::decode(&taken.encode()).is_none(), "and no copy holding it reads");
+        got.insert(p.id(), full.encode());
+        let v = testlot::done(&|g| Ok(valid_of(&ctx, &tl.lot, g, 1)), &got).unwrap();
+        println!("OLD REGISTRY FILL: {} forged claims, the real one refused (merge {} > cap {}); V(1) = {} staker(s)", full.claims.len(), taken.claims.len(), t::claims::CLAIMS_MAX, v.len());
+        assert!(v.is_empty(), "V(1) empty: the baseline alone");
+    }
+
     #[test]
     fn the_test_baseline_key_is_its_seeds() {
         use ed25519_dalek::SigningKey;
