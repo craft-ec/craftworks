@@ -2336,5 +2336,5 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
 - Verified on the live manifest: devices/mls/idlog/bag/feed/tail/register/sealed unchanged; no Nodes/Wallet/Network;
   login-only pages caption, chat, contact, drive, mail, note, settings.
 - B: craftworks-beacon.service stopped and disabled (owner 10-12). fx/fy moved to B (/opt/craftworks-test, fresh,
-  started only by $CLAUDE_JOB_DIR/tmp/fxfy.sh up).
+  started only by $CLAUDE_JOB_DIR/tmp/fxfy.sh up) — MOVED BACK LOCAL the same day: this link (~100 KB/s up) made pages time out; fxfy.sh now starts the local pair on demand.
 - Token: not released; most epochs still post a second root with an unwitnessed entry.
