@@ -265,7 +265,7 @@ export async function start(ctx) {
     if (Date.now() - (reported.get(key) ?? 0) < 3600e3) return false;
     reported.set(key, Date.now());
     const day = new Date().toISOString().slice(0, 10);
-    const v = String(ctx.shaOf?.("conversation") ?? "").slice(0, 12);
+    const v = String(ctx.siteV ?? ctx.shaOf?.("conversation") ?? "").slice(0, 12); // the site's manifest hash
     // WHO reported (the account's id, its first 8 hex: reports from one account told apart, and its other reports
     // read together) — never more of it.
     const r = String((await space.account().catch(() => null))?.id ?? "").replace(/^did:craftec:/, "").slice(0, 8) || null;

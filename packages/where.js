@@ -45,11 +45,12 @@ export async function start(ctx) {
       const pr = desc ? await roles.ofPublic(desc) : null;
       if (pr) await pr.settled;
       const domain = (await ctx.require("kinds")).policyDomain(kind);
-      if (!desc) throw new Error("you are not in that space (left, or not joined yet)");
+      // (Both refusals are ANSWERS, not failures: `expected` — the loader says them, never as a fault.)
+      if (!desc) throw Object.assign(new Error("you are not in that space (left, or not joined yet)"), { expected: true });
       // Why not, said (its public rules: the app not on there, or who reads it).
       const on = pr.apps().includes(app);
       const reads = pr.policyIn(domain, "read");
-      if (!on || reads !== "anyone") throw new Error(`${space.shown(desc)}'s ${app} is for its members (${on ? `read by: ${reads ?? "members"}` : "not public there"}): join it to open it`);
+      if (!on || reads !== "anyone") throw Object.assign(new Error(`${space.shown(desc)}'s ${app} is for its members (${on ? `read by: ${reads ?? "members"}` : "not public there"}): join it to open it`), { expected: true });
       sp = { ...desc, outside: true };
     }
     // An app the space TURNED OFF: its Home instead (where its apps are added) — only on that certainty, an `app` act

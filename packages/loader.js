@@ -398,6 +398,9 @@ export async function run(boot) {
     ctx.log("loader started", { what: `loader v${VERSION}` });
     const m = await boot.manifest();
     manifest = JSON.parse(new TextDecoder().decode(m.bytes));
+    // The SITE's version (its manifest's hash): what every health report names — one package's hash cannot tell two
+    // releases apart that left it unchanged.
+    ctx.siteV = hex(await crypto.subtle.digest("SHA-256", m.bytes)).slice(0, 12);
     // Each package's VERSION (its sha256, as the manifest names it): what a record of a critical action carries.
     ctx.shaOf = n => manifest?.packages?.[n]?.sha256 ?? null;
     ctx.app = manifest.app;
@@ -419,7 +422,7 @@ export async function run(boot) {
     // guards the `login` pages.
     if (manifest.packages.login) require("login").catch(() => {});
     ctx.log("manifest read", {
-      what: `${manifest.app}: ${Object.keys(manifest.packages).length} packages, ${Object.keys(manifest.pages).length} pages`,
+      what: `${manifest.app}: ${Object.keys(manifest.packages).length} packages, ${Object.keys(manifest.pages).length} pages, site ${ctx.siteV}`,
       bytes: m.bytes.length,
       ms: m.ms,
     });
@@ -532,6 +535,15 @@ export async function run(boot) {
   function fail(e) {
     // Whatever was thrown, said (a rejection with no Error showed "undefined").
     const said = e?.message ?? (typeof e === "string" ? e : (() => { try { return JSON.stringify(e); } catch { return String(e); } })());
+    // An EXPECTED refusal (`e.expected`: a members-only app opened from outside) is the page's answer: said as it is,
+    // never reported as a fault.
+    if (e?.expected) {
+      ctx.log("page", { what: `${location.hash}: ${said}` });
+      status.textContent = said;
+      status.className = "said";
+      status.hidden = false;
+      return;
+    }
     ctx.log("FAILED", { what: `${location.hash}: ${said}${e?.stack ? ` — ${String(e.stack).split("\n").slice(0, 3).join(" | ")}` : ""}` });
     status.textContent = `Could not load: ${said}`;
     status.className = "bad";
