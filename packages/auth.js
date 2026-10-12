@@ -135,7 +135,13 @@ export async function start(ctx) {
       // While the words are still here: whoever needs them to act for the account (the `keys` capability: this node
       // joins the account's MLS group). A failure there is reported, never a failed login.
       const node = id.publicOf(joining.member);
-      for (const f of joined) await f({ entropy: joining.entropy, did: joining.did, node, fresh }).catch(e => ctx.log("after login", { what: e?.message ?? String(e) }));
+      // …and to the health bag (`account-recovery`): a recovery that failed is a report, never only a trace line.
+      for (const f of joined)
+        await f({ entropy: joining.entropy, did: joining.did, node, fresh }).catch(e => {
+          const why = e?.message ?? String(e);
+          ctx.log("after login", { what: why });
+          ctx.require("index").then(ix => ix.health({ k: "account-recovery", s: "", why: `failed: ${why}`.slice(0, 160), d: { fresh: !!fresh } })).catch(() => {});
+        });
       joining.member.fill(0);
       joining.entropy.fill(0);
       joining.data.fill(0);

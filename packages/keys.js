@@ -294,20 +294,32 @@ export async function start(ctx) {
       if (home.refused) return;
       const channel = await storage.table(CHANNEL);
       const kept = new Set();
+      // How the walk went — reported whatever the outcome (`account-recovery`, to the health bag: the account's own
+      // tables may still be sealed here): where it started, how far it got, why it stopped (10-12: the owner's node
+      // recovered the account but not its storage, and nothing said how far the walk had come).
+      const walked = { channelRows: channel.rows().length, info: false, escrow0: false, epochs: 0, stop: null };
+      const recovery = (k, why, d = {}) =>
+        ctx.require("index").then(ix => ix.health({ k, s: "", e: walked.epochs, why: String(why).slice(0, 160), d: { ...walked, ...d } })).catch(() => {});
       // The WALK, with the words: from the channel's pointer, every epoch's commit and escrowed next secret, to the
       // present — each epoch's secret kept here on the way (this node then reads what was written before it joined).
       async function walk() {
         let e = 0;
         let info = channel.rows().find(x => x.key === "info")?.value;
+        walked.info = !!info;
         const first = channel.rows().find(x => x.key === escrowKey(e))?.value;
-        if (!first) return { e, info, secret: null };
+        walked.escrow0 = !!first;
+        if (!first) return ((walked.stop = "no escrow for epoch 0 in the channel"), { e, info, secret: null });
         let secret = mlsGlue.Mls.open_escrow(entropy, bytes(first));
         for (;;) {
           if (!kept.has(e) && (await auth.identity.epochKeep(e, secret)).mlsSaved) kept.add(e);
+          walked.epochs = e;
           const entry = await commitFrom(e, secret);
-          if (!entry) return { e, info, secret };
+          if (!entry) return ((walked.stop = `no commit after epoch ${e} (the newest)`), { e, info, secret });
           const c = parse(entry);
           info = c.info ?? info;
+          // A commit without its escrowed next secret (made before escrows, or by a build that did not write one):
+          // the chain of keys breaks here — said, never a bare throw.
+          if (!c.next) return ((walked.stop = `the commit after epoch ${e} carries no escrowed secret: later epochs not recoverable from the words`), { e, info, secret, broken: true });
           secret = mlsGlue.Mls.open_escrow(entropy, bytes(c.next));
           e += 1;
         }
@@ -323,6 +335,7 @@ export async function start(ctx) {
         }
         const st = await keep(channel, { made: true });
         ctx.log("account keys", { what: `this node ${kind} the account's group: epoch ${st.epoch}, ${st.members.length} node(s)` });
+        await recovery("account-recovery", `${kind}: group epoch ${st.epoch}, ${st.members.length} node(s), ${kept.size} earlier epoch(s) recovered; walk: ${walked.stop ?? "?"}`, { kind, groupEpoch: st.epoch, nodes: st.members.length, recovered: kept.size, broken: !!at.broken });
         if (kept.size) ctx.log("account keys", { what: `${kept.size} earlier epoch(s) recovered from escrow` });
         // JOINED with the words (a node new to the account): every capability of this page opened before the keys were
         // here — the account's tables read sealed, the name, the spaces — and keeps what it saw. The app starts again,
