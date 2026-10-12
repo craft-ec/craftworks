@@ -38,8 +38,14 @@ export async function run(boot) {
     (healthIndex ??= require("index").catch(() => null)).then(ix => ix?.health?.({ k, s: String(source ?? "page").slice(0, 24), to: tag(msg), why: msg, d: { ...where(), ...d } })).catch(() => {});
   }
   const stackTop = e => String(e?.stack ?? "").split("\n").slice(1, 3).map(l => l.trim().replace(/blob:[^ )]+/g, "blob")).join(" | ").slice(0, 160);
-  addEventListener("error", e => report("page-error", working.at(-1) || ctx.route, e.message ?? e.error?.message, { stack: stackTop(e.error) }));
-  addEventListener("unhandledrejection", e => report("page-rejection", working.at(-1) || ctx.route, e.reason?.message ?? e.reason, { stack: stackTop(e.reason) }));
+  // A BROWSER EXTENSION's own error (its stack wholly in the extension: a wallet extension failing to connect) is not
+  // this site's: not reported.
+  const extensions = e => {
+    const lines = String(e?.stack ?? "").split("\n").slice(1).filter(l => l.trim());
+    return lines.length > 0 && lines.every(l => /(chrome|moz|safari(-web)?)-extension:\/\//.test(l));
+  };
+  addEventListener("error", e => extensions(e.error) || report("page-error", working.at(-1) || ctx.route, e.message ?? e.error?.message, { stack: stackTop(e.error) }));
+  addEventListener("unhandledrejection", e => extensions(e.reason) || report("page-rejection", working.at(-1) || ctx.route, e.reason?.message ?? e.reason, { stack: stackTop(e.reason) }));
   // A LOG LINE THAT SAYS SOMETHING FAILED (the words every package already uses for it), from the package that said it.
   // (Not a COUNT of them — "0 refused" in a tally says nothing failed.)
   const FAILED = /(?<!\d )\b(could not|couldn't|failed|refused|cannot|can't|not (loaded|saved|sent|put|stored|played|opened))\b/i;

@@ -879,7 +879,8 @@ export async function start(ctx) {
   // fails the page: a view is best effort.
   const viewedHere = new Set();
   async function view(ref, { outside = null } = {}) {
-    if (viewedHere.has(ref)) return;
+    // A GUEST's view is nobody's: not counted (a signal is its signer's).
+    if (viewedHere.has(ref) || !(await me())) return;
     viewedHere.add(ref);
     try {
       const it = await get(ref, { outside }).catch(() => null);
@@ -893,6 +894,7 @@ export async function start(ctx) {
   // USED: this person's running TIME and DATA on an item (`usage`), as its public counts — never on one's own; best
   // effort, as a view.
   async function used(ref, { s = 0, b = 0 } = {}) {
+    if (!(await me())) return; // a guest's: nobody's, as a view
     try {
       const outside = await outsideOf(ref).catch(() => null);
       const it = await get(ref, { outside }).catch(() => null);
