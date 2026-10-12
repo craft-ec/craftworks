@@ -63,6 +63,29 @@ export async function start(ctx) {
         removed: { from: "*", to: "REMOVED" },
       },
     },
+    // AN OPEN APP (a body component): opening → open → closed, or failed (reported; the rest are quiet — they ride in
+    // the visit's snapshot).
+    app: {
+      initial: "CLOSED",
+      quiet: ["opening", "open", "closed"],
+      events: {
+        opening: { from: "*", to: "OPENING" },
+        open: { from: ["OPENING"], to: "OPEN" },
+        failed: { from: "*", to: "FAILED" },
+        closed: { from: "*", to: "CLOSED" },
+      },
+    },
+    // A DELETE (an item, a space left, a device removed): one path — asked, then HIDDEN (still on the network, no
+    // longer shown: a tail can hide, not erase) or GONE (forgotten), or REFUSED with why.
+    delete: {
+      initial: "NONE",
+      events: {
+        request: { from: "*", to: "REQUESTED" },
+        hidden: { from: ["REQUESTED"], to: "HIDDEN" },
+        gone: { from: ["REQUESTED"], to: "GONE" },
+        refuse: { from: ["REQUESTED"], to: "REFUSED" },
+      },
+    },
     // A BACKGROUND JOB (upkeep, sync, the usage flush, keeping): runs every `every` ms only while what it NEEDS holds;
     // PAUSED (said, with why) while it does not. Each run is not reported — only pausing and resuming are.
     job: {
@@ -162,6 +185,20 @@ export async function start(ctx) {
     running.set(name, handle);
     return handle;
   }
+  // DELETE `what` (a kind: "item", "space", "device") through its machine: `fn()` does it; `ends` says how it ends
+  // ("hidden" or "gone"). A refusal is recorded with why, and thrown on.
+  async function deleting(what, id, fn, ends = "gone") {
+    const key = `${what}:${String(id).slice(0, 24)}`;
+    transition("delete", key, "request", { what });
+    try {
+      const r = await fn();
+      transition("delete", key, ends, { what });
+      return r;
+    } catch (e) {
+      transition("delete", key, "refuse", { what, why: String(e?.message ?? e).slice(0, 120) });
+      throw e;
+    }
+  }
   const jobs = () => [...running.keys()].map(n => ({ name: n, s: at("job", n).s }));
 
   // The move `event` names, only if it changes the state (a state found again each round is not a move).
@@ -178,5 +215,5 @@ export async function start(ctx) {
     return out;
   };
 
-  return { MACHINES, state, transition, become, on, snapshot, job, jobs };
+  return { MACHINES, state, transition, become, on, snapshot, job, jobs, deleting };
 }

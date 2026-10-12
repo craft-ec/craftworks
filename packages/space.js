@@ -165,7 +165,7 @@ export async function start(ctx) {
   // FORGET: out of this person's list without a word to the space — they are out of it already (removed or banned:
   // its group says so), so it is no longer theirs to list.
   async function forget(sp) {
-    await (await (await ctx.require("storage")).table(SPACES)).remove(sp.id);
+    await (await ctx.require("lifecycle")).deleting("space", sp.id, async () => (await (await ctx.require("storage")).table(SPACES)).remove(sp.id));
     ctx.log("space", { what: `removed from ${sp.kind} “${sp.name}”: no longer listed` });
   }
 

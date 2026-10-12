@@ -517,7 +517,9 @@ export async function start(ctx) {
   // REMOVE a node (lost, stolen, retired): an MLS removal, committed in the group's order. The group moves to a new
   // epoch; the removed node reads nothing written from then on. If another node moved the group first, this node's
   // view is taken back to what it kept and brought current, and the removal must be asked again.
-  async function remove(index) {
+  // (Through the DELETE machine: a device removed is gone from the account's group.)
+  const remove = index => life.deleting("device", `account#${index}`, () => removeNow(index));
+  async function removeNow(index) {
     return (busy = busy.then(async () => {
       if (!status) throw new Error("the account's keys are not held on this site");
       const channel = await storage.table(CHANNEL);

@@ -323,8 +323,9 @@ export async function start(ctx) {
       onChange: f => changed.push(f),
       // `value`: bytes, text, or a function giving the bytes at the moment of writing (a version names the feed's
       // next sequence, so it is made in the write's own turn).
-      put: (key, value) => (queue = queue.catch(() => {}).then(() => write(key, value))),
-      remove: key => (queue = queue.catch(() => {}).then(() => write(key, ""))),
+      // (`user`: asked by the person — a click or key just now — so said on the save line; background writes are not.)
+      put: (key, value, user = !!navigator.userActivation?.isActive) => (queue = queue.catch(() => {}).then(() => saving(write(key, value), user))),
+      remove: (key, user = !!navigator.userActivation?.isActive) => (queue = queue.catch(() => {}).then(() => saving(write(key, ""), user))),
       tailNext: () => core.tail_next(id),
       // Ask again (a tail that was not there: its writer may have made it since).
       reread: () => read(),
@@ -468,6 +469,15 @@ export async function start(ctx) {
     live.set(idHex, t);
 
     const allowed = () => (catalogKey || spaceId ? Promise.resolve(true) : access.allowed(app));
+    // SAVE STATE, said in ONE place (the loader's line): every write announced as saving, then saved or not saved
+    // (with the fault's words) — FOUNDATION.md §3, the save machine.
+    const saving = (p, user) => {
+      dispatchEvent(new CustomEvent("craftworks:save", { detail: { app, user, s: "saving" } }));
+      return p.then(
+        v => (dispatchEvent(new CustomEvent("craftworks:save", { detail: { app, user, s: "saved" } })), v),
+        e => (dispatchEvent(new CustomEvent("craftworks:save", { detail: { app, user, s: "failed", kind: e?.kind ?? "bug", why: String(e?.message ?? e).slice(0, 120) } })), Promise.reject(e)),
+      );
+    };
 
     // Read it and follow it. None on the network: its first write is a PUT. No answer at all: the same as none, so
     // it opens empty; a first write the network then refuses resets it and reads it again.

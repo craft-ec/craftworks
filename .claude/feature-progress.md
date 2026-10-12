@@ -2396,7 +2396,18 @@ Build order (FOUNDATION §7):
       account-keys-unreadable | not-past | package-not-held | branch}. Verified: lifecycle tests 6/6; fx v647: recovery
       complete; gate probe on fy — card written while keys held, then session KEYLESS: publish and renew REFUSED,
       upkeep job PAUSED. Left as they are: UI tickers (header, theme, video player — tied to their elements).
-- [ ] 5. Page/app/save/delete (save on change, drafts, resume; installed apps in frames)
+- [x] 5. Page/app/save/delete — `packages/drafts.js`: every text field in the body saved as typed (2 s pause, at once
+      when hidden) to the account's `drafts` table and put back into an empty field when opened again; dropped when sent
+      (Enter, submit, a button of its component) or emptied by the app; never a password/PIN/words field, anything in a
+      dialog, header or search. An update is a resume (drafts flushed, then reload; only an open dialog holds it). Each
+      body component gets `ctx.signal` (aborted when replaced) and an `app` machine (opening/open/closed quiet, failed
+      reported). One SAVE line in the loader for writes the person asked for (saving… / not saved: the fault's words).
+      DELETE machine + `life.deleting()`: items (hidden), spaces left, devices removed (gone), refusals recorded.
+      Verified on fy (v650/652): typed in a space chat, tab closed, opened again → text back; sent → opened again, box
+      empty. CONTROL (send/sweep handling removed): the sent text came back. Full recovery complete (v652).
+      Moved to phase 8: installed apps (manifests, installed table, frames). FOUND (pre-existing, for phase 6): a space's
+      chat opened by a DIRECT link shows no channel — chat.js `at()` reads `space.mine()` before the spaces table is
+      decided, finds nothing, never looks again (same on the phase-4 build).
 - [ ] 6. R3/R4/R5
 - [ ] 7. Apps on faults
 - [ ] 8. Desktop (App Store, Spaces app with enabled capabilities, Settings)

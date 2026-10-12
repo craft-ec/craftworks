@@ -907,7 +907,9 @@ export async function start(ctx) {
   }
 
   // REMOVE: this person's own, or — on a board, as its moderator — anyone's (hidden, as the server's moderation does).
-  async function remove(ref) {
+  // (Through the DELETE machine: asked, then hidden — or refused, with why.)
+  const remove = async ref => (await ctx.require("lifecycle")).deleting("item", ref, () => removeNow(ref), "hidden");
+  async function removeNow(ref) {
     if (ref.startsWith("space:")) {
       const sp = await boardOf(ref);
       if (!sp) throw await notInBoard(ref);

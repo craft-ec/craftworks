@@ -268,11 +268,11 @@ the damaged owner account is not repaired — everyone, the owner included, make
 4. **Gates and jobs**: `directory.publish`/`renew`, welcome-again asks and upkeep become **jobs** gated on account
    group `MEMBER`; **space** with failure reasons; every `setInterval` moved into a scope.
 5. **Page, app, save, delete**: save on change with the drafts table, resume on open (an update is a resume), unmount
-   on close, save states shown from one place, one delete path. Apps installed: own manifest, own frame, per-app
-   grants, the system API; built-in apps moved first, then install/uninstall and a catalog for others' apps.
+   on close, save states shown from one place, one delete path.
 6. **R3/R4/R5**: caches, re-open on key arrival, merged tables; remove the reload and the polling loops.
 7. **Apps**: `absentOnly` for reads, `present()` for messages; retire the private retry loops.
-8. **Desktop** (ARCHITECTURE §1): Home screen, App Store, Spaces and Settings apps; a space's enabled capabilities
+8. **Desktop** (ARCHITECTURE §1): apps installed (each its own manifest, an installed-apps table, per-app grants;
+   their own frames and the system API before any app not ours is offered); Home screen, App Store, Spaces and Settings apps; a space's enabled capabilities
    (`enable`/`disable` acts in place of `app`); apps' `needs`/`can use` in manifests; each app's own space
    sidebar and settings schema; the header's space and app dropdowns, the rail and `spaces-panel` retired.
 9. **Reset** (§5): new contract epoch; every account and space made fresh.

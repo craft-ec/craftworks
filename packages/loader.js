@@ -117,6 +117,8 @@ export async function run(boot) {
   // (Asked before the manifest is read: nothing yet, and nothing kept — asked again later.)
   const fault = () => (manifest ? (faults ??= manifest.packages?.fault ? require("fault").then(f => (f.reportTo(report), f)).catch(() => null) : Promise.resolve(null)) : Promise.resolve(null));
   let faultNow = null; // the service, once loaded: `fail` classifies at once
+  // The LIFECYCLES (`lifecycle`), once the manifest names it: each body component's app machine moved through it.
+  const lifeOf = () => (manifest?.packages?.lifecycle ? require("lifecycle").catch(() => null) : null);
   const met = (source, e, via) =>
     fault().then(f => {
       if (f) {
@@ -310,7 +312,14 @@ export async function run(boot) {
     });
   }
   const placeholders = new Map(); // element -> placeholder
+  // CLOSING a component (its slot filled anew): its `ctx.signal` aborted — listeners added with it, fetches and timers
+  // it tied to it end with it (FOUNDATION.md §3: an app's work ends when it closes).
+  const mountedIn = { header: [], side: [], body: [], footer: [] }; // slot → [{ name, ac }]
   async function fill(slot, names) {
+    for (const m of mountedIn[slot].splice(0)) {
+      m.ac.abort();
+      if (slot === "body") lifeOf()?.then(l => l?.become("app", m.name, "closed", {})).catch(() => {});
+    }
     slots[slot].replaceChildren();
     const theme = manifest.theme ? await require(manifest.theme) : null;
     const els = names.map(name => {
@@ -345,8 +354,15 @@ export async function run(boot) {
       const own = Object.create(ctx);
       own.require = n => require(n).then(v => view(v, track.work));
       own.pending = track.work;
+      const ac = new AbortController();
+      own.signal = ac.signal;
+      mountedIn[slot].push({ name, ac });
+      if (slot === "body") lifeOf()?.then(l => l?.become("app", name, "opening", {})).catch(() => {});
       const mounted = Promise.resolve(mod.mount(own, el)).finally(() => working.pop());
-      await mounted.catch(() => {});
+      await mounted.then(
+        () => slot === "body" && lifeOf()?.then(l => l?.become("app", name, "open", {})).catch(() => {}),
+        e => slot === "body" && lifeOf()?.then(l => l?.become("app", name, "failed", { why: String(e?.message ?? e).slice(0, 80) })).catch(() => {}),
+      );
       // Its placeholder goes once its mount is over; the busy line stays while its own work runs.
       p?.done();
       await mounted;
@@ -413,6 +429,32 @@ export async function run(boot) {
     ctx.appsOpened.add(route);
     ctx.log("page ready", { what: route, ms: Math.round(performance.now() - t0) });
     watchPage(rec, t0);
+  }
+
+  // SAVING, said in ONE place (FOUNDATION.md §3): "Saving…" while any write is on its way, "Not saved" with why when
+  // one fails (the fault's words), nothing once all are held. No app says it on its own.
+  {
+    let n = 0;
+    let line = null;
+    let hide = null;
+    const say = (text, bad) => {
+      line ??= Object.assign(document.createElement("div"), { role: "status" });
+      line.style.cssText = `position:fixed;left:16px;bottom:8px;z-index:2147483001;font-size:12px;padding:3px 10px;border-radius:999px;background:Canvas;color:${bad ? "#b3261e" : "CanvasText"};border:1px solid #8886;opacity:.85`;
+      line.textContent = text;
+      if (!line.isConnected) document.body.append(line);
+      clearTimeout(hide);
+      hide = text ? (bad ? setTimeout(() => line.remove(), 8000) : null) : (line.remove(), null);
+    };
+    addEventListener("craftworks:save", e => {
+      const d = e.detail ?? {};
+      if (!d.user) return; // background writes (drafts, upkeep, records): not the person's saves
+      if (d.s === "saving") (n += 1), say("Saving…");
+      else {
+        n = Math.max(0, n - 1);
+        if (d.s === "failed") say(`Not saved: ${(() => { try { return faultNow.say(new faultNow.Fault(d.kind, d.why)); } catch { return d.why; } })()}`, true);
+        else if (!n) say("");
+      }
+    });
   }
 
   // THE TRACE: always recorded (the wrapper's log), shown only on demand. A small toggle; the `trace` component is
@@ -517,6 +559,8 @@ export async function run(boot) {
     // The SESSION layer (`login`), on every page as any site's: it answers a guest's "log in to do that" anywhere, and
     // guards the `login` pages.
     if (manifest.packages.login) require("login").catch(() => {});
+    // DRAFTS (save on change: what is typed outlives the tab — FOUNDATION.md §3, "Close at any time").
+    if (manifest.packages.drafts) require("drafts").catch(() => {});
     ctx.log("manifest read", {
       what: `${manifest.app}: ${Object.keys(manifest.packages).length} packages, ${Object.keys(manifest.pages).length} pages, site ${ctx.siteV}`,
       bytes: m.bytes.length,
@@ -569,12 +613,19 @@ export async function run(boot) {
       told = true;
       ctx.log("newest", { what: "a newer version is on this node: taking it when nothing would be lost" });
       const editable = el => el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+      // With DRAFTS, what is typed is saved (flushed before the reload) and put back after it: AN UPDATE IS A RESUME —
+      // only an open dialog (a login: never drafted) holds it. Without them: as before, nothing typed is lost.
+      const drafted = loaded.has("drafts");
       const busy = () =>
         !!document.querySelector("dialog[open]") ||
-        editable(document.activeElement) ||
-        [...document.querySelectorAll("textarea, input[type=text], input:not([type])")].some(x => x.value && !x.closest("header, [role=search]") && x.type !== "search");
+        (!drafted &&
+          (editable(document.activeElement) ||
+            [...document.querySelectorAll("textarea, input[type=text], input:not([type])")].some(x => x.value && !x.closest("header, [role=search]") && x.type !== "search")));
       let done = false;
-      const go = () => {
+      const go = async () => {
+        if (done) return;
+        // Everything typed written first; a draft not saved holds the update until it is.
+        if (drafted && !(await require("drafts").then(d => d.flush(), () => false))) return;
         if (done) return;
         done = true;
         clearInterval(poll);
