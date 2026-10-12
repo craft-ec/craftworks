@@ -102,7 +102,19 @@ pub fn build(i: &Inputs, got: Got) -> Result<Step<(R::statement::Statement, usiz
     // 24's signatures before its witness signed kept that copy, found it not accepted, carried nothing, and posted a root
     // Wren's tool — reading fresh — did not build, for epochs 25 and 26). Statement blocks are content-addressed: any
     // copy is the copy.
-    let fresh_got = |id: &[u8; 32]| if (i.fresh)(id) { got(id) } else { None };
+    // A read REFUSED as not fresh is a request to read it, never an absence (10-12, measured on fx: a page that held
+    // the epoch before's signatures from an earlier pass read them as missing, found no accepted statement and carried
+    // no lines — a root no witness rebuilt): each one refused is asked for (`Want`) before anything is decided.
+    let held = got;
+    let refused = std::cell::RefCell::new(Vec::<[u8; 32]>::new());
+    let fresh_got = |id: &[u8; 32]| {
+        if (i.fresh)(id) {
+            held(id)
+        } else {
+            refused.borrow_mut().push(*id);
+            None
+        }
+    };
     let got: Got = &fresh_got;
     let mut prev = BTreeMap::new();
     let signed = match epoch.checked_sub(1) {
@@ -130,11 +142,21 @@ pub fn build(i: &Inputs, got: Got) -> Result<Step<(R::statement::Statement, usiz
             }
         }
     };
+    {
+        let mut asked = refused.borrow().clone();
+        if !asked.is_empty() {
+            asked.sort();
+            asked.dedup();
+            return Ok(Step::Want(asked));
+        }
+    }
     // KEPT, audited — last, once every read is in (the seals take seconds each: never redone for a later want).
     let kept = match audit {
         Some((e, lot_out)) => {
             let out = |h: u64| beacon_out(h).ok().and_then(|r| r.ok());
-            let piece_of = |id: &[u8; 32]| got(id).filter(|b| !b.is_empty());
+            // A PIECE is content-addressed: any copy held is the piece (never "not fresh": a page that held it from an
+            // earlier pass found every keeper's audit failing, 10-12).
+            let piece_of = |id: &[u8; 32]| held(id).filter(|b| !b.is_empty());
             let seal = |key: &[u8; 32], s: &craftworks_standing::record::State| craftworks_standing::record::audited(s, key, e, &lot_out, &out, &piece_of);
             match i.audit {
                 None => craftworks_standing::record::kept_audited_by(&listed, &record_of, e, &seal),
@@ -274,6 +296,33 @@ mod tests {
         let run = |got: &HashMap<[u8; 32], Vec<u8>>, piece_there: bool| run_with(&i, got, piece_there);
         let (honest, kept) = run(&got, true);
         assert_eq!(kept, 1, "the honest keeper alone");
+        // THE PAGE's LATER PASS (10-12, measured on fx): every piece already held from the pass before, and only what
+        // this build asks for read FRESH — the same keepers kept, the same root as a build reading everything fresh.
+        let mut held = got.clone();
+        for (id, _) in &hosted {
+            held.insert(*id, piece(id));
+        }
+        let asked = std::cell::RefCell::new(std::collections::HashSet::<[u8; 32]>::new());
+        let fresh_now = |id: &[u8; 32]| asked.borrow().contains(id);
+        let later = Inputs { fresh: &fresh_now, ..i };
+        let mut ended = None;
+        for _ in 0..8 {
+            let h = held.clone();
+            match build(&later, &|x| h.get(x).cloned()).unwrap() {
+                Step::Done(d) => {
+                    ended = Some(d);
+                    break;
+                }
+                Step::Want(w) => w.into_iter().for_each(|id| {
+                    asked.borrow_mut().insert(id);
+                    held.entry(id).or_insert_with(Vec::new);
+                }),
+                Step::Sign(_) => panic!("signs"),
+            }
+        }
+        let (later_st, later_kept) = ended.expect("the later pass ends");
+        println!("later pass (pieces held, fresh only what it asked): kept {later_kept}");
+        assert_eq!((&later_st, later_kept), (&honest, 1), "a later pass holding the pieces builds the same root");
         // THE MISDEED REGISTRY (TOKEN §7d decision 3) through the one Inputs path: the honest keeper's device key — the
         // credential its owner gave it — signed two entries at one place, proven in epoch 3's registry. Epoch 4's
         // statement then pays it nothing (bootstrap would: it kept) and lists it at reputation 0; a proof that does not
