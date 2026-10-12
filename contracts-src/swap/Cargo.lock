@@ -252,6 +252,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-bag-contract"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+]
+
+[[package]]
 name = "craftworks-beacon-contract"
 version = "0.1.0"
 dependencies = [
@@ -282,6 +289,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "craftworks-reputation"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "craftworks-bag-contract",
+ "craftworks-identity",
+ "craftworks-idlog-contract",
+ "ed25519-dalek",
+ "engine",
+ "freenet-prolly",
+]
+
+[[package]]
 name = "craftworks-standing"
 version = "0.1.0"
 dependencies = [
@@ -289,16 +309,6 @@ dependencies = [
  "craftworks-identity",
  "ed25519-dalek",
  "freenet-prolly",
-]
-
-[[package]]
-name = "craftworks-standing-contract"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "contract-keys",
- "craftworks-beacon-contract",
- "craftworks-standing",
 ]
 
 [[package]]
@@ -320,8 +330,8 @@ dependencies = [
  "craftworks-beacon-contract",
  "craftworks-identity",
  "craftworks-idlog-contract",
+ "craftworks-reputation",
  "craftworks-standing",
- "craftworks-standing-contract",
  "ed25519-dalek",
  "engine",
  "freenet-prolly",
