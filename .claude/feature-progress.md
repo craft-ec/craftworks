@@ -2338,3 +2338,8 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
 - B: craftworks-beacon.service stopped and disabled (owner 10-12). fx/fy moved to B (/opt/craftworks-test, fresh,
   started only by $CLAUDE_JOB_DIR/tmp/fxfy.sh up) — MOVED BACK LOCAL the same day: this link (~100 KB/s up) made pages time out; fxfy.sh now starts the local pair on demand.
 - Token: not released; most epochs still post a second root with an unwitnessed entry.
+- Live v381 (2026-10-12, loader v38): main f18965c, token off, from release worktree release2 with devices.wasm, mls wasm
+  AND identity.wasm = v380's bytes (identity f6108b6e kept: no PIN prompt; the statement fix in the delegate is idle
+  with the token off). Carries: guest views not counted, extension errors filtered, Chat opens a late channel, the
+  address bar follows the app (+ tab title), Vote member parts hidden from outside. 1189/1262 pieces, every package
+  rebuildable; site/manifest 200.
