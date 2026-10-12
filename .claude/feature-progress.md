@@ -2344,3 +2344,9 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
   address bar follows the app (+ tab title), Vote member parts hidden from outside. 1189/1262 pieces, every package
   rebuildable; site/manifest 200.
 - [x] 10-12 C2b CLAIMS IN OWN CHAINS + LIVENESS (local, not published): `Body::Claim` in the staker's pool chain, chained stake-pointer bags (CPU prefilter), signatures container admits a claim-writer key named with its staker, claim witnessed only on a standing answer that epoch, claimed in the window before the freeze (page + delegate); claims.rs gone, token/pool/swap.wasm re-keyed (TOKEN §7a, §8.6).
+- Live v382 (2026-10-12, loader v39): release3 = main 4bf650c, token off, devices/mls/identity = v380 bytes (no PIN
+  prompt). Carries the recovery fix: a words login on a new node joins the account (the key channel is no longer
+  ruled absent by the sealed directory — that made fy create a SECOND group) and the app starts again once, keys in
+  place. Proven on fx/fy (fresh account with a handle, its own space, a chat message): joined + 1 earlier epoch
+  recovered, handle, space, message — no manual reload; also on the release tree itself before publishing.
+  Also carries 8c2d17e (reports name the site; members-only refusal not a fault). 1179/1263 pieces.
