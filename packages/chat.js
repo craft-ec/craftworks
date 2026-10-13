@@ -353,13 +353,19 @@ export async function mount(ctx, el) {
     const s = f?.kind === "server" ? f : null;
     if (!s) return;
     const cid = ctx.sub || null;
+    // CHAT's OWN SETTINGS (its channels, who posts and reads each — `app-settings`), drawn in its room.
+    if (cid === "settings") {
+      if (server?.id !== s.id) await openServer(s, null);
+      const page = await (await ctx.require("app-settings")).appPage(s, "chat").catch(e => Object.assign(document.createElement("p"), { textContent: ctx.say(e) }));
+      return void roomEl.replaceChildren(page);
+    }
     if (server?.id !== s.id) return openServer(s, cid);
     const c = cid && list().find(x => x.id.endsWith(`/${cid}`));
     if (c && channel?.id !== c.id) openChannel(c);
   };
   const menu = () => {
-    // (Its settings — who may post, its channels — are the Settings app's.)
-    ctx.actions["/chat"] = [];
+    // ITS SETTINGS (its channels — the app's own): a link in its menu, for who may manage the space's apps.
+    ctx.actions["/chat"] = server && rs?.can?.(account?.id, "apps") ? [{ label: "Settings", href: `#/s/${server.id}/chat/settings`, on: ctx.sub === "settings" }] : [];
     dispatchEvent(new CustomEvent("craftworks:actions"));
   };
   menu();

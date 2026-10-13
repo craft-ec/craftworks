@@ -2,8 +2,8 @@
 // personal view), each of your spaces that enables what the app needs (`roles.apps()`), and Discover (where it has a
 // public view) — kept here, once. HOW an app shows them is the APP's own choice, made in its own code: a RAIL of spaces
 // beside it (Discord's — Chat), a subtle GROUP line above it (Reddit's "in: …" — Board, Blog), or the app's own terms
-// with no switcher at all: a space is a CHANNEL in Video, a COLLECTION in Audio and Book, its people in Contact — reached
-// through what the app shows (a channel's page, what you follow), as YouTube or Spotify do. The loader draws none.
+// with no switcher at all: each app lists its groups (yours, each space enabling it) in its own menu (`where`), and
+// Contact shows every space's people in one list. The loader draws none.
 //
 //   const places = await ctx.require("places");
 //   await places.list("/chat")          // [{ id, label, href, on, count }]

@@ -90,7 +90,28 @@ export async function start(ctx) {
     };
     // THE TABS, in the same order in every app: in your space, the app's own page ("Your …"), then the app's extras,
     // then Discover (an app with a public side); elsewhere the extras alone.
-    const tabs = (extra = [], { yoursOn = true, before = [], create = null } = {}) => {
+    // THE APP's GROUPS (ARCHITECTURE §1: a space is a group in every app, shown by the app — never reached through a
+    // space's Home): its own ("Your …") and each of this person's spaces that enables what the app needs, named by the
+    // app (`group(space)`; else the space's name) — kept in the app's own menu, the one open marked.
+    let groups = [];
+    const groupsRead = me
+      ? ctx
+          .require("places")
+          .then(p => p.list(`/${app}`))
+          .then(ps => (groups = ps.filter(x => x.id && x.id !== "discover")))
+          .catch(ctx.quiet(() => []))
+      : Promise.resolve([]);
+    // THE APP's OWN SETTINGS in a space (ARCHITECTURE §1: an app defines its settings and shows them itself) — for who
+    // may manage the space's apps, where the app has any (`app-settings`: Board's rules, Blog's approval, Chat's channels).
+    const settingsRead = sp && !sp.outside && me
+      ? Promise.all([ctx.require("app-settings"), roles.of(sp)]).then(([st, r]) => st.has(app) && r.can(me, "apps")).catch(ctx.quiet(() => false))
+      : Promise.resolve(false);
+    let mayConfigure = false;
+    // (`groups: false`: an app that shows every space its own way — Contact, all spaces' people in one list.)
+    const tabs = (extra = [], { yoursOn = true, before = [], create = null, group = null, groups: showGroups = true } = {}) => {
+      groupsRead.then(() => groups.length && draw());
+      settingsRead.then(ok => ok && ((mayConfigure = true), draw()));
+      const draw = () => {
       const home = who === "mine" || who === "discover";
       // A GUEST: nothing of theirs (Yours, Saved) and nothing to make — Log in instead; once in, the page starts again
       // (as at Log out: nothing made for the guest reaches the session).
@@ -102,15 +123,27 @@ export async function start(ctx) {
           ]
         : [
             ...(home ? before : []),
-            ...(home ? [{ label: yours, href: `#/${app}`, on: who === "mine" && !saved && yoursOn }] : []),
+            ...(home || sp ? [{ label: yours, href: `#/${app}`, on: who === "mine" && !saved && yoursOn }] : []),
+            ...((home || sp) && showGroups ? groups.map(g => ({ label: group?.(g) ?? g.label, href: g.href, on: sp?.id === g.id && !sp?.outside && sub !== "settings" })) : []),
             ...extra,
+            ...(mayConfigure ? [{ label: "Settings", href: `${base}/settings`, on: sub === "settings" }] : []),
             ...(home && saves ? [{ label: "Saved", href: `#/${app}/saved`, on: saved }] : []),
             ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover" }] : []),
             ...(create && who !== "person" && !sp?.outside ? [{ ...create, label: `＋ ${create.label}`, end: true }] : []),
           ];
       dispatchEvent(new CustomEvent("craftworks:actions"));
+      };
+      draw();
     };
-    return { who, saved, outside: !!sp?.outside, others: who === "person" || who === "discover" || saved || !!sp?.outside, discover: who === "discover", guest: !me, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
+    // ITS SETTINGS PAGE, drawn into `host` when the address is `…/settings` in a space: true when drawn (the app draws
+    // nothing else then).
+    const settings = async host => {
+      if (sub !== "settings" || !sp || sp.outside) return false;
+      const page = await (await ctx.require("app-settings")).appPage(sp, app).catch(e => Object.assign(document.createElement("p"), { textContent: ctx.say(e) }));
+      host.replaceChildren(page ?? Object.assign(document.createElement("p"), { textContent: "This app has no settings of its own." }));
+      return true;
+    };
+    return { settings, who, saved, outside: !!sp?.outside, others: who === "person" || who === "discover" || saved || !!sp?.outside, discover: who === "discover", guest: !me, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
   }
   return { of, personOf, key: () => `${ctx.space ?? ""}|${ctx.sub ?? ""}`, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
 }

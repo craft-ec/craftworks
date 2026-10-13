@@ -16,13 +16,14 @@ const WORDS = {
   form: "Forms",
   wiki: "Wiki pages",
   vote: "Polls and proposals",
+  bundle: "Bundles (sets of any items)",
   comments: "Comments",
   reactions: "Votes and reactions",
   mail: "Mail to the space",
   contact: "Its people (Contact)",
 };
 export async function mount(ctx, el) {
-  const [space, roles, conversation, theme] = await Promise.all(["space", "roles", "conversation", "theme"].map(n => ctx.require(n)));
+  const [space, roles, conversation, theme, settings] = await Promise.all(["space", "roles", "conversation", "theme", "app-settings"].map(n => ctx.require(n)));
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
     e.append(...kids.filter(k => k != null && k !== false));
@@ -91,7 +92,17 @@ export async function mount(ctx, el) {
           () => draw(),
           e => ((box.checked = !box.checked), fail(e)),
         );
-      return h("label", {}, box, h("span", { textContent: `${WORDS[cap] ?? cap}${base.has(cap) ? " — always on" : ""}` }));
+      const row = h("label", {}, box, h("span", { textContent: `${WORDS[cap] ?? cap}${base.has(cap) ? " — always on" : ""}` }));
+      // ITS RULES (a domain's: who may read, post, edit, comment, vote …) — the capability's, kept here with it.
+      if (!may || !on.has(cap) || !(r.domains?.() ?? []).includes(cap)) return row;
+      const rules = h("details", {}, h("summary", { textContent: "Who may…" }));
+      let drawn = false;
+      rules.ontoggle = async () => {
+        if (!rules.open || drawn) return;
+        drawn = true;
+        rules.append(await settings.capabilityPage(sp, cap, WORDS[cap] ?? cap).catch(e => h("p", { className: "said", textContent: ctx.say(e) })));
+      };
+      return h("div", {}, row, rules);
     });
     const apps = (ctx.apps ?? []).filter(a => r.apps().includes(a.route.slice(1)));
     root.replaceChildren(
@@ -102,6 +113,7 @@ export async function mount(ctx, el) {
       h("div", { className: "caps" }, ...caps),
       h("h3", { textContent: "Apps that show it" }),
       apps.length ? h("ul", {}, ...apps.map(a => h("li", {}, h("a", { href: `#/s/${sp.id}${a.route}`, textContent: `${a.icon ?? ""} ${a.name}` })))) : h("p", { textContent: "None yet: enable what an app needs." }),
+      h("p", { textContent: "An app's own settings (Board's rules, Chat's channels …) are in the app." }),
       h("h3", { textContent: "People, roles, invites, bans" }),
       h("p", {}, h("a", { href: `#/s/${sp.id}/settings`, textContent: "Its settings" })),
       said,

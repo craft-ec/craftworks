@@ -2473,3 +2473,15 @@ Build order (FOUNDATION §7):
       460 sites in 75 packages converted (not: sequencing `queue.catch(() => {}).then`, optional `require`, health
       itself, code without `ctx`, the token files). fx v670: recovery complete, 11 page loads all drawn, ONE swallowed
       failure surfaced (sealed `tables` on /chat while a recovery's keys arrived). Test stubs gained failed/quiet/say.
+- [x] App-owned structure (owner 10-13: "the space app only manages capability; the view is the app's") — every app
+      lists its GROUPS in its own menu (`where.tabs`: yours + each space enabling what it needs; Contact opts out — all
+      spaces' people in one list); a member's space Home is the Spaces app's page (capabilities, people, settings).
+      SETTINGS split: a capability's RULES (who may read/post/edit/comment …) beside its switch in the Spaces app
+      (`app-settings.capabilityPage`); an app's OWN settings inside the app (Board's rules, Blog's approval, Chat's
+      channels — `…/settings` in its menu, `where.settings`); the Settings app keeps the space-wide section. SETS are
+      BUNDLES: one item kind `bundle` (its own capability), members of any kind in order (`bundles.js`), the BUNDLE app
+      keeps them per group, "Add to a bundle" on every item's page. (A side-table `collections.js` and per-domain bundle
+      kinds were built and replaced the same day: tags ≠ sets; sets cross capabilities.) Spaces panel removed.
+      Verified fx v671–672: space Home → Spaces app; a capability's rules shown; Wiki's menu lists the space; Board and
+      Chat settings in-app; Contact without group tabs; a words recovery complete; a bundle across a note and a post —
+      added from their pages, reordered, one taken out.

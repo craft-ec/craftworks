@@ -38,8 +38,10 @@ no space dropdown and no app dropdown.
   every space that enables what it needs, and a capability disabled disappears from every app at once.
 - **Spaces inside an app are the app's.** There is no switcher of spaces: each app shows them in its own terms and
   layout (owner 2026-10-13) — Chat a RAIL of spaces (Discord's), Board and Blog a subtle "in: …" GROUP line (Reddit's),
-  Video a CHANNEL, Audio and Book a COLLECTION, Contact every space's people in one list — reached through what the app
-  shows (a channel's page, what you follow), as YouTube or Spotify do. One list of where an app can be (`places`) feeds
+  Contact every space's people in one list. A space's Home is the Spaces app's page for it (capabilities and their
+  rules, people, settings), never a way into its apps. SETS are BUNDLES: an item of its own (kind `bundle`, its own
+  capability) naming members of ANY kind in order — an album, a course, a collection; not tags — kept per group by the
+  Bundle app and added to from any item's page. One list of where an app can be (`places`) feeds
   them all; the loader draws none. A SHARED view never crosses spaces; the PERSONAL view may gather across every space
   the person is in (Board's Feed, unread across spaces). Messages is personal only: conversations between equals — who
   needs governance makes a space.

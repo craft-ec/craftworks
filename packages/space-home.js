@@ -71,66 +71,9 @@ export async function mount(ctx, el) {
     const found = ctx.space ? await space.find(ctx.space) : null;
     const sp = found?.kind === "server" ? found : null;
     if (!sp) return outside();
-    // Its roles as known (`roles.of` brought the group current when it opened the space; its acts keep it so): drawn
-    // at once, never after another round of the group's log and every member's card.
-    const r = await roles.of(sp);
-    const on = r.apps();
-    const may = r.can(me, "apps");
-    const said = h("p", { className: "said", hidden: true });
-    // Its SETTINGS: the Settings app (`settings`), at a tab.
-    const openSettings = tab => (location.hash = `#/s/${sp.id}/settings${tab && tab !== "overview" ? `/${tab}` : ""}`);
-    // Its apps, as every Home shows them (`app-icons`): a pill with what is new (Chat: its unread), and — for who may —
-    // the apps it does not use yet, dimmed, with Add.
-    // ADD an app: what it NEEDS enabled — the space's capabilities (ARCHITECTURE §1): every app that needs no more
-    // shows it too.
-    const add = k => async () => {
-      try {
-        const a = sharedApps.find(x => keyOf(x) === k);
-        for (const cap of a?.needs ?? []) await r.enable(cap, true);
-        // Chat added: its first channel, if it has none.
-        if (k === "chat") {
-          const c = await conversation.channels(sp);
-          await c.settled;
-          if (!c.list().length) await c.add("general");
-        }
-        await draw();
-      } catch (e) {
-        said.textContent = ctx.say(e);
-        said.hidden = false;
-      }
-    };
-    // An app ALWAYS there (Settings): never added or removed.
-    const uses = a => a.always || on.includes(keyOf(a));
-    // THE DESK (`app-icons`: the same layout as your own Home): Pinned (this space's pins, its own) and All apps — the
-    // apps it uses, and for who may, those it does not yet, dimmed with Add.
-    const appGrid = h("div", {});
-    icons.desk(appGrid, {
-      items: () =>
-        sharedApps
-          .filter(a => uses(a) || may)
-          .map(a => (uses(a) ? { app: a, href: `#/s/${sp.id}${a.route}`, count: activity && ["chat", "board"].includes(keyOf(a)) ? activity.of(sp.id, keyOf(a)) : 0 } : { app: a, add: add(keyOf(a)) })),
-      pinKey: a => `app:/s/${sp.id}${a.route}`,
-      empty: "No apps yet: its owner or an admin adds them.",
-    });
-    // (What the space enables — and so which apps show it — is kept in ONE list: the Spaces app's.)
-    const capabilities = may ? h("p", {}, h("a", { href: `#/spaces/${sp.id}`, textContent: "Capabilities" }), ` · ${r.enabled().join(", ") || "none enabled"}`) : null;
-    root.replaceChildren(
-      ...[
-      h(
-        "div",
-        { className: "top" },
-        h("h2", { textContent: space.shown(sp) }),
-        r.config("space", "about", "") ? h("p", { className: "about", textContent: String(r.config("space", "about", "")) }) : null,
-        r.can(me, "invite") ? h("button", { type: "button", className: "btn main", textContent: "Invite", onclick: () => openSettings("invites") }) : null,
-
-        // Its PEOPLE: the space's Contact (`members-list`: the one list, its roles).
-        h("p", {}, h("a", { href: `#/s/${sp.id}/contact`, textContent: r.membersText() }), ` · you: ${r.role(me) ?? "member"}`),
-      ),
-      appGrid,
-      capabilities,
-      said,
-      ].filter(Boolean),
-    );
+    // A MEMBER's space Home is the SPACES app's page for it (ARCHITECTURE §1): what it enables, its people and settings.
+    // Its apps are not reached from here — each app shows its spaces as its own groups.
+    return location.replace(`#/spaces/${sp.id}`);
   }
   root.replaceChildren(theme.loading("Opening the space…"));
   await draw();

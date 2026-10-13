@@ -104,32 +104,13 @@ export async function start(ctx) {
         await madePublic(r, sp);
       },
     },
-    // Board shows the TEXT domain (posts): its rules are the domain's (`kinds.policyDomain`), as every app's are.
-    board: {
-      title: "Board",
-      fields: [
-        { action: "read", path: "text", label: "Read" },
-        { action: "post", path: "text", label: "Post" },
-        ...SIGNAL_FIELDS("text"),
-        { key: "rules", app: "board", label: "Rules" },
-      ],
-      saved: async (changed, r, sp) => changed["text|read"] === "anyone" && madePublic(r, sp),
-    },
-    // BLOG: Board's posts as articles (the text domain's rules above); a PUBLICATION whose editors (who may moderate)
-    // approve members' articles before they are public (`blog-press`).
+    // AN APP's OWN SETTINGS only (ARCHITECTURE §1): what the app is and does — Board's rules, Blog's approval, Chat's
+    // channels. WHO MAY read, post, edit, comment … in a domain is the CAPABILITY's rule, set in the Spaces app
+    // (`capabilityPage`), never here.
+    board: { title: "Board", fields: [{ key: "rules", app: "board", label: "Rules" }] },
+    // BLOG: a PUBLICATION whose editors (who may moderate) approve members' articles before they are public (`blog-press`).
     blog: { title: "Blog", fields: [{ key: "approval", app: "blog", label: "Approval", choices: [["", "Members publish directly"], ["editors", "Editors approve members' articles"]] }] },
-    video: { title: "Video", fields: [...["read", "post"].map(action => ({ action, path: "video", label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS("video")], saved: async (c, r, sp) => c["video|read"] === "anyone" && madePublic(r, sp) },
-    audio: { title: "Audio", fields: [...["read", "post"].map(action => ({ action, path: "audio", label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS("audio")], saved: async (c, r, sp) => c["audio|read"] === "anyone" && madePublic(r, sp) },
-    image: { title: "Image", fields: [...["read", "post"].map(action => ({ action, path: "image", label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS("image")], saved: async (c, r, sp) => c["image|read"] === "anyone" && madePublic(r, sp) },
-    book: { title: "Book", fields: [...["read", "post"].map(action => ({ action, path: "book", label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS("book")], saved: async (c, r, sp) => c["book|read"] === "anyone" && madePublic(r, sp) },
-    chat: { title: "Chat", fields: [{ action: "post", path: "chat", label: "Post" }], extra: chatChannels },
-    note: { title: "Note", fields: [{ action: "post", path: "note", label: "Add" }, { action: "edit", path: "note", label: "Edit" }] },
-    // Drive shows the FILE domain: its rules are the domain's (`kinds.policyDomain`), as Board's are the text domain's.
-    drive: { title: "Drive", fields: [{ action: "read", path: "file", label: "Read" }, { action: "post", path: "file", label: "Upload" }, { action: "edit", path: "file", label: "Move" }] },
-    // Wiki shows the WIKI domain: who EDITS its pages (the rest suggest — `wiki-pages`), who may suggest (comment).
-    wiki: { title: "Wiki", fields: [{ action: "read", path: "wiki", label: "Read" }, { action: "edit", path: "wiki", label: "Edit" }, { action: "comment", path: "wiki", label: "Suggest" }], saved: async (c, r, sp) => c["wiki|read"] === "anyone" && madePublic(r, sp) },
-    // Vote shows the VOTE domain: who makes polls and proposals (post), who VOTES (and delegates), who comments.
-    vote: { title: "Vote", fields: [{ action: "read", path: "vote", label: "Read" }, { action: "post", path: "vote", label: "Make polls and proposals" }, { action: "vote", path: "vote", label: "Vote and delegate" }, { action: "comment", path: "vote", label: "Comment" }], saved: async (c, r, sp) => c["vote|read"] === "anyone" && madePublic(r, sp) },
+    chat: { title: "Chat", fields: [], extra: chatChannels },
   };
   // CHAT's own rows: its channels, each with who may post in it.
   async function chatChannels(host, r, sp) {
@@ -203,12 +184,32 @@ export async function start(ctx) {
     if (S.extra) await S.extra(more, r, sp).catch(err => more.append(h("p", { className: "said", textContent: err?.message ?? String(err) })));
     return form;
   }
-  // THE PAGE: the space's own section, then each app it uses that has settings.
+  // THE SPACE's PAGE (the Settings app): the space's own section only — its apps' settings are in each app, its
+  // capabilities' rules in the Spaces app.
   async function page(sp) {
     const r = await roles.of(sp);
     const me = (await (await ctx.require("space")).account()).id;
-    const keys = ["", ...r.apps().filter(a => SECTIONS[a])];
-    return h("div", { className: "cw-settings", style: "display:grid;gap:var(--cw-space-3)" }, ...(await Promise.all(keys.map(k => section(sp, k, r, me)))));
+    return h("div", { className: "cw-settings", style: "display:grid;gap:var(--cw-space-3)" }, await section(sp, "", r, me));
+  }
+  // AN APP's settings, drawn INSIDE the app (its own Settings page): null when it has none.
+  const has = key => !!SECTIONS[key];
+  async function appPage(sp, key) {
+    if (!SECTIONS[key]) return null;
+    const r = await roles.of(sp);
+    const me = (await (await ctx.require("space")).account()).id;
+    return section(sp, key, r, me);
+  }
+  // A CAPABILITY's RULES (the Spaces app, beside its switch): who may read, post, edit, and each signal, in its domain.
+  // Read by anyone: the space listed in public.
+  async function capabilityPage(sp, cap, title = cap) {
+    const r = await roles.of(sp);
+    const me = (await (await ctx.require("space")).account()).id;
+    SECTIONS[`cap:${cap}`] ??= {
+      title,
+      fields: [...["read", "post", "edit"].map(action => ({ action, path: cap, label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS(cap)],
+      saved: async (c, rr, s_) => c[`${cap}|read`] === "anyone" && madePublic(rr, s_),
+    };
+    return section(sp, `cap:${cap}`, r, me);
   }
   // A space's: its Settings, "Apps & rules", at that app's section; yours: Settings, "Permissions", at it.
   const href = (sp, key) => (sp ? `#/s/${sp.id}/settings/apps/${key}` : `#/settings/permissions/${key}`);
@@ -237,5 +238,5 @@ export async function start(ctx) {
   }
 
 
-  return { page, personalPage, href, who: (r, path, action) => who(r, path, action) };
+  return { page, personalPage, appPage, capabilityPage, has, href, who: (r, path, action) => who(r, path, action) };
 }

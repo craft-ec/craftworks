@@ -236,6 +236,8 @@ export async function mount(ctx, el) {
   async function draw() {
     drawnFor = routeKey();
     at = await whereCap.of({ kind: "post", app: "board", yours: "Your posts" });
+    // ITS OWN SETTINGS (a space's, for who may manage its apps): drawn here, in the app.
+    if (at.sub === "settings") return void (at.tabs([]), await at.settings(main));
     const w = route();
     // On screen: this space's board (both tables) is read as it arrives (`activity`).
     const onBoard = w.board ? await posts.boardOf(w.board) : null;

@@ -13,12 +13,9 @@ export function mount(ctx, el) {
       .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--cw-line); height: var(--cw-bar); box-sizing: border-box;
         font-size: var(--cw-text-sm); }
       .bar .home { text-decoration: none; font-size: 1.1rem; color: inherit; }
-      .bar .space-name { border: 0; background: none; font: inherit; font-weight: 700; color: inherit; cursor: pointer; padding: 2px var(--cw-space-2);
         border-radius: var(--cw-radius-sm); max-width: 16em; min-width: 6em; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       /* The app's own actions give way first (they scroll), never the space's name. */
       .bar .actions { min-width: 0; overflow-x: auto; scrollbar-width: none; }
-      .bar .space-name:hover { background: var(--cw-hover); }
-      .bar .space-name .cw-badge { margin-left: 4px; }
       .bar .name { font-weight: 600; }
       .bar .name .drop > button { border: 0; background: none; font-weight: 700; padding: 2px var(--cw-space-2); }
       .bar .actions { display: flex; gap: 10px; align-items: center; }
@@ -52,7 +49,7 @@ export function mount(ctx, el) {
       .bar .find .results .none { color: var(--cw-muted); padding: 6px var(--cw-space-2); margin: 0; }
       /* A PHONE: the search box shrinks to its icon and opens out while typed in; the header's buttons never wrap. */
       @media (max-width: 640px) { .bar .find > input { width: 2.4em; padding: 2px 6px; transition: width .15s; } .bar .find > input:focus { width: 11em; }
-        .bar { gap: 8px; } .bar .space-name { min-width: 3em; max-width: 8em; padding-inline: 4px; }
+        .bar { gap: 8px; }
         /* The app's own actions on a second row of their own, the whole width (the theme's --cw-bar is two rows here). */
         .bar { flex-wrap: wrap; align-content: center; row-gap: 2px; height: auto; min-height: 48px; padding-block: 4px; }
         .bar::after { content: ""; order: 9; flex-basis: 100%; height: 0; }
@@ -77,7 +74,6 @@ export function mount(ctx, el) {
     }</style>
     <nav class="bar">
       <a class="home" href="#/" title="Home">⌂</a>
-      <button type="button" class="space-name" data-spaces title="Spaces: yours, your friends', following" hidden></button>
       <span class="name"></span>
       <span class="actions"></span>
       <span class="end"></span>
@@ -312,27 +308,7 @@ export function mount(ctx, el) {
   tabsEl.addEventListener("scroll", more, { passive: true });
   if (typeof ResizeObserver === "function") new ResizeObserver(more).observe(tabsEl);
   new MutationObserver(more).observe(tabsEl, { childList: true, subtree: true });
-  const spaceB = el.querySelector(".space-name");
-  // (No space dropdown: spaces are the Spaces app's, and each app shows its own places.)
-  spaceB.hidden = true;
-  let naming = 0;
-  async function spaceName() {
-    if (spaceB.hidden) return;
-    const n = ++naming;
-    const session = await ctx.require("auth").then(a => a.check()).catch(() => null);
-    if (n !== naming) return;
-    spaceB.hidden = !session;
-    if (!session) return;
-    const [panel, activity] = await Promise.all([ctx.require("spaces-panel"), ctx.require("activity").catch(() => null)]);
-    const name = await panel.here();
-    const spaceCap = await ctx.require("space");
-    const elsewhere = activity ? (await spaceCap.mine().catch(ctx.quiet(() => []))).filter(s => s.kind === "server" && !spaceCap.isGroup(s) && s.id !== ctx.space).reduce((t, s) => t + (activity.of(s.id) ?? 0), 0) : 0;
-    if (n !== naming) return;
-    spaceB.replaceChildren(`${name} ▾`, ...(elsewhere ? [Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(elsewhere) })] : []));
-    if (activity && !spaceB.dataset.watching) (spaceB.dataset.watching = "1"), activity.onChange(() => spaceName());
-  }
   const draw = () => {
-    spaceName();
     switcher();
     const actions = el.querySelector(".actions");
     const all = ctx.actions[ctx.route] ?? [];
@@ -370,7 +346,7 @@ export function mount(ctx, el) {
   draw();
   addEventListener("craftworks:route", draw);
   addEventListener("craftworks:actions", draw);
-  addEventListener("craftworks:auth", () => (spaceName(), switcher()));
+  addEventListener("craftworks:auth", () => switcher());
   // THE BACKGROUND — on every page, AFTER it: started one at a time, each once the node is idle (the page's own reads
   // answered), never on a clock that lands among them. ACTIVITY (what is new: notified, whichever app is open);
   // UPKEEP (welcomes joined, askers let in); FILE KEYS (every file on the key its access calls for); KEEP (this person's

@@ -383,6 +383,8 @@ export async function mount(ctx, el) {
   async function draw() {
     at = await whereCap.of({ kind: "post", app: "blog", yours: "Your blog" });
     drawn = whereCap.key();
+    // ITS OWN SETTINGS (a space's, for who may manage its apps): drawn here, in the app.
+    if (at.sub === "settings") return void (at.tabs([]), await at.settings(root));
     const s = at.sub;
     const mine = at.who === "mine";
     const editor = at.space ? await press.mayEdit(at.space).catch(ctx.quiet(() => false)) : false;

@@ -4,7 +4,10 @@
 // - KIND (the atomic type): what the item IS — a Movie, a Podcast, a Post — each with its own fields (`meta`). A
 //   video tutorial is a `video` tagged "Tutorial", not a kind of its own: kinds do not overlap.
 // - CONTEXT: tags (genre, theme, purpose) — the `tags` capability, free to grow.
-// - BUNDLE: a collection (a series, an album, a course) — later, its own item naming its members.
+// - BUNDLE: a set that IS an item of its own — an album, a course, a collection — naming its MEMBERS in order
+//   (`meta.members`: refs), of ANY kind across capabilities (a course: videos, a book, posts). Not a tag (a tag labels
+//   items from outside; a bundle holds them): its own page, comments, votes, audience, traded as one (TOKEN.md §4).
+//   Its own domain (`bundle`, a capability a space enables), managed by the Bundle app.
 // An APP is a lens on a domain: Videos shows the video domain, Board the text domain (posts).
 //
 //   const kinds = await ctx.require("kinds");
@@ -49,6 +52,8 @@ export async function start() {
     ["dataset", "file", "Dataset", ["format", "schema"]],
     // Text
     ["post", "text", "Post", []],
+    // Bundle (a set of items of any kind, an item of its own — its members in `meta.members`, kept by the Bundle app)
+    ["bundle", "bundle", "Bundle", []],
     // Note (Notes: a card of text, its own domain — its own policy)
     ["note", "note", "Note", []],
     // Paste (Paste: code or text kept as it is — the note family's, with its language and an expiry)
@@ -126,12 +131,14 @@ export async function start() {
     vote: { look: "card", votes: false, comments: true, about: false },
   };
   return {
-    parts: kind => PARTS[byKind.get(kind)?.domain] ?? { look: "card", votes: false, comments: false, about: false },
+    // (A BUNDLE's page is a card — its members listed by its app — with votes, comments and its about.)
+    parts: kind => (kind === "bundle" ? { look: "card", votes: true, comments: true, about: true } : PARTS[byKind.get(kind)?.domain] ?? { look: "card", votes: false, comments: false, about: false }),
     of: kind => byKind.get(kind) ?? onTo.get(kind) ?? null,
     attaching: () => [...onTo.keys()],
     attachesTo: kind => [...(onTo.get(kind)?.to ?? [])],
     domain: kind => byKind.get(kind)?.domain ?? null,
     inDomain: domain => CATALOG.filter(c => c[1] === domain).map(c => c[0]),
+    isBundle: kind => kind === "bundle",
     all: () => [...byKind.keys()],
     fieldLabel: f => LABELS[f] ?? f,
     collaborative: kind => COLLABORATIVE.has(kind),

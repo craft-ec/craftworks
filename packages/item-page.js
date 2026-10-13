@@ -168,5 +168,30 @@ export async function start(ctx) {
     return page;
   }
 
-  return { show };
+  // ADD TO A BUNDLE, on every item's page (one place, every app): your bundles, and those of the space the item is in
+  // (when you are in it) — a bundle holds items of any kind. Not on a bundle's own page, not from outside.
+  async function withBundles(ref, o = {}) {
+    const page = await show(ref, o);
+    if (o.outside || o.discover || !page?.classList?.contains("cw-page")) return page;
+    try {
+      const space = await ctx.require("space");
+      if (!(await space.me())) return page;
+      const it = o.item ?? (await items.get(ref).catch(ctx.quiet(() => null)));
+      if (!it || kinds.isBundle?.(it.kind)) return page;
+      const bundles = await ctx.require("bundles");
+      const sid = items.spaceIdOf?.(ref);
+      const sp = sid ? await space.find(sid, { wait: 3000 }).catch(ctx.quiet(() => null)) : null;
+      const all = [...(await bundles.of(null).catch(ctx.quiet(() => []))), ...(sp ? await bundles.of(sp).catch(ctx.quiet(() => [])) : [])];
+      if (!all.length) return page;
+      const sel = document.createElement("select");
+      sel.ariaLabel = "Add to a bundle";
+      sel.append(Object.assign(document.createElement("option"), { value: "", textContent: "Add to a bundle…" }), ...all.map(b => Object.assign(document.createElement("option"), { value: b.ref, textContent: `${b.title}${b.members.includes(ref) ? " ✓" : ""}` })));
+      sel.onchange = () => sel.value && bundles.add(sel.value, ref).then(() => (sel.selectedOptions[0].textContent += " ✓", (sel.value = "")), e => alert(ctx.say(e)));
+      page.prepend(sel);
+    } catch (e) {
+      ctx.failed("item page", e, "add to a bundle not offered");
+    }
+    return page;
+  }
+  return { show: withBundles };
 }
