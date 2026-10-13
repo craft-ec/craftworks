@@ -128,7 +128,7 @@ export async function start(ctx) {
       const drawList = async () => {
         const sp = all.find(s => s.id === choose.value) ?? null;
         listEl.replaceChildren(h("li", { textContent: "Loading…" }));
-        const rows = (await drive.list(sp).catch(ctx.quiet(() => []))).filter(r => !media || !!kinds.mediaOf(r.ref));
+        const rows = (await ctx.optional("attachments: drive.list", drive.list(sp), () => [])).filter(r => !media || !!kinds.mediaOf(r.ref));
         listEl.replaceChildren(
           ...(rows.length
             ? rows.map(r => {
@@ -228,7 +228,7 @@ export async function start(ctx) {
   async function openFull(ref, note, item = null) {
     const m = kinds.mediaOf(ref);
     // Counted for its ITEM, and kept for others (`usage.trackItem`).
-    if (item) ctx.require("usage").then(u => u.trackItem(item, [ref]), () => {});
+    if (item) ctx.background("attachments: ctx.require", ctx.require("usage").then(u => u.trackItem(item, [ref])));
     const show = (media, url = null) => {
       const d = h("dialog", { className: "cw-att-full" }, media, h("p", { textContent: `${ref.name} · ${sizeOf(ref.size)}` }));
       d.addEventListener("click", e => e.target === d && d.close());

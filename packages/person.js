@@ -47,7 +47,7 @@ export async function start(ctx) {
 
   async function open(anchor, did, { space: sp = null } = {}) {
     close();
-    const me = await space.account();
+    const me = await space.account.strict();
     if (!me) return;
     const box = el("div", { className: "cw-person", role: "dialog" });
     openBox = box;
@@ -58,7 +58,7 @@ export async function start(ctx) {
     const said = el("p", { className: "said" });
     // Roles, removal and bans only in a SHARED space (a server): a conversation is between equals.
     const shared = sp && (sp.parent ?? sp).kind === "server" ? sp.parent ?? sp : null;
-    const [people, r, handle] = await Promise.all([edge.people(), shared ? roles.of(shared) : null, directory.handle(did)]);
+    const [people, r, handle] = await Promise.all([edge.people(), shared ? roles.of.strict(shared) : null, directory.handle.strict(did)]);
     const mod = shared ? await moderation.of(shared) : null;
     const RANK = { owner: 3, admin: 2, member: 1 };
     // A button that does something, then redraws; `confirm`: a lasting act asks again on the button itself.
@@ -185,15 +185,15 @@ export async function start(ctx) {
     box.style.top = `${Math.min(at.bottom + 6, innerHeight - 320)}px`;
     document.body.append(box);
     box.replaceChildren(el("h3", { textContent: space.shown(desc) }), el("p", { className: "id", textContent: "Reading it…" }));
-    const mine = (await space.mine()).some(s => s.id === desc.id);
-    const pr = mine ? await roles.of((await space.mine()).find(s => s.id === desc.id)) : await roles.ofPublic(desc);
+    const mine = (await space.mine.strict()).some(s => s.id === desc.id);
+    const pr = mine ? await roles.of.strict((await space.mine.strict()).find(s => s.id === desc.id)) : await roles.ofPublic.strict(desc);
     await pr.settled;
     const about = pr.config?.("space", "about", "") ?? "";
     const apps = ctx.apps.filter(a => (a.views ?? []).includes("shared") && !a.always && pr.apps().includes(a.route.slice(1)));
     const n = pr.members().length;
     const join = await (await ctx.require("join-button")).control(desc, { open: `#/s/${desc.id}`, joinable: pr.policy("", "join") === "anyone" });
     // Its MAIL, where its owner turned it on: written to from here, member or not.
-    const mailable = await conversation.mail.accepts(desc.id).catch(ctx.quiet(() => false));
+    const mailable = await ctx.optional("person: conversation.mail.accepts", conversation.mail.accepts(desc.id), () => false);
     // HIDE (private, everywhere) and FLAG (public: your list, Discover) the whole space — as a post and an author.
     const lists = await moderation.lists();
     const hideFlag = () =>
@@ -218,16 +218,16 @@ export async function start(ctx) {
   // MENTIONS — one way everywhere (a message, a post, a comment, a note, a mail): written `[@name#abc123](person:DID)`
   // by every composer (`md-editor`), drawn by `markdown` as a link that opens their card here.
   async function mentionable(q = "", { extra = [] } = {}) {
-    const me = await space.me();
+    const me = await space.me.strict();
     const dids = new Set(extra);
-    const mine = await space.mine().catch(ctx.quiet(() => []));
+    const mine = await space.mine();
     for (const s of mine) if (s.kind === "direct" && s.with) dids.add(s.with);
     const here = mine.find(s => s.id === ctx.space && s.kind === "server");
-    if (here) for (const d of await conversation.members(here).catch(ctx.quiet(() => []))) dids.add(d);
-    const people = await edge.people().catch(ctx.quiet(() => null));
+    if (here) for (const d of await conversation.members(here)) dids.add(d);
+    const people = await ctx.optional("person: edge.people", edge.people(), () => null);
     for (const rel of ["friend", "follow"]) for (const d of people?.list(rel) ?? []) if (String(d).startsWith("did:craftec:")) dids.add(d);
     dids.delete(me);
-    const all = await Promise.all([...dids].map(async did => ({ did, shown: directory.shown(did, await directory.handle(did).catch(ctx.quiet(() => null))) })));
+    const all = await Promise.all([...dids].map(async did => ({ did, shown: directory.shown(did, await directory.handle(did)) })));
     q = String(q).toLowerCase();
     return all.filter(p => p.shown.toLowerCase().includes(q)).sort((a, b) => a.shown.toLowerCase().startsWith(q) === b.shown.toLowerCase().startsWith(q) ? a.shown.localeCompare(b.shown) : a.shown.toLowerCase().startsWith(q) ? -1 : 1);
   }
@@ -236,14 +236,14 @@ export async function start(ctx) {
     // here and this person themselves, by the id's start.
     const short = String(typed ?? "").split("#")[1] ?? "";
     const byStart = async () => {
-      const me = await space.me();
-      const all = [...(await mentionable("").catch(ctx.quiet(() => []))).map(p => p.did), me].filter(d => d && d.replace(/^did:craftec:/, "").startsWith(short));
+      const me = await space.me.strict();
+      const all = [...(await ctx.optional("person: mentionable", mentionable(""), () => [])).map(p => p.did), me].filter(d => d && d.replace(/^did:craftec:/, "").startsWith(short));
       return all.length === 1 ? all[0] : null;
     };
-    const who = did ?? (await conversation.person(typed).catch(ctx.quiet(() => null))) ?? (short ? await byStart() : null);
+    const who = did ?? (await conversation.person(typed)) ?? (short ? await byStart() : null);
     if (!who) return;
-    const sp = (await space.mine().catch(ctx.quiet(() => []))).find(s => s.id === ctx.space) ?? null;
+    const sp = (await space.mine()).find(s => s.id === ctx.space) ?? null;
     return open(anchor, who, { space: sp });
   }
-  return { open, openSpace, close, mentionable, openMention };
+  return { open, openSpace, close, mentionable: ctx.total("person.mentionable", () => [], mentionable), openMention };
 }

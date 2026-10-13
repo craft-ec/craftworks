@@ -346,14 +346,14 @@ export function delegationChains(electorate, delegations) {
 // ── THE SERVICE ─────────────────────────────────────────────────────────────────────────────────────────────────────
 export async function start(ctx) {
   const [items, space, roles] = await Promise.all(["items", "space", "roles"].map(n => ctx.require(n)));
-  const me = async () => space.me();
+  const me = async () => space.me.strict();
   // The space an item is in, this person a member (null: a person's own item, or a space read from outside).
   const spaceOf = async ref => {
     const sid = items.spaceIdOf(ref);
-    return sid ? ((await space.mine()).find(s => s.id === sid) ?? null) : null;
+    return sid ? ((await space.mine.strict()).find(s => s.id === sid) ?? null) : null;
   };
   const rolesOf = async sp => {
-    const r = await roles.of(sp);
+    const r = await roles.of.strict(sp);
     await r.settled;
     return r;
   };
@@ -373,13 +373,13 @@ export async function start(ctx) {
   async function pollView(poll) {
     const sp = await spaceOf(poll.ref);
     const r = sp ? await rolesOf(sp) : null;
-    if (!sp) await roles.personal(poll.by).ready?.catch?.(() => {});
-    const records = await hashed(await items.attached(poll.ref, BALLOT).catch(ctx.quiet(() => [])));
+    if (!sp) await ctx.background("vote-tally: roles.personal", roles.personal(poll.by).ready);
+    const records = await hashed(await items.attached(poll.ref, BALLOT));
     const self = await me();
     const tally = pollTally(poll, records, { eligible: eligibility(poll, r) });
     const mineRec = newest(records.filter(x => x.by === self && x.on === poll.ref)).get(self) ?? null;
     const meta = normalizePoll(poll.meta);
-    const may = meta.open && (await items.mayWriteOn(poll, "vote").catch(ctx.quiet(() => false)));
+    const may = meta.open && (await items.mayWriteOn(poll, "vote"));
     return { meta, tally, mine: mineRec?.choice ?? null, may, records };
   }
   // A BALLOT written: a new record in this person's own feed, its seq one above their last on this item.
@@ -390,17 +390,17 @@ export async function start(ctx) {
       if (!p.open) throw new Error("this poll is closed");
       if (!validPollChoice(p, choice)) throw new Error(p.multiple ? "choose one or more of its options" : "choose one of its options");
     } else if (choice !== null && !CHOICES.includes(choice)) throw new Error("a proposal's vote is yes, no or abstain");
-    if (!(await items.mayWriteOn(item, "vote").catch(ctx.quiet(() => false)))) throw new Error("you may not vote on this");
-    const mine = (await hashed(await items.attached(item.ref, BALLOT).catch(ctx.quiet(() => [])))).filter(x => x.by === self);
+    if (!(await items.mayWriteOn(item, "vote"))) throw new Error("you may not vote on this");
+    const mine = (await hashed(await items.attached(item.ref, BALLOT))).filter(x => x.by === self);
     const sp = await spaceOf(item.ref);
-    const cred = sp ? null : await roles.credToCite(item, "vote").catch(ctx.quiet(() => null));
+    const cred = sp ? null : await ctx.optional("vote-tally: roles.credToCite", roles.credToCite(item, "vote"), () => null);
     return items.attach(item.ref, BALLOT, "", { meta: { seq: nextSeq(mine, self), choice, ...(cred ? { cred } : {}) } });
   }
 
   // A SPACE's proposals and delegations, read once (every record of the vote kinds in its room), hashed.
   async function inSpace(sp) {
     const r = await rolesOf(sp);
-    const all = await items.inPlaces({ spaces: [sp] }, [POLL, PROPOSAL, DELEGATION, BALLOT, TALLY], { withVotes: false });
+    const all = await items.inPlaces.strict({ spaces: [sp] }, [POLL, PROPOSAL, DELEGATION, BALLOT, TALLY], { withVotes: false });
     const records = await hashed(all);
     const self = await me();
     const members = () => r.members().map(m => m.did);

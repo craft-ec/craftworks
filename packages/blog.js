@@ -12,7 +12,7 @@
 // UI only. Its look is `theme`'s tokens; what an item is, `items`'; who may, `roles`'.
 export async function mount(ctx, el) {
   // WHERE it is — its spaces — shown as this app chooses (`places`: a subtle group line).
-  ctx.require("places").then(p => p.attach(el, "group"), () => {});
+  ctx.background("blog: ctx.require", ctx.require("places").then(p => p.attach(el, "group")));
   const [items, press, theme, space, cards, markdown, attachments, directory, person] = await Promise.all(
     ["items", "blog-press", "theme", "space", "cards", "markdown", "attachments", "directory", "person"].map(n => ctx.require(n)),
   );
@@ -139,7 +139,7 @@ export async function mount(ctx, el) {
   // AN ARTICLE whole.
   async function article(ref) {
     root.replaceChildren(theme.loading("Opening the article…"));
-    const outside = await items.outsideOf(ref).catch(ctx.quiet(() => null));
+    const outside = await items.outsideOf(ref);
     const it = await items.get(ref, { outside });
     if (!it) return root.replaceChildren(h("p", { className: "none", textContent: "This article is not there (removed, or not found yet)." }));
     // GATED (adult content not chosen, a level's item): the one item page decides what shows.
@@ -218,7 +218,7 @@ export async function mount(ctx, el) {
     const page = h("div", { className: "art" }, col, nav);
     root.replaceChildren(page);
     // ITS TIME read (`usage`), as every item page counts it.
-    ctx.require("usage").then(u => (u.opened(it.ref, { kind: it.kind, title: it.title ?? null }), u.reading(page, it.ref, { kind: it.kind, title: it.title ?? null })), () => {});
+    ctx.background("blog: ctx.require", ctx.require("usage").then(u => (u.opened(it.ref, { kind: it.kind, title: it.title ?? null }), u.reading(page, it.ref, { kind: it.kind, title: it.title ?? null }))));
   }
 
   // AN EDITOR's WORD on a review copy: approve, or decline with a note.
@@ -262,7 +262,7 @@ export async function mount(ctx, el) {
       const said = h("span", { className: "said" });
       const publish = h("button", { type: "button", className: "cw-btn primary", textContent: b.review ? "Send again" : "Publish now" });
       const go = theme.action(publish, () => press.publish(d).then(x => (x.review ? draw() : (location.hash = `${b.place ? `#/s/${b.place}/blog` : "#/blog"}/p/${x.ref}`)), e => ((said.textContent = ctx.say(e)), Promise.reject(e))), { busy: "Publishing…", done: "Done ✓" });
-      publish.onclick = () => go().catch(ctx.quiet(() => {}));
+      publish.onclick = () => ctx.background("blog: go", go());
       const del = h("button", { type: "button", className: "cw-btn", textContent: "Delete" });
       del.onclick = () => (del.dataset.armed === "1" ? items.remove(d.ref).then(() => draw(), e => (said.textContent = ctx.say(e))) : ((del.dataset.armed = "1"), (del.textContent = "Confirm: delete")));
       const where = b.place ? `for ${spaces.get(b.place) ? space.shown(spaces.get(b.place)) : "a space you left"}` : "for your blog";
@@ -332,7 +332,7 @@ export async function mount(ctx, el) {
           throw e;
         }
       }, words);
-      btn.onclick = () => act().catch(ctx.quiet(() => {}));
+      btn.onclick = () => ctx.background("blog: act", act());
     };
     if (editRef) {
       run(publish, async () => {
@@ -387,7 +387,7 @@ export async function mount(ctx, el) {
     if (at.sub === "settings") return void (at.tabs([]), await at.settings(root));
     const s = at.sub;
     const mine = at.who === "mine";
-    const editor = at.space ? await press.mayEdit(at.space).catch(ctx.quiet(() => false)) : false;
+    const editor = at.space ? await ctx.optional("blog: press.mayEdit", press.mayEdit(at.space), () => false) : false;
     at.tabs(
       [
         ...(at.who === "space" ? [{ label: "Articles", href: base(), on: !s }] : []),

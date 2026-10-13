@@ -113,10 +113,9 @@ export async function start(ctx) {
 
   // ONE health report per move (never content: a short key, the states, the event's details).
   const report = (machine, key, from, to, event, detail) =>
-    ctx
+    ctx.background("lifecycle: index", ctx
       .require("index")
-      .then(ix => ix.health({ k: `lifecycle-${machine}`, s: String(key).slice(0, 12), to: `${from}>${to}`, why: `${event}: ${from} → ${to}`, d: detail }))
-      .catch(() => {});
+      .then(ix => ix.health({ k: `lifecycle-${machine}`, s: String(key).slice(0, 12), to: `${from}>${to}`, why: `${event}: ${from} → ${to}`, d: detail })));
 
   function transition(machine, key, event, detail = {}) {
     const m = MACHINES[machine];

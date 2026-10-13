@@ -21,7 +21,7 @@ export async function start(ctx) {
   const bytes = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
 
   const mine = async () => {
-    const me = await space.account();
+    const me = await space.account.strict();
     if (!me?.shared) throw new Error("log in with your recovery words once on this device first");
     return { me, t: await storage.publicTail(TAIL, me.shared) };
   };
@@ -51,15 +51,15 @@ export async function start(ctx) {
   async function open(id, passphrase) {
     const did = String(id ?? "").trim();
     if (!did.startsWith("did:craftec:")) throw new Error("your account's full id: did:craftec:… (on your Card page)");
-    const t = await directory.publicOf(did, TAIL);
-    await t?.reread?.().catch(ctx.quiet(() => {}));
+    const t = await directory.publicOf.strict(did, TAIL);
+    await ctx.background("recovery: t?.reread", t?.reread?.());
     const sealed = t?.rows().find(r => r.key === ROW)?.value;
     if (!sealed) throw new Error("this account has no recovery passphrase set");
     return Core.recovery_open(passphrase, glue.did_bytes(did), bytes(sealed));
   }
 
   // New words: the copy holds the old ones — dropped.
-  auth.identity.onWordsChanged(() => clear().catch(ctx.quiet(() => {})));
+  auth.identity.onWordsChanged(() => ctx.background("recovery: clear", clear()));
 
-  return { set, has, clear, open };
+  return { set, has: ctx.total("recovery.has", () => false, has), clear, open };
 }

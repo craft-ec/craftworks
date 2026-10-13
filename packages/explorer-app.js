@@ -76,7 +76,7 @@ export async function mount(ctx, el) {
     const st = [];
     for (let x = e; x >= Math.max(0, e - 3); x--) {
       const posted = (await index.bag.read(Core.statement_bag_address(x), "reading an epoch's statement")).map(p => Core.statement_posted_read(p)).filter(p => p?.epoch === x);
-      const iss = await statement.issuance(x).catch(ctx.quiet(() => null));
+      const iss = await ctx.optional("explorer-app: statement.issuance", statement.issuance(x), () => null);
       if (!posted.length) st.push([cell(String(x), "num"), cell("not posted yet"), cell(""), cell(iss ? String(iss.keepers) : "—", "num"), cell(iss ? craft(iss.total) : "—", "num")]);
       for (const p of posted) {
         const s = await run(() => core.statement_status(tokens.code, tokens.beacon, tokens.idlogCode, lot.pool, lot.bag, lot.beacon, x, p.root)).catch(err => ({ waiting: err.message ?? String(err) }));
@@ -88,7 +88,7 @@ export async function mount(ctx, el) {
     // WITNESS LOT
     const lotRows = [];
     for (const x of [c, c + 1]) {
-      const claims = (await run(() => core.stakers(tokens.code, tokens.beacon, tokens.idlogCode, lot.bag, lot.beacon, x)).catch(ctx.quiet(() => []))) ?? [];
+      const claims = (await ctx.optional("explorer-app: run", run(() => core.stakers(tokens.code, tokens.beacon, tokens.idlogCode, lot.bag, lot.beacon, x)), () => [])) ?? [];
       if (!claims.length) lotRows.push([cell(String(x), "num"), cell("no entrants: the baseline witnesses alone", "note"), cell(""), cell(""), cell("")]);
       for (const k of claims) lotRows.push([cell(String(x), "num"), cell(k.owner === myDid ? "you" : short(k.owner)), cell(craft(k.amount), "num"), code(short(k.key)), cell(k.key === myKey ? "this node" : "")]);
     }
@@ -109,7 +109,7 @@ export async function mount(ctx, el) {
     parts.push(section("Witness queue", "Every new token entry, waiting for its drawn witnesses (this epoch and the last, newest first).", table([["Epoch", "num"], ["Token"], ["Chain owner"], ["Seq", "num"], ["Entry"], ["Stamp", "num"], ["Signatures", "num"], ["Status"]], qRows)));
 
     // REGISTRIES
-    const net = await keeper.network?.(e).catch(ctx.quiet(() => null));
+    const net = await ctx.optional("explorer-app: keeper.network", keeper.network?.(e), () => null);
     parts.push(section("Registries", "What the network keeps, and who keeps it (this epoch and the last).", table([["Files listed", "num"], ["Bytes", "num"], ["Keepers", "num"]], net ? [[cell(String(net.files), "num"), cell(`${(net.bytes / 1e6).toFixed(1)} MB`, "num"), cell(String(net.keepers), "num")]] : [])));
 
     said.textContent = `At height ${h}.`;

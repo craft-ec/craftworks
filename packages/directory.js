@@ -89,7 +89,7 @@ export async function start(ctx) {
   async function publicOf(did, name, opts = {}) {
     // Nobody (a guest's "me"): an empty table — nothing there.
     if (did == null) return storage.empty(name);
-    const me = await space.account();
+    const me = await space.account.strict();
     const id = typeof did === "string" ? did : glue.did_of(did);
     if (me?.id === id) return storage.publicTail(name, me.shared, opts);
     const k = await keysOf(did);
@@ -103,7 +103,7 @@ export async function start(ctx) {
   async function card(did, { fresh = false } = {}) {
     const t = await publicOf(did, CARD);
     await t?.answer?.();
-    if (fresh) await t?.reread?.().catch(ctx.quiet(() => {}));
+    if (fresh) await ctx.background("directory: t?.reread", t?.reread?.());
     if (!t || t.absent) return null;
     return { did: typeof did === "string" ? did : glue.did_of(did), ...read(t) };
   }
@@ -111,7 +111,7 @@ export async function start(ctx) {
   // THIS person's card: its handle, and this node's key package (made by `keys`, its secrets kept with this node).
   async function publish({ handle } = {}) {
     await (await ctx.require("keys")).mustWrite("the card");
-    const sp = await space.account();
+    const sp = await space.account.strict();
     if (!sp?.shared) throw new Error("this node does not hold the account's data key");
     const t = await storage.publicTail(CARD, sp.shared);
     if (handle != null && read(t).handle !== handle) await t.put("handle", handle);
@@ -143,13 +143,13 @@ export async function start(ctx) {
   // THIS person's CONTRIBUTIONS on their card (PUBLIC: anyone computes their level from them — `usage.levelFrom`).
   // This person's wallet PAY KEYS on their card (TOKEN §7f: the only wallet fact tied to the DID).
   async function setPay(keys) {
-    const sp = await space.account();
+    const sp = await space.account.strict();
     if (!sp?.shared) throw new Error("this node does not hold the account's data key");
     const t = await storage.publicTail(CARD, sp.shared);
     await t.put("pay", JSON.stringify({ scan: keys.scan, spend: keys.spend }));
   }
   async function setContributions(list) {
-    const sp = await space.account();
+    const sp = await space.account.strict();
     if (!sp?.shared) throw new Error("this node does not hold the account's data key");
     const t = await storage.publicTail(CARD, sp.shared);
     await t.put("contrib", JSON.stringify(list.map(c => ({ at: c.at, amount: c.amount, days: c.days }))));
@@ -158,17 +158,17 @@ export async function start(ctx) {
   // A person's LEVEL now, from their card's contributions (once per page per person).
   const levels = new Map();
   function levelOf(did) {
-    if (!levels.has(did)) levels.set(did, Promise.all([card(did), ctx.require("usage")]).then(([c, u]) => u.levelFrom(c?.contrib ?? []), () => ({ id: "free", name: "Free" })));
+    if (!levels.has(did)) levels.set(did, ctx.optional("directory: Promise.all", Promise.all([card(did), ctx.require("usage")]).then(([c, u]) => u.levelFrom(c?.contrib ?? [])), () => ({ id: "free", name: "Free" })));
     return levels.get(did);
   }
 
   // The account's DEVICES on the card: the credentials its key group holds now (rewritten when they change: a device
   // joined or was removed).
   async function putNodes(t) {
-    const st = await (await ctx.require("keys")).ready().catch(() => null);
+    const st = await ctx.optional("directory: ready", (await ctx.require("keys")).ready(), () => null);
     const creds = (st?.members ?? []).map(m => m.cred).filter(Boolean).sort();
     // And into the account's DEVICES contract (a grow-only set: the union is kept) — where readers count them.
-    const me = await auth.check().catch(ctx.quiet(() => null));
+    const me = await auth.check();
     const put = me && creds.length ? await auth.identity.addDevices(me.didBytes, creds.map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))))).then(() => true, e => (ctx.failed("card", e, `the account's devices: ${e.message}`), false)) : false;
     // Said on the card once the contract is put: what readers check before looking it up.
     if (put && !read(t).hasDevices) await t.put("devices", "1");
@@ -179,7 +179,7 @@ export async function start(ctx) {
   // NEW key packages (one was used to add this person somewhere: each works once).
   async function renew() {
     await (await ctx.require("keys")).mustWrite("the card's key packages");
-    const sp = await space.account();
+    const sp = await space.account.strict();
     await putKeyPackages(await storage.publicTail(CARD, sp.shared));
   }
 
@@ -197,13 +197,13 @@ export async function start(ctx) {
   const watchedCards = new Set();
   function handle(did) {
     if (!handles.has(did)) {
-      const p = card(did).then(c => c?.handle ?? null, () => null);
+      const p = ctx.optional("directory: card", card(did).then(c => c?.handle ?? null), () => null);
       p.then(h => h != null && knownHandles.set(did, h));
       handles.set(did, p);
       p.then(h => h == null && handles.get(did) === p && handles.delete(did));
       if (!watchedCards.has(did)) {
         watchedCards.add(did);
-        publicOf(did, CARD).then(t => t?.onChange(() => handles.delete(did)), () => {});
+        ctx.background("directory: publicOf", publicOf(did, CARD).then(t => t?.onChange(() => handles.delete(did))));
       }
     }
     return handles.get(did);
@@ -219,14 +219,14 @@ export async function start(ctx) {
   const BADGE = { pro: " ⭐ PRO", vip: " 💎 VIP" };
   const nameEl = (did, tag = "span", props = {}) => {
     const e = Object.assign(document.createElement(tag), props, { textContent: shown(did, knownHandles.get(did)) });
-    Promise.all([name(did), levelOf(did).catch(ctx.quiet(() => null))]).then(([t, lv]) => (e.textContent = t + (BADGE[lv?.id] ?? "")), () => {});
+    ctx.background("directory: Promise.all", Promise.all([name(did), ctx.optional("directory: levelOf", levelOf(did), () => null)]).then(([t, lv]) => (e.textContent = t + (BADGE[lv?.id] ?? ""))));
     return e;
   };
 
   // A person's DATA key, from their key log (once per page): what signs their member's credential in a space.
   const dataKeys = new Map();
   function dataKey(did) {
-    if (!dataKeys.has(did)) dataKeys.set(did, keysOf(did).then(k => k?.data ?? null, () => null));
+    if (!dataKeys.has(did)) dataKeys.set(did, ctx.optional("directory: keysOf", keysOf(did).then(k => k?.data ?? null), () => null));
     return dataKeys.get(did);
   }
 
@@ -240,14 +240,13 @@ export async function start(ctx) {
   function onDevices(did, fn) {
     if (!deviceWatch.has(did)) {
       deviceWatch.set(did, []);
-      publicOf(did, CARD)
+      ctx.background("directory: publicOf", publicOf(did, CARD)
         .then(t =>
           t?.onChange(() => {
             deviceSets.delete(did);
             for (const f of deviceWatch.get(did)) f(did);
           }),
-        )
-        .catch(ctx.quiet(() => {}));
+        ));
     }
     deviceWatch.get(did).push(fn);
   }
@@ -296,20 +295,20 @@ export async function start(ctx) {
   // whether they still want it (row `listed`): a bag keeps its pointers, so leaving is the card's word.
   const PEOPLE = "discover:people";
   async function listMe(on) {
-    const sp = await space.account();
+    const sp = await space.account.strict();
     const t = await storage.publicTail(CARD, sp.shared);
     await t.put("listed", on ? "1" : "");
     if (on) await (await ctx.require("index")).point(PEOPLE, { did: sp.id });
   }
   const isListed = async () => {
-    const sp = await space.account();
+    const sp = await space.account.strict();
     return (await storage.publicTail(CARD, sp.shared)).rows().some(r => r.key === "listed" && r.value === "1");
   };
   async function listed() {
-    const dids = [...new Set((await (await ctx.require("index")).pointers(PEOPLE, { show: true }).catch(() => [])).map(p => p.did).filter(d => typeof d === "string" && d.startsWith("did:craftec:")))];
-    const ok = await Promise.all(dids.map(d => publicOf(d, CARD).then(t => !!t?.rows().some(r => r.key === "listed" && r.value === "1"), () => false)));
+    const dids = [...new Set((await ctx.optional("directory: pointers", (await ctx.require("index")).pointers(PEOPLE, { show: true }), () => [])).map(p => p.did).filter(d => typeof d === "string" && d.startsWith("did:craftec:")))];
+    const ok = await Promise.all(dids.map(d => ctx.optional("directory: publicOf", publicOf(d, CARD).then(t => !!t?.rows().some(r => r.key === "listed" && r.value === "1")), () => false)));
     return dids.filter((_, i) => ok[i]);
   }
 
-  return { credTable, card, publish, setContributions, setPay, levelOf, renew, handle, shown, name, nameEl, publicOf, dataKey, devices, devicesWhy, onDevices, listMe, isListed, listed };
+  return { credTable, card: ctx.total("directory.card", () => null, card), publish, setContributions, setPay, levelOf, renew, handle: ctx.total("directory.handle", () => null, handle), shown, name, nameEl, publicOf: ctx.total("directory.publicOf", () => null, publicOf), dataKey, devices: ctx.total("directory.devices", () => [], devices), devicesWhy, onDevices, listMe, isListed: ctx.total("directory.isListed", () => false, isListed), listed };
 }

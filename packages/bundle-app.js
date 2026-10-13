@@ -27,7 +27,7 @@ export async function mount(ctx, el) {
     // DISCOVER (and someone else's, or a space from outside): the bundles they show in public — as every app's.
     const others = at.who === "discover" || at.who === "person" || at.outside;
     const bs = others
-      ? (await at.read({ kinds: ["bundle"] }).catch(ctx.quiet(() => []))).map(b => ({ ref: b.ref, title: b.title || "untitled", members: Array.isArray(b.meta?.members) ? b.meta.members : [], item: b }))
+      ? (await at.read({ kinds: ["bundle"] })).map(b => ({ ref: b.ref, title: b.title || "untitled", members: Array.isArray(b.meta?.members) ? b.meta.members : [], item: b }))
       : await bundles.of(sp);
     // WHO SEES a new one: in your space just you, or anyone (public — listed in Discover); in a shared space its members,
     // or anyone.
@@ -51,9 +51,9 @@ export async function mount(ctx, el) {
   async function one(bref) {
     const meId = await (await ctx.require("space")).me();
     const mineHere = at.who === "mine" || (at.who === "space" && !at.outside);
-    const b = (mineHere ? (await bundles.of(at.space && !at.outside ? at.space : null)).find(x => x.ref === bref) : null) ?? (await items.get(bref, { outside: await items.outsideOf(bref).catch(ctx.quiet(() => null)) }).then(it => (it ? { ref: it.ref, title: it.title, members: it.meta?.members ?? [], item: it } : null)));
+    const b = (mineHere ? (await bundles.of(at.space && !at.outside ? at.space : null)).find(x => x.ref === bref) : null) ?? (await items.get(bref, { outside: await items.outsideOf(bref) }).then(it => (it ? { ref: it.ref, title: it.title, members: it.meta?.members ?? [], item: it } : null)));
     if (!b) return root.replaceChildren(h("p", { className: "none", textContent: "Not found." }));
-    const got = await Promise.all(b.members.map(r => items.get(r).catch(ctx.quiet(() => null))));
+    const got = await Promise.all(b.members.map(r => items.get(r)));
     const rows = b.members.map((ref, i) => {
       const it = got[i];
       const label = it ? `${kinds.of(it.kind)?.label ?? it.kind} · ${it.title || String(it.body ?? "").slice(0, 60) || "untitled"}` : "(not readable here)";

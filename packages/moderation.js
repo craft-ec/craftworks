@@ -25,7 +25,7 @@ export async function start(ctx) {
   // DEPARTED: before a commit takes a person's nodes out, where each of their feeds stands — so what they wrote still
   // counts, up to there, for everyone who opens the space later (`storage`: the space's table `departed`).
   async function departed(sp, did) {
-    const nodes = await directory.devices(did).catch(ctx.quiet(() => []));
+    const nodes = await directory.devices.strict(did);
     if (!nodes.length) return;
     const heads = await storage.headsOf(sp, nodes);
     const t = await storage.table(space.tableOf(sp, "departed"), sp);
@@ -34,14 +34,14 @@ export async function start(ctx) {
   }
 
   async function of(sp) {
-    const r = await roles.of(sp);
+    const r = await roles.of.strict(sp);
     // OUT: the act first — naming their devices, so what they wrote stays theirs after they leave — then their member
     // out of the group. A ban of someone already out is the act alone.
     async function out(did, act) {
       await r.refresh();
       const nodes = r.nodesOf(did);
       if (!nodes.length && act !== "ban") throw new Error("they are not in this space");
-      await r.act({ act, did, nodes: await directory.devices(did) });
+      await r.act({ act, did, nodes: await directory.devices.strict(did) });
       if (nodes.length) await departed(r.space, did).catch(e => ctx.failed("moderation", e, `where their feeds stand: ${e.message}`));
       if (nodes.length) await keys.group(r.space).remove(nodes.map(n => n.index));
       await r.refresh();
@@ -75,9 +75,9 @@ export async function start(ctx) {
     return (listsOpen ??= (async () => {
       const [space, edge] = await Promise.all(["space", "edge"].map(n => ctx.require(n)));
       const people = await edge.people();
-      const me = await space.me();
+      const me = await space.me.strict();
       const LIST = "modlist";
-      const mineT = await directory.publicOf(me, LIST);
+      const mineT = await directory.publicOf.strict(me, LIST);
       const tails = new Map(); // did → tail
       const changed = [];
       const fire = () => changed.forEach(f => f());
@@ -85,12 +85,12 @@ export async function start(ctx) {
       const follow = async () => {
         for (const did of people.list("modlist"))
           if (!tails.has(did)) {
-            const t = await directory.publicOf(did, LIST).catch(ctx.quiet(() => null));
+            const t = await directory.publicOf(did, LIST);
             if (t) (tails.set(did, t), t.onChange(fire));
           }
       };
       // The lists chosen arrive as they are read (what is hidden by this person's own needs none of them).
-      follow().then(fire, () => {});
+      ctx.background("moderation: follow", follow().then(fire));
       people.onChange(() => follow().then(fire));
       const entries = () => {
         const on = new Set();

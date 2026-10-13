@@ -57,7 +57,9 @@ const roles = {
   of: async () => ({ settled: Promise.resolve(), allowsIn: () => true }),
   mayWrite: ({ writer }) => editors.has(writer),
 };
-const ctx = { log: () => {}, failed: () => {}, quiet: make => () => make(), say: e => String(e?.message ?? e), require: async name => ({ items, space, roles })[name] };
+// (A fake capability's reads, read strictly the same: `.strict` as the loader's `ctx.total` gives.)
+const strictly = caps => (Object.values(caps).forEach(c => c && typeof c === "object" && Object.values(c).forEach(f => typeof f === "function" && (f.strict ??= f))), caps);
+const ctx = { log: () => {}, failed: () => {}, total: (w, empty, read) => Object.assign((...a) => Promise.resolve().then(() => read(...a)).catch(() => empty()), { strict: (...a) => Promise.resolve().then(() => read(...a)) }), background: (w, p) => Promise.resolve(p).catch(() => {}), optional: (w, f, fb) => Promise.resolve().then(() => (typeof f === "function" ? f() : f)).catch(() => (typeof fb === "function" ? fb() : fb)), say: e => String(e?.message ?? e), require: async name => strictly({ items, space, roles })[name] };
 const S = await W.start(ctx);
 const as = who => (me = `did:craftec:${who}`);
 const spaceAt = { who: "space", space: SP };

@@ -82,7 +82,7 @@ export async function start(ctx) {
   async function show(host, conversation, title) {
     const titleEl = typeof title === "string" ? null : title;
     title = titleEl ? titleEl.textContent : title;
-    const me = await space.me();
+    const me = await space.me.strict();
     const box = el("div", { className: "cw-room" });
     const msgs = el("ol", { className: "msgs" });
     const said = el("p", { className: "said", hidden: true });
@@ -119,7 +119,7 @@ export async function start(ctx) {
       if (!did) return "?";
       if (!names.has(did)) {
         names.set(did, null);
-        directory.handle(did).then(h => h && open && (names.set(did, h), draw()));
+        directory.handle.strict(did).then(h => h && open && (names.set(did, h), draw()));
       }
       return directory.shown(did, names.get(did));
     };
@@ -214,7 +214,7 @@ export async function start(ctx) {
               if (earlier) return (limit += PAGE), draw();
               e.target.disabled = true;
               e.target.textContent = "Loading…";
-              await room.older(PAGE).catch(ctx.quiet(() => 0));
+              await ctx.optional("room: room.older", room.older(PAGE), () => 0);
               limit += PAGE;
               draw();
             } }))]
@@ -248,9 +248,9 @@ export async function start(ctx) {
       if (!people) {
         const dids = new Set(room.list().map(m => m.by).filter(Boolean));
         const sp = conversation.scope && conversation.scope.kind !== "account" ? conversation.scope : null;
-        if (sp) for (const d of await (await ctx.require("conversation")).members(sp).catch(() => [])) dids.add(d);
+        if (sp) for (const d of await ctx.optional("room: members", (await ctx.require("conversation")).members(sp), () => [])) dids.add(d);
         dids.delete(me);
-        people = await Promise.all([...dids].map(async d => ({ did: d, shown: directory.shown(d, await directory.handle(d)) })));
+        people = await Promise.all([...dids].map(async d => ({ did: d, shown: directory.shown(d, await directory.handle.strict(d)) })));
       }
       return people;
     };

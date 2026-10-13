@@ -69,7 +69,7 @@ export async function start(ctx) {
         return c;
       },
       async meta() {
-        const m = await doc.getMetadata().catch(ctx.quiet(() => null));
+        const m = await ctx.optional("book-studio: doc.getMetadata", doc.getMetadata(), () => null);
         return { title: m?.info?.Title || "", author: m?.info?.Author || "" };
       },
       close: () => task.destroy(),
@@ -108,10 +108,10 @@ export async function start(ctx) {
     if (!opfPath) throw new Error("not an EPUB: no package file named");
     const opf = await xml(opfPath);
     const items = new Map([...opf.getElementsByTagName("item")].map(i => [i.getAttribute("id"), { href: resolve(opfPath, i.getAttribute("href") ?? ""), type: i.getAttribute("media-type") ?? "", props: i.getAttribute("properties") ?? "" }]));
-    const spine = [...opf.getElementsByTagName("itemref")].map(r => items.get(r.getAttribute("idref"))).filter(i => i && /html/.test(i.type));
+    const spine = [...opf.getElementsByTagName("itemref")].map(r => items.get.strict(r.getAttribute("idref"))).filter(i => i && /html/.test(i.type));
     const dc = tag => opf.getElementsByTagNameNS("*", tag)[0]?.textContent?.trim() ?? "";
     const coverId = [...opf.getElementsByTagName("meta")].find(m => m.getAttribute("name") === "cover")?.getAttribute("content");
-    const coverItem = [...items.values()].find(i => /\bcover-image\b/.test(i.props)) ?? items.get(coverId) ?? null;
+    const coverItem = [...items.values()].find(i => /\bcover-image\b/.test(i.props)) ?? items.get.strict(coverId) ?? null;
     // A chapter is shown in a frame of no origin of its own (the reader's), where no object URL loads: its pictures
     // go in as data: URLs and its stylesheets as text, each read once.
     const datas = new Map(); // an entry's path → its data: URL
@@ -188,7 +188,7 @@ export async function start(ctx) {
     if (!format) throw new Error(`${file.name}: not a book read here (a PDF, an EPUB or a CBZ)`);
     onProgress({ stage: "reading", p: 0 });
     const book = await open(file, format);
-    const [preview, tags] = await Promise.all([cover(book), book.meta().catch(ctx.quiet(() => ({})))]);
+    const [preview, tags] = await Promise.all([cover(book), ctx.optional("book-studio: book.meta", book.meta(), () => ({}))]);
     const pages = book.pages ?? null;
     book.close();
     const typed = new File([file], file.name, { type: TYPES[format] });

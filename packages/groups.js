@@ -13,11 +13,11 @@
 export async function start(ctx) {
   const [space, conversation, roles] = await Promise.all(["space", "conversation", "roles"].map(n => ctx.require(n)));
   const keyOf = sp => (sp.circle ? `circle:${sp.circle}` : (sp.group ?? null));
-  const mine = async () => (await space.mine().catch(ctx.quiet(() => []))).filter(s => keyOf(s));
+  const mine = async () => (await space.mine()).filter(s => keyOf(s));
   const find = async key => (await mine()).find(s => keyOf(s) === key) ?? null;
   const making = new Map();
   async function of(key, { name, setup = null } = {}) {
-    const me = await space.me();
+    const me = await space.me.strict();
     const had = (await mine()).find(s => keyOf(s) === key && s.governance?.owner === me);
     if (had) return had;
     if (!making.has(key))
@@ -26,7 +26,7 @@ export async function start(ctx) {
         (async () => {
           const circle = key.startsWith("circle:") ? key.slice(7) : null;
           const sp = await space.create("server", name, circle ? { circle } : { group: key });
-          if (setup) await setup(sp, await roles.of(sp));
+          if (setup) await setup(sp, await roles.of.strict(sp));
           ctx.log("groups", { what: `${name} made` });
           return sp;
         })().finally(() => making.delete(key)),
@@ -35,9 +35,9 @@ export async function start(ctx) {
   }
   // ITS MEMBERS as `want` says (this person and its owner always): the missing invited, the extra removed.
   async function keep(sp, want) {
-    const me = await space.me();
+    const me = await space.me.strict();
     if (!me) return;
-    const r = await roles.of(sp);
+    const r = await roles.of.strict(sp);
     await r.settled;
     const keepIn = new Set([me, r.owner].filter(Boolean));
     const have = new Set(r.members().map(m => m.did));

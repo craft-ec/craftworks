@@ -59,7 +59,7 @@ export async function start(ctx) {
   };
 
   async function account() {
-    const s = await auth.check();
+    const s = await auth.check.strict();
     if (!s) return null;
     return Object.freeze({
       kind: "account",
@@ -183,10 +183,10 @@ export async function start(ctx) {
   // the space on first; theirs is only the list.
   async function leave(sp) {
     if (sp.kind === "server") {
-      const r = await (await ctx.require("roles")).of(sp).catch(() => null);
+      const r = await ctx.optional("space: of", (await ctx.require("roles")).of(sp), () => null);
       const me = (await account())?.id;
       // Naming its devices (written by one of them), so what this person wrote stays theirs once they are out.
-      const nodes = await (await ctx.require("directory")).devices(me).catch(() => []);
+      const nodes = await ctx.optional("space: devices", (await ctx.require("directory")).devices(me), () => []);
       if (r && !r.left && r.role(me) && r.role(me) !== "owner") await r.act({ act: "leave", did: me, nodes });
     }
     await (await (await ctx.require("storage")).table(SPACES)).remove(sp.id);
@@ -206,5 +206,5 @@ export async function start(ctx) {
 
   // A GROUP (a person's circle, a channel's readers — `groups`): a space of its own, never listed as one.
   const isGroup = sp => !!(sp?.circle || sp?.group);
-  return { isGroup, account, me, loginNeeded, tables, mine, find, create, record, describe, tableOf, channel, board, owner, leave, forget, shown };
+  return { isGroup, account: ctx.total("space.account", () => null, account), me: ctx.total("space.me", () => null, me), loginNeeded, tables, mine: ctx.total("space.mine", () => [], mine), find: ctx.total("space.find", () => null, find), create, record, describe, tableOf, channel, board, owner: ctx.total("space.owner", () => null, owner), leave, forget, shown };
 }

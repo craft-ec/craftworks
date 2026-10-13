@@ -97,7 +97,7 @@ export async function mount(ctx, el) {
       const id = decodeURIComponent(place.sub.slice(2));
       const page = await (await ctx.require("item-page")).show(id, { app: "drive", back: base(), discover });
       // Drive's own, beside the page's action row: Open (show or download it) and, for one listed here, Move…
-      const row = (await drive.list(sp, opts).catch(ctx.quiet(() => []))).find(r => r.id === id);
+      const row = (await ctx.optional("drive: drive.list", drive.list(sp, opts), () => [])).find(r => r.id === id);
       const note = h("span", { className: "s" });
       const tools = row
         ? [

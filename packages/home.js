@@ -87,7 +87,7 @@ export async function mount(ctx, el) {
     // Drawn AT ONCE with every app; the removed ones leave when the list is read (never a blank Home while it is —
     // 10-13: the desk waited for the installed list, up to its table's long read).
     let have = new Set(ctx.apps.map(a => a.route));
-    installed.list().then(l => ((have = new Set(l.map(a => a.route))), desk.redraw()), ctx.quiet(() => {}));
+    ctx.background("home: installed.list", installed.list().then(l => ((have = new Set(l.map(a => a.route))), desk.redraw())));
     const personal = () => ctx.apps.filter(a => (a.views ?? ["personal"]).includes("personal") && have.has(a.route));
     const desk = icons.desk(el.querySelector(".desk"), {
       items: () => personal().map(a => ({ app: a, href: `#${a.route}`, count: a.counts && activity ? activity.total(a.counts) : 0 })),
@@ -95,11 +95,11 @@ export async function mount(ctx, el) {
     });
     addEventListener("craftworks:installed", async () => ((have = new Set((await installed.list()).map(a => a.route))), desk.redraw()), { signal: ctx.signal });
     // What is new in each app: its badge, kept current.
-    ctx.require("activity").then(a => {
+    ctx.background("home: ctx.require", ctx.require("activity").then(a => {
       activity = a;
       a.onChange(desk.redraw);
       desk.redraw();
-    }, () => {});
+    }));
   };
 
   // A PERSON's Home: theirs, seen from outside.
@@ -120,7 +120,7 @@ export async function mount(ctx, el) {
       <div class="them"><h2></h2><p class="did"></p><button type="button" class="act">Follow, friend, message…</button><div class="grid"></div></div>`;
     const name = el.querySelector("h2");
     name.textContent = directory.shown(did);
-    directory.handle(did).then(n => (name.textContent = directory.shown(did, n)), () => {});
+    ctx.background("home: directory.handle", directory.handle(did).then(n => (name.textContent = directory.shown(did, n))));
     el.querySelector(".did").textContent = did;
     el.querySelector(".act").onclick = e => person.open(e.currentTarget, did);
     icons.grid(el.querySelector(".grid"), ctx.apps.filter(a => (a.views ?? []).includes("person")).map(a => ({ app: a, href: `#${a.route}/u/${did}` })));
@@ -136,10 +136,10 @@ export async function mount(ctx, el) {
     if (!el.isConnected) return removeEventListener("craftworks:route", onRoute);
     if (ctx.route !== "/" || (ctx.sub ?? "") === drawnFor) return;
     drawnFor = ctx.sub ?? "";
-    auth.check().then(show, () => {});
+    ctx.background("home: auth.check", auth.check().then(show));
   };
   addEventListener("craftworks:route", onRoute);
   const onAuth = e => (el.isConnected ? show(e.detail) : removeEventListener("craftworks:auth", onAuth));
   addEventListener("craftworks:auth", onAuth);
-  await show(await auth.check().catch(ctx.quiet(() => null)));
+  await show(await auth.check());
 }

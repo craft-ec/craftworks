@@ -76,7 +76,7 @@ export async function start(ctx) {
     ])
       .catch(async e => {
         // Its own table: this node holds it, so never lost — asked again within the hour.
-        await (await records()).put(idOf(t), JSON.stringify({ name: t.app, at: Date.now(), error: e?.message ?? String(e) })).catch(ctx.quiet(() => {}));
+        await ctx.background("keep: put", (await records()).put(idOf(t), JSON.stringify({ name: t.app, at: Date.now(), error: e?.message ?? String(e) })));
         throw e;
       })
       .finally(() => clearTimeout(timer));
@@ -88,7 +88,7 @@ export async function start(ctx) {
   // Every coded file where this person reads: the account's, and each space's (null: the account).
   async function allFiles() {
     const out = [];
-    for (const sp of [null, ...(await space.mine()).filter(s => s.kind === "server")]) for (const row of await files.rows(sp).catch(ctx.quiet(() => []))) out.push({ sp, row, key: `f/${sp?.id ?? ""}/${row.id}` });
+    for (const sp of [null, ...(await space.mine.strict()).filter(s => s.kind === "server")]) for (const row of await files.rows(sp)) out.push({ sp, row, key: `f/${sp?.id ?? ""}/${row.id}` });
     return out;
   }
   async function keepFile({ sp, row, key }) {
@@ -160,7 +160,7 @@ export async function start(ctx) {
     const files = [];
     for (const w of all) {
       if (total + (w.file.size ?? 0) > limit) {
-        await t.remove(w.key).catch(ctx.quiet(() => {}));
+        await ctx.background("keep: t.remove", t.remove(w.key));
         continue;
       }
       total += w.file.size ?? 0;
@@ -185,12 +185,12 @@ export async function start(ctx) {
     const now = new Date();
     const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
     const months = new Set([monthOf(), monthOf(last.getTime())]);
-    const claims = await index.pointers(`keepers:${root}`).catch(ctx.quiet(() => []));
+    const claims = await index.pointers(`keepers:${root}`);
     return [...new Set(claims.filter(c => c && typeof c.did === "string" && months.has(c.m)).map(c => c.did))];
   }
   // Said in the bag once the file is WHOLE here (every generation), once a month (the same claim merges).
   async function claim(root) {
-    const me = await space.me();
+    const me = await space.me.strict();
     if (!me) return;
     await (await ctx.require("index")).point(`keepers:${root}`, { did: me, m: monthOf() });
   }
@@ -201,7 +201,7 @@ export async function start(ctx) {
     const r = t.rows().find(x => x.key.startsWith("f/") && (v => v && !v.error && v.gens && v.whole === v.gens && v.claimed !== m)(read(x)));
     if (!r) return;
     const v = read(r);
-    const row = (await files.rows(v.space ? (await space.mine()).find(s => s.id === v.space) ?? null : null).catch(ctx.quiet(() => []))).find(x => x.id === v.file);
+    const row = (await files.rows.strict(v.space ? (await space.mine.strict()).find(s => s.id === v.space) ?? null : null)).find(x => x.id === v.file);
     if (row?.root) await claim(row.root);
     await t.put(r.key, JSON.stringify({ ...v, claimed: m }));
   }
@@ -213,7 +213,7 @@ export async function start(ctx) {
     const t = await records();
     const k = `h/${epoch}`;
     const fixed = read(t.rows().find(r => r.key === k) ?? { value: "null" });
-    const spaces = new Map((await space.mine()).filter(s => s.kind === "server").map(s => [s.id, s]));
+    const spaces = new Map((await space.mine.strict()).filter(s => s.kind === "server").map(s => [s.id, s]));
     const own = async () => {
       const out = [];
       for (const r of t.rows().filter(x => x.key.startsWith("f/"))) {
@@ -233,7 +233,7 @@ export async function start(ctx) {
     // (Nothing whole yet — the first passes still running: not fixed, asked again.)
     if (!fixed && list.length) {
       await t.put(k, JSON.stringify(list));
-      for (const r of t.rows().filter(x => x.key.startsWith("h/") && x.key !== k)) await t.remove(r.key).catch(ctx.quiet(() => {}));
+      for (const r of t.rows().filter(x => x.key.startsWith("h/") && x.key !== k)) await ctx.background("keep: t.remove", t.remove(r.key));
     }
     // Each one's row (its key and root): its space's, or the watched record's own ref.
     const watched = new Map((await kept()).files.map(w => [w.root, w.w.file]));
@@ -251,7 +251,7 @@ export async function start(ctx) {
       }
       const sp = h.space ? (spaces.get(h.space) ?? null) : null;
       if (h.space && !sp) continue;
-      if (!rowsOf.has(h.space)) rowsOf.set(h.space, await files.rows(sp).catch(ctx.quiet(() => [])));
+      if (!rowsOf.has(h.space)) rowsOf.set(h.space, await files.rows(sp));
       const row = rowsOf.get(h.space).find(x => x.id === h.file);
       if (row?.root) out.push({ sp, row });
     }
@@ -299,7 +299,7 @@ export async function start(ctx) {
   let running = false;
   let said = false;
   async function tick() {
-    if (running || !(await space.account())) return;
+    if (running || !(await space.account.strict())) return;
     running = true;
     try {
       // Its records unreadable here (no grant for them on this site yet, say): said once, and tried next time.
@@ -312,8 +312,8 @@ export async function start(ctx) {
       else if (d.files[0]) await keepFile(d.files[0]);
       else {
         // Its own first; then what it is assigned; then what it played, kept for others.
-        const a = (await assignedDue().catch(ctx.quiet(() => [])))[0];
-        const w = a ? null : (await watchedDue().catch(ctx.quiet(() => [])))[0];
+        const a = (await ctx.optional("keep: assignedDue", assignedDue(), () => []))[0];
+        const w = a ? null : (await ctx.optional("keep: watchedDue", watchedDue(), () => []))[0];
         if (a) await keepAssigned(a);
         else if (w) await keepWatched(w);
         else await claimOwn().catch(e => ctx.failed("keep", e, `own files not said in the keepers bag: ${e?.message ?? e}`));
@@ -343,6 +343,6 @@ export async function start(ctx) {
   }
   // After the page has settled; then one due table a minute.
   // (A JOB: every minute, two minutes after the page is up, while someone is logged in.)
-  (await ctx.require("lifecycle")).job("keep", { every: 60000, delay: 120000, needs: async () => !!(await space.account().catch(() => null)) || "nobody is logged in", run: () => tick() });
-  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.failed("keep", e, `not noted for keeping: ${e?.message ?? e}`)), kept, setLimit, limits, keepers, holdings, assign, assigned: assignedNow };
+  (await ctx.require("lifecycle")).job("keep", { every: 60000, delay: 120000, needs: async () => !!(await space.account()) || "nobody is logged in", run: () => tick() });
+  return { status: ctx.total("keep.status", () => [], status), now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.failed("keep", e, `not noted for keeping: ${e?.message ?? e}`)), kept, setLimit, limits, keepers: ctx.total("keep.keepers", () => [], keepers), holdings, assign, assigned: assignedNow };
 }

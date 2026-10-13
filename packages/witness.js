@@ -46,7 +46,7 @@ export async function start(ctx) {
     busy = true;
     lastPass = h;
     try {
-      const me = await auth.check().catch(ctx.quiet(() => null));
+      const me = await auth.check();
       if (!me) return;
       const tokens = await ctx.require("tokens");
       if (!tokens.on) return;
@@ -95,14 +95,14 @@ export async function start(ctx) {
       if (line !== lastTally) {
         lastTally = line;
         ctx.log("witness", { what: line });
-        ctx.require("index").then(ix => ix.health({ k: "witness-pass", d: { ...tally, key, epoch } })).catch(() => {});
+        ctx.background("witness: ctx.require", ctx.require("index").then(ix => ix.health({ k: "witness-pass", d: { ...tally, key, epoch } })));
       }
       // THE EPOCH STATEMENT due now (and the one before), once its lot is drawn: this page's own root, if seated.
       const statement = await ctx.require("statement");
       const se = Math.floor((h - statement.settle) / EPOCH);
       for (let e = Math.max(0, se - 1); e <= se; e++) {
         if (h < Core.statement_lot_height(e)) continue;
-        const root = await statement.root(e).catch(ctx.quiet(() => null));
+        const root = await ctx.optional("witness: statement.root", statement.root(e), () => null);
         const k = `statement ${e} ${root}`;
         if (!root || done.get(k) === "signed" || done.get(k) === "not seated") continue;
         const v = await run(() => core.witness_statement(tokens.code, tokens.beacon, tokens.idlogCode, lot.pool, lot.bag, lot.beacon, e, root, bytes(me.member))).catch(x => ({ refused: x.message ?? String(x) }));
@@ -129,7 +129,7 @@ export async function start(ctx) {
   let mandated = false;
   beaconSvc.onHeight(async () => {
     if (mandated) return;
-    const me = await auth.check().catch(ctx.quiet(() => null));
+    const me = await auth.check();
     const tokens = me ? await ctx.require("tokens") : null;
     if (!tokens?.on) return;
     mandated = true;

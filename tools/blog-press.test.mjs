@@ -102,7 +102,8 @@ async function pressWith({ approval = "editors", editors = ["did:ed"] } = {}) {
   };
   let comments = [];
   const r = { settled: Promise.resolve(), config: (app, key, d) => (app === "blog" && key === "approval" ? approval : d), can: (did, what) => what === "moderate" && editors.includes(did) };
-  const ctx = { log: () => {}, failed: () => {}, quiet: make => () => make(), say: e => String(e?.message ?? e), require: async name => ({ items, space: { account: async () => ({ id: "did:me" }), me: async () => "did:me" }, roles: { of: async () => r }, files: { publicity: async () => {} } })[name] };
+  const strictly = caps => (Object.values(caps).forEach(c => c && typeof c === "object" && Object.values(c).forEach(f => typeof f === "function" && (f.strict ??= f))), caps);
+  const ctx = { log: () => {}, failed: () => {}, total: (w, empty, read) => Object.assign((...a) => Promise.resolve().then(() => read(...a)).catch(() => empty()), { strict: (...a) => Promise.resolve().then(() => read(...a)) }), background: (w, p) => Promise.resolve(p).catch(() => {}), optional: (w, f, fb) => Promise.resolve().then(() => (typeof f === "function" ? f() : f)).catch(() => (typeof fb === "function" ? fb() : fb)), say: e => String(e?.message ?? e), require: async name => strictly({ items, space: { account: async () => ({ id: "did:me" }), me: async () => "did:me" }, roles: { of: async () => r }, files: { publicity: async () => {} } })[name] };
   const press = await start(ctx);
   return { press, calls, store, items, setComments: c => (comments = c) };
 }

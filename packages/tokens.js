@@ -103,7 +103,7 @@ export async function start(ctx) {
   async function supersede(o, at) {
     const q = Core.queued_read(bytes(o.q));
     if (!q) return { superseded: false, why: "not a queued entry" };
-    const me = await auth.check();
+    const me = await auth.check.strict();
     const none = new Uint8Array(0);
     let seed = none;
     let ann = none;
@@ -137,7 +137,7 @@ export async function start(ctx) {
       for (const ep of r.keeperEpochs ?? []) await priv.put(`remint/${ep}`, JSON.stringify({ epoch: ep, did: hexOf(me.didBytes) }));
     }
     // (Its own entries queued on the next pass — never from inside this one.)
-    setTimeout(() => queueAll().catch(() => {}), 1000);
+    setTimeout(() => ctx.background("tokens: queueAll", queueAll()), 1000);
     return r;
   }
   // KEEPER MINTS a supersede voided (their lines still owed): `[{ epoch, did }]`; `reminted(epoch)` once minted again.
@@ -147,7 +147,7 @@ export async function start(ctx) {
   // (a keeper mint, by any page) are in no queue row of this page's — each chain's last entry, the same way.
   async function wedgedOwn() {
     const at = await now();
-    const me = await auth.check();
+    const me = await auth.check.strict();
     for (const tid of [allowance?.token, bytes(Core.craft_id(code, beacon, idlogCode))].filter(Boolean)) {
       try {
         const t = await run(() => core.wallet_tail(code, beacon, idlogCode, tid, me.didBytes));
@@ -163,7 +163,7 @@ export async function start(ctx) {
   }
   // Checked as the clock moves too (no new entry needed): an entry whose queue aged out is queued again; a wedged tail
   // superseded.
-  setInterval(() => queueAll().then(wedgedOwn).catch(() => {}), 5 * 60 * 1000);
+  setInterval(() => ctx.background("tokens: queueAll", queueAll().then(wedgedOwn)), 5 * 60 * 1000);
   // RUN a step to its end: read what it wants, have the delegate sign what it asks (one entry a round), until done.
   async function run(step) {
     const sigs = [];
@@ -193,7 +193,7 @@ export async function start(ctx) {
   }
   // THIS DEVICE: the node (its member key) and the account's credentials.
   async function device() {
-    const me = await auth.check();
+    const me = await auth.check.strict();
     return { me, member: bytes(me.member), creds: await membership.credentials() };
   }
 
@@ -228,7 +228,7 @@ export async function start(ctx) {
   // The card's PAY KEYS: the first seed's, published if the card does not have them.
   async function ensureCard(me) {
     const keys = Core.stealth_public(bytes((await seeds())[0].seed));
-    const card = await directory.card(me.did, { fresh: true }).catch(() => null);
+    const card = await directory.card(me.did, { fresh: true });
     if (card?.pay?.scan !== keys.scan || card?.pay?.spend !== keys.spend) await directory.setPay(keys);
   }
   // DROP an announcement into the current epoch's payments bags.
@@ -295,7 +295,7 @@ export async function start(ctx) {
     // THE ALLOWANCE (TOKEN §7d): each recent epoch's payout to this account's DID chain, then MOVED TO PRIVATE (§7f: a
     // DID holds only stake) — never the token's creator's (the treasury is public on purpose).
     if (allowance) {
-      const me = await auth.check();
+      const me = await auth.check.strict();
       const from = Number(priv.rows().find(r => r.key === "allowed")?.value ?? Math.max(0, current - 8));
       for (let e = from; e <= current; e++) {
         try {
@@ -309,7 +309,7 @@ export async function start(ctx) {
         }
       }
       if (current - 1 > from) await priv.put("allowed", String(current - 1));
-      const v = await run(() => core.wallet_view(code, beacon, idlogCode, allowance.token, me.didBytes)).catch(() => null);
+      const v = await ctx.optional("tokens: run", run(() => core.wallet_view(code, beacon, idlogCode, allowance.token, me.didBytes)), () => null);
       if (v && v.begun && v.balance !== "0" && v.creator !== hexOf(me.didBytes)) {
         await shield(me, hexOf(allowance.token), v.balance).catch(err => ctx.log("wallet", { what: `moving the allowance to private: ${err.message ?? err}` }));
         await onToken?.(hexOf(allowance.token));
@@ -318,16 +318,16 @@ export async function start(ctx) {
     // $CRAFT's WITNESS FEES (spendable, minted on the DID chain): moved to private like any payment (TOKEN §7f: a DID
     // chain holds only stake — the keeper share stays there, locked, the lot's weight).
     {
-      const me = await auth.check();
+      const me = await auth.check.strict();
       const craftId = Core.craft_id(code, beacon, idlogCode);
-      const v = await run(() => core.wallet_view(code, beacon, idlogCode, bytes(craftId), me.didBytes)).catch(() => null);
+      const v = await ctx.optional("tokens: run", run(() => core.wallet_view(code, beacon, idlogCode, bytes(craftId), me.didBytes)), () => null);
       if (v && v.begun && v.balance !== "0") {
         await shield(me, craftId, v.balance).catch(err => ctx.log("wallet", { what: `moving witness fees to private: ${err.message ?? err}` }));
         await onToken?.(craftId);
       }
     }
     for (const f of found().filter(f => f.edition)) {
-      const sales = await run(() => core.edition_sales(code, beacon, idlogCode, bytes(f.edition))).catch(() => []);
+      const sales = await ctx.optional("tokens: run", run(() => core.edition_sales(code, beacon, idlogCode, bytes(f.edition))), () => []);
       const taken = new Set(f.taken ?? []);
       for (const s of sales) {
         const key = hexOf(s);

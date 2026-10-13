@@ -220,6 +220,21 @@ absentOnly                             // .catch(absentOnly): null for absent/no
   (`join-failed`, `account-recovery`) by throwing a `Fault` with `d`.
 - A report that cannot be written is retried as `transient` and said in the trace — never swallowed.
 - One `ask` timeout (`WAIT.ask`); private loops become per-call `policy` overrides.
+- A failure that is HANDLED (not thrown on) is handled in one place, never by a call site's own fallback (owner
+  10-13: "if it is one machinery, why still multiple implementations?"). Three forms, all in the loader, all reporting
+  by kind (absent / not yet / slow / logged out / cancelled / an expected refusal are not reported one by one):
+  - a capability's READ is TOTAL — `ctx.total(what, empty, read)` at its export: it never throws, gives its natural
+    empty value (null, [], false) carrying its read state where it can (`.state: { s: unknown | unreadable | failed,
+    why }`), so callers use the value and never catch it (items, space, roles, directory, index, files, keys, auth,
+    bundles, vouch, person, recovery, membership, usage, captions, drive, conversation, keep, storage, `where`'s read);
+    a DECISION that must not act on "unknown" (a join, a removal, a claim, a copy) reads `.strict` — the same read,
+    throwing its fault, so the step stops (services read strict; views read total);
+  - a best-effort WRITE (a mark, a notice, a record) — `ctx.background(what, promise)`: its value when it works,
+    reported when it fails, never stopping the flow;
+  - an OPTIONAL step (a browser codec, a package a site may lack, an internal read with a fallback) —
+    `ctx.optional(what, promise, fallback)`.
+  The build refuses anything else (`tools/failure-check.mjs`, run by build.sh): no `.catch(() => v)`, no
+  `.then(f, () => v)`, no `ctx.quiet` in any package but the loader and framed apps (whose boundary is the frame API).
 
 ### Health: outcomes, not only errors (owner 2026-10-12)
 

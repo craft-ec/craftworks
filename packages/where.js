@@ -29,21 +29,21 @@ export async function start(ctx) {
 
   // A SAVED item, read where it is (a space's this person is not in: from outside, by its public description).
   async function getSaved(ref) {
-    const outside = await items.outsideOf(ref).catch(ctx.quiet(() => null));
-    if (String(ref).startsWith("space:") && !outside && !(await items.boardOf(ref.slice(6, ref.indexOf("/"))))) return null;
-    return items.get(ref, { outside }).catch(ctx.quiet(() => null));
+    const outside = await items.outsideOf(ref);
+    if (String(ref).startsWith("space:") && !outside && !(await items.boardOf.strict(ref.slice(6, ref.indexOf("/"))))) return null;
+    return items.get(ref, { outside });
   }
 
   async function of({ kind, kinds = [kind], app = ctx.route.replace(/^\//, ""), yours = "Yours", saves = true } = {}) {
-    const me = await space.me();
+    const me = await space.me.strict();
     const discover = ctx.space === "discover";
-    const mineSp = ctx.space && !discover ? ((await space.mine()).find(s => s.id === ctx.space) ?? null) : null;
+    const mineSp = ctx.space && !discover ? ((await space.mine.strict()).find(s => s.id === ctx.space) ?? null) : null;
     // A space this person is NOT in (or anyone, for a guest): opened FROM OUTSIDE where the space lets anyone read this
     // app — its public description, its public acts' rules (the app on, its kind's `read` policy "anyone"); else said.
     let sp = mineSp;
     if (ctx.space && !discover && !sp) {
-      const desc = await items.publicSpace(ctx.space).catch(ctx.quiet(() => null));
-      const pr = desc ? await roles.ofPublic(desc) : null;
+      const desc = await items.publicSpace(ctx.space);
+      const pr = desc ? await roles.ofPublic.strict(desc) : null;
       if (pr) await pr.settled;
       const domain = (await ctx.require("kinds")).policyDomain(kind);
       // (Both refusals are ANSWERS, not failures: `expected` — the loader says them, never as a fault.)
@@ -59,13 +59,12 @@ export async function start(ctx) {
     // merge in after "settled": the app would be sent away from a space that uses it).
     const app_ = ctx.apps.find(a => a.route === `/${app}`);
     if (sp)
-      roles
-        .of(sp)
-        .then(async r => (await r.settled, r))
-        .then(r => {
+      ctx.background("where: roles.of", roles
+        .of.strict(sp)
+        .then(async r => (await r.settled, r)).then(r => {
           const last = r.acts("app").filter(a => a.app === app).at(-1);
           if (last && !last.on && !r.apps().includes(app) && ctx.space === sp.id && ctx.route === `/${app}`) location.replace(`#/s/${sp.id}`);
-        }, () => {});
+        }));
     const p = personOf();
     const person = p && p !== me ? p : null;
     // A GUEST (nobody logged in) has no "yours": an app with a public side opens its Discover, the address made so.
@@ -77,17 +76,17 @@ export async function start(ctx) {
     if (guestDiscover) history.replaceState(history.state, "", `#/discover/${app}${sub ? `/${sub}` : ""}`), dispatchEvent(new CustomEvent("craftworks:address"));
     const saved = saves && who === "mine" && /^saved(\/|$)/.test(sub);
     // THE READ: the place's items — a list's window, or (whole) every one; your Saved: what you saved of its kinds.
-    const read = ({ kinds: ks = kinds, sort = "new", window = "all", whole = false, ...options } = {}) => {
+    const read = ctx.total("where.read", () => [], ({ kinds: ks = kinds, sort = "new", window = "all", whole = false, ...options } = {}) => {
       if (saved)
         return ctx
           .require("actions")
           .then(a => Promise.all(a.saved().map(getSaved)))
           // NSFW as every list (`items.visible`).
           .then(list => items.visible(list.filter(it => it && ks.includes(it.kind))));
-      if (who === "discover") return items.list({ discover: true }, sort, ks, { window, ...options });
-      if (whole) return items.inPlaces(sp ? { spaces: [sp] } : { people: [person ?? me] }, ks, { withVotes: false });
-      return items.list(sp?.outside ? { outside: sp } : sp ? { board: sp.id } : { by: person ?? me }, sort, ks, { window, ...options });
-    };
+      if (who === "discover") return items.list.strict({ discover: true }, sort, ks, { window, ...options });
+      if (whole) return items.inPlaces.strict(sp ? { spaces: [sp] } : { people: [person ?? me] }, ks, { withVotes: false });
+      return items.list.strict(sp?.outside ? { outside: sp } : sp ? { board: sp.id } : { by: person ?? me }, sort, ks, { window, ...options });
+    });
     // THE TABS, in the same order in every app: in your space, the app's own page ("Your …"), then the app's extras,
     // then Discover (an app with a public side); elsewhere the extras alone.
     // THE APP's GROUPS (ARCHITECTURE §1: a space is a group in every app, shown by the app — never reached through a
@@ -95,16 +94,15 @@ export async function start(ctx) {
     // app (`group(space)`; else the space's name) — kept in the app's own menu, the one open marked.
     let groups = [];
     const groupsRead = me
-      ? ctx
+      ? ctx.optional("where: places", ctx
           .require("places")
           .then(p => p.list(`/${app}`))
-          .then(ps => (groups = ps.filter(x => x.id && x.id !== "discover")))
-          .catch(ctx.quiet(() => []))
+          .then(ps => (groups = ps.filter(x => x.id && x.id !== "discover"))), () => [])
       : Promise.resolve([]);
     // THE APP's OWN SETTINGS in a space (ARCHITECTURE §1: an app defines its settings and shows them itself) — for who
     // may manage the space's apps, where the app has any (`app-settings`: Board's rules, Blog's approval, Chat's channels).
     const settingsRead = sp && !sp.outside && me
-      ? Promise.all([ctx.require("app-settings"), roles.of(sp)]).then(([st, r]) => st.has(app) && r.can(me, "apps")).catch(ctx.quiet(() => false))
+      ? ctx.optional("where: Promise.all", Promise.all([ctx.require("app-settings"), roles.of.strict(sp)]).then(([st, r]) => st.has(app) && r.can(me, "apps")), () => false)
       : Promise.resolve(false);
     let mayConfigure = false;
     // (`groups: false`: an app that shows every space its own way — Contact, all spaces' people in one list.)

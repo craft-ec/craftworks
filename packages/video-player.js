@@ -61,7 +61,7 @@ export async function start(ctx) {
   // STREAM: true once a playable track started; false (nothing played) to load it whole.
   async function stream(video, ref) {
     if (!canStream() || !/mp4|quicktime|m4v/.test(ref.type ?? "")) return false;
-    const MP4Box = await mp4box().catch(ctx.quiet(() => null));
+    const MP4Box = await ctx.optional("video-player: mp4box", mp4box(), () => null);
     if (!MP4Box) return false;
     const size = ref.size;
     const mp4 = MP4Box.createFile();
@@ -194,9 +194,8 @@ export async function start(ctx) {
     const smooth = async r =>
       MediaSource.isTypeSupported(r.mime) &&
       (r.codec === "aac" ||
-      (await navigator.mediaCapabilities
-        ?.decodingInfo({ type: "media-source", video: { contentType: r.mime.replace(/, *mp4a[^"]*|, *opus/i, ""), width: r.width, height: r.height, bitrate: r.bitrate, framerate: 30 } })
-        .then(x => x.supported && x.smooth, () => true)) !== false);
+      (await ctx.optional("video-player: decodingInfo", navigator.mediaCapabilities
+        ?.decodingInfo({ type: "media-source", video: { contentType: r.mime.replace(/, *mp4a[^"]*|, *opus/i, ""), width: r.width, height: r.height, bitrate: r.bitrate, framerate: 30 } }).then(x => x.supported && x.smooth), () => true)) !== false);
     const fam = async codec => {
       const rs = m.renditions.filter(r => r.codec === codec).sort((a, b) => a.height - b.height);
       const ok = [];
@@ -254,7 +253,7 @@ export async function start(ctx) {
         const r = rs[lv], seg = r.index.segments[i];
         const p = files.range(r.ref, seg.start, seg.end - seg.start, { urgent });
         const entry = { urgent, p: had ? Promise.any([had.p, p]).catch(e => Promise.reject(e?.errors?.at(-1) ?? e)) : p };
-        entry.p.catch(() => asked.get(k) === entry && asked.delete(k));
+        ctx.optional("video-player: entry.p", entry.p, () => asked.get(k) === entry && asked.delete(k));
         asked.set(k, entry);
       }
       return asked.get(k).p;
@@ -286,10 +285,7 @@ export async function start(ctx) {
           lowest = cur;
           running++;
           const i = segAt(rs[cur], t);
-          Promise.all([initOf_(cur), fetchSeg(cur, i, true)]).then(
-            ([init, bytes]) => finish({ lv: cur, i, init, bytes }),
-            () => (running--, lower()),
-          );
+          ctx.optional("video-player: Promise.all", Promise.all([initOf_(cur), fetchSeg(cur, i, true)]).then(([init, bytes]) => finish({ lv: cur, i, init, bytes })), () => (running--, lower()));
           timer = setTimeout(lower, Math.max(2000, (ahead() - 4) * 1000));
         };
         start(lv);
@@ -319,7 +315,7 @@ export async function start(ctx) {
           }
           const e = epoch;
           const i0 = segAt(rs[level], next);
-          for (let k = 1; k < FRAGMENTS_IN_FLIGHT && rs[level].index.segments[i0 + k]; k++) fetchSeg(level, i0 + k).catch(ctx.quiet(() => {}));
+          for (let k = 1; k < FRAGMENTS_IN_FLIGHT && rs[level].index.segments[i0 + k]; k++) ctx.background("video-player: fetchSeg", fetchSeg(level, i0 + k));
           const got = await obtain(level, next);
           if (e !== epoch) continue;
           if (!got) {
@@ -424,7 +420,7 @@ export async function start(ctx) {
       if (!low) throw new Error("this video has no rendition this browser plays");
       ref = { ...low.ref, type: "video/mp4" };
     }
-    if (await stream(video, ref).catch(ctx.quiet(() => false))) {
+    if (await ctx.optional("video-player: stream", stream(video, ref), () => false)) {
       onNote("");
       return "stream";
     }

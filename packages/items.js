@@ -46,12 +46,12 @@ export async function start(ctx) {
   const listedIn = new Map(); // `domain|month` → Promise<Set of refs>
   const indexed = (domain, at) => {
     const k = `${domain}|${index.monthOf(at)}`;
-    if (!listedIn.has(k)) listedIn.set(k, index.discoverPointers(domain, [index.monthOf(at)]).then(ps => new Set(ps.map(p => p?.ref))));
+    if (!listedIn.has(k)) listedIn.set(k, index.discoverPointers.strict(domain, [index.monthOf(at)]).then(ps => new Set(ps.map(p => p?.ref))));
     return listedIn.get(k);
   };
   const answeredIn = new Map(); // an item's ref → Promise<Set of writer keys pointed in its bag>
   const answerers = ref => {
-    if (!answeredIn.has(ref)) answeredIn.set(ref, index.pointers(ref).then(ps => new Set(ps.map(p => p?.w).filter(Boolean)), () => new Set()));
+    if (!answeredIn.has(ref)) answeredIn.set(ref, ctx.optional("items: index.pointers", index.pointers(ref).then(ps => new Set(ps.map(p => p?.w).filter(Boolean))), () => new Set()));
     return answeredIn.get(ref);
   };
   // A PUBLIC item LISTED: in Discover's bag of its domain and month (a top item), its own bag made; an answer to one (a
@@ -62,7 +62,7 @@ export async function start(ctx) {
       if (set.has(ref)) return;
       await index.discoverPoint(domainOf(x.kind), x.at, { ref, kind: x.kind, at: x.at, ...where });
       set.add(ref);
-      await index.openPointers(ref).catch(ctx.quiet(() => {}));
+      await ctx.background("items: index.openPointers", index.openPointers(ref));
       return;
     }
     if (!where.w) return;
@@ -75,7 +75,7 @@ export async function start(ctx) {
   const fire = () => changed.forEach(f => f());
   // A bag answered (a space's outsiders): what reads it, drawn again.
   index.onChange?.(fire);
-  const me = async () => space.me();
+  const me = async () => space.me.strict();
   // Whose profiles this person reads: whom they follow, and their friends (friends need no follow as well).
   // A follow names a SPACE: a person's DID (their personal space) or a shared space's id.
   const following = async () => {
@@ -85,7 +85,7 @@ export async function start(ctx) {
   // The SHARED spaces followed (not joined): each read from outside, as Discover reads a public one.
   const followedSpaces = async () => {
     const p = await edge.people();
-    const inside = new Set((await space.mine()).map(s => s.id));
+    const inside = new Set((await space.mine.strict()).map(s => s.id));
     return p
       .list("follow")
       .filter(id => !id.startsWith("did:") && !inside.has(id))
@@ -98,7 +98,7 @@ export async function start(ctx) {
   const opened = (key, make) => {
     if (!rooms.has(key)) {
       const p = make().then(r => (r.onChange(fire), r));
-      p.catch(() => rooms.delete(key));
+      ctx.optional("items: p", p, () => rooms.delete(key));
       rooms.set(key, p);
     }
     return rooms.get(key);
@@ -109,10 +109,10 @@ export async function start(ctx) {
   // the place (a space with Video and no Board still takes videos).
   const PLACE_APPS = ["board", "video", "audio", "caption", "note", "drive", "image", "book", "chat", "form", "blog", "wiki", "vote"];
   const boards = async () => {
-    const all = await space.mine();
+    const all = await space.mine.strict();
     // Its apps once its acts are read (before, a space shows the default apps: a Chat-only space would open a board).
     // A space whose rules do not read here is not a board here — said, never dropped silently.
-    const on = await Promise.all(all.map(sp => roles.of(sp).then(async r => (await r.settled, r.apps().some(a => PLACE_APPS.includes(a))), e => (ctx.failed("posts", e, `${sp.name ?? sp.id.slice(0, 8)}: its rules do not read (${e?.message ?? e})`), false))));
+    const on = await Promise.all(all.map(sp => roles.of.strict(sp).then(async r => (await r.settled, r.apps().some(a => PLACE_APPS.includes(a))), e => (ctx.failed("posts", e, `${sp.name ?? sp.id.slice(0, 8)}: its rules do not read (${e?.message ?? e})`), false))));
     return all.filter((_, i) => on[i]);
   };
   // The SPACE ID an item reference names (`space:<id>/…`), null for a person's item.
@@ -125,9 +125,9 @@ export async function start(ctx) {
   // none that keeps items.
   const notInBoard = async x => {
     const id = spaceIdOf(x) ?? x;
-    const sp = (await space.mine()).find(s => s.id === id);
+    const sp = (await space.mine.strict()).find(s => s.id === id);
     if (!sp) return new Error("you are not in that board's space");
-    const r = await roles.of(sp);
+    const r = await roles.of.strict(sp);
     await r.settled;
     return new Error(`${space.shown(sp)} shows ${r.apps().join(", ") || "no apps"}: none keeps items here`);
   };
@@ -147,14 +147,14 @@ export async function start(ctx) {
     }
     if (!Array.isArray(it?.files) || !it.files.length) return v;
     const files = await ctx.require("files");
-    return JSON.stringify({ ...it, files: await Promise.all(it.files.map(f => files.current(f).catch(() => f))) });
+    return JSON.stringify({ ...it, files: await Promise.all(it.files.map(f => ctx.optional("items: files.current", files.current(f), () => f))) });
   }
   // A DOMAIN's read setting in a space: its own (`text`, `video`, `caption` …: content decides, whatever app shows it),
   // else the space's.
   const domainReads = (r, domain) => r.policyIn(domain, "read") === "anyone";
   // Whether an item of `kind` is public in a space now.
   async function publicIn(sp, kind) {
-    const r = await roles.of(sp);
+    const r = await roles.of.strict(sp);
     await r.settled;
     return domainReads(r, kinds.policyDomain(kind));
   }
@@ -165,7 +165,7 @@ export async function start(ctx) {
       const t0 = performance.now();
       const took = (what, p) => p.then(v => ((t[what] = Math.round(performance.now() - t0)), v));
       const t = {};
-      const [a, b, r] = await Promise.all([took("board", content.in(space.board(sp), { paged: true })), took("public board", content.in(space.board(sp, { pub: true }), { paged: true, extra: outsideSource(sp) })), took("roles", roles.of(sp))]);
+      const [a, b, r] = await Promise.all([took("board", content.in(space.board(sp), { paged: true })), took("public board", content.in(space.board(sp, { pub: true }), { paged: true, extra: outsideSource(sp) })), took("roles", roles.of.strict(sp))]);
       if (performance.now() - t0 > 3000) ctx.log("posts", { what: `${sp.name}: its board opened slowly — ${Object.entries(t).map(([k, v]) => `${k} ${v} ms`).join(", ")}` });
       // PUBLIC is per item, by its own APP's setting now (a video: Videos'; a post: Board's) — what attaches to an item
       // (a comment, a vote, a subtitle) as that item is. Not bound to Board: a space's place holds every kind.
@@ -263,7 +263,7 @@ export async function start(ctx) {
   async function discovered(kinds_, since) {
     const domains = [...new Set(kinds_.map(domainOf))];
     const months = index.monthsSince(since);
-    const ps = (await Promise.all(domains.map(d => index.discoverPointers(d, months).catch(ctx.quiet(() => []))))).flat();
+    const ps = (await Promise.all(domains.map(d => index.discoverPointers(d, months)))).flat();
     const seen = new Set();
     return ps.filter(p => p?.ref && kinds_.includes(p.kind) && (p.at ?? 0) >= since && !seen.has(p.ref) && seen.add(p.ref));
   }
@@ -281,7 +281,7 @@ export async function start(ctx) {
     if (!m) return null;
     const at = parseInt(m[1], 36);
     for (const d of new Set([...TOP].map(domainOf))) {
-      const p = (await index.discoverPointers(d, [index.monthOf(at)]).catch(ctx.quiet(() => []))).find(x => x?.ref === ref);
+      const p = (await index.discoverPointers(d, [index.monthOf(at)])).find(x => x?.ref === ref);
       if (p) return p;
     }
     return null;
@@ -295,7 +295,7 @@ export async function start(ctx) {
   const profileRoom = did =>
     opened(did, async () => {
       const pub = await content.in({ kind: "public", did, name: TAIL });
-      const acc = await space.account();
+      const acc = await space.account.strict();
       // Another's (or anyone's, for a guest): its public posts.
       if (!acc || did !== acc.id) return pub;
       // Its PRIVATE posts (`journal`) opened in the background: the public ones never wait on them; what needs them
@@ -303,9 +303,9 @@ export async function start(ctx) {
       let priv = null;
       const privReady = content.in({ kind: "journal", messages: JOURNAL, scope: acc }).then(r => (priv = r));
       const changedHere = [];
-      privReady.then(r => (r.onChange(() => changedHere.forEach(f => f())), changedHere.forEach(f => f())), () => {});
+      ctx.background("items: privReady.then", privReady.then(r => (r.onChange(() => changedHere.forEach(f => f())), changedHere.forEach(f => f()))));
       const isPrivate = id => !!priv?.list().some(x => x.id === id);
-      const roomOf = async id => (await privReady.catch(ctx.quiet(() => null)), isPrivate(id) ? priv : pub);
+      const roomOf = async id => (await ctx.optional("items: privReady", privReady, () => null), isPrivate(id) ? priv : pub);
       const idIn = ref => String(ref ?? "").slice(String(ref ?? "").lastIndexOf("/") + 1);
       return {
         list: () => [...pub.list(), ...(priv?.list() ?? []).map(x => ({ ...x, private: true }))],
@@ -316,7 +316,7 @@ export async function start(ctx) {
         settled: pub.settled,
         isPrivate: ref => isPrivate(idIn(ref)),
         // Its private posts read (before deciding whether something about one is private).
-        whenPrivate: () => privReady.catch(ctx.quiet(() => {})),
+        whenPrivate: () => ctx.background("items: privReady", privReady),
         post: async (kind, body, opts = {}) => (TOP.has(kind) ? (opts.private ? await privReady : pub) : await roomOf(idIn(opts.in))).post(kind, body, opts),
         react: async (item, e, on, o) => (await roomOf(idIn(item))).react(item, e, on, o),
         remove: async id => (await roomOf(id)).remove(id),
@@ -328,8 +328,8 @@ export async function start(ctx) {
     });
   // Each read bounded where it is read (`storage`): a silent profile shows as held, never waited on.
   const profiles = async dids =>
-    (await Promise.all([...new Set(dids)].map(d => profileRoom(d).catch(ctx.quiet(() => null))))).filter(Boolean);
-  const pointersTo = async ref => (await index.pointers(ref).catch(ctx.quiet(() => []))).map(p => p.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
+    (await Promise.all([...new Set(dids)].map(d => ctx.optional("items: profileRoom", profileRoom(d), () => null)))).filter(Boolean);
+  const pointersTo = async ref => (await index.pointers(ref)).map(p => p.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
   const idOf = ref => ref.slice(ref.lastIndexOf("/") + 1);
   const whereOf = ref => ref.slice(0, ref.lastIndexOf("/"));
 
@@ -441,16 +441,16 @@ export async function start(ctx) {
     const seen = new Set();
     let loads = 0;
     const load = async () => {
-      const dids = (await index.pointers(spaceBag(sp), { show: true }).catch(ctx.quiet(() => []))).map(p => p?.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
+      const dids = (await index.pointers(spaceBag(sp), { show: true })).map(p => p?.from).filter(d => typeof d === "string" && d.startsWith("did:craftec:"));
       ctx.log("posts", { what: `${sp.name ?? sp.id.slice(0, 8)}: outsiders read (${++loads}) — ${dids.length} writer(s)` });
       rooms = await profiles(dids);
       for (const r of rooms) if (!seen.has(r)) seen.add(r), r.onChange(fire);
       fire();
     };
     load();
-    index.onChange?.(() => load().catch(ctx.quiet(() => {})));
+    index.onChange?.(() => ctx.background("items: load", load()));
     // A writer new since: read when the node says the bag changed.
-    index.watch(spaceBag(sp), () => load().catch(ctx.quiet(() => {}))).catch(ctx.quiet(() => {}));
+    ctx.background("items: index.watch", index.watch(spaceBag(sp), () => ctx.background("items: load", load())));
     const src = {
       items: () =>
         rooms.flatMap(r => [
@@ -533,7 +533,7 @@ export async function start(ctx) {
   const sorter = (sort, by) => (sort === "new" ? (a, b) => b.at - a.at : (a, b) => RANK[sort === "top" && by === "comments" ? "comments" : sort in RANK ? sort : "hot"](b) - RANK[sort === "top" && by === "comments" ? "comments" : sort in RANK ? sort : "hot"](a) || b.at - a.at);
 
   // ONE public space's description (as Discover lists it), or null.
-  const publicSpace = async id => (await publicSpaces().catch(ctx.quiet(() => []))).find(d => d.id === id) ?? null;
+  const publicSpace = async id => (await ctx.optional("items: publicSpaces", publicSpaces(), () => [])).find(d => d.id === id) ?? null;
   // An item SEEN FROM OUTSIDE: its space's public description when this person is not in it (listed, else followed),
   // null when they are (or it is a person's) — what `get`, `list`, votes and comments are given as `outside`.
   async function outsideOf(ref) {
@@ -553,21 +553,21 @@ export async function start(ctx) {
     openable
       .set(
         d.id,
-        (async () => {
+        ctx.optional("items: async", (async () => {
           const pr = await (await ctx.require("roles")).ofPublic(d);
           await pr.settled;
           return pr.acts().length > 0;
-        })().catch(ctx.quiet(() => false)),
+        })(), () => false),
       )
       .get(d.id);
   let leftoverSaid = false;
   async function publicSpaces() {
     const seen = new Map();
-    const lists = await (await ctx.require("moderation")).lists().catch(() => null);
+    const lists = await ctx.optional("items: lists", (await ctx.require("moderation")).lists(), () => null);
     const candidates = [];
-    for (const d of await index.spaces().catch(ctx.quiet(() => []))) {
+    for (const d of await index.spaces()) {
       if (!d?.id || seen.has(d.id) || !d.governance?.owner) continue;
-      if ((await space.owner(d).catch(ctx.quiet(() => null))) !== d.governance.owner) continue;
+      if ((await space.owner(d)) !== d.governance.owner) continue;
       if (lists?.flagged({ space: d.id, by: d.governance.owner })) continue;
       seen.set(d.id, { id: d.id, name: String(d.name ?? "").slice(0, 100), kind: "server", governance: d.governance });
       candidates.push(seen.get(d.id));
@@ -577,7 +577,7 @@ export async function start(ctx) {
     const hidden = candidates.length - shown.length;
     if (hidden && !leftoverSaid) {
       leftoverSaid = true;
-      index.health({ k: "leftover", s: "spaces", why: `${hidden} of ${candidates.length} listed space(s) do not open: left out of Discover`, d: { hidden, of: candidates.length } }).catch(() => {});
+      ctx.background("items: index.health", index.health({ k: "leftover", s: "spaces", why: `${hidden} of ${candidates.length} listed space(s) do not open: left out of Discover`, d: { hidden, of: candidates.length } }));
     }
     return shown;
   }
@@ -601,7 +601,7 @@ export async function start(ctx) {
           (async () => boardPostsOf(spaces.get(id), { outside: true, kinds: kinds_, room: await pointedRoom(spaces.get(id), ptrs) }))().catch(e => (ctx.failed("posts", e, `Discover: ${spaces.get(id).name ?? id.slice(0, 8)} not read: ${e?.message ?? e}`), [])),
         ),
       ).then(x => x.flat()),
-      dids.size ? profilePosts([...dids], [], kinds_, since).catch(ctx.quiet(() => [])) : [],
+      dids.size ? ctx.optional("items: profilePosts", profilePosts([...dids], [], kinds_, since), () => []) : [],
     ]);
     // What a pointer claims is checked: only items there, of what was listed.
     ctx.log("posts", { what: `Discover: ${ps.length} pointer(s) — ${[...bySpace].map(([id, x]) => `${spaces.get(id).name ?? id.slice(0, 8)}: ${x.length}`).join(", ") || "no space"}; ${dids.size} profile(s); read ${inSpaces.length} space item(s), ${profile.length} profile item(s)` });
@@ -642,7 +642,7 @@ export async function start(ctx) {
       const sp = await boardOf(where.board);
       if (!sp) throw new Error("you are not in that board's space: join it with an invite");
       // Its AUDIENCES' groups this person is in (what only a role reads): read with it.
-      out = (await Promise.all([sp, ...(await audienceGroups(sp))].map(g => boardPosts(g, { kinds, window }).catch(ctx.quiet(() => []))))).flat();
+      out = (await Promise.all([sp, ...(await audienceGroups(sp))].map(g => ctx.optional("items: boardPosts", boardPosts(g, { kinds, window }), () => [])))).flat();
     } else if (where.feed) {
       // The FEED: every space followed or joined — the spaces this person is in, the people they follow (their
       // personal spaces) and the shared spaces they follow (read from outside).
@@ -652,8 +652,8 @@ export async function start(ctx) {
       const [bs, people, fs] = await Promise.all([took("its spaces known", boards()), took("whom it follows known", following()), took("the spaces it follows known", followedSpaces())]);
       out = (
         await Promise.all([
-          took("its spaces' boards read", Promise.all(bs.map(sp => boardPosts(sp, { kinds, window }).catch(ctx.quiet(() => []))))).then(x => x.flat()),
-          took("followed spaces read", Promise.all(fs.map(d => pointedPosts(kinds, sinceOf(window) ?? 0, { space: d }).catch(ctx.quiet(() => []))))).then(x => x.flat()),
+          took("its spaces' boards read", Promise.all(bs.map(sp => ctx.optional("items: boardPosts", boardPosts(sp, { kinds, window }), () => [])))).then(x => x.flat()),
+          took("followed spaces read", Promise.all(fs.map(d => ctx.optional("items: pointedPosts", pointedPosts(kinds, sinceOf(window) ?? 0, { space: d }), () => [])))).then(x => x.flat()),
           took("profiles read", profilePosts([await me(), ...people], [], kinds, sinceOf(window) ?? 0)),
         ])
       ).flat();
@@ -671,7 +671,7 @@ export async function start(ctx) {
       // ONE item of a space: read where this person is a member (whatever apps the space shows — its acts may not be
       // read yet on a page just opened), or from outside.
       const sid = ref.slice(6, ref.indexOf("/"));
-      const sp = outside ?? (await space.mine()).find(s => s.id === sid) ?? null;
+      const sp = outside ?? (await space.mine.strict()).find(s => s.id === sid) ?? null;
       if (!sp) return null;
       // ONE item: its place read from its time on (it, its votes and comments) — never the place whole.
       if (!outside) await sinceItem(await boardRoom(sp), idOf(ref));
@@ -729,7 +729,7 @@ export async function start(ctx) {
       // NOT IN IT, where its policy lets anyone post: kept in this person's profile, for that space (`meta.space`),
       // pointed in its bag — one more item of its room (`outsideSource`), the room's one filter deciding.
       if (!sp && outside?.id === board) {
-        const pr = await roles.ofPublic(outside);
+        const pr = await roles.ofPublic.strict(outside);
         await pr.settled;
         const self = await me();
         if (pr.banned(self) || !pr.allowsIn("post", self, domainOf(kind))) throw new Error(`only ${space.shown(outside)}'s members post here`);
@@ -814,12 +814,12 @@ export async function start(ctx) {
       if (sp) return (await (await boardRoom(sp)).mayAbout?.(it.id, action)) ?? true;
       // Not in it: as the space's public policy says (anyone), unless banned there.
       if (!outside) return false;
-      const pr = await roles.ofPublic(outside);
+      const pr = await roles.ofPublic.strict(outside);
       await pr.settled;
       const self = await me();
       return !pr.banned(self) && roles.mayWrite({ action, item: it, writer: self, r: pr }) === true;
     }
-    return writeCred(it.ref, action).then(() => true, () => false);
+    return ctx.optional("items: writeCred", writeCred(it.ref, action).then(() => true), () => false);
   }
 
   // Something of this person's about someone's profile post: a pointer to them in its bag, once per page.
@@ -846,7 +846,7 @@ export async function start(ctx) {
       const room = await boardRoom(sp);
       // Its post's rule (the one check): a credential cited where only its author's friends or followers comment.
       const it = room.list().find(x => x.id === idOf(post));
-      const cred = it ? await roles.credToCite(it, "comment", await roles.of(sp)) : null;
+      const cred = it ? await roles.credToCite(it, "comment", await roles.of.strict(sp)) : null;
       await room.post("comment", body, { re: idOf(re ?? post), in: idOf(post), files, ...(cred ? { meta: { cred } } : {}) });
       return;
     }
@@ -909,7 +909,7 @@ export async function start(ctx) {
     if (viewedHere.has(ref) || !(await me())) return;
     viewedHere.add(ref);
     try {
-      const it = await get(ref, { outside }).catch(ctx.quiet(() => null));
+      const it = await ctx.optional("items: get", get(ref, { outside }), () => null);
       if (!it || it.by === (await me()) || it.signaled?.view) return;
       await signal(ref, "view", true, { outside });
     } catch (e) {
@@ -922,8 +922,8 @@ export async function start(ctx) {
   async function used(ref, { s = 0, b = 0 } = {}) {
     if (!(await me())) return; // a guest's: nobody's, as a view
     try {
-      const outside = await outsideOf(ref).catch(ctx.quiet(() => null));
-      const it = await get(ref, { outside }).catch(ctx.quiet(() => null));
+      const outside = await ctx.optional("items: outsideOf", outsideOf(ref), () => null);
+      const it = await ctx.optional("items: get", get(ref, { outside }), () => null);
       if (!it || it.by === (await me())) return;
       if (s) await signal(ref, "time", s, { outside });
       if (b) await signal(ref, "data", b, { outside });
@@ -951,8 +951,8 @@ export async function start(ctx) {
   // a vote sync as they are written). What it was synced as: upkeep's mark (`storage`), never every board each page.
   async function syncPublic() {
     const storage = await ctx.require("storage");
-    for (const sp of await boards().catch(ctx.quiet(() => []))) {
-      const r = await roles.of(sp).catch(ctx.quiet(() => null));
+    for (const sp of await ctx.optional("items: boards", boards(), () => [])) {
+      const r = await roles.of(sp);
       if (!r) continue;
       const sig = r.domains().map(d => (domainReads(r, d) ? 1 : 0)).join("");
       const mark = `public ${sp.id.slice(0, 16)} ${String(sp.self).slice(0, 16)}`;
@@ -1051,8 +1051,8 @@ export async function start(ctx) {
   // (One this person was taken out of — no longer of that audience — shown no more: what was there before stays sealed
   // to its key, never presented.)
   const audienceGroups = async sp => {
-    const gs = (await space.mine()).filter(g => g.group?.startsWith(`audience:${sp.id}/`));
-    const out = await Promise.all(gs.map(g => roles.of(g).then(async r => (await r.settled, r.left ? null : g), () => null)));
+    const gs = (await space.mine.strict()).filter(g => g.group?.startsWith(`audience:${sp.id}/`));
+    const out = await Promise.all(gs.map(g => ctx.optional("items: roles.of", roles.of(g).then(async r => (await r.settled, r.left ? null : g)), () => null)));
     return out.filter(Boolean);
   };
   async function inPlaces({ spaces = [], people: dids = [] }, kind, { after = null, withVotes = true } = {}) {
@@ -1066,7 +1066,7 @@ export async function start(ctx) {
       if (after) await sinceItem(await boardRoom(sp), after);
       return boardPosts(sp, { kinds: ks, window: after ? "held" : "all" });
     };
-    const [a, b] = await Promise.all([Promise.all(spaces.map(sp => read(sp).catch(ctx.quiet(() => [])))), profilePosts(dids, [], ks, 0, { withVotes }).catch(ctx.quiet(() => []))]);
+    const [a, b] = await Promise.all([Promise.all(spaces.map(sp => ctx.optional("items: read", read(sp), () => []))), ctx.optional("items: profilePosts", profilePosts(dids, [], ks, 0, { withVotes }), () => [])]);
     return [...a.flat(), ...b];
   }
 
@@ -1106,11 +1106,11 @@ export async function start(ctx) {
   // — so a mention reaches them wherever it is written (a personal post of someone they never read, a comment), not
   // only where they already read (`activity.mentions`). `ref`: what opens it (a comment: its post).
   const mentionsTold = async (ref, kind, body) => {
-    const me = await space.me();
+    const me = await space.me.strict();
     const dids = [...new Set([...String(body ?? "").matchAll(/\(person:(did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64})\)/g)].map(m => m[1]))].filter(d => d !== me);
     for (const did of dids) await index.send(did, { kind: "mention", ref, itemKind: kind, from: me, text: String(body).slice(0, 280), at: Date.now() }).catch(e => ctx.failed("posts", e, `telling ${did.slice(12, 20)}… of a mention: ${e.message}`));
   };
-  const told = (p, ref, kind, body) => (ref && mentionsTold(ref, kind, body).catch(ctx.quiet(() => {})), p);
+  const told = (p, ref, kind, body) => (ref && ctx.background("items: mentionsTold", mentionsTold(ref, kind, body)), p);
   return {
     submit: async o => {
       const ref = await submit(o);
@@ -1128,5 +1128,5 @@ export async function start(ctx) {
       told(null, ref, null, body);
       return out;
     },
-    mayWriteOn, pageOf, linkOf, refOf, appOf, list, get, setFiles, attach, attached, history, publicIn, inPlaces, following, thread, vote, remove, boards, boardOf, spaceIdOf, publicSpaces, publicSpace, outsideOf, syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
+    mayWriteOn: ctx.total("items.mayWriteOn", () => false, mayWriteOn), pageOf, linkOf, refOf, appOf, list: ctx.total("items.list", () => [], list), get: ctx.total("items.get", () => null, get), setFiles, attach, attached: ctx.total("items.attached", () => [], attached), history, publicIn: ctx.total("items.publicIn", () => [], publicIn), inPlaces: ctx.total("items.inPlaces", () => [], inPlaces), following, thread: ctx.total("items.thread", () => [], thread), vote, remove, boards: ctx.total("items.boards", () => [], boards), boardOf: ctx.total("items.boardOf", () => null, boardOf), spaceIdOf, publicSpaces: ctx.total("items.publicSpaces", () => [], publicSpaces), publicSpace: ctx.total("items.publicSpace", () => null, publicSpace), outsideOf: ctx.total("items.outsideOf", () => null, outsideOf), syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
 }

@@ -381,12 +381,12 @@ export function tree(pages) {
 // ── THE SERVICE ─────────────────────────────────────────────────────────────────────────────────────────────────────
 export async function start(ctx) {
   const [items, space, roles] = await Promise.all(["items", "space", "roles"].map(n => ctx.require(n)));
-  const me = async () => space.me();
+  const me = async () => space.me.strict();
   const placeOf = ref => String(ref).slice(0, String(ref).lastIndexOf("/"));
   // The page a section item is attached to (a space's: its id there; a person's: its whole reference).
   const pageRefOf = it => (String(it.in ?? "").includes("/") ? it.in : it.in ? `${placeOf(it.ref)}/${it.in}` : null);
   // A person's CIRCLES this reader is in (theirs: yours, your friends' and followers'): part of their personal wiki.
-  const circlesOf = async did => (await space.mine()).filter(s => s.circle && s.governance?.owner === did);
+  const circlesOf = async did => (await space.mine.strict()).filter(s => s.circle && s.governance?.owner === did);
 
   // THE SCOPE of a place (`where`'s): a person's own wiki, or a space's. The COMMONS (the global, ownerless wiki) is
   // its own scope, later (after Vote): refused here by name.
@@ -397,7 +397,7 @@ export async function start(ctx) {
     // A space that is one of a person's CIRCLES is their personal wiki, not a space's.
     const circle = sp?.circle ? sp : null;
     const owner = sp && !circle ? null : (circle?.governance?.owner ?? at?.person ?? self);
-    const r = sp && !circle ? await roles.of(sp) : null;
+    const r = sp && !circle ? await roles.of.strict(sp) : null;
     if (r) await r.settled;
     const rule = { kind: KIND, by: null, meta: {} };
     // May the writer of version v edit (as the rule was when they wrote it)?
@@ -408,8 +408,8 @@ export async function start(ctx) {
     const mayWrite = () => mayEdit() || (r ? r.allowsIn("comment", self, KIND) : owner !== self);
     const read = async () => {
       const kinds = [KIND, SECTION];
-      if (!owner) return items.inPlaces({ spaces: [sp] }, kinds, { withVotes: false });
-      return items.inPlaces({ spaces: await circlesOf(owner), people: [owner] }, kinds, { withVotes: false });
+      if (!owner) return items.inPlaces.strict({ spaces: [sp] }, kinds, { withVotes: false });
+      return items.inPlaces.strict({ spaces: await circlesOf(owner), people: [owner] }, kinds, { withVotes: false });
     };
     // A page's ONE container (the same title in two places of one wiki — your public and your private — stays two
     // pages: their text is never merged across who reads it).
@@ -442,7 +442,7 @@ export async function start(ctx) {
       const isRef = /^(space:|did:)/.test(String(keyOrRef));
       const p = isRef ? all.find(x => x.refs.includes(keyOrRef)) : all.find(x => x.key === normTitle(keyOrRef));
       if (!p) return null;
-      const more = (await Promise.all(p.refs.map(ref => items.attached(ref, SECTION).catch(ctx.quiet(() => []))))).flat();
+      const more = (await Promise.all(p.refs.map(ref => items.attached(ref, SECTION)))).flat();
       const list = [...(await held).list.filter(x => x.kind === SECTION), ...more];
       const seen = new Set();
       return shapePage(p, list.filter(x => !seen.has(x.ref) && seen.add(x.ref)));
@@ -477,7 +477,7 @@ export async function start(ctx) {
       if (!mayEdit()) throw new Error(owner ? "only its owner writes in this wiki" : "this space's rules do not let you write pages");
       const key = normTitle(title);
       if ((await pages()).some(x => x.key === key)) throw new Error(`there is a page “${cleanTitle(title)}” here already`);
-      const aud = audience ?? (sp && !circle ? ((await items.publicIn(sp, KIND).catch(ctx.quiet(() => false))) ? "public" : "members") : "private");
+      const aud = audience ?? (sp && !circle ? ((await items.publicIn(sp, KIND)) ? "public" : "members") : "private");
       const ref = await items.submit({ board: sp && !circle ? sp.id : (circle?.id ?? null), title: cleanTitle(title), body: "", kind: KIND, audience: circle ? "members" : aud, meta: { key, ...(lineage ? { lineage } : {}) }, write });
       const p = { ref, refs: [ref], key, title: cleanTitle(title), versions: [], sections: [] };
       await apply(p, sections ?? planWhole([], text), { suggest: false });
@@ -503,7 +503,7 @@ export async function start(ctx) {
     // is now — who wrote it, when, which section — newest first.
     async function history(p) {
       const refs = [...new Set(p.versions.filter(v => v.ref && !v.review).map(v => v.ref))];
-      const olds = (await Promise.all(refs.map(ref => items.history(ref).then(vs => vs.map(x => versionOf({ ...x, ref })), () => [])))).flat();
+      const olds = (await Promise.all(refs.map(ref => ctx.optional("wiki-pages: items.history", items.history(ref).then(vs => vs.map(x => versionOf({ ...x, ref }))), () => [])))).flat();
       const seen = new Set();
       return [...p.versions.filter(v => !v.review), ...olds]
         .filter(v => v && !seen.has(`${v.ref}|${v.h}|${v.at}`) && seen.add(`${v.ref}|${v.h}|${v.at}`))
@@ -534,7 +534,7 @@ export async function start(ctx) {
     const lin = myPage.meta?.lineage;
     if (!lin?.from) throw new Error("this page was not copied from anywhere");
     const sid = items.spaceIdOf(lin.from);
-    const sp = sid ? ((await space.mine()).find(s => s.id === sid) ?? null) : null;
+    const sp = sid ? ((await space.mine.strict()).find(s => s.id === sid) ?? null) : null;
     if (sid && !sp) throw new Error("you are not in the space it came from");
     const there = await of(sp ? { who: "space", space: sp } : { who: "person", person: placeOf(lin.from) });
     const origin = await there.page(lin.from);

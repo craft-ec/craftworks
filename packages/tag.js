@@ -27,8 +27,8 @@ export async function mount(ctx, el) {
     el.querySelector(".bar").replaceChildren(bar.el());
     grid.replaceChildren(theme.loading(`Finding #${tag}…`));
     const [mine, open] = await Promise.all([
-      items.list({ feed: true, tag }, bar.sort(), shown, bar.options()).catch(ctx.quiet(() => [])),
-      items.list({ discover: true, tag }, bar.sort(), shown, bar.options()).catch(ctx.quiet(() => [])),
+      items.list({ feed: true, tag }, bar.sort(), shown, bar.options()),
+      items.list({ discover: true, tag }, bar.sort(), shown, bar.options()),
     ]);
     const seen = new Set();
     const list = bar.reorder([...mine, ...open].filter(p => !seen.has(p.ref) && seen.add(p.ref)));

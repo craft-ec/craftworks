@@ -82,7 +82,7 @@ export async function start(ctx) {
   }
 
   // EVERY APP's SETTINGS — its fields, what saving one does beyond the act (a space made public: listed).
-  const madePublic = async (r, sp) => (await r.publish().catch(() => {}), await (await ctx.require("index")).listSpace(sp));
+  const madePublic = async (r, sp) => (await ctx.background("app-settings: r.publish", r.publish()), await (await ctx.require("index")).listSpace(sp));
   // A SIGNAL's own rule at a path (`signals`: react, save, share, tag — each, unset, as its parent): every settings
   // section lists them, so a new signal shows up here by itself.
   const SIGNAL_FIELDS = path => S.interactions().map(a => ({ action: a.action, path, label: a.label.replace(/^Who may /, "").replace(/^./, c => c.toUpperCase()) }));
@@ -187,7 +187,7 @@ export async function start(ctx) {
   // THE SPACE's PAGE (the Settings app): the space's own section only — its apps' settings are in each app, its
   // capabilities' rules in the Spaces app.
   async function page(sp) {
-    const r = await roles.of(sp);
+    const r = await roles.of.strict(sp);
     const me = (await (await ctx.require("space")).account()).id;
     return h("div", { className: "cw-settings", style: "display:grid;gap:var(--cw-space-3)" }, await section(sp, "", r, me));
   }
@@ -195,14 +195,14 @@ export async function start(ctx) {
   const has = key => !!SECTIONS[key];
   async function appPage(sp, key) {
     if (!SECTIONS[key]) return null;
-    const r = await roles.of(sp);
+    const r = await roles.of.strict(sp);
     const me = (await (await ctx.require("space")).account()).id;
     return section(sp, key, r, me);
   }
   // A CAPABILITY's RULES (the Spaces app, beside its switch): who may read, post, edit, and each signal, in its domain.
   // Read by anyone: the space listed in public.
   async function capabilityPage(sp, cap, title = cap) {
-    const r = await roles.of(sp);
+    const r = await roles.of.strict(sp);
     const me = (await (await ctx.require("space")).account()).id;
     SECTIONS[`cap:${cap}`] ??= {
       title,

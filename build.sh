@@ -5,6 +5,8 @@
 set -euo pipefail
 # ONE LOOK PER COMPONENT: a shared class styled only by the package that makes it (tools/style-check.mjs).
 node "$(cd "$(dirname "$0")" && pwd)/tools/style-check.mjs"
+# A FAILURE IS HANDLED IN ONE PLACE: no package writes its own fallback catch (tools/failure-check.mjs).
+node "$(cd "$(dirname "$0")" && pwd)/tools/failure-check.mjs"
 root="$(cd "$(dirname "$0")" && pwd)"
 cd "$root"
 target="${CARGO_TARGET_DIR:-$root/target}"

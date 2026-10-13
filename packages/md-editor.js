@@ -409,8 +409,8 @@ export async function start(ctx) {
       const items = await ctx.require("items");
       mine ??= (async () => {
         const [own, saved] = await Promise.all([
-          items.list({ by: (await (await ctx.require("space")).account()).id }, "new", kinds.all(), { window: "all" }).catch(() => []),
-          ctx.require("actions").then(a => Promise.all(a.saved().slice(0, 50).map(r => items.get(r).catch(() => null)))).catch(() => []),
+          items.list({ by: (await (await ctx.require("space")).account()).id }, "new", kinds.all(), { window: "all" }),
+          ctx.optional("md-editor: ctx.require", ctx.require("actions").then(a => Promise.all(a.saved().slice(0, 50).map(r => items.get(r)))), () => []),
         ]);
         const seen = new Set();
         return [...saved.filter(Boolean), ...own].filter(it => !seen.has(it.ref) && seen.add(it.ref));
@@ -420,7 +420,7 @@ export async function start(ctx) {
       // not to be readable.
       const named = items.refOf(q);
       if (named) {
-        const it = await items.get(named).catch(ctx.quiet(() => null));
+        const it = await items.get(named);
         if (n !== asked) return;
         return found.replaceChildren(it ? btn(`🔗 ${kinds.of(it.kind)?.label ?? it.kind}: ${it.title || (it.body ?? "").slice(0, 40) || "untitled"}`, "Insert it", () => putItem(it.ref, it.title)) : h("span", { className: "s", textContent: "That item is not there, or not yours to read." }));
       }
@@ -459,7 +459,7 @@ export async function start(ctx) {
       }
       const m = before.match(/@([^\s@]*)$/);
       if (!m) return (list.hidden = true);
-      const found = (await people(m[1]).catch(ctx.quiet(() => []))).slice(0, 6);
+      const found = (await ctx.optional("md-editor: people", people(m[1]), () => [])).slice(0, 6);
       list.replaceChildren(...found.map(p => h("li", { textContent: p.shown, onmousedown: e => (e.preventDefault(), take(p, m[0].length)) })));
       list.hidden = !found.length;
     }

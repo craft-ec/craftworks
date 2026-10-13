@@ -44,8 +44,8 @@ export async function start(ctx) {
     const h = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids.filter(k => k != null && k !== false)); return e; };
     const ui = {
       h,
-      loading: text => h("p", { className: "cw-loading", textContent: text }),
-      card: (it, { href } = {}) => h("a", { className: "cw-card cw-box", href: href ?? "#" },
+      loading: text => h("p", { className: "cw-app-loading", textContent: text }),
+      card: (it, { href } = {}) => h("a", { className: "cw-app-card cw-box", href: href ?? "#" },
         h("b", { textContent: it.title || String(it.body ?? "").split("\\n")[0].slice(0, 80) || "untitled" }),
         h("pre", { className: "cw-excerpt", textContent: String(it.body ?? "").slice(0, 240) }),
         h("small", { textContent: new Date(it.at ?? Date.now()).toLocaleString() })),
@@ -88,8 +88,8 @@ export async function start(ctx) {
     const theme = document.querySelector("style[data-theme]")?.textContent ?? "";
     frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}">
       <style>${theme.replace(/</g, "\\3c ")}</style>
-      <style>body{margin:0;font-family:var(--cw-font);color:var(--cw-fg);background:transparent}.cw-card{display:grid;gap:4px;padding:var(--cw-space-3);text-decoration:none;color:inherit}
-      .cw-excerpt{margin:0;white-space:pre-wrap;font:12px/1.4 var(--cw-font-mono);color:var(--cw-muted);max-height:6em;overflow:hidden}.cw-loading{color:var(--cw-muted)}</style></head>
+      <style>body{margin:0;font-family:var(--cw-font);color:var(--cw-fg);background:transparent}.cw-app-card{display:grid;gap:4px;padding:var(--cw-space-3);text-decoration:none;color:inherit}
+      .cw-excerpt{margin:0;white-space:pre-wrap;font:12px/1.4 var(--cw-font-mono);color:var(--cw-muted);max-height:6em;overflow:hidden}.cw-app-loading{color:var(--cw-muted)}</style></head>
       <style>html,body{height:auto!important;min-height:0!important}#cw-app{display:flow-root}</style>
       <body><div id="cw-app"></div><script data-src="data:text/javascript;base64,${b64(bytes)}">${RUNTIME}</script></body></html>`;
     // The SYSTEM's item page, under the frame (for `…/p/<ref>`).
@@ -115,7 +115,7 @@ export async function start(ctx) {
     const cleanMeta = m => Object.fromEntries(Object.entries(m && typeof m === "object" ? m : {}).filter(([k]) => !META_DENY.has(k)).slice(0, 32));
     const AUDIENCES = new Set(["private", "public", "members"]);
     const ofMine = async ref => {
-      const it = await items.get(ref);
+      const it = await items.get.strict(ref);
       if (!it || !mine.has(it.kind)) throw Object.assign(new Error("not one of this app's items"), { kind: "refused" });
       return it;
     };

@@ -147,18 +147,48 @@ export async function run(boot) {
     boot.log(step, { what: what || String(e?.message ?? e) });
     met(step, e, "failed", what ? { doing: String(what).slice(0, 120) } : {});
   };
-  // A FAILURE A READ TURNS INTO ITS FALLBACK (`.catch(ctx.quiet(() => null))`): the same value as before, but no longer
-  // SILENT — anything but absent / not yet / logged out / cancelled / an expected refusal is reported by its kind, from
-  // where it was met (FOUNDATION.md §4; 10-13: ~460 reads turned every failure into "nothing" without a word).
+  // WHAT A HANDLED FAILURE REPORTS: anything but absent / not yet / logged out / cancelled / an expected refusal, by its
+  // kind, from where it was met (FOUNDATION.md §4; 10-13: ~460 reads turned every failure into "nothing" without a
+  // word). (Slow reads are NOT reported one by one — the visit's waits count them; audit 10-13: a timeout in a loop's
+  // catch reported every tick.)
   const EXPECTED = new Set(["absent", "not-yet", "login-needed", "cancelled", "refused-expected", "extension"]);
-  // (Slow or not-yet reads swallowed are NOT reported one by one — the visit's waits count them; audit 10-13: a timeout
-  // in a loop's catch reported every tick.)
   const QUIET_SKIP = new Set([...EXPECTED, "transient"]);
-  ctx.quiet = make => e => {
-    const kind = faultNow?.classify(e).kind;
-    if (kind && !QUIET_SKIP.has(kind)) met(working.at(-1) || ctx.route, e, "swallowed");
-    return make();
+  // THE THREE WAYS A FAILURE IS HANDLED, each decided ONCE (owner 10-13: "if it is one machinery, why still many
+  // implementations?") — never a call site's own catch:
+  // - A CAPABILITY's READ is TOTAL (`ctx.total(what, empty, read)` → a read function): it never throws — on any failure
+  //   it gives its natural empty value (null, [], {}), its read STATE on it where the value can carry one
+  //   (`.state`: { s: "unknown" | "unreadable" | "failed", why }), and the failure reported once by its kind (absent,
+  //   not yet, slow — counted in the visit's waits — not one by one). Callers use the value; they never catch it.
+  // - A BEST-EFFORT WRITE (a record, a mark, a notice): `ctx.background(what, promise)` — reported, never stops the flow.
+  // - AN OPTIONAL feature (a browser's codec, a package a site may lack): `ctx.optional(what, fnOrPromise, fallback)`.
+  const stateOf = kind => (kind === "sealed" ? "unreadable" : ["absent", "not-yet", "transient", "cancelled", "login-needed", "refused-expected"].includes(kind) ? "unknown" : "failed");
+  const handled = (source, e) => {
+    const kind = faultNow?.classify(e).kind ?? "bug";
+    if (!QUIET_SKIP.has(kind)) met(source, e, "handled");
+    return kind;
   };
+  //   A DECISION that must not act on "unknown" (a join, a removal, a claim, a copy) reads `.strict` instead: the same
+  //   read, throwing its fault — the step stops rather than treat a failed read as an empty one (review 10-13: a failed
+  //   `space.mine()` read as "no spaces" re-keyed every Drive file; a failed `directory.devices` wrote a ban with no
+  //   nodes). Services read strict; views read total.
+  ctx.total = (what, empty, read) =>
+    Object.assign(
+      (...args) =>
+        Promise.resolve()
+          .then(() => read(...args))
+          .catch(e => {
+            const kind = handled(what, e);
+            const v = empty();
+            if (v && typeof v === "object") Object.defineProperty(v, "state", { value: { s: stateOf(kind), why: String(e?.message ?? e).slice(0, 120) }, enumerable: false });
+            return v;
+          }),
+      { strict: (...args) => Promise.resolve().then(() => read(...args)) },
+    );
+  ctx.background = (what, p) => Promise.resolve(p).catch(e => void handled(what, e));
+  ctx.optional = (what, f, fallback) =>
+    Promise.resolve()
+      .then(() => (typeof f === "function" ? f() : f))
+      .catch(e => (handled(what, e), typeof fallback === "function" ? fallback() : fallback));
   // WHAT A PERSON READS for a failure: its kind's words (`fault.say`), never a stack.
   ctx.say = e => faultNow?.say(e) ?? String(e?.message ?? e);
 
@@ -168,6 +198,9 @@ export async function run(boot) {
   // WHO ASKED FOR WHAT: the component mounting or the service starting when a package is first asked for. What the
   // Stack tab shows for a package no slot names (a service, a component's own parts).
   const working = [];
+  // A failed page's tries to show it again (`fail`); a page shown resets them. (Declared before any page is shown:
+  // a show before its line ran met it uninitialised — fx 10-13.)
+  let retries = 0;
   const askedBy = new Map();
   function require(name) {
     if (!loaded.has(name)) {
@@ -731,7 +764,6 @@ export async function run(boot) {
     ctx.log("page", { what: "resumed: tables opened before their key was held, opened again with it" });
     location.reload();
   });
-  let retries = 0;
   function fail(e) {
     // Whatever was thrown, said (a rejection with no Error showed "undefined").
     const said = e?.message ?? (typeof e === "string" ? e : (() => { try { return JSON.stringify(e); } catch { return String(e); } })());

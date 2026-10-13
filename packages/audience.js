@@ -37,8 +37,8 @@ export async function start(ctx) {
     // The choices here: yours, or what the space's policy allows for this kind.
     // A space's: everyone (where it may), its members — or fewer: a role's holders, the admins, the owner (sealed to
     // them alone: its audience's group).
-    const r = sp ? await (await ctx.require("roles")).of(sp).catch(() => null) : null;
-    const me = await space.me();
+    const r = sp ? await ctx.optional("audience: of", (await ctx.require("roles")).of(sp), () => null) : null;
+    const me = await space.me.strict();
     const directory = await ctx.require("directory");
     const listName = l => l.people.map(d => directory.shown(d)).join(", ");
     // A space's: its roles, admins — and NAMED PEOPLE: this person's lists, or a new one chosen from its members.
@@ -52,7 +52,7 @@ export async function start(ctx) {
       : [];
     const choices = sp
       ? [
-          ...((await items.publicIn(sp, kind).catch(ctx.quiet(() => false)))
+          ...((await items.publicIn(sp, kind))
             ? [["public", "🌐 Everyone (public)"], ["members", `👥 ${space.shown(sp)}'s members`]]
             : [["members", `👥 ${space.shown(sp)}'s members (the space keeps this app to its members)`]]),
           ...fewer,

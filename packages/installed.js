@@ -11,7 +11,7 @@ export async function start(ctx) {
   const [space, storage] = await Promise.all([ctx.require("space"), ctx.require("storage")]);
   const SYSTEM = new Set(["/settings", "/spaces", "/store"]); // never removed
   let table = null;
-  const tableOf = async () => (table ??= (await space.account().catch(ctx.quiet(() => null))) ? storage.table("installed") : null);
+  const tableOf = async () => (table ??= (await space.account()) ? storage.table("installed") : null);
   addEventListener("craftworks:auth", () => (table = null));
   async function removed() {
     const t = await tableOf();

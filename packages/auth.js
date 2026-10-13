@@ -142,7 +142,7 @@ export async function start(ctx) {
         await f({ entropy: joining.entropy, did: joining.did, node, fresh }).catch(e => {
           const why = e?.message ?? String(e);
           ctx.log("after login", { what: why });
-          ctx.require("index").then(ix => ix.health({ k: "account-recovery", s: "", why: `failed: ${why}`.slice(0, 160), d: { fresh: !!fresh } })).catch(() => {});
+          ctx.background("auth: ctx.require", ctx.require("index").then(ix => ix.health({ k: "account-recovery", s: "", why: `failed: ${why}`.slice(0, 160), d: { fresh: !!fresh } })));
         });
       joining.member.fill(0);
       joining.entropy.fill(0);
@@ -153,7 +153,7 @@ export async function start(ctx) {
   }
 
   return {
-    check, accept: opened, unlock, join, logout, current: () => current, identity: id,
+    check: ctx.total("auth.check", () => null, check), accept: opened, unlock, join, logout, current: () => current, identity: id,
     // `fn({ entropy, did, node, fresh })`, called after a words login or a registration, before the words are wiped.
     onJoined: f => joined.push(f),
   };

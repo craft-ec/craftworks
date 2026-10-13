@@ -19,6 +19,8 @@ globalThis.CustomEvent ??= class CustomEvent {
 const healths = [];
 const ctx = {
   log: () => {},
+  background: (w, p) => Promise.resolve(p).catch(() => {}),
+  optional: (w, f, fb) => Promise.resolve().then(() => (typeof f === "function" ? f() : f)).catch(() => (typeof fb === "function" ? fb() : fb)),
   require: async name => {
     if (name === "fault") return fault;
     if (name === "index") return { health: async item => (healths.push(item), true) };

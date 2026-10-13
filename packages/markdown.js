@@ -224,13 +224,13 @@ export async function start(ctx) {
   function media(key, ref, alt, item = null) {
     const kind = kindOf(ref);
     // Counted for its ITEM, and kept for others once it loads (`usage.trackItem`).
-    if (item && !ref.inline) ctx.require("usage").then(u => u.trackItem(item, [ref]), () => {});
+    if (item && !ref.inline) ctx.background("markdown: ctx.require", ctx.require("usage").then(u => u.trackItem(item, [ref])));
     const spec = K.mediaOf(ref);
     if (spec?.view === "image") {
       const img = Object.assign(document.createElement("img"), { className: "cw-md-media", alt: alt || ref.name || "", title: ref.name || "" });
       const small = ref.preview ?? (ref.inline ? `data:${ref.type};base64,${ref.inline}` : null);
       if (small) img.src = small;
-      if (!ref.inline) whenSeen(img, () => urlOf(key, ref).then(u => (img.src = u), () => {}));
+      if (!ref.inline) whenSeen(img, () => ctx.background("markdown: urlOf", urlOf(key, ref).then(u => (img.src = u))));
       img.onclick = () => img.src && window.open(img.src, "_blank", "noopener");
       return img;
     }
@@ -250,7 +250,7 @@ export async function start(ctx) {
     const a = Object.assign(document.createElement("a"), { href: "#", textContent: text || ref.name || "file" });
     a.onclick = async e => {
       e.preventDefault();
-      const u = await urlOf(key, ref).catch(ctx.quiet(() => null));
+      const u = await ctx.optional("markdown: urlOf", urlOf(key, ref), () => null);
       if (!u) return;
       const d = Object.assign(document.createElement("a"), { href: u, download: ref.name || "file" });
       document.body.append(d);
@@ -274,14 +274,14 @@ export async function start(ctx) {
     }
     // Items embedded: each its kind's look (`cards`), read with its own access.
     const embeds = [...el.querySelectorAll("[data-item]")];
-    if (embeds.length) ctx.require("cards").then(c => embeds.forEach(s => s.replaceWith(c.embed(s.dataset.item))), () => {});
+    if (embeds.length) ctx.background("markdown: ctx.require", ctx.require("cards").then(c => embeds.forEach(s => s.replaceWith(c.embed(s.dataset.item)))));
     for (const a of el.querySelectorAll("[data-file-link]")) {
       const ref = byKey.get(a.dataset.fileLink);
       a.replaceWith(ref ? link(a.dataset.fileLink, ref, a.textContent) : missing(a.dataset.fileLink));
     }
     // A MENTION opens their card (`person`).
     for (const a of el.querySelectorAll("a.cw-mention"))
-      a.onclick = e => (e.preventDefault(), e.stopPropagation(), ctx.require("person").then(p => p.openMention(a, { did: a.dataset.did || null, typed: a.dataset.typed || null }), () => {}));
+      a.onclick = e => (e.preventDefault(), e.stopPropagation(), ctx.background("markdown: ctx.require", ctx.require("person").then(p => p.openMention(a, { did: a.dataset.did || null, typed: a.dataset.typed || null }))));
     for (const s of el.querySelectorAll(".spoiler")) s.onclick = e => (e.stopPropagation(), s.classList.toggle("shown"));
     // A link inside a card that opens on a click: it opens itself, not the card.
     for (const a of el.querySelectorAll("a, video, audio")) a.addEventListener("click", e => e.stopPropagation());

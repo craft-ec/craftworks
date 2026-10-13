@@ -71,7 +71,7 @@ export async function start(ctx) {
 
   const render = (host, server, opts = {}) => open(server, { ...opts, host });
   async function open(server, { tab = "overview", focus = null, channels, left = () => {}, host = null } = {}) {
-    const [r, mod, me] = await Promise.all([roles.of(server), moderation.of(server), ctx.require("space").then(s => s.account())]);
+    const [r, mod, me] = await Promise.all([roles.of.strict(server), moderation.of(server), ctx.require("space").then(s => s.account())]);
     await r.refresh();
     // A DIALOG, or (`host`) a PAGE: the same tabs.
     const d = host ? el("div", { className: "cw-set page" }) : el("dialog", { className: "cw-set" });
@@ -286,7 +286,7 @@ export async function start(ctx) {
         const who = el("input", { placeholder: "name#abc123 or did:craftec:…", style: "min-width: 18em" });
         main.append(
           el("div", { className: "row" }, who, act("Invite this person", async () => {
-            const did = await conversation.person(who.value);
+            const did = await conversation.person.strict(who.value);
             await conversation.invite(server, did);
             who.value = "";
           }, "main")),

@@ -23,10 +23,10 @@ export async function start(ctx) {
     if (running) return;
     // (Called directly too — a Chat or a Space Home asks — so its own rule here: only while this device may write for
     // the account; audit 10-13.)
-    if ((await keys.writable().catch(() => "unknown")) !== true) return;
+    if ((await ctx.optional("upkeep: keys.writable", keys.writable(), () => "unknown")) !== true) return;
     running = true;
     try {
-      const me = await space.account();
+      const me = await space.account.strict();
       if (!me) return;
       await absorb(me).catch(e => ctx.failed("upkeep", e, `what the delegate did: ${e.message}`));
       // THE CARD as it should be (once a page): its key packages ones this account answers — none means every welcome
@@ -46,14 +46,14 @@ export async function start(ctx) {
       await mandate(me).catch(e => ctx.failed("upkeep", e, `the mandate: ${e.message}`));
       // One space at a time, each once the node is idle (BACKGROUND: a page's reads first).
       const node = await ctx.require("node");
-      const servers = (await space.mine()).filter(s => s.kind === "server");
+      const servers = (await space.mine.strict()).filter(s => s.kind === "server");
       // TELEMETRY: this page's state in each space (the HEARTBEAT, hourly), and what it sees of the other members.
       const seen = [];
       // The space open first.
       for (const sp of [...servers.filter(s => s.id === ctx.space), ...servers.filter(s => s.id !== ctx.space)]) {
         await node.idle();
         // REMOVED from it (its group says so): no longer in this person's list — never left shown as theirs.
-        if (await (await ctx.require("keys")).group(sp).removed().catch(() => false)) {
+        if (await ctx.optional("upkeep: group", (await ctx.require("keys")).group(sp).removed(), () => false)) {
           (await ctx.require("lifecycle")).become("space", sp.id.slice(0, 12), "removed", {});
           await space.forget(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: ${e.message}`));
           continue;
@@ -71,7 +71,7 @@ export async function start(ctx) {
         const ev = self.why ? "not-held" : self.e == null ? "not-held" : self.oe != null && self.e < self.oe ? "behind" : self.on === false ? "off-branch" : self.u ? "unreadable" : "held";
         life.become("space", sp.id.slice(0, 12), ev, { e: self.e, oe: self.oe, u: self.u, ...(self.why ? { why: self.why } : {}) });
         await conversation.observe(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: observing members: ${e.message}`));
-        const r = await roles.of(sp).catch(ctx.quiet(() => null));
+        const r = await roles.of(sp);
         // AN OPEN SPACE's roster public (the owner, once a page): askers outside learn they were let in.
         if (r && !published.has(sp.id) && r.role(me.id) === "owner" && r.policy("", "join") === "anyone") {
           published.add(sp.id);
@@ -105,7 +105,7 @@ export async function start(ctx) {
       }
       // THE HEARTBEAT: this page open, its version, and its state in each space (a member who stops beating, or whose
       // state turns, is seen in the day's health bag: `tools/health-watch`).
-      await index.health({ k: "seen", sp: seen.slice(0, 12), ...(ctx.appsOpened?.size ? { apps: [...ctx.appsOpened].slice(0, 24) } : {}) }).catch(() => {});
+      await ctx.background("upkeep: index.health", index.health({ k: "seen", sp: seen.slice(0, 12), ...(ctx.appsOpened?.size ? { apps: [...ctx.appsOpened].slice(0, 24) } : {}) }));
       ctx.appsOpened?.clear();
       // AUDIENCES: each circle's members as they should be (friends; followers, from their notices).
       await (await ctx.require("circles")).sync().catch(e => ctx.log("upkeep", { what: `circles: ${e?.message ?? (typeof e === "object" ? JSON.stringify(e) : String(e))}${e?.stack ? ` (${String(e.stack).split("\n")[1]?.trim() ?? ""})` : ""}` }));
@@ -121,13 +121,13 @@ export async function start(ctx) {
   async function absorb(me) {
     const st = (await auth.identity.upkeepStatus())?.upkeep;
     if (!st) return;
-    const mine = await space.mine();
+    const mine = await space.mine.strict();
     const of = id => mine.find(s => s.id === id);
     for (const g of st.groups ?? []) if (of(g.space)) await keys.group(of(g.space)).adopt(g.epoch, g.state);
     const written = [];
     // The key packages it used: recorded as spent (a key package works once), before the admissions are acknowledged.
-    const used = await storage().catch(ctx.quiet(() => null));
-    for (const a of st.admitted ?? []) if (used && a.kp) await used.put(a.kp, String(a.at || Date.now())).catch(ctx.quiet(() => {}));
+    const used = await ctx.optional("upkeep: storage", storage(), () => null);
+    for (const a of st.admitted ?? []) if (used && a.kp) await ctx.background("upkeep: used.put", used.put(a.kp, String(a.at || Date.now())));
     for (const a of st.admitted ?? []) {
       const sp = of(a.space);
       if (!sp) continue;
@@ -139,12 +139,12 @@ export async function start(ctx) {
       // Let in AGAIN (a member stuck behind its own commit): a member already — no act.
       if (a.code === "stuck") {
         // Recorded in the space as any member's welcome again (`conversation`'s once-per-epoch rule reads it).
-        await index.spacePoint(sp, "writers", { w: sp.self, repair: a.did, epoch: Number(a.epoch), ...kp }).catch(ctx.quiet(() => {}));
+        await ctx.background("upkeep: index.spacePoint", index.spacePoint(sp, "writers", { w: sp.self, repair: a.did, epoch: Number(a.epoch), ...kp }));
         ctx.log("upkeep", { what: `the delegate let ${a.did.slice(12, 20)}… into ${sp.name} again (stuck behind its own change) while no page ran` });
         continue;
       }
-      if (kp.kp) await index.spacePoint(sp, "writers", { w: sp.self, welcomed: a.did, ...kp, at: a.at || Date.now() }).catch(ctx.quiet(() => {}));
-      const r = await roles.of(sp);
+      if (kp.kp) await ctx.background("upkeep: index.spacePoint", index.spacePoint(sp, "writers", { w: sp.self, welcomed: a.did, ...kp, at: a.at || Date.now() }));
+      const r = await roles.of.strict(sp);
       await r.refresh();
       await r.act({ act: "admitted", code: a.code, did: a.did, at: a.at });
       ctx.log("upkeep", { what: `the delegate let ${a.did.slice(12, 20)}… into ${sp.name} while no page ran` });
@@ -164,18 +164,18 @@ export async function start(ctx) {
   async function mandate(me) {
     const spaces = [];
     const { glue } = await ctx.require("node");
-    for (const sp of (await space.mine()).filter(s => s.kind === "server")) {
-      const r = await roles.of(sp).catch(ctx.quiet(() => null));
-      const g = await keys.group(sp).snapshot().catch(ctx.quiet(() => null));
+    for (const sp of (await space.mine.strict()).filter(s => s.kind === "server")) {
+      const r = await roles.of(sp);
+      const g = await ctx.optional("upkeep: keys.group", keys.group(sp).snapshot(), () => null);
       if (!g) continue;
       const mayInvite = !!r?.can(me.id, "invite");
-      const inGroup = ((await keys.group(sp).ready().catch(ctx.quiet(() => null)))?.members ?? []).filter(m => m.cred).map(m => glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16)))));
+      const inGroup = ((await keys.group(sp).ready())?.members ?? []).filter(m => m.cred).map(m => glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16)))));
       const members = [...new Set([...(r?.members() ?? []).map(m => m.did), ...inGroup])];
       // The key packages its members (and their nodes) used, mirrored into this account's `keypacks` (`shared:<tag>`):
       // handed below as spent with this account's own — a package is spent for every space once any member used it.
       await conversation.mirrorShared(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: key packages used there: ${e?.message ?? e}`));
       // Its STUCK bag made (once a page): the delegate reads it every round, and never asks for one not made.
-      if (!stuckBags.has(sp.id)) await index.openRequests(`stuck ${sp.id}`).then(() => stuckBags.add(sp.id), () => {});
+      if (!stuckBags.has(sp.id)) await ctx.background("upkeep: index.openRequests", index.openRequests(`stuck ${sp.id}`).then(() => stuckBags.add(sp.id)));
       spaces.push({
         space: sp.id, name: sp.name, kind: sp.kind, owner: sp.governance.owner, nonce: sp.governance.nonce ?? null, channel: sp.tables.channel,
         open: mayInvite && r.policy("", "join") === "anyone",
@@ -190,7 +190,7 @@ export async function start(ctx) {
     }
     // With it, the key packages this account used already — and those another member used (`shared:<tag>`): upkeep
     // never uses one again.
-    const used = await storage().catch(ctx.quiet(() => null));
+    const used = await ctx.optional("upkeep: storage", storage(), () => null);
     const spent = used ? [...new Set(used.rows().filter(r => r.value).map(r => r.key.replace(/^shared:/, "")).filter(k => /^[0-9a-f]{32}$/.test(k)))] : [];
     const r = await auth.identity.upkeepMandate(me.id, spaces, spent);
     const said = spaces.map(x => `${x.name}${x.codes.length || x.open || x.level ? "" : " (re-add only)"}`).join(", ");
@@ -200,7 +200,7 @@ export async function start(ctx) {
   // THE DELEGATE's upkeep (no page open: the node wakes it — node ≥ 0.2.139, with the Background grant): told which
   // contract the account's inbox is, once per login.
   async function handOver() {
-    const me = await space.account();
+    const me = await space.account.strict();
     if (!me) return;
     const [{ glue }, bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode, devicesCode] = await Promise.all(["node", "bag-wasm", "tail-wasm", "idlog-wasm", "sealed-wasm", "piece-wasm", "block-wasm", "devices-wasm"].map(n => ctx.require(n)));
     const Core = glue.CraftworksCore;
@@ -210,13 +210,13 @@ export async function start(ctx) {
     // The contracts it writes (their code) and reads: handed over when they are not the ones it holds — the Sealed,
     // Piece and Block contracts too (it re-keys a space's files with no page open).
     if (r.upkeep && r.upkeep.codes !== Core.upkeep_codes_hash(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode, devicesCode))
-      await auth.identity.upkeepCodes(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode, devicesCode).catch(ctx.quiet(() => {}));
+      await ctx.background("upkeep: auth.identity.upkeepCodes", auth.identity.upkeepCodes(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode, devicesCode));
     ctx.log("upkeep", { what: r.upkeep ? `the delegate watches the inbox (${r.upkeep.wakeups} wake-up(s) so far)` : `the delegate: ${r.refused ?? JSON.stringify(r)}` });
     // What it did with no page open (admissions, re-keys): its last lines, each said once a page opens.
     for (const line of String(r.upkeep?.said ?? "").split("\n").filter(Boolean)) ctx.log("upkeep said", { what: line });
   }
-  handOver().catch(ctx.quiet(() => {}));
-  addEventListener("craftworks:auth", () => handOver().catch(ctx.quiet(() => {})));
+  ctx.background("upkeep: handOver", handOver());
+  addEventListener("craftworks:auth", () => ctx.background("upkeep: handOver", handOver()));
   // A JOB (FOUNDATION.md §3): every 30 s, only while this device may write for the account (its session open, its
   // account group a member) — paused, and said why, otherwise.
   const life = await ctx.require("lifecycle");

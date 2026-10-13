@@ -101,8 +101,8 @@ export async function start(ctx) {
     const pubName = space.tableOf(sp, "pub-acts");
     const index = await ctx.require("index");
     const [first, me, sealedActs, pubActs] = await Promise.all([
-      space.owner(sp),
-      space.account(),
+      space.owner.strict(sp),
+      space.account.strict(),
       out ? null : storage.table(space.tableOf(sp, "acts"), sp),
       out ? storage.readOnly(pubName, []) : storage.table(pubName, sp),
     ]);
@@ -140,10 +140,10 @@ export async function start(ctx) {
       if (said !== lastSaid) (lastSaid = said), ctx.log("roles", { what: `${sp.name ?? sp.id.slice(0, 8)}: its group — ${said}` });
       // Each member's DEVICES write on its behalf (their feeds): device key → the DID (the DID's card, checked
       // against its key log).
-      const sets = await Promise.all(group.map(m => directory.devices(m.did)));
+      const sets = await Promise.all(group.map(m => directory.devices.strict(m.did)));
       group.forEach((m, i) => sets[i].forEach(k => writers.set(k, m.did)));
     };
-    if (!out) await learn(await g.ready().catch(ctx.quiet(() => null)));
+    if (!out) await learn(await g.ready());
     const author = row => (row?.id ? (writers.get(row.id.slice(0, 64)) ?? null) : null);
 
     // THE REPLAY: the acts in order, each kept only if its signer could (the core's `Governance`).
@@ -183,14 +183,14 @@ export async function start(ctx) {
     // ITS PUBLIC ACTS' WRITERS (`index`: the space's public acts bag — whoever wrote a public act, the owner and admins,
     // listed once): read from outside instead of every member's public acts.
     const ACTS = `acts ${sp.id}`;
-    const actWriters = out ? await index.pointers(ACTS).then(ps => [...new Set(ps.map(p => p?.w).filter(w => typeof w === "string"))], () => []) : [];
+    const actWriters = out ? await ctx.optional("roles: index.pointers", index.pointers(ACTS).then(ps => [...new Set(ps.map(p => p?.w).filter(w => typeof w === "string"))]), () => []) : [];
     async function widen() {
       if (!out) return;
       for (;;) {
         const fresh = [...roster].filter(d => !known.has(d));
         if (!fresh.length) return;
         fresh.forEach(d => known.add(d));
-        const sets = await Promise.all(fresh.map(d => directory.devices(d).catch(ctx.quiet(() => []))));
+        const sets = await Promise.all(fresh.map(d => directory.devices(d)));
         fresh.forEach((d, i) => sets[i].forEach(k => writers.set(k, d)));
         await pubActs.add(actWriters);
         replay();
@@ -213,7 +213,7 @@ export async function start(ctx) {
         try {
           if (out) return;
           const before = sig();
-          await learn(await g.ready().catch(ctx.quiet(() => null)));
+          await learn(await g.ready());
           if (sig() !== before) {
             replay();
             for (const f of changed) f();
@@ -223,7 +223,7 @@ export async function start(ctx) {
         }
       })());
     if (!out) {
-      addEventListener("craftworks:keys", () => relearn().catch(ctx.quiet(() => {})));
+      addEventListener("craftworks:keys", () => ctx.background("roles: relearn", relearn()));
       let wait = 3000;
       const until = Date.now() + 600000;
       const again = () => !group.length && Date.now() < until && setTimeout(() => relearn().finally(again), (wait = Math.min(wait * 2, 60000)));
@@ -233,7 +233,7 @@ export async function start(ctx) {
       replay();
       if (out) widen().then(() => ((group = [...roster].map(did => ({ did }))), changed.forEach(f => f())));
       for (const f of changed) f();
-      if (!out) relearn().catch(ctx.quiet(() => {}));
+      if (!out) ctx.background("roles: relearn", relearn());
     });
     // PUBLIC: something of the space is anyone's — an app read by anyone, or joining open to anyone (an open space is
     // listed in Discover: whoever looks must see who is in it and how to join).
@@ -254,8 +254,8 @@ export async function start(ctx) {
     async function listActWriter() {
       if (out || actListed || !sp.self) return;
       actListed = true;
-      const ws = await index.pointers(ACTS).catch(ctx.quiet(() => []));
-      if (!ws.some(p => p?.w === sp.self)) await index.point(ACTS, { w: sp.self }).catch(() => (actListed = false));
+      const ws = await index.pointers(ACTS);
+      if (!ws.some(p => p?.w === sp.self)) await ctx.optional("roles: index.point", index.point(ACTS, { w: sp.self }), () => actListed = false);
     }
     // The policy set at exactly a path.
     const policyAt = (path, action, at) => gv.policy_at(path, action, at) || null;
@@ -353,7 +353,7 @@ export async function start(ctx) {
       // Brought current with the group (a member added or removed).
       refresh: async () => {
         if (out) return widen();
-        await learn(await g.ready().catch(ctx.quiet(() => null)));
+        await learn(await g.ready());
         replay();
       },
       isPublic,
@@ -403,7 +403,7 @@ export async function start(ctx) {
       const v = r.config("space", "history", "");
       storage.setRetention(sp.id, v === "" || v == null ? null : Number(v));
     };
-    t.settled.then(retain, () => {});
+    ctx.background("roles: t.settled.then", t.settled.then(retain));
     changed.push(retain);
     return r;
   }
@@ -440,10 +440,9 @@ export async function start(ctx) {
         gv?.free();
         gv = next;
       };
-      const ready = directory
-        .publicOf(did, "card")
-        .then(async x => ((t = x), x && (await x.answer(), replay(), x.onChange(() => (replay(), checked.forEach(f => f()))))))
-        .catch(ctx.quiet(() => {}))
+      const ready = ctx.background("roles: directory.publicOf", directory
+        .publicOf.strict(did, "card")
+        .then(async x => ((t = x), x && (await x.answer(), replay(), x.onChange(() => (replay(), checked.forEach(f => f())))))))
         .finally(() => ((loaded = true), checked.forEach(f => f())));
       const policyAt = (path, action, at) => gv?.policy_at(path, action, at) || null;
       // Walked up the path (`board/p/<id>` → `board` → the space), else anyone.
@@ -488,10 +487,9 @@ export async function start(ctx) {
     if (!credChecks.has(k)) {
       const c = { v: undefined };
       credChecks.set(k, c);
-      directory
+      ctx.optional("roles: directory.credTable", directory
         .credTable(author, token)
-        .then(async t => (t ? (await t.answer(), JSON.parse(t.rows().find(x => x.key === "for")?.value ?? "null")) : null))
-        .catch(ctx.quiet(() => null))
+        .then(async t => (t ? (await t.answer(), JSON.parse(t.rows().find(x => x.key === "for")?.value ?? "null")) : null)), () => null)
         .then(v => ((c.v = v), checked.forEach(f => f())));
     }
     return credChecks.get(k).v;
@@ -521,7 +519,7 @@ export async function start(ctx) {
   async function credToCite(item, action, r = null) {
     if (!r && item?.by) await personal(item.by).ready;
     const rule = ruleOf(item, action, r, Infinity);
-    if (!CIRCLES_OF[rule] || item.by === (await space.me())) return null;
+    if (!CIRCLES_OF[rule] || item.by === (await space.me.strict())) return null;
     const people = await (await ctx.require("edge")).people();
     for (const w of CIRCLES_OF[rule]) {
       const token = people.about(`credin-${w}`, item.by)?.token;
@@ -538,5 +536,5 @@ export async function start(ctx) {
   }
 
   // `perms`: what a composed role may carry.
-  return { of, ofPublic, personal, mayWrite, credToCite, followable, onChecked: f => checked.push(f), can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"], perms: G.perms() };
+  return { of: ctx.total("roles.of", () => null, of), ofPublic: ctx.total("roles.ofPublic", () => null, ofPublic), personal, mayWrite, credToCite, followable, onChecked: f => checked.push(f), can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"], perms: G.perms() };
 }

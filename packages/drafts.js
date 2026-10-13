@@ -14,7 +14,7 @@ export async function start(ctx) {
   const space = await ctx.require("space");
   const storage = await ctx.require("storage");
   let table = null; // the drafts table, once someone is logged in
-  const tableOf = async () => (table ??= (await space.account().catch(ctx.quiet(() => null))) ? storage.table("drafts") : null);
+  const tableOf = async () => (table ??= (await space.account()) ? storage.table("drafts") : null);
 
   // A field's KEY: where it is (the route and what follows), the component it is in, and its own name — stable across
   // loads of the same page, never its content.
@@ -105,7 +105,7 @@ export async function start(ctx) {
   // never overwritten).
   let held = null;
   const heldNow = async () =>
-    (held ??= (async () => {
+    (held ??= ctx.optional("drafts: async", (async () => {
       const t = await tableOf();
       if (!t) return new Map();
       await t.settled;
@@ -117,7 +117,7 @@ export async function start(ctx) {
         } catch {}
       }
       return m;
-    })().catch(() => new Map()));
+    })(), () => new Map()));
   async function restore(root) {
     const fields = [...root.querySelectorAll("textarea, input, [contenteditable]")].filter(el => isText(el) && !secret(el));
     if (!fields.length) return;
@@ -140,7 +140,7 @@ export async function start(ctx) {
     clearTimeout(look);
     look = setTimeout(() => {
       sweep();
-      if (body()) restore(body()).catch(ctx.quiet(() => {}));
+      if (body()) ctx.background("drafts: restore", restore(body()));
     }, 300);
   }).observe(document.body, { childList: true, subtree: true });
   addEventListener("craftworks:auth", () => ((table = null), (held = null)));

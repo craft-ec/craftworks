@@ -16,7 +16,7 @@ export async function start(ctx) {
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   let mineOpen = null;
-  const mine = () => (mineOpen ??= space.account().then(me => directory.publicOf(me.id, TABLE)));
+  const mine = () => (mineOpen ??= space.account.strict().then(me => directory.publicOf.strict(me.id, TABLE)));
   // A table's rows as signed items (rows from before signing — not items — are left out).
   const items = t =>
     (t?.rows() ?? []).flatMap(r => {
@@ -37,7 +37,7 @@ export async function start(ctx) {
 
   // SIGN one: this node signs the message, the core builds the item (reading the key log it needs first).
   async function sign(to, on) {
-    const me = await auth.check();
+    const me = await auth.check.strict();
     const at = await height();
     const toBytes = glue.did_bytes(to);
     const a = await auth.identity.tokenSign(Core.vouch_message(me.didBytes, toBytes, at, on));
@@ -74,16 +74,16 @@ export async function start(ctx) {
     await relay([item]).catch(e => ctx.failed("vouch", e, `relaying: ${e.message ?? e}`));
   }
   async function of(did) {
-    const t = await directory.publicOf(did, TABLE);
+    const t = await directory.publicOf.strict(did, TABLE);
     await t?.answer?.();
     return t && !t.absent ? items(t).map(v => v.item) : [];
   }
   let held = [];
-  mine().then(t => {
+  ctx.background("vouch: mine", mine().then(t => {
     held = items(t);
     t.onChange?.(() => (held = items(t)));
-  }, () => {});
+  }));
   const has = did => held.some(v => v.to === did && v.on);
 
-  return { BUDGET, has, set, of, relay };
+  return { BUDGET, has, set, of: ctx.total("vouch.of", () => [], of), relay };
 }

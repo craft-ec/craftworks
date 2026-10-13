@@ -39,7 +39,7 @@ export async function mount(ctx, el) {
   };
   // SHOW ME IN DISCOVER: this person's own choice (their card says it).
   const box = el.querySelector(".listed input");
-  directory.isListed().then(on => (box.checked = on), () => {});
+  ctx.background("contact: directory.isListed", directory.isListed().then(on => (box.checked = on)));
   box.onchange = () =>
     directory.listMe(box.checked).catch(e => {
       box.checked = !box.checked;
@@ -50,7 +50,7 @@ export async function mount(ctx, el) {
   // EVERY SPACE's PEOPLE, here too (owner 10-13: contact is in every space — its members — so Contact shows them all,
   // as it chooses: each space its own section, opened when wanted; no switching between spaces).
   const [ml, space] = await Promise.all([ctx.require("members-list"), ctx.require("space")]);
-  const spaces = (await space.mine().catch(ctx.quiet(() => []))).filter(s => s.kind === "server");
+  const spaces = (await space.mine()).filter(s => s.kind === "server");
   for (const sp of spaces) {
     const d = Object.assign(document.createElement("details"), { className: "space-people" });
     d.style.cssText = "padding:0 var(--cw-space-3)";
@@ -107,7 +107,7 @@ async function people(ctx, el, { directory, person }) {
     <div class="ppl"><h2>👤 People</h2><p class="note">People who chose to be shown in Discover. Show yourself from your Contacts.</p><div class="grid"></div></div>`;
   const grid = el.querySelector(".grid");
   grid.replaceChildren(theme.loading("Finding people…"));
-  const lists = await moderation.lists().catch(ctx.quiet(() => null));
+  const lists = await ctx.optional("contact: moderation.lists", moderation.lists(), () => null);
   const dids = (await directory.listed()).filter(d => !lists?.flagged({ by: d }));
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
@@ -119,7 +119,7 @@ async function people(ctx, el, { directory, person }) {
       ? dids.map(d => {
           const name = directory.nameEl(d, "b");
           const about = h("span", { textContent: "public profile" });
-          posts.list({ by: d }).then(ps => (about.textContent = `${ps.length} public post${ps.length === 1 ? "" : "s"}`), () => {});
+          ctx.background("contact: posts.list", posts.list({ by: d }).then(ps => (about.textContent = `${ps.length} public post${ps.length === 1 ? "" : "s"}`)));
           return h("div", { className: "card", onclick: e => person.open(e.currentTarget, d) }, name, about);
         })
       : [h("p", { className: "note", textContent: "Nobody listed" })]),

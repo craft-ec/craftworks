@@ -67,7 +67,7 @@ export async function mount(ctx, el) {
     </div></div>`;
   // CHAT's PLACES, as Discord shows them: a RAIL of spaces beside it — You (your conversations), each space with chat
   // on, Discover (`places`: the one list; how it is drawn is Chat's).
-  ctx.require("places").then(p => p.rail(el.querySelector(".rail")), () => {});
+  ctx.background("chat: ctx.require", ctx.require("places").then(p => p.rail(el.querySelector(".rail"))));
   const $ = s => el.querySelector(s);
   // A click outside a question (on its backdrop) cancels it, as Esc does.
   $(".ask").addEventListener("click", e => e.target === e.currentTarget && e.currentTarget.close("cancel"));
@@ -118,7 +118,7 @@ export async function mount(ctx, el) {
     try {
       // At once: its roles, moderation and channels (each opens what it reads; the keys come with the tables).
       const chsP = conversation.channels(s);
-      chsP.catch(ctx.quiet(() => {}));
+      ctx.background("chat: chsP", chsP);
       [rs, mod] = await Promise.all([roles.of(s), moderation.of(s)]);
       if (server !== s) return;
       menu();
@@ -241,14 +241,14 @@ export async function mount(ctx, el) {
     channel = c;
     showOpen(true);
     // Its readers in the side panel (a channel kept to a role shows that role's people).
-    if (server) drawMembers(server).catch(ctx.quiet(() => {}));
+    if (server) ctx.background("chat: drawMembers", drawMembers(server));
     // A RESTRICTED channel (who may read: a role, admins…): its messages are its GROUP's (`groups`) — open to its
     // readers, locked to everyone else here.
     const g = c.item?.meta?.group;
     if (g) {
       // (Its group left — no longer of its readers —: locked, as for anyone else.)
       const gsp0 = (await space.mine()).find(s => s.id === g);
-      const gsp = gsp0 && !(await roles.of(gsp0).then(async r => (await r.settled, r.left), () => true)) ? gsp0 : null;
+      const gsp = gsp0 && !(await ctx.optional("chat: roles.of", roles.of(gsp0).then(async r => (await r.settled, r.left)), () => true)) ? gsp0 : null;
       const to = `#/s/${server.id}/chat/${c.id.split("/").pop()}`;
       if (location.hash !== to) history.replaceState(null, "", to), dispatchEvent(new CustomEvent("craftworks:address"));
       drawChannels();
@@ -269,7 +269,7 @@ export async function mount(ctx, el) {
   }
 
   // Welcomes and askers are `upkeep`'s (every page, every 30 s): asked once now, for whoever is waiting on this one.
-  ctx.require("upkeep").then(u => u.tick(), () => {});
+  ctx.background("chat: ctx.require", ctx.require("upkeep").then(u => u.tick()));
   // New since read: the channel list says so.
   activity.onChange(() => el.isConnected && (!ctx.space && personalDraw ? personalDraw() : drawChannels()));
   // YOUR CHAT (your personal space): your CONVERSATIONS — direct and group, each its own sealed space with its own
@@ -404,7 +404,7 @@ async function openSpaces(ctx, el, { space, roles, conversation, theme }) {
   const joins = await ctx.require("join-button");
   const cards = [];
   for (const d of await posts.publicSpaces()) {
-    const r = await roles.ofPublic(d).catch(ctx.quiet(() => null));
+    const r = await roles.ofPublic(d);
     if (!r || r.policy("", "join") !== "anyone" || !r.apps().includes("chat")) continue;
     const n = r.members().length;
     // Join, Requested (while a member lets you in), Open: the one join control.

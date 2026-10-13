@@ -67,7 +67,7 @@ export async function start(ctx) {
     // whole history. (A table read from outside or a person's public tail: read whole, as before.)
     paged = paged && !container?.outside && container?.kind !== "public";
     const t = await tableOf(container, { lazy: paged });
-    const me = await space.me();
+    const me = await space.me.strict();
     // In a space (not the account): its roles (who wrote what); in a SHARED space (a server) its moderation too (what is
     // hidden). A conversation (direct, group) is between equals: nobody moderates another's items.
     const open = container.kind === "public";
@@ -143,7 +143,7 @@ export async function start(ctx) {
     // Its REACTIONS, read with each item (keyed `r-<item>-…`: a range per item).
     const withReactions = async rows => {
       const items = rows.filter(r => !r.key.startsWith("r-"));
-      const rs = await Promise.all(items.map(r => t.page({ lo: `r-${r.key}-`, hi: `r-${r.key}.`, limit: 500 }).then(p => p.rows, () => [])));
+      const rs = await Promise.all(items.map(r => ctx.optional("content: t.page", t.page({ lo: `r-${r.key}-`, hi: `r-${r.key}.`, limit: 500 }).then(p => p.rows), () => [])));
       return [...rows, ...rs.flat()];
     };
     // THE NEXT PAGE, older than what is held: items (time ids) newest first.
@@ -180,12 +180,11 @@ export async function start(ctx) {
     // CHANGED (a new row, a flush moving rows into the tree): what is held read again, from the newest to the oldest held.
     let refreshing = null;
     const refresh = () =>
-      (refreshing ??= (async () => {
+      (refreshing ??= ctx.background("content: async", (async () => {
         if (!paged || !oldest) return;
         const p = await t.page({ lo: oldest, limit: 100000 });
         for (const row of await withReactions(p.rows)) loaded.set(row.key, row);
-      })()
-        .catch(ctx.quiet(() => {}))
+      })())
         .finally(() => (refreshing = null)));
     // An extra source changed (an outsider wrote): drawn again.
     extra?.onChange(() => changed.forEach(f => f()));
@@ -281,7 +280,7 @@ export async function start(ctx) {
       mayAbout: async (id, action) => {
         const it = list().find(x => x.id === id);
         if (!(governed && app) || !it) return true;
-        const cred = await R.credToCite(it, action, r).catch(ctx.quiet(() => false));
+        const cred = await ctx.optional("content: R.credToCite", R.credToCite(it, action, r), () => false);
         return cred !== false && R.mayWrite({ action, item: it, writer: me, cred, r }) !== false;
       },
       mayEdit,

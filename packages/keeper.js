@@ -33,7 +33,7 @@ export async function start(ctx) {
   async function assignment(epoch, keep) {
     if (epoch < 1) return;
     const [index, tokens] = await Promise.all(["index", "tokens"].map(n => ctx.require(n)));
-    const me = await auth.check();
+    const me = await auth.check.strict();
     // (STRICT: a registry that did not answer leaves the assignment as it was — never replaced by an empty one.)
     const strict = { strict: true };
     const [now, before, ks] = await Promise.all([
@@ -87,7 +87,7 @@ export async function start(ctx) {
   // account computes the same from the public records; only that one claims.
   async function seatIsMine(epoch, me) {
     const [membership, tokens] = await Promise.all(["membership", "tokens"].map(n => ctx.require(n)));
-    const list = (await membership.nodes().catch(ctx.quiet(() => null))) ?? [{ key: me.member }];
+    const list = (await membership.nodes()) ?? [{ key: me.member }];
     if (list.length < 2) return true;
     let best = null;
     for (const n of list) {
@@ -105,7 +105,7 @@ export async function start(ctx) {
     if (busy) return;
     busy = true;
     try {
-      const me = await auth.check().catch(ctx.quiet(() => null));
+      const me = await auth.check();
       if (!me) return;
       // (The token service needs an account: asked for once one is logged in.)
       const tokens = await ctx.require("tokens");
@@ -167,7 +167,7 @@ export async function start(ctx) {
       // CLAIMS each claims epoch: an offline keeper is still listed, kept and seated (TOKEN §7d).
       if (self.mandated !== epoch) {
         const { creds } = await tokens.device();
-        const seat = await seatIsMine(epoch, me).catch(ctx.quiet(() => false));
+        const seat = await ctx.optional("keeper: seatIsMine", seatIsMine(epoch, me), () => false);
         const bagCode = await ctx.require("bag-wasm");
         const a = await auth.identity.keeperMandate(standingCode, beaconCode, beacon, epoch, self.hosted, tokens.code, tokens.idlogCode, bagCode, me.didBytes, public_, creds, seat).catch(e => ({ refused: e?.message ?? e }));
         if (a?.keeperMandated) {
@@ -176,10 +176,10 @@ export async function start(ctx) {
           // The coming epochs' keepers registries MADE while a page is here (reading one nobody made makes it): a
           // delegate's own new contracts do not leave its node (freenet #5542) — it can only add to these.
           const index = await ctx.require("index");
-          for (let e = epoch + 1; e <= epoch + 8; e++) await index.bag.read(Core.keepers_address(e, 0), "making a coming keepers registry").catch(ctx.quiet(() => {}));
+          for (let e = epoch + 1; e <= epoch + 8; e++) await ctx.background("keeper: index.bag.read", index.bag.read(Core.keepers_address(e, 0), "making a coming keepers registry"));
           // And the coming claims epochs' first STAKE POINTER bags (the delegate points to its claim into one).
           const c = Math.floor(h / Core.clock().claims);
-          for (let e = c + 1; e <= c + 2; e++) await putAll([core.stake_pointers_put(tokens.code, beacon, tokens.idlogCode, e, 0)]).catch(ctx.quiet(() => {}));
+          for (let e = c + 1; e <= c + 2; e++) await ctx.background("keeper: putAll", putAll([core.stake_pointers_put(tokens.code, beacon, tokens.idlogCode, e, 0)]));
         } else ctx.log("keeper", { what: `not handed to the delegate (${a?.refused ?? "no answer"})` });
       }
       // ANSWER every height of this epoch since the last one handled that is sampled for this keeper (one that came

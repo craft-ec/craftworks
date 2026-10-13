@@ -74,7 +74,7 @@ export async function start(ctx) {
   const WAIT = { hint: 1500, show: 5000, ask: 30000, answer: 120000 };
   // BACKOFF: `task` again and again — 5 s, doubling, to every 5 min — until it says it is done (`true`).
   const backoff = task => {
-    const again = (n = 0) => setTimeout(async () => ((await task().catch(ctx.quiet(() => false))) ? null : again(n + 1)), Math.min(5000 * 2 ** n, 300000));
+    const again = (n = 0) => setTimeout(async () => ((await ctx.optional("node: task", task(), () => false)) ? null : again(n + 1)), Math.min(5000 * 2 ** n, 300000));
     again();
   };
   // Send frames and wait for the first answer `match` accepts. Never silent: a timeout is a `transient` fault with its

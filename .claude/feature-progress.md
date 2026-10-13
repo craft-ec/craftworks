@@ -2473,6 +2473,20 @@ Build order (FOUNDATION §7):
       460 sites in 75 packages converted (not: sequencing `queue.catch(() => {}).then`, optional `require`, health
       itself, code without `ctx`, the token files). fx v670: recovery complete, 11 page loads all drawn, ONE swallowed
       failure surfaced (sealed `tables` on /chat while a recovery's keys arrived). Test stubs gained failed/quiet/say.
+      SUPERSEDED 10-13 (owner: "if it is one machinery, why still multiple implementations?" → "implement before
+      release"): `ctx.quiet` removed. Capability reads TOTAL at their export (`ctx.total`, empty value + `.state`),
+      their callers' catches dropped (152 by hand + 41 by codemod); every other fallback rewritten by an AST codemod
+      to `ctx.background` (220) or `ctx.optional` (231), incl. the raw `.catch(() => v)` / `.then(f, () => v)` sites
+      that were never counted; tools/failure-check.mjs (build.sh) refuses any new one (positive control: 484 sites on
+      the pre-change tree). Found on fx: a TDZ in the loader's `retries` (bbd3d0c) failed /chat once per visit →
+      declared before the first show. apphost's frame toolkit classes renamed (cw-app-card/-loading: style-check
+      failed at HEAD). 86 tests; fx v684 / loader v38: recovery complete (no reload, message back), paste, frame
+      boundary, secret not kept, bundles public list, desktop.
+      Review (10-13) found decisions acting on a failed read as an empty one (re-join an already-joined space, a ban
+      act with no nodes, every Drive file re-keyed, a month's claim marked done unclaimed): `ctx.total(...).strict`
+      throws as before — 257 sites that relied on the throw at HEAD (aligned per callee, per file, against HEAD;
+      every service call without a fallback, and handlers that used the error) + 5 decision sites that already fell
+      back to empty at HEAD (file-keys pass, readd stale, departed, claimOwn). 86 tests; fx v685/loader v39: all probes.
 - [x] App-owned structure (owner 10-13: "the space app only manages capability; the view is the app's") — every app
       lists its GROUPS in its own menu (`where.tabs`: yours + each space enabling what it needs; Contact opts out — all
       spaces' people in one list); a member's space Home is the Spaces app's page (capabilities, people, settings).

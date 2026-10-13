@@ -31,7 +31,7 @@ export async function start(ctx) {
     }));
   }
   async function gather() {
-    const sp = await space.account();
+    const sp = await space.account.strict();
     if (!sp) return [];
     const known = new Set([sp.self, ...(await storage.nodes())]);
     const seen = new Set();
@@ -82,10 +82,10 @@ export async function start(ctx) {
     }
   }
   keys.onChange(tell);
-  keys.ready().then(tell).catch(ctx.quiet(() => {}));
+  ctx.background("membership: keys.ready", keys.ready.strict().then(tell));
 
   async function nodes() {
-    const st = await keys.ready();
+    const st = await keys.ready.strict();
     if (!st) return null;
     if (st.removed) return "removed"; // this node was removed from the account
     return st.members.map(m => ({ index: m.index, key: m.key, me: m.index === st.me }));
@@ -93,7 +93,7 @@ export async function start(ctx) {
 
   // The account's devices' CREDENTIALS (bytes), as its group holds them — but `except` (a group index).
   async function credentials(except = null) {
-    const st = await keys.ready();
+    const st = await keys.ready.strict();
     const hex = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
     return (st?.members ?? []).filter(m => m.cred && m.index !== except).map(m => hex(m.cred));
   }
@@ -103,11 +103,11 @@ export async function start(ctx) {
   // counting everywhere, and nothing it holds credentials it again); then out of the group (a new epoch: it reads
   // nothing written after), its current rows adopted into this node's feeds, its removal told.
   async function remove(index, words) {
-    const before = await keys.ready();
+    const before = await keys.ready.strict();
     const node = before?.members.find(m => m.index === index)?.key;
     if (!node) throw new Error("no such node in the account's group");
     if (!words) throw new Error("removing a device needs the account's recovery words");
-    const me = await auth.check();
+    const me = await auth.check.strict();
     await auth.identity.removeDevice(me.didBytes, words, await credentials(index));
     const st = await keys.remove(index);
     await storage.adopt(node).catch(e => ctx.failed("members", e, `adopting ${node.slice(0, 12)}…'s rows: ${e.message}`));
@@ -117,5 +117,5 @@ export async function start(ctx) {
     return st;
   }
 
-  return { nodes, remove, writers, credentials };
+  return { nodes: ctx.total("membership.nodes", () => null, nodes), remove, writers, credentials };
 }

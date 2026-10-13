@@ -95,7 +95,7 @@ export function mount(ctx, el) {
       return e;
     };
     const badge = n => (n ? h("span", { className: "cw-badge", textContent: String(n) }) : null);
-    ctx
+    ctx.optional("header: activity", ctx
       .require("activity")
       .then(async activity => {
         const directory = await ctx.require("directory");
@@ -121,10 +121,9 @@ export function mount(ctx, el) {
         activity.onChange(() => (drawBtn(), out.hidden || drawList()));
         btn.onclick = () => {
           out.hidden = !out.hidden;
-          if (!out.hidden) (drawList(), of === "mentions" && activity.mentionsSeen().catch(ctx.quiet(() => {})));
+          if (!out.hidden) (drawList(), of === "mentions" && ctx.background("header: activity.mentionsSeen", activity.mentionsSeen()));
         };
-      })
-      .catch(() => (box.hidden = true));
+      }), () => box.hidden = true);
     addEventListener("mousedown", e => !out.hidden && !box.contains(e.target) && (out.hidden = true), true);
   }
   // BACKGROUND WORK (⏳, shown only while there is some): this person's uploads not finished and videos with renditions
@@ -144,7 +143,7 @@ export function mount(ctx, el) {
     const read = async () => {
       if (!(await ctx.require("auth")).current()) return (list = []);
       const [files, studio] = await Promise.all([ctx.require("files"), ctx.require("video-studio")]);
-      const [ups, vids] = await Promise.all([files.uploads().catch(() => []), studio.queue().catch(() => [])]);
+      const [ups, vids] = await Promise.all([ctx.optional("header: files.uploads", files.uploads(), () => []), ctx.optional("header: studio.queue", studio.queue(), () => [])]);
       list = [
         ...ups.map(u => ({ what: `Uploading ${u.name}`, where: `${pct(u.done)} stored · ${(u.size / 1e6).toFixed(0)} MB · resumes when the file is picked again` })),
         ...vids.map(v => ({
@@ -164,7 +163,7 @@ export function mount(ctx, el) {
           : [h("p", { className: "none", textContent: "Nothing in the background." })]),
       );
     };
-    const tick = () => read().then(draw, () => {});
+    const tick = () => ctx.background("header: read", read().then(draw));
     setTimeout(tick, 20000);
     setInterval(() => out.hidden && tick(), 30000);
     setInterval(() => !out.hidden && tick(), 3000);
@@ -196,7 +195,7 @@ export function mount(ctx, el) {
       const ref = items.refOf(q);
       if (ref) {
         const page = /#\/\S*\/p\//.test(q) ? q.slice(q.indexOf("#")) : null;
-        groups.push(["Open", [h("button", { type: "button", textContent: "🔗 Open this item", onclick: async () => go(page ?? items.pageOf(ref, (await items.get(ref).catch(ctx.quiet(() => null)))?.kind ?? "post")) })]]);
+        groups.push(["Open", [h("button", { type: "button", textContent: "🔗 Open this item", onclick: async () => go(page ?? items.pageOf(ref, (await items.get(ref))?.kind ?? "post")) })]]);
       } else if (/^did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64}$/.test(q)) {
         // A PERSON's id: their card, and their space.
         const shownAs = (await ctx.require("directory")).nameEl(q);
@@ -204,7 +203,7 @@ export function mount(ctx, el) {
       } else if (/^(space:)?[0-9a-f]{64}$/.test(q)) {
         // A SPACE's id: opened (yours, or a public one).
         const id = q.replace(/^space:/, "");
-        const known = [...(await space.mine().catch(ctx.quiet(() => []))), ...(await items.publicSpaces().catch(ctx.quiet(() => [])))].find(s => s.id === id);
+        const known = [...(await space.mine()), ...(await items.publicSpaces())].find(s => s.id === id);
         groups.push(["Space", [h("a", { href: `#/s/${id}`, textContent: `🏠 ${known?.name ?? "This space"}`, onclick: e => (e.preventDefault(), go(`#/s/${id}`)) })]]);
       } else if (/^#[^\s#]+$/.test(q)) {
         groups.push(["Tag", [h("a", { href: `#/tag/${encodeURIComponent(q.slice(1).toLowerCase())}`, textContent: `# ${q.slice(1).toLowerCase()}`, onclick: e => (e.preventDefault(), go(`#/tag/${encodeURIComponent(q.slice(1).toLowerCase())}`)) })]]);
@@ -212,20 +211,20 @@ export function mount(ctx, el) {
         const t = q.replace(/^@/, "").toLowerCase();
         const apps = ctx.apps.filter(a => (a.views ?? []).includes("personal") && a.name.toLowerCase().includes(t));
         if (apps.length) groups.push(["Apps", apps.slice(0, 5).map(a => h("a", { href: `#${a.route}`, textContent: `${a.icon ?? ""} ${a.name}`, onclick: e => (e.preventDefault(), go(`#${a.route}`)) }))]);
-        const mine = (await space.mine().catch(ctx.quiet(() => []))).filter(s => s.kind === "server" && !s.group);
-        const pub = await items.publicSpaces().catch(ctx.quiet(() => []));
+        const mine = (await space.mine()).filter(s => s.kind === "server" && !s.group);
+        const pub = await items.publicSpaces();
         const seen = new Set();
         const sps = [...mine, ...pub].filter(s => s?.name && s.name.toLowerCase().includes(t) && !seen.has(s.id) && seen.add(s.id)).slice(0, 5);
         if (sps.length) groups.push(["Spaces", sps.map(s => h("a", { href: `#/s/${s.id}`, textContent: `🏠 ${s.name}`, onclick: e => (e.preventDefault(), go(`#/s/${s.id}`)) }))]);
         if (n !== asked) return;
-        const people = (await person.mentionable(t).catch(ctx.quiet(() => []))).slice(0, 5);
+        const people = (await person.mentionable(t)).slice(0, 5);
         if (people.length) groups.push(["People", people.map(p => h("button", { type: "button", textContent: `👤 ${p.shown}`, onclick: e => person.open(e.currentTarget, p.did) }))]);
         out.replaceChildren(...groups.flatMap(([head, rows]) => [h("div", { className: "head", textContent: head }), ...rows]), h("p", { className: "none", textContent: "Looking in items…" }));
         out.hidden = false;
         const shown = kinds.all().filter(k => !["channel", "folder", "delegation"].includes(k));
         itemsHeld ??= Promise.all([
-          items.list({ feed: true }, "new", shown, { window: "all" }).catch(ctx.quiet(() => [])),
-          items.list({ discover: true }, "new", shown, { window: "all" }).catch(ctx.quiet(() => [])),
+          items.list({ feed: true }, "new", shown, { window: "all" }),
+          items.list({ discover: true }, "new", shown, { window: "all" }),
         ]).then(([a, b]) => {
           const seen = new Set();
           return [...a, ...b].filter(it => !seen.has(it.ref) && seen.add(it.ref));
@@ -239,8 +238,8 @@ export function mount(ctx, el) {
       out.hidden = false;
     }
     let timer = null;
-    input.addEventListener("input", () => (clearTimeout(timer), (timer = setTimeout(() => find().catch(ctx.quiet(() => {})), 250))));
-    input.addEventListener("focus", () => ((itemsHeld = null), input.value.trim() && find().catch(ctx.quiet(() => {}))));
+    input.addEventListener("input", () => (clearTimeout(timer), (timer = setTimeout(() => ctx.background("header: find", find()), 250))));
+    input.addEventListener("focus", () => ((itemsHeld = null), input.value.trim() && ctx.background("header: find", find())));
     input.addEventListener("keydown", e => {
       if (e.key === "Escape") return close(), input.blur();
       if (e.key === "Enter") out.querySelector("a, button")?.click();
@@ -351,11 +350,11 @@ export function mount(ctx, el) {
   // answered), never on a clock that lands among them. ACTIVITY (what is new: notified, whichever app is open);
   // UPKEEP (welcomes joined, askers let in); FILE KEYS (every file on the key its access calls for); KEEP (this person's
   // data kept on the network); VIDEO STUDIO (renditions still to make).
-  (async () => {
+  ctx.background("header: async", (async () => {
     const node = await ctx.require("node");
     for (const name of ["activity", "upkeep", "file-keys", "keep", "video-studio"]) {
       await node.idle();
-      await ctx.require(name).catch(() => {});
+      await ctx.background("header: ctx.require", ctx.require(name));
     }
-  })().catch(ctx.quiet(() => {}));
+  })());
 }

@@ -38,7 +38,7 @@ export async function start(ctx) {
   // EDIT one's own in place: its text and its files (kept where it is — its space's, public as it is; or the profile's),
   // saved as a new version (shown "(edited)").
   async function editIn(host, it, done) {
-    const sp = it.board ? await items.boardOf(it.board.id) : null;
+    const sp = it.board ? await items.boardOf.strict(it.board.id) : null;
     const pub = it.board ? !!it.pub : !it.private;
     const pick = attachments.picker({ space: sp, from: { app: items.appOf(it.kind) }, public: () => pub, media: true, publish: true });
     pick.preset(it.files ?? []);
@@ -61,12 +61,12 @@ export async function start(ctx) {
   }
 
   async function show(ref, { outside = null, app = null, back = null, discover = false, item = null, shown = false } = {}) {
-    const it = item ?? (await items.get(ref, { outside }));
+    const it = item ?? (await items.get.strict(ref, { outside }));
     if (!it) return h("p", { className: "none", textContent: "Not found" });
     // ADULT CONTENT (tagged NSFW) for someone who did not choose to see it: said, and shown only on asking.
     if (!shown && items.isNsfw(it) && !(await items.nsfwShown())) {
       const space = await ctx.require("space");
-      if (it.by !== (await space.me())) {
+      if (it.by !== (await space.me.strict())) {
         const gate = h(
           "div",
           { className: "cw-page" },
@@ -81,14 +81,14 @@ export async function start(ctx) {
     const gate = it.meta?.gate;
     if (gate?.space && gate?.ref && (it.meta.level === "pro" || it.meta.level === "vip")) {
       const space = await ctx.require("space");
-      if ((await space.mine()).some(s => s.id === gate.space)) return show(gate.ref, { app, back, discover });
+      if ((await space.mine.strict()).some(s => s.id === gate.space)) return show(gate.ref, { app, back, discover });
       const usage = await ctx.require("usage");
-      const mine = await usage.level().catch(() => ({ id: "free", name: "Free" }));
+      const mine = await ctx.optional("item-page: usage.level", usage.level(), () => ({ id: "free", name: "Free" }));
       const name = it.meta.level === "vip" ? "VIP" : "PRO and VIP";
       const about = h("div", { className: "about" });
       if (usage.reaches(mine.id, it.meta.level)) {
         const conversation = await ctx.require("conversation");
-        const asked = (await conversation.askedCodes().catch(ctx.quiet(() => []))).some(a => a.key === `code:${conversation.levelCode(gate.space)}`);
+        const asked = (await conversation.askedCodes()).some(a => a.key === `code:${conversation.levelCode(gate.space)}`);
         if (!asked) await conversation.joinLevel(gate.space, gate.name ?? null).catch(e => ctx.failed("item", e, `asking into ${gate.space.slice(0, 8)}: ${e.message}`));
         about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name} · asked, waiting` }));
       } else about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name}` }), h("a", { href: "#/wallet/contribute", textContent: "Contribute (Wallet)" }));
@@ -100,7 +100,7 @@ export async function start(ctx) {
     if (lv === "pro" || lv === "vip") {
       const usage = await ctx.require("usage");
       if (!(await usage.mayOpen(lv, it.by))) {
-        const mine = await usage.level().catch(() => ({ name: "Free" }));
+        const mine = await ctx.optional("item-page: usage.level", usage.level(), () => ({ name: "Free" }));
         return h(
           "div",
           { className: "cw-page" },
@@ -115,11 +115,11 @@ export async function start(ctx) {
     const page = h("div", { className: "cw-page" });
     // OPENED: counted in this person's month (`usage`).
     // Its TIME: what played, for a video or an audio (`media-look`); else the time on this page.
-    ctx.require("usage").then(u => {
+    ctx.background("item-page: ctx.require", ctx.require("usage").then(u => {
       const info = { kind: it.kind, title: it.title ?? null };
       u.opened(it.ref ?? ref, info);
       if (kinds.parts(it.kind).look !== "player") u.reading(page, it.ref ?? ref, info);
-    }, () => {});
+    }));
     const redraw = async () => page.replaceWith(await show(ref, { outside, app, back, discover }));
     const removed = () => (location.hash = back ?? items.pageOf(ref, it.kind).replace(/\/(p|w)\/.*$/, ""));
     let host = null; // where its text is, to edit in place
@@ -175,15 +175,15 @@ export async function start(ctx) {
     if (o.outside || o.discover || !page?.classList?.contains("cw-page")) return page;
     try {
       const space = await ctx.require("space");
-      if (!(await space.me())) return page;
-      const it = o.item ?? (await items.get(ref).catch(ctx.quiet(() => null)));
+      if (!(await space.me.strict())) return page;
+      const it = o.item ?? (await items.get(ref));
       if (!it || kinds.isBundle?.(it.kind)) return page;
       const bundles = await ctx.require("bundles");
       const sid = items.spaceIdOf?.(ref);
-      const sp = sid ? await space.find(sid, { wait: 3000 }).catch(ctx.quiet(() => null)) : null;
+      const sp = sid ? await space.find(sid, { wait: 3000 }) : null;
       // (Your own bundles only: only its author changes a bundle.)
-      const meId = await space.me();
-      const all = [...(await bundles.of(null).catch(ctx.quiet(() => []))), ...(sp ? await bundles.of(sp).catch(ctx.quiet(() => [])) : [])].filter(b => b.item?.by === meId);
+      const meId = await space.me.strict();
+      const all = [...(await bundles.of(null)), ...(sp ? await bundles.of(sp) : [])].filter(b => b.item?.by === meId);
       if (!all.length) return page;
       const sel = document.createElement("select");
       sel.ariaLabel = "Add to a bundle";

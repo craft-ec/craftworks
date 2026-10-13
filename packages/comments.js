@@ -56,15 +56,15 @@ export async function start(ctx) {
 
   async function create({ item, outside = null, app = "board" }) {
     const ref = item.ref;
-    const me = await space.me();
+    const me = await space.me.strict();
     // Where it is: its space (from outside: none here), and where its comments' files are kept.
-    const sp = !outside && item.board ? await items.boardOf(item.board.id) : null;
+    const sp = !outside && item.board ? await items.boardOf.strict(item.board.id) : null;
     const pub = sp ? !!item.pub : !item.private;
-    const r = sp ? await roles.of(sp).catch(ctx.quiet(() => null)) : null;
+    const r = sp ? await roles.of(sp) : null;
     // THE ONE CHECK (`roles.mayWrite`, through `items`): the item's own rule, else its space's policy — the same for a
     // personal item (its author's friends or followers, by the credential this person holds).
     // From outside (not in its space): as its public policy says (`items.mayWriteOn`: anyone may, or nobody outside).
-    const [mayComment, mayVote] = await Promise.all(["comment", "vote"].map(a => items.mayWriteOn(item, a, { outside }).catch(ctx.quiet(() => false))));
+    const [mayComment, mayVote] = await Promise.all(["comment", "vote"].map(a => items.mayWriteOn(item, a, { outside })));
     // The rule that closed it, to say (a personal item: its own, else its author's policy for what it is).
     const closedBy = item.meta?.write?.comment ?? (!sp && !outside && !String(ref).startsWith("space:") ? roles.personal(item.by).policyIn((await ctx.require("kinds")).policyDomain(item.kind), "comment") : null);
 
@@ -169,7 +169,7 @@ export async function start(ctx) {
     const counted = [];
     let lastCount = null;
     async function refresh() {
-      const cs = await items.thread(ref, { outside }).catch(ctx.quiet(() => []));
+      const cs = await items.thread(ref, { outside });
       tree.replaceChildren(...(cs.length ? cs.map(commentTree) : [h("p", { className: "none", textContent: "No comments yet." })]));
       lastCount = all_(cs).length;
       counted.forEach(f => f(lastCount));
@@ -181,13 +181,13 @@ export async function start(ctx) {
       mayComment ? replyForm(ref, "Comment") : outside ? h("p", { className: "none", textContent: "Only the space's members comment here." }) : h("p", { className: "none", textContent: ({ friends: `Only ${directory.shown(item.by)}'s friends comment here.`, followers: `Only ${directory.shown(item.by)}'s followers comment here.`, author: "Only its author comments here." })[closedBy] ?? "Comments are closed to you here." }),
       tree,
     );
-    refresh().catch(ctx.quiet(() => {}));
+    ctx.background("comments: refresh", refresh());
     // Read again as what it is read from ARRIVES (each profile's read is bounded: shown within a wait, the rest merged
     // later) — a comment read late shows then. Never under a reply or an edit being written (drawn once it is done).
     let again = null;
     items.onChange(() => {
       if (!el.isConnected || again) return;
-      again = setTimeout(() => ((again = null), tree.querySelector("form") ? null : refresh().catch(ctx.quiet(() => {}))), 300);
+      again = setTimeout(() => ((again = null), tree.querySelector("form") ? null : ctx.background("comments: refresh", refresh())), 300);
     });
     return { el, refresh, onCount: f => (counted.push(f), lastCount !== null && f(lastCount)) };
   }

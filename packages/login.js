@@ -10,13 +10,13 @@ export async function start(ctx) {
   const { glue } = await ctx.require("node");
 
   async function session({ tab = "login" } = {}) {
-    return (await auth.check()) ?? dialog(tab);
+    return (await auth.check.strict()) ?? dialog(tab);
   }
   // A GUEST tried what needs someone logged in (`space.loginNeeded`): the dialog, once at a time; logged in, the page
   // starts again (as at Log out: nothing made for the guest reaches the session).
   let asking = null;
   addEventListener("craftworks:login-needed", () => {
-    asking ??= (async () => (await auth.check()) ?? dialog("login"))().then(s => s && location.reload(), () => {}).finally(() => (asking = null));
+    asking ??= ctx.background("login: async", (async () => (await auth.check.strict()) ?? dialog("login"))().then(s => s && location.reload())).finally(() => (asking = null));
   });
 
   function dialog(tab) {

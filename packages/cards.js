@@ -114,11 +114,11 @@ export async function start(ctx) {
   document.head.append(style);
   // Read LATER (they use cards themselves: `attachments` shows a file as its card): taken as they arrive.
   const later = {};
-  for (const n of ["markdown", "attachments", "space"]) ctx.require(n).then(m => (later[n] = m), () => {});
+  for (const n of ["markdown", "attachments", "space"]) ctx.background("cards: ctx.require", ctx.require(n).then(m => (later[n] = m)));
   const when = (n, f) => {
     if (later[n]) return f(later[n]);
     const ph = document.createElement("span");
-    ctx.require(n).then(m => ph.replaceWith(f(m) ?? ""), () => ph.remove());
+    ctx.optional("cards: ctx.require", ctx.require(n).then(m => ph.replaceWith(f(m) ?? "")), () => ph.remove());
     return ph;
   };
   const h = (tag, props = {}, ...kids) => {
@@ -383,7 +383,7 @@ export async function start(ctx) {
     const none = () => !shown && ph.replaceChildren(h("span", { className: "s", textContent: "(not available to you)" }));
     const draw = () =>
       items
-        .get(ref)
+        .get.strict(ref)
         .then(async it => {
           if (shown) return;
           if (!it) return none();

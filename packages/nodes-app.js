@@ -65,20 +65,20 @@ export async function mount(ctx, el) {
     // claims are accepted yet), naming one node's key.
     const seat = {};
     for (const x of [c, c + 1]) {
-      const v = await tokens.run(() => core.stakers(tokens.code, tokens.beacon, tokens.idlogCode, tokens.lot.bag, tokens.lot.beacon, x)).catch(ctx.quiet(() => []));
+      const v = await ctx.optional("nodes-app: tokens.run", tokens.run(() => core.stakers(tokens.code, tokens.beacon, tokens.idlogCode, tokens.lot.bag, tokens.lot.beacon, x)), () => []);
       const mine = (v ?? []).find(k => k.owner === did);
       if (mine) seat[x] = mine;
     }
     // ACCOUNT: the last two epochs' statement lines.
     const acct = [];
     for (const x of [e - 1, e - 2].filter(y => y >= 0)) {
-      const p = await statement.paid(x, did).catch(ctx.quiet(() => null));
+      const p = await ctx.optional("nodes-app: statement.paid", statement.paid(x, did), () => null);
       acct.push([cell(String(x), "num"), p && p.keeper !== "0" ? cell("✓", "ok") : cell("✗", "no"), cell(p ? craft(p.keeper) : "0", "num"), cell(p ? craft(p.witness) : "0", "num")]);
     }
     const seats = [c, c + 1].map(x => (seat[x] ? `claims epoch ${x}: node ${seat[x].key.slice(0, 8)}… · ${craft(seat[x].amount)} staked` : `claims epoch ${x}: none`)).join(" · ");
     // NODES: each node's standing record (its key names it).
-    const list = (await membership.nodes().catch(ctx.quiet(() => null))) ?? [{ index: 0, key: me.member, me: true }];
-    const limits = await (await ctx.require("keep")).limits(list.map(n => n.key)).catch(() => ({}));
+    const list = (await membership.nodes()) ?? [{ index: 0, key: me.member, me: true }];
+    const limits = await ctx.optional("nodes-app: limits", (await ctx.require("keep")).limits(list.map(n => n.key)), () => ({}));
     const rows = [];
     for (const n of list) {
       const key = n.key.toLowerCase();
@@ -120,7 +120,7 @@ export async function mount(ctx, el) {
       const what = document.createElement("td");
       what.append(f.item ? Object.assign(document.createElement("a"), { href: items.pageOf(f.item, f.kind ?? "video"), textContent: f.title || "an item" }) : `${f.root.slice(0, 8)}…`);
       const who = cell("…", "num");
-      keep.keepers(f.root).then(ds => (who.textContent = String(ds.length)), () => (who.textContent = "—"));
+      ctx.optional("nodes-app: keep.keepers", keep.keepers(f.root).then(ds => (who.textContent = String(ds.length))), () => who.textContent = "—");
       return [what, cell(size(f.size), "num"), cell(ago(f.used)), cell(ago(f.at)), cell(f.error ? f.error : f.gens ? `${f.whole}/${f.gens} whole${f.missing ? `, ${f.missing} unanswered` : ""}` : "—"), who];
     });
     return [row, section("Files this node keeps", "Re-read so the network does not drop them; assigned files join its holdings.", table([["What"], ["Size", "num"], ["Played"], ["Last read"], ["Health"], ["Keepers", "num"]], rows))];

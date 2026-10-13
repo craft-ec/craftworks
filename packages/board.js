@@ -10,7 +10,7 @@
 // role and removal). The space itself (its members, settings, invites) is its Home's.
 export async function mount(ctx, el) {
   // WHERE it is — its spaces — shown as this app chooses (`places`: a subtle group line).
-  ctx.require("places").then(p => p.attach(el, "group"), () => {});
+  ctx.background("board: ctx.require", ctx.require("places").then(p => p.attach(el, "group")));
   const [posts, directory, person, theme, space, roles, cards] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "cards"].map(n => ctx.require(n)));
   const me = await space.me();
   // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.
@@ -146,7 +146,7 @@ export async function mount(ctx, el) {
     if (discovering()) {
       // Public boards only (a space may be listed for joining, its board still its members').
       const listed = await posts.publicSpaces();
-      const spaces = (await Promise.all(listed.map(async x => ((await roles.ofPublic(x).catch(ctx.quiet(() => null)))?.policyIn("text", "read") === "anyone" ? x : null)))).filter(Boolean);
+      const spaces = (await Promise.all(listed.map(async x => ((await roles.ofPublic(x))?.policyIn("text", "read") === "anyone" ? x : null)))).filter(Boolean);
       const d = w.pub ? spaces.find(x => x.id === w.pub) : null;
       return [
         d ? await publicPanel(d) : null,
@@ -241,7 +241,7 @@ export async function mount(ctx, el) {
     const w = route();
     // On screen: this space's board (both tables) is read as it arrives (`activity`).
     const onBoard = w.board ? await posts.boardOf(w.board) : null;
-    ctx.require("activity").then(a => a.showing(onBoard ? [space.board(onBoard), space.board(onBoard, { pub: true })] : null), () => {});
+    ctx.background("board: ctx.require", ctx.require("activity").then(a => a.showing(onBoard ? [space.board(onBoard), space.board(onBoard, { pub: true })] : null)));
     await setActions(w);
     here = discovering() ? null : w.board ? await posts.boardOf(w.board) : w.post?.startsWith("space:") ? await posts.boardOf(w.post) : null;
     const parts = await (w.post ? postPage(w.post) : w.submit ? submitPage(w.board) : listPage(w));

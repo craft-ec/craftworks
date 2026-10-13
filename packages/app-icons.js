@@ -57,7 +57,7 @@ export async function start(ctx) {
   // THE DRAWER: by name (the loader's order), or grouped by category — categories by name, "Other" last.
   const GROUPED = "apps-grouped";
   async function drawer(host, items, { empty = null } = {}) {
-    const prefs = await (await ctx.require("edge")).prefs().catch(() => null);
+    const prefs = await ctx.optional("app-icons: prefs", (await ctx.require("edge")).prefs(), () => null);
     const grouped = () => !!prefs?.get(GROUPED);
     const toggle = el("input", { type: "checkbox", checked: grouped() });
     const draw = () => {

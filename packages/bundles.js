@@ -13,13 +13,13 @@ export async function start(ctx) {
   const MAX = 500;
   const shape = b => ({ ref: b.ref, title: b.title || "untitled", members: Array.isArray(b.meta?.members) ? b.meta.members.filter(m => typeof m === "string") : [], item: b });
   async function of(sp = null) {
-    const where = sp ? { board: sp.id } : { by: await space.me() };
-    return (await items.list(where, "new", [KIND], { window: "all" })).map(shape);
+    const where = sp ? { board: sp.id } : { by: await space.me.strict() };
+    return (await items.list.strict(where, "new", [KIND], { window: "all" })).map(shape);
   }
   const make = (title, sp = null, { audience = sp ? "members" : "private" } = {}) =>
     items.submit({ kind: KIND, title: String(title ?? "").trim(), body: "", meta: { members: [] }, board: sp?.id ?? null, audience });
   async function members(bref, change) {
-    const b = await items.get(bref);
+    const b = await items.get.strict(bref);
     if (!b || b.kind !== KIND) throw new Error("not a bundle");
     const now = shape(b).members;
     const next = change(now);
@@ -41,5 +41,5 @@ export async function start(ctx) {
       out.splice(j, 0, out.splice(i, 1)[0]);
       return out;
     });
-  return { KIND, of, make, add, drop, move };
+  return { KIND, of: ctx.total("bundles.of", () => [], of), make, add, drop, move };
 }

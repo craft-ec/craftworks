@@ -113,7 +113,7 @@ export async function start(ctx) {
 
   // THE SECTION on an item's page.
   async function section(it, { changed } = {}) {
-    const me = await auth.check().catch(ctx.quiet(() => null));
+    const me = await auth.check();
     const author = me && me.did === it.by;
     const ids = Array.isArray(it.meta?.editions) ? it.meta.editions : [];
     if (!ids.length && !author) return null;

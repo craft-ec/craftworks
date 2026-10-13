@@ -42,7 +42,7 @@ export async function start(ctx) {
   // ITS USE counted and its file KEPT for others (`usage.track` with the file's REF: data counted for the item, and
   // `keep.watched` once it brings bytes here) — a picture's and a book's, as a video's in `begin` (owner 10-07: a book
   // opened did not show in Kept for others).
-  const trackFile = (v, f) => f && ctx.require("usage").then(u => u.trackItem(v.ref, [f], { kind: v.kind, title: v.title ?? f.name ?? null, by: v.by }), () => {});
+  const trackFile = (v, f) => f && ctx.background("media-look: ctx.require", ctx.require("usage").then(u => u.trackItem(v.ref, [f], { kind: v.kind, title: v.title ?? f.name ?? null, by: v.by })));
 
   // AN IMAGE whole: its preview at once, the picture itself when read; a click shows it at its own size.
   function picture(v, { outside = null } = {}) {
@@ -113,7 +113,7 @@ export async function start(ctx) {
     const el = h("div", { className: "cw-media" }, audio ? view.el : stage, h("div", {}, making, kept), view.note, speed, view.line, view.timed);
     let quiet = 0; // checks in a row with nothing being made (the work may not have started yet)
     const showMaking = async () => {
-      if (!el.isConnected || v.by !== (await space.me())) return;
+      if (!el.isConnected || v.by !== (await space.me.strict())) return;
       const pr = await studio.progress(v.ref);
       making.textContent = pr ? ` · processing ${pr.done} of ${pr.of}: ${pr.stage}${pr.p ? ` ${Math.round(pr.p * 100)}%` : ""}` : "";
       quiet = pr ? 0 : quiet + 1;
@@ -123,24 +123,24 @@ export async function start(ctx) {
       setTimeout(showMaking, 500);
       // ITS USE counted (`usage`): the time it plays, and the data its files bring — the manifest's, the frames', every
       // rendition's (whichever plays).
-      ctx.require("usage").then(async u => {
+      ctx.background("media-look: ctx.require", ctx.require("usage").then(async u => {
         const info = { kind: v.kind, title: v.title ?? f?.name ?? null };
         u.watch(video, v.ref, info);
         if (!f) return;
         // File REFS (not only roots): what brings bytes here is also kept for others (`keep.watched`) — not one's own.
-        const mine = v.by === await space.me();
+        const mine = v.by === await space.me.strict();
         u.track(v.ref, { ...info, mine }, [f]);
         let roots = [f.root];
         if (f.type === studio.MANIFEST) {
-          const m = await player.manifest(f).catch(ctx.quiet(() => null));
+          const m = await ctx.optional("media-look: player.manifest", player.manifest(f), () => null);
           if (m) u.track(v.ref, { ...info, mine }, [m.strip?.ref, ...m.renditions.map(r => r.ref)]);
           if (m) roots = m.renditions.map(r => r.ref?.root).filter(Boolean);
         }
         // WHO KEEPS IT (the keepers bag, `keep.keepers`): the people keeping any of its files this month or last.
         const keep = await ctx.require("keep");
-        const ds = new Set((await Promise.all(roots.map(r => keep.keepers(r).catch(ctx.quiet(() => []))))).flat());
+        const ds = new Set((await Promise.all(roots.map(r => keep.keepers(r)))).flat());
         if (ds.size && el.isConnected) kept.textContent = ` · kept by ${ds.size} ${ds.size === 1 ? "person" : "people"}`;
-      }, () => {});
+      }));
       if (f && audio) view.prepare().catch(e => (view.note.textContent = ctx.say(e)));
       else if (f)
         start.onclick = () => {
@@ -151,7 +151,7 @@ export async function start(ctx) {
           if (label) c.level(label);
           view.play({ autoplay: true }).catch(e => (view.note.textContent = ctx.say(e)));
         };
-      scrubStrip().catch(ctx.quiet(() => {}));
+      ctx.background("media-look: scrubStrip", scrubStrip());
     };
     return { el, start: begin, media: video };
   }

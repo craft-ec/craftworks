@@ -74,7 +74,7 @@ export async function mount(ctx, el) {
     // ARRIVING: payments found and not yet taken — a payment to you, or a send's rest moving to a fresh address of
     // yours — counted in the total (shown as arriving), not lost from it while their witnesses sign.
     const waiting = mine.filter(f => !f.done && !f.edition);
-    const amounts = await Promise.all(waiting.map(f => purse.status(f.a).then(s => BigInt(s?.amount ?? 0), () => 0n)));
+    const amounts = await Promise.all(waiting.map(f => ctx.optional("wallet-app: purse.status", purse.status(f.a).then(s => BigInt(s?.amount ?? 0)), () => 0n)));
     const arriving = amounts.reduce((a, b) => a + b, 0n);
     // STAKED: locked on the DID chain (a keeper's $CRAFT: what weighs its witness lot), counted in the total, never sent.
     return { ...v, onId: onId.toString(), private: p.balance, arriving: arriving.toString(), chains: p.chains.filter(c => c.balance !== "0").length, total: (onId + BigInt(p.balance) + arriving + BigInt(v.staked ?? 0)).toString() };
@@ -228,7 +228,7 @@ export async function mount(ctx, el) {
     // once anyone has minted it.
     const craft = node.glue.CraftworksCore.craft_id(code, beacon, idlogCode);
     const craftCard = h("div");
-    viewOf(craft, me).then(() => craftCard.replaceWith(card(craft, me)), () => craftCard.replaceWith(h("p", { className: "note", textContent: "$CRAFT: nothing minted on this network yet — keeping earns it." })));
+    ctx.optional("wallet-app: viewOf", viewOf(craft, me).then(() => craftCard.replaceWith(card(craft, me))), () => craftCard.replaceWith(h("p", { className: "note", textContent: "$CRAFT: nothing minted on this network yet — keeping earns it." })));
     const others = rows.filter(r => r.key !== craft);
     out.append(craftCard, ...(others.length ? others.map(r => card(r.key, me)) : [h("p", { className: "note", textContent: "No other tokens yet: be sent one, or add one by its id." })]), addForm, said);
     return out;
@@ -258,7 +258,7 @@ export async function mount(ctx, el) {
       give.disabled = false;
       draw();
     };
-    const [cs, lv, plan, st] = await Promise.all([usage.contributions().catch(ctx.quiet(() => [])), usage.level().catch(ctx.quiet(() => null)), usage.levelPlan().catch(ctx.quiet(() => [])), usage.statement(month()).catch(ctx.quiet(() => null))]);
+    const [cs, lv, plan, st] = await Promise.all([usage.contributions(), ctx.optional("wallet-app: usage.level", usage.level(), () => null), usage.levelPlan(), ctx.optional("wallet-app: usage.statement", usage.statement(month()), () => null)]);
     const directory = await ctx.require("directory");
     const split = st?.amount
       ? grid(["To", "For", "Tokens"], [

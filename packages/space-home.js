@@ -8,7 +8,7 @@ export async function mount(ctx, el) {
   );
   // What is new in each app (Chat's unread in this space): its pill, kept current.
   let activity = null;
-  ctx.require("activity").then(a => ((activity = a), a.onChange(() => el.isConnected && ctx.route === "/space" && draw())), () => {});
+  ctx.background("space-home: ctx.require", ctx.require("activity").then(a => ((activity = a), a.onChange(() => el.isConnected && ctx.route === "/space" && draw()))));
   const me = await space.me();
   el.innerHTML = `
     <style>@layer apps {
@@ -81,7 +81,7 @@ export async function mount(ctx, el) {
   const sp0 = ctx.space && (await space.mine()).find(s => s.id === ctx.space);
   if (sp0) (await roles.of(sp0)).onChange(() => el.isConnected && ctx.route === "/space" && ctx.space === sp0.id && draw());
   // Welcomes and askers are `upkeep`'s (every page, every 30 s): asked once now.
-  ctx.require("upkeep").then(u => u.tick(), () => {});
+  ctx.background("space-home: ctx.require", ctx.require("upkeep").then(u => u.tick()));
   // Drawn again only for another space (the route event right after mounting names this one).
   let drawnFor = ctx.space;
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/space" && ctx.space !== drawnFor && ((drawnFor = ctx.space), draw()));

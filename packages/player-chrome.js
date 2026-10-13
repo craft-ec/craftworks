@@ -8,7 +8,7 @@
 //   c.strip({ url, w, h, n, cols, every })     // the frames sprite, once read
 //   c.levels(labels, pick)                     // the renditions (`video-player`'s onLevels); pick(i | null)
 //   c.level(label)                             // the one playing (`video-player`'s onLevel)
-export async function start() {
+export async function start(ctx) {
   const style = document.createElement("style");
   style.textContent = `@layer components {
 
@@ -169,13 +169,13 @@ export async function start() {
     video.addEventListener("play", wake);
     video.addEventListener("pause", () => (clearTimeout(idle), stage.classList.remove("idle")));
 
-    const toggle = () => (video.paused ? video.play().catch(() => {}) : video.pause());
+    const toggle = () => (video.paused ? ctx.background("player-chrome: play", video.play()) : video.pause());
     play.onclick = toggle;
     // A tap on the picture: when the controls are hidden it only shows them (a phone's first tap); else play/pause.
     video.addEventListener("click", () => (stage.classList.contains("idle") ? wake() : toggle()));
     mute.onclick = () => (video.muted = !video.muted);
     vol.oninput = () => ((video.volume = Number(vol.value)), (video.muted = video.volume === 0));
-    full.onclick = () => (document.fullscreenElement ? document.exitFullscreen() : stage.requestFullscreen?.())?.catch?.(() => {});
+    full.onclick = () => ctx.background("player-chrome: fullscreen", document.fullscreenElement ? document.exitFullscreen() : stage.requestFullscreen?.());
     stage.tabIndex = 0;
     stage.addEventListener("keydown", e => {
       if (e.target.closest?.("select, input")) return;

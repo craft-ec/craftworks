@@ -17,14 +17,14 @@ export async function start(ctx) {
   const [space, files, roles, kinds, items] = await Promise.all(["space", "files", "roles", "kinds", "items"].map(n => ctx.require(n)));
   const shared = sp => sp && sp.kind !== "account";
   // A space HAS a Drive only when it uses the Drive app (an `app` act); yours always.
-  const usesDrive = async sp => !shared(sp) || (await roles.of(sp).then(r => r.apps().includes("drive"), () => false));
+  const usesDrive = async sp => !shared(sp) || (await ctx.optional("drive-store: roles.of", roles.of(sp).then(r => r.apps().includes("drive")), () => false));
   // THE DRIVES this person can pick from: theirs, and every space they are in that uses Drive.
   async function drives() {
-    const all = (await space.mine().catch(ctx.quiet(() => []))).filter(s => s.kind === "server" && !space.isGroup(s));
+    const all = (await space.mine()).filter(s => s.kind === "server" && !space.isGroup(s));
     const on = await Promise.all(all.map(usesDrive));
     return all.filter((_, i) => on[i]);
   }
-  const me = async () => space.me();
+  const me = async () => space.me.strict();
   const place = async sp => (shared(sp) ? { spaces: [sp] } : { people: [await me()] });
   const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
   // A FILE's id: its own (its first index root; an inline file's own hash) — the same file listed twice is one entry.
@@ -39,14 +39,14 @@ export async function start(ctx) {
   const audienceOf = (sp, pub) => (pub ? "public" : shared(sp) ? "members" : "private");
 
   // THE ENTRIES of a Drive (items of kind `file`; `folder`: an empty folder).
-  const entries = async (sp, kind = "file") => items.inPlaces(await place(sp), kind, { withVotes: false });
+  const entries = async (sp, kind = "file") => items.inPlaces.strict(await place(sp), kind, { withVotes: false });
   // THE LIST: Drive's own entries (uploaded or saved in Drive: moved, removed, seen as set here) — and, READ-ONLY, the
   // files of the items made in other apps (a video, a track, an image in a post), each in the folder of what its item
   // is (/Videos, /Audio, /Images), else of what the file is: a VIEW, never a second entry. Who sees one, its edits and
   // its removal are its item's, in its app (`page`: its item's page — `items.pageOf`).
   const MEDIA = new Set(kinds.media().map(m => m.domain));
   const viewed = async sp =>
-    (await items.inPlaces(await place(sp), [...kinds.all()].filter(k => !["note", "file", "folder"].includes(k)), { withVotes: false }).catch(ctx.quiet(() => []))).flatMap(it =>
+    (await items.inPlaces(await place(sp), [...kinds.all()].filter(k => !["note", "file", "folder"].includes(k)), { withVotes: false })).flatMap(it =>
       (it.files ?? []).map((ref, i) => ({
         id: `${it.ref}#${i}`,
         ref,
@@ -62,7 +62,7 @@ export async function start(ctx) {
     // SOMEONE ELSE's files — a person's (their space: what you may read) or DISCOVER's (anyone's public ones): read
     // only, by the same reads as every app's (`items`); Discover's in one folder (each person's folders are theirs).
     if (discover || person) {
-      const its = discover ? await items.list({ discover: true }, "new", "file") : await items.inPlaces({ people: [person] }, "file", { withVotes: false });
+      const its = discover ? await items.list.strict({ discover: true }, "new", "file") : await items.inPlaces.strict({ people: [person] }, "file", { withVotes: false });
       return its.filter(it => it.files?.[0]).map(it => ({ id: it.ref, ref: it.files[0], at: it.at, folder: discover ? "/" : clean(it.meta?.folder), by: it.by, readOnly: true, others: true }));
     }
     const own = (await entries(sp))
@@ -123,5 +123,5 @@ export async function start(ctx) {
   const remove = async (sp, id) => items.remove(id);
   const onChange = async (sp, f) => items.onChange(f);
 
-  return { upload, add, list, folders, mkdir, move, remove, onChange, drives, usesDrive };
+  return { upload, add, list: ctx.total("drive-store.list", () => [], list), folders, mkdir, move, remove, onChange, drives, usesDrive };
 }

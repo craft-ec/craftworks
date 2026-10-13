@@ -83,11 +83,11 @@ export async function start(ctx) {
     async function tracks() {
       const ts = item ? await subs.tracksFor(item, cover ? file : undefined, { outside }) : [];
       for (const [i, t] of ts.entries()) {
-        const text = await subs.text(t).catch(ctx.quiet(() => null));
+        const text = await ctx.optional("media-view: subs.text", subs.text(t), () => null);
         if (text) media.append(h("track", { kind: "subtitles", label: t.label || t.lang || NAME, srclang: t.lang || "und", default: i === 0 && kind === "video", src: URL.createObjectURL(new Blob([text], { type: "text/vtt" })) }));
       }
       // An audio with no track: the lyrics its tags carried.
-      if (!ts.length && kind === "audio") for (const t of await subs.forFile(file).catch(ctx.quiet(() => []))) media.append(h("track", { kind: "subtitles", label: t.label, srclang: "und", src: URL.createObjectURL(new Blob([t.text], { type: "text/vtt" })) }));
+      if (!ts.length && kind === "audio") for (const t of await ctx.optional("media-view: subs.forFile", subs.forFile(file), () => [])) media.append(h("track", { kind: "subtitles", label: t.label, srclang: "und", src: URL.createObjectURL(new Blob([t.text], { type: "text/vtt" })) }));
       const href = subsHref();
       line.replaceChildren(
         `💬 ${NAME}: ${ts.length ? ts.map(t => `${t.label || t.lang}${t.lang ? ` (${t.lang})` : ""}`).join(", ") : "none yet"}`,

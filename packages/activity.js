@@ -43,7 +43,7 @@ export async function start(ctx) {
     const w = watched.get(id);
     if (!w?.room || !reads) return;
     const last = Math.max(0, ...w.room.list().map(m => m.at));
-    if (last > readAt(id)) await reads.put(id, JSON.stringify({ at: last })).catch(ctx.quiet(() => {}));
+    if (last > readAt(id)) await ctx.background("activity: reads.put", reads.put(id, JSON.stringify({ at: last })));
   }
   const visible = () => document.visibilityState === "visible";
 
@@ -75,7 +75,7 @@ export async function start(ctx) {
         w.seen.add(m.id);
         if (m.by === me.id || m.kind === "system" || m.at < since) continue;
         if (onScreen.has(container.id) && visible()) markRead(container.id);
-        else if (m.at > readAt(container.id)) notify(w, m).catch(ctx.quiet(() => {}));
+        else if (m.at > readAt(container.id)) ctx.background("activity: notify", notify(w, m));
       }
       fire();
     });
@@ -88,29 +88,29 @@ export async function start(ctx) {
   // space holds the next one's count only, never the page).
   async function scan() {
     const node = await ctx.require("node");
-    readTold().catch(ctx.quiet(() => {}));
+    ctx.background("activity: readTold", readTold());
     // The space open first (moved to another: it goes to the front of the next pass).
-    const all = await space.mine().catch(ctx.quiet(() => []));
+    const all = await space.mine();
     for (const sp of [...all.filter(s => s.id === ctx.space), ...all.filter(s => s.id !== ctx.space)]) {
       await node.idle();
-      await scanOne(sp).catch(ctx.quiet(() => {}));
+      await ctx.background("activity: scanOne", scanOne(sp));
     }
   }
   async function scanOne(sp) {
-    if (sp.kind === "direct" || sp.kind === "group") watch(sp, "chat", { route: `#/chat/${sp.id}` }).catch(ctx.quiet(() => {}));
+    if (sp.kind === "direct" || sp.kind === "group") ctx.background("activity: watch", watch(sp, "chat", { route: `#/chat/${sp.id}` }));
     else if (sp.kind === "server") {
       // Its BOARD (both tables), when it uses Board.
-      const r = await roles.of(sp).catch(ctx.quiet(() => null));
+      const r = await roles.of(sp);
       if (r?.apps().includes("board")) {
         const extra = { serverId: sp.id, serverName: space.shown(sp), route: `#/s/${sp.id}/board` };
-        watch(space.board(sp), "board", extra).catch(ctx.quiet(() => {}));
-        watch(space.board(sp, { pub: true }), "board", extra).catch(ctx.quiet(() => {}));
+        ctx.background("activity: watch", watch(space.board(sp), "board", extra));
+        ctx.background("activity: watch", watch(space.board(sp, { pub: true }), "board", extra));
       }
-      const chs = await conversation.channels(sp).catch(ctx.quiet(() => null));
+      const chs = await ctx.optional("activity: conversation.channels", conversation.channels(sp), () => null);
       if (!chs) return;
       const add = () =>
         chs.list().forEach(c =>
-          watch(c, "chat", { serverId: sp.id, serverName: sp.name, route: `#/s/${sp.id}/chat/${c.id.split("/").pop()}` }).catch(ctx.quiet(() => {})),
+          ctx.background("activity: watch", watch(c, "chat", { serverId: sp.id, serverName: sp.name, route: `#/s/${sp.id}/chat/${c.id.split("/").pop()}` })),
         );
       if (!chs.watched) {
         chs.watched = true;
@@ -122,7 +122,7 @@ export async function start(ctx) {
 
   // Started once someone is logged in (and again for whoever logs in next).
   async function begin() {
-    me = await space.account();
+    me = await space.account.strict();
     watched.clear();
     if (!me) return fire();
     reads = await storage.table("reads");
@@ -132,7 +132,7 @@ export async function start(ctx) {
     await scan();
   }
   begin().catch(e => ctx.log("activity", { what: e?.message ?? String(e) }));
-  addEventListener("craftworks:auth", () => begin().catch(ctx.quiet(() => {})));
+  addEventListener("craftworks:auth", () => ctx.background("activity: begin", begin()));
   // Unread scanned every minute while someone is logged in (a JOB: paused for a guest).
   (await ctx.require("lifecycle")).job("activity", { every: 60000, delay: 60000, needs: () => !!me || "nobody is logged in", run: () => scan() });
   // A notification clicked: its conversation or channel.
@@ -186,7 +186,7 @@ export async function start(ctx) {
           text: t.text,
           open: async () => {
             const items = await ctx.require("items");
-            location.hash = items.pageOf(t.ref, t.itemKind ?? (await items.get(t.ref).catch(ctx.quiet(() => null)))?.kind ?? "post");
+            location.hash = items.pageOf(t.ref, t.itemKind ?? (await items.get(t.ref))?.kind ?? "post");
           },
         });
     return out.sort((a, b) => b.at - a.at);
@@ -198,13 +198,13 @@ export async function start(ctx) {
   const checked = new Map(); // `${ref}|${from}|${at}` → the mention as checked, or null
   async function readTold() {
     const [index, items] = await Promise.all([ctx.require("index"), ctx.require("items")]);
-    const got = (await index.inbox().catch(ctx.quiet(() => []))).filter(x => x?.kind === "mention" && typeof x.ref === "string" && typeof x.from === "string" && x.from !== me?.id && Number(x.at));
+    const got = (await index.inbox()).filter(x => x?.kind === "mention" && typeof x.ref === "string" && typeof x.from === "string" && x.from !== me?.id && Number(x.at));
     let changedHere = false;
     for (const x of got) {
       const k = `${x.ref}|${x.from}|${x.at}`;
       if (checked.has(k)) continue;
-      const it = await items.get(x.ref).catch(ctx.quiet(() => null));
-      const thread = it ? await items.thread(x.ref).catch(ctx.quiet(() => [])) : [];
+      const it = await items.get(x.ref);
+      const thread = it ? await items.thread(x.ref) : [];
       const flat = cs => (cs ?? []).flatMap(c => [c, ...flat(c.replies)]);
       const where = [it, ...flat(thread)].filter(Boolean).find(y => y.by === x.from && mentionOf(y.body));
       checked.set(k, where ? { ref: x.ref, itemKind: it.kind, from: x.from, at: where.at ?? x.at, text: where.title || where.body } : null);
@@ -227,7 +227,7 @@ export async function start(ctx) {
     mentionsNew: () => mentions().filter(x => x.at > readAt(MENTIONS)).length,
     mentionsSeen: async () => {
       const last = Math.max(0, ...mentions().map(x => x.at));
-      if (reads && last > readAt(MENTIONS)) await reads.put(MENTIONS, JSON.stringify({ at: last })).catch(ctx.quiet(() => {}));
+      if (reads && last > readAt(MENTIONS)) await ctx.background("activity: reads.put", reads.put(MENTIONS, JSON.stringify({ at: last })));
       fire();
     },
     unread,

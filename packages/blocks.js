@@ -42,8 +42,7 @@ export async function start(ctx) {
     if (!inflight.has(b)) {
       const [, frames] = core.frames_get(bytes(b));
       sends.set(b, (sends.get(b) ?? 0) + 1);
-      const p = slot(() => ask(frames, x => x.block === b || (x.kind === "get-failed" && x.id === b), what, WAIT.ask))
-        .catch(() => ({ kind: "get-failed", id: b, waited: true }))
+      const p = ctx.optional("blocks: slot", slot(() => ask(frames, x => x.block === b || (x.kind === "get-failed" && x.id === b), what, WAIT.ask)), () => ({ kind: "get-failed", id: b, waited: true }))
         .then(a => (a.kind === "get-failed" && !a.waited && absent.set(b, Date.now()), a))
         .finally(() => inflight.delete(b));
       inflight.set(b, { p, what, at: performance.now() });
@@ -88,7 +87,7 @@ export async function start(ctx) {
       repaired = true;
       try {
         const p = core.tail_keep_put(bytes(tail), b);
-        if (p) put([p], `repairing ${what}`).then(() => ctx.log("block repaired", { what: `${what}: block ${b.slice(0, 12)}… was not there; rebuilt from its group and put back` }), () => {});
+        if (p) ctx.background("blocks: put", put([p], `repairing ${what}`).then(() => ctx.log("block repaired", { what: `${what}: block ${b.slice(0, 12)}… was not there; rebuilt from its group and put back` })));
       } catch {}
     };
     return new Promise((resolve, reject) => {
@@ -178,7 +177,7 @@ export async function start(ctx) {
   // found (false). The state is not kept: a probe only counts.
   async function probe(c, what) {
     const [, frames] = core.frames_get(bytes(c));
-    const a = await slot(() => ask(frames, x => (x.kind === "got" && x.id === c) || x.block === c || (x.kind === "get-failed" && x.id === c), what, WAIT.ask)).catch(() => ({ kind: "get-failed" }));
+    const a = await ctx.optional("blocks: slot", slot(() => ask(frames, x => (x.kind === "got" && x.id === c) || x.block === c || (x.kind === "get-failed" && x.id === c), what, WAIT.ask)), () => ({ kind: "get-failed" }));
     core.take_got(c);
     return a.kind !== "get-failed";
   }

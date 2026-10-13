@@ -42,7 +42,7 @@ export async function start(ctx) {
 
   // This account's own inbox, made (empty) — before anyone is told where it is.
   async function makeInbox() {
-    const sp = await space.account();
+    const sp = await space.account.strict();
     await drop(Core.inbox_address(sp.idBytes), new Uint8Array(0), "making the inbox");
   }
 
@@ -97,21 +97,21 @@ export async function start(ctx) {
     const id = Core.bag_id(bagCode, address);
     const full = (async () => {
       const [, frames] = follow ? core.frames_follow(bytes(id)) : core.frames_get(bytes(id));
-      const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, what, WAIT.answer).catch(() => ({ kind: "silent" }));
+      const said = await ctx.optional("index: ask", ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, what, WAIT.answer), () => ({ kind: "silent" }));
       if (said.kind === "got") return held(address, id);
-      if (said.kind === "get-failed" && !madeBags.has(id)) madeBags.add(id), drop(address, new Uint8Array(0), `making ${what}`).catch(() => madeBags.delete(id));
+      if (said.kind === "get-failed" && !madeBags.has(id)) madeBags.add(id), ctx.optional("index: drop", drop(address, new Uint8Array(0), `making ${what}`), () => madeBags.delete(id));
       if (said.kind === "silent" && strict) throw new Error(`no answer: ${what}`);
       return [];
     })();
     if (!show) return full;
     const early = await Promise.race([full.then(x => ({ x })), new Promise(r => setTimeout(r, WAIT.hint, null))]);
     if (early) return early.x;
-    full.then(x => x.length && changed.forEach(f => f()), () => {});
+    ctx.background("index: full.then", full.then(x => x.length && changed.forEach(f => f())));
     return held(address, id);
   }
 
   async function inbox({ show = false } = {}) {
-    const sp = await space.account();
+    const sp = await space.account.strict();
     const payloads = await read(Core.inbox_address(sp.idBytes), "the inbox", { show });
     if (!payloads.length) return [];
     const r = await auth.identity.inboxOpen(payloads);
@@ -160,7 +160,7 @@ export async function start(ctx) {
     const key = (await ctx.require("blocks")).address(Core.bag_id(bagCode, address));
     if (!watchers.has(key)) watchers.set(key, []);
     watchers.get(key).push(fn);
-    await read(address, `the bag of ${ref}`, { follow: true }).catch(ctx.quiet(() => {}));
+    await ctx.background("index: read", read(address, `the bag of ${ref}`, { follow: true }));
   }
 
   // A SPACE's SEALED bag (`name`): at an address the space's id gives, each item sealed with the space's newest EPOCH
@@ -199,7 +199,7 @@ export async function start(ctx) {
       if (p.length < 17) continue;
       raw += 1;
       const epoch = new DataView(p.buffer, p.byteOffset).getUint32(0);
-      if (!keys.has(epoch)) keys.set(epoch, epoch === OPEN ? await openKey(sp) : await access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes }).then(k => (k.key ? aes(k.key) : null), () => null));
+      if (!keys.has(epoch)) keys.set(epoch, epoch === OPEN ? await openKey(sp) : await ctx.optional("index: access.keyAt", access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes }).then(k => (k.key ? aes(k.key) : null)), () => null));
       const key = await keys.get(epoch);
       if (!key) {
         unread.set(epoch, (unread.get(epoch) ?? 0) + 1);
@@ -253,11 +253,10 @@ export async function start(ctx) {
   const healthRef = (day, k) => (k ? `health ${day} #${k}` : `health ${day}`);
   let supportKey;
   const support = () =>
-    (supportKey ??= ctx
+    (supportKey ??= ctx.optional("index: support-config", ctx
       .require("support-config")
       .then(b => JSON.parse(dec.decode(b)).support)
-      .then(h => (/^[0-9a-f]{64}$/.test(h ?? "") ? bytes(h) : null))
-      .catch(ctx.quiet(() => null)));
+      .then(h => (/^[0-9a-f]{64}$/.test(h ?? "") ? bytes(h) : null)), () => null));
   // Once a kind per space (per member it is about) per hour from a page.
   const reported = new Map();
   async function health(item) {
@@ -268,7 +267,7 @@ export async function start(ctx) {
     const v = String(ctx.siteV ?? ctx.shaOf?.("conversation") ?? "").slice(0, 12); // the site's manifest hash
     // WHO reported (the account's id, its first 8 hex: reports from one account told apart, and its other reports
     // read together) — never more of it.
-    const r = String((await space.account().catch(ctx.quiet(() => null)))?.id ?? "").replace(/^did:craftec:/, "").slice(0, 8) || null;
+    const r = String((await space.account())?.id ?? "").replace(/^did:craftec:/, "").slice(0, 8) || null;
     const to = await support();
     if (!to) {
       ctx.log("health", { what: `${item.k}: not reported (this page has no support key: support-config)` });
@@ -314,5 +313,5 @@ export async function start(ctx) {
     return out;
   }
   const bag = { add: (address, payload, what = "adding to a bag") => drop(address, payload, what), read: (address, what = "reading a bag", opts = {}) => read(address, what, opts), chained, chain };
-  return { bag, onChange: f => changed.push(f), send, inbox, sendTo, inboxWith, makeInbox, request, requests, openRequests, openPointers, point, pointers, watch, listSpace, spaces, health, spacePoint, spacePointers, discoverPoint, discoverPointers, monthOf, monthsSince, OPEN };
+  return { bag, onChange: f => changed.push(f), send, inbox: ctx.total("index.inbox", () => [], inbox), sendTo, inboxWith, makeInbox, request, requests: ctx.total("index.requests", () => [], requests), openRequests, openPointers, point, pointers: ctx.total("index.pointers", () => [], pointers), watch, listSpace, spaces: ctx.total("index.spaces", () => [], spaces), health, spacePoint, spacePointers: ctx.total("index.spacePointers", () => [], spacePointers), discoverPoint, discoverPointers: ctx.total("index.discoverPointers", () => [], discoverPointers), monthOf, monthsSince, OPEN };
 }

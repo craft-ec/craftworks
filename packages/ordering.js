@@ -66,7 +66,7 @@ export async function start(ctx) {
             throw e;
           }
           // Written; the network read again — a writer racing for the same position shows now: the lowest entry is it.
-          await t.reread?.().catch(ctx.quiet(() => {}));
+          await ctx.background("ordering: t.reread", t.reread?.());
           return at(n) === entry ? { ok: true } : { ok: false, taken: true };
         },
         onAppend: f => t.onChange(f),

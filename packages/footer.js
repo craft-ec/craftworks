@@ -98,7 +98,7 @@ function mountDock(ctx, el) {
     addEventListener("hashchange", close);
     v.onclick = e => (e.target === v || e.target.closest("a")) && close();
     const openList = [...open.entries()].reverse().map(([route, o]) => [appOf(route), o]).filter(([a]) => a);
-    const all = installed ? await installed.list().catch(ctx.quiet(() => ctx.apps ?? [])) : (ctx.apps ?? []);
+    const all = installed ? await ctx.optional("footer: installed.list", installed.list(), () => ctx.apps ?? []) : (ctx.apps ?? []);
     v.append(
       h("h3", { textContent: "OPEN" }),
       openList.length
@@ -115,14 +115,13 @@ function mountDock(ctx, el) {
   note();
   draw();
   // Your Home's pins (the account's: the same on every device).
-  ctx
+  ctx.background("footer: edge", ctx
     .require("edge")
     .then(async edge => {
       const p = await edge.pins();
       const read = () => ((pinned = new Set((ctx.apps ?? []).map(a => a.route).filter(r => p.has(`app:${r}`)))), draw());
       p.onChange(read);
       read();
-    })
-    .catch(ctx.quiet(() => {}));
-  ctx.require("installed").then(i => (installed = i), ctx.quiet(() => {}));
+    }));
+  ctx.background("footer: installed", ctx.require("installed").then(i => (installed = i)));
 }

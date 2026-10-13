@@ -12,12 +12,12 @@ export async function start(ctx) {
   // the question answers nothing readable; a node that never ran it answers nothing at all).
   async function askPrior(prior, [id, frames], what) {
     const key = prior.split(":")[0];
-    const said = await ask(
+    const said = await ctx.optional("identity: ask", ask(
       frames,
       s => (s.kind === "identity" && s.answers.some(a => a.id === id || a.id === 0)) || (s.kind === "delegate-missing" && String(s.delegate).includes(key)),
       `asking an earlier identity build for ${what}`,
       30000,
-    ).catch(() => ({ kind: "silent" }));
+    ), () => ({ kind: "silent" }));
     // No answer in time (the node still loading that build — a compile can take a minute): said so, never taken for
     // "it does not know this PIN".
     if (said.kind === "silent") return { silent: true };
@@ -59,7 +59,7 @@ export async function start(ctx) {
       if (!d || !(await readKeyLog(d))) throw new Error("none");
       return d;
     });
-    return Promise.any([own, named]).catch(ctx.quiet(() => null));
+    return ctx.optional("identity: Promise.any", Promise.any([own, named]), () => null);
   }
   // The ACCOUNT words open: new words (`fresh`: a registration) their own inception's, made now — words the person
   // BROUGHT (`own`) refused if some account has them already (words drawn here are 128 random bits: never asked);

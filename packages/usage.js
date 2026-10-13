@@ -52,7 +52,7 @@ export async function start(ctx) {
     r.b += bytes;
     pending.set(rk, r);
     // WHAT IT PLAYED, kept for others (rewards step 2): a file of an item that brought bytes here, never one's own.
-    if (o?.file && !o.mine) ctx.require("keep").then(k => k.watched(o.file, o.ref, { title: o.title, kind: o.kind }), () => {});
+    if (o?.file && !o.mine) ctx.background("usage: ctx.require", ctx.require("keep").then(k => k.watched(o.file, o.ref, { title: o.title, kind: o.kind })));
   });
   // AN ITEM's FILES, from wherever they are opened (a post's attachment, an inline image, Drive's Open, a picture, a
   // book): counted for the item, and KEPT for others once they bring bytes here (owner 10-07: books, Drive and Board
@@ -64,7 +64,7 @@ export async function start(ctx) {
     let by = info.by ?? (ref.startsWith("did:") ? ref.slice(0, ref.lastIndexOf("/")) : null);
     let it = null;
     if (!by || !info.kind || !info.title) {
-      if (!byItem.has(ref)) byItem.set(ref, ctx.require("items").then(i => i.get(ref), () => null).catch(() => null));
+      if (!byItem.has(ref)) byItem.set(ref, ctx.optional("usage: items.get", ctx.require("items").then(i => i.get(ref)), () => null));
       it = await byItem.get(ref);
       by = by ?? it?.by ?? null;
     }
@@ -184,7 +184,7 @@ export async function start(ctx) {
     if (!me) return;
     const index = await ctx.require("index");
     const months = new Set(cs.flatMap(c => [monthOf(c.at), monthOf(c.at + (c.days - 1) * 86400000)]));
-    for (const m of months) if (!(await index.pointers(bagOf(m)).catch(ctx.quiet(() => []))).some(x => x?.did === me)) await index.point(bagOf(m), { did: me });
+    for (const m of months) if (!(await index.pointers(bagOf(m))).some(x => x?.did === me)) await index.point(bagOf(m), { did: me });
   }
   async function contributions() {
     const t = await storage.table("contrib");
@@ -196,11 +196,11 @@ export async function start(ctx) {
   setTimeout(async () => {
     try {
       const space = await ctx.require("space");
-      const me = await space.me();
+      const me = await space.me.strict();
       if (!me) return;
       const directory = await ctx.require("directory");
       const kept = onCard(await contributions());
-      const on = (await directory.card(me))?.contrib ?? [];
+      const on = (await directory.card.strict(me))?.contrib ?? [];
       const key = l => JSON.stringify(l.map(c => [c.at, c.amount, c.days]).sort());
       if (kept.length && key(kept) !== key(on)) await directory.setContributions(kept);
       if (kept.length) await listIn(kept);
@@ -295,12 +295,12 @@ export async function start(ctx) {
     const [items, space, keep] = await Promise.all(["items", "space", "keep"].map(n => ctx.require(n)));
     const bys = new Map();
     const byOf = ref => {
-      if (!bys.has(ref)) bys.set(ref, String(ref).startsWith("did:") ? Promise.resolve(String(ref).slice(0, String(ref).lastIndexOf("/"))) : items.get(ref).then(it => it?.by ?? null, () => null));
+      if (!bys.has(ref)) bys.set(ref, String(ref).startsWith("did:") ? Promise.resolve(String(ref).slice(0, String(ref).lastIndexOf("/"))) : ctx.optional("usage: items.get", items.get(ref).then(it => it?.by ?? null), () => null));
       return bys.get(ref);
     };
     const keepersOf = new Map();
-    const keepers = root => (keepersOf.has(root) || keepersOf.set(root, keep.keepers(root).catch(ctx.quiet(() => []))), keepersOf.get(root));
-    return { me: (await space.me()) ?? null, byOf, keepers, cs: await contributions() };
+    const keepers = root => (keepersOf.has(root) || keepersOf.set(root, keep.keepers(root)), keepersOf.get(root));
+    return { me: (await space.me.strict()) ?? null, byOf, keepers, cs: await contributions() };
   }
   const daysOfMonth = m => {
     const [y, mo] = m.split("-").map(Number);
@@ -351,7 +351,7 @@ export async function start(ctx) {
   };
   async function publishStatements(months = [prevMonth(), monthOf()]) {
     const space = await ctx.require("space");
-    const me = await space.account();
+    const me = await space.account.strict();
     if (!me?.shared) return 0;
     const l = await lookups();
     if (!l.cs.length) return 0;
@@ -377,7 +377,7 @@ export async function start(ctx) {
         await t.put(day, JSON.stringify(body));
         wrote += 1;
       }
-      if (any && !(await index.pointers(bagOf(m)).catch(ctx.quiet(() => []))).some(x => x?.did === me.id)) await index.point(bagOf(m), { did: me.id });
+      if (any && !(await index.pointers(bagOf(m))).some(x => x?.did === me.id)) await index.point(bagOf(m), { did: me.id });
     }
     return wrote;
   }
@@ -391,7 +391,7 @@ export async function start(ctx) {
   // THE LEDGER of a month (or any days of it: `days`, a test): every contributor's daily statements, summed.
   async function ledger(m = monthOf(), { days = () => true } = {}) {
     const [index, directory] = await Promise.all(["index", "directory"].map(n => ctx.require(n)));
-    const dids = [...new Set((await index.pointers(bagOf(m)).catch(ctx.quiet(() => []))).map(x => x?.did).filter(d => typeof d === "string" && d.startsWith("did:")))];
+    const dids = [...new Set((await index.pointers(bagOf(m))).map(x => x?.did).filter(d => typeof d === "string" && d.startsWith("did:")))];
     const by = {};
     // PER DAY too (the cutoff): { day: { final, statements, total, creators, carriers, network, by: { did: {creator, carrier} } } }
     const perDay = {};
@@ -404,7 +404,7 @@ export async function start(ctx) {
     };
     await Promise.all(
       dids.map(async did => {
-        const [t, card] = await Promise.all([directory.publicOf(did, STATEMENTS).catch(ctx.quiet(() => null)), directory.card(did).catch(ctx.quiet(() => null))]);
+        const [t, card] = await Promise.all([directory.publicOf(did, STATEMENTS), directory.card(did)]);
         await t?.answer?.();
         const rows = new Map((t?.rows() ?? []).filter(r => r.key.startsWith(`${m}-`) && days(r.key)).map(r => [r.key, parse(r.value)]));
         // Every day of this month their card's contributions give a share — with a row of theirs or without.
@@ -491,5 +491,5 @@ export async function start(ctx) {
     if (by && by === (await (await ctx.require("space")).account())?.id) return true;
     return reaches((await level()).id, lv);
   }
-  return { track, trackItem, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions, level, levelFrom, levelPlan, mayOpen, reaches, LEVELS, publishStatements, ledger, earnings };
+  return { track, trackItem, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions: ctx.total("usage.contributions", () => [], contributions), level, levelFrom, levelPlan: ctx.total("usage.levelPlan", () => [], levelPlan), mayOpen, reaches, LEVELS, publishStatements, ledger, earnings };
 }

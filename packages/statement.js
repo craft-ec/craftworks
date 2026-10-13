@@ -59,10 +59,7 @@ export async function start(ctx) {
     for (let round = 0; round < ROUNDS; round++) {
       const r = core.statement_build(idlogCode, items, epoch, keepers, standingCode, beaconCode, beacon, tokenCode, bagCode, queued, posted, [...fresh], earlier, misdeeds);
       if (r.want) {
-        await Promise.all(r.want.map(id => node.read(bytes(id), "reading a key log, a keeper's record or an audited piece", { absent: true }).then(
-          got => (fresh.add(id), reads.silent.delete(id), got ? reads.got++ : reads.absent.push(id.slice(0, 8))),
-          () => reads.silent.add(id),
-        )));
+        await Promise.all(r.want.map(id => ctx.optional("statement: node.read", node.read(bytes(id), "reading a key log, a keeper's record or an audited piece", { absent: true }).then(got => (fresh.add(id), reads.silent.delete(id), got ? reads.got++ : reads.absent.push(id.slice(0, 8)))), () => reads.silent.add(id))));
         continue;
       }
       r.reads = { got: reads.got, absent: reads.absent, listed: keepers.length, rounds: round + 1 };

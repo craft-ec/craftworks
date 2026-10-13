@@ -23,7 +23,7 @@ export async function start(ctx) {
     kind ??= spec.kind;
     const maker = await ctx.require(spec.maker);
     // A space this person is not in (its policy lets anyone post): published public, kept in their profile (`items.submit`).
-    const outside = space && !(await items.boardOf(space.id)) ? space : null;
+    const outside = space && !(await items.boardOf.strict(space.id)) ? space : null;
     const ref = await maker.make(file, { space: outside ? null : space, public: outside ? true : audience === "public", app: app ?? spec.domain, keepOriginal, onProgress });
     // A COVER chosen: over the file's own.
     if (cover) ref.preview = (await (await ctx.require("image-studio")).thumbnail(cover)) ?? ref.preview;
@@ -39,11 +39,10 @@ export async function start(ctx) {
     if (spec.maker === "video-studio") {
       const subs = await ctx.require("caption-store");
       for (const s of subtitles) await subs.add(item, s).catch(e => ctx.failed("publish", e, `timed text ${s.name}: ${e.message}`));
-      const lyrics = !subtitles.length && spec.domain === "audio" ? (await maker.probe(file).catch(ctx.quiet(() => null)))?.lyrics : null;
+      const lyrics = !subtitles.length && spec.domain === "audio" ? (await ctx.optional("publisher: maker.probe", maker.probe(file), () => null))?.lyrics : null;
       if (lyrics)
-        await subs
-          .add(item, `WEBVTT\n\n00:00:00.000 --> ${new Date(Math.max(1, ref.duration || 3600) * 1000).toISOString().slice(11, 23)}\n${lyrics.trim()}\n`, { label: kinds.attachLabel("subtitle", kind) })
-          .catch(ctx.quiet(() => {}));
+        await ctx.background("publisher: subs.add", subs
+          .add(item, `WEBVTT\n\n00:00:00.000 --> ${new Date(Math.max(1, ref.duration || 3600) * 1000).toISOString().slice(11, 23)}\n${lyrics.trim()}\n`, { label: kinds.attachLabel("subtitle", kind) }));
     }
     return { item, ref };
   }
@@ -85,7 +84,7 @@ export async function start(ctx) {
   // (its policy lets anyone post): public, from outside, as `publish`.
   async function written({ domain, space, initial, app, onPublished, onCancel }) {
     const [audience, attachments, mdEditor, spaces] = await Promise.all(["audience", "attachments", "md-editor", "space"].map(n => ctx.require(n)));
-    const outside = space && !(await items.boardOf(space.id)) ? space : null;
+    const outside = space && !(await items.boardOf.strict(space.id)) ? space : null;
     const ks = kinds.inDomain(domain);
     const kindSel = h("select", { name: "kind" }, ...ks.map(k => h("option", { value: k, textContent: kinds.of(k).label })));
     const who = await audience.picker({ space: outside ? null : space, kind: ks[0], initial });
@@ -159,9 +158,9 @@ export async function start(ctx) {
     const prefill = async x => {
       if (!x) return;
       const t = av
-        ? await (await ctx.require("video-studio")).probe(x).catch(() => null)
+        ? await ctx.optional("publisher: probe", (await ctx.require("video-studio")).probe(x), () => null)
         : spec.domain === "book"
-          ? await (await ctx.require("book-studio")).open(x).then(async b => (await b.meta().finally(() => b.close())), () => null)
+          ? await ctx.optional("publisher: open", (await ctx.require("book-studio")).open(x).then(async b => (await b.meta().finally(() => b.close()))), () => null)
           : null;
       if (!f.elements.title.value) f.elements.title.value = t?.title || x.name.replace(/\.[^.]+$/, "");
       for (const [k, val] of Object.entries({ artist: t?.artist, album: t?.album, year: t?.year, genre: t?.genre, author: t?.author })) {

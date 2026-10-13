@@ -49,13 +49,13 @@ export async function start(ctx) {
   async function control(d, { open = `#/s/${d.id}`, joinable = true } = {}) {
     const box = h("div", { className: "cw-join" });
     const draw = async () => {
-      if ((await space.mine()).some(s => s.id === d.id)) return box.replaceChildren(h("a", { href: open, textContent: "Open" }));
+      if ((await space.mine.strict()).some(s => s.id === d.id)) return box.replaceChildren(h("a", { href: open, textContent: "Open" }));
       // Asked already: said so, whatever the space lets in now.
-      const asked = await conversation.asked(d.id).catch(ctx.quiet(() => null));
+      const asked = await conversation.asked(d.id);
       if (!asked && !joinable) return box.replaceChildren(followButton(d));
       if (asked) {
         // LET IN already (its public acts admit this person): the welcome is what is awaited — asked for again here.
-        const letIn = (await conversation.waiting().catch(ctx.quiet(() => []))).some(w => w.key === d.id && w.status === "let-in");
+        const letIn = (await conversation.waiting()).some(w => w.key === d.id && w.status === "let-in");
         if (letIn) return box.replaceChildren(h("button", { type: "button", disabled: true, textContent: "Let in ✓", title: `Asked ${ago(asked.at)}` }), h("p", { textContent: `You were let in. Your keys arrive when a member's app is open; this app asks for them again on its own.` }));
         return box.replaceChildren(h("button", { type: "button", disabled: true, textContent: "Requested ✓", title: `Asked ${ago(asked.at)}` }), h("p", { textContent: `Asked ${ago(asked.at)}. ${WAITING}` }));
       }
@@ -74,7 +74,7 @@ export async function start(ctx) {
     await draw();
     people.onChange(() => box.isConnected && draw());
     // In at last (the welcome accepted): Open.
-    (await ctx.require("storage")).table("spaces").then(t => t.onChange(() => box.isConnected && draw()), () => {});
+    ctx.background("join-button: table", (await ctx.require("storage")).table("spaces").then(t => t.onChange(() => box.isConnected && draw())));
     return box;
   }
   return { control };

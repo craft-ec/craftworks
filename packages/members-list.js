@@ -32,7 +32,7 @@ export async function start(ctx) {
   const RANK = { owner: 3, admin: 2, member: 1 };
 
   async function show(sp, { manage = false, who = null } = {}) {
-    const [r, mod, me] = await Promise.all([roles.of(sp), moderation.of(sp), space.account()]);
+    const [r, mod, me] = await Promise.all([roles.of.strict(sp), moderation.of(sp), space.account.strict()]);
     const box = h("div", { className: "cw-members" });
     const said = h("p", { className: "said", hidden: true });
     const say = t => ((said.textContent = t ?? ""), (said.hidden = !t));
@@ -60,11 +60,10 @@ export async function start(ctx) {
     // to ask another for a log: on the owner's keys, behind, or on another branch, and who caught them up.
     // DIAGNOSTICS only (debugging: `edge.prefs` "diagnostics", Settings → Content).
     let keyState = null;
-    ctx
+    ctx.background("members-list: edge", ctx
       .require("edge")
       .then(e => e.prefs())
-      .then(p => (p.get("diagnostics") ? ctx.require("conversation").then(c => c.keyStatus(sp)) : null))
-      .then(k => k && ((keyState = k), box.isConnected && draw()), () => {});
+      .then(p => (p.get("diagnostics") ? ctx.require("conversation").then(c => c.keyStatus(sp)) : null)).then(k => k && ((keyState = k), box.isConnected && draw())));
     const keyChip = did => {
       const k = keyState?.members.get(did);
       if (!k) return null;

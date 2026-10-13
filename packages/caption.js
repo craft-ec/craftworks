@@ -62,7 +62,7 @@ export async function mount(ctx, el) {
     a.click();
     a.remove();
   };
-  const itemOf = async ref => await items.get(ref).catch(ctx.quiet(() => null));
+  const itemOf = async ref => await items.get(ref);
   const title = async ref => (await itemOf(ref))?.title ?? "an item";
   // A TRACK: its look is the kind's (`cards`); the item it is for, and its tools, given.
   const row = async t => {
@@ -124,7 +124,7 @@ export async function mount(ctx, el) {
     const roles = await ctx.require("roles");
     const mine = await space.mine();
     const teams = [];
-    for (const s of mine.filter(x => x.kind === "server")) if ((await roles.of(s).catch(ctx.quiet(() => null)))?.apps().includes("caption")) teams.push(s);
+    for (const s of mine.filter(x => x.kind === "server")) if ((await roles.of(s))?.apps().includes("caption")) teams.push(s);
     const withVideo = ref.startsWith("space:") ? mine.some(s => ref.startsWith(`space:${s.id}/`)) : true;
     const placeSel = h(
       "select",

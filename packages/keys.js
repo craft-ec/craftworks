@@ -34,7 +34,7 @@ export async function start(ctx) {
   // are we not keeping enough log for critical action?"). PROVENANCE: what every key-log row and commit this page writes
   // carries — this device (its member key), why, when, the `keys` code's version. KEY EVENTS: each critical action of
   // this account's keys, kept in its own table (`keyevents`, newest 500), not only in a page's trace.
-  const provOf = async why => ({ by: String((await auth.check().catch(ctx.quiet(() => null)))?.member ?? "").slice(0, 16), why, at: Date.now(), v: String(ctx.shaOf?.("keys") ?? "").slice(0, 12) });
+  const provOf = async why => ({ by: String((await auth.check())?.member ?? "").slice(0, 16), why, at: Date.now(), v: String(ctx.shaOf?.("keys") ?? "").slice(0, 12) });
   const eventQueue = [];
   let eventTimer = null;
   async function flushEvents() {
@@ -57,15 +57,14 @@ export async function start(ctx) {
     eventQueue.push({ ...p, what, ...detail });
     eventTimer ??= setTimeout(flushEvents, 3000);
     if (PROBLEMS.has(what))
-      ctx
+      ctx.background("keys: index", ctx
         .require("index")
         .then(ix => {
           // The event's whole detail goes with it (its reason under `why` or `reason`, its counts and epochs in `d`): a
           // report support can resolve, not a bare kind (seen 10-09: a join-failed arrived with nothing but its version).
           const { space: _s, epoch: _e, reason, why, ...d } = detail;
           return ix.health({ k: what, s: String(detail.space ?? "").slice(0, 6), e: detail.epoch ?? null, why: String(reason ?? why ?? "").slice(0, 160) || undefined, d });
-        })
-        .catch(ctx.quiet(() => {}));
+        }));
   }
   async function keyEvents(spaceHex = null) {
     const t = await storage.table("keyevents");
@@ -128,7 +127,7 @@ export async function start(ctx) {
     // The commit that moved the group FROM epoch e (`fresh`: the log read again from the network, not as last seen).
     async function commitFrom(e, secret, fresh = false) {
       const log = await open(e, secret);
-      if (fresh) await log.reread?.().catch(ctx.quiet(() => {}));
+      if (fresh) await ctx.background("keys: log.reread", log.reread?.());
       return log.from(e)[0]?.entry ?? null;
     }
     // COMMIT from epoch e: into e's log, with the group info after it (and, for the account, the next secret in escrow).
@@ -168,7 +167,7 @@ export async function start(ctx) {
       // member's who caught up from the epoch before.
       // (A SPACE's only: the account's history is its escrow — its logs open as they always did.)
       if (log.absent && (prev || st.epoch === 0 || !g.space)) {
-        const back = await backFor(st.epoch, prev).catch(ctx.quiet(() => null));
+        const back = await ctx.optional("keys: backFor", backFor(st.epoch, prev), () => null);
         await log.put("open", JSON.stringify({ info: hexOf(st.info), ...(prev ? { prev } : {}), ...(back ? { back } : {}), ...(await provOf(why)) }));
         if (g.space) keyEvent("log-open-written", { space: hexOf(g.space), epoch: st.epoch, prev: !!prev, made: !!made, reason: why });
       } else if (log.absent && g.space) keyEvent("log-open-left", { space: hexOf(g.space), epoch: st.epoch, reason: why });
@@ -178,7 +177,7 @@ export async function start(ctx) {
     // node joined open too. How many were kept.
     // Walked once per device: where the identity holds the epoch before this one and the first (a walk that finished
     // left them all), nothing is read again — each step is a log read and a delegate call.
-    const held = async e => !!(await auth.identity.tableKeyAt(g.channel, e, g.space).catch(ctx.quiet(() => null)))?.tableKey;
+    const held = async e => !!(await ctx.optional("keys: auth.identity.tableKeyAt", auth.identity.tableKeyAt(g.channel, e, g.space), () => null))?.tableKey;
     // `whole`: walked to the start whatever is held — a node that joined another BRANCH (a repair) holds its old
     // branch's keys for those epochs, not this one's.
     async function history(st, { whole = false } = {}) {
@@ -249,10 +248,10 @@ export async function start(ctx) {
     async function heal() {
       if (!g.snaps) return false;
       for (const s of await g.snaps()) {
-        const won = await commitFrom(s.epoch, bytes(s.secret), true).catch(ctx.quiet(() => null));
+        const won = await ctx.optional("keys: commitFrom", commitFrom(s.epoch, bytes(s.secret), true), () => null);
         if (!won || won === s.entry) continue;
         ctx.log(g.label, { what: `epoch ${s.epoch}: this node's commit lost the race for it — the winner's applied, the change made again where it still applies` });
-        await g.keepLost(await branch(g.mls().status(), s.epoch + 1).catch(() => [{ epoch: g.mls().status().epoch, secret: hexOf(g.mls().status().secret) }]));
+        await g.keepLost(await ctx.optional("keys: branch", branch(g.mls().status(), s.epoch + 1), () => [{ epoch: g.mls().status().epoch, secret: hexOf(g.mls().status().secret) }]));
         await g.restore(s);
         return true;
       }
@@ -291,7 +290,7 @@ export async function start(ctx) {
   const ensureLog = account.ensure;
   const catchUp = () =>
     account.catchUp(async st => {
-      const s = await auth.check();
+      const s = await auth.check.strict();
       mls.load(s.didBytes, await keyLog(s.didBytes), st.state);
     });
 
@@ -319,23 +318,23 @@ export async function start(ctx) {
     let chState = (await channel.decided?.())?.s ?? "unknown";
     // (A words login, the channel still empty: read again — the fault policy's `not-yet` tries, 10 s apart, a minute.)
     if (!fresh && !channel.rows().length)
-      await attempt(
+      await ctx.background("keys: attempt", attempt(
         "account keys",
         "reading the account's key channel",
         async n => {
-          if (n) await channel.reread?.().catch(ctx.quiet(() => {}));
+          if (n) await ctx.background("keys: channel.reread", channel.reread?.());
           chState = channel.state?.s ?? chState;
           if (!channel.rows().length) throw new Fault("not-yet", "the account's key channel still empty", { d: { state: chState } });
         },
         { policy: { "not-yet": { tries: 7, report: "never" } } },
-      ).catch(ctx.quiet(() => {}));
+      ));
     const kept = new Set();
     // How the walk went — reported whatever the outcome (`account-recovery`, to the health bag: the account's own
     // tables may still be sealed here): where it started, how far it got, why it stopped (10-12: the owner's node
     // recovered the account but not its storage, and nothing said how far the walk had come).
     const walked = { channelRows: channel.rows().length, fresh: !!fresh, info: false, escrow0: false, epochs: 0, stop: null };
     const recovery = (k, why, d = {}) =>
-      ctx.require("index").then(ix => ix.health({ k, s: "", e: walked.epochs, why: String(why).slice(0, 160), d: { ...walked, ...d } })).catch(() => {});
+      ctx.background("keys: ctx.require", ctx.require("index").then(ix => ix.health({ k, s: "", e: walked.epochs, why: String(why).slice(0, 160), d: { ...walked, ...d } })));
     // The WALK, with the words: from the channel's pointer, every epoch's commit and escrowed next secret, to the
     // present — each epoch's secret kept here on the way (this node then reads what was written before it joined).
     async function walk() {
@@ -353,12 +352,12 @@ export async function start(ctx) {
         // one asked twice more before it counts as the newest — a walk cut short joins at an old epoch.
         let entry = await commitFrom(e, secret, true);
         if (!entry)
-          entry = await attempt(
+          entry = await ctx.optional("keys: attempt", attempt(
             "account keys",
             "reading an epoch's log",
             async () => (await commitFrom(e, secret, true)) ?? Promise.reject(new Fault("not-yet", "an epoch's log still empty", { d: { epoch: e } })),
             { policy: { "not-yet": { tries: 2, wait: () => 5000, report: "never" } } },
-          ).catch(ctx.quiet(() => null));
+          ), () => null);
         if (!entry) return ((walked.stop = `no commit after epoch ${e} (the newest)`), { e, info, secret });
         const c = parse(entry);
         info = c.info ?? info;
@@ -456,7 +455,7 @@ export async function start(ctx) {
   function ready() {
     if (readyShared) return readyShared;
     const p = (busy = busy.then(async () => {
-      const s = await auth.check();
+      const s = await auth.check.strict();
       if (!s) return null;
       if (!status) {
         const r = await auth.identity.mlsLoad();
@@ -481,10 +480,7 @@ export async function start(ctx) {
     }));
     readyShared = p;
     // A null ("not here yet") is never kept as the answer: the next read asks again (as a space's group's, below).
-    p.then(
-      s => !s && readyShared === p && (readyShared = null),
-      () => readyShared === p && (readyShared = null),
-    );
+    ctx.optional("keys: p.then", p.then(s => !s && readyShared === p && (readyShared = null)), () => readyShared === p && (readyShared = null));
     return p;
   }
 
@@ -493,8 +489,8 @@ export async function start(ctx) {
   // 10-12 one re-put the card's key packages and asked members to welcome it again, which dropped the original devices).
   // `writable()`: true, or why not.
   async function writable() {
-    if (!(await auth.check().catch(ctx.quiet(() => null)))) return "nobody is logged in";
-    await ready().catch(ctx.quiet(() => null));
+    if (!(await auth.check())) return "nobody is logged in";
+    await ctx.optional("keys: ready", ready(), () => null);
     const a = life.state("account", ME).s;
     const s = life.state("session", ME).s;
     if (a !== "MEMBER" || s === "OPEN_KEYLESS") return `the account's keys are not held on this device (account ${a}, session ${s})`;
@@ -539,7 +535,7 @@ export async function start(ctx) {
       const r = await commitAt(from.epoch, from.secret, commit);
       if (!r.ok) {
         const kept = await auth.identity.mlsLoad();
-        const s = await auth.check();
+        const s = await auth.check.strict();
         mls.load(s.didBytes, await keyLog(s.didBytes), bytes(kept.mlsState));
         await catchUp();
         await keep(channel);
@@ -552,11 +548,11 @@ export async function start(ctx) {
       setTimeout(async () => {
         // Writes onto the new epoch first (the removed node holds the old ones), then the card: the removed node no
         // longer listed as the account's (what it writes counts for nothing).
-        await storage.sealNewest().catch(ctx.quiet(() => {}));
+        await ctx.background("keys: storage.sealNewest", storage.sealNewest());
         await ctx.require("directory").then(d => d.publish()).catch(e => ctx.failed("account keys", e, `the card: ${e.message}`));
-        for (const sp of await space.mine().catch(ctx.quiet(() => []))) {
+        for (const sp of await space.mine()) {
           const g = group(sp);
-          if (!(await g.ready().catch(ctx.quiet(() => null)))) continue;
+          if (!(await g.ready())) continue;
           await g.refresh().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `refreshing after the removal: ${e.message}` }));
         }
       });
@@ -584,7 +580,7 @@ export async function start(ctx) {
   // filled again by a member's welcome and the card's renewal). Read once per page.
   let keysName = null;
   const spacekeys = async () => {
-    keysName ??= storage.upkeepMark("spacekeys").then(n => (typeof n === "string" && /^spacekeys(-[2-9])?$/.test(n) ? n : SPACEKEYS), () => SPACEKEYS);
+    keysName ??= ctx.optional("keys: storage.upkeepMark", storage.upkeepMark("spacekeys").then(n => (typeof n === "string" && /^spacekeys(-[2-9])?$/.test(n) ? n : SPACEKEYS)), () => SPACEKEYS);
     const t = await storage.table(await keysName);
     await t.settled;
     return t;
@@ -707,7 +703,7 @@ export async function start(ctx) {
       const branch = glue.epoch_log_public(s.secret);
       const index = await ctx.require("index");
       // (Only an entry every member reads counts: one sealed with an epoch is read by those who hold it alone.)
-      const had = (await index.spacePointers(sp, "writers").catch(ctx.quiet(() => []))).some(p => p?.w === sp.self && p.epoch === s.epoch && p.branch === branch && p.sealedAt === index.OPEN);
+      const had = (await index.spacePointers(sp, "writers")).some(p => p?.w === sp.self && p.epoch === s.epoch && p.branch === branch && p.sealedAt === index.OPEN);
       if (!had) await index.spacePoint(sp, "writers", { w: sp.self, epoch: s.epoch, branch, at: Date.now() }).catch(e => ((announced = -1), Promise.reject(e)));
     }
     // EVERY SWITCH of the group keeps the branch it leaves: its epoch secrets that the group now on does not share
@@ -716,7 +712,7 @@ export async function start(ctx) {
     const keepLeft = async wasList => {
       if (!wasList.length || !m) return;
       const from = Math.min(...wasList.map(l => l.epoch));
-      const now = await logs.branch(m.status(), from).catch(() => [{ epoch: m.status().epoch, secret: hexOf(m.status().secret) }]);
+      const now = await ctx.optional("keys: logs.branch", logs.branch(m.status(), from), () => [{ epoch: m.status().epoch, secret: hexOf(m.status().secret) }]);
       const left = wasList.filter(l => !now.some(n => n.epoch === l.epoch && n.secret === l.secret) && now.some(n => n.epoch === l.epoch));
       if (left.length) await keepLostHere(left);
     };
@@ -777,13 +773,13 @@ export async function start(ctx) {
       // The branch this device is on, before it is replaced: a newer state saved by another device of the account
       // (or by upkeep) may be ANOTHER branch — what was sealed on this one must stay readable.
       const was = m ? m.status() : null;
-      const wasList = was ? await logs.branch(was, Math.max(0, was.epoch - 8)).catch(() => [{ epoch: was.epoch, secret: hexOf(was.secret) }]) : [];
+      const wasList = was ? await ctx.optional("keys: logs.branch", logs.branch(was, Math.max(0, was.epoch - 8)), () => [{ epoch: was.epoch, secret: hexOf(was.secret) }]) : [];
       m = mlsGlue.Mls.load_space(sp.idBytes, bytes(r.state));
       const s = m.status();
       await auth.identity.epochKeep(s.epoch, s.secret, sp.idBytes);
       await keepLeft(wasList);
       if (first) {
-        const n = await logs.history(s).catch(ctx.quiet(() => 0));
+        const n = await ctx.optional("keys: logs.history", logs.history(s), () => 0);
         if (n) ctx.log(`${sp.name ?? "space"} keys`, { what: `${n} earlier epoch(s) kept on this device` });
       }
       status(s);
@@ -800,7 +796,7 @@ export async function start(ctx) {
       const snap = t.rows().find(r => r.key === snapKey(p.epoch))?.value;
       const before = snap ? JSON.parse(snap) : null;
       if (!before?.secret) return void (await t.remove(`${at}~pending`));
-      const won = await logs.commitFrom(p.epoch, bytes(before.secret), true).catch(ctx.quiet(() => undefined));
+      const won = await ctx.background("keys: logs.commitFrom", logs.commitFrom(p.epoch, bytes(before.secret), true));
       if (won === undefined) return; // not read: asked again next time
       if (won === null) {
         const r = await logs.publish(p.epoch, bytes(before.secret), p.entry);
@@ -876,7 +872,7 @@ export async function start(ctx) {
         await t.remove(snapKey(from.epoch));
         m = null;
         await load();
-        await current().catch(ctx.quiet(() => {}));
+        await ctx.background("keys: current", current());
         throw new Error("the group moved meanwhile: try again");
       }
       await save(true, hexOf(from.secret), "commit");
@@ -887,7 +883,7 @@ export async function start(ctx) {
     const g = {
       // ADD a person (a DID) by a key package from their card: the WELCOME (hex) for them.
       add: keyPackage =>
-        (queue = queue.catch(() => {}).then(() =>
+        (queue = ctx.background("keys: queue", queue).then(() =>
           change(() => {
             const [commit, welcome] = m.add(bytes(keyPackage));
             return [commit, hexOf(welcome)];
@@ -896,7 +892,7 @@ export async function start(ctx) {
       // WELCOMED AGAIN in ONE commit: the person's `stale` entries (indexes) out, their key package in — the WELCOME
       // (hex). One epoch, not a removal's and an add's: each epoch leaves whoever is behind further behind.
       readd: (stale, keyPackage) =>
-        (queue = queue.catch(() => {}).then(() => {
+        (queue = ctx.background("keys: queue", queue).then(() => {
           const creds = [...stale].map(i => m.status().members.find(x => x.index === i)?.cred).filter(Boolean);
           return change(
             () => {
@@ -908,7 +904,7 @@ export async function start(ctx) {
         })),
       // REMOVE members (their indexes in the group): one commit each, a new epoch each, which they cannot read.
       remove: indexes =>
-        (queue = queue.catch(() => {}).then(async () => {
+        (queue = ctx.background("keys: queue", queue).then(async () => {
           for (const i of [...indexes].sort((a, b) => b - a)) {
             const cred = m.status().members.find(x => x.index === i)?.cred ?? null;
             await change(() => [m.remove(i), null], cred ? { kind: "remove", creds: [cred] } : null);
@@ -921,7 +917,7 @@ export async function start(ctx) {
       // A TARGET, not a one-off (ARCHITECTURE §5, reconciling): the mark `~refresh` stays until a refresh commit is in
       // the log — one that lost its race, or a page closed first, is made again on the next load (`ready`).
       refresh: () =>
-        (queue = queue.catch(() => {}).then(async () => {
+        (queue = ctx.background("keys: queue", queue).then(async () => {
           const t = await spacekeys();
           if (!t.rows().some(r => r.key === `${at}~refresh` && r.value)) await t.put(`${at}~refresh`, String(Date.now()));
           await change(() => [m.update(), null], { kind: "refresh" });
@@ -934,14 +930,14 @@ export async function start(ctx) {
       // `expect` ({ epoch, branch }: a REPAIR, `conversation`): taken only if it leads onto that branch — checked before
       // anything is kept (a member who made a group of their own under this space's id pulls nobody into it).
       join: (welcome, { expect = null, above = null } = {}) =>
-        (queue = queue.catch(() => {}).then(async () => {
+        (queue = ctx.background("keys: queue", queue).then(async () => {
           const t = await spacekeys();
           await t.reread?.();
           // Already in the group on ANOTHER branch (a fork, healed by being added again): its epoch secrets kept
           // first — what this node wrote there stays readable — then the welcome's branch joined.
           if (m && !m.status().removed) {
             const was = m.status();
-            await keepLostHere(await logs.branch(was, Math.max(0, was.epoch - 8)).catch(() => [{ epoch: was.epoch, secret: hexOf(was.secret) }]));
+            await keepLostHere(await ctx.optional("keys: logs.branch", logs.branch(was, Math.max(0, was.epoch - 8)), () => [{ epoch: was.epoch, secret: hexOf(was.secret) }]));
           }
           // Each batch's own failure: one that does not hold its key package says NotFound; the one that HOLDS it says
           // why it did not open (what to report — never hidden behind the others' NotFound).
@@ -970,7 +966,7 @@ export async function start(ctx) {
               throw new Error(`that welcome leads to epoch ${m?.status().epoch ?? "?"} at most, not past this node's ${above}: not taken`);
             }
             if (expect) {
-              const fp = await fingerprint(expect.epoch).catch(ctx.quiet(() => null));
+              const fp = await ctx.optional("keys: fingerprint", fingerprint(expect.epoch), () => null);
               if (fp !== expect.branch) {
                 m = before;
                 throw new Error("that welcome does not lead onto the space owner's branch: not taken");
@@ -998,7 +994,7 @@ export async function start(ctx) {
         })),
       // MADE by this DID, its first member.
       create: () =>
-        (queue = queue.catch(() => {}).then(async () => {
+        (queue = ctx.background("keys: queue", queue).then(async () => {
           m = (await memberWith(null)).create_space(sp.idBytes);
           ctx.log(`${sp.name ?? "space"} keys`, { what: "made the space's group: epoch 0" });
           return save(true, null, "create");
@@ -1007,7 +1003,7 @@ export async function start(ctx) {
       // page runs; and a NEWER group it made meanwhile (it let someone in), ADOPTED here (kept for the account's
       // devices, loaded).
       snapshot: () =>
-        (queue = queue.catch(() => {}).then(async () => {
+        (queue = ctx.background("keys: queue", queue).then(async () => {
           if (!m && !(await load())) return null;
           const s = m.status();
           return s.removed ? null : { epoch: s.epoch, state: hexOf(s.state) };
@@ -1015,19 +1011,19 @@ export async function start(ctx) {
       // REMOVED: this account taken out of the space's group (a removal or a ban by its acts, a commit read since) —
       // the group brought current first. Not joined yet (no group here): not removed.
       removed: () =>
-        (queue = queue.catch(() => {}).then(async () => {
+        (queue = ctx.background("keys: queue", queue).then(async () => {
           if (!m && !(await load())) return false;
-          await current(false).catch(ctx.quiet(() => null));
+          await ctx.optional("keys: current", current(false), () => null);
           return !!m?.status().removed;
         })),
       adopt: (epoch, stateHex) =>
-        (queue = queue.catch(() => {}).then(async () => {
+        (queue = ctx.background("keys: queue", queue).then(async () => {
           if (m && m.status().epoch >= epoch) return false;
           // The group as it was here, kept with the commit upkeep wrote from it (its epoch log's): undone like any lost
           // commit if the log's winner turns out another (`logs.heal`).
           if (m) {
             const was = m.status();
-            const entry = await logs.commitFrom(was.epoch, was.secret, true).catch(ctx.quiet(() => null));
+            const entry = await ctx.optional("keys: logs.commitFrom", logs.commitFrom(was.epoch, was.secret, true), () => null);
             if (entry) await keepSnap(was, entry);
           }
           await (await spacekeys()).put(at, JSON.stringify({ epoch, state: stateHex }));
@@ -1043,7 +1039,7 @@ export async function start(ctx) {
       // A write asks `fresh` (read again from the network: sealed with the newest epoch).
       ready: ({ fresh = false } = {}) => {
         if (!fresh && shared) return shared;
-        const p = (queue = queue.catch(() => {}).then(async () => {
+        const p = (queue = ctx.background("keys: queue", queue).then(async () => {
           if (!m && !(await load())) return null;
           const s = await current(fresh);
           if (!s) return null;
@@ -1060,10 +1056,7 @@ export async function start(ctx) {
         // Finished: current (every change of the group runs in this same queue) — what reads share from now on. NOT a
         // null ("not here yet": a fresh load's `spacekeys` still arriving when a space asked first — owner 10-07: kept
         // as the answer, a member's space showed 0 members and no apps for the whole session): the next read asks again.
-        p.then(
-          s => (s ? shared === null && (shared = p) : shared === p && (shared = null)),
-          () => shared === p && (shared = null),
-        );
+        ctx.optional("keys: p.then", p.then(s => (s ? shared === null && (shared = p) : shared === p && (shared = null))), () => shared === p && (shared = null));
         return p;
       },
       // MEND (owner 10-07: "don't let it happen in the first place" — and heal what already did): this epoch's log
@@ -1071,11 +1064,11 @@ export async function start(ctx) {
       // the same row, its prev added, for every member at once (not a handover to one asker at a time). One that does
       // not hold it writes nothing: "cannot".
       mend: () =>
-        (queue = queue.catch(() => {}).then(async () => {
+        (queue = ctx.background("keys: queue", queue).then(async () => {
           if (!m && !(await load())) return "no group";
           const s = m.status();
           if (s.removed || s.epoch === 0) return "nothing to mend";
-          const k = await auth.identity.tableKeyAt(ch, s.epoch, sp.idBytes).catch(ctx.quiet(() => null));
+          const k = await ctx.optional("keys: auth.identity.tableKeyAt", auth.identity.tableKeyAt(ch, s.epoch, sp.idBytes), () => null);
           if (!k?.tableKey) return "its key not held";
           const lg = await storage.log(ch, glue.epoch_log_public(s.secret), { known: null, sealWith: k.tableKey, space: sp.idBytes });
           await lg.answer?.();
@@ -1091,18 +1084,18 @@ export async function start(ctx) {
           // answered): those added now.
           if (v?.prev) {
             if (v.back || s.epoch < 2) return "whole";
-            const back = await logs.backFor(s.epoch, v.prev).catch(ctx.quiet(() => null));
+            const back = await ctx.optional("keys: logs.backFor", logs.backFor(s.epoch, v.prev), () => null);
             if (!back) return "whole (no way back further to add yet)";
             await lg.put("open", JSON.stringify({ ...v, back, ...(await provOf("mend")) }));
             keyEvent("log-back-added", { space: hexOf(sp.idBytes), epoch: s.epoch, back: Object.keys(back).length });
             return `back added (${Object.keys(back).length})`;
           }
-          const before = (await auth.identity.epochSecrets(sp.idBytes, s.epoch).catch(ctx.quiet(() => []))).find(([e]) => e === s.epoch - 1)?.[1];
+          const before = (await ctx.optional("keys: auth.identity.epochSecrets", auth.identity.epochSecrets(sp.idBytes, s.epoch), () => [])).find(([e]) => e === s.epoch - 1)?.[1];
           if (!before) {
             keyEvent("log-mend-cannot", { space: hexOf(sp.idBytes), epoch: s.epoch });
             return "cannot: the epoch before is not held here";
           }
-          const back = await logs.backFor(s.epoch, before).catch(ctx.quiet(() => null));
+          const back = await ctx.optional("keys: logs.backFor", logs.backFor(s.epoch, before), () => null);
           await lg.put("open", JSON.stringify({ ...v, prev: before, ...(back ? { back } : {}), ...(await provOf("mend")) }));
           keyEvent("log-mended", { space: hexOf(sp.idBytes), epoch: s.epoch });
           ctx.log(`${sp.name ?? "space"} keys`, { what: `its epoch ${s.epoch} log had no way back: mended (its prev put back)` });
@@ -1110,7 +1103,7 @@ export async function start(ctx) {
         })),
       // AUDIT (log only): the epoch this node's group state is at, and whether its identity holds that epoch's key.
       diag: () =>
-        (queue = queue.catch(() => {}).then(async () => {
+        (queue = ctx.background("keys: queue", queue).then(async () => {
           if (!m && !(await load())) return { state: "none" };
           const s = m.status();
           const k = await auth.identity.tableKeyAt(ch, s.epoch, sp.idBytes).catch(e => ({ why: e?.message ?? String(e) }));
@@ -1126,8 +1119,13 @@ export async function start(ctx) {
           return { opens, state: "held", epoch: s.epoch, removed: !!s.removed, members: s.members?.length ?? 0, keyHeld: !!k?.tableKey, why: k?.tableKey ? null : (k?.why ?? k?.refused ?? null) };
         })),
       lost: async () => JSON.parse((await spacekeys()).rows().find(r => r.key === `${at}~lost`)?.value ?? "[]"),
-      fingerprint: e => (queue = queue.catch(() => {}).then(() => fingerprint(e))),
+      fingerprint: e => (queue = ctx.background("keys: queue", queue).then(() => fingerprint(e))),
     };
+    // (Its READS total — `ctx.total`: never thrown at a caller; a group not ready here reads as null.)
+    const readyRaw = g.ready;
+    const fingerprintRaw = g.fingerprint;
+    g.ready = ctx.total("keys.group.ready", () => null, readyRaw);
+    g.fingerprint = ctx.total("keys.group.fingerprint", () => null, fingerprintRaw);
     groups.set(sp.id, g);
     return g;
   }
@@ -1135,7 +1133,7 @@ export async function start(ctx) {
   // How many epochs are in escrow for the words.
   // Every epoch is escrowed: the first from the channel, each later one with the commit that made it.
   async function escrowed() {
-    const st = await ready().catch(ctx.quiet(() => null));
+    const st = await ctx.optional("keys: ready", ready(), () => null);
     return st && !st.removed ? st.epoch + 1 : 0;
   }
 
@@ -1168,13 +1166,13 @@ export async function start(ctx) {
       const w = pk?.id ? pk.id.slice(0, 8) : "?";
       lines.push(`${id.slice(0, 8)}: offered ${kps.length}, row ${pk ? (pk.value ? `holds ${held.length}` : "EMPTY") : "MISSING"} (writer ${w}), offered-not-held ${missing}`);
     }
-    const s0 = await auth.check();
+    const s0 = await auth.check.strict();
     const me = s0?.didBytes ? (await ctx.require("node")).glue.did_of(s0.didBytes) : null;
-    const card = me ? await (await ctx.require("directory")).card(me, { fresh: true }).catch(() => null) : null;
+    const card = me ? await ctx.optional("keys: card", (await ctx.require("directory")).card(me, { fresh: true }), () => null) : null;
     const onCard = card?.keyPackages ?? [];
     const allHeld = new Set(rows.filter(x => x.key.startsWith("packages/") && x.value).flatMap(x => { try { return batchRefs(bytes(x.value)); } catch { return []; } }));
     const cardHeld = (await Promise.all(onCard.map(refOf))).filter(x => allHeld.has(x)).length;
-    for (const sp of await (await ctx.require("space")).mine().catch(() => [])) {
+    for (const sp of await ctx.optional("keys: mine", (await ctx.require("space")).mine(), () => [])) {
       if (sp.kind === "account") continue;
       const d = await group(sp).diag().catch(e => ({ state: `error ${e?.message ?? e}` }));
       const broken = d.state === "held" && d.epoch > 0 && /NO prev/.test(String(d.opens));
@@ -1182,10 +1180,10 @@ export async function start(ctx) {
       const thin = d.state === "held" && d.epoch > 1 && /(^|,)prev(?!\+)/.test(String(d.opens));
       const mended = broken || thin ? await group(sp).mend().catch(e => `mend failed: ${e?.message ?? e}`) : null;
       if (thin && mended && !/^whole/.test(mended)) ctx.log("account keys", { what: `${sp.name ?? sp.id.slice(0, 8)}: its epoch ${d.epoch} log — ${mended}` });
-      const evs = broken ? (await keyEvents(sp.id).catch(ctx.quiet(() => []))).slice(-5).map(e => `${new Date(e.at).toISOString().slice(5, 16)} ${e.what}${e.epoch != null ? ` @${e.epoch}` : ""}${e.reason ? ` (${e.reason})` : ""} by ${String(e.by).slice(0, 8)} v${e.v}`).join("; ") : "";
+      const evs = broken ? (await ctx.optional("keys: keyEvents", keyEvents(sp.id), () => [])).slice(-5).map(e => `${new Date(e.at).toISOString().slice(5, 16)} ${e.what}${e.epoch != null ? ` @${e.epoch}` : ""}${e.reason ? ` (${e.reason})` : ""} by ${String(e.by).slice(0, 8)} v${e.v}`).join("; ") : "";
       ctx.log("account keys", { what: `AUDIT space ${broken ? "BROKEN CHAIN — " : ""}${sp.name ?? sp.id.slice(0, 8)}${broken ? ` [mend: ${mended}; its key events: ${evs || "none recorded"}]` : ""}: group ${d.state}${d.state === "held" ? ` at epoch ${d.epoch}, ${d.members} member(s)${d.removed ? ", REMOVED" : ""}, its epoch key ${d.keyHeld ? "HELD" : `NOT held${d.why ? ` (${d.why})` : ""}`}, its log's open: ${d.opens}` : ""}` });
     }
-    const allEv = await keyEvents().catch(ctx.quiet(() => []));
+    const allEv = await ctx.optional("keys: keyEvents", keyEvents(), () => []);
     ctx.log("account keys", { what: `AUDIT key events — ${allEv.length} kept; last: ${allEv.slice(-3).map(e => `${e.what}${e.epoch != null ? ` @${e.epoch}` : ""}${e.reason ? ` (${e.reason})` : ""} by ${String(e.by).slice(0, 8)} v${e.v}`).join("; ") || "none"}` });
     const whole = lines.filter(l => / offered-not-held 0$/.test(l)).length;
     ctx.log("account keys", { what: `AUDIT key packages — ${lines.length} batch(es), ${whole} hold all they offered, ${lines.length - whole} have used ones; the card lists ${onCard.length}, held ${cardHeld}` });
@@ -1194,7 +1192,7 @@ export async function start(ctx) {
     ctx
       .require("directory")
       .then(async d => {
-        const me = await space.account();
+        const me = await space.account.strict();
         if (me) await d.publish(); // writes only what is missing or changed: key packages, the devices' credentials
       })
       .catch(e => ctx.failed("account keys", e, `the card: ${e.message}`));
@@ -1315,5 +1313,5 @@ export async function start(ctx) {
     return { batches: batches.length, offers, held };
   }
 
-  return { ready, writable, mustWrite, remove, escrowed, group, keyPackages, answers, holdsTag, welcomeFor, packageCounts, event: keyEvent, events: keyEvents, onChange: f => watchers.push(f) };
+  return { ready: ctx.total("keys.ready", () => null, ready), writable, mustWrite, remove, escrowed: ctx.total("keys.escrowed", () => null, escrowed), group, keyPackages, answers, holdsTag, welcomeFor, packageCounts, event: keyEvent, events: keyEvents, onChange: f => watchers.push(f) };
 }
