@@ -21,7 +21,7 @@ export async function start(ctx) {
   const keyOf = el => {
     const comp = el.closest("[data-component]")?.dataset.component ?? "?";
     const own = el.name || el.id || el.getAttribute("aria-label") || el.placeholder || "";
-    const same = [...(el.closest("[data-component]") ?? document).querySelectorAll(el.tagName)];
+    const same = own ? [] : [...(el.closest("[data-component]") ?? document).querySelectorAll(el.tagName)];
     const at = `${ctx.route}${ctx.sub ? `/${ctx.sub}` : ""}${ctx.space ? `@${ctx.space.slice(0, 16)}` : ""}`;
     return `${at}|${comp}|${own || `#${same.indexOf(el)}`}`.slice(0, 200);
   };
@@ -29,9 +29,14 @@ export async function start(ctx) {
     el instanceof HTMLTextAreaElement ||
     (el instanceof HTMLInputElement && ["text", "", "url", "email"].includes(el.type) && el.type !== "search") ||
     (el instanceof HTMLElement && el.isContentEditable && el.getAttribute("contenteditable") !== "false");
+  // NEVER A SECRET (audit 10-13: two recovery-words fields of the account page — no name, `name="own"` — would have been
+  // drafted and synced): nothing in the account, settings or login screens at all; nothing whose name, id, placeholder
+  // or label speaks of a PIN, words, a phrase, a key or a secret; no password field; nothing marked `data-no-draft`.
+  const SECRETISH = /pin|word|phrase|secret|key|recover|mnemonic|seed|passw/i;
   const secret = el =>
-    !!el.closest("dialog, [data-no-draft], .auth-dialog, header, [role=search]") ||
-    (el instanceof HTMLInputElement && (el.type === "password" || /pin|word|secret|key/i.test(el.name ?? "")));
+    !!el.closest("dialog, [data-no-draft], .auth-dialog, header, [role=search], [data-component=account], [data-component=settings], [data-component=login]") ||
+    (el instanceof HTMLInputElement && el.type === "password") ||
+    [el.name, el.id, el.getAttribute?.("placeholder"), el.getAttribute?.("aria-label")].some(v => SECRETISH.test(v ?? ""));
   const valueOf = el => (el.isContentEditable ? el.innerText : el.value);
   const setValue = (el, v) => {
     if (el.isContentEditable) el.innerText = v;

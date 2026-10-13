@@ -356,6 +356,7 @@ export async function mount(ctx, el) {
     // CHAT's OWN SETTINGS (its channels, who posts and reads each — `app-settings`), drawn in its room.
     if (cid === "settings") {
       if (server?.id !== s.id) await openServer(s, null);
+      if (!rs?.can?.(account?.id, "apps")) return void roomEl.replaceChildren(Object.assign(document.createElement("p"), { textContent: "Its owner and admins keep Chat's settings." }));
       const page = await (await ctx.require("app-settings")).appPage(s, "chat").catch(e => Object.assign(document.createElement("p"), { textContent: ctx.say(e) }));
       return void roomEl.replaceChildren(page);
     }

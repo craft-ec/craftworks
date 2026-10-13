@@ -17,6 +17,6 @@ export async function mount(api, el) {
   };
   api.onChange(draw);
   const w = await api.where();
-  el.querySelector(".w").textContent = `Here: ${w.route}${w.space ? ` in a space` : ""}`;
+  el.querySelector(".w").textContent = `Here: ${w.who}${w.space ? ` in a space` : ""}`;
   await draw();
 }

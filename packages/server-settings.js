@@ -66,7 +66,7 @@ export async function start(ctx) {
     ["roles", "Roles"],
     ["invites", "Invites"],
     ["log", "Moderation log"],
-    ["apps", "Apps & rules"],
+    ["apps", "Space rules"],
   ];
 
   const render = (host, server, opts = {}) => open(server, { ...opts, host });
@@ -337,9 +337,10 @@ export async function start(ctx) {
           ),
         );
       },
-      // APPS & RULES: the space's and each app's settings (`app-settings`: the one place of them) — who may do what.
+      // SPACE RULES: the space's own section (`app-settings`) — its capabilities' rules are in the Space app, each app's
+      // settings in the app (ARCHITECTURE §1).
       apps() {
-        main.append(el("h3", { textContent: "Apps & rules" }));
+        main.append(el("h3", { textContent: "Space rules" }), el("p", { className: "note" }, "What each capability allows — who reads, posts, edits — is in the ", el("a", { href: `#/spaces/${server.id}`, textContent: "Space app" }), "; an app's own settings are in the app."));
         const slot = el("div");
         main.append(slot);
         ctx.require("app-settings").then(a => a.page(server)).then(p => (slot.replaceWith(p), focus && p.querySelector(`#settings-${focus}`)?.scrollIntoView({ block: "start" })), err => say(err?.message ?? err));

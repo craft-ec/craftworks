@@ -18,7 +18,7 @@ export async function start(ctx) {
     session: {
       initial: "GUEST",
       events: {
-        open: { from: ["GUEST", "LOCKED", "OPEN", "OPEN_KEYLESS"], to: "OPEN" },
+        open: { from: ["GUEST", "LOCKED", "OPEN", "OPEN_KEYLESS", "REMOVED"], to: "OPEN" },
         keyless: { from: ["GUEST", "LOCKED", "OPEN", "OPEN_KEYLESS"], to: "OPEN_KEYLESS" },
         lock: { from: "*", to: "LOCKED" },
         removed: { from: "*", to: "REMOVED" },

@@ -66,6 +66,8 @@ export async function start(ctx) {
   const BASE = ["chat", "mail", "contact"];
   // The apps a list of enabled names opens: each app whose `needs` are all on (and, until the reset, an app turned on
   // by its own name by an older act).
+  // An OLDER act that turned on an APP by its name (before capabilities): what that app needs counts as enabled.
+  const legacyCaps = on => (ctx.apps ?? []).filter(a => on.includes(a.route.slice(1)) && !CAPABILITIES.includes(a.route.slice(1))).flatMap(a => a.needs ?? []);
   const appsFor = on => {
     const caps = new Set(on);
     return (ctx.apps ?? [])
@@ -287,12 +289,17 @@ export async function start(ctx) {
       acts: kind => (kind ? counted.filter(a => a.act === kind) : [...counted]),
       missing: () => (out ? [] : dag.missing(new Set(t.rows().map(x => x.key)))),
       invites: () => JSON.parse(gv.invites(Date.now())),
-      enabled: () => [...new Set([...BASE, ...gv.apps().filter(x => CAPABILITIES.includes(x))])],
+      enabled: () => [...new Set([...BASE, ...gv.apps().filter(x => CAPABILITIES.includes(x)), ...legacyCaps(gv.apps())])],
       base: () => BASE,
       enable: (cap, on) => {
         if (!CAPABILITIES.includes(cap)) throw new Error(`"${cap}" is not a capability a space enables`);
         if (BASE.includes(cap)) throw new Error(`${cap} is always on in a space`);
-        return r.act({ act: "app", app: cap, on: !!on });
+        // Off: also every OLDER app act that turned it on by an app's name.
+        const older = on ? [] : (ctx.apps ?? []).filter(a => gv.apps().includes(a.route.slice(1)) && !CAPABILITIES.includes(a.route.slice(1)) && (a.needs ?? []).includes(cap)).map(a => a.route.slice(1));
+        return (async () => {
+          for (const app of older) await r.act({ act: "app", app, on: false });
+          return r.act({ act: "app", app: cap, on: !!on });
+        })();
       },
       capabilities: () => CAPABILITIES,
       apps: () => appsFor([...BASE, ...gv.apps()]),

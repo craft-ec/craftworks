@@ -139,6 +139,8 @@ export async function start(ctx) {
     // nothing else then).
     const settings = async host => {
       if (sub !== "settings" || !sp || sp.outside) return false;
+      // (Only for who may manage the space's apps — the menu offers it to them alone, and so does the address.)
+      if (!(await settingsRead)) return void host.replaceChildren(Object.assign(document.createElement("p"), { textContent: "Its owner and admins keep this app's settings." })), true;
       const page = await (await ctx.require("app-settings")).appPage(sp, app).catch(e => Object.assign(document.createElement("p"), { textContent: ctx.say(e) }));
       host.replaceChildren(page ?? Object.assign(document.createElement("p"), { textContent: "This app has no settings of its own." }));
       return true;

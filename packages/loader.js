@@ -34,8 +34,9 @@ export async function run(boot) {
   const where = () => ({ route: ctx.route, sub: ctx.sub || null, starting: working.at(-1) ?? null });
   function report(k, source, why, d = {}) {
     if (!manifest) return;
-    const msg = String(why ?? "").slice(0, 160);
-    (healthIndex ??= require("index").catch(() => null)).then(ix => ix?.health?.({ k, s: String(source ?? "page").slice(0, 24), to: tag(msg), why: msg, d: { ...where(), ...d } })).catch(() => {});
+    // (Its key without ids — a timeout naming a contract would make every one a new report.)
+    const msg = String(why ?? "").replace(/[0-9a-f]{8,}/gi, "…").slice(0, 160);
+    (healthIndex ??= require("index").catch(() => ((healthIndex = null), null))).then(ix => ix?.health?.({ k, s: String(source ?? "page").slice(0, 24), to: tag(msg), why: msg, d: { ...where(), ...d } })).catch(() => {});
   }
   // HOW EACH VISIT WENT (owner 10-12: "not only an error collector" — a page that never finishes says nothing by
   // itself, and a person rarely knows what to report): every page load reports its OUTCOME, success included — how
@@ -63,7 +64,7 @@ export async function run(boot) {
     // even when nothing threw.
     const life = loaded.has("lifecycle") ? await require("lifecycle").then(l => l.snapshot(), () => null) : null;
     const spaces = me ? Object.keys(life?.space ?? {}).length : null;
-    const ix = await (healthIndex ??= require("index").catch(() => null));
+    const ix = await (healthIndex ??= require("index").catch(() => ((healthIndex = null), null)));
     await ix?.health?.({ k: "visit", s: "page", to: `${visit.pid}#${visit.n}`, why: "", d: { member: me === undefined ? "unknown" : !!me, spaces, boot: visit.boot, up: Math.round(performance.now() - t00), routes: visit.routes.slice(-12), faults: visit.faults, reconnects: visit.reconnects, waits, life } }).catch(() => {});
   }
   document.addEventListener("visibilitychange", () => {
@@ -150,9 +151,12 @@ export async function run(boot) {
   // SILENT — anything but absent / not yet / logged out / cancelled / an expected refusal is reported by its kind, from
   // where it was met (FOUNDATION.md §4; 10-13: ~460 reads turned every failure into "nothing" without a word).
   const EXPECTED = new Set(["absent", "not-yet", "login-needed", "cancelled", "refused-expected", "extension"]);
+  // (Slow or not-yet reads swallowed are NOT reported one by one — the visit's waits count them; audit 10-13: a timeout
+  // in a loop's catch reported every tick.)
+  const QUIET_SKIP = new Set([...EXPECTED, "transient"]);
   ctx.quiet = make => e => {
     const kind = faultNow?.classify(e).kind;
-    if (kind && !EXPECTED.has(kind)) met(working.at(-1) || ctx.route, e, "swallowed");
+    if (kind && !QUIET_SKIP.has(kind)) met(working.at(-1) || ctx.route, e, "swallowed");
     return make();
   };
   // WHAT A PERSON READS for a failure: its kind's words (`fault.say`), never a stack.
@@ -453,6 +457,7 @@ export async function run(boot) {
     ctx.appsOpened.add(route);
     ctx.log("page ready", { what: route, ms: Math.round(performance.now() - t0) });
     watchPage(rec, t0);
+    retries = 0; // (a page shown: the next failure gets its tries again)
   }
 
   // SAVING, said in ONE place (FOUNDATION.md §3): "Saving…" while any write is on its way, "Not saved" with why when
@@ -718,7 +723,11 @@ export async function run(boot) {
   // built on them (roles, spaces, names) RESUMED: the page saved (drafts) and loaded again where the person is. An
   // unreadable table that opens now changes in place (no resume).
   addEventListener("craftworks:reopen", async () => {
+    // (At most one resume a minute — remembered across the reload in the frame's name: its storage is refused here.)
+    const last = Number(/^cw-resumed:(\d+)$/.exec(window.name)?.[1] ?? 0);
+    if (Date.now() - last < 60000) return showAgain("tables opened again (resumed a moment ago: shown again instead)");
     if (loaded.has("drafts") && !(await require("drafts").then(d => d.flush(), () => false))) return showAgain("tables opened again (a draft not saved: no resume)");
+    window.name = `cw-resumed:${Date.now()}`;
     ctx.log("page", { what: "resumed: tables opened before their key was held, opened again with it" });
     location.reload();
   });

@@ -1,7 +1,9 @@
 // APP HOST, a service (FOUNDATION.md §3, "Apps are installed"): runs an app in ITS OWN FRAME — a sandboxed `srcdoc`
-// frame (an opaque origin of its own: it cannot reach this page, its DOM, its keys or its storage), with a content
-// security policy set before any of the app's code (no network) — and gives it the SYSTEM API by messages, this page
-// enforcing every call. Every app moves here in turn; an app not ours runs only this way.
+// frame (an opaque origin of its own: it cannot reach this page, its DOM, its keys or its storage; scripts only — no
+// popups, forms or modals), with a content security policy set before any of the app's code (no connections; the
+// page's own frame policy keeps it from navigating out) — and gives it the SYSTEM API by messages, this page enforcing
+// every call: writes and copying only on the person's own click or key, an app's own items and rows only, a budget of
+// calls a second. Every app moves here in turn; an app not ours runs only this way.
 //
 // IN THE FRAME, the app's module exports `mount(api, el)`; `api`:
 //   where()                       → { who, sub, space, saved, others, base } (where the app is open)
@@ -75,13 +77,17 @@ export async function start(ctx) {
     const prefix = `${app}/`;
     const mine = new Set(own);
     const frame = document.createElement("iframe");
-    frame.sandbox = "allow-scripts allow-forms allow-popups allow-modals";
+    // Scripts and forms (a sandbox without forms never fires a form's submit — the app's own handler; posting a form
+    // anywhere is refused by its CSP, `form-action 'none'`); no popups (a popup is a request CSP does not stop — data
+    // out), no modal loops freezing the page. (Navigating itself away: refused by the page's own frame policy, and the
+    // frame removed.)
+    frame.sandbox = "allow-scripts allow-forms";
     frame.title = app;
     frame.style.cssText = "border:0;width:100%;min-height:120px;display:block;background:transparent";
     const csp = "default-src 'none'; script-src 'unsafe-inline' data:; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'";
     const theme = document.querySelector("style[data-theme]")?.textContent ?? "";
     frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}">
-      <style>${theme.replace(/<\/style/gi, "")}</style>
+      <style>${theme.replace(/</g, "\\3c ")}</style>
       <style>body{margin:0;font-family:var(--cw-font);color:var(--cw-fg);background:transparent}.cw-card{display:grid;gap:4px;padding:var(--cw-space-3);text-decoration:none;color:inherit}
       .cw-excerpt{margin:0;white-space:pre-wrap;font:12px/1.4 var(--cw-font-mono);color:var(--cw-muted);max-height:6em;overflow:hidden}.cw-loading{color:var(--cw-muted)}</style></head>
       <style>html,body{height:auto!important;min-height:0!important}#cw-app{display:flow-root}</style>
@@ -89,11 +95,25 @@ export async function start(ctx) {
     // The SYSTEM's item page, under the frame (for `…/p/<ref>`).
     const system = document.createElement("div");
     el.replaceChildren(frame, system);
+    // An app that NAVIGATES its frame away (a second load) is not this app any more: removed.
+    let loads = 0;
+    frame.addEventListener("load", () => {
+      if (++loads > 1) frame.replaceWith(Object.assign(document.createElement("p"), { textContent: `${app} left its page and was closed.` }));
+    });
 
     const where = async () => {
       const at = await (await ctx.require("where")).of({ kinds: own, app, yours: "Yours" });
       return { at, plain: { who: at.who, sub: at.sub, space: at.space ? { id: at.space.id, name: at.space.name ?? null } : null, saved: at.saved, others: at.others, base: at.base } };
     };
+    // A WRITE (make, edit, remove, copy) only on the person's own gesture: this page's user activation — a click or a key
+    // inside the frame activates its ancestors too, so the app cannot fake it.
+    const gesture = what => {
+      if (!navigator.userActivation?.isActive) throw Object.assign(new Error(`${what}: only when you click or type in the app`), { kind: "refused" });
+    };
+    // What an app may set on an item: its own fields — never a level, a gate or write rules (the system's).
+    const META_DENY = new Set(["level", "gate", "write", "editions", "members"]);
+    const cleanMeta = m => Object.fromEntries(Object.entries(m && typeof m === "object" ? m : {}).filter(([k]) => !META_DENY.has(k)).slice(0, 32));
+    const AUDIENCES = new Set(["private", "public", "members"]);
     const ofMine = async ref => {
       const it = await items.get(ref);
       if (!it || !mine.has(it.kind)) throw Object.assign(new Error("not one of this app's items"), { kind: "refused" });
@@ -110,12 +130,27 @@ export async function start(ctx) {
       read: async ({ saved = false } = {}) => plain((await (await where()).at.read({ kinds: own })).filter(it => mine.has(it.kind))),
       get: async ref => plain(await ofMine(ref)),
       submit: async it => {
+        gesture("making an item");
         if (!mine.has(it?.kind)) throw Object.assign(new Error(`this app makes ${[...mine].join(", ") || "nothing"}`), { kind: "refused" });
         const { kind, title, body, audience, meta } = it;
-        return items.submit({ kind, title, body, audience, meta, board: ctx.space && ctx.space !== "discover" ? ctx.space : null });
+        if (audience != null && !AUDIENCES.has(audience)) throw Object.assign(new Error(`who sees it: ${[...AUDIENCES].join(", ")}`), { kind: "refused" });
+        return items.submit({ kind, title, body, audience, meta: cleanMeta(meta), board: ctx.space && ctx.space !== "discover" ? ctx.space : null });
       },
-      edit: async (ref, body, meta) => (await ofMine(ref), await items.editItem(ref, body, { meta }), true),
-      removeItem: async ref => (await ofMine(ref), await items.remove(ref), true),
+      edit: async (ref, body, meta) => {
+        gesture("changing an item");
+        const it = await ofMine(ref);
+        await items.editItem(ref, body, { meta: { ...cleanMeta(meta), ...Object.fromEntries(Object.entries(it.meta ?? {}).filter(([k]) => META_DENY.has(k))) } });
+        return true;
+      },
+      // Only the person's OWN item (never another's, even where they may moderate).
+      removeItem: async ref => {
+        gesture("removing an item");
+        const it = await ofMine(ref);
+        const me = await (await ctx.require("space")).me();
+        if (it.by !== me) throw Object.assign(new Error("only your own items"), { kind: "refused" });
+        await items.remove(ref);
+        return true;
+      },
       pageOf: async ref => items.pageOf(ref, [...mine][0]),
       linkOf: async ref => items.linkOf(ref, app),
       tabs: async entries => {
@@ -128,7 +163,7 @@ export async function start(ctx) {
         location.hash = hash;
         return true;
       },
-      copy: async text => (await navigator.clipboard.writeText(String(text).slice(0, 100000)), true),
+      copy: async text => (gesture("copying"), await navigator.clipboard.writeText(String(text).slice(0, 100000)), true),
       say: async message => ctx.say(new Error(message)),
       lib: async name => {
         if (!LIBS.has(name)) throw Object.assign(new Error(`no library "${name}" for apps`), { kind: "refused" });
@@ -139,13 +174,25 @@ export async function start(ctx) {
         await t.decided?.();
         return t.rows().filter(r => r.key.startsWith(prefix) && r.value).map(r => ({ key: r.key.slice(prefix.length), value: r.value }));
       },
-      put: async (key, value) => (await (await tableOf()).put(own_(key), String(value)), true),
+      // (Its rows: at most 500, each at most 16 KiB.)
+      put: async (key, value) => {
+        const v = String(value);
+        if (v.length > 16384) throw Object.assign(new Error("a row of at most 16 KiB"), { kind: "refused" });
+        const t = await tableOf();
+        if (!t.rows().some(r => r.key === own_(key)) && t.rows().filter(r => r.key.startsWith(prefix) && r.value).length >= 500) throw Object.assign(new Error("at most 500 rows an app"), { kind: "refused" });
+        await t.put(own_(key), v);
+        return true;
+      },
       remove: async key => (await (await tableOf()).remove(own_(key)), true),
     };
+    // CALLS a second, at most (a flood starves the page): past it, refused.
+    let budget = 30;
+    const refill = setInterval(() => (frame.isConnected ? (budget = 30) : clearInterval(refill)), 1000);
     const onMessage = async e => {
       if (!frame.isConnected) return (removeEventListener("message", onMessage), removeEventListener("craftworks:route", onRoute));
       if (e.source !== frame.contentWindow) return;
       const m = e.data ?? {};
+      if (typeof m.id === "number" && budget-- <= 0) return frame.contentWindow?.postMessage({ id: m.id, ok: false, error: "too many calls", kind: "refused" }, "*");
       if (m.event === "height") return void (frame.style.height = `${Math.max(120, Math.min(Number(m.h) || 0, 20000))}px`);
       const { id, op, args = [] } = m;
       if (typeof id !== "number") return;

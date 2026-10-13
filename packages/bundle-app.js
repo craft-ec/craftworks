@@ -49,6 +49,7 @@ export async function mount(ctx, el) {
   }
 
   async function one(bref) {
+    const meId = await (await ctx.require("space")).me();
     const mineHere = at.who === "mine" || (at.who === "space" && !at.outside);
     const b = (mineHere ? (await bundles.of(at.space && !at.outside ? at.space : null)).find(x => x.ref === bref) : null) ?? (await items.get(bref, { outside: await items.outsideOf(bref).catch(ctx.quiet(() => null)) }).then(it => (it ? { ref: it.ref, title: it.title, members: it.meta?.members ?? [], item: it } : null)));
     if (!b) return root.replaceChildren(h("p", { className: "none", textContent: "Not found." }));
@@ -56,7 +57,8 @@ export async function mount(ctx, el) {
     const rows = b.members.map((ref, i) => {
       const it = got[i];
       const label = it ? `${kinds.of(it.kind)?.label ?? it.kind} · ${it.title || String(it.body ?? "").slice(0, 60) || "untitled"}` : "(not readable here)";
-      const tools = !mineHere
+      // (Only its author changes a bundle: the tools are theirs.)
+      const tools = !mineHere || b.item?.by !== meId
         ? null
         : h(
             "span",

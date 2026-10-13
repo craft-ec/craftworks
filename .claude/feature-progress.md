@@ -2492,3 +2492,20 @@ Build order (FOUNDATION §7):
       sized to its content; the ITEM PAGE is the system's, drawn under the frame for `…/p/<ref>`. Paste rewritten on the
       API alone, published as bytes. fx v673: framed; 15 languages via lib; a paste saved → its system page under the
       frame with Raw / Copy link; raw view; listed; making a note from Paste's frame REFUSED.
+- [x] RELEASE AUDIT (10-13: 4 reviewers — storage/keys/lifecycle, loader/faults/telemetry, desktop/apps, frame
+      security — plus release mechanics). FIXED: drafts would have kept RECOVERY WORDS (account fields without a secret
+      name; never live) — no field of the account, settings or login screens is drafted, names/ids/placeholders/labels
+      checked; a framed app could send data out by a POPUP — sandbox scripts+forms only, writes and copy need the
+      person's own click/key (the page's user activation), audience allowlist, level/gate/write/editions/members never
+      set by an app, remove only your own, a call budget a second, row caps, a frame that navigates away is closed;
+      merged table decided only once every writer's feed ANSWERED, and UNREADABLE while one is sealed (a recovery read
+      "Not listed"); upkeep.tick checks it may write (called directly by Chat and a space's Home); a registration's
+      channel opens known absent (a slow node left the group unmade); a long read undecided not retried within a
+      minute; swallowed transient/not-yet failures not reported one by one, ids out of report keys; a failed `index`
+      load no longer silences reports; the keys-arrived resume at most once a minute (window.name); Board's post rule
+      read in the text domain; older app acts count their apps' needs (and turn off with them); bundle tools for its
+      author only; app settings pages refused to non-admins by address too; the dock skips token packages a site
+      lacks. MECHANICS: token-off build idle (no load failures); no grant prompt for the 3 new tables (home app);
+      core/MLS/identity wasm unchanged (no re-login); release must be built from a clean worktree at HEAD (the tree holds
+      uncommitted token edits). Verified fx v683: recovery complete without reload, framed Paste and Sample, frame
+      boundary, drafts never keep words (control: a plain field is kept).

@@ -181,7 +181,9 @@ export async function start(ctx) {
       const bundles = await ctx.require("bundles");
       const sid = items.spaceIdOf?.(ref);
       const sp = sid ? await space.find(sid, { wait: 3000 }).catch(ctx.quiet(() => null)) : null;
-      const all = [...(await bundles.of(null).catch(ctx.quiet(() => []))), ...(sp ? await bundles.of(sp).catch(ctx.quiet(() => [])) : [])];
+      // (Your own bundles only: only its author changes a bundle.)
+      const meId = await space.me();
+      const all = [...(await bundles.of(null).catch(ctx.quiet(() => []))), ...(sp ? await bundles.of(sp).catch(ctx.quiet(() => [])) : [])].filter(b => b.item?.by === meId);
       if (!all.length) return page;
       const sel = document.createElement("select");
       sel.ariaLabel = "Add to a bundle";

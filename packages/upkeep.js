@@ -21,6 +21,9 @@ export async function start(ctx) {
   const published = new Set(); // open spaces whose roster this page made public
   async function tick() {
     if (running) return;
+    // (Called directly too — a Chat or a Space Home asks — so its own rule here: only while this device may write for
+    // the account; audit 10-13.)
+    if ((await keys.writable().catch(() => "unknown")) !== true) return;
     running = true;
     try {
       const me = await space.account();

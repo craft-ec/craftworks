@@ -162,8 +162,8 @@ export async function mount(ctx, el) {
       const n = r.members().length;
       // BOARD'S OWN SETTINGS (its owner and admins): who may post, and its rules (shown here).
       const rules = r.config("board", "rules", "");
-      // Its settings: on the space's Home (`app-settings`: the one place).
-      const mayPost = r.allows("post", me, "board");
+      // Who may post: the TEXT domain's rule (`kinds.policyDomain`: what enforces a post — set in the Space app).
+      const mayPost = r.allowsIn("post", me, "text");
       return [
         h(
           "div",

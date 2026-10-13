@@ -436,12 +436,14 @@ export async function start(ctx) {
     let answered = false; // the last read had the node's answer (the tail, or "not found"), not silence
     let st = { s: "unknown" }; // the read state (FOUNDATION.md §2)
     let deciding = null; // the second, long read of an undecided tail (shared)
+    let longReadAt = 0; // when the last long read ended still undecided (not tried again within a minute)
     async function decide() {
       await t.answer();
       if (st.s !== "unknown") return st;
+      if (Date.now() - longReadAt < 60000) return st;
       deciding ??= read(WAIT.answer)
         .catch(e => ctx.failed("table not decided", e, `${app}: ${e?.message ?? e}`))
-        .finally(() => (deciding = null));
+        .finally(() => ((deciding = null), st.s === "unknown" && (longReadAt = Date.now())));
       await deciding;
       return st;
     }
@@ -912,7 +914,9 @@ export async function start(ctx) {
     // So the directory never decides that the channel is ABSENT: a sealed directory reads as empty on such a node, and
     // "not listed" made it start a SECOND group for the account (fx/fy 10-12: "this node created the account's group"
     // instead of joining it). The channel is always read for what it is.
-    return tail(sp.shared, name, { known: null, beforeCreate: () => listInDirectory(name).catch(ctx.quiet(() => {})) });
+    // A REGISTRATION's channel cannot exist yet (the account was made this moment): known absent, never waited on
+    // (audit 10-13: on a slow node the long read ended undecided and the new group was never made).
+    return tail(sp.shared, name, { known: sp.fresh ? false : null, beforeCreate: () => listInDirectory(name).catch(ctx.quiet(() => {})) });
   }
   // A SCOPE: a space seen from this node — who writes in it, where each writer lists its tables, how its tails open.
   // The account: the directory names its nodes, their catalogs are account tables. Another space: its GROUP's members write, each listing the space's tables in its own catalog
@@ -1213,7 +1217,7 @@ export async function start(ctx) {
         lazy,
         page,
         // What each writer's feed is here (to see why a table reads as it does).
-        feedsNow: () => all.map(f => ({ owner: f.owner.slice(0, 12), absent: !!f.absent, lazy: !!f.lazy, info: f.info ?? null })),
+        feedsNow: () => all.map(f => ({ owner: f.owner.slice(0, 12), absent: !!f.absent, lazy: !!f.lazy, state: f.state?.s ?? null, info: f.info ?? null })),
         // THIS WRITER's own feed read whole (a lazy table: what it copies or checks of its own), the others as paged.
         ownWhole: async () => {
           await me.whole?.();
@@ -1261,11 +1265,15 @@ export async function start(ctx) {
           const own = me.state ?? { s: "unknown" };
           if (own.s !== "present" && own.s !== "absent") return own;
           if (!gathered) return { s: "unknown", why: "writers' feeds still being read" };
+          // (Every other writer's feed ANSWERED too — not merely opened, shown after WAIT.hint: audit 10-13.)
+          if (all.some(f => f !== me && f.state?.s === "unknown")) return { s: "unknown", why: "a writer's feed not answered yet" };
+          // (A writer's feed there but SEALED here — a recovery before its keys arrived: never an empty "present", R5.)
+          if (all.some(f => f !== me && f.state?.s === "unreadable")) return { s: "unreadable", why: "a writer's feed sealed here" };
           return unopened ? { s: "unreadable", why: `${unopened} writer feed(s) not read here` } : { s: "present" };
         },
         decided: async () => {
           await me.decided?.();
-          await Promise.race([gathering, new Promise(r => setTimeout(r, WAIT.answer))]);
+          await Promise.race([gathering.then(() => Promise.all(all.map(f => f.decided?.()))), new Promise(r => setTimeout(r, WAIT.answer))]);
           return t.state;
         },
         // R3: the writers whose feed did not open here, GATHERED AGAIN (keys arrived since).

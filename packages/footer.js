@@ -4,14 +4,19 @@
 // closes it). Switching apps is here; the header names the app.
 // (A new version of the app reaches an open page by itself: the loader loads it once nothing would be lost.)
 export function mount(ctx, el) {
-  // Every open page keeps the network's clock going (`beacon`: it extends the beacon when it stalls).
+  // Every open page keeps the network's clock going (`beacon`: it extends the beacon when it stalls) — where the site
+  // has the token's packages at all.
+  if (!ctx.shaOf?.("beacon")) return mountDock(ctx, el);
   ctx.require("beacon").catch(e => ctx.log("beacon", { what: e.message ?? String(e) }));
   // …and publishes the current epoch's statement if nobody has (`statement`: anyone may).
   ctx.require("statement").catch(e => ctx.log("statement", { what: e.message ?? String(e) }));
   ctx.require("keeper").catch(e => ctx.log("keeper", { what: e.message ?? String(e) }));
   // …and witnesses what its stake is drawn for (`witness`: its member key, through its identity delegate).
   ctx.require("witness").catch(e => ctx.log("witness", { what: e.message ?? String(e) }));
+  mountDock(ctx, el);
+}
 
+function mountDock(ctx, el) {
   el.innerHTML = `<style>@layer components {
     .cw-dock-pad { height: 76px; }
     .cw-dock { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 2147482000; display: flex; align-items: flex-end; gap: 4px;

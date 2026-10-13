@@ -466,7 +466,7 @@ export async function start(ctx) {
         if (!r.mlsState) return null; // not the home site, or this node has not joined yet
         mls.load(s.didBytes, await keyLog(s.didBytes), bytes(r.mlsState));
       }
-      if (!lifeIs("MEMBER")) life.transition("account", ME, "loaded", { epoch: mls.status().epoch });
+      if (!lifeIs("MEMBER") && !lifeIs("REMOVED")) life.transition("account", ME, "loaded", { epoch: mls.status().epoch });
       const channel = await storage.table(CHANNEL);
       const applied = await catchUp();
       if (mls.status().removed) return forget();
