@@ -2350,6 +2350,12 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
   place. Proven on fx/fy (fresh account with a handle, its own space, a chat message): joined + 1 earlier epoch
   recovered, handle, space, message — no manual reload; also on the release tree itself before publishing.
   Also carries 8c2d17e (reports name the site; members-only refusal not a fault). 1179/1263 pieces.
+- Live v385 (2026-10-13, loader v40): release6 = main c2b0a8e, token off, contracts/devices + packages/build (core,
+  mls, identity …) = release5's bytes — every wasm package identical to v384 (no PIN prompt). Carries FOUNDATION 1-8,
+  the desktop (dock, app viewer, Space app), apps in frames (Paste, sample), bundles (public, with editions when the
+  token is on), drafts without secrets, failures handled in one place (total/strict/background/optional + build
+  check). Verified on fx from the release tree (v686): recovery complete, paste. Live manifest after publish = the
+  fx-verified manifest (139 packages, 0 differ); site/manifest 200.
 
 ## FOUNDATION (owner 10-12) — docs/FOUNDATION.md is the design; full reset at the end (no migration)
 
