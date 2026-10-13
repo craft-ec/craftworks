@@ -13,7 +13,7 @@ export async function mount(api, el) {
       .pb .new { display: grid; gap: var(--cw-space-2); }
       .pb .opts { display: flex; flex-wrap: wrap; gap: var(--cw-space-2); align-items: center; }
       .pb .opts label { display: inline-flex; gap: 6px; align-items: center; font-size: var(--cw-text-sm); color: var(--cw-muted); }
-      .pb textarea.code { box-sizing: border-box; min-height: 45vh; width: 100%; font: 13px/1.5 var(--cw-font-mono); tab-size: 2; resize: vertical; white-space: pre; }
+      .pb textarea.code { box-sizing: border-box; min-height: 360px; width: 100%; font: 13px/1.5 var(--cw-font-mono); tab-size: 2; resize: vertical; white-space: pre; }
       .pb .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--cw-space-3); align-items: start; }
       .pb .said { color: var(--cw-danger); margin: 0; }
       .pb .none { color: var(--cw-muted); }

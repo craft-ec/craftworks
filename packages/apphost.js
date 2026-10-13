@@ -62,8 +62,12 @@ export async function start(ctx) {
       onRoute: f => routeFns.push(f), onChange: f => changeFns.push(f), ui,
     };
     // ITS HEIGHT, told (the page fits the frame to it).
-    new ResizeObserver(() => parent.postMessage({ event: "height", h: document.documentElement.scrollHeight }, "*")).observe(document.body);
-    import(document.currentScript.dataset.src).then(m => m.mount(api, document.body)).catch(e => (document.body.textContent = "This app did not start: " + (e?.message ?? e)));
+    // (The APP's own element is measured — never the body or the document, which the theme sizes to the frame: a
+    // feedback loop.)
+    const appEl = document.getElementById("cw-app");
+    const tell = () => parent.postMessage({ event: "height", h: Math.ceil(appEl.getBoundingClientRect().height) + 8 }, "*");
+    new ResizeObserver(tell).observe(appEl);
+    import(document.currentScript.dataset.src).then(m => m.mount(api, appEl)).catch(e => (appEl.textContent = "This app did not start: " + (e?.message ?? e)));
   `;
 
   function mount(el, { app, bytes, kinds: own = [] }) {
@@ -80,7 +84,8 @@ export async function start(ctx) {
       <style>${theme.replace(/<\/style/gi, "")}</style>
       <style>body{margin:0;font-family:var(--cw-font);color:var(--cw-fg);background:transparent}.cw-card{display:grid;gap:4px;padding:var(--cw-space-3);text-decoration:none;color:inherit}
       .cw-excerpt{margin:0;white-space:pre-wrap;font:12px/1.4 var(--cw-font-mono);color:var(--cw-muted);max-height:6em;overflow:hidden}.cw-loading{color:var(--cw-muted)}</style></head>
-      <body><script data-src="data:text/javascript;base64,${b64(bytes)}">${RUNTIME}</script></body></html>`;
+      <style>html,body{height:auto!important;min-height:0!important}#cw-app{display:flow-root}</style>
+      <body><div id="cw-app"></div><script data-src="data:text/javascript;base64,${b64(bytes)}">${RUNTIME}</script></body></html>`;
     // The SYSTEM's item page, under the frame (for `…/p/<ref>`).
     const system = document.createElement("div");
     el.replaceChildren(frame, system);
