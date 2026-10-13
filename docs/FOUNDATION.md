@@ -241,12 +241,16 @@ ecosystem stable, every page reports how it WENT, success included (sealed to su
   `JOIN_FAILED`, a space `WELCOME_FAILED` are outcomes in the visit even when nothing threw.
 - The hourly heartbeat (`seen`, members' spaces) stays.
 
-## 5. No migration: a fresh start (owner 2026-10-12)
+## 5. No migration, no reset (owner 2026-10-12, 10-13)
 
-Craftworks is in beta with no real usage, so the foundation lands as a FULL RESET, not a migration: no conversion of
-existing accounts, spaces or acts (the `app` act is simply replaced by `enable`/`disable`), formats change freely, and
-the damaged owner account is not repaired — everyone, the owner included, makes a new account on the reset. Its guards
-(§3 account group) are what keep a stray group from happening again.
+Craftworks is in beta: the foundation lands with NO migration code — no converters for older accounts, spaces or acts.
+And NO reset (10-13): Freenet deletes nothing, and a change that moves every address (a new code epoch) only makes old
+data unreachable to the new app, not gone — while a new identity build alone (10-04) moves no address at all and leaves
+old data readable by nothing that understands it. So the network stays as it is: the new code reads existing data (an
+older space's apps turned on by name still count), and what cannot be opened — a listing pointing at a space or post
+under keys nobody holds — is a READ STATE (§2): left out of what is shown, and counted in health. The owner's damaged
+account stays usable from its other devices, or a new one is made; its guards (§3 account group) keep a stray group from
+happening again.
 
 ## 6. Shipped patches this replaces
 
@@ -275,7 +279,7 @@ the damaged owner account is not repaired — everyone, the owner included, make
    their own frames and the system API before any app not ours is offered); Home screen, App Store, Spaces and Settings apps; a space's enabled capabilities
    (`enable`/`disable` acts in place of `app`); apps' `needs`/`can use` in manifests; each app's own space
    sidebar and settings schema; the header's space and app dropdowns, the rail and `spaces-panel` retired.
-9. **Reset** (§5): new contract epoch; every account and space made fresh.
+9. **Leftovers** (§5): listings that point at what cannot be opened left out of Discover and the directory, counted in health.
 
 Each phase: a test with a negative control (the old behaviour fails it), the full-recovery check on fx/fy (a fresh
 account with a handle, its own space, a message: recovered with no reload), then a release.
