@@ -112,9 +112,11 @@ export async function start() {
     /* THE SHELL, like an app on a phone: the window and the canvas never scroll. The header on top and the footer at
        the bottom stay; between them, each component of the page is a PANEL that scrolls itself. The whole window, edge
        to edge. A page with panes of its own (each scrolling) marks its component .cw-fill: it gets the canvas bare. */
-    html, body { height: 100%; overflow: hidden; }
+    /* (CLIP, not only hidden: a hidden overflow is still scrolled by a script — a scrollIntoView while a page loaded slid
+       the whole app up and clipped the header, owner 10-13. Only the body slot's section scrolls.) */
+    html, body { height: 100%; overflow: hidden; overflow: clip; }
     body { box-sizing: border-box; max-width: none; margin: 0; padding: 0; }
-    #app { height: 100dvh; display: grid; grid-template: "head head" auto "side body" minmax(0, 1fr) "foot foot" auto / auto minmax(0, 1fr); }
+    #app { height: 100dvh; overflow: clip; display: grid; grid-template: "head head" auto "side body" minmax(0, 1fr) "foot foot" auto / auto minmax(0, 1fr); }
     #app > .slot-header { grid-area: head; } #app > .slot-footer { grid-area: foot; } #app > .slot-body { grid-area: body; }
     #app > .slot-side { grid-area: side; min-height: 0; overflow: hidden; display: flex; }
     #app > .slot-side > section { margin: 0; display: flex; min-height: 0; position: relative; min-width: 64px; }
@@ -135,7 +137,7 @@ export async function start() {
     #app > .slot-header, #app > .slot-footer { flex: none; }
     #app > .slot-header > section, #app > .slot-footer > section { margin: 0; }
     #app > .slot-header .bar, #app > .slot-footer p { padding-left: var(--cw-gutter); padding-right: var(--cw-gutter); }
-    #app > .slot-body { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+    #app > .slot-body { flex: 1 1 auto; min-height: 0; overflow: hidden; overflow: clip; display: flex; flex-direction: column; }
     #app > .slot-body > section { flex: 1 1 auto; min-height: 0; margin: 0; overflow-y: auto; overscroll-behavior: contain;
       padding: var(--cw-space-3) var(--cw-gutter); box-sizing: border-box; }
     #app > .slot-body > section { position: relative; }

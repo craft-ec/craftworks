@@ -353,8 +353,8 @@ export async function run(boot) {
       get(t, k) {
         const x = Reflect.get(t, k, t);
         if (typeof x !== "function") return x;
-        return (...args) => {
-          const r = x.apply(t, args);
+        const counted = f => (...args) => {
+          const r = f.apply(t, args);
           if (!(r instanceof Promise)) return plain(r) ? view(r, work) : r;
           return work(
             r.then(got => {
@@ -363,6 +363,10 @@ export async function run(boot) {
             }),
           );
         };
+        // A function's OWN functions seen the same way — a total read's `.strict` (10-13: the wrapper dropped them, and
+        // every component reading `.strict` failed: "membership.nodes.strict is not a function").
+        const own = Object.entries(x).filter(([, v]) => typeof v === "function");
+        return Object.assign(counted(x), Object.fromEntries(own.map(([n, f]) => [n, counted(f)])));
       },
     });
   }
@@ -779,6 +783,22 @@ export async function run(boot) {
   // Tables opened before their key was held (a words login: its keys arrived after the page opened) — every capability
   // built on them (roles, spaces, names) RESUMED: the page saved (drafts) and loaded again where the person is. An
   // unreadable table that opens now changes in place (no resume).
+  // PROGRESS (`craftworks:progress` { lines }: the lifecycle's, one line per process in progress — FOUNDATION.md §1):
+  // drawn in one pill at the top; no lines, no pill.
+  let pill = null;
+  addEventListener("craftworks:progress", ({ detail }) => {
+    const lines = detail?.lines ?? [];
+    if (!lines.length) return void pill?.remove();
+    if (!pill) {
+      pill = document.createElement("div");
+      pill.setAttribute("role", "status");
+      pill.style.cssText =
+        "position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:2147483002;background:Canvas;color:CanvasText;max-width:min(90vw,640px);" +
+        "border:1px solid #8886;border-radius:12px;box-shadow:0 4px 18px #0004;padding:8px 14px;font-size:.9rem;text-align:center";
+    }
+    pill.replaceChildren(...lines.map(t => Object.assign(document.createElement("div"), { textContent: `⏳ ${t}` })));
+    if (!pill.isConnected) document.body.append(pill);
+  });
   // WHAT A TAB REMEMBERS across its reloads (its frame's name: storage is refused here): when it last resumed, when it
   // last reloaded for a node that came back. `cw:{json}` (an older `cw-resumed:<ms>` read as such).
   const tabState = () => {

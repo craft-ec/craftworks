@@ -12,6 +12,10 @@ export async function start(ctx) {
   const { Fault, met } = await ctx.require("fault");
 
   // THE MACHINES. `events`: event → { from: [states] | "*", to, guard?(detail) → true | why-not }.
+  // PROGRESS, the ONE way a running process shows on the page (owner 10-13: "can the progress bar become one
+  // implementation and standard for all lifecycle?"): `progress: { STATE: text | (key, detail) => text }` — said while
+  // the process is in that state; `after` (ms): only once it has lasted that long (a quick step never flickers);
+  // `ended: { STATE: { text, ms } }` — how it finished, said for `ms`. The page's pill lists every process in progress.
   const MACHINES = {
     // THE SESSION (who this page is for). OPEN_KEYLESS: logged in, but the account's keys did not come — it must not
     // write to the card, key packages, welcomes or asks (gated from phase 4), and says "keys not recovered".
@@ -28,6 +32,16 @@ export async function start(ctx) {
     // account's channel is not there; a words login walks the channel's history and joins.
     account: {
       initial: "NONE",
+      progress: {
+        CONFIRMING_CHANNEL: "Recovering your account (1 of 4): finding your account's keys…",
+        WALKING: "Recovering your account (2 of 4): opening your keys…",
+        JOINING: "Recovering your account (3 of 4): adding this device…",
+        CREATING: "Setting up your account's keys…",
+      },
+      ended: {
+        MEMBER: { from: ["WALKING", "JOINING", "CREATING"], text: "Recovering your account (4 of 4): opening your spaces and tables — keep this page open a minute", ms: 90000 },
+        JOIN_FAILED: { text: "Recovery stopped — try the recovery words again (the trace says why)", ms: 30000 },
+      },
       events: {
         login: { from: "*", to: "CONFIRMING_CHANNEL" },
         walk: {
@@ -67,6 +81,8 @@ export async function start(ctx) {
     // the visit's snapshot).
     app: {
       initial: "CLOSED",
+      progress: { OPENING: key => `Opening ${key}…` },
+      after: 4000,
       quiet: ["opening", "open", "closed"],
       events: {
         opening: { from: "*", to: "OPENING" },
@@ -79,6 +95,8 @@ export async function start(ctx) {
     // longer shown: a tail can hide, not erase) or GONE (forgotten), or REFUSED with why.
     delete: {
       initial: "NONE",
+      progress: { REQUESTED: (_, d) => `Deleting${d?.what ? ` ${String(d.what).slice(0, 40)}` : ""}…` },
+      ended: { REFUSED: { text: "Not deleted (the trace says why)", ms: 15000 } },
       events: {
         request: { from: "*", to: "REQUESTED" },
         hidden: { from: ["REQUESTED"], to: "HIDDEN" },
@@ -117,6 +135,35 @@ export async function start(ctx) {
       .require("index")
       .then(ix => ix.health({ k: `lifecycle-${machine}`, s: String(key).slice(0, 12), to: `${from}>${to}`, why: `${event}: ${from} → ${to}`, d: detail })));
 
+  // THE PILL'S LINES: one per process in progress (`machine|key` → text), sent whole on every change
+  // (`craftworks:progress` { lines }: the loader draws them).
+  const lines = new Map();
+  const timers = new Map();
+  const say = () => dispatchEvent(new CustomEvent("craftworks:progress", { detail: { lines: [...lines.values()] } }));
+  const textOf = (t, key, detail) => (typeof t === "function" ? t(key, detail) : t);
+  function progressOf(machine, key, from, to, detail) {
+    const m = MACHINES[machine];
+    if (!m.progress && !m.ended) return;
+    const id = `${machine}|${key}`;
+    clearTimeout(timers.get(id));
+    timers.delete(id);
+    const was = lines.delete(id);
+    const now = m.progress?.[to];
+    const end = m.ended?.[to];
+    if (now) {
+      const show = () => (lines.set(id, textOf(now, key, detail)), say());
+      if (m.after) timers.set(id, setTimeout(show, m.after));
+      else show();
+      if (was) say();
+      return;
+    }
+    if (end && (!end.from || end.from.includes(from))) {
+      lines.set(id, textOf(end.text, key, detail));
+      timers.set(id, setTimeout(() => (lines.delete(id), say()), end.ms ?? 10000));
+    }
+    say();
+  }
+
   function transition(machine, key, event, detail = {}) {
     const m = MACHINES[machine];
     if (!m) throw met("lifecycle", new Fault("bug", `lifecycle: no machine "${machine}"`));
@@ -134,6 +181,7 @@ export async function start(ctx) {
       report(machine, key, from, to, event, detail);
     }
     dispatchEvent(new CustomEvent("craftworks:lifecycle", { detail: { machine, key, from, to, event } }));
+    progressOf(machine, key, from, to, detail);
     for (const f of listeners.get(machine) ?? []) Promise.resolve(f(key, to, from, event, detail)).catch(e => met("lifecycle", e));
     return to;
   }

@@ -107,3 +107,32 @@ test("two ticks at once (a timer and now()) never move the job from a state they
   assert.ok(runs >= 1);
   assert.equal(healths.filter(h => /bug|refused/.test(h.k)).length, 0);
 });
+
+test("progress is the lifecycle's: one line per process in progress, its end said, then gone", async () => {
+  const seen = [];
+  const was = globalThis.dispatchEvent;
+  globalThis.dispatchEvent = e => (e.type === "craftworks:progress" && seen.push(e.detail.lines), true);
+  const has = re => seen.at(-1).some(l => re.test(l));
+  try {
+    // (Other tests' processes may still show an end line: counted from here.)
+    L.transition("account", "p", "login", {});
+    const base = seen.at(-1).length - 1;
+    assert.ok(has(/1 of 4/), "the first stage is said");
+    L.transition("account", "p", "walk", { channel: "present", info: true });
+    assert.ok(has(/2 of 4/) && !has(/1 of 4/), "the next stage replaces it");
+    L.transition("delete", "x", "request", { what: "a post" });
+    assert.equal(seen.at(-1).length, base + 2, "two processes in progress: two lines");
+    assert.ok(has(/Deleting a post/));
+    L.transition("delete", "x", "gone", {});
+    assert.equal(seen.at(-1).length, base + 1, "a process done leaves the pill");
+    L.transition("account", "p", "join", {});
+    L.transition("account", "p", "joined", { epoch: 1 });
+    assert.ok(has(/4 of 4/), "how it ended is said");
+    // A machine with no progress (a space's membership) never touches the pill.
+    const n = seen.length;
+    L.transition("space", "s", "held", {});
+    assert.equal(seen.length, n);
+  } finally {
+    globalThis.dispatchEvent = was;
+  }
+});

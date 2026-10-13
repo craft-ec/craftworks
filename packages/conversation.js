@@ -496,7 +496,10 @@ export async function start(ctx) {
     const now = (await keys.group(sp).ready())?.epoch ?? 0;
     const below = Math.max(Number(detail.below) + 1 || 0, now);
     const ranked = (r?.members() ?? []).sort((a, b) => ["owner", "admin"].includes(b.role) - ["owner", "admin"].includes(a.role)).map(m => m.did);
-    const to = [...new Set([sp.governance?.owner, ...ranked].filter(d => d && d !== me.id))].slice(0, 12);
+    // THIS ACCOUNT FIRST (its other devices hold the space's whole history — 10-13: the owner's recovered device asked
+    // only the other members, who joined after the epochs it lacked; its own original device was never asked), then
+    // the owner and admins. (This device reads the ask too: it holds none of what it asks, and answers nothing.)
+    const to = [...new Set([me.id, sp.governance?.owner, ...ranked].filter(Boolean))].slice(0, 12);
     for (const did of to) await ctx.background("conversation: index.send", index.send(did, { kind: "history-ask", space: sp.id, from: me.id, below, at: Date.now() }));
     ctx.log("conversation", { what: `${sp.name}: its history (epochs below ${below}) asked of ${to.length} member(s)` });
   });
