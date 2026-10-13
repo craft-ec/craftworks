@@ -2485,3 +2485,10 @@ Build order (FOUNDATION §7):
       Verified fx v671–672: space Home → Spaces app; a capability's rules shown; Wiki's menu lists the space; Board and
       Chat settings in-app; Contact without group tabs; a words recovery complete; a bundle across a note and a post —
       added from their pages, reordered, one taken out.
+- [x] Apps into frames, 1: PASTE (owner 10-13: every app framed; the system — loader, header, Home, Spaces, Settings,
+      Store, capabilities — stays in the page). `apphost` v2 system API: where/read/get/submit/edit/remove (only the
+      app's manifest `kinds`), pageOf/linkOf, tabs (its menu), go, copy, say, own rows, lib (a pure library's data:
+      `highlight`), route and change events; toolkit `api.ui` (h, loading, card, action); the theme copied in; the frame
+      sized to its content; the ITEM PAGE is the system's, drawn under the frame for `…/p/<ref>`. Paste rewritten on the
+      API alone, published as bytes. fx v673: framed; 15 languages via lib; a paste saved → its system page under the
+      frame with Raw / Copy link; raw view; listed; making a note from Paste's frame REFUSED.

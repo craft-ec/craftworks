@@ -366,7 +366,10 @@ export async function run(boot) {
       // system API only (FOUNDATION.md §3, "Apps are installed").
       if (mod instanceof Uint8Array) {
         const bytes = mod;
-        mod = { mount: async (c, host) => (await require("apphost")).mount(host, { app: name, bytes }) };
+        // Its app (the manifest's entry for this page's route): its key and the KINDS it may make and read.
+        const entry = (manifest.apps ?? []).find(a => a.route === ctx.route);
+        const app = entry ? entry.route.slice(1) : name;
+        mod = { mount: async (c, host) => (await require("apphost")).mount(host, { app, bytes, kinds: entry?.kinds ?? [] }) };
       }
       const t = performance.now();
       working.push(name);
