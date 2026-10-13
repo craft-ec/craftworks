@@ -89,33 +89,51 @@ export async function start(ctx) {
   async function unlock_(pin) {
     const r = await id.unlock(pin);
     if (!r.wrongPin) return r;
-    let silent = false;
-    for (const prior of ctx.identityPrior) {
-      let h;
-      // An earlier build the node is still loading answers nothing for a while: asked again (the fault policy's
-      // `not-yet`, 3 tries); still silent is said as silent, never as a wrong PIN.
-      h = await fault
+    // ONE ASK of an earlier build: a build the node is still loading answers nothing for a while — asked again at once
+    // a few times (the fault policy's `not-yet`); still silent is said as silent, never as a wrong PIN.
+    const askOnce = prior =>
+      fault
         .attempt("earlier build", `asking ${prior.slice(0, 12)}…`, async () => {
           const got = await id.handoverFrom(prior, pin);
           if (got?.silent) throw new fault.Fault("not-yet", "an earlier build not answering yet", { d: { got } });
           return got;
         }, { policy: { "not-yet": { tries: 3, wait: () => 0, report: "never" } } })
         .catch(e => (e?.kind === "not-yet" ? e.d.got : (ctx.failed("earlier build", e, `${prior.slice(0, 12)}…: ${e.message}`), null)));
-      if (h?.silent) silent = true;
-      if (!h?.handed) continue;
+    // The member an earlier build hands over, moved here with its keys (the account's group, the epochs it could read)
+    // before anything reads a table.
+    const moveIn = async (prior, h) => {
       const bytes = x => (x ? hexBytes(x) : new Uint8Array(0));
       const p = await id.provision(bytes(h.handed.seed), bytes(h.handed.did), pin, bytes(h.handed.data));
       ctx.log("member moved", { what: `from the earlier build ${prior.slice(0, 12)}…: ${p.unlocked ? "logged in" : JSON.stringify(p)}` });
       p.movedFrom = prior;
-      // Its keys too (the account's group, the epochs it could read), before anything reads a table.
       if (p.unlocked) {
         const k = await id.moveKeysFrom(prior, pin).catch(e => ({ moved: 0, said: e.message }));
         ctx.log("member moved", { what: `its keys: ${k.group ? "the account's group and " : ""}${k.moved} epoch(s), ${k.spaces ?? 0} space(s)${k.said ? ` (${k.said})` : ""}` });
       }
       return p;
+    };
+    // Newest first, each once; the SILENT ones asked again, 10 s apart, for a minute — a slow node compiles a build in
+    // about that (10-12: every earlier build of the owner's node was passed over at once, and the login went to the
+    // recovery words — a new member without the account's keys).
+    let silent = [];
+    for (const prior of ctx.identityPrior) {
+      const h = await askOnce(prior);
+      if (h?.handed) return moveIn(prior, h);
+      if (h?.silent) silent.push(prior);
+    }
+    for (let round = 0; round < 6 && silent.length; round++) {
+      ctx.log("earlier build", { what: `${silent.length} not answering yet: asked again in 10 s (${round + 1} of 6)` });
+      await new Promise(res => setTimeout(res, 10000));
+      const still = [];
+      for (const prior of silent) {
+        const h = await askOnce(prior);
+        if (h?.handed) return moveIn(prior, h);
+        if (h?.silent) still.push(prior);
+      }
+      silent = still;
     }
     // Not "wrong": an earlier build never answered — the PIN may well be right.
-    if (silent) return { slow: true };
+    if (silent.length) return { slow: true };
     return r;
   }
 

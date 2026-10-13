@@ -25,7 +25,9 @@ export async function start(ctx) {
   }
   const node = await ctx.require("node");
   const { core, glue, ask } = node;
-  const reg = await ask(core.frames_register_identity(), s => s.kind === "registered" || s.kind === "refused", "registering the identity delegate");
+  // Registering compiles the delegate on the node (2.9 MB): a slow node takes a minute — the owner's answered at 64 s
+  // (10-13) while the page had given up at 30 s and failed. Waited for as long as it takes, up to 3 minutes.
+  const reg = await ask(core.frames_register_identity(), s => s.kind === "registered" || s.kind === "refused", "registering the identity delegate", 180000);
   if (reg.kind !== "registered") throw new Error(`the node refused the identity delegate: ${reg.said}`);
   ctx.log("identity ready", { what: core.identity_key().slice(0, 16) + "…" });
 
